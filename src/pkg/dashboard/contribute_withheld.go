@@ -80,6 +80,7 @@ var withheldReasonLabels = map[string]string{
 	contributorAdmissionReasonLabelSkipped:      "Contribute skip label",
 	contributorAdmissionReasonDependencyBlocked: "A dependency is still open",
 	contributorAdmissionReasonDependencyUnknown: "A dependency could not be resolved",
+	contributorAdmissionReasonOwnerGrace:        "Filed by an owner or maintainer moments ago; they claim first",
 	withheldReasonDisabledRepo:                  "Repository is disabled for contribution",
 	withheldReasonRepoUnmintable:                "Repository excluded after a GitHub App token mint failure",
 	withheldReasonTracker:                       "Tracker / umbrella issue",
@@ -115,6 +116,7 @@ func isConvergenceWithheldReason(reason string) bool {
 		contributorAdmissionReasonIssueClaim,
 		contributorAdmissionReasonMergedClaimStale,
 		contributorAdmissionReasonIssueChurn,
+		contributorAdmissionReasonOwnerGrace,
 		withheldReasonDisabledRepo,
 		withheldReasonRepoUnmintable,
 		withheldReasonTracker,
@@ -363,6 +365,10 @@ func withheldFromAdmissionDecision(c withheldCandidate, d contributorAdmissionDe
 		// The counts ARE the answer a maintainer is being asked for, so the
 		// prose states them rather than restating the rule.
 		item.Detail = d.churn.Reason()
+		return item
+	case contributorAdmissionReasonOwnerGrace:
+		item := newWithheldItem(c, d.reason)
+		item.Detail = d.detail
 		return item
 	case contributorAdmissionReasonWorkflowBlocked, contributorAdmissionReasonLabelSkipped:
 		item := newWithheldItem(c, d.reason)

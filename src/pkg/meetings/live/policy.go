@@ -130,6 +130,36 @@ func (l *Ledger) Exceeded(now time.Time) bool {
 	return (l.hourly > 0 && hour >= l.hourly) || (l.daily > 0 && day >= l.daily)
 }
 
+// LedgerUsage is the hive-wide meetings spend in the last hour and day
+// against the ceilings (zero ceiling: none).
+type LedgerUsage struct {
+	HourlyUsed    int `json:"hourly_used"`
+	HourlyCeiling int `json:"hourly_ceiling"`
+	DailyUsed     int `json:"daily_used"`
+	DailyCeiling  int `json:"daily_ceiling"`
+}
+
+// Usage reports the spend in the rolling hour and day at now.
+func (l *Ledger) Usage(now time.Time) LedgerUsage {
+	if l == nil {
+		return LedgerUsage{}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	u := LedgerUsage{HourlyCeiling: l.hourly, DailyCeiling: l.daily}
+	dayCut, hourCut := now.Add(-ledgerDay), now.Add(-ledgerHour)
+	for _, e := range l.entries {
+		if !e.at.After(dayCut) {
+			continue
+		}
+		u.DailyUsed += e.tokens
+		if e.at.After(hourCut) {
+			u.HourlyUsed += e.tokens
+		}
+	}
+	return u
+}
+
 // truncate caps text at limit runes.
 func truncate(text string, limit int) string {
 	r := []rune(text)

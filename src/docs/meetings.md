@@ -152,6 +152,24 @@ The warm process is replaced after `HIVE_MEETINGS_CLI_RECYCLE_TURNS` turns (defa
 
 Spektacular must be a version that includes the `meeting` command ([hivecommons/spektacular#126](https://github.com/hivecommons/spektacular/pull/126)). With an older binary the live mode exits at once; hive keeps the meeting going (transcript, consent, `hive leave`, research approvals, the panel) without Spek's questions and notes, and the panel says plainly that notes and clarifying questions are off for the meeting. While hive cannot reach a Spektacular child that is restarting, the panel says they are paused, and clears it when Spek writes again.
 
+## The meeting budget
+
+Every meeting has its own token budget (`meetings.budget.max_tokens_per_meeting`, 200000 by default), and the hive has hourly and daily ceilings across all meetings (`meetings.budget.max_tokens_per_hour`, `max_tokens_per_day`). When Spek reports no usage, `meetings.budget.max_intents_per_meeting` (500) caps intents instead.
+
+**How it is counted.** The meeting's usage ledger charges fresh input tokens, output tokens and cache writes in full, and cache reads at a tenth (the weight set in #18911: a warm session re-reads its whole history every turn, and counting those reads in full spent a meeting budget in about fifteen answers). Each answer Betty gives also counts as one intent. Hive-wide ceilings use the same token count.
+
+**Where the owner changes it.** In `hive.yaml` under `meetings.budget`, or with `HIVE_MEETINGS_MAX_TOKENS_PER_MEETING`, `HIVE_MEETINGS_MAX_TOKENS_PER_HOUR`, `HIVE_MEETINGS_MAX_TOKENS_PER_DAY` and `HIVE_MEETINGS_MAX_INTENTS_PER_MEETING`; Settings, Meetings shows the values in effect. The 80 and 90 percent steps below are fixed behaviour, not settings.
+
+**The meter.** The meeting row and the live meeting view show a slim meter with the percent used, with the text alternative "62% of the meeting budget used". `GET /api/meetings/budget` returns it for every meeting plus the hourly and daily ceilings used, to any role, as numbers only; the owner-only `GET /api/meetings/{id}` also carries the questions that were skipped.
+
+| Used | What happens |
+|---|---|
+| 80% | One warn log line per meeting (`[meetings] meeting budget at 80%`, ids and numbers only) and a "budget 80%" badge on the meeting. Nothing changes in the meeting. |
+| 90% | Betty says once that answers will be shorter and no new long research runs will start. From then on she answers in one short sentence (at most 160 characters) and does not start deep dives; research Spek asks for is not started. Research already running finishes, and the owner can still approve a waiting item by hand. |
+| 100% | Betty posts the existing notice, now saying what to do: ask the owner to raise the budget or start a new meeting. She keeps taking notes but stops asking, answering and researching. |
+
+A question dropped because the budget ran out is never lost. It is counted, shown in the live meeting view, and listed under "Not answered: budget" in the meeting's inbox record. While the budget is out, Betty repeats the notice with the running count of skipped questions each time that count doubles (1, 2, 4, 8, and so on), so the room learns questions are being skipped without a post for each one. Logs and audit carry counts and ids only, never the question text.
+
 ## Using it
 
 Only the hive owner can send hive to a meeting.
@@ -456,4 +474,4 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.persona.unprompted.stale_s` | `60` | Seconds before a waiting question is dropped. |
 | `meetings.persona.searxng_url` | none | SearXNG instance for web answers (for example `http://searxng.meetings.svc.cluster.local:8080`). |
 
-When the budget runs out, hive posts one notice in the meeting and keeps taking notes, but stops asking questions, starting research and speaking.
+When the budget runs out, hive posts one notice in the meeting and keeps taking notes, but stops asking questions, starting research and speaking. See [The meeting budget](#the-meeting-budget) for how it is counted and what happens at 80, 90 and 100 percent.
