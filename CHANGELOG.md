@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.320.0)
+
+### Added
+
+- Added `GET /api/knowledge/advisor/summary` and a Knowledge-section Advisor card: the read-only rank-versus-holdout comparison ([#18897](https://github.com/hivecommons/hive/issues/18897), from [#17054](https://github.com/hivecommons/hive/issues/17054)) with decision counts by mode, arm and outcome, the `Lane.AdvisorArmSummary()` per-arm bead means (`mixed` and `none` listed separately), mean model latency and tokens, the advisor settings and a small-sample caveat; counts and means only, never slugs, refs or content. Advisor decision records now also store the call's latency and token counts.
+- **The contributor lane waits 15 minutes before claiming an issue an owner, maintainer or the hive itself just filed.** `governor.claims.contributor_grace_s` (default `900`; negative turns it off) withholds an issue whose author is an owner/maintainer (author association `OWNER`, `MEMBER`, `COLLABORATOR`) or this hive's own App from `selectTask` and the Ready queue (Withheld reason `owner_grace`) and refuses a contributor's fresh ledger claim with `owner grace: filed by <login> 3m ago; ...`, so the owner or the owner's dispatcher can claim first; #18866 and #18880 each grew a duplicate contributor PR because the lane claimed within seconds of filing. A person adding `help wanted` after filing waives the grace. Live leases, hive agents and outside reporters are unaffected. ([#18898](https://github.com/hivecommons/hive/issues/18898), part of [#18890](https://github.com/hivecommons/hive/issues/18890)).
+- Betty: a visible meeting-budget meter (tokens used, percent, intents answered, hive hourly and daily ceilings) on the meeting row and live view and at `GET /api/meetings/budget`, one 80 percent warning per meeting, shorter answers and no new research at 90 percent, a notice that says what to do at 100 percent, and questions dropped for budget are counted, shown and listed as "not answered: budget" in the inbox record (#18914)
+- Added "does this build contain PR #N" lookups ([#18915](https://github.com/hivecommons/hive/issues/18915)): `GET /api/saas/build-contains?q=<PR number or SHA>` on the hub answers `yes`, `no` or `unknown` for each hive you can see, and `GET /api/version/contains?q=` answers for a hive's own running build. The answer comes from git ancestry of the commit the hive already reports; a commit that cannot be resolved is always `unknown`, and a PR outside the build's history is `no`. No new heartbeat field; see `src/docs/telemetry.md` for the on-demand GitHub request.
+- The hub hive list and each hive's version menu can now answer "does this build contain PR #N" ([#18915](https://github.com/hivecommons/hive/issues/18915)): type a PR number or commit SHA to see yes, no or unknown per hive, with the reason for every unknown and each hive's behind-by count. The version menu also shows the newest image commit and the newest merged commit as separate rows, so "merged, not yet built" is visible.
+
+### Fixed
+
+- Fix sandbox agents' PR requests carrying the literal head `HEAD` from a detached checkout, which retried a GitHub 422 every 15 minutes for a day and never opened the PR: `hive-open-pr` now resolves the one local branch at the commit or refuses with the remedy, and the watcher rejects a non-branch head once, before any GitHub call (result file, `.rejected` quarantine, fleet-report class `pr_request_head_invalid`), while a branch that draws `422 head invalid` is retried 3 times and then rejected the same way (#18907).
+- Workflow dispatch: a reason replayed from the hand-off ledger now carries its age and the hand-off session that decided it (`reason_at`, `reason_age`, `reason_session`) in the "item not handed off" log line and the Settings "not started" display, and is marked stale once a newer hand-off of the same item exists, so an old decline is no longer read as a new refusal (#18916).
+
 ## 2026-11-18 (v5.319.0)
 
 ### Added
