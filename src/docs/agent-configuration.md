@@ -71,6 +71,8 @@ During the Kubernetes **seed-plus-overlay fallback** only:
 | `acmm_level` | Overlay when present; seed is a fallback, not an unconditional platform override |
 | `hub.is_public` | Seed when set; the hosting hub can also reassert publication policy by heartbeat |
 | GitHub App credentials | Overlay, except a real installed App in the seed is protected against a placeholder overlay wiping it |
+| `review` and `agent_sandbox` blocks | Overlay when it carries the block (adopted whole, on boot and on every reload that starts from the seed); the seed is the fallback only when the overlay has none |
+| `variables.security` | Seed only. The overlay's `variables` block is never adopted |
 
 For example, changing `acmm_level` in the ConfigMap of a hive with a runtime file will not apply a new pack on restart. Use the dashboard's pack controls or the hosting hub's supported controls instead. Public-hosting policy remains the hosting administrator's responsibility, not an arbitrary agent setting.
 
