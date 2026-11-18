@@ -3,6 +3,7 @@ package dashboard
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 )
@@ -19,7 +20,17 @@ func (s *Server) delegatedMidFlight(repoFull string, number int, in delegatedeci
 	if in.Kind != delegatedecision.KindPR {
 		return nil
 	}
-	it, _ := s.stageTrackerCachedPR(repoFull, number)
+	it, ok := s.stageTrackerCachedPR(repoFull, number)
+	if !ok {
+		it, ok = s.stageTrackerBuiltPR(repoFull, number)
+	}
+	if !ok {
+		// The review track of this PR cannot be read: fail closed. An
+		// approval must never rest on a head whose review state is unknown
+		// (a restart before the first tracker poll, a PR the enumeration
+		// has not listed yet).
+		return &StageTrackerMidFlight{Kind: midFlightKindReview, Head: strings.TrimSpace(in.HeadSHA), Text: "review state not yet loaded"}
+	}
 	it.Kind, it.Repo, it.Number = "pr", repoFull, number
 	if head := strings.TrimSpace(in.HeadSHA); head != "" {
 		it.Head = head
@@ -33,6 +44,23 @@ func (s *Server) delegatedMidFlight(repoFull string, number int, in delegatedeci
 		it.CIActivity = nil
 	}
 	return stageTrackerMidFlightFor(it)
+}
+
+// stageTrackerBuiltPR finds a PR row by building the tracker from the status
+// snapshot, for when no tracker body has been served yet.
+func (s *Server) stageTrackerBuiltPR(repoFull string, number int) (StageTrackerItem, bool) {
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	if status == nil {
+		return StageTrackerItem{}, false
+	}
+	for _, it := range s.buildStageTracker(status, s.stageStoreOrShared(), time.Now().UTC()).Items {
+		if it.Kind == "pr" && it.Number == number && strings.EqualFold(it.Repo, repoFull) {
+			return it, true
+		}
+	}
+	return StageTrackerItem{}, false
 }
 
 // delegatedMidFlightOutcome answers a delegated decision on a mid-flight PR:

@@ -13,10 +13,34 @@ import (
 func seedTrackerPR(t *testing.T, srv *Server, number int, item map[string]any) {
 	t.Helper()
 	item["repo"], item["kind"], item["number"] = "testorg/testrepo", "pr", number
-	body, err := json.Marshal(map[string]any{"items": []map[string]any{item}})
+	srv.stageTrackerCacheMu.Lock()
+	defer srv.stageTrackerCacheMu.Unlock()
+	var cur struct {
+		Items []map[string]any `json:"items"`
+	}
+	_ = json.Unmarshal(srv.stageTrackerCache.body, &cur)
+	items := []map[string]any{item}
+	for _, other := range cur.Items {
+		if n, _ := other["number"].(float64); int(n) != number {
+			items = append(items, other)
+		}
+	}
+	body, err := json.Marshal(map[string]any{"items": items})
 	if err != nil {
 		t.Fatal(err)
 	}
+	srv.stageTrackerCache.body = body
+}
+
+// seedSettledTrackerPRs serves tracker rows whose review is approved and CI
+// passing, with no head recorded so they match any head.
+func seedSettledTrackerPRs(srv *Server, numbers ...int) {
+	items := make([]map[string]any, 0, len(numbers))
+	for _, n := range numbers {
+		items = append(items, map[string]any{"repo": "testorg/testrepo", "kind": "pr", "number": n, "stage": 85,
+			"review_activity": map[string]any{"state": "approved"}, "ci_activity": map[string]any{"state": "passing"}})
+	}
+	body, _ := json.Marshal(map[string]any{"items": items})
 	srv.stageTrackerCacheMu.Lock()
 	srv.stageTrackerCache.body = body
 	srv.stageTrackerCacheMu.Unlock()
@@ -121,4 +145,16 @@ func TestDelegatedDecisionAllPRsSkipsMidFlight(t *testing.T) {
 	if strings.Contains(all, "approve #8") || !strings.Contains(all, "approve #9") {
 		t.Fatalf("only the settled PR is decided: %v", mock.comments)
 	}
+}
+
+// A PR whose review state cannot be read at all (no tracker body served, the
+// PR not in a built tracker) is not decided on: the guard fails closed.
+func TestDelegatedDecisionUnreadableReviewStateFailsClosed(t *testing.T) {
+	mock := &repoItemDecisionMock{}
+	srv := newDelegatedServer(t, mock)
+	srv.stageTrackerCacheMu.Lock()
+	srv.stageTrackerCache.body = nil
+	srv.stageTrackerCacheMu.Unlock()
+	w := postDelegated(t, srv, 8, "writer", `{"type":"pr"}`, nil)
+	assertMidFlightNoEffect(t, mock, decodeDelegatedJob(t, w), "review state not yet loaded")
 }
