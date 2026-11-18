@@ -31,6 +31,14 @@ func TestClassify(t *testing.T) {
 		{"typo", "typo in line 4", KindCorrection, nil},
 		{"always without a modal", "He is always late with reviews.", KindCorrection, nil},
 		{"empty", "", KindCorrection, nil},
+		{"for the future", "Keep this in mind for the future.", KindRule, []string{SignalGoingForward}},
+		{"moving forward", "Moving forward, cite the commit.", KindRule, []string{SignalGoingForward}},
+		{"for future reviews", "Apply this for future reviews.", KindRule, []string{SignalGoingForward}},
+		{"for future analyses and work", "Use it for future analyses and for future work.", KindRule, []string{SignalGoingForward}},
+		{"quoted line ignored", "> Going forward, use the maintainers file.\nThe score is too high.", KindCorrection, nil},
+		{"fenced code ignored", "Fix this:\n```\n// going forward use X\n```\nThanks", KindCorrection, nil},
+		{"question ignored", "Should we do this from now on?", KindCorrection, nil},
+		{"question ignored, statement kept", "Why is this low? Going forward, cite the commit.", KindRule, []string{SignalGoingForward}},
 		{"upper case", "SOURCE OF TRUTH is the lockfile", KindRule, []string{SignalSourceOfTruth}},
 	}
 	for _, tc := range tests {
@@ -59,6 +67,10 @@ func TestExtractRuleText(t *testing.T) {
 		{"only a capture request keeps it", "Please capture this.", "Please capture this."},
 		{"no signal returns the body", "just a remark", "just a remark"},
 		{"control characters and comment delimiters", "source of truth <!-- x --> is\tthe lockfile\x00", "source of truth  x  is the lockfile"},
+		{"quoted rule is not extracted", "> Going forward, cite everything.\nThe maintainers file is the source of truth.", "The maintainers file is the source of truth"},
+		{"fenced code is not extracted", "```\nalways cite\n```\nGoing forward, cite the commit.", "Going forward, cite the commit"},
+		{"question is not extracted", "Is it the source of truth? Going forward, cite the commit.", "Going forward, cite the commit"},
+		{"short rule sentence falls back to the whole comment", "Cite the commit for scores. Going forward.", "Cite the commit for scores. Going forward."},
 		{"empty clause list falls back", "capture this; record it", "capture this; record it"},
 	}
 	for _, tc := range tests {
