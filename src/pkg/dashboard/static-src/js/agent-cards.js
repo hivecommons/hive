@@ -1163,7 +1163,6 @@
       }
     }
 
-
     // Per-agent "was the terminal tail scrolled to the bottom?" snapshot taken
     // before a re-render, so the post-render auto-follow respects a reader who
     // scrolled up inside a pane.
