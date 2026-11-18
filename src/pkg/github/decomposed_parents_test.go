@@ -281,3 +281,36 @@ func TestEnumerateActionable_SubIssueSummaryBecomesChildren(t *testing.T) {
 		t.Errorf("leaves must carry no children: %+v / %+v", byNumber[42].Children, byNumber[43].Children)
 	}
 }
+
+func TestSyncIssueStageLabels_EpicParentNotClosed(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+	key := stagelabels.Key("acme/widgets", 7)
+	store.Observe(key, stagelabels.Actionable, "actionable")
+	fake.mu.Lock()
+	fake.subIssues[7] = []subIssueRef{{Number: 3, State: "closed"}}
+	fake.mu.Unlock()
+	result := &ActionableResult{}
+	result.Issues = IssueResultFromItems([]Issue{parentInput(&IssueChildren{Total: 1, Completed: 1}, stagelabels.Actionable.Label(), "EPIC")})
+	res := syncSeeded(t, fake, c, result, store, stageNow())
+	if res.ParentsClosed != 0 {
+		t.Fatalf("epic must stay open: %+v", res)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if _, ok := fake.closed[7]; ok {
+		t.Fatal("epic parent was closed")
+	}
+}
+
+func TestParentKeptOpenByLabel(t *testing.T) {
+	for _, l := range []string{"epic", "EPIC", "hold", "hold/review", "hive/keep-open"} {
+		if !parentKeptOpenByLabel([]string{l}) {
+			t.Errorf("%q should keep the parent open", l)
+		}
+	}
+	if parentKeptOpenByLabel([]string{"enhancement"}) {
+		t.Error("plain label must not keep the parent open")
+	}
+}

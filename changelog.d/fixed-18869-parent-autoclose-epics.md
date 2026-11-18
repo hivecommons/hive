@@ -1,0 +1,1 @@
+- Parent auto-close no longer closes epics, held issues, or a parent a person reopened after a hive auto-close (#18869).

@@ -350,6 +350,9 @@ func decomposedParentCloseComment(children []ChildRef, closers map[ChildRef]int)
 // comment is posted only after a successful close so a close the reporter
 // gate refuses does not leave a "delivered" note every cycle.
 func (c *Client) closeDecomposedParent(ctx context.Context, in IssueStageInput, store *stagelabels.Store, key string, logger *slog.Logger) bool {
+	if parentKeptOpenByLabel(in.Labels) {
+		return false
+	}
 	owner, name := c.splitRepo(in.Repo)
 	children, open, ok, err := c.decomposedChildren(ctx, owner, name, in.Number)
 	if err != nil {
@@ -359,6 +362,12 @@ func (c *Client) closeDecomposedParent(ctx context.Context, in IssueStageInput, 
 		return false
 	}
 	if !ok || open > 0 {
+		return false
+	}
+	// A parent that still carries our close note was closed once and then
+	// reopened by a person: that is a maintainer saying the work is not done,
+	// so never close it again. An unreadable thread fails toward keeping it open.
+	if closedBefore, err := c.IssueCommentsContain(ctx, in.Repo, in.Number, parentAutoCloseMarker); err != nil || closedBefore {
 		return false
 	}
 	closers := map[ChildRef]int{}
@@ -393,4 +402,16 @@ func (c *Client) closeDecomposedParent(ctx context.Context, in IssueStageInput, 
 		logger.Info("issue stage labels: decomposed parent closed, all children delivered", "repo", in.Repo, "issue", in.Number, "children", children, "closing_prs", closers)
 	}
 	return true
+}
+
+// parentKeptOpenByLabel reports whether a label says a person owns closing the
+// parent: an epic, any hold label, or the explicit keep-open marker.
+func parentKeptOpenByLabel(labels []string) bool {
+	for _, l := range labels {
+		l = strings.ToLower(l)
+		if l == "epic" || l == "hive/keep-open" || strings.Contains(l, "hold") {
+			return true
+		}
+	}
+	return false
 }
