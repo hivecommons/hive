@@ -128,7 +128,24 @@ A pin change can leave Hive's model lists behind. Two layers cover it:
 - Goose: out of scope. Its models depend on whichever provider an operator
   configures, so there is no single list to keep fresh; the dashboard's ACP
   probe asks the configured provider at run time.
-- Copilot, codex, agy and omp are tracked under
+- agy and omp: the running CLI already bounds what a hive can launch, because
+  the dashboard asks the local binary at run time (`agy models`,
+  `omp models --json`), so neither needs an allowlist. Their static floors
+  (`agyStaticModels` in `cli_models_agy.go`, `ompStaticModels` in
+  `cli_models_omp.go`, and the matching `AGY_CLI_MODELS` / `OMP_CLI_MODELS`
+  in `backends-tokens.js` and `static/index.html`) are **not** refreshed by CI,
+  because neither subcommand answers without a login. Checked on the pinned
+  binaries (agy 1.5.0, omp 18.22.0) with an empty `HOME` and no credentials:
+  `agy models` prints `Please sign in to view available models` and exits 1,
+  and `omp models --json` exits 0 with `{"models":[]}`. A key in the
+  environment would make omp list that one provider's catalogue, but that is
+  not what a signed-in account sees (the omp floor also carries OAuth-only
+  providers and a reasoning-effort map), so it is not used as a source. Both
+  floors are therefore **a manual capture**: sign in on a machine running the
+  pinned binary, run the two commands above, and copy the result into the Go
+  and JS lists in the CLI's own order. The agy floor is still the 1.1.18
+  snapshot until someone does that. Neither list is guessed.
+- Copilot and codex are tracked under
   [#19028](https://github.com/hivecommons/hive/issues/19028).
 
 The PR then runs the normal gates. The docker workflow builds both images for

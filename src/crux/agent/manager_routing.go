@@ -239,9 +239,19 @@ const bobBackend = "bob"
 // undefined (reading 'maxTokens')". Leaving it unrewritten keeps logs honest
 // about what was configured and stops the corrupted id from being handed to a
 // future bob consumer.
+//
+// claude takes only the dotted-to-dashed repair (config.CanonicalizeClaudeModel):
+// a Copilot-spelled id such as claude-sonnet-5.5, carried over when an agent
+// is switched from copilot to claude, is rejected by the Claude CLI on every
+// kick, so it is launched as claude-sonnet-5-5. Aliases and dashed ids pass
+// through unchanged.
 func normalizeModelNameForBackend(model, backend string, inferenceRoutable bool) string {
-	if backend == "claude" || backend == bobBackend || inferenceRoutable {
+	if inferenceRoutable || backend == bobBackend {
 		return model
+	}
+	if backend == config.ClaudeBackend {
+		canonical, _ := config.CanonicalizeClaudeModel(model)
+		return canonical
 	}
 	if backend == "copilot" {
 		return CopilotLaunchModel(model)
