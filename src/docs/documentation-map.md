@@ -65,6 +65,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Dashboard settings explained](settings.md) — one entry per Settings tab: what it controls and which guide explains it. The **?** mark next to each setting opens its guide or this page.
 - [Dashboard feedback](feedback.md) — reporting bugs and requesting features from the spoke dashboard, including diagnostics, screenshot handling, hub relay, user-auth, and fallback issue paths.
 - [Dashboard source layout](dashboard-source-layout.md) — `static/index.html` is generated from per-area CSS/JS/HTML sources in `static-src/` via `make dashboard-gen`; how to edit, add an area, and resolve merge conflicts.
+- [UI render evidence](ui-render-evidence.md) — the screenshots a UI pull request carries (desktop and phone, light and dark, fixture data), the one sticky comment that indexes them, how to read them, and what they do not prove.
 - [Dashboard design system](dashboard-design-system.md) — shared token catalogue, component variants, migration rules, ratchet plan, and #8536 theme override contract for spoke, contributor, and hub dashboard surfaces.
 - [Dashboard glossary and sidebar IA](dashboard-glossary.md) — the operator-facing names used by the dashboard and the ADR-0018 sidebar information architecture.
 - [The `auto-update` Compose profile](auto-update-profile.md) — what unattended Watchtower updates cost you, what the Docker socket proxy does and does **not** fix, and why Kubernetes should not use this profile at all.

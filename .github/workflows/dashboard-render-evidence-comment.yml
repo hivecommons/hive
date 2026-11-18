@@ -1,0 +1,73 @@
+name: Dashboard Render Evidence Comment
+
+# Posts or updates the ONE sticky "UI render evidence" comment for a pull
+# request, and records a check run, from the artifact that
+# dashboard-render-evidence.yml uploaded (#18915).
+#
+# WHY workflow_run AND NOT pull_request_target
+#
+# Writing a PR comment needs a write token, which a `pull_request` run from a
+# fork never gets. pull_request_target would grant it but runs with secrets in
+# the base repository's context, so it must never execute or check out PR code.
+# workflow_run gives the same split safely, the way notice-autofix.yml does: the
+# capture job runs untrusted PR code with a read-only token, and this workflow
+# runs the DEFAULT branch's copy of itself and only reads the capture job's
+# small index artifact as DATA. It never checks out, builds or executes
+# anything from the PR. The script validates the artifact, reduces its text to a
+# fixed alphabet, and believes the PR number inside it only when that PR's head
+# commit is the commit the capture run built.
+#
+# It never fails: every problem is logged as a notice and the job exits 0.
+on:
+  workflow_run:
+    workflows: ['Dashboard Render Evidence']
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-evidence-comment-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    name: Post render evidence comment
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      issues: write
+      checks: write
+    steps:
+      # workflow_run checks out the default branch: the trusted copy of the script.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Download the evidence index
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: render-evidence-index
+          path: ${{ runner.temp }}/render-evidence-index
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Post or update the comment
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_HINT: ${{ github.event.workflow_run.pull_requests[0].number }}
+          INDEX_PATH: ${{ runner.temp }}/render-evidence-index/index.json
+        run: node src/scripts/render-evidence-comment.mjs
