@@ -46906,7 +46906,7 @@ function burnAreaChart() {
         + ' · model ' + escapeHtml(String(st.model || 'not set'))
         + ' · budget ' + escapeHtml(String(st.max_calls_per_day == null ? '–' : st.max_calls_per_day)) + '/day, '
         + escapeHtml(String(st.max_calls_per_agent_hour == null ? '–' : st.max_calls_per_agent_hour)) + '/agent/hour'
-        + (st.enabled ? '' : ' · knowledge.advisor is off') + '</div>';
+        + (st.enabled ? '' : ' · advisor is turned off') + '</div>';
       html += '<div class="kb-effective-scope">' + escapeHtml(String(w.decisions || 0)) + ' decisions'
         + (w.first_decision ? ' from ' + escapeHtml(w.first_decision) + ' to ' + escapeHtml(w.last_decision || '') : '')
         + (w.rank_mode_start ? ' · rank mode since ' + escapeHtml(w.rank_mode_start) : '') + '</div>';
