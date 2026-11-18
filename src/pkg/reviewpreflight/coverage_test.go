@@ -102,7 +102,7 @@ func TestReleaseAgeFailureAndOptOut(t *testing.T) {
 		t.Fatalf("age failure not reported:\n%s", out)
 	}
 	before := hits.Load()
-	off := config.ReviewPreflightConfig{Vulnerabilities: boolPtr(false), MinReleaseAgeDays: -1}
+	off := config.ReviewPreflightConfig{Vulnerabilities: boolPtr(false), ReleaseAge: boolPtr(false)}
 	out = Build(context.Background(), stubClient(srv), stubSettings(srv, off), depInput())
 	if hits.Load() != before || strings.Contains(out, "published") {
 		t.Fatalf("a disabled age check must make no request:\n%s", out)
@@ -306,7 +306,7 @@ func TestRuleDocLimits(t *testing.T) {
 		tree = append(tree, TreeEntry{Path: fmt.Sprintf("docs/adr/%03d.md", i), Size: 10})
 	}
 	tree = append(tree, TreeEntry{Path: strings.Repeat("a", 301) + "/AGENTS.md", Size: 10}, TreeEntry{Path: "line\nbreak/AGENTS.md", Size: 10})
-	sel := SelectRuleDocs(tree, config.DefaultReviewPreflightRuleDocPatterns, nil, 0)
+	sel := SelectRuleDocs(tree, []string{"docs/adr/**"}, nil, 0)
 	if len(sel.Docs) != maxRuleDocs || len(sel.Omitted) != 5 {
 		t.Fatalf("docs=%d omitted=%d, want %d and 5", len(sel.Docs), len(sel.Omitted), maxRuleDocs)
 	}

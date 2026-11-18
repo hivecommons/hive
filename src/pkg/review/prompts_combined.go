@@ -70,7 +70,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	b.WriteString(preflightSection(pr))
 	for _, p := range perspectives {
 		if p == PerspectiveCorrectness {
-			b.WriteString(subtleDefectGuidance)
+			b.WriteString(understandingGuidance)
 			break
 		}
 	}
