@@ -1,0 +1,1 @@
+- The Hive activity monitor no longer draws a linked PR's title one letter per line when its repo chip, base-branch pill and status chips fill the row (seen on an iPad for utah-packages#1212). The PR's number and title now keep a minimum width and move to the next line instead.
