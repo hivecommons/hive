@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.318.0)
+
+### Added
+
+- Added `GET /api/hub/v1`, the discovery document of the hub registration protocol v1 (rollout step 1 of [#18642](https://github.com/hivecommons/hive/issues/18642)): it lists the operations, limits (`max_repos`, `max_per_user`, `expiry`, `key_rotation_overlap`) and the ownership proof method (`hub-session-token`), and answers `404` while `HIVE_HUB_SELFSERVICE_REGISTRATION` is off. The per-registration repo cap is now configurable with `HIVE_HUB_SELFSERVICE_MAX_REPOS` (default `20`, clamped to `500`); the legacy `/api/hub/selfservice/*` responses are unchanged.
+
+### Fixed
+
+- Remember per repository that Prow refuses the App's `/ok-to-test`, so a new fork PR there gets the needs-human note instead of a first command Prow rejects; the memory is re-derived from the repository's comments after a restart and clears when the `hive-ok-to-test` workflow is installed (#18608).
+- Give the proxy's `agent could not be identified` blocked-write WARN its own `proxy_writer_unidentified` operator-action class (no longer a generic `unclassified_error_repeated` fleet bug) and log why attribution failed (`reason`: `no_uid_map`, `shared_uid_mode`, `no_peer_port`, `port_not_in_socket_table`, `uid_not_in_map`); unidentified writers are still blocked as ADVISORY.
+- Report transient proxy upstream dial failures to GitHub hosts only when they persist over an hour, under the operator-action class `proxy_upstream_degraded`, and log an `error_class` (`timeout`, `refused`, `dns`, `unreachable`, `reset`, `tls`) with the failing host.
+- A contributor PR the hive is going to adopt anyway (author relay offline or unregistered, adoption enabled and unblocked) no longer gets a "back in your court" nudge followed by an adoption note 16-39 minutes later: the nudge is recorded (the adoption clock still runs, the relay still gets its task) but its GitHub comment is withheld, so the author gets one notification, and it is posted if the adoption stops being certain; an online author keeps the nudge and the full grace, and the ladder's immediate-supersede rung fires only for an unreachable author, the same condition. (#18872).
+- Publish benchmark records in byte-bounded batches (about 384 KB) with a watermark advanced per accepted batch, halve and retry a batch the hub answers with 413 (skipping a single record that still gets 413 once another batch has landed), and include the truncated hub response body in `benchmarks.last_error` so a proxy 413 is distinguishable from the hub handler.
+- Customers tag chips now render as pills; they were bare unstyled text because the class they used had no CSS (#18882).
+
 ## 2026-11-18 (v5.317.1)
 
 ### Fixed
