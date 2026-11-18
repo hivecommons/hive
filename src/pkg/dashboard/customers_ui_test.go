@@ -544,3 +544,26 @@ func TestGovernorFeatures_CustomersAvatarsToggleRoundTrip(t *testing.T) {
 		t.Fatalf("env override = %+v", got.Features)
 	}
 }
+
+// TestCustomersProfileDetailsWiring pins the real name, organization and
+// location fields: the Details block with its auto or by-hand marker, the
+// organization pill on the row, and the profile edit op.
+func TestCustomersProfileDetailsWiring(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`function customersDetailsHtml(p)`,
+		`function customersOrgPill(p)`,
+		`customersOrgPill(p) + customersTagPills(p)`,
+		`data-action="customersProfileSave"`,
+		`data-action="customersProfileReset"`,
+		`{ op: 'profile', field: f.key, value: next }`,
+		`op: 'profile', field: key, state: 'auto'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("Customers UI lacks %q", want)
+		}
+	}
+	if !strings.Contains(html, `customersDetailsHtml(p) + customersGoalsHtml(p)`) {
+		t.Error("the Details block is not part of the profile")
+	}
+}
