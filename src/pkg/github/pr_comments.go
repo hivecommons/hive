@@ -93,6 +93,9 @@ type rawPRComment struct {
 }
 
 type rawPRCommentThread struct {
+	// ID is the review thread's GraphQL node id; only the feedback query
+	// (pr_feedback.go) asks for it.
+	ID         string `json:"id"`
 	IsResolved bool   `json:"isResolved"`
 	IsOutdated bool   `json:"isOutdated"`
 	Path       string `json:"path"`
