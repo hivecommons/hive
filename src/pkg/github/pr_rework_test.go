@@ -24,7 +24,7 @@ func TestBuildPRReworkStatsFromReviewAndCommitTimeline(t *testing.T) {
 	}
 	commits := []PRCommit{
 		{Message: "initial", AuthoredAt: created.Add(30 * time.Minute)},
-		{Message: "fix review\n\nAuto-fix attempt 2/6\n— hive: agent=scanner backend=copilot model=claude-opus-5", AuthoredAt: firstReview.Add(30 * time.Minute)},
+		{Message: "fix review\n\nAuto-fix attempt 2/6\n-- hive: agent=scanner backend=copilot model=claude-opus-5", AuthoredAt: firstReview.Add(30 * time.Minute)},
 		{Message: "polish", AuthoredAt: firstReview.Add(90 * time.Minute)},
 	}
 	got := BuildPRReworkStats(pr, reviews, commits)
