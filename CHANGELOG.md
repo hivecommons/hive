@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v6.48.0)
+
+### Added
+
+- `shared_ci_rerun.enabled` is now a Settings toggle (Features → Quality loops & release health → Shared-CI recovery) and an admin-MCP `governor.feature_settings` field (`sharedCiRerunEnabled`), so a hive whose App has no Actions write (an optional permission) can turn the shared-CI rerun attempts and their notes off without editing its config file.
+
+### Fixed
+
+- On a repo whose auto-merge is off, the contributor lane's observe-only pass no longer tries to post `/ok-to-test` on a non-member fork PR. Its mutation boundary refuses every write by design, and each pass runs on a fresh engine, so the attempt was refused and logged at WARN on every re-evaluation of the head, about every three minutes.
+- A refused shared-CI re-run (the App has no Actions write) no longer replaces a PR's real blocker. It takes the stage (085, "re-run CI") only when CI is what holds the PR; a reviewer's changes request, a requested decision or another 085 stays the stage and caption, and the re-run ask remains as the `hive:unauthorized` note.
+
 ## 2026-11-18 (v6.47.1)
 
 ### Fixed
