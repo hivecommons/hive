@@ -147,6 +147,54 @@ func (c *Config) DegradeContradictingLaunchCmds() []LaunchCmdDegradation {
 	return degraded
 }
 
+// ModelIDNormalization records one claude-backend agent whose stored model
+// id the loader rewrote from the Copilot (dotted) spelling to the Claude CLI
+// (dashed) spelling.
+type ModelIDNormalization struct {
+	Agent   string
+	Backend string
+	From    string
+	To      string
+}
+
+// NormalizeClaudeModelIDs rewrites, for every claude-backend agent, a stored
+// Copilot-style dotted Claude id (claude-sonnet-5.5) to the dashed id the
+// Claude CLI accepts (claude-sonnet-5-5), and records each rewrite in
+// c.ModelIDNormalizations so the dashboard can warn about it.
+//
+// The dotted id is valid on the copilot backend and is carried over verbatim
+// when an agent is switched from copilot to claude. The Claude CLI rejects it,
+// so every kick fails with "There's an issue with the selected model" while
+// the dashboard's model dropdown (which matches dotted and dashed spellings
+// as the same model) shows a correct-looking selection. Normalizing at load
+// repairs agents already in that state on the next boot; the dashboard write
+// paths normalize at set time so new ones are not created.
+func (c *Config) NormalizeClaudeModelIDs() []ModelIDNormalization {
+	var fixed []ModelIDNormalization
+	for name, agent := range c.Agents {
+		if agent.Backend != ClaudeBackend {
+			continue
+		}
+		to, changed := CanonicalizeClaudeModel(agent.Model)
+		if !changed {
+			continue
+		}
+		fixed = append(fixed, ModelIDNormalization{Agent: name, Backend: agent.Backend, From: agent.Model, To: to})
+		slog.Default().Warn("config: rewrote a Copilot-style dotted Claude model id to the Claude CLI spelling",
+			"hive_id", c.HiveID,
+			"agent", name,
+			"file", agent.SourceFile(),
+			"from", agent.Model,
+			"to", to,
+		)
+		agent.Model = to
+		c.Agents[name] = agent
+	}
+	sort.Slice(fixed, func(i, j int) bool { return fixed[i].Agent < fixed[j].Agent })
+	c.ModelIDNormalizations = append(c.ModelIDNormalizations, fixed...)
+	return fixed
+}
+
 // validateAgentOverlay runs the per-agent gates that an overlay file can
 // realistically violate. Deliberately the same calls validateAgents makes, so
 // a file rejected here is exactly a file that would have failed the whole load.

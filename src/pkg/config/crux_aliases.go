@@ -182,6 +182,7 @@ var (
 
 var (
 	APIKeySHA256              = cruxconfig.APIKeySHA256
+	CanonicalizeClaudeModel   = cruxconfig.CanonicalizeClaudeModel
 	CopiedSandboxBlock        = cruxconfig.CopiedSandboxBlock
 	AllowSecretFileRoot       = cruxconfig.AllowSecretFileRoot
 	DropDanglingModelFlag     = cruxconfig.DropDanglingModelFlag

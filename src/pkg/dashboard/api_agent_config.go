@@ -1073,8 +1073,18 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		agentCfg.Model = sanitizeString(body.Model)
 		agentCfg.ModelOwner = config.FieldOwnerOperator
 		effectiveModel = agentCfg.Model
-		modelChanged = agentCfg.Model != prevModel
 	}
+	// A Copilot-style dotted Claude id (claude-sonnet-5.5), whether sent in
+	// this request or carried over from a copilot backend, is stored in the
+	// Claude CLI's dashed spelling on the claude backend, with a warning.
+	// The CLI rejects the dotted id on every kick.
+	normalizedModel, modelWarning := canonicalizeModelForBackend(name, effectiveBackend, effectiveModel)
+	if modelWarning != "" {
+		agentCfg.Model = normalizedModel
+		agentCfg.ModelOwner = config.FieldOwnerOperator
+		effectiveModel = normalizedModel
+	}
+	modelChanged = effectiveModel != prevModel
 	if body.ReasoningEffort != nil {
 		effort := sanitizeString(*body.ReasoningEffort)
 		// Same set-time rejection rationale as ValidateBackend above: an
@@ -1137,7 +1147,8 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 			s.logger.Warn("failed to apply backend from config endpoint", "agent", name, "error", err)
 		}
 	}
-	resp := map[string]any{"ok": true, "status": "updated", "agent": name, "applied": true, "restarted": false}
+	resp := withModelWarning(map[string]any{"ok": true, "status": "updated", "agent": name, "applied": true, "restarted": false}, modelWarning)
+	s.noteModelIDNormalization(name, modelWarning)
 	if modelChanged || backendChanged || effortChanged {
 		if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
 			// Persisted and applied to the launch configuration, but the

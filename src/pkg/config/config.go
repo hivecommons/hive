@@ -286,6 +286,11 @@ type Config struct {
 	// dashboard can raise a banner for each. Runtime-only; see
 	// DegradeContradictingLaunchCmds.
 	LaunchCmdDegradations []LaunchCmdDegradation `yaml:"-" json:"-"`
+	// ModelIDNormalizations lists the claude-backend agents whose dotted
+	// (Copilot-style) Claude model id the loader rewrote to the Claude CLI
+	// spelling, so the dashboard can warn for each. Runtime-only; see
+	// NormalizeClaudeModelIDs.
+	ModelIDNormalizations []ModelIDNormalization `yaml:"-" json:"-"`
 	// GateRegressions lists the safety gates a previous runtime overlay
 	// carried that this config lacks or weakens, as detected at boot
 	// (hivecommons/hive#16438). Runtime-only; served in /api/status as
@@ -6194,6 +6199,9 @@ func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Con
 	// when the base entry carries the same stale launch_cmd. Drop it here
 	// rather than let validation exit the process.
 	cfg.DegradeContradictingLaunchCmds()
+	// A claude agent carrying the copilot spelling of its model id cannot
+	// launch; rewrite it to the id the Claude CLI accepts.
+	cfg.NormalizeClaudeModelIDs()
 
 	if err := cfg.ApplyAgentSpecRepoScopes(); err != nil {
 		return nil, fmt.Errorf("applying agent spec repo scopes: %w", err)

@@ -1012,7 +1012,7 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 		r.models = dedupeModels(append(r.models, copilotAlwaysIncludeModels...))
 	}
 	if backend == "claude" {
-		r.models = dedupeModels(append(r.models, claudeAlwaysIncludeModels...))
+		r.models = canonicalClaudeModelList(append(r.models, claudeAlwaysIncludeModels...))
 	}
 	if s.cliModels != nil {
 		s.cliModels.set(backend, r)
@@ -1063,7 +1063,7 @@ func (s *Server) staticCLIModelResult(backend string) cliModelResult {
 			models = dedupeModels(append(models, copilotAlwaysIncludeModels...))
 		}
 		if backend == "claude" {
-			models = dedupeModels(append(models, claudeAlwaysIncludeModels...))
+			models = canonicalClaudeModelList(append(models, claudeAlwaysIncludeModels...))
 		}
 		return cliModelResult{models: models, fallback: true, discoveryErr: "discovery refresh running in background"}
 	}

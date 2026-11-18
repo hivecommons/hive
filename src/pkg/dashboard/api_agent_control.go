@@ -431,10 +431,12 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.claimAgentFieldOwnership(name, "", backend)
+		modelWarning := s.healCarriedClaudeModel(name, backend)
+		s.noteModelIDNormalization(name, modelWarning)
 		s.deps.Logger.Info("audit: backend saved for agent not running", "agent", name, "backend", backend, "trigger", "dashboard-api")
 		s.auditFromRequest(r, "switch_backend", auditDetail("backend", backend), name)
 		minStatusSeq := s.refreshAndPersistSeq()
-		jsonResponse(w, savedNotRunningResponse("backend_saved", name, "backend", backend, minStatusSeq))
+		jsonResponse(w, withModelWarning(savedNotRunningResponse("backend_saved", name, "backend", backend, minStatusSeq), modelWarning))
 		return
 	}
 
@@ -446,6 +448,11 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	// Persist to hive.yaml and mark the field operator-owned so the next pack
 	// apply (which runs on every restart) does not reconcile it away.
 	s.claimAgentFieldOwnership(name, "", backend)
+	// The switch changes only the backend: an agent coming from copilot
+	// carries the copilot (dotted) spelling of its Claude model, which the
+	// Claude CLI rejects. Rewrite it before the restart below.
+	modelWarning := s.healCarriedClaudeModel(name, backend)
+	s.noteModelIDNormalization(name, modelWarning)
 
 	s.deps.Logger.Info("audit: backend switched", "agent", name, "backend", backend, "trigger", "dashboard-api")
 	s.auditFromRequest(r, "switch_backend", auditDetail("backend", backend), name)
@@ -455,7 +462,7 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	// the saved choice applies when it next starts.
 	if agentHoldsNoSession(proc) {
 		minStatusSeq := s.refreshAndPersistSeq()
-		jsonResponse(w, savedNotRunningResponse("backend_saved", name, "backend", backend, minStatusSeq))
+		jsonResponse(w, withModelWarning(savedNotRunningResponse("backend_saved", name, "backend", backend, minStatusSeq), modelWarning))
 		return
 	}
 	if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
@@ -463,7 +470,7 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	minStatusSeq := s.refreshAndPersistSeq()
-	jsonResponse(w, map[string]any{"ok": true, "status": "switched", "agent": name, "backend": backend, "minStatusSeq": minStatusSeq})
+	jsonResponse(w, withModelWarning(map[string]any{"ok": true, "status": "switched", "agent": name, "backend": backend, "minStatusSeq": minStatusSeq}, modelWarning))
 }
 
 func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
@@ -483,6 +490,12 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A Copilot-style dotted Claude id is stored in the Claude CLI's dashed
+	// spelling on the claude backend, with a warning, instead of being saved
+	// as an id every kick would fail on.
+	backend, _ := s.agentEffectiveBackendAndModel(name)
+	model, modelWarning := canonicalizeModelForBackend(name, backend, model)
+
 	// Reject a model the effective backend cannot serve BEFORE storing it.
 	// Silently accepting an unusable value and then falling back at launch is
 	// what made this class of bug invisible: the grid showed the choice, the
@@ -497,10 +510,11 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 		// held back by the ACMM gate): persist the choice to both config
 		// layers so it applies when the agent starts (#18905).
 		s.claimAgentFieldOwnership(name, model, "")
+		s.noteModelIDNormalization(name, modelWarning)
 		s.deps.Logger.Info("audit: model saved for agent not running", "agent", name, "model", model, "trigger", "dashboard-api")
 		s.auditFromRequest(r, "set_model", auditDetail("model", model), name)
 		minStatusSeq := s.refreshAndPersistSeq()
-		jsonResponse(w, savedNotRunningResponse("model_saved", name, "model", model, minStatusSeq))
+		jsonResponse(w, withModelWarning(savedNotRunningResponse("model_saved", name, "model", model, minStatusSeq), modelWarning))
 		return
 	}
 
@@ -512,6 +526,7 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 	// Persist to hive.yaml and mark the field operator-owned so the next pack
 	// apply (which runs on every restart) does not reconcile it away.
 	s.claimAgentFieldOwnership(name, model, "")
+	s.noteModelIDNormalization(name, modelWarning)
 
 	s.deps.Logger.Info("audit: model set", "agent", name, "model", model, "trigger", "dashboard-api")
 	s.auditFromRequest(r, "set_model", auditDetail("model", model), name)
@@ -521,7 +536,7 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 	// next starts, and a restart must not wake it.
 	if agentHoldsNoSession(proc) {
 		minStatusSeq := s.refreshAndPersistSeq()
-		jsonResponse(w, savedNotRunningResponse("model_saved", name, "model", model, minStatusSeq))
+		jsonResponse(w, withModelWarning(savedNotRunningResponse("model_saved", name, "model", model, minStatusSeq), modelWarning))
 		return
 	}
 	if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
@@ -529,7 +544,7 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	minStatusSeq := s.refreshAndPersistSeq()
-	jsonResponse(w, map[string]any{"ok": true, "status": "model_set", "agent": name, "model": model, "minStatusSeq": minStatusSeq})
+	jsonResponse(w, withModelWarning(map[string]any{"ok": true, "status": "model_set", "agent": name, "model": model, "minStatusSeq": minStatusSeq}, modelWarning))
 }
 
 // handleEffortSet sets an agent's reasoning effort from the grid dropdown and
