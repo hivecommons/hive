@@ -191,7 +191,7 @@ Commit committer dates and SHA-keyed `check_suite` / `status` times are never us
 
 **Applies to:** Issues. **Kind:** Hard issue hold.
 
-Since [#18468](https://github.com/hivecommons/hive/issues/18468) the sweep gives every reporter the `needs-sha` label below and never applies `hold`; `needs-sha` itself keeps the issue out of agent work with reporter trust on or off. Before that, human-filed primary-repo `kind/bug` without a 7-40 hex SHA got `hold` and a notice carrying `<!-- hive:sha-hold -->`; once a SHA appears in body/comments, Hive removes `hold` only if the current hold is its own (newest `hold` event labeled by the App bot, paired with an App-authored notice at or after it). A human's hold, a re-hold, or another subsystem's hold stays. Reporters whose author association is trusted (`issue_filter.reporter_trust.trusted_associations`, default OWNER/MEMBER/COLLABORATOR) get the soft `needs-sha` row below instead, and a SHA-hold `hold` already on such an issue is swapped for it (#12002).
+Since [#18468](https://github.com/hivecommons/hive/issues/18468) the sweep never applies `hold`. Before that, human-filed primary-repo `kind/bug` without a 7-40 hex SHA got `hold` and a notice carrying `<!-- hive:sha-hold -->`. Hive removes a legacy SHA hold when a SHA appears or the issue is exempt, only if the newest `hold` event was labeled by the App bot and paired with an App-authored notice at or after it. A human's hold, a re-hold, or another subsystem's hold stays.
 
 The hard-suppress reconcile also lifts this `hold` once a PR referencing the issue merges after it was applied.
 
@@ -207,13 +207,13 @@ The hard-suppress reconcile also lifts this `hold` once a PR referencing the iss
 
 **Applies to:** Issues. **Kind:** Hard (issue gate; not a PR merge gate).
 
-A `kind/bug` without a SHA gets this label plus the `<!-- hive:sha-hold -->` notice. While it is on the issue no agent implements, decomposes or claims it, whatever the reporter-trust setting; the issue shows as filtered in the work list. The sweep removes it once a SHA appears, which releases the issue. Description: "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
+An external primary-repo `kind/bug` without a SHA in its body or comments gets this label plus the `<!-- hive:sha-hold -->` notice. Issues authored by an OWNER, MEMBER, COLLABORATOR or Hive's own accounts, and issues whose body cites a concrete file or code path, are exempt. While the label is present no agent implements, decomposes or claims the issue, whatever the reporter-trust setting. The sweep removes its own existing label when an exemption applies; it leaves a human-applied label alone. The dashboard shows blocking control labels and explains how to lift them.
 
 **Who applies it:** Hive.
 
 **Checked by:** SHA-hold sweep. **When:** Eval tick SHA sweep.
 
-**Release or override.** Add SHA evidence, or remove the label
+**Release or override.** Post a commit SHA, or use the authorized dashboard override. The override records `hive/sha-override` on the issue so subsequent sweeps do not re-add the SHA hold. Other hold labels still apply.
 
 **Configuration and implementation.** `issues.sha_hold_trusted_label` (default `needs-sha`; `hold` is treated as unset, since the sweep never applies `hold`)
 

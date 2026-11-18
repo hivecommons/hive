@@ -1349,6 +1349,7 @@
       switch (id) {
         case 'hold': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: true, type } };
         case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type } };
+        case 'override-sha': return type === 'issue' ? { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type, override_sha: true } } : null;
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
         case 'wf-dispatch': return { url: '/api/workflows/dispatch', body: { repo: item.repo, number: n } };
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };

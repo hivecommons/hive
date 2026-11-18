@@ -16,8 +16,9 @@ import (
 const repoHoldPermissionCacheTTL = 2 * time.Minute
 
 type repoHoldRequest struct {
-	Held bool   `json:"held"`
-	Type string `json:"type"`
+	Held        bool   `json:"held"`
+	Type        string `json:"type"`
+	OverrideSHA bool   `json:"override_sha"`
 }
 
 type repoHoldResponse struct {
@@ -672,6 +673,14 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Ctx != nil {
 		ctx = s.deps.Ctx
 	}
+	if body.OverrideSHA {
+		if body.Held || !strings.EqualFold(body.Type, "issue") {
+			jsonError(w, "SHA override requires an issue release", http.StatusBadRequest)
+			return
+		}
+		s.overrideRepoSHAHold(w, r, ctx, owner, repoName, number)
+		return
+	}
 	canonical := s.canonicalHoldLabel()
 	repoFull := owner + "/" + repoName
 	var removed []string
@@ -722,5 +731,49 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 		Removed:      removed,
 		MinStatusSeq: minStatusSeq,
 		Result:       result,
+	})
+}
+
+// overrideRepoSHAHold records the operator's decision before removing the
+// SHA label, so subsequent sweeps can honor the override.
+func (s *Server) overrideRepoSHAHold(w http.ResponseWriter, r *http.Request, ctx context.Context, owner, repo string, number int) {
+	repoFull := owner + "/" + repo
+	labels, err := s.currentItemLabels(ctx, owner, repo, number)
+	if err != nil {
+		s.repoHoldGitHubError(w, "read labels", repoFull, number, "", err)
+		return
+	}
+	shaLabel := "needs-sha"
+	if s.deps.Config != nil {
+		if configured := s.deps.Config.Issues.EffectiveSHAHoldTrustedLabel(); configured != "" && !strings.EqualFold(configured, "hold") {
+			shaLabel = configured
+		}
+	}
+	var removed []string
+	for _, label := range labels {
+		if strings.EqualFold(label, shaLabel) || strings.EqualFold(label, "needs-sha") {
+			removed = append(removed, label)
+		}
+	}
+	if len(removed) > 0 {
+		if err := s.deps.GHClient.EnsureIssueLabel(ctx, repoFull, github.SHAHoldOverrideLabel, "0e8a16", "A maintainer waived the SHA requirement for this issue."); err != nil {
+			s.repoHoldGitHubError(w, "ensure SHA override label", repoFull, number, github.SHAHoldOverrideLabel, err)
+			return
+		}
+		if err := s.deps.GHClient.AddLabels(ctx, repoFull, number, []string{github.SHAHoldOverrideLabel}); err != nil {
+			s.repoHoldGitHubError(w, "add SHA override label", repoFull, number, github.SHAHoldOverrideLabel, err)
+			return
+		}
+		for _, label := range removed {
+			if err := s.deps.GHClient.RemoveLabel(ctx, repoFull, number, label); err != nil {
+				s.repoHoldGitHubError(w, "remove SHA hold label", repoFull, number, label, err)
+				return
+			}
+		}
+		s.auditFromRequest(r, "repo_item_sha_override", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "labels", strings.Join(removed, ",")), "")
+	}
+	jsonResponse(w, repoHoldResponse{
+		OK: true, Repo: repoFull, Number: number, Removed: removed,
+		Result: repoHoldResult(repoFull, number, rowActionTargetIssue, false, shaLabel, removed),
 	})
 }

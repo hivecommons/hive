@@ -4711,10 +4711,8 @@ type SHAHoldConfig struct {
 	PrimaryRepo     string
 	AIAuthor        string
 	InternalAuthors []string
-	// TrustedAssociations are the GitHub author associations (OWNER, MEMBER,
-	// COLLABORATOR, ...) that got TrustedLabel instead of the hard `hold`
-	// (hivecommons/hive#12002). Since #18468 every reporter gets TrustedLabel
-	// and the sweep no longer consults this; it is kept for callers.
+	// TrustedAssociations is retained for compatibility; OWNER, MEMBER and
+	// COLLABORATOR are always exempt from the SHA gate.
 	TrustedAssociations []string
 	// TrustedLabel is the label the sweep applies while a SHA is missing.
 	// Empty (or "hold") uses defaultSHAHoldLabel: the sweep never applies
@@ -4734,6 +4732,9 @@ type SHAHoldResult struct {
 // defaultSHAHoldLabel is the label the SHA sweep applies when none is
 // configured (config.DefaultSHAHoldTrustedLabel).
 const defaultSHAHoldLabel = "needs-sha"
+
+// SHAHoldOverrideLabel records an authorized operator's durable exemption.
+const SHAHoldOverrideLabel = "hive/sha-override"
 
 // NeedsSHALabelDescription is the repo label description for the SHA-hold label.
 const NeedsSHALabelDescription = "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
@@ -4775,11 +4776,8 @@ func (c *Client) ensureNeedsSHALabel(ctx context.Context, owner, repo, name stri
 // shaHoldLabel returns the label the sweep applies to an issue missing a SHA.
 // It is never `hold`: a `hold` means a person said hands-off, and the hive
 // no longer applies one itself (hivecommons/hive#18468). Before #18468 an
-// untrusted reporter's issue got the hard `hold`; the sweep now gives every
-// reporter this label and swaps any `hold` it applied itself for it. An
-// untrusted reporter's issue still stays out of automatic work through the
-// reporter-trust gate (issue_filter.reporter_trust) until a maintainer
-// admits it.
+// untrusted reporter's issue got the hard `hold`; the sweep now uses this
+// label for non-exempt reporters.
 func (cfg SHAHoldConfig) shaHoldLabel() string {
 	label := strings.TrimSpace(cfg.TrustedLabel)
 	if label == "" || strings.EqualFold(label, LegacyHiveHoldLabel) {
@@ -4813,12 +4811,15 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 		}
 
 		author := safeGetLogin(issue.GetUser())
-		if author == cfg.AIAuthor || isInternalAuthor(author, cfg.InternalAuthors) {
-			result.Skipped++
+		labels := extractLabels(issue.Labels)
+		association := strings.ToUpper(strings.TrimSpace(issue.GetAuthorAssociation()))
+		if (author != "" && strings.EqualFold(author, cfg.AIAuthor)) || isInternalAuthor(author, cfg.InternalAuthors) ||
+			association == "OWNER" || association == "MEMBER" || association == "COLLABORATOR" ||
+			labelPresent(labels, SHAHoldOverrideLabel) || shaHoldBodyHasPath(issue.GetBody()) {
+			c.releaseExemptSHAHold(ctx, owner, repo, issue.GetNumber(), cfg.shaHoldLabel(), labels, result)
 			continue
 		}
 
-		labels := extractLabels(issue.Labels)
 		held := c.isHeld(labels)
 		hasSHA := shaPattern.MatchString(issue.GetBody())
 
@@ -4830,6 +4831,53 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 	}
 
 	return result, nil
+}
+
+// shaHoldBodyHasPath accepts concrete repository paths in prose or backticks.
+// Reuse the issue path recognizer, excluding URLs and arbitrary prose.
+func shaHoldBodyHasPath(body string) bool {
+	for _, token := range strings.Fields(body) {
+		token = strings.Trim(token, "`\"'()[]<>,;.")
+		if _, ok := normalizeCitedPath(token); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// releaseExemptSHAHold removes only labels demonstrably owned by the sweep.
+// A human or another subsystem's hold must remain in place.
+func (c *Client) releaseExemptSHAHold(ctx context.Context, owner, repo string, number int, soft string, labels []string, result *SHAHoldResult) {
+	removed := false
+	if labelPresent(labels, soft) {
+		own, _, err := c.latestLabelEventByApp(ctx, owner, repo, number, soft)
+		if err != nil {
+			c.logger.Warn("SHA exemption: could not verify label provenance", "repo", repo, "issue", number, "label", soft, "error", err)
+		} else if own {
+			if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, soft); err != nil {
+				c.logger.Warn("SHA exemption: failed to remove label", "repo", repo, "issue", number, "label", soft, "error", err)
+			} else {
+				removed = true
+			}
+		}
+	}
+	if labelPresent(labels, "hold") {
+		own, err := c.shaHoldIsOwn(ctx, owner, repo, number)
+		if err != nil {
+			c.logger.Warn("SHA exemption: could not verify hold provenance", "repo", repo, "issue", number, "error", err)
+		} else if own {
+			if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, "hold"); err != nil {
+				c.logger.Warn("SHA exemption: failed to remove hold", "repo", repo, "issue", number, "error", err)
+			} else {
+				removed = true
+			}
+		}
+	}
+	if removed {
+		result.Unheld++
+	} else {
+		result.Skipped++
+	}
 }
 
 // enforceSoftSHAHold is EnforceSHAHold's one branch (trusted reporters since

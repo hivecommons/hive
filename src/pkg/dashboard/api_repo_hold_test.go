@@ -152,6 +152,30 @@ func TestRepoItemHoldToggleAuthorizationAndLabels(t *testing.T) {
 	}
 }
 
+func TestRepoItemSHAOverrideRequiresWriteAndPreservesOtherHolds(t *testing.T) {
+	mock := &repoHoldMock{permission: map[string]string{"writer": "maintain"}, issueLabels: []string{"needs-sha", "hold"}}
+	srv := newRepoHoldServer(t, mock)
+	post := func(user string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/repos/testorg/testrepo/items/7/hold", strings.NewReader(`{"held":false,"type":"issue","override_sha":true}`))
+		req.Header.Set("X-Hive-User", user)
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, req)
+		return w
+	}
+	if w := post("reader"); w.Code != http.StatusForbidden {
+		t.Fatalf("reader: %d %s", w.Code, w.Body.String())
+	}
+	if len(mock.added) != 0 || len(mock.removed) != 0 {
+		t.Fatal("reader changed labels")
+	}
+	if w := post("writer"); w.Code != http.StatusOK {
+		t.Fatalf("writer: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Join(mock.added, ",") != github.SHAHoldOverrideLabel || strings.Join(mock.removed, ",") != "needs-sha" {
+		t.Fatalf("added %v, removed %v; want override and needs-sha only", mock.added, mock.removed)
+	}
+}
+
 // TestRepoItemHoldGitHubFailureIsNotAGatewayStatus: a hold on an issue whose
 // GitHub label write fails answers 424 with GitHub's reason — never 502/503,
 // which the hosted Ingress replaces with its generic "hive unavailable" page

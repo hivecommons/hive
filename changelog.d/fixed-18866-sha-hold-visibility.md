@@ -1,0 +1,1 @@
+- Exempt trusted and code-specific bug reports from SHA holds, show work-blocking labels on dashboard issue rows, and let authorized maintainers persistently override a SHA hold.

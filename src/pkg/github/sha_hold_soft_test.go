@@ -72,6 +72,7 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 	cases := []struct {
 		name         string
 		association  string
+		body         string
 		labels       []wireLabel
 		comments     []wireComment
 		events       []map[string]any
@@ -81,12 +82,10 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 		want         SHAHoldResult
 	}{
 		{
-			name:         "member without SHA gets needs-sha, not hold",
-			association:  "MEMBER",
-			labels:       []wireLabel{{Name: "kind/bug"}},
-			wantAdded:    []string{"needs-sha"},
-			wantComments: 1,
-			want:         SHAHoldResult{Held: 1},
+			name:        "member without SHA is exempt",
+			association: "MEMBER",
+			labels:      []wireLabel{{Name: "kind/bug"}},
+			want:        SHAHoldResult{Skipped: 1},
 		},
 		{
 			// hivecommons/hive#18468: the hive never applies `hold`
@@ -99,15 +98,15 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 			wantComments: 1,
 		},
 		{
-			name:        "member supplies SHA and the soft label lifts",
-			association: "MEMBER",
+			name:        "external reporter supplies SHA and the soft label lifts",
+			association: "NONE",
 			labels:      []wireLabel{{Name: "kind/bug"}, {Name: "needs-sha"}},
 			comments:    []wireComment{{User: wireUser{"maintainer"}, Body: "running abc1234def"}},
 			wantRemoved: []string{"needs-sha"},
 			want:        SHAHoldResult{Unheld: 1},
 		},
 		{
-			name:        "sweep's legacy hard hold on a member issue is softened",
+			name:        "sweep's legacy hard hold on an owner issue is released",
 			association: "OWNER",
 			labels:      []wireLabel{{Name: "kind/bug"}, {Name: "hold"}},
 			comments:    []wireComment{{User: wireUser{testHiveAppBotLogin}, Body: shaHoldComment, CreatedAt: "2026-09-15T12:00:01Z"}},
@@ -115,9 +114,8 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 				"event": "labeled", "created_at": "2026-09-15T12:00:00Z",
 				"actor": map[string]string{"login": testHiveAppBotLogin}, "label": map[string]string{"name": "hold"},
 			}},
-			wantAdded:   []string{"needs-sha"},
 			wantRemoved: []string{"hold"},
-			want:        SHAHoldResult{Softened: 1},
+			want:        SHAHoldResult{Unheld: 1},
 		},
 		{
 			name:        "human hold on a member issue is left alone",
@@ -129,11 +127,47 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 			}},
 			want: SHAHoldResult{Skipped: 1},
 		},
+		{
+			name:        "owner exemption removes sweep label",
+			association: "OWNER",
+			labels:      []wireLabel{{Name: "kind/bug"}, {Name: "needs-sha"}},
+			events:      []map[string]any{{"event": "labeled", "created_at": "2026-09-15T12:00:00Z", "actor": map[string]string{"login": testHiveAppBotLogin}, "label": map[string]string{"name": "needs-sha"}}},
+			wantRemoved: []string{"needs-sha"},
+			want:        SHAHoldResult{Unheld: 1},
+		},
+		{
+			name:        "human reapplied label remains",
+			association: "OWNER",
+			labels:      []wireLabel{{Name: "kind/bug"}, {Name: "needs-sha"}},
+			events:      []map[string]any{{"event": "labeled", "created_at": "2026-09-15T12:00:00Z", "actor": map[string]string{"login": "alice"}, "label": map[string]string{"name": "needs-sha"}}},
+			want:        SHAHoldResult{Skipped: 1},
+		},
+		{
+			name:        "external report with path is exempt",
+			association: "NONE",
+			body:        "Failure in src/pkg/github/client.go:123",
+			labels:      []wireLabel{{Name: "kind/bug"}},
+			want:        SHAHoldResult{Skipped: 1},
+		},
+		{
+			name:        "override persists without SHA",
+			association: "NONE",
+			labels:      []wireLabel{{Name: "kind/bug"}, {Name: SHAHoldOverrideLabel}},
+			want:        SHAHoldResult{Skipped: 1},
+		},
+		{
+			name:        "override removes sweep label",
+			association: "NONE",
+			labels:      []wireLabel{{Name: "kind/bug"}, {Name: SHAHoldOverrideLabel}, {Name: "needs-sha"}},
+			events:      []map[string]any{{"event": "labeled", "created_at": "2026-09-15T12:00:00Z", "actor": map[string]string{"login": testHiveAppBotLogin}, "label": map[string]string{"name": "needs-sha"}}},
+			wantRemoved: []string{"needs-sha"},
+			want:        SHAHoldResult{Unheld: 1},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &shaSoftRecorder{}
-			issue := wireIssue{Number: 11732, Title: "bug", User: wireUser{"maintainer"}, Labels: tc.labels, CreatedAt: hoursAgo(1), AuthorAssociation: tc.association}
+			issue := wireIssue{Number: 11732, Title: "bug", Body: tc.body, User: wireUser{"maintainer"}, Labels: tc.labels, CreatedAt: hoursAgo(1), AuthorAssociation: tc.association}
 			server := httptest.NewServer(buildSHASoftMux(t, org, repo, issue, tc.comments, tc.events, rec))
 			defer server.Close()
 			c := newTestClient(t, server, org, []string{repo})
@@ -160,6 +194,31 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 				t.Errorf("comments = %d, want %d", rec.comments, tc.wantComments)
 			}
 		})
+	}
+}
+
+func TestSHAHoldBodyHasPath(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{
+		{"Fix `src/pkg/github/client.go:123`", true},
+		{"Look at src/pkg/github/client.go", true},
+		{"See `Makefile`", true},
+		{"Inspect `src/pkg/`", true},
+		{"The console crashes on startup", false},
+		{"See https://example.com/path/file.go", false},
+		{"Version 1.2.3 is broken", false},
+	} {
+		if got := shaHoldBodyHasPath(tc.body); got != tc.want {
+			t.Errorf("shaHoldBodyHasPath(%q) = %v, want %v", tc.body, got, tc.want)
+		}
+	}
+}
+
+func TestSHAHoldOverrideIsNotAHold(t *testing.T) {
+	if HasHoldLabel([]string{SHAHoldOverrideLabel}) {
+		t.Fatal("the durable SHA override must not itself block work")
 	}
 }
 

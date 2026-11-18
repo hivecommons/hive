@@ -560,6 +560,10 @@
           if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
           if (sg.isNew && typeof stageTrackerNewLines === 'function') tip = (typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item) ? 'Triage needed — ' : 'New — ') + stageTrackerNewLines(item, nowMs).join(' — ');
           if (sg.advisory) tip = (item.advisory && item.advisory.caption) || 'Advisory for maintainers · read, then close';
+          if (sg.number === 0 && typeof stageTrackerControlLabels === 'function') {
+            const controls = stageTrackerControlLabels(item);
+            if (controls.length) tip += ' — ' + controls.map(c => c.label + ': ' + c.tip).join(' — ');
+          }
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
           // With merge_gate in the payload the sentence is the gate's own
@@ -968,7 +972,43 @@
       const parked = Number(lp.stage) === STAGE_TRACKER_NEEDS_DECISION || (Array.isArray(lp.modifiers) && lp.modifiers.indexOf('needs-decision') >= 0) || !!(lp.decision_needed && lp.decision_needed.question);
       return parked ? lp : null;
     }
+    // Label gates are independent of the stage: a stale stage does not make
+    // an issue eligible while the scanner still sees one of these labels.
+    function stageTrackerControlLabels(item) {
+      if (!item || item.kind !== 'issue') return [];
+      const labels = Array.isArray(item.labels) ? item.labels : [];
+      const reasons = {
+        'hold': 'Hive is paused on this issue. A maintainer can remove the hold to resume work.',
+        'blocked': 'Hive is waiting for the blocker to clear. Resolve the blocker and remove the label.',
+        'needs-human': 'Hive is waiting for a person. Address the request and remove the label.',
+        'stage/045-needs-decision': 'Hive is waiting for a decision. Record the decision to lift the gate.',
+        'stage/085-needs-decision': 'Hive is waiting for a decision. Record the decision to lift the gate.',
+        'stage/017-possible-existing': 'Hive found possible prior art. Reply to the prior-art question to lift the gate.',
+        'needs-spec': 'Hive needs a specification or acceptance criteria. Add them and remove the label.',
+        'needs-direction': 'Hive needs direction. Give direction and remove the label.',
+        'needs-decision': 'Hive needs a decision. Record the decision and remove the label.',
+        'needs-reporter-confirmation': 'Hive is waiting for the reporter or a maintainer to confirm the fix. Confirm it to lift the gate.'
+      };
+      return labels.map(label => {
+        const key = String(label).trim().toLowerCase();
+        if (item.sha_hold_label && key === String(item.sha_hold_label).trim().toLowerCase()) {
+          return { label, sha: true, tip: 'Hive cannot work this bug without the affected commit SHA. Add the SHA to the issue or a comment; the SHA sweep removes the label. A maintainer may override this requirement.' };
+        }
+        return reasons[key] ? { label, tip: reasons[key] } : null;
+      }).filter(Boolean);
+    }
+    function stageTrackerControlLabelsHtml(item) {
+      return stageTrackerControlLabels(item).map(c => {
+        const badge = `<span class="ham-badge ham-badge-mod" title="${esc(c.tip)}">${esc(c.label)}</span>`;
+        if (!c.sha) return badge;
+        const ctx = typeof stageTrackerActionCtx === 'function' ? stageTrackerActionCtx(item.repo) : {};
+        const state = typeof stageTrackerActionAllowed === 'function' ? stageTrackerActionAllowed('release', ctx) : { enabled: false, why: 'Sign in to override' };
+        const tip = state.enabled ? 'Override the SHA requirement for this issue; other holds remain in place.' : state.why;
+        return badge + `<button type="button" class="ham-lead-act" data-ham-act="override-sha"${state.enabled ? '' : ' aria-disabled="true"'} title="${esc(tip)}">Override SHA hold</button>`;
+      }).join('');
+    }
     function stageTrackerChipsHtml(item, opts) {
+      const controls = typeof stageTrackerControlLabelsHtml === 'function' ? stageTrackerControlLabelsHtml(item) : '';
       // opts.gate: the row renders the one human-gate pill, which carries the
       // sentinel / hold / needs-human reasons itself — those chips step aside.
       const gated = !!(opts && opts.gate);
@@ -987,7 +1027,7 @@
         mods.push('needs-decision');
         mods.sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       }
-      if (!mods.length) return sentinel;
+      if (!mods.length) return controls + sentinel;
       // A regression the hive is working through yields the lead pill to any
       // other modifier and, alone, draws muted as "stage reset" rather than red.
       const handled = stageTrackerRegressionHandled(item);
@@ -1033,7 +1073,7 @@
       const cls = 'ham-mod-' + mods[0] + (handled && mods[0] === 'regressed' ? ' ham-mod-handled' : '');
       const inner = `${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}`;
       // The lead pill of a row blocked on a PR is the link to that PR.
-      if (blockedPR && blockedPR.url) return sentinel + `<a class="ham-badge ham-badge-mod ${esc(cls)}" href="${esc(blockedPR.url)}" target="_blank" rel="noopener"${tip ? ` title="${esc(tip)}"` : ''} aria-label="${esc(blockedPR.tip)}">${inner}</a>`;
+      if (blockedPR && blockedPR.url) return controls + sentinel + `<a class="ham-badge ham-badge-mod ${esc(cls)}" href="${esc(blockedPR.url)}" target="_blank" rel="noopener"${tip ? ` title="${esc(tip)}"` : ''} aria-label="${esc(blockedPR.tip)}">${inner}</a>`;
       // A lead needs-human / needs human decision pill opens the decision
       // popover (what to decide, who asked, the applicable actions) instead
       // of a native tooltip.
@@ -1043,12 +1083,12 @@
       // words fold into the icon so a nested PR's title keeps its line and
       // the popover / hover still carry the question (hivecommons/hive#17453).
       const askIco = askable && typeof stageTrackerIcon === 'function' ? stageTrackerIcon('human', 'ham-ico ham-mod-ico') : '';
-      if (decision) return sentinel + stageTrackerDecisionTriggerHtml(decision, askIco ? askIco + `<span class="ham-mod-word">${inner}</span>` : inner, tip, 'ham-badge ham-badge-mod ' + cls + (askIco ? ' ham-mod-ask' : ''));
+      if (decision) return controls + sentinel + stageTrackerDecisionTriggerHtml(decision, askIco ? askIco + `<span class="ham-mod-word">${inner}</span>` : inner, tip, 'ham-badge ham-badge-mod ' + cls + (askIco ? ' ham-mod-ask' : ''));
       // No popover to open (the ask is the issue's own while a covering
       // PR drives the strip): the pill is a button that reveals the row's
       // "Needs human: …" note line and carries the full reason as its hover.
-      if (ask && typeof stageTrackerItemKey === 'function') return sentinel + `<button type="button" class="ham-badge ham-badge-mod ${esc(cls)} ham-needs-human-pill" data-action="stageTrackerNeedsHumanReveal" data-arg0="${esc(stageTrackerItemKey(item))}" data-stop="1" title="${esc(tip)}" aria-label="${esc(text + ' — ' + ask.reason + '. Click to show why on the row.')}">${inner}</button>`;
-      return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${inner}</span>`;
+      if (ask && typeof stageTrackerItemKey === 'function') return controls + sentinel + `<button type="button" class="ham-badge ham-badge-mod ${esc(cls)} ham-needs-human-pill" data-action="stageTrackerNeedsHumanReveal" data-arg0="${esc(stageTrackerItemKey(item))}" data-stop="1" title="${esc(tip)}" aria-label="${esc(text + ' — ' + ask.reason + '. Click to show why on the row.')}">${inner}</button>`;
+      return controls + sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${inner}</span>`;
     }
 
     /* ---- "Did I act on this?" badge ------------------------------------

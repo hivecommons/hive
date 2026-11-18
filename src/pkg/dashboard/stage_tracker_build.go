@@ -298,6 +298,19 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Labels: append([]string(nil), issue.Labels...), CreatedAt: timePtr(issue.CreatedAt), UpdatedAt: timePtr(issue.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL)}
+		shaLabel := config.DefaultSHAHoldTrustedLabel
+		if cfg != nil {
+			shaLabel = cfg.Issues.EffectiveSHAHoldTrustedLabel()
+		}
+		if strings.EqualFold(strings.TrimSpace(shaLabel), "hold") {
+			shaLabel = config.DefaultSHAHoldTrustedLabel
+		}
+		for _, label := range issue.Labels {
+			if strings.EqualFold(strings.TrimSpace(label), config.DefaultSHAHoldTrustedLabel) || strings.EqualFold(strings.TrimSpace(label), shaLabel) {
+				it.SHAHoldLabel = label
+				break
+			}
+		}
 		it.Children = issue.Children
 		if it.Children == nil {
 			it.Children = progress

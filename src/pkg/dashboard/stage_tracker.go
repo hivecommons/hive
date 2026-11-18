@@ -366,9 +366,11 @@ type StageTrackerItem struct {
 	OpenChildren int `json:"open_children,omitempty"`
 	// Labels are the item's GitHub labels as the snapshot saw them, so the
 	// dashboard can offer a label filter without a second endpoint.
-	Labels    []string   `json:"labels,omitempty"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	Labels []string `json:"labels,omitempty"`
+	// SHA hold label actually present on this issue, including configured names.
+	SHAHoldLabel string     `json:"sha_hold_label,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
 	// Bucket is the enumeration bucket of an item outside the actionable
 	// set (claimed, in_progress, claimed_by_pr, filtered, hive_advisory,
 	// reporter_triage, draft, …) and BucketReason the enumeration's note;
