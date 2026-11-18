@@ -36,8 +36,14 @@ func TestMeetingsTrustOwnerApprovesAndAudits(t *testing.T) {
 	if rec.Code != http.StatusOK || len(f.trusted) != 1 || f.trusted[0] != "mtg-1|octo" {
 		t.Fatalf("trust = %d %s %v", rec.Code, rec.Body.String(), f.trusted)
 	}
-	if e := s.audit.Recent(1); len(e) != 1 || e[0].Action != "meeting_requester_trust" || !strings.Contains(e[0].Detail, "trusted_id=900000000000000001") {
-		t.Fatalf("trust not audited: %+v", e)
+	// The approval and the trust are each audited.
+	var trustAudited, approveAudited bool
+	for _, e := range s.audit.Recent(5) {
+		trustAudited = trustAudited || (e.Action == "meeting_requester_trust" && strings.Contains(e.Detail, "trusted_id=900000000000000001"))
+		approveAudited = approveAudited || e.Action == "meeting_request_approve"
+	}
+	if !trustAudited || !approveAudited {
+		t.Fatalf("trust=%v approve=%v audited: %+v", trustAudited, approveAudited, s.audit.Recent(5))
 	}
 	if rec := doOwnerGet(s, "/api/meetings"); !strings.Contains(rec.Body.String(), "trusted_requesters") {
 		t.Fatalf("list lacks trusted_requesters: %s", rec.Body.String())
