@@ -32,8 +32,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -161,6 +159,19 @@ type Options struct {
 	// whichever of this and the context-derived value is later, so the
 	// deadline never cuts a run short of the timeout hive gave it.
 	ActiveDeadlineSeconds int64
+	// Preflight, PreflightTimeout, PreflightTotalTimeout and
+	// PreflightRetryDelay configure the node preflight (#18811); see
+	// preflight.go. Preflight empty leaves the Job exactly as before.
+	Preflight             []string
+	PreflightTimeout      time.Duration
+	PreflightTotalTimeout time.Duration
+	PreflightRetryDelay   time.Duration
+	// ScheduleTimeout is how long the pod may stay Unschedulable before the
+	// kick fails with waiting_for_node; zero uses DefaultScheduleTimeout.
+	ScheduleTimeout time.Duration
+	// OnEvent, when set, is told about scheduling and preflight-retry events
+	// so the manager can surface them (see Event). It must not block.
+	OnEvent func(Event)
 }
 
 // ActiveDeadlineSeconds returns the activeDeadlineSeconds for a Job running
@@ -195,44 +206,6 @@ func (o Options) network() string {
 	}
 	return o.Network
 }
-
-// Toleration mirrors the subset of corev1.Toleration an operator writes in YAML.
-type Toleration struct {
-	Key      string `json:"key,omitempty"`
-	Operator string `json:"operator,omitempty"`
-	Value    string `json:"value,omitempty"`
-	Effect   string `json:"effect,omitempty"`
-}
-
-// Resources mirrors corev1.ResourceRequirements with string quantities, so a
-// device limit like `<vendor>.com/<device>: "2"` passes through untouched.
-type Resources struct {
-	Limits   map[string]string `json:"limits,omitempty"`
-	Requests map[string]string `json:"requests,omitempty"`
-}
-
-// VolumeMount is an additional PVC to mount into the Job.
-type VolumeMount struct {
-	Name      string `json:"name"`
-	Claim     string `json:"claim"`
-	MountPath string `json:"mount_path"`
-	ReadOnly  bool   `json:"read_only,omitempty"`
-}
-
-// Network modes, Options.Network.
-const (
-	// NetworkDefault leaves the pod on the cluster network with whatever
-	// policies the namespace already has. The empty string means this.
-	NetworkDefault = "default"
-	// NetworkNone creates a deny-all NetworkPolicy selecting the Job's pods
-	// before the Job and removes it with the Job; the run is refused when
-	// the policy cannot be created. Enforcement is the CNI's: a cluster
-	// whose network plugin ignores NetworkPolicy isolates nothing, and the
-	// launcher cannot tell.
-	NetworkNone = "none"
-	// NetworkHost runs the pod with hostNetwork.
-	NetworkHost = "host"
-)
 
 // Launcher implements sandbox.Launcher by running the kick as a Job.
 type Launcher struct {
@@ -272,6 +245,9 @@ func (o Options) Validate() error {
 		return errors.New("kubejob: relay_run_as_user must be a positive (non-root) uid")
 	}
 	if err := validatePullSecretNames(o.ImagePullSecrets); err != nil {
+		return err
+	}
+	if err := o.validatePreflight(); err != nil {
 		return err
 	}
 	switch o.network() {
@@ -314,148 +290,19 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 			return res, err
 		}
 	}
-	name := jobName(spec.Name, l.now())
-	manifest := l.jobManifest(ns, name, subPath, spec, relays)
-	setPullSecrets(manifest, l.resolvePullSecrets(ctx, ns, relays))
-	if jobSpec, ok := manifest["spec"].(map[string]any); ok {
-		jobSpec["activeDeadlineSeconds"] = l.activeDeadline(ctx)
+	if spec.Relays && len(l.Options.Preflight) > 0 && len(spec.Command) == 0 {
+		return res, errors.New("kubejob: sandbox.preflight needs an explicit command to run the agent after it; this launch has none")
 	}
-	body, err := json.Marshal(manifest)
-	if err != nil {
-		return res, err
-	}
-	jobsPath := fmt.Sprintf("/apis/batch/v1/namespaces/%s/jobs", ns)
-	policyPath := ""
-	if l.Options.network() == NetworkNone {
-		// The policy exists before any pod can: a Job created first could
-		// start its pod in the window before the policy lands.
-		policiesPath := fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies", ns)
-		policy, err := json.Marshal(denyAllPolicy(ns, name))
-		if err != nil {
-			return res, err
-		}
-		if _, err := l.do(ctx, http.MethodPost, policiesPath, policy); err != nil {
-			return res, fmt.Errorf("kubejob: network %q: creating the deny-all NetworkPolicy for %s: %w", NetworkNone, name, err)
-		}
-		policyPath = policiesPath + "/" + name
-	}
-	if _, err := l.do(ctx, http.MethodPost, jobsPath, body); err != nil {
-		if policyPath != "" {
-			_ = l.delete(ctx, policyPath)
-		}
-		return res, fmt.Errorf("kubejob: creating job %s: %w", name, err)
-	}
-	jobPath := jobsPath + "/" + name
-
-	done, waitErr := l.wait(ctx, jobPath)
-	// Collect whatever the pod produced BEFORE deciding anything: a timed-out
-	// or failed kick with no transcript is the worst outcome for an operator.
-	// The caller's ctx may be dead already (kick timeout) or die between any
-	// two of these requests (cancel during log collection), so every step
-	// re-checks it and falls back to a fresh, request-bounded context.
-	// Otherwise a readable, Complete pod would report exitCodeUnknown merely
-	// because ctx was cancelled after the log was read.
-	var cancels []context.CancelFunc
-	defer func() {
-		for _, c := range cancels {
-			c()
-		}
-	}()
-	live := func() context.Context {
-		if ctx.Err() == nil {
-			return ctx
-		}
-		fresh, cancel := context.WithTimeout(context.Background(), requestTimeout)
-		cancels = append(cancels, cancel)
-		return fresh
-	}
-	pod, podErr := l.findPod(live(), ns, name)
-	if podErr == nil && pod != "" {
-		res.Stdout = l.podLog(live(), ns, pod)
-		res.ExitCode = l.podExitCode(live(), ns, pod)
-	} else {
-		res.ExitCode = exitCodeUnknown
-	}
-	if waitErr != nil {
-		// Context ended (kick timeout or cancel). The Job would otherwise
-		// keep running the workload on the accelerator node; stop it.
-		_ = l.delete(live(), jobPath)
-		l.deletePolicy(live(), policyPath)
-		return res, waitErr
-	}
-	if !done.succeeded {
-		// The Job stays for inspection; its pods are finished, so the
-		// policy has nothing left to isolate and goes.
-		l.deletePolicy(live(), policyPath)
-		res.Stderr = done.reason
-		return res, fmt.Errorf("kubejob: job %s failed: %s", name, done.reason)
-	}
-	// When the Job reports Complete but the pod could not be read back
-	// (already GC'd, or RBAC on pods missing), res.ExitCode stays
-	// exitCodeUnknown rather than a guessed 0; callers treat a nil error with
-	// an unknown code as completed-without-code.
-	//
-	// Collection may have expired the context even on success; the fresh
-	// context ensures the finished Job is still removed immediately.
-	_ = l.delete(live(), jobPath)
-	l.deletePolicy(live(), policyPath)
-	return res, nil
-}
-
-// deletePolicy removes the per-Job NetworkPolicy when one was created.
-func (l *Launcher) deletePolicy(ctx context.Context, policyPath string) {
-	if policyPath != "" {
-		_ = l.delete(ctx, policyPath)
-	}
-}
-
-// denyAllPolicy is a networking.k8s.io/v1 NetworkPolicy named after the
-// Job that selects its pods and allows no ingress and no egress.
-func denyAllPolicy(ns, job string) map[string]any {
-	return map[string]any{
-		"apiVersion": "networking.k8s.io/v1",
-		"kind":       "NetworkPolicy",
-		"metadata": map[string]any{
-			"name":      job,
-			"namespace": ns,
-			"labels":    map[string]string{managedByLabel: managedByValue, jobLabel: job},
-		},
-		"spec": map[string]any{
-			"podSelector": map[string]any{"matchLabels": map[string]string{jobLabel: job}},
-			"policyTypes": []string{"Ingress", "Egress"},
-		},
-	}
+	return l.runWithRetry(ctx, spec, ns, subPath, relays)
 }
 
 type jobOutcome struct {
 	succeeded bool
 	reason    string
-}
-
-// wait polls the Job until a Complete or Failed condition, or ctx ends.
-func (l *Launcher) wait(ctx context.Context, jobPath string) (jobOutcome, error) {
-	interval := l.Options.PollInterval
-	if interval <= 0 {
-		interval = DefaultPollInterval
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		raw, err := l.do(ctx, http.MethodGet, jobPath, nil)
-		if err != nil {
-			if ctx.Err() != nil {
-				return jobOutcome{}, fmt.Errorf("kubejob: %w", ctx.Err())
-			}
-			// Transient API error: keep polling; the context still bounds us.
-		} else if out, finished := parseJobStatus(raw); finished {
-			return out, nil
-		}
-		select {
-		case <-ctx.Done():
-			return jobOutcome{}, fmt.Errorf("kubejob: %w", ctx.Err())
-		case <-ticker.C:
-		}
-	}
+	// failReason is sandbox.FailReasonWaitingForNode when the pod stayed
+	// Unschedulable past the schedule timeout; node is where the pod landed.
+	failReason string
+	node       string
 }
 
 // parseJobStatus reads the Complete/Failed conditions off a Job object.
@@ -526,33 +373,7 @@ func (l *Launcher) podLog(ctx context.Context, ns, pod string) string {
 // podExitCode reads the kick container's terminated exit code, or
 // exitCodeUnknown when the pod is not terminated or cannot be read.
 func (l *Launcher) podExitCode(ctx context.Context, ns, pod string) int {
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s", ns, pod)
-	raw, err := l.do(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return exitCodeUnknown
-	}
-	var p struct {
-		Status struct {
-			ContainerStatuses []struct {
-				Name  string `json:"name"`
-				State map[string]struct {
-					ExitCode int `json:"exitCode"`
-				} `json:"state"`
-			} `json:"containerStatuses"`
-		} `json:"status"`
-	}
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return exitCodeUnknown
-	}
-	for _, cs := range p.Status.ContainerStatuses {
-		if cs.Name != containerName {
-			continue
-		}
-		if term, ok := cs.State[stateTerminated]; ok {
-			return term.ExitCode
-		}
-	}
-	return exitCodeUnknown
+	return l.podDetails(ctx, ns, pod).exitCode
 }
 
 func (l *Launcher) delete(ctx context.Context, jobPath string) error {
@@ -638,7 +459,7 @@ func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec
 		"envFrom":      envFrom,
 		"volumeMounts": mounts,
 	}
-	command := spec.Command
+	command := preflightCommand(spec.Command, l.Options)
 	if relays != nil {
 		command = sandbox.RelayCommand(command)
 		mounts = append(mounts, map[string]any{"name": relayVolumeName, "mountPath": sandbox.RelayMountPath, "readOnly": true})
@@ -717,58 +538,6 @@ func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec
 			},
 		},
 	}
-}
-
-// workspaceSubPath turns hive's absolute workspace path into the path relative
-// to the claim mount, which is what the Job's volumeMount.subPath needs.
-func workspaceSubPath(workspace, claimMount string) (string, error) {
-	if claimMount == "" {
-		claimMount = DefaultWorkspaceClaimMount
-	}
-	ws := filepath.Clean(workspace)
-	cm := filepath.Clean(claimMount)
-	rel, err := filepath.Rel(cm, ws)
-	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
-		return "", fmt.Errorf("kubejob: workspace %q is not under the workspace claim mount %q — set agent_sandbox.workspace_dir under it, or job.workspace_claim_mount to where the claim is mounted", workspace, claimMount)
-	}
-	return filepath.ToSlash(rel), nil
-}
-
-var labelUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)
-
-// jobName builds a unique, DNS-label-safe Job name from the launch name and a
-// timestamp: hive-kick-<agent>-<unix>. Names must survive as pod-name prefixes.
-func jobName(launchName string, now time.Time) string {
-	base := sanitizeLabel(strings.TrimSuffix(launchName, "-sandbox"))
-	if base == "" {
-		base = "agent"
-	}
-	suffix := fmt.Sprintf("-%d", now.Unix())
-	room := jobNameMax - len(namePrefix) - len(suffix)
-	if len(base) > room {
-		base = strings.TrimRight(base[:room], "-")
-	}
-	return namePrefix + base + suffix
-}
-
-func sanitizeLabel(s string) string {
-	s = labelUnsafe.ReplaceAllString(strings.ToLower(s), "-")
-	return strings.Trim(s, "-")
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	// insertion sort: env maps are tiny and this avoids importing sort for
-	// one call site.
-	for i := 1; i < len(keys); i++ {
-		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
-			keys[j], keys[j-1] = keys[j-1], keys[j]
-		}
-	}
-	return keys
 }
 
 func (l *Launcher) now() time.Time {

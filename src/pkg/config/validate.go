@@ -24,6 +24,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateJobAffinities(); err != nil {
 		return err
 	}
+	if err := c.validateSandboxPreflights(); err != nil {
+		return err
+	}
 	if err := c.IntegrationOrchestration.Validate(); err != nil {
 		return err
 	}

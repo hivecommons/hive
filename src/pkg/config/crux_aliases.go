@@ -59,6 +59,7 @@ type (
 
 type (
 	SandboxJobAffinity                = cruxconfig.SandboxJobAffinity
+	SandboxPreflightConfig            = cruxconfig.SandboxPreflightConfig
 	SandboxJobNodeAffinity            = cruxconfig.SandboxJobNodeAffinity
 	SandboxJobNodeSelector            = cruxconfig.SandboxJobNodeSelector
 	SandboxJobNodeSelectorTerm        = cruxconfig.SandboxJobNodeSelectorTerm

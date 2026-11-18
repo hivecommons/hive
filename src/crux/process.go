@@ -77,6 +77,7 @@ type Process struct {
 	ActionNudges              int
 	KickOutcome               KickOutcome
 	SandboxLastRun            *SandboxRun
+	SandboxPhase              *SandboxPhase
 	StartFailureClass         string
 	StartFailureReason        string
 	StartFailureCount         int
