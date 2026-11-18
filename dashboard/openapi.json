@@ -40834,7 +40834,7 @@
                       },
                       "dispatch": {
                         "type": "array",
-                        "description": "Every bound repository's profiles: repo, profile, agent, source, mode, needs, pinned, disabled, problem (why nothing fills it), states, candidates (each pinnable agent with its mode and whether it may do what the profile needs), not_started (hand-offs an agent declined or did not act on)",
+                        "description": "Every bound repository's profiles: repo, profile, agent, source, mode, needs, pinned, disabled, problem (why nothing fills it), states, candidates (each pinnable agent with its mode and whether it may do what the profile needs), not_started (hand-offs an agent declined or did not act on, each with reason_at, reason_age, reason_session and stale: true once a newer hand-off of the item exists, so the reason is history and not the current state)",
                         "items": {
                           "type": "object"
                         }

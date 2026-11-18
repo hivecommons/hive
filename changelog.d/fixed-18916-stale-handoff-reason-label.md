@@ -1,0 +1,1 @@
+- Workflow dispatch: a reason replayed from the hand-off ledger now carries its age and the hand-off session that decided it (`reason_at`, `reason_age`, `reason_session`) in the "item not handed off" log line and the Settings "not started" display, and is marked stale once a newer hand-off of the same item exists, so an old decline is no longer read as a new refusal (#18916).

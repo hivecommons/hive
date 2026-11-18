@@ -228,15 +228,19 @@ func (rt *workflowDispatchRuntime) notStarted(cfg *config.Config, logger *slog.L
 	rt.mu.Lock()
 	seen := rt.seen
 	rt.mu.Unlock()
+	dlog := rt.dispatchLog(cfg, logger)
+	now := time.Now()
 	for _, e := range entries {
 		if !seen[workflowHandoffSeenKey(e.Ref, e.Profile, e.State)] {
 			continue
 		}
 		repo, number := splitWorkflowRef(e.Ref)
-		out = append(out, dashboard.WorkflowDispatchHandoff{
+		h := dashboard.WorkflowDispatchHandoff{
 			Ref: e.Ref, Repo: qualifyClaimRepo(cfg.Project.Org, repo), Number: number, Profile: e.Profile, State: e.State,
 			Agent: e.Agent, Reason: e.Reason, At: e.At, Attempts: e.Attempts, Retrying: e.Retryable(), Next: scheduler.WorkflowHandoffNext(e),
-		})
+		}
+		workflowHandoffReasonOrigin(&h, e, dlog, now)
+		out = append(out, h)
 	}
 	return out
 }
