@@ -1018,7 +1018,10 @@ func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, 
 		if !isCommand && proseDecision {
 			cmd, isCommand = parseUnparkProseDecision(cm.GetBody())
 		}
-		if !isCommand && !isUnparkProseAssent(cm.GetBody()) {
+		// The decision hint (a bare `B`, `option 1`, `decide ...`) is only for
+		// the issue sweep. On a PR a one-letter reply is common, and as the
+		// newest candidate it would hide an older valid `/hive decision`.
+		if !isCommand && !isUnparkProseAssent(cm.GetBody()) && !(proseDecision && isUnparkProseDecisionHint(cm.GetBody())) {
 			continue
 		}
 		if !c.isHumanAuthor(cm.GetUser()) || isHiveSelfDecisionComment(cm.GetBody()) {
@@ -1179,7 +1182,18 @@ func isUnparkProseAssent(body string) bool {
 			return true
 		}
 	}
-	return unparkProseDecisionHint.MatchString(firstNonEmptyLine(body))
+	return false
+}
+
+// isUnparkProseDecisionHint reports whether a comment names a decision
+// without the command (unparkProseDecisionHint). Like isUnparkProseAssent it
+// only decides whether to print a hint, and only the issue sweep asks.
+func isUnparkProseDecisionHint(body string) bool {
+	line := firstNonEmptyLine(body)
+	if line == "" || strings.HasPrefix(line, ">") || strings.HasPrefix(line, "/") {
+		return false
+	}
+	return unparkProseDecisionHint.MatchString(line)
 }
 
 // unparkProseDecisionHint matches a first line that names a decision without

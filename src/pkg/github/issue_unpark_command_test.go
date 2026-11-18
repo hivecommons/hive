@@ -839,14 +839,29 @@ func TestUnparkNoticeBodyListsIssueOptions(t *testing.T) {
 }
 
 func TestIsUnparkProseAssent(t *testing.T) {
-	for _, body := range []string{"approved", "Go ahead", "LGTM", "sounds good to me", "Decision:", "decide later", "option 1", "Option B", "B"} {
+	for _, body := range []string{"approved", "Go ahead", "LGTM", "sounds good to me"} {
 		if !isUnparkProseAssent(body) {
 			t.Errorf("isUnparkProseAssent(%q) = false, want true", body)
 		}
 	}
-	for _, body := range []string{"/hive approve", "/fixed approved", "> approved", "what do you think?", "", "Bravo team", "optional"} {
+	// The decision forms are the issue sweep's hint (isUnparkProseDecisionHint),
+	// not assent: the PR sweep must not treat a bare `B` as a candidate.
+	for _, body := range []string{"/hive approve", "/fixed approved", "> approved", "what do you think?", "", "Bravo team", "optional", "Decision:", "option 1", "B"} {
 		if isUnparkProseAssent(body) {
 			t.Errorf("isUnparkProseAssent(%q) = true, want false", body)
+		}
+	}
+}
+
+func TestIsUnparkProseDecisionHint(t *testing.T) {
+	for _, body := range []string{"Decision:", "decide later", "option 1", "Option B", "B"} {
+		if !isUnparkProseDecisionHint(body) {
+			t.Errorf("isUnparkProseDecisionHint(%q) = false, want true", body)
+		}
+	}
+	for _, body := range []string{"/hive decision B", "> option 1", "", "Bravo team", "optional", "approved"} {
+		if isUnparkProseDecisionHint(body) {
+			t.Errorf("isUnparkProseDecisionHint(%q) = true, want false", body)
 		}
 	}
 }
