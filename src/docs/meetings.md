@@ -300,6 +300,78 @@ keeps the last 50 in the Inbox's **Recent mail** list
 Reports are best effort: a hub or hive that does not take them yet changes
 nothing for the sender.
 
+### Replies to the sender (off by default)
+
+[#18746](https://github.com/hivecommons/hive/issues/18746) designs a short
+reply from the hive to whoever mailed it ("received", or "waiting for the
+owner's approval"). Hive has never sent mail, and `hive-mx` still does not:
+the reply is composed and decided by the hub (option A of the design: a
+hub-side sender with DKIM, one fixed `From`, the hive's own address as
+`Reply-To`). This release ships the decision, the ledger and the two
+templates; the SMTP and DKIM sender is a later step. With no sender built
+in, a hub sends nothing whatever it is configured with.
+
+It is off unless `HIVE_HUB_MAIL_REPLY_DKIM_KEY_FILE` names a file that
+exists and is not empty (the variables are in
+[env-vars.md](env-vars.md)). Removing the file stops replies at once.
+
+What decides a reply, all of it enforced in the hub:
+
+- **Only authenticated senders.** The mail must have passed DMARC alignment
+  (`wire.Auth.Aligned`). A mail whose `From` is not aligned gets what it gets
+  today (the SMTP refusal, or nothing) and no reply, so a forged `From` never
+  receives backscatter.
+- **Only a person's mail.** No reply to `Auto-Submitted` other than `no`,
+  `Precedence: bulk`, `list`, `junk` or `auto_reply`, any `List-*` header,
+  `X-Auto-Response-Suppress`, a null return path (`MAIL FROM:<>`), a delivery
+  status report, the local parts `mailer-daemon`, `postmaster`, `no-reply`,
+  `noreply` and `hive`, any `hive@<known hive host>`, or the configured `From`
+  address and domain. `hive-mx` passes these as `wire.Delivery.Facts`; a
+  delivery without them (an older `hive-mx`) is never answered. Every reply
+  carries `Auto-Submitted: auto-replied`, `X-Auto-Response-Suppress: All`,
+  `Precedence: auto_reply` and a null envelope sender, so a reply is never
+  answered, by a hive or anyone else.
+- **Only after the hive took the mail.** The hub reads the spoke's answer
+  (`items`, `awaiting_approval`): stored and allowlisted is "received", stored
+  and awaiting approval is "held". Refusals keep their SMTP reply; no mail is
+  sent for them. Only mail-in files are answered, never invites or proof
+  mails.
+- **At most one reply per `Message-ID` and hive**, remembered 8 days in the
+  ledger, across retries and restarts. A message without a `Message-ID` gets
+  none.
+- **Limits** per sender address (10 an hour, 30 a day), per sender domain
+  (100 a day) and per hive (200 a day). Past a limit the reply is dropped and
+  counted; the mail is unaffected.
+- **No content.** The reply is plain text. It repeats nothing of the mail but a
+  sanitized subject (control and invisible characters removed, 120
+  characters) in its `Subject`, and the `Message-ID` in `In-Reply-To` and
+  `References`. The held text does not say why the sender is not trusted.
+
+The ledger (`HIVE_HUB_MAIL_REPLY_LEDGER_FILE`) holds the delivery id, the
+outcome and salted hashes of the message id, sender, sender domain and hive:
+no address, subject or body. The hub logs a sent reply with the delivery id,
+the hive id and the outcome only, never a key or any part of a mail.
+
+#### DNS records and network the hosted hub needs
+
+For option A with one fixed `From` (shape 1), `<project domain>` being the
+project's organizational domain and `<selector>` the DKIM selector:
+
+| Record | Type | Value |
+|---|---|---|
+| `<selector>._domainkey.hive.<project domain>` | TXT | `v=DKIM1; k=rsa; p=<base64 public key>` (2048-bit; the private key stays in the hub's Secret) |
+| `hive.<project domain>` | TXT | `v=spf1 ip4:<sending IP> -all` (recommended: DKIM alone satisfies DMARC, since the envelope sender is null) |
+| `<sending host name>` | TXT | `v=spf1 a -all` (recommended: covers the HELO identity used with a null envelope sender) |
+| reverse DNS of `<sending IP>` | PTR | `<sending host name>`, set at the cloud provider, not in the zone |
+
+No existing record changes: the organizational DMARC policy (`p=reject`,
+strict alignment) already covers `hive.<project domain>`, and the DKIM
+signing domain equals the `From` domain, so it aligns. The hub's network
+also needs outbound TCP 25 (many clouds block it by default); if it cannot
+be opened the fallback is a transactional mail provider (option C of the
+design). Before turning replies on for everyone, send to a test mailbox at
+two large providers and check `Authentication-Results` shows `dmarc=pass`.
+
 ### Who can invite Betty
 
 An invite is scheduled at once only when all of these hold:
