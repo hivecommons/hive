@@ -51,6 +51,7 @@ func (h *ruleHarness) sweep(t *testing.T) reviewFeedbackSweep {
 func (h *ruleHarness) feedback(items ...github.FeedbackItem) {
 	fb := openDraftFeedback()
 	fb.Items = items
+	fb.RuleCandidates = items
 	h.src.byKey[feedbackTestKey] = fb
 }
 
@@ -385,4 +386,69 @@ func TestReviewFeedbackSweep_ReplyMustNameCapturedRule(t *testing.T) {
 			t.Fatalf("notes = %q, want exactly one needs-human note naming R-1", notes)
 		}
 	})
+}
+
+// The maintainers.yaml comment on cncf/techdocs#424 was already named in a
+// handled marker, so routing no longer returns it; a plain conversation comment
+// does not address the hive. Rule capture reads its own candidate set, so both
+// are captured on the first pass (the backfill) without a kick, and a later
+// pass does not read them again (hivecommons/hive#19136).
+func TestReviewFeedbackSweep_RuleCaptureReadsHandledAndUnaddressedComments(t *testing.T) {
+	h := newRuleHarness(t, reviewrules.Config{})
+	plain := ruleItem("conversation:2002", "OWNER", "Going forward, cite the scorecard with a commit-pinned link.")
+	plain.Kind, plain.ThreadID, plain.Path, plain.Line = github.PRCommentConversation, "", "", 0
+	fb := openDraftFeedback()
+	fb.Items = nil
+	fb.RuleCandidates = []github.FeedbackItem{ruleItem("inline:1001", "MEMBER", maintainersFixture), plain}
+	h.src.byKey[feedbackTestKey] = fb
+	res := h.sweep(t).run(context.Background(), parseReviewFeedbackKey)
+	if res.RulesCaptured != 2 || res.Kicked != 0 || len(h.rules.List()) != 2 {
+		t.Fatalf("res = %+v rules = %d, want both captured and no kick", res, len(h.rules.List()))
+	}
+	if r := h.rules.Get("R-1"); r == nil || r.Text != maintainersRuleText {
+		t.Fatalf("R-1 = %+v", r)
+	}
+	for _, id := range []string{"inline:1001", "conversation:2002"} {
+		if !h.rules.Evaluated("cncf/techdocs", 424, id) {
+			t.Fatalf("%s not recorded as evaluated", id)
+		}
+	}
+	if len(h.src.comments) != 1 || !strings.Contains(h.src.comments[0], "R-1") || !strings.Contains(h.src.comments[0], "R-2") {
+		t.Fatalf("comments = %q, want one acknowledgement naming both rules", h.src.comments)
+	}
+
+	// Later passes classify only new comments.
+	fb.RuleCandidates = append(fb.RuleCandidates, ruleItem("inline:1003", "OWNER", "The score is too high."))
+	h.src.byKey[feedbackTestKey] = fb
+	h.now = h.now.Add(time.Hour)
+	res = h.sweep(t).run(context.Background(), parseReviewFeedbackKey)
+	if res.RulesCaptured+res.RulesMerged+res.RulesQueued != 0 || len(h.src.comments) != 1 || !h.rules.Evaluated("cncf/techdocs", 424, "inline:1003") {
+		t.Fatalf("res = %+v comments = %d", res, len(h.src.comments))
+	}
+}
+
+// A candidate still inside the debounce may be edited; it is read once it is
+// quiet, and a kick of a comment captured on an earlier pass still names the rule.
+func TestReviewFeedbackSweep_RuleCaptureWaitsForDebounceAndBriefNamesEarlierCapture(t *testing.T) {
+	h := newRuleHarness(t, reviewrules.Config{})
+	it := ruleItem("inline:1001", "OWNER", maintainersFixture)
+	it.CreatedAt = h.now
+	fb := openDraftFeedback()
+	fb.Items = nil
+	fb.RuleCandidates = []github.FeedbackItem{it}
+	h.src.byKey[feedbackTestKey] = fb
+	if res := h.sweep(t).run(context.Background(), parseReviewFeedbackKey); res.RulesCaptured != 0 || h.rules.Evaluated("cncf/techdocs", 424, "inline:1001") {
+		t.Fatalf("a comment still in the debounce was read: %+v", res)
+	}
+	h.now = h.now.Add(time.Hour)
+	if res := h.sweep(t).run(context.Background(), parseReviewFeedbackKey); res.RulesCaptured != 1 {
+		t.Fatalf("res = %+v", res)
+	}
+	fb.Items = []github.FeedbackItem{it}
+	h.src.byKey[feedbackTestKey] = fb
+	h.now = h.now.Add(time.Hour)
+	res := h.sweep(t).run(context.Background(), parseReviewFeedbackKey)
+	if res.Kicked != 1 || res.RulesCaptured != 0 || !strings.Contains(h.kick.kicks["quality"][0], "R-1 (recorded") {
+		t.Fatalf("res = %+v kicks = %q", res, h.kick.kicks)
+	}
 }
