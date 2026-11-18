@@ -549,7 +549,29 @@ func TestSessionsListShapeVendorsAndLimits(t *testing.T) {
 }
 
 func TestSessionsRoleMatrix(t *testing.T) {
+	// Authorization, not CLI onboarding, is under test. An idle pane lets
+	// accepted inputs drain; cleanup joins the workers before TempDir removal.
+	t.Setenv(config.EnvSessionsAutostart, "false")
 	e := newSessionTestEnv(t, true)
+	fastSessionQueue(t, e)
+	e.rt.setCapture(claudeIdlePane)
+	t.Cleanup(func() {
+		waitSessionsFor(t, "session starts to finish", func() bool {
+			e.s.sessionsMu.Lock()
+			defer e.s.sessionsMu.Unlock()
+			return len(e.s.sessionsPreparing) == 0
+		})
+		waitSessionsFor(t, "session input workers to stop", func() bool {
+			e.s.sessionQueuesMu.Lock()
+			defer e.s.sessionQueuesMu.Unlock()
+			for _, q := range e.s.sessionQueues {
+				if q.running {
+					return false
+				}
+			}
+			return true
+		})
+	})
 	id := e.createShared(t, callerOwner, "owner session")
 	post := map[string]string{"name": "n", "group": "g", "vendor": "claude"}
 

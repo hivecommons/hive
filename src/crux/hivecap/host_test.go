@@ -122,9 +122,8 @@ func TestInferenceRoutesPushAndClear(t *testing.T) {
 				got, ok := h.route("a")
 				return ok && got == callback.InferenceRoute{Backend: "litellm", Model: "gpt"}
 			})
-			if n, err := r.Pending(); n != 0 || err != nil {
-				t.Fatalf("Pending = %d, %v", n, err)
-			}
+			// The host can record the route before the worker clears pending.
+			waitFor(t, "pending drained", func() bool { n, err := r.Pending(); return n == 0 && err == nil })
 			r.Clear("a")
 			waitFor(t, "route cleared", func() bool { _, ok := h.route("a"); return !ok })
 			waitFor(t, "desired entry dropped", func() bool {
