@@ -4799,7 +4799,7 @@ function runHeadlessTask(task) {
         failCurrentTask(reason, {
           outputTail: outTail,
           permanent: false,
-          kind: BACKEND === 'pi' ? 'environment' : undefined,
+          kind: (BACKEND === 'pi' || CLI_USAGE_ERROR_RE.test(diagnostic || '')) ? 'environment' : undefined,
         });
       });
       return;
@@ -7901,6 +7901,13 @@ function restartBackoffMs(attempt) {
 // Only headless callers pass it: they have no pane of their own, and any tmux
 // session that happens to share TMUX_SESSION's name on the host belongs to
 // someone else, so when it is supplied it is used instead of a pane capture.
+// A CLI that rejects the flags the relay launched it with (a version older than
+// the one the backend table assumes) is a client-environment failure, not a
+// failure of the work: it will repeat on every task until the CLI is upgraded.
+// How many trailing CLI output lines failCurrentTask prints to the local log.
+const FAILURE_TAIL_LOCAL_LINES = 8;
+const CLI_USAGE_ERROR_RE = /\b(unrecognized|unknown|invalid) (flag|option|argument)s?\b/i;
+
 function failCurrentTask(reason, opts) {
   if (!currentTask) return;
   const permanent = !!(opts && opts.permanent);
@@ -7918,6 +7925,10 @@ function failCurrentTask(reason, opts) {
   // the reality agree at the instant the hub acts on it.
   stopAgentForTaskExit({ skipCLI: !!(opts && opts.skipCLI) });
   console.error(`Task ${taskId} failed${permanent ? ' permanently' : ''}${kind ? ` [${kind}]` : ''}: ${reason}`);
+  // The tail goes to the hub in task_failed below; print it here too so the
+  // contributor sees the CLI's own error, not only the one-line reason.
+  const shownTail = tmuxLines.map(l => String(l).trim()).filter(Boolean).slice(-FAILURE_TAIL_LOCAL_LINES);
+  if (shownTail.length > 0) console.error(`  CLI output tail:\n${shownTail.map(l => `    ${l}`).join('\n')}`);
   send({
     type: 'task_failed',
     seq: nextSeq(),
@@ -10459,6 +10470,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     // rule set and is where the interesting cases live; resolveTaskPR is the
     // wiring, exercised through a stubbed gh.
     prAttributionEvidence,
+    CLI_USAGE_ERROR_RE,
     verifyTaskPR,
     resolveTaskPR,
     PR_ATTRIBUTION_CONFIRMED,

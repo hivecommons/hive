@@ -16234,3 +16234,26 @@ test('#19049 retry bookkeeping is silent by default and visible with HIVE_RELAY_
     assert.deepStrictEqual(lines.filter(l => /Cancelled ready retry|Skipping work request/.test(l)), []);
   } finally { global.setTimeout = origSetTimeout; console.log = log; console.debug = dbg; teardown(relay); }
 });
+
+test('headless failure: a CLI that rejects the launch flags is classed as an environment failure', () => {
+  const relay = loadRelay({ backend: 'opencode' });
+  const re = relay.CLI_USAGE_ERROR_RE;
+  assert.ok(re.test('Unrecognized flag: --auto in command opencode run'));
+  assert.ok(re.test('error: unknown option --yolo'));
+  assert.ok(!re.test('TypeError: cannot read properties of undefined'));
+  assert.ok(!re.test('2 tests failed'));
+});
+
+test('failCurrentTask prints the CLI output tail to the local log, not only the reason', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const err = console.error; const lines = [];
+  console.error = (...a) => { lines.push(a.join(' ')); };
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-opencode-tail');
+    relay.failCurrentTask('headless CLI exited with error: code 1', { outputTail: ['Unrecognized flag: --auto in command opencode run'], permanent: false });
+  } finally {
+    console.error = err;
+  }
+  assert.ok(lines.some(l => l.includes('CLI output tail') && l.includes('Unrecognized flag: --auto')), lines.join('\n'));
+});
