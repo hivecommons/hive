@@ -835,6 +835,7 @@
         <p class="section-label">Dashboard</p>
         <h1>My Hives</h1>
         <p class="subtitle">Hive instances you own or have access to</p>
+        <p id="profile-share-link" hidden><a href="/profile-share">Profile sharing</a></p>
         <p style="margin-top:var(--sp-4);padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:color-mix(in srgb,var(--hub-dashboard-accent) 8%,transparent);font-size:0.85rem">👋 New to Hive? Read the <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Getting Started Guide</a> before diving in.</p>
         <p id="benchmarks-pointer" class="benchmarks-pointer">📊 See how models perform across the fleet &mdash; merge rate, CI first-try and estimated cost per PR, from real hive output. <a href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener">Open the benchmarks ↗</a></p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-2)"></p>
@@ -1086,6 +1087,11 @@
           (worker-count reductions apply on the next hub restart).
         </div>
         <div id="scale-globals" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--sp-5);margin-bottom:var(--sp-6)"></div>
+        <div style="padding:var(--sp-5);margin-bottom:var(--sp-6);border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+          <h3 style="font-size:0.9rem;margin-bottom:var(--sp-2)">Customers profile sharing</h3>
+          <p style="font-size:0.8rem">In force: <strong id="customers-share-effective">Unknown</strong> · Default: Off</p>
+          <p style="font-size:0.75rem;color:var(--muted);margin-top:var(--sp-2)">Set <code>HIVE_HUB_CUSTOMERS_SHARE_ENABLED</code> on the hub to enable the personal profile and consent page. The environment is authoritative; this setting cannot be changed here. No profile details are sent to hives in this release.</p>
+        </div>
         <div style="font-size:0.85rem;color:var(--text);margin:var(--sp-5) var(--sp-0) var(--sp-4);font-weight:600">Per-cluster limits</div>
         <div class="table-wrap"><table style="width:100%;font-size:0.85rem"><thead><tr>
           <th style="text-align:left">Cluster</th><th style="text-align:right">Hives</th><th style="text-align:right">Pool avail</th>
@@ -4717,6 +4723,7 @@
         var data = await resp.json();
         applyImpersonationBanner(data);
         if (data.authenticated) {
+          _personalProfileLinksAllowed = !data.impersonating;
           _isAdmin = !!data.hub_admin;
           _isRootAdmin = !!data.root_admin;
           /* The signed-in login is the ONE piece of viewer identity the hive
@@ -4759,6 +4766,9 @@
     }
 
     var _userQuota = 0, _userUsed = 0, _isAdmin = false, _isRootAdmin = false;
+    var _personalProfileLinksAllowed = false;
+    var _profileShareHiveIDs = new Set();
+    var _profileShareHiveSignature = '';
     /* Lowercased login of the signed-in viewer, set by loadUser(). Empty until
        that resolves, and empty is safe: hiveAccessAvatars() then simply omits
        nobody, which is a cosmetic over-render for one paint rather than a
@@ -7890,6 +7900,11 @@
         _userUsed = data.saas_used || 0;
         _allDashHives = data.hives || [];
         _hiveRegistry = data.hives || [];
+        var showProfileShare = _personalProfileLinksAllowed && data.customersShareEnabled === true;
+        var profileShareIDs = showProfileShare ? (data.profileShareHiveIDs || []) : [];
+        document.getElementById('profile-share-link').hidden = !showProfileShare;
+        _profileShareHiveIDs = new Set(profileShareIDs);
+        _profileShareHiveSignature = JSON.stringify(profileShareIDs);
         /* The fleet reference polygon behind every kite. Captured here rather
            than derived in the browser: it is the average over the SAME
            population the server scored, and recomputing it client-side from
@@ -8996,7 +9011,7 @@
         '|' + JSON.stringify(_dashFacetCollapsed) + '|' + JSON.stringify(_dashSectionCollapsed) +
         '|' + _dashGroupBy + '|' + JSON.stringify(_dashGroupCollapsed) +
         '|' + _dashActiveView + '|' + _dashDefaultView + '|' + JSON.stringify(_dashSavedViews) +
-        '|' + _dashFacetTrayOpen;
+        '|' + _dashFacetTrayOpen + '|' + _profileShareHiveSignature;
       if (!force && sig === _lastHivesJSON) return;
       _lastHivesJSON = sig;
       /* Status/facet filters describe ASSIGNED hives only. An unassigned
@@ -9166,6 +9181,7 @@
         var snapUrl = snapshotLink(h);
         var apiUrl = apiLink(h);
         var menuItems = [];
+        if (_profileShareHiveIDs.has(h.id)) menuItems.push('<a href="/profile-share?hive=' + encodeURIComponent(h.id) + '" class="hive-menu-item">Profile sharing</a>');
         if (_isAdmin && h.provStatus === 'available' && !h.assigning) menuItems.push('<div onclick="openAssignModal(\'' + esc(h.id) + '\')" class="hive-menu-item" style="color:#3fb950;font-weight:600">Assign / Claim</div><div style="border-top:1px solid #30363d;margin:var(--sp-2) var(--sp-0)"></div>');
         /* Reset assignment: escape hatch for a placeholder wedged at
            assigned && !claim_delivered (assignedUnclaimed) — its spoke never
@@ -11660,6 +11676,8 @@
         if (body) body.style.display = _scaleControlsCollapsed ? 'none' : '';
         if (toggle) toggle.style.transform = _scaleControlsCollapsed ? '' : 'rotate(90deg)';
         var eff = data.effective || {};
+        document.getElementById('customers-share-effective').textContent =
+          typeof eff.customers_share_enabled !== 'boolean' ? 'Unknown' : (eff.customers_share_enabled ? 'On' : 'Off');
         document.getElementById('scale-controls-summary').textContent =
           'wave ' + eff.upgrade_wave_size + ' · workers ' + eff.provision_workers +
           ' · per-cluster ' + eff.provision_per_cluster + ' · kubectl ' + eff.kubectl_per_cluster;
