@@ -11,6 +11,24 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.323.0)
+
+### Added
+
+- `hivectl benchmarks export` converts a local evidence tree into the same anonymized benchmark records as `GET /api/benchmarks/export`, offline, so an owner can publish to hivecommons.dev/benchmarks by hand. Name the hive with `--hive-id` or `--hive-hash`, repositories are named only when listed with `--public-repo`, and `--by-month` writes the `data/fleet/<hash>/<YYYY-MM>.json` layout. See `src/docs/hivectl.md` (#18990)
+- Customers: a profile can now carry a real name, an organization and a location or country, each marked as filled from the person's public GitHub profile or set by hand. The organization shows as a small pill on the row; the other two are in the expanded profile under Details. The owner and read-write users edit anyone, a read-only user edits their own; "Auto" hands a field back to GitHub, and a field set by hand is never overwritten. GitHub fills them with one profile request when a suggested login is accepted, under the same off-by-default switch and hourly budget as the accept-time search. Nothing is taken from the hub. Forget removes the fields and export includes them.
+- The activity monitor shows one **Needs human** state for any row that waits on a person instead of an agent. An issue an agent filed for outside help (the filed-for-help marker) no longer reads as a stalled "Open · since 4h" row: its Open column says Needs human with the reason in one line, its later stages show as not applicable, and it joins the Needs human filter and the waiting-on-you list. Pending decisions, PRs held for a maintainer by the level gate, holds the hive placed and approval waits use the same state and the same wording, derived on the server from data the hive already has (payload field `needs_human_why`).
+- README now shows live badges for tests, coverage, maturity level, security scan, supply-chain scorecard and the review follow-up rate. A new `Quality report` workflow builds a small generated report from real runs and the published outcomes file every six hours, after each coverage run and on demand, and publishes it to the `quality-badges` branch. A value that cannot be computed shows `unknown` and an old one shows `stale`. The maturity badge needs the optional `QUALITY_ACMM_URL` repository variable. See `src/docs/quality-report.md` (#18979)
+
+### Changed
+
+- Docs: a new [RFC and proposal process](src/docs/rfc-process.md) page explains when a change needs an RFC, how to file a `📝 RFC:` issue with the `proposal` label (and what the older `[v5 RFC]` tags mean), who decides under `GOVERNANCE.md`, what accepted and held mean, how accepted RFCs are tracked and closed, and links live searches for open RFCs. An RFC issue template under `.github/ISSUE_TEMPLATE/` gives filers a consistent structure, and `CONTRIBUTING.md`, `GOVERNANCE.md` and the documentation map link to the page (#18980).
+- Docs: a new [AI gateway evaluation](src/docs/ai-gateway-evaluation.md) page, linked from the inference backends guide and the documentation map, traces how model traffic flows through the inference translator today, gives a vendor-neutral recipe for placing a generic OpenAI-compatible gateway in front of the model backend using existing `governor.gateways` configuration, lists what that configuration cannot express (agent identity upstream, custom gateway headers, translator timeouts and retries), and defines a spike with named pass/fail thresholds for latency, failure behavior, metering, per-agent quotas, credentials and operations cost. It is an evaluation, not a commitment: the bundled LiteLLM proxy and all defaults are unchanged (#18989).
+
+### Fixed
+
+- **Claim ledger saves no longer fail under concurrency.** Concurrent saves of the PR claim ledger now serialize and use a unique temp file, so one save can no longer rename away another's temp file and log "renaming claim ledger: no such file or directory".
+
 ## 2026-11-18 (v5.322.1)
 
 ### Changed
