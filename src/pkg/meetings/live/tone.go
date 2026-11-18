@@ -42,7 +42,7 @@ func (s *session) notePartial(who string) {
 // voice (chat-only fallback plays nothing), speech already queued or
 // playing, and someone else mid-sentence each stop it.
 func (s *session) toneAllowed(asker string) (bool, string) {
-	if off, _ := s.voiceOff(); off != "" {
+	if off := s.toneVoiceOff(); off != "" {
 		return false, off
 	}
 	now := s.now()
@@ -54,6 +54,21 @@ func (s *session) toneAllowed(asker string) (bool, string) {
 		return false, "someone else is speaking"
 	}
 	return true, ""
+}
+
+// toneVoiceOff is voiceOff for the tone. A companion meeting has no voice
+// in the call at all: the desktop companion plays the chime on the host's
+// own computer, never into the call, so the meeting's voice setting does
+// not apply there and only meetings.voice_on_address does.
+func (s *session) toneVoiceOff() string {
+	if m, err := s.r.opts.Meetings.Get(s.id); err == nil && m.Platform == meetings.PlatformCompanion {
+		if !s.r.opts.Policy.VoiceOnAddress {
+			return speakPolicyOff
+		}
+		return ""
+	}
+	off, _ := s.voiceOff()
+	return off
 }
 
 // playTone asks for the tone in the background. The answer never waits for

@@ -18,6 +18,7 @@ type fakeCompanionQuorum struct {
 	chunks   []string
 	audioErr error
 	lines    []CompanionLine
+	tone     bool
 }
 
 func (f *fakeCompanionQuorum) CompanionAudio(_ context.Context, nativeID, channel string, seq int, pcm []byte) (CompanionChunk, error) {
@@ -30,18 +31,18 @@ func (f *fakeCompanionQuorum) CompanionAudio(_ context.Context, nativeID, channe
 	return CompanionChunk{Seq: seq}, nil
 }
 
-func (f *fakeCompanionQuorum) CompanionOutbox(_ context.Context, _ string, after int64) ([]CompanionLine, int64, error) {
+func (f *fakeCompanionQuorum) CompanionOutbox(_ context.Context, _ string, after int64) (CompanionPage, error) {
 	f.cmu.Lock()
 	defer f.cmu.Unlock()
-	var out []CompanionLine
-	next := after
+	out := CompanionPage{NextSeq: after, Tone: f.tone}
+	f.tone = false
 	for _, l := range f.lines {
 		if l.Seq > after {
-			out = append(out, l)
-			next = l.Seq
+			out.Lines = append(out.Lines, l)
+			out.NextSeq = l.Seq
 		}
 	}
-	return out, next, nil
+	return out, nil
 }
 
 func newCompanionFake() *fakeCompanionQuorum {
@@ -171,8 +172,18 @@ func TestCompanionAudioRepliesAndEnd(t *testing.T) {
 	if err != nil || len(r.Lines) != 1 || r.Lines[0].Text != "an answer" || r.NextSeq != 2 || r.State != StateLive {
 		t.Fatalf("replies = %+v, %v", r, err)
 	}
-	if r, err := m.CompanionReplies(ctx, mt.ID, "ana", false, 9); err != nil || r.Lines == nil || len(r.Lines) != 0 {
+	if r, err := m.CompanionReplies(ctx, mt.ID, "ana", false, 9); err != nil || r.Lines == nil || len(r.Lines) != 0 || r.Tone {
 		t.Fatalf("empty replies = %+v, %v", r, err)
+	}
+	// A listening tone Quorum holds for the window is passed through once.
+	q.cmu.Lock()
+	q.tone = true
+	q.cmu.Unlock()
+	if r, err := m.CompanionReplies(ctx, mt.ID, "ana", false, 2); err != nil || !r.Tone || len(r.Lines) != 0 {
+		t.Fatalf("replies with a tone = %+v, %v", r, err)
+	}
+	if r, err := m.CompanionReplies(ctx, mt.ID, "ana", false, 2); err != nil || r.Tone {
+		t.Fatalf("the tone is delivered once = %+v, %v", r, err)
 	}
 
 	ended, err := m.EndCompanion(ctx, mt.ID, "ana", false)
@@ -236,7 +247,7 @@ func TestClientCompanionRoutes(t *testing.T) {
 			_, _ = io.WriteString(w, `not json`)
 		default:
 			if r.URL.Path == "/companion/outbox" {
-				_, _ = io.WriteString(w, `{"lines":[{"seq":3,"text":"hi","at":"2026-11-16T12:00:00Z"}],"next_seq":3}`)
+				_, _ = io.WriteString(w, `{"lines":[{"seq":3,"text":"hi","at":"2026-11-16T12:00:00Z"}],"next_seq":3,"tone":true}`)
 				return
 			}
 			_, _ = io.WriteString(w, `{"seq":2,"duplicate":true}`)
@@ -253,9 +264,9 @@ func TestClientCompanionRoutes(t *testing.T) {
 	if gotAuth != "Bearer tok" || gotQuery != "channel=mic&meeting_id=m1&seq=2" || string(gotBody) != "\x01\x02" {
 		t.Fatalf("request: auth=%q query=%q body=%v", gotAuth, gotQuery, gotBody)
 	}
-	lines, next, err := c.CompanionOutbox(ctx, "m1", -5)
-	if err != nil || next != 3 || len(lines) != 1 || lines[0].Text != "hi" || gotQuery != "after=0&meeting_id=m1" {
-		t.Fatalf("outbox = %+v, %d, %v (query %q)", lines, next, err, gotQuery)
+	page, err := c.CompanionOutbox(ctx, "m1", -5)
+	if err != nil || page.NextSeq != 3 || len(page.Lines) != 1 || page.Lines[0].Text != "hi" || !page.Tone || gotQuery != "after=0&meeting_id=m1" {
+		t.Fatalf("outbox = %+v, %v (query %q)", page, err, gotQuery)
 	}
 
 	var gap *ChunkGapError
@@ -265,7 +276,7 @@ func TestClientCompanionRoutes(t *testing.T) {
 	if _, err := c.CompanionAudio(ctx, "ended", CompanionChannelCall, 0, nil); !errors.Is(err, ErrNotLive) {
 		t.Fatalf("ended = %v", err)
 	}
-	if _, _, err := c.CompanionOutbox(ctx, "missing", 0); !errors.Is(err, ErrNotFound) {
+	if _, err := c.CompanionOutbox(ctx, "missing", 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing = %v", err)
 	}
 	if _, err := c.CompanionAudio(ctx, "bad", CompanionChannelCall, 0, nil); !IsCode(err, CodeInvalidArgument) {
@@ -277,7 +288,7 @@ func TestClientCompanionRoutes(t *testing.T) {
 	if _, err := c.CompanionAudio(ctx, "garbled", CompanionChannelCall, 0, nil); err == nil {
 		t.Fatal("garbled audio reply should fail")
 	}
-	if _, _, err := c.CompanionOutbox(ctx, "garbled", 0); err == nil {
+	if _, err := c.CompanionOutbox(ctx, "garbled", 0); err == nil {
 		t.Fatal("garbled outbox reply should fail")
 	}
 	srv.Close()
