@@ -165,6 +165,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			HiveAuthor:                hiveIdentity(cfg).Matches,
 			SharedCIIncident:          stageSharedCIIncident,
 			BaseBranchRed:             stageBaseBranchRed,
+			BaseRedRemembered:         stageBaseRedRemembered,
 			ForkGuard:                 stageForkGuard,
 			DCORequired:               stage.DCO.RequiredFor,
 			SquashOnly:                cfg.AutoMerge.SquashOnlyFor,

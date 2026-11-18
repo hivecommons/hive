@@ -68,3 +68,21 @@ func TestStageBaseBranchRedIndex(t *testing.T) {
 		t.Fatalf("base-red without an incident reported incident %d", got)
 	}
 }
+
+func TestStageBaseRedRemembered(t *testing.T) {
+	t.Cleanup(func() { stageBaseRedMemory.Store(nil) })
+	if got := stageBaseRedRemembered("acme/widget", "main"); got != nil {
+		t.Fatalf("nothing published: %v", got)
+	}
+	publishStageBaseRedMemory(map[string][]string{github.BaseRedRememberedKey("acme/widget", "main"): {"Tests Passed", "Unit Tests"}})
+	if got := stageBaseRedRemembered("Acme/Widget", "main"); len(got) != 2 || got[0] != "Tests Passed" || got[1] != "Unit Tests" {
+		t.Fatalf("remembered = %v", got)
+	}
+	if got := stageBaseRedRemembered("acme/widget", "release"); len(got) != 0 {
+		t.Fatalf("another base: %v", got)
+	}
+	publishStageBaseRedMemory(nil)
+	if got := stageBaseRedRemembered("acme/widget", "main"); len(got) != 0 {
+		t.Fatalf("after an empty publish: %v", got)
+	}
+}

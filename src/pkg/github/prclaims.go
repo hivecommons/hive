@@ -1224,6 +1224,9 @@ type ClaimLedger struct {
 	weakDefer time.Duration
 	// now is the clock, overridable for tests.
 	now func() time.Time
+	// canon maps a repo onto its configured spelling (SetRepoCanonicalizer);
+	// nil keys repos exactly as given.
+	canon func(string) string
 }
 
 // ledgerFile is the on-disk shape of the ledger. History is omitempty so a
@@ -1392,11 +1395,62 @@ func (l *ClaimLedger) weakDeferExpired(c IssueClaim) bool {
 // external PR racing it to the map. Callers must hold l.mu (or own the ledger
 // exclusively, as LoadClaimLedger does before publishing it).
 func (l *ClaimLedger) insertLocked(c IssueClaim) {
+	c.Repo = l.repoLocked(c.Repo)
 	key := c.Key()
 	if existing, ok := l.claims[key]; ok && claimRank(c) < claimRank(existing) {
 		return
 	}
 	l.claims[key] = c
+}
+
+// repoLocked is repo in the configured spelling when a canonicalizer is set.
+// Callers must hold l.mu (read or write).
+func (l *ClaimLedger) repoLocked(repo string) string {
+	if l.canon == nil || repo == "" {
+		return repo
+	}
+	return l.canon(repo)
+}
+
+// keyLocked is claimKey with the repo canonicalized, so a lookup spelled
+// "owner/repo" and one spelled "repo" find the same entry. Callers must hold
+// l.mu (read or write).
+func (l *ClaimLedger) keyLocked(repo string, issue int) string {
+	return claimKey(l.repoLocked(repo), issue)
+}
+
+// SetRepoCanonicalizer keys every claim and churn record by the repo
+// spelling canon returns (projectbluefin/actions#748). The writers disagree:
+// the scan stores the configured spelling ("actions"), while a verdict claim
+// carries the hub task repo ("projectbluefin/actions") and a cross-repo
+// "Part of owner/repo#N" carries the owner. The enumeration looks claims up
+// with the configured spelling, so an owner-qualified claim was invisible to
+// the claimed-by-PR filter and the label sync while BackfillCoveredByLedger,
+// which walks the ledger itself, still found it: the issue flipped 010↔040
+// every pass and hive/likely-done was stripped minutes after it was added.
+// Entries already stored under another spelling are re-keyed here, keeping
+// the higher-ranked claim when both spellings hold one. canon must be
+// owner-aware (Client.canonicalRepo): a hive can watch two repos with the
+// same bare name in different orgs.
+func (l *ClaimLedger) SetRepoCanonicalizer(canon func(string) string) {
+	if l == nil || canon == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.canon = canon
+	claims := l.claims
+	l.claims = make(map[string]IssueClaim, len(claims))
+	for _, c := range claims {
+		l.insertLocked(c)
+	}
+	history := l.history
+	l.history = make(map[string]map[int]IssuePRRecord, len(history))
+	for _, byPR := range history {
+		for _, r := range byPR {
+			l.insertHistoryLocked(r)
+		}
+	}
 }
 
 // Record inserts one claim outside the enumeration cycle and persists the
@@ -1415,6 +1469,7 @@ func (l *ClaimLedger) Record(c IssueClaim) error {
 	if c.ObservedAt.IsZero() {
 		c.ObservedAt = l.now()
 	}
+	c.Repo = l.repoLocked(c.Repo)
 	l.insertLocked(l.anchorFirstObservedLocked(l.claims, c))
 	l.mu.Unlock()
 	return l.Save()
@@ -1431,7 +1486,7 @@ func (l *ClaimLedger) MarkCloseOnMergeSettled(repo string, issue, pr int, at tim
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	key := claimKey(repo, issue)
+	key := l.keyLocked(repo, issue)
 	c, ok := l.claims[key]
 	if !ok || c.PRNumber != pr {
 		return false
@@ -1521,7 +1576,7 @@ func (l *ClaimLedger) LookupAny(repo string, issue int) (IssueClaim, bool) {
 	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	c, ok := l.claims[claimKey(repo, issue)]
+	c, ok := l.claims[l.keyLocked(repo, issue)]
 	return c, ok
 }
 
@@ -1553,7 +1608,7 @@ func (l *ClaimLedger) MarkIssueReopened(repo string, issue int, at time.Time) bo
 func (l *ClaimLedger) markIssueReopenedLocked(repo string, issue int, at time.Time) (IssueClaim, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	key := claimKey(repo, issue)
+	key := l.keyLocked(repo, issue)
 	c, ok := l.claims[key]
 	if !ok || !c.MergedPR || !c.ReopenedAt.IsZero() {
 		return IssueClaim{}, false
@@ -1572,7 +1627,7 @@ func (l *ClaimLedger) markIssueReopenedLocked(repo string, issue int, at time.Ti
 func (l *ClaimLedger) markReopenChecked(repo string, issue int, at time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	key := claimKey(repo, issue)
+	key := l.keyLocked(repo, issue)
 	if c, ok := l.claims[key]; ok {
 		c.ReopenCheckedAt = at
 		l.claims[key] = c
@@ -1730,6 +1785,7 @@ func (l *ClaimLedger) reconcileOpen(live []IssueClaim, authoritative bool, open 
 			if c.Issue <= 0 || c.Repo == "" {
 				continue
 			}
+			c.Repo = l.repoLocked(c.Repo)
 			l.insertLocked(l.anchorFirstObservedLocked(prev, c))
 		}
 		if !listedAt.IsZero() {
@@ -1785,6 +1841,7 @@ func (l *ClaimLedger) reconcileOpen(live []IssueClaim, authoritative bool, open 
 		if c.Issue <= 0 || c.Repo == "" {
 			continue
 		}
+		c.Repo = l.repoLocked(c.Repo)
 		l.insertLocked(l.anchorFirstObservedLocked(l.claims, c))
 	}
 	l.markOpenLocked(open, l.now())

@@ -101,8 +101,11 @@ func gfiPublicOrigin(cfg *config.Config) string {
 // gfiSweepOptions builds the per-call options shared by the sweep and hooks.
 func gfiSweepOptions(cfg *config.Config, dashSrv *dashboard.Server, logger *slog.Logger) gfi.SweepOptions {
 	gc := cfg.GoodFirstIssue
+	policy := gc.Policy(github.HardSuppressIssueLabels())
+	// Never advertise what the contributor relay refuses to hand out.
+	policy.RelaySkip = cfg.Hub.MatchContributeSkipLabel
 	opts := gfi.SweepOptions{
-		Policy:   gc.Policy(github.HardSuppressIssueLabels()),
+		Policy:   policy,
 		Links:    gfi.Links{Origin: gfiPublicOrigin(cfg), HiveID: cfg.HiveID, DocsBase: gc.DocsURL},
 		Template: gc.CommentTemplate,
 		Logger:   logger,
@@ -155,12 +158,14 @@ func gfiCandidates(org string, result *github.ActionableResult, allowed func(str
 		out = append(out, c)
 	}
 	// Issues the enumeration filtered out (blocked, held, parked on a
-	// person) that still wear the label are handed to the sweep so it can
-	// withdraw the advertisement (hivecommons/hive#13267); the labels alone
-	// decide, so the missing body is harmless.
+	// person) or set aside because a pull request covers them, that still
+	// wear the label, are handed to the sweep so it can withdraw the
+	// advertisement (hivecommons/hive#13267); the labels and the coverage
+	// alone decide, so the missing body is harmless.
 	for _, repo := range sortedRepoKeys(result.WorkDetailsByRepo) {
 		for _, row := range result.WorkDetailsByRepo[repo].Issues {
-			if row.Number <= 0 || row.Bucket != "filtered" || !gfi.HasLabel(row.Labels) {
+			covered := row.Bucket == "claimed_by_pr"
+			if row.Number <= 0 || row.Bucket != "filtered" && !covered || !gfi.HasLabel(row.Labels) {
 				continue
 			}
 			full := qualifyClaimRepo(org, row.Repo)
@@ -173,6 +178,16 @@ func gfiCandidates(org string, result *github.ActionableResult, allowed func(str
 				// marker so Score skips it as tracking and the sweep withdraws
 				// the label (hivecommons/hive#14613).
 				c.Body = gfi.TrackingMarker
+			}
+			if covered {
+				c.HasLinkedPR = true
+				// A relay contributor or person who claimed the issue and
+				// opened the PR is the outcome the label exists for: it stays
+				// until the issue closes (gfi.Sweeper.Convert), so Score
+				// reports "claimed", which is never withdrawn.
+				if kind := claims.Kind(row.ClaimKind); (kind == claims.KindContributor || kind == claims.KindHuman) && strings.TrimSpace(row.ClaimedBy) != "" {
+					c.ClaimedBy = row.ClaimedBy
+				}
 			}
 			if labelled[c.Key()] {
 				continue

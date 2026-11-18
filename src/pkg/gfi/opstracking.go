@@ -91,15 +91,28 @@ func OpsTrackingReason(title, body string) (reason string, ok bool) {
 // went on) and the advertisement is withdrawn, not merely skipped.
 var withdrawLabels = map[string]bool{"blocked": true, "hold": true}
 
+// coveredByPRLabel is the stage label of an issue a pull request covers.
+const coveredByPRLabel = "stage/040-covered-by-pr"
+
+// coveredByPR reports whether a Decision.Skip reason says a pull request
+// already covers the issue.
+func coveredByPR(skip string) bool {
+	return skip == SkipLinkedPR || strings.EqualFold(skip, "excluded-label:"+coveredByPRLabel)
+}
+
 // Withdrawable reports whether a Decision.Skip reason means a labelled
 // issue must have its advertisement withdrawn: parked on a person
-// (hard-suppress), blocked or held, an ops-tracking checklist, a
-// tracking/archive issue, or
+// (hard-suppress), blocked or held, covered by a pull request, an
+// ops-tracking checklist, a tracking/archive issue, or
 // time-gated. Softer reasons (too fresh, low score, an epic a maintainer
-// labelled by hand) leave a hand-applied label alone.
+// labelled by hand) leave a hand-applied label alone. A relay-skip label
+// (`needs-triage`) is not withdrawable either: triage adds and removes it
+// all the time, and a withdrawal is permanent.
 func Withdrawable(skip string) bool {
 	switch {
 	case strings.HasPrefix(skip, "hard-suppress:"):
+		return true
+	case coveredByPR(skip):
 		return true
 	case skip == SkipTimeGated, strings.HasPrefix(skip, SkipOpsTracking), strings.HasPrefix(skip, SkipTracking+":"):
 		return true

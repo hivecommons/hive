@@ -54,6 +54,9 @@ type Client struct {
 	// (kubestellar/hive#5733). Per-client because the artifact it corrects is a
 	// property of THIS client's token minting. Zero value is ready to use.
 	rateLimits rateLimitTracker
+	// baseRed remembers each base branch's red checks across passes
+	// (base_branch_red_memory.go). Zero value is ready to use.
+	baseRed baseRedMemory
 	// lastGoodEnum keeps each repo's newest successful enumeration so a
 	// transiently refused fetch does not publish the repo as empty
 	// (enumerate_lastgood.go). Zero value is ready to use.

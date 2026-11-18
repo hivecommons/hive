@@ -126,6 +126,63 @@ func TestGFICandidatesIncludeLabelledFilteredRows(t *testing.T) {
 	}
 }
 
+// Rows set aside because a pull request covers them (claimed_by_pr) that
+// still wear the label reach the sweep marked HasLinkedPR, so it withdraws
+// them (projectbluefin/website#1031); a relay contributor's or person's
+// claim rides along so the label stays (gfi.Sweeper.Convert). Unlabelled
+// covered rows are not candidates.
+func TestGFICandidatesHandCoveredRowsToSweep(t *testing.T) {
+	res := &github.ActionableResult{
+		WorkDetailsByRepo: map[string]github.RepoWorkDetails{
+			"widgets": {Issues: []github.RepoWorkIssue{
+				{Repo: "widgets", Number: 1031, Labels: []string{"good first issue", "help wanted", "stage/040-covered-by-pr"}, Bucket: "claimed_by_pr", Reason: "Open external PR #1040 covers this issue"},
+				{Repo: "widgets", Number: 5, Labels: []string{"stage/040-covered-by-pr"}, Bucket: "claimed_by_pr"},
+				{Repo: "widgets", Number: 6, Labels: []string{"good first issue"}, Bucket: "claimed_by_pr", ClaimKind: string(claims.KindContributor), ClaimedBy: "newcomer"},
+				{Repo: "widgets", Number: 7, Labels: []string{"good first issue"}, Bucket: "claimed_by_pr", ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner"},
+			}},
+		},
+	}
+	cands, labelled := gfiCandidates("acme", res, nil)
+	if len(cands) != 3 || labelled["acme/widgets#5"] {
+		t.Fatalf("cands %+v labelled %v", cands, labelled)
+	}
+	byNum := map[int]gfi.Candidate{}
+	for _, c := range cands {
+		byNum[c.Number] = c
+	}
+	if c := byNum[1031]; !c.HasLinkedPR || c.ClaimedBy != "" || len(c.Labels) != 3 {
+		t.Fatalf("covered row %+v", c)
+	}
+	if c := byNum[6]; !c.HasLinkedPR || c.ClaimedBy != "newcomer" {
+		t.Fatalf("contributor-claimed covered row %+v", c)
+	}
+	if c := byNum[7]; !c.HasLinkedPR || c.ClaimedBy != "" {
+		t.Fatalf("agent-claimed covered row %+v", c)
+	}
+	d := gfi.Score(byNum[1031], gfi.Policy{}, time.Now())
+	if d.Skip != gfi.SkipLinkedPR || !gfi.Withdrawable(d.Skip) {
+		t.Fatalf("covered row decision %+v", d)
+	}
+	if d := gfi.Score(byNum[6], gfi.Policy{}, time.Now()); d.Skip != "claimed" || gfi.Withdrawable(d.Skip) {
+		t.Fatalf("claimed covered row decision %+v", d)
+	}
+}
+
+// The sweep never advertises what the relay refuses: the policy carries
+// hub.contribute_skip_labels (`needs-triage` by default).
+func TestGFISweepOptionsCarryRelaySkip(t *testing.T) {
+	opts := gfiSweepOptions(&config.Config{}, nil, slog.New(slog.DiscardHandler))
+	if opts.Policy.RelaySkip == nil {
+		t.Fatal("RelaySkip not wired")
+	}
+	if l, ok := opts.Policy.RelaySkip([]string{"kind/bug", "needs-triage"}); !ok || l != "needs-triage" {
+		t.Fatalf("needs-triage not matched: %q %v", l, ok)
+	}
+	if _, ok := opts.Policy.RelaySkip([]string{"kind/bug", "size/S"}); ok {
+		t.Fatal("plain labels matched")
+	}
+}
+
 // gfiFakeGitHub serves the handful of endpoints the sweep and release touch.
 type gfiFakeGitHub struct {
 	mu       sync.Mutex
