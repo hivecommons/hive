@@ -3,6 +3,7 @@ package dashboard
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -156,10 +157,19 @@ func stageTrackerMidFlightPark(it StageTrackerItem) string {
 // review activity). It runs before the human gates so the gate and the
 // verbs read the finished field.
 func stageTrackerResolveMidFlight(items []StageTrackerItem) {
+	// A nested PR carries no lane reason of its own; when the PR is listed
+	// as a row, its park reason is the row's.
+	parks := map[string]string{}
 	for i := range items {
 		it := &items[i]
 		it.MidFlight = stageTrackerMidFlightFor(*it)
 		stageTrackerMidFlightGuardOptions(it.DecisionNeeded, it.MidFlight)
+		if it.Kind == "pr" && it.MidFlight != nil && it.MidFlight.Park != "" {
+			parks[strings.ToLower(it.Repo)+"#"+strconv.Itoa(it.Number)] = it.MidFlight.Park
+		}
+	}
+	for i := range items {
+		it := &items[i]
 		for j := range it.LinkedPRs {
 			lp := &it.LinkedPRs[j]
 			lp.MidFlight = nil
@@ -167,10 +177,13 @@ func stageTrackerResolveMidFlight(items []StageTrackerItem) {
 				continue
 			}
 			lp.MidFlight = stageTrackerMidFlightFor(StageTrackerItem{
-				Repo: it.Repo, Number: lp.Number, Kind: "pr", Stage: lp.Stage, Head: lp.Head, Reason: lp.Reason,
+				Repo: it.Repo, Number: lp.Number, Kind: "pr", Stage: lp.Stage, Head: lp.Head,
 				Modifiers: lp.Modifiers, ManualMerge: lp.ManualMerge, HumanMergeReason: lp.HumanMergeReason,
 				CIActivity: lp.CIActivity, ReviewActivity: lp.ReviewActivity,
 			})
+			if lp.MidFlight != nil && lp.MidFlight.Park == "" {
+				lp.MidFlight.Park = parks[strings.ToLower(it.Repo)+"#"+strconv.Itoa(lp.Number)]
+			}
 			stageTrackerMidFlightGuardOptions(lp.DecisionNeeded, lp.MidFlight)
 		}
 	}
