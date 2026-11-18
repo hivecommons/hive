@@ -596,6 +596,10 @@ function formatRetryInterval(ms) {
 const HOSTED_HIVE_PREFIX_RE = /^hosted-/;
 const HOSTED_HIVE_SUFFIX_RE = /-[a-z0-9]{4}$/;
 function hiveShortName(hub) {
+  // The name the hive states on auth_ok wins; the hostname is minted once at
+  // claim time and never follows a rename.
+  const stated = hiveDisplayName(hub);
+  if (stated) return stated;
   let host = '';
   try { host = new URL(hub.sourceURL || hub.url).host; } catch (_) { return 'this hive'; }
   if (!host) return 'this hive';
@@ -2562,6 +2566,25 @@ function clampFrame(msg, maxFrameBytes) {
 const RELAY_DEBUG = process.env.HIVE_RELAY_DEBUG === '1';
 function debugLog(message) {
   if (RELAY_DEBUG) console.log(message);
+}
+
+// hiveNameSlug turns the display name a hub states on auth_ok into the short
+// public form a contributor sees ("hivecommons hive" becomes hivecommons-hive):
+// sanitized like any hub text, lowercased, whitespace to dashes, bounded.
+// null when the hub stated nothing usable, so callers fall back to a name
+// derived from the hostname.
+const HIVE_NAME_MAX_LEN = 64;
+function hiveNameSlug(raw) {
+  const clean = sanitizeHubText(raw).toLowerCase().replace(/\s+/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
+  const bounded = Array.from(clean).slice(0, HIVE_NAME_MAX_LEN).join('').replace(/-+$/, '');
+  return bounded || null;
+}
+
+// hiveDisplayName is the name to show a contributor for a hub: the name the
+// hive stated on auth_ok, or null before it has authenticated or when it sent
+// none (an older hub), in which case the caller keeps its hostname-derived name.
+function hiveDisplayName(hub) {
+  return hub && typeof hub.hiveName === 'string' && hub.hiveName ? hub.hiveName : null;
 }
 
 function readyConnLabel(hub) {
@@ -9343,7 +9366,11 @@ function handleMessage(data, hub) {
       break;
 
     case 'auth_ok':
-      console.log(`Authenticated with ${hub.url} as ${sanitizeHubText(msg.contributor_id)} (tier: ${sanitizeHubText(msg.trust_tier)})`);
+      // The hive names itself: its hostname is minted once at claim time and
+      // never follows a rename, so the name the hub states wins over anything
+      // parsed from the URL. A hub that sends none leaves it null.
+      hub.hiveName = hiveNameSlug(msg.hive_name);
+      console.log(`Authenticated with ${hub.url} as ${sanitizeHubText(msg.contributor_id)} (tier: ${sanitizeHubText(msg.trust_tier)})${hub.hiveName ? ` [hive: ${hub.hiveName}]` : ''}`);
       recordHubSeen(hub);
       // #2567: the hub advertises its protocol version + capability set here. We
       // log them (forward-compatible: unknown/absent fields are simply skipped)
@@ -10466,6 +10493,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     relocateRetiredHiveURL,
     normalizeRetiredHiveURL,
     hubWsURL,
+    hiveNameSlug,
+    hiveDisplayName,
     hubPublicURL,
     isTLSHostMismatchError,
     tlsHostMismatchRemediation,

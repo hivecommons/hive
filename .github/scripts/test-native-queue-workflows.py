@@ -51,9 +51,17 @@ class NativeQueueWorkflows(unittest.TestCase):
     def test_owned_gate_uses_trusted_base_not_member_code(self):
         data = workflow("native-queue-policy.yml")
         events = data.get("on", data.get(True))
-        self.assertIn("pull_request_target", events)
-        self.assertNotIn("pull_request", events)
+        # GitHub blocks pull_request_target by default on public repositories
+        # from 2026-12-02; the gate only reads, so the plain event suffices.
+        self.assertIn("pull_request", events)
+        self.assertNotIn("pull_request_target", events)
+        self.assertIn("merge_group", events)
         self.assertTrue(all(value == "read" for value in data["permissions"].values()))
+        self.assertIn("github.event_name == 'pull_request'", data["concurrency"]["group"])
+        self.assertNotIn("pull_request_target", data["concurrency"]["group"])
+        # The hive status provider is configured only through this variable.
+        self.assertEqual(data["jobs"]["policy"]["env"]["HIVE_PR_GATE_CREATOR_LOGIN"],
+                         "${{ vars.HIVE_PR_GATE_CREATOR_LOGIN }}")
         checkout = data["jobs"]["policy"]["steps"][0]["with"]
         self.assertEqual(checkout["ref"],
                          "${{ github.event.merge_group.base_sha || format('refs/heads/{0}', github.event.pull_request.base.ref) }}")
@@ -75,7 +83,7 @@ class NativeQueueWorkflows(unittest.TestCase):
         data = workflow("native-queue-policy.yml")
         events = data.get("on", data.get(True))
         for action in ("edited", "labeled", "unlabeled"):
-            self.assertIn(action, events["pull_request_target"]["types"])
+            self.assertIn(action, events["pull_request"]["types"])
         concurrency = data["concurrency"]
         self.assertIn("github.event.pull_request.number", concurrency["group"])
         self.assertIs(concurrency["cancel-in-progress"], False)

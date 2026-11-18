@@ -5165,6 +5165,22 @@ func isPrivateURL(ctx context.Context, rawURL string) bool {
 	return netguard.IsPrivateURL(ctx, rawURL, netguard.Resolver(privateURLResolver))
 }
 
+// pinnedFetchTransport returns the transport for a fetch whose URL a remote
+// party chose and that guard already checked (#18992). The pre-fetch guard
+// resolves the name, and a default http.Client resolves it again when it
+// dials, so a self-reported DashboardURL whose name rebinds passed the guard
+// as public and was connected to as private. This transport resolves each
+// dial once through privateURLResolver, runs guard on every answer, and
+// connects to an address it checked, for every connection including redirect
+// hops. guard is called on each dial, not captured, so a test that swaps the
+// guard var behind it reaches its loopback server through the same path.
+func pinnedFetchTransport(guard func(ctx context.Context, rawURL string) bool) *http.Transport {
+	return netguard.PinnedDialer{
+		Resolve: func(ctx context.Context, host string) ([]string, error) { return privateURLResolver(ctx, host) },
+		Refuse:  func(ctx context.Context, target string) bool { return guard(ctx, "http://"+target) },
+	}.Transport()
+}
+
 func clampInt(v, min, max int) int {
 	if v < min {
 		return min

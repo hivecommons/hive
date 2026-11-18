@@ -1,0 +1,1073 @@
+[
+ {
+  "title": "\u2728 feature",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tfeature\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ud83d\udc1b fix",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udc1b PR (bugfix)",
+   "text": "Final title:\n\n\tfix\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ud83d\udcd6 docs",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udcd6 PR (docs)",
+   "text": "Final title:\n\n\tdocs\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ud83c\udf31 infra",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83c\udf31 PR (infra)",
+   "text": "Final title:\n\n\tinfra\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u26a0\ufe0f breaking",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u26a0 PR (breaking)",
+   "text": "Final title:\n\n\tbreaking\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u26a0 breaking no selector",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u26a0 PR (breaking)",
+   "text": "Final title:\n\n\tbreaking no selector\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ud83d\ude80 release",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\ude80 PR (release)",
+   "text": "Final title:\n\n\trelease\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": ":sparkles: shortcode feature",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tshortcode feature\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": ":bug: fix",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udc1b PR (bugfix)",
+   "text": "Final title:\n\n\tfix\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": ":book: docs",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udcd6 PR (docs)",
+   "text": "Final title:\n\n\tdocs\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": ":seedling: chore",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83c\udf31 PR (infra)",
+   "text": "Final title:\n\n\tchore\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": ":warning: breaking",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u26a0 PR (breaking)",
+   "text": "Final title:\n\n\tbreaking\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": ":rocket: release",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\ude80 PR (release)",
+   "text": "Final title:\n\n\trelease\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": ":running: legacy",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83c\udf31 PR (infra)",
+   "text": "Final title:\n\n\tlegacy\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ud83c\udfc3 runner emoji",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83c\udf31 PR (infra)",
+   "text": "Final title:\n\n\trunner emoji\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "WIP: [scope] \u2728\ufe0f add thing",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tadd thing\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ud83d\udc1bWIP: \ud83d\udcd6 docs",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udcd6 PR (docs)",
+   "text": "Final title:\n\n\tdocs\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "wip: \u2728 lower case wip",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tlower case wip\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "[scope] \ud83d\udc1b scoped fix",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udc1b PR (bugfix)",
+   "text": "Final title:\n\n\tscoped fix\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "[a.b-c_d] \u2728 scoped",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tscoped\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "[] \u2728 empty scope",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tempty scope\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of ``, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "   ",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of ``, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "ordinary title",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of `ordinary title`, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ud83d\udcdd proposal",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of `\ud83d\udcdd proposal`, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ud83d\udcd6 proposal docs",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udcd6 PR (docs)",
+   "text": "Final title:\n\n\tproposal docs\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u2728 fix #123",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tfix #123\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "failure",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR has an Issue or PR number in the title.",
+   "text": "The title should just be descriptive.\nIssue numbers belong in the PR body as either `Fixes #XYZ` (if it closes the issue or PR), or something like `Related to #XYZ` (if it's just related)."
+  }
+ },
+ {
+  "title": "\ud83d\udc1b fix #12a",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udc1b PR (bugfix)",
+   "text": "Final title:\n\n\tfix #12a\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ud83d\udc1b fix #12 and more",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udc1b PR (bugfix)",
+   "text": "Final title:\n\n\tfix #12 and more\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "failure",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR has an Issue or PR number in the title.",
+   "text": "The title should just be descriptive.\nIssue numbers belong in the PR body as either `Fixes #XYZ` (if it closes the issue or PR), or something like `Related to #XYZ` (if it's just related)."
+  }
+ },
+ {
+  "title": ":bug: #12a and #13",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udc1b PR (bugfix)",
+   "text": "Final title:\n\n\t#12a and #13\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "failure",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR has an Issue or PR number in the title.",
+   "text": "The title should just be descriptive.\nIssue numbers belong in the PR body as either `Fixes #XYZ` (if it closes the issue or PR), or something like `Related to #XYZ` (if it's just related)."
+  }
+ },
+ {
+  "title": "\ud83c\udf31 bump (#456)",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83c\udf31 PR (infra)",
+   "text": "Final title:\n\n\tbump (#456)\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "failure",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR has an Issue or PR number in the title.",
+   "text": "The title should just be descriptive.\nIssue numbers belong in the PR body as either `Fixes #XYZ` (if it closes the issue or PR), or something like `Related to #XYZ` (if it's just related)."
+  }
+ },
+ {
+  "title": "\ud83c\udf31 bump #7.",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83c\udf31 PR (infra)",
+   "text": "Final title:\n\n\tbump #7.\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "failure",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR has an Issue or PR number in the title.",
+   "text": "The title should just be descriptive.\nIssue numbers belong in the PR body as either `Fixes #XYZ` (if it closes the issue or PR), or something like `Related to #XYZ` (if it's just related)."
+  }
+ },
+ {
+  "title": "\u2728 #1",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\t#1\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "failure",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR has an Issue or PR number in the title.",
+   "text": "The title should just be descriptive.\nIssue numbers belong in the PR body as either `Fixes #XYZ` (if it closes the issue or PR), or something like `Related to #XYZ` (if it's just related)."
+  }
+ },
+ {
+  "title": "#99 no prefix",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of `#99 no prefix`, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "failure",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR has an Issue or PR number in the title.",
+   "text": "The title should just be descriptive.\nIssue numbers belong in the PR body as either `Fixes #XYZ` (if it closes the issue or PR), or something like `Related to #XYZ` (if it's just related)."
+  }
+ },
+ {
+  "title": "  \u2728 leading space  ",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tleading space\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ufeff\u2728 bom prefix",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tbom prefix\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u2728\ufe0f variation selector",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tvariation selector\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u0085\u2728 next line",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of `\u0085\u2728 next line`, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u00a0\u2728 nbsp",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tnbsp\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u2003\ud83d\udc1b em space",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udc1b PR (bugfix)",
+   "text": "Final title:\n\n\tem space\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": ":sparkles:\u2728 double prefix",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tdouble prefix\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u2728:sparkles: reversed double",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\t:sparkles: reversed double\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "title with `backquote`",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of \"title with `backquote`\", which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "bad\ttab",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of `bad\ttab`, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "bad\nnewline",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of \"bad\\nnewline\", which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "quote \" and \\ backslash",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of `quote \" and \\ backslash`, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "ctrl\u0001char",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of \"ctrl\\u0001char\", which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "delchar",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of \"delchar\", which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ufeffinner bom\ufeff x",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of \"inner bom\ufeff x\", which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ud83d\udca5 unknown emoji",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of `\ud83d\udca5 unknown emoji`, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u2728feature without space",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tfeature without space\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\ud83d\udc1b: colon after emoji",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udc1b PR (bugfix)",
+   "text": "Final title:\n\n\t: colon after emoji\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "refs Fixes #12 in title",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of `refs Fixes #12 in title`, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "failure",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR has an Issue or PR number in the title.",
+   "text": "The title should just be descriptive.\nIssue numbers belong in the PR body as either `Fixes #XYZ` (if it closes the issue or PR), or something like `Related to #XYZ` (if it's just related)."
+  }
+ },
+ {
+  "title": "WIP \u2728 no colon",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\tno colon\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "!WIP! \ud83d\udc1b bang wip",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udc1b PR (bugfix)",
+   "text": "Final title:\n\n\tbang wip\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "[WIP] \ud83d\udcd6 bracket wip",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udcd6 PR (docs)",
+   "text": "Final title:\n\n\tbracket wip\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "(wip) \ud83c\udf31 paren wip",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83c\udf31 PR (infra)",
+   "text": "Final title:\n\n\tparen wip\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\tWIP: \ud83d\ude80 tab lead",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\ude80 PR (release)",
+   "text": "Final title:\n\n\ttab lead\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u00dcn\u00efcode title",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of `\u00dcn\u00efcode title`, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u65e5\u672c\u8a9e\u306e\u30bf\u30a4\u30c8\u30eb",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "failure",
+   "title": "PR Type in Title",
+   "summary": "No matching PR type indicator found in title.",
+   "text": "I saw a title of `\u65e5\u672c\u8a9e\u306e\u30bf\u30a4\u30c8\u30eb`, which doesn't seem to have any of the acceptable prefixes.\n\nYou need to have one of these as the prefix of your PR title:\n\n- Breaking change: \u26a0 (`:warning:`)\n- Non-breaking feature: \u2728 (`:sparkles:`)\n- Patch fix: \ud83d\udc1b (`:bug:`)\n- Docs: \ud83d\udcd6 (`:book:`)\n- Release: \ud83d\ude80 (`:rocket:`)\n- Infra/Tests/Other: \ud83c\udf31 (`:seedling:`)\n\nMore details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md)."
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u2728 \u65e5\u672c\u8a9e #123",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u2728 PR (feature)",
+   "text": "Final title:\n\n\t\u65e5\u672c\u8a9e #123\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "failure",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR has an Issue or PR number in the title.",
+   "text": "The title should just be descriptive.\nIssue numbers belong in the PR body as either `Fixes #XYZ` (if it closes the issue or PR), or something like `Related to #XYZ` (if it's just related)."
+  }
+ },
+ {
+  "title": "\ud83d\udc1b fix \u26a0 inside",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \ud83d\udc1b PR (bugfix)",
+   "text": "Final title:\n\n\tfix \u26a0 inside\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ },
+ {
+  "title": "\u26a0\ufe0f \u2728 both",
+  "type": {
+   "name": "PR Type",
+   "conclusion": "success",
+   "title": "PR Type in Title",
+   "summary": "Found \u26a0 PR (breaking)",
+   "text": "Final title:\n\n\t\u2728 both\n"
+  },
+  "issue": {
+   "name": "PR Issue",
+   "conclusion": "success",
+   "title": "Issue/PR tag in PR title",
+   "summary": "Your PR title does not contain any Issue or PR tags",
+   "text": ""
+  }
+ }
+]

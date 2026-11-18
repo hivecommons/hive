@@ -159,7 +159,7 @@ func TestValidateLinkURLRefusals(t *testing.T) {
 		"http://user:pw@public.example/", "https://token@public.example/", "http://127.0.0.1/", "http://[::1]:8080/",
 		"http://169.254.169.254/latest/meta-data/", "http://[fd00:ec2::254]/", "http://10.1.2.3/", "http://100.64.0.1/",
 		"http://224.0.0.1/", "http://localhost:8080/", "http://app.localhost/", "http://metadata.google.internal/",
-		"http://printer.local/", "http://[::ffff:127.0.0.1]/", "http:///nohost", "http://" + strings.Repeat("a", linkMaxURLBytes) + ".example/", "::not a url"} {
+		"http://printer.local/", "http://[::ffff:127.0.0.1]/", "http://1.2.3.4.5/", "http://2130706433/", "http://0x7f.1/", "http://203.0.113.10/", "http://[2001:db8::1]/", "http:///nohost", "http://" + strings.Repeat("a", linkMaxURLBytes) + ".example/", "::not a url"} {
 		if _, err := ValidateLinkURL(raw); !errors.Is(err, ErrLinkRefused) {
 			t.Errorf("ValidateLinkURL(%q) = %v, want refused", raw, err)
 		}
