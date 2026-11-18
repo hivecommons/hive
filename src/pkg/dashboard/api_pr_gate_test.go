@@ -197,7 +197,7 @@ func TestPRGateHealthReportsAWriteRefusal(t *testing.T) {
 	}
 	deadline := time.Now().Add(prGateTestWait)
 	for time.Now().Before(deadline) && s.prGateInstance().Snapshot()[prGateTestRepo].Forbidden == 0 {
-		time.Sleep(10 * time.Millisecond)
+		<-time.After(10 * time.Millisecond)
 	}
 	h = s.PRGateHealth()
 	if h == nil || h.Cause != github.PRGateCauseWriteRefused || len(h.ForbiddenRepos) != 1 || h.Message == "" {
