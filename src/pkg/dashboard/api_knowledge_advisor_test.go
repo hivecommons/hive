@@ -45,7 +45,7 @@ type advisorSummaryResp struct {
 	Caveat string `json:"caveat"`
 }
 
-func advisorTestServer(t *testing.T) *Server {
+func knowledgeAdvisorTestServer(t *testing.T) *Server {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := NewServerWithAuth(0, "dashboard-secret", logger)
@@ -71,7 +71,7 @@ func getAdvisorSummary(t *testing.T, s *Server, target, role string) (*httptest.
 }
 
 func TestAdvisorSummaryEmptyStore(t *testing.T) {
-	s := advisorTestServer(t)
+	s := knowledgeAdvisorTestServer(t)
 	s.SetKnowledgeAdvisorSummary(retro.NewAdvisorDecisionStore(""), nil)
 	rec, got := getAdvisorSummary(t, s, "/api/knowledge/advisor/summary", config.RoleRead)
 	if rec.Code != http.StatusOK {
@@ -95,7 +95,7 @@ func TestAdvisorSummaryEmptyStore(t *testing.T) {
 }
 
 func TestAdvisorSummaryNoSourceInstalled(t *testing.T) {
-	s := advisorTestServer(t)
+	s := knowledgeAdvisorTestServer(t)
 	rec, got := getAdvisorSummary(t, s, "/api/knowledge/advisor/summary", config.RoleRead)
 	if rec.Code != http.StatusOK || got.Window.Decisions != 0 || !got.SmallN {
 		t.Fatalf("code=%d got=%+v", rec.Code, got)
@@ -143,7 +143,7 @@ func TestAdvisorSummaryMixedArmsMatchLane(t *testing.T) {
 	rec("2026-11-12T11:00:00Z", "k5", "o/r#4", "rank", "held-out", 0, 0, 0)
 	lane := advisorLane(t, store, map[string]int{"o/r#2": 4, "o/r#3": 1, "o/r#4": 2, "o/r#5": 7})
 
-	s := advisorTestServer(t)
+	s := knowledgeAdvisorTestServer(t)
 	s.deps.Config.Knowledge = config.KnowledgeConfig{Advisor: true, AdvisorLLM: config.AdvisorLLMConfig{Mode: "rank", Model: "small-model", HoldoutPercent: 20, APIKeyEnv: "SHOULD_NOT_APPEAR", Endpoint: "https://llm.example.invalid"}}
 	s.SetKnowledgeAdvisorSummary(store, lane.AdvisorArmSummary)
 
@@ -210,7 +210,7 @@ func TestAdvisorSummarySinceNarrowsDecisionsOnly(t *testing.T) {
 	store := retro.NewAdvisorDecisionStore("")
 	store.Record(retro.AdvisorDecisionRecord{Timestamp: "2026-11-01T10:00:00Z", Agent: "dev", Kick: "k1", Mode: "shadow", Outcome: "gated"})
 	store.Record(retro.AdvisorDecisionRecord{Timestamp: "2026-11-10T10:00:00Z", Agent: "dev", Kick: "k2", Mode: "rank", Outcome: "delivered"})
-	s := advisorTestServer(t)
+	s := knowledgeAdvisorTestServer(t)
 	s.SetKnowledgeAdvisorSummary(store, nil)
 
 	_, got := getAdvisorSummary(t, s, "/api/knowledge/advisor/summary?since=2026-11-05T00:00:00Z", config.RoleRead)
@@ -232,7 +232,7 @@ func TestAdvisorSummarySmallNCaveatClearsAtThreshold(t *testing.T) {
 		store.Record(retro.AdvisorDecisionRecord{Timestamp: time.Now().UTC().Format(time.RFC3339), Agent: "dev", Kick: "d" + strconv.Itoa(i), Refs: []string{d}, Mode: "rank", Outcome: "delivered"})
 		store.Record(retro.AdvisorDecisionRecord{Timestamp: time.Now().UTC().Format(time.RFC3339), Agent: "dev", Kick: "h" + strconv.Itoa(i), Refs: []string{h}, Mode: "rank", Outcome: "held-out"})
 	}
-	s := advisorTestServer(t)
+	s := knowledgeAdvisorTestServer(t)
 	s.SetKnowledgeAdvisorSummary(store, advisorLane(t, store, closed).AdvisorArmSummary)
 	_, got := getAdvisorSummary(t, s, "/api/knowledge/advisor/summary", config.RoleRead)
 	if got.SmallN || got.Caveat != "" {
@@ -249,7 +249,7 @@ func TestAdvisorSummarySmallNCaveatClearsAtThreshold(t *testing.T) {
 }
 
 func TestAdvisorSummaryRoleGating(t *testing.T) {
-	s := advisorTestServer(t)
+	s := knowledgeAdvisorTestServer(t)
 	s.SetKnowledgeAdvisorSummary(retro.NewAdvisorDecisionStore(""), nil)
 
 	rec := httptest.NewRecorder()

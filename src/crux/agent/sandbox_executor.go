@@ -184,17 +184,13 @@ type SandboxExecutor struct {
 	// PRTargetReader reads an existing PR a kick pushes to (spec.TargetPR):
 	// before the checkout and again before the push. Nil refuses every
 	// TargetPR kick.
-	PRTargetReader crux.PRPushTargetReader
-	Logger         *slog.Logger
-	Now            func() time.Time
-	Mutation       effects.Boundary
-	onStarted      func()
-	// GitHubReadRelay, when set, routes a Job-runtime kick's GitHub reads
-	// through hive's read relay (#18865). Nil leaves the Job on its own
-	// network path, exactly as before.
-	GitHubReadRelay SandboxGitHubReadRelay
-	// GitHubReadRelayNoProxy is extra NO_PROXY entries for relayed Jobs.
-	GitHubReadRelayNoProxy []string
+	PRTargetReader         crux.PRPushTargetReader
+	Logger                 *slog.Logger
+	Now                    func() time.Time
+	Mutation               effects.Boundary
+	onStarted              func()
+	GitHubReadRelay        SandboxGitHubReadRelay // routes a Job kick's GitHub reads through hive's read relay (#18865); nil leaves the Job as before
+	GitHubReadRelayNoProxy []string               // extra NO_PROXY entries for relayed Jobs
 }
 
 func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (SandboxKickResult, error) {
