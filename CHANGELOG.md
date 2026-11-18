@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v6.50.1)
+
+### Fixed
+
+- The contributor relay's start-up warning and `contribute-setup` no longer tell contributors to replace their classic `repo` token with a fine-grained token limited to their forks. A fine-grained token covers one owner, so it can't open the pull request on the upstream repository, and every task ended without one (seen on 2026-11-18: eight tasks lost). A relay started with a fine-grained token now warns that it can't open upstream pull requests. How to narrow the token safely is tracked in [#19145](https://github.com/hivecommons/hive/issues/19145).
+
 ## 2026-11-18 (v6.50.0)
 
 ### Added

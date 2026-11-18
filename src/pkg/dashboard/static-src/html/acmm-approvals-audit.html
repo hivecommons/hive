@@ -70,6 +70,23 @@
         <button class="hv-btn btn-danger btn-sm" data-action="clearAuditSearches" title="Clear saved searches">✕</button>
         <span id="audit-match-count" style="font-size:0.7rem;color:var(--muted);white-space:nowrap"></span>
       </div>
+      <!-- Server-side filters (GET /api/audit repo/number/action/since/contributor): they search every retained audit file, not just the loaded page, and match the admin MCP's audit_log arguments. -->
+      <div class="audit-controls-row audit-server-filters" style="margin-bottom:5px;padding:3px;display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap">
+        <input id="audit-filter-repo" type="text" placeholder="repo (owner/name)" aria-label="Filter by repository" data-keydown-action="applyAuditServerFilters" data-keys="Enter" style="width:13rem;padding:var(--sp-2) var(--sp-4);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-sm)">
+        <input id="audit-filter-number" type="number" min="1" placeholder="#" aria-label="Filter by issue or PR number" data-keydown-action="applyAuditServerFilters" data-keys="Enter" style="width:5.5rem;padding:var(--sp-2) var(--sp-4);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-sm)">
+        <input id="audit-filter-action" type="text" placeholder="action (pr_merged, relay_*)" aria-label="Filter by action; a trailing * matches a prefix, commas separate several" data-keydown-action="applyAuditServerFilters" data-keys="Enter" style="width:12rem;padding:var(--sp-2) var(--sp-4);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-sm)">
+        <input id="audit-filter-contributor" type="text" placeholder="user" aria-label="Filter by user (login)" data-keydown-action="applyAuditServerFilters" data-keys="Enter" style="width:8rem;padding:var(--sp-2) var(--sp-4);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-sm)">
+        <select id="audit-filter-since" aria-label="Time window" data-change-action="applyAuditServerFilters" style="padding:var(--sp-2) var(--sp-4);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-sm)">
+          <option value="">All retained</option>
+          <option value="24h">Last 24h</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="90d">Last 90 days</option>
+        </select>
+        <button class="hv-btn btn-secondary btn-sm" data-action="applyAuditServerFilters" title="Search every retained audit file with these filters">Filter</button>
+        <button class="hv-btn btn-secondary btn-sm" data-action="clearAuditServerFilters" title="Clear the server-side filters">Clear</button>
+        <button id="audit-item-history-btn" class="hv-btn btn-primary btn-sm" data-action="openAuditItemHistoryFromFilters" title="Everything the hive recorded about this issue or PR, open or closed" hidden>Item history</button>
+      </div>
       <p class="mobile-table-hint">Scroll horizontally for more columns.</p>
       <div id="audit-panel" class="audit-resizable" tabindex="0" role="region" aria-label="Audit log table" style="padding:var(--sp-5)">
         <div class="loading">Loading audit log...</div>

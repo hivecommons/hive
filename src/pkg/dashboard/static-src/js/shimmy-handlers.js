@@ -101,7 +101,7 @@
           ['nous-status', () => ensureNousPolling()],
           ['public-knowledge', () => fetchPublicKnowledgeSetting()],
           ['knowledge-stats', () => fetchKnowledgeStats().then(() => { dashboardSetInterval('knowledge-stats', fetchKnowledgeStats, KB_POLL_MS); })],
-          ['audit-log', () => fetchAuditLog().then(() => { dashboardSetInterval('audit-log', fetchAuditLog, AUDIT_POLL_MS); })],
+          ['audit-log', () => fetchAuditLog().then(() => { dashboardSetInterval('audit-log', auditPollTick, AUDIT_POLL_MS); })],
           ['review-queue', () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); })],
           ['review-pipeline', () => fetchReviewPipeline().then(() => { dashboardSetInterval('review-pipeline', fetchReviewPipeline, REVIEW_PIPELINE_POLL_MS); })],
           ['stage-tracker', () => fetchStageTracker().then(() => { dashboardSetInterval('stage-tracker', fetchStageTracker, STAGE_TRACKER_POLL_MS); })],

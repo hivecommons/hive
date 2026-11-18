@@ -290,6 +290,7 @@
     .audit-filter-chip[aria-pressed="false"] { border-color: var(--line-subtle); background: color-mix(in srgb, var(--surface-2) 70%, transparent); color: var(--muted); }
     .audit-entry-sensitive { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--yellow) 72%, transparent); background: color-mix(in srgb, var(--yellow) 7%, transparent); }
     .audit-entry-sensitive-tag { display: inline-flex; align-items: center; margin-left: var(--sp-2); padding: 0 var(--sp-2); min-height: 16px; border: 1px solid color-mix(in srgb, var(--yellow) 48%, transparent); border-radius: var(--r-pill); background: color-mix(in srgb, var(--yellow) 13%, transparent); color: var(--yellow); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: middle; }
+    .audit-entry-history { margin-left: var(--sp-2); color: var(--accent); font-size: var(--fs-2xs); font-weight: 600; cursor: pointer; text-decoration: underline; }
     .audit-entry-delegated-tag { border-color: color-mix(in srgb, var(--accent) 48%, transparent); background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); }
     .dash-card .section-label, .dash-card .token-title, .dash-card .cost-title, .dash-card .gov-title { margin: 0; }
     .section-group-header {

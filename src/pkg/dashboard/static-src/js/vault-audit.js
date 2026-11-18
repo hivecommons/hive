@@ -119,6 +119,11 @@
     var _auditSensitiveOnly = false;
     var _auditRelayOnly = false;
     var _auditPendingSensitiveScroll = false;
+    // Server-side filters (GET /api/audit repo/number/action/since/
+    // contributor): searched over every retained audit file before the
+    // 200-row cap, unlike the search box, which narrows the loaded page.
+    var _auditServerFilters = {};
+    var _auditServerMeta = null;
     function auditPanelSavedHeight() {
       const n = Number(localStorage.getItem(AUDIT_PANEL_HEIGHT_KEY));
       return Number.isFinite(n) && n >= 320 ? Math.min(n, Math.round(window.innerHeight * 0.8)) : AUDIT_PANEL_DEFAULT_HEIGHT;
@@ -165,10 +170,11 @@
       }
       var sensitiveTag = sensitive ? '<span class="audit-entry-sensitive-tag" title="Server-classified sensitive audit action">sensitive</span>' : '';
       var delegatedTag = auditDelegatedDecision(e) ? '<span class="audit-entry-sensitive-tag audit-entry-delegated-tag" title="Decided by the hive as the owner\'s delegate (owner-delegate policy), not by a person">delegated</span>' : '';
+      var historyLink = auditEntryHistoryLink(e);
       return '<tr class="audit-entry' + (sensitive ? ' audit-entry-sensitive' : '') + '" data-audit-sensitive="' + (sensitive ? '1' : '0') + '" style="border-bottom:1px solid var(--terminal-line)">' +
         '<td style="padding:var(--sp-2) var(--sp-4);white-space:nowrap;color:var(--terminal-muted)">' + timeStr + '</td>' +
         '<td class="py-2-px-4" title="' + esc(actor) + '">' + face + esc(actorLabel || '—') + '</td>' +
-        '<td style="padding:var(--sp-2) var(--sp-4);font-weight:600">' + esc(e.action||'—') + sensitiveTag + delegatedTag + '</td>' +
+        '<td style="padding:var(--sp-2) var(--sp-4);font-weight:600">' + esc(e.action||'—') + sensitiveTag + delegatedTag + historyLink + '</td>' +
         '<td class="py-2-px-4">' + esc(e.agent||'—') + '</td>' +
         '<td style="padding:var(--sp-2) var(--sp-4);color:var(--terminal-muted)">' + esc(e.detail||'') + '</td>' +
         '</tr>';
@@ -189,6 +195,140 @@
       morphInnerHtml(panel, '<table style="width:100%;border-collapse:collapse;font-size:0.78rem">' +
         '<thead><tr style="color:var(--terminal-muted);font-size:0.7rem;border-bottom:1px solid var(--terminal-line)"><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Time</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">User</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Action</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Agent</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Details</th></tr></thead>' +
         '<tbody>' + entries.map(renderAuditRow).join('') + '</tbody></table>');
+    }
+
+    // Pure: a "history" link on an entry that names an issue or PR, so a
+    // merged or closed item's history is one click from its audit row.
+    function auditEntryHistoryLink(e) {
+      var repo = String((e && e.repo) || '').trim();
+      var n = Number(e && e.target) || 0;
+      if (!repo || n <= 0) return '';
+      return ' <a class="audit-entry-history" role="button" tabindex="0" data-action="openAuditItemHistory" data-arg0="' + esc(repo) + '" data-arg1="' + esc(String(n)) + '" data-arg-types="s,j" data-keydown-action="openAuditItemHistory" data-keys="Enter, " data-stop="1" title="Everything the hive recorded about ' + esc(repo) + '#' + esc(String(n)) + '">history</a>';
+    }
+
+    // Pure: the GET /api/audit query string for the server-side filters
+    // and the sensitive chip ('' when none apply).
+    function auditServerQueryString(filters, sensitiveOnly) {
+      var p = [];
+      var f = filters || {};
+      ['repo', 'number', 'action', 'contributor', 'since'].forEach(function(k) {
+        var v = String(f[k] == null ? '' : f[k]).trim();
+        if (v) p.push(k + '=' + encodeURIComponent(v));
+      });
+      if (sensitiveOnly) p.push('sensitive=1');
+      return p.length ? '?' + p.join('&') : '';
+    }
+
+    // Pure: whether the filters ask the server to scan every retained audit
+    // file (repo, number, action or since). Such a view is a query: the
+    // section's 30s poll skips it, and it re-runs when the filters change.
+    function auditServerScanActive(filters) {
+      var f = filters || {};
+      return ['repo', 'number', 'action', 'since'].some(function(k) {
+        return String(f[k] == null ? '' : f[k]).trim() !== '';
+      });
+    }
+
+    // The Audit Log section's poll: a scanning query is not re-run every
+    // AUDIT_POLL_MS, since each run decompresses the rotated files.
+    function auditPollTick() {
+      if (auditServerScanActive(_auditServerFilters)) return Promise.resolve();
+      return fetchAuditLog();
+    }
+
+    // Pure: the match note the count shows for a server-filtered page.
+    function auditServerMatchNote(meta) {
+      if (!meta || !meta.active) return '';
+      var matched = Number(meta.matched) || 0;
+      return ' · ' + matched + ' matched' + (meta.truncated ? ' (newest ' + (Number(meta.shown) || 0) + ' shown)' : '') + (meta.scanned === 'ring' ? ' · recent only' : '');
+    }
+
+    function readAuditServerFilterInputs() {
+      var get = function(id) { var el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+      return { repo: get('audit-filter-repo'), number: get('audit-filter-number'), action: get('audit-filter-action'), contributor: get('audit-filter-contributor'), since: get('audit-filter-since') };
+    }
+
+    function syncAuditItemHistoryButton() {
+      var btn = document.getElementById('audit-item-history-btn');
+      if (!btn) return;
+      var f = _auditServerFilters || {};
+      btn.hidden = !(String(f.repo || '').trim() && Number(f.number) > 0);
+    }
+
+    function applyAuditServerFilters() {
+      var f = readAuditServerFilterInputs();
+      if (f.number && !(Number(f.number) > 0)) { if (typeof showToast === 'function') showToast('Number must be a positive integer', 'error'); return; }
+      _auditServerFilters = f;
+      syncAuditItemHistoryButton();
+      fetchAuditLog();
+    }
+
+    function clearAuditServerFilters() {
+      ['audit-filter-repo', 'audit-filter-number', 'audit-filter-action', 'audit-filter-contributor', 'audit-filter-since'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      _auditServerFilters = {};
+      syncAuditItemHistoryButton();
+      fetchAuditLog();
+    }
+
+    function openAuditItemHistoryFromFilters() {
+      var f = _auditServerFilters || {};
+      if (String(f.repo || '').trim() && Number(f.number) > 0) openAuditItemHistory(String(f.repo).trim(), Number(f.number));
+    }
+
+    // Pure: the item history dialog's body for a GET /api/audit/item answer.
+    function auditItemHistoryHtml(h) {
+      h = h || {};
+      var facts = [];
+      var state = String(h.state || 'unknown');
+      facts.push('<b>State:</b> ' + esc(state));
+      if (h.merged) {
+        var m = h.merged;
+        var by = String(m.merged_by || '').trim();
+        facts.push('<b>Merged</b> ' + esc(m.merged_at ? formatDashboardDateTime(new Date(m.merged_at)) : '') + (by ? ' ' + esc(by === 'hive' ? 'by the hive' : 'by @' + by) : ' (merger not recorded)') + (m.lane ? ' · lane ' + esc(String(m.lane)) : ''));
+      }
+      if (h.tracker) {
+        var t = h.tracker;
+        facts.push('<b>Activity monitor:</b> ' + esc(String(t.stage_label || ('stage ' + (t.stage || '')))) + (t.reason ? ' — ' + esc(String(t.reason)) : ''));
+      }
+      if (h.closed && h.closed.closed_at) facts.push('<b>Closed</b> ' + esc(formatDashboardDateTime(new Date(h.closed.closed_at))));
+      if (Number(h.linked_issue) > 0) facts.push('<b>Linked issue:</b> #' + esc(String(h.linked_issue)) + ' (its rows are included)');
+      var entries = Array.isArray(h.entries) ? h.entries : [];
+      var note = entries.length + ' audit entr' + (entries.length === 1 ? 'y' : 'ies') + (h.truncated ? ' (newest shown; more exist)' : '') + (h.scanned === 'ring' ? ' · this hive keeps no audit files, so only recent entries are searched' : '');
+      var table = entries.length
+        ? '<table style="width:100%;border-collapse:collapse;font-size:0.78rem"><thead><tr style="color:var(--terminal-muted);font-size:0.7rem;border-bottom:1px solid var(--terminal-line)"><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Time</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">User</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Action</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Agent</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Details</th></tr></thead><tbody>' + entries.map(renderAuditRow).join('') + '</tbody></table>'
+        : '<div style="color:var(--terminal-muted);padding:var(--sp-4)">The hive recorded no audit entries for this item.</div>';
+      return '<div class="audit-item-history-facts">' + facts.map(function(f) { return '<div>' + f + '</div>'; }).join('') + '</div>' +
+        '<div class="audit-item-history-note" style="color:var(--terminal-muted);font-size:0.75rem;margin:var(--sp-3) 0">' + esc(note) + '</div>' + table;
+    }
+
+    // Opens the item history dialog (GET /api/audit/item) for repo#number,
+    // open or closed: its audit rows, its merged-ledger entry and its
+    // Activity monitor row. The admin MCP's item_history_read reads the same.
+    async function openAuditItemHistory(repo, number) {
+      repo = String(repo || '').trim();
+      number = Number(number) || 0;
+      if (!repo || number <= 0) return;
+      var overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      if (typeof hiveRememberModalOpen === 'function') hiveRememberModalOpen(overlay);
+      overlay.innerHTML = '<div class="hive-dialog audit-item-history-dialog" role="dialog" aria-modal="true" aria-labelledby="audit-item-history-title" style="max-width:min(960px,96vw);width:96vw">' +
+        '<div id="audit-item-history-title" class="hive-dialog-title">History of ' + esc(repo) + '#' + esc(String(number)) + '</div>' +
+        '<div class="hive-dialog-body long modal-scroll audit-item-history-body"><div class="loading">Loading…</div></div>' +
+        '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Close</button></div></div>';
+      document.body.appendChild(overlay);
+      hiveWireDialog(overlay, function() {}, undefined, '.primary', null, function(close) { close(); });
+      var body = overlay.querySelector('.audit-item-history-body');
+      try {
+        var resp = await fetch('/api/audit/item?repo=' + encodeURIComponent(repo) + '&number=' + encodeURIComponent(String(number)));
+        if (!resp.ok) { if (body) body.textContent = resp.status === 403 ? 'Item history needs the read-write role.' : 'Could not load the item history (HTTP ' + resp.status + ').'; return; }
+        var data = await resp.json();
+        if (body) body.innerHTML = auditItemHistoryHtml(data);
+      } catch(e) {
+        if (body) body.textContent = 'Could not load the item history.';
+      }
     }
 
     function parseAuditQuery(q) {
@@ -222,7 +362,7 @@
       var base = _auditRelayOnly ? _auditEntries.filter(auditEntryIsRelay) : _auditEntries;
       if (!raw) {
         renderAuditTable(base);
-        if (countEl) countEl.textContent = base.length ? (_auditSensitiveOnly ? base.length + ' sensitive / 24h' : base.length + (_auditRelayOnly ? ' relay_ entries' : ' entries')) : '';
+        if (countEl) countEl.textContent = (base.length ? (_auditSensitiveOnly ? base.length + ' sensitive / 24h' : base.length + (_auditRelayOnly ? ' relay_ entries' : ' entries')) : '') + auditServerMatchNote(_auditServerMeta);
         scrollPendingAuditSensitiveEntry();
         return;
       }
@@ -235,7 +375,7 @@
         return terms.some(function(t) { return lower.includes(t); });
       });
       renderAuditTable(filtered);
-      if (countEl) countEl.textContent = filtered.length + ' / ' + base.length + (_auditSensitiveOnly ? ' sensitive / 24h' : '') + (_auditRelayOnly ? ' relay_' : '');
+      if (countEl) countEl.textContent = filtered.length + ' / ' + base.length + (_auditSensitiveOnly ? ' sensitive / 24h' : '') + (_auditRelayOnly ? ' relay_' : '') + auditServerMatchNote(_auditServerMeta);
       scrollPendingAuditSensitiveEntry();
     }
 
@@ -304,10 +444,18 @@
 
     async function fetchAuditLog() {
       try {
-        var resp = await fetch('/api/audit' + (_auditSensitiveOnly ? '?sensitive=1' : ''));
-        if (!resp.ok) return;
+        var resp = await fetch('/api/audit' + auditServerQueryString(_auditServerFilters, _auditSensitiveOnly));
+        if (!resp.ok) {
+          if (resp.status === 400 && typeof showToast === 'function') {
+            var msg = '';
+            try { msg = ((await resp.json()) || {}).error || ''; } catch(_) {}
+            showToast('Audit filter: ' + (msg || 'invalid filter'), 'error');
+          }
+          return;
+        }
         var data = await resp.json();
         _auditEntries = capDashboardArray(data.entries || [], DASHBOARD_LOG_CAP);
+        _auditServerMeta = data.matched != null ? { active: true, matched: data.matched, truncated: !!data.truncated, shown: (data.entries || []).length, scanned: data.scanned || '' } : null;
         _auditSummary = {
           histogram: Array.isArray(data.histogram) ? data.histogram : [],
           sensitive_24h: Number(data.sensitive_24h) || 0,
