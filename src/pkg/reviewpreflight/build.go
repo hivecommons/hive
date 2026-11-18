@@ -25,6 +25,9 @@ type Input struct {
 	TreeKnown  bool
 	Files      []ChangedFile
 	FilesKnown bool
+	// Read returns a file's contents at Ref so discovery can follow the
+	// references in the repository's entry files. nil lists entry files only.
+	Read DocReader
 }
 
 func ecosystemByID(id string) (Ecosystem, bool) {
@@ -43,7 +46,11 @@ func Build(ctx context.Context, c *Client, set config.ReviewPreflightResolved, i
 	if set.RuleDocs || len(set.Rules) > 0 {
 		var sel RuleDocSelection
 		if set.RuleDocs && in.TreeKnown {
-			sel = SelectRuleDocs(in.Tree, set.RuleDocPatterns, set.RuleDocExclude, set.RuleDocBudgetBytes)
+			if len(set.RuleDocOverride) > 0 {
+				sel = SelectRuleDocs(in.Tree, set.RuleDocOverride, set.RuleDocExclude, set.RuleDocBudgetBytes)
+			} else {
+				sel = DiscoverRuleDocs(ctx, in.Repo, in.Tree, in.Read, set.RuleDocExclude, set.RuleDocBudgetBytes)
+			}
 		}
 		b.WriteString(renderRules(in.Repo, in.Ref, set, sel, in.TreeKnown))
 	}
@@ -115,7 +122,7 @@ func dependencySection(ctx context.Context, c *Client, set config.ReviewPrefligh
 		if set.Vulnerabilities {
 			unavailable = append(unavailable, c.checkVulnerabilities(total, set, results, now)...)
 		}
-		if set.ReleaseAge && set.MinReleaseAgeDays > 0 {
+		if set.ReleaseAge {
 			unavailable = append(unavailable, c.checkReleaseAge(total, set, results)...)
 		}
 	}
@@ -333,8 +340,8 @@ func renderDeps(set config.ReviewPreflightResolved, results []depResult, notChec
 		if !r.published.IsZero() {
 			age := int(now.Sub(r.published).Hours() / hoursPerDay)
 			s := fmt.Sprintf("published %s (%d days ago)", r.published.Format(config.ReviewPreflightDateLayout), age)
-			if age < set.MinReleaseAgeDays && !ageIgnored(set.Ignore, d.Name, now) {
-				s += fmt.Sprintf(", inside the %d day release-age window", set.MinReleaseAgeDays)
+			if set.MinReleaseAgeDays > 0 && age < set.MinReleaseAgeDays && !ageIgnored(set.Ignore, d.Name, now) {
+				s += fmt.Sprintf(", younger than the %d day minimum release age declared in this hive's config", set.MinReleaseAgeDays)
 			}
 			parts = append(parts, s)
 		}
@@ -351,8 +358,12 @@ func renderDeps(set config.ReviewPreflightResolved, results []depResult, notChec
 	}
 	b.WriteString("How to use this: report a vulnerable dependency only for an advisory id listed above, and cite the id. ")
 	fmt.Fprintf(&b, "An advisory at or above %s is an in-scope finding (changes_requested); a lower one is an info or low note. ", set.BlockSeverity)
-	if set.MinReleaseAgeDays > 0 {
-		b.WriteString("A version inside the release-age window is a low or info supply-chain note with the publish date cited; never block on age alone. ")
+	if set.ReleaseAge {
+		if set.MinReleaseAgeDays > 0 {
+			fmt.Fprintf(&b, "This hive's config declares a minimum release age of %d days for this repository (min_release_age_days): a version marked younger than that is a finding under that policy; cite the policy and the publish date. ", set.MinReleaseAgeDays)
+		} else {
+			b.WriteString("Publish dates are facts, not verdicts: this hive declares no release-age policy, so do not call a version too new or old enough on its age alone. If the repository's own documents state a release-age policy, apply it and quote it; otherwise mention a publish date only where it bears on another finding. ")
+		}
 	}
 	b.WriteString("A line saying not checked or could not check means no data, not a clean result: say so rather than calling the dependency safe. Do not invent advisories or ages that are not listed.\n")
 	return b.String()
