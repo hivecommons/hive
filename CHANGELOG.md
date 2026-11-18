@@ -11,6 +11,36 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.320.4)
+
+### Fixed
+
+- Startup no longer reports "failed to start agent" (and a self-report issue) when an agent is already running or launching by the time its startup launch runs ([#18936](https://github.com/hivecommons/hive/issues/18936)).
+
+## 2026-11-18 (v5.320.3)
+
+### Fixed
+
+- Switching the model or method of a configured agent that is stopped, paused or not in the runtime no longer fails with "Model switch failed: agent <name> not found": the choice is saved to both config layers without restarting the agent and the dashboard says "saved; applies when <agent> starts", while a genuinely unknown agent still fails and lists the valid names; and switching an agent's method, model or reasoning effort no longer scrolls the dashboard away from that agent, drops focus from the dropdown used, or re-sorts the cards. (#18905, #18906).
+
+## 2026-11-18 (v5.320.2)
+
+### Fixed
+
+- The sandbox GitHub read relay now stops serving a connection once its per-kick key is released: an intercepted GitHub tunnel refuses the next request with a 403, and an opaque tunnel to any other host is closed, instead of both working until the client hung up or an idle timeout fired ([#18895](https://github.com/hivecommons/hive/issues/18895)).
+- **The hive no longer adopts a contributor PR when a person's or the hive's own open PR already covers the issue.** On #18866 the hive adopted contributor PR #18870 as #18879 while the owner's #18873 for the same issue was open, and the dashboard then offered "Let hive decide" over two mid-CI PRs. Before adopting, the engine (the `AutoAdoption` executor) and the "Let hive decide" ladder (new rung `covered-by-other-pr`, just before the adopt rung) now look for another open PR on the same base branch that closes the same issue and is an owner's, an `author/human`'s, a collaborator's (not driving a clanker) or the hive's. If there is one the contributor PR is closed as a duplicate of it with a thank-you note that credits the contributor, the head records `covered-by-open-pr`, and the tracker row says why; a write-back gate refusal or failed close leaves it open with adoption still off. The hive's own copy of the PR, another contributor's PR, a PR on another release line and a duplicate the merge queue holds behind this one do not count, so "green first, then earlier-opened" only breaks ties between equal-trust PRs. With only a person's or hive agent's live claim on the issue (no PR yet) the ladder recommends leaving the PR open and names the holder. ([#18900](https://github.com/hivecommons/hive/issues/18900), part of [#18890](https://github.com/hivecommons/hive/issues/18890)).
+
+## 2026-11-18 (v5.320.1)
+
+### Changed
+
+- UI pull requests now carry render evidence ([#18915](https://github.com/hivecommons/hive/issues/18915)): when dashboard sources or assets change, a non-blocking job screenshots the affected pages with synthetic fixture data at desktop and phone width in light and dark themes, uploads them as a workflow artifact and keeps one sticky PR comment indexing them. Capture problems report as partial or neutral, never as a failed check. See `src/docs/ui-render-evidence.md`; the renders are fixtures, not live data.
+
+### Fixed
+
+- Stop offering Decide…, Approve as-is and Let hive decide on a PR whose CI is running or whose review is incomplete on its current head (#18889): the verbs stay on the row, disabled, with the reason (`mid_flight`: *CI running 2/5*, *review queued on abc1234*), and a park from an earlier head no longer counts after a push; `Let hive decide — all N PRs` skips the PRs still in flight; the server answers `no-effect` before any decider runs and the policy's `default-release` / `small-low-risk` now require CI that is not pending; and the row says why a PR with no linked issue is parked (`contributor-lane:no-linked-issue`) instead of a bare *decision*.
+- **An owner's claim now releases a live contributor lease and stops the contributor lane.** The ledger always ranked a person over a contributor, but a claim made outside it (the assignee an owner or maintainer sets, a `/claim` comment, `hive/claimed-by-human` applied by hand) never displaced one: on #18866 the owner claimed at 03:21Z and the contributor still opened #18870 at 03:32Z. The contributor claim's admission check now reads those signals (the operator dispatcher's `gh issue edit --add-assignee` plus a plain "Claimed; fix in progress." comment counts); a renewal that meets one releases the claim at once and the five-minute release tick catches the rest, with release reason `human claim: assigned by <login>`. The relay task is yanked (a disconnected relay's lease is revoked), the lane is handed other work, the person is recorded as the ledger holder, a fresh contributor claim is refused while the claim stands, and the hive no longer adopts a contributor PR for an issue a person holds (tracker row: "an owner or maintainer has claimed the issue"; stage record `human-claim`). `/claim` and `/unclaim` are documented in the maintainer commands. ([#18899](https://github.com/hivecommons/hive/issues/18899), part of [#18890](https://github.com/hivecommons/hive/issues/18890)).
+
 ## 2026-11-18 (v5.320.0)
 
 ### Added

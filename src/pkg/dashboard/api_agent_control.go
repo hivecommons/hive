@@ -3,6 +3,7 @@ package dashboard
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -316,14 +317,19 @@ func (s *Server) validateModelForAgent(name, model string) error {
 	if model == "" {
 		return fmt.Errorf("model must not be empty")
 	}
-	proc, err := s.deps.AgentMgr.GetStatus(name)
-	if err != nil || proc == nil {
-		// Agent lookup failures are reported by the caller's SetModelOverride.
+	var backend string
+	if proc, err := s.deps.AgentMgr.GetStatus(name); err == nil && proc != nil {
+		backend = proc.Config.Backend
+		if proc.BackendOverride != "" {
+			backend = proc.BackendOverride
+		}
+	} else if ac, ok := s.configuredAgent(name); ok {
+		// Configured but not instantiated in the runtime (stopped, paused or
+		// held back by the ACMM gate): validate against its saved backend.
+		backend = ac.Backend
+	} else {
+		// Unknown agents are reported by the caller.
 		return nil
-	}
-	backend := proc.Config.Backend
-	if proc.BackendOverride != "" {
-		backend = proc.BackendOverride
 	}
 
 	known := s.modelIDsForBackend(backend)
@@ -345,6 +351,61 @@ func (s *Server) validateModelForAgent(name, model string) error {
 		model, backend, strings.Join(known, ", "))
 }
 
+// runningAgentProcess returns the runtime's process for name, or nil when the
+// agent is not instantiated in the runtime. A configured agent can be absent
+// from the runtime (for example one held back by the ACMM level gate), so a nil
+// result does not mean the name is unknown: see configuredAgent.
+func (s *Server) runningAgentProcess(name string) *crux.Process {
+	proc, err := s.deps.AgentMgr.GetStatus(name)
+	if err != nil {
+		return nil
+	}
+	return proc
+}
+
+// configuredAgent looks name up in the saved configuration.
+func (s *Server) configuredAgent(name string) (config.AgentConfig, bool) {
+	if s.deps == nil || s.deps.Config == nil {
+		return config.AgentConfig{}, false
+	}
+	ac, ok := s.deps.Config.Agents[name]
+	return ac, ok
+}
+
+// agentHoldsNoSession reports whether proc is paused or stopped, so a model or
+// backend change is saved for the next start instead of restarting a session.
+func agentHoldsNoSession(proc *crux.Process) bool {
+	return proc != nil && (proc.Paused || proc.State == crux.StatePaused || proc.State == crux.StateStopped)
+}
+
+// unknownAgentMessage is the not-found error for a name that is neither running
+// nor configured, listing the valid names so a typo is fixable at a glance.
+func (s *Server) unknownAgentMessage(name string) string {
+	names := make([]string, 0)
+	if s.deps != nil && s.deps.Config != nil {
+		for n := range s.deps.Config.Agents {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return fmt.Sprintf("agent %s not found (valid agents: %s)", name, strings.Join(names, ", "))
+}
+
+// savedNotRunningResponse is the success body for a model or backend change
+// persisted for an agent that is not running. applied=false tells the client
+// that no session was restarted; message is shown to the operator verbatim.
+func savedNotRunningResponse(status, name, field, value string, minStatusSeq uint64) map[string]any {
+	return map[string]any{
+		"ok":           true,
+		"status":       status,
+		"applied":      false,
+		"agent":        name,
+		field:          value,
+		"message":      fmt.Sprintf("saved; applies when %s starts", name),
+		"minStatusSeq": minStatusSeq,
+	}
+}
+
 func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	// Owner-only, matching handleEffortSet: switching backends persists to
 	// hive.yaml, claims operator field-ownership, and restarts the agent (#6557).
@@ -353,6 +414,29 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	backend := sanitizeString(r.PathValue("backend"))
+
+	proc := s.runningAgentProcess(name)
+	if proc == nil {
+		// Configured but not instantiated in the runtime: persist the choice
+		// so it applies when the agent starts (#18905). Unknown names get the
+		// not-found error with the valid names.
+		if _, ok := s.configuredAgent(name); !ok {
+			jsonError(w, s.unknownAgentMessage(name), http.StatusBadRequest)
+			return
+		}
+		if backend != "" && !config.IsCLIBackend(backend) && !config.IsInferenceBackend(backend) &&
+			s.deps.Config.Governor.ResolveGateway(backend) == nil {
+			jsonError(w, fmt.Sprintf("unsupported backend %q (supported: %s; or the name of a configured model gateway)",
+				backend, strings.Join(config.SupportedBackends(), ", ")), http.StatusBadRequest)
+			return
+		}
+		s.claimAgentFieldOwnership(name, "", backend)
+		s.deps.Logger.Info("audit: backend saved for agent not running", "agent", name, "backend", backend, "trigger", "dashboard-api")
+		s.auditFromRequest(r, "switch_backend", auditDetail("backend", backend), name)
+		minStatusSeq := s.refreshAndPersistSeq()
+		jsonResponse(w, savedNotRunningResponse("backend_saved", name, "backend", backend, minStatusSeq))
+		return
+	}
 
 	if err := s.deps.AgentMgr.SetBackendOverride(name, backend); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -366,7 +450,14 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	s.deps.Logger.Info("audit: backend switched", "agent", name, "backend", backend, "trigger", "dashboard-api")
 	s.auditFromRequest(r, "switch_backend", auditDetail("backend", backend), name)
 
-	// Restart the agent session so the new backend takes effect immediately.
+	// Restart the agent session so the new backend takes effect immediately —
+	// unless the agent is stopped or paused, where a restart would be wrong:
+	// the saved choice applies when it next starts.
+	if agentHoldsNoSession(proc) {
+		minStatusSeq := s.refreshAndPersistSeq()
+		jsonResponse(w, savedNotRunningResponse("backend_saved", name, "backend", backend, minStatusSeq))
+		return
+	}
 	if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
 		s.deps.Logger.Warn("restart after backend switch failed", "agent", name, "error", err)
 	}
@@ -384,12 +475,32 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	model := sanitizeString(r.PathValue("model"))
 
+	proc := s.runningAgentProcess(name)
+	if proc == nil {
+		if _, ok := s.configuredAgent(name); !ok {
+			jsonError(w, s.unknownAgentMessage(name), http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Reject a model the effective backend cannot serve BEFORE storing it.
 	// Silently accepting an unusable value and then falling back at launch is
 	// what made this class of bug invisible: the grid showed the choice, the
 	// agent ran on something else, and the value appeared to "revert".
 	if err := s.validateModelForAgent(name, model); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if proc == nil {
+		// Configured but not instantiated in the runtime (stopped, paused or
+		// held back by the ACMM gate): persist the choice to both config
+		// layers so it applies when the agent starts (#18905).
+		s.claimAgentFieldOwnership(name, model, "")
+		s.deps.Logger.Info("audit: model saved for agent not running", "agent", name, "model", model, "trigger", "dashboard-api")
+		s.auditFromRequest(r, "set_model", auditDetail("model", model), name)
+		minStatusSeq := s.refreshAndPersistSeq()
+		jsonResponse(w, savedNotRunningResponse("model_saved", name, "model", model, minStatusSeq))
 		return
 	}
 
@@ -405,7 +516,14 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 	s.deps.Logger.Info("audit: model set", "agent", name, "model", model, "trigger", "dashboard-api")
 	s.auditFromRequest(r, "set_model", auditDetail("model", model), name)
 
-	// Restart the agent session so the new model takes effect immediately.
+	// Restart the agent session so the new model takes effect immediately —
+	// unless the agent is stopped or paused: the saved choice applies when it
+	// next starts, and a restart must not wake it.
+	if agentHoldsNoSession(proc) {
+		minStatusSeq := s.refreshAndPersistSeq()
+		jsonResponse(w, savedNotRunningResponse("model_saved", name, "model", model, minStatusSeq))
+		return
+	}
 	if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
 		s.deps.Logger.Warn("restart after model switch failed", "agent", name, "error", err)
 	}
