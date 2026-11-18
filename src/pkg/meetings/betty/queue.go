@@ -217,6 +217,7 @@ func (e *Engine) addressed(l Line, trig Trigger, now time.Time) {
 		// A spoken request with no question gets one clarifying question
 		// or a thought on the recent discussion; anything else, a hello.
 		if !l.Spoken || e.d.LLM == nil || e.exhausted.Load() || len(e.recent) < minThoughtLines {
+			e.listening(l, trig, now)
 			e.emit(Reply{Kind: replyKind(trig), Text: fallbackHello, Trigger: TriggerAddressed, Question: l.Text, VoiceWanted: trig.VoiceWanted,
 				Timing: fixedTiming(now)})
 			return
@@ -227,6 +228,7 @@ func (e *Engine) addressed(l Line, trig Trigger, now time.Time) {
 		e.budgetSkip(l, true)
 		return
 	}
+	e.listening(l, trig, now)
 	if q := trig.Clarify; q != "" {
 		// An unsure correction of what was heard: she asks which was meant
 		// instead of spending a model call on a guess.

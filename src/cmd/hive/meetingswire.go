@@ -339,6 +339,7 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 			model = betty.MeetLLM{Client: client, Config: mc}
 		}
 		settings := betty.SettingsFrom(persona)
+		settings.ListeningTone = cfg.Meetings.ListeningToneEnabled()
 		if llm.Backend == config.MeetingsLLMModeAgentBackend {
 			if m, ok := meetingCLIModel(llm, mc, mt.ID, logger); ok {
 				model = m

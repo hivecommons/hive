@@ -37,6 +37,9 @@ const (
 	TriggerAddressed = "addressed"
 	TriggerQuestion  = "question"
 	TriggerOffer     = "spek_offer"
+	// TriggerTone is not a line: it asks the session to play the listening
+	// tone (tone.go). It carries no text and is never recorded or charged.
+	TriggerTone = "tone"
 )
 
 // Reply is one thing the persona wants to say.
@@ -111,6 +114,10 @@ type Settings struct {
 	// fast answer comes with no filler and no request is acked twice. Zero
 	// acks at once (and allows early acks from partial lines).
 	AckDelay time.Duration
+	// ListeningTone asks the session for the soft chime when she was
+	// addressed by voice and will answer (meetings.listening_tone). Off in
+	// the zero value; the live wiring sets it from the config, default on.
+	ListeningTone bool
 }
 
 // Engine timing defaults beyond the persona config.
@@ -257,6 +264,8 @@ type Engine struct {
 	// lastAnswerAt is when she last answered anything (attribution.go).
 	queueNoteAt  time.Time
 	lastAnswerAt time.Time
+	// lastToneAt is when the last listening tone was asked for (tone.go).
+	lastToneAt time.Time
 }
 
 type timedLine struct {
@@ -502,7 +511,7 @@ func (e *Engine) emit(r Reply) bool {
 	}
 	select {
 	case e.out <- r:
-		if r.Trigger != TriggerAck && r.Trigger != TriggerQueue {
+		if r.Trigger != TriggerAck && r.Trigger != TriggerQueue && r.Trigger != TriggerTone {
 			e.lastAnswerAt = e.d.Now()
 		}
 		return true
