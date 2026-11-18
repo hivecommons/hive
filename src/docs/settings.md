@@ -44,7 +44,7 @@ Which labels hold, require, or route work, the label the merger queue applies to
 
 The repos the hive manages and the caps on how many issues and PRs are listed in one kick (`governor.kick_limits`). See the `governor.kick_limits` row of the [notable fields](operator-reference.md#notable-fields).
 
-The same tab has a **Parent auto-close** card (owner only, `repos.<key>.parent_autoclose`): per monitored repo, choose "Close finished parents (default)", "Also close epics and holds" or "Never auto-close parents". It shows the effective value for each repo, applies on save without a restart, and is audited. A parent a person reopened is never re-closed, and issues marked as tracking issues are never auto-closed. See [stage-labels](labels-and-control-signals/stage-labels.md#decomposed-parents--closed-by-their-children-never-stalled).
+The same tab has a **Parent auto-close** card (owner only, `repos.<key>.parent_autoclose`): per monitored repo, choose "Close finished parents (default)", "Also close epics and holds", "Also close trackers whose work is done" or "Never auto-close parents". It shows the effective value for each repo, applies on save without a restart, and is audited. A parent a person reopened is never re-closed, and issues marked as tracking issues are never auto-closed. See [stage-labels](labels-and-control-signals/stage-labels.md#decomposed-parents--closed-by-their-children-never-stalled).
 
 ## Budget
 
