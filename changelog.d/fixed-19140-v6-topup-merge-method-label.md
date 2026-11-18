@@ -1,1 +1,0 @@
-- Top-ups: the automated v5 to v6 top-up PR now carries the `tide/merge-method-merge` label, so Tide lands it as a merge commit and v6 keeps v5's history instead of a squash dropping it; the sync policy documents the label, the `-s ours` repair, and the post-merge ancestry check ([#19140](https://github.com/hivecommons/hive/issues/19140)).

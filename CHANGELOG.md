@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.329.0)
+
+### Added
+
+- Authorization decision seam, phase 0/1 (shadow mode, off by default, [#18988](https://github.com/hivecommons/hive/issues/18988)): a new `authz` package in the Crux module adds an in-process `authz.Decide(Request) Decision` evaluator that mirrors one existing decision, the push broker's changed-files guard (empty push, then protected paths). With `HIVE_AUTHZ_SHADOW=true` (stream size `HIVE_AUTHZ_SHADOW_BUFFER`, default 1000), each time the guard decides the evaluator is run too, one versioned decision event (attributes only, never payloads, paths or credentials) is kept on its own bounded in-memory stream, and a difference from the guard is logged as a divergence. It enforces nothing and changes no behaviour, on or off; with the variable unset nothing is recorded. Parity tests replay the push broker's existing cases through the seam. The design record's phase status and the security model are updated.
+
+### Fixed
+
+- After a review-feedback kick that carried captured reviewer rules, the sweep now checks the agent's reply names each rule id and, when it does not (or no reply arrives within 6 hours), logs it and posts one needs-human note on the PR ([#19048](https://github.com/hivecommons/hive/issues/19048)).
+- Top-ups: the automated v5 to v6 top-up PR now carries the `tide/merge-method-merge` label, so Tide lands it as a merge commit and v6 keeps v5's history instead of a squash dropping it; the sync policy documents the label, the `-s ours` repair, and the post-merge ancestry check ([#19140](https://github.com/hivecommons/hive/issues/19140)).
+
 ## 2026-11-18 (v5.328.1)
 
 ### Changed
