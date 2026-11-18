@@ -307,3 +307,52 @@ func TestBuildBrief_TruncatesLongBodiesAndShowsThreadlessInlineItem(t *testing.T
 		t.Fatal("thread header must carry path:line and message url")
 	}
 }
+
+func TestCheckReply(t *testing.T) {
+	kicked := time.Now().Add(-time.Hour)
+	p := PendingReply{RuleIDs: []string{"R-3"}, KickedAt: kicked}
+	reply := func(body string, at time.Time) []github.FeedbackMessage {
+		return []github.FeedbackMessage{{ID: "conversation:1", Body: body, CreatedAt: at}}
+	}
+	cases := []struct {
+		name    string
+		replies []github.FeedbackMessage
+		now     time.Time
+		want    string
+	}{
+		{"names the rule", reply("Captured as R-3.", kicked.Add(time.Minute)), time.Now(), ReplyOK},
+		{"names another rule", reply("Captured as R-30.", kicked.Add(time.Minute)), time.Now(), ReplyMissing},
+		{"does not name it", reply("Fixed.", kicked.Add(time.Minute)), time.Now(), ReplyMissing},
+		{"older reply does not count", reply("R-3", kicked.Add(-time.Minute)), time.Now(), ReplyWaiting},
+		{"no reply within grace", nil, time.Now(), ReplyWaiting},
+		{"no reply after grace", nil, kicked.Add(ReplyGrace + time.Minute), ReplyMissing},
+	}
+	for _, tc := range cases {
+		if got, _ := CheckReply(p, tc.replies, tc.now); got != tc.want {
+			t.Errorf("%s: verdict = %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestStorePendingReplyPersistsAndMerges(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	now := time.Now()
+	if err := s.RecordPendingReply("o/r#1", []string{"R-2"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordPendingReply("o/r#1", []string{"R-1"}, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	s2, _ := Open(dir)
+	p, ok := s2.PendingReplyFor("o/r#1")
+	if !ok || strings.Join(p.RuleIDs, ",") != "R-1,R-2" {
+		t.Fatalf("pending = %+v ok=%v", p, ok)
+	}
+	if err := s2.ClearPendingReply("o/r#1", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s2.PendingReplyFor("o/r#1"); ok {
+		t.Fatal("pending not cleared")
+	}
+}

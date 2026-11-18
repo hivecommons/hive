@@ -1,1 +1,0 @@
-- Apply per-agent repository scope to attributable GitHub GraphQL mutations, including node-ID writes resolved from earlier GitHub responses, with the same denial as REST. Queries stay unrestricted; unresolved mutations retain existing gates for compatibility with normal `gh` flows ([#19058](https://github.com/hivecommons/hive/issues/19058)).

@@ -1,0 +1,1 @@
+- Meetings: the bundled Quorum is now v0.6.0, which adds the listening chime on Discord and hands it to the desktop companion ([quorum#51](https://github.com/hivecommons/quorum/pull/51), [quorum#52](https://github.com/hivecommons/quorum/pull/52), [#19116](https://github.com/hivecommons/hive/pull/19116)).
