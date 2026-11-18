@@ -825,6 +825,21 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    (default 6h) is folded into the comment too; after the cooldown it
    counts as a fresh nudge. The ledger lives in the stage-label store, so
    a restart does not re-nudge.
+   One outcome per head (hivecommons/hive#18872): a head the hive adopts
+   anyway gets **no** "back in your court" comment. When the author's relay
+   is offline or not registered here (live presence is known), adoption is
+   enabled and nothing blocks it (no hold label, no fork guard, no workflow
+   path, `maintainer_policy: adopt`), the `AutoAdoption` clock will adopt the
+   head regardless of what the author does next, so the nudge is only
+   *recorded* (the clock starts on it, the relay still receives its
+   `fix-pr` task) and the adoption note is the author's one notification.
+   An author whose relay is online keeps the nudge and the full online grace
+   (`contributor_grace_online`); a withheld nudge is posted as soon as the
+   adoption stops being certain (the relay reconnects, the adoption is held
+   or blocked). The operator's "Let hive decide" ladder agrees: rung 5
+   (`contributor-offline`, supersede now) only fires for an author who is not
+   reachable, the same condition. This follows the documented rule that a
+   contributor who has gone quiet is superseded now (#13975).
 2. Relay contributors (the author has a contributor profile and a live relay
    connection) also receive the diagnosis in their relay session as a
    `fix-pr` task with `priority: interrupt`. Presence = a relay heartbeat
