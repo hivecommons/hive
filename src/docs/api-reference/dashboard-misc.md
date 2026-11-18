@@ -39,6 +39,18 @@ filters or routing. Consumers must not turn either display field into a gate.
 The monitor renders CI and Review concurrently on one shared PR row; see
 [Reading the tracks](../streaming-the-activity-monitor.md#reading-the-tracks).
 
+Every open PR row (and each `linked_prs[]` entry) whose CURRENT head is still being
+checked also carries `mid_flight`: `{kind, text, head?, park?}`, `kind` one of
+`ci-running`, `review-in-progress`, `head-moved` (the CI / review on file belong to
+an earlier head). While it is set the decision options that rest on the head
+(`decide:delegate`, `decide:approve`, `decide:direction`) arrive in
+`decision_needed.options` with `enabled: false` and the reason, the SPA draws
+*Decide…*, *Approve as-is* and *Let hive decide* disabled, and
+`POST …/decide-delegated` answers `no-effect` (rule `mid-flight`, nothing
+written, `force` does not lift it). `park` is the plain reason the hive parked the
+PR when a person was asked for a decision. The field is absent on a PR whose CI and
+review are settled.
+
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
 | `GET` | `/api/audit` | Read-write role | Audit Log — `{"entries": [...]}` envelope, newest first, capped at 200; response shape and the serve-time `user_name` field in [audit-log.md](../audit-log.md#get-apiaudit) | `pkg/dashboard/api.go:63` |
