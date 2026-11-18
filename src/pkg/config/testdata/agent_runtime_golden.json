@@ -783,7 +783,8 @@
     "grounded_answers": {}
   },
   "customers": {
-    "inference": {}
+    "inference": {},
+    "avatars": {}
   },
   "duplicate_sweep": {},
   "good_first_issue": {},
