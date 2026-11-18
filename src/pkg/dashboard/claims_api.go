@@ -80,6 +80,7 @@ func (s *Server) InstallClaimHooks(base claims.Hooks) {
 		if prevReleased != nil {
 			prevReleased(c, reason)
 		}
+		s.contributorReleasedForHumanClaim(c, reason)
 	}
 	base.OnTakenOver = func(now, previous claims.Claim) {
 		s.integrationRelease(previous.Key(), previous.Holder, uint64(previous.ClaimedAt.UnixNano()), "claim takeover")
@@ -121,6 +122,38 @@ func (s *Server) preemptDisplacedHolder(now, previous claims.Claim) {
 		"by", now.Holder, "by_kind", now.Kind, "released", released, "reassigned_to", next)
 	s.AuditLog(now.Holder, "claim_preempt", fmt.Sprintf("%s taken from %s (%s); released=%d next=%s",
 		previous.Key(), previous.Holder, previous.Kind, released, next), "")
+}
+
+// contributorReleasedForHumanClaim is the "a person claimed it" half of the
+// precedence rule (hivecommons/hive#18899). The admission check refuses a
+// contributor on an issue an owner or maintainer claimed outside the ledger
+// (assignee, `/claim` comment, hand-applied hive/claimed-by-human), the
+// release tick or the next lease renewal then drops the contributor claim
+// with claims.HumanClaimReason, and this hook does what a takeover does for
+// a displaced contributor: yank the relay task (or revoke a disconnected
+// relay's lease) so the lane stops, and record the person's claim in the
+// ledger so every other producer sees it and the history says who. Any other
+// release reason is not this hook's.
+func (s *Server) contributorReleasedForHumanClaim(c claims.Claim, reason string) {
+	login, ok := claims.ParseHumanClaimReason(reason)
+	if !ok || c.Kind != claims.KindContributor {
+		return
+	}
+	released := 0
+	if s.contributeHub != nil && c.HolderID != "" {
+		released, _ = s.contributeHub.PreemptContributorIssue(c.HolderID, c.Repo, c.Issue, "preempted: "+reason)
+		if released == 0 {
+			s.contributeHub.revokeLeaseForKey(c.HolderID, c.Key())
+		}
+	}
+	if l := s.claimsLedger(); l != nil {
+		if _, err := l.Claim(claims.Request{Repo: c.Repo, Issue: c.Issue, Holder: login, Kind: claims.KindHuman}); err != nil {
+			s.logger.Warn("[claims] human claim not recorded after releasing a contributor", "issue", c.Key(), "by", login, "error", err)
+		}
+	}
+	s.logger.Info("[claims] contributor lease released: a person claimed the issue",
+		"issue", c.Key(), "holder", c.Holder, "holder_id", c.HolderID, "by", login, "reason", reason, "yanked", released)
+	s.AuditLog(login, "claim_preempt", fmt.Sprintf("%s released from %s (%s): %s; yanked=%d", c.Key(), c.Holder, c.Kind, reason, released), "")
 }
 
 // claimIssueForContributor records a contributor claim after the relay has
@@ -172,9 +205,21 @@ func (h *ContributeWSHub) renewClaimForLease(identity, repo string, number int) 
 	if !ok || c.HolderID != identity {
 		return
 	}
-	if _, err := l.Claim(claims.Request{Repo: c.Repo, Issue: c.Issue, Holder: c.Holder, HolderID: c.HolderID,
-		Kind: c.Kind, Session: c.Session, Tier: c.Tier, Verified: c.Verified}); err != nil {
+	res, err := l.Claim(claims.Request{Repo: c.Repo, Issue: c.Issue, Holder: c.Holder, HolderID: c.HolderID,
+		Kind: c.Kind, Session: c.Session, Tier: c.Tier, Verified: c.Verified})
+	if err != nil {
 		h.logger.Warn("[claims] contributor claim not renewed", "issue", c.Key(), "holder", c.Holder, "error", err)
+		return
+	}
+	// The renewal's admission check found a person's claim (hivecommons/hive#18899):
+	// release the contributor now rather than wait for the release tick. Off
+	// this goroutine: renewal runs inside the progress handler and the yank
+	// takes the connection locks.
+	if res.Outcome == claims.OutcomeRefused {
+		if _, human := claims.ParseHumanClaimReason(res.Reason); human {
+			reason, holderID, key := res.Reason, c.HolderID, c.Key()
+			go l.ReleaseByHolderID(holderID, reason, key)
+		}
 	}
 }
 
