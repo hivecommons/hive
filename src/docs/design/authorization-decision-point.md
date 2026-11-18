@@ -133,30 +133,30 @@ leaves no per-decision record** beyond the write counters.
 
 ### B. The push broker
 
-`Broker.Run` (`src/crux/pushbroker/pushbroker.go:168-292`) runs a fixed
+`Broker.Run` (`src/crux/pushbroker/pushbroker.go:174-300`) runs a fixed
 sequence, each step an early return through `fail`
-(`src/crux/pushbroker/pushbroker.go:597-604`), which logs and returns the error:
+(`src/crux/pushbroker/pushbroker.go:603-610`), which logs and returns the error:
 
-1. required fields (`validate`, `:296`);
-2. hostile workspace config (`:175`, `src/crux/pushbroker/workspace_config.go:111`);
-3. empty outgoing commits (`:183`);
-4. fast-forward against remote and base (`:189-197`);
-5. descend-from-lease when updating an existing PR branch (`:199`);
-6. forged lane sign-off (`:203`, `:432`);
-7. changed-files guard: empty push, then protected paths (`:207`,
-   `src/crux/pushbroker/protected.go:13-27`);
-8. outgoing-diff secret scan (`:238`);
-9. mint token (`:242`), then push inside `effects.Execute` with
-   `Kind: KindBranchPush` (`:277-282`).
+1. required fields (`validate`, `:302`);
+2. hostile workspace config (`:181`, `src/crux/pushbroker/workspace_config.go:111`);
+3. empty outgoing commits (`:189`);
+4. fast-forward against remote and base (`:195-203`);
+5. descend-from-lease when updating an existing PR branch (`:205`);
+6. forged lane sign-off (`:209`, `:438`);
+7. changed-files guard: empty push, then protected paths (`:213`,
+   `src/crux/pushbroker/protected.go:15-33`);
+8. outgoing-diff secret scan (`:244`);
+9. mint token (`:248`), then push inside `effects.Execute` with
+   `Kind: KindBranchPush` (`:283-288`).
 
 The protected-path list is `DefaultProtectedPaths`
-(`src/crux/pushbroker/pushbroker.go:28-36`). `Broker.ProtectedPaths` overrides
-it per call (`:128`, `src/crux/pushbroker/protected.go:29-34`), but the only
+(`src/crux/pushbroker/pushbroker.go:29-37`). `Broker.ProtectedPaths` overrides
+it per call (`:129`, `src/crux/pushbroker/protected.go:54-59`), but the only
 production construction, `src/crux/agent/sandbox_executor.go:377-389`, does not
 set it, and a grep found no config key feeding it. So the list is effectively a
 code constant today. **(unverified outside the files searched.)**
 
-The broker records a `Result` (`src/crux/pushbroker/pushbroker.go:150-166`)
+The broker records a `Result` (`src/crux/pushbroker/pushbroker.go:156-172`)
 with `ProtectedReject`, `SecretRejected` and `Error`. It carries no rule id, no
 policy version and no credential descriptor. The `effects.Claim` it submits has
 an `Actor` field (`src/crux/effects/effects.go:182-188`) that the broker leaves
@@ -213,7 +213,7 @@ refusals as well as its successes is **unverified**.
   repositories (`src/pkg/github/app.go:291-345`, `:440-444`). The
   `contributor` tier carries issues, contents and pull-requests write
   (`src/pkg/github/app.go:331-337`). The broker uses `DefaultTier = "contributor"`
-  (`src/crux/pushbroker/pushbroker.go:25`), so a push token also carries issue
+  (`src/crux/pushbroker/pushbroker.go:26`), so a push token also carries issue
   and PR write that a push does not need.
 - **Callback mint.** `MintToken` returns a response with an `ExpiresAt` for
   the minted token (`src/pkg/cruxhost/cruxhost.go:220-241`). The relation
