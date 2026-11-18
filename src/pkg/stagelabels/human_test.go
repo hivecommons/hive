@@ -1044,3 +1044,43 @@ func TestRequiresHumanReasons(t *testing.T) {
 		t.Fatalf("RouteHuman reasons = %q, want %q", r.Reasons, want)
 	}
 }
+
+// On a repository listed in auto_merge.human_merge_owner_approval the 085
+// actions for a human-merge path ask for the approval that releases the
+// hive's hold (`/hive approve` included) instead of a manual merge; without
+// a manual-merge reason the flag offers nothing.
+func TestDecisionActionsHumanMergePathOwnerApproval(t *testing.T) {
+	e := readyEvidence()
+	e.ManualMerge = true
+	e.ApprovalReleasesPathHold = true
+	e.Cause = CauseDecision
+	e.CauseReason = "the PR touches a human-merge path (auto_merge.human_merge_paths): awaiting a trusted merger's approval of the current head"
+	r := RouteHuman(e)
+	if r.Stage != NeedsDecision || !r.ManualMerge || !r.ApprovalReleasesPathHold {
+		t.Fatalf("route = %+v", r)
+	}
+	got := DecisionComment(r)
+	for _, want := range []string{
+		"Needs a decision, not a merge",
+		"a trusted merger approves this head (`abc1234`) with a GitHub **Approve** review, a `/hive decision approve` reply",
+		"or a `/hive approve` reply; that releases the hive's hold for this repository's human-merge paths",
+		"the hive merges the PR once the other gates clear",
+		"A new push needs a new approval",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("owner-approval DecisionComment missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"merge this PR manually", "does not override", "Needs a manual merge decision"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("owner-approval DecisionComment says %q:\n%s", unwanted, got)
+		}
+	}
+
+	stray := readyEvidence()
+	stray.Sentinel = true
+	stray.ApprovalReleasesPathHold = true
+	if r := RouteHuman(stray); r.ApprovalReleasesPathHold || strings.Contains(DecisionActions(r), "human-merge paths") {
+		t.Fatalf("path-hold release offered without a manual-merge reason: %+v", r)
+	}
+}

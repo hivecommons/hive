@@ -43,3 +43,4 @@ agents.*.github_api_hourly_cap
 auto_merge.squash_only[*]
 auto_merge.require_current_base[*]
 auto_merge.human_merge_paths.*[*]
+auto_merge.human_merge_owner_approval[*]

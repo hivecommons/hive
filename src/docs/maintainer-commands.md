@@ -208,7 +208,13 @@ that queue flow. A swarm `changes_requested` or `reject` verdict is not
 overridden by a human approval; the head must be fixed or merged manually.
 Neither form bypasses CI, `hold`-class labels, a sentinel alert or a lane
 that only merges by hand (CI workflow / action files edited, tests removed,
-an `auto_merge.human_merge_paths` match): the `stage/085-needs-decision`
+an `auto_merge.human_merge_paths` match, except in a repository listed in
+`auto_merge.human_merge_owner_approval`, where a trusted merger's Approve
+review, `/hive decision approve` or `/hive approve` on the current head
+releases the hive's human-merge-path hold and the lanes merge the PR once
+every other gate passes; see
+[hive-merge.md](hive-merge.md#owner-approval-releases-the-human-merge-path-hold)):
+the `stage/085-needs-decision`
 entry comment names, per lane, what actually clears the park — the trusted
 merger's approval, the label a person must remove, or a manual merge
 ([#13087](https://github.com/hivecommons/hive/issues/13087)). A `/hive

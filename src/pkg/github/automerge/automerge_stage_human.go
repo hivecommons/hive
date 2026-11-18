@@ -536,6 +536,17 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	// an owner's approval releases the workflow fence only into the
 	// human-merge-path refusal, so it is never asked for.
 	humanMergePath := c.humanMergePathFencePersonMerge(ctx, tracker, key, obs)
+	// On a repository that lets an owner's approval release the refusal
+	// (auto_merge.human_merge_owner_approval) the head is a person's merge
+	// only until a trusted merger approves it: an approved head is routed on
+	// its own progress, and an unapproved one is asked for that approval.
+	humanMergeOwnerApproval := humanMergePath && c.humanMergeOwnerApprovalEnabled(obs.Owner+"/"+obs.Repo)
+	humanMergeApprover := ""
+	if humanMergeOwnerApproval {
+		if login, ok := c.headHumanMergeOwnerApproval(ctx, obs); ok {
+			humanMergePath, humanMergeApprover = false, login
+		}
+	}
 	workflowManual := c.workflowFenceManual(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA) || humanMergePath
 	// A gate stops the lane before it reads mergeability, so the head's
 	// mergeable_state comes from the hive's own reads of it
@@ -630,7 +641,10 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		e.HumanApprover = c.headTrustedApproval(ctx, tracker, key, obs, contributorVerdict, now)
 	}
 	if humanMergePath {
-		applyHumanMergePathFenceRoute(&e, obs)
+		applyHumanMergePathFenceRoute(&e, obs, humanMergeOwnerApproval)
+	}
+	if humanMergeApprover != "" && e.HumanApprover == "" {
+		e.HumanApprover = humanMergeApprover
 	}
 	e.CauseAwaitsApproval = e.ApprovalReleasesFence && strings.HasSuffix(e.CauseReason, prstage.CauseWorkflowPathAwaitingApproval)
 	if strings.HasPrefix(obs.Reason, stageReasonForkGuard) {

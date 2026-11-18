@@ -394,6 +394,53 @@ auto_merge:
     - your-org/docs-only-repo
 ```
 
+### Owner approval releases the human-merge-path hold
+
+`auto_merge.human_merge_owner_approval` is an opt-in list of `owner/repo`
+names, empty by default. A repository not listed keeps the rule above: a pull
+request touching one of its `human_merge_paths` is held and a person merges
+it. In a listed repository a trusted merger's explicit approval of the pull
+request's current head releases that hold instead, and the merge lanes merge
+the pull request once every other gate passes. CI, required checks,
+freshness, soak, review verdicts, other holds and the sentinel all still
+apply: the approval is not a merge override.
+
+- **What counts as approval.** A trusted merger's GitHub **Approve** review
+  on the current head, a `/hive decision approve` reply (typed on the PR or
+  sent from the dashboard), or a `/hive approve` reply posted after the hive
+  first saw the head. These are the workflow-path fence's approvals plus
+  `/hive approve`; an edited comment never counts, and someone who is not a
+  trusted merger cannot approve.
+- **Not the author.** The pull request author's own approval never counts,
+  whatever form it takes, so one account cannot stand in for the second
+  person the hold exists to bring in.
+- **Bound to the head.** A new push needs a new approval. The one exception
+  is the fence's: an Approve review or dashboard approval carries over the
+  hive's own update from the base branch when the PR's diff is unchanged.
+- **What is released.** The stage-label pass removes only the `hold` the
+  human-merge-path gate put on for this refusal, through the shared release
+  API with its provenance checks: the App's single, unedited, head-stamped
+  notice, and every `hold` the PR was ever labelled with applied by the App.
+  A `hold` a person added or re-added is never removed, and neither is one
+  another hold source explains (a pause, the reporter-trust gate). The
+  release goes through the write-back gate (`human_merge_path_release`).
+- **What is recorded.** One comment per head names who approved which head
+  (`<!-- hive:human-merge-approval <sha> -->`), and the hive logs
+  `owner approval released human-merge-path hold`.
+- **What `/hive approve` replies.** In a listed repository the reply says
+  the hold is released for the head and that the hive merges the PR when the
+  other gates clear, or, when no approval of the current head is recorded
+  yet, which approvals do it. In other repositories the reply is unchanged.
+- **The PR's stage.** An unapproved head parks at `085` asking for the
+  approval; an approved head goes on through the lanes like any other PR.
+
+Owners set the list from **Settings → Features → Auto-merge → Per-repository
+merge policy → Owner approval merges paths a person must merge**, through
+`human_merge_owner_approval` on `PUT /api/config/auto-merge`, or with the
+admin MCP operation `auto_merge.update`; it applies on the next sweep. A
+repository outside `project.repos` is refused. The `hive-merge` relay path is
+unchanged: it still refuses such a pull request.
+
 ### One human step at L5: approve and unhold
 
 At ACMM L5 an agent PR carries the level `hold`, and Hive cannot merge its own

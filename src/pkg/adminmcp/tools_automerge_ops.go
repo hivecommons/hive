@@ -113,6 +113,7 @@ var autoMergeFields = []amField{
 	{key: "require_current_base", kind: amList, entry: amEntryRepo, widen: amWidenRemove, why: "pull requests there may merge without the current base tip"},
 	{key: "human_merge_paths", kind: amRepoPaths, widen: amWidenPaths, why: "pull requests touching these paths no longer wait for a person to merge them"},
 	{key: "human_merge_pin_only", kind: amPinOnly, widen: amWidenPinOnly},
+	{key: "human_merge_owner_approval", kind: amList, entry: amEntryRepo, widen: amWidenAdd, why: "a trusted merger's approval of a pull request's head lets the hive merge it there although it touches a path a person must merge"},
 	{key: "bot_takeover_enabled", kind: amBool, widen: amWidenOn, why: "the App re-authors trusted github-actions[bot] pull requests and merges its copy"},
 	{key: "dependency_bot_adopt_enabled", kind: amBool, widen: amWidenOn, why: "the hive adopts red trusted dependency-bot pull requests its review asked to change, and merges its fixed copy"},
 	{key: "require_current_base_default", kind: amBool, widen: amWidenOff, why: "repositories without an override may merge without the current base tip"},

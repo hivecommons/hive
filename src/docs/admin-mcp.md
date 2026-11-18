@@ -764,8 +764,9 @@ The keys and names whose values are shown:
   `agents.*.backend`, `agents.*.model`, `agents.*.enabled`, `agents.*.paused`,
   the API proxy's GitHub API hourly cap `agents.github_api_hourly_cap` and
   `agents.*.github_api_hourly_cap`, and the per-repository merge policy: `auto_merge.squash_only[*]`,
-  `auto_merge.require_current_base[*]` and `auto_merge.human_merge_paths.*[*]`
-  (the path globs listed under each `owner/repo`). A `*` segment is one map key
+  `auto_merge.require_current_base[*]`, `auto_merge.human_merge_paths.*[*]`
+  (the path globs listed under each `owner/repo`) and
+  `auto_merge.human_merge_owner_approval[*]`. A `*` segment is one map key
   and `[*]` any list index.
 - **Per-agent GitHub API caps:** the result also carries
   `agent_github_api_hourly_caps`, the API proxy's cap as this configuration
@@ -1195,6 +1196,9 @@ only.
   pin-only exception, `{"enabled": true, "paths": [...], "kinds": [...],
   "trusted_authors": [...]}`; `null` removes it. An enabled exception needs
   `human_merge_paths` for the repository, set already or in the same change.
+  `human_merge_owner_approval` is a list of `owner/repo` like `squash_only`;
+  adding a repository is named as widening (a trusted merger's approval
+  then lets the hive merge its human-merge paths).
   `kinds` takes the same list the dashboard offers (`action-sha`,
   `image-digest`, `version-pin`, `action-sha-ref`), and the schema says what
   each admits. `action-sha-ref` lets a bare `key: <40-hex>` line follow a

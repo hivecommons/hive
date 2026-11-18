@@ -138,3 +138,43 @@ assert.equal(modeEmoji('NO_GITHUB'), modeEmoji('ADVISORY'));
 assert(!render('ADVISORY').includes('NO_GITHUB'));
 `)
 }
+
+// auto_merge.human_merge_owner_approval ships with its dashboard control
+// beside the per-repository merge policy, with a help mark, and the control
+// stages the whole selection for the PUT.
+func TestDashboardParityAutoMergeHumanMergeOwnerApproval(t *testing.T) {
+	html := indexHTML(t)
+	features := extractJSFunction(t, html, "renderGovFeatures")
+	for _, want := range []string{
+		`id="am-human-merge-owner-approval"`,
+		"amRepoPolicyOptions(am.human_merge_owner_approval)",
+		"yamlHint('auto_merge.human_merge_owner_approval')",
+		"settingHelpMark('hive-merge', 'owner-approval-releases-the-human-merge-path-hold'",
+		"<code>auto_merge.human_merge_owner_approval[]</code>",
+	} {
+		if !strings.Contains(features, want) {
+			t.Fatalf("Settings → Features → Auto-merge has no %q", want)
+		}
+	}
+	runNodeScript(t, parityMarkDirtyStub+jsFunc(t, html, "markDirty")+"\n"+jsFunc(t, html, "markDirtyAutoMergeRepoPolicy")+`
+const selects = {
+  'am-squash-only': ['o/a'],
+  'am-human-merge-owner-approval': ['o/goodreads'],
+};
+const document = {
+  getElementById: id => selects[id] ? { selectedOptions: selects[id].map(value => ({ value })) } : null,
+  querySelectorAll: () => [],
+};
+global.document = document;
+
+markDirtyAutoMergeRepoPolicy.call({ id: 'am-squash-only', classList: { contains: () => false } });
+assert.equal(_configState.dirty['auto-merge'].human_merge_owner_approval, undefined);
+
+markDirtyAutoMergeRepoPolicy.call({ id: 'am-human-merge-owner-approval', classList: { contains: () => false } });
+assert.deepEqual(_configState.dirty['auto-merge'].human_merge_owner_approval, ['o/goodreads']);
+
+selects['am-human-merge-owner-approval'] = [];
+markDirtyAutoMergeRepoPolicy.call({ id: 'am-human-merge-owner-approval', classList: { contains: () => false } });
+assert.deepEqual(_configState.dirty['auto-merge'].human_merge_owner_approval, []);
+`)
+}

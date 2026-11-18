@@ -2515,6 +2515,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
 	autoMergeOpts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(b.cfg, repo) }
+	autoMergeOpts.HumanMergeOwnerApproval = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.HumanMergeOwnerApprovalFor(repo) }
 	autoMergeOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(b.cfg) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	// Commit messages on a merge-ready head are read for closing keywords

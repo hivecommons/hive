@@ -456,6 +456,7 @@
       if (this && this.id === 'am-squash-only') markDirty('auto-merge', 'squash_only', selected('am-squash-only'));
       if (this && this.id === 'am-no-ci-ok') markDirty('auto-merge', 'no_ci_ok', selected('am-no-ci-ok'));
       if (this && this.id === 'am-allow-unprotected-base') markDirty('auto-merge', 'allow_unprotected_base', selected('am-allow-unprotected-base'));
+      if (this && this.id === 'am-human-merge-owner-approval') markDirty('auto-merge', 'human_merge_owner_approval', selected('am-human-merge-owner-approval'));
       if (this && this.classList && this.classList.contains('am-human-merge-path-input')) {
         const paths = {};
         document.querySelectorAll('#am-human-merge-paths .am-human-merge-path-row').forEach(row => {

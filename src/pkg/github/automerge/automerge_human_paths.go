@@ -166,7 +166,10 @@ func pinOnlyTrustedLogin(policy config.PinOnlyException, login string) bool {
 // auto_merge.human_merge_pin_only exception qualifies the PR (trusted author,
 // complete list, every changed line a pin replacement, every commit a
 // verified trusted-author commit, every action SHA anchored in its upstream
-// repository) and returns ("", nil).
+// repository) and returns ("", nil). On a repository listed in
+// auto_merge.human_merge_owner_approval a trusted merger's explicit approval
+// of the current head lets it through the same way
+// (humanMergeOwnerApprovalGate).
 func (c *Engine) humanMergePathGate(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest) (string, error) {
 	patterns := c.currentHumanMergePaths(owner + "/" + repo)
 	if len(patterns) == 0 {
@@ -188,6 +191,9 @@ func (c *Engine) humanMergePathGate(ctx context.Context, displayRepo, owner, rep
 	}
 	if why != "" {
 		c.info("automerge sweep pin-only exception not applied", "repo", displayRepo, "pr", number, "config", humanMergePinOnlyConfigKey, "reason", why)
+	}
+	if c.humanMergeOwnerApprovalGate(ctx, displayRepo, owner, repo, pr, matches) {
+		return "", nil
 	}
 	c.info("automerge sweep held PR touching human-merge paths", "repo", displayRepo, "pr", number, "paths", matches, "config", hgithub.HumanMergePathsConfigKey)
 	if err := hgithub.HoldForHumanMergePaths(ctx, c.gh, owner, repo, number, matches, pr.GetHead().GetSHA()); err != nil {

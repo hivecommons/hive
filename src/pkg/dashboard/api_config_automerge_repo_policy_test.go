@@ -166,3 +166,49 @@ func TestAutoMergeRepoPolicy_PersistsToSavedConfig(t *testing.T) {
 		t.Fatalf("saved auto_merge missing the per-repo policy: %+v", saved.AutoMerge)
 	}
 }
+
+// auto_merge.human_merge_owner_approval is a repository list like
+// squash_only: it round-trips through GET, a repository outside
+// project.repos is a 400 with nothing changed, and an empty list clears it.
+func TestAutoMergeRepoPolicy_HumanMergeOwnerApproval(t *testing.T) {
+	s := repoPolicyServer(t)
+	rec := doOwnerGet(s, "/api/config/auto-merge")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"human_merge_owner_approval":[]`) {
+		t.Fatalf("GET before any put: expected an empty human_merge_owner_approval list, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"human_merge_owner_approval": []string{" api ", "ACME/api", "acme/docs"}}); rec.Code != http.StatusOK {
+		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	am := s.deps.Config.AutoMerge
+	if got := strings.Join(am.HumanMergeOwnerApproval, ","); got != "acme/api,acme/docs" {
+		t.Fatalf("human_merge_owner_approval = %q, want acme/api,acme/docs", got)
+	}
+	if !am.HumanMergeOwnerApprovalFor("acme/api") || am.HumanMergeOwnerApprovalFor("acme/web") {
+		t.Fatalf("stored list does not match the sweep's owner/repo lookup: %+v", am.HumanMergeOwnerApproval)
+	}
+	rec = doOwnerGet(s, "/api/config/auto-merge")
+	var got struct {
+		HumanMergeOwnerApproval []string `json:"human_merge_owner_approval"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode GET: %v", err)
+	}
+	if strings.Join(got.HumanMergeOwnerApproval, ",") != "acme/api,acme/docs" {
+		t.Fatalf("human_merge_owner_approval did not round-trip: %v", got.HumanMergeOwnerApproval)
+	}
+
+	rec = doPut(s, "/api/config/auto-merge", map[string]any{"max_merges": 7, "human_merge_owner_approval": []string{"api", "other/repo"}})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "human_merge_owner_approval: other/repo is not in project.repos") {
+		t.Fatalf("repo outside project.repos: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if am := s.deps.Config.AutoMerge; strings.Join(am.HumanMergeOwnerApproval, ",") != "acme/api,acme/docs" || am.MaxMerges != 0 {
+		t.Fatalf("rejected write mutated config: %+v", am)
+	}
+
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"human_merge_owner_approval": []string{}}); rec.Code != http.StatusOK {
+		t.Fatalf("clear put: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.AutoMerge.HumanMergeOwnerApprovalFor("acme/api") {
+		t.Fatalf("empty list did not clear: %+v", s.deps.Config.AutoMerge.HumanMergeOwnerApproval)
+	}
+}
