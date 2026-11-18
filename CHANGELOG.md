@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.330.0)
+
+### Added
+
+- New opt-in `repos.<repo>.parent_autoclose: trackers_too` (also a fourth choice, "Also close trackers whose work is done", in Settings, Repos tab) closes tracker and umbrella issues that have no sub-issue children once everything they reference is finished. "Done" is computed from the state of the issues and PRs the tracker lists in its task list or `close_when` checklist, plus the PRs that reference it with `Refs`, never from close keywords, since v5 merges do not auto-close. Only issues that announce themselves as trackers are read, `hive/tracking` and `hold` issues never close, a person's reopen is final, and the close waits for the same finished evidence on two reads 15 minutes apart and leaves an evidence comment listing every reference and its state. Default behaviour is unchanged ([#19071](https://github.com/hivecommons/hive/issues/19071)).
+- New opt-in `session_taint` recorder, the observe-only first slice of session taint ([#18987](https://github.com/hivecommons/hive/issues/18987)). A pattern scan checks each outgoing message alone, so it cannot see that an agent earlier read something it should not repeat in a wider audience; this adds the memory half of the answer, as a measurement only. With `session_taint.enabled: true` the hive keeps a bounded in-memory record of the coarse labels each agent session has accrued (a canary hit sets `secret`) and, when that session later asks the issue, comment, PR or review relay to write, logs and audits which rule would have held the write (`session_taint_label` and `session_taint_would_act` audit entries, plus per-rule counters). It never blocks, holds, restricts or changes any request or action, stores labels, counts and ids only (no credential or content), takes effect at restart, starts every session clean after a restart, and does nothing at all when the key is absent. `max_sessions`, `max_labels_per_session` and `max_decisions` bound the store. Enforcement is a later, separately decided phase; see `docs/design/session-taint.md` and `docs/security-model.md`.
+
+### Fixed
+
+- Betty now treats plain requests such as "start a spec for this", "write a spec for X" and "draft a design for X" as a Spek session draft, the same as "Spek session" wording; the draft still waits for approval, and statements like "the spec says" or "the design review happened" are not requests ([#19157](https://github.com/hivecommons/hive/issues/19157)).
+
 ## 2026-11-18 (v5.329.1)
 
 ### Fixed
