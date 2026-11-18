@@ -234,6 +234,30 @@ agents:
         ttl_seconds: 3600
 ```
 
+To run on any Spyre node except a known bad host, add Kubernetes node affinity
+under `job` (replace `bad-spyre-node` with the node's actual hostname):
+
+```yaml
+agent_sandbox:
+  job:
+    node_selector: { accelerator: spyre }
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: NotIn
+                  values: [bad-spyre-node]
+```
+
+The node selector and required node affinity both have to match. Do not pin
+`node_selector` to a particular `kubernetes.io/hostname` if the Job should
+move among Spyre nodes; a hostname selector can restrict it to one node or
+conflict with the exclusion and leave the Job pending. If using a custom
+`scheduler_name`, ensure that scheduler honors Kubernetes `nodeAffinity`;
+otherwise the exclusion is not guaranteed.
+
 **Workspace transport is a shared claim, not a copy.** The Job mounts `workspace_claim` with a `subPath` pointing at the per-kick workspace, at the same `/workspace` mount the Podman launcher uses. The sandbox `workspace_dir` must therefore live under `workspace_claim_mount` (it does by default: `/data/agents/sandbox`). When the Job is scheduled onto a different node than hive, which is the whole point of a node selector, the claim must be **ReadWriteMany**. Hive cannot check the access mode from inside its pod; a Job that fails to start with a multi-attach error is the symptom.
 
 **The credential boundary.** The Job receives exactly the Secrets named in `env_from_secrets`, resolved by Kubernetes from the pod template; hive never reads them. Environment variables from the allowlist are copied in with the same credential-name filter Podman applies. An allowlisted `ANTHROPIC_BASE_URL` that points at a pod-local proxy (such as `127.0.0.1:18444`) is not reachable from a Job pod, so operators must supply a routable endpoint or model credentials via `env_from_secrets`. Hive's brokered GitHub token **never enters the Job**, so a Job cannot push or open a PR itself; hive does both from the returned workspace, with the same scan and scoped-token minting as the Podman path. If a workload needs its own registry or model credentials, they go in a Secret named here, and they are that workload's to protect.

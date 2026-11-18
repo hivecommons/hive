@@ -37,6 +37,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
 
@@ -119,9 +120,10 @@ type Options struct {
 	// WorkspaceClaimMount is where that claim is mounted INSIDE THE HIVE POD
 	// (default /data). The Job's subPath is the workspace path relative to it.
 	WorkspaceClaimMount string
-	// NodeSelector, Tolerations, Resources, ServiceAccount are passed through
-	// to the pod template verbatim.
+	// NodeSelector, Affinity, Tolerations, Resources, ServiceAccount are passed
+	// through to the pod template verbatim.
 	NodeSelector   map[string]string
+	Affinity       *config.SandboxJobAffinity
 	Tolerations    []Toleration
 	Resources      Resources
 	ServiceAccount string
@@ -671,6 +673,9 @@ func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec
 	}
 	if len(l.Options.NodeSelector) > 0 {
 		podSpec["nodeSelector"] = l.Options.NodeSelector
+	}
+	if l.Options.Affinity != nil {
+		podSpec["affinity"] = l.Options.Affinity
 	}
 	if len(l.Options.Tolerations) > 0 {
 		podSpec["tolerations"] = l.Options.Tolerations

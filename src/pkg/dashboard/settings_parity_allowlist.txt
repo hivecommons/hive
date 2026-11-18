@@ -1,6 +1,13 @@
 # Current Settings dialog parity gaps.
 # Every entry must have a Settings control before it is removed.
 # TODO #11854
+agent_sandbox.job.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[].preference.matchExpressions[].key # TODO #18809
+agent_sandbox.job.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[].preference.matchExpressions[].operator # TODO #18809
+agent_sandbox.job.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[].preference.matchExpressions[].values[] # TODO #18809
+agent_sandbox.job.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[].weight # TODO #18809
+agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].key # TODO #18809
+agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].operator # TODO #18809
+agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].values[] # TODO #18809
 agent_sandbox.job.image_pull_secrets[] # TODO #11854
 agent_sandbox.job.node_selector.<key> # TODO #11854
 agent_sandbox.job.relay_image # TODO #11854
@@ -116,6 +123,13 @@ agents.<key>.role # TODO #11854
 agents.<key>.sandbox.enabled # TODO #11854
 agents.<key>.sandbox.env_allowlist[] # TODO #11854
 agents.<key>.sandbox.image # TODO #11854
+agents.<key>.sandbox.job.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[].preference.matchExpressions[].key # TODO #18809
+agents.<key>.sandbox.job.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[].preference.matchExpressions[].operator # TODO #18809
+agents.<key>.sandbox.job.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[].preference.matchExpressions[].values[] # TODO #18809
+agents.<key>.sandbox.job.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[].weight # TODO #18809
+agents.<key>.sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].key # TODO #18809
+agents.<key>.sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].operator # TODO #18809
+agents.<key>.sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].values[] # TODO #18809
 agents.<key>.sandbox.job.env_from_secrets[] # TODO #11854
 agents.<key>.sandbox.job.image_pull_secrets[] # TODO #11854
 agents.<key>.sandbox.job.node_selector.<key> # TODO #11854

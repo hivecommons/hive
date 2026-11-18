@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
 )
 
@@ -20,6 +21,9 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
+	if err := c.validateJobAffinities(); err != nil {
+		return err
+	}
 	if err := c.IntegrationOrchestration.Validate(); err != nil {
 		return err
 	}
@@ -400,6 +404,28 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		}
 		if err := validateAgentSpecRef(name, agent.AgentSpec); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateJobAffinities() error {
+	if c.AgentSandbox.Job != nil {
+		if err := cruxconfig.ValidateSandboxJobAffinity(c.AgentSandbox.Job.Affinity); err != nil {
+			return fmt.Errorf("agent_sandbox.job.%w", err)
+		}
+	}
+	names := make([]string, 0, len(c.Agents))
+	for name := range c.Agents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		agent := c.Agents[name]
+		if agent.Sandbox != nil && agent.Sandbox.Job != nil {
+			if err := cruxconfig.ValidateSandboxJobAffinity(agent.Sandbox.Job.Affinity); err != nil {
+				return fmt.Errorf("agents.%s.sandbox.job.%w", name, err)
+			}
 		}
 	}
 	return nil

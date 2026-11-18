@@ -56,6 +56,15 @@ type (
 	WatchdogRestartConfig      = cruxconfig.WatchdogRestartConfig
 )
 
+type (
+	SandboxJobAffinity                = cruxconfig.SandboxJobAffinity
+	SandboxJobNodeAffinity            = cruxconfig.SandboxJobNodeAffinity
+	SandboxJobNodeSelector            = cruxconfig.SandboxJobNodeSelector
+	SandboxJobNodeSelectorTerm        = cruxconfig.SandboxJobNodeSelectorTerm
+	SandboxJobNodeSelectorRequirement = cruxconfig.SandboxJobNodeSelectorRequirement
+	SandboxJobPreferredSchedulingTerm = cruxconfig.SandboxJobPreferredSchedulingTerm
+)
+
 const (
 	BobAPIKeyEnvVar                     = cruxconfig.BobAPIKeyEnvVar
 	BobApprovalModeFlag                 = cruxconfig.BobApprovalModeFlag
