@@ -44,7 +44,7 @@ func TestEscalationNoteSaysWhenTheStageLabelIsRefused(t *testing.T) {
 			if !strings.Contains(body, "Moving to `"+label+"`") {
 				t.Fatalf("fixture no longer announces the move:\n%s", body)
 			}
-			got := e.withStageMoveFact(obs, body)
+			got := e.withStageMoveFact(context.Background(), obs, body)
 			if strings.Contains(got, "Moving to `") {
 				t.Fatalf("a refused label write is still announced as a move:\n%s", got)
 			}
@@ -55,7 +55,7 @@ func TestEscalationNoteSaysWhenTheStageLabelIsRefused(t *testing.T) {
 			}
 			opted := obs
 			opted.Labels = []string{writeback.DefaultOptInLabel}
-			if got := e.withStageMoveFact(opted, body); got != body {
+			if got := e.withStageMoveFact(context.Background(), opted, body); got != body {
 				t.Fatalf("an opted-in PR's note must be unchanged:\n%s", got)
 			}
 		})
@@ -64,7 +64,7 @@ func TestEscalationNoteSaysWhenTheStageLabelIsRefused(t *testing.T) {
 		t.Fatalf("describing the move recorded %d suppression(s); the stage writer records its own", n)
 	}
 	// No gate installed: every write is allowed, the note is unchanged.
-	if got := (&Engine{transport: stubTransport{}}).withStageMoveFact(obs, notes["workflow refused"]); got != notes["workflow refused"] {
+	if got := (&Engine{transport: stubTransport{}}).withStageMoveFact(context.Background(), obs, notes["workflow refused"]); got != notes["workflow refused"] {
 		t.Fatalf("no gate: note changed:\n%s", got)
 	}
 }
@@ -93,5 +93,56 @@ func TestPostedEscalationNoteSaysWhenTheStageLabelIsRefused(t *testing.T) {
 	}
 	if strings.Contains(posted, "Moving to `") || !strings.Contains(posted, "would move this to `"+stagelabels.NeedsDecision.Label()+"`") {
 		t.Fatalf("posted note announces a refused move:\n%s", posted)
+	}
+}
+
+// hiveStageTransport is gatedTransport whose client says whether a PR's
+// stage labels are the hive's own (hgithub.Client.HiveAppliedStageLabels).
+type hiveStageTransport struct {
+	gatedTransport
+	applied bool
+	asked   *int
+}
+
+func (t hiveStageTransport) HiveAppliedStageLabels(context.Context, string, int, []string) bool {
+	*t.asked++
+	return t.applied
+}
+
+// projectbluefin/utah#1274: on a PR older than the backfill cutoff the note
+// said the gate kept the hive's labels off, while the 074 on it was the
+// hive's own. The stage writer now moves a stage label the hive applied, so
+// the note asks with the same fact and announces the move; a person's stage
+// label is still described as held by the backfill guard. A PR the guard
+// does not cover is decided without asking.
+func TestEscalationNoteAnnouncesTheMoveOfAHiveAppliedStageLabel(t *testing.T) {
+	firstSeen := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	cfg := writeback.Config{Kinds: map[string]writeback.KindPolicyOverride{"stage_label": {RequireLabel: gh.Ptr(false)}}}
+	gate := writeback.New(cfg, writeback.Deps{LevelFor: func(string) int { return 6 }, Now: func() time.Time { return firstSeen }}, "")
+	gate.ObserveRepo("projectbluefin/utah")
+	obs := stageObservation{Display: "projectbluefin/utah", Owner: "projectbluefin", Repo: "utah", Number: 1274, HeadSHA: "abc1274", Author: "contributor", Labels: []string{"stage/074-adopted-by-hive"}, OpenedAt: firstSeen.Add(-time.Hour)}
+	body := AdoptionWorkflowRefusedComment(obs)
+	label := stagelabels.NeedsDecision.Label()
+
+	asked := 0
+	hive := &Engine{transport: hiveStageTransport{gatedTransport: gatedTransport{gate: gate}, applied: true, asked: &asked}}
+	if got := hive.withStageMoveFact(context.Background(), obs, body); got != body {
+		t.Fatalf("the hive's own stage label: note must announce the move unchanged:\n%s", got)
+	}
+	person := &Engine{transport: hiveStageTransport{gatedTransport: gatedTransport{gate: gate}, applied: false, asked: &asked}}
+	got := person.withStageMoveFact(context.Background(), obs, body)
+	if !strings.Contains(got, "would move this to `"+label+"`") || !strings.Contains(got, string(writeback.ReasonBackfill)) {
+		t.Fatalf("a person's stage label: note must say the backfill guard holds the move:\n%s", got)
+	}
+	if asked != 2 {
+		t.Fatalf("asked %d times, want once per old PR note", asked)
+	}
+	newer := obs
+	newer.OpenedAt = firstSeen.Add(time.Hour)
+	if got := person.withStageMoveFact(context.Background(), newer, body); got != body || asked != 2 {
+		t.Fatalf("a PR the guard does not cover: note changed or the fact was asked (asked=%d):\n%s", asked, got)
+	}
+	if n := len(gate.Recent()); n != 0 {
+		t.Fatalf("describing the move recorded %d suppression(s)", n)
 	}
 }

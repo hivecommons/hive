@@ -1112,13 +1112,19 @@ author's `author_association` is not `OWNER`, `MEMBER` or `COLLABORATOR`, the
 PR has no `ok-to-test` label and Prow has reported no presubmit status on the
 head (a status other than `tide` from the account that reports `tide`), the
 lane posts `/ok-to-test` once per head with the same per-head marker and
-mutation-boundary dedupe as the trusted-lane command. If Prow replies
-`Cannot trigger testing until a trusted user`, the lane logs it once with
+mutation-boundary dedupe as the trusted-lane command. The lane treats the
+command as refused when the merge bot says so, in upstream Prow's words
+(`@<app>: Cannot trigger testing until a trusted user …`) or
+cncf/prow-github-actions' (`Cannot /ok-to-test because Error: <app> is not a
+reviewer or approver …`), each naming the App. It also treats it as refused,
+whatever the reply, when its command for an earlier head is more than 10
+minutes old and the PR still has no `ok-to-test` label and Prow reported no
+presubmit status on that head. A refused command is logged once with
 `skipped=prow-rejects-bot-commands`, leaves one
-`<!-- hive-ok-to-test-rejected -->` needs-human note and never posts the
-command on that PR again; making the App a Prow trusted user is the
-repository's Prow configuration. The merge-request relay's read-only
-evaluation posts nothing.
+`<!-- hive-ok-to-test-rejected -->` needs-human note and is never posted on
+that PR again; making the App a Prow trusted user is the repository's Prow
+configuration. The same refusal reader serves the same-repo held-runs
+command. The merge-request relay's read-only evaluation posts nothing.
 
 A PR merges through this tier only when all of the following hold:
 
@@ -1267,7 +1273,14 @@ A PR merges through this tier only when all of the following hold:
   does. When the approval is already recorded and the PR is parked for
   another reason, **What to do** says there is nothing more to approve
   instead of asking for it again
-  ([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)). While the
+  ([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)). That
+  holds when the lane stopped at an earlier gate (a fork-guard check, a
+  hold) before it reached the review gate or the fence: the stage pass then
+  reads the head's trusted approval itself (cached per head for ten
+  minutes), and the 085 note lists neither the reviewer's `requires_human`
+  question nor the fence "awaiting owner approval" that the approval
+  already answered, and the same-head 085 re-park does not ask it again
+  ([projectbluefin/utah-packages#1181](https://github.com/projectbluefin/utah-packages/pull/1181)). While the
   approval is still owed and a sentinel alert is open on the same PR, **What
   to do** says that **Approve** on the PR's Activity monitor row (or
   `approve` through the admin MCP's `repository.item_decision`) records the
@@ -1661,8 +1674,9 @@ red — goes to `stage/085-needs-decision` as
 per head and reason, retried until GitHub accepts it), so the
 dashboard shows a person's item, not a silent 074; "waiting on maintainer
 lgtm" is only ever the state at 080+ (hivecommons/hive#12858). The dwell runs
-from the head's last hive push, a red optional check alone is not a blocker,
-and the escalation releases back to 074 when its reason clears
+from the head's last hive push, a red optional check alone is not a blocker
+unless the repo's auto-merge is off (a person merges there,
+projectbluefin/actions#752), and the escalation releases back to 074 when its reason clears
 (hivecommons/hive#13040). The issues a PR covers
 follow it: once the sweep stages a PR at 050 or later, the enumeration cycle
 writes the same stage on each linked issue (`stage/040-covered-by-pr` until

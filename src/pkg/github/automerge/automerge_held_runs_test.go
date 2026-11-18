@@ -678,6 +678,65 @@ func TestTrySweepSelfAuthoredPRStopsOkToTestAfterProwRejection(t *testing.T) {
 	}
 }
 
+// cncf/prow-github-actions refuses the App in its own words, naming the
+// login without an @ (projectbluefin/utah#1274): the same-repo path stops on
+// that reply too, and its note quotes the action's wording, not Prow's.
+func TestTrySweepSelfAuthoredPRStopsOkToTestAfterProwActionsRefusal(t *testing.T) {
+	var comments []string
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.workflowRuns = []map[string]any{heldRun(1, "acme/widget")}
+		p.commentBodies = &comments
+		p.existingComments = &[]map[string]any{
+			appComment(1, workflowApprovalCommandBody("oldhead")),
+			prowComment(2, "Cannot /ok-to-test because Error: "+testHiveAppBotLogin+" is not a reviewer or approver for any changed file"),
+		}
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+
+	want := workflowApprovalUntrustedPrefix + "ci/build"
+	for tick := 1; tick <= 3; tick++ {
+		_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+		if err != nil {
+			t.Fatalf("tick %d returned error: %v", tick, err)
+		}
+		if reason != want {
+			t.Fatalf("tick %d reason = %q, want %q", tick, reason, want)
+		}
+	}
+	if len(comments) != 1 {
+		t.Fatalf("comments = %q, want exactly one needs-human note and no further %q", comments, workflowApprovalCommand)
+	}
+	if !strings.HasPrefix(comments[0], workflowApprovalRejectedMarker) || !strings.Contains(comments[0], prowActionsOkToTestRefusal) || strings.Contains(comments[0], prowOkToTestRejection) {
+		t.Fatalf("note = %q, want the rejected marker quoting the action's wording", comments[0])
+	}
+}
+
+func TestOkToTestRefusal(t *testing.T) {
+	const app = testHiveAppBotLogin
+	for _, tc := range []struct {
+		name, body, login, want string
+	}{
+		{name: "Prow trigger plugin, @App", body: "@" + app + ": Cannot trigger testing until a trusted user reviews the PR and leaves an `/ok-to-test` message.", login: app, want: prowOkToTestRejection},
+		{name: "Prow wording without @App is someone else's", body: app + ": Cannot trigger testing until a trusted user reviews the PR", login: app},
+		{name: "prow-github-actions, bare login", body: "Cannot /ok-to-test because Error: " + app + " is not a reviewer or approver for any changed file", login: app, want: prowActionsOkToTestRefusal + "…"},
+		{name: "prow-github-actions, login case differs", body: "Cannot /ok-to-test because Error: " + strings.ToUpper(app) + " is not a org member or collaborator", login: app, want: prowActionsOkToTestRefusal + "…"},
+		{name: "prow-github-actions refusing another commenter", body: "Cannot /ok-to-test because Error: karibhou is not a reviewer or approver for any changed file", login: app},
+		{name: "a different command's refusal", body: "Cannot /lgtm because Error: " + app + " is not a reviewer or approver for any changed file", login: app},
+		{name: "the wording quoted mid-comment is not the action's reply", body: "FYI the bot said: Cannot /ok-to-test because Error: " + app + " is not a reviewer", login: app},
+		{name: "unknown App login keeps Prow's lenient match", body: "Cannot /ok-to-test because Error: someone is not a reviewer", want: prowActionsOkToTestRefusal + "…"},
+		{name: "unrelated comment", body: "/ok-to-test", login: app},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := okToTestRefusal(tc.body, tc.login); got != tc.want {
+				t.Fatalf("okToTestRefusal(%q) = %q, want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
 // The needs-human note is posted once per PR, even across a restart: a
 // thread that already carries it gets nothing new.
 func TestTrySweepSelfAuthoredPRProwRejectionNoteIsOncePerPR(t *testing.T) {
@@ -688,7 +747,7 @@ func TestTrySweepSelfAuthoredPRProwRejectionNoteIsOncePerPR(t *testing.T) {
 		p.existingComments = &[]map[string]any{
 			appComment(1, workflowApprovalCommandBody("oldhead")),
 			prowComment(2, "@"+testHiveAppBotLogin+": Cannot trigger testing until a trusted user reviews the PR and leaves an `/ok-to-test` message."),
-			appComment(3, workflowApprovalUntrustedNote(testHiveAppBotLogin, true)),
+			appComment(3, workflowApprovalUntrustedNote(testHiveAppBotLogin, prowOkToTestRejection)),
 		}
 	})
 	var merged []int

@@ -29,6 +29,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -95,7 +96,10 @@ type Cluster struct {
 	FindingKey string
 	Confidence Confidence
 	// BotSeries marks a cluster whose members are all the same bot account
-	// regenerating the same artifact. Those are superseded BY CONSTRUCTION —
+	// running the same job again: the same title once versions, dates and
+	// hashes are set aside, or a byte-identical patch (see sameJob). Sharing
+	// a file is not enough — renovate bumping two different dependencies in
+	// one package.json is two jobs. Those are superseded BY CONSTRUCTION —
 	// the newest regeneration is the survivor — and they get one summary
 	// comment rather than one comment per PR, because a bot re-opening the
 	// same PR daily would otherwise turn this sweep into the noise source it
@@ -256,7 +260,10 @@ func Find(prs []PR, opts Options) []Cluster {
 		if len(b.members) < 2 {
 			continue
 		}
-		c := buildCluster(b, opts.BotAuthors, false)
+		c, ok := buildCluster(b, opts.BotAuthors, false)
+		if !ok {
+			continue
+		}
 		clusterByMembers[memberKey(c.Members())] = len(clusters)
 		clusters = append(clusters, c)
 	}
@@ -265,7 +272,10 @@ func Find(prs []PR, opts Options) []Cluster {
 		if len(b.members) < 2 {
 			continue
 		}
-		c := buildCluster(b, opts.BotAuthors, true)
+		c, ok := buildCluster(b, opts.BotAuthors, true)
+		if !ok {
+			continue
+		}
 		mkey := memberKey(c.Members())
 		if i, ok := clusterByMembers[mkey]; ok {
 			clusters[i] = c
@@ -287,11 +297,22 @@ func Find(prs []PR, opts Options) []Cluster {
 	return clusters
 }
 
-func buildCluster(b *clusterBucket, botAuthors []string, identity bool) Cluster {
+// buildCluster turns a bucket into a cluster. ok is false when the bucket is
+// one bot's independent jobs that merely share a file — renovate bumping
+// different dependencies in one package.json, the false positive #7469 names
+// — which are not duplicates of each other at all. A finding identity or a
+// byte-identical patch is evidence beyond the shared file, so those still
+// cluster.
+func buildCluster(b *clusterBucket, botAuthors []string, identity bool) (Cluster, bool) {
 	members := append([]PR(nil), b.members...)
 	sort.Slice(members, func(i, j int) bool { return members[i].Number < members[j].Number })
 
-	botSeries := isBotSeries(members, botAuthors)
+	confidence := gradeConfidence(members, identity)
+	sameBot := sameBotAuthor(members, botAuthors)
+	botSeries := sameBot && (confidence == ConfidenceIdenticalDiff || sameJob(members))
+	if sameBot && !botSeries && confidence != ConfidenceFindingIdentity {
+		return Cluster{}, false
+	}
 	survivor := pickSurvivor(members, botSeries)
 	superseded := make([]PR, 0, len(members)-1)
 	for _, m := range members {
@@ -303,11 +324,11 @@ func buildCluster(b *clusterBucket, botAuthors []string, identity bool) Cluster 
 		Repo:       b.repo,
 		Files:      b.files,
 		FindingKey: b.findingKey,
-		Confidence: gradeConfidence(members, identity),
+		Confidence: confidence,
 		BotSeries:  botSeries,
 		Survivor:   survivor,
 		Superseded: superseded,
-	}
+	}, true
 }
 
 func memberKey(members []PR) string {
@@ -355,11 +376,12 @@ func newer(a, b PR) bool {
 	return a.CreatedAt.After(b.CreatedAt)
 }
 
-// isBotSeries reports whether every member is the same bot account. All three
-// conditions matter: same author (two different bots are not a series), a bot
-// account (a human resubmitting is NOT superseded by construction and must
-// get the ordinary earliest-survives treatment), and more than one member.
-func isBotSeries(members []PR, extra []string) bool {
+// sameBotAuthor reports whether every member is the same bot account. All
+// three conditions matter: same author (two different bots are not a series),
+// a bot account (a human resubmitting is NOT superseded by construction and
+// must get the ordinary earliest-survives treatment), and more than one member.
+// It is necessary for a series, not sufficient: see sameJob.
+func sameBotAuthor(members []PR, extra []string) bool {
 	if len(members) < 2 {
 		return false
 	}
@@ -373,6 +395,46 @@ func isBotSeries(members []PR, extra []string) bool {
 		}
 	}
 	return true
+}
+
+// sameJob reports whether every member's title names the same job once the
+// tokens a rerun changes are set aside. A regeneration bot titles every run
+// alike ("chore: update churn", "regenerate X (2026-11-16)"); a dependency
+// bot names the dependency, so "update dependency vue-tsc to v3.3.14" and
+// "update dependency js-yaml to v5" are two jobs even though both edit
+// package.json. The head branch cannot tell these apart: two open PRs never
+// share one, whether they are reruns or separate bumps.
+func sameJob(members []PR) bool {
+	job := jobTitle(members[0].Title)
+	for _, m := range members[1:] {
+		if jobTitle(m.Title) != job {
+			return false
+		}
+	}
+	return true
+}
+
+var (
+	// jobTitleHash matches a commit or digest hash: 7+ hex characters as one
+	// word. Words without a digit ("deadbeef", "facade") are left alone.
+	jobTitleHash = regexp.MustCompile(`\b[0-9a-f]{7,64}\b`)
+	// jobTitleNumber matches a version, date or counter that starts a token
+	// ("v3.3.14", "2026-11-16", "#42"), but not digits inside a name such as
+	// "web3" or "python3", which identify the dependency.
+	jobTitleNumber = regexp.MustCompile(`(^|[^a-z0-9])v?[0-9]+(?:[.\-_:+/][0-9]+)*`)
+)
+
+// jobTitle normalises a title to the job it names: lower-cased, whitespace
+// collapsed, hashes and versions/dates/counters replaced by "#".
+func jobTitle(title string) string {
+	t := strings.ToLower(strings.Join(strings.Fields(title), " "))
+	t = jobTitleHash.ReplaceAllStringFunc(t, func(s string) string {
+		if strings.IndexAny(s, "0123456789") < 0 {
+			return s
+		}
+		return "#"
+	})
+	return jobTitleNumber.ReplaceAllString(t, "${1}#")
 }
 
 func looksLikeBot(author string, extra []string) bool {

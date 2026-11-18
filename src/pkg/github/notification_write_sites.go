@@ -128,6 +128,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).postBlockedOnPRMarker":             {Class: NotificationClassProtocolCommand},
 	"github.(*Client).markBlockedPRSuccessor":            {Class: NotificationClassProtocolCommand},
 	"github.blockedSuccessorRetargetIssue":               {Class: NotificationClassProtocolCommand},
+	"github.retargetBlockedOnAll":                        {Class: NotificationClassProtocolCommand},
 
 	// security_event: trust and integrity signals.
 	"github.(*Client).handleOnePRRequest":           {Class: NotificationClassSecurityEvent},

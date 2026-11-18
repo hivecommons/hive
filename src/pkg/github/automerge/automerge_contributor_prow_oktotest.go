@@ -66,15 +66,16 @@ func (c *Engine) requestProwPresubmitsForFork(ctx context.Context, displayRepo, 
 	if !scanned {
 		return
 	}
-	if state.rejected {
+	unanswered := !state.rejected && c.okToTestUnanswered(ctx, displayRepo, owner, repo, number, state.earlierPosts)
+	if state.rejected || unanswered {
 		c.markWorkflowApprovalUntrusted(owner, repo, number)
-		args := []any{"repo", displayRepo, "pr", number, "sha", headSHA, "skipped", hgithub.PRApprovalCommandsSkippedProw}
+		args := []any{"repo", displayRepo, "pr", number, "sha", headSHA, "skipped", hgithub.PRApprovalCommandsSkippedProw, "unanswered", unanswered}
 		const msg = "contributor-lane ok-to-test not posted again: Prow rejected the App's command on this fork PR; a trusted user must post it"
 		if state.rejectionNoted {
 			c.debug(msg, args...)
 			return
 		}
-		c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, prowPresubmitsRejectedNote(strings.TrimSpace(c.transport.AppBotLogin())))
+		c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, prowPresubmitsRejectedNote(strings.TrimSpace(c.transport.AppBotLogin()), state.refusal))
 		c.warn(msg, args...)
 		return
 	}
@@ -85,6 +86,29 @@ func (c *Engine) requestProwPresubmitsForFork(ctx context.Context, displayRepo, 
 		return
 	}
 	c.postWorkflowApprovalCommand(ctx, displayRepo, owner, repo, number, headSHA)
+}
+
+// okToTestUnanswered reports whether the App's command for an earlier head
+// evidently did nothing, whatever the merge bot's wording (or none): it was
+// posted at least workflowApprovalGrace ago, the PR still has no `ok-to-test`
+// label (the caller returned on one; the trigger plugin's label persists
+// across pushes) and Prow reported no presubmit on that head. The newest such
+// post is checked; a status lookup failure answers false.
+func (c *Engine) okToTestUnanswered(ctx context.Context, displayRepo, owner, repo string, number int, posts []okToTestPost) bool {
+	var last okToTestPost
+	now := c.clock()
+	for _, post := range posts {
+		if post.at.IsZero() || now.Sub(post.at) < workflowApprovalGrace {
+			continue
+		}
+		if last.at.IsZero() || post.at.After(last.at) {
+			last = post
+		}
+	}
+	if last.sha == "" {
+		return false
+	}
+	return !c.prowPresubmitStatusPresent(ctx, displayRepo, owner, repo, number, last.sha)
 }
 
 // prowPresubmitStatusPresent reports whether Prow already reported a job on
@@ -130,8 +154,9 @@ func (c *Engine) prowPresubmitStatusPresent(ctx context.Context, displayRepo, ow
 }
 
 // prowPresubmitsRejectedNote is the one needs-human comment posted when Prow
-// refuses the App's `/ok-to-test` on a non-member fork PR.
-func prowPresubmitsRejectedNote(appLogin string) string {
+// refuses the App's `/ok-to-test` on a non-member fork PR. refusal is the
+// merge bot's wording; "" means it never acted on an earlier post.
+func prowPresubmitsRejectedNote(appLogin, refusal string) string {
 	if appLogin == "" {
 		appLogin = "the Hive App"
 	}
@@ -139,11 +164,20 @@ func prowPresubmitsRejectedNote(appLogin string) string {
 	b.WriteString(workflowApprovalRejectedMarker)
 	b.WriteString("\nneeds-human: Prow has not run this fork PR's presubmits. Its author is not one of Prow's trusted users, so the trigger plugin waits for `")
 	b.WriteString(workflowApprovalCommand)
-	b.WriteString("`; Hive posted it and Prow rejected `")
-	b.WriteString(appLogin)
-	b.WriteString("` (\"")
-	b.WriteString(prowOkToTestRejection)
-	b.WriteString("\"). Hive will not post the command again on this PR.\n\nA maintainer can comment `")
+	if refusal != "" {
+		b.WriteString("`; Hive posted it and Prow rejected `")
+		b.WriteString(appLogin)
+		b.WriteString("` (\"")
+		b.WriteString(refusal)
+		b.WriteString("\")")
+	} else {
+		b.WriteString("`; Hive posted it for an earlier head and nothing came of it: no `")
+		b.WriteString(prowOkToTestLabel)
+		b.WriteString("` label and no presubmit status, so Prow does not accept it from `")
+		b.WriteString(appLogin)
+		b.WriteString("`")
+	}
+	b.WriteString(". Hive will not post the command again on this PR.\n\nA maintainer can comment `")
 	b.WriteString(workflowApprovalCommand)
 	b.WriteString("` (plus `/test all` for the current head), or make `")
 	b.WriteString(appLogin)

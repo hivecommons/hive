@@ -264,6 +264,53 @@ func settleTriageClear(store *stagelabels.Store, key, repo string, number int, l
 	return remove, rec.TriageClearYielded || yieldNow
 }
 
+// openPRLabelClearAllowed is the once-per-issue rule for taking a stale
+// `has-open-pr` off, the same shape as triageClearAllowed: already yielded
+// → leave it; removed once and back now (still no linking PR) → yield and
+// leave it; otherwise → remove. ResetOpenPRLabelClear starts it over when a
+// linking PR is seen beside the label again.
+func openPRLabelClearAllowed(rec stagelabels.Record) (remove, yieldNow bool) {
+	switch {
+	case rec.OpenPRLabelClearYielded:
+		return false, false
+	case !rec.OpenPRLabelClearedAt.IsZero():
+		return false, true
+	}
+	return true, false
+}
+
+// settleOpenPRLabelClear decides whether the issue sweep takes
+// `has-open-pr` off an open issue, returning the label to clear ("" to
+// keep it). The open-PR guard adds the label and nothing else touched it,
+// so after the linking PR merged or closed the issue kept claiming an open
+// PR (projectbluefin/bluefin-bling#82, projectbluefin/common#1656). It asks
+// the guard's own evidence, OpenPRLinkingIssue, and removes the label only
+// on a positive answer: the listing succeeded and no open PR links the
+// issue. A failed listing keeps it, and with the guard off
+// (scanner.skip_issues_with_open_pr: false) the label is left alone.
+func (c *Client) settleOpenPRLabelClear(ctx context.Context, store *stagelabels.Store, key string, in IssueStageInput, logger *slog.Logger) string {
+	if store == nil || !issueHasLabel(in.Labels, HasOpenPRLabel) || !c.SkipIssuesWithOpenPR() {
+		return ""
+	}
+	_, linked, err := c.OpenPRLinkingIssue(ctx, in.Repo, in.Number)
+	if err != nil {
+		return ""
+	}
+	if linked {
+		store.ResetOpenPRLabelClear(key)
+		return ""
+	}
+	rec, _ := store.Get(key)
+	remove, yieldNow := openPRLabelClearAllowed(rec)
+	if yieldNow && store.MarkOpenPRLabelClearYielded(key) && logger != nil {
+		logger.Info("issue stage labels: "+HasOpenPRLabel+" came back after the hive removed it and no open PR links the issue; leaving it on this issue", "repo", in.Repo, "issue", in.Number, "label", HasOpenPRLabel)
+	}
+	if !remove {
+		return ""
+	}
+	return HasOpenPRLabel
+}
+
 // IssueStageFor classifies one enumerated issue: it resolves the hive's
 // label families into stageengine.Facts (issueFactsFrom) and asks the
 // engine (stageengine.DeriveIssue) for the stage. covered reports whether
@@ -614,6 +661,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
 		var triageYielded bool
+		var staleOpenPR string
 		if stage == stagelabels.None {
 			store.ForgetStage(key)
 		} else {
@@ -659,6 +707,11 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 				if clearTriage {
 					want.Clear = []string{triageAwaitingLabel}
 				}
+			}
+			// A `has-open-pr` whose linking PR is gone comes off in the same
+			// write; Decision.Clear carries it through StaleOpenPRLabel.
+			if staleOpenPR = client.settleOpenPRLabelClear(ctx, store, key, in, logger); staleOpenPR != "" {
+				want.Clear = append(want.Clear, staleOpenPR)
 			}
 		}
 		if stage == stagelabels.PRInProgress || stage == stagelabels.CoveredByPR {
@@ -709,6 +762,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		facts.ObservedAt = now
 		facts.Issue.Stalled = want.Stalled
 		facts.Issue.TriageClearYielded = triageYielded
+		facts.Issue.StaleOpenPRLabel = staleOpenPR
 		pending = append(pending, issueStagePending{in: in, key: key, want: want, tr: tr, covered: covered, reason: reason, facts: facts})
 	}
 	// The write: one ReconcileBatch for the pass. The reconciler re-reads
