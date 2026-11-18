@@ -183,7 +183,9 @@ const (
 	// attributionTrailerPrefix opens the visible trailer line pkg/github
 	// AppendTrailer writes and the hub's ReconcilePRAttribution stamps on
 	// relay-reported PRs.
-	attributionTrailerPrefix = "— hive:"
+	attributionTrailerPrefix = "-- hive:"
+	// legacyAttributionTrailerPrefix is the em-dash spelling older PRs carry.
+	legacyAttributionTrailerPrefix = "\u2014 hive:"
 	// identityFooterMarker is the visible prefix of the footer
 	// bin/gh-wrapper.sh appends to agent-authored bodies.
 	identityFooterMarker = "🐝 **Hive Agent**"
@@ -271,7 +273,7 @@ func Explain(in Input) (Kind, string) {
 		}
 		return Clanker, RuleOriginForeign
 	}
-	if strings.Contains(in.Body, attributionTrailerPrefix) {
+	if strings.Contains(in.Body, attributionTrailerPrefix) || strings.Contains(in.Body, legacyAttributionTrailerPrefix) {
 		return Clanker, RuleAttributionTrailer
 	}
 	if strings.Contains(in.Body, identityFooterMarker) {

@@ -18,7 +18,7 @@ func TestReporterTrustReasonFromComments(t *testing.T) {
 		{"legacy", ReporterTrustNoticeMarker + "\nThis PR's rationale traces to acme/widget#42, filed by @outside-user (GitHub association: NONE).", "hive[bot]", finding.NeedsHumanReason()},
 		{"untrusted marker", reporterTrustNotice(finding), "outside-user", ""},
 		{"unmarked reason", finding.NeedsHumanReason(), "hive[bot]", ""},
-		{"unknown notice format", ReporterTrustNoticeMarker, "hive[bot]", "reporter-trust hold — maintainer sign-off required"},
+		{"unknown notice format", ReporterTrustNoticeMarker, "hive[bot]", "reporter-trust hold - maintainer sign-off required"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			comments := []*gh.IssueComment{nil, {Body: gh.Ptr(tt.body), User: &gh.User{Login: gh.Ptr(tt.author)}}}

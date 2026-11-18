@@ -7581,7 +7581,7 @@ function postUnaddressedNotesComment(prURL, notes) {
   const body = `### ${UNADDRESSED_ADVISOR_NOTES_HEADING}\n\n` +
     'The contributor\'s advisor posted these after the final verdict; the agent had no further turn to address them. Recorded here for the reviewer.\n\n' +
     notes.map(n => `- ${n}`).join('\n') +
-    '\n\n<sub>— hive contributor relay (#7879)</sub>';
+    '\n\n<sub>-- hive contributor relay (#7879)</sub>';
   try {
     execSync(`gh pr comment ${shellQuote(prURL)} --body ${shellQuote(body)} 2>/dev/null`, {
       encoding: 'utf8',

@@ -102,7 +102,7 @@ func TestFetchPRs_PopulatesForkOrigin(t *testing.T) {
 }
 
 // End to end through fetchPRs (hivecommons/hive#7638): a PR a hive agent
-// opened on a person's credentials — human author, `— hive:` trailer in the
+// opened on a person's credentials — human author, `-- hive:` trailer in the
 // body — comes back HiveAttributed from the list payload alone, so the
 // review-thread reconciler can recognise it without a second fetch. A
 // hand-written PR by the same person, and a PR with no body at all, do not.
@@ -112,12 +112,12 @@ func TestFetchPRs_PopulatesHiveAttributed(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/app/pulls", prsHandler(t, []wirePR{
 		{Number: 195, Title: "relay PR", User: wireUser{Login: "danathar"}, CreatedAt: hoursAgo(1), Head: head, Base: base,
-			Body: "Refuses the new options.\n\n— hive: backend=claude model=claude-opus-5"},
+			Body: "Refuses the new options.\n\n-- hive: backend=claude model=claude-opus-5"},
 		{Number: 196, Title: "hand-written", User: wireUser{Login: "danathar"}, CreatedAt: hoursAgo(1), Head: head, Base: base,
 			Body: "I wrote this one myself."},
 		{Number: 197, Title: "no body", User: wireUser{Login: "danathar"}, CreatedAt: hoursAgo(1), Head: head, Base: base},
 		{Number: 198, Title: "held relay PR", User: wireUser{Login: "danathar"}, CreatedAt: hoursAgo(1), Head: head, Base: base,
-			Labels: []wireLabel{{Name: "hold"}}, Body: "— hive: agent=quality backend=claude model=claude-opus-5"},
+			Labels: []wireLabel{{Name: "hold"}}, Body: "-- hive: agent=quality backend=claude model=claude-opus-5"},
 	}))
 	server := httptest.NewServer(mux)
 	defer server.Close()

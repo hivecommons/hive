@@ -19,7 +19,7 @@ import (
 
 const (
 	owner  = "nate-double-u"
-	marker = "\n\n— hive: agent=docs-assessor backend=claude"
+	marker = "\n\n-- hive: agent=docs-assessor backend=claude"
 )
 
 type fakeForge struct {
@@ -104,8 +104,8 @@ func testPoller(t *testing.T, forge *fakeForge) (*Poller, *Store) {
 // testMarker: the trailer names the agent after "agent="; the footer form
 // names it in backticks; anything else is unmarked.
 func testMarker(body string) (string, bool) {
-	if i := strings.Index(body, "— hive: agent="); i >= 0 {
-		rest := body[i+len("— hive: agent="):]
+	if i := strings.Index(body, "-- hive: agent="); i >= 0 {
+		rest := body[i+len("-- hive: agent="):]
 		if j := strings.IndexAny(rest, " \n"); j >= 0 {
 			rest = rest[:j]
 		}
@@ -130,7 +130,7 @@ func TestRun_TracksMarkedOwnItemsOnly(t *testing.T) {
 		{Repo: "hivecommons/docs", Number: 8, IsPR: true, Body: "Fix headings\n\n---\n🐝 **Hive Agent**: `Docs Assessor` | **SHA:** `abc`", Author: owner, CreatedAt: t0},
 		{Repo: "hivecommons/docs", Number: 9, Body: "I filed this by hand", Author: owner, CreatedAt: t0},                          // no marker
 		{Repo: "hivecommons/docs", Number: 10, Body: "someone else's" + marker, Author: "other", CreatedAt: t0},                    // not ours
-		{Repo: "hivecommons/docs", Number: 11, Body: "marker, unknown agent\n\n— hive: agent=ghost", Author: owner, CreatedAt: t0}, // unknown agent
+		{Repo: "hivecommons/docs", Number: 11, Body: "marker, unknown agent\n\n-- hive: agent=ghost", Author: owner, CreatedAt: t0}, // unknown agent
 	}
 	p, store := testPoller(t, forge)
 	out := p.Run(context.Background(), []string{"hivecommons/docs", "hivecommons/site"}, owner, nil, t0.Add(time.Hour))
