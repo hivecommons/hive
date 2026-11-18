@@ -102,6 +102,7 @@ func Convert(bundles []*evidence.Bundle, opts Options) []Record {
 		public := opts.RepoConsent && opts.RepoPublic != nil && opts.RepoPublic(latest.Repo)
 		base := Record{
 			SchemaVersion: SchemaVersion,
+			UpdatedAt:     latest.UpdatedAt,
 			PublishedAt:   now.Format(time.RFC3339),
 			Source:        Source{HiveID: hash, HiveVersion: version, Cluster: opts.Cluster, Exporter: Exporter},
 			Task:          Task{RepoConsent: public},

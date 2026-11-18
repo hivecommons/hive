@@ -63,6 +63,7 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		SandboxJobTTLSeconds        *int                           `json:"agentSandboxJobTtlSeconds"`
 		SandboxJobWorkspaceClaim    *string                        `json:"agentSandboxJobWorkspaceClaim"`
 		SandboxJobClaimMount        *string                        `json:"agentSandboxJobWorkspaceClaimMount"`
+		SandboxJobEnvFromSecrets    *[]string                      `json:"agentSandboxJobEnvFromSecrets"`
 		SandboxSubstrate            *config.SandboxSubstrateConfig `json:"agentSandboxSubstrate"`
 		// Sentinel (suspicious-activity alerts) is pointer-typed per field
 		// so an absent key means "unchanged" — a save that only toggled a
@@ -284,6 +285,19 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		}
 		cfg.AgentSandbox.Runtime = v
 	}
+	var envFromSecrets []string
+	if body.SandboxJobEnvFromSecrets != nil {
+		raw := make([]interface{}, 0, len(*body.SandboxJobEnvFromSecrets))
+		for _, n := range *body.SandboxJobEnvFromSecrets {
+			raw = append(raw, n)
+		}
+		names, err := secretNamesFromBody(raw)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		envFromSecrets = names
+	}
 	if body.SandboxTimeoutS != nil && *body.SandboxTimeoutS < 0 || body.SandboxJobTTLSeconds != nil && *body.SandboxJobTTLSeconds < 0 {
 		http.Error(w, "sandbox timeouts must be >= 0", http.StatusBadRequest)
 		return
@@ -307,7 +321,7 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		cfg.AgentSandbox.TimeoutS = *body.SandboxTimeoutS
 	}
 	if body.SandboxJobServiceAccount != nil || body.SandboxJobSchedulerName != nil || body.SandboxJobTTLSeconds != nil ||
-		body.SandboxJobWorkspaceClaim != nil || body.SandboxJobClaimMount != nil {
+		body.SandboxJobWorkspaceClaim != nil || body.SandboxJobClaimMount != nil || body.SandboxJobEnvFromSecrets != nil {
 		if cfg.AgentSandbox.Job == nil {
 			cfg.AgentSandbox.Job = &config.SandboxJobConfig{}
 		}
@@ -326,6 +340,9 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		}
 		if body.SandboxJobTTLSeconds != nil {
 			job.TTLSeconds = *body.SandboxJobTTLSeconds
+		}
+		if body.SandboxJobEnvFromSecrets != nil {
+			job.EnvFromSecrets = envFromSecrets
 		}
 	}
 	if body.SandboxSubstrate != nil {
@@ -499,6 +516,7 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"agentSandboxJobTtlSeconds":          sandboxJobOrEmpty(cfg).TTLSeconds,
 		"agentSandboxJobWorkspaceClaim":      sandboxJobOrEmpty(cfg).WorkspaceClaim,
 		"agentSandboxJobWorkspaceClaimMount": sandboxJobOrEmpty(cfg).WorkspaceClaimMount,
+		"agentSandboxJobEnvFromSecrets":      nonNilStrings(sandboxJobOrEmpty(cfg).EnvFromSecrets),
 		"agentSandboxSubstrate":              substrateOrEmpty(cfg.AgentSandbox.Substrate),
 		"sandboxedAgents":                    sandboxed,
 		"totalAgents":                        len(cfg.Agents),

@@ -28,10 +28,10 @@ function clearInterval(id) { timers.delete(id); }
 function visibility(hidden) { document.hidden = hidden; listeners.visibilitychange(); }
 `
 	script += jsVarLine(t, html, "DASHBOARD_INTERVALS") + "\n" + html[start:end]
-	for _, name := range []string{"_dashboardDateFormatters", "DASHBOARD_TIMEZONE_STORAGE_KEY", "DASHBOARD_TIMEZONE_BROWSER", "DASHBOARD_TIMEZONE_SERVER", "_dashboardServerTimeZone"} {
+	for _, name := range []string{"_dashboardDateFormatters", "DASHBOARD_TIMEZONE_STORAGE_KEY", "DASHBOARD_TIMEZONE_BROWSER", "DASHBOARD_TIMEZONE_SERVER", "DASHBOARD_CLOCK_STORAGE_KEY", "_dashboardServerTimeZone"} {
 		script += jsVarLine(t, html, name) + "\n"
 	}
-	for _, name := range []string{"dashboardDateFormatter", "selectedDashboardTimeZone", "dashboardTimeZonePreference", "validDashboardTimeZone", "browserDashboardTimeZone", "animateSparklinePart"} {
+	for _, name := range []string{"dashboardDateFormatter", "selectedDashboardTimeZone", "dashboardTimeZonePreference", "dashboardClockPreference", "validDashboardTimeZone", "browserDashboardTimeZone", "animateSparklinePart"} {
 		script += jsFunc(t, html, name) + "\n"
 	}
 	script += `

@@ -134,10 +134,12 @@ func TestUnknownSandboxRuntimeRefusesKick(t *testing.T) {
 }
 
 func TestJobOptionsFromConfig(t *testing.T) {
+	affinity := &config.SandboxJobAffinity{}
 	got := JobOptionsFromConfig(config.SandboxJobConfig{
 		WorkspaceClaim:      "hive-data",
 		WorkspaceClaimMount: "/data",
 		NodeSelector:        map[string]string{"accelerator": "spyre"},
+		Affinity:            affinity,
 		Tolerations:         []config.SandboxJobToleration{{Key: "spyre", Operator: "Exists", Effect: "NoSchedule"}},
 		Resources:           config.SandboxJobResources{Limits: map[string]string{"ibm.com/spyre_pf": "2"}, Requests: map[string]string{"cpu": "4"}},
 		ServiceAccount:      "hive",
@@ -151,6 +153,9 @@ func TestJobOptionsFromConfig(t *testing.T) {
 	}
 	if got.NodeSelector["accelerator"] != "spyre" {
 		t.Errorf("node selector not carried: %+v", got.NodeSelector)
+	}
+	if got.Affinity != affinity {
+		t.Errorf("affinity not carried: %+v", got.Affinity)
 	}
 	if len(got.Tolerations) != 1 || got.Tolerations[0].Key != "spyre" || got.Tolerations[0].Effect != "NoSchedule" {
 		t.Errorf("tolerations not carried: %+v", got.Tolerations)

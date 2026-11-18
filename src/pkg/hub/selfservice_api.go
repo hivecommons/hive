@@ -50,12 +50,24 @@ const (
 	selfServiceExpiryEnv     = "HIVE_HUB_SELFSERVICE_EXPIRY"
 	selfServiceExpiryDefault = 24 * time.Hour
 
-	// selfServiceMaxRequestBody bounds a registration body; the largest legal
-	// body is selfServiceMaxRepos repo refs plus a URL, far under this.
+	// selfServiceMaxRequestBody is the floor for a registration body; the
+	// largest legal body at the default repo cap is far under this.
+	// selfServiceRequestBodyLimit raises it when the cap is configured higher.
 	selfServiceMaxRequestBody = 64 << 10
-	// selfServiceMaxRepos bounds how many repos one registration may prove
-	// ownership of, and so how many GitHub calls one request can trigger.
-	selfServiceMaxRepos = 20
+	// selfServiceRequestBodyPerRepo is the body budget allowed per repo ref
+	// above the floor (an owner/name ref is at most ~140 bytes, plus JSON).
+	selfServiceRequestBodyPerRepo = 256
+	// selfServiceMaxReposEnv sets how many repos one registration may list
+	// (#18642). Each repo is one GitHub ownership call, so the value is also a
+	// bound on the calls one request can trigger.
+	selfServiceMaxReposEnv = "HIVE_HUB_SELFSERVICE_MAX_REPOS"
+	// selfServiceMaxReposDefault is the cap when the env is unset; it is the
+	// previous fixed cap, so behaviour does not change until an operator
+	// raises it.
+	selfServiceMaxReposDefault = 20
+	// selfServiceMaxReposCeiling clamps a configured cap so a typo cannot turn
+	// one request into thousands of GitHub calls.
+	selfServiceMaxReposCeiling = 500
 	// selfServiceGitHubAPIBase is the production API the ownership proof
 	// calls; tests point selfServiceOwnershipChecker.apiBase at a stub.
 	selfServiceGitHubAPIBase = "https://api.github.com"
@@ -114,6 +126,18 @@ func selfServiceMaxPerUser() int {
 
 func selfServiceExpiry() time.Duration {
 	return durationEnv(selfServiceExpiryEnv, selfServiceExpiryDefault)
+}
+
+// selfServiceMaxRepos is how many repos one registration may list. Read per
+// request like the other self-service limits; advertised by GET /api/hub/v1.
+func selfServiceMaxRepos() int {
+	return min(positiveIntEnv(selfServiceMaxReposEnv, selfServiceMaxReposDefault), selfServiceMaxReposCeiling)
+}
+
+// selfServiceRequestBodyLimit bounds a registration body so the largest legal
+// body at the configured repo cap still fits.
+func selfServiceRequestBodyLimit() int64 {
+	return max(int64(selfServiceMaxRequestBody), int64(selfServiceMaxRepos())*selfServiceRequestBodyPerRepo+selfServiceMaxRequestBody)
 }
 
 // selfServiceOwnershipChecker asks GitHub whether a token's user administers
@@ -335,8 +359,8 @@ func selfServiceValidateRepos(repos []string) ([]string, error) {
 	if len(repos) == 0 {
 		return nil, errors.New("at least one owner/name repo is required")
 	}
-	if len(repos) > selfServiceMaxRepos {
-		return nil, fmt.Errorf("at most %d repos per registration", selfServiceMaxRepos)
+	if maxRepos := selfServiceMaxRepos(); len(repos) > maxRepos {
+		return nil, fmt.Errorf("at most %d repos per registration", maxRepos)
 	}
 	out := make([]string, 0, len(repos))
 	seen := make(map[string]struct{}, len(repos))
@@ -417,76 +441,140 @@ func (s *HubServer) handleSelfServiceRegister(w http.ResponseWriter, r *http.Req
 	if !s.requireSelfServiceEnabled(w) {
 		return
 	}
+	stored, rawKey, ok := s.selfServiceRegisterCore(w, r, false)
+	if !ok {
+		return
+	}
+	hubURL := hubPublicURL()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"hive":     selfServiceView(stored, false),
+		"key":      rawKey,
+		"hub_url":  hubURL,
+		"snippets": selfServiceSnippets(hubURL, stored.ID, rawKey),
+	})
+}
+
+// selfServiceRegisterCore validates a registration body, runs the ownership
+// proof and stores the record. It writes every refusal itself and returns
+// ok=false; on success it writes nothing, so the v6 route and the v1 resource
+// route (selfservice_v1_api.go) can each shape their own 201 body. v1 selects
+// the v1 over-cap answer (413 naming the limit); the v6 route keeps its 400.
+func (s *HubServer) selfServiceRegisterCore(w http.ResponseWriter, r *http.Request, v1 bool) (SelfServiceHive, string, bool) {
 	login := s.getAuthUser(r)
 	user := loadSaaSUser(login)
 	if user == nil {
 		writeJSONError(w, http.StatusUnauthorized, "not authenticated")
-		return
+		return SelfServiceHive{}, "", false
 	}
 	var body selfServiceRegisterRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, selfServiceMaxRequestBody)).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, selfServiceRequestBodyLimit())).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
-		return
+		return SelfServiceHive{}, "", false
 	}
 
 	githubLogin := topRepoProfileLogin(user)
 	if githubLogin == "" {
 		s.auditSelfServiceRefused(login, "", selfServiceRefusedNoGitHubLogin)
 		writeJSONError(w, http.StatusBadRequest, "a GitHub identity is required to register a self-hosted hive")
-		return
+		return SelfServiceHive{}, "", false
 	}
 	id, reason, err := selfServiceBuildID(githubLogin, body.Name)
 	if err != nil {
 		s.auditSelfServiceRefused(login, "", reason)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+		return SelfServiceHive{}, "", false
 	}
 	if s.selfServiceRegistryHas(id) {
 		s.auditSelfServiceRefused(login, id, selfServiceRefusedDuplicateID)
 		writeJSONError(w, http.StatusConflict, "a hive with this ID is already registered")
-		return
+		return SelfServiceHive{}, "", false
 	}
 	if _, exists := s.selfService.get(id); exists {
 		s.auditSelfServiceRefused(login, id, selfServiceRefusedDuplicateID)
 		writeJSONError(w, http.StatusConflict, "a hive with this ID is already registered")
-		return
+		return SelfServiceHive{}, "", false
 	}
 	org := strings.TrimSpace(body.Org)
 	if org != "" && !isValidName(org) {
 		s.auditSelfServiceRefused(login, id, selfServiceRefusedInvalidName)
 		writeJSONError(w, http.StatusBadRequest, "org may contain only letters, digits, '.', '_' and '-'")
-		return
+		return SelfServiceHive{}, "", false
 	}
 	repos, err := selfServiceValidateRepos(body.Repos)
 	if err != nil {
 		s.auditSelfServiceRefused(login, id, selfServiceRefusedInvalidRepos)
+		if maxRepos := selfServiceMaxRepos(); v1 && len(body.Repos) > maxRepos {
+			writeHubV1RepoCapError(w, err, maxRepos)
+			return SelfServiceHive{}, "", false
+		}
 		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+		return SelfServiceHive{}, "", false
 	}
 	dashboardURL, err := selfServiceValidateDashboardURL(r.Context(), body.DashboardURL)
 	if err != nil {
 		s.auditSelfServiceRefused(login, id, selfServiceRefusedInvalidURL)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+		return SelfServiceHive{}, "", false
 	}
 	if maxPerUser := selfServiceMaxPerUser(); s.selfServiceCount(login) >= maxPerUser {
 		s.auditSelfServiceRefused(login, id, selfServiceRefusedCap, "max_per_user", maxPerUser)
 		writeJSONError(w, http.StatusTooManyRequests, fmt.Sprintf("you already have %d self-hosted hives registered; remove one first", maxPerUser))
-		return
+		return SelfServiceHive{}, "", false
 	}
 
+	if !s.selfServiceProveOwnership(w, r, login, id, user, repos) {
+		return SelfServiceHive{}, "", false
+	}
+
+	now := time.Now().UTC()
+	// The cap is enforced again inside the store, under the lock that inserts
+	// the record: the count above ran before up to selfServiceMaxRepos() GitHub
+	// calls, so concurrent POSTs from one user could all have passed it.
+	maxPerUser := selfServiceMaxPerUser()
+	rawKey, err := s.selfService.registerCapped(SelfServiceHive{
+		ID: id, Owner: login, Org: org, Repos: repos, DashboardURL: dashboardURL, OwnershipCheckedAt: now,
+		RepoProofs: selfServiceProofTimes(nil, repos, time.Time{}, now, repos),
+	}, maxPerUser)
+	if err != nil {
+		if errors.Is(err, errSelfServiceExists) {
+			s.auditSelfServiceRefused(login, id, selfServiceRefusedDuplicateID)
+			writeJSONError(w, http.StatusConflict, "a hive with this ID is already registered")
+			return SelfServiceHive{}, "", false
+		}
+		if errors.Is(err, errSelfServiceCapReached) {
+			s.auditSelfServiceRefused(login, id, selfServiceRefusedCap, "max_per_user", maxPerUser)
+			writeJSONError(w, http.StatusTooManyRequests, fmt.Sprintf("you already have %d self-hosted hives registered; remove one first", maxPerUser))
+			return SelfServiceHive{}, "", false
+		}
+		s.logger.Error("self-service registration: store write failed", "user", login, "hive", id, "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "could not persist the registration")
+		return SelfServiceHive{}, "", false
+	}
+	s.logger.Info("audit: selfservice_hive_registered", "user", login, "hive", id, "repos", len(repos), "org", org)
+
+	stored, _ := s.selfService.get(id)
+	return stored, rawKey, true
+}
+
+// selfServiceProveOwnership checks that user administers every repo in repos,
+// with the user's OWN stored GitHub token. It is a read (GET /repos/{o}/{r})
+// and nothing else. It writes the refusal and returns false when any repo
+// fails; true means every repo passed.
+func (s *HubServer) selfServiceProveOwnership(w http.ResponseWriter, r *http.Request, login, id string, user *SaaSUser, repos []string) bool {
 	// Ownership proof with the user's OWN token, never the hub's App token: the
 	// question is what this person administers, not what the hub can see.
 	if strings.TrimSpace(user.EncryptedToken) == "" {
 		s.auditSelfServiceRefused(login, id, selfServiceRefusedNoToken)
 		writeJSONError(w, http.StatusForbidden, "no GitHub token is stored for your account; sign out and back in with GitHub, then retry")
-		return
+		return false
 	}
 	token, err := decryptToken(user.EncryptedToken)
 	if err != nil {
 		s.logger.Warn("self-service registration: stored token could not be decrypted", "user", login, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "stored GitHub token could not be read")
-		return
+		return false
 	}
 	checker := s.ownershipChecker()
 	for _, repo := range repos {
@@ -496,7 +584,7 @@ func (s *HubServer) handleSelfServiceRegister(w http.ResponseWriter, r *http.Req
 			s.auditSelfServiceRefused(login, id, selfServiceRefusedOwnershipError, "repo", repo)
 			s.logger.Warn("self-service registration: ownership check failed", "user", login, "hive", id, "repo", repo, "error", err)
 			writeJSONError(w, http.StatusBadGateway, fmt.Sprintf("could not verify your permission on %s; try again", repo))
-			return
+			return false
 		}
 		if !admin {
 			s.auditSelfServiceRefused(login, id, selfServiceRefusedNotAdmin, "repo", repo)
@@ -506,45 +594,10 @@ func (s *HubServer) handleSelfServiceRegister(w http.ResponseWriter, r *http.Req
 				"error": fmt.Sprintf("your GitHub account is not an admin of %s", repo),
 				"repo":  repo,
 			})
-			return
+			return false
 		}
 	}
-
-	now := time.Now().UTC()
-	// The cap is enforced again inside the store, under the lock that inserts
-	// the record: the count above ran before up to selfServiceMaxRepos GitHub
-	// calls, so concurrent POSTs from one user could all have passed it.
-	maxPerUser := selfServiceMaxPerUser()
-	rawKey, err := s.selfService.registerCapped(SelfServiceHive{
-		ID: id, Owner: login, Org: org, Repos: repos, DashboardURL: dashboardURL, OwnershipCheckedAt: now,
-	}, maxPerUser)
-	if err != nil {
-		if errors.Is(err, errSelfServiceExists) {
-			s.auditSelfServiceRefused(login, id, selfServiceRefusedDuplicateID)
-			writeJSONError(w, http.StatusConflict, "a hive with this ID is already registered")
-			return
-		}
-		if errors.Is(err, errSelfServiceCapReached) {
-			s.auditSelfServiceRefused(login, id, selfServiceRefusedCap, "max_per_user", maxPerUser)
-			writeJSONError(w, http.StatusTooManyRequests, fmt.Sprintf("you already have %d self-hosted hives registered; remove one first", maxPerUser))
-			return
-		}
-		s.logger.Error("self-service registration: store write failed", "user", login, "hive", id, "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "could not persist the registration")
-		return
-	}
-	s.logger.Info("audit: selfservice_hive_registered", "user", login, "hive", id, "repos", len(repos), "org", org)
-
-	stored, _ := s.selfService.get(id)
-	hubURL := hubPublicURL()
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"hive":     selfServiceView(stored, false),
-		"key":      rawKey,
-		"hub_url":  hubURL,
-		"snippets": selfServiceSnippets(hubURL, id, rawKey),
-	})
+	return true
 }
 
 // selfServiceOwnedHive loads the hive named in the path and checks login owns

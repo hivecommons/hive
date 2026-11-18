@@ -56,9 +56,6 @@ import (
 // "Yes, I trust this folder" answer.
 const claudeTrustAcceptedKey = "hasTrustDialogAccepted"
 
-// claudeProjectsKey is the ~/.claude.json key holding per-directory state.
-const claudeProjectsKey = "projects"
-
 // claudeFirstRunSeedTempInfix names the staging file a seed is written to
 // before it is renamed over ~/.claude.json, in the same directory so the
 // rename is atomic.

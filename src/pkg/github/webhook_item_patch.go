@@ -115,6 +115,14 @@ func (c *Client) classifyWebhookIssue(repo string, issue *gh.Issue, blockedBy in
 	if !issueFilter.Admits(labels) {
 		return sidelined("filtered", issueFilterReason)
 	}
+	// Parent acknowledgement needs the list-wide pass. Defer placement, but
+	// provide a display row for a newly observed proposal.
+	if c.isKnownNonHumanAuthor(issue.GetUser()) && !c.issueHasCheapHumanAcknowledgement(issue) {
+		if gate, ok := issueFilter.(AgentProposalGate); ok && gate.IsAgentProposal(labels, issue.GetTitle()) {
+			row := c.workIssue(repo, issue, labels, "filtered", agentProposalFilterReason)
+			return WebhookItemPatch{Bucket: WebhookBucketUnknown, WorkIssue: &row}
+		}
+	}
 	return WebhookItemPatch{Bucket: WebhookBucketActionable, Issue: &Issue{
 		Repo:              repo,
 		Number:            issue.GetNumber(),
@@ -164,6 +172,7 @@ func (c *Client) classifyWebhookPR(repo string, pr *gh.PullRequest, labels []str
 		HiveAgent:           attrMeta.Agent,
 		HiveBackend:         attrMeta.Backend,
 		HiveModel:           attrMeta.Model,
+		HiveEffort:          attrMeta.Effort,
 		HiveRun:             runKey,
 		HivePlan:            planRef,
 		ScopeContract:       scopeContract,

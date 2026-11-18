@@ -11,6 +11,36 @@ type RepoSettings struct {
 	// project.agents_md_max_bytes. Zero inherits it. The agentsmd floor and
 	// hard ceiling still apply (agentsmd.EffectiveMaxBytes).
 	AgentsMdMaxBytes int `yaml:"agents_md_max_bytes,omitempty" json:"agents_md_max_bytes,omitempty"`
+	// ParentAutoClose is the decomposed-parent auto-close policy for this
+	// repo (hivecommons/hive#18869): "true" (the default when empty) closes a
+	// decomposed parent once every child is closed, except an issue labelled
+	// epic or hold; "false" never auto-closes a parent; "epics_too" also
+	// closes epic/hold-labelled parents. A parent a person reopened after a
+	// hive auto-close is never re-closed under any value. YAML booleans
+	// true/false are accepted and read as the strings.
+	ParentAutoClose string `yaml:"parent_autoclose,omitempty" json:"parent_autoclose,omitempty"`
+}
+
+// Parent auto-close policy values for RepoSettings.ParentAutoClose.
+const (
+	ParentAutoCloseOn       = "true"
+	ParentAutoCloseOff      = "false"
+	ParentAutoCloseEpicsToo = "epics_too"
+)
+
+// ParentAutoCloseFor is the normalised parent auto-close policy for repo:
+// one of ParentAutoCloseOn (default), ParentAutoCloseOff or
+// ParentAutoCloseEpicsToo. An unrecognised value falls back to the default.
+func (c *Config) ParentAutoCloseFor(repo string) string {
+	rs, ok := c.RepoSettingsFor(repo)
+	if !ok {
+		return ParentAutoCloseOn
+	}
+	switch v := strings.ToLower(strings.TrimSpace(rs.ParentAutoClose)); v {
+	case ParentAutoCloseOff, ParentAutoCloseEpicsToo:
+		return v
+	}
+	return ParentAutoCloseOn
 }
 
 // RepoSettingsFor returns repo's entry from the `repos:` map, and whether one

@@ -23,9 +23,26 @@ type ResearchDispatcher interface {
 	Dispatch(ctx context.Context, query string, meta map[string]string) (kickID string, err error)
 }
 
+// ResearchWarmer is a dispatcher that can boot its agents ahead of the
+// first request: a live meeting warms the pool when it starts and keeps it
+// warm while it runs, so a question is not answered "I couldn't look that
+// up" because the agent was still cold (live Discord test).
+type ResearchWarmer interface {
+	Warm(ctx context.Context)
+}
+
+// ResearchLoad is a dispatcher that can say its agents all have work
+// already: a request dispatched then is queued behind another question, and
+// the persona says so instead of leaving the room to guess
+// (research.Pool.Busy).
+type ResearchLoad interface {
+	Busy() bool
+}
+
 // Research signal kinds: the agent's [FINDING], [COMPLETE] and [ERROR]
-// output for a kick.
+// output for a kick, and SignalRunning when the kick reached its agent.
 const (
+	SignalRunning  = "running"
 	SignalFinding  = "finding"
 	SignalComplete = "complete"
 	SignalError    = "error"
@@ -48,8 +65,22 @@ type NotesSink interface {
 type Meetings interface {
 	Get(id string) (meetings.Meeting, error)
 	PostChat(ctx context.Context, id, text string) error
-	Say(ctx context.Context, id, text string) error
+	Say(ctx context.Context, id, text string) (meetings.SayResult, error)
 	Subscribe(fn func(meetings.Update)) func()
+}
+
+// ConfirmedPoster is a Meetings that can confirm a chat line landed in the
+// meeting (Manager.PostChatConfirmed over Quorum's chat.post confirm:true).
+// With it, a post the platform accepted but never showed counts as not
+// delivered, and the reply goes out by voice instead.
+type ConfirmedPoster interface {
+	PostChatConfirmed(ctx context.Context, id, text string) (bool, error)
+}
+
+// Leaver is a Meetings that can remove the bot from a meeting
+// (Manager.Leave); the session uses it to leave a meeting it cannot reach.
+type Leaver interface {
+	Leave(ctx context.Context, id, reason string) (meetings.Meeting, error)
 }
 
 // Spek is one live Spektacular child (*spektacular.Stream).
@@ -83,7 +114,10 @@ type ResearchItem struct {
 	KickID   string   `json:"kick_id,omitempty"`
 	Findings []string `json:"findings,omitempty"`
 	Summary  string   `json:"summary,omitempty"`
-	Posted   bool     `json:"posted,omitempty"`
+	// Error is why a failed item failed: the dispatch error's reason, the
+	// research agent's own [ERROR] text, or "timed out".
+	Error  string `json:"error,omitempty"`
+	Posted bool   `json:"posted,omitempty"`
 	// Betty marks a deep dive the persona started on an addressed
 	// question (hivecommons/hive#18393): Spek never hears of it, and its
 	// result is reported once, restyled by the persona.
@@ -98,8 +132,16 @@ type ResearchItem struct {
 	// DispatchedAt is when the item went to the research pool (after any
 	// approval); the deep dive's progress note and timeout count from it.
 	DispatchedAt *time.Time `json:"dispatched_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	// Waiting marks an item dispatched while every research agent had work:
+	// it is queued behind another question until StartedAt.
+	Waiting bool `json:"waiting,omitempty"`
+	// StartedAt is when the item's kick reached its research agent.
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	// HeardAt is when the question behind a persona deep dive was heard;
+	// its follow-up's timing counts from it.
+	HeardAt   *time.Time `json:"heard_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // Ask is a clarifying question hive posted for Spek.
@@ -150,6 +192,16 @@ type State struct {
 	// PersonaLatency sums them (timing.go, #18590).
 	PersonaTimings []PersonaTiming `json:"persona_timings,omitempty"`
 	PersonaLatency *PersonaLatency `json:"persona_latency,omitempty"`
+	// Undelivered counts the replies in a row that reached the meeting in
+	// neither chat nor voice, and UnreachableSince is when the first of
+	// them failed; both clear on the next delivery. Unreachable is set once
+	// that has lasted UnreachableWarnAfter: the meeting view then says the
+	// bot cannot reach the participants (reach.go).
+	Undelivered      int        `json:"undelivered,omitempty"`
+	UnreachableSince *time.Time `json:"unreachable_since,omitempty"`
+	Unreachable      bool       `json:"unreachable,omitempty"`
+	// UndeliveredReason is why the last of them was not delivered.
+	UndeliveredReason string `json:"undelivered_reason,omitempty"`
 }
 
 // StateDoc is the side document name the state is stored under.
@@ -162,8 +214,12 @@ const (
 	EventNotes    = "notes"
 	EventDropped  = "dropped"
 	EventSpek     = "spek"
-	// EventPersona is a persona reply; Intent carries it as JSON.
+	// EventPersona is a persona reply; Intent carries it as JSON and Line
+	// the reply as recorded in the transcript.
 	EventPersona = "persona"
+	// EventReach reports a change in whether the bot can reach the meeting
+	// (State.Undelivered, State.Unreachable).
+	EventReach = "reach"
 )
 
 // Event is what live-panel observers receive.
@@ -173,7 +229,9 @@ type Event struct {
 	Intent    json.RawMessage `json:"intent,omitempty"`
 	Research  *ResearchItem   `json:"research,omitempty"`
 	Reason    string          `json:"reason,omitempty"`
-	At        time.Time       `json:"at"`
+	// Line is the transcript line a persona event added (a reply event).
+	Line *meetings.Event `json:"line,omitempty"`
+	At   time.Time       `json:"at"`
 }
 
 // intent is one Spek stdout line.

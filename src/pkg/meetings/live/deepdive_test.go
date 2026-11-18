@@ -39,6 +39,7 @@ func deepDiveHarness(t *testing.T, m meetings.Meeting, progress, timeout time.Du
 	t.Helper()
 	resolved := config.MeetingsPersonaConfig{}.Resolve()
 	s := betty.SettingsFrom(resolved)
+	s.AckDelay = 0
 	s.AnswerWait, s.MinGap = personaWait, 0
 	drops := &dropLog{m: map[string]int{}}
 	h := newHarness(t, Policy{ChatPostsPerMinute: 20, VoiceOnAddress: true}, func(o *Options) {
@@ -70,7 +71,7 @@ func TestDeepDiveDispatchFailureIsSaidInChat(t *testing.T) {
 	h := deepDiveHarness(t, meetings.Meeting{Platform: meetings.PlatformGoogleMeet}, time.Hour, time.Hour)
 	h.res.err = reasonErr{reason: "no research agent is available on this hive"}
 	h.live()
-	h.line(meetings.EventChat, "Bo", "Betty, what PRs are open in the hive repo?", false)
+	h.line(meetings.EventChat, "Bo", "Betty, how does the cert rotation work?", false)
 	h.eventually("dig in", h.posted("I'll dig into that and report back."))
 	h.eventually("failure said", h.posted("I couldn't look that up: no research agent is available on this hive."))
 	it := h.state().Research[0]
@@ -90,7 +91,19 @@ func TestDeepDiveFailureIsSpokenWhenAskedByVoice(t *testing.T) {
 	h.res.err = errors.New("queue full")
 	h.live()
 	h.line(meetings.EventSegment, "Bo", "Betty, how does the cert rotation work?", true)
-	h.eventually("dig in spoken", h.said("I'll dig into that and report back."))
+	// She already said "one moment" aloud: the dig-in goes to chat, not a
+	// second spoken ack back to back.
+	h.eventually("dig in posted", h.posted("I'll dig into that and report back."))
+	if _, says := h.mt.got(); func() bool {
+		for _, x := range says {
+			if strings.Contains(x, "I'll dig into that") {
+				return true
+			}
+		}
+		return false
+	}() {
+		t.Fatal("the dig-in must not be spoken after the spoken ack")
+	}
 	h.eventually("failure spoken", h.said("I couldn't look that up: the research could not be started."))
 	if !h.state().Research[0].Voice {
 		t.Fatal("a spoken deep dive is marked voice")

@@ -35,6 +35,7 @@ func (s *Server) registerInboxRoutes() {
 	s.registerInboxUploadRoutes()
 	s.registerInboxSpekRunner()
 	s.registerInboxEmailRoutes()
+	s.registerInboxDeleteRoutes()
 }
 
 // inboxSourceReadTimeout bounds one read that may spawn the source's MCP
@@ -320,6 +321,14 @@ type InboxListResponse struct {
 	Repos    []string       `json:"repos"`
 	Settings inbox.Settings `json:"settings"`
 	Error    string         `json:"error,omitempty"`
+	// EmailIn is this hive's email-in address, for owner and read-write
+	// callers (api_email_in.go).
+	EmailIn *EmailInView `json:"email_in,omitempty"`
+	// InputMethods is the static catalogue of input methods the Inbox
+	// lists but does not connect to (inbox.InputMethods): tools that
+	// already type into the Quick note box, and neural interfaces with no
+	// public API yet. They are not sources and have no settings.
+	InputMethods []inbox.InputMethod `json:"input_methods"`
 }
 
 func (s *Server) inboxService(w http.ResponseWriter) (*inbox.Service, bool) {
@@ -336,9 +345,12 @@ func (s *Server) handleInboxList(w http.ResponseWriter, r *http.Request) {
 	if s == nil || s.deps == nil || s.deps.Inbox == nil {
 		// No service (older boot path / tests): still a valid, empty inbox —
 		// the panel must render its empty state, not spin on a 404.
-		resp := InboxListResponse{Items: []inbox.Item{}, Sources: []InboxSourceStatus{}, Repos: s.inboxRepos(), Settings: inbox.Settings{Rules: []config.InboxRule{}}}
+		resp := InboxListResponse{Items: []inbox.Item{}, Sources: []InboxSourceStatus{}, Repos: s.inboxRepos(), Settings: inbox.Settings{Rules: []config.InboxRule{}}, InputMethods: inbox.InputMethods()}
 		if s != nil && s.deps != nil && s.deps.Config != nil {
 			resp.Sources = s.inboxSources(ctx, s.deps.Config.Inbox.EffectiveSources())
+		}
+		if s != nil {
+			resp.EmailIn = s.emailInView(r)
 		}
 		jsonResponse(w, resp)
 		return
@@ -351,6 +363,9 @@ func (s *Server) handleInboxList(w http.ResponseWriter, r *http.Request) {
 		Sources:     s.inboxSources(ctx, svc.Config().EffectiveSources()),
 		Repos:       s.inboxRepos(),
 		Settings:    svc.Settings(),
+		EmailIn:     s.emailInView(r),
+
+		InputMethods: inbox.InputMethods(),
 	}
 	if resp.Items == nil {
 		resp.Items = []inbox.Item{}

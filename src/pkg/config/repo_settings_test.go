@@ -50,3 +50,19 @@ func TestReposAgentsMdMaxBytesYAML(t *testing.T) {
 		t.Errorf("yaml per-repo cap = %d, want 49152", got)
 	}
 }
+
+func TestParentAutoCloseFor(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("project: {org: acme}\nrepos:\n  off: {parent_autoclose: false}\n  epics: {parent_autoclose: epics_too}\n  on: {parent_autoclose: true}\n  junk: {parent_autoclose: maybe}\n  other: {}\n"), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"off": ParentAutoCloseOff, "acme/epics": ParentAutoCloseEpicsToo, "on": ParentAutoCloseOn,
+		"junk": ParentAutoCloseOn, "other": ParentAutoCloseOn, "unlisted": ParentAutoCloseOn,
+	}
+	for repo, want := range cases {
+		if got := cfg.ParentAutoCloseFor(repo); got != want {
+			t.Errorf("%s = %q, want %q", repo, got, want)
+		}
+	}
+}

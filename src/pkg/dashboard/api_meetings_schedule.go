@@ -125,7 +125,7 @@ func (s *Server) handleMeetingsScheduleList(w http.ResponseWriter, r *http.Reque
 		s.meetingsError(w, r, err)
 		return
 	}
-	jsonResponse(w, out)
+	jsonResponse(w, s.withEmailIn(r, out))
 }
 
 // parseMeetingScheduleAdd validates the request shape; the scheduler

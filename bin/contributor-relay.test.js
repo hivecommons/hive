@@ -7179,10 +7179,10 @@ test('#4117: bob model is detected from the last message of the newest chat reco
 });
 
 test('#4117: unsupported backends detect nothing and degrade to today\'s behavior', () => {
-  // A claude transcript exists on disk, but codex has no scanner — detection
+  // A claude transcript exists on disk, but these backends have no scanner — detection
   // must not guess from another CLI's files.
   const fx = makeClaudeFixture([assistantTurn('claude-opus-5-20260101')]);
-  for (const backend of ['codex', 'agy', 'goose', 'pi', 'aider', 'litellm']) {
+  for (const backend of ['agy', 'goose', 'pi', 'aider', 'litellm']) {
     const relay = loadRelay({ backend, model: '', env: { HIVE_CLAUDE_PROJECTS_DIR: fx.projectsDir } });
     try {
       assert.strictEqual(relay.refreshDetectedModel(), '', `${backend} must not detect a model`);
@@ -7193,6 +7193,61 @@ test('#4117: unsupported backends detect nothing and degrade to today\'s behavio
     }
   }
   fs.rmSync(fx.root, { recursive: true, force: true });
+});
+
+function makeCodexHome(files, config) {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const root = fs.mkdtempSync(path.join(scratchRoot, 'codex-detect-'));
+  for (const [rel, lines] of Object.entries(files)) {
+    const file = path.join(root, 'sessions', rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, lines.map(l => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n') + '\n');
+  }
+  if (config !== undefined) fs.writeFileSync(path.join(root, 'config.toml'), config);
+  return root;
+}
+const codexTurn = (model) => ({ timestamp: '2026-11-17T00:00:00Z', type: 'turn_context', payload: { model } });
+
+test('#18714: codex model comes from the newest rollout file, ignoring garbage lines', () => {
+  const root = makeCodexHome({
+    '2026/11/16/rollout-2026-11-16T10-00-00-aaa.jsonl': [codexTurn('gpt-old')],
+    '2026/11/17/rollout-2026-11-17T10-00-00-bbb.jsonl': [codexTurn('gpt-new'), 'not json {{'],
+  }, 'model = "from-config"\n');
+  const relay = loadRelay({ backend: 'codex', model: '', env: { CODEX_HOME: root } });
+  try {
+    assert.strictEqual(relay.refreshDetectedModel(), 'gpt-new');
+    assert.strictEqual(relay.effectiveModel(), 'gpt-new');
+  } finally {
+    teardown(relay);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#18714: codex falls back to config.toml, then to no model', () => {
+  const withCfg = makeCodexHome({}, 'model_provider = "x"\nmodel = "gpt-cfg"\n[profiles.a]\nmodel = "nested"\n');
+  const empty = makeCodexHome({});
+  try {
+    let relay = loadRelay({ backend: 'codex', model: '', env: { CODEX_HOME: withCfg } });
+    try { assert.strictEqual(relay.refreshDetectedModel(), 'gpt-cfg'); } finally { teardown(relay); }
+    relay = loadRelay({ backend: 'codex', model: '', env: { CODEX_HOME: empty } });
+    try { assert.strictEqual(relay.refreshDetectedModel(), ''); } finally { teardown(relay); }
+  } finally {
+    fs.rmSync(withCfg, { recursive: true, force: true });
+    fs.rmSync(empty, { recursive: true, force: true });
+  }
+});
+
+test('#18714: explicit AGENT_MODEL means the codex detector is not used', () => {
+  const root = makeCodexHome({ '2026/11/17/rollout-x.jsonl': [codexTurn('gpt-new')] });
+  const relay = loadRelay({ backend: 'codex', model: 'explicit', env: { CODEX_HOME: root } });
+  try {
+    assert.strictEqual(relay.detectRunningModel(), '');
+    assert.strictEqual(relay.effectiveModel(), 'explicit');
+  } finally {
+    teardown(relay);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('#4117: detection failure (missing log root) is silent and reports no model', () => {

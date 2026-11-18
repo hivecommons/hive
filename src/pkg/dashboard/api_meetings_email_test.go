@@ -331,8 +331,22 @@ func TestCalendarEmailsAddLimits(t *testing.T) {
 }
 
 func TestMailRelayPathsMatchWire(t *testing.T) {
-	if meetingsInvitesPath != wire.SpokeInvitesPath || meetingsCalendarProofPath != wire.SpokeProofPath || inboxEmailPath != wire.SpokeFilesPath || inboxEmailChunkPath != wire.SpokeFilesChunkPath {
+	if meetingsInvitesPath != wire.SpokeInvitesPath || meetingsCalendarProofPath != wire.SpokeProofPath || inboxEmailPath != wire.SpokeFilesPath || inboxEmailChunkPath != wire.SpokeFilesChunkPath || inboxEmailReportPath != wire.SpokeReportPath {
 		t.Fatal("the hub forwards to wire.Spoke*Path; the dashboard must serve the same paths")
+	}
+	// Every relay target must pass the session gate: the hub holds no
+	// dashboard session, and each handler verifies the relay signature
+	// itself. The chunk path was missing (hivecommons/hive#18699), so every
+	// mail with more than one relay piece of attachments got a 401.
+	for _, p := range []string{meetingsInvitesPath, meetingsCalendarProofPath, inboxEmailPath, inboxEmailChunkPath, inboxEmailReportPath} {
+		if !isPublicPath(p) {
+			t.Errorf("isPublicPath(%q) = false: the hub's relay cannot reach it", p)
+		}
+	}
+	for _, p := range []string{"/api/inbox/email/recent", "/api/inbox/email/abc/file", meetingsCalendarEmailsPath} {
+		if isPublicPath(p) {
+			t.Errorf("isPublicPath(%q) = true: it must stay behind the session gate", p)
+		}
 	}
 }
 

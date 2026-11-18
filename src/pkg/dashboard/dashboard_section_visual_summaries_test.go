@@ -56,6 +56,7 @@ function formatNumber(value, locale, options) { try { return new Intl.NumberForm
 function fmtSparkVal(v) { return Number.isFinite(Number(v)) ? String(Number(v)) : '—'; }
 function renderSparkline(_el, series, opts) { lastSparkSeries = series; return '<span class="sparkline"><svg class="' + opts.svgClass + '" role="img"><title>' + escapeHtml(opts.title || '') + '</title><polyline class="sparkline-line" points="0,0 1,1"/></svg></span>'; }
 function _getAgentColor() { return 'var(--cyan)'; }
+function agentsAttentionBadgeHtml() { return ''; }
 function costHist() { return [{ usd: 1 }, { usd: 2 }]; }
 function computeHourlyBurnRates() { return [{ rate: 4 }, { rate: 8 }]; }
 ` + block + `

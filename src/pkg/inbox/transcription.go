@@ -266,6 +266,7 @@ func (s *Service) applyTranscripts(items []Item) {
 		}
 		busy := ok && (rec.Status == TranscriptionQueued || rec.Status == TranscriptionRunning || rec.Status == TranscriptionDone)
 		it.Transcribable = active && it.Pending && !busy && !it.AwaitingApproval && s.hasAudio(*it)
+		it.AutoTranscribe = active && it.Pending && !it.AwaitingApproval && s.hasAudio(*it) && s.autoOptedIn(*it, txCfg)
 		if it.Pending && !busy && s.hasAudio(*it) {
 			if !blockedKnown {
 				blocked, blockedKnown = s.transcribeBlockedReason(txCfg, store), true

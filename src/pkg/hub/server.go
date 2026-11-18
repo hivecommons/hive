@@ -1806,6 +1806,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("POST /api/hub/selfservice/hives", s.requireAuth(s.handleSelfServiceRegister))
 	s.mux.HandleFunc("POST /api/hub/selfservice/hives/{id}/rotate", s.requireAuth(s.handleSelfServiceRotate))
 	s.mux.HandleFunc("DELETE /api/hub/selfservice/hives/{id}", s.requireAuth(s.handleSelfServiceDelete))
+	// Hub registration protocol v1 (#18642, selfservice_v1_api.go): discovery
+	// first; the resource routes follow in later steps of the rollout.
+	s.registerHubV1Routes()
 	s.mux.HandleFunc("POST /api/contribute/register", s.handleContributeProxy)
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.handleContributeWSProxy)

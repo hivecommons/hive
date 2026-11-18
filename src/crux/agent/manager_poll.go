@@ -21,6 +21,9 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 	var prevLines []string
 	loginStreak := 0
 	tokenRestartProducingLogged := false
+	// A dashboard Claude sign-in that predates this poller is not its signal
+	// to restart on (#18732); only a newer one is.
+	signInGenSeen := m.claudeSignInGeneration()
 	outcomeTick := 0
 	for {
 		select {
@@ -194,7 +197,34 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				if lastKick != nil && now.Sub(*lastKick) < tokenRestartKickGrace {
 					continue
 				}
-				if tokenRestartBlockedByOutput(lastPaneChange, now) {
+				// #18732: "valid" has to mean the PROVIDER accepts the token,
+				// not that the file is well-formed — a revoked grant leaves
+				// the file intact. For Claude the heal is chosen only after a
+				// live check (claude_login_revoked.go); other backends route
+				// straight to the capped heal below.
+				heal := m.decideLoginPromptHeal(ctx, agent, &signInGenSeen, now)
+				if heal == loginHealSignInRestart {
+					m.logger.Info("restarting agent still at a login prompt after the operator signed in to Claude; token-restart window bypassed",
+						"agent", agent.Name,
+						"restarts_24h", agent.tokenRestartsInWindow(now),
+						"window_max", tokenRestartWindowMax,
+					)
+					go func() {
+						if err := m.RestartWithReason(ctx, agent.Name, "operator signed in to Claude"); err != nil {
+							m.logger.Warn("post-sign-in restart failed", "agent", agent.Name, "error", err)
+						}
+					}()
+					return // stop polling; Restart will spawn a new goroutine
+				}
+				if heal == loginHealOperatorLogin {
+					// The provider rejected the credential: the dashboard
+					// banner, the login detector's notification and the hub
+					// verdict carry it from the BackendAuthRevoked mark. No
+					// restart, and decideTokenRestart is not consulted, so
+					// the 24h ledger is untouched for the sign-in that fixes
+					// this. Deliberately no `continue`: the TLS and hung-CLI
+					// detectors below stay live.
+				} else if tokenRestartBlockedByOutput(lastPaneChange, now) {
 					if !tokenRestartProducingLogged {
 						m.logger.Info("token-triggered restart suppressed: agent is producing output",
 							"agent", agent.Name,
@@ -499,6 +529,9 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 					m.logger.Warn("Claude Code permission dialog on screen; the agent is meant to run with --dangerously-skip-permissions — answering option 1",
 						"agent", agent.Name, "dialog", title, "option", key)
 				}
+				if label == claudeFirstRunNoticeLabel {
+					m.noteClaudeFirstRunNotice(agent, "launch")
+				}
 				answeredAt[label] = time.Now()
 				time.Sleep(paneCaptureSleep)
 				// An empty key means the affirmative option is already selected
@@ -611,6 +644,12 @@ func looksLikeEchoedKickContent(line string) bool {
 
 func (m *Manager) checkKickRefusal(agent *AgentProcess, line string) {
 	if looksLikeEchoedKickContent(line) {
+		return
+	}
+	// Claude Code's first-run security notice says "Due to prompt injection
+	// risks, …", which matches the "prompt injection" refusal pattern; it is
+	// CLI onboarding text, not the model declining a kick.
+	if strings.Contains(line, claudeFirstRunNoticeInjectionMarker) {
 		return
 	}
 	lower := strings.ToLower(line)

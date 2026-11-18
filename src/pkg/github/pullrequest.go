@@ -249,6 +249,9 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 	if head == "" {
 		return CreatePRResult{}, fmt.Errorf("CreatePR: head branch is required")
 	}
+	if reason := invalidHeadReason(head); reason != "" {
+		return CreatePRResult{}, &errInvalidHead{head: head, reason: reason}
+	}
 	if base = strings.TrimSpace(base); base == "" {
 		resolved, err := c.DefaultBranch(ctx, owner, repo)
 		if err != nil {

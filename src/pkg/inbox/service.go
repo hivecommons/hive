@@ -64,8 +64,8 @@ type Service struct {
 
 	// Machine transcription (see transcription.go). transcripts is nil until
 	// EnableTranscription; txMu guards the queue check-and-set. txQueue
-	// holds queued and running jobs in order (the head runs, one at a time)
-	// with their live progress, guarded by txQMu.
+	// holds queued and running jobs in order (the first
+	// transcribeConcurrency run) with their live progress, guarded by txQMu.
 	transcripts *TranscriptStore
 	// intentRunners are the registered transcribe-then-share handlers.
 	intentRunners map[string]IntentRunner
@@ -74,6 +74,12 @@ type Service struct {
 	txMu      sync.Mutex
 	txQMu     sync.Mutex
 	txQueue   []*txJob
+	// TranscribeConcurrency is how many transcriptions run at once; zero
+	// reads HIVE_INBOX_TRANSCRIBE_CONCURRENCY (default
+	// DefaultTranscribeConcurrency). Fixed on first use.
+	TranscribeConcurrency int
+	txConcOnce            sync.Once
+	txConc                int
 	// NewTranscriber builds the provider for a run; nil uses
 	// DefaultTranscriber with the key from Getenv. Tests inject a fake.
 	NewTranscriber func(config.InboxTranscription) (transcribe.Transcriber, error)
@@ -204,7 +210,7 @@ func (s *Service) AddUpload(ctx context.Context, in UploadInput) (Item, error) {
 
 // AddMedia stores one dropped audio or video file and, when transcription
 // is enabled and consented, queues its machine transcription at once
-// (opts audits the run like a manual Transcribe).
+// through AutoTranscribe (opts audits the run like a manual Transcribe).
 func (s *Service) AddMedia(ctx context.Context, in MediaInput, opts TranscribeOptions) (Item, error) {
 	u := s.Uploads()
 	if u == nil {
@@ -215,11 +221,7 @@ func (s *Service) AddMedia(ctx context.Context, in MediaInput, opts TranscribeOp
 		return Item{}, err
 	}
 	it := u.item(m)
-	if s.Config().Transcription.Active() && s.transcriptStore() != nil {
-		if _, err := s.Transcribe(ctx, it, opts); err != nil {
-			s.Logger.Warn("inbox: upload transcription not queued", "item", it.Key(), "error", err)
-		}
-	}
+	s.AutoTranscribe(ctx, it, opts)
 	return it, nil
 }
 
@@ -309,6 +311,7 @@ func (s *Service) Items(ctx context.Context) ([]Item, error) {
 		}
 		out = append(out, items...)
 	}
+	out = s.Store.Live(out)
 	s.Store.Apply(out)
 	s.applyTranscripts(out)
 	sortItems(out)

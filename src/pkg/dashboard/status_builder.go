@@ -676,7 +676,17 @@ func agentDisabledInConfig(cfg *config.Config, name string, proc *crux.Process) 
 // wins during config/reconcile races; otherwise enabled and unpaused is the
 // active configuration. Pack-paused or disabled entries remain suppressible as
 // the inactive higher-level "ghost" agents the dashboard filter targets.
+//
+// An agent whose pause/run state the operator owns is never such a ghost: an
+// agent created by hand is operator-owned from birth (handleAgentCreate) and is
+// never in any pack's roster, so without this a hand-created agent vanished
+// from every dashboard view the moment it was paused, while its name stayed
+// taken in the config (#18730). The pack sweep never touches such an agent, so
+// the only one who can bring it back is the operator, through its card.
 func activeOutsidePack(cfg *config.Config, name string, proc *crux.Process) bool {
+	if operatorOwnsPauseState(cfg, name) {
+		return true
+	}
 	if proc == nil {
 		return false
 	}
@@ -685,6 +695,16 @@ func activeOutsidePack(cfg *config.Config, name string, proc *crux.Process) bool
 	}
 	return !agentDisabledInConfig(cfg, name, proc) &&
 		!proc.Paused && proc.State != crux.StatePaused
+}
+
+// operatorOwnsPauseState reports whether the live config records the
+// operator as the owner of name's pause/run state (#5706).
+func operatorOwnsPauseState(cfg *config.Config, name string) bool {
+	if cfg == nil {
+		return false
+	}
+	ac, ok := cfg.Agents[name]
+	return ok && ac.PauseIsOperatorOwned()
 }
 
 func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
@@ -1008,7 +1028,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 				seen[name] = true
 				continue
 			}
-			if packAllowed != nil && !packAllowed[name] && agentCfg.Paused {
+			if packAllowed != nil && !packAllowed[name] && agentCfg.Paused && !agentCfg.PauseIsOperatorOwned() {
 				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonPackInactive})
 				slog.Debug("agent card omitted: config-only agent outside ACMM pack and paused", "agent", name, "acmm_level", acmmLevel)
 				seen[name] = true

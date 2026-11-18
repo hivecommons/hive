@@ -30,7 +30,9 @@ import (
 // GitHub webhooks (signWebhookRelayHeaders), with the delivery id in
 // X-Hive-Relay-Delivery, and forwards it to the spoke behind the same
 // private-address guard and no-redirect client as the webhook relay. The hub
-// stores nothing and logs only the delivery id.
+// stores nothing and logs only the delivery id. A refusal report
+// (wire.KindReport, #18699: what hive-mx turned away for a hive and why) is
+// routed the same way.
 //
 // Both endpoints need the shared bearer token HIVE_HUB_MAIL_TOKEN (the same
 // value hive-mx mounts from its Secret); without it they answer 404, so a hub

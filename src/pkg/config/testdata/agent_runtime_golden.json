@@ -819,6 +819,11 @@
   "chat": {
     "grounded_answers": {}
   },
+  "customers": {
+    "inference": {},
+    "avatars": {},
+    "mention_search": {}
+  },
   "duplicate_sweep": {},
   "good_first_issue": {},
   "supersession_sweep": {},

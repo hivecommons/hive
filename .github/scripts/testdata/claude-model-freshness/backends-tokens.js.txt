@@ -1,0 +1,13 @@
+    // Miniature of backends-tokens.js for test-claude-model-freshness.py.
+    const CLAUDE_CLI_MODELS = [
+      { value: 'claude-opus-5-5', label: 'Opus 5.5' },
+      { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
+      { value: 'claude-fable-5', label: 'Fable 5' },
+      { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+      { value: 'opus', label: 'Opus (alias)' },
+      { value: 'sonnet', label: 'Sonnet (alias)' },
+      { value: 'haiku', label: 'Haiku (alias)' },
+    ];
+    const GEMINI_CLI_MODELS = [
+      { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+    ];

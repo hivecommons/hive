@@ -29,8 +29,12 @@ var claudePinnedCLIModels = []string{
 }
 GO
 }
+# A fixed requirements file, not the real one: the cases below are about the
+# Sonnet 5.5 line, and the real file grows a line with every model refresh
+# (#18753), which would otherwise fail these fixtures' two-model allowlist.
+printf '# fixture\nclaude claude-sonnet-5-5 2.1.284\n' > "$TMP/requirements.txt"
 run() { HIVE_PIN_DOCKERFILE="$TMP/Dockerfile" HIVE_MODELS_GO="$TMP/models.go" \
-  HIVE_MODEL_REQUIREMENTS="$HERE/cli-model-requirements.txt" "$@" bash "$SCRIPT" >"$TMP/out" 2>&1 && RC=0 || RC=$?; }
+  HIVE_MODEL_REQUIREMENTS="$TMP/requirements.txt" "$@" bash "$SCRIPT" >"$TMP/out" 2>&1 && RC=0 || RC=$?; }
 
 fixtures 2.1.284 2.1.284 '"claude-sonnet-5-5",'
 run env; [ $RC -eq 0 ] && grep -q consistent "$TMP/out" && pass "consistent lists pass" || fail "consistent" "$(cat "$TMP/out")"
@@ -53,6 +57,17 @@ fixtures 2.1.284 2.1.284 '"claude-sonnet-5-5",'
 sed -i 's/CODEX_VERSION=0.159.0/CODEX_VERSION=0.160.0/' "$TMP/Dockerfile"
 run env HIVE_MODEL_CHECK_STRICT=1
 [ $RC -eq 1 ] && grep -q 'codex static list comment says 0.159.0 but src/Dockerfile pins 0.160.0' "$TMP/out" && pass "stale codex version comment is caught" || fail "codex comment" "$(cat "$TMP/out")"
+
+# A line the weekly claude-model-freshness run appends (#18754): strict mode
+# fails while the allowlist lacks the model and passes once it is listed.
+printf 'claude claude-haiku-5-5 2.1.326\n' > "$TMP/reqs-new.txt"
+fixtures 2.1.326 2.1.326 '"claude-sonnet-5-5",'
+run env HIVE_MODEL_REQUIREMENTS="$TMP/reqs-new.txt" HIVE_MODEL_CHECK_STRICT=1
+[ $RC -eq 1 ] && grep -q 'missing claude-haiku-5-5, which Claude Code 2.1.326' "$TMP/out" && pass "strict mode fails on an appended requirement the allowlist lacks" || fail "appended requirement missing" "$(cat "$TMP/out")"
+fixtures 2.1.326 2.1.326 '"claude-sonnet-5-5",
+	"claude-haiku-5-5",'
+run env HIVE_MODEL_REQUIREMENTS="$TMP/reqs-new.txt" HIVE_MODEL_CHECK_STRICT=1
+[ $RC -eq 0 ] && grep -q consistent "$TMP/out" && pass "strict mode passes once the appended model is listed" || fail "appended requirement present" "$(cat "$TMP/out")"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

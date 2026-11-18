@@ -438,6 +438,14 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
+	// A head that can never be a branch (the literal HEAD of a detached
+	// checkout, an empty or malformed name) is refused before any GitHub call:
+	// no retry can fix it and every later gate would judge the wrong ref.
+	if reason := invalidHeadReason(req.Head); reason != "" {
+		c.rejectInvalidHead(path, req, (&errInvalidHead{head: req.Head, reason: reason}).Error(), nowFn)
+		return
+	}
+
 	// Red-main circuit breaker (#13630): while a required check has been red
 	// on the repo's default branch past its threshold, a new PR would be red
 	// too, so only a PR that fixes main opens. Existing PRs never come
@@ -830,6 +838,10 @@ func (c *Client) failPRRequest(path string, req PRRequest, err error, nowFn func
 	// fleet report fires only when distinct requests fail the same way. The
 	// message states what the watcher checked and what it saw — the ref, the
 	// repository, and the push relay's own record — not an inferred cause.
+	if reason, terminal := invalidHeadFailure(err, c.prRetries.attempts(path)+1); terminal {
+		c.rejectInvalidHead(path, req, reason, nowFn)
+		return
+	}
 	reason, missingHead := missingHeadReason(err)
 	if missingHead {
 		attempt := c.prRetries.attempts(path) + 1
@@ -877,6 +889,19 @@ func (c *Client) rejectPRRequest(path string, req PRRequest, gate, reason string
 	c.prRetries.clear(path)
 	c.logger.Warn("pr-request watcher: REJECTED (policy)",
 		slog.String("gate", gate),
+		slog.String("agent", req.Agent), slog.String("repo", req.Repo),
+		slog.String("head", req.Head), slog.String("reason", reason))
+}
+
+// rejectInvalidHead records a head that can never open a PR and quarantines the
+// request (.rejected). It is logged at ERROR, once, so the fleet feed and the
+// dashboard see it (fleetreport.ClassPRRequestHeadInvalid) instead of a WARN
+// that repeats on every backoff.
+func (c *Client) rejectInvalidHead(path string, req PRRequest, reason string, nowFn func() time.Time) {
+	c.writePRResult(path, PRResponse{OK: false, Error: "PR head rejected: " + reason, At: nowFn().UTC().Format(time.RFC3339)})
+	_ = os.Rename(path, path+".rejected")
+	c.prRetries.clear(path)
+	c.logger.Error("pr-request watcher: head is not a pushable branch, request rejected",
 		slog.String("agent", req.Agent), slog.String("repo", req.Repo),
 		slog.String("head", req.Head), slog.String("reason", reason))
 }

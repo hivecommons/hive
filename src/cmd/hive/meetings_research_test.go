@@ -101,14 +101,15 @@ func TestWireMeetingsResearch(t *testing.T) {
 }
 
 func TestResearchSignalMapping(t *testing.T) {
-	cases := map[string]string{research.EventFinding: live.SignalFinding, research.EventDone: live.SignalComplete, research.EventFailed: live.SignalError}
+	cases := map[string]string{research.EventFinding: live.SignalFinding, research.EventDone: live.SignalComplete, research.EventFailed: live.SignalError,
+		research.EventRunning: live.SignalRunning}
 	for kind, want := range cases {
 		sig, ok := researchSignal(research.Event{KickID: "k", Kind: kind, Text: "t"})
 		if !ok || sig.Kind != want || sig.KickID != "k" || sig.Text != "t" {
 			t.Errorf("%s -> %+v %v", kind, sig, ok)
 		}
 	}
-	for _, kind := range []string{research.EventQueued, research.EventRunning, "other"} {
+	for _, kind := range []string{research.EventQueued, "other"} {
 		if _, ok := researchSignal(research.Event{Kind: kind}); ok {
 			t.Errorf("%s must not map", kind)
 		}

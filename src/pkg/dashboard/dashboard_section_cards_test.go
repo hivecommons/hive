@@ -276,6 +276,7 @@ func TestDashboardSectionRenderersRefreshSharedShell(t *testing.T) {
 		"function renderKnowledge()":                "knowledge-section",
 		"function renderInbox()":                    "inbox-section",
 		"function renderCalendar()":                 "calendar-section",
+		"function renderCustomers()":                "customers-section",
 		"function renderDebugSection()":             "debug-section",
 		"function renderLogs()":                     "logs-section",
 	}

@@ -21,6 +21,7 @@ type Remediation struct {
 const (
 	causeAppBroken           = "app-broken"
 	causeLoginStuck          = "login-stuck"
+	causeLoginRevoked        = "login-revoked"
 	causeBudgetExhausted     = "budget-exhausted"
 	causeBudgetMisconfigured = "budget-misconfigured"
 	causeErrorStreak         = "error-streak"
@@ -161,6 +162,14 @@ func attachRemediation(v *HealthVerdict, e RegistryEntry) {
 			Action:  "Copilot device-flow login on the spoke dashboard",
 			Surface: "spoke dashboard /login",
 			Link:    link("/login"),
+		}
+	case causeLoginRevoked:
+		// Provider-verified (#18732): the stored Claude grant is dead and the
+		// spoke is holding its restarts for the sign-in. Nothing else helps.
+		v.Remediation = &Remediation{
+			Action:  "Sign in to Claude again on the spoke dashboard — the provider rejected the stored login; agents restart on their own after the sign-in",
+			Surface: "spoke dashboard",
+			Link:    link(""),
 		}
 	case causeBudgetExhausted, causeBudgetMisconfigured:
 		v.Remediation = &Remediation{

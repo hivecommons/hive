@@ -48,7 +48,9 @@ var prowTrustedAssociations = map[string]bool{
 // a fork PR by a non-member on a Prow-managed repository (Prow's labels or its
 // approve plugin's comment), carries no `ok-to-test` label, and Prow has
 // reported no presubmit status on the head. A Prow rejection of the App's
-// command is recorded once per PR and stops every later post. The caller
+// command is recorded once per PR and stops every later post; it is also
+// remembered per repository (automerge_prow_refusal_memory.go), so a later
+// fork PR there gets the needs-human note without the command being posted. The caller
 // must already have admitted the PR to the contributor lane.
 func (c *Engine) requestProwPresubmitsForFork(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA string) {
 	if c == nil || c.gh == nil || pr == nil || strings.TrimSpace(headSHA) == "" || !c.isForkPR(pr) {
@@ -61,6 +63,7 @@ func (c *Engine) requestProwPresubmitsForFork(ctx context.Context, displayRepo, 
 	if hasLabel(labels, prowOkToTestLabel) || c.workflowApprovalUntrustedKnown(owner, repo, number) {
 		return
 	}
+	knownRefusal := c.prowRefusesApp(ctx, displayRepo, owner, repo)
 	_, first := c.markWorkflowApprovalCommandSeen(owner, repo, number, headSHA)
 	state, scanned := c.workflowApprovalCommentState(ctx, displayRepo, owner, repo, number, headSHA, first)
 	if !scanned {
@@ -69,6 +72,9 @@ func (c *Engine) requestProwPresubmitsForFork(ctx context.Context, displayRepo, 
 	unanswered := !state.rejected && c.okToTestUnanswered(ctx, displayRepo, owner, repo, number, state.earlierPosts)
 	if state.rejected || unanswered {
 		c.markWorkflowApprovalUntrusted(owner, repo, number)
+		if state.rejected {
+			c.rememberProwRefusal(owner, repo)
+		}
 		args := []any{"repo", displayRepo, "pr", number, "sha", headSHA, "skipped", hgithub.PRApprovalCommandsSkippedProw, "unanswered", unanswered}
 		const msg = "contributor-lane ok-to-test not posted again: Prow rejected the App's command on this fork PR; a trusted user must post it"
 		if state.rejectionNoted {
@@ -83,6 +89,17 @@ func (c *Engine) requestProwPresubmitsForFork(ctx context.Context, displayRepo, 
 		return
 	}
 	if c.prowPresubmitStatusPresent(ctx, displayRepo, owner, repo, number, headSHA) {
+		return
+	}
+	if knownRefusal {
+		// Prow already refused the App in this repository: skip the first
+		// command and hand the PR to a person directly (hivecommons/hive#18608).
+		c.markWorkflowApprovalUntrusted(owner, repo, number)
+		if !state.rejectionNoted {
+			c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, prowKnownRefusalNote(strings.TrimSpace(c.transport.AppBotLogin())))
+		}
+		c.debug("contributor-lane ok-to-test not posted: Prow already refused the App's command on this repository; a trusted user must post it",
+			"repo", displayRepo, "pr", number, "sha", headSHA, "skipped", hgithub.PRApprovalCommandsSkippedProw)
 		return
 	}
 	c.postWorkflowApprovalCommand(ctx, displayRepo, owner, repo, number, headSHA)
