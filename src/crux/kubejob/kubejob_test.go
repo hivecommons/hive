@@ -11,12 +11,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
 
@@ -436,6 +438,47 @@ func TestManifestShape(t *testing.T) {
 	}
 }
 
+func TestManifestAffinity(t *testing.T) {
+	const affinityJSON = `{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"accelerator","operator":"In","values":["spyre","gpu"]}]}]},"preferredDuringSchedulingIgnoredDuringExecution":[{"weight":50,"preference":{"matchExpressions":[{"key":"zone","operator":"In","values":["east"]}]}}]}}`
+	var affinity config.SandboxJobAffinity
+	if err := json.Unmarshal([]byte(affinityJSON), &affinity); err != nil {
+		t.Fatal(err)
+	}
+	var want any
+	if err := json.Unmarshal([]byte(affinityJSON), &want); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		selector map[string]string
+	}{
+		{name: "affinity alone"},
+		{name: "affinity and node selector", selector: map[string]string{"accelerator": "spyre"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newFakeAPI()
+			api.statuses = []string{statusComplete}
+			srv := httptest.NewServer(api.handler(t))
+			defer srv.Close()
+			l := newLauncher(srv, Options{WorkspaceClaim: "hive-data", Affinity: &affinity, NodeSelector: tc.selector})
+			if _, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123")); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			spec := api.created["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+			if !reflect.DeepEqual(spec["affinity"], want) {
+				t.Errorf("serialized affinity = %#v, want %#v", spec["affinity"], want)
+			}
+			if tc.selector == nil {
+				if _, ok := spec["nodeSelector"]; ok {
+					t.Errorf("unexpected nodeSelector: %#v", spec["nodeSelector"])
+				}
+			} else if !reflect.DeepEqual(spec["nodeSelector"], map[string]any{"accelerator": "spyre"}) {
+				t.Errorf("serialized nodeSelector = %#v", spec["nodeSelector"])
+			}
+		})
+	}
+}
+
 func TestManifestDefaultsAndCustomTTLAndMount(t *testing.T) {
 	l := &Launcher{Options: Options{WorkspaceClaim: "c", TTLSeconds: 60}}
 	m := l.manifest("ns", "job", "sub", sandbox.LaunchSpec{Image: "i", WorkspaceMount: "/w", WorkDir: "/w/sub"})
@@ -446,7 +489,7 @@ func TestManifestDefaultsAndCustomTTLAndMount(t *testing.T) {
 			t.Errorf("manifest missing %s\n%s", want, s)
 		}
 	}
-	for _, absent := range []string{"nodeSelector", "tolerations", "serviceAccountName", `"resources"`, `"command"`} {
+	for _, absent := range []string{"nodeSelector", `"affinity"`, "tolerations", "serviceAccountName", `"resources"`, `"command"`} {
 		if strings.Contains(s, absent) {
 			t.Errorf("manifest must omit %s when unset\n%s", absent, s)
 		}

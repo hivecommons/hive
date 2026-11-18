@@ -1648,7 +1648,7 @@ func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 		return SandboxGateReport{}
 	}
 
-	var noPullSecrets, badPullSecrets []string
+	var noPullSecrets, badPullSecrets, hostnamePinned []string
 	var optedIn, noImage, noClaim, noGateway, noDigest, badRuntime []string
 	var openshellBlocks []SandboxOpenShellConfig
 	var substrateBlocks []SandboxSubstrateConfig
@@ -1662,6 +1662,9 @@ func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 		}
 		if a.SandboxRuntime(cfg.AgentSandbox) == SandboxRuntimeJob {
 			job := a.SandboxJob(cfg.AgentSandbox)
+			if _, pinned := job.NodeSelector["kubernetes.io/hostname"]; pinned {
+				hostnamePinned = append(hostnamePinned, name)
+			}
 			if err := ValidateImagePullSecrets(job.ImagePullSecrets); err != nil {
 				badPullSecrets = append(badPullSecrets, name)
 			} else if strings.TrimSpace(job.ServiceAccount) != "" && len(job.ImagePullSecrets) == 0 {
@@ -1702,6 +1705,7 @@ func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 	sort.Strings(badRuntime)
 	sort.Strings(noPullSecrets)
 	sort.Strings(badPullSecrets)
+	sort.Strings(hostnamePinned)
 
 	var out []string
 	if len(optedIn) == 0 {
@@ -1738,6 +1742,11 @@ func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 		out = append(out, fmt.Sprintf(
 			"agent(s) %s run Jobs under sandbox.job.service_account with no sandbox.job.image_pull_secrets; hive reads that service account's imagePullSecrets only when its Role grants `get serviceaccounts`, and without it a private-registry sandbox image fails ImagePullBackOff (see the launcher warning) — set sandbox.job.image_pull_secrets to the registry Secret names (#18819)",
 			strings.Join(noPullSecrets, ", ")))
+	}
+	if len(hostnamePinned) > 0 {
+		out = append(out, fmt.Sprintf(
+			"agent(s) %s pin sandbox.job.node_selector kubernetes.io/hostname to a single node; if it is cordoned or down the Job may remain Pending until its deadline — consider node affinity instead (#18809)",
+			strings.Join(hostnamePinned, ", ")))
 	}
 	if len(noGateway) > 0 {
 		out = append(out, fmt.Sprintf(
@@ -6304,7 +6313,7 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// Guard: the overlay must look like a full hive config (same check the
 	// entrypoint and validateSaveGuard apply) before we trust its agents.
 	if overlay.Project.Org == "" || len(overlay.Agents) == 0 {
-		return cfg, nil
+		return cfg, cfg.validateJobAffinities()
 	}
 	// Overlay agents win — they carry the reconciled pack-behavior fields.
 	//
@@ -6372,7 +6381,7 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// block is intentionally NOT merged. The dashboard overlay is user-writable,
 	// so honoring its resolver policy would let a compromised overlay enable
 	// script/http execution. Keep this true if overlay merging is ever expanded.
-	return cfg, nil
+	return cfg, cfg.validateJobAffinities()
 }
 
 // adoptOperatorCadenceOverrides re-applies the dashboard overlay's

@@ -33,6 +33,7 @@ type SandboxJobConfig struct {
 	WorkspaceClaim      string                 `yaml:"workspace_claim,omitempty" json:"workspace_claim,omitempty"`
 	WorkspaceClaimMount string                 `yaml:"workspace_claim_mount,omitempty" json:"workspace_claim_mount,omitempty"`
 	NodeSelector        map[string]string      `yaml:"node_selector,omitempty" json:"node_selector,omitempty"`
+	Affinity            *SandboxJobAffinity    `yaml:"affinity,omitempty" json:"affinity,omitempty"`
 	Tolerations         []SandboxJobToleration `yaml:"tolerations,omitempty" json:"tolerations,omitempty"`
 	Resources           SandboxJobResources    `yaml:"resources,omitempty" json:"resources,omitempty"`
 	ServiceAccount      string                 `yaml:"service_account,omitempty" json:"service_account,omitempty"`
@@ -96,11 +97,10 @@ func (a *AgentConfig) SandboxRuntime(global AgentSandboxConfig) string {
 
 // SandboxJob returns the effective Job runtime settings. A per-agent job
 // block replaces the global one wholesale for the pod-template fields (node
-// selector, tolerations, resources, secrets, volumes, service account) — an
-// agent that needs an accelerator names its own scheduling. The claim
-// fields and the TTL are cluster facts rather than per-agent choices, so
-// they fall back to the global block when the per-agent one leaves them
-// empty.
+// selector, affinity, tolerations, resources, secrets, volumes, service
+// account) — an agent that needs an accelerator names its own scheduling. The
+// claim fields and the TTL are cluster facts, not per-agent choices, so they
+// fall back to the global block when the per-agent one leaves them empty.
 func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	var g SandboxJobConfig
 	if global.Job != nil {
