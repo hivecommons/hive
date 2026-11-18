@@ -61,12 +61,13 @@ const (
 	AuditClaudeCredentialRefreshed = "claude_credential_refreshed"
 
 	// AuditUserSessionLoginAdopted is recorded when a user session's HOME held
-	// a Claude login strictly newer than the shared one (the CLI in the
-	// session refreshed, or signed in, on its own copy) and hive adopted it
-	// into the shared login so the fleet and the session keep ONE login. The
-	// detail names the session, the trigger (boot, watchdog, sign-in,
-	// session-start, session-remove) and where the replaced shared file was
-	// preserved; it never carries token material.
+	// a Claude, Codex or OpenCode login strictly newer than the shared one
+	// (the CLI in the session refreshed, or signed in, on its own copy) and
+	// hive adopted it into the shared login so the fleet and the session keep
+	// ONE login. The detail names the session, the trigger (boot, watchdog,
+	// sign-in, session-start, session-remove), where the replaced shared file
+	// was preserved and, for Codex and OpenCode, the vendor and login file; it
+	// never carries token material.
 	AuditUserSessionLoginAdopted = "user_session_login_adopted"
 )
 

@@ -1,1 +1,0 @@
-- Governor PRs by model now shows, in each model's tooltip, a per-repository breakdown and a weekly trend (30d and all-time views), so a model's rework can be traced to one hard repository and its improvement over time is visible without diffing windows. `GET /api/governor/pr-models` adds `repos[]` and `weeks[]` to each bucket; existing fields are unchanged (#18716).

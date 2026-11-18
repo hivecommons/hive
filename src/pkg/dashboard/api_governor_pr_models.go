@@ -64,6 +64,10 @@ type governorPRModelBucket struct {
 	// HiveCost is what this model's PRs cost the hive to review and repair
 	// (#18717); omitted when the launch-cost snapshot is not ready.
 	HiveCost *governorPRModelHiveCost `json:"hive_cost,omitempty"`
+
+	// ClosedUnmergedReasons splits ClosedUnmerged by why the PR was closed
+	// (#18719); the three counts always sum to ClosedUnmerged.
+	ClosedUnmergedReasons governorPRModelCloseReasons `json:"closed_unmerged_reasons"`
 	// Repos splits the bucket by canonical owner/repo (effectivePRRepo), PRs
 	// descending. Weeks splits it by ISO week (Monday, UTC) of created_at,
 	// oldest first, and is omitted for window=7d. Rework figures in both
@@ -261,6 +265,7 @@ func (s *Server) handleGovernorPRModels(w http.ResponseWriter, r *http.Request) 
 	minMergedPRs := effectiveModelsMinMergedPRs()
 	actionable := s.lastActionableForPRModels()
 	resp := aggregateGovernorPRModels(actionable.PRs.Attributed, window, time.Now())
+	applyGovernorPRModelCloseReasons(&resp, actionable.PRs.Attributed, governorPRModelsSupersededKeys(actionable.PRs.Attributed, actionable.PRs.Items), time.Now())
 	resp.FixerQueue = s.governorFixerQueue()
 	now := time.Now()
 	runs, rotated, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), governorPRModelsWindowDuration(window))
@@ -499,18 +504,6 @@ func finishGovernorPRModelEfforts(m map[string]*governorPRModelSliceState) []gov
 		return out[i].Effort < out[j].Effort
 	})
 	return out
-}
-
-// governorPRModelsCutoff is the earliest PR created_at a window counts; zero
-// for "all".
-func governorPRModelsCutoff(window string, now time.Time) time.Time {
-	switch normalizeGovernorPRModelsWindow(window) {
-	case governorPRModelsWindow7d:
-		return now.AddDate(0, 0, -governorPRModelsDays7)
-	case governorPRModelsWindow30d:
-		return now.AddDate(0, 0, -governorPRModelsDays30)
-	}
-	return time.Time{}
 }
 
 // joinedBackends returns the sorted distinct backends and their comma-joined
