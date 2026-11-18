@@ -692,6 +692,10 @@ security.sensitive_paths[] # TODO #15640
 self_experiments.scheduler.enabled # TODO #11854
 self_experiments.scheduler.interval_s # TODO #11854
 self_experiments.scheduler.mode # TODO #11854
+session_taint.enabled # observe-only recorder, yaml-only until its read-only view lands (#18987)
+session_taint.max_decisions # bound on the in-memory decision ring; yaml-only (#18987)
+session_taint.max_labels_per_session # bound on labels per session; yaml-only (#18987)
+session_taint.max_sessions # bound on tracked sessions; yaml-only (#18987)
 shared_ci_rerun.enabled # TODO #11854
 swarm.themes.<key>.call_to_arms # TODO #11854
 swarm.themes.<key>.event_name # TODO #11854
