@@ -79,15 +79,6 @@ func decodeV1Registration(t *testing.T, rec *httptest.ResponseRecorder) hubV1Reg
 	return resp.Registration
 }
 
-func sortedLower(in []string) []string {
-	out := make([]string, len(in))
-	for i, s := range in {
-		out[i] = strings.ToLower(s)
-	}
-	sort.Strings(out)
-	return out
-}
-
 func TestHubV1Discovery(t *testing.T) {
 	cases := []struct {
 		name         string

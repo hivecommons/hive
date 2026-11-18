@@ -14,10 +14,12 @@ import (
 
 func registerV1TestHive(t *testing.T, st *selfServiceStore) (SelfServiceHive, string) {
 	t.Helper()
+	proved := time.Date(2026, 11, 13, 11, 0, 0, 0, time.UTC)
 	raw, err := st.register(SelfServiceHive{
 		ID: "byo-alice--lab", Owner: "alice", Org: "alice",
 		Repos: []string{"alice/lab", "alice/tools"}, DashboardURL: "https://lab.example.org/",
-		OwnershipCheckedAt: time.Date(2026, 11, 13, 11, 0, 0, 0, time.UTC),
+		OwnershipCheckedAt: proved,
+		RepoProofs:         map[string]time.Time{"alice/lab": proved, "alice/tools": proved},
 	})
 	if err != nil {
 		t.Fatal(err)
