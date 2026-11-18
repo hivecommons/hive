@@ -473,6 +473,7 @@ without a class. Review submissions and review requests are always counted as
 | `dashboard.(*Server).handleRepoItemBlockerClosePartial` | `status` |  |
 | `dashboard.(*Server).handleRepoItemDecision` | `status` |  |
 | `dashboard.(*Server).handleRepoItemSentinelConfirm` | `status` |  |
+| `dashboard.(*Server).handleRepoItemSHAWaiver` | `status` |  |
 | `dashboard.(*Server).handleReviewQueueSupersededClose` | `status` |  |
 | `dashboard.(*Server).mirrorPlanWith` | `status` |  |
 | `github.(*Client).CloseIssueForConfiguredLinePR` | `status` |  |

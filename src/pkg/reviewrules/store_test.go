@@ -3,6 +3,7 @@ package reviewrules
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -492,5 +493,55 @@ func TestSimilarity(t *testing.T) {
 		if got := similarity(tc.a, tc.b); got < tc.want-0.001 || got > tc.want+0.001 {
 			t.Errorf("similarity(%q,%q) = %v, want %v", tc.a, tc.b, got, tc.want)
 		}
+	}
+}
+
+// The evaluated ids are the rule index's own record, kept across a reload, and
+// a captured comment's rule can be looked up for a later kick
+// (hivecommons/hive#19136).
+func TestEvaluatedCommentsPersistAndRuleForComment(t *testing.T) {
+	s, dir, vault := openStore(t, Config{})
+	if s.Evaluated("cncf/techdocs", 424, "inline:1001") {
+		t.Fatal("a fresh index has evaluated nothing: the first pass is a backfill")
+	}
+	res := s.CaptureComment(cmt("inline:1001", "OWNER", maintainersComment), t0)
+	if res.Outcome != OutcomeCaptured {
+		t.Fatalf("res = %+v", res)
+	}
+	if err := s.MarkEvaluated("cncf/techdocs", 424, []string{"inline:1001", "inline:1002"}, t0); err != nil {
+		t.Fatal(err)
+	}
+	re, err := Open(dir, vault, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !re.Evaluated("cncf/techdocs", 424, "inline:1001") || !re.Evaluated("cncf/techdocs", 424, "inline:1002") {
+		t.Fatal("evaluated ids lost across reload")
+	}
+	if re.Evaluated("cncf/techdocs", 425, "inline:1001") {
+		t.Fatal("evaluated ids are per PR")
+	}
+	if r := re.RuleForComment("cncf/techdocs", 424, "inline:1001"); r == nil || r.ID != res.Rule.ID {
+		t.Fatalf("rule for comment = %+v, want %s", r, res.Rule.ID)
+	}
+	if r := re.RuleForComment("cncf/techdocs", 424, "inline:1002"); r != nil {
+		t.Fatalf("a comment that became no rule has none: %+v", r)
+	}
+}
+
+func TestEvaluatedCommentsAreBounded(t *testing.T) {
+	s, _, _ := openStore(t, Config{})
+	ids := make([]string, 0, maxEvaluatedComments+5)
+	for i := 0; i < maxEvaluatedComments+5; i++ {
+		ids = append(ids, "inline:"+strconv.Itoa(i))
+	}
+	if err := s.MarkEvaluated("o/r", 1, ids[:5], t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkEvaluated("o/r", 1, ids[5:], t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.st.Evaluated) != maxEvaluatedComments || s.Evaluated("o/r", 1, "inline:0") || !s.Evaluated("o/r", 1, ids[len(ids)-1]) {
+		t.Fatalf("evaluated = %d, want the oldest evicted", len(s.st.Evaluated))
 	}
 }

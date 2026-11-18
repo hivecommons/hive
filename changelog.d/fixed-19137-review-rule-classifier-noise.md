@@ -1,0 +1,1 @@
+- The review-rule classifier now ignores quoted lines, fenced code and questions, falls back to the whole comment when the rule sentence is too short to stand alone, and also recognises "for the future", "moving forward" and "for future reviews" as going-forward phrases ([#19137](https://github.com/hivecommons/hive/issues/19137)).
