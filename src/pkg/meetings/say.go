@@ -167,7 +167,14 @@ func (m *Manager) prewarmSpeech(mt Meeting) {
 	if len(lines) == 0 {
 		return
 	}
-	spoken := make([]string, 0, len(lines))
+	// The consent notice goes first: it is the first thing said in a
+	// meeting and, when chat cannot carry it, nothing else is said until
+	// it is out (live Teams test: 10.7 s of synthesis, uncached, on top of
+	// the chat wait).
+	spoken := make([]string, 0, len(lines)+1)
+	if t := SpeechText(m.opts.ConsentText); t != "" {
+		spoken = append(spoken, t)
+	}
 	for _, l := range lines {
 		if t := SpeechText(l); t != "" {
 			spoken = append(spoken, t)
