@@ -70,6 +70,8 @@ github.com/hivecommons/hive/pkg/mailallow
 github.com/hivecommons/hive/pkg/mailin
 github.com/hivecommons/hive/pkg/maintainernotes
 github.com/hivecommons/hive/pkg/modelfamily
+# pkg/netguard: isPrivateURL delegates to the one shared address classifier for server-side fetchers, a stdlib-only leaf package also used by pkg/hub (hivecommons/hive#18991).
+github.com/hivecommons/hive/pkg/netguard
 github.com/hivecommons/hive/pkg/notify
 github.com/hivecommons/hive/pkg/nous
 github.com/hivecommons/hive/pkg/planning
