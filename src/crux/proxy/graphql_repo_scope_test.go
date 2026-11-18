@@ -75,7 +75,17 @@ func graphQLScopeExchange(t *testing.T, p *GitHubProxy, request, reply []byte) (
 		defer decoded.Close()
 		responseReader = decoded
 	}
-	body, err := io.ReadAll(responseReader)
+	var body []byte
+	if resp.StatusCode == http.StatusForbidden {
+		// Proxy denials are a single line with no Content-Length. The
+		// keep-alive proxy waits for another request, so waiting for EOF
+		// here deadlocks until the pipe deadline instead of reading a denial.
+		line, readErr := bufio.NewReader(responseReader).ReadString('\n')
+		body, err = []byte(line), readErr
+		_ = client.Close()
+	} else {
+		body, err = io.ReadAll(responseReader)
+	}
 	_ = resp.Body.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -91,6 +101,21 @@ func scopeGraphQLBody(query string, variables any) []byte {
 }
 
 func TestGraphQLRepoScopeGHFlows(t *testing.T) {
+	// Scope is independent of autonomy. Other package tests register global
+	// overrides, which demote unattributed PR creates/merges to advisory.
+	// Snapshot and clear them so these flows exercise only repository scope;
+	// restore them afterwards, and do not run this test in parallel.
+	saved := map[any]any{}
+	autonomyRepoLevels.Range(func(k, v any) bool {
+		saved[k] = v
+		autonomyRepoLevels.Delete(k)
+		return true
+	})
+	t.Cleanup(func() {
+		for k, v := range saved {
+			autonomyRepoLevels.Store(k, v)
+		}
+	})
 	data, err := os.ReadFile("testdata/graphql-gh-repo-scope.json")
 	if err != nil {
 		t.Fatal(err)
