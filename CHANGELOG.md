@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v6.46.0)
+
+### Added
+
+- `governor.ci.auto_approve_workflows` and `governor.ci.auto_approve_workflow_actors` now have a Settings control (Features → Auto-merge → Workflow approval) and an admin-MCP write (`governor.feature_settings`: `ciAutoApproveWorkflows`, `ciAutoApproveWorkflowActors`), so a hosted hive can trust another bot such as `github-actions[bot]` without editing hive.yaml.
+- The admin MCP `governor.feature_settings` operation now writes write-back containment's unsolicited knobs (`writebackMinLevel`, `writebackRequireLabels`, `writebackBackfill`), which until now only the dashboard's Settings → Features toggles could change. The preview discloses each change that lets the hive write to more items.
+
+### Fixed
+
+- A PR whose workflow runs GitHub holds for approval, and that the hive will not approve (an untrusted or fork head, or auto-approval off), now parks at 085 with reason `workflow-approval-required:held-runs:<run ids>` instead of showing an unrelated lane reason such as "author association" or "waiting for a verdict". The approval probe also runs on green heads that are missing a required check (a fork head whose `pull_request_target` check passed), so the missing-check base refresh no longer merges the base into such a PR again and again, and it now updates a PR once per set of missing checks instead of once per check.
+- `just contribute-hive opencode local` works again. The `OPENCODE_PERMISSION` deny-list was placed after the `opencode` binary on the launch line, so the shell passed it to opencode as an argument instead of setting it: opencode exited at once, the relay relaunched it in a loop, and no task ran. Its host-state denials were never applied. The assignment now goes before the binary.
+- The shared-CI rerun sweep no longer waits for a person to close the `[shared-ci]` tracker: once the incident's check has completed green on a PR's base tip after the tracker was filed, the PRs the tracker lists (Renovate, Dependabot and 072 PRs included) and the PRs deferred to it get their failed jobs re-run once each, and the rerun lifts their deferral. The tracker stays open for a person to close. PRs a closed tracker lists are now re-run too, not only the ones a fix lane stamped.
+
 ## 2026-11-18 (v6.45.1)
 
 ### Fixed

@@ -1,1 +1,0 @@
-- The admin MCP `governor.feature_settings` operation now writes write-back containment's unsolicited knobs (`writebackMinLevel`, `writebackRequireLabels`, `writebackBackfill`), which until now only the dashboard's Settings → Features toggles could change. The preview discloses each change that lets the hive write to more items.
