@@ -61,8 +61,6 @@
     const STAGE_TRACKER_NEEDS_HUMAN_STAGES = [15, 45, 85, 90];
     const STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES = [71, 72];
     const STAGE_TRACKER_NEEDS_HUMAN_MODS = ['needs-human', 'needs-decision', 'unauthorized'];
-    // The one phrase for the state, shared by the Open chevron, tooltips and the filter chip.
-    const STAGE_TRACKER_NEEDS_HUMAN_WORD = 'Needs human';
     const STAGE_TRACKER_NEEDS_HUMAN_TIP = 'Only a person can move these: triage needed, needs decision, human author must act, human merge, a needs-human / hive-bot-lacks-permission pill, an issue filed for outside help, or a PR held for a maintainer by a hive gate';
     const STAGE_TRACKER_ON_HOLD_TIP = 'Paused on purpose with a hold label — waiting on nobody; remove the hold to resume';
     // Label families a chip row is built from, in display order; other
