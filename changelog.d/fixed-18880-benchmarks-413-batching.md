@@ -1,1 +1,0 @@
-- Publish benchmark records in byte-bounded batches (about 384 KB) with a watermark advanced per accepted batch, halve and retry a batch the hub answers with 413 (skipping a single record that still gets 413 once another batch has landed), and include the truncated hub response body in `benchmarks.last_error` so a proxy 413 is distinguishable from the hub handler.

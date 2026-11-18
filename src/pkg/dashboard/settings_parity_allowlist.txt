@@ -8,6 +8,10 @@ agent_sandbox.job.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringEx
 agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].key # TODO #18809
 agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].operator # TODO #18809
 agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].values[] # TODO #18809
+agent_sandbox.job.github_read_proxy.enabled # TODO #18865
+agent_sandbox.job.github_read_proxy.endpoint # TODO #18865
+agent_sandbox.job.github_read_proxy.listen_addr # TODO #18865
+agent_sandbox.job.github_read_proxy.no_proxy[] # TODO #18865
 agent_sandbox.job.image_pull_secrets[] # TODO #11854
 agent_sandbox.job.node_selector.<key> # TODO #11854
 agent_sandbox.job.relay_image # TODO #11854
@@ -136,6 +140,10 @@ agents.<key>.sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDu
 agents.<key>.sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].operator # TODO #18809
 agents.<key>.sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].values[] # TODO #18809
 agents.<key>.sandbox.job.env_from_secrets[] # TODO #11854
+agents.<key>.sandbox.job.github_read_proxy.enabled # TODO #18865
+agents.<key>.sandbox.job.github_read_proxy.endpoint # TODO #18865
+agents.<key>.sandbox.job.github_read_proxy.listen_addr # TODO #18865
+agents.<key>.sandbox.job.github_read_proxy.no_proxy[] # TODO #18865
 agents.<key>.sandbox.job.image_pull_secrets[] # TODO #11854
 agents.<key>.sandbox.job.node_selector.<key> # TODO #11854
 agents.<key>.sandbox.job.relay_image # TODO #11854

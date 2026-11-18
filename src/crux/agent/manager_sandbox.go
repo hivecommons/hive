@@ -310,6 +310,10 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 		Mutation:       mutationBoundary,
 		Logger:         m.logger,
 	}
+	if in := m.sandboxReadRelay.cur.Load(); in != nil {
+		exec.GitHubReadRelay = in.relay
+		exec.GitHubReadRelayNoProxy = in.noProxy
+	}
 	res, err := exec.Run(ctx, spec)
 	ended := time.Now()
 	// The run record is written to disk after m.mu is released (defers run

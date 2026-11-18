@@ -4518,6 +4518,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		)
 
 		deps.startProxy(b.githubProxy, b.logger)
+		b.wireSandboxGitHubReadRelay()
 		// Jev decision endpoint (hivecommons/hive#8939). Always bound so a
 		// jev_mode toggle in the dashboard takes effect on the agent's next
 		// call; every predicate reads the LIVE config, and an agent whose
@@ -6118,6 +6119,15 @@ func (b *boot) bootLanes() {
 			"max_kicks", b.cfg.Retro.MaxKicks,
 			"long_stall_days", b.cfg.Retro.LongStallDays,
 			"analysis_enabled", b.cfg.Retro.AnalysisModel != "")
+	}
+	if b.dashSrv != nil {
+		// Read-only rank-versus-holdout summary route (#18897). The arm
+		// comparison needs the retro lane; the decision counts do not.
+		var armSummary func() []retro.ArmSummary
+		if b.retroLane != nil {
+			armSummary = b.retroLane.AdvisorArmSummary
+		}
+		b.dashSrv.SetKnowledgeAdvisorSummary(b.knowledgeAdvisorDecisions(), armSummary)
 	}
 }
 
