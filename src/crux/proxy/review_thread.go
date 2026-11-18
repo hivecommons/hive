@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agent"
 )
 
 // Review-thread replies on the hive's own PRs (hivecommons/hive#19096).
@@ -64,6 +66,21 @@ var (
 	reviewPRCommentPathRe  = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/pulls/(\d+)/comments$`)
 	ownCommentDeletePathRe = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/(issues|pulls)/comments/(\d+)$`)
 )
+
+// The mode-table rules for the guarded routes. They only say WHICH modes may:
+// the review-thread gate runs first and refuses the reply routes unless the PR
+// is the hive's own and the caller opened it, and a delete unless the comment
+// is the hive's own and recent. Replies and PR review comments sit at the tier
+// of a review (ISSUES_AND_PRS or converse); a delete at ISSUES_ONLY. No other
+// rule matches these (method, path) pairs, so appending keeps first-match-wins
+// order intact; they live here so rules.go stays inside its size ratchet.
+func init() {
+	rules = append(rules,
+		ProxyRule{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/comments/\d+/replies$`), Method: http.MethodPost, MinMode: agent.ModeIssuesAndPRs, Capability: agent.AgentCapabilities.CanConverse},
+		ProxyRule{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/comments$`), Method: http.MethodPost, MinMode: agent.ModeIssuesAndPRs, Capability: agent.AgentCapabilities.CanConverse},
+		ProxyRule{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/(?:issues|pulls)/comments/\d+$`), Method: http.MethodDelete, MinMode: agent.ModeIssuesOnly},
+	)
+}
 
 // reviewThreadWrite is one classified guarded request.
 type reviewThreadWrite struct {
