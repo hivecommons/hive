@@ -45,21 +45,23 @@ func (k *recordingKicker) Kick(agent, message string) error {
 	return nil
 }
 
+var wireTestLimits = reviewfeedback.Limits{Debounce: 3 * time.Minute, Window: 24 * time.Hour, WindowCap: 2, MaxItems: 30}
+
 const feedbackTestKey = "cncf/techdocs#424"
 
 func feedbackSweepFor(t *testing.T, src *fakeFeedbackSource, kicker fixKicker, route func(string) reviewFeedbackRoute, now time.Time) reviewFeedbackSweep {
 	t.Helper()
 	store, _ := reviewfeedback.Open(t.TempDir())
 	return reviewFeedbackSweep{
-		Source: src, Store: store, Kicker: kicker, Route: route, Now: now, Logger: discardLogger(),
+		Source: src, Store: store, Kicker: kicker, Route: route, Now: now, Logger: discardLogger(), Limits: wireTestLimits,
 		Owners: map[string]string{feedbackTestKey: "quality"},
 	}
 }
 
 func openDraftFeedback() github.PRFeedback {
 	return github.PRFeedback{State: "open", Draft: true, HeadRef: "quality/x", Source: "graphql", Items: []github.FeedbackItem{
-		{ID: "inline:11", ThreadID: "T1", Kind: github.PRCommentInline, Author: "nate", Body: "score is too high", Path: "a.md", CreatedAt: time.Now()},
-		{ID: "inline:12", ThreadID: "T2", Kind: github.PRCommentInline, Author: "nate", Body: "misleading phrase", Path: "a.md", CreatedAt: time.Now()},
+		{ID: "inline:11", ThreadID: "T1", Kind: github.PRCommentInline, Author: "nate", Body: "score is too high", Path: "a.md", CreatedAt: time.Now().Add(-time.Hour)},
+		{ID: "inline:12", ThreadID: "T2", Kind: github.PRCommentInline, Author: "nate", Body: "misleading phrase", Path: "a.md", CreatedAt: time.Now().Add(-time.Hour)},
 	}}
 }
 
@@ -69,7 +71,7 @@ func routeTo(agent string) func(string) reviewFeedbackRoute {
 
 // A draft PR in a remote repo (not one the hive manages) with unanswered
 // inline feedback kicks the authoring agent once, and the same comments never
-// kick it again, even after the rate-limit interval.
+// kick it again, even much later.
 func TestReviewFeedbackSweep_DraftRemotePRKicksOnceAndNeverAgain(t *testing.T) {
 	src := &fakeFeedbackSource{byKey: map[string]github.PRFeedback{feedbackTestKey: openDraftFeedback()}}
 	kicker := &recordingKicker{}
@@ -86,29 +88,78 @@ func TestReviewFeedbackSweep_DraftRemotePRKicksOnceAndNeverAgain(t *testing.T) {
 			t.Errorf("brief missing %q", want)
 		}
 	}
-	s.Now = now.Add(reviewfeedback.MinInterval + time.Hour)
+	s.Now = now.Add(24 * time.Hour)
 	if res := s.run(context.Background(), parseReviewFeedbackKey); res.Kicked != 0 || len(kicker.kicks["quality"]) != 1 {
 		t.Fatalf("handled comments re-kicked: %+v", res)
 	}
 }
 
-func TestReviewFeedbackSweep_RateLimitsNewFeedbackOnSamePR(t *testing.T) {
-	src := &fakeFeedbackSource{byKey: map[string]github.PRFeedback{feedbackTestKey: openDraftFeedback()}}
-	kicker := &recordingKicker{}
+// Nine existing comments go out as one coalesced kick, and a comment posted
+// afterwards (while the agent may still be working) is held for the debounce
+// and then triggers a second kick carrying only it.
+func TestReviewFeedbackSweep_NineCommentsOneKick_ThenFollowUpKick(t *testing.T) {
 	now := time.Now()
-	s := feedbackSweepFor(t, src, kicker, routeTo("quality"), now)
-	s.run(context.Background(), parseReviewFeedbackKey)
-
 	fb := openDraftFeedback()
-	fb.Items = append(fb.Items, github.FeedbackItem{ID: "inline:13", Kind: github.PRCommentInline, Author: "nate", Body: "one more"})
-	src.byKey[feedbackTestKey] = fb
-	s.Now = now.Add(time.Minute)
-	if res := s.run(context.Background(), parseReviewFeedbackKey); res.RateLimited != 1 || res.Kicked != 0 {
-		t.Fatalf("res = %+v, want rate limited", res)
+	fb.Items = nil
+	for i := 0; i < 9; i++ {
+		fb.Items = append(fb.Items, github.FeedbackItem{ID: "inline:" + string(rune('a'+i)), Kind: github.PRCommentInline, Author: "nate", Body: "c", CreatedAt: now.Add(-time.Hour)})
 	}
-	s.Now = now.Add(reviewfeedback.MinInterval + time.Minute)
+	src := &fakeFeedbackSource{byKey: map[string]github.PRFeedback{feedbackTestKey: fb}}
+	kicker := &recordingKicker{}
+	s := feedbackSweepFor(t, src, kicker, routeTo("quality"), now)
+	if res := s.run(context.Background(), parseReviewFeedbackKey); res.Kicked != 1 || len(kicker.kicks["quality"]) != 1 {
+		t.Fatalf("res = %+v, want one kick", res)
+	}
+	for _, id := range []string{"inline:a", "inline:i"} {
+		if !strings.Contains(kicker.kicks["quality"][0], id) {
+			t.Fatalf("brief missing %s", id)
+		}
+	}
+
+	later := fb
+	later.Items = append(append([]github.FeedbackItem{}, fb.Items...), github.FeedbackItem{ID: "inline:new", Kind: github.PRCommentInline, Author: "nate", Body: "one more", CreatedAt: now.Add(time.Minute)})
+	src.byKey[feedbackTestKey] = later
+	s.Now = now.Add(time.Minute + 30*time.Second)
+	if res := s.run(context.Background(), parseReviewFeedbackKey); res.Debounced != 1 || res.Kicked != 0 {
+		t.Fatalf("res = %+v, want the new comment held for the debounce", res)
+	}
+	s.Now = now.Add(5 * time.Minute)
+	if res := s.run(context.Background(), parseReviewFeedbackKey); res.Kicked != 1 || len(kicker.kicks["quality"]) != 2 {
+		t.Fatalf("res = %+v, want a second kick within minutes", res)
+	}
+	second := kicker.kicks["quality"][1]
+	if !strings.Contains(second, "inline:new") || strings.Contains(second, "inline:a") {
+		t.Fatalf("follow-up brief must carry only the new comment")
+	}
+}
+
+// Hitting the rolling cap is a visible needs-human note, not silence, and a
+// person's next comment resumes kicks.
+func TestReviewFeedbackSweep_CapIsVisibleAndResetsOnNewFeedback(t *testing.T) {
+	now := time.Now()
+	mk := func(id string, at time.Time) github.PRFeedback {
+		fb := openDraftFeedback()
+		fb.Items = []github.FeedbackItem{{ID: id, Kind: github.PRCommentInline, Author: "nate", Body: "x", CreatedAt: at}}
+		return fb
+	}
+	src := &fakeFeedbackSource{byKey: map[string]github.PRFeedback{}}
+	kicker := &recordingKicker{}
+	s := feedbackSweepFor(t, src, kicker, routeTo("quality"), now)
+	for i := 0; i < wireTestLimits.WindowCap; i++ {
+		src.byKey[feedbackTestKey] = mk("inline:"+string(rune('a'+i)), now.Add(-time.Hour))
+		s.Now = now.Add(time.Duration(i) * time.Minute)
+		s.run(context.Background(), parseReviewFeedbackKey)
+	}
+	src.byKey[feedbackTestKey] = mk("inline:capped", now.Add(-time.Hour))
+	s.Now = now.Add(10 * time.Minute)
+	res := s.run(context.Background(), parseReviewFeedbackKey)
+	if res.CapReached != 1 || res.NeedsHuman != 1 || len(src.comments) != 1 || !strings.Contains(src.comments[0], "resets") {
+		t.Fatalf("res = %+v comments = %q, want a visible cap note", res, src.comments)
+	}
+	src.byKey[feedbackTestKey] = mk("inline:fresh", now.Add(12*time.Minute))
+	s.Now = now.Add(20 * time.Minute)
 	if res := s.run(context.Background(), parseReviewFeedbackKey); res.Kicked != 1 {
-		t.Fatalf("res = %+v, want the new comment kicked after the interval", res)
+		t.Fatalf("res = %+v, want kicks to resume after new human feedback", res)
 	}
 }
 

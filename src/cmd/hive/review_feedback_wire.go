@@ -61,6 +61,7 @@ type reviewFeedbackSweep struct {
 	Kicker       fixKicker
 	Route        func(owner string) reviewFeedbackRoute
 	WritingGuide string
+	Limits       reviewfeedback.Limits
 	MaxPRs       int
 	Cursor       int
 	Now          time.Time
@@ -69,11 +70,12 @@ type reviewFeedbackSweep struct {
 
 // reviewFeedbackResult counts one pass, for tests and the summary line.
 type reviewFeedbackResult struct {
-	Checked, Kicked, RateLimited, CapReached, NeedsHuman, Errors int
-	NextCursor                                                   int
+	Checked, Kicked, Debounced, CapReached, NeedsHuman, Errors int
+	NextCursor                                                 int
 }
 
 func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (repo string, number int, ok bool)) reviewFeedbackResult {
+	s.Limits = s.Limits.Normalized()
 	keys := make([]string, 0, len(s.Owners))
 	for k := range s.Owners {
 		keys = append(keys, k)
@@ -109,14 +111,14 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 		if !fb.Open() || len(fb.Items) == 0 {
 			continue
 		}
-		d := s.Store.Plan(key, fb.Items, s.Now)
+		d := s.Store.Plan(key, fb.Items, s.Now, s.Limits)
 		switch d.Verdict {
-		case reviewfeedback.VerdictRateLimited:
-			res.RateLimited++
-			s.Logger.Debug("review feedback: rate limited for this PR", "repo", repo, "pr", number)
+		case reviewfeedback.VerdictDebounce:
+			res.Debounced++
+			s.Logger.Debug("review feedback: burst still arriving, waiting to coalesce", "repo", repo, "pr", number, "comments", len(d.Items))
 		case reviewfeedback.VerdictCapReached:
 			res.CapReached++
-			s.needsHuman(ctx, key, repo, number, "it has already been routed to its agent "+strconv.Itoa(reviewfeedback.MaxKicksPerPR)+" times", d.Items, &res)
+			s.needsHuman(ctx, key, repo, number, "it has been routed to its agent "+strconv.Itoa(s.Limits.WindowCap)+" times in "+s.Limits.Window.String()+"; further feedback is waiting, and a new comment from a person resets this", d.Items, &res)
 		case reviewfeedback.VerdictKick:
 			if route.Agent == "" {
 				s.needsHuman(ctx, key, repo, number, route.Reason, d.Items, &res)
@@ -202,6 +204,7 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		Owners:       auditPRAgents(cfg.Project.Org, now.Add(-auditPRAttributionWindow), ""),
 		Kicker:       agentKicker{mgr: agentMgr},
 		WritingGuide: cfg.Project.WritingGuideSection(),
+		Limits:       reviewfeedback.LimitsFromEnv(),
 		MaxPRs:       reviewFeedbackMaxPRsPerPass,
 		Cursor:       reviewFeedbackCursor,
 		Now:          now,
@@ -224,8 +227,8 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 	}
 	res := sweep.run(ctx, parseReviewFeedbackKey)
 	reviewFeedbackCursor = res.NextCursor
-	if res.Kicked+res.NeedsHuman+res.RateLimited+res.CapReached+res.Errors > 0 {
-		logger.Info("review feedback pass", "checked", res.Checked, "kicked", res.Kicked, "rate_limited", res.RateLimited,
+	if res.Kicked+res.NeedsHuman+res.Debounced+res.CapReached+res.Errors > 0 {
+		logger.Info("review feedback pass", "checked", res.Checked, "kicked", res.Kicked, "debounced", res.Debounced,
 			"cap_reached", res.CapReached, "needs_human", res.NeedsHuman, "errors", res.Errors)
 	}
 }

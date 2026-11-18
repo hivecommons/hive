@@ -175,3 +175,48 @@ func TestFetchPRFeedback_DraftPR_GraphQLAndRESTFallback(t *testing.T) {
 		})
 	}
 }
+
+// A human reply to the hive's own thread reply is new feedback, and it carries
+// the whole thread in order, hive message flagged.
+func TestUnansweredFeedback_HumanReplyToHiveReplyCarriesWholeThread(t *testing.T) {
+	c := humanCommentTestClient(t, "http://127.0.0.1:1")
+	at := time.Date(2026, 11, 18, 15, 0, 0, 0, time.UTC)
+	var raw rawPRConversation
+	raw.ReviewThreads.Nodes = []rawPRCommentThread{{ID: "T", Path: "a.md", Comments: struct {
+		Nodes []rawPRComment `json:"nodes"`
+	}{Nodes: []rawPRComment{
+		rawComment(1, "nate", "User", "MEMBER", "score is too high", at),
+		rawComment(2, "hive[bot]", "Bot", "NONE", "lowered to 40", at.Add(time.Minute)),
+		rawComment(3, "nate", "User", "MEMBER", "it targets the docs site; 70/100", at.Add(2*time.Minute)),
+	}}}}
+	got := detect(c, raw)
+	if len(got) != 1 || got[0].ID != "inline:3" {
+		t.Fatalf("items = %v, want only the reply", feedbackIDsOf(got))
+	}
+	th := got[0].Thread
+	if len(th) != 3 || th[0].ID != "inline:1" || !th[1].Hive || th[2].ID != "inline:3" || th[0].Hive {
+		t.Fatalf("thread = %+v, want all three in order with the hive reply flagged", th)
+	}
+}
+
+// Reviews with empty bodies add nothing themselves; their inline comments, from
+// any number of submitted reviews, are the feedback, in one list.
+func TestUnansweredFeedback_EmptyBodyReviewsCoalesceInlineComments(t *testing.T) {
+	c := humanCommentTestClient(t, "http://127.0.0.1:1")
+	at := time.Date(2026, 11, 18, 15, 0, 0, 0, time.UTC)
+	nate := &rawPRCommentAuthor{Login: "nate", Typename: "User"}
+	var raw rawPRConversation
+	raw.Reviews.Nodes = []rawPRComment{
+		{DatabaseID: 1, State: "COMMENTED", CreatedAt: at, AuthorAssociation: "MEMBER", Author: nate},
+		{DatabaseID: 2, State: "COMMENTED", CreatedAt: at.Add(time.Hour), AuthorAssociation: "MEMBER", Author: nate},
+	}
+	one := func(id int64, when time.Time, thread string) rawPRCommentThread {
+		return rawPRCommentThread{ID: thread, Comments: struct {
+			Nodes []rawPRComment `json:"nodes"`
+		}{Nodes: []rawPRComment{rawComment(id, "nate", "User", "MEMBER", "point", when)}}}
+	}
+	raw.ReviewThreads.Nodes = []rawPRCommentThread{one(10, at, "T1"), one(11, at.Add(time.Hour), "T2")}
+	if got := feedbackIDsOf(detect(c, raw)); got != "inline:10,inline:11" {
+		t.Fatalf("ids = %s", got)
+	}
+}

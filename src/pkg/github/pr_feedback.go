@@ -57,14 +57,29 @@ type FeedbackItem struct {
 	// "conversation:<id>".
 	ID string `json:"id"`
 	// ThreadID is the review thread's id for an inline comment, else "".
-	ThreadID  string        `json:"thread_id,omitempty"`
-	Kind      PRCommentKind `json:"kind"`
-	Author    string        `json:"author"`
-	Body      string        `json:"body"`
-	Path      string        `json:"path,omitempty"`
-	Line      int           `json:"line,omitempty"`
-	URL       string        `json:"url,omitempty"`
-	CreatedAt time.Time     `json:"created_at"`
+	ThreadID string `json:"thread_id,omitempty"`
+	// Thread is the whole review thread this comment sits in, oldest first,
+	// including replies by people and by the hive, so a consumer applies the
+	// reviewer's LATEST position rather than the first comment's. Empty for
+	// review and conversation comments.
+	Thread    []FeedbackMessage `json:"thread,omitempty"`
+	Kind      PRCommentKind     `json:"kind"`
+	Author    string            `json:"author"`
+	Body      string            `json:"body"`
+	Path      string            `json:"path,omitempty"`
+	Line      int               `json:"line,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+}
+
+// FeedbackMessage is one comment in a review thread.
+type FeedbackMessage struct {
+	ID        string    `json:"id"`
+	Author    string    `json:"author"`
+	Hive      bool      `json:"hive,omitempty"`
+	Body      string    `json:"body"`
+	URL       string    `json:"url,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // PRFeedback is what one fetch of a PR's conversation found.
@@ -230,22 +245,22 @@ func UnansweredFeedback(raw rawPRConversation, isHuman func(*rawPRCommentAuthor)
 		return isHuman != nil && isHuman(rc.Author)
 	}
 	var out []FeedbackItem
-	add := func(kind PRCommentKind, rc rawPRComment, thread, path string, line int) {
+	add := func(kind PRCommentKind, rc rawPRComment, thread, path string, line int, ctxThread []FeedbackMessage) {
 		id := string(kind) + ":" + strconv.FormatInt(rc.DatabaseID, 10)
 		if handled[id] {
 			return
 		}
-		out = append(out, FeedbackItem{ID: id, ThreadID: thread, Kind: kind, Author: rc.Author.Login,
+		out = append(out, FeedbackItem{ID: id, ThreadID: thread, Thread: ctxThread, Kind: kind, Author: rc.Author.Login,
 			Body: truncateCommentBody(rc.Body), Path: path, Line: line, URL: rc.URL, CreatedAt: rc.CreatedAt})
 	}
 	for _, rc := range raw.Comments.Nodes {
 		if human(rc) && addressed != nil && addressed(rc.Body) {
-			add(PRCommentConversation, rc, "", "", 0)
+			add(PRCommentConversation, rc, "", "", 0, nil)
 		}
 	}
 	for _, rc := range raw.Reviews.Nodes {
 		if routedReviewStates[strings.ToUpper(rc.State)] && human(rc) {
-			add(PRCommentReview, rc, "", "", 0)
+			add(PRCommentReview, rc, "", "", 0, nil)
 		}
 	}
 	for _, th := range raw.ReviewThreads.Nodes {
@@ -262,11 +277,21 @@ func UnansweredFeedback(raw rawPRConversation, isHuman func(*rawPRCommentAuthor)
 				lastHiveReply = rc.CreatedAt
 			}
 		}
+		var whole []FeedbackMessage
+		for _, rc := range th.Comments.Nodes {
+			if rc.Author == nil {
+				continue
+			}
+			whole = append(whole, FeedbackMessage{ID: string(PRCommentInline) + ":" + strconv.FormatInt(rc.DatabaseID, 10),
+				Author: rc.Author.Login, Hive: isHive != nil && isHive(rc.Author, rc.Body), Body: truncateCommentBody(rc.Body),
+				URL: rc.URL, CreatedAt: rc.CreatedAt})
+		}
+		sort.SliceStable(whole, func(i, j int) bool { return whole[i].CreatedAt.Before(whole[j].CreatedAt) })
 		for _, rc := range th.Comments.Nodes {
 			if !human(rc) || !rc.CreatedAt.After(lastHiveReply) {
 				continue
 			}
-			add(PRCommentInline, rc, th.ID, th.Path, line)
+			add(PRCommentInline, rc, th.ID, th.Path, line, whole)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
