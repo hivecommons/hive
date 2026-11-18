@@ -99,8 +99,15 @@ type mailReplyConfig struct {
 	Selector string
 	KeyFile  string
 	// Helo is the host name the sender introduces itself with.
-	Helo   string
-	Limits mailReplyLimits
+	Helo string
+	// Relay is the optional smarthost, "host" or "host:port" (default port
+	// mailReplyRelayDefaultPort). Empty means direct MX delivery.
+	Relay string
+	// RelayAuthFile is the optional file holding the relay's SMTP AUTH
+	// credentials: the user name on the first line, the password on the
+	// second. Only meaningful with Relay.
+	RelayAuthFile string
+	Limits        mailReplyLimits
 }
 
 // mailReplySenderFactory builds the sender from the configuration. Tests
@@ -131,6 +138,9 @@ func newMailReplierFromEnv(logger *slog.Logger, hosts func() map[string]string) 
 		Selector: strings.TrimSpace(os.Getenv(envMailReplySelector)),
 		KeyFile:  strings.TrimSpace(os.Getenv(envMailReplyKeyFile)),
 		Helo:     strings.TrimSpace(os.Getenv(envMailReplyHelo)),
+
+		Relay:         strings.TrimSpace(os.Getenv(envMailReplyRelay)),
+		RelayAuthFile: strings.TrimSpace(os.Getenv(envMailReplyRelayAuthFile)),
 		Limits: mailReplyLimits{
 			SenderPerHour: int(mailEnvInt64(envMailReplySenderH, defaultReplySenderPerHour)),
 			SenderPerDay:  int(mailEnvInt64(envMailReplySenderD, defaultReplySenderPerDay)),

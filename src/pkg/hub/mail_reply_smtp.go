@@ -21,6 +21,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,11 +45,36 @@ import (
 //   - the key is read for the signature only and never logged, and neither
 //     are the body, the subject or any address: a failure is reported as a
 //     reason class and, for a server refusal, its numeric code.
+//
+// Optional smarthost (the relay option of #18746): with
+// HIVE_HUB_MAIL_REPLY_RELAY set, the one connection goes to that host and
+// port instead of the recipient's MX, so mail leaves from one stable IP. The
+// rules above do not change: the message is already DKIM-signed here, the
+// relay never re-signs it, the envelope sender stays null, STARTTLS is
+// required (a relay that does not offer it, or whose handshake fails, gets
+// nothing: no plain-text fallback, no direct delivery instead), and optional
+// SMTP AUTH uses credentials read from a file, never from the environment,
+// and never logged. A relay setting that cannot be used builds no sender.
 const (
 	// envMailReplyHelo is the host name the hub introduces itself with. It is
 	// the name carrying the HELO SPF record and the reverse DNS of the
 	// sending IP, so it must be set; there is no default.
 	envMailReplyHelo = "HIVE_HUB_MAIL_REPLY_HELO"
+
+	// envMailReplyRelay is the optional smarthost, "host" or "host:port".
+	// Unset means direct MX delivery, as before.
+	envMailReplyRelay = "HIVE_HUB_MAIL_REPLY_RELAY"
+	// envMailReplyRelayAuthFile names the file with the relay's SMTP AUTH
+	// credentials. Unset means no AUTH.
+	envMailReplyRelayAuthFile = "HIVE_HUB_MAIL_REPLY_RELAY_AUTH_FILE"
+
+	// mailReplyRelayDefaultPort is the relay port when none is given: the
+	// mail submission port, where STARTTLS and AUTH are expected.
+	mailReplyRelayDefaultPort = "587"
+	// mailReplyRelayMaxPort is the highest valid TCP port.
+	mailReplyRelayMaxPort = 65535
+	// mailReplyAuthMaxBytes bounds the credentials file read.
+	mailReplyAuthMaxBytes = 1 << 10
 
 	// mailSMTPPort is where mail is delivered to an MX host.
 	mailSMTPPort = "25"
@@ -100,6 +126,11 @@ const (
 	sendFailRcpt     = "recipient_refused"
 	sendFailData     = "data_refused"
 	sendFailTimeout  = "timeout"
+
+	sendFailRelayAddr  = "relay_address_lookup"
+	sendFailAuthFile   = "relay_credentials_unusable"
+	sendFailNoAuth     = "relay_auth_unavailable"
+	sendFailAuthDenied = "relay_auth"
 )
 
 // mailReplySendError is a failed send: a reason class and, when the server
@@ -182,6 +213,10 @@ func mailReplyPublicIP(ip net.IP) bool {
 type smtpReplySender struct {
 	from, selector, keyFile, helo string
 
+	// relayHost and relayPort are the smarthost; relayHost is empty for
+	// direct MX delivery. relayAuthFile is the credentials file, if any.
+	relayHost, relayPort, relayAuthFile string
+
 	resolver mailReplyResolver
 	// dial opens the one connection. The default refuses nothing itself:
 	// the address was already checked by mailReplyPublicIP.
@@ -200,9 +235,18 @@ func newSMTPReplySender(cfg mailReplyConfig) (mailReplySender, error) {
 	if !mailHostRE.MatchString(helo) || !strings.Contains(helo, ".") {
 		return nil, errors.New(envMailReplyHelo + " is missing or not a host name")
 	}
+	relayHost, relayPort, err := parseMailReplyRelay(cfg.Relay)
+	if err != nil {
+		return nil, err
+	}
+	authFile := strings.TrimSpace(cfg.RelayAuthFile)
+	if authFile != "" && relayHost == "" {
+		return nil, errors.New(envMailReplyRelayAuthFile + " is set without " + envMailReplyRelay)
+	}
 	d := &net.Dialer{Timeout: mailReplyDialTimeout}
 	return &smtpReplySender{
 		from: strings.ToLower(cfg.From), selector: cfg.Selector, keyFile: cfg.KeyFile, helo: helo,
+		relayHost: relayHost, relayPort: relayPort, relayAuthFile: authFile,
 		resolver: net.DefaultResolver,
 		dial:     d.DialContext,
 		tlsConfig: func(serverName string) *tls.Config {
@@ -213,10 +257,47 @@ func newSMTPReplySender(cfg mailReplyConfig) (mailReplySender, error) {
 	}, nil
 }
 
-// Ready reports whether the signing key can be loaded now.
+// parseMailReplyRelay splits the relay setting into a host name and a port.
+// An empty setting is no relay. A value that is not a host name with an
+// optional numeric port is an error that names the variable only, never the
+// value: it fails closed instead of falling back to direct delivery.
+func parseMailReplyRelay(v string) (host, port string, err error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", "", nil
+	}
+	invalid := errors.New(envMailReplyRelay + " is not a host name with an optional port")
+	host, port = v, mailReplyRelayDefaultPort
+	if strings.Contains(v, ":") {
+		h, p, serr := net.SplitHostPort(v)
+		if serr != nil {
+			return "", "", invalid
+		}
+		n, perr := strconv.Atoi(p)
+		if perr != nil || n < 1 || n > mailReplyRelayMaxPort || strconv.Itoa(n) != p {
+			return "", "", invalid
+		}
+		host, port = h, p
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if !mailHostRE.MatchString(host) {
+		return "", "", invalid
+	}
+	return host, port, nil
+}
+
+// Ready reports whether the signing key can be loaded now and, with a relay
+// that needs AUTH, whether its credentials can be.
 func (s *smtpReplySender) Ready() error {
-	_, err := loadMailReplyKey(s.keyFile)
-	return err
+	if _, err := loadMailReplyKey(s.keyFile); err != nil {
+		return err
+	}
+	if s.relayAuthFile != "" {
+		if _, _, err := loadMailReplyRelayAuth(s.relayAuthFile); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Send composes, signs and delivers m. Every failure is final.
@@ -224,6 +305,9 @@ func (s *smtpReplySender) Send(ctx context.Context, m mailReplyMessage) error {
 	raw, err := s.compose(m)
 	if err != nil {
 		return err
+	}
+	if s.relayHost != "" {
+		return s.deliverViaRelay(ctx, m.To, raw)
 	}
 	mx, err := s.chooseMX(ctx, domainOfAddr(m.To))
 	if err != nil {
@@ -357,7 +441,49 @@ func (s *smtpReplySender) deliver(ctx context.Context, mx, to string, raw []byte
 	if !ok {
 		return &mailReplySendError{Reason: sendFailBlocked}
 	}
-	conn, err := s.dial(ctx, "tcp", net.JoinHostPort(ip.String(), mailSMTPPort))
+	return s.converse(ctx, net.JoinHostPort(ip.String(), mailSMTPPort), mx, to, raw, nil)
+}
+
+// deliverViaRelay hands raw to the configured smarthost: one connection, one
+// message, STARTTLS required, AUTH when credentials are configured. The relay
+// is operator-chosen (unlike a sender's MX), so a private address is allowed;
+// its certificate is still checked against its configured name.
+func (s *smtpReplySender) deliverViaRelay(ctx context.Context, to string, raw []byte) error {
+	var auth *mailReplyRelayCreds
+	if s.relayAuthFile != "" {
+		user, pass, err := loadMailReplyRelayAuth(s.relayAuthFile)
+		if err != nil {
+			return err
+		}
+		defer clear(pass)
+		auth = &mailReplyRelayCreds{user: user, pass: pass}
+	}
+	lctx, cancel := context.WithTimeout(ctx, mailReplyDNSTimeout)
+	addrs, err := s.resolver.LookupIPAddr(lctx, s.relayHost)
+	cancel()
+	if len(addrs) == 0 {
+		return classifyMailReplyErr(ctx, sendFailRelayAddr, err)
+	}
+	ip := addrs[0].IP
+	for _, a := range addrs {
+		if a.IP.To4() != nil {
+			ip = a.IP
+			break
+		}
+	}
+	return s.converse(ctx, net.JoinHostPort(ip.String(), s.relayPort), s.relayHost, to, raw, auth)
+}
+
+// mailReplyRelayCreds are the SMTP AUTH credentials, held only for one send.
+type mailReplyRelayCreds struct {
+	user string
+	pass []byte
+}
+
+// converse makes the one connection to address and sends raw to one
+// recipient. serverName is the name the TLS certificate is checked against.
+func (s *smtpReplySender) converse(ctx context.Context, address, serverName, to string, raw []byte, auth *mailReplyRelayCreds) error {
+	conn, err := s.dial(ctx, "tcp", address)
 	if err != nil {
 		return classifyMailReplyErr(ctx, sendFailDial, err)
 	}
@@ -368,7 +494,7 @@ func (s *smtpReplySender) deliver(ctx context.Context, mx, to string, raw []byte
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
-	c, err := smtp.NewClient(conn, mx)
+	c, err := smtp.NewClient(conn, serverName)
 	if err != nil {
 		return classifyMailReplyErr(ctx, sendFailGreeting, err)
 	}
@@ -379,8 +505,17 @@ func (s *smtpReplySender) deliver(ctx context.Context, mx, to string, raw []byte
 	if ok, _ := c.Extension("STARTTLS"); !ok {
 		return &mailReplySendError{Reason: sendFailNoTLS}
 	}
-	if err := c.StartTLS(s.tlsConfig(mx)); err != nil {
+	if err := c.StartTLS(s.tlsConfig(serverName)); err != nil {
 		return classifyMailReplyErr(ctx, sendFailTLS, err)
+	}
+	if auth != nil {
+		// Only after STARTTLS: the credentials never cross a plain-text link.
+		if ok, _ := c.Extension("AUTH"); !ok {
+			return &mailReplySendError{Reason: sendFailNoAuth}
+		}
+		if err := c.Auth(smtp.PlainAuth("", auth.user, string(auth.pass), serverName)); err != nil {
+			return classifyMailReplyErr(ctx, sendFailAuthDenied, err)
+		}
 	}
 	// The null envelope sender: MAIL FROM:<>.
 	if err := c.Mail(""); err != nil {
@@ -468,6 +603,37 @@ func loadMailReplyKey(path string) (crypto.Signer, error) {
 		return k, nil
 	}
 	return nil, unusable
+}
+
+// loadMailReplyRelayAuth reads the relay's SMTP AUTH credentials: the user
+// name on the first line, the password on the second. Like the signing key,
+// every failure is the same error and nothing of the file is passed on.
+func loadMailReplyRelayAuth(path string) (user string, pass []byte, err error) {
+	unusable := &mailReplySendError{Reason: sendFailAuthFile}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", nil, unusable
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || !st.Mode().IsRegular() || st.Size() == 0 || st.Size() > mailReplyAuthMaxBytes {
+		return "", nil, unusable
+	}
+	data, err := io.ReadAll(io.LimitReader(f, mailReplyAuthMaxBytes+1))
+	defer clear(data)
+	if err != nil || len(data) > mailReplyAuthMaxBytes {
+		return "", nil, unusable
+	}
+	lines := bytes.Split(bytes.TrimRight(data, "\r\n"), []byte("\n"))
+	if len(lines) != 2 {
+		return "", nil, unusable
+	}
+	u := bytes.TrimRight(lines[0], "\r")
+	p := bytes.TrimRight(lines[1], "\r")
+	if len(u) == 0 || len(p) == 0 || bytes.ContainsAny(u, "\x00") || bytes.ContainsAny(p, "\x00") {
+		return "", nil, unusable
+	}
+	return string(u), append([]byte(nil), p...), nil
 }
 
 // safeMailHeaderValue is true for a value that can go in a header as it is:

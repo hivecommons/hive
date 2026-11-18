@@ -378,6 +378,28 @@ anything is sent.
 - **STARTTLS is required**, with a certificate that verifies for the MX host
   name (TLS 1.2 or later). A server without it, or with a certificate that
   does not verify, gets nothing.
+- **Optional relay (smarthost).** With `HIVE_HUB_MAIL_REPLY_RELAY` set to
+  `<relay host>` or `<relay host>:<port>` (port 587 when none is given), the
+  one connection goes to that host instead of the sender's MX, so the mail
+  leaves from one stable IP that carries the reverse DNS and SPF records. It
+  is off while the variable is unset, and then everything above is unchanged.
+  Nothing else changes with a relay: the message is DKIM-signed by the hub
+  before the hand-off (the relay must not re-sign it), the envelope sender is
+  still `MAIL FROM:<>`, STARTTLS is still required with a certificate that
+  verifies for the relay's host name (a relay without it, or whose handshake
+  fails, gets nothing, and the hub never falls back to direct delivery), and
+  any failure is still final. The relay is chosen by the operator, so unlike
+  an MX host it may have a private address. If the relay needs SMTP AUTH, set
+  `HIVE_HUB_MAIL_REPLY_RELAY_AUTH_FILE` to a mounted file with the user name
+  on the first line and the password on the second; AUTH PLAIN is sent only
+  after STARTTLS, the credentials are read from the file for each send and
+  never come from an inline setting, and they are never logged. A relay
+  setting that is not a host name with an optional port, or a credentials
+  file named without a relay, builds no sender (the log names the variable,
+  not its value); credentials that cannot be read send nothing and use up
+  nothing, like an unusable key. The hub has no YAML block for this sender,
+  so the relay is configured through these environment variables only. A
+  relay runbook is the owner's side of this option.
 - **Bounded.** 10 seconds for each DNS lookup, 15 for the connection, 45
   for the whole SMTP conversation, 90 for the whole reply. At most 8 replies
   are in flight; past that a reply is dropped and counted.
@@ -394,7 +416,8 @@ anything is sent.
 - **Nothing private in the log.** The hub logs a failed reply with the
   delivery id, the hive id, a reason class (for example `mx_lookup`,
   `no_mx`, `timeout`, `starttls`, `recipient_refused`, `connect`,
-  `signing_key_unusable`) and, when the server refused, its numeric code.
+  `signing_key_unusable`, and with a relay `relay_address_lookup`,
+  `relay_auth_unavailable`, `relay_auth`, `relay_credentials_unusable`) and, when the server refused, its numeric code.
   Never a key, an address, a domain, a subject, a body or a server's text.
 
 #### DNS records and network the hosted hub needs
@@ -414,7 +437,9 @@ strict alignment) already covers `hive.<project domain>`, and the DKIM
 signing domain equals the `From` domain, so it aligns. The hub's network
 also needs outbound TCP 25 (many clouds block it by default); if it cannot
 be opened the fallback is a transactional mail provider (option C of the
-design). Before turning replies on for everyone, send to a test mailbox at
+design), or a relay with a fixed IP (the optional relay above), in which
+case the records name the relay's IP and host name and the hub itself needs
+no outbound port 25. Before turning replies on for everyone, send to a test mailbox at
 two large providers and check `Authentication-Results` shows `dmarc=pass`.
 
 ### Who can invite Betty
