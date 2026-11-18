@@ -103,7 +103,7 @@ func TestDirectWeather(t *testing.T) {
 	if len(got) != 1 || got[0].Source != SourceOpenMeteo || got[0].Title != "Weather in Boston, Massachusetts, United States" {
 		t.Fatalf("weather %+v", got)
 	}
-	for _, w := range []string{"Now: 8.4 C (47.1 F)", "feels like 4.7 C", "clear sky", "wind 13 km/h", "humidity 65%", "Today: high 11.8 C (53.2 F), low -0.7 C (30.7 F)", "Tomorrow: high 9.0 C", "According to Open-Meteo"} {
+	for _, w := range []string{"Now (forecast-model estimate, not a station reading, can be off by several degrees): 8.4 C (47.1 F)", "feels like 4.7 C", "clear sky", "wind 13 km/h", "humidity 65%", "Today (forecast): high 11.8 C (53.2 F), low -0.7 C (30.7 F)", "Tomorrow (forecast): high 9.0 C", "According to Open-Meteo"} {
 		if !strings.Contains(got[0].Text, w) {
 			t.Errorf("weather text lacks %q: %s", w, got[0].Text)
 		}
