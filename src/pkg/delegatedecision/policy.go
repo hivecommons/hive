@@ -193,6 +193,11 @@ type CompetingPR struct {
 	// train as a duplicate of the item (same `Fixes #N`,
 	// hivecommons/hive#15395); the item is the PR the queue kept.
 	HeldDuplicate bool
+	// PersonAuthored: a person pushed it (author/human, or one of this
+	// hive's owners). With HiveAuthored it is the trust that lets the
+	// competitor cover a contributor PR's issue (RuleCoveredByOtherPR,
+	// hivecommons/hive#18900): a contributor copy never beats either.
+	PersonAuthored bool
 }
 
 // Input is everything the delegate reads about one parked item.
@@ -250,6 +255,12 @@ type Input struct {
 	Overlaps []int
 	// Competing lists the other open PRs for the same work.
 	Competing []CompetingPR
+	// IssueClaimHolder names a person or hive agent holding a live claim on
+	// an issue this PR closes ("" = none), IssueClaimIssue is that issue:
+	// work a person or the hive already holds is not adopted from a
+	// contributor (hivecommons/hive#18900).
+	IssueClaimHolder string
+	IssueClaimIssue  int
 	// TrainDuplicateOf is the open PR the merge queue kept for the same
 	// issue when it held this one as a duplicate (0 = not held);
 	// TrainDuplicateIssue is that issue (hivecommons/hive#15395).
