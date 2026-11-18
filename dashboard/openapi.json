@@ -8314,6 +8314,116 @@
         }
       }
     },
+    "/api/config/repos/parent-autoclose": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Parent auto-close policy per repo",
+        "description": "Returns repos.<repo>.parent_autoclose for every monitored repo (effective value and whether the repo carries its own), the default, and the three options the Settings editor offers. Owner only.",
+        "responses": {
+          "200": {
+            "description": "Current policy per monitored repo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set a repo's parent auto-close policy",
+        "description": "Sets repos.<repo>.parent_autoclose for one monitored repo: true (close finished parents, the default and clears the override), epics_too (also close epic and hold parents) or false (never auto-close parents). Applies without a restart. Parents a person reopened and tracking issues are never auto-closed under any value. Audited as config_repo_parent_autoclose. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "value"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string",
+                    "enum": [
+                      "true",
+                      "epics_too",
+                      "false"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current policy per monitored repo (same body as GET)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing repo or invalid value; nothing was stored"
+          },
+          "404": {
+            "description": "The repo is not a monitored repo"
+          },
+          "500": {
+            "description": "The config file could not be written; the previous value is restored"
+          }
+        }
+      }
+    },
     "/api/config/reference-repos": {
       "get": {
         "tags": [
