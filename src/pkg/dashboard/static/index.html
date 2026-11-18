@@ -1521,7 +1521,12 @@
        grows into the free space but keeps a readable floor, so pills wrap
        under it only when the line is genuinely full. */
     .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-ref, .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line { flex: 1 1 0; min-width: min(100%, 20em); }
-    .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line > .ham-pr-ref { flex: 1 1 0; min-width: 0; }
+    /* The PR's #N and title keep a real minimum width. With min-width 0, a
+       repo chip and base pill that filled the 20em line left the title a
+       sliver, and overflow-wrap: anywhere drew it one letter per line
+       (iPad Chrome, utah-packages#1212 under #1123). Now #N and the title
+       move to the next line of the PR line instead. */
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line > .ham-pr-ref { flex: 1 1 0; min-width: min(100%, 12em); }
     .ham-head-cols .ham-seg.ham-head-pr > .ham-badges { position: static; flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; min-width: 0; max-width: 100%; }
     .ham-head-cols .ham-seg.ham-head-pr > .ham-badges:empty { display: none; }
     .ham-head-cols .ham-seg.ham-head-tools { align-items: flex-start; }
@@ -1542,7 +1547,7 @@
        drops the whole title onto a second line as soon as it cannot fit
        entirely, even with half the row free (hivecommons/hive#16454). */
     .ham-head-main > .ham-title { flex: 1 1 0; min-width: 0; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
-    .ham-head-pr .ham-pr-title { flex: 1 1 0; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+    .ham-head-pr .ham-pr-title { flex: 1 1 0; min-width: min(100%, 8em); white-space: normal; overflow: visible; overflow-wrap: anywhere; }
     .ham-head-pr .ham-pr-ref, .ham-head-pr .ham-pr-line { flex-wrap: wrap; overflow: visible; }
     .ham-pr-ref { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; overflow: hidden; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); }
     .ham-pr-ref:hover { color: var(--text); }
