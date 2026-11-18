@@ -101,9 +101,17 @@ func TestSearchMentionsErrorsNameClassOnly(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "ada-lovelace") || strings.Contains(err.Error(), "search/issues") || !strings.Contains(err.Error(), "500") {
 		t.Fatalf("err = %v", err)
 	}
-	// A secondary-limit refusal is reported as rate limited.
+	// A secondary-limit refusal is reported as rate limited. The 403 carries
+	// a zero core budget, so keep that reading out of the package's shared
+	// accounting for the tests that follow (the historical-enrichment tests
+	// run only in normal API budget mode).
 	ResetRateLimitPacingForTest()
 	t.Cleanup(ResetRateLimitPacingForTest)
+	ResetRateLimitBudgetForTest()
+	t.Cleanup(ResetRateLimitBudgetForTest)
+	prevAccounting := sharedRESTAccountingPtr.Load()
+	sharedRESTAccountingPtr.Store(&restAccountingStore{now: time.Now})
+	t.Cleanup(func() { sharedRESTAccountingPtr.Store(prevAccounting) })
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "1")
 		w.Header().Set("X-RateLimit-Remaining", "0")

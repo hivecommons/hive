@@ -27,11 +27,11 @@ var sessionStartupLabels = map[string]bool{
 	// The first-run "Security notes … Press Enter to continue" screen. Agents
 	// answer it under this label; a session also reaches it through
 	// StartupNoticeLabel below when the table has no entry for it.
-	"claude first-run security notice": true,
-	"copilot folder trust":             true,
-	"agy project trust":                true,
-	"omp onboarding":                   true,
-	"codex directory trust":            true,
+	ClaudeSecurityNotesLabel: true,
+	"copilot folder trust":   true,
+	"agy project trust":      true,
+	"omp onboarding":         true,
+	"codex directory trust":  true,
 	// Answered with "Skip until next version", never the pre-selected
 	// "Update now" (see the table entry).
 	CodexUpdatePromptLabel: true,

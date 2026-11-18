@@ -62,8 +62,10 @@ const (
 	//	Press Enter to continue…
 	//
 	// Two body phrases AND the footer must all be present, so a pane (or a
-	// kick) that merely quotes one of them never matches.
-	ClaudeFirstRunNoticeLabel = "claude first-run security notice"
+	// kick) that merely quotes one of them never matches. It is the same
+	// screen ClaudeSecurityNotesLabel names, so the two entries share one
+	// label and every consumer treats the screen the same way.
+	ClaudeFirstRunNoticeLabel = ClaudeSecurityNotesLabel
 	// claudeFirstRunNoticeMistakesMarker / ClaudeFirstRunNoticeInjectionMarker
 	// are the two distinctive body lines of the notice. The injection marker is
 	// exported because it also contains "prompt injection", a kick-refusal

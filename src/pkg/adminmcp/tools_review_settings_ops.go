@@ -116,6 +116,10 @@ var reviewSettingsFields = []reviewSettingsField{
 	{key: "max_out_of_scope_backlog_issues", kind: rsInt},
 	{key: "perspectives", kind: rsList},
 	{key: "perspective_prompts", kind: rsMap},
+	// Links the perspective set to a repo file (#18797): owner, repo, path and
+	// an optional ref. An empty object clears it; the dashboard's Unlink sends
+	// null, which review.settings cannot express.
+	{key: "perspectives_source", kind: rsMap},
 	{key: "combined_perspectives", kind: rsBool},
 	{key: "revise_repos", kind: rsList},
 	{key: "revise_verdicts_before", kind: rsString},

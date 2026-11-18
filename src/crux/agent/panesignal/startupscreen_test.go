@@ -104,7 +104,7 @@ func TestSessionStartupScreen_ClaudeFirstRunNotice(t *testing.T) {
 	if !ok || got.Refused {
 		t.Fatalf("first-run notice = (%+v, %v), want an answerable startup screen", got, ok)
 	}
-	if got.Label != StartupNoticeLabel && got.Label != "claude first-run security notice" {
+	if got.Label != StartupNoticeLabel && got.Label != ClaudeSecurityNotesLabel {
 		t.Errorf("label = %q", got.Label)
 	}
 	if !reflect.DeepEqual(got.Keys, []string{"Enter"}) {
