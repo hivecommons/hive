@@ -26,6 +26,15 @@ type sharedCIRerunIssue struct {
 	Open      bool
 	CreatedAt time.Time
 	Body      string
+	// Author is the issue's author; empty means the hive's App, hive[bot].
+	Author string
+}
+
+func (is sharedCIRerunIssue) author() string {
+	if is.Author != "" {
+		return is.Author
+	}
+	return "hive[bot]"
 }
 
 type sharedCIRerunRun struct {
@@ -80,7 +89,7 @@ func newSharedCIRerunFake(t *testing.T, issues []sharedCIRerunIssue, prs []*shar
 				out := []map[string]any{}
 				for _, is := range f.issues {
 					if is.Open {
-						out = append(out, map[string]any{"number": is.Number, "title": is.Title, "state": "open", "created_at": is.CreatedAt.Format(time.RFC3339), "body": is.Body})
+						out = append(out, map[string]any{"number": is.Number, "title": is.Title, "state": "open", "created_at": is.CreatedAt.Format(time.RFC3339), "body": is.Body, "user": map[string]any{"login": is.author()}})
 					}
 				}
 				_ = json.NewEncoder(w).Encode(out)
@@ -94,7 +103,7 @@ func newSharedCIRerunFake(t *testing.T, issues []sharedCIRerunIssue, prs []*shar
 				if is.Open {
 					continue
 				}
-				item := map[string]any{"number": is.Number, "title": is.Title, "state": "closed", "closed_at": is.ClosedAt.Format(time.RFC3339), "body": is.Body}
+				item := map[string]any{"number": is.Number, "title": is.Title, "state": "closed", "closed_at": is.ClosedAt.Format(time.RFC3339), "body": is.Body, "user": map[string]any{"login": is.author()}}
 				if is.StateReason != "" {
 					item["state_reason"] = is.StateReason
 				}
@@ -508,6 +517,7 @@ func TestSweepSharedCIReruns_OpenIncidentRecoveredOnBase(t *testing.T) {
 	}
 	srv, fake := newSharedCIRerunFake(t, issues, prs)
 	c := newTestClient(t, srv, "org", []string{"org/repo"})
+	c.SetAppBotLogin("hive[bot]")
 	c.baseRed.now = sharedCIRerunNow
 	c.baseRed.noteGreen(baseRedMemoryKey("org", "repo", "main"), map[string]time.Time{"contract": now.Add(-time.Hour)})
 
@@ -567,6 +577,7 @@ func TestSweepSharedCIReruns_OpenIncidentNotRecovered(t *testing.T) {
 			}
 			srv, fake := newSharedCIRerunFake(t, []sharedCIRerunIssue{openOutageIncident(now, body)}, prs)
 			c := newTestClient(t, srv, "org", []string{"org/repo"})
+			c.SetAppBotLogin("hive[bot]")
 			c.baseRed.now = sharedCIRerunNow
 			if tc.greenKey != "" {
 				c.baseRed.noteGreen(baseRedMemoryKey("org", "repo", tc.greenKey), map[string]time.Time{"contract": tc.greenAt})
@@ -600,6 +611,7 @@ func TestSweepSharedCIReruns_ClosedIncidentRerunsListedPRs(t *testing.T) {
 	}
 	srv, fake := newSharedCIRerunFake(t, issues, prs)
 	c := newTestClient(t, srv, "org", []string{"org/repo"})
+	c.SetAppBotLogin("hive[bot]")
 	if _, err := c.SweepSharedCIReruns(context.Background(), SharedCIRerunOptions{Now: sharedCIRerunNow}); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -662,6 +674,7 @@ func TestSweepSharedCIReruns_SecondBaseRecoversLater(t *testing.T) {
 	}
 	srv, fake := newSharedCIRerunFake(t, []sharedCIRerunIssue{openOutageIncident(now, "Affected PRs: #1, #2.\n")}, prs)
 	c := newTestClient(t, srv, "org", []string{"org/repo"})
+	c.SetAppBotLogin("hive[bot]")
 	c.baseRed.now = sharedCIRerunNow
 	c.baseRed.noteGreen(baseRedMemoryKey("org", "repo", "main"), map[string]time.Time{"contract": now.Add(-time.Hour)})
 	opts := SharedCIRerunOptions{Now: sharedCIRerunNow}
@@ -677,5 +690,29 @@ func TestSweepSharedCIReruns_SecondBaseRecoversLater(t *testing.T) {
 	}
 	if reruns, _, _ := fake.snap(); !reflect.DeepEqual(reruns, []int64{11, 21}) {
 		t.Fatalf("second sweep reruns = %v, want PR 2 re-run once v5 recovered", reruns)
+	}
+}
+
+// Anyone can open an issue under the [shared-ci] title: a tracker the hive's
+// own accounts did not write does not pick PRs to re-run (#18946 review),
+// though a PR deferred to it by marker still is.
+func TestSweepSharedCIReruns_StrangerTrackerListIgnored(t *testing.T) {
+	now := sharedCIRerunNow()
+	issue := openOutageIncident(now, "Affected PRs: #1, #2.\n")
+	issue.Author = "stranger"
+	prs := []*sharedCIRerunPR{
+		{Number: 1, SHA: "aaaaaaaaaa", Comments: []string{"<!-- hive-shared-ci-1336 -->"}, Runs: []sharedCIRerunRun{failedRun(11, 1)}},
+		{Number: 2, SHA: "bbbbbbbbbb", Runs: []sharedCIRerunRun{failedRun(21, 1)}},
+	}
+	srv, fake := newSharedCIRerunFake(t, []sharedCIRerunIssue{issue}, prs)
+	c := newTestClient(t, srv, "org", []string{"org/repo"})
+	c.SetAppBotLogin("hive[bot]")
+	c.baseRed.now = sharedCIRerunNow
+	c.baseRed.noteGreen(baseRedMemoryKey("org", "repo", "main"), map[string]time.Time{"contract": now.Add(-time.Hour)})
+	if _, err := c.SweepSharedCIReruns(context.Background(), SharedCIRerunOptions{Now: sharedCIRerunNow}); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if reruns, _, _ := fake.snap(); !reflect.DeepEqual(reruns, []int64{11}) {
+		t.Fatalf("reruns = %v, want only the marker-stamped PR 1", reruns)
 	}
 }

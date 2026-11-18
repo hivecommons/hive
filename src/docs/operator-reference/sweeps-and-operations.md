@@ -319,7 +319,9 @@ someone re-runs it. The shared-CI rerun sweep
 - With no incident over, it makes no other calls.
 - For each open PR whose newest shared-CI marker names one of those incidents,
   or that the incident's tracker body lists (the hive tracker's "Open pull
-  requests failing it" line, or an agent's "Affected PRs:" line), it re-runs
+  requests failing it" line, or an agent's "Affected PRs:" line; only a
+  tracker one of the hive's own accounts wrote, since anyone can open an
+  issue under that title), it re-runs
   the failed jobs (`POST .../actions/runs/{id}/rerun-failed-jobs`)
   of the newest run per workflow on the PR head when that run concluded
   `failure` or `timed_out`, using the hive's App/daemon credential. A newest

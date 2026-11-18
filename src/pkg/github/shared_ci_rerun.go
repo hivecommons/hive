@@ -76,7 +76,8 @@ type SharedCIRerunResult struct {
 }
 
 // sharedCIRerunSeen memoizes a PR that needed no action, so later passes skip
-// re-listing its comments until the PR or the closed-incident set changes.
+// re-listing its comments until the PR or the set of incidents over for its
+// base changes.
 type sharedCIRerunSeen struct {
 	updatedAt time.Time
 	incidents string
@@ -260,6 +261,20 @@ func sharedCITrackerListedPRs(body string) map[int]bool {
 	return out
 }
 
+// trustedSharedCITrackerListedPRs is sharedCITrackerListedPRs for a tracker
+// one of the hive's own accounts wrote (its sweep's tracker, or an agent's
+// filed for help): anyone can open an issue under the `[shared-ci]` title, and
+// a stranger's list must not pick which PRs the hive re-runs (#18946 review).
+// A hive that cannot name its own accounts trusts every author, as the other
+// hive-authorship checks do. Marker-stamped PRs are unaffected.
+func (c *Client) trustedSharedCITrackerListedPRs(issue *gh.Issue) map[int]bool {
+	prs := sharedCITrackerListedPRs(issue.GetBody())
+	if len(prs) == 0 || c.isHiveAccount(issue.GetUser()) || !c.knowsOwnAccounts() {
+		return prs
+	}
+	return nil
+}
+
 // recoveredOpenSharedCIIncidents returns the open [shared-ci] incidents in
 // owner/repo whose check has completed green on a base tip since the
 // incident was filed, and records the PRs each one's tracker lists. The
@@ -284,7 +299,7 @@ func (c *Client) recoveredOpenSharedCIIncidents(ctx context.Context, owner, repo
 			out = map[int]sharedCIOpenIncident{}
 		}
 		out[issue.GetNumber()] = sharedCIOpenIncident{check: check, opened: opened}
-		if prs := sharedCITrackerListedPRs(issue.GetBody()); len(prs) > 0 {
+		if prs := c.trustedSharedCITrackerListedPRs(issue); len(prs) > 0 {
 			listed[issue.GetNumber()] = prs
 		}
 	}
@@ -323,7 +338,7 @@ func (c *Client) recentlyClosedSharedCIIncidents(ctx context.Context, owner, rep
 				continue
 			}
 			out[issue.GetNumber()] = true
-			if prs := sharedCITrackerListedPRs(issue.GetBody()); len(prs) > 0 && listed != nil {
+			if prs := c.trustedSharedCITrackerListedPRs(issue); len(prs) > 0 && listed != nil {
 				listed[issue.GetNumber()] = prs
 			}
 		}
