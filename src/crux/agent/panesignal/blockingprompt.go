@@ -76,8 +76,10 @@ const (
 	// claudeFirstRunNoticeFooterLines is how many trailing non-blank lines the
 	// footer may sit in for the notice to count as live. Once Enter is pressed
 	// the CLI draws the next screen below it, and lingering scrollback must not
-	// hold the readiness gate or re-fire Enter.
-	claudeFirstRunNoticeFooterLines = 2
+	// hold the readiness gate or re-fire Enter. One line: the footer is the
+	// last line of the live screen, the same rule ShowsClaudeSecurityNotes
+	// applies to the same screen.
+	claudeFirstRunNoticeFooterLines = 1
 )
 
 // ShowsClaudeFirstRunNotice reports whether the pane tail is Claude Code's
