@@ -707,6 +707,9 @@ with `recent`, which covers 30 minutes.
   operator whose Approve admitted the head. Other Approve reviews are not
   recorded, because no merge path reads a PR's reviews. `approvals_known` is
   true when the hive read the Activity monitor's row for the PR at merge time.
+  That row is the monitor's cached copy, so an approval given after its last
+  refresh and before the merge is missed: treat `approved=none` as "no human
+  approval the hive saw", not proof that nobody approved.
 - **Older entries:** an entry recorded before `author` and `approved_by` existed
   has neither. An `author`, `exclude_author` or `approved` filter leaves it out
   and counts it in `author_unknown` or `approvals_unknown`, so nothing is

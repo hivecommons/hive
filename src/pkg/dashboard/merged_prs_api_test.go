@@ -202,7 +202,7 @@ func TestMergedPRsHandler(t *testing.T) {
 	if err := json.Unmarshal(get("limit=2&offset=2").Body.Bytes(), &second); err != nil || jsonInts(mergedPRsNumbers(second)) != "[3]" || second.NextOffset != 0 {
 		t.Fatalf("second page = %+v (%v)", second, err)
 	}
-	for _, bad := range []string{"since=100d", "approved=maybe", "limit=0", "limit=501", "offset=-1"} {
+	for _, bad := range []string{"since=100d", "since=300000d", "approved=maybe", "limit=0", "limit=501", "offset=-1"} {
 		if rr := get(bad); rr.Code != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400", bad, rr.Code)
 		}
