@@ -92,7 +92,11 @@ type sharedCIIncidentState struct {
 // defers the PR until the rerun sweep has stamped its
 // `<!-- hive-shared-ci-rerun-<n> -->` marker: the red is the incident's
 // until the failed jobs have run again on the repaired base. A
-// not-planned close gets no re-run, so it releases the PR at once.
+// not-planned close gets no re-run, so it releases the PR at once. Once the
+// sweep has stamped that marker the deferral is lifted even while the
+// incident stays open: the sweep re-runs a PR for an open incident only
+// after its check passed on the base again, so a red that survives the
+// re-run is the PR's own.
 //
 // Every lookup failure returns 0: listing a deferred PR costs one redundant
 // triage, hiding a PR that is not deferred stalls it, so the error side is
@@ -101,7 +105,7 @@ type sharedCIIncidentState struct {
 // issue GET.
 func (c *Client) openSharedCIIncident(ctx context.Context, pr *PullRequest, texts []string, states map[string]sharedCIIncidentState) int {
 	incident := newestSharedCIMarker(texts)
-	if incident == 0 {
+	if incident == 0 || sharedCIRerunStamped(texts, incident) {
 		return 0
 	}
 	owner, repo := c.splitRepo(pr.Repo)
@@ -123,7 +127,7 @@ func (c *Client) openSharedCIIncident(ctx context.Context, pr *PullRequest, text
 	if state.open {
 		return incident
 	}
-	if state.awaitingRerun && !sharedCIRerunStamped(texts, incident) {
+	if state.awaitingRerun {
 		return incident
 	}
 	return 0
