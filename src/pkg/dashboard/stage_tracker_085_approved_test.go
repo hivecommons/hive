@@ -72,7 +72,10 @@ func TestStageTrackerApprovedHeadAt085(t *testing.T) {
 	}
 
 	s.statusMu.Lock()
-	s.status.Repos[0].OpenPrs[len(s.status.Repos[0].OpenPrs)-1].HeadSHA = "head-pushed"
+	last := len(s.status.Repos[0].OpenPrs) - 1
+	pr := s.status.Repos[0].OpenPrs[last].(FrontendPR)
+	pr.HeadSHA = "head-pushed"
+	s.status.Repos[0].OpenPrs[last] = pr
 	s.statusMu.Unlock()
 	if it := trackerItem(t, s.buildStageTracker(s.status, store, now), "pr", 1013); it.HumanApprover != "" {
 		t.Fatalf("a new head inherited the approval: %q", it.HumanApprover)
