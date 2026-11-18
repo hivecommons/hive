@@ -62,6 +62,25 @@ func TestBrokerRewritesHeadCommitMessageDashes(t *testing.T) {
 	}
 }
 
+// The success path logs how many dashes it rewrote, so an operator can tell
+// the amend ran; the count is the drop between the original and the result.
+func TestBrokerLogsHeadCommitMessageRewrite(t *testing.T) {
+	dir := initRepo(t)
+	commitWithMessage(t, dir, "fix: a "+emDashForTest+" b\n\nWhy "+emDashForTest+" because.\n")
+	var buf strings.Builder
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: &recordingRunner{},
+		Logger: slog.New(slog.NewTextHandler(&buf, nil))}).Run(context.Background())
+	if err != nil || !res.Pushed {
+		t.Fatalf("Run = %+v, %v", res, err)
+	}
+	if strings.Contains(headMessage(t, dir), emDashForTest) {
+		t.Fatalf("dashes survived the amend: %q", headMessage(t, dir))
+	}
+	if log := buf.String(); !strings.Contains(log, "rewrote dashes in the HEAD commit message") || !strings.Contains(log, "dashes=2") {
+		t.Fatalf("rewrite not logged with its dash count: %s", log)
+	}
+}
+
 func TestBrokerLeavesCleanCommitMessageAlone(t *testing.T) {
 	dir := initRepo(t)
 	commitWithMessage(t, dir, "fix: a - b\n\nlevels 3"+prosefilter.EnDash+"5\n")

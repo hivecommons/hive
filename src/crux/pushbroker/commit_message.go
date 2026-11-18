@@ -3,7 +3,6 @@ package pushbroker
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/hivecommons/hive/crux/prosefilter"
@@ -47,10 +46,9 @@ func (b *Broker) rewriteHeadCommitMessage(ctx context.Context) (amended bool, er
 	if err != nil {
 		return false, fmt.Errorf("reading HEAD commit message: %w", err)
 	}
-	_, msg, found := strings.Cut(string(raw), "\n\n")
-	if !found {
-		return false, nil
-	}
+	// A commit object always has a blank line before its message; without
+	// one msg is empty and HasDash below is false, so no separate check.
+	_, msg, _ := strings.Cut(string(raw), "\n\n")
 	if !prosefilter.HasDash(msg) {
 		return false, nil
 	}
@@ -58,21 +56,12 @@ func (b *Broker) rewriteHeadCommitMessage(ctx context.Context) (amended bool, er
 	if clean == msg {
 		return false, nil
 	}
-	f, err := os.CreateTemp("", "hive-commit-msg-*")
-	if err != nil {
-		return false, fmt.Errorf("staging commit message: %w", err)
-	}
-	defer func() { _ = os.Remove(f.Name()) }()
-	if _, err := f.WriteString(clean); err != nil {
-		_ = f.Close()
-		return false, fmt.Errorf("staging commit message: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return false, fmt.Errorf("staging commit message: %w", err)
-	}
-	// --only with no paths amends the message alone; the agent's staged
-	// changes stay staged and out of the commit.
-	if _, err := b.git(ctx, "commit", "--amend", "--only", "--cleanup=verbatim", "-F", f.Name()); err != nil {
+	// The message goes in as one -m argument rather than through a temp file
+	// (git completes a missing final newline and, with --cleanup=verbatim,
+	// keeps everything else as given), so no staging file can fail. --only
+	// with no paths amends the message alone; the agent's staged changes
+	// stay staged and out of the commit.
+	if _, err := b.git(ctx, "commit", "--amend", "--only", "--cleanup=verbatim", "-m", clean); err != nil {
 		return false, err
 	}
 	if b.Logger != nil {
