@@ -41,12 +41,12 @@ func (m *Manager) keepCompanionTail(ctx context.Context, mt Meeting) {
 	if err != nil {
 		return
 	}
-	lines, last, err := cq.CompanionOutbox(ctx, mt.NativeID, 0)
+	page, err := cq.CompanionOutbox(ctx, mt.NativeID, 0)
 	if err != nil {
 		m.log.Info("[meetings] companion: last lines not kept", "meeting", mt.ID, "error", err)
 		return
 	}
-	if len(lines) == 0 {
+	if len(page.Lines) == 0 {
 		return
 	}
 	now := m.opts.Now()
@@ -60,7 +60,7 @@ func (m *Manager) keepCompanionTail(ctx context.Context, mt Meeting) {
 			delete(m.tails.by, id)
 		}
 	}
-	m.tails.by[mt.ID] = companionTail{lines: lines, last: last, expires: now.Add(companionTailGrace)}
+	m.tails.by[mt.ID] = companionTail{lines: page.Lines, last: page.NextSeq, expires: now.Add(companionTailGrace)}
 }
 
 // companionTail returns an ended meeting's kept lines after the cursor and

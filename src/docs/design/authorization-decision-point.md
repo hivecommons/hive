@@ -1,9 +1,11 @@
 # One authorization point: decision seam, decision events and scoped credentials (#18988)
 
-Status: **Proposed (design only).** Spec for RFC
-[#18988](https://github.com/hivecommons/hive/issues/18988). No code or behaviour
-changes with this record. The RFC stays open until its acceptance criteria are
-met; this page is the concrete proposal to review against them. Related records:
+Status: **Partly shipped (shadow mode only).** Spec for RFC
+[#18988](https://github.com/hivecommons/hive/issues/18988). The first slice of
+the migration is in the tree, off by default and enforcing nothing: see
+[Phase status](#phase-status). Everything else on this page is still a
+proposal. The RFC stays open until the enforcement phases are decided; this
+page is the concrete proposal to review against its acceptance criteria. Related records:
 [crux-tool-policy.md](crux-tool-policy.md) (the proxy's own operation
 vocabulary, a narrower scope than this page), [tool-approval-desk.md](tool-approval-desk.md)
 (the one declarative rule layer that exists today), [crux.md](crux.md) (the
@@ -131,30 +133,30 @@ leaves no per-decision record** beyond the write counters.
 
 ### B. The push broker
 
-`Broker.Run` (`src/crux/pushbroker/pushbroker.go:168-292`) runs a fixed
+`Broker.Run` (`src/crux/pushbroker/pushbroker.go:174-300`) runs a fixed
 sequence, each step an early return through `fail`
-(`src/crux/pushbroker/pushbroker.go:597-604`), which logs and returns the error:
+(`src/crux/pushbroker/pushbroker.go:603-610`), which logs and returns the error:
 
-1. required fields (`validate`, `:296`);
-2. hostile workspace config (`:175`, `src/crux/pushbroker/workspace_config.go:111`);
-3. empty outgoing commits (`:183`);
-4. fast-forward against remote and base (`:189-197`);
-5. descend-from-lease when updating an existing PR branch (`:199`);
-6. forged lane sign-off (`:203`, `:432`);
-7. changed-files guard: empty push, then protected paths (`:207`,
-   `src/crux/pushbroker/protected.go:13-27`);
-8. outgoing-diff secret scan (`:238`);
-9. mint token (`:242`), then push inside `effects.Execute` with
-   `Kind: KindBranchPush` (`:277-282`).
+1. required fields (`validate`, `:302`);
+2. hostile workspace config (`:181`, `src/crux/pushbroker/workspace_config.go:111`);
+3. empty outgoing commits (`:189`);
+4. fast-forward against remote and base (`:195-203`);
+5. descend-from-lease when updating an existing PR branch (`:205`);
+6. forged lane sign-off (`:209`, `:438`);
+7. changed-files guard: empty push, then protected paths (`:213`,
+   `src/crux/pushbroker/protected.go:15-33`);
+8. outgoing-diff secret scan (`:244`);
+9. mint token (`:248`), then push inside `effects.Execute` with
+   `Kind: KindBranchPush` (`:283-288`).
 
 The protected-path list is `DefaultProtectedPaths`
-(`src/crux/pushbroker/pushbroker.go:28-36`). `Broker.ProtectedPaths` overrides
-it per call (`:128`, `src/crux/pushbroker/protected.go:29-34`), but the only
+(`src/crux/pushbroker/pushbroker.go:29-37`). `Broker.ProtectedPaths` overrides
+it per call (`:129`, `src/crux/pushbroker/protected.go:54-59`), but the only
 production construction, `src/crux/agent/sandbox_executor.go:377-389`, does not
 set it, and a grep found no config key feeding it. So the list is effectively a
 code constant today. **(unverified outside the files searched.)**
 
-The broker records a `Result` (`src/crux/pushbroker/pushbroker.go:150-166`)
+The broker records a `Result` (`src/crux/pushbroker/pushbroker.go:156-172`)
 with `ProtectedReject`, `SecretRejected` and `Error`. It carries no rule id, no
 policy version and no credential descriptor. The `effects.Claim` it submits has
 an `Actor` field (`src/crux/effects/effects.go:182-188`) that the broker leaves
@@ -211,7 +213,7 @@ refusals as well as its successes is **unverified**.
   repositories (`src/pkg/github/app.go:291-345`, `:440-444`). The
   `contributor` tier carries issues, contents and pull-requests write
   (`src/pkg/github/app.go:331-337`). The broker uses `DefaultTier = "contributor"`
-  (`src/crux/pushbroker/pushbroker.go:25`), so a push token also carries issue
+  (`src/crux/pushbroker/pushbroker.go:26`), so a push token also carries issue
   and PR write that a push does not need.
 - **Callback mint.** `MintToken` returns a response with an `ExpiresAt` for
   the minted token (`src/pkg/cruxhost/cruxhost.go:220-241`). The relation
@@ -538,6 +540,44 @@ Flip order for phase 4, lowest risk first: broker checks (small, one caller,
 pure functions of the workspace), then proxy hard denies and write-surface,
 then proxy REST mode table, then relays, then GraphQL (decision parity with
 the REST path is verified first, see open questions).
+
+### Phase status
+
+| Phase | Status |
+|---|---|
+| 1. Types and schema | **Shipped for one gate.** `src/crux/authz` has `Request`, `Decision`, the `v1` event, and a rule id and reason code for the push broker's changed-files guard only. The registry for the other gates is not written |
+| 2. Decision events behind a flag | **Started, one gate.** With `HIVE_AUTHZ_SHADOW=true` the push broker's changed-files guard emits one event per call to a bounded in-memory stream (`HIVE_AUTHZ_SHADOW_BUFFER`, default 1000, evictions counted). The proxy, the relays, the rest of the broker and the volume probe are not done, and there is no persistent stream or sink wiring yet, so the volume question stays open |
+| 3. Seam in shadow | **Started, one gate.** `authz.Decide` re-derives the broker's changed-files decision after the guard has decided, and a difference is counted and logged as a divergence. Parity is covered by `TestParityPushBrokerChangedFiles` and `TestParityPushBrokerPathShapes` over the broker's existing cases. The proxy mode table, GraphQL, Linear, the relays and tool approval have no evaluator yet |
+| 4. Enforce through the seam | Not started. Nothing reads a `Decision` to allow or refuse an action |
+| 5. Operator rules and credentials | Not started |
+
+What this slice does and does not do, as built:
+
+- **Default off.** Unset, empty or unparseable `HIVE_AUTHZ_SHADOW` is off. Off
+  records nothing and allocates nothing: the broker holds a nil recorder.
+- **Enforces nothing.** The broker calls the shadow after the guard has
+  returned its verdict and never reads a result back. A recorder panic is
+  recovered and counted. A test pins that the broker's `Result`, error and git
+  commands are identical with the shadow on and off.
+- **Fail closed is written down, not applied.** `authz.Decide` already returns
+  a deny with `authz_error` for an evaluator panic, `missing_attribute` for a
+  missing repo or branch, and `unsupported_action` for an action with no rule,
+  and tests pin that. In this phase a shadow deny that the guard did not issue
+  is a divergence log line only.
+- **Independent mirror.** The evaluator's path matching is written separately
+  from `pushbroker.ProtectedPathViolations`, so drift between the two is
+  caught by the parity tests and by the live divergence counter rather than
+  hidden by a shared function.
+- **Attributes only.** An event carries the agent name, repo, branch, a count
+  of changed paths and a count of matched paths. Free-text attributes are
+  scrubbed for credential shapes, stripped of control characters and cut to 256
+  bytes. No path list, body, diff or credential is in the event type.
+- **Policy version.** The event's `policy_version` is the floor version plus a
+  short digest of the protected path list in force, so a per-call override of
+  the list is visible in the record.
+- **Not yet an audit trail.** The stream is in memory, bounded and lost on
+  restart. It exists to measure parity. The dedicated durable stream and its
+  integrity are phase 2 work and open question 6.
 
 Proposed task-sized issues (not filed; for the RFC's acceptance criteria):
 

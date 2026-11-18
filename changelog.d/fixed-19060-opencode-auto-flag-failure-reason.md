@@ -1,1 +1,0 @@
-- The contributor relay no longer launches `opencode run` with `--auto` when the installed opencode rejects that flag, classes unrecognized-flag CLI errors as environment failures, prints the CLI output tail in its local log on task failure, and the activity feed now shows a scrubbed reason on failed runs ([#19060](https://github.com/hivecommons/hive/issues/19060)).

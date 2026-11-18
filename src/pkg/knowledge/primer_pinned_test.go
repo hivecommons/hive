@@ -3,6 +3,8 @@ package knowledge
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -173,5 +175,53 @@ func TestWithPinned(t *testing.T) {
 	var none *Primer
 	if none.HasPinned() {
 		t.Fatal("nil primer has nothing pinned")
+	}
+}
+
+// A pinned directory that does not exist at registration is opened on the
+// first kick after it appears (#19094), and onOpen runs once.
+func TestPinnedDirIsOpenedWhenItAppears(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "review-rules")
+	opened := 0
+	p := NewPrimer(nil, PrimerConfig{MaxFacts: 25}, fileStoreTestLogger())
+	p.AddPinnedDir("review-rules", dir, LayerProject, func(s *FileStore) {
+		if s == nil || s.RootDir() != dir {
+			t.Errorf("onOpen store = %v", s)
+		}
+		opened++
+	})
+	if !p.HasPinned() {
+		t.Fatal("a registered directory counts as pinned before it exists")
+	}
+	kc := KickContext{Lane: "quality"}
+	if got := p.PrimeForKick(context.Background(), nil, kc, nil); len(got.Facts) != 0 || opened != 0 {
+		t.Fatalf("missing dir: facts=%d opened=%d", len(got.Facts), opened)
+	}
+	if err := os.WriteFile(dir, []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.PrimeForKick(context.Background(), nil, kc, nil); len(got.Facts) != 0 || opened != 0 {
+		t.Fatalf("a file at the path is not opened: facts=%d opened=%d", len(got.Facts), opened)
+	}
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeLifecycleFact(t, dir, "rule-r-1", "title: R-1 quality rule\ntype: reviewer-rule\ntags: [review-rule, pin]\nscope:\n  lanes: [quality]\n", "Use the maintainers file.")
+	for i := 0; i < 2; i++ {
+		got := p.PrimeForKick(context.Background(), nil, kc, nil)
+		if slugsOf(got.Facts) != "rule-r-1" {
+			t.Fatalf("pass %d: pinned = %s, want rule-r-1", i, slugsOf(got.Facts))
+		}
+	}
+	if opened != 1 {
+		t.Fatalf("onOpen ran %d times, want once", opened)
+	}
+	nilHook := NewPrimer(nil, PrimerConfig{MaxFacts: 25}, fileStoreTestLogger())
+	nilHook.AddPinnedDir("review-rules", dir, LayerProject, nil)
+	if got := nilHook.PrimeForKick(context.Background(), nil, kc, nil); slugsOf(got.Facts) != "rule-r-1" {
+		t.Fatalf("without a hook: %s", slugsOf(got.Facts))
 	}
 }

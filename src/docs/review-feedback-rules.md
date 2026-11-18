@@ -8,7 +8,7 @@ leaving it to the agent's discretion ([#19046](https://github.com/hivecommons/hi
 
 ## What happens
 
-1. **Classify.** Each comment in a coalesced burst is matched against fixed phrase signals. A comment with at least one is a rule; the rest
+1. **Classify.** Each human comment on the PR is matched against fixed phrase signals. A comment with at least one is a rule; the rest
    are corrections and are handled as before. The signals are `source-of-truth`, `authoritative`, `always` ("should always", "must always"),
    `never` ("should never", "must never"), `going-forward` ("going forward", "from now on", "next time", "for future assessments"),
    `capture-request` ("capture this", "document this", "record it"), `assessment-criteria` ("assessment criteria", "assessment knowledge")
@@ -26,12 +26,17 @@ leaving it to the agent's discretion ([#19046](https://github.com/hivecommons/hi
    source comment and how to retract it, so the reviewer sees it was captured and can object. The agent's brief lists the recorded rules, tells
    it not to record them again, and asks it to name the ids in its reply.
 6. **Load.** The kick primer carries every approved `pin` entry whose scope admits the kick, whatever the kick's keywords are, ahead of ranked
-   knowledge and exempt from the max-facts trim (at most 20 pinned entries per kick). A rule applies to the authoring agent's lane by default,
+   knowledge and exempt from the max-facts trim (at most 20 pinned entries per kick). This holds for a kick with no issues or no extractable
+   keywords too: it gets its pinned rules and nothing else, since ranked knowledge still needs keywords. A rule applies to the authoring agent's lane by default,
    so the quality agent receives its rules on its next kick; a rule scoped to a workflow reaches the lane or workflow model of that name. The
    usual lifecycle filter and `knowledge.agent_scopes` still apply, so drafts, retracted rules and out-of-scope agents never see a rule.
 
-Capture happens when the burst is routed, so it also happens when the per-PR cap was reached or no agent could take the kick. It does not
-change the sweep's debounce, cap or thread behavior.
+Capture reads its own candidate set, not the routed burst: every human comment on the hive's open PRs in the attribution window (inline,
+review body, conversation), whether or not it was already handled, sits in a resolved thread, or addresses the hive. A comment is read once
+it has been quiet for the sweep's debounce. The rule index keeps the ids it has evaluated, separately from the sweep's handled ids, so the
+first pass after an upgrade is a one-time backfill over the comments still visible on those PRs and later passes read only new comments. So
+capture also happens when the per-PR cap was reached, no agent could take the kick, or no kick is due at all. It does not change the sweep's
+debounce, cap, routing or thread behavior.
 
 ## The agent's structured block
 
@@ -59,8 +64,10 @@ source comment, so a maintainer can place it. It is posted once and retried on a
 
 Rules are ordinary knowledge entries in the `review-rules` channel (`/data/vaults/review-rules`, override with
 `HIVE_REVIEW_FEEDBACK_RULES_VAULT`), so the dashboard's knowledge list shows each rule with its source and the provenance lines in its body.
-The rule index lives in the sweep's state directory (`HIVE_REVIEW_FEEDBACK_DIR`, file `rules.json`). The channel is connected at boot when the
-vaults directory exists; the primer reads it within the vault's usual refresh interval after a change.
+The rule index lives in the sweep's state directory (`HIVE_REVIEW_FEEDBACK_DIR`, file `rules.json`). At boot the channel is created and
+connected when it or the vaults directory exists. On a host without a vaults directory the sweep creates the channel on its first capture;
+the primer is registered with its path at boot, opens it on the first kick after it appears and connects it to the knowledge API then, so
+neither kicks nor the dashboard wait for a restart. After a change, the primer reads the channel within the vault's usual refresh interval.
 
 - Retract a rule: `hivectl knowledge state rule-r-1 deprecated`. Deleting the entry file does the same. The sweep reconciles on its next pass
   (every five minutes) and records the change in its log.

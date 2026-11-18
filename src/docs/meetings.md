@@ -197,7 +197,7 @@ The desktop companion ([hivecommons/quorum-companion](https://github.com/hivecom
 - **Who can use it.** Owner or read-write users. A companion meeting can be used only by the person who started it (owners can use any). Read-only users cannot stream.
 - **Signing in.** Each owner or read-write user opens `/companion/token` on their hive and creates a companion token (shown once; only its SHA-256 is stored, one per user, **Replace** or **Revoke** any time). The companion sends it as `X-Hive-Companion-Token`. It works only on the `/api/companion/info` and `/api/companion/meetings` routes, acts as that user at their current role (a user removed or downgraded below read-write stops working at once), and never in `Authorization`. On hosted hives the hub lets those routes through to the hive, which does the check; the token page stays behind the hub sign-in.
 - **Audio.** Two channels of raw 16 kHz mono s16le PCM: `call` (the meeting app's audio, everyone else) and `mic` (the person). Quorum cuts each at silences and transcribes it with the shared transcription service (`meetings.transcribe_url` is required); `mic` segments are attributed to the person, `call` segments to "Call".
-- **Betty's replies** go to the companion window (and the meeting panel) instead of a meeting chat: the consent notice first, then answers. Betty cannot speak in a companion meeting yet. Saying "betty leave" ends the meeting, as does stopping the capture. The lines still waiting when the meeting ends ("Leaving now." among them) are served by the replies route after the end, until the window's cursor has passed them or two minutes are over.
+- **Betty's replies** go to the companion window (and the meeting panel) instead of a meeting chat: the consent notice first, then answers. Betty cannot speak in a companion meeting yet, but when she heard her name and will answer, the companion plays her soft listening chime on your own computer (never into the call), when `meetings.listening_tone` and `meetings.voice_on_address` are on; the meeting's own voice setting does not apply. Saying "betty leave" ends the meeting, as does stopping the capture. The lines still waiting when the meeting ends ("Leaving now." among them) are served by the replies route after the end, until the window's cursor has passed them or two minutes are over.
 - **After the meeting** it is an ordinary meeting: notes, research and the Inbox hand-off are unchanged.
 
 | Route | |
@@ -205,7 +205,7 @@ The desktop companion ([hivecommons/quorum-companion](https://github.com/hivecom
 | `GET /api/companion/info` | Consent notice and version, sample rate, channels, `max_chunk_bytes`. |
 | `POST /api/companion/meetings` | `{title, app, host_name, consent_version, consent_attested: true}`; 201 with the meeting record. |
 | `POST /api/companion/meetings/{id}/audio?channel=call\|mic&seq=N` | One PCM chunk; per channel in order from 0; 409 with `expected_seq` on a gap; a resend answers `duplicate: true`. |
-| `GET /api/companion/meetings/{id}/replies?after=N` | Betty's lines after the cursor, `next_seq`, and the meeting `state`; after the meeting ended, its last unfetched lines once. |
+| `GET /api/companion/meetings/{id}/replies?after=N` | Betty's lines after the cursor, `next_seq`, the meeting `state`, and `tone` (true once when the window should play the listening chime now; Quorum's `say.tone`); after the meeting ended, its last unfetched lines once. |
 | `POST /api/companion/meetings/{id}/end` | Ends the meeting after transcribing buffered speech. |
 
 The dashboard's ● Record ([Recording into the Inbox](inbox-recording.md)) stays the no-install option: it records a Chromium tab's audio and is transcribed after the recording ends, so Betty cannot answer during the call, and it cannot hear a desktop meeting app.
@@ -494,7 +494,7 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.tts_token_file` | `/data/secrets/meetings_tts_token` | Keystore-sealed TTS service token file. |
 | `meetings.delivery` | `chat` | Where meeting output goes. |
 | `meetings.voice_on_address` | `true` | Allow speaking when addressed in a voice-enabled meeting. |
-| `meetings.listening_tone` | `true` | Betty plays a short, soft two-note chime when she heard her name in a spoken request and is about to answer, so the room knows she is listening (`HIVE_MEETINGS_LISTENING_TONE`). The only setting: no volume or sound options. It plays only when voice is on, never over speech, and is dropped silently if the audio path is busy. |
+| `meetings.listening_tone` | `true` | Betty plays a short, soft two-note chime when she heard her name in a spoken request and is about to answer, so the room knows she is listening (`HIVE_MEETINGS_LISTENING_TONE`). The only setting: no volume or sound options. It plays only when voice is on (a companion meeting plays it in the companion on the host's computer instead), never over speech, and is dropped silently if the audio path is busy. |
 | `meetings.bot_name` | the persona's display name | Bot display name; `hive (notes)` with the persona off. |
 | `meetings.invite_policy` | `owner` | Who may send hive to a meeting. |
 | `meetings.research_pool_size` | `2` | Research agents (`research-1..N`). |

@@ -145,6 +145,10 @@ func TestClaimedIssue_AllClaimedYieldsNoMatchingWork(t *testing.T) {
 	if msg.Type != "task_unavailable" || msg.Reason != taskUnavailableNoMatchingWork {
 		t.Fatalf("expected task_unavailable/no_matching_work, got %q/%q", msg.Type, msg.Reason)
 	}
+	// #19052: the wire says why the work was dropped.
+	if msg.Filtered[filterAdmission] == 0 {
+		t.Fatalf("expected filtered[%s] > 0, got %v", filterAdmission, msg.Filtered)
+	}
 }
 
 // TestClaimedIssue_BareRepoNameKeyMatches: the claim ledger keys claims by the

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/authz"
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/gitidentity"
 	"github.com/hivecommons/hive/crux/logscrub"
@@ -131,6 +132,11 @@ type Broker struct {
 	Logger         *slog.Logger
 	Now            func() time.Time
 	Mutation       effects.Boundary
+	// Shadow, when set, observes the changed-files guard in shadow mode
+	// (RFC #18988 phase 0/1): the authz evaluator is compared with this
+	// guard's own verdict and an event is recorded. It enforces nothing. Nil
+	// uses authz.DefaultShadow(), which is off unless HIVE_AUTHZ_SHADOW is true.
+	Shadow *authz.Shadow
 	// LeaseSHA, when set, makes the push an update of an EXISTING branch: a
 	// hive-opened PR's head that a sandboxed kick checked out
 	// (hivecommons/hive#18574). The outgoing commits must descend from it,

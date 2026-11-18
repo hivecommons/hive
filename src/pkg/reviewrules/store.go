@@ -58,6 +58,9 @@ const (
 
 	// maxSeenComments bounds the remembered review comments.
 	maxSeenComments = 500
+	// maxEvaluatedComments bounds the comment ids rule capture classified.
+	// Evicting the oldest only means one more, idempotent, classification.
+	maxEvaluatedComments = 5000
 	// maxRepliesKept bounds the remembered applied agent replies.
 	maxRepliesKept = 500
 	// titleRunes bounds a rule's entry title.
@@ -159,6 +162,12 @@ type index struct {
 	Comments map[string]string      `json:"comments"`
 	Seen     map[string]seenComment `json:"seen"`
 	Replies  map[string]time.Time   `json:"replies"`
+	// Evaluated are the comments rule capture has classified, keyed like
+	// Comments, with when. It is separate from the review-feedback sweep's
+	// handled ids, so a comment the agent already answered is still read for
+	// rules once, and an index from before this field backfills on its first
+	// pass (hivecommons/hive#19136).
+	Evaluated map[string]time.Time `json:"evaluated,omitempty"`
 }
 
 // Config is the capture policy.
@@ -275,7 +284,7 @@ func Open(dir, vault string, cfg Config) (*Store, error) {
 }
 
 func newIndex() index {
-	return index{Next: 1, Comments: map[string]string{}, Seen: map[string]seenComment{}, Replies: map[string]time.Time{}}
+	return index{Next: 1, Comments: map[string]string{}, Seen: map[string]seenComment{}, Replies: map[string]time.Time{}, Evaluated: map[string]time.Time{}}
 }
 
 func (s *Store) fillMaps() {
@@ -290,6 +299,9 @@ func (s *Store) fillMaps() {
 	}
 	if s.st.Replies == nil {
 		s.st.Replies = map[string]time.Time{}
+	}
+	if s.st.Evaluated == nil {
+		s.st.Evaluated = map[string]time.Time{}
 	}
 }
 
@@ -455,6 +467,58 @@ func (s *Store) CaptureComment(c Comment, now time.Time) Result {
 		home = c.Repo
 	}
 	return s.captureLocked(c, text, ScopeAgent, c.Lane, home, "sweep", confidenceSweep, cl.Signals, now)
+}
+
+// Evaluated reports whether rule capture already classified this comment.
+func (s *Store) Evaluated(repo string, pr int, commentID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.st.Evaluated[commentKey(repo, pr, commentID)]
+	return ok
+}
+
+// MarkEvaluated records that rule capture classified these comments, so a
+// later pass does not read them again.
+func (s *Store) MarkEvaluated(repo string, pr int, commentIDs []string, now time.Time) error {
+	if len(commentIDs) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.txn(func() []*Rule {
+		for _, id := range commentIDs {
+			s.st.Evaluated[commentKey(repo, pr, id)] = now
+		}
+		if len(s.st.Evaluated) > maxEvaluatedComments {
+			keys := make([]string, 0, len(s.st.Evaluated))
+			for k := range s.st.Evaluated {
+				keys = append(keys, k)
+			}
+			sort.Slice(keys, func(i, j int) bool {
+				a, b := s.st.Evaluated[keys[i]], s.st.Evaluated[keys[j]]
+				if !a.Equal(b) {
+					return a.Before(b)
+				}
+				return keys[i] < keys[j]
+			})
+			for _, k := range keys[:len(s.st.Evaluated)-maxEvaluatedComments] {
+				delete(s.st.Evaluated, k)
+			}
+		}
+		return nil
+	})
+}
+
+// RuleForComment returns a copy of the rule this comment was captured as or
+// merged into, following merges, or nil when it became none.
+func (s *Store) RuleForComment(repo string, pr int, commentID string) *Rule {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.st.Comments[commentKey(repo, pr, commentID)]
+	if !ok {
+		return nil
+	}
+	return s.copyOf(s.resolve(s.byID(id)))
 }
 
 // captureLocked creates a rule, or joins an existing near-identical one.

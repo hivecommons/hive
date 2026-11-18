@@ -539,6 +539,7 @@ without a class. Review submissions and review requests are always counted as
 | `main.maintainHeldPRMergeability` | `attention` |  |
 | `main.rfcCoverageForge.CreateComment` | `attention` |  |
 | `main.runEscalationSweep` | `attention` |  |
+| `main.reviewFeedbackSweep.checkRuleReply` | `attention` |  |
 | `main.reviewFeedbackSweep.needsHuman` | `attention` |  |
 | `main.reviewFeedbackSweep.proposeRuleHome` | `attention` |  |
 | `prfollowup.postStaleHeadPushNotes` | `attention` |  |
