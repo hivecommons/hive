@@ -22,6 +22,7 @@ type Context7Suggester func(ctx context.Context, keyword string) string
 type Primer struct {
 	layers          []layerClient
 	fileStores      []localStore
+	pinned          []localStore
 	graphStore      *GraphStore
 	config          PrimerConfig
 	logger          *slog.Logger
@@ -110,9 +111,20 @@ func (p *Primer) PrimeScoped(ctx context.Context, scope *TOCScope, filePaths []s
 func (p *Primer) PrimeForKick(ctx context.Context, scope *TOCScope, kc KickContext, keywords []string) *PrimedKnowledge {
 	start := time.Now()
 
+	// An agent that opted into its own drafts (TOCScope.DraftAuthors, #17076)
+	// gets those on top of what the primer's lifecycle filter admits.
+	var draftAuthors []string
+	if scope != nil {
+		draftAuthors = scope.DraftAuthors
+	}
+	pinned := p.pinnedFacts(scope, kc, draftAuthors)
+
 	query := buildQuery(kc.Paths, keywords)
 	if query == "" {
-		return &PrimedKnowledge{}
+		if len(pinned) == 0 {
+			return &PrimedKnowledge{}
+		}
+		return &PrimedKnowledge{Facts: pinned, MaxBytes: p.config.MaxBytes}
 	}
 
 	// Query each HTTP wiki layer; collect results tagged with their layer.
@@ -152,12 +164,6 @@ func (p *Primer) PrimeForKick(ctx context.Context, scope *TOCScope, kc KickConte
 
 	// Filter after the precedence merge so a higher-precedence layer that
 	// deprecates a slug hides it rather than surfacing a lower layer's copy.
-	// An agent that opted into its own drafts (TOCScope.DraftAuthors, #17076)
-	// gets those on top of what the primer's lifecycle filter admits.
-	var draftAuthors []string
-	if scope != nil {
-		draftAuthors = scope.DraftAuthors
-	}
 	merged := FilterByLifecycleFor(p.mergeWithPrecedence(allFacts), p.config.IncludeStates, draftAuthors)
 	if scope != nil {
 		merged = scope.Filter(merged)
@@ -166,7 +172,10 @@ func (p *Primer) PrimeForKick(ctx context.Context, scope *TOCScope, kc KickConte
 	reranked := p.rerankFisherRao(query, merged)
 	prioritized := p.applyPriority(reranked)
 
-	if len(prioritized) > p.config.MaxFacts {
+	if len(pinned) > 0 {
+		prioritized = withPinned(pinned, prioritized, p.config.MaxFacts)
+	}
+	if len(prioritized) > p.config.MaxFacts && len(pinned) == 0 {
 		prioritized = prioritized[:p.config.MaxFacts]
 	}
 

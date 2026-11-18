@@ -35,6 +35,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"automerge.(*engineStatusForge).CreateComment": {Class: NotificationClassStatus, Passthrough: true},
 
 	// status: bookkeeping readable on demand.
+	"main.reviewFeedbackSweep.acknowledgeRules":               {Class: NotificationClassStatus},
 	"dashboard.(*ContributeWSHub).markAlreadyDoneIssue":       {Class: NotificationClassStatus},
 	"dashboard.(*ContributeWSHub).releaseGateParkLabel":       {Class: NotificationClassStatus},
 	"dashboard.(*ContributeWSHub).releaseToolingBlockedLabel": {Class: NotificationClassStatus},
@@ -100,6 +101,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"main.rfcCoverageForge.CreateComment":                 {Class: NotificationClassAttention},
 	"main.runEscalationSweep":                             {Class: NotificationClassAttention},
 	"main.reviewFeedbackSweep.needsHuman":                 {Class: NotificationClassAttention},
+	"main.reviewFeedbackSweep.proposeRuleHome":            {Class: NotificationClassAttention},
 	"prfollowup.postStaleHeadPushNotes":                   {Class: NotificationClassAttention},
 	"scheduler.(*Scheduler).judgePriorArt":                {Class: NotificationClassAttention},
 	"scheduler.(*Scheduler).parkUnclearIssue":             {Class: NotificationClassAttention},

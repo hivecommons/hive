@@ -508,6 +508,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.handleMergedPRIssueStage` | `status` |  |
 | `github.runRecheckSoak` | `status` |  |
 | `main.postReviewAcknowledgements` | `status` |  |
+| `main.reviewFeedbackSweep.acknowledgeRules` | `status` |  |
 | `main.rfcNotifySource.Comment` | `status` |  |
 | `main.unparkEscalatedPR` | `status` |  |
 | `dashboard.(*ContributeWSHub).parkWrongBase` | `attention` |  |
@@ -537,6 +538,7 @@ without a class. Review submissions and review requests are always counted as
 | `main.rfcCoverageForge.CreateComment` | `attention` |  |
 | `main.runEscalationSweep` | `attention` |  |
 | `main.reviewFeedbackSweep.needsHuman` | `attention` |  |
+| `main.reviewFeedbackSweep.proposeRuleHome` | `attention` |  |
 | `prfollowup.postStaleHeadPushNotes` | `attention` |  |
 | `scheduler.(*Scheduler).judgePriorArt` | `attention` |  |
 | `scheduler.(*Scheduler).parkUnclearIssue` | `attention` |  |

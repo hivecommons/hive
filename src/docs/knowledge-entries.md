@@ -113,3 +113,9 @@ touch.
 The rules themselves (do not run the suite locally, never run it in an agent
 pane, fragment required, `--fix` first) stay in `AGENTS.md`; only the facts and
 reasons moved.
+
+## Reviewer-stated rules
+
+Rules that people state in review feedback on the hive's own PRs are written as entries of a local `review-rules` channel, tagged `pin`,
+scoped to the authoring agent's lane, with the source comment as `source`. A pinned, approved entry whose scope admits a kick is primed
+whatever the kick's keywords are. See [review-feedback-rules.md](review-feedback-rules.md).
