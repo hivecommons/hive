@@ -125,6 +125,9 @@ type WorkflowDispatchSkip struct {
 	// Profile is the model profile the item is handed to.
 	Profile string
 	Reason  string
+	// Replayed is the not-started hand-off whose stored reason Reason
+	// repeats (WorkflowSkipNotStarted); nil for any other skip.
+	Replayed *WorkflowDispatchEntry
 }
 
 // Skip reasons.
@@ -225,7 +228,7 @@ func PlanWorkflowDispatch(items []github.WorkflowDispatch, deps WorkflowDispatch
 				agent, ok = deps.RetryAgent(d, prior.Tried)
 			}
 			if !ok {
-				skips = append(skips, WorkflowDispatchSkip{Ref: ref, Profile: d.Target.Profile, Reason: WorkflowSkipNotStarted + ": " + prior.Reason})
+				skips = append(skips, WorkflowDispatchSkip{Ref: ref, Profile: d.Target.Profile, Reason: WorkflowSkipNotStarted + ": " + prior.Reason, Replayed: prior})
 				continue
 			}
 			if deps.Eligible != nil && !deps.Eligible(agent) {
@@ -499,6 +502,11 @@ type WorkflowDispatchEntry struct {
 	Status string `json:"status,omitempty"`
 	// Reason says why a hand-off was not started.
 	Reason string `json:"reason,omitempty"`
+	// ReasonAt is when Reason was decided and ReasonSession the hand-off
+	// session that decided it (WorkflowHandoffSession); both empty on a
+	// record written before provenance was kept.
+	ReasonAt      *time.Time `json:"reason_at,omitempty"`
+	ReasonSession string     `json:"reason_session,omitempty"`
 	// Attempts counts the hand-offs of this key to an agent that could do
 	// the work; Tried names those agents. A hand-off to an agent that may
 	// not do what the profile needs counts for neither.
