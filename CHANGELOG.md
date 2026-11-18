@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v6.44.9)
+
+### Fixed
+
+- A PR whose only red checks are also red on its base branch no longer flips between 050/060 and 070/072 while the base stays red. The base's red checks are remembered across passes and drop only when the base tip's run of the check completes green, so a tip whose run is still in progress, or a failed base lookup (now logged at Warn), no longer sends the PR to its author, queues a relay fix and then withdraws the nudge. A new head the CI enrichment has not read yet is classified from that memory when every check red on it is the base's and it touches no CI-owning path.
+- Good-first-issue curation no longer keeps inviting newcomers to issues the contributor relay will not hand out. An advertised issue that a pull request later covers (its `claimed_by_pr` row, `linked-pr`, or `stage/040-covered-by-pr`) now loses `good first issue` and `help wanted` on the next sweep, and its welcome comment is edited to say a pull request covers it; a relay contributor's or person's own claim still keeps the label until the issue closes. The sweep also skips any issue matching `hub.contribute_skip_labels` (`needs-triage` by default, logged as `relay-skip:<label>`), so an untriaged issue is never advertised; an already-advertised issue that later gains such a label keeps its invite, since triage adds and removes it all the time.
+- An unsigned squash merge is refused only in repos that require DCO. Since [#18204](https://github.com/hivecommons/hive/pull/18204) the hive refused to squash any PR with no `Signed-off-by` on its branch, even in repos with no DCO gate, so every Renovate and Dependabot PR and every unsigned human commit there stalled at `080-awaiting-merge-admission` with `squash-unsigned` and nothing a person could do. The refusal now applies only where the repo requires DCO: the existing `governor.labels.stage.dco.required` override, else a `dco` / `DCO` check required on the base branch or reported on the PR head, the same rule the stage router uses for `no-dco`. Repos with a DCO gate, hivecommons/hive included, keep the refusal from [#18203](https://github.com/hivecommons/hive/issues/18203). Applies to the sweep lanes and the merge relay.
+
 ## 2026-11-18 (v6.44.8)
 
 ### Fixed
