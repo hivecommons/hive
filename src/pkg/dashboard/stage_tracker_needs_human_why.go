@@ -110,6 +110,12 @@ func stageTrackerNeedsHumanWhyFor(it StageTrackerItem) *StageTrackerNeedsHumanWh
 	if it.Kind == "issue" && it.FiledForHelp != "" && !it.Mirrored && it.Stage < trackerNumberClaimed && !held {
 		return &StageTrackerNeedsHumanWhy{Source: needsHumanSourceFiledForHelp, Reason: stageTrackerFiledForHelpReason(it.FiledForHelp)}
 	}
+	if it.BlockedOwnerReason != "" && !held {
+		// A `blocked` issue whose blocker is a person's action (the
+		// owner-action blocked-on marker): the reason line is already
+		// "needs an owner action: ...".
+		return &StageTrackerNeedsHumanWhy{Source: needsHumanSourceBlockedOnOwner, Reason: it.BlockedOwnerReason}
+	}
 	if held {
 		// A hold a person set is their own pause and waits on nobody; one
 		// the hive placed waits on a maintainer to lift it.
