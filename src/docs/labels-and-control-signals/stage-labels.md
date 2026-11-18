@@ -277,7 +277,7 @@ final, and maps each row ([#12436](https://github.com/hivecommons/hive/issues/12
 | covered by an open PR the sweep has staged (≥ 050) | still `040-covered-by-pr`; the reason reads `open PR #N covers it (PR at <stage>)`. `050`+ are PR-only stages and never land on an issue ([#12451](https://github.com/hivecommons/hive/issues/12451)) |
 | reporter triage (human-filed, held by the #9665 gate until the triage label lands) | `015-triage-needed` — the gate still withholds it from agents |
 | exempt / filtered / advisory / dependency dashboard | no stage |
-| **decomposed parent** — an issue with tracked child issues (GitHub sub-issues the relay linked with `parent: N`; see below) | keeps the stage the rows above give it while any child is open, **never `stage/stalled`**; once every child is closed the parent is **closed as completed** by the sweep ([#12857](https://github.com/hivecommons/hive/issues/12857)) |
+| **decomposed parent** — an issue with tracked child issues (GitHub sub-issues the relay linked with `parent: N`; see below) | keeps the stage the rows above give it while any child is open, **never `stage/stalled`**; once every child is closed the parent is **closed as completed** by the sweep unless it is an epic/hold, was reopened by a person, or the repo disables it ([#12857](https://github.com/hivecommons/hive/issues/12857)) |
 
 Labels come from the issue list payload the cycle already fetched — no
 per-issue GETs — and are written only when the planned set differs from the
@@ -694,9 +694,34 @@ the open-issue snapshot instead — and then:
   "delivered" comment is posted until the close succeeds.
 - **No children** → nothing changes.
 
-Reopen the parent if something it asked for is still missing; the sweep does
-not close it again until a child is reopened and closed once more (the
-sub-issue summary is read fresh each cycle).
+Reopen the parent if something it asked for is still missing. A parent a
+person reopens after a hive auto-close is **never auto-closed again**
+([#18869](https://github.com/hivecommons/hive/issues/18869)): once every
+child is confirmed closed the sweep reads the parent's timeline (one read,
+only at that point, cached per parent) and keeps it open when a non-bot
+`reopened` event follows the `<!-- hive:parent-autoclose -->` comment (or a
+bot's close). The timeline is the record, so the rule survives restarts;
+an unreadable timeline means no close that cycle. This holds under every
+config value below.
+
+**Epics and holds are never auto-closed.** An issue labelled `epic` (any
+case) or `hold` stays open for a person to close, with all children closed.
+Per repo, `repos.<repo>.parent_autoclose` chooses the policy:
+
+| value | behaviour |
+|---|---|
+| `true` (default) | close a decomposed parent when all children are closed, except `epic`/`hold`-labelled issues |
+| `epics_too` | also close `epic`/`hold`-labelled parents |
+| `false` | never auto-close a parent in this repo |
+
+```yaml
+repos:
+  torch-spyre/spyre-inference:
+    parent_autoclose: false
+```
+
+The dashboard does not yet show a "kept open: reopened by <login>" pill; the
+kept-open decision is logged (`decomposed parent kept open`).
 
 ### `stage/stalled` — "nobody is working this"
 
