@@ -878,6 +878,16 @@ type ActivityEntry struct {
 	AdvisorModel  string `json:"advisor_model,omitempty"`
 	AdvisorEffort string `json:"advisor_effort,omitempty"`
 	Task          string `json:"task,omitempty"`
+	// Reason is the bounded, scrubbed failure reason carried ONLY by "failed"
+	// entries, so the feed says why a run failed instead of just that it did.
+	Reason string `json:"reason,omitempty"`
+}
+
+// activityFailureReason scrubs (emails, links, tokens, repo refs) and bounds
+// (scrubBattleLogText caps at 120 runes) a relay-reported failure reason for
+// the public activity feed.
+func activityFailureReason(reason string) string {
+	return scrubBattleLogText(reason)
 }
 
 // advisorInfo is the optional trailing argument to addActivity: the advisor
@@ -1351,6 +1361,12 @@ func taskDescOf(task *WSTaskAssign) string {
 }
 
 func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort, task string, advisor ...advisorInfo) {
+	h.addActivityWithReason("", username, action, role, cli, model, effort, task, advisor...)
+}
+
+// addActivityWithReason is addActivity plus the failure reason shown on a
+// "failed" feed entry.
+func (h *ContributeWSHub) addActivityWithReason(reason, username, action, role, cli, model, effort, task string, advisor ...advisorInfo) {
 	adv := advisorInfo{}
 	if len(advisor) > 0 {
 		adv = advisor[0]
@@ -1401,6 +1417,7 @@ func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort
 		AdvisorModel:  adv.Model,
 		AdvisorEffort: adv.Effort,
 		Task:          task,
+		Reason:        activityFailureReason(reason),
 	}
 	h.activity = append(h.activity, entry)
 	if len(h.activity) > maxActivityEntries {
@@ -4371,7 +4388,7 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			if s.contributor.cliBackend == "pi" {
 				provider, _, _ = strings.Cut(s.contributor.model, "/")
 			}
-			h.addActivity(s.contributor.profile.GitHubUsername, "failed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, failedDesc, s.contributor.advisor())
+			h.addActivityWithReason(msg.Reason, s.contributor.profile.GitHubUsername, "failed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, failedDesc, s.contributor.advisor())
 			h.logger.Info("[contribute-ws] task failed",
 				"username", s.contributor.profile.GitHubUsername,
 				"task", msg.TaskID,
