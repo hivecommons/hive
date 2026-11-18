@@ -32,7 +32,7 @@ type WorkflowDispatch struct {
 	// Repo is the item's repository, always "owner/name": the enumeration
 	// carries a bare name for the client's org, and the owner's "Send to"
 	// path carries the qualified one, so every constructor qualifies it
-	// (qualifiedRepo). Ref and the dispatch log's keys are built from it, so
+	// (Client.qualifiedRepo). Ref and the dispatch log's keys are built from it, so
 	// one item has one key whichever path made the record.
 	Repo   string
 	Number int
@@ -51,15 +51,6 @@ type WorkflowDispatch struct {
 	Target workflowmodel.DispatchTarget
 	// Profile is the compiled bound model.
 	Profile *workflowmodel.Profile
-}
-
-// qualifiedRepo is repo as "owner/name", a bare name taking the client's org.
-func (c *Client) qualifiedRepo(repo string) string {
-	owner, name := c.splitRepo(repo)
-	if owner == "" {
-		return name
-	}
-	return owner + "/" + name
 }
 
 // Ref is the item's "owner/repo#N" reference.
