@@ -13108,7 +13108,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!kicks.length) return '<p class="text-muted">No recorded kicks yet.</p>';
       const time = value => {
         const date = new Date(value);
-        return value && !isNaN(date.getTime()) ? esc(date.toLocaleString()) : 'Unknown time';
+        return value && !isNaN(date.getTime()) ? esc(formatDashboardDateTime(date)) : 'Unknown time';
       };
       return '<ol class="kick-outcome-list">' + kicks.map(k => {
         let evidence = '';

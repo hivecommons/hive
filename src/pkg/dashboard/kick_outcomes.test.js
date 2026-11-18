@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, 'static-src/js/kick-outcomes.js'), 'utf8');
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-function build(document = {}, fetch = () => {}) {
-  return new Function('esc', 'document', 'fetch', '_inceptionAuthHeaders', source + '\nreturn {kickOutcomesHtml, refreshKickOutcomes};')(esc, document, fetch, () => ({Authorization: 'Bearer fixture'}));
+function build(document = {}, fetch = () => {}, formatDashboardDateTime = date => date.toISOString()) {
+  return new Function('esc', 'document', 'fetch', '_inceptionAuthHeaders', 'formatDashboardDateTime', source + '\nreturn {kickOutcomesHtml, refreshKickOutcomes};')(esc, document, fetch, () => ({Authorization: 'Bearer fixture'}), formatDashboardDateTime);
 }
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, '../../scripts/fixtures/render-evidence/api/kick-outcomes.json'), 'utf8'));
 
@@ -22,6 +22,22 @@ test('all seven outcome kinds and real evidence render', () => {
   for (const label of ['Opened PR', 'Pushed commit', 'Commented', 'Stood down', 'Refused', 'Still running', 'Ended — no visible action']) assert.ok(html.includes(label), label);
   for (const field of ['fixture-operator', 'PR #42', '0123456789abcdef', 'paused', 'No eligible work.']) assert.ok(html.includes(field), field);
   assert.ok(html.includes('&lt;This is untrusted agent text.&gt;'));
+});
+
+test('timestamps use the shared dashboard formatter and preserve unknown-time fallbacks', () => {
+  const timestamps = [];
+  const {kickOutcomesHtml} = build({}, () => {}, date => {
+    timestamps.push(date.toISOString());
+    return '<selected timezone & clock>';
+  });
+  const kick = {kind: 'stood_down', at: '2026-11-18T12:00:00Z', started_at: '2026-11-18T11:00:00Z', ended_at: '2026-11-18T12:01:00Z'};
+  const html = kickOutcomesHtml({detail: true, kicks: [kick]});
+  assert.deepEqual(timestamps.sort(), [kick.at, kick.started_at, kick.ended_at].map(value => new Date(value).toISOString()).sort());
+  assert.equal((html.match(/&lt;selected timezone &amp; clock&gt;/g) || []).length, 3);
+  timestamps.length = 0;
+  const unknown = kickOutcomesHtml({detail: true, kicks: [{kind: 'stood_down', at: 'invalid', ended_at: 'invalid'}]});
+  assert.equal((unknown.match(/Unknown time/g) || []).length, 3);
+  assert.equal(timestamps.length, 0);
 });
 
 test('read-only response renders only its latest summary, even with stray detail fields', () => {
