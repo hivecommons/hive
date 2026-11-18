@@ -184,6 +184,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.AutoMerge.TrustedAuthors.Validate(); err != nil {
 		return err
 	}
+	if err := c.AutoMerge.PRGate.Validate(); err != nil {
+		return err
+	}
 	if err := c.AutoMerge.ContributorLane.Validate(); err != nil {
 		return err
 	}
