@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // MCP over streamable HTTP (POST /mcp), the transport Quorum serves. The
@@ -104,6 +106,9 @@ func (c *Client) post(ctx context.Context, body any, wantID int64) (json.RawMess
 	if err != nil {
 		return nil, err
 	}
+	// Every chat line and spoken line (chat.post, say, say.prewarm) leaves
+	// through here: apply the shared outbound dash rule (#19103).
+	data, _ = prosefilter.SanitizeJSON(data, meetingProseKeys)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/mcp", bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -358,6 +363,10 @@ func (c *Client) TranscriptRead(ctx context.Context, nativeID string, afterSeq i
 	err := c.Call(ctx, "transcript.read", args, &r)
 	return r, err
 }
+
+// meetingProseKeys are the tool-argument fields that become meeting chat or
+// speech.
+var meetingProseKeys = prosefilter.Keys{"text": prosefilter.Prose, "texts": prosefilter.Prose}
 
 // ChatPost calls chat.post.
 func (c *Client) ChatPost(ctx context.Context, nativeID, text string) error {

@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/feedbackbundle"
 	ghauth "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -685,6 +686,7 @@ func writeHubFeedbackDiagnostics(b *strings.Builder, d *feedbackDiagnostics, sub
 	}
 }
 func postHubGitHubIssue(ctx context.Context, client *http.Client, apiBase, token, owner, repo, title, body string, labels []string) (feedbackIssueResult, int, error) {
+	title, body = prosefilter.SanitizeTitle(title), prosefilter.Sanitize(body)
 	ctx = hubGitHubCallerContext(ctx, "feedback_issue")
 	payload := map[string]any{"title": title, "body": body}
 	if labels != nil {

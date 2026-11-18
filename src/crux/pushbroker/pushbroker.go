@@ -221,9 +221,18 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	// the final newline (kubestellar/hive#5116). Fixing it here, once, covers
 	// every backend and every target-repo language instead of teaching each
 	// coding CLI's own formatter to run first.
-	if amended, err := b.stripTrailingBlankLines(ctx, res.ChangedFiles); err != nil {
+	amended, err := b.stripTrailingBlankLines(ctx, res.ChangedFiles)
+	if err != nil {
 		return b.fail(res, fmt.Errorf("normalising trailing newlines: %w", err))
-	} else if amended {
+	}
+	// The commit message travels inside the pushed objects, out of the
+	// egress proxy's reach, so the broker applies the outbound dash rule to
+	// it here (hivecommons/hive#19103).
+	msgAmended, err := b.sanitizeHeadCommitMessage(ctx)
+	if err != nil {
+		return b.fail(res, fmt.Errorf("normalising commit message dashes: %w", err))
+	}
+	if amended || msgAmended {
 		commit, err = b.git(ctx, "rev-parse", "HEAD")
 		if err != nil {
 			return b.fail(res, fmt.Errorf("reading HEAD after newline normalisation: %w", err))
