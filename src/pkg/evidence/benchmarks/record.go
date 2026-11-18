@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+	"time"
 )
 
 // SchemaVersion is the published record schema version.
@@ -50,6 +51,11 @@ type Record struct {
 	Outcome        Outcome  `json:"outcome"`
 	Quality        *Quality `json:"quality,omitempty"`
 	Cost           Cost     `json:"cost"`
+
+	// UpdatedAt is the evidence bundle time this record was derived from. It
+	// is never serialized; the spoke publisher uses it to order records and
+	// advance its watermark batch by batch.
+	UpdatedAt time.Time `json:"-"`
 }
 
 // Source says which hive emitted the record.
