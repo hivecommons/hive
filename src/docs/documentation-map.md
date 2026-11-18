@@ -231,6 +231,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Gap analysis: OpenAI Agents API](backend-gap-openai-agents-api.md) — **Design/evaluation:** assess hosted tools, metering, and write paths outside Hive's proxy.
 - [Omnigent CLI contract and policy composition](backend-omnigent-cli-contract.md) — **Experimental/unconfined backend reference:** launch contract, credentials, safety flags, refusal gate, and policy composition.
 - [Inference backends](../../docs/inference-backends.md) — vLLM, llm-d, LiteLLM, and Model Gateway troubleshooting.
+- [Evaluation: generic AI gateway in front of the model backend](ai-gateway-evaluation.md) — **Design/evaluation, not a commitment:** how model traffic flows today, a vendor-neutral recipe using existing gateway configuration, what that configuration cannot express, and a spike plan with named pass/fail thresholds. LiteLLM stays the supported default (#18989).
 - [apiproxy](apiproxy.md) — Anthropic-compatible proxy logging and deployment notes.
 - [Outreach anti-spam ruleset](../../docs/outreach-antispam.md) — the deduplication and anti-spam rules the outreach agent operates under across awesome lists, project issues, directories, and community threads.
 - [v1 to v2 migration](../../docs/migration-v1-v2.md) — **historical.** Both ends of this migration are retired; v2 was retired in August 2026. Kept for operators still on v1, who should read it alongside [v2 → v4 migration](migration-v2-v4.md) above. New deployments do not need it.

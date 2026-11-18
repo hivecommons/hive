@@ -242,3 +242,31 @@ func TestConsentVoiceWithAudioIsDelivered(t *testing.T) {
 		t.Fatalf("meeting %+v", got)
 	}
 }
+
+func TestConsentTransientNoComposer(t *testing.T) {
+	if !consentTransient(errNoComposer) {
+		t.Fatal("platform_unavailable with no_composer is transient: the chat panel mounts after admission")
+	}
+	other := &ToolError{Tool: "chat.post", Code: CodePlatformUnavailable, Message: "chat not available"}
+	if consentTransient(other) {
+		t.Fatal("any other platform_unavailable is not transient")
+	}
+}
+
+// A Teams chat with no composer yet: the notice is spoken at once, and the
+// chat post is retried and lands once the composer is there.
+func TestConsentSpokenThenChatRetriedAfterNoComposer(t *testing.T) {
+	q := &confirmingQuorum{fakeQuorum: newFakeQuorum(), confirmEr: []error{errNoComposer, nil}}
+	m, mt := liveTeams(t, q, true)
+	eventually(t, "consent", func() bool { got, _ := m.Get(mt.ID); return got.ConsentPostedAt != nil })
+	if got, _ := m.Get(mt.ID); got.ConsentVia != ConsentViaVoice || got.State != StateLive {
+		t.Fatalf("meeting %+v", got)
+	}
+	eventually(t, "chat retry", func() bool { posts, _ := q.snapshot(); return len(posts) == 1 })
+	if posts, _ := q.snapshot(); posts[0] != testConsent {
+		t.Fatalf("posts %q", posts)
+	}
+	if s := q.says(); len(s) != 1 || s[0] != testConsent {
+		t.Fatalf("says %q: the notice is spoken once", s)
+	}
+}

@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.322.1)
+
+### Changed
+
+- Docs now state plainly that Hive is the work-governance plane for AI coding agents (claims, stage labels, ACMM levels, DCO and the merge path) and not a model gateway or inference server, in the README, `what-is-hive.md` and `architecture.md` ([#18978](https://github.com/hivecommons/hive/issues/18978)).
+- Customers: the list row no longer has an Open button. A chevron button left of the avatar (aria-expanded, keyboard operable) and the row itself open the profile inline under the row and fold it again; the open row stays open across refreshes and across accept, dismiss and add-suggestion. The profile's Tags toggles now use the same pill as the row's tags. Dashboard-wide, the page body now has a base text size (the small step, the size of a card title): text that no rule sized used to fall back to the 16px browser default and render larger than the small section headings above it. Customers content is held at the heading size, and three empty-state lines (governor models, review queue, review pipeline) were brought down from the base step to the card-title size.
+- Meetings: a meeting's details (the Spektacular notice, the budget meter, the hive-wide line, Transcript, Notes, Research and Spek intents) now open in place under the meeting's row instead of in a separate block below the list. A chevron button left of the row (the shared `row-chevron` control, now also used by Customers) and the row title open and fold it; the Open button is gone. The open meeting stays open across list refreshes. The details have room between their parts, small uppercase headings above content set at the same small step, two columns only on wide screens, a slim meter with the token numbers aligned right, and the Spektacular status shown as one calm notice with a link to the issue.
+
+### Fixed
+
+- Inbox: no player or error toasts for live meetings (audio is never kept) (#18966)
+- Sentinel's `remote_code_execution` rule no longer flags local `bash -c` test runners, `sha256sum -c` or plain `chmod 755 /path` ([#18957](https://github.com/hivecommons/hive/issues/18957)). The `subprocess ... -c` alternative is narrowed to a literal shell, then `-c`, then a fetch or decode marker (curl, wget, base64, b64decode) on the same line and `chmod` now matches only setuid/setgid modes, so PRs with these ordinary lines stop parking behind `sentinel-alert` until a maintainer clears them.
+
 ## 2026-11-18 (v5.322.0)
 
 ### Added
