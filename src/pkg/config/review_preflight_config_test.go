@@ -95,7 +95,7 @@ func TestResolveReviewPreflightBadValuesFallBack(t *testing.T) {
 func TestReviewPreflightForUsesRepoSettings(t *testing.T) {
 	t.Setenv(ReviewPreflightOfflineEnv, "")
 	cfg := &Config{
-		Review: ReviewConfig{Evidence: ReviewPreflightConfig{Dependencies: evBool(true)}},
+		Review: ReviewConfig{Preflight: ReviewPreflightConfig{Dependencies: evBool(true)}},
 		Repos:  map[string]RepoSettings{"widgets": {ReviewPreflight: ReviewPreflightConfig{Dependencies: evBool(false)}}},
 	}
 	if cfg.ReviewPreflightFor("widgets").Dependencies {

@@ -171,7 +171,7 @@ type ReviewPreflightResolved struct {
 	Ignore            []ReviewPreflightIgnore
 }
 
-func boolOr(over, base *bool, def bool) bool {
+func pfBoolOr(over, base *bool, def bool) bool {
 	switch {
 	case over != nil:
 		return *over
@@ -181,7 +181,7 @@ func boolOr(over, base *bool, def bool) bool {
 	return def
 }
 
-func strOr(over, base, def string) string {
+func pfStrOr(over, base, def string) string {
 	if s := strings.TrimSpace(over); s != "" {
 		return s
 	}
@@ -191,7 +191,7 @@ func strOr(over, base, def string) string {
 	return def
 }
 
-func durOr(over, base string, def time.Duration) time.Duration {
+func pfDurOr(over, base string, def time.Duration) time.Duration {
 	for _, raw := range []string{over, base} {
 		if raw = strings.TrimSpace(raw); raw == "" {
 			continue
@@ -203,7 +203,7 @@ func durOr(over, base string, def time.Duration) time.Duration {
 	return def
 }
 
-func intOr(over, base, def int) int {
+func pfIntOr(over, base, def int) int {
 	if over != 0 {
 		return over
 	}
@@ -213,7 +213,7 @@ func intOr(over, base, def int) int {
 	return def
 }
 
-func severityOr(over, base, def string) string {
+func pfSeverityOr(over, base, def string) string {
 	for _, s := range []string{over, base} {
 		s = strings.ToLower(strings.TrimSpace(s))
 		for _, ok := range ReviewPreflightSeverities {
@@ -232,18 +232,18 @@ func severityOr(over, base, def string) string {
 // still inherits; use rule_doc_exclude to remove documents.
 func ResolveReviewPreflight(hive, repo ReviewPreflightConfig) ReviewPreflightResolved {
 	out := ReviewPreflightResolved{
-		RuleDocs:           boolOr(repo.RuleDocs, hive.RuleDocs, true),
-		RuleDocBudgetBytes: intOr(repo.RuleDocBudgetBytes, hive.RuleDocBudgetBytes, DefaultReviewPreflightRuleDocBudgetBytes),
-		Dependencies:       boolOr(repo.Dependencies, hive.Dependencies, false),
-		Vulnerabilities:    boolOr(repo.Vulnerabilities, hive.Vulnerabilities, true),
-		ReleaseAge:         boolOr(repo.ReleaseAge, hive.ReleaseAge, true),
-		Offline:            boolOr(repo.Offline, hive.Offline, false) || strings.EqualFold(strings.TrimSpace(os.Getenv(ReviewPreflightOfflineEnv)), "true"),
-		OSVURL:             strings.TrimRight(strOr(repo.OSVURL, hive.OSVURL, DefaultReviewPreflightOSVURL), "/"),
-		SeverityFloor:      severityOr(repo.SeverityFloor, hive.SeverityFloor, DefaultReviewPreflightSeverityFloor),
-		BlockSeverity:      severityOr(repo.BlockSeverity, hive.BlockSeverity, DefaultReviewPreflightBlockSeverity),
-		CacheTTL:           durOr(repo.CacheTTL, hive.CacheTTL, DefaultReviewPreflightCacheTTL),
-		RequestTimeout:     durOr(repo.RequestTimeout, hive.RequestTimeout, DefaultReviewPreflightRequestTimeout),
-		MaxDependencies:    intOr(repo.MaxDependencies, hive.MaxDependencies, DefaultReviewPreflightMaxDependencies),
+		RuleDocs:           pfBoolOr(repo.RuleDocs, hive.RuleDocs, true),
+		RuleDocBudgetBytes: pfIntOr(repo.RuleDocBudgetBytes, hive.RuleDocBudgetBytes, DefaultReviewPreflightRuleDocBudgetBytes),
+		Dependencies:       pfBoolOr(repo.Dependencies, hive.Dependencies, false),
+		Vulnerabilities:    pfBoolOr(repo.Vulnerabilities, hive.Vulnerabilities, true),
+		ReleaseAge:         pfBoolOr(repo.ReleaseAge, hive.ReleaseAge, true),
+		Offline:            pfBoolOr(repo.Offline, hive.Offline, false) || strings.EqualFold(strings.TrimSpace(os.Getenv(ReviewPreflightOfflineEnv)), "true"),
+		OSVURL:             strings.TrimRight(pfStrOr(repo.OSVURL, hive.OSVURL, DefaultReviewPreflightOSVURL), "/"),
+		SeverityFloor:      pfSeverityOr(repo.SeverityFloor, hive.SeverityFloor, DefaultReviewPreflightSeverityFloor),
+		BlockSeverity:      pfSeverityOr(repo.BlockSeverity, hive.BlockSeverity, DefaultReviewPreflightBlockSeverity),
+		CacheTTL:           pfDurOr(repo.CacheTTL, hive.CacheTTL, DefaultReviewPreflightCacheTTL),
+		RequestTimeout:     pfDurOr(repo.RequestTimeout, hive.RequestTimeout, DefaultReviewPreflightRequestTimeout),
+		MaxDependencies:    pfIntOr(repo.MaxDependencies, hive.MaxDependencies, DefaultReviewPreflightMaxDependencies),
 	}
 	if out.RuleDocBudgetBytes < MinReviewPreflightRuleDocBudgetBytes {
 		out.RuleDocBudgetBytes = DefaultReviewPreflightRuleDocBudgetBytes
@@ -251,7 +251,7 @@ func ResolveReviewPreflight(hive, repo ReviewPreflightConfig) ReviewPreflightRes
 	if out.MaxDependencies < 0 {
 		out.MaxDependencies = DefaultReviewPreflightMaxDependencies
 	}
-	switch days := intOr(repo.MinReleaseAgeDays, hive.MinReleaseAgeDays, DefaultReviewPreflightMinAgeDays); {
+	switch days := pfIntOr(repo.MinReleaseAgeDays, hive.MinReleaseAgeDays, DefaultReviewPreflightMinAgeDays); {
 	case days > 0:
 		out.MinReleaseAgeDays = days
 	}
@@ -281,7 +281,7 @@ func mergeEvidenceRules(hive, repo []ReviewPreflightRule) []ReviewPreflightRule 
 		for _, r := range list {
 			r.ID = strings.TrimSpace(r.ID)
 			r.Text = strings.TrimSpace(r.Text)
-			r.Severity = severityOr(r.Severity, "", "medium")
+			r.Severity = pfSeverityOr(r.Severity, "", "medium")
 			if r.ID == "" || r.Text == "" {
 				continue
 			}
@@ -324,7 +324,7 @@ func (c *Config) ReviewPreflightFor(repo string) ReviewPreflightResolved {
 		return ResolveReviewPreflight(ReviewPreflightConfig{}, ReviewPreflightConfig{})
 	}
 	rs, _ := c.RepoSettingsFor(repo)
-	return ResolveReviewPreflight(c.Review.Evidence, rs.ReviewPreflight)
+	return ResolveReviewPreflight(c.Review.Preflight, rs.ReviewPreflight)
 }
 
 // Validate rejects values that would otherwise be silently ignored.
@@ -341,7 +341,7 @@ func (e ReviewPreflightConfig) Validate(scope string) error {
 		if strings.TrimSpace(s.v) == "" {
 			continue
 		}
-		if severityOr(s.v, "", "") == "" {
+		if pfSeverityOr(s.v, "", "") == "" {
 			return fmt.Errorf("%s.%s %q is not one of %s", scope, s.name, s.v, strings.Join(ReviewPreflightSeverities, ", "))
 		}
 	}
@@ -361,7 +361,7 @@ func (e ReviewPreflightConfig) Validate(scope string) error {
 		if len(r.Text) > MaxReviewPreflightRuleTextLen {
 			return fmt.Errorf("%s.rules[%d] text is %d characters, over the %d limit", scope, i, len(r.Text), MaxReviewPreflightRuleTextLen)
 		}
-		if strings.TrimSpace(r.Severity) != "" && severityOr(r.Severity, "", "") == "" {
+		if strings.TrimSpace(r.Severity) != "" && pfSeverityOr(r.Severity, "", "") == "" {
 			return fmt.Errorf("%s.rules[%d] severity %q is not one of %s", scope, i, r.Severity, strings.Join(ReviewPreflightSeverities, ", "))
 		}
 	}
@@ -380,7 +380,7 @@ func (e ReviewPreflightConfig) Validate(scope string) error {
 
 // ValidateReviewPreflight checks the hive-wide block and every repo override.
 func (c *Config) ValidateReviewPreflight() error {
-	if err := c.Review.Evidence.Validate("review.preflight"); err != nil {
+	if err := c.Review.Preflight.Validate("review.preflight"); err != nil {
 		return err
 	}
 	for key, rs := range c.Repos {
