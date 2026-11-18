@@ -147,6 +147,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 ## Contributors and access
 
 - [Getting started as a first-time contributor](../../docs/getting-started-contributing.md) — the end-to-end path for a first code or documentation contribution, tying the reference docs together and answering the Hive-specific questions they don't.
+- [RFC and proposal process](rfc-process.md) — when a change needs an RFC, how to file a `📝 RFC:` issue, who decides, what accepted means, how RFCs are tracked and closed, and where to see open ones.
 - [Local development](../../docs/development.md) — the local workflow for contributing to the Go codebase on `v4`: prerequisites, build, and test loop.
 - [ClankeR contributor relay](contributor-relay.md) — local contributor setup, multi-hub subscriptions, moving a relay to another machine, and role requests.
 - [Hive-curated good first issues](good-first-issue.md) — find or configure contributor-friendly work, welcome comments, relay links, and qualification rules.
