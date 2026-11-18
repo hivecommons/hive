@@ -141,6 +141,7 @@ must(list.includes('data-action="customersAccept"') && list.includes('data-actio
 must(list.includes('data-arg0="me"') && list.includes('data-arg0="p_abc"'), 'list rows do not open me and the customer');
 must(!list.includes('<b>Ada</b>') && list.includes('&lt;b&gt;Ada&lt;/b&gt;'), 'a name reached the page unescaped');
 must(prof.includes('data-action="customersForget"'), 'owner profile lacks Forget');
+must(prof.includes('<table class="customers-ident-table"') && prof.includes('<th scope="col">Identity</th>') && prof.includes('<th scope="row" class="customers-ident-value">') && prof.includes('data-action="customersIdentityRemove"') && prof.includes('<th scope="col">Source</th>'), 'identities are not a table with headers, a row header and row actions');
 must(customersFlagEmoji('DE') === '\u{1F1E9}\u{1F1EA}' && customersFlagEmoji('de') === '' && customersFlagEmoji('<b>') === '' && customersFlagEmoji(null) === '', 'flag emoji');
 must(list.includes('class="kc-pill customers-pill customers-country" role="img" aria-label="Country: ') && list.includes(' DE</span>'), 'the row lacks the country pill with its text code and accessible name');
 must(customersCountryPill({ profile: { country: { value: '<b>' } } }) === '' && customersCountryPill({}) === '', 'a malformed or missing country must render nothing');
