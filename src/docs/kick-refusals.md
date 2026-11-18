@@ -235,6 +235,12 @@ when shown, and never puts it into an agent prompt. Agents cannot query the
 record. Owner and read-write sessions see the detail; a read-only session sees
 only the one-line summary. Log lines about the record hold ids and kinds only.
 
+In the dashboard, each agent card and each row of the **Agent activity**
+section shows the latest kick as `last kick: opened PR #12 6m ago`. Owner and
+read-write sessions can expand it to the agent's last ten kicks, each with its
+time, trigger, outcome and, for `stood_down` and `refused`, the quoted text and
+reason code. A read-only session sees the one line only.
+
 ## Where to see refusals
 
 - **Toast.** Clicking **kick** on an agent card shows "Kick failed: ..." with a

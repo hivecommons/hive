@@ -1,0 +1,1 @@
+- Dashboard: each agent card and Agent activity row now shows what the latest kick came to ("last kick: opened PR #12 6m ago"); owner and read-write sessions can expand the last ten kicks with trigger, time and, for a stand-down or refusal, the escaped quoted reason; read-only sees only the one line (#18916).

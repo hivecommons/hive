@@ -10,6 +10,10 @@ owner to resume it. The pause is separate from the **Enabled** setting and from
 per-mode cadences: after resuming, check **Cadences** if the current governor
 mode still has no schedule.
 
+## What each kick came to
+
+Each agent card and each row of the **Agent activity** card carries a `last kick:` line, for example `last kick: opened PR #12 6m ago`, from `GET /api/kick-outcomes`. The outcome is one of opened PR, pushed a commit, commented, stood down, refused, still running, or ended with no visible action, derived only from signals the hive already has; where it cannot tell, it says ended with no visible action. Owner and read-write sessions get a **last 10 kicks** button that expands the agent's recent kicks with their time, trigger (a dashboard user's login, the governor, or a workflow hand-off) and, for stood down and refused, the quoted text and the reason code from [Kick refusals](kick-refusals.md). The quoted text is untrusted agent text: it is redacted, capped and escaped, and never sent back to an agent. A read-only session sees the one line only. The list refreshes with the status the page already receives, at most every 30 seconds, with no extra timer.
+
 ## Base preparation visibility
 
 The Activity Monitor shows a compact **Preparation train** pill directly above

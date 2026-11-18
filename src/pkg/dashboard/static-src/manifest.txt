@@ -87,6 +87,7 @@ js/history-sparklines.js
 js/cost-trend.js
 js/stats.js
 js/agent-now.js
+js/kick-outcomes.js
 js/tracker-words-core.js
 js/tracker-words-stage.js
 js/tracker-words-gate.js

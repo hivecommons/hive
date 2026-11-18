@@ -425,6 +425,7 @@
         <td class="aa-now">${nowHtml}</td>
         <td class="aa-since">${since ? esc(since) : '—'}</td>
         <td class="aa-reserved">${reserved || '—'}</td>
+        <td class="aa-kick">${kickOutcomeSlotHtml(a.name) || '—'}</td>
       </tr>`;
     }
 
@@ -432,6 +433,7 @@
     // argument on the "Now:" tick so the times keep counting up.
     function renderAgentActivity(agents) {
       if (Array.isArray(agents)) _agentActivityAgents = agents;
+      loadKickOutcomes();
       const el = document.getElementById('agent-activity-panel');
       if (!el) return;
       refreshSectionCardShell('agent-activity-section');
@@ -446,7 +448,7 @@
       const ctx = agentNowContext(Date.now());
       const rows = list.map(a => agentActivityRowHtml(a, agentNowHtml(a), ctx)).join('');
       setIfChanged(el, `<div class="agent-activity-scroll"><table class="agent-activity-table">
-        <thead><tr><th scope="col">Agent</th><th scope="col">State</th><th scope="col">Now</th><th scope="col">Since last action</th><th scope="col">Reserved</th></tr></thead>
+        <thead><tr><th scope="col">Agent</th><th scope="col">State</th><th scope="col">Now</th><th scope="col">Since last action</th><th scope="col">Reserved</th><th scope="col">Last kick</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`);
     }

@@ -44,6 +44,7 @@ func TestAgentActivityRows(t *testing.T) {
 		jsFunc(t, html, "agentActivityRowHtml"),
 	}, "\n") + `
 const assert = require('assert');
+const kickOutcomeSlotHtml = () => '';
 const MIN = 60000;
 const now = Date.parse('2026-01-01T12:00:00Z');
 const iso = (ms) => new Date(ms).toISOString();

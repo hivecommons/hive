@@ -1068,6 +1068,7 @@
           ${agentNowHtml(a)}
           ${agentRunLineHtml(a)}
           ${agentBlockerLineHtml(a)}
+          ${kickOutcomeSlotHtml(a.name)}
           ${(() => {
             // Last upstream/launch error stays on its own line below the state
             // badge, never behind the working-indicator dot — previously the

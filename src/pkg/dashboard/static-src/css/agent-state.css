@@ -86,6 +86,15 @@
     .oc-agent-detail-header .oc-run-line { margin-top: var(--sp-0); margin-left: auto; }
     /* Agent activity section (#10935): one row per agent. */
     .agent-activity-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
+    /* What each kick came to: the one-line summary and the expandable last ten kicks. */
+    .kick-outcome-line { font-size: var(--fs-sm); color: var(--muted); overflow-wrap: anywhere; }
+    .kick-outcome-line .ko-last[data-kind="refused"], .kick-outcome-line .ko-last[data-kind="stood_down"] { color: var(--red); }
+    .kick-outcome-line .ko-last[data-kind="opened_pr"], .kick-outcome-line .ko-last[data-kind="pushed_commit"], .kick-outcome-line .ko-last[data-kind="commented"] { color: var(--green); }
+    .kick-outcome-line .ko-toggle { margin-left: 0.4rem; }
+    .kick-outcome-list { list-style: none; margin: 0.3rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+    .kick-outcome-row .ko-time, .kick-outcome-row .ko-trigger { color: var(--muted); }
+    .kick-outcome-row .ko-code { font-family: var(--font-mono); }
+    .kick-outcome-row .ko-quote { font-style: italic; }
     .agent-activity-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
     .agent-activity-table th { text-align: left; color: var(--muted); font-weight: 600; padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
     .agent-activity-table td { padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); vertical-align: top; }
