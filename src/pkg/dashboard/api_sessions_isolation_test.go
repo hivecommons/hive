@@ -163,18 +163,19 @@ func TestSessionsAllocateDistinctUIDSlotsAndReuseOnlyAfterRemoval(t *testing.T) 
 		t.Error("slot of an ended (not removed) session was handed out again")
 	}
 	// A failed file removal keeps the record and therefore the slot.
-	e.rt.removeErr = errors.New("rm failed")
-	if got := e.statusOf(t, callerOwner, "DELETE", "/api/sessions/"+a, nil); got != 500 {
-		t.Errorf("delete with failing cleanup = %d, want 500", got)
+	e.rt.setRemoveErr(errors.New("rm failed"))
+	if got := e.statusOf(t, callerOwner, "DELETE", "/api/sessions/"+a, nil); got != http.StatusAccepted {
+		t.Errorf("delete with failing cleanup = %d, want 202", got)
 	}
-	if _, ok := st.get(a); !ok {
-		t.Error("record dropped although its files could not be removed")
+	if got := e.waitDeleteFailed(t, a); got.UIDSlot != ra.UIDSlot {
+		t.Errorf("record after a failed removal = %+v; it must keep its slot", got)
 	}
 	// Once removal succeeds the slot is free again.
-	e.rt.removeErr = nil
-	if got := e.statusOf(t, callerOwner, "DELETE", "/api/sessions/"+a, nil); got != 200 {
+	e.rt.setRemoveErr(nil)
+	if got := e.statusOf(t, callerOwner, "DELETE", "/api/sessions/"+a, nil); got != http.StatusAccepted {
 		t.Fatalf("delete = %d", got)
 	}
+	e.waitDeleted(t, a)
 	d := e.create(t, callerOwner, "d")
 	if rd, _ := st.get(d); rd.UIDSlot != ra.UIDSlot {
 		t.Errorf("freed slot %d not reused, got %d", ra.UIDSlot, rd.UIDSlot)
@@ -189,8 +190,9 @@ func TestSessionsDeleteAndPruneRemoveSessionFiles(t *testing.T) {
 		t.Fatalf("closing a running session must keep its files for resume: %v", e.rt.removed)
 	}
 	e.do(t, callerRW, "DELETE", "/api/sessions/"+id, nil) // removed
-	if !idsContain(e.rt.removed, id) {
-		t.Errorf("deleting an ended session did not remove its files: %v", e.rt.removed)
+	e.waitDeleted(t, id)
+	if got := e.rt.removedIDs(); !idsContain(got, id) {
+		t.Errorf("deleting an ended session did not remove its files: %v", got)
 	}
 
 	pruned := e.create(t, callerRW, "old")
@@ -199,18 +201,16 @@ func TestSessionsDeleteAndPruneRemoveSessionFiles(t *testing.T) {
 		r.Status = sessionStatusEnded
 		r.EndedAt = time.Now().Add(-2 * sessionEndedRetention).UTC().Format(time.RFC3339)
 	})
-	e.rt.removeErr = errors.New("busy")
+	e.rt.setRemoveErr(errors.New("busy"))
 	e.s.sweepSessions(time.Now())
-	if _, ok := st.get(pruned); !ok {
-		t.Fatal("prune dropped the record although file removal failed")
-	}
-	e.rt.removeErr = nil
+	// The prune is the same background job as a delete: a failed removal
+	// keeps the record.
+	e.waitDeleteFailed(t, pruned)
+	e.rt.setRemoveErr(nil)
 	e.s.sweepSessions(time.Now())
-	if _, ok := st.get(pruned); ok {
-		t.Error("expired session not pruned")
-	}
-	if !idsContain(e.rt.removed, pruned) {
-		t.Errorf("prune did not remove files: %v", e.rt.removed)
+	e.waitDeleted(t, pruned)
+	if got := e.rt.removedIDs(); !idsContain(got, pruned) {
+		t.Errorf("prune did not remove files: %v", got)
 	}
 }
 

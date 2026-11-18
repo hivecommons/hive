@@ -20,9 +20,16 @@ const DefaultCallTimeout = 30 * time.Second
 // DefaultResearchProgressAfter, and gives up, saying so, past
 // DefaultResearchTimeout. The session checks every DefaultResearchCheckEvery.
 const (
-	DefaultResearchProgressAfter = 30 * time.Second
-	DefaultResearchTimeout       = 5 * time.Minute
+	// A deep dive is a background job with a hard deadline: past it she
+	// says plainly that it took too long rather than leave the room
+	// waiting minutes (live tests; research-meeting-bots report item 10).
+	DefaultResearchProgressAfter = 20 * time.Second
+	DefaultResearchTimeout       = 45 * time.Second
 	DefaultResearchCheckEvery    = 5 * time.Second
+	// DefaultResearchQueueWait is how much longer a deep dive may take when
+	// every research agent had work as it was dispatched: the time allowed
+	// for it to reach the head of the queue, on top of the deadline.
+	DefaultResearchQueueWait = 90 * time.Second
 )
 
 // Options configures a Runner.
@@ -58,6 +65,14 @@ type Options struct {
 	ResearchProgressAfter time.Duration
 	ResearchTimeout       time.Duration
 	ResearchCheckEvery    time.Duration
+	// ResearchQueueWait is the extra time a deep dive queued behind another
+	// question gets; zero means DefaultResearchQueueWait.
+	ResearchQueueWait time.Duration
+	// UnreachableWarnAfter and UnreachableLeaveAfter time the meeting
+	// being marked unreachable and the bot leaving it when no reply gets
+	// out (reach.go); zero means the defaults.
+	UnreachableWarnAfter  time.Duration
+	UnreachableLeaveAfter time.Duration
 }
 
 // Runner starts a live session when a meeting goes live and ends it when
@@ -101,6 +116,15 @@ func NewRunner(opts Options) (*Runner, error) {
 	}
 	if opts.ResearchCheckEvery <= 0 {
 		opts.ResearchCheckEvery = DefaultResearchCheckEvery
+	}
+	if opts.ResearchQueueWait <= 0 {
+		opts.ResearchQueueWait = DefaultResearchQueueWait
+	}
+	if opts.UnreachableWarnAfter <= 0 {
+		opts.UnreachableWarnAfter = DefaultUnreachableWarnAfter
+	}
+	if opts.UnreachableLeaveAfter <= 0 {
+		opts.UnreachableLeaveAfter = DefaultUnreachableLeaveAfter
 	}
 	opts.Policy = opts.Policy.withDefaults()
 	log := opts.Logger

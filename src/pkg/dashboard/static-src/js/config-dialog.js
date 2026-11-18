@@ -476,8 +476,6 @@
         // opt-in (applyDashboardFeatureVisibility) and ACMM L3+.
         const nousVisible = experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL;
         nousVisible ? show(nousSection, '') : hide(nousSection);
-        const nousSidebarCfg = document.getElementById('nous-sidebar-config');
-        nousVisible ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
         level >= ACMM_DEBUG_MIN_LEVEL ? show(debugSection, '') : hide(debugSection);
         hide(logsSection);
 

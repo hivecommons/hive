@@ -125,6 +125,7 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	message = s.addGuideFlow(a.agent, a.actionable, message)
 	message = s.addInflightNote(message, a.issues)
 	message = s.addMaintainerNotes(message, a.issues)
+	message = s.addCustomerContext(message, a.issues)
 	message = s.addQuestionAnswerContract(a.agent, message, a.issues)
 	message = addInProgressClaimRule(message, a.issues)
 	if a.idleReason == "" {

@@ -131,6 +131,7 @@ func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 		return SandboxGateReport{}
 	}
 
+	var noPullSecrets, badPullSecrets, hostnamePinned []string
 	var optedIn, noImage, noClaim, noGateway, noDigest, badRuntime []string
 	var openshellBlocks []SandboxOpenShellConfig
 	var substrateBlocks []SandboxSubstrateConfig
@@ -141,6 +142,17 @@ func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 		optedIn = append(optedIn, name)
 		if strings.TrimSpace(a.SandboxImage(cfg.AgentSandbox)) == "" {
 			noImage = append(noImage, name)
+		}
+		if a.SandboxRuntime(cfg.AgentSandbox) == SandboxRuntimeJob {
+			job := a.SandboxJob(cfg.AgentSandbox)
+			if _, pinned := job.NodeSelector["kubernetes.io/hostname"]; pinned {
+				hostnamePinned = append(hostnamePinned, name)
+			}
+			if err := ValidateImagePullSecrets(job.ImagePullSecrets); err != nil {
+				badPullSecrets = append(badPullSecrets, name)
+			} else if strings.TrimSpace(job.ServiceAccount) != "" && len(job.ImagePullSecrets) == 0 {
+				noPullSecrets = append(noPullSecrets, name)
+			}
 		}
 		switch rt := a.SandboxRuntime(cfg.AgentSandbox); {
 		case !ValidSandboxRuntimes[rt]:
@@ -174,6 +186,9 @@ func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 	sort.Strings(noGateway)
 	sort.Strings(noDigest)
 	sort.Strings(badRuntime)
+	sort.Strings(noPullSecrets)
+	sort.Strings(badPullSecrets)
+	sort.Strings(hostnamePinned)
 
 	var out []string
 	if len(optedIn) == 0 {
@@ -200,6 +215,21 @@ func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 			"agent(s) %s use the job or openshell sandbox runtime but resolve no workspace_claim; the sandbox has no way to see the workspace and every kick will fail — "+
 				"set agent_sandbox.job.workspace_claim / agent_sandbox.openshell.workspace_claim (or the per-agent one) to the PVC hive's data lives on (#6311)",
 			strings.Join(noClaim, ", ")))
+	}
+	if len(badPullSecrets) > 0 {
+		out = append(out, fmt.Sprintf(
+			"agent(s) %s have an invalid sandbox.job.image_pull_secrets (names only, at most %d); sandboxed kicks will be refused (#18819)",
+			strings.Join(badPullSecrets, ", "), MaxJobImagePullSecrets))
+	}
+	if len(noPullSecrets) > 0 {
+		out = append(out, fmt.Sprintf(
+			"agent(s) %s run Jobs under sandbox.job.service_account with no sandbox.job.image_pull_secrets; hive reads that service account's imagePullSecrets only when its Role grants `get serviceaccounts`, and without it a private-registry sandbox image fails ImagePullBackOff (see the launcher warning) — set sandbox.job.image_pull_secrets to the registry Secret names (#18819)",
+			strings.Join(noPullSecrets, ", ")))
+	}
+	if len(hostnamePinned) > 0 {
+		out = append(out, fmt.Sprintf(
+			"agent(s) %s pin sandbox.job.node_selector kubernetes.io/hostname to a single node; if it is cordoned or down the Job may remain Pending until its deadline — consider node affinity instead (#18809)",
+			strings.Join(hostnamePinned, ", ")))
 	}
 	if len(noGateway) > 0 {
 		out = append(out, fmt.Sprintf(

@@ -3098,6 +3098,9 @@ rules:
 - apiGroups: [""]
   resources: ["pods", "pods/log"]
   verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

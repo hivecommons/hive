@@ -22,6 +22,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/oktotest"
 	"github.com/hivecommons/hive/pkg/review"
 	hreview "github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -120,6 +121,12 @@ type contributorLaneFixture struct {
 	// earlierStatuses is what GET commits/<sha>/statuses serves for heads
 	// other than sha7; a head without an entry serves an empty list.
 	earlierStatuses map[string][]map[string]any
+	// repoComments is what GET issues/comments (the repository-wide comment
+	// listing the Prow refusal memory reads) serves; repoCommentLists counts
+	// those reads. workflowInstalled serves the hive-ok-to-test workflow file.
+	repoComments      []map[string]any
+	repoCommentLists  int
+	workflowInstalled bool
 	// baseRef, when set, gives the PR base a branch name and serves the
 	// branch, protection and compare routes the current-base gate
 	// (automerge_current_base.go) and release hold need; empty leaves the
@@ -353,6 +360,19 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			// The linked issue the body closes, read by the linked-issue
 			// gate: open and unlabelled, so it never blocks.
 			json.NewEncoder(w).Encode(map[string]any{"number": 42, "state": "open", "labels": []any{}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/comments":
+			fx.repoCommentLists++
+			repoComments := fx.repoComments
+			if repoComments == nil {
+				repoComments = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(repoComments)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/contents/"+oktotest.WorkflowPath:
+			if !fx.workflowInstalled {
+				http.NotFound(w, r)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"type": "file", "name": "hive-ok-to-test.yml", "path": oktotest.WorkflowPath})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/files":
 			if fx.filesStatus != 0 {
 				http.Error(w, "files error", fx.filesStatus)

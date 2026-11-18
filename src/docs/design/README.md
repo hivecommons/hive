@@ -54,6 +54,17 @@ that status is the thing to check before treating a page as current behaviour:
   impossible rather than merely unwise, including why `POST /api/contribute/invite` cannot work
   from a role-derived credential at all — and the one real gap it does not close: writes audit as
   `local`, so an assistant-mediated action is indistinguishable from a dashboard one.
+- [Customers: a profile per person and a customer graph](customers.md) -
+  **design only / proposed; build in progress.** RFC
+  [#18742](https://github.com/hivecommons/hive/issues/18742): a Customers
+  section under Collaborate, one profile per person built from what the hive
+  already holds, a read-only GraphQL endpoint over people and artefacts, and
+  goals and a satisfaction signal that Hive infers with evidence and a person
+  confirms. Records the customer versus suggested line, identity resolution,
+  retention by reference, forget with tombstones, the role rules, the bounded
+  agent context block, and the position on personal data of people who never
+  signed up. Nothing leaves the hive.
+
 - [Meeting recordings in the Inbox: Zoom and Microsoft Teams](meeting-recordings.md) -
   **Zoom shipped; Teams scaffold shipped, live verification blocked on tenant
   consent.** Zoom cloud recordings (user-level OAuth with the hosted paste

@@ -179,8 +179,12 @@ func TestCompanionAudioRepliesAndEnd(t *testing.T) {
 	if err != nil || ended.State != StateEnded || ended.StateReason != ReasonCompanionEnded {
 		t.Fatalf("end = %+v, %v", ended, err)
 	}
-	if r, err := m.CompanionReplies(ctx, mt.ID, "ana", false, 0); err != nil || r.State != StateEnded || len(r.Lines) != 0 {
+	// The lines Quorum still held are served once after the end (companion_tail.go).
+	if r, err := m.CompanionReplies(ctx, mt.ID, "ana", false, 0); err != nil || r.State != StateEnded || len(r.Lines) != 2 || r.NextSeq != 2 {
 		t.Fatalf("replies after end = %+v, %v", r, err)
+	}
+	if r, err := m.CompanionReplies(ctx, mt.ID, "ana", false, 2); err != nil || r.State != StateEnded || len(r.Lines) != 0 {
+		t.Fatalf("replies after the last lines were fetched = %+v, %v", r, err)
 	}
 	if _, err := m.CompanionAudio(ctx, mt.ID, "ana", false, CompanionChannelCall, 0, nil); !errors.Is(err, ErrNotLive) {
 		t.Fatalf("audio after end = %v", err)

@@ -86,6 +86,7 @@ type Process struct {
 	KickOutcome               KickOutcome
 	RepeatFailure             RepeatFailureStatus
 	SandboxLastRun            *SandboxRun
+	SandboxPhase              *SandboxPhase
 	StartFailureClass         string
 	StartFailureReason        string
 	StartFailureCount         int

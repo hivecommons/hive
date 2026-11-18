@@ -1,11 +1,25 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// workingLevel is an ACMM level at which every agent but the supervisor
+// defaults to ISSUES_AND_PRS, so a test roster may open pull requests
+// unless it says otherwise.
+func workingLevel() *int {
+	level := 5
+	return &level
+}
+
+// advisory is an enabled agent that may only read and advise.
+var advisory = AgentConfig{Enabled: true, Mode: "ADVISORY"}
 
 func TestWorkflowDispatchAgent(t *testing.T) {
 	off := false
 	base := func() *Config {
-		c := &Config{}
+		c := &Config{ACMMLevel: workingLevel()}
 		c.Agents = map[string]AgentConfig{
 			"scanner":   {Enabled: true, Role: "scanner"},
 			"zed":       {Enabled: true, Role: "feature"},
@@ -40,7 +54,7 @@ func TestWorkflowDispatchAgent(t *testing.T) {
 			c.Agents = map[string]AgentConfig{"scanner": {Enabled: true, Role: "scanner"}}
 		}, "techdocs-drafter", "scanner", true},
 		{"no agent fills it", func(c *Config) {
-			c.Agents = map[string]AgentConfig{"supervisor": {Enabled: true}, "guide": {Enabled: true}, "brainstorm": {Enabled: true}}
+			c.Agents = map[string]AgentConfig{"supervisor": {Enabled: true}, "guide": advisory, "brainstorm": advisory}
 		}, "techdocs-drafter", "", false},
 		{"empty profile", nil, "", "", false},
 	}
@@ -74,21 +88,25 @@ func TestWorkflowDispatchAgent(t *testing.T) {
 }
 
 // standardFleet is the roster a default hive runs: no writer, docs or
-// feature agent (hivecommons/hive#18690).
+// feature agent (hivecommons/hive#18690). At workingLevel the working
+// agents may open pull requests; brainstorm and guide are advisory here and
+// the supervisor always is.
 func standardFleet() *Config {
-	c := &Config{}
+	c := &Config{ACMMLevel: workingLevel()}
 	c.Project.Org = "cncf"
 	c.Agents = map[string]AgentConfig{}
-	for _, name := range []string{"brainstorm", "ci-maintainer", "guide", "quality", "reviewer", "scanner", "supervisor"} {
+	for _, name := range []string{"ci-maintainer", "quality", "reviewer", "scanner", "supervisor"} {
 		c.Agents[name] = AgentConfig{Enabled: true}
 	}
+	c.Agents["brainstorm"], c.Agents["guide"] = advisory, advisory
 	return c
 }
 
 // The resolution order: pin, agent named after the profile, writer / docs /
 // feature, then the last resort (the issue worker for a profile that opens a
-// pull request, the reviewer for one that reviews), which must serve the
-// bound repository. Nothing else is ever picked.
+// pull request, the reviewer for one that reviews, else the first agent
+// that may do the work), which must serve the bound repository. An agent
+// that may not do what the profile needs is never picked.
 func TestResolveWorkflowDispatchFallbackOrder(t *testing.T) {
 	drafter := WorkflowDispatchNeed{Repo: "cncf/techdocs"}
 	verifier := WorkflowDispatchNeed{Repo: "cncf/techdocs", Reviews: true}
@@ -127,21 +145,40 @@ func TestResolveWorkflowDispatchFallbackOrder(t *testing.T) {
 			c.Agents["scanner"] = AgentConfig{Enabled: true, Repos: []string{"cncf/website"}}
 			c.Agents["techdocs-scanner"] = AgentConfig{Enabled: true, Role: "scanner", Repos: []string{"techdocs"}}
 		}, "techdocs-drafter", drafter, "techdocs-scanner", WorkflowDispatchSourceFallback},
-		{"a scanner that does not serve the repo is not picked", func(c *Config) {
+		{"a scanner that does not serve the repo is passed over for the first agent that may open pull requests", func(c *Config) {
 			c.Agents["scanner"] = AgentConfig{Enabled: true, Repos: []string{"cncf/website"}}
-		}, "techdocs-drafter", drafter, "", ""},
-		{"a disabled scanner is not picked", func(c *Config) { c.Agents["scanner"] = AgentConfig{Enabled: false} }, "techdocs-drafter", drafter, "", ""},
+		}, "techdocs-drafter", drafter, "ci-maintainer", WorkflowDispatchSourceFallback},
+		{"a disabled scanner is not picked", func(c *Config) { c.Agents["scanner"] = AgentConfig{Enabled: false} }, "techdocs-drafter", drafter, "ci-maintainer", WorkflowDispatchSourceFallback},
 		{"a scanner replica is not picked", func(c *Config) {
 			delete(c.Agents, "scanner")
 			c.Agents["scanner-2"] = AgentConfig{Enabled: true, Role: "scanner", ReplicaOf: "scanner"}
-		}, "techdocs-drafter", drafter, "", ""},
-		{"the drafter never falls back to the reviewer", func(c *Config) { delete(c.Agents, "scanner") }, "techdocs-drafter", drafter, "", ""},
-		{"the verifier never falls back to the scanner", func(c *Config) { delete(c.Agents, "reviewer") }, "techdocs-verifier", verifier, "", ""},
-		{"supervisor, guide and brainstorm are never picked", func(c *Config) {
+		}, "techdocs-drafter", drafter, "ci-maintainer", WorkflowDispatchSourceFallback},
+		{"without a scanner the drafter goes to the first agent that may open pull requests", func(c *Config) { delete(c.Agents, "scanner") }, "techdocs-drafter", drafter, "ci-maintainer", WorkflowDispatchSourceFallback},
+		{"without a reviewer the verifier goes to the first agent that may comment", func(c *Config) { delete(c.Agents, "reviewer") }, "techdocs-verifier", verifier, "ci-maintainer", WorkflowDispatchSourceFallback},
+		{"advisory agents are never picked", func(c *Config) {
 			for _, name := range []string{"ci-maintainer", "quality", "reviewer", "scanner"} {
 				delete(c.Agents, name)
 			}
 		}, "techdocs-drafter", drafter, "", ""},
+		// hivecommons/hive#18749: the scanner is advisory and one agent may
+		// open pull requests, so that agent is the drafter.
+		{"an advisory scanner is passed over for the agent that may open pull requests", func(c *Config) {
+			for _, name := range []string{"ci-maintainer", "reviewer", "scanner"} {
+				c.Agents[name] = advisory
+			}
+			c.Agents["quality"] = AgentConfig{Enabled: true, Mode: "ISSUES_AND_PRS"}
+		}, "techdocs-drafter", drafter, "quality", WorkflowDispatchSourceFallback},
+		{"an advisory reviewer with the converse capability may be the verifier", func(c *Config) {
+			talks := true
+			c.Agents["reviewer"] = AgentConfig{Enabled: true, Mode: "ADVISORY", Converse: &talks}
+		}, "techdocs-verifier", verifier, "reviewer", WorkflowDispatchSourceFallback},
+		{"an advisory agent named after the profile is passed over", func(c *Config) {
+			c.Agents["techdocs-drafter"] = advisory
+		}, "techdocs-drafter", drafter, "scanner", WorkflowDispatchSourceFallback},
+		{"an advisory writer is passed over", func(c *Config) {
+			c.Agents["writer"] = advisory
+		}, "techdocs-drafter", drafter, "scanner", WorkflowDispatchSourceFallback},
+		{"an agent the hand-off already went to is not picked again", func(c *Config) {}, "techdocs-drafter", WorkflowDispatchNeed{Repo: "cncf/techdocs", Exclude: []string{"scanner"}}, "ci-maintainer", WorkflowDispatchSourceFallback},
 		{"a pin that names no enabled agent never falls back", func(c *Config) {
 			c.Workflow.Dispatch.Profiles = map[string]WorkflowDispatchProfile{"techdocs-drafter": {Agent: "nobody"}}
 		}, "techdocs-drafter", drafter, "", ""},
@@ -173,13 +210,13 @@ func TestResolveWorkflowDispatchFallbackOrder(t *testing.T) {
 // show it as is.
 func TestResolveWorkflowDispatchProblem(t *testing.T) {
 	c := standardFleet()
-	delete(c.Agents, "scanner")
+	c.Agents = map[string]AgentConfig{}
 	got := c.ResolveWorkflowDispatch("techdocs-drafter", WorkflowDispatchNeed{Repo: "cncf/techdocs"}, false)
-	if want := "no agent fills techdocs-drafter: this hive has no enabled techdocs-drafter, writer, docs, feature or scanner agent"; got.Problem != want {
+	if want := "no agent fills techdocs-drafter: this hive has no enabled agent"; got.Problem != want {
 		t.Fatalf("problem = %q; want %q", got.Problem, want)
 	}
 	c = standardFleet()
-	c.Agents["scanner"] = AgentConfig{Enabled: true, Repos: []string{"cncf/website"}}
+	c.Agents = map[string]AgentConfig{"scanner": {Enabled: true, Repos: []string{"cncf/website"}}, "guide": advisory}
 	got = c.ResolveWorkflowDispatch("techdocs-drafter", WorkflowDispatchNeed{Repo: "cncf/techdocs"}, false)
 	if want := "no agent fills techdocs-drafter: scanner does not work on cncf/techdocs"; got.Problem != want {
 		t.Fatalf("scoped problem = %q; want %q", got.Problem, want)
@@ -248,5 +285,166 @@ func TestSetWorkflowDispatchAgent(t *testing.T) {
 	}
 	if got := standardFleet().WorkflowDispatchAgentChoices(); len(got) != 7 || got[0] != "brainstorm" || got[6] != "supervisor" {
 		t.Fatalf("choices = %v", got)
+	}
+}
+
+// advisoryFleet is the roster of hivecommons/hive#18749: every agent runs
+// ADVISORY except quality, the one agent that may open pull requests.
+func advisoryFleet() *Config {
+	c := &Config{ACMMLevel: workingLevel()}
+	c.Project.Org = "cncf"
+	c.Agents = map[string]AgentConfig{}
+	for _, name := range []string{"brainstorm", "ci-maintainer", "guide", "reviewer", "scanner", "supervisor"} {
+		c.Agents[name] = advisory
+	}
+	c.Agents["quality"] = AgentConfig{Enabled: true, Mode: "ISSUES_AND_PRS"}
+	return c
+}
+
+// A profile resolves only to an agent whose mode lets it do what the
+// profile needs: on a hive whose scanner is advisory the drafter is the one
+// agent that may open pull requests, and its mode rides along for the
+// prompt (hivecommons/hive#18749).
+func TestResolveWorkflowDispatchRequiresCapability(t *testing.T) {
+	drafter := WorkflowDispatchNeed{Repo: "cncf/techdocs"}
+	verifier := WorkflowDispatchNeed{Repo: "cncf/techdocs", Reviews: true}
+	c := advisoryFleet()
+	got := c.ResolveWorkflowDispatch("techdocs-drafter", drafter, false)
+	if got.Agent != "quality" || got.Source != WorkflowDispatchSourceFallback || got.Mode != "ISSUES_AND_PRS" || got.Problem != "" {
+		t.Fatalf("drafter on a mixed-mode hive = %+v; want quality", got)
+	}
+	if got.Needs != "open pull requests in cncf/techdocs" {
+		t.Fatalf("needs = %q", got.Needs)
+	}
+	// The verifier needs comment rights only; the advisory reviewer has
+	// none, so it goes to the agent that does.
+	if got = c.ResolveWorkflowDispatch("techdocs-verifier", verifier, false); got.Agent != "quality" || got.Needs != "comment in cncf/techdocs" {
+		t.Fatalf("verifier on a mixed-mode hive = %+v; want quality", got)
+	}
+
+	// No agent may write: the profile is unfilled and the reason says so.
+	c.Agents["quality"] = advisory
+	got = c.ResolveWorkflowDispatch("techdocs-drafter", drafter, false)
+	if want := "no agent on this hive may open pull requests in cncf/techdocs; agents are advisory-only"; got.OK() || got.Problem != want {
+		t.Fatalf("advisory-only hive = %+v; want problem %q", got, want)
+	}
+	if got = c.ResolveWorkflowDispatch("techdocs-verifier", verifier, false); got.OK() || got.Problem != "no agent on this hive may comment in cncf/techdocs; agents are advisory-only" {
+		t.Fatalf("advisory-only verifier = %+v", got)
+	}
+	if got = c.ResolveWorkflowDispatch("techdocs-drafter", WorkflowDispatchNeed{}, true); got.OK() || got.Problem != "no agent on this hive may open pull requests in the bound repository; agents are advisory-only" {
+		t.Fatalf("advisory-only hive, repository unknown = %+v", got)
+	}
+	// Issue-only agents are not advisory, and still may not open one.
+	c.Agents["scanner"] = AgentConfig{Enabled: true, Mode: "ISSUES_ONLY"}
+	if got = c.ResolveWorkflowDispatch("techdocs-drafter", drafter, false); got.OK() || got.Problem != "no agent on this hive may open pull requests in cncf/techdocs; no agent's mode allows it" {
+		t.Fatalf("issues-only hive = %+v", got)
+	}
+	// ... but it may comment, so it can be the verifier.
+	if got = c.ResolveWorkflowDispatch("techdocs-verifier", verifier, false); got.Agent != "scanner" {
+		t.Fatalf("issues-only verifier = %+v; want scanner", got)
+	}
+}
+
+// A pin that names an agent without the capability is a visible problem,
+// never a silent pick and never a fallback to another agent.
+func TestResolveWorkflowDispatchPinWithoutCapability(t *testing.T) {
+	drafter := WorkflowDispatchNeed{Repo: "cncf/techdocs"}
+	c := advisoryFleet()
+	c.Workflow.Dispatch.Profiles = map[string]WorkflowDispatchProfile{"techdocs-drafter": {Agent: "scanner"}}
+	got := c.ResolveWorkflowDispatch("techdocs-drafter", drafter, false)
+	if want := `the pinned agent "scanner" may not open pull requests in cncf/techdocs (mode ADVISORY)`; got.OK() || got.Pinned != "scanner" || got.Problem != want {
+		t.Fatalf("advisory pin = %+v; want problem %q", got, want)
+	}
+	if agent, ok := c.WorkflowDispatchAgentForManual("techdocs-drafter"); ok || agent != "scanner" {
+		t.Fatalf("manual send to an advisory pin = %q %v", agent, ok)
+	}
+	c.Workflow.Dispatch.Profiles = map[string]WorkflowDispatchProfile{"techdocs-verifier": {Agent: "reviewer"}}
+	got = c.ResolveWorkflowDispatch("techdocs-verifier", WorkflowDispatchNeed{Repo: "cncf/techdocs", Reviews: true}, false)
+	if want := `the pinned agent "reviewer" may not comment in cncf/techdocs (mode ADVISORY, no converse capability)`; got.Problem != want {
+		t.Fatalf("advisory verifier pin = %+v; want problem %q", got, want)
+	}
+	// A pinned agent the hand-off already went to is not replaced.
+	c.Workflow.Dispatch.Profiles = map[string]WorkflowDispatchProfile{"techdocs-drafter": {Agent: "quality"}}
+	got = c.ResolveWorkflowDispatch("techdocs-drafter", WorkflowDispatchNeed{Repo: "cncf/techdocs", Exclude: []string{"quality"}}, false)
+	if got.OK() || !strings.Contains(got.Problem, `the pinned agent "quality" did not start the hand-off`) {
+		t.Fatalf("excluded pin = %+v", got)
+	}
+	// With nothing pinned and the only capable agent already tried, the
+	// reason names it.
+	c.Workflow.Dispatch.Profiles = nil
+	got = c.ResolveWorkflowDispatch("techdocs-drafter", WorkflowDispatchNeed{Repo: "cncf/techdocs", Exclude: []string{"quality"}}, false)
+	if got.OK() || got.Problem != "no agent other than quality may open pull requests in cncf/techdocs" {
+		t.Fatalf("every capable agent tried = %+v", got)
+	}
+}
+
+// The mode a session runs in is the agent's configured mode, else the
+// default for its name at the hive's ACMM level; the repository gate is the
+// pull-request relay's; and the picker's candidates say who qualifies.
+func TestWorkflowDispatchCapabilityChecks(t *testing.T) {
+	c := advisoryFleet()
+	if got := c.AgentInteractionMode("quality").String(); got != "ISSUES_AND_PRS" {
+		t.Fatalf("configured mode = %s", got)
+	}
+	c.Agents["fresh"] = AgentConfig{Enabled: true}
+	if got := c.AgentInteractionMode("fresh").String(); got != "ISSUES_AND_PRS" {
+		t.Fatalf("default mode at the working level = %s", got)
+	}
+	c.Agents["odd"] = AgentConfig{Enabled: true, Mode: "nonsense"}
+	if got := c.AgentInteractionMode("odd").String(); got != "ISSUES_AND_PRS" {
+		t.Fatalf("an unparseable mode must fall back to the default, got %s", got)
+	}
+	var nilCfg *Config
+	if got := nilCfg.AgentInteractionMode("x").String(); got != "ADVISORY" {
+		t.Fatalf("nil config mode = %s", got)
+	}
+	if ok, why := nilCfg.WorkflowDispatchAgentQualifies("x", WorkflowDispatchNeed{}); ok || why == "" {
+		t.Fatalf("nil config qualifies = %v %q", ok, why)
+	}
+	if ok, why := c.WorkflowDispatchAgentQualifies("nobody", WorkflowDispatchNeed{}); ok || why != "is not an enabled agent of this hive" {
+		t.Fatalf("unknown agent qualifies = %v %q", ok, why)
+	}
+	if ok, why := c.WorkflowDispatchAgentQualifies("scanner", WorkflowDispatchNeed{Repo: "cncf/techdocs"}); ok || why != "may not open pull requests in cncf/techdocs (mode ADVISORY)" {
+		t.Fatalf("advisory scanner qualifies = %v %q", ok, why)
+	}
+	if ok, why := c.WorkflowDispatchAgentQualifies("quality", WorkflowDispatchNeed{Repo: "cncf/techdocs"}); !ok || why != "" {
+		t.Fatalf("quality qualifies = %v %q", ok, why)
+	}
+
+	// The relay's repository gate: a hive below the level at which the
+	// agent's name may push refuses the pull request whatever its mode.
+	if err := c.PRRepoPolicyRefusal("quality", "cncf/techdocs"); err != nil {
+		t.Fatalf("repository gate at the working level: %v", err)
+	}
+	low := 2
+	c.ACMMLevel = &low
+	if err := c.PRRepoPolicyRefusal("quality", "cncf/techdocs"); err == nil || !strings.Contains(err.Error(), "effective ACMM L2 does not allow quality to open PRs") {
+		t.Fatalf("repository gate at L2 = %v", err)
+	}
+	if ok, why := c.WorkflowDispatchAgentQualifies("quality", WorkflowDispatchNeed{Repo: "cncf/techdocs"}); ok || !strings.Contains(why, "the repository's ACMM level does not allow it") {
+		t.Fatalf("quality below the repository gate = %v %q", ok, why)
+	}
+	got := c.ResolveWorkflowDispatch("techdocs-drafter", WorkflowDispatchNeed{Repo: "cncf/techdocs"}, false)
+	if got.OK() || got.Problem != "no agent on this hive may open pull requests in cncf/techdocs; no agent's mode allows it" {
+		t.Fatalf("drafter below the repository gate = %+v", got)
+	}
+	c.ACMMLevel = workingLevel()
+
+	cands := c.WorkflowDispatchCandidates(WorkflowDispatchNeed{Repo: "cncf/techdocs"})
+	byName := map[string]WorkflowDispatchAgentChoice{}
+	for _, cand := range cands {
+		byName[cand.Agent] = cand
+	}
+	if len(cands) != len(c.WorkflowDispatchAgentChoices()) {
+		t.Fatalf("candidates = %+v", cands)
+	}
+	if q := byName["quality"]; !q.Qualifies || q.Reason != "" || q.Mode != "ISSUES_AND_PRS" {
+		t.Fatalf("quality candidate = %+v", q)
+	}
+	if s := byName["scanner"]; s.Qualifies || s.Mode != "ADVISORY" || !strings.Contains(s.Reason, "may not open pull requests") {
+		t.Fatalf("scanner candidate = %+v", s)
+	}
+	if got := nilCfg.WorkflowDispatchCandidates(WorkflowDispatchNeed{}); len(got) != 0 {
+		t.Fatalf("nil config candidates = %v", got)
 	}
 }

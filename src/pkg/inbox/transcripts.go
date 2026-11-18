@@ -231,6 +231,43 @@ func (s *TranscriptStore) Put(rec TranscriptRecord) error {
 	return writeFileAtomic(s.path(rec.Source, rec.ID), data)
 }
 
+// List reads every record (one directory per source). Files that are not
+// records (the usage ledger, temp files of an interrupted write) and records
+// that do not parse are skipped; a missing store is empty.
+func (s *TranscriptStore) List() ([]TranscriptRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dirs, err := os.ReadDir(s.Dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []TranscriptRecord
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(s.Dir, d.Name()))
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.IsDir() || filepath.Ext(f.Name()) != ".json" {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(s.Dir, d.Name(), f.Name()))
+			var rec TranscriptRecord
+			if err != nil || json.Unmarshal(data, &rec) != nil || rec.Source == "" || rec.ID == "" {
+				continue
+			}
+			out = append(out, rec)
+		}
+	}
+	return out, nil
+}
+
 // Delete removes one record; a missing record is not an error.
 func (s *TranscriptStore) Delete(source, id string) error {
 	s.mu.Lock()

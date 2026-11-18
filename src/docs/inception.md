@@ -12,6 +12,17 @@ and the [Sessions API](api-reference/sessions.md). An Inbox recording can
 seed a session directly (**🔗 Share ▾ → Hive → spek…**, see
 [Inbox and voice sources](inbox-voice-sources.md#from-recording-to-an-inception-spek-session)).
 
+A new session does not wait on the CLI's first-run questions. The hive answers
+the vendor CLI's startup screens (first-run notice, trust for the session's
+folder, onboarding) and then delivers what was sent to the session, so spek
+starts on the request by itself. The pane header shows "Getting the CLI
+ready…" and then "Started". It never answers a permission prompt and never
+signs in: if the CLI needs a login the header says "Needs sign-in", and if it
+stops at any other screen the header names it and the terminal is yours. See
+[Startup auto-answer](api-reference/sessions.md#startup-auto-answer);
+`dashboard.sessions.autostart: false` or `HIVE_SESSIONS_AUTOSTART=false` turns
+it off.
+
 ## Retired: the inception API, watcher and brainstorm inception mode
 
 The old ACMM L1 inception workflow (a fixed `capture → clarify → structure →

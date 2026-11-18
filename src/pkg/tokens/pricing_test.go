@@ -350,3 +350,54 @@ func TestFable51PricedAtFable5ListRate(t *testing.T) {
 		t.Errorf("claude-fable-5.1 = %+v, want fable-5 input/output rates %+v", p, want)
 	}
 }
+
+// TestIssue18753FableAndHaiku55PricedExactly: Fable 5.2 and Haiku 5.5 have
+// rows at Anthropic's published rates (Haiku 5.5 at its up-to-100K-token base
+// rate), every spelling a spend record or Copilot can carry resolves to the
+// same row, and a spend sample is priced exactly instead of by the tier guess.
+func TestIssue18753FableAndHaiku55PricedExactly(t *testing.T) {
+	cases := []struct {
+		canonical string
+		spellings []string
+		want      ModelPrice
+		// 1M input + 1M output + 1M cache read + 1M cache write.
+		wantUSD float64
+	}{
+		{
+			canonical: "claude-fable-5-2",
+			spellings: []string{"claude-fable-5.2", "anthropic/claude-fable-5.2", "Claude-Fable-5-2"},
+			want:      ModelPrice{InputPerMTok: 8.00, OutputPerMTok: 40.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 10.00},
+			wantUSD:   8.00 + 40.00 + 0.20 + 10.00,
+		},
+		{
+			canonical: "claude-haiku-5-5",
+			spellings: []string{"claude-haiku-5.5", "anthropic/claude-haiku-5.5"},
+			want:      ModelPrice{InputPerMTok: 0.10, OutputPerMTok: 0.50, CacheReadPerMTok: 0.01, CacheWritePerMTok: 0.125},
+			wantUSD:   0.10 + 0.50 + 0.01 + 0.125,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.canonical, func(t *testing.T) {
+			got, priced := LookupPrice(tc.canonical)
+			if !priced {
+				t.Fatalf("%s has no price row; it would fall back to the tier guess", tc.canonical)
+			}
+			if got != tc.want {
+				t.Errorf("%s = %+v, want %+v", tc.canonical, got, tc.want)
+			}
+			for _, s := range tc.spellings {
+				p, ok := LookupPrice(s)
+				if !ok || p != got {
+					t.Errorf("%q = %+v (priced=%v), want the %s row %+v", s, p, ok, tc.canonical, got)
+				}
+			}
+			usd, exact := EstimateCostUSD(tc.canonical, 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+			if !exact {
+				t.Errorf("%s spend was tier-estimated, want an exact list price", tc.canonical)
+			}
+			if math.Abs(usd-tc.wantUSD) > 1e-6 {
+				t.Errorf("%s 1M of each token kind = $%.6f, want $%.6f", tc.canonical, usd, tc.wantUSD)
+			}
+		})
+	}
+}

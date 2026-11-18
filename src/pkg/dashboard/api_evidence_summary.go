@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/evidence"
 	"github.com/hivecommons/hive/pkg/evidence/complexity"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/modelfamily"
 	"github.com/hivecommons/hive/pkg/review"
 )
 
@@ -60,6 +61,12 @@ type EvidenceSummary struct {
 	SentinelPerWeek        EvidenceSentinelSeries          `json:"sentinel_hits_per_week"`
 	ShadowGate             EvidenceShadowGate              `json:"shadow_gate"`
 	ReviewerAccuracy       *review.ReviewerAccuracySummary `json:"reviewer_accuracy,omitempty"`
+	// OutcomesByAuthorModel is Outcomes keyed by the author's canonical model
+	// (modelfamily.Canonical, the ids /api/governor/pr-models uses), so
+	// change failures can be compared per model rather than per family.
+	// "human" and "unknown" are bucketed as in OutcomesByAuthorFamily —
+	// hivecommons/hive#18720.
+	OutcomesByAuthorModel map[string]EvidenceOutcomes `json:"outcomes_by_author_model"`
 	// WriteCounters is the proxy's attempted-vs-blocked agent write totals per
 	// intent tier (#12069); omitted when the counter file is absent or unreadable.
 	WriteCounters map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
@@ -426,6 +433,17 @@ func (st *EvidenceModelStat) add(approve, block, known, merged, enforced bool) {
 func evidenceAuthorFamily(a evidence.Author) string {
 	hiveAuthored := a.Kind == evidence.AuthorAgent || a.Kind == evidence.AuthorBot
 	return review.AuthorFamilyBucket(a.Model, a.Kind != "", hiveAuthored)
+}
+
+// evidenceAuthorModel is the per-model bucket for a bundle's author: the
+// canonical model id when one was recorded, otherwise the same "human" /
+// "unknown" bucket evidenceAuthorFamily uses, so every PR lands in exactly
+// one key of each map.
+func evidenceAuthorModel(a evidence.Author) string {
+	if strings.TrimSpace(a.Model) != "" {
+		return modelfamily.Canonical(a.Model)
+	}
+	return evidenceAuthorFamily(a)
 }
 
 // evidenceVerdictFamilyMatch prefers the verdict's stored same_family (set
@@ -907,6 +925,7 @@ func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[strin
 		CalibrationDerived: []EvidencePerspectiveCalib{},
 
 		OutcomesByAuthorFamily: map[string]EvidenceOutcomes{},
+		OutcomesByAuthorModel:  map[string]EvidenceOutcomes{},
 		ReviewerModels:         []EvidenceModelAccuracy{},
 		SentinelPerWeek:        EvidenceSentinelSeries{Weeks: []EvidenceSentinelWeek{}},
 		ClaimVsVerdict:         []EvidenceClaimWeek{},
@@ -950,6 +969,10 @@ func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[strin
 		fo := resp.OutcomesByAuthorFamily[family]
 		fo.add(b)
 		resp.OutcomesByAuthorFamily[family] = fo
+		authorModel := evidenceAuthorModel(b.Author)
+		mo := resp.OutcomesByAuthorModel[authorModel]
+		mo.add(b)
+		resp.OutcomesByAuthorModel[authorModel] = mo
 		if !merged && !b.Closed && !known {
 			resp.Missing.PRsOutcomeUnknown++
 		}
@@ -1138,6 +1161,10 @@ func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[strin
 	for k, o := range resp.OutcomesByAuthorFamily {
 		o.finishChangeFailures()
 		resp.OutcomesByAuthorFamily[k] = o
+	}
+	for k, o := range resp.OutcomesByAuthorModel {
+		o.finishChangeFailures()
+		resp.OutcomesByAuthorModel[k] = o
 	}
 	return resp
 }

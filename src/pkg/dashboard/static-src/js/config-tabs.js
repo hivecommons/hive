@@ -990,7 +990,7 @@
     function markDashboardSessions(key, value) {
       const d = _configState.data.dashboard = _configState.data.dashboard || {};
       const sessions = d.sessions = Object.assign({}, d.sessions || {});
-      sessions[key] = key === 'enabled' ? !!value : Math.max(0, parseInt(value || '0', 10) || 0);
+      sessions[key] = (key === 'enabled' || key === 'autostart') ? !!value : Math.max(0, parseInt(value || '0', 10) || 0);
       markDirty('dashboard', 'sessions', sessions);
     }
 
@@ -1070,7 +1070,8 @@
           limit('max_sessions', 'Max running sessions', 'Live sessions per hive. 0 uses the default (12); HIVE_SESSIONS_MAX overrides.') +
           limit('max_per_user', 'Max per user', 'Live sessions one person may create. 0 uses the default (4); HIVE_SESSIONS_MAX_PER_USER overrides.') +
           limit('idle_ttl_hours', 'Idle close (hours)', 'A session with no input and nobody attached ends after this long. 0 uses the default (72); HIVE_SESSIONS_IDLE_TTL_HOURS overrides.') +
-        '</div>';
+        '</div>' +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.autostart !== false ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="autostart"></div><span class="config-toggle-label">Answer the CLI startup screens ' + yamlHint('dashboard.sessions.autostart') + ' ' + settingHelpMark('settings', 'dashboard', 'Session startup', 'When a session starts, Hive takes the vendor CLI through its startup screens (first-run notice, trust for the session folder, onboarding) to its input prompt, so the first request runs without a person. It never answers a tool or command permission prompt and never signs in. On by default; the HIVE_SESSIONS_AUTOSTART environment variable, when set, overrides this switch.') + '</span></div>';
     }
 
     function renderGovDashboard(dash) {
@@ -1113,8 +1114,10 @@
       ];
       const zoneOptions = zones.filter(z => z !== 'UTC').map(z => `<option value="${esc(z)}"${pref === z ? ' selected' : ''}>${esc(z)}</option>`).join('');
       const options = fixed.map(([value, label]) => `<option value="${esc(value)}"${pref === value ? ' selected' : ''}>${esc(label)}</option>`).join('') + zoneOptions;
+      const clock = dashboardClockPreference();
+      const clockOptions = [['', 'Browser locale (default)'], ['12', '12-hour (4:05 PM)'], ['24', '24-hour (16:05)']].map(([value, label]) => `<option value="${value}"${clock === value ? ' selected' : ''}>${esc(label)}</option>`).join('');
       const preview = formatDashboardDateTime(new Date());
-      const datalist = zones.map(z => `<option value="${esc(z)}"></option>`).join('');
+      const datalist =zones.map(z => `<option value="${esc(z)}"></option>`).join('');
       return '<div class="config-section" id="dashboard-timezone-settings">' +
         '<h3>Display timezone</h3>' +
         '<p class="text-muted fs-base">Choose the timezone used for dashboard timestamps. Relative ages such as “1m ago” are unchanged.</p>' +
@@ -1122,7 +1125,9 @@
         '<select id="dashboard-timezone-select" data-change-action="setDashboardTimeZonePreference" data-arg-types="v">' + options + '</select></div>' +
         '<div class="config-field"><label for="dashboard-timezone-custom">Search IANA timezone</label>' +
         '<input id="dashboard-timezone-custom" list="dashboard-timezone-list" value="' + esc(selectedCustom ? pref : '') + '" placeholder="America/Los_Angeles" data-change-action="setDashboardTimeZonePreference" data-arg-types="v">' +
-        '<datalist id="dashboard-timezone-list">' + datalist + '</datalist></div></div>' +
+        '<datalist id="dashboard-timezone-list">' + datalist + '</datalist></div>' +
+        '<div class="config-field"><label for="dashboard-clock-select">Time format</label>' +
+        '<select id="dashboard-clock-select" data-change-action="setDashboardClockPreference" data-arg-types="v">' + clockOptions + '</select></div></div>' +
         '<div class="text-muted fs-base">Preview: <strong id="dashboard-timezone-preview">' + esc(preview) + '</strong></div>' +
         '</div>';
     }
@@ -1140,6 +1145,16 @@
       const root = document.getElementById('theme-config-root');
       if (root) root.outerHTML = renderGovAppearance();
       showToast('Display timezone saved: ' + dashboardTimeZoneLabel(selectedDashboardTimeZone()), 'success');
+    }
+
+    function setDashboardClockPreference(value) {
+      const pref = value === '12' || value === '24' ? value : '';
+      try { if (pref) localStorage.setItem(DASHBOARD_CLOCK_STORAGE_KEY, pref); else localStorage.removeItem(DASHBOARD_CLOCK_STORAGE_KEY); } catch (e) {}
+      tickNavbarClock();
+      if (window._lastStatus) render(window._lastStatus);
+      const root = document.getElementById('theme-config-root');
+      if (root) root.outerHTML = renderGovAppearance();
+      showToast('Time format saved: ' + (pref ? pref + '-hour' : 'browser locale'), 'success');
     }
 
     function renderGovAppearance() {

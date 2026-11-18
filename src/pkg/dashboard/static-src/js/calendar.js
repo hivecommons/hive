@@ -160,7 +160,7 @@
     dashboardSetInterval('calendar', fetchCalendar, CALENDAR_POLL_MS);
 
     function calendarFormHtml() {
-      return '<details class="calendar-add"><summary class="muted-xs">Add meeting</summary><div class="calendar-add-grid mt-2">' +
+      return '<details class="calendar-add"><summary class="calendar-add-summary">Add meeting</summary><div class="calendar-add-grid mt-2">' +
         '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-calendar-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
         '<label>Title (optional)<input class="kb-search-box" type="text" data-calendar-field="title" maxlength="200" placeholder="Weekly sync" autocomplete="off"></label>' +
         '<label>Starts<input class="kb-search-box" type="datetime-local" data-calendar-field="start"></label>' +
@@ -228,21 +228,98 @@
       return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="calendarOpenMeeting" data-arg0="' + escapeHtml(mid) + '">' + (live ? 'Open live panel' : 'Notes') + '</button>';
     }
 
+    // A forwarded invite carries "FW:" or "Fwd:" in its title. Display only:
+    // the stored title is never changed.
+    const CALENDAR_FWD_PREFIX = /^\s*(?:(?:fw|fwd)\s*:\s*)+/i;
+    function calendarDisplayTitle(title) {
+      const s = String(title || '');
+      return s.replace(CALENDAR_FWD_PREFIX, '').trim() || s;
+    }
+    function calendarLooksForwarded(title) { return CALENDAR_FWD_PREFIX.test(String(title || '')); }
+
+    // calendarRepeatText says a recurrence rule in words ("repeats weekly").
+    function calendarRepeatText(rrule) {
+      const rule = String(rrule || '').toUpperCase();
+      if (!rule) return '';
+      const part = k => { const m = rule.match(new RegExp('(?:^|;)' + k + '=([^;]+)')); return m ? m[1] : ''; };
+      const n = parseInt(part('INTERVAL'), 10);
+      const every = (unit, word) => n > 1 ? 'repeats every ' + n + ' ' + unit + 's' : 'repeats ' + word;
+      switch (part('FREQ')) {
+        case 'DAILY': return every('day', 'daily');
+        case 'WEEKLY': return part('BYDAY') === 'MO,TU,WE,TH,FR' && !(n > 1) ? 'repeats every weekday' : every('week', 'weekly');
+        case 'MONTHLY': return every('month', 'monthly');
+        case 'YEARLY': return every('year', 'yearly');
+        default: return 'repeats on a schedule';
+      }
+    }
+
+    // calendarFormatRange writes one start and end in the viewer's zone with
+    // the zone named once, at the end: "Thu, Nov 19 · 10:00 AM – 11:00 AM EST".
+    function calendarFormatRange(start, end) {
+      const s = new Date(start);
+      if (!start || isNaN(s.getTime())) return '';
+      const e = end ? new Date(end) : null;
+      const hasEnd = !!e && !isNaN(e.getTime()) && e.getTime() > s.getTime();
+      try {
+        const day = d => new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).format(d);
+        const time = d => new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(d);
+        const zone = (new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' }).formatToParts(s).find(p => p.type === 'timeZoneName') || {}).value || '';
+        const tz = zone ? ' ' + zone : '';
+        if (!hasEnd) return day(s) + ' · ' + time(s) + tz;
+        if (day(s) === day(e)) return day(s) + ' · ' + time(s) + ' – ' + time(e) + tz;
+        return day(s) + ' ' + time(s) + ' – ' + day(e) + ' ' + time(e) + tz;
+      } catch (err) { return s.toISOString(); }
+    }
+
+    // calendarWhen is the row's time line. A series leads with its next
+    // occurrence and the rule after it; the first occurrence goes to the
+    // tooltip. A single meeting shows its own time.
+    function calendarWhen(e) {
+      const next = e.rrule ? (e.next_occurrences || [])[0] : '';
+      const startMs = new Date(e.start).getTime();
+      const span = e.end && !isNaN(startMs) ? new Date(e.end).getTime() - startMs : 0;
+      const lead = next ? calendarFormatRange(next, span > 0 ? new Date(new Date(next).getTime() + span).toISOString() : '') : calendarFormatRange(e.start, e.end);
+      const rule = e.rrule ? calendarRepeatText(e.rrule) : '';
+      const first = calendarFormatRange(e.start, e.end);
+      return {
+        text: (next ? 'Next: ' : '') + lead + (rule ? ' · ' + rule : ''),
+        title: e.rrule && first ? 'Series started ' + first : ''
+      };
+    }
+
+    // calendarApprovalWhy says, in plain words, why a row waits for the owner.
+    // The rule is the scheduler's: an emailed invite is scheduled on its own
+    // only when its sender is the organizer, DMARC aligned and allowlisted; a
+    // meeting another user adds waits for the owner.
+    function calendarApprovalWhy(e) {
+      if (!e || e.status !== 'awaiting_approval') return '';
+      if (e.source === 'email') {
+        const rule = 'Hive schedules an emailed invite on its own only when the meeting\'s organizer sent it, the sender is verified (DMARC aligned) and is on this hive\'s allowlist. ';
+        return calendarLooksForwarded(e.summary)
+          ? 'This invite looks forwarded, so it did not come from its organizer. ' + rule + 'Approve it to have hive join.'
+          : rule + 'This one did not meet all three. Approve it to have hive join.';
+      }
+      if (e.source === 'manual') return 'Added by ' + (e.invited_by || 'another user') + '. The owner approves meetings other users add.';
+      return 'Waiting for the owner to approve it.';
+    }
+
     function calendarRowHtml(e) {
       const platform = e.platform || '';
       const organizer = e.organizer ? (e.organizer.name || e.organizer.email || '') : (e.invited_by || '');
-      const next = (e.next_occurrences || [])[0];
       const status = e.status || '';
-      const times = calendarFormatTime(e.start) + (e.end ? ' – ' + calendarFormatTime(e.end) : '');
+      const when = calendarWhen(e);
+      const why = calendarApprovalWhy(e);
+      const meta = [organizer, CALENDAR_SOURCE_LABELS[e.source] || e.source || '', e.status_reason || ''].filter(Boolean).map(escapeHtml).join(' · ');
+      const actions = calendarMeetingLink(e) + calendarActionButtons(e);
       return '<div class="calendar-row" data-calendar-event="' + escapeHtml(e.id) + '" data-status="' + escapeHtml(status) + '">' +
+        '<div class="calendar-chips">' +
         '<span class="kc-pill calendar-status" data-status="' + escapeHtml(CALENDAR_PILL_STATUS[status] || '') + '">' + escapeHtml(CALENDAR_STATUS_LABELS[status] || status) + '</span>' +
-        '<span class="badge calendar-platform" data-platform="' + escapeHtml(platform) + '">' + (CALENDAR_PLATFORM_ICONS[platform] || '🎙') + ' ' + escapeHtml(calendarPlatformLabel(platform)) + '</span>' +
-        '<div class="calendar-row-main"><div class="calendar-row-title" title="' + escapeHtml(e.join_url || '') + '">' + escapeHtml(e.summary || e.join_url || 'Meeting') + '</div>' +
-        '<div class="muted-xs">' + escapeHtml(times) + (e.rrule ? ' · repeats' : '') +
-        (next && e.rrule ? ' · next ' + escapeHtml(calendarFormatTime(next)) : '') +
-        (organizer ? ' · ' + escapeHtml(organizer) : '') + ' · ' + escapeHtml(CALENDAR_SOURCE_LABELS[e.source] || e.source || '') +
-        (e.status_reason ? ' · ' + escapeHtml(e.status_reason) : '') + '</div></div>' +
-        calendarMeetingLink(e) + calendarActionButtons(e) + '</div>';
+        '<span class="badge calendar-platform" data-platform="' + escapeHtml(platform) + '">' + (CALENDAR_PLATFORM_ICONS[platform] || '🎙') + ' ' + escapeHtml(calendarPlatformLabel(platform)) + '</span></div>' +
+        '<div class="calendar-row-main"><div class="calendar-row-title" title="' + escapeHtml(e.join_url || '') + '">' + escapeHtml(calendarDisplayTitle(e.summary) || e.join_url || 'Meeting') + '</div>' +
+        '<div class="calendar-row-when"' + (when.title ? ' title="' + escapeHtml(when.title) + '"' : '') + '>' + escapeHtml(when.text) + '</div>' +
+        (meta ? '<div class="muted-xs calendar-row-meta">' + meta + '</div>' : '') + '</div>' +
+        (why ? '<div class="calendar-why" role="note">' + escapeHtml(why) + '</div>' : '') +
+        (actions ? '<div class="calendar-row-actions">' + actions + '</div>' : '') + '</div>';
     }
 
     function renderCalendar() {
@@ -259,7 +336,7 @@
       const upcoming = data.upcoming || [];
       const recent = data.recent || [];
       const pending = upcoming.filter(e => e.status === 'awaiting_approval').length;
-      host.innerHTML = calendarFormHtml() +
+      host.innerHTML = (typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '') + calendarFormHtml() +
         '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
         (recent.length ? '<div class="calendar-subsection"><div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div></div>' : '');
       setSectionSummary('calendar-section', upcoming.length + ' upcoming' + (pending ? ' · ' + pending + ' awaiting approval' : ''));
@@ -369,19 +446,20 @@
       const btn = (action, label, cls) => '<button type="button" class="hv-btn ' + cls + ' btn-sm" data-action="meetingDraftAct" data-arg0="' + id + '" data-arg1="' + action + '">' + label + '</button>';
       const where = d.type === 'knowledge' ? 'knowledge vault' : (d.repo || 'no repo set');
       const result = d.result_url ? ' · <a href="' + escapeHtml(d.result_url) + '" target="_blank" rel="noopener">' + escapeHtml(d.result_url) + '</a>' : (d.result_note ? ' · ' + escapeHtml(d.result_note) : '');
+      const actions = (d.meeting_id ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="calendarOpenMeeting" data-arg0="' + escapeHtml(d.meeting_id) + '">Meeting</button>' : '') +
+        (open ? btn('approve', 'Approve', 'btn-primary') + btn('reject', 'Reject', 'btn-secondary') : '');
       return '<div class="calendar-row" data-meeting-draft="' + id + '" data-status="' + (open ? 'awaiting_approval' : escapeHtml(status)) + '">' +
-        '<span class="kc-pill calendar-status" data-status="' + escapeHtml(CALENDAR_PILL_STATUS[status] || '') + '">' + escapeHtml(MEETING_DRAFT_STATUS[status] || status) + '</span>' +
-        '<span class="badge">' + escapeHtml(MEETING_DRAFT_TYPES[d.type] || d.type || '') + '</span>' +
+        '<div class="calendar-chips"><span class="kc-pill calendar-status" data-status="' + escapeHtml(CALENDAR_PILL_STATUS[status] || '') + '">' + escapeHtml(MEETING_DRAFT_STATUS[status] || status) + '</span>' +
+        '<span class="badge">' + escapeHtml(MEETING_DRAFT_TYPES[d.type] || d.type || '') + '</span></div>' +
         '<div class="calendar-row-main"><div class="calendar-row-title">' + escapeHtml(d.title || '') + '</div>' +
-        '<div class="muted-xs">' + escapeHtml(where) + (d.meeting_title ? ' · from ' + escapeHtml(d.meeting_title) : '') +
+        '<div class="muted-xs calendar-row-meta">' + escapeHtml(where) + (d.meeting_title ? ' · from ' + escapeHtml(d.meeting_title) : '') +
         (d.requested_by ? ' · asked by ' + escapeHtml(d.requested_by) + ' (display name)' : '') +
         (d.auto_approved ? ' · auto-approved' : '') + (d.decided_by && !d.auto_approved ? ' · ' + escapeHtml(status) + ' by ' + escapeHtml(d.decided_by) : '') +
         result + (d.error ? ' · <span class="kc-error">' + escapeHtml(d.error) + '</span>' : '') + '</div>' +
-        (d.body ? '<div class="muted-xs">' + escapeHtml(d.body) + '</div>' : '') +
+        (d.body ? '<div class="muted-xs calendar-row-body">' + escapeHtml(d.body) + '</div>' : '') +
         (d.excerpt ? '<details><summary class="muted-xs">Transcript excerpt</summary><pre class="muted-xs">' + escapeHtml(d.excerpt) + '</pre></details>' : '') +
         (open ? meetingDraftEditHtml(d) : '') + '</div>' +
-        (d.meeting_id ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="calendarOpenMeeting" data-arg0="' + escapeHtml(d.meeting_id) + '">Meeting</button>' : '') +
-        (open ? btn('approve', 'Approve', 'btn-primary') + btn('reject', 'Reject', 'btn-secondary') : '') + '</div>';
+        (actions ? '<div class="calendar-row-actions">' + actions + '</div>' : '') + '</div>';
     }
 
     function renderMeetingDrafts() {
@@ -393,7 +471,7 @@
       }
       const split = meetingDraftsSplit((_meetingDrafts || {}).drafts);
       host.innerHTML = '<div class="calendar-subsection"><div class="section-label m-0">Drafts from meetings</div>' +
-        '<p class="muted-xs">Issues, RFCs, Spek sessions and knowledge notes people asked for in a meeting. Nothing is created until you approve it.</p>' +
+        '<p class="muted-xs calendar-hint">Issues, RFCs, Spek sessions and knowledge notes people asked for in a meeting. Nothing is created until you approve it.</p>' +
         '<div class="calendar-list">' + (split.pending.length ? split.pending.map(meetingDraftRowHtml).join('') : '<p class="empty-dashed">No drafts waiting.</p>') + '</div>' +
         (split.decided.length ? '<details><summary class="muted-xs">Recent (' + split.decided.length + ')</summary><div class="calendar-list mt-2">' + split.decided.map(meetingDraftRowHtml).join('') + '</div></details>' : '') + '</div>';
     }

@@ -98,7 +98,7 @@ func TestConsentSpokenWhenChatFails(t *testing.T) {
 		t.Fatalf("posts %q leaves %q", posts, leaves)
 	}
 	// Once the notice is delivered, replies go through.
-	if err := m.Say(context.Background(), mt.ID, "hello"); err != nil {
+	if _, err := m.Say(context.Background(), mt.ID, "hello"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -112,7 +112,7 @@ func TestConsentUnconfirmedChatAndVoiceOffLeaves(t *testing.T) {
 	if got.ConsentPostedAt != nil || got.StateReason != ReasonConsentUndelivered {
 		t.Fatalf("meeting %+v", got)
 	}
-	if !strings.Contains(got.ConsentError, "chat delivery not confirmed") || !strings.Contains(got.ConsentError, "voice off") {
+	if !strings.Contains(got.ConsentError, "chat delivery not confirmed") || !strings.Contains(got.ConsentError, "joined without voice") {
 		t.Fatalf("consent error %q", got.ConsentError)
 	}
 	if _, leaves := q.snapshot(); len(leaves) != 1 || leaves[0] != "q1" {
@@ -136,17 +136,23 @@ func TestConsentChatAndVoiceFailLeaves(t *testing.T) {
 	}
 }
 
-func TestConsentVoiceCapableButMutedLeaves(t *testing.T) {
+// The live Teams test: chat had no composer and the owner had turned voice
+// replies off, so she left at once. The consent notice is not a voice
+// reply: a bot that joined able to speak says it.
+func TestConsentSpokenWhenVoiceRepliesOff(t *testing.T) {
 	q := &confirmingQuorum{fakeQuorum: newFakeQuorum(), confirmEr: []error{errNoComposer}}
-	// The owner turned voice off before the bot went live: hive may not speak.
 	m, mt := liveTeams(t, q, true, func(m *Manager, mt Meeting) {
 		if _, err := m.SetVoice(mt.ID, false); err != nil {
 			t.Fatal(err)
 		}
 	})
-	eventually(t, "left", stateIs(m, mt.ID, StateEnded))
-	if s := q.says(); len(s) != 0 {
-		t.Fatalf("says %q", s)
+	eventually(t, "consent", func() bool { got, _ := m.Get(mt.ID); return got.ConsentPostedAt != nil })
+	got, _ := m.Get(mt.ID)
+	if got.ConsentVia != ConsentViaVoice || got.State != StateLive || got.VoiceEnabled {
+		t.Fatalf("meeting %+v", got)
+	}
+	if s := q.says(); len(s) != 1 || s[0] != testConsent {
+		t.Fatalf("says %q, want the consent notice", s)
 	}
 }
 
@@ -186,6 +192,53 @@ func TestConsentTransientThenConfirmed(t *testing.T) {
 	q.stream("q1") <- Event{Type: EventSegment, Speaker: &Person{Name: "Ana"}, Text: "hello", Final: true}
 	eventually(t, "consent", func() bool { got, _ := m.Get(mt.ID); return got.ConsentPostedAt != nil })
 	if got, _ := m.Get(mt.ID); got.ConsentVia != ConsentViaChat || got.ConsentError != "" || got.State != StateLive {
+		t.Fatalf("meeting %+v", got)
+	}
+}
+
+// zeroAudioQuorum reports a spoken line with the given length, as the bot
+// does for a line it could not synthesize (duration 0).
+type zeroAudioQuorum struct {
+	*confirmingQuorum
+	durationMS int64
+}
+
+func (z *zeroAudioQuorum) SayTimed(ctx context.Context, id, text string) (SayResult, error) {
+	return SayResult{DurationMS: z.durationMS}, z.confirmingQuorum.Say(ctx, id, text)
+}
+
+// A bot that could not synthesize the notice answers "spoken" with no
+// audio. Nobody heard it, so it is not a delivered notice: the bot leaves.
+func TestConsentVoiceWithNoAudioIsNotDelivered(t *testing.T) {
+	cq := &confirmingQuorum{fakeQuorum: newFakeQuorum(), confirmEr: []error{errNoComposer}}
+	z := &zeroAudioQuorum{confirmingQuorum: cq}
+	m := newTestManager(t, z, 0)
+	mt, err := m.Join(context.Background(), JoinRequest{URL: "https://teams.microsoft.com/l/meetup-join/x", Voice: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	z.stream("q1") <- Event{Type: EventState, State: StateLive}
+	eventually(t, "left", stateIs(m, mt.ID, StateEnded))
+	got, _ := m.Get(mt.ID)
+	if got.ConsentPostedAt != nil || got.ConsentVia == ConsentViaVoice || got.StateReason != ReasonConsentUndelivered {
+		t.Fatalf("a zero-length spoken notice was taken as delivered: %+v", got)
+	}
+	if !strings.Contains(got.ConsentError, errConsentNotSpoken.Error()) {
+		t.Fatalf("consent error %q", got.ConsentError)
+	}
+}
+
+func TestConsentVoiceWithAudioIsDelivered(t *testing.T) {
+	cq := &confirmingQuorum{fakeQuorum: newFakeQuorum(), confirmEr: []error{errNoComposer}}
+	z := &zeroAudioQuorum{confirmingQuorum: cq, durationMS: 4200}
+	m := newTestManager(t, z, 0)
+	mt, err := m.Join(context.Background(), JoinRequest{URL: "https://teams.microsoft.com/l/meetup-join/x", Voice: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	z.stream("q1") <- Event{Type: EventState, State: StateLive}
+	eventually(t, "consent", func() bool { got, _ := m.Get(mt.ID); return got.ConsentPostedAt != nil })
+	if got, _ := m.Get(mt.ID); got.ConsentVia != ConsentViaVoice {
 		t.Fatalf("meeting %+v", got)
 	}
 }

@@ -138,6 +138,10 @@ type UserSessionRuntime struct {
 	// bufSeq makes every paste buffer name unique, so concurrent inputs to one
 	// session cannot paste each other's text.
 	bufSeq atomic.Uint64
+	// auditSink records a login adopted from a session HOME into the shared
+	// login (usersession_login.go); guarded by auditMu. Nil is allowed.
+	auditMu   sync.Mutex
+	auditSink crux.AuditSink
 }
 
 // NewUserSessionRuntime returns a runtime that drives the real tmux binary.
@@ -263,6 +267,9 @@ func (r *UserSessionRuntime) Start(spec crux.UserSessionSpec) error {
 		}
 		cwd, workspace = ws, ws
 	}
+	// First line against first-run screens: a seeded HOME never shows them
+	// (usersession_startup.go).
+	r.seedOnboarding(spec, uid, cwd)
 	session := UserSessionTmuxName(spec.ID)
 	create := newSessionCommands(session, cwd)
 	// Keep the pane (and its scrollback) after the CLI exits so a late viewer

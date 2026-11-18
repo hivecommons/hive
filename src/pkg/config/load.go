@@ -9,9 +9,11 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"gopkg.in/yaml.v3"
 )
@@ -200,6 +202,24 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// pack apply saw nothing to respect. Adopt them BEFORE the fullness guard,
 	// like WorkSource, so a short overlay still carries them.
 	adoptOperatorCadenceOverrides(cfg, &overlay)
+	// Review gate and agent sandbox (#18804): the dashboard saves both into
+	// the overlay (the Config marshals whole), but this reload used to rebuild
+	// them from the seed alone, so a reload that starts from the seed (the
+	// read-only ConfigMap mount on a first boot or reprovision, config-check,
+	// a watcher reload of the seed path) silently dropped
+	// review.combined_perspectives, review.require_labels,
+	// review.perspectives_source and agent_sandbox.image/job.*, the same shape
+	// as #5632 and the work source. Adopt each block whole when the overlay
+	// carries it, BEFORE the fullness guard so a short overlay still wins; an
+	// overlay that says nothing leaves the seed's block untouched. This is the
+	// same overlay-wins rule the entrypoint's boot merge applies to every
+	// block. Variables stays seed-only (see the invariant below).
+	if !reflect.DeepEqual(overlay.Review, ReviewConfig{}) {
+		cfg.Review = overlay.Review
+	}
+	if !reflect.DeepEqual(overlay.AgentSandbox, cruxconfig.AgentSandboxConfig{}) {
+		cfg.AgentSandbox = overlay.AgentSandbox
+	}
 	if len(overlay.RemovedAgents) > 0 {
 		cfg.RemovedAgents = overlay.RemovedAgents
 		cfg.PruneRemovedAgents()
@@ -216,7 +236,7 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// Guard: the overlay must look like a full hive config (same check the
 	// entrypoint and validateSaveGuard apply) before we trust its agents.
 	if overlay.Project.Org == "" || len(overlay.Agents) == 0 {
-		return cfg, nil
+		return cfg, cfg.validateJobAffinities()
 	}
 	// Overlay agents win — they carry the reconciled pack-behavior fields.
 	//
@@ -245,6 +265,34 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	for name := range agents {
 		cfg.ApplyAgentDefaults(name)
 	}
+	// Per-agent files (/data/agent-configs/<name>.yaml) are the higher layer
+	// (config-layering.md), but the whole-entry replacement above buried them
+	// under the overlay's older copy of the same agent, so an operator's
+	// `paused: true` or `sandbox:` block in the agent file never took effect
+	// while the overlay and runtime config still said otherwise (#18804). Carry
+	// those two operator-owned fields forward from the file. Not the whole
+	// entry: an explicit overlay `converse: false` deliberately beats the file
+	// (#7503), and pack-reconciled fields live in the overlay. `paused: false`
+	// in a file is indistinguishable from unset, so only a pause is carried;
+	// unpause through the dashboard, which writes both layers.
+	if cfg.Data.AgentsDir != "" {
+		if files, ferr := LoadAgentOverrides(cfg.Data.AgentsDir); ferr == nil {
+			for name, fa := range files {
+				a, ok := cfg.Agents[name]
+				if !ok || cfg.IsAgentRemoved(name) {
+					continue
+				}
+				if fa.Paused {
+					a.Paused = true
+					a.PauseOwner = fa.PauseOwner
+				}
+				if fa.Sandbox != nil {
+					a.Sandbox = fa.Sandbox
+				}
+				cfg.Agents[name] = a
+			}
+		}
+	}
 	if err := cfg.ApplyAgentSpecRepoScopes(); err != nil {
 		return cfg, err
 	}
@@ -256,7 +304,7 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// block is intentionally NOT merged. The dashboard overlay is user-writable,
 	// so honoring its resolver policy would let a compromised overlay enable
 	// script/http execution. Keep this true if overlay merging is ever expanded.
-	return cfg, nil
+	return cfg, cfg.validateJobAffinities()
 }
 
 // adoptOperatorCadenceOverrides re-applies the dashboard overlay's

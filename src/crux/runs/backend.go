@@ -109,6 +109,7 @@ func jobOptions(job config.SandboxJobConfig) kubejob.Options {
 		WorkspaceClaim:      job.WorkspaceClaim,
 		WorkspaceClaimMount: job.WorkspaceClaimMount,
 		NodeSelector:        job.NodeSelector,
+		Affinity:            job.Affinity,
 		ServiceAccount:      job.ServiceAccount,
 		SchedulerName:       job.SchedulerName,
 		EnvFromSecrets:      job.EnvFromSecrets,

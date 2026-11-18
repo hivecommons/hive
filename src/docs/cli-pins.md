@@ -110,6 +110,17 @@ A pin change can leave Hive's model lists behind. Two layers cover it:
   `HIVE_MODEL_CHECK_STRICT=1` to make drift fail.
 - Each bump PR body carries a checklist for what cannot be automated:
   allowlists/fallbacks, `static/index.html`, and `src/pkg/tokens/pricing.go`.
+- For Claude, `.github/workflows/claude-model-freshness.yml` does those edits
+  weekly (#18754). It takes the Claude ids on OpenRouter's public catalogue
+  that are newer than the lists' newest of the same line (Fable, Opus, Sonnet,
+  Haiku; never Mythos, never an id OpenRouter is withdrawing) and probes each
+  with the pinned Claude Code, unauthenticated: the CLI prints an
+  `unrecognized_model` diagnostic for an id its model table does not know.
+  Recognised ids go into `claudePinnedCLIModels`, `claudeStaticModels`,
+  `CLAUDE_CLI_MODELS`, `static/index.html`, a requirements line at the pin,
+  and a `modelPrices` row from `pricetable --add` (same plausibility rules as
+  the price refresh). Everything else is listed under "needs a check" in one
+  PR on `bot/claude-model-freshness`, which carries `needs-human`.
 
 The PR then runs the normal gates. The docker workflow builds both images for
 linux/amd64 and linux/arm64, where every hash-verified layer runs

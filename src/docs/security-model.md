@@ -73,6 +73,7 @@ are enabled on a given hive.
 | Forced egress through the proxy (iptables) | proxy bypass | `src/deploy/entrypoint.sh` | boot log; no `HIVE_PROXY_ADVISORY_OK` |
 | Tiered GitHub tokens per agent mode | blast radius of a leaked token | `src/crux/agentmode`, `src/crux/agent/manager_tokens.go` | token tier on the agent card |
 | Proxy-side credential injection (opt-in) | token theft | `HIVE_PROXY_INJECT_GH_AUTH` | `security.credentialInjection` in governor config |
+| Sandbox Job GitHub read relay (opt-in) | anonymous 60/hr API cap; token in the Job | `agent_sandbox.job.github_read_proxy` | `sandbox GitHub read relay enabled` boot line |
 | Inference-key placeholder swap | provider key theft | `src/pkg/apiproxy` | agent env shows `sk-hive-<agent>` |
 | `gh` wrapper with per-agent restrictions | denied commands | `bin/gh-wrapper.sh` | `gh` resolves to `/usr/local/bin/gh` |
 | `hive-open-pr` / `hive-merge` relays | forged authorship, stale-commit merges | `bin/hive-merge.sh`, `bin/hive-open-pr.sh` | `POST /pulls` returns 403 for agents |
@@ -147,6 +148,19 @@ envelope before it reaches spektacular or an agent prompt
 scanned for them. Session state is pruned and logs are scrubbed
 ([security.md](security.md)).
 
+Customer profiles follow the same rule. An agent cannot read the customers
+store. When a kick is about an issue whose author, assignee or claimer is a
+customer, the hive adds one short block to the prompt: their GitHub login, the
+tags that are on, and the goals a person confirmed. The block is capped at 1,024
+bytes. It never holds an email address, an id, notes or the satisfaction
+assessment. A goal is text a person typed, so it is scanned by `ioscan` first. A
+goal that holds an address, an id or a recognised attack is dropped whole. The
+rest sit inside a fence with a random nonce, marked as data and not as
+instructions. The meeting persona gets the same slice for a customer a question
+names: a name, tags and confirmed goals. It never says notes or the satisfaction
+assessment aloud, because a room can hold people who are not the hive's users.
+Goals the hive inferred stay out until a person confirms them.
+
 Untrusted recordings transcribed by the built-in whisper provider are decoded
 and transcribed outside the hive process, in the `hive-whisper` sandbox: a
 separate `hive-transcribe` uid with no home, shell or supplementary groups,
@@ -182,6 +196,56 @@ the URL, the hive's own DNS lookup with the connection pinned to the checked
 address (any private, loopback, link-local, CGNAT, multicast, ULA or metadata
 answer refuses the link), every redirect re-checked (at most 3), the body
 size- and time-capped, and the environment proxy never used.
+
+### Customers: people the hive has seen
+
+The Customers section keeps one profile per person. It lives in two files on the
+hive's own volume and nothing in it leaves the hive. It is not sent to the hub,
+written to GitHub or put in a heartbeat. The design is in
+[customers](design/customers.md).
+
+Some of these people never signed up. They are issue authors, meeting guests and
+mail senders. The hive keeps only a key, a few counts and up to five references
+for them, and only until someone accepts them. A suggestion ends when the thing
+it came from is deleted. Forgetting a person deletes them and leaves a salted
+hash, so they are not rebuilt.
+
+Links between identities are made only on exact keys. A display name never links
+anyone. One link rests on an assumption you should know about. When the access
+list holds a name such as `github:alice`, or the bare login `alice` that a
+GitHub device-flow sign-in produces (the access list treats the two as one
+user), the hive treats `alice` as that person's GitHub login. A name with
+another provider prefix, an address, a dot or an underscore is not read as a
+login. The hub put that entry there after it signed the person in with GitHub,
+so the hive trusts it. If your access list is edited by hand, an entry like
+that gives the named person's profile the matching GitHub activity.
+
+One part of this section is a request your browser makes, not the hive. The list
+shows a GitHub picture for each person with a confirmed GitHub login. Your
+browser asks `github.com/<login>.png` over https for the people on screen. It does
+this late, only for rows you can see, and it sends no referrer. GitHub learns
+your IP address and which logins were asked for. So it can tell you have those
+GitHub users in your customer list. It learns nothing else about them. The hive
+does not fetch or keep the pictures. A person known only by an email address is
+never looked up, and neither is any hash of the address. The dashboard already
+allows `https:` images, so no policy changes, and a test pins it. To turn the
+pictures off, set `customers.avatars.enabled: false` or
+`HIVE_CUSTOMERS_AVATARS_ENABLED=false`, or use the switch in Settings. The list
+then shows initials and asks GitHub for nothing.
+
+A read-only user sees only their own profile. An identity they add is shown as
+unconfirmed. It links nothing until the owner or a read-write user confirms it.
+
+Goal and satisfaction suggestions are off by default, because they send text to
+a model. When the owner turns them on, the hive sends a customer's own issues,
+pull requests and approved mail to the model set up for meetings. That text can
+be about people who never signed up, so it is cleaned first. A line that holds an
+address, an id or a recognised attack is dropped, and the rest sits in a fenced
+block marked as data. The reply is checked too: at most three short goals, a
+level from a short list and no number, each citing the evidence it was given. A
+suggestion is never applied. A person confirms, edits or rejects it, and a value
+a person set is never overwritten. The model has a daily token budget, and
+nothing it suggests leaves the hive.
 
 ## 5. Network and credentials
 
@@ -533,6 +597,102 @@ importance:
   mode 0400, session-owned. `settings.json`, hooks, MCP or extension config,
   `gh`'s `hosts.yml` and `~/.config` are never bridged, so a session can neither
   rewrite shared configuration nor plant a hook an agent would run.
+- **One refreshable Claude login, and it is not in a session.** A copy of an
+  OAuth login that can refresh is a second holder of the grant: when the CLI
+  in a session refreshed its copy, the refresh rotated the grant, the shared
+  file the agents read was left with a dead refresh token, and every agent on
+  the hive fell to the login prompt until a person signed in again
+  ([#18724](https://github.com/hivecommons/hive/issues/18724)). A session
+  therefore gets the Claude login **without its refresh token**, and only the
+  login's own token block, nothing else stored in that file. It can use the
+  fleet's current access token and cannot rotate or carry away the long-lived
+  grant. Who refreshes it: the hive itself, once, ahead of expiry
+  ([#18731](https://github.com/hivecommons/hive/issues/18731); it redeems the
+  shared refresh token and holds the new grant on disk and in memory until the
+  shared file has it, `HIVE_CLAUDE_SHARED_REFRESH=off` disables it), the
+  agents' credential bridge when a CLI refreshed first anyway, and the
+  dashboard sign-in. A session never refreshes. All writers of the shared file
+  go through one function under one lock that accepts only a usable credential
+  expiring strictly later than the current one. The hive keeps
+  the copies current (it replaces them, atomically and as the session's uid,
+  when the shared login changes), so a session depends on the fleet's login
+  being refreshed by an agent or a sign-in; a session cannot do that itself.
+  The session uid still has no access to `/data/home`: nothing is linked or
+  bound into the session, and the hive reads a session's login file as that
+  session's uid, through a size-bounded helper with the minimal session
+  environment.
+  As a safety net, a complete Claude login that is in a session home anyway (a
+  copy made before this rule, or a person signing in from inside a session)
+  is **adopted** into the shared file when it is usable and strictly newer
+  than the shared login: a later access-token expiry and a file written after
+  the shared one, or a shared login that is not usable at all. Only expiry
+  and modification time decide; token values are never logged. The replaced
+  shared file is kept beside it as `.credentials.json.stale-<UTC time>`, the
+  session is put back on a refresh-less copy, and a
+  `user_session_login_adopted` audit entry names the session and the trigger.
+  This runs at boot, on every credential-bridge poll
+  (`HIVE_CLAUDE_CREDENTIAL_BRIDGE_INTERVAL`), after a dashboard sign-in, when
+  a session starts or resumes, and before a session's sandbox is deleted: if
+  the login cannot be adopted the deletion fails and is retried, so removing
+  a session never removes the only valid login. It runs under the lock the
+  agents' bridge repair holds, so two newer logins settle on the later one.
+  Note what this means: anyone who may use a session's keyboard can sign that
+  session in with an account of their own, and that login becomes the hive's
+  when it is newer. The audit entry is the record of it, and a dashboard
+  sign-in puts the hive back on the operator's account.
+  The other vendors' files are still plain copies, refresh token included
+  where the vendor stores one. Gemini's Google refresh token and the Copilot
+  CLI token do not rotate. Codex's ChatGPT login (`.codex/auth.json`) and an
+  OpenCode OAuth entry (`opencode/auth.json`) do, so a session that refreshes
+  its copy holds the only valid login; for these two the hive **adopts** that
+  login back into the shared file the agents link to
+  ([#18740](https://github.com/hivecommons/hive/issues/18740)). Codex: the
+  session's file was written after the shared one, holds a ChatGPT login
+  with a different refresh token and records a later `last_refresh`, and the
+  shared file itself holds a ChatGPT login (an API-key login does not rotate
+  and is never replaced). OpenCode, per provider entry: both entries are
+  `oauth`, the session's has a different refresh token and a later
+  `expires`, and the session's file was written after the shared one; only
+  those entries are replaced, every other entry of the shared file is kept,
+  and a provider the shared file does not hold is not added. Only those
+  fields and modification times decide; token values are never logged. The
+  replaced file is kept as `auth.json.stale-<UTC time>`, the new one keeps the
+  old one's mode (and owner, where the hive may set it), and
+  `user_session_login_adopted` names the session, trigger, vendor and file.
+  It runs when the Claude check runs, deletion included: a newer login that
+  cannot be adopted keeps the session. Unlike Claude, a session still holds a
+  copy that can refresh, on purpose. Both CLIs keep the refresh token as a
+  field their login file schema requires (from their source, not yet
+  confirmed on a live install) (Codex: `tokens.refresh_token`; OpenCode:
+  `refresh` of an `oauth` entry), so a copy with that field removed is read
+  as a corrupt or logged-out login, and one with a placeholder fails at its
+  first refresh: either would sign the person out of the session, which is
+  worse than the window it closes, and hive has no way to route a CLI's
+  refresh through the shared file. The adoption above is therefore the
+  safety net and the shared file stays the single owner: an adoption only
+  ever writes the shared file, never the session's copy, and the hive never
+  replaces a shared file that changed after it was compared, so a session
+  refresh and an agent refresh of the same token within one poll cannot
+  leave two diverged logins for long; the shared file converges on the newer
+  one at the next poll. If that file is ever needed again, the stale file the
+  adoption kept (`auth.json.stale-<UTC time>`, next to the shared login, same
+  mode) holds the login it replaced.
+  Manual check, needs a person and a real install (not run in CI, so the
+  assumed file formats stay unconfirmed until it is done,
+  [#18740](https://github.com/hivecommons/hive/issues/18740)): on a hive with
+  a signed-in Codex and OpenCode, (1) start a session, confirm
+  `.codex/auth.json` and `opencode/auth.json` in its home match the shared
+  files' shape (compare key names only, never print values); (2) in the
+  session force a refresh (Codex: `codex login status` after setting an
+  older `last_refresh`; OpenCode: wait past `expires`) and confirm the next
+  poll writes the shared file, leaves an `auth.json.stale-*` beside it and
+  audits `user_session_login_adopted` with vendor `codex` or `opencode`;
+  (3) confirm an agent of that vendor is still logged in; (4) remove the
+  session and confirm the shared login still works; (5) grep the hive log
+  for the access and refresh token values: there must be none. Attach a
+  redacted real file, with token values replaced, as the test fixture. For all of these vendors a resume
+  no longer overwrites a file the session's CLI rewrote after the shared one
+  was written.
 - **Terminal access is bound.** ttyd listens on loopback without a secret a
   session uid could not read (its `-c` credential is visible in `/proc`), so
   session attaches are gated by a per-session token, HMAC-SHA256 of the tmux
@@ -563,6 +723,24 @@ importance:
   keyboard. Renaming, closing, resuming, deleting and the `shared` flag stay
   with the creator and owners. Ids of sessions a caller may not see are never
   disclosed.
+- **Startup screens only.** When a session starts the hive takes the CLI to
+  its input prompt by answering its startup screens (first-run notice, trust
+  for the session's own working directory, onboarding, an update menu), with
+  the detector agents use restricted to those screens; a Claude Code HOME is
+  also seeded so they do not appear. This does not weaken the posture above:
+  a tool or command permission prompt is classified as refused and is never
+  answered (the refusal is checked before anything else and across every
+  vendor's patterns, and a test fails when a prompt added for agents is not
+  classified), a login or OAuth screen is never answered (the tab says
+  "needs sign-in"), the seed carries no account or credential and never
+  replaces an existing file, and nothing is sent once a person has typed
+  into the session, after the input prompt is reached, or after a bounded
+  window. Trusting the working directory is the one decision made for the
+  person: it is the session's own worktree of the hive's project repository,
+  the directory they asked to work in. Each outcome is audited as
+  `session_autostart`. `dashboard.sessions.autostart: false` or
+  `HIVE_SESSIONS_AUTOSTART=false` turns it off. See
+  [Startup auto-answer](api-reference/sessions.md#startup-auto-answer).
 - **Resume ids** never start with `-` and a resume command may carry only the
   vendor binary, a fixed set of resume words and a flag-free id, so a planted
   transcript name cannot add `--dangerously-skip-permissions`.
@@ -581,8 +759,12 @@ importance:
   ([inbox-recording.md](inbox-recording.md)); `/terminal/` and `/api/` keep
   `display-capture=()`.
 
-Audit: `session_created`, `session_started` (the outcome of the background
-start), `session_closed`, `session_renamed`, `session_input` and
+Audit: `user_session_login_adopted` (a newer Claude, Codex or OpenCode login
+found in a session home was adopted into the shared login; session id,
+trigger, the preserved file's path and, for Codex and OpenCode, the vendor and
+file, never token material), `session_created`, `session_started` (the
+outcome of the background start), `session_autostart` (how the startup auto-answer ended and which
+screens it answered), `session_closed`, `session_renamed`, `session_input` and
 `session_upload` record the user and session id (never input text).
 `session_input` is written when a queued Send is actually typed into the pane,
 as the user who queued it, so attribution follows the sender, not the moment

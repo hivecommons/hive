@@ -58,6 +58,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	resp.NeedsHumanLabels = needsHumanPresetLabels(cfg, status.HiveID)
 	resp.Workflows = stageTrackerWorkflows(cfg, s.workflowProfileLookup(), qualifyRepo)
+	attachWorkflowHandoffsToTracker(resp.Workflows, s.workflowDispatchHandoffs())
 	expectedPerspectives := stageTrackerExpectedPerspectives(cfg)
 	// A Review track only waits on "the hive reviewer" when this hive's
 	// planner dispatches one; with the swarm off it says a person reviews.
@@ -655,6 +656,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
 	stageTrackerResolveHumanAttention(resp.Items)
+	stageTrackerResolveHumanGates(resp.Items, now)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
 }

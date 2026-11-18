@@ -69,20 +69,27 @@ const (
 // Log-fed classes: faults that have no dedicated hook site and are recognised
 // from their WARN+ log line by the slog feed (see LogFedClass).
 const (
-	ClassTmuxSessionCheckFailed      = "tmux_session_check_failed"
-	ClassAgentPaneTimeout            = "agent_pane_timeout"
-	ClassProxyTLSHandshakeFailed     = "proxy_tls_handshake_failed"
-	ClassAgentDirSetupFailed         = "agent_dir_setup_failed"
-	ClassReviewEvidenceWriteFail     = "review_evidence_write_failed"
-	ClassFeedbackIssueRefreshFailed  = "feedback_issue_refresh_failed"
-	ClassBeadFactIngestFailed        = "bead_fact_ingest_failed"
-	ClassSelfReportClearedFailed     = "selfreport_cleared_comment_failed"
-	ClassGitHubAppRepoNotCovered     = "github_app_repo_not_covered"
-	ClassProxyConnectDialFailed      = "proxy_connect_dial_failed"
-	ClassProxyPlainForwardRefused    = "proxy_plain_forward_refused"
-	ClassInferenceUpstreamError      = "inference_upstream_error"
-	ClassInferenceCallerUnknown      = "inference_caller_unidentified"
-	ClassInferenceNoRoute            = "inference_no_route"
+	ClassTmuxSessionCheckFailed     = "tmux_session_check_failed"
+	ClassAgentPaneTimeout           = "agent_pane_timeout"
+	ClassProxyTLSHandshakeFailed    = "proxy_tls_handshake_failed"
+	ClassAgentDirSetupFailed        = "agent_dir_setup_failed"
+	ClassReviewEvidenceWriteFail    = "review_evidence_write_failed"
+	ClassFeedbackIssueRefreshFailed = "feedback_issue_refresh_failed"
+	ClassBeadFactIngestFailed       = "bead_fact_ingest_failed"
+	ClassSelfReportClearedFailed    = "selfreport_cleared_comment_failed"
+	ClassGitHubAppRepoNotCovered    = "github_app_repo_not_covered"
+	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
+	ClassProxyPlainForwardRefused   = "proxy_plain_forward_refused"
+	ClassInferenceUpstreamError     = "inference_upstream_error"
+	ClassInferenceCallerUnknown     = "inference_caller_unidentified"
+	ClassInferenceNoRoute           = "inference_no_route"
+	ClassProxyWriterUnidentified    = "proxy_writer_unidentified"
+	// ClassProxyUpstreamDegraded: the MITM/transparent proxy's TLS dial to a
+	// GitHub-family host keeps failing (hivecommons/hive#18867). A burst is
+	// environment degradation (a flaky egress path), kept in the hive's logs
+	// and not filed; only a failure that persists past proxyUpstreamSustained
+	// is reportable, and then as an operator action on that spoke.
+	ClassProxyUpstreamDegraded       = "proxy_upstream_degraded"
 	ClassInferenceBackendAuthFailure = "inference_backend_auth_failure"
 	ClassSHAPollCommitMsgUnavail     = "sha_poll_commit_message_unavailable"
 	ClassKickFreshnessWithheld       = "kick_freshness_withheld"
@@ -124,6 +131,14 @@ const (
 	// this long (2× its window) is cleared, so a "cleared" comment follows
 	// once the symptom stops instead of the condition idling until the TTL.
 	unclassifiedIdleClear = 2 * unclassifiedRepeatWindow
+	// proxyUpstreamSustained is how long upstream dial failures must persist
+	// (no quiet gap of proxyUpstreamIdleClear) before they stop being treated
+	// as a transient egress blip and become reportable.
+	proxyUpstreamSustained = time.Hour
+	// proxyUpstreamIdleClear: a quiet gap this long ends the episode and
+	// restarts the persistence clock, so repeated short bursts never add up
+	// to "sustained".
+	proxyUpstreamIdleClear = 30 * time.Minute
 	// kickFailureStreak is the consecutive-failure count that makes repeated
 	// kick failures reportable.
 	kickFailureStreak = 3
@@ -212,8 +227,10 @@ var Classes = map[string]ClassSpec{
 	ClassSelfReportClearedFailed:     {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"fleet report: cleared comment failed"}},
 	ClassGitHubAppRepoNotCovered:     {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
 	ClassProxyConnectDialFailed:      {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed", "copilot sniff: upstream dial failed"}},
+	ClassProxyUpstreamDegraded:       {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, MinDuration: proxyUpstreamSustained, IdleClear: proxyUpstreamIdleClear, LogFed: true, Keywords: []string{"proxy upstream dial failed"}},
 	ClassProxyPlainForwardRefused:    {Component: "github-proxy", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward refused"}},
 	ClassInferenceCallerUnknown:      {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference request from unidentified caller refused"}},
+	ClassProxyWriterUnidentified:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: agent could not be identified"}},
 	ClassInferenceNoRoute:            {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference no route"}},
 	ClassInferenceBackendAuthFailure: {Component: "backend-auth", Severity: "high", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference backend auth failure"}},
 	ClassInferenceUpstreamError:      {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed", "inference translate request failed"}},
@@ -992,6 +1009,92 @@ func SeenComment(fp, hive, version, cluster string, ev Evidence, now time.Time) 
 		fmt.Fprintf(&b, "\n\n<details><summary>Diagnostics (scrubbed)</summary>\n\n```\n%s\n```\n</details>", ev.Diagnostics)
 	}
 	return safeText(b.String())
+}
+
+// SeenLogMarker heads the single "also seen" comment a poster keeps per
+// fleet-report issue (hivecommons/hive#18608). Joins edit that comment in
+// place instead of posting a new one per sighting: an edit notifies nobody,
+// and the issue body's Affected-hives block already counts every sighting.
+const SeenLogMarker = "<!-- hive:selfreport-seen-log -->"
+
+// seenLogMaxHives bounds the sections one seen-log comment keeps.
+const seenLogMaxHives = 25
+
+// seenLogMaxBytes bounds the seen-log comment body below GitHub's 65536-char
+// comment limit. Sections can carry up to maxDiagnosticsBytes of diagnostics
+// each, so the section count alone does not keep the body under the limit.
+const seenLogMaxBytes = 60000
+
+const seenLogHeader = SeenLogMarker + "\n**Also seen on other hives.** One section per hive, newest first; edited in place as sightings arrive. The Affected hives block in the issue body keeps the counts."
+
+// SeenLog folds sighting (a SeenComment, or any body that starts with
+// SeenMarker) into the seen-log comment body previous ("" when none exists
+// yet) and returns the new body. The hive's earlier section is replaced, the
+// new one goes first, and other hives' sections are kept in order.
+func SeenLog(previous, sighting string) string {
+	sighting = strings.TrimSpace(sighting)
+	key := seenSectionHive(sighting)
+	sections := []string{sighting}
+	if strings.Contains(previous, SeenLogMarker) {
+		for _, s := range seenSections(previous) {
+			if key != "" && seenSectionHive(s) == key {
+				continue
+			}
+			if len(sections) >= seenLogMaxHives {
+				break
+			}
+			sections = append(sections, s)
+		}
+	}
+	body := safeText(seenLogHeader + "\n\n" + strings.Join(sections, "\n\n"))
+	// Drop the oldest sections (always keeping the newest) until the body fits.
+	for len(body) > seenLogMaxBytes && len(sections) > 1 {
+		sections = sections[:len(sections)-1]
+		body = safeText(seenLogHeader + "\n\n" + strings.Join(sections, "\n\n"))
+	}
+	return body
+}
+
+// seenSections splits a seen-log body into its per-hive sections, each
+// starting at a SeenMarker.
+func seenSections(body string) []string {
+	var out []string
+	rest := body
+	idx := strings.Index(rest, SelfReportSeenMarkerPrefix)
+	for idx >= 0 {
+		rest = rest[idx:]
+		next := strings.Index(rest[len(SelfReportSeenMarkerPrefix):], SelfReportSeenMarkerPrefix)
+		section := rest
+		if next >= 0 {
+			section = rest[:len(SelfReportSeenMarkerPrefix)+next]
+			rest = rest[len(SelfReportSeenMarkerPrefix)+next:]
+			idx = 0
+		} else {
+			idx = -1
+		}
+		if s := strings.TrimSpace(section); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// seenSectionHive returns the hive=<value> a section's leading seen marker
+// names, or "" when it has none.
+func seenSectionHive(section string) string {
+	if !strings.HasPrefix(section, SelfReportSeenMarkerPrefix) {
+		return ""
+	}
+	marker, _, ok := strings.Cut(section[len(SelfReportSeenMarkerPrefix):], "-->")
+	if !ok {
+		return ""
+	}
+	for _, field := range strings.Fields(marker) {
+		if v, found := strings.CutPrefix(field, "hive="); found {
+			return v
+		}
+	}
+	return ""
 }
 
 // ClearedComment renders the one-time "condition cleared" comment.

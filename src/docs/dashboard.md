@@ -174,7 +174,18 @@ The dashboard **Governor** card summarizes queue depth, operating mode, budget
 posture, and cadence controls for the hive. Its collapsible **PRs by model** nested
 sub-section reads `GET /api/governor/pr-models` with the selected `7d`, `30d`,
 or `all` window. The nested header keeps the window/sort toggles visible and its
-collapsed summary shows the current top-ranked model plus model count.
+collapsed summary shows the current top-ranked model plus model count. Each
+model row has a **▸ PRs** button that opens that model's pull requests in the
+selected window (outcome, review rounds, fix attempts, first pass, author agent
+and backend, each linked to GitHub). The list is fetched on demand with
+`GET /api/governor/pr-models?window=…&model=<model>` and cached per window and
+model.
+Each model row's tooltip also shows **Hive review cost**: what the hive's own
+agents (reviewers, adjudicator, fixers) are estimated to have spent on that
+model's PRs, joined from the cached launch-cost snapshot (see
+[Launch attribution](token-tracking.md#launch-attribution)). A note under the
+header names the launch-cost window and the spend that could not be tied to any
+PR. "—" means no attributed usage, not $0.
 
 The Governor **actionable issues** and **actionable PRs** tiles use the shared
 server-side actionable partition described in [Repository card legend, issue
@@ -521,7 +532,8 @@ it for this hive. The Outside rows cover hard-suppress labels
 (`stage/045-needs-decision` with its retired pre-045 `stage/085-needs-decision`, `needs-decision` / `needs-direction` spellings, `needs-spec`, and `needs-human`) only for
 items that are not your turn, exempt labels from `governor.labels.exempt` plus
 permanent exempt labels, reporter-trust triage from
-`project.issue_filter.reporter_trust`, require-label filtering from
+`project.issue_filter.reporter_trust`, agent proposal filtering from
+`project.issue_filter.agent_proposal`, require-label filtering from
 `project.issue_filter.require_labels`, standing hive advisory/meta issues,
 bot Dependency Dashboard issues, draft PRs, exempt PR labels, and
 hold-adjacent/other remainder rows. See [Outside buckets](#outside-buckets)
@@ -570,6 +582,7 @@ and exposes the editable rows.
 | Exempt labels | Issue or PR carries a deny-list label and is never agent work. | `governor.labels.exempt` plus permanent labels such as `do-not-merge`. | Settings → Labels → Exempt labels, or edit `hive.yaml`. |
 | Reporter triage | Reporter trust is enabled and the issue author is not trusted yet. | `project.issue_filter.reporter_trust` trusted associations/logins and untrusted required labels. | Settings → Labels → Reporter trust. |
 | Project issue filter | Issue lacks every required allow-list label. It carries no stage label, and a `/hive approve` on it names the label that would admit it. | `project.issue_filter.require_labels`. | Settings → Labels → Required labels. |
+| Agent proposal | A non-human strategist or outreach proposal lacks an approved-direction label, human assignee, or acknowledged split parent. The Activity Monitor reason is `Agent proposal awaiting approved-direction`. | `project.issue_filter.agent_proposal` (omitted for defaults; `agent_proposal: {}` disables the gate). | Edit `hive.yaml`; see [Agent-filed direction proposals](agent-configuration.md#agent-filed-direction-proposals). |
 | Standing meta/advisory | Hive's own advisory report or issue labelled `hive/advisory`; it is coordination state, not work. | Fixed scanner rule: advisory title/label. | Rename/close the advisory, or remove the advisory label if it should become work. |
 | Dependency dashboard | Bot dependency dashboard control panel, not a concrete task. | Fixed scanner rule: Renovate/Dependabot-style bot author plus Dependency/Renovate Dashboard title. | File concrete child issues or close/rename the dashboard issue. |
 | Draft PRs | Pull request is open but marked draft. | GitHub draft state. | Use GitHub's **Ready for review** action. |

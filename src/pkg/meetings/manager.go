@@ -66,6 +66,21 @@ const (
 	// ConsentSpeechEnd fence applies only this long, so a platform that
 	// restarts its session clock cannot silence the rest of the meeting.
 	ConsentSpeechWindow = 2 * time.Minute
+	// ConsentSTTLag is how long speech-to-text can take to finalize an
+	// utterance after it was spoken. A segment that arrives sooner than its
+	// own duration plus this lag after the notice began before the notice
+	// and is discarded, even when no line was heard while consent was
+	// pending (the usual case: the notice goes out on the first live state).
+	ConsentSTTLag = 3 * time.Second
+	// ConsentCursorAttempts is how many times markConsent asks Quorum for
+	// its transcript cursor before it gives up and falls back to the
+	// degraded fence.
+	ConsentCursorAttempts = 2
+	// ConsentDegradedWindow is how long after the notice every segment is
+	// discarded when Quorum's transcript cursor could not be read: without
+	// the cursor nothing says which buffered lines came before the notice,
+	// so the fence fails closed on time instead.
+	ConsentDegradedWindow = 30 * time.Second
 	// ReasonDeclined is the state reason for a platform join request the
 	// owner declined.
 	ReasonDeclined = "declined"
@@ -88,18 +103,56 @@ var DefaultLeavePhrases = []string{"hive leave"}
 // leave hive out of this" from matching.
 const leaveSep = `[\s,.:;!-]*(?:please[\s,]+)?`
 
+// LeavingText is posted when a leave command is heard, just before the
+// bot leaves.
+const LeavingText = "Leaving now."
+
 // LeaveMatcher matches the configured leave phrases ("betty leave", "hive
 // leave") and close variants anywhere in a line.
-type LeaveMatcher struct{ re *regexp.Regexp }
+type LeaveMatcher struct {
+	re *regexp.Regexp
+	// names are the words before "leave" in the phrases ("betty",
+	// "hive"): a line that is only one of them and a sound-alike of
+	// "leave" ("Betty Lee.", "hive leaf") asks her to leave too (scored
+	// live test: "Betty leave" was transcribed "Betty Lee." and she stayed).
+	names map[string]bool
+}
+
+// leaveSounds are speech-to-text spellings of "leave" accepted when the
+// line is only the name and that word.
+var leaveSounds = map[string]bool{
+	"leave": true, "lee": true, "leaf": true, "lead": true, "leaves": true, "leaving": true,
+	"lief": true, "leeve": true, "leve": true, "leigh": true,
+}
+
+// leaveWords splits a line into lowercase words for the misheard check.
+var leaveWords = regexp.MustCompile(`[a-z']+`)
+
+// matchMisheard reports a whole line that is a name plus a sound-alike of
+// "leave", optionally with "please" between them.
+func (l *LeaveMatcher) matchMisheard(text string) bool {
+	w := leaveWords.FindAllString(strings.ToLower(text), -1)
+	switch {
+	case len(w) == 2:
+		return l.names[w[0]] && leaveSounds[w[1]]
+	case len(w) == 3:
+		return l.names[w[0]] && w[1] == "please" && leaveSounds[w[2]]
+	}
+	return false
+}
 
 // NewLeaveMatcher builds a matcher; no usable phrase means
 // DefaultLeavePhrases.
 func NewLeaveMatcher(phrases []string) *LeaveMatcher {
 	var alts []string
+	names := map[string]bool{}
 	for _, p := range phrases {
 		words := strings.Fields(strings.ToLower(p))
 		if len(words) == 0 {
 			continue
+		}
+		if len(words) == 2 && words[1] == "leave" {
+			names[words[0]] = true
 		}
 		q := make([]string, len(words))
 		for i, w := range words {
@@ -110,11 +163,13 @@ func NewLeaveMatcher(phrases []string) *LeaveMatcher {
 	if len(alts) == 0 {
 		return NewLeaveMatcher(DefaultLeavePhrases)
 	}
-	return &LeaveMatcher{re: regexp.MustCompile(`(?i)\b(?:` + strings.Join(alts, "|") + `)\b`)}
+	return &LeaveMatcher{re: regexp.MustCompile(`(?i)\b(?:` + strings.Join(alts, "|") + `)\b`), names: names}
 }
 
 // Match reports whether text asks the bot to leave.
-func (l *LeaveMatcher) Match(text string) bool { return l.re.MatchString(text) }
+func (l *LeaveMatcher) Match(text string) bool {
+	return l.re.MatchString(text) || l.matchMisheard(text)
+}
 
 var defaultLeave = NewLeaveMatcher(DefaultLeavePhrases)
 
@@ -152,6 +207,11 @@ type Options struct {
 	// `/hive join`) is approved without the owner. Nil approves none: every
 	// request waits in the dashboard.
 	AutoApprove func(requester Person) bool
+	// FixedSpokenLines returns the lines the persona says in every meeting
+	// (its spoken introduction, acknowledgements, the goodbye), which hive
+	// asks Quorum to pre-render when a meeting that can speak goes live
+	// (say.go). Nil pre-renders nothing.
+	FixedSpokenLines func(mt Meeting) []string
 	// Now is the clock (tests).
 	Now func() time.Time
 }
@@ -191,6 +251,8 @@ type Manager struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
+	// tails keeps ended companion meetings' last lines (companion_tail.go).
+	tails companionTails
 }
 
 // ErrInvalidRequest wraps a rejected JoinRequest.
@@ -397,6 +459,7 @@ func (m *Manager) Leave(ctx context.Context, id, reason string) (Meeting, error)
 		return mt, nil
 	}
 	if mt.NativeID != "" {
+		m.keepCompanionTail(ctx, mt)
 		if _, err := m.opts.Quorum.Leave(ctx, mt.NativeID); err != nil && !IsCode(err, CodeNotFound) {
 			return mt, err
 		}
@@ -432,21 +495,6 @@ func (m *Manager) PostChat(ctx context.Context, id, text string) error {
 		return ErrConsentPending
 	}
 	return m.opts.Quorum.ChatPost(ctx, mt.NativeID, text)
-}
-
-// Say speaks text in a live meeting. The caller applies the voice policy.
-func (m *Manager) Say(ctx context.Context, id, text string) error {
-	mt, err := m.opts.Store.Get(id)
-	if err != nil {
-		return err
-	}
-	if mt.State != StateLive {
-		return ErrNotLive
-	}
-	if mt.ConsentPostedAt == nil {
-		return ErrConsentPending
-	}
-	return m.opts.Quorum.Say(ctx, mt.NativeID, text)
 }
 
 // Resume re-attaches to every meeting that was not terminal when hive
@@ -582,6 +630,7 @@ func (m *Manager) handleState(ctx context.Context, id string, ev Event) bool {
 		return true
 	}
 	now := m.opts.Now()
+	wentLive := false
 	mt, err := m.update(id, &ev, func(mt *Meeting) {
 		if mt.State.Terminal() {
 			return
@@ -596,6 +645,7 @@ func (m *Manager) handleState(ctx context.Context, id string, ev Event) bool {
 		}
 		if ev.State == StateLive && mt.LiveAt == nil {
 			mt.LiveAt = timePtr(now)
+			wentLive = true
 		}
 	})
 	if err != nil {
@@ -607,6 +657,9 @@ func (m *Manager) handleState(ctx context.Context, id string, ev Event) bool {
 	} else {
 		m.clearLobby(id)
 	}
+	if wentLive {
+		m.prewarmSpeech(mt)
+	}
 	if mt.State == StateLive && m.ensureConsent(ctx, mt) {
 		return true
 	}
@@ -616,8 +669,9 @@ func (m *Manager) handleState(ctx context.Context, id string, ev Event) bool {
 // ensureConsent delivers the consent notice once, the first thing hive
 // says in the meeting, and reports whether hive left the meeting because it
 // could not. The notice counts as posted only when Quorum confirms the chat
-// line reached the meeting. If chat cannot deliver it and the meeting has
-// voice, hive speaks it instead; if neither works, hive leaves
+// line reached the meeting. If chat cannot deliver it and the bot joined
+// able to speak (voice_capable, whatever the voice reply setting), hive
+// speaks it instead; if neither works, hive leaves
 // (ReasonConsentUndelivered) rather than stay in a meeting that was never
 // told. Transient failures (the bot not admitted yet, a rate limit, a
 // dropped call) are retried on later events, at most ConsentAttempts times.
@@ -650,9 +704,14 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 		return false
 	}
 	why := "chat unavailable (" + chatErr.Error() + ")"
-	if mt.VoiceCapable && mt.VoiceEnabled {
+	// The consent notice is not a voice reply: the voice setting governs
+	// whether she answers out loud, but telling the room it is recorded
+	// comes first, so a bot that can speak says it whenever chat cannot
+	// carry it, even with replies set to chat (a Teams join where chat had
+	// no composer and the owner had turned voice replies off left at once).
+	if mt.VoiceCapable {
 		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
-		sayErr := m.opts.Quorum.Say(cctx, mt.NativeID, m.opts.ConsentText)
+		sayErr := m.sayConsent(cctx, mt.NativeID)
 		cancel()
 		if sayErr == nil {
 			m.log.Info("[meetings] consent notice spoken; chat could not deliver it", "meeting", mt.ID, "chat_error", chatErr)
@@ -661,7 +720,7 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 		}
 		why += ", voice failed (" + sayErr.Error() + ")"
 	} else {
-		why += ", voice off"
+		why += ", the bot joined without voice"
 	}
 	m.log.Warn("[meetings] consent notice could not be delivered; leaving the meeting", "meeting", mt.ID, "reason", why)
 	_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentError = why })
@@ -675,6 +734,25 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 		_, _ = m.finish(mt.ID, StateEnded, ReasonConsentUndelivered, nil)
 	}
 	return true
+}
+
+// errConsentNotSpoken is a voice notice Quorum accepted but reported with no
+// audio: nothing (or too little to count) reached the room.
+var errConsentNotSpoken = errors.New("the voice notice reported no audio")
+
+// sayConsent speaks the consent notice. A Quorum that reports timing must
+// report a positive duration: a bot that could not synthesize the line
+// answers "spoken" with a zero length, and that is not a delivered notice.
+// A Quorum that cannot report timing is judged by its error alone.
+func (m *Manager) sayConsent(ctx context.Context, nativeID string) error {
+	res, err := m.say(ctx, nativeID, m.opts.ConsentText)
+	if err != nil {
+		return err
+	}
+	if _, timed := m.opts.Quorum.(TimedSayer); timed && res.DurationMS <= 0 {
+		return errConsentNotSpoken
+	}
+	return nil
 }
 
 // postConsentChat posts the consent notice in chat. It returns nil only
@@ -716,35 +794,54 @@ func consentTransient(err error) bool {
 func (m *Manager) markConsent(ctx context.Context, mt Meeting, via string) {
 	at := m.opts.Now()
 	var fence int64
+	var degraded bool
 	if tc, ok := m.opts.Quorum.(TranscriptCursor); ok {
-		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
-		res, err := tc.TranscriptRead(cctx, mt.NativeID, mt.LastSeq)
-		cancel()
-		if err != nil {
-			m.log.Warn("[meetings] reading quorum's transcript cursor for the consent fence", "meeting", mt.ID, "error", err)
-		} else {
-			fence = res.NextSeq
+		for attempt := 1; attempt <= ConsentCursorAttempts; attempt++ {
+			cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
+			res, err := tc.TranscriptRead(cctx, mt.NativeID, mt.LastSeq)
+			cancel()
+			if err == nil {
+				fence, degraded = res.NextSeq, false
+				break
+			}
+			degraded = true
+			m.log.Warn("[meetings] reading quorum's transcript cursor for the consent fence", "meeting", mt.ID, "attempt", attempt, "error", err)
 		}
 	}
 	_, _ = m.update(mt.ID, nil, func(x *Meeting) {
 		x.ConsentPostedAt, x.ConsentVia, x.ConsentError = timePtr(at), via, ""
 		x.ConsentSeq = max(x.ConsentSeq, fence)
+		x.ConsentFenceDegraded = degraded
 	})
+	// The notice is the first of hive's own lines in the meeting record.
+	kind := ReplyKindChat
+	if via == ConsentViaVoice {
+		kind = ReplyKindVoice
+	}
+	m.RecordReply(mt.ID, m.opts.ConsentText, kind, ReplyTriggerConsent, at, 0, nil)
 }
 
 // fromHive reports whether a line is hive's own (its chat posts echo back).
 // Platforms may decorate the bot's display name ("Betty Bee from the hive
 // (Guest)"), so a trailing parenthetical is ignored.
-func (m *Manager) fromHive(ev Event) bool {
+func (m *Manager) fromHive(id string, ev Event) bool {
 	if m.opts.BotName != "" && (ev.Author != nil && IsBotName(ev.Author.Name, m.opts.BotName) ||
 		ev.Speaker != nil && IsBotName(ev.Speaker.Name, m.opts.BotName)) {
 		return true
 	}
-	return ev.Type == EventChat && strings.TrimSpace(ev.Text) == strings.TrimSpace(m.opts.ConsentText)
+	if ev.Type == EventChat && strings.TrimSpace(ev.Text) == strings.TrimSpace(m.opts.ConsentText) {
+		return true
+	}
+	// Her own recent line under another name: a segment is judged only when
+	// final, and chat always.
+	if ev.Type == EventChat || ev.Type == EventSegment && ev.Final {
+		return m.opts.Store.IsOwnEcho(id, ev.Text, m.opts.Now())
+	}
+	return false
 }
 
 func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
-	if m.fromHive(ev) {
+	if m.fromHive(id, ev) {
 		return false
 	}
 	mt, err := m.opts.Store.Get(id)
@@ -778,6 +875,12 @@ func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
 		m.log.Info("[meetings] leave requested in the meeting", "meeting", id, "by", ev.Who())
 		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
 		defer cancel()
+		if mt.ConsentPostedAt != nil {
+			// Say so before going, so the room knows the command was heard,
+			// and only go once the line is known to be out (say.go).
+			m.goodbye(cctx, mt, ev, m.opts.Now())
+		}
+		m.keepCompanionTail(cctx, mt)
 		if _, err := m.opts.Quorum.Leave(cctx, mt.NativeID); err != nil && !IsCode(err, CodeNotFound) {
 			m.log.Warn("[meetings] leave failed", "meeting", id, "error", err)
 		}
@@ -809,12 +912,34 @@ func beforeConsent(mt Meeting, ev Event, now time.Time) bool {
 		}
 		return false
 	}
-	if mt.ConsentSpeechEnd > 0 && now.Sub(*mt.ConsentPostedAt) < ConsentSpeechWindow {
+	since := now.Sub(*mt.ConsentPostedAt)
+	if mt.ConsentFenceDegraded && since < ConsentDegradedWindow {
+		return true
+	}
+	if mt.ConsentSpeechEnd > 0 && since < ConsentSpeechWindow {
 		if start, ok := sessionSecs(ev.Start); ok && start < mt.ConsentSpeechEnd {
 			return true
 		}
 	}
-	return false
+	return speechBeganBeforeNotice(ev, since)
+}
+
+// speechBeganBeforeNotice reports whether a segment that arrived since
+// after the notice must have begun before it: an utterance of duration d
+// finalized by STT with a lag of at most ConsentSTTLag began no earlier
+// than d+lag before it arrived. A segment without a usable start and end is
+// not judged here.
+func speechBeganBeforeNotice(ev Event, since time.Duration) bool {
+	if ev.Type != EventSegment || since >= ConsentSpeechWindow {
+		return false
+	}
+	start, okStart := sessionSecs(ev.Start)
+	end, okEnd := sessionSecs(ev.End)
+	if !okStart || !okEnd || end < start {
+		return false
+	}
+	spoken := time.Duration((end - start) * float64(time.Second))
+	return since < spoken+ConsentSTTLag
 }
 
 // sessionSecs decodes a segment's start or end (seconds from the session

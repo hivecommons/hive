@@ -2133,7 +2133,7 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 		for name := range cfg.Agents {
 			agents = append(agents, name)
 		}
-		return github.IssueStagePolicy{Enabled: p.Enabled, Dwell: p.Dwell, AgentNames: agents}
+		return github.IssueStagePolicy{Enabled: p.Enabled, Dwell: p.Dwell, AgentNames: agents, ParentAutoClose: func(repo string) string { return cfg.ParentAutoCloseFor(repo) }}
 	})
 	client.SetReviewCadenceLimits(
 		func() bool { return cfg.Review.CombinedPerspectives },

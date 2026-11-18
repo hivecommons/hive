@@ -39,6 +39,17 @@ import (
 // launch, on a short poll from the credential watchdog, and right after a
 // dashboard sign-in.
 //
+// Detecting is not preventing. All N CLIs hold the same access token, so
+// they reach its expiry together and refresh within seconds of each other;
+// the refresh token rotates on first use, the rest present the dead one, and
+// the authorization server revokes the WHOLE grant as a reuse, leaving
+// nothing for this repair to promote (hivecommons/hive#18731). So the hive
+// now refreshes the shared grant itself, well ahead of expiry
+// (claude_shared_refresh.go), and the CLIs find a token with hours of life
+// left whenever they look. This repair remains the backstop for the race the
+// refresher cannot win (a CLI that refreshes first anyway): its fresher
+// private copy is promoted exactly as described below.
+//
 // The repair never deletes a token. It moves the private file aside, keeps
 // whichever of the two credentials is newer AND usable in the shared file, and
 // restores the symlink:
@@ -483,27 +494,13 @@ func (m *Manager) relinkUnreadableAfterSignIn(agentName, link, target string) (*
 // metadata by descriptor, and a refusal (sharedfile.ErrUnsafeLocation) when
 // the shared directory or file is not what it should be.
 func promoteClaudeCredential(data []byte, target string, now time.Time) (string, error) {
-	canonical, _, err := canonicalClaudeCredential(data, now)
+	_, tok, err := canonicalClaudeCredential(data, now)
 	if err != nil {
 		return "", err
 	}
-	// Refuse before the backup copy, not only at the write: the copy lands in
-	// the same directory, and the directory is part of what is being checked.
-	info, err := sharedfile.CheckLocation(target)
-	if err != nil {
-		return "", err
-	}
-	staleShared := ""
-	if info != nil {
-		staleShared, err = preserveClaudeCredential(target, now)
-		if err != nil {
-			return "", fmt.Errorf("preserve shared credential: %w", err)
-		}
-	}
-	if err := sharedfile.Replace(target, canonical, claudeSharedCredentialMode, sharedfile.Options{PreserveOwner: true}); err != nil {
-		return staleShared, err
-	}
-	return staleShared, nil
+	// The one writer of the shared login: re-checks, under the caller's
+	// claudeBridgeMu, that tok is strictly newer (claude_shared_grant.go).
+	return replaceSharedClaudeLoginIfNewer(tok, target, now, true)
 }
 
 // preserveClaudeCredential copies path to a unique stale name beside it,
@@ -667,5 +664,8 @@ func (m *Manager) RepairClaudeCredentialBridges(trigger string) []string {
 func (m *Manager) rebridgeClaudeCredentialsAfterSignIn() {
 	if claude.HasUsableToken(sharedClaudeBridgeTarget()) {
 		m.RepairClaudeCredentialBridges(claudeBridgeTriggerSignIn)
+		// Sessions hold a refresh-less copy of the login; give them the new
+		// one now rather than on the next poll.
+		m.syncUserSessionClaudeLogins(sessionLoginTriggerSignIn)
 	}
 }

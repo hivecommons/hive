@@ -9,7 +9,6 @@ import (
 
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 
-	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/beads"
@@ -278,14 +277,7 @@ func (b *boot) applyGitHubClientAppPolicyHooks(client *github.Client) {
 // does not let the requesting agent push. Read through b.cfg on every call so
 // a per-repo level change takes effect without a restart.
 func (b *boot) prRepoPolicyGate(agentName, repo string) error {
-	level := b.cfg.EffectiveACMMLevelForRepo(repo)
-	if level <= 0 {
-		level = b.cfg.ACMMLevelOrZero()
-	}
-	if !crux.DefaultAgentMode(agentName, level).CanPush() {
-		return fmt.Errorf("repo %s effective ACMM L%d does not allow %s to open PRs", repo, level, agentName)
-	}
-	return nil
+	return b.cfg.PRRepoPolicyRefusal(agentName, repo)
 }
 
 // selfAuthorizationHoldEnabled reports whether the self-authorization hold

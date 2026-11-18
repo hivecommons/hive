@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +25,7 @@ func writeBenchmarkFixtureBundle(t *testing.T, root string, b *evidence.Bundle) 
 	if err := evidence.Seal(b, nil); err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(root, filepath.FromSlash(b.Repo), "1")
+	dir := filepath.Join(root, filepath.FromSlash(b.Repo), strconv.Itoa(b.Number))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -163,5 +165,178 @@ func TestPushBenchmarksAdvancesWatermarkAndRecordsFailures(t *testing.T) {
 	s.pushBenchmarks(t.Context(), hub.URL, logger)
 	if bearer != "" {
 		t.Fatal("publish:false must not push")
+	}
+}
+
+// benchmarksSeedMany seeds n merged agent PRs in all (one record each), one minute
+// apart, and returns the server with the state file redirected to a temp dir.
+func benchmarksSeedMany(t *testing.T, n int) *Server {
+	t.Helper()
+	s := benchmarksTestServer(t, true)
+	prevState := benchmarksPublishStatePath
+	benchmarksPublishStatePath = filepath.Join(t.TempDir(), "benchmarks-publish.json")
+	t.Cleanup(func() { benchmarksPublishStatePath = prevState })
+	t.Setenv(spoke.EnvHeartbeatKey, "spoke-key")
+	base := time.Now().UTC().Add(-48 * time.Hour)
+	for i := 2; i < n+1; i++ { // the base fixture is record 1
+		ts := base.Add(time.Duration(i) * time.Minute)
+		writeBenchmarkFixtureBundle(t, ghpkg.ReviewEvidenceRoot, &evidence.Bundle{
+			SchemaVersion: evidence.SchemaVersion, Repo: "o/r", Number: i, HeadSHA: "sha" + strconv.Itoa(i),
+			Author:    evidence.Author{Login: "bot", Kind: evidence.AuthorAgent, Model: "claude-fable-5.1", Backend: "copilot", Runtime: "podman", TaskKind: "docs"},
+			CreatedAt: ts, UpdatedAt: ts,
+			Merge: &evidence.MergeEvent{Actor: "hive", Method: "squash", At: ts.Add(time.Minute), OpenedAt: ts},
+		})
+	}
+	return s
+}
+
+func benchmarksDiscardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func TestBenchmarksBatchEndSplitsByCountAndBytes(t *testing.T) {
+	sizes := []int{1000, 1000, 1000, 1000, 1000}
+	// Budget fits the envelope plus two records (each +1 comma).
+	budget := benchmarksEnvelopeOverheadBytes + 2*1001
+	if got := benchmarksBatchEnd(sizes, 0, 100, budget); got != 2 {
+		t.Errorf("byte split: end=%d want 2", got)
+	}
+	if got := benchmarksBatchEnd(sizes, 2, 100, budget); got != 4 {
+		t.Errorf("second batch: end=%d want 4", got)
+	}
+	if got := benchmarksBatchEnd(sizes, 0, 3, 1<<30); got != 3 {
+		t.Errorf("count split: end=%d want 3", got)
+	}
+	// A record bigger than the whole budget still travels alone.
+	if got := benchmarksBatchEnd([]int{budget * 2, 10}, 0, 100, budget); got != 1 {
+		t.Errorf("oversized single: end=%d want 1", got)
+	}
+}
+
+func TestPushBenchmarksHalvesBatchOn413AndKeepsProgress(t *testing.T) {
+	const total, accepts = 8, 2
+	s := benchmarksSeedMany(t, total)
+	var sizes []int
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got benchmarksIngestPayload
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		sizes = append(sizes, len(got.Records))
+		if len(got.Records) > accepts {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = w.Write([]byte("payload too large"))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer hub.Close()
+
+	s.pushBenchmarks(t.Context(), hub.URL, benchmarksDiscardLogger())
+	st := s.BenchmarksStatusBlock()
+	// 8 is refused, 4 is refused, then 2-record batches carry the rest.
+	if st.TotalPushed != total || st.LastError != "" || st.WatermarkAt == "" {
+		t.Fatalf("status = %+v (request sizes %v)", st, sizes)
+	}
+	if sizes[0] != total || sizes[1] != total/2 || sizes[2] != accepts {
+		t.Errorf("request sizes %v: want halving 8,4,2 then 2-record batches", sizes)
+	}
+	// Nothing left: a second tick sends no request.
+	n := len(sizes)
+	s.pushBenchmarks(t.Context(), hub.URL, benchmarksDiscardLogger())
+	if len(sizes) != n {
+		t.Errorf("second tick pushed again: %v", sizes[n:])
+	}
+}
+
+func TestPushBenchmarksSkipsSingleRecordThatAlwaysGets413(t *testing.T) {
+	const total = 5
+	s := benchmarksSeedMany(t, total)
+	recs, _, err := s.benchmarksRecords(t.Context(), time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sortRecs := append([]benchmarks.Record(nil), recs...)
+	// Poison a record in the middle of the time order.
+	for i := range sortRecs {
+		for j := i + 1; j < len(sortRecs); j++ {
+			if sortRecs[j].UpdatedAt.Before(sortRecs[i].UpdatedAt) {
+				sortRecs[i], sortRecs[j] = sortRecs[j], sortRecs[i]
+			}
+		}
+	}
+	poison := sortRecs[2].ID
+	accepted := map[string]bool{}
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got benchmarksIngestPayload
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		for _, rec := range got.Records {
+			if rec.ID == poison {
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				return
+			}
+		}
+		for _, rec := range got.Records {
+			accepted[rec.ID] = true
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer hub.Close()
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+
+	s.pushBenchmarks(t.Context(), hub.URL, logger)
+	if len(accepted) != total-1 || accepted[poison] {
+		t.Fatalf("accepted %d records, poison accepted=%v", len(accepted), accepted[poison])
+	}
+	if n := strings.Count(logs.String(), "skipping record the hub rejects even alone"); n != 1 {
+		t.Errorf("skip logged %d times, want once; logs=%s", n, logs.String())
+	}
+	st := s.BenchmarksStatusBlock()
+	if st.LastError != "" || st.TotalPushed != total-1 {
+		t.Fatalf("publisher wedged: %+v", st)
+	}
+	if got := s.benchmarks().watermark(); !got.Equal(sortRecs[total-1].UpdatedAt) {
+		t.Errorf("watermark %v, want newest %v", got, sortRecs[total-1].UpdatedAt)
+	}
+}
+
+func TestPushBenchmarksDoesNotDropRecordsWhenEveryPushGets413(t *testing.T) {
+	s := benchmarksSeedMany(t, 6)
+	requests := 0
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_, _ = w.Write([]byte("<html>\n<body>413 Request Entity Too Large</body>\n</html>"))
+	}))
+	defer hub.Close()
+
+	s.pushBenchmarks(t.Context(), hub.URL, benchmarksDiscardLogger())
+	st := s.BenchmarksStatusBlock()
+	if st.TotalPushed != 0 || st.WatermarkAt != "" {
+		t.Fatalf("records dropped though nothing was accepted: %+v", st)
+	}
+	if !strings.Contains(st.LastError, "413") || !strings.Contains(st.LastError, "<body>413 Request Entity Too Large</body>") {
+		t.Errorf("last_error = %q", st.LastError)
+	}
+	if limit := benchmarksPushMaxShrinkAttempts + benchmarksPushMaxUnprovenSkips*benchmarksPushMaxShrinkAttempts; requests > limit {
+		t.Errorf("%d requests, want bounded by %d", requests, limit)
+	}
+}
+
+func TestBenchmarksFailureIncludesTruncatedBody(t *testing.T) {
+	s := benchmarksSeedMany(t, 1)
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("upstream\n  said " + strings.Repeat("x", 5000) + " Bearer spoke-key"))
+	}))
+	defer hub.Close()
+
+	s.pushBenchmarks(t.Context(), hub.URL, benchmarksDiscardLogger())
+	got := s.BenchmarksStatusBlock().LastError
+	if !strings.HasPrefix(got, "hub answered 502 Bad Gateway: upstream said xxx") {
+		t.Errorf("last_error = %q", got)
+	}
+	if max := len("hub answered 502 Bad Gateway: ") + benchmarksErrBodyMaxBytes + len("..."); len(got) > max {
+		t.Errorf("last_error is %d bytes, want <= %d", len(got), max)
+	}
+	if strings.Contains(got, "spoke-key") {
+		t.Error("last_error leaks the bearer")
 	}
 }

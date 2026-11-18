@@ -207,7 +207,7 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 
 	// Rung 4 — return to contributor: their clanker or hive is reachable
 	// (presence, or the rework-pickup signal of hivecommons/hive#15280).
-	if in.ContributorOnline || in.ReworkPickedUp {
+	if in.ContributorReachable() {
 		fix := fixList(in)
 		if len(fix) == 0 {
 			return Decision{}, false
@@ -227,7 +227,12 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 	}
 	skip(RuleReturnToContributor, in.OfflineWording())
 
-	// Rung 5 — adopt-supersede, the last resort.
+	// Rung 5 — adopt-supersede, the last resort. Reaching it means the
+	// author is NOT reachable (rung 4 returned the PR otherwise), and for
+	// an unreachable author a "back in your court" nudge asks for work
+	// they will not get to do: the contributor nudge is withheld under the
+	// same condition (AdoptsImmediately), so the author's one notification
+	// is the adoption note (hivecommons/hive#18872).
 	if in.AdoptionGraceElapsed {
 		text := "adopt now: the offline grace on " + ref + " has already elapsed; adopt in supersede mode at once, preserving the author's commits and sign-off"
 		d := Decision{
@@ -253,6 +258,22 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 		return out(fixThenMerge(fixList(in)), cr+" still stand; the direction names them")
 	}
 	return Decision{}, false
+}
+
+// ContributorReachable reports whether the author's clanker or hive is
+// connected or has picked the rework up: the condition under which rung 4
+// returns the PR to them and rung 5 never fires.
+func (in Input) ContributorReachable() bool { return in.ContributorOnline || in.ReworkPickedUp }
+
+// AdoptsImmediately reports whether the ladder would adopt this head in
+// supersede mode right now, without waiting for the grace. The contributor
+// nudge and the ladder must agree on one outcome per head
+// (hivecommons/hive#18872): a head for which this is true is not nudged
+// ("back in your court") only to be adopted minutes later; and a head that is
+// given a real chance (ContributorReachable) is never adopted by rung 5.
+func AdoptsImmediately(in Input) bool {
+	d, ok := decideLadder(in, "this PR")
+	return ok && d.Verdict == VerdictAdoptSupersede
 }
 
 // decideAlreadyFixed is rung 1: close as superseded by the merged closer,

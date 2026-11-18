@@ -31,7 +31,7 @@ func TestMeetingsPersonaDefaults(t *testing.T) {
 		}
 	}
 	intro := r.Intro()
-	for _, want := range []string{"Betty Bee from the hive", "she/her", `"betty leave"`, "buzz"} {
+	for _, want := range []string{"Betty Bee from the hive", `"betty leave"`, "buzz"} {
 		if !strings.Contains(intro, want) {
 			t.Errorf("intro %q missing %q", intro, want)
 		}
@@ -72,7 +72,7 @@ func TestMeetingsPersonaDisabledAndOverrides(t *testing.T) {
 	if r.Name != "Max" || strings.Join(r.Aliases, ",") != "max,maximus" || r.VoiceType != "male" || r.Humor != "off" || r.Unprompted.MinConfidence != 0.9 {
 		t.Fatalf("overrides %+v", r)
 	}
-	if strings.Contains(r.Intro(), "buzz") || !strings.Contains(r.Intro(), "he/him") {
+	if strings.Contains(r.Intro(), "buzz") || strings.Contains(r.Intro(), "he/him") || !strings.Contains(r.Intro(), "remove me") {
 		t.Fatalf("humor off uses the plain intro: %q", r.Intro())
 	}
 	if !strings.Contains(r.ConsentText(), "'max leave'") || !strings.Contains(r.ConsentText(), "Max from the hive") {
@@ -181,5 +181,31 @@ unprompted: {per_10m: 1, min_gap_s: 2, per_meeting: 3, answer_wait_s: 4, min_con
 	if p.Enabled == nil || *p.Enabled || p.Name != "B" || p.DisplayName != "D" || len(p.Aliases) != 2 || p.VoiceType != "female" ||
 		p.Unprompted.MinConfidence != 0.5 || p.Unprompted.StaleS != 7 || p.SearxngURL != "http://s" || p.LeavePhrases[0] != "b leave" {
 		t.Fatalf("yaml %+v", p)
+	}
+}
+
+// Operator ruling after the live Meet test: the persona never states
+// pronouns. No preset's intro, plain intro or sample line, with humor on
+// or off, carries a pronoun parenthetical, and a custom template that
+// spells one out has it dropped.
+func TestPersonaNeverStatesPronouns(t *testing.T) {
+	off := MeetingsPersonaHumorOff
+	for id := range MeetingsPersonaPresets {
+		for _, humor := range []string{"", off} {
+			r := MeetingsPersonaConfig{Preset: id, Humor: humor}.Resolve()
+			intro := r.Intro()
+			for _, bad := range []string{"(" + r.Pronouns, "（" + r.Pronouns, "()", "（）", "{pronouns}"} {
+				if strings.Contains(intro, bad) {
+					t.Errorf("preset %s humor %q intro states %q: %s", id, humor, bad, intro)
+				}
+			}
+		}
+	}
+	custom := MeetingsPersonaConfig{IntroTemplate: "Hi, I'm {display_name} (she/her), or ({pronouns})."}.Resolve()
+	if got := custom.Intro(); strings.Contains(got, "she") || strings.Contains(got, "(") {
+		t.Fatalf("custom intro %q", got)
+	}
+	if got := StripPronouns("I'm Ana (they/them)."); got != "I'm Ana." {
+		t.Fatalf("StripPronouns = %q", got)
 	}
 }

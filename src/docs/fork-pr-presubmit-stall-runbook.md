@@ -49,6 +49,9 @@ ask that owner to comment `/approve`.
   admitted non-member fork PR. Making the hive App (or contributor agents) a
   Prow trusted user remains a Prow configuration choice; until then Prow
   rejects the App's command and step 2 applies.
+- Done in #18608: once Prow has refused the App anywhere in a repository, the
+  lane skips the first `/ok-to-test` on later fork PRs there and leaves the
+  needs-human note directly; step 2 applies to those PRs too.
 - Relay `/lgtm` and `/approve` with the approving human's token, or add the
   hive App to `OWNERS`; surface Prow's rejection reply on the board instead of
   showing "approved".

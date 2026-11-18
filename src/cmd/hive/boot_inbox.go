@@ -53,6 +53,13 @@ func (b *boot) bootInbox(baseDir string) {
 	// Machine transcripts stay on this spoke's own data volume; runs only
 	// happen once inbox.transcription is enabled and consented to.
 	svc.EnableTranscription(inbox.NewTranscriptStore(filepath.Join(baseDir, "connector-state", "transcripts")))
+	// Runs the previous process left queued or running are marked
+	// interrupted before anything is queued; the boot transcription sweep
+	// (startInboxRecordingSweep) then queues them with every recording
+	// still pending, so no recording waits for a click after a restart.
+	if n, err := svc.RecoverTranscriptions(); err != nil || n > 0 {
+		b.logger.Info("inbox transcriptions recovered after restart", "interrupted", n, "error", err)
+	}
 	// Files and links dropped onto the Inbox stay on this spoke's data
 	// volume (0700 dirs, 0600 files); their extracted text becomes a fact in
 	// the personal connectors vault.
@@ -286,7 +293,8 @@ func (b *boot) startInboxRecordingSweep(svc *inbox.Service) {
 			b.logger.Warn("inbox recording sweep", "error", err)
 		}
 		// Recordings finished while transcription was off are transcribed
-		// once it is enabled with consent.
+		// once it is enabled with consent; the first pass, at boot, also
+		// queues the runs RecoverTranscriptions found interrupted.
 		tctx, cancel := context.WithTimeout(ctx, inboxSweepTimeout)
 		b.inboxTranscribeSweep(tctx, svc)
 		cancel()

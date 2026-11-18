@@ -38,6 +38,18 @@
     .hive-dialog-check { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--muted); margin: calc(-1 * var(--sp-4)) 0 var(--sp-6); cursor: pointer; }
     .hive-dialog-check input { accent-color: var(--accent); margin: 0; }
     .hive-dialog-buttons { display: flex; gap: 10px; justify-content: flex-end; }
+    /* Export / link viewer (hiveExportViewer): the handed-over text sits in
+       the dialog's own type and colour tokens, full width, read-only and
+       selectable, so an OAuth URL reads as part of the dialog rather than a
+       stray form control. A link is one wrapped line; an export is a <pre>. */
+    .hive-export-dialog { width: 560px; }
+    .hive-export-dialog .hive-dialog-title { margin-bottom: var(--sp-3); }
+    .hive-export-dialog .hive-dialog-body { margin-bottom: var(--sp-6); white-space: normal; }
+    .hive-export-note { margin: 0 0 var(--sp-4); }
+    .hive-export-link, .hive-export-text { display: block; width: 100%; box-sizing: border-box; margin: 0; padding: var(--sp-4) var(--sp-5); font: inherit; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); border: 1px solid var(--border); border-radius: var(--r); cursor: text; user-select: all; -webkit-user-select: all; }
+    .hive-export-link { word-break: break-all; overflow-wrap: anywhere; white-space: normal; line-height: 1.5; }
+    .hive-export-text { font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.5; white-space: pre; overflow: auto; min-height: 8em; max-height: 50vh; }
+    .hive-export-link:focus-visible, .hive-export-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     .release-notes-dialog { width: 720px; }
     .release-notes-caveat { margin-bottom: var(--sp-4); }
     .release-notes-body { max-height: min(55vh, 520px); margin-bottom: var(--sp-7); } /* scroll via .modal-scroll */
@@ -269,6 +281,10 @@
     .rv-perspectives-linked { margin: var(--sp-0) var(--sp-0) var(--sp-3); padding: var(--sp-4) var(--sp-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-sm); }
     .rv-perspectives-linked-status, .rv-perspectives-linked-warning { margin-top: var(--sp-2); color: var(--muted); }
     .rv-perspectives-linked-warning { color: var(--yellow); }
+    .rv-psrc-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--sp-3) var(--sp-5); }
+    .rv-psrc-actions { margin-top: var(--sp-3); }
+    .cfg-inline-row { display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap; }
+    .cfg-inline-row select { flex: 1 1 12rem; min-width: 0; }
     .am-trusted-authors-repos { min-height: 72px; }
     .am-bot-empty { color: var(--muted); margin: var(--sp-1) 0; }
     .am-bot-add { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); align-items: center; }

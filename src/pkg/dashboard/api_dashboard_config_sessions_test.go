@@ -103,3 +103,47 @@ func TestDashboardSettingsAPISessionsReportsEnvOverride(t *testing.T) {
 		t.Fatalf("env_override not reported while %s is set: %s", config.EnvSessionsEnabled, get.Body.String())
 	}
 }
+
+// dashboard.sessions.autostart (the startup auto-answer) reads as on by
+// default, saves an explicit false, and is left alone by a PUT that omits it.
+func TestDashboardSettingsAPISessionsAutostartRoundTrip(t *testing.T) {
+	s := govServer(t)
+	t.Setenv(config.EnvSessionsEnabled, "")
+	t.Setenv(config.EnvSessionsAutostart, "")
+	saved := func() *bool {
+		t.Helper()
+		get := doOwnerGet(s, "/api/config/dashboard")
+		if get.Code != http.StatusOK {
+			t.Fatalf("GET = %d: %s", get.Code, get.Body.String())
+		}
+		var payload struct {
+			Sessions struct {
+				Autostart *bool `json:"autostart"`
+			} `json:"sessions"`
+		}
+		if err := json.Unmarshal(get.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode GET: %v", err)
+		}
+		return payload.Sessions.Autostart
+	}
+	if v := saved(); v == nil || !*v {
+		t.Fatal("autostart must read as on by default")
+	}
+	put := doPut(s, "/api/config/dashboard", map[string]any{"sessions": map[string]any{"autostart": false}})
+	if put.Code != http.StatusOK {
+		t.Fatalf("PUT off = %d: %s", put.Code, put.Body.String())
+	}
+	if d := s.deps.Config.Dashboard.Sessions; d.Autostart == nil || *d.Autostart || s.deps.Config.SessionsAutostart() {
+		t.Fatalf("saving autostart off did not persist an explicit false: %+v", d)
+	}
+	if v := saved(); v == nil || *v {
+		t.Fatal("GET does not report the saved false")
+	}
+	put = doPut(s, "/api/config/dashboard", map[string]any{"sessions": map[string]any{"max_per_user": 3}})
+	if put.Code != http.StatusOK {
+		t.Fatalf("partial PUT = %d: %s", put.Code, put.Body.String())
+	}
+	if s.deps.Config.SessionsAutostart() {
+		t.Fatal("a PUT that omits autostart turned it back on")
+	}
+}

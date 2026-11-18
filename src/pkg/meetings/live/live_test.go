@@ -26,6 +26,12 @@ type fakeMeetings struct {
 	postErr error
 	sayErr  error
 	subs    []func(meetings.Update)
+	// sayRes is what a say call reports; sayHook, when set, runs inside
+	// each say call (a slow or blocked platform).
+	sayRes  meetings.SayResult
+	sayHook func(text string)
+	// left records Leave calls (the reason), for a fake that can leave.
+	left []string
 }
 
 func (f *fakeMeetings) Get(id string) (meetings.Meeting, error) {
@@ -48,14 +54,41 @@ func (f *fakeMeetings) PostChat(_ context.Context, _ string, text string) error 
 	return nil
 }
 
-func (f *fakeMeetings) Say(_ context.Context, _ string, text string) error {
+func (f *fakeMeetings) Say(_ context.Context, _ string, text string) (meetings.SayResult, error) {
+	f.mu.Lock()
+	hook := f.sayHook
+	f.mu.Unlock()
+	if hook != nil {
+		hook(text)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.sayErr != nil {
-		return f.sayErr
+		return meetings.SayResult{}, f.sayErr
 	}
 	f.says = append(f.says, text)
-	return nil
+	return f.sayRes, nil
+}
+
+// Leave implements Leaver.
+func (f *fakeMeetings) Leave(_ context.Context, id, reason string) (meetings.Meeting, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.left = append(f.left, reason)
+	return f.m[id], nil
+}
+
+func (f *fakeMeetings) leaves() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.left...)
+}
+
+// fail sets the errors the next post and say calls return.
+func (f *fakeMeetings) fail(post, say error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.postErr, f.sayErr = post, say
 }
 
 func (f *fakeMeetings) Subscribe(fn func(meetings.Update)) func() {
@@ -151,6 +184,21 @@ type fakeResearch struct {
 	n     int
 	err   error
 	metas []map[string]string
+	// busy is what Busy reports (ResearchLoad).
+	busy bool
+}
+
+// Busy implements ResearchLoad.
+func (f *fakeResearch) Busy() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.busy
+}
+
+func (f *fakeResearch) setBusy(b bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.busy = b
 }
 
 func (f *fakeResearch) Dispatch(_ context.Context, q string, meta map[string]string) (string, error) {
@@ -316,6 +364,7 @@ func TestChatRateLimitAndTruncation(t *testing.T) {
 	h.spek.intent(`{"type":"chat.post","text":"three"}`)
 	h.spek.intent(`{"type":"chat.post","text":"   "}`)
 	h.eventually("rate limit", func() bool { return h.state().Dropped == 1 })
+	h.eventually("two posts out", func() bool { p, _ := h.mt.got(); return len(p) == 2 })
 	posts, _ := h.mt.got()
 	if len(posts) != 2 || len([]rune(posts[0])) != ChatMaxChars {
 		t.Fatalf("posts %d, first %d runes", len(posts), len([]rune(posts[0])))
@@ -478,7 +527,8 @@ func TestSayPolicy(t *testing.T) {
 	h.mt.sayErr = errors.New("platform_unavailable")
 	h.mt.mu.Unlock()
 	h.spek.intent(`{"type":"say","text":"fallback"}`)
-	h.eventually("fallback to chat", func() bool { p, _ := h.mt.got(); return len(p) == 1 && p[0] == "fallback" })
+	// A say call that failed: the line goes to chat and says why it is there.
+	h.eventually("fallback to chat", func() bool { p, _ := h.mt.got(); return len(p) == 1 && p[0] == sayFailedPrefix+"fallback" })
 
 	h2 := newHarness(t, Policy{VoiceOnAddress: false}, nil)
 	h2.m.VoiceEnabled = true
@@ -498,6 +548,7 @@ func TestBudgetByIntentsAndTokens(t *testing.T) {
 	h.spek.intent(`{"type":"say","text":"x"}`)
 	h.spek.intent(`{"type":"notes.append","section":"notes","text":"still noted"}`)
 	h.eventually("notes still taken", func() bool { return len(h.state().Notes[SectionNotes]) == 1 })
+	h.eventually("post and notice out", func() bool { p, _ := h.mt.got(); return len(p) == 2 })
 	st := h.state()
 	posts, _ := h.mt.got()
 	if !st.BudgetExhausted || len(posts) != 2 || posts[1] != budgetNotice(defaultPersonaName) || st.Dropped != 4 {

@@ -95,6 +95,10 @@
     {
       "name": "Meetings",
       "description": "Hive as a live meeting participant (Quorum)"
+    },
+    {
+      "name": "Customers",
+      "description": "A profile per person: identities, tags, goals and satisfaction"
     }
   ],
   "paths": {
@@ -926,6 +930,10 @@
                         "type": "object",
                         "description": "Meeting record: id, platform, url or guild_id/channel_id, native_id, title, invited_by, state (requested, joining, lobby, live, ended, failed, blocked, handed_off, purged), state_reason, voice_enabled, consent_posted_at and timestamps."
                       }
+                    },
+                    "email_in": {
+                      "type": "object",
+                      "description": "This hive's email-in address, as in GET /api/inbox: address, ready, reason, files_enabled, invites_enabled, docs_url."
                     }
                   }
                 }
@@ -1770,6 +1778,10 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "email_in": {
+                      "type": "object",
+                      "description": "This hive's email-in address, as in GET /api/inbox: address, ready, reason, files_enabled, invites_enabled, docs_url."
+                    },
                     "upcoming": {
                       "type": "array",
                       "items": {
@@ -22347,6 +22359,18 @@
               "default": 7
             },
             "description": "Trailing window in days; 0 aggregates everything in the live log."
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "canonical"
+              ]
+            },
+            "description": "canonical merges model rows by canonical_model (modelfamily.Canonical): runs summed, rates recomputed from summed counts, model set to the canonical id, raw_models[] listing each raw spelling with its runs. Omitted: one row per raw model, each with canonical_model (#18718)."
           }
         ],
         "responses": {
@@ -31993,6 +32017,41 @@
                         }
                       }
                     },
+                    "outcomes_by_author_model": {
+                      "type": "object",
+                      "description": "outcomes_by_author_kind keyed by the author's canonical model (the ids /api/governor/pr-models uses); human for a person's PR, unknown for an agent PR with no recorded model (#18720).",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "n": {
+                            "type": "integer"
+                          },
+                          "merged": {
+                            "type": "integer"
+                          },
+                          "closed": {
+                            "type": "integer"
+                          },
+                          "open": {
+                            "type": "integer"
+                          },
+                          "reverted_14d": {
+                            "type": "integer",
+                            "nullable": true
+                          },
+                          "issue_reopened_14d": {
+                            "type": "integer"
+                          },
+                          "change_failures": {
+                            "type": "integer"
+                          },
+                          "change_failure_rate": {
+                            "type": "number",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
                     "reviewer_calibration": {
                       "type": "array",
                       "items": {
@@ -39578,7 +39637,21 @@
           "Contribute"
         ],
         "summary": "Contributor run stats by model",
-        "description": "Returns per-model run counts, verified-PR share, and failure rate for contributor-wall evidence.",
+        "description": "Returns per-model run counts, verified-PR share, failure rate and canonical_model for contributor-wall evidence, plus why runs ended (#18721): `abandoned` (count), `scenarios` (scenario -> count, the same keys as /api/contribute/run-stats backends[].scenarios, summing to runs) and `failure_kinds` ({environment, task, unspecified}, summing to the failed runs behind failure_rate). group=canonical merges rows by canonical model id.",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "canonical"
+              ]
+            },
+            "description": "canonical merges model rows by canonical_model (modelfamily.Canonical): runs, abandoned, scenarios and failure_kinds summed, rates recomputed from summed counts, model set to the canonical id, raw_models[] listing each raw spelling with its runs. Omitted: one row per raw model, each with canonical_model (#18718)."
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -43316,7 +43389,7 @@
                     },
                     "dispatch": {
                       "type": "array",
-                      "description": "Every bound repository's profiles: repo, profile, agent, source, pinned, disabled, problem (why nothing fills it), states",
+                      "description": "Every bound repository's profiles: repo, profile, agent, source, mode, needs, pinned, disabled, problem (why nothing fills it), states, candidates (each pinnable agent with its mode and whether it may do what the profile needs), not_started (hand-offs an agent declined or did not act on)",
                       "items": {
                         "type": "object"
                       }
@@ -45058,6 +45131,81 @@
                         },
                         "spek_ready": {
                           "type": "boolean"
+                        }
+                      }
+                    },
+                    "input_methods": {
+                      "type": "array",
+                      "description": "Static catalogue of input methods the Inbox lists but does not connect to (src/docs/inbox-input-methods.md). Not sources: no entry has settings, sync or sign-in.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "neural",
+                              "silent-speech",
+                              "gaze",
+                              "switch",
+                              "voice"
+                            ]
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "works_today",
+                              "coming_soon"
+                            ],
+                            "description": "works_today: already enters text, use Quick note. coming_soon: no public API or export of text or speech yet."
+                          },
+                          "note": {
+                            "type": "string",
+                            "description": "One factual sentence about the project"
+                          },
+                          "url": {
+                            "type": "string",
+                            "description": "The project's own page (https)"
+                          },
+                          "featured": {
+                            "type": "boolean",
+                            "description": "Shown in the Inbox row; the rest are listed in the docs only"
+                          }
+                        }
+                      }
+                    },
+                    "email_in": {
+                      "type": "object",
+                      "description": "This hive's email-in address, hive@<dashboard host>, for owner and read-write callers (absent for everyone else). Mail to it becomes Inbox items; calendar invites become Calendar entries.",
+                      "properties": {
+                        "address": {
+                          "type": "string",
+                          "description": "hive@<dashboard host>; present only when ready"
+                        },
+                        "ready": {
+                          "type": "boolean",
+                          "description": "True when mail can reach this hive: it holds the hub relay key relayed deliveries are verified with"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "description": "Why ready is false: no_relay (no hub relays mail to this hive) or no_host (the hive's public host is not known)"
+                        },
+                        "files_enabled": {
+                          "type": "boolean",
+                          "description": "Mailed-in files and text bodies become Inbox items"
+                        },
+                        "invites_enabled": {
+                          "type": "boolean",
+                          "description": "Calendar invites become Calendar entries that hive joins"
+                        },
+                        "docs_url": {
+                          "type": "string",
+                          "description": "The setup guide"
                         }
                       }
                     },
@@ -48253,17 +48401,23 @@
         "tags": [
           "Sessions"
         ],
-        "summary": "Close a session (creator or owner)",
-        "description": "Kills tmux and keeps the metadata marked ended; on an ended session removes its metadata.",
+        "summary": "Close or delete a session (creator or owner)",
+        "description": "On a running session: kills tmux and keeps the metadata marked ended (with remove=true it is then deleted). On an ended or failed session: starts the delete and answers 202 at once with the session as deleting; the files are removed by a background job, the record goes when they are gone, and a failure puts the previous status back with delete_error.",
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "Closed (running session), or removed=true: nothing was left on disk and the record is gone"
+          },
+          "202": {
+            "description": "The delete is running in the background; body carries the session with status deleting"
           },
           "403": {
             "description": "Not the creator or an owner"
           },
           "404": {
             "description": "Unknown session"
+          },
+          "409": {
+            "description": "The session is still being prepared, or changed state meanwhile"
           }
         },
         "parameters": [
@@ -48271,6 +48425,15 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "remove",
+            "in": "query",
+            "required": false,
+            "description": "true: delete a running session after closing it",
             "schema": {
               "type": "string"
             }
@@ -48887,6 +49050,1420 @@
           },
           "503": {
             "description": "No identity store on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "List customers",
+        "description": "The Customers section. Every signed-in user gets their own profile (me), created on first read. The verified owner and read-write users also get every customer and every suggested person; a read-only user gets nobody else. With customers.enabled off the answer is {enabled: false}.",
+        "responses": {
+          "200": {
+            "description": "The list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "enabled, full, owner, me (a customer profile), people (customer profiles), suggestions (id, kind, value, counts, evidence references, first_seen, last_seen), default_tags, levels"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not signed in as a named user, or the owner role was not verified"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Add a customer",
+        "description": "Creates a customer by hand. Owner or read-write. An identity that already belongs to another customer is refused with 409; a hive_user identity cannot be added by hand. Audited as customer_add.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "identities": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "kind",
+                        "value"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "github",
+                            "email",
+                            "git_email",
+                            "discord",
+                            "slack",
+                            "teams",
+                            "meet",
+                            "zoom",
+                            "name"
+                          ]
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it: id, name, status, origin, identities (kind, value, source, manual, claimed, at, by), tags (name, state, source, rule, history), goals (id, text, state, source, evidence, history), satisfaction (level, source, evidence, suggestion, history), notes, me, counts, hints, hinted. A viewer without the full view gets no notes, satisfaction, merge history, counts or hints."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name or identity"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "409": {
+            "description": "An identity already belongs to another customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Get a customer profile",
+        "description": "One profile. A read-only user can read only their own (id me, or their own id); any other id answers 404, exactly as an id that does not exist. Opening someone else's profile is audited as customer_profile_open.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id (p_ plus 12 hex), or me for the viewer's own profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it: id, name, status, origin, identities (kind, value, source, manual, claimed, at, by), tags (name, state, source, rule, history), goals (id, text, state, source, evidence, history), satisfaction (level, source, evidence, suggestion, history), notes, me, counts, hints, hinted. A viewer without the full view gets no notes, satisfaction, merge history, counts or hints."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not signed in as a named user, or the owner role was not verified"
+          },
+          "404": {
+            "description": "No such customer, or not visible to this viewer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Forget a customer",
+        "description": "Deletes the customer, their identities and every edge to them, and keeps a salted-hash tombstone per confirmed identity so discovery does not rebuild them. Owner only. Audited as customer_forget.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id (p_ plus 12 hex), or me for the viewer's own profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Forgotten",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "forgotten, edges_removed"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/edit": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Edit a customer profile",
+        "description": "Applies one change, named by op: name, notes, identity_add, identity_remove, tag (state on, off or auto), goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set, satisfaction_confirm, satisfaction_reject. Owner and read-write users may edit anyone. A read-only user may post only to /api/customers/me/edit, and only name, identity, tag and goal changes; an identity they add is an unconfirmed claim that resolves nobody until someone with the full view confirms it. Audited as customer_edit with the person and the op, never the value.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id (p_ plus 12 hex), or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "op"
+                ],
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "enum": [
+                      "name",
+                      "notes",
+                      "identity_add",
+                      "identity_remove",
+                      "tag",
+                      "goal_add",
+                      "goal_edit",
+                      "goal_confirm",
+                      "goal_reject",
+                      "satisfaction_set",
+                      "satisfaction_confirm",
+                      "satisfaction_reject"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string",
+                    "description": "Identity key (kind:value) to remove"
+                  },
+                  "tag": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "on",
+                      "off",
+                      "auto"
+                    ]
+                  },
+                  "goal_id": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "level": {
+                    "type": "string",
+                    "enum": [
+                      "unknown",
+                      "at_risk",
+                      "neutral",
+                      "satisfied"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The profile after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it: id, name, status, origin, identities (kind, value, source, manual, claimed, at, by), tags (name, state, source, rule, history), goals (id, text, state, source, evidence, history), satisfaction (level, source, evidence, suggestion, history), notes, me, counts, hints, hinted. A viewer without the full view gets no notes, satisfaction, merge history, counts or hints."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid change"
+          },
+          "403": {
+            "description": "This viewer may not make this change"
+          },
+          "404": {
+            "description": "No such customer, goal, tag or identity, or not visible to this viewer"
+          },
+          "409": {
+            "description": "The change conflicts with the current state"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/hints/{hid}/answer": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Answer a \"Same person?\" question",
+        "description": "Hive raises a question when a suggested person's address starts like a customer's login, or the reverse. Nothing is linked until it is answered. same true makes the suggested identity the customer's own and deletes the suggestion; same false closes the question and remembers it so it is not asked again. A question between two customers is answered by merging them, so same true on one is refused with 400. Owner or read-write. Audited as customer_hint_answer.",
+        "parameters": [
+          {
+            "name": "hid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Hint id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "same"
+                ],
+                "properties": {
+                  "same": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body, or a customer-to-customer question answered yes"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such question, customer or suggestion"
+          },
+          "409": {
+            "description": "The identity already belongs to another customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/merge": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Merge a customer into this one",
+        "description": "Folds the customer in from into this one: identities, tags, goals and the activity edges move across, and the merge is recorded so it can be undone. Two dashboard users cannot be merged (409). Owner or read-write. Audited as customer_merge.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "from"
+                ],
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Customer id"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          },
+          "409": {
+            "description": "Two dashboard users, or a conflicting identity"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/unmerge": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Undo a merge",
+        "description": "Restores the customer from as it stood before it was merged into this one, and gives back exactly the identities, tags, goals and activity the merge brought. The pair is remembered as different people. Owner or read-write. Audited as customer_unmerge.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "from"
+                ],
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Customer id"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/split": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Split identities off into a new customer",
+        "description": "Moves the named identities (kind:value) off this customer onto a new one, and the activity those identities produced moves with them. A hive user identity cannot be split off and a split must leave an identity behind. Returns the new customer. Owner or read-write. Audited as customer_split.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "identities"
+                ],
+                "properties": {
+                  "identities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Identity keys, kind:value"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Name for the new customer; defaults to the first identity"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/export": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Export everything held about a customer",
+        "description": "Owner only. Returns the profile (including notes, the satisfaction assessment and the merge history), open hints and the references behind the person's activity (at most 10,000), as a JSON download. It holds references, never the content of what they point at. Audited as customer_export.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The export",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "person": {
+                      "type": "object",
+                      "description": "The full profile"
+                    },
+                    "edges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "person, predicate, artefact, via, source, at"
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "hints": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/suggestions/{sid}/accept": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Accept a suggested person",
+        "description": "Turns a suggestion into a customer. This is the human decision that lets the hive build a profile of someone who never signed up. With the optional body {\"into\": \"<customer id or me>\"} it attaches the suggestion to that existing customer instead: the identity becomes one of theirs (a manual decision, so it is not suggested again), no new person is created, the activity moves onto them on the next sweep, and POST /api/customers/{id}/unmerge undoes it. Owner or read-write. Audited as customer_accept, or customer_attach with the target's id.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "into": {
+                    "type": "string",
+                    "description": "Existing customer id, or me, to attach the suggestion to"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Suggestion id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it: id, name, status, origin, identities (kind, value, source, manual, claimed, at, by), tags (name, state, source, rule, history), goals (id, text, state, source, evidence, history), satisfaction (level, source, evidence, suggestion, history), notes, me, counts, hints, hinted. A viewer without the full view gets no notes, satisfaction, merge history, counts or hints."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such suggestion"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/suggestions/{sid}/dismiss": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Dismiss a suggested person",
+        "description": "Deletes a suggestion and tombstones its key, so it is not offered again and no readable trace is kept. Owner or read-write. Audited as customer_dismiss.",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Suggestion id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dismissed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "dismissed"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such suggestion"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/graph": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Query the customer graph (GraphQL, read-only)",
+        "description": "Runs one GraphQL query against the customer graph: people, the artefacts they touched and the edges between them. The schema has no mutations and no subscriptions, so this POST changes nothing, and any signed-in, named user may call it, the read role included. Access is decided on the viewer: the verified owner and read-write users can reach every customer; a read-only user reaches only their own profile by any path (person by id answers null, people lists only them, and an artefact's people lists only them). Suggested people are never returned. An edge to an artefact the viewer may not open where it lives is left out. Limits: depth 8, 8 KB of query text, pages of at most 100, 5,000 nodes and 5 seconds per query; introspection is off (the schema is in src/docs/api-reference/customers.md). A query that fails still answers 200 with a GraphQL errors array. Audited as customer_graph_query with the operation name, node count and error count, never the query text.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "query"
+                ],
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "GraphQL query text, at most 8 KB"
+                  },
+                  "operationName": {
+                    "type": "string"
+                  },
+                  "variables": {
+                    "type": "object",
+                    "description": "Query variables"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "GraphQL response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "description": "The selected fields"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "GraphQL error: message, locations, path"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or no query"
+          },
+          "403": {
+            "description": "Not signed in as a named user, or the owner role was not verified"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive, or the graph engine is not running"
+          }
+        }
+      }
+    },
+    "/api/meetings/persona/preview": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Play a persona preset's introduction",
+        "description": "Speaks the preset's introduction (the text the persona says when asked to introduce itself, in the preset's language, with no pronoun note) in the preset's own voice through the meetings TTS service, and returns the audio, at most 2 MiB. The dashboard plays it when a preset card is clicked. Clips are cached in memory per TTS service, preset, voice and text, so a repeat does not call the TTS again; the X-Hive-Preview-Cache header says hit or miss. At most 30 requests per user per minute, an introduction of at most 600 characters, and a 20 second TTS timeout. Every failure is a JSON error. Owner or read-write.",
+        "parameters": [
+          {
+            "name": "preset",
+            "in": "query",
+            "required": true,
+            "description": "A persona preset id, for example betty.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The audio",
+            "headers": {
+              "X-Hive-Preview-Cache": {
+                "description": "hit when the clip came from the cache, else miss",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "hit",
+                    "miss"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or unknown preset, or the introduction is too long"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "429": {
+            "description": "Rate limited; Retry-After says when to try again"
+          },
+          "502": {
+            "description": "The TTS service failed or is not reachable"
+          },
+          "503": {
+            "description": "Meetings are turned off, TTS not configured, or config is not available"
+          }
+        }
+      }
+    },
+    "/api/knowledge/advisor/summary": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Knowledge advisor rank-versus-holdout summary",
+        "description": "Read-only comparison for the knowledge advisor (read role or higher). Counts and means only: never slugs, refs, agents or content. `arms` carries the `Lane.AdvisorArmSummary()` rows for shadow, deliver and holdout; `mixed` and `none` are listed separately. `since` narrows the decision counts and cost means, not the per-arm bead means.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "RFC 3339 lower bound for the decision counts and cost means"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Advisor summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "window": {
+                      "type": "object",
+                      "properties": {
+                        "since": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "first_decision": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "last_decision": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "rank_mode_start": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "decisions": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "settings": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "mode": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "holdout_percent": {
+                          "type": "integer"
+                        },
+                        "max_calls_per_day": {
+                          "type": "integer"
+                        },
+                        "max_calls_per_agent_hour": {
+                          "type": "integer"
+                        },
+                        "candidates": {
+                          "type": "integer"
+                        },
+                        "on_error": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "by_mode": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "by_arm": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "by_outcome": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "arms": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "arm": {
+                            "type": "string"
+                          },
+                          "beads": {
+                            "type": "integer"
+                          },
+                          "mean_fix_attempts": {
+                            "type": "number"
+                          },
+                          "mean_ci_failure_count": {
+                            "type": "number"
+                          },
+                          "mean_kicks_received": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    },
+                    "mixed": {
+                      "type": "object",
+                      "properties": {
+                        "arm": {
+                          "type": "string"
+                        },
+                        "beads": {
+                          "type": "integer"
+                        },
+                        "mean_fix_attempts": {
+                          "type": "number"
+                        },
+                        "mean_ci_failure_count": {
+                          "type": "number"
+                        },
+                        "mean_kicks_received": {
+                          "type": "number"
+                        }
+                      },
+                      "nullable": true
+                    },
+                    "none": {
+                      "type": "object",
+                      "properties": {
+                        "arm": {
+                          "type": "string"
+                        },
+                        "beads": {
+                          "type": "integer"
+                        },
+                        "mean_fix_attempts": {
+                          "type": "number"
+                        },
+                        "mean_ci_failure_count": {
+                          "type": "number"
+                        },
+                        "mean_kicks_received": {
+                          "type": "number"
+                        }
+                      },
+                      "nullable": true
+                    },
+                    "arms_scope": {
+                      "type": "string"
+                    },
+                    "cost": {
+                      "type": "object",
+                      "properties": {
+                        "latency_samples": {
+                          "type": "integer"
+                        },
+                        "mean_latency_ms": {
+                          "type": "number"
+                        },
+                        "token_samples": {
+                          "type": "integer"
+                        },
+                        "mean_prompt_tokens": {
+                          "type": "number"
+                        },
+                        "mean_completion_tokens": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "small_n": {
+                      "type": "boolean"
+                    },
+                    "small_n_beads": {
+                      "type": "integer"
+                    },
+                    "caveat": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "since is not an RFC 3339 timestamp"
+          },
+          "403": {
+            "description": "Read access required"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/recent": {
+      "get": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "List recent mail: received and refused",
+        "description": "The last 50 messages mailed to hive@<host>, newest first: received, awaiting approval or refused, with the reason category of a refusal and each attachment that was left out (extension and reason). No subject, file name, body or full sender address: only the sender's domain. Received mail and this hive's own refusals are recorded by the hive; the mail receiver's refusals arrive on POST /api/inbox/email/report. A refused or held event also says how to try again (how_to_fix), links the documentation of its reason (help_url) and a prefilled new-issue page (report_url: reason code, SMTP code, day and hive version, never the sender, a subject or a file name); an event that awaits approval lists the Inbox items it brought and those still awaiting approval, for the approve and decline routes. Owner or read-write.",
+        "responses": {
+          "200": {
+            "description": "The recent-mail log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "accepted",
+                              "awaiting_approval",
+                              "rejected"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "type": "integer",
+                            "description": "SMTP reply code the sender got for a refusal"
+                          },
+                          "sender_domain": {
+                            "type": "string"
+                          },
+                          "bytes": {
+                            "type": "integer"
+                          },
+                          "files": {
+                            "type": "integer"
+                          },
+                          "items": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Inbox item ids of a mail that awaits approval"
+                          },
+                          "pending_items": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "The items that still await approval"
+                          },
+                          "how_to_fix": {
+                            "type": "string",
+                            "description": "How to try again, for a refused or held mail"
+                          },
+                          "help_url": {
+                            "type": "string",
+                            "description": "Documentation of the reason"
+                          },
+                          "report_url": {
+                            "type": "string",
+                            "description": "New-issue page prefilled with the reason code, the SMTP code, the day and the hive version"
+                          },
+                          "skipped": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "ext": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "approval_reason": {
+                            "type": "string",
+                            "description": "Why a received mail awaits approval: sender_not_authenticated or sender_not_on_allowlist"
+                          },
+                          "auth": {
+                            "type": "object",
+                            "description": "The sender authentication the mail receiver recorded: dmarc, aligned, spf, spf_domain, dkim (domain:result), remote_ip, helo"
+                          }
+                        }
+                      }
+                    },
+                    "files_enabled": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/report": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Receive a refusal report from the mail receiver (hub relay)",
+        "description": "A message for this hive that the mail receiver refused: a delivery of kind report with the SMTP code, the reason category, the sender's domain, the size, the attachment count and each skipped attachment's extension and reason. It carries no subject, file name, body or full address. Signed by the hub with this hive's relay key like the other mail deliveries; added to the recent-mail log, nothing else is stored. No session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "pkg/mailin/wire.Delivery with kind report"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recorded": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a report delivery"
+          },
+          "401": {
+            "description": "Relay signature rejected or delivery replayed"
+          },
+          "413": {
+            "description": "Delivery too large"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
+          }
+        }
+      }
+    },
+    "/api/inbox/delete": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Delete inbox items of any kind",
+        "description": "Owner or read-write. Deletes items for good, one or many. A hive recording, an upload and a mailed-in file lose the file this hive stores and their machine transcript record; a meeting hive attended and an item of a synced source lose only their Inbox item. The Knowledge fact is kept unless `remove_knowledge` is true, and then only a fact this hive wrote itself (recording, upload) is removed. Every deleted item leaves a tombstone, so a later sync never lists it again; what was already shared from it is not touched. Each deleted item is audited as inbox_delete.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "items"
+                ],
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string"
+                        },
+                        "item_id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "remove_knowledge": {
+                    "type": "boolean",
+                    "description": "Also delete the Knowledge fact of items whose fact this hive wrote itself. Default false."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Items deleted; items that could not be deleted are listed in failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "integer"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string"
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "stored_removed": {
+                            "type": "boolean",
+                            "description": "The file, recording or audio this hive stored was deleted"
+                          },
+                          "knowledge_removed": {
+                            "type": "boolean"
+                          },
+                          "knowledge_kept": {
+                            "type": "boolean"
+                          },
+                          "shares_kept": {
+                            "type": "integer",
+                            "description": "Shares in the item's history; what they filed is not touched"
+                          }
+                        }
+                      }
+                    },
+                    "failed": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string"
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required, or the item is not this user's to delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Inbox not configured, or no such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The item is being transcribed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

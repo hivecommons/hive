@@ -16,8 +16,11 @@ import (
 // prompt line; sessionPaneIdle), waits for idle again, and so on. Idle
 // detection is a heuristic over the pane's last lines, so it fails OPEN: an
 // item that has waited sessionQueueDeliverAfter is delivered anyway, and a
-// message is never stuck forever. The delivery is audited as session_input
-// with the user who queued it, at delivery time.
+// message is never stuck forever. The one exception is a session whose CLI is
+// known not to be at its input prompt yet (startup, login or permission
+// screen, api_sessions_autostart.go): the queue waits for that first. The
+// delivery is audited as session_input with the user who queued it, at
+// delivery time.
 const (
 	// sessionQueueMaxItems bounds one session's queue; a full queue answers 429.
 	sessionQueueMaxItems = 32
@@ -381,7 +384,11 @@ func (s *Server) sessionQueueHeadIs(id, itemID string) bool {
 // passes or the item is gone from the queue, and returns how long it waited.
 func (s *Server) waitSessionIdle(rt SessionRuntime, id, vendor, itemID string) time.Duration {
 	start := s.sessionQueueNow()
-	deadline := start.Add(s.sessionQueueDeadline())
+	// The fail-open deadline only starts once the startup auto-answer lets go:
+	// while the CLI is on a startup, login or permission screen a delivery
+	// would be typed into that screen (api_sessions_autostart.go).
+	s.waitSessionStartup(id, itemID)
+	deadline := s.sessionQueueNow().Add(s.sessionQueueDeadline())
 	for {
 		if text, err := rt.Capture(id, sessionIdleCaptureLines); err == nil && sessionPaneIdle(vendor, text) {
 			return s.sessionQueueNow().Sub(start)
