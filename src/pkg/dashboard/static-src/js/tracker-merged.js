@@ -535,7 +535,10 @@
         // Numbers and counts go through String(): esc() drops non-strings.
         const n = esc(String(e.number || ''));
         const num = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">#${n}</a>` : `#${n}`;
-        return `<li><span class="ham-merged-num" title="${esc(String(e.repo || ''))}#${n}">${num}</span><span class="ham-merged-title" title="${esc(e.title || '')}">${esc(e.title || e.repo)}</span><span class="ham-merged-repo">${esc(String(e.repo || ''))}</span><span class="ham-merged-meta">${meta}</span></li>`;
+        // History opens the item's audit trail, ledger entry and row
+        // (GET /api/audit/item, the admin MCP's item_history_read).
+        const hist = e.repo && Number(e.number) > 0 ? `<button type="button" class="ham-merged-hist" data-action="openAuditItemHistory" data-arg0="${esc(String(e.repo))}" data-arg1="${n}" data-arg-types="s,j" data-stop="1" title="Everything the hive recorded about this PR">history</button>` : '';
+        return `<li><span class="ham-merged-num" title="${esc(String(e.repo || ''))}#${n}">${num}</span><span class="ham-merged-title" title="${esc(e.title || '')}">${esc(e.title || e.repo)}</span><span class="ham-merged-repo">${esc(String(e.repo || ''))}</span><span class="ham-merged-meta">${meta}${hist}</span></li>`;
       }).join('');
       let head = `<div class="ham-merged-pop-head"><span>Recent merges</span><span class="ham-merged-pop-sum">${esc(String(txt.today))} today · ${esc(String(txt.week))} this week · ${esc(String(txt.total30d))} in 30 days</span></div>`;
       let body = rows ? `<ol class="ham-merged-list">${rows}</ol>` : `<div class="ham-empty">No merges recorded yet.</div>`;

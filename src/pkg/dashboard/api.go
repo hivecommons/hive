@@ -62,6 +62,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/variables/{name}", s.handleVariableUpsert)
 	s.mux.HandleFunc("DELETE /api/config/variables/{name}", s.handleVariableDelete)
 	s.mux.HandleFunc("GET /api/audit", s.handleAuditLog)
+	s.mux.HandleFunc("GET /api/audit/item", s.handleAuditItemHistory)
 	s.mux.HandleFunc("GET /api/advisor/records", s.handleAdvisorRecords)
 	s.mux.HandleFunc("GET /api/advisor/spend", s.handleAdvisorSpend)
 	s.mux.HandleFunc("GET /api/config/advisor", s.handleAdvisorSettingsGet)
