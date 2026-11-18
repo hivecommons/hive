@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v6.45.1)
+
+### Fixed
+
+- The Activity monitor's 085 row no longer asks for an approval the head already has. The stage pass now records the trusted merger's approval of the head on the stage record, and the row reads it at 085 (where the stage reason carries no `:human-approved@` suffix): the decision popover skips the reviewer question that approval answered and shows the real blocker (for example a fork-guard check), and Approve is disabled with "@login already approved this head" except on a sentinel alert, where Approve still clears the label (follow-up to #18849).
+- A `<!-- hive:blocked-on issue=owner/repo#N -->` marker read from an issue's comment is now remembered in the issue form, so the row reads "blocked on issue owner/repo#N". It was remembered as "blocked on owner/repo#N", and a later blocked sweep pass whose comment budget skipped the issue looked the blocker up as a pull request, which failed with a 404 and kept the block from ever lifting on that pass.
+- The stale-red base refresh now updates a red PR at `stage/072-returned-to-contributor` when its base has since fixed every failing check. The 072 skip assumed the contributor's hive would merge the base, but nothing asks it to, so such a PR (projectbluefin/actions#765, #766) stayed red until a person pressed "Update branch". The update is pinned to the evaluated head, so a contributor's push wins.
+
 ## 2026-11-18 (v6.45.0)
 
 ### Added

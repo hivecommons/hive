@@ -306,19 +306,37 @@ someone re-runs it. The shared-CI rerun sweep
 (`src/pkg/github/shared_ci_rerun.go`) closes that gap every ~15 minutes:
 
 - It lists `[shared-ci]` issues closed in the last 72h in each watched repo,
-  ignoring ones closed as "not planned". With none, it makes no other calls.
+  ignoring ones closed as "not planned".
+- It also treats an **open** incident as over once the incident's check has
+  completed green on a base branch tip after the incident was filed. The hive
+  never closes a tracker itself, and an outside outage that ends on its own
+  (projectbluefin/utah#1336: codeberg.org stopped resolving) otherwise left
+  every PR red until a person closed the issue. The green times come from the
+  base-red gate's own reads of the base tip (no extra listing), so the open
+  incidents are listed only for a repo where such a green run was seen. A PR
+  counts the open incident as over only when the check passed on **its own**
+  base. The tracker stays open; closing it is still a person's step.
+- With no incident over, it makes no other calls.
 - For each open PR whose newest shared-CI marker names one of those incidents,
-  it re-runs the failed jobs (`POST .../actions/runs/{id}/rerun-failed-jobs`)
+  or that the incident's tracker body lists (the hive tracker's "Open pull
+  requests failing it" line, or an agent's "Affected PRs:" line; only a
+  tracker one of the hive's own accounts wrote, since anyone can open an
+  issue under that title), it re-runs
+  the failed jobs (`POST .../actions/runs/{id}/rerun-failed-jobs`)
   of the newest run per workflow on the PR head when that run concluded
   `failure` or `timed_out`, using the hive's App/daemon credential. A newest
   run that concluded `cancelled` — how a job cut off by its `timeout-minutes`
   is recorded, the shape of the `mutation` incident #17463 — is red too and
   is re-run whole (`POST .../actions/runs/{id}/rerun`), since it has no
   "failed" job for the other endpoint (hivecommons/hive#17500). It pushes
-  nothing to the branch, so it applies to every author; PRs with a hold or
-  `do-not-merge` label are skipped.
+  nothing to the branch, so it applies to every author, Renovate, Dependabot
+  and contributor branches at `stage/072-returned-to-contributor` included;
+  PRs with a hold or `do-not-merge` label are skipped. A PR whose newest
+  marker names an incident that is not over is still deferred there and is
+  left alone.
 - It then posts one comment, *Shared-CI incident #N closed — re-running
-  `<check>`*, carrying `<!-- hive-shared-ci-rerun-<n> -->` and
+  `<check>`* (for an open incident: *#N (still open; `<check>` has passed on
+  the base branch since it was filed) is over*), carrying `<!-- hive-shared-ci-rerun-<n> -->` and
   `<!-- hive-shared-ci-lifted-<n> -->`; either marker keeps the PR to one
   re-run per incident. A PR with nothing red on its
   head gets no comment. At most 10 PRs are re-run per pass; each re-run is
@@ -329,13 +347,15 @@ someone re-runs it. The shared-CI rerun sweep
   failed jobs have not run again yet, so the stage pass does not hand it
   back to its author (072) and the kick builders do not list it for repair
   in that window. A "not planned" close gets no re-run and releases the PR
-  at once.
+  at once. Once the rerun comment is on the PR its deferral is lifted even
+  while the incident stays open: the re-run happened after the base
+  recovered, so a red that survives it is the PR's own.
 - It is an unstick step (`shared_ci_rerun` in `api_budget.unstick_steps`): it
   keeps running in `conserve` and is shed only in `critical`.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes. |
+| `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes or its check passes on the base again. |
 
 ## Shared-CI tracking issues (`shared_ci_issues`)
 
@@ -640,7 +660,7 @@ that level, the power the write-back exists to govern?
 | Issue filing (`pkg/upstreamwatch/github_filer.go`, `advisory.go`, scanner/deps/regression agents, `dedupe_advisory_close.go`) | agents, advisory digest, upstream watch | **new** issues hive authors, pinned advisory issue + comments | `project.repos` | `issue_file` → L3, no label (this is what listing a repo opts in to; `per_repo.mode: issues-only` keeps only this) |
 | Code scanning sweep (`pkg/github/code_scanning.go`, `pkg/codescanning`) | hourly sweep (`code_scanning`, opt-in per repo) | **new** grouped issues from code scanning alerts, alert-table body edits, one closing comment + close when every alert is fixed or dismissed | the hive's own `hive/code-scanning` issues in repos with `code_scanning` on | `issue_file` → L3, no label (own items); see [code-scanning.md](../code-scanning.md) |
 | Shared-CI tracking issues (`shared_ci_issues.go`) | 15-min sweep (`shared_ci_issues`) | **new** `[shared-ci] <check> failing across <owner/repo>` issue, body edits of its own issue | repos where one check fails on `shared_ci_issues.min_prs`+ open PRs or trips the red-main breaker | `issue_file` → L3, no label (own items) |
-| Shared-CI rerun (`shared_ci_rerun.go`) | CI failure watcher | `rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment | PRs with failed shared workflows | `ci_rerun` → L6 + label |
+| Shared-CI rerun (`shared_ci_rerun.go`) | CI failure watcher | `rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment | PRs deferred to or listed by a `[shared-ci]` incident that closed or whose check passed on their base again | `ci_rerun` → L6 + label |
 | Transient-CI rerun (`transient_ci_rerun.go`) | eval cycle, before the stuck-PR reaper | `rerun-failed-jobs`, once per head, no comment | hive-authored and `auto_merge.trusted_bot_authors` red PRs whose every failing run carries `hive-ci-transient` | `ci_rerun` (own items: allowed unless the repo is paused, off or issues-only; trusted-bot PRs: L6 + label, or `writeback.kinds.ci_rerun.unlabeled_min_level`; a refused re-run hands the bot PR to a person with the reason) |
 | Stale-red base refresh (`cmd/hive/stale_red_base_refresh.go`, `pkg/github/stale_red_base_refresh.go`) | eval cycle, before the stuck-PR reaper, at most every 5 min | **branch push** (`update-branch` merge of the base), once per head and base tip, no comment | red PRs behind their base whose every failing check is green on the base tip, 072 included; not drafts, held, non-editable forks, dependency-bot branches or 074 | `base_refresh` → hive-authored PRs, else L6 + label |
 | Missing-check base refresh (`cmd/hive/missing_check_base_refresh.go`, `pkg/github/missing_check_base_refresh.go`) | eval cycle, after the stale-red base refresh, at most every 5 min | **branch push** (`update-branch` merge of the base), once per head and base tip and once per missing check, no comment | PRs behind their base, otherwise green, whose head has no run at all for a required check that runs on the base tip or another open PR; not drafts, held, parked, non-editable forks, dependency-bot branches, 072 or 074 | `base_refresh` → hive-authored PRs, else L6 + label |

@@ -1132,6 +1132,13 @@ refuses any other role.
   operator-owned (`governor.cadence_owners`), as a dashboard edit does, so a
   later ACMM level change (`fleet.autonomy_level`) or pack apply no longer
   resets it to the pack default. The preview says so.
+- `governor.feature_settings` also takes write-back containment's unsolicited
+  knobs, the toggles above the per-kind table on Settings → Features:
+  `writebackMinLevel` (`writeback.unsolicited.min_level`, 0 restores the default),
+  `writebackRequireLabels` (`writeback.unsolicited.require_labels`) and
+  `writebackBackfill` (`writeback.unsolicited.backfill`). Its preview names
+  each one that lets the hive write to more items: backfill on, the opt-in
+  label requirement off, or any level change.
 - `writeback.kind_policy` changes the write-back gate's per-kind overrides
   (`writeback.kinds.<kind>`: `min_level`, `require_label`,
   `unlabeled_min_level` and `own_only`), through

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -124,6 +125,7 @@ func (c *Client) baseCheckStatesForRef(ctx context.Context, owner, repo, ref str
 		opts.Page = resp.NextPage
 	}
 	states := map[string]baseCheckState{}
+	completed := map[string]time.Time{}
 	for _, cr := range latestCheckRunsByNameAndApp(all) {
 		name := cr.GetName()
 		if name == "" || isMetaCheck(name) {
@@ -141,6 +143,20 @@ func (c *Client) baseCheckStatesForRef(ctx context.Context, owner, repo, ref str
 		if prev, seen := states[name]; !seen || baseCheckRank(st) > baseCheckRank(prev) {
 			states[name] = st
 		}
+		if at := cr.GetCompletedAt().Time; st == baseCheckGreen && at.After(completed[name]) {
+			completed[name] = at
+		}
+	}
+	// When each check last went green on the tip, for the shared-CI rerun
+	// sweep's recovery test; a name another app still runs or failed is
+	// not green.
+	for name := range completed {
+		if states[name] != baseCheckGreen {
+			delete(completed, name)
+		}
+	}
+	if len(completed) > 0 {
+		c.baseRed.noteGreen(baseRedMemoryKey(owner, repo, ref), completed)
 	}
 	return states, nil
 }

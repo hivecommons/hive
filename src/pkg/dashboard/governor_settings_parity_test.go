@@ -316,3 +316,77 @@ func TestParityBatch7SettingsRenderEveryKey(t *testing.T) {
 		}
 	}
 }
+
+// governor.ci's workflow-approval keys (hivecommons/hive#16603) round-trip
+// through the Features PUT: the flag, the actor list as typed, "none" for an
+// explicit empty list and blank for the default.
+func TestGovernorFeaturesWorkflowApprovalRoundTrip(t *testing.T) {
+	s := covApiServer(t)
+	if rec := doPut(s, opsFeaturesPath, map[string]any{"ciAutoApproveWorkflowActors": "dependabot[bot], some one"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("an actor with a space: expected 400, got %d", rec.Code)
+	}
+	if s.deps.Config.Governor.CI.AutoApproveWorkflowActors != nil {
+		t.Fatal("a rejected PUT changed the actor list")
+	}
+	if rec := doPut(s, opsFeaturesPath, map[string]any{
+		"ciAutoApproveWorkflows":      false,
+		"ciAutoApproveWorkflowActors": " renovate[bot], github-actions[bot] ,",
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("features PUT: %d — %s", rec.Code, rec.Body.String())
+	}
+	ci := s.deps.Config.Governor.CI
+	if ci.AutoApproveWorkflowsEnabled() {
+		t.Fatal("auto_approve_workflows not turned off")
+	}
+	if got := strings.Join(ci.WorkflowApprovalActors(), ","); got != "renovate[bot],github-actions[bot]" {
+		t.Fatalf("auto_approve_workflow_actors = %q", got)
+	}
+
+	rec := doGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("governor GET: %d", rec.Code)
+	}
+	var got struct {
+		Features map[string]any `json:"features"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	f := got.Features
+	if f["ciAutoApproveWorkflows"] != false || f["ciAutoApproveWorkflowActors"] != "renovate[bot], github-actions[bot]" || f["ciAutoApproveActorsDefault"] != "dependabot[bot], renovate[bot]" {
+		t.Fatalf("features response: %v / %v / %v", f["ciAutoApproveWorkflows"], f["ciAutoApproveWorkflowActors"], f["ciAutoApproveActorsDefault"])
+	}
+
+	if rec := doPut(s, opsFeaturesPath, map[string]any{"ciAutoApproveWorkflowActors": "none"}); rec.Code != http.StatusOK {
+		t.Fatalf("none PUT: %d — %s", rec.Code, rec.Body.String())
+	}
+	if a := s.deps.Config.Governor.CI.AutoApproveWorkflowActors; a == nil || len(*a) != 0 || len(s.deps.Config.Governor.CI.WorkflowApprovalActors()) != 0 {
+		t.Fatalf("\"none\" must store an explicit empty list, got %#v", a)
+	}
+	if rec := doPut(s, opsFeaturesPath, map[string]any{"ciAutoApproveWorkflowActors": " "}); rec.Code != http.StatusOK {
+		t.Fatalf("blank PUT: %d — %s", rec.Code, rec.Body.String())
+	}
+	if ci = s.deps.Config.Governor.CI; ci.AutoApproveWorkflowActors != nil || ci.WorkflowApprovalActors()[0] != "dependabot[bot]" {
+		t.Fatalf("blank must restore the default actors, got %#v", ci.AutoApproveWorkflowActors)
+	}
+	if ci.AutoApproveWorkflowsEnabled() {
+		t.Fatal("a PUT that did not carry the flag changed it")
+	}
+}
+
+// Both governor.ci keys render on Settings → Features with their YAML-key
+// hint next to a control bound to the Features save path.
+func TestWorkflowApprovalSettingsRender(t *testing.T) {
+	features := extractJSFunction(t, indexHTML(t), "renderGovFeatures")
+	for _, c := range []struct{ yaml, control string }{
+		{"governor.ci.auto_approve_workflows", `data-section="features" data-key="ciAutoApproveWorkflows"`},
+		{"governor.ci.auto_approve_workflow_actors", `data-arg1="ciAutoApproveWorkflowActors" data-arg-types="s,s,s"`},
+	} {
+		if !strings.Contains(features, "yamlHint('"+c.yaml+"')") {
+			t.Errorf("%s has no YAML-key hint", c.yaml)
+		}
+		if !strings.Contains(features, c.control) {
+			t.Errorf("%s has no Features control (%s)", c.yaml, c.control)
+		}
+	}
+}
