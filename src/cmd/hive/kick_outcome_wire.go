@@ -107,3 +107,28 @@ func kickOutcomeSender(s *kickoutcome.Store, send func(agent, message string) er
 
 // isKickBusy reports a busy bounce (agent mid-turn).
 func isKickBusy(err error) bool { return errors.Is(err, crux.ErrAgentBusy) }
+
+// kickOutcomeSource adapts the store to the dashboard's KickOutcomeSource, so
+// the dashboard takes no import of pkg/kickoutcome.
+type kickOutcomeSource struct{ s *kickoutcome.Store }
+
+func (a kickOutcomeSource) Intend(agent, kind, actor string) {
+	a.s.Intend(agent, kickoutcome.Trigger{Kind: kind, Actor: actor})
+}
+
+func (a kickOutcomeSource) Refused(agent, kind, actor, code, reason string, at time.Time) {
+	a.s.Refused(agent, kickoutcome.Trigger{Kind: kind, Actor: actor}, code, reason, at)
+}
+
+func (a kickOutcomeSource) Latest() any { return a.s.Latest() }
+
+func (a kickOutcomeSource) Recent(agent string, n int) (any, any) {
+	kicks := a.s.Recent(agent, n)
+	if kicks == nil {
+		kicks = []kickoutcome.Detail{}
+	}
+	if len(kicks) == 0 {
+		return nil, kicks
+	}
+	return kicks[0].View, kicks
+}

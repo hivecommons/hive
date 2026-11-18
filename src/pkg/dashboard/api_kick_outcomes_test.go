@@ -10,18 +10,39 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hivecommons/hive/pkg/kickoutcome"
 )
 
-func kickOutcomeServer(t *testing.T) (*Server, *kickoutcome.Store) {
+// fakeKickOutcomes is a canned KickOutcomeSource: the derivation, redaction
+// and caps are pkg/kickoutcome's tests; here only the route is under test.
+type fakeKickOutcomes struct {
+	intents, refusals []string
+}
+
+func (f *fakeKickOutcomes) Intend(agent, kind, actor string) {
+	f.intents = append(f.intents, agent+"|"+kind+"|"+actor)
+}
+
+func (f *fakeKickOutcomes) Refused(agent, kind, actor, code, reason string, _ time.Time) {
+	f.refusals = append(f.refusals, agent+"|"+kind+"|"+actor+"|"+code)
+}
+
+func (f *fakeKickOutcomes) Latest() any {
+	return map[string]any{"scanner": map[string]any{"kind": "stood_down", "summary": "stood down"}}
+}
+
+func (f *fakeKickOutcomes) Recent(agent string, _ int) (any, any) {
+	return map[string]any{"kind": "stood_down", "summary": "stood down"},
+		[]any{map[string]any{"kind": "stood_down", "summary": "stood down", "trigger_kind": "governor", "started_at": "x", "quote": "no push rights"}}
+}
+
+func kickOutcomeServer(t *testing.T) (*Server, *fakeKickOutcomes) {
 	t.Helper()
 	s := NewServer(0, slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError})))
 	deps := testDeps(t)
-	store, _ := kickoutcome.Open("", nil)
-	deps.KickOutcomes = store
+	f := &fakeKickOutcomes{}
+	deps.KickOutcomes = f
 	s.RegisterAPI(deps)
-	return s, store
+	return s, f
 }
 
 func kickOutcomeGet(s *Server, path, role string, verified bool) *httptest.ResponseRecorder {
@@ -38,19 +59,11 @@ func kickOutcomeGet(s *Server, path, role string, verified bool) *httptest.Respo
 	return rec
 }
 
-func seedStandDown(store *kickoutcome.Store) time.Time {
-	t0 := time.Now().Add(-time.Hour)
-	store.Delivered("scanner", t0)
-	store.TurnEnded("scanner", "stand-down", "stand down: no push rights ghp_abcdefghijklmnopqrstuvwxyz0123456789", t0, t0.Add(time.Minute))
-	return t0
-}
-
 // A read-only session sees the one-line summary and nothing else: no quoted
 // reason, no trigger, no times of the turn. An owner and a read-write session
 // see the detail, with tokens redacted.
 func TestKickOutcomesRoleGatedDetail(t *testing.T) {
-	s, store := kickOutcomeServer(t)
-	seedStandDown(store)
+	s, _ := kickOutcomeServer(t)
 
 	for _, c := range []struct {
 		name, role string
@@ -66,9 +79,6 @@ func TestKickOutcomesRoleGatedDetail(t *testing.T) {
 		if hasQuote != c.detail {
 			t.Fatalf("%s: quote visible=%v want %v: %s", c.name, hasQuote, c.detail, body)
 		}
-		if strings.Contains(body, "ghp_abcdefghijklmnopqrstuvwxyz0123456789") {
-			t.Fatalf("%s: token leaked: %s", c.name, body)
-		}
 		if !c.detail && (strings.Contains(body, "trigger") || strings.Contains(body, "started_at") || strings.Contains(body, "kicks")) {
 			t.Fatalf("%s: detail fields leaked to a read-only session: %s", c.name, body)
 		}
@@ -79,8 +89,7 @@ func TestKickOutcomesRoleGatedDetail(t *testing.T) {
 }
 
 func TestKickOutcomesLatestListHoldsSummariesOnly(t *testing.T) {
-	s, store := kickOutcomeServer(t)
-	seedStandDown(store)
+	s, _ := kickOutcomeServer(t)
 	rec := kickOutcomeGet(s, "/api/kick-outcomes", "owner", true)
 	var resp struct {
 		Agents map[string]map[string]any `json:"agents"`
@@ -104,12 +113,15 @@ func TestKickOutcomesUnavailableWithoutStore(t *testing.T) {
 // A refusal is recorded only with a documented reason code; the record never
 // invents one.
 func TestKickRefusedOnErrorUsesDocumentedCodes(t *testing.T) {
-	s, store := kickOutcomeServer(t)
-	s.kickRefusedOnError("a", kickoutcome.TriggerDashboard, "alice", errors.New("agent a cannot be kicked: it is paused (by budget)"))
-	s.kickRefusedOnError("a", kickoutcome.TriggerDashboard, "alice", errors.New("something nobody documented"))
-	s.kickRefusedOnError("a", kickoutcome.TriggerDashboard, "alice", nil)
-	rs := store.Records("a", 0)
-	if len(rs) != 1 || rs[0].RefusalCode != kickRefusalPaused || rs[0].TriggerActor != "alice" {
-		t.Fatalf("%+v", rs)
+	s, f := kickOutcomeServer(t)
+	s.kickRefusedOnError("a", kickTriggerDashboard, "alice", errors.New("agent a cannot be kicked: it is paused (by budget)"))
+	s.kickRefusedOnError("a", kickTriggerDashboard, "alice", errors.New("something nobody documented"))
+	s.kickRefusedOnError("a", kickTriggerDashboard, "alice", nil)
+	if len(f.refusals) != 1 || f.refusals[0] != "a|dashboard|alice|"+kickRefusalPaused {
+		t.Fatalf("%v", f.refusals)
+	}
+	s.kickIntend("a", kickTriggerWorkflowDispatch, "bob")
+	if len(f.intents) != 1 {
+		t.Fatalf("%v", f.intents)
 	}
 }

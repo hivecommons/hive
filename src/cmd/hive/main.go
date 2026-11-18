@@ -1131,7 +1131,7 @@ func (b *boot) wireBootClosures() {
 			WorkflowProvisionLabels:  workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
 			WorkflowDispatchPrepare:  workflowDispatchPrepare(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
 			WorkflowDispatchHandoffs: workflowDispatchHandoffs(b.cfg, b.logger),
-			KickOutcomes:             kickOutcomesFor(b.cfg, b.logger),
+			KickOutcomes:             kickOutcomeSource{kickOutcomesFor(b.cfg, b.logger)},
 			WorkflowEmitChecks:       workflowEmitChecks(b.cfg, func() *github.Client { return b.ghClient }),
 			WorkflowClusterRunner:    workflowClusterRunner(),
 			WorkflowSpecLLM:          newWorkflowSpecRunner(func() *config.Config { return b.cfg }),

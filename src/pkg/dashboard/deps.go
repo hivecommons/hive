@@ -23,7 +23,6 @@ import (
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/governor"
-	"github.com/hivecommons/hive/pkg/kickoutcome"
 	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/inbox"
@@ -107,9 +106,9 @@ type Dependencies struct {
 	Governor          *governor.Governor
 	// KickOutcomes is the durable per-kick outcome record behind
 	// GET /api/kick-outcomes (hivecommons/hive#18916). Nil answers 503.
-	KickOutcomes *kickoutcome.Store
-	GHClient          *ghpkg.Client
-	GHAppAuth         *ghpkg.AppAuth
+	KickOutcomes KickOutcomeSource
+	GHClient     *ghpkg.Client
+	GHAppAuth    *ghpkg.AppAuth
 	// GHTokenScopes is the boot-time PAT scope probe result (see
 	// ghpkg.CheckTokenScopes). It is set only on the token-auth path; the App
 	// path leaves it at ScopeStatusSkipped because Apps carry permissions, not

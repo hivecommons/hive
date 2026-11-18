@@ -8,7 +8,6 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/kickoutcome"
 )
 
 func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
@@ -41,16 +40,16 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 
 	kickUser := requestUser(r)
 	deliverKick := func(kickMsg string) (bool, error) {
-		s.kickIntend(name, kickoutcome.TriggerDashboard, kickUser)
+		s.kickIntend(name, kickTriggerDashboard, kickUser)
 		started, err := s.deps.AgentMgr.SendKickAsync(name, kickMsg)
-		s.kickRefusedOnError(name, kickoutcome.TriggerDashboard, kickUser, err)
+		s.kickRefusedOnError(name, kickTriggerDashboard, kickUser, err)
 		return started, err
 	}
 
 	if msg == "" && s.deps.Scheduler != nil {
 		if !s.deps.Scheduler.FirstScanDone() {
 			if err := s.deps.AgentMgr.ValidateKick(name); err != nil {
-				s.kickRefusedOnError(name, kickoutcome.TriggerDashboard, kickUser, err)
+				s.kickRefusedOnError(name, kickTriggerDashboard, kickUser, err)
 				jsonKickError(w, err.Error(), http.StatusBadRequest)
 				return
 			}
