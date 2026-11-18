@@ -654,6 +654,87 @@ A re-review is a review of a PR the hive already judged at an earlier head SHA. 
 
 Every delta aggregate records `delta.previous_head` (and `delta_previous_head` on each perspective report, stamped from the dispatch state like `review_model`), so the cost dashboard can split delta reviews, re-stamps and full reviews. The compare is fetched once per candidate head (no verdict, no pending entry, a prior at another head) with one 300-file page; a bigger or failed compare still gets the delta instruction, just without the file list and never the re-stamp.
 
+## Independent fact-check for analysis PRs (`review.analysis_factcheck`)
+
+The swarm's built-in perspectives are shaped around code diffs. On a PR that is an analysis or a report (a docs assessment, an audit write-up, a scored comparison) they judge the build, the layout and whether the diff matches the PR body, not whether the content is true. The fact-check pass is an opt-in second reviewer for that kind of PR: a different agent re-verifies what the author claimed, so a person reviews after an agent has already checked the work ([#19074](https://github.com/hivecommons/hive/issues/19074)). It is off by default and changes nothing for a hive that does not enable it.
+
+### Enable it
+
+```yaml
+review:
+  analysis_factcheck:
+    enabled: true
+    author_agents: [quality]     # agents whose PRs qualify; a PR also qualifies by label
+    labels: []                   # e.g. [analysis]; matched case-insensitively on PRs an agent opened
+    reviewer_agents: [reviewer]  # who may run the pass; default review.reviewer_agents, else role: reviewer
+    reviewer_model: ""           # optional: pin the review to a model (a sub-agent runs with it)
+    independence: model          # agent | model | family
+    max_rounds: 3                # author/reviewer rounds per PR (1-10)
+    ready_policy: human          # human | hive
+    revision_wait: 6h            # how long the author has to push a revision after findings
+    authoritative_files: []      # default: MAINTAINERS, MAINTAINERS.md, OWNERS, CODEOWNERS, .github/CODEOWNERS, .project/maintainers.yaml, GOVERNANCE.md
+    rubric: ""                   # extra guidance for the reviewer, e.g. where the scoring rubric lives
+```
+
+`enabled` with neither `author_agents` nor `labels` fails config load, because no PR would qualify. Nothing in the block names a project, a repository or a workflow: the qualifying agents and labels are the operator's choice. Candidates are the PRs your agents opened (owner from the audit trail's `agent_pr_created` entries), so it reaches repositories the hive does not manage; a PR a person opened is not enumerated. When the PR is also covered by the review swarm, the swarm is unchanged and the two run side by side.
+
+### What the reviewer does
+
+The sweep (every 5 minutes, off the eval cycle, no webhook needed) kicks one reviewer agent with a brief generalised from the prompt a maintainer used by hand to review a hive's analysis: check the work for quality and correctness against the sources and domains the request names, and give comments a person can verify, with file and line numbers. The reviewer:
+
+1. reads the PR body, the request issue it links and earlier work in the repository, to learn the sources, domains and scoring rules;
+2. re-verifies every factual claim, score, grade and attribution against the cited source or live evidence, and compares with any authoritative external score;
+3. checks each judgment for skew in both directions (a rating or a "standout" claim that is too positive, a gap or negative rating that is too negative);
+4. checks that the material the analysis rates was actually inspected, and that a capability installed is not counted as delivered;
+5. checks people, roles and approvals against the authoritative files, not against other prose;
+6. posts **one review** with `hive-review`: a summary and line-anchored comments, in one notification.
+
+The reviewer is read-only. It never pushes, approves, requests changes, merges, labels, or changes the draft state.
+
+### Output format
+
+The summary opens with `**Fact-check: PASS | FINDINGS | INCONCLUSIVE** (round N of M, head <sha>)`, then a short judgement, `Re-verified:` and `Not verified:` lists, and ends with a hidden marker the hive reads:
+
+```text
+<!-- hive:factcheck round=2 verdict=findings head=<full head sha> -->
+```
+
+Each inline comment is anchored on the line that makes the claim and has exactly this shape; a finding without all three parts is not posted:
+
+```text
+**<claim | score | attribution | skew-positive | skew-negative | not-inspected | authority | scope>** what is wrong, quoting the claim, and what the evidence shows
+Verify: <a link or an exact command a person can run>
+Confidence: high | medium | low
+```
+
+PASS means no finding of high or medium confidence remains. INCONCLUSIVE means a material part could not be checked, and goes to a person rather than into another round.
+
+### Independence
+
+The author never reviews its own PR, whatever `reviewer_agents` lists (a replica such as `quality-2` counts as the author `quality`). `independence` sets how different the reviewer must be:
+
+- `agent`: a different agent.
+- `model` (default): a different model id. The review's model is `reviewer_model` when set, else the reviewer agent's own model.
+- `family`: a different model family (`claude`, `gpt`, `gemini`, ...). Two Claude models are the same family.
+
+Independence that cannot be shown is refused: where the level needs a model and either model is unknown, the reviewer is not used. When no candidate qualifies, the hive posts one hand-off note instead of reviewing, so a misconfigured lane is visible rather than silent.
+
+### Draft state
+
+The pass is built around the draft as an end point. A workflow that opens its deliverable as a draft keeps it a draft while the pass runs. `ready_policy: human` (default) leaves the draft-to-ready call to a person, who finds a PR that already carries a fact-check review. `ready_policy: hive` marks the PR ready for review after a PASS on the current head. The hive never marks a PR ready on any other verdict, on a marker from anyone but its own identity, on an older head, or after a person has reviewed, and it never moves a ready PR back to draft.
+
+### The author/reviewer loop, and how it stays bounded
+
+The review-feedback sweep (#19027) ignores bot comments so two agents can never answer each other forever, which means it would not carry the reviewer's findings to the author. This pass has its own bounded path instead:
+
+- The reviewer's findings are marked by the hidden marker above. Only a marker on the hive's own review counts; a marker typed by anyone else is ignored.
+- On FINDINGS the author agent is kicked **once per head** with the review's text quoted as data to test, never instructions. It runs each `Verify:` link or command, fixes what is right in a signed revision on the same branch, and replies with evidence on what is wrong. It does not mark the PR ready.
+- A new head starts the next round. Rounds are capped by `max_rounds`, counted from the hive's own persisted record and from marked reviews, whichever is higher, so a silent reviewer or a missing marker cannot extend the loop.
+- The loop stops, with the PR left as it is, on a PASS; when `max_rounds` is reached; when the author does not push within `revision_wait`; on INCONCLUSIVE; when no independent reviewer exists; and as soon as a person has reviewed the PR (their review is the review; the feedback sweep routes what they say to the author). Every stop that needs a person posts exactly one note marked `<!-- hive:factcheck-needs-human -->`, and nothing more is done after it.
+- The per-head review cap (`max_reviews_per_head`, one review per head in quiet mode) exempts a review that carries a valid fact-check marker, because this pass is asked to post a review on a head the swarm may already have covered. The pass bounds its own rounds.
+
+State lives in `/data/factcheck/state.json` (`HIVE_FACTCHECK_DIR` overrides it). A hive that cannot write it keeps counting in memory, and the marked reviews on the PR still bound the loop.
+
 ## Revising a recorded verdict
 
 Dispatch skips any PR that already carries a verdict for its head SHA. That is the right default — it stops the reviewer re-reviewing unchanged code every sweep — but it also makes a review final the moment it is written, even when the reviewer itself was defective. Two settings, both required, re-open such verdicts narrowly:

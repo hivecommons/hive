@@ -96,6 +96,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).upsertScannerNote":                  {Class: NotificationClassAttention},
 	"github.attentionDelivery.Post":                       {Class: NotificationClassAttention},
 	"main.claimEscalationLookup":                          {Class: NotificationClassAttention},
+	"main.factCheckSweep.needsHuman":                      {Class: NotificationClassAttention},
 	"main.maintainHeldPRMergeability":                     {Class: NotificationClassAttention},
 	"main.rfcCoverageForge.CreateComment":                 {Class: NotificationClassAttention},
 	"main.runEscalationSweep":                             {Class: NotificationClassAttention},
