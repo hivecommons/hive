@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.317.0)
+
+### Added
+
+- Hold unacknowledged agent strategist and outreach proposals before admission, with configurable lanes and an explicit opt-out.
+
 ## 2026-11-18 (v5.316.0)
 
 ### Added
