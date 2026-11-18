@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -233,6 +234,7 @@ func TestParityBatch8SettingsRenderEveryKey(t *testing.T) {
 
 	body := extractJSFunction(t, html, "renderKnowledgePipelineBody")
 	for _, c := range []struct{ yaml, id string }{
+		{"knowledge.sidecar_advise", "sa-enabled"},
 		{"knowledge.bead_synthesizer.enabled", "bs-enabled"},
 		{"knowledge.bead_synthesizer.schedule", "bs-schedule"},
 		{"knowledge.bead_synthesizer.target_layer", "bs-target_layer"},
@@ -289,5 +291,87 @@ func TestParityBatch8SettingsRenderEveryKey(t *testing.T) {
 	}
 	if !strings.Contains(sharing, "renderKnowledgePipelineSection()") {
 		t.Error("the Knowledge tab does not render the pipeline section")
+	}
+}
+
+// knowledge.sidecar_advise (hivecommons/hive#17157) is saved through the same
+// pipeline PUT: off by default, a PUT that does not carry it leaves it alone,
+// it applies to the live config at once, and the GET reports it with the
+// advisor flag it depends on.
+func TestKnowledgePipelineSidecarAdvise(t *testing.T) {
+	s := covApiServer(t)
+	k := &s.deps.Config.Knowledge
+
+	rec := doOwnerGet(s, knowledgePipelinePath)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: %d", rec.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["sidecar_advise"] != false || resp["advisor"] != false || k.SidecarAdvise {
+		t.Fatalf("default GET = %s (sidecar_advise must default off)", rec.Body.String())
+	}
+
+	if rec := doPut(s, knowledgePipelinePath, map[string]any{"primer": map[string]any{"max_facts": 7}}); rec.Code != http.StatusOK {
+		t.Fatalf("unrelated PUT: %d", rec.Code)
+	}
+	if k.SidecarAdvise {
+		t.Fatal("a PUT that does not carry sidecar_advise turned it on")
+	}
+
+	k.Advisor = true
+	rec = doPut(s, knowledgePipelinePath, map[string]any{"sidecar_advise": true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT true: %d, %s", rec.Code, rec.Body.String())
+	}
+	if !k.SidecarAdvise {
+		t.Fatalf("sidecar_advise not applied: %+v", *k)
+	}
+	resp = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["sidecar_advise"] != true || resp["advisor"] != true {
+		t.Fatalf("PUT response = %s", rec.Body.String())
+	}
+	if k.Primer.MaxFacts != 7 {
+		t.Fatal("setting sidecar_advise changed an unrelated key")
+	}
+
+	if rec := doPut(s, knowledgePipelinePath, map[string]any{"sidecar_advise": false}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT false: %d", rec.Code)
+	}
+	if k.SidecarAdvise {
+		t.Fatal("sidecar_advise not turned off")
+	}
+}
+
+// The Settings control for knowledge.sidecar_advise sits at the top of the
+// Knowledge tab's pipeline section, saves through the pipeline PUT as a
+// top-level key, and says it applies without a restart.
+func TestKnowledgeSidecarAdviseControl(t *testing.T) {
+	html := indexHTML(t)
+	body := extractJSFunction(t, html, "renderKnowledgePipelineBody")
+	if !strings.Contains(body, "toggle('sa-enabled', ") || !strings.Contains(body, "'knowledge.sidecar_advise'") {
+		t.Error("the pipeline section has no knowledge.sidecar_advise toggle with its YAML hint")
+	}
+	if strings.Index(body, "'sa-enabled'") > strings.Index(body, "'bs-enabled'") {
+		t.Error("the sidecar advisor toggle is not the first control in the pipeline section")
+	}
+	if !strings.Contains(body, "knowledge.advisor is off in hive.yaml") {
+		t.Error("the control does not say it needs knowledge.advisor")
+	}
+	save := extractJSFunction(t, html, "saveKnowledgePipeline")
+	if !strings.Contains(save, "['top', 'sidecar_advise', 'sa-enabled', 'bool']") || !strings.Contains(save, "body[key] = v") {
+		t.Error("saveKnowledgePipeline does not send sidecar_advise as a top-level key")
+	}
+	allow, err := os.ReadFile("settings_parity_allowlist.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(allow), "knowledge.sidecar_advise") {
+		t.Error("knowledge.sidecar_advise must have a Settings control, not an allowlist entry")
 	}
 }

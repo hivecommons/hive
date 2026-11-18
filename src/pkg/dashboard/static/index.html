@@ -64845,7 +64845,7 @@ function burnAreaChart() {
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Plaud voice notes connector', key: 'knowledge.connectors', lazy: true, text: 'plaud voice notes recordings transcript summary mcp oauth connect npx @plaud-ai/mcp command since_days max_files include_audio tags knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Wispr Flow dictation connector', key: 'knowledge.connectors', lazy: true, text: 'wispr flow wisprflow dictation voice history flow.sqlite sqlite export path since_days max_items min_words group apps include_raw tags knowledge.connectors' },
-      { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path publish to repository knowledge.bead_synthesizer.publish.enabled knowledge.bead_synthesizer.publish.repo knowledge.bead_synthesizer.publish.path knowledge.bead_synthesizer.publish.base_branch knowledge.bead_synthesizer.publish.mode knowledge.bead_synthesizer.publish.cadence knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
+      { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled mid-task advisor sidecar runtime callback knowledge.sidecar_advise knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path publish to repository knowledge.bead_synthesizer.publish.enabled knowledge.bead_synthesizer.publish.repo knowledge.bead_synthesizer.publish.path knowledge.bead_synthesizer.publish.base_branch knowledge.bead_synthesizer.publish.mode knowledge.bead_synthesizer.publish.cadence knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
       { tab: 'Forge App', section: 'Forge App', label: 'GitHub API quota, PR scans and authorship', key: 'github.api_reserve', lazy: true, text: 'github api quota reserve critical agent reserve floor pr detail cache ttl etag cache size mb entries conditional request 304 graphql batch page size app authored prs bot signed commits forge api url docs installation oauth client token github.api_reserve github.api_critical github.agent_reserve_floor github.etag_cache_max_mb github.etag_cache_max_entries github.pr_detail_ttl_s github.graphql_pr_batch github.graphql_pr_batch_page_size github.app_authored_prs github.app_signed_commits github.forge github.api_url github.docs_installation_id github.oauth_client_id github.token github.key_file' },
     ];
     let _settingsSearch = { active: false, query: '', previousTab: '', index: null, bound: false };
@@ -66464,7 +66464,13 @@ function burnAreaChart() {
           </div>`;
       const schedules = d.schedules || ['hourly', 'daily'];
       const layers = d.layers || ['personal', 'project', 'org', 'community'];
+      const advisorOn = !!d.advisor;
       return `
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Mid-task advisor for sidecar runtimes</div>
+          ${toggle('sa-enabled', 'Serve the mid-task knowledge advisor to a sidecar runtime', 'knowledge.sidecar_advise', d.sidecar_advise, 'off by default; with it off a sidecar runtime gets no advisor.', true, 'Lets a sidecar-mode runtime ask this hive for mid-task knowledge hints over the callback endpoint. Needs knowledge.advisor, which stays in hive.yaml. The hive runs the same advisor it runs in-process and sends no model settings or credentials to the runtime. Off unless turned on.')}
+          ${advisorOn ? '' : '<div class="config-help">knowledge.advisor is off in hive.yaml, so this has no effect until it is on.</div>'}
+        </div>
         <div class="card-inset mt-5">
           <div class="settings-subsection-title">Bead synthesizer</div>
           ${toggle('bs-enabled', 'Synthesize completed beads into wiki facts', 'knowledge.bead_synthesizer.enabled', bs.enabled, 'on by default; starts or stops the running synthesizer.', true, 'Turns completed beads (and their merged PRs) into wiki facts on a schedule. On unless set to false. Saving starts or stops the running synthesizer at once.')}
@@ -66540,6 +66546,7 @@ function burnAreaChart() {
     async function saveKnowledgePipeline() {
       const d = _kpState.data || {};
       const cur = {
+        top: { sidecar_advise: d.sidecar_advise },
         bead_synthesizer: d.bead_synthesizer || {},
         publish: (d.bead_synthesizer || {}).publish || {},
         retention_policy: (d.bead_synthesizer || {}).retention_policy || {},
@@ -66548,6 +66555,7 @@ function burnAreaChart() {
         primer: d.primer || {}
       };
       const fields = [
+        ['top', 'sidecar_advise', 'sa-enabled', 'bool'],
         ['bead_synthesizer', 'enabled', 'bs-enabled', 'bool'],
         ['bead_synthesizer', 'schedule', 'bs-schedule', 'str'],
         ['bead_synthesizer', 'target_layer', 'bs-target_layer', 'str'],
@@ -66578,7 +66586,9 @@ function burnAreaChart() {
       ];
       const body = {};
       const put = (group, key, v) => {
-        if (group === 'retention_policy' || group === 'publish') {
+        if (group === 'top') {
+          body[key] = v;
+        } else if (group === 'retention_policy' || group === 'publish') {
           body.bead_synthesizer = body.bead_synthesizer || {};
           body.bead_synthesizer[group] = body.bead_synthesizer[group] || {};
           body.bead_synthesizer[group][key] = v;
@@ -66617,7 +66627,7 @@ function burnAreaChart() {
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
         _kpState = { loaded: true, error: '', data: data };
         const bsKeys = Object.keys(body.bead_synthesizer || {});
-        const liveOnly = Object.keys(body).length === 1 && bsKeys.length === 1 && bsKeys[0] === 'enabled';
+        const liveOnly = Object.keys(body).every(k => k === 'sidecar_advise' || (k === 'bead_synthesizer' && bsKeys.length === 1 && bsKeys[0] === 'enabled'));
         showToast(liveOnly ? 'Knowledge settings saved' : 'Knowledge settings saved — restart the hive to apply them', 'success');
         const el = document.getElementById('kp-pipeline-root');
         if (el) el.innerHTML = renderKnowledgePipelineBody();
