@@ -55,6 +55,33 @@ func publishStageSharedCIIncidents(actionable *github.ActionableResult) {
 	stageSharedCIIndex.Store(&idx)
 }
 
+// stageBaseRedMemory holds the github client's remembered base-branch red
+// checks (github.Client.BaseRedSnapshot), keyed by
+// github.BaseRedRememberedKey, as of the last CI-enriched enumeration. The
+// stage reconciler reads it through StageLabelPolicy.BaseRedRemembered so a
+// PR head the index has not read yet, red only on its base's checks, is not
+// returned to its author before the next enumeration
+// (projectbluefin/chairlift#811).
+var stageBaseRedMemory atomic.Pointer[map[string][]string]
+
+// publishStageBaseRedMemory replaces the base-red memory snapshot.
+func publishStageBaseRedMemory(snap map[string][]string) {
+	if snap == nil {
+		snap = map[string][]string{}
+	}
+	stageBaseRedMemory.Store(&snap)
+}
+
+// stageBaseRedRemembered answers StageLabelPolicy.BaseRedRemembered: the
+// checks remembered red on repo's ("owner/name") base branch baseRef.
+func stageBaseRedRemembered(repo, baseRef string) []string {
+	m := stageBaseRedMemory.Load()
+	if m == nil {
+		return nil
+	}
+	return append([]string(nil), (*m)[github.BaseRedRememberedKey(repo, baseRef)]...)
+}
+
 // stageSharedCIIncident answers StageLabelPolicy.SharedCIIncident. repo is
 // "owner/name"; the snapshot may key a PR by either form. A head pushed
 // since the snapshot is not covered: the deferral was decided for the old

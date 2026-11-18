@@ -31,9 +31,12 @@ import (
 // "waiting on the author", and a hive PR burned three fix attempts against
 // the red baseline and escalated to needs-human.
 //
-// Error side. Every lookup failure leaves BaseRedChecks empty: the PR is
-// then routed exactly as before this rule existed (author-facing), which is
-// the conservative direction — a wrongly "base red" PR would sit unrepaired.
+// Error side. A failed base listing reuses the base's remembered red set
+// (base_branch_red_memory.go), and with nothing remembered leaves
+// BaseRedChecks empty: the PR is then routed exactly as before this rule
+// existed (author-facing), which is the conservative direction — a wrongly
+// "base red" PR would sit unrepaired. A failed or truncated PR file listing
+// leaves it empty too.
 
 // baseRedMaxFilePages bounds the PR file listing (100 files per page). A PR
 // larger than this is treated as possibly owning CI (not base red).
@@ -101,9 +104,11 @@ func (p PullRequest) AllFailuresBaseRed() bool {
 	return true
 }
 
-// redCheckNamesForRef returns the names of the latest check runs on ref
-// that concluded red (checkConclusionIsRed, meta checks excluded).
-func (c *Client) redCheckNamesForRef(ctx context.Context, owner, repo, ref string) (map[string]bool, error) {
+// baseCheckStatesForRef returns the state of the latest check run of each
+// name on ref (meta checks excluded): red when it concluded red
+// (checkConclusionIsRed), green when it completed otherwise, running while
+// it is queued or in progress.
+func (c *Client) baseCheckStatesForRef(ctx context.Context, owner, repo, ref string) (map[string]baseCheckState, error) {
 	ctx = WithRESTCaller(ctx, "hive:base_branch_red")
 	var all []*gh.CheckRun
 	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
@@ -118,17 +123,36 @@ func (c *Client) redCheckNamesForRef(ctx context.Context, owner, repo, ref strin
 		}
 		opts.Page = resp.NextPage
 	}
-	red := map[string]bool{}
+	states := map[string]baseCheckState{}
 	for _, cr := range latestCheckRunsByNameAndApp(all) {
 		name := cr.GetName()
-		if name == "" || isMetaCheck(name) || cr.GetStatus() != "completed" {
+		if name == "" || isMetaCheck(name) {
 			continue
 		}
-		if checkConclusionIsRed(cr.GetConclusion()) {
-			red[name] = true
+		st := baseCheckGreen
+		switch {
+		case cr.GetStatus() != "completed":
+			st = baseCheckRunning
+		case checkConclusionIsRed(cr.GetConclusion()):
+			st = baseCheckRed
+		}
+		// Two apps may run a check of the same name: red outranks running,
+		// and running outranks green, so green means every run is green.
+		if prev, seen := states[name]; !seen || baseCheckRank(st) > baseCheckRank(prev) {
+			states[name] = st
 		}
 	}
-	return red, nil
+	return states, nil
+}
+
+func baseCheckRank(st baseCheckState) int {
+	switch st {
+	case baseCheckRed:
+		return 2
+	case baseCheckRunning:
+		return 1
+	}
+	return 0
 }
 
 // prChangedPaths lists the PR's changed file paths, up to
@@ -157,9 +181,10 @@ func (c *Client) prChangedPaths(ctx context.Context, owner, repo string, number 
 }
 
 // enrichBaseBranchRed stamps BaseRedChecks on every red PR in prs whose
-// failing checks are also red on its base branch tip. One check-run
-// listing per distinct repo+base per pass; one file listing per red PR
-// whose failing checks overlap the base's.
+// failing checks are also red on its base branch: on the tip, or
+// remembered red and not yet seen green there (baseRedMemory). One
+// check-run listing per distinct repo+base per pass; one file listing per
+// red PR whose failing checks overlap the base's.
 func (c *Client) enrichBaseBranchRed(ctx context.Context, prs []PullRequest) {
 	type baseKey struct{ owner, repo, ref string }
 	baseRed := map[baseKey]map[string]bool{}
@@ -173,11 +198,13 @@ func (c *Client) enrichBaseBranchRed(ctx context.Context, prs []PullRequest) {
 		key := baseKey{owner, repoName, pr.BaseRef}
 		red, known := baseRed[key]
 		if !known {
-			var err error
-			red, err = c.redCheckNamesForRef(ctx, owner, repoName, pr.BaseRef)
+			memKey := baseRedMemoryKey(owner, repoName, pr.BaseRef)
+			states, err := c.baseCheckStatesForRef(ctx, owner, repoName, pr.BaseRef)
 			if err != nil {
-				c.logger.Debug("base branch check runs unavailable; red PRs stay author-facing", "repo", pr.Repo, "base", pr.BaseRef, "error", err)
-				red = nil
+				red = c.baseRed.remembered(memKey)
+				c.logger.Warn("base branch check runs unavailable; using the base's remembered red checks", "repo", pr.Repo, "base", pr.BaseRef, "remembered", len(red), "error", err)
+			} else {
+				red = c.baseRed.observe(memKey, states)
 			}
 			baseRed[key] = red
 		}
