@@ -6429,6 +6429,9 @@
     .customers-row[data-me="true"] { border-color: var(--accent); }
     .customers-row .customers-row-title { overflow-wrap: anywhere; }
     .customers-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); min-width: 0; }
+    /* The tag chip: the entity-chip pill recipe (design-system.css), tokens only. The old .badge class has no rule, which left tags as bare text. */
+    .customers-chip { display: inline-flex; align-items: center; gap: var(--sp-2); padding: 1px var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.5; white-space: nowrap; }
+    button.customers-chip { cursor: pointer; min-height: var(--tap-target); }
     .customers-chip[data-state="off"] { opacity: 0.55; }
     .customers-chip[data-source="manual"] { border-color: var(--accent); }
     .customers-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr) auto; gap: var(--sp-2); align-items: end; }

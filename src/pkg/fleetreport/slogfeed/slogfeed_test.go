@@ -119,8 +119,8 @@ func TestProxyUpstreamDialFailedFilesAsConnectDialClass(t *testing.T) {
 		t.Fatalf("observations = %+v, want both dial failures", *seen)
 	}
 	for _, o := range *seen {
-		if o.class != fleetreport.ClassProxyConnectDialFailed {
-			t.Fatalf("class = %q for %q, want %q", o.class, o.message, fleetreport.ClassProxyConnectDialFailed)
+		if o.class != fleetreport.ClassProxyUpstreamDegraded {
+			t.Fatalf("class = %q for %q, want %q", o.class, o.message, fleetreport.ClassProxyUpstreamDegraded)
 		}
 	}
 	if !strings.Contains((*seen)[0].diagnostics, "error=EOF") || !strings.Contains((*seen)[0].diagnostics, "host=api.github.com:443") {

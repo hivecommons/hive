@@ -478,6 +478,27 @@ Common causes:
   The boot log reports the opt-in next to `no UID map found`.
   Ensure the shared UID can write the cache directory. This option does not
   restore UID isolation or clear the `uid_isolation` health alert.
+
+- **Writes blocked with `proxy: agent could not be identified`.** The proxy
+  could not attribute the write to an agent, so it fails closed to ADVISORY
+  (this is not an agent-mode misconfiguration, and the proxy never trusts a
+  self-asserted `Proxy-Authorization` name instead). The log line's `reason`
+  field says why: `shared_uid_mode` (a UID map with no per-agent UIDs and no
+  forced egress, the OpenShift `restricted-v2` shape; fix by granting the
+  NET_ADMIN SCC per [net-admin-requirement.md](net-admin-requirement.md)),
+  `no_uid_map` (no `uid-map.json` loaded), `port_not_in_socket_table` (the peer
+  port is not visible in `/proc/net/tcp{,6}`), `uid_not_in_map` (the socket
+  owner's UID, logged as `peer_uid`, belongs to no agent) or `no_peer_port`.
+  The fleet reporter files this as the operator-action class
+  `proxy_writer_unidentified`, not as a fleet bug.
+
+- **`proxy upstream dial failed` for `api.github.com:443`.** The proxy could
+  not open its TLS connection to GitHub. The log's `error_class` field says
+  `timeout`, `refused`, `dns`, `unreachable`, `reset`, `tls` or `other`, next
+  to `host` and `error`; a burst of these is a flaky egress path on the
+  cluster and stays in the logs only. If it persists for over an hour the
+  reporter raises the operator-action class `proxy_upstream_degraded`; check
+  cluster egress, DNS and any outbound proxy toward GitHub.
 - The cache file exists but is empty, unreadable, or was not pre-created by the
   entrypoint as `dev:hive-<agent> 0640`.
 - The GitHub App is not installed on the repo, or token minting failed for the

@@ -1,0 +1,1 @@
+- Report transient proxy upstream dial failures to GitHub hosts only when they persist over an hour, under the operator-action class `proxy_upstream_degraded`, and log an `error_class` (`timeout`, `refused`, `dns`, `unreachable`, `reset`, `tls`) with the failing host.
