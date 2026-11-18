@@ -51,7 +51,7 @@ func TestClassifyMergeFailureForOperator(t *testing.T) {
 		{
 			name: "merge queue required",
 			err:  "merging PR o/r#74 (squash): PUT https://api.github.test: 405 Repository rule violations found\n\nChanges must be made through the merge queue",
-			want: []string{"requires changes to be made through the merge queue", "Enqueue the PR", "https://github.com/o/r/settings/rules"},
+			want: []string{"requires changes to be made through the merge queue", "auto_merge.native_merge_queue", "enqueue the PR through the merge queue", "merge it by hand"},
 		},
 		{
 			name: "merge method",

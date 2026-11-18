@@ -570,6 +570,10 @@ type Client struct {
 	// forge to that forge's merger (see ForgeMergeSelector). nil keeps every
 	// repo on the GitHub path.
 	forgeMergeSelector ForgeMergeSelector
+	// nativeQueueMerge enqueues a relayed merge on a repo opted into
+	// auto_merge.native_merge_queue (see NativeQueueMergeFunc). nil merges
+	// every repo directly, as before.
+	nativeQueueMerge NativeQueueMergeFunc
 	// mergeStateMu guards the merge-request watcher's per-PR+SHA wait state
 	// (merge_request_state.go). mergeStatePath is where it is persisted;
 	// empty keeps it in memory only (tests). Set by SetMergeRequestStatePath.

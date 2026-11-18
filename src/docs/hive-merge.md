@@ -102,18 +102,34 @@ verdict:
 
 An API error while gathering that evidence is a failed attempt, never a pass.
 
-**A merge-queue-required refusal is terminal on the first attempt.** When the
-merge call itself (`PUT /pulls/{n}/merge`) answers `405 Changes must be made
-through the merge queue`, the base branch's ruleset forbids direct merges and no
-retry, code push or re-engaged fix loop can change that. The request is
-quarantined (`.exhausted`) for that head immediately, without consuming the
-retry budget, raising an operator alert or re-engaging the fix loop; the result
-file records `repo requires merge queue; direct merge not possible — enqueue via
-merge queue or merge by hand` followed by GitHub's message, and the watcher logs
-it once per head at INFO. Clear it by enqueuing the PR through the merge queue
-(see `auto_merge.native_merge_queue.enabled` in the
-[operator reference](operator-reference/README.md)) or merging by hand; a new
-head SHA starts fresh like any other exhausted request.
+**A repo opted into the native merge queue is enqueued, not merged.** When
+the request's repo and the PR's base are in `auto_merge.native_merge_queue`
+(see [native-merge-queue.md](native-merge-queue.md)) and the base has a merge
+queue, the watcher does not call `PUT /pulls/{n}/merge`, which GitHub refuses
+there. After every gate above passes, it enqueues the PR through the same path
+the auto-merge lanes use: pinned to the request's `expect_sha` (or the PR's
+head when the request has none), with the lanes' mixed-authorship merge-method
+check and their memory of a head the queue already rejected. The queue picks
+the merge method, so the request's `method` does not apply. The request is
+then done: the result file is not `ok` (nothing has merged yet), and its error
+starts `enqueued in GitHub's merge queue; GitHub merges it when the merge group
+passes:`. GitHub merges the PR when its merge group passes. A head that moved,
+a queue read error or a refused enqueue is a failed attempt like any other.
+
+**On any other repo, a merge-queue-required refusal is terminal on the first
+attempt.** When the merge call itself answers `405 Changes must be made through
+the merge queue`, the base branch's ruleset forbids direct merges and no retry,
+code push or re-engaged fix loop can change that. The request is quarantined
+(`.exhausted`) for that head immediately, without consuming the retry budget
+or re-engaging the fix loop; the result file records `repo requires merge
+queue; direct merge not possible — enqueue via merge queue or merge by hand`
+followed by GitHub's message, and the watcher logs it once per head at INFO.
+It raises a "Merge blocked" operator alert that suggests opting the repo into
+`auto_merge.native_merge_queue`, enqueueing the PR through the merge queue, or
+merging it by hand; it never suggests removing the merge-queue rule. On an
+opted-in repo whose queue probe read the base as queue-less, the request is
+quarantined the same way but no alert is raised, because the lanes enqueue the
+PR. A new head SHA starts fresh like any other exhausted request.
 
 **Wait state survives restarts and re-requests.** The attempt count, `ci_waits`,
 the pending-poll backoff and an "exhausted" record are kept per PR and head SHA

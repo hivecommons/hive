@@ -2593,6 +2593,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			// (tier, soak, min_head_age, review verdict) the sweep applies;
 			// hive-authored PRs keep the relay's existing behaviour.
 			mergePolicy: relayLanePolicyGate(autoMergeOpts),
+			// A repo opted into auto_merge.native_merge_queue merges a
+			// relayed request through GitHub's merge queue, as the lanes
+			// do; a direct merge there is refused with 405.
+			nativeQueueMerge: relayNativeQueueMerge(autoMergeOpts),
 			// Per-repo forge (#14113): a repo on GitLab/Gitea merges through
 			// its forge.Merger after the same merge-eligible binding; GitHub
 			// repos keep the path above unchanged.

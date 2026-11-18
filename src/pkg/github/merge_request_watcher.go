@@ -200,6 +200,37 @@ func (c *Client) SetMergeRequestPolicyGate(fn MergeRequestPolicyGate) {
 	c.mergePolicyGate = fn
 }
 
+// NativeQueueMergeResult is what NativeQueueMergeFunc did with a relayed
+// merge.
+type NativeQueueMergeResult struct {
+	// OptedIn: the repo and the PR's base are in
+	// auto_merge.native_merge_queue and the transport can enqueue. When
+	// false the relay merges directly, as before.
+	OptedIn bool
+	// Queued: GitHub's merge queue holds the PR at the requested head.
+	Queued bool
+	// Reason is the queue path's verdict. Empty with Queued false means
+	// the base has no merge queue, so the relay merges directly; any other
+	// value is a failed attempt.
+	Reason string
+}
+
+// NativeQueueMergeFunc hands a relayed merge for an opted-in repo to the
+// auto-merge lanes' native-queue path (automerge.Engine.RelayNativeQueueMerge)
+// instead of PUT /pulls/{n}/merge, which GitHub refuses with 405 on a base
+// whose ruleset requires the merge queue (projectbluefin/utah-packages#1199,
+// 2026-11-18).
+type NativeQueueMergeFunc func(ctx context.Context, repo string, pr *gh.PullRequest, expectSHA string) (NativeQueueMergeResult, error)
+
+// SetNativeQueueMerge installs the relay's native-queue path. Call it before
+// StartMergeRequestWatcher; nil merges every repo directly.
+func (c *Client) SetNativeQueueMerge(fn NativeQueueMergeFunc) {
+	if c == nil {
+		return
+	}
+	c.nativeQueueMerge = fn
+}
+
 // ForgeMergeFunc merges repo#number on a non-GitHub forge (GitLab, Gitea) at
 // the pinned head expectSHA with the requested method ("" = the relay default,
 // squash). It is the forge-neutral counterpart of MergePR.
@@ -632,10 +663,32 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
+	// A repo opted into auto_merge.native_merge_queue merges through
+	// GitHub's merge queue, as the auto-merge lanes do: a direct merge on a
+	// queue base is refused with 405.
+	queueOptedIn := false
+	if c.nativeQueueMerge != nil {
+		queued, err := c.nativeQueueMerge(ctx, req.Repo, destination, req.ExpectSHA)
+		queueOptedIn = queued.OptedIn
+		switch {
+		case !queued.OptedIn:
+		case queued.Queued:
+			c.enqueuedMergeRequest(path, req, attempts, queued.Reason, nowFn)
+			return
+		case err != nil || queued.Reason != "":
+			why := queued.Reason
+			if err != nil {
+				why = strings.TrimPrefix(why+": "+err.Error(), ": ")
+			}
+			c.recordMergeFailure(path, req, attempts, why, nowFn)
+			return
+		}
+	}
+
 	res, err := c.MergePR(ctx, req.Repo, req.Number, req.Method, req.ExpectSHA)
 	if err != nil {
 		if isMergeQueueRequiredMergeBlocker(err.Error()) {
-			c.quarantineMergeQueueRequired(path, req, attempts, err.Error(), nowFn)
+			c.quarantineMergeQueueRequired(path, req, attempts, err.Error(), !queueOptedIn, nowFn)
 			return
 		}
 		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
@@ -767,21 +820,43 @@ func (c *Client) quarantineMergeRequest(path string, req MergeRequest, attempts 
 // re-request for the same head is refused quietly and the classified message
 // is logged once per head. It logs at INFO: the blocker is the target repo's
 // configuration, not a hive defect, and a WARN per head would surface as an
-// unclassified_error_repeated selfreport. It still raises the operator alert
-// (merge-queue-required) so the dashboard tells the operator to enqueue or
-// reconfigure.
-func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, attempts int, errMsg string, nowFn func() time.Time) {
+// unclassified_error_repeated selfreport. On a repo not opted into
+// auto_merge.native_merge_queue it raises the operator alert
+// (merge-queue-required), which suggests opting in, enqueueing or merging by
+// hand. An opted-in repo reaches this only when the queue probe read the base
+// as queue-less; the lanes enqueue it, so no alert is raised (alert false).
+func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, attempts int, errMsg string, alert bool, nowFn func() time.Time) {
 	now := nowFn()
 	reason := mergeQueueRequiredReason + ": " + errMsg
 	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: reason, At: now.UTC().Format(time.RFC3339)})
 	c.putMergeRequestState(req.Repo, req.Number, mergeRequestPRState{SHA: req.ExpectSHA, Attempts: attempts, Exhausted: true, Reason: reason, At: now})
-	c.raiseMergeFailureAlert(req.Repo, req.Number, reason, req.ExpectSHA, req.Method)
+	if alert {
+		c.raiseMergeFailureAlert(req.Repo, req.Number, reason, req.ExpectSHA, req.Method)
+	}
 	_ = os.Rename(path, path+".exhausted")
 	c.logger.Info("merge-request watcher: "+mergeQueueRequiredReason,
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", req.ExpectSHA), slog.Int("attempts", attempts),
 		slog.String("error", errMsg))
 }
+
+// enqueuedMergeRequest finishes a request whose PR GitHub's merge queue now
+// holds (NativeQueueMergeFunc): the request is done, and GitHub merges the PR
+// when its merge group passes. The result is not OK, because nothing has
+// merged yet and there is no merge SHA; its error says the PR was queued.
+func (c *Client) enqueuedMergeRequest(path string, req MergeRequest, attempts int, reason string, nowFn func() time.Time) {
+	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, Error: mergeRequestEnqueuedPrefix + reason, At: nowFn().UTC().Format(time.RFC3339)})
+	_ = os.Remove(path)
+	c.clearMergeRequestState(req.Repo, req.Number)
+	c.logger.Info("merge-request watcher: PR handed to the native merge queue",
+		slog.String("repo", req.Repo), slog.Int("number", req.Number),
+		slog.String("sha", req.ExpectSHA), slog.String("agent", req.Agent),
+		slog.String("reason", reason))
+}
+
+// mergeRequestEnqueuedPrefix starts the result error of a request handed to
+// GitHub's merge queue.
+const mergeRequestEnqueuedPrefix = "enqueued in GitHub's merge queue; GitHub merges it when the merge group passes: "
 
 // refuseExhaustedMergeRequest answers a new request for a PR+SHA whose earlier
 // request was already exhausted with the recorded reason, instead of starting

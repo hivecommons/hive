@@ -531,6 +531,18 @@ func relayLanePolicyGate(opts automerge.Options) func(*github.Client) github.Mer
 	}
 }
 
+// relayNativeQueueMerge builds the merge relay's native-queue path: the
+// auto-merge engine's RelayNativeQueueMerge, over the same options (and so
+// the same auto_merge.native_merge_queue policy) the lanes use.
+func relayNativeQueueMerge(opts automerge.Options) func(*github.Client) github.NativeQueueMergeFunc {
+	return func(c *github.Client) github.NativeQueueMergeFunc {
+		if c == nil {
+			return nil
+		}
+		return automerge.New(c, opts).RelayNativeQueueMerge
+	}
+}
+
 var (
 	mergeEligibleLaneGateMu sync.RWMutex
 	mergeEligibleLaneGate   github.MergeRequestPolicyGate
