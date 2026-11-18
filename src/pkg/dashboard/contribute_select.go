@@ -245,9 +245,6 @@ func (h *ContributeWSHub) rollbackAssignment(c *ContributorConnection, taskID st
 	h.unrecordAssignment(identityOf(c), assignedAt)
 }
 
-// taskUnavailable builds the explicit negative-ack the ready handler sends in
-// place of silence. It carries a machine-readable reason so the failure is
-// diagnosable rather than an indefinite hang (kubestellar/hive#2436, finding 1).
 // Filter names carried in task_unavailable.filtered (#19052). Additive; relays
 // that do not know a key can print it as is.
 const (
@@ -265,6 +262,9 @@ const (
 	filterAssignedToOthers = "assigned_to_others"
 )
 
+// taskUnavailable builds the explicit negative-ack the ready handler sends in
+// place of silence. It carries a machine-readable reason so the failure is
+// diagnosable rather than an indefinite hang (kubestellar/hive#2436, finding 1).
 func (h *ContributeWSHub) taskUnavailable(reason string) *WSMessage {
 	return &WSMessage{
 		Type:   "task_unavailable",
