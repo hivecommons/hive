@@ -67,7 +67,7 @@ var ruleSignals = []signal{
 	{SignalAuthoritative, regexp.MustCompile(`(?i)\bauthoritative\b`)},
 	{SignalAlways, regexp.MustCompile(`(?i)\b(?:should|must|needs? to|has to|have to) always\b`)},
 	{SignalNever, regexp.MustCompile(`(?i)\b(?:should|must) never\b`)},
-	{SignalGoingForward, regexp.MustCompile(`(?i)\b(?:going forward|from now on|in (?:the )?future|next time|for future (?:analys[ie]s|assessments|runs|prs|work))\b`)},
+	{SignalGoingForward, regexp.MustCompile(`(?i)\b(?:going forward|from now on|in (?:the )?future|for the future|moving forward|next time|for future (?:analys[ie]s|assessments?|reviews?|runs|prs|work))\b`)},
 	{SignalCaptureRequest, regexp.MustCompile(`(?i)\b(?:capture|record|document|write down|remember)\s+(?:this|that|it)\b`)},
 	{SignalCriteria, regexp.MustCompile(`(?i)\bassessment (?:criteria|rubric|knowledge|guidance)\b`)},
 	{SignalKnowledgeBase, regexp.MustCompile(`(?i)\bknowledge[- ]?base\b`)},
@@ -85,6 +85,47 @@ var metaClause = regexp.MustCompile(`(?i)^\s*(?:please\s+|and\s+)?(?:capture|rec
 
 var sentenceSplit = regexp.MustCompile(`[.!?]+\s+|\n+`)
 
+// minRuleRunes is the shortest rule sentence that can stand alone. A shorter
+// one ("Going forward.") is meaningless without the comment around it, so the
+// whole comment is kept instead.
+const minRuleRunes = 20
+
+// stripNoise removes what is not the reviewer's own statement: quoted lines
+// (a leading ">"), fenced code blocks and questions. A question asks, it does
+// not state, so a phrase inside one is not a rule.
+func stripNoise(body string) string {
+	var lines []string
+	fenced := false
+	for _, line := range strings.Split(body, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			fenced = !fenced
+			continue
+		}
+		if fenced || strings.HasPrefix(t, ">") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	text := strings.Join(lines, "\n")
+	var out strings.Builder
+	last := 0
+	keep := func(seg string) {
+		if !strings.HasSuffix(strings.TrimSpace(seg), "?") {
+			out.WriteString(seg)
+		}
+	}
+	for _, loc := range sentenceSplit.FindAllStringIndex(text, -1) {
+		seg := text[last:loc[1]]
+		if !strings.Contains(text[loc[0]:loc[1]], "?") {
+			out.WriteString(seg)
+		}
+		last = loc[1]
+	}
+	keep(text[last:])
+	return out.String()
+}
+
 // Classification is Classify's verdict.
 type Classification struct {
 	Kind Kind
@@ -95,6 +136,7 @@ type Classification struct {
 // Classify says whether body states a rule for future work. It is a pure
 // function of the text: every signal is an explicit phrase from ruleSignals.
 func Classify(body string) Classification {
+	body = stripNoise(body)
 	var hit []string
 	for _, s := range ruleSignals {
 		if s.re.MatchString(body) {
@@ -115,8 +157,9 @@ func ForeignHomeHint(body string) bool { return foreignHomeHint.MatchString(body
 // signal, without the clauses that only ask for the capture, normalised and
 // bounded. A comment with no signal yields its whole body, bounded.
 func ExtractRuleText(body string) string {
+	clean := stripNoise(body)
 	var kept []string
-	for _, sent := range sentenceSplit.Split(body, -1) {
+	for _, sent := range sentenceSplit.Split(clean, -1) {
 		if strings.TrimSpace(sent) == "" {
 			continue
 		}
@@ -124,8 +167,11 @@ func ExtractRuleText(body string) string {
 			kept = append(kept, sent)
 		}
 	}
-	if len(kept) == 0 {
-		kept = []string{body}
+	if len(kept) == 0 || utf8.RuneCountInString(NormalizeText(strings.Join(kept, " "))) < minRuleRunes {
+		kept = []string{clean}
+		if strings.TrimSpace(clean) == "" {
+			kept = []string{body}
+		}
 	}
 	var clauses []string
 	for _, sent := range kept {
