@@ -1,1 +1,0 @@
-- After a review-feedback kick that carried captured reviewer rules, the sweep now checks the agent's reply names each rule id and, when it does not (or no reply arrives within 6 hours), logs it and posts one needs-human note on the PR ([#19048](https://github.com/hivecommons/hive/issues/19048)).

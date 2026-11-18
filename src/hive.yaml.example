@@ -174,7 +174,8 @@ project:
 #   close_on_merge: true
 #   close_on_merge_backfill_interval: 1h
 #   reporter_confirmation: false
-#   # Trusted reporters' SHA-less bugs get this soft label, not `hold` (#12002).
+#   # Non-exempt reporters' SHA-less bugs get this soft label, not `hold` (#12002).
+#   # Owners/maintainers, hive accounts, issues naming repo paths and waived issues are exempt (#18866).
 #   sha_hold_trusted_label: needs-sha
 #   # Lift hive-applied hold/blocked once a referencing PR merges (#12002).
 #   lift_hive_hard_suppress: true

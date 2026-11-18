@@ -8,7 +8,7 @@ leaving it to the agent's discretion ([#19046](https://github.com/hivecommons/hi
 
 ## What happens
 
-1. **Classify.** Each comment in a coalesced burst is matched against fixed phrase signals. A comment with at least one is a rule; the rest
+1. **Classify.** Each human comment on the PR is matched against fixed phrase signals. A comment with at least one is a rule; the rest
    are corrections and are handled as before. The signals are `source-of-truth`, `authoritative`, `always` ("should always", "must always"),
    `never` ("should never", "must never"), `going-forward` ("going forward", "from now on", "next time", "for future assessments"),
    `capture-request` ("capture this", "document this", "record it"), `assessment-criteria` ("assessment criteria", "assessment knowledge")
@@ -31,8 +31,12 @@ leaving it to the agent's discretion ([#19046](https://github.com/hivecommons/hi
    so the quality agent receives its rules on its next kick; a rule scoped to a workflow reaches the lane or workflow model of that name. The
    usual lifecycle filter and `knowledge.agent_scopes` still apply, so drafts, retracted rules and out-of-scope agents never see a rule.
 
-Capture happens when the burst is routed, so it also happens when the per-PR cap was reached or no agent could take the kick. It does not
-change the sweep's debounce, cap or thread behavior.
+Capture reads its own candidate set, not the routed burst: every human comment on the hive's open PRs in the attribution window (inline,
+review body, conversation), whether or not it was already handled, sits in a resolved thread, or addresses the hive. A comment is read once
+it has been quiet for the sweep's debounce. The rule index keeps the ids it has evaluated, separately from the sweep's handled ids, so the
+first pass after an upgrade is a one-time backfill over the comments still visible on those PRs and later passes read only new comments. So
+capture also happens when the per-PR cap was reached, no agent could take the kick, or no kick is due at all. It does not change the sweep's
+debounce, cap, routing or thread behavior.
 
 ## The agent's structured block
 
