@@ -1,0 +1,1 @@
+- `governor.ci.auto_approve_workflows` and `governor.ci.auto_approve_workflow_actors` now have a Settings control (Features → Auto-merge → Workflow approval) and an admin-MCP write (`governor.feature_settings`: `ciAutoApproveWorkflows`, `ciAutoApproveWorkflowActors`), so a hosted hive can trust another bot such as `github-actions[bot]` without editing hive.yaml.
