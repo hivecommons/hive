@@ -110,6 +110,7 @@ func (a *AgentProcess) snapshot() crux.Process {
 		LastError:                 a.LastError,
 		KickOutcome:               a.KickOutcome,
 		SandboxLastRun:            cloneSandboxRun(a.SandboxLastRun),
+		SandboxPhase:              sandboxPhaseOf(a),
 		NeedsLogin:                needsLogin,
 		LoginURL:                  loginURL,
 		Starting:                  a.startupLaunchQueued || a.launching,
