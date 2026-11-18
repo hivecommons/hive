@@ -364,6 +364,22 @@ on the same evidence as a literal IP. Set
 destination is intended; it lifts the guard for all three legs at once, and the
 proxy warns at boot when it is set.
 
+**Server-side fetches of user- or spoke-chosen URLs.** The dashboard's agent
+import and workflow spec fetches, the hub's hive config proxy and webhook
+relay to a spoke's self-reported dashboard URL, and knowledge document imports
+check the URL before fetching and then dial through a pinned transport
+(`netguard.PinnedDialer`): the name is resolved once per connection, every
+answer must pass the same classifier, and the connection goes to an address
+that was checked, never to the name. A name that rebinds between the check and
+the dial is refused, and because the check runs per connection it covers
+every redirect hop as well. Two limits are deliberate. When an
+`HTTP(S)_PROXY` applies, the connection is to the operator's proxy and the
+proxy resolves the target, the same limit as the agent proxy's chained
+upstream leg, so the pre-fetch check and the redirect policy are the controls
+there. Operator-configured gateway endpoints and the fixed-host `/api/style`
+fetch are not pinned: a gateway may legitimately sit on a private address, and
+redirects off either are still checked.
+
 **Hub-to-spoke channel.** Heartbeats carry a per-hive bearer key derived from
 the hub master secret and are compared in constant time. The payload is
 telemetry only: health, version, agent and governor summaries and 24-hour
