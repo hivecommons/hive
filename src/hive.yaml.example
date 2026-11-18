@@ -108,6 +108,17 @@ project:
 # sentinel:
 #   trusted_authors_block: false  # set true to block trusted authors too
 
+# Optional observe-only session taint recorder (docs/design/session-taint.md).
+# Default: off, and nothing is recorded. When enabled it keeps a bounded,
+# in-memory record of coarse labels per agent session and logs and audits which
+# rule WOULD have held a later relay write. It never blocks, holds or changes
+# anything and stores labels, counts and ids only. Takes effect at restart.
+# session_taint:
+#   enabled: false
+#   max_sessions: 256
+#   max_labels_per_session: 32
+#   max_decisions: 128
+
 # Hive-curated `good first issue` advertising (default ON; `enabled: false`
 # opts out). A periodic sweep scores open, unclaimed issues; the few that qualify get
 # GitHub's canonical `good first issue` + `help wanted` labels and ONE welcome
