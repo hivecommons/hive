@@ -1,0 +1,137 @@
+name: Dashboard Render Evidence
+
+# Why this exists (#18915)
+#
+# UI pull requests keep being reported as "not verified in a browser". This job
+# renders the BUILT dashboard pages a PR touches, with synthetic fixture data,
+# at desktop and phone width in light and dark themes, and uploads the
+# screenshots. The sibling workflow dashboard-render-evidence-comment.yml then
+# posts or updates ONE sticky PR comment indexing them.
+#
+# It is evidence, not a gate. The job can never fail a PR over screenshot
+# trouble: capture problems become a "partial" or "neutral" status with a
+# reason in index.json, the capture step is continue-on-error, and the job
+# itself is continue-on-error like dashboard-mobile-shots.yml. Do not add it to
+# required checks.
+#
+# Fixtures are NOT live data: see src/docs/ui-render-evidence.md.
+#
+# SECURITY: this runs on `pull_request` with a read-only token and no secrets,
+# so it can render a fork's code safely. Chrome resolves only 127.0.0.1, so the
+# rendered page cannot reach any real hive or network. Posting the comment needs
+# write permission a fork PR does not get, so that happens in the workflow_run
+# sibling, which runs the DEFAULT branch's copy and treats this job's output as
+# untrusted data. Never switch this to pull_request_target.
+#
+# TIME BUDGET: the harness stops starting new screenshots after
+# RENDER_EVIDENCE_BUDGET_MS (src/scripts/lib/render-evidence.mjs, 8 minutes);
+# timeout-minutes below is larger so the harness always writes its index.
+on:
+  pull_request:
+    paths:
+      - 'src/pkg/dashboard/static-src/**'
+      - 'src/pkg/dashboard/static/**'
+      - 'src/pkg/hub/static/**'
+      - 'src/pkg/hub/assets/**'
+      - 'src/scripts/dashboard-render-evidence.mjs'
+      - 'src/scripts/render-evidence-comment.mjs'
+      - 'src/scripts/lib/render-evidence*.mjs'
+      - 'src/scripts/fixtures/render-evidence/**'
+      - '.github/workflows/dashboard-render-evidence*.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  render-evidence:
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      # Hermetic, well under a second: the comment composer handles
+      # author-controlled artifact data and must not ship untested.
+      - name: Self-test the evidence helpers
+        continue-on-error: true
+        run: node --test src/scripts/lib/render-evidence.test.mjs src/scripts/render-evidence-comment.test.mjs
+
+      # Same Chrome for Testing install as dashboard-mobile-shots.yml (the
+      # self-hosted fleet ships no browser, #11810).
+      - name: Install Chrome for Testing
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          out="$(sudo env "PATH=$PATH" npx --yes @puppeteer/browsers@2 install chrome@stable --install-deps --path "$RUNNER_TEMP/chrome-for-testing" | tail -n 1)"
+          bin="${out#* }"
+          test -x "$bin"
+          "$bin" --version
+          echo "CHROME_BIN=$bin" >> "$GITHUB_ENV"
+
+      - name: List changed files
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' > "$RUNNER_TEMP/changed-files.txt"
+
+      - name: Capture render evidence
+        continue-on-error: true
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node src/scripts/dashboard-render-evidence.mjs \
+            --out render-evidence-out \
+            --changed-files "$RUNNER_TEMP/changed-files.txt" \
+            --pr "$PR" --head "$HEAD_SHA"
+
+      - name: Summarise
+        if: ${{ always() }}
+        run: |
+          if [ -f render-evidence-out/index.json ]; then
+            {
+              echo '### UI render evidence'
+              echo
+              echo 'Fixture renders, not live data. Index:'
+              echo
+              echo '```json'
+              head -c 6000 render-evidence-out/index.json
+              echo
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'No render-evidence index was produced (neutral).' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload screenshots
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: render-evidence
+          path: render-evidence-out/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # A tiny artifact of its own so the comment workflow downloads only the
+      # index, never the images.
+      - name: Upload index
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: render-evidence-index
+          path: render-evidence-out/index.json
+          if-no-files-found: ignore
+          retention-days: 14

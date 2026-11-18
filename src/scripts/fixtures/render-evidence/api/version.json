@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0",
+  "hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+  "short": "1a2b3c4",
+  "branch": "v5",
+  "channel": "stable",
+  "tracking": "floating",
+  "imageRef": "ghcr.io/hivecommons/hive:stable",
+  "latestHash": "9f8e7d6c5b4a39281706f5e4d3c2b1a099887766",
+  "latestShort": "9f8e7d6",
+  "behind": true,
+  "commitsBehind": 3
+}
