@@ -126,6 +126,15 @@ func (rt *workflowDispatchRuntime) dispatchLog(cfg *config.Config, logger *slog.
 		if err != nil && logger != nil {
 			logger.Warn("workflow dispatch log unreadable; starting empty", "path", path, "error", err)
 		}
+		if cfg != nil {
+			// One-time: records the governor wrote under the short repo form
+			// join the owner's qualified ones (hivecommons/hive#18901).
+			if n, merr := l.MigrateQualifiedRefs(cfg.Project.Org); merr != nil && logger != nil {
+				logger.Warn("workflow dispatch log: migrating to qualified refs failed", "path", path, "error", merr)
+			} else if n > 0 && logger != nil {
+				logger.Info("workflow dispatch log: migrated records to qualified refs", "records", n)
+			}
+		}
 		rt.log = l
 	})
 	return rt.log

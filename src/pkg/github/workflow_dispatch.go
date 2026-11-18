@@ -29,7 +29,11 @@ import (
 // WorkflowDispatch is one item whose bound model hands its current state to
 // an agent profile.
 type WorkflowDispatch struct {
-	// Repo is the item's repository as the enumeration carries it.
+	// Repo is the item's repository, always "owner/name": the enumeration
+	// carries a bare name for the client's org, and the owner's "Send to"
+	// path carries the qualified one, so every constructor qualifies it
+	// (qualifiedRepo). Ref and the dispatch log's keys are built from it, so
+	// one item has one key whichever path made the record.
 	Repo   string
 	Number int
 	Kind   workflowmodel.ItemKind
@@ -47,6 +51,15 @@ type WorkflowDispatch struct {
 	Target workflowmodel.DispatchTarget
 	// Profile is the compiled bound model.
 	Profile *workflowmodel.Profile
+}
+
+// qualifiedRepo is repo as "owner/name", a bare name taking the client's org.
+func (c *Client) qualifiedRepo(repo string) string {
+	owner, name := c.splitRepo(repo)
+	if owner == "" {
+		return name
+	}
+	return owner + "/" + name
 }
 
 // Ref is the item's "owner/repo#N" reference.
@@ -79,7 +92,7 @@ func (c *Client) WorkflowDispatchForIssue(issue Issue) (WorkflowDispatch, bool) 
 	f := issueFactsFrom(issueStageInputFrom(issue), func(string, int) stagelabels.Stage { return stagelabels.None })
 	f.Ref.Owner, f.Ref.Repo = owner, name
 	return workflowDispatchFrom(p, stagelabels.IssueItem, f, WorkflowDispatch{
-		Repo: issue.Repo, Number: issue.Number, Kind: workflowmodel.KindIssue,
+		Repo: c.qualifiedRepo(issue.Repo), Number: issue.Number, Kind: workflowmodel.KindIssue,
 		Title: issue.Title, URL: issue.URL, Labels: append([]string(nil), issue.Labels...), UpdatedAt: issue.UpdatedAt,
 	})
 }
@@ -104,7 +117,7 @@ func (c *Client) WorkflowDispatchForPR(pr PullRequest) (WorkflowDispatch, bool) 
 		PR:     &stageengine.PRFacts{},
 	}
 	return workflowDispatchFrom(p, stagelabels.PRItem, f, WorkflowDispatch{
-		Repo: pr.Repo, Number: pr.Number, Kind: workflowmodel.KindPR,
+		Repo: c.qualifiedRepo(pr.Repo), Number: pr.Number, Kind: workflowmodel.KindPR,
 		Title: pr.Title, URL: pr.URL, Labels: append([]string(nil), pr.Labels...), UpdatedAt: pr.UpdatedAt,
 	})
 }
