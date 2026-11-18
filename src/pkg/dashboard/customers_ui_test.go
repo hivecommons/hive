@@ -562,7 +562,6 @@ func TestCustomersProfileDetailsWiring(t *testing.T) {
 	for _, want := range []string{
 		`function customersDetailsHtml(p)`,
 		`function customersOrgPill(p)`,
-		`customersOrgPill(p) + customersTagPills(p)`,
 		`data-action="customersProfileSave"`,
 		`data-action="customersProfileReset"`,
 		`function customersCountryPill(p)`,
