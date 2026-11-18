@@ -111,6 +111,11 @@ func checkMergedPRsSince(s string, now time.Time) error {
 			if err != nil {
 				return fmt.Errorf("since must be an RFC3339 time or a duration such as 24h or 7d, got %q", s)
 			}
+			// Cap before multiplying, as the endpoint does: a large day
+			// count overflows int64 and wraps to a short window.
+			if n > int(retention/(24*time.Hour)) {
+				n = int(retention/(24*time.Hour)) + 1
+			}
 			d = time.Duration(n) * 24 * time.Hour
 		} else if d, err = time.ParseDuration(s); err != nil {
 			return fmt.Errorf("since must be an RFC3339 time or a duration such as 24h or 7d, got %q", s)

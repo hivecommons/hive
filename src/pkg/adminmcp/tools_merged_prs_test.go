@@ -62,6 +62,7 @@ func TestMergedPRsReadPath(t *testing.T) {
 	}
 	for _, args := range []map[string]any{
 		{"since": "91d"},
+		{"since": "1000000d"}, // overflows int64 unless capped first
 		{"since": "soon"},
 		{"since": now.Add(time.Hour).Format(time.RFC3339)},
 		{"approved": "maybe"},
