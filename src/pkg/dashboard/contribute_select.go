@@ -1460,7 +1460,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// the prompt), so previewing the prompt can never leak the token. buildTaskPrompt
 	// itself carries the #2545 workspace-clone instruction (real checkout into
 	// $HIVE_WORKSPACE_DIR rather than a fork-only --clone=false).
-	canPush := h.contributorCanPush(chosen.repoFull, ownUsername)
+	canPush := h.contributorCanPushWith(c, chosen.repoFull, ownUsername)
 	// #8124: the guide is THIS hive's project.writing_guide, resolved here
 	// rather than inside the builder — the builder stays a pure function of task
 	// metadata, and the assigning hub is the only party that should decide how

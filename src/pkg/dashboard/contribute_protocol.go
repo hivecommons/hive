@@ -161,6 +161,7 @@ func serverCapabilities() []string {
 		capRepoScope,
 		capQuotaHoldV1,
 		capBusyElsewhereV1,
+		capForkOnlyToken,
 	}
 }
 

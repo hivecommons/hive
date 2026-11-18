@@ -540,6 +540,10 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
     echo "      Prefer a fine-grained token limited to your forks (Contents and Pull"
     echo "      requests: read and write): https://github.com/settings/personal-access-tokens/new"
     echo "      then: gh auth login --with-token < token.txt, and rerun this setup."
+    echo "      With such a token the hive works through your forks on every repository"
+    echo "      you do not own, even ones your account can push to. Fork a repository"
+    echo "      once yourself before its first task, and if the token is limited to"
+    echo "      selected repositories, add the new fork to it."
     GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
     if [[ -n "$GH_TOKEN" ]]; then
       echo "GH_TOKEN=${GH_TOKEN}" > "{{config_dir}}/gh-auth.env"
@@ -818,6 +822,10 @@ contribute-move backend="claude": check-version (contribute-check-backend backen
     echo "      Prefer a fine-grained token limited to your forks (Contents and Pull"
     echo "      requests: read and write): https://github.com/settings/personal-access-tokens/new"
     echo "      then: gh auth login --with-token < token.txt, and rerun this setup."
+    echo "      With such a token the hive works through your forks on every repository"
+    echo "      you do not own, even ones your account can push to. Fork a repository"
+    echo "      once yourself before its first task, and if the token is limited to"
+    echo "      selected repositories, add the new fork to it."
     GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
     if [[ -z "$GH_USER" || -z "$GH_TOKEN" ]]; then
       echo "ERROR: could not read your GitHub identity or token from gh."

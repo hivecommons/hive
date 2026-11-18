@@ -318,7 +318,7 @@ func (h *ContributeWSHub) assignStandbyTask(c *ContributorConnection, item Ready
 		h.rollbackAssignment(c, taskID)
 		return nil, fmt.Errorf("standby token mint failed: %w", err)
 	}
-	canPush := h.contributorCanPush(item.Repo, c.profile.GitHubUsername)
+	canPush := h.contributorCanPushWith(c, item.Repo, c.profile.GitHubUsername)
 	prompt := buildTaskPromptForContributor(ref, item.Title, canPush, h.writingGuideSection())
 	task := ghpkg.Issue{Repo: item.Repo, Number: item.Number, Title: item.Title, Labels: item.Labels}
 	if policy := strings.TrimSpace(h.roleKickPrompt(lane, task)); policy != "" {

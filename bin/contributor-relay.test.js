@@ -10788,6 +10788,33 @@ test('#18238 a fine-grained or narrow token, no token, or a failed probe does no
   }
 });
 
+// fork_only_token_v1: a fine-grained personal token reaches only its owner's
+// repositories, so the relay tells the hub to hand it the fork workflow. The
+// hub had sent a maintainer following #18238's advice to push upstream, and
+// every push failed with 403 (Danathar's relay, 2026-11-18).
+test('fork_only_token_v1: a fine-grained personal token is declared fork-only; a classic token, no token or a failed probe is not', () => {
+  for (const [name, probe, env, want] of [
+    ['fine-grained token', () => null, { GH_TOKEN: 'set' }, true],
+    ['classic repo token', () => ['read:org', 'repo'], { GH_TOKEN: 'set' }, false],
+    ['narrow classic token', () => ['public_repo'], { GH_TOKEN: 'set' }, false],
+    ['no personal token', () => null, {}, false],
+    ['failed probe', () => { throw new Error('offline'); }, { GH_TOKEN: 'set' }, false],
+  ]) {
+    const relay = loadRelay({ backend: 'claude' });
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+      relay.warnOnBroadPersonalToken(probe, env);
+      const declared = relay.detectCapabilities().relay_capabilities.includes(relay.FORK_ONLY_TOKEN_CAPABILITY);
+      assert.strictEqual(declared, want, `${name}: fork_only_token_v1 declared=${declared}, want ${want}`);
+      assert.strictEqual(relay.personalTokenForkOnly(), want, `${name}: personalTokenForkOnly`);
+    } finally {
+      console.warn = origWarn;
+      teardown(relay);
+    }
+  }
+});
+
 test('#5447 an expired token still does NOT refuse the work (clock skew)', () => {
   const relay = loadRelay({ backend: 'claude' });
   const origWarn = console.warn;

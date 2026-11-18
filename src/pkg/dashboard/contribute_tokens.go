@@ -395,6 +395,37 @@ func repoNameOnly(repo string) string {
 	return repo
 }
 
+// capForkOnlyToken is the relay→hub capability token that says the
+// contributor's personal GitHub token is fine-grained, so it reaches only the
+// repositories of its own owner: the contributor's account and forks. Such a
+// token cannot push to an upstream repository the contributor's ACCOUNT can
+// write to, so the hub must hand that contributor the fork workflow there too.
+// hivecommons/hive#18238 recommends exactly this token, and before this the
+// hub sent maintainers following it to push upstream, where every push failed
+// with 403 (Danathar's relay, 2026-11-18: hive#19052, #19056, #19057, #19123,
+// utah#1256 and utah-packages#1214 all committed locally and never pushed).
+const capForkOnlyToken = "fork_only_token_v1"
+
+// contributorTokenForkOnly reports whether c's relay declared a fork-only
+// personal token (capForkOnlyToken).
+func contributorTokenForkOnly(c *ContributorConnection) bool {
+	return c != nil && c.capabilities != nil && c.capabilities.DeclaresCapability(capForkOnlyToken)
+}
+
+// contributorCanPushWith is contributorCanPush for connection c. When the relay
+// declared a fork-only token, only the contributor's own repositories keep the
+// direct-push workflow: the token reaches them, and a personal repository
+// cannot be forked back into the same account. Every other repository gets the
+// fork workflow, whatever the account could push to.
+func (h *ContributeWSHub) contributorCanPushWith(c *ContributorConnection, repoFull, username string) bool {
+	if contributorTokenForkOnly(c) {
+		owner, _, ok := strings.Cut(strings.TrimSpace(repoFull), "/")
+		username = strings.TrimSpace(username)
+		return ok && owner != "" && username != "" && strings.EqualFold(owner, username)
+	}
+	return h.contributorCanPush(repoFull, username)
+}
+
 // contributorCanPush reports whether the connected contributor can create a
 // branch directly in repoFull. A personal repository cannot be forked back into
 // the same account, so owner equality is both authoritative and deliberately

@@ -161,3 +161,40 @@ func TestContributorCanPushUsesEffectiveGitHubPermission(t *testing.T) {
 		})
 	}
 }
+
+// A relay that declares fork_only_token_v1 holds a fine-grained token that
+// reaches only its owner's repositories, so it gets the fork workflow even
+// where the contributor's account could push (Danathar's relay, 2026-11-18:
+// every upstream push failed with 403). The API is never asked, and a relay
+// without the token keeps today's answer.
+func TestContributorCanPushWithForkOnlyToken(t *testing.T) {
+	var lookups int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lookups++
+		_, _ = w.Write([]byte(`{"permission":"write"}`))
+	}))
+	defer api.Close()
+	client := ghpkg.NewClientForTest(api.URL, "acme", []string{"widgets"}, slog.Default())
+	hub := &ContributeWSHub{
+		server: &Server{deps: &Dependencies{Ctx: context.Background(), GHClient: client}},
+		logger: slog.Default(),
+	}
+	forkOnly := &ContributorConnection{capabilities: &ContributorCapabilities{RelayCapabilities: []string{capForkOnlyToken}}}
+	plain := &ContributorConnection{capabilities: &ContributorCapabilities{RelayCapabilities: []string{capFixPRInterrupt}}}
+
+	if hub.contributorCanPushWith(forkOnly, "acme/widgets", "alice") {
+		t.Fatal("a fork-only token must get the fork workflow on a repository the account can write to")
+	}
+	if !hub.contributorCanPushWith(forkOnly, "Alice/widgets", "alice") {
+		t.Fatal("the contributor's own repository keeps the direct-push workflow: it cannot be forked into the same account")
+	}
+	if lookups != 0 {
+		t.Fatalf("permission lookups = %d, want none for a fork-only token", lookups)
+	}
+	if !hub.contributorCanPushWith(plain, "acme/widgets", "alice") || !hub.contributorCanPushWith(nil, "acme/widgets", "alice") {
+		t.Fatal("without fork_only_token_v1 a writer keeps the upstream-push workflow")
+	}
+	if !testContainsString(serverCapabilities(), capForkOnlyToken) {
+		t.Fatalf("serverCapabilities() = %v, missing %q", serverCapabilities(), capForkOnlyToken)
+	}
+}

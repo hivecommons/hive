@@ -2368,6 +2368,21 @@ function broadTokenScopeWarning(scopes) {
     'then rerun `just contribute-setup <backend>`. See hivecommons/hive#18238.';
 }
 
+// ── Fork-only personal token (fork_only_token_v1) ───────────────────────────
+// A fine-grained token reaches only its owner's repositories: for the token
+// #18238 recommends, the contributor's own account and forks. The hub picks
+// the upstream-push workflow from what the contributor's ACCOUNT can write,
+// so a maintainer following that advice was sent to push upstream and every
+// push failed with 403. The relay declares fork_only_token_v1 when the
+// personal token is fine-grained (it carries no X-OAuth-Scopes header), and
+// the hub then hands this relay the fork workflow on every repository the
+// contributor does not own.
+const FORK_ONLY_TOKEN_CAPABILITY = 'fork_only_token_v1';
+// personalTokenForkOnly is set by warnOnBroadPersonalToken at start, before
+// detectCapabilities caches the declared set. A failed probe leaves it false,
+// so the hub keeps its current choice.
+let personalTokenForkOnly = false;
+
 function probePersonalTokenScopes() {
   const out = execFileSync('gh', ['api', '--include', '/user'], {
     encoding: 'utf8',
@@ -2384,6 +2399,7 @@ function warnOnBroadPersonalToken(probe = probePersonalTokenScopes, env = proces
   if (!env.GH_TOKEN && !env.GITHUB_TOKEN) return null;
   let scopes;
   try { scopes = probe(); } catch (_) { return null; }
+  personalTokenForkOnly = scopes === null;
   const msg = broadTokenScopeWarning(scopes);
   if (msg) console.warn(msg);
   return msg;
@@ -4003,6 +4019,7 @@ function detectCapabilities() {
     caps.relay_capabilities.push('parallel_sessions');
     caps.max_parallel_fixes = FIX_PR_MAX_PARALLEL;
   }
+  if (personalTokenForkOnly) caps.relay_capabilities.push(FORK_ONLY_TOKEN_CAPABILITY);
   // Container runtime: prefer docker, then podman, else none. `command -v` is a
   // cheap presence check; failure just means the runtime is absent.
   let runtime = 'none';
@@ -11368,6 +11385,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     parseOAuthScopes,
     broadTokenScopeWarning,
     warnOnBroadPersonalToken,
+    FORK_ONLY_TOKEN_CAPABILITY,
+    personalTokenForkOnly: () => personalTokenForkOnly,
     TOKEN_EXPIRY_WARN_MS,
     tmuxSendKeys,
     flushPendingTask,
@@ -11864,8 +11883,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
   // resolution and the `--version` call added for the CLI version — off the auth
   // path entirely, where a slow host could otherwise eat that budget. Failures are
   // already absorbed field-by-field, so this cannot stop the relay starting.
-  detectCapabilities();
+  // The token probe runs first: it decides whether detectCapabilities declares
+  // fork_only_token_v1.
   warnOnBroadPersonalToken();
+  detectCapabilities();
   writeRelayPidFile();
   writeRelayStatus();
   connect();

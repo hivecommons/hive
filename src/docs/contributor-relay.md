@@ -895,6 +895,14 @@ Before this, the prompt mentioned a branch exactly once ("push your branch to yo
 
 Watching the pane, the base is the thing worth a glance: it is stated in the prompt, and the agent is asked to confirm it on the opened PR before reporting done.
 
+### Push upstream or through a fork
+
+The assignment prompt tells the agent either to push its branch to the upstream repository or to work through the contributor's fork. The hub decides per task: a contributor whose GitHub account can write to the repository pushes upstream, everyone else forks (`contributorCanPush` in `src/pkg/dashboard/contribute_tokens.go`). A repository the contributor owns is always pushed to directly, because it cannot be forked into the same account.
+
+The account's permission is not the token's. A fine-grained personal token, the kind `contribute-setup` and the start-up warning recommend ([#18238](https://github.com/hivecommons/hive/issues/18238)), reaches only its owner's repositories: for a token limited to your forks, your own account and forks. So at start the relay checks the personal token, and when it is fine-grained (GitHub sends no `X-OAuth-Scopes` header for it) it declares the `fork_only_token_v1` capability. A hub that knows the capability then gives that relay the fork workflow on every repository the contributor does not own. Before this, a maintainer following the advice was told to push upstream, and every push failed with 403 (2026-11-18: six tasks committed locally and never pushed). An older hub ignores the capability.
+
+With such a token, fork each repository once yourself before its first task, and if the token is limited to selected repositories, add the new fork to it. Otherwise the agent cannot create the fork and reports an environment failure.
+
 ### The assigning hive's writing guide travels with the task
 
 If the hive that handed you the task sets [`project.writing_guide`](agent-configuration.md#writing-guide-how-issues-and-prs-should-read-projectwriting_guide), the assignment prompt carries it, immediately before the instruction to open the PR ([#8124](https://github.com/hivecommons/hive/issues/8124)). It is the repo owner's instruction for how the PR body should *read* — length, structure, register — and it never overrides what the repository's own `AGENTS.md` and `CONTRIBUTING` require, or what the prompt asks the body to contain.
