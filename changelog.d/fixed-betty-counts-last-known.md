@@ -1,0 +1,1 @@
+- Betty's hive status brief no longer says "counted in 0 of N repos so far" beside real figures: when no repo has been re-read since a restart the counts are worded as last known figures not yet confirmed in any of the N repos, and the "counted in K of N repos so far" wording returns, filling in, as repos are re-read.
