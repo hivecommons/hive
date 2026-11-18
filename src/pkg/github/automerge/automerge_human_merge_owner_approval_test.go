@@ -56,7 +56,7 @@ func TestHumanMergeApprovalCommentNamesApproverAndHead(t *testing.T) {
 	body := humanMergeApprovalComment(ownerApprovalHead, workflowApproval{Login: "owner"})
 	for _, want := range []string{
 		humanMergeApprovalMarker(ownerApprovalHead),
-		"Hold released for `dddddddd",
+		"Hold released for `ddddddd`:",
 		"`owner` approved this head",
 		humanMergeOwnerApprovalConfigKey,
 		"not a merge override",
