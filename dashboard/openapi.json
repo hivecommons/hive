@@ -2042,7 +2042,7 @@
           "Customers"
         ],
         "summary": "Edit a customer profile",
-        "description": "Applies one change, named by op: name, notes, profile (field real_name, organization or location, with value; state auto hands it back to GitHub), identity_add, identity_remove, tag (state on, off or auto), goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set, satisfaction_confirm, satisfaction_reject. Owner and read-write users may edit anyone. A read-only user may post only to /api/customers/me/edit, and only name, profile, identity, tag and goal changes; an identity they add is an unconfirmed claim that resolves nobody until someone with the full view confirms it. Audited as customer_edit with the person and the op, never the value.",
+        "description": "Applies one change, named by op: name, notes, profile (field real_name, organization, location or country, with value; a country is an ISO 3166 alpha-2 code or a country name; state auto hands it back to the automatic source, which derives a country from the location), affiliation_dismiss (value: a suggested organization the person refused), identity_add, identity_remove, tag (state on, off or auto), goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set, satisfaction_confirm, satisfaction_reject. Owner and read-write users may edit anyone. A read-only user may post only to /api/customers/me/edit, and only name, profile, affiliation_dismiss, identity, tag and goal changes; an identity they add is an unconfirmed claim that resolves nobody until someone with the full view confirms it. Audited as customer_edit with the person and the op, never the value.",
         "parameters": [
           {
             "name": "id",
@@ -2070,6 +2070,7 @@
                       "name",
                       "notes",
                       "profile",
+                      "affiliation_dismiss",
                       "identity_add",
                       "identity_remove",
                       "tag",
@@ -2114,7 +2115,8 @@
                     "enum": [
                       "real_name",
                       "organization",
-                      "location"
+                      "location",
+                      "country"
                     ]
                   },
                   "goal_id": {

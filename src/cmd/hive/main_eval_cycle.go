@@ -1075,6 +1075,7 @@ func runEvalCycle(
 		}
 		return workflowAgentTurnFrom(st)
 	}, logger) {
+		k.Message = sched.PrimeWorkflowDispatch(k.Message, k.Dispatch)
 		workflowMessages = append(workflowMessages, k.Message)
 		workflowKickByMessage[workflowDispatchKickKey(k.Message)] = k
 	}

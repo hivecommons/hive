@@ -313,6 +313,54 @@ hand-off, and `workflow.dispatch.enabled: false` stops them all (owned items sta
 from the generic lanes either way). `prompt_template` replaces the built-in prompt; see the
 design doc for its `${VAR}` placeholders.
 
+### Assessment criteria and reviewer rules
+
+The assessment rubric lives in the TechDocs repository's
+[`docs/analysis/criteria.md`](https://github.com/cncf/techdocs/blob/main/docs/analysis/criteria.md)
+and its assessment specification (linked above). The curated workflow model defines
+lifecycle states, human gates and drafter/verifier profiles, not a second scoring
+rubric. Hive selects an eligible agent (which may be `quality`, as described above)
+and builds its instructions with `scheduler.BuildWorkflowDispatchPrompt` or the
+profile's configured `prompt_template`.
+
+Reviewer-stated corrections belong in the shared knowledge store as small,
+source-linked entries, not only in a reply or the agent's private memory. Scope
+assessment rules to the **workflow model name**, independent of its version and
+of which agent fills the profile:
+
+```yaml
+title: cncf-techdocs-assessment reviewer rule for <criterion>
+type: gotcha
+layer: project
+state: approved
+tags: [repo:cncf/techdocs, techdocs, assessment, reviewer-rule]
+source: https://github.com/cncf/techdocs/pull/<pr>#discussion_r<comment-id>
+scope:
+  lanes: [cncf-techdocs-assessment]
+```
+
+This is frontmatter for a [knowledge entry](../knowledge-entries.md); follow it
+with the verified rule and its project-specific limits. Preserve the originating
+comment URL/id when capturing a rule. Draft rules remain excluded until approved.
+Do not use `lanes: [quality]` alone: that would teach unrelated quality work an
+assessment-specific rule and miss a drafter assigned to a different agent.
+
+Workflow hand-offs run the knowledge primer before delivery. The bound model's
+unversioned name is an additional lane match and search term, alongside the base
+agent lane and item labels. The usual agent knowledge scope, lifecycle filter,
+relevance selection and byte cap still apply. A rule must be in a registered
+vault/git source and fit the primer budget to reach the next kick. See
+[registering repository knowledge](../knowledge-entries.md#how-the-directory-reaches-the-primer).
+
+The initial reviewer rules from `cncf/techdocs#424` live in
+[`techdocs-assessment-evidence.md`](../knowledge/techdocs-assessment-evidence.md)
+and [`techdocs-assessment-ownership.md`](../knowledge/techdocs-assessment-ownership.md).
+They cover evidence-based readiness grading on the documentation domain and the
+project's authoritative maintainer roster. They supplement rather than replace
+the upstream rubric. Automated review-feedback capture and reply verification
+are tracked separately in hivecommons/hive#19048; this injection path also accepts
+subsequent captured entries with the same scope.
+
 ### When the agent does not start
 
 A kick that landed only means the agent was told. An agent can decline (one whose session

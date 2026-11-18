@@ -70,6 +70,10 @@ type FeedbackItem struct {
 	Line      int               `json:"line,omitempty"`
 	URL       string            `json:"url,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
+	// AuthorAssociation is GitHub's association of the author with the repo
+	// (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR), upper-case. The rule
+	// capture trust gate (pkg/reviewrules) reads it.
+	AuthorAssociation string `json:"author_association,omitempty"`
 }
 
 // FeedbackMessage is one comment in a review thread.
@@ -92,6 +96,10 @@ type PRFeedback struct {
 	Items []FeedbackItem
 	// Source is "graphql" or "rest": which read produced this result.
 	Source string
+	// HiveReplies are the hive's own comments that carry a review-rules
+	// block (the structured statement of the rules a reviewer stated). They
+	// are read even when no human comment is unanswered.
+	HiveReplies []FeedbackMessage
 }
 
 // Open reports whether the PR can still take a revision.
@@ -166,6 +174,9 @@ func (c *Client) FetchPRFeedback(ctx context.Context, repo string, number int) (
 		HeadRef: raw.HeadRefName,
 		Items:   UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
 		Source:  source,
+		HiveReplies: HiveRuleReplies(raw.rawPRConversation, func(a *rawPRCommentAuthor) bool {
+			return a != nil && c.isHiveLogin(strings.TrimSpace(a.Login))
+		}),
 	}, nil
 }
 
@@ -251,7 +262,8 @@ func UnansweredFeedback(raw rawPRConversation, isHuman func(*rawPRCommentAuthor)
 			return
 		}
 		out = append(out, FeedbackItem{ID: id, ThreadID: thread, Thread: ctxThread, Kind: kind, Author: rc.Author.Login,
-			Body: truncateCommentBody(rc.Body), Path: path, Line: line, URL: rc.URL, CreatedAt: rc.CreatedAt})
+			Body: truncateCommentBody(rc.Body), Path: path, Line: line, URL: rc.URL, CreatedAt: rc.CreatedAt,
+			AuthorAssociation: strings.ToUpper(rc.AuthorAssociation)})
 	}
 	for _, rc := range raw.Comments.Nodes {
 		if human(rc) && addressed != nil && addressed(rc.Body) {
