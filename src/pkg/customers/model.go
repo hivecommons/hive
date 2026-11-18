@@ -82,6 +82,10 @@ const (
 	MaxSuggestionRef = 5
 )
 
+// MaxProfileFieldLen bounds one profile field (real name, organization,
+// location).
+const MaxProfileFieldLen = 120
+
 // Sentinel errors. The dashboard maps them to status codes.
 var (
 	ErrNotFound  = errors.New("customers: not found")
@@ -261,6 +265,54 @@ type MergeRecord struct {
 	By         string    `json:"by,omitempty"`
 }
 
+// Profile field names an edit may address.
+const (
+	FieldRealName     = "real_name"
+	FieldOrganization = "organization"
+	FieldLocation     = "location"
+)
+
+// ProfileFields is every profile field, in display order.
+var ProfileFields = []string{FieldRealName, FieldOrganization, FieldLocation}
+
+// ProfileSourceGitHub names the automatic source of a profile field: the
+// person's own public GitHub profile.
+const ProfileSourceGitHub = "github_profile"
+
+// ProfileField is one optional fact about a person with its provenance, in
+// the shape of a tag's: Source is auto (filled from a public GitHub profile)
+// or manual (a person typed it, possibly to clear it). A manual value always
+// wins; "auto" hands the field back to the automatic source.
+type ProfileField struct {
+	Value  string    `json:"value,omitempty"`
+	Source Source    `json:"source,omitempty"`
+	Rule   string    `json:"rule,omitempty"`
+	At     time.Time `json:"at,omitempty"`
+	By     string    `json:"by,omitempty"`
+}
+
+// Profile holds the optional descriptive fields of a person. All of it is
+// either the person's own public GitHub profile text or typed by a person;
+// nothing here comes from the hub.
+type Profile struct {
+	RealName     ProfileField `json:"real_name,omitempty"`
+	Organization ProfileField `json:"organization,omitempty"`
+	Location     ProfileField `json:"location,omitempty"`
+}
+
+// Field returns a pointer to the named field, or nil for an unknown name.
+func (pr *Profile) Field(name string) *ProfileField {
+	switch name {
+	case FieldRealName:
+		return &pr.RealName
+	case FieldOrganization:
+		return &pr.Organization
+	case FieldLocation:
+		return &pr.Location
+	}
+	return nil
+}
+
 // Person is one customer.
 type Person struct {
 	ID           string       `json:"id"`
@@ -272,6 +324,9 @@ type Person struct {
 	Goals        []Goal       `json:"goals,omitempty"`
 	Satisfaction Satisfaction `json:"satisfaction"`
 	Notes        string       `json:"notes,omitempty"`
+	// Profile is the real name, organization and location, each with its
+	// provenance.
+	Profile Profile `json:"profile,omitempty"`
 	// RejectedGoals is the fingerprints of goal suggestions a person
 	// turned down.
 	RejectedGoals []string `json:"rejected_goals,omitempty"`

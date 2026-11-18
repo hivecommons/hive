@@ -19,6 +19,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/netguard"
 )
 
 const (
@@ -1659,15 +1660,20 @@ func defaultHostResolver(ctx context.Context, host string) ([]string, error) {
 // so an exemption cannot widen to all of loopback.
 var privateURLTestExemptHostPorts map[string]struct{}
 
+// isPrivateURL reports whether rawURL targets a destination that is not
+// globally routable. It delegates to netguard, the one address classifier
+// shared by every isPrivateURL site (#18991): literals in any spelling are
+// classified with net/netip, names are resolved through privateURLResolver,
+// and a resolver failure fails closed.
 func isPrivateURL(ctx context.Context, rawURL string) bool {
-	for _, scheme := range []string{"https://", "http://", "wss://", "ws://"} {
-		if strings.HasPrefix(rawURL, scheme) {
-			rawURL = strings.TrimPrefix(rawURL, scheme)
-			break
-		}
-	}
 	if len(privateURLTestExemptHostPorts) > 0 {
 		hostPort := rawURL
+		for _, scheme := range []string{"https://", "http://", "wss://", "ws://"} {
+			if strings.HasPrefix(hostPort, scheme) {
+				hostPort = strings.TrimPrefix(hostPort, scheme)
+				break
+			}
+		}
 		if idx := strings.IndexAny(hostPort, "/"); idx >= 0 {
 			hostPort = hostPort[:idx]
 		}
@@ -1675,34 +1681,7 @@ func isPrivateURL(ctx context.Context, rawURL string) bool {
 			return false
 		}
 	}
-	host := rawURL
-	if idx := strings.IndexAny(host, ":/"); idx >= 0 {
-		host = host[:idx]
-	}
-	host = strings.ToLower(host)
-	blocked := []string{"localhost", "127.", "10.", "172.16.", "172.17.", "172.18.", "172.19.",
-		"172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
-		"172.28.", "172.29.", "172.30.", "172.31.", "192.168.", "169.254.", "[::1]", "[::ffff:", "0.0.0.0", "0."}
-	for _, p := range blocked {
-		if strings.HasPrefix(host, p) {
-			return true
-		}
-	}
-
-	addrs, err := privateURLResolver(ctx, host)
-	if err != nil {
-		// If DNS fails, treat as private (fail-closed) to prevent bypass.
-		return true
-	}
-	for _, addr := range addrs {
-		for _, p := range blocked {
-			if strings.HasPrefix(addr, p) {
-				return true
-			}
-		}
-	}
-
-	return false
+	return netguard.IsPrivateURL(ctx, rawURL, netguard.Resolver(privateURLResolver))
 }
 
 // validateGitHubToken checks a GitHub personal access token against the GitHub API

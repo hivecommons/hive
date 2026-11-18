@@ -19,6 +19,7 @@ const MeID = "me"
 const (
 	OpName                = "name"
 	OpNotes               = "notes"
+	OpProfile             = "profile"
 	OpIdentityAdd         = "identity_add"
 	OpIdentityRemove      = "identity_remove"
 	OpTag                 = "tag"
@@ -37,7 +38,7 @@ const TagAuto = "auto"
 // selfOps is what a viewer without the full view may do, and only to their
 // own profile: name, identities, tags and goals.
 var selfOps = map[string]bool{
-	OpName: true, OpIdentityAdd: true, OpIdentityRemove: true, OpTag: true,
+	OpName: true, OpProfile: true, OpIdentityAdd: true, OpIdentityRemove: true, OpTag: true,
 	OpGoalAdd: true, OpGoalEdit: true, OpGoalConfirm: true, OpGoalReject: true,
 }
 
@@ -57,6 +58,9 @@ type Edit struct {
 	// GoalID and Text address a goal.
 	GoalID string
 	Text   string
+	// Field names a profile field (Value is its text; State "auto" hands
+	// it back to the automatic source).
+	Field string
 	// Level sets satisfaction.
 	Level string
 }
@@ -237,6 +241,12 @@ func (s *Service) Edit(v Viewer, id string, e Edit) (PersonView, error) {
 		p, err = s.store.SetName(p.ID, e.Name)
 	case OpNotes:
 		p, err = s.store.SetNotes(p.ID, e.Notes)
+	case OpProfile:
+		if e.State == TagAuto {
+			p, err = s.store.ResetProfileField(p.ID, e.Field)
+		} else {
+			p, err = s.store.SetProfileField(p.ID, e.Field, e.Value, v.User)
+		}
 	case OpIdentityAdd:
 		id := Identity{Kind: IdentityKind(e.Kind), Value: e.Value}
 		if !v.Full {

@@ -1,0 +1,1 @@
+- Security: the SSRF guard on dashboard and hub outbound fetches now classifies addresses with one netip-based classifier, refusing CGNAT, IPv6 unique-local and link-local, bare ::1, mapped/NAT64/6to4 embeddings of private IPv4, multicast, and decimal/hex/octal/short IPv4 literal spellings (#18991)
