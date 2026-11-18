@@ -100,6 +100,9 @@ type PRFeedback struct {
 	// block (the structured statement of the rules a reviewer stated). They
 	// are read even when no human comment is unanswered.
 	HiveReplies []FeedbackMessage
+	// AgentReplies are the hive's comments that carry the handled-ids
+	// marker: the kicked agent's replies to feedback.
+	AgentReplies []FeedbackMessage
 }
 
 // Open reports whether the PR can still take a revision.
@@ -169,15 +172,18 @@ func (c *Client) FetchPRFeedback(ctx context.Context, repo string, number int) (
 		state = "closed"
 	}
 	return PRFeedback{
-		State:   state,
-		Draft:   raw.IsDraft,
-		HeadRef: raw.HeadRefName,
-		Items:   UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
-		Source:  source,
-		HiveReplies: HiveRuleReplies(raw.rawPRConversation, func(a *rawPRCommentAuthor) bool {
-			return a != nil && c.isHiveLogin(strings.TrimSpace(a.Login))
-		}),
+		State:        state,
+		Draft:        raw.IsDraft,
+		HeadRef:      raw.HeadRefName,
+		Items:        UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
+		Source:       source,
+		HiveReplies:  HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
+		AgentReplies: HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
 	}, nil
+}
+
+func (c *Client) isHiveAuthor(a *rawPRCommentAuthor) bool {
+	return a != nil && c.isHiveLogin(strings.TrimSpace(a.Login))
 }
 
 // addressesHive reports whether a conversation comment is aimed at the hive:
