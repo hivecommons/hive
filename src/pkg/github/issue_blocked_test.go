@@ -1179,7 +1179,8 @@ func TestReconcileBlockedIssuesOwnerActionSurvivesMarkerlessLift(t *testing.T) {
 		mu.Unlock()
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/80/comments":
-			_, _ = io.WriteString(w, `[{"id":1,"body":"relay\n`+BlockedOwnerMarker("grant the hub app contents:write on o/other")+`\nBlocked: needs an owner action"}]`)
+			body, _ := json.Marshal("relay\n" + BlockedOwnerMarker("grant the hub app contents:write on o/other") + "\nBlocked: needs an owner action")
+			_, _ = io.WriteString(w, `[{"id":1,"body":`+string(body)+`}]`)
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/81/comments":
 			_, _ = io.WriteString(w, `[{"id":1,"body":"blocked: waiting on something"}]`)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/timeline"):
