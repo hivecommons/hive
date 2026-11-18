@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,37 +16,50 @@ import (
 	"github.com/hivecommons/hive/crux/sharedfile"
 )
 
-// Codex and OpenCode logins in a session HOME, adopted back into the shared
-// login when a session refreshed them (#18740, a follow-up to #18724).
+// Codex and OpenCode logins in a session HOME: what a session is given, and
+// how a login that still ends up there gets back to the shared login (#18740,
+// a follow-up to #18724).
 //
-// A session gets a plain copy of these two files (userSessionLoginFiles).
-// Both can hold a ROTATING refresh token: Codex's ChatGPT login, and an
-// OpenCode provider entry of type "oauth". When the CLI in a session refreshes
-// its copy, the refresh rotates the token, the session's copy becomes the
-// only valid login, and the shared file every agent uses is left stale. The
-// agents link to that shared file (Codex: each agent's CODEX_HOME/auth.json
-// is a symlink to it, setupCodexHome; OpenCode: each agent's
-// $XDG_DATA_HOME/opencode is a symlink to the shared directory,
-// xdgDataSharedBridges), so the shared file is the single owner of each
-// login, and the CLIs of the agents write their own refreshes into it.
+// Both files can hold a ROTATING refresh token: Codex's ChatGPT login, and an
+// OpenCode provider entry of type "oauth". The agents link to the shared file
+// (Codex: each agent's CODEX_HOME/auth.json is a symlink to it,
+// setupCodexHome; OpenCode: each agent's $XDG_DATA_HOME/opencode is a symlink
+// to the shared directory, xdgDataSharedBridges), so the shared file is the
+// single owner of each login, and the CLIs of the agents write their own
+// refreshes into it. A session used to get a full copy: when the CLI in the
+// session refreshed it, the refresh rotated the token, the session's copy
+// became a second, diverging holder of the grant, and a session refresh and
+// an agent refresh in the same window left two logins of which at most one
+// still worked.
 //
-// The fix here is ADOPT-BACK, the same safety net usersession_login.go has for
-// Claude: when a session's file holds a strictly newer login than the shared
-// file, that login is written into the shared file atomically, the replaced
-// shared file is kept beside it as "<name>.stale-<UTC time>", and
-// user_session_login_adopted is audited. It runs at the same points as the
-// Claude check: at boot, on every credential-bridge poll, at a session's
-// start or resume, and before a session's sandbox is removed (a login that
-// cannot be adopted keeps the sandbox).
+// The same three rules as the Claude login (usersession_login.go):
 //
-// What a session is NOT given here, unlike Claude, is a copy that cannot
-// refresh. Codex (tokens.refresh_token) and OpenCode (an oauth entry's
-// refresh) both treat the refresh token as a required field, so a copy
-// without it, or with a placeholder, would log the person out of the session
-// (#18740). The session keeps a full copy; adopt-back makes the fleet
-// converge on the newest login within one poll, and it never writes the
-// session's copy. It does not stop a session and an agent refreshing the same
-// token in the same few seconds.
+//  1. A session is never a refresh holder. Its copy is the shared file with
+//     every refresh token EMPTIED (sessionCodexLogin, sessionOpenCodeLogin).
+//     The key stays: both CLIs require it in their login file, but accept an
+//     empty value; the CLI then keeps using the access token and a refresh it
+//     attempts fails without rotating anything. Nothing else changes, so the
+//     session sees the fleet's account, mode and API-key entries as before.
+//  2. The session's copy follows the shared login. When the shared file was
+//     written after the copy (an agent refreshed, an operator signed in), the
+//     copy is replaced, atomically and as the session's uid. A session
+//     therefore depends on an agent or a sign-in refreshing the shared login
+//     before its access token expires; it cannot refresh it itself.
+//  3. A login that is in a session HOME anyway (a full copy from an earlier
+//     release, refreshed there, or a person signing in inside the session) is
+//     never lost and never left to diverge: when it is strictly newer than the
+//     shared file it is ADOPTED into it atomically, the replaced shared file
+//     is kept beside it as "<name>.stale-<UTC time>", and
+//     user_session_login_adopted is audited. The session is then put back on
+//     a refresh-less copy. A full copy carrying the shared file's own refresh
+//     token is put on a refresh-less copy too. A refresh token the shared
+//     file does not hold and that is not adoptable is the session's own login
+//     and is left alone.
+//
+// It runs at the same points as the Claude check: at boot, on every
+// credential-bridge poll, at a session's start or resume, and before a
+// session's sandbox is removed (a login that cannot be adopted keeps the
+// sandbox).
 //
 // "Strictly newer" is decided from the files' own freshness fields and
 // modification times only:
@@ -71,8 +85,8 @@ const (
 	userSessionOpenCodeLoginRel = ".local/share/opencode/auth.json"
 )
 
-// rotatingSessionLogin is one vendor login a session holds as a full copy
-// whose refresh token rotates.
+// rotatingSessionLogin is one vendor login whose refresh token rotates. A
+// session holds it only as a refresh-less copy.
 type rotatingSessionLogin struct {
 	rel    string // relative to HOME, in the session and in the shared home
 	vendor string // for logs and the audit detail
@@ -80,12 +94,22 @@ type rotatingSessionLogin struct {
 	// strictly newer login than shared, nil when there is nothing to adopt.
 	// It never logs and never returns token material in an error.
 	adopt func(sess, shared []byte, sessMod, sharedMod time.Time) []byte
+	// sessionCopy returns what a session is given for the shared file: the
+	// same file with every refresh token emptied. ok is false when shared is
+	// not a login file of this vendor; such a file is not handed out.
+	sessionCopy func(shared []byte) ([]byte, bool)
+	// refreshTokens returns every non-empty refresh token data holds.
+	refreshTokens func(data []byte) []string
 }
 
 var rotatingSessionLogins = []rotatingSessionLogin{
-	{rel: userSessionCodexLoginRel, vendor: "codex", adopt: adoptCodexLogin},
-	{rel: userSessionOpenCodeLoginRel, vendor: "opencode", adopt: adoptOpenCodeLogin},
+	{rel: userSessionCodexLoginRel, vendor: "codex", adopt: adoptCodexLogin, sessionCopy: sessionCodexLogin, refreshTokens: codexRefreshTokens},
+	{rel: userSessionOpenCodeLoginRel, vendor: "opencode", adopt: adoptOpenCodeLogin, sessionCopy: sessionOpenCodeLogin, refreshTokens: openCodeRefreshTokens},
 }
+
+// emptyJSONString is the value a session copy holds in place of a refresh
+// token: the key both CLIs require, with nothing to redeem.
+var emptyJSONString = json.RawMessage(`""`)
 
 // rotatingSessionLoginFor returns the rotating login stored at rel.
 func rotatingSessionLoginFor(rel string) (rotatingSessionLogin, bool) {
@@ -98,8 +122,9 @@ func rotatingSessionLoginFor(rel string) (rotatingSessionLogin, bool) {
 }
 
 // sessionRotatingLoginMu serialises every read-compare-write of a rotating
-// shared login made by the hive (the manager's poll, a session's start and
-// its removal), so two sessions holding newer logins settle on the later one.
+// login made by the hive (the manager's poll, a session's start and its
+// removal), so two sessions holding newer logins settle on the later one and
+// a copy is never written from a shared file another check is replacing.
 // The agents' CLIs write the shared file without it; replaceSharedLogin
 // refuses to replace a shared file that changed after it was judged.
 var sessionRotatingLoginMu sync.Mutex
@@ -167,6 +192,47 @@ func adoptCodexLogin(sess, shared []byte, sessMod, sharedMod time.Time) []byte {
 	return append(out, '\n')
 }
 
+// sessionCodexLogin implements rotatingSessionLogin.sessionCopy for Codex:
+// the shared file with tokens.refresh_token emptied. A file without a tokens
+// block (an API-key login) is handed out unchanged in content.
+func sessionCodexLogin(shared []byte) ([]byte, bool) {
+	if len(shared) > claudeBridgeMaxCredentialBytes {
+		return nil, false
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(shared, &top); err != nil || top == nil {
+		return nil, false
+	}
+	if raw, ok := top["tokens"]; ok {
+		var tokens map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &tokens); err != nil {
+			return nil, false
+		}
+		if _, has := tokens["refresh_token"]; has {
+			tokens["refresh_token"] = emptyJSONString
+			b, err := json.Marshal(tokens)
+			if err != nil {
+				return nil, false
+			}
+			top["tokens"] = b
+		}
+	}
+	out, err := json.MarshalIndent(top, "", "  ")
+	if err != nil {
+		return nil, false
+	}
+	return append(out, '\n'), true
+}
+
+// codexRefreshTokens implements rotatingSessionLogin.refreshTokens for Codex.
+func codexRefreshTokens(data []byte) []string {
+	var f codexLoginFile
+	if json.Unmarshal(data, &f) != nil || f.Tokens == nil || f.Tokens.RefreshToken == "" {
+		return nil
+	}
+	return []string{f.Tokens.RefreshToken}
+}
+
 // ---- OpenCode
 
 // openCodeAuthEntry is the part of one OpenCode auth.json provider entry the
@@ -222,17 +288,89 @@ func adoptOpenCodeLogin(sess, shared []byte, sessMod, sharedMod time.Time) []byt
 	return out
 }
 
+// sessionOpenCodeLogin implements rotatingSessionLogin.sessionCopy for
+// OpenCode: the shared file with the refresh token of every "oauth" entry
+// emptied. Every other entry (API keys, well-known logins) is kept as it is.
+func sessionOpenCodeLogin(shared []byte) ([]byte, bool) {
+	if len(shared) > claudeBridgeMaxCredentialBytes {
+		return nil, false
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(shared, &top); err != nil || top == nil {
+		return nil, false
+	}
+	for provider, raw := range top {
+		var entry map[string]json.RawMessage
+		if json.Unmarshal(raw, &entry) != nil || entry == nil {
+			continue
+		}
+		var typ string
+		if json.Unmarshal(entry["type"], &typ) != nil || typ != "oauth" {
+			continue
+		}
+		if _, has := entry["refresh"]; !has {
+			continue
+		}
+		entry["refresh"] = emptyJSONString
+		b, err := json.Marshal(entry)
+		if err != nil {
+			return nil, false
+		}
+		top[provider] = b
+	}
+	out, err := json.MarshalIndent(top, "", "  ")
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// openCodeRefreshTokens implements rotatingSessionLogin.refreshTokens for
+// OpenCode: the refresh token of every "oauth" entry that has one.
+func openCodeRefreshTokens(data []byte) []string {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(data, &top) != nil {
+		return nil
+	}
+	var out []string
+	for _, raw := range top {
+		if e, ok := openCodeOAuthEntry(raw); ok {
+			out = append(out, e.Refresh)
+		}
+	}
+	return out
+}
+
+// refreshTokenOverlap reports whether sess holds a refresh token shared does
+// not (the session's own login) and whether it holds one shared does too (a
+// full copy of the shared login). Only equality is used.
+func refreshTokenOverlap(sess, shared []string) (own, copied bool) {
+	for _, s := range sess {
+		found := false
+		for _, h := range shared {
+			if s == h {
+				found = true
+				break
+			}
+		}
+		if found {
+			copied = true
+		} else {
+			own = true
+		}
+	}
+	return own, copied
+}
+
 // ---- the check
 
 // rotatingLoginKey is the sessionLoginCache key of one session's rotating
 // login; the Claude check keys the same cache by the bare session id.
 func rotatingLoginKey(id, rel string) string { return id + "\x00" + rel }
 
-// reconcileRotatingLogin adopts a strictly newer login of one vendor from a
-// session HOME into the shared file. The session's copy is never written:
-// after an adoption it holds the same login as the shared file. The caller
-// holds sessionRotatingLoginMu.
-func (o sessionLoginOps) reconcileRotatingLogin(id string, l rotatingSessionLogin) (sessionLoginResult, error) {
+// reconcileRotatingLogin applies the three rules of the file comment to one
+// vendor login of one session. The caller holds sessionRotatingLoginMu.
+func (o sessionLoginOps) reconcileRotatingLogin(id string, l rotatingSessionLogin, mode sessionLoginMode) (sessionLoginResult, error) {
 	var none sessionLoginResult
 	home := userSessionHome(id)
 	path := filepath.Join(home, l.rel)
@@ -240,7 +378,18 @@ func (o sessionLoginOps) reconcileRotatingLogin(id string, l rotatingSessionLogi
 
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return none, nil
+		if mode != sessionLoginModeStart {
+			return none, nil
+		}
+		shared, ok := readLoginSource(target)
+		if !ok {
+			return none, nil
+		}
+		written, werr := o.writeRotatingCopy(home, path, l, []byte(shared))
+		if werr != nil || !written {
+			return none, werr
+		}
+		return sessionLoginResult{action: sessionLoginInstalled}, nil
 	}
 	if err != nil {
 		return none, fmt.Errorf("inspecting the session's %s login: %w", l.vendor, err)
@@ -250,22 +399,25 @@ func (o sessionLoginOps) reconcileRotatingLogin(id string, l rotatingSessionLogi
 	}
 	sharedInfo, err := os.Lstat(target)
 	if errors.Is(err, fs.ErrNotExist) {
-		// No shared login to split from.
+		// No shared login to split from or to follow.
 		return none, nil
 	}
 	if err != nil {
 		return none, fmt.Errorf("inspecting the shared %s login: %w", l.vendor, err)
 	}
-	if !info.ModTime().After(sharedInfo.ModTime()) {
-		// Not written after the shared file: an unchanged copy, or one an
-		// adoption already settled. Nothing is read.
-		return none, nil
-	}
+	sessNewer := info.ModTime().After(sharedInfo.ModTime())
 	if !sharedInfo.Mode().IsRegular() {
+		if !sessNewer {
+			return none, nil
+		}
 		// The session's file may hold the newest login, and the shared one
 		// is nothing hive could compare or replace: report it, so a removal
 		// keeps the session.
 		return none, fmt.Errorf("%w: the shared %s login %s is not a regular file", sharedfile.ErrUnsafeLocation, l.vendor, target)
+	}
+	if !sessNewer && mode == sessionLoginModeRemove {
+		// Nothing to adopt, and the copy is about to be deleted.
+		return none, nil
 	}
 	data, err := o.readSessionLogin(home, path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -281,15 +433,61 @@ func (o sessionLoginOps) reconcileRotatingLogin(id string, l rotatingSessionLogi
 	if err != nil {
 		return none, fmt.Errorf("reading the shared %s login: %w", l.vendor, err)
 	}
-	merged := l.adopt(data, shared, info.ModTime(), sharedInfo.ModTime())
-	if merged == nil {
+	if sessNewer {
+		if merged := l.adopt(data, shared, info.ModTime(), sharedInfo.ModTime()); merged != nil {
+			stale, err := replaceSharedLogin(target, merged, sharedInfo, o.now())
+			if err != nil {
+				return none, fmt.Errorf("%w (%s); adopting it failed: %w", crux.ErrUserSessionHoldsLogin, l.vendor, err)
+			}
+			res := sessionLoginResult{action: sessionLoginAdopted, staleShared: stale}
+			if mode == sessionLoginModeRemove {
+				return res, nil
+			}
+			// The session stops being a second refresh holder. A failure here
+			// loses nothing: the login is in the shared file, and the next
+			// check replaces the copy.
+			if _, werr := o.writeRotatingCopy(home, path, l, merged); werr != nil {
+				return res, fmt.Errorf("the %s login was adopted, but the session's copy could not be replaced: %w", l.vendor, werr)
+			}
+			return res, nil
+		}
+	}
+	if mode == sessionLoginModeRemove {
 		return none, nil
 	}
-	stale, err := replaceSharedLogin(target, merged, sharedInfo, o.now())
-	if err != nil {
-		return none, fmt.Errorf("%w (%s); adopting it failed: %w", crux.ErrUserSessionHoldsLogin, l.vendor, err)
+	own, copied := refreshTokenOverlap(l.refreshTokens(data), l.refreshTokens(shared))
+	if own {
+		// A refresh token the shared login does not hold and that was not
+		// adoptable: the session's own login, left alone.
+		return none, nil
 	}
-	return sessionLoginResult{action: sessionLoginAdopted, staleShared: stale}, nil
+	if sessNewer && !copied {
+		// A refresh-less copy the shared login has not moved past.
+		return none, nil
+	}
+	want, ok := l.sessionCopy(shared)
+	if !ok || bytes.Equal(want, data) {
+		return none, nil
+	}
+	written, werr := o.writeRotatingCopy(home, path, l, shared)
+	if werr != nil || !written {
+		return none, werr
+	}
+	return sessionLoginResult{action: sessionLoginRefreshed}, nil
+}
+
+// writeRotatingCopy replaces the session's copy with the refresh-less form of
+// shared, as the session's uid. written is false, with no error, when shared
+// is not a login that can be handed out.
+func (o sessionLoginOps) writeRotatingCopy(home, path string, l rotatingSessionLogin, shared []byte) (bool, error) {
+	copyBytes, ok := l.sessionCopy(shared)
+	if !ok {
+		return false, nil
+	}
+	if err := o.writeSessionCopy(home, path, copyBytes); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // replaceSharedLogin writes data over the shared login target, keeping the
@@ -315,10 +513,10 @@ func replaceSharedLogin(target string, data []byte, judged os.FileInfo, now time
 }
 
 // checkRotatingLogin runs one check under sessionRotatingLoginMu.
-func (o sessionLoginOps) checkRotatingLogin(id string, l rotatingSessionLogin) (sessionLoginResult, error) {
+func (o sessionLoginOps) checkRotatingLogin(id string, l rotatingSessionLogin, mode sessionLoginMode) (sessionLoginResult, error) {
 	sessionRotatingLoginMu.Lock()
 	defer sessionRotatingLoginMu.Unlock()
-	return o.reconcileRotatingLogin(id, l)
+	return o.reconcileRotatingLogin(id, l, mode)
 }
 
 // reportRotatingLogin logs and audits one check. Only an adoption is
@@ -338,6 +536,9 @@ func reportRotatingLogin(logger *slog.Logger, audit func(action string, fields m
 				"stale_shared_file", res.staleShared,
 			))
 		}
+	} else if res.action != "" {
+		logger.Debug("user session login: session copy brought up to date with the shared login",
+			"session", id, "trigger", trigger, "vendor", l.vendor, "action", res.action)
 	}
 	if err != nil {
 		logger.Warn("user session login: check failed", "session", id, "trigger", trigger, "vendor", l.vendor, "error", err)
@@ -345,8 +546,8 @@ func reportRotatingLogin(logger *slog.Logger, audit func(action string, fields m
 }
 
 // syncRotatingLogin checks one session's login of one vendor and reports it.
-func (r *UserSessionRuntime) syncRotatingLogin(id, trigger string, l rotatingSessionLogin) error {
-	res, err := r.loginOps().checkRotatingLogin(id, l)
+func (r *UserSessionRuntime) syncRotatingLogin(id, trigger string, l rotatingSessionLogin, mode sessionLoginMode) error {
+	res, err := r.loginOps().checkRotatingLogin(id, l, mode)
 	reportRotatingLogin(r.logger, r.loginAudit(), id, trigger, l, res, err)
 	return err
 }
@@ -368,7 +569,7 @@ func (m *Manager) syncUserSessionRotatingLogins(id, trigger string, ops sessionL
 		if !m.sessionLogins.due(key, stamp, now, force) {
 			continue
 		}
-		res, err := ops.checkRotatingLogin(id, l)
+		res, err := ops.checkRotatingLogin(id, l, sessionLoginModeWatch)
 		reportRotatingLogin(m.logger, func(action string, fields map[string]any) { m.audit(action, "", fields) }, id, trigger, l, res, err)
 		if after, aok := sessionLoginStampOf(path, target); aok {
 			m.sessionLogins.record(key, after, now)
