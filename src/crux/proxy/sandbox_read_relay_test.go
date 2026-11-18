@@ -338,6 +338,29 @@ func TestSandboxReadRelayRequiresLiveKey(t *testing.T) {
 	}
 }
 
+// TestSandboxReadRelayReleasedKeyStopsEstablishedTunnel pins #18895: the key
+// is authenticated at CONNECT, but a tunnel that is already open must stop
+// serving once the kick's key is released.
+func TestSandboxReadRelayReleasedKeyStopsEstablishedTunnel(t *testing.T) {
+	h := newRelayHarness(t, func() (string, error) { return testReadToken, nil })
+	user, release := enrollKey(t, h.relay, "deps")
+	tc, status := h.connect(t, user, "api.github.com:443")
+	if status != 200 {
+		t.Fatalf("CONNECT status = %d", status)
+	}
+	if resp := roundTrip(t, tc, "GET", "api.github.com", "/repos/o/r/tags", nil); resp.StatusCode != 200 {
+		t.Fatalf("GET with live key: status = %d, want 200", resp.StatusCode)
+	}
+	release()
+	resp := roundTrip(t, tc, "GET", "api.github.com", "/repos/o/r/tags", nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("GET after release: status = %d, want 403", resp.StatusCode)
+	}
+	if n := len(h.seen()); n != 1 {
+		t.Fatalf("upstream saw %d requests, want 1 (the post-release request must not reach GitHub)", n)
+	}
+}
+
 func TestSandboxReadRelayRefusesNon443Connect(t *testing.T) {
 	h := newRelayHarness(t, nil)
 	user, release := enrollKey(t, h.relay, "deps")
