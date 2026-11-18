@@ -35,6 +35,7 @@ func TestMergeCIGate_TargetStartupFailure(t *testing.T) {
 			fixture: func() *ciFixture {
 				f := greenFixture()
 				f.runs = append(f.runs, targetRun)
+				f.requiredChecks = []string{"build", "verify PR contents"}
 				return f
 			},
 			requiredSet:  map[string]bool{"build": true, "verify PR contents": true},
