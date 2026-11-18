@@ -103,9 +103,15 @@ func costAgentWindow(hist []CostHistoryEntry, since, until int64) costAgentWindo
 		resp.DataSince = time.UnixMilli(oldest).UTC().Format(time.RFC3339)
 	}
 
+	// An agent whose usage is unpriced has token counters but no $ entry
+	// (sampleCostHistory records Agents only for USD > 0): name it from
+	// either map so its tokens still show (#18971 review).
 	names := map[string]bool{}
 	for _, e := range hist {
 		for name := range e.Agents {
+			names[name] = true
+		}
+		for name := range e.AgentTokens {
 			names[name] = true
 		}
 	}
@@ -158,13 +164,21 @@ func costAgentWindowFor(hist []CostHistoryEntry, name string, since, until int64
 	}
 	var series []sample
 	pts := make([]costSeriesPoint, 0, len(hist))
+	// A snapshot with the agent's tokens but no $ entry recorded its spend
+	// as $0 (unpriced); the counter is cumulative, so it carries the last $
+	// seen rather than reading as a drop to zero and a later restore.
+	lastUSD := 0.0
 	for i := range hist {
-		usd, ok := hist[i].Agents[name]
-		if !ok {
+		usd, priced := hist[i].Agents[name]
+		snap, counted := hist[i].AgentTokens[name]
+		if !priced && !counted {
 			continue
 		}
-		s := sample{pt: costSeriesPoint{T: hist[i].Timestamp, USD: usd}}
-		if snap, ok := hist[i].AgentTokens[name]; ok {
+		if priced {
+			lastUSD = usd
+		}
+		s := sample{pt: costSeriesPoint{T: hist[i].Timestamp, USD: lastUSD}}
+		if counted {
 			s.tokens = &snap
 		}
 		series = append(series, s)

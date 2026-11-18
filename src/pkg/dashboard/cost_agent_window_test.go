@@ -230,3 +230,25 @@ func TestHandleCostAgents(t *testing.T) {
 		t.Errorf("hours=1 = %d", rec.Code)
 	}
 }
+
+// An agent on an unpriced model has token counters but never a $ entry
+// (sampleCostHistory records Agents only for USD > 0): it still gets a row,
+// with its tokens and $0. A priced agent whose $ entry is missing from one
+// snapshot carries its last $ instead of reading as a drop and a restore
+// (#18971 review).
+func TestCostAgentWindowUnpricedAgent(t *testing.T) {
+	t0 := time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
+	hist := []CostHistoryEntry{
+		agentSnap(t0, map[string]float64{"scanner": 1}, map[string]CostAgentSnap{"local": {Input: 100, Output: 10}, "scanner": {Input: 1000}}),
+		agentSnap(t0.Add(time.Hour), nil, map[string]CostAgentSnap{"local": {Input: 300, Output: 30}, "scanner": {Input: 1500}}),
+		agentSnap(t0.Add(2*time.Hour), map[string]float64{"scanner": 3}, map[string]CostAgentSnap{"local": {Input: 600, Output: 60}, "scanner": {Input: 2000}}),
+	}
+	resp := costAgentWindow(hist, t0.UnixMilli(), t0.Add(2*time.Hour).UnixMilli())
+	local := windowRow(t, resp, "local")
+	if local.USD != 0 || local.TotalTokens == nil || *local.TotalTokens != 550 {
+		t.Fatalf("unpriced agent row = %+v (tokens %v), want $0 and 550 tokens", local, local.TotalTokens)
+	}
+	if scanner := windowRow(t, resp, "scanner"); scanner.USD != 2 {
+		t.Fatalf("scanner $ = %v, want 2 (the snapshot without a $ entry carries $1)", scanner.USD)
+	}
+}

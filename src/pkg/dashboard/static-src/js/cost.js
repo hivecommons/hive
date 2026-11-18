@@ -526,7 +526,8 @@
       if (sandboxRange) {
         sandboxHead = `${costSortTh('sandbox', 'name', 'sandbox (agent)')}${costSortTh('sandbox', 'total_tokens', 'tokens', { align: 'right', title: 'Input + output + cache tokens over the range' })}${costSortTh('sandbox', 'input', 'input', { align: 'right' })}${costSortTh('sandbox', 'output', 'output', { align: 'right' })}${costSortTh('sandbox', 'usd', 'est. $', { align: 'right' })}`;
         const rangeRows = sandboxWindow ? costSandboxRangeRowsHtml(sandboxWindow.data) : '';
-        sandboxBody = rangeRows || `<tr><td class="text-muted" colspan="5">${sandboxWindow ? 'no agent usage recorded in this range' : 'loading the selected range…'}</td></tr>`;
+        const sandboxFailed = !sandboxWindow && typeof costAgentWindowFailed === 'function' && costAgentWindowFailed();
+        sandboxBody = rangeRows || `<tr><td class="text-muted" colspan="5">${sandboxWindow ? 'no agent usage recorded in this range' : sandboxFailed ? 'could not load the selected range; retrying shortly' : 'loading the selected range…'}</td></tr>`;
         sandboxNote = costSandboxCoverageNote(sandboxWindow && sandboxWindow.data);
       } else {
         sandboxHead = `${costSortTh('sandbox', 'name', 'sandbox (agent)')}${costSortTh('sandbox', 'input', 'input', { align: 'right' })}${costSortTh('sandbox', 'output', 'output', { align: 'right' })}${costSortTh('sandbox', 'usd', 'est. $', { align: 'right' })}`;

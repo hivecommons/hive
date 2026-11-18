@@ -570,7 +570,10 @@
     // for this window the chips fall back to the browser's own sum below.
     let _costAgentWindow = null;          // { key, data, byName }
     let _costAgentWindowLoading = '';
-    let _costAgentWindowFailed = '';
+    let _costAgentWindowFailed = null;    // { key, at } of the last failed read
+    // A failed read is retried after this long, so one bad answer does not
+    // leave the table on a message until the window itself changes.
+    const COST_AGENT_WINDOW_RETRY_MS = 60000;
     // costAgentWindowQuery: the request for the active window. A window that
     // runs to now (hourly, daily, the current week or month) is asked without
     // `until` and keyed "now", so each poll refreshes it in place; a custom
@@ -597,26 +600,33 @@
       _costAgentWindowLoading = q.key;
       try {
         const r = await fetch('/api/cost/agents?' + q.qs);
-        if (!r.ok) { _costAgentWindowFailed = q.key; return false; }
+        if (!r.ok) { _costAgentWindowFailed = { key: q.key, at: Date.now() }; return false; }
         const data = await r.json();
         const byName = {};
         for (const a of (data.agents || [])) byName[a.name] = a;
         _costAgentWindow = { key: q.key, data, byName };
-        _costAgentWindowFailed = '';
+        _costAgentWindowFailed = null;
         return true;
       } catch {
-        _costAgentWindowFailed = q.key;
+        _costAgentWindowFailed = { key: q.key, at: Date.now() };
         return false;
       } finally {
         if (_costAgentWindowLoading === q.key) _costAgentWindowLoading = '';
       }
+    }
+    // costAgentWindowFailed: whether the last read of the active window
+    // failed, so the table says so instead of "loading" (#18971 review).
+    function costAgentWindowFailed() {
+      const f = _costAgentWindowFailed;
+      return !!f && f.key === costAgentWindowQuery().key;
     }
     // costAgentWindowEnsure: called while rendering; fetches the active
     // window once when nothing (and no failure) is recorded for it yet, then
     // re-renders the Cost card and the agent cards.
     function costAgentWindowEnsure() {
       const q = costAgentWindowQuery();
-      if (costAgentWindowData() || _costAgentWindowLoading === q.key || _costAgentWindowFailed === q.key) return;
+      const failed = _costAgentWindowFailed;
+      if (costAgentWindowData() || _costAgentWindowLoading === q.key || (failed && failed.key === q.key && Date.now() - failed.at < COST_AGENT_WINDOW_RETRY_MS)) return;
       fetchCostAgentWindow().then((fresh) => {
         if (!fresh) return;
         if (typeof _lastCost !== 'undefined' && _lastCost) renderCost(_lastCost);
