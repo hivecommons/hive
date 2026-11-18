@@ -6,13 +6,13 @@ import "testing"
 // spelling of its model, which the Claude CLI rejects. The loader rewrites it
 // and records the rewrite; other backends and valid ids are left alone.
 func TestNormalizeClaudeModelIDs(t *testing.T) {
-	c := &Config{Agents: map[string]AgentConfig{
+	c := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{
 		"architect": {Backend: ClaudeBackend, Model: "claude-sonnet-5.5"},
 		"guide":     {Backend: ClaudeBackend, Model: "claude-opus-4.6"},
 		"healthy":   {Backend: ClaudeBackend, Model: "claude-sonnet-5-5"},
 		"alias":     {Backend: ClaudeBackend, Model: "sonnet"},
 		"copilot":   {Backend: "copilot", Model: "claude-sonnet-5.5"},
-	}}
+	}}}
 
 	got := c.NormalizeClaudeModelIDs()
 
