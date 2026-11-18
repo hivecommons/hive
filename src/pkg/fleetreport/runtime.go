@@ -97,6 +97,7 @@ const (
 	ClassModelsEndpointEmpty         = "models_endpoint_empty"
 	ClassAgentLoginRequired          = "agent_login_required"
 	ClassPRRequestHeadUnpushed       = "pr_request_head_unpushed"
+	ClassPRRequestHeadInvalid        = "pr_request_head_invalid"
 	ClassIOScanClassifierUnavail     = "ioscan_classifier_unavailable"
 	ClassGitHubFetchTransient        = "github_fetch_transient"
 	ClassLabelProvisioningFailed     = "label_provisioning_failed"
@@ -240,6 +241,7 @@ var Classes = map[string]ClassSpec{
 	ClassModelsEndpointEmpty:         {Component: "dashboard", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"no models found from any endpoint"}},
 	ClassAgentLoginRequired:          {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"login required detected", "watchdog: agent credential failure"}},
 	ClassPRRequestHeadUnpushed:       {Component: "github-relay", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"head branch is not on the remote"}},
+	ClassPRRequestHeadInvalid:        {Component: "github-relay", Severity: "medium", MinCount: 1, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"head is not a pushable branch"}},
 	ClassIOScanClassifierUnavail:     {Component: "inference-gateway", Severity: "medium", MinCount: 1, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"ioscan classifier failed closed", "ioscan classifier failed open", "ioscan fail-closed blocked kick", "ioscan fail-closed blocked held-pr coordination kick"}},
 	ClassAgentGitHubCapReached:       {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"agent github api hourly cap reached"}},
 	ClassGitHubFetchTransient:        {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"channel commit date: fetch failed"}},
