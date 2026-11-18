@@ -25,7 +25,19 @@ import (
 // The amend keeps the tree, the author and every trailer (Signed-off-by
 // included); --cleanup=verbatim keeps the message byte-for-byte apart from
 // the rewritten dashes. The switch is prosefilter.AgentWritesEnv.
-func (b *Broker) sanitizeHeadCommitMessage(ctx context.Context) (amended bool, err error) {
+//
+// It is best-effort: a dash rewrite never blocks a push. A failure to read or
+// amend the message is logged and the commit leaves as the agent wrote it.
+func (b *Broker) sanitizeHeadCommitMessage(ctx context.Context) bool {
+	amended, err := b.rewriteHeadCommitMessage(ctx)
+	if err != nil && b.Logger != nil {
+		b.Logger.Warn("pushbroker could not rewrite dashes in the HEAD commit message; pushing it unchanged",
+			"repo", b.Repo, "branch", b.Branch, "error", err)
+	}
+	return amended && err == nil
+}
+
+func (b *Broker) rewriteHeadCommitMessage(ctx context.Context) (amended bool, err error) {
 	if !prosefilter.AgentWritesEnabled() {
 		return false, nil
 	}

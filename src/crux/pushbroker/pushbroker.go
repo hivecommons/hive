@@ -228,11 +228,10 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	// The commit message travels inside the pushed objects, out of the
 	// egress proxy's reach, so the broker applies the outbound dash rule to
 	// it here (hivecommons/hive#19103).
-	msgAmended, err := b.sanitizeHeadCommitMessage(ctx)
-	if err != nil {
-		return b.fail(res, fmt.Errorf("normalising commit message dashes: %w", err))
+	if b.sanitizeHeadCommitMessage(ctx) {
+		amended = true
 	}
-	if amended || msgAmended {
+	if amended {
 		commit, err = b.git(ctx, "rev-parse", "HEAD")
 		if err != nil {
 			return b.fail(res, fmt.Errorf("reading HEAD after newline normalisation: %w", err))

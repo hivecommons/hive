@@ -85,7 +85,6 @@ const (
 
 var outboundSites = map[string]outboundSite{
 	// Filtered at the send boundary.
-	"dashboard.meetingsSpeak":                  filtered(),
 	"discord.(*Bot).do":                        filtered(),
 	"discord.(*Bot).setChannelTopic":           filtered(),
 	"github.(*Client).createCommitOnBranch":    filtered(),
@@ -93,7 +92,6 @@ var outboundSites = map[string]outboundSite{
 	"hub.(*HubServer).pushAuthAuditAlert":      filtered(),
 	"hub.postDiscordRequestWebhook":            filtered(),
 	"hub.postHubGitHubIssue":                   filtered(),
-	"hub.postHubGitHubIssueComment":            filtered(),
 	"hub.sendSlackDM":                          filtered(),
 	"inbox.(*DibsDestination).Deliver":         filtered(),
 	"linearagent.doGraphQL":                    filtered(),
@@ -107,6 +105,7 @@ var outboundSites = map[string]outboundSite{
 	"dashboard.(*Server).forwardFeedbackToHub": via("hub.postHubGitHubIssue", "operator feedback; the hub files it"),
 
 	// Hive-rendered text under the emit ratchet.
+	"hub.postHubGitHubIssueComment":      template("pkg/fleetreport", reasonFleetReport),
 	"hub.patchHubGitHubIssueBody":        template("pkg/fleetreport", reasonFleetReport),
 	"hub.patchHubGitHubIssueComment":     template("pkg/fleetreport", reasonFleetReport),
 	"forge.(*gitLabForge).doWrite":       template("pkg/forge", reasonForgeWrite),
@@ -130,6 +129,7 @@ var outboundSites = map[string]outboundSite{
 	"dashboard.(*Server).pollCopilotToken":             machine(reasonAuth),
 	"dashboard.(*Server).postBenchmarksBatch":          machine(reasonSpokeToHub),
 	"dashboard.kubernetesSelfUpgradeRequest":           machine(reasonPlatform),
+	"dashboard.meetingsSpeak":                          machine("persona voice sample, played back to the operator in the dashboard only"),
 	"dashboard.npsRelayPost":                           machine(reasonSpokeToHub),
 	"dashboard.patchKeyIntoHiveSecrets":                machine(reasonPlatform),
 	"dashboard.probeLiteLLMInference":                  machine(reasonModelPrompt),

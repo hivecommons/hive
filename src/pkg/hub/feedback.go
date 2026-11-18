@@ -686,7 +686,12 @@ func writeHubFeedbackDiagnostics(b *strings.Builder, d *feedbackDiagnostics, sub
 	}
 }
 func postHubGitHubIssue(ctx context.Context, client *http.Client, apiBase, token, owner, repo, title, body string, labels []string) (feedbackIssueResult, int, error) {
-	title, body = prosefilter.SanitizeTitle(title), prosefilter.Sanitize(body)
+	// Only the title is filtered here. The body carries the pkg/fleetreport
+	// affected-hives block, which UpdateAffected parses back from the live
+	// issue by its separators, so rewriting it after rendering would break
+	// later edits; that template is held to the rule by the emit ratchet
+	// instead (hivecommons/hive#19103).
+	title = prosefilter.SanitizeTitle(title)
 	ctx = hubGitHubCallerContext(ctx, "feedback_issue")
 	payload := map[string]any{"title": title, "body": body}
 	if labels != nil {

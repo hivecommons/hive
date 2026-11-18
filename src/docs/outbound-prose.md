@@ -43,9 +43,9 @@ header), so most text never needs rewriting.
 | Hub Discord webhooks (requests, GitHub activity feed) | `hub.postDiscordRequestWebhook`, `hub.(*GitHubActivityFeed).postDiscord` | yes |
 | Hub ntfy alert | `hub.(*HubServer).pushAuthAuditAlert` | yes |
 | Meeting chat and spoken text (Quorum `chat.post`, `say`, `say.prewarm`) | `meetings.(*Client).post` | yes |
-| Persona voice sample | `dashboard.meetingsSpeak` | yes |
-| Hub-filed GitHub issues and comments (self-reports, feedback) | `hub.postHubGitHubIssue`, `hub.postHubGitHubIssueComment` | yes |
-| Hub seen-log and affected-hives edits | `pkg/fleetreport` templates | emit ratchet |
+| Hub-filed GitHub issue titles (self-reports, feedback) | `hub.postHubGitHubIssue` | yes |
+| Hub-filed issue bodies, seen-log comments and affected-hives edits | `pkg/fleetreport` templates | emit ratchet (the affected-hives block is parsed back from the issue by its separators, so it is not rewritten after rendering) |
+| Linear advisory digest | `LinearAdvisoryPoster.PostDigest` filters before its skip-if-unchanged compare; the footer marker is now plain ASCII and the old em-dash marker is still recognised | yes |
 | Linear and Jira work-source writes | `worksource.linearGraphQL`, `worksource.(*jiraSource).doJSON` | yes |
 | Linear agent activity | `linearagent.doGraphQL` | yes |
 | DIBS inbox ideas | `inbox.(*DibsDestination).Deliver` | yes |
@@ -85,7 +85,8 @@ rewritten in transit without changing object ids. The push broker, which
 already amends an agent's HEAD commit for the trailing-newline rule, rewrites
 the HEAD commit message with the same filter before pushing. Only HEAD is
 rewritten: an older commit in the same push keeps its message, because the
-broker never rebases an agent's branch. Hive squash-merges, and the squash
+broker never rebases an agent's branch. The rewrite is best-effort: if the message cannot be
+read or amended, the broker logs a warning and pushes the commit unchanged. Hive squash-merges, and the squash
 commit message it writes is filtered, so the commit that lands on the default
 branch is clean either way. Hive installs no git hooks in agent workspaces
 (hooks are disabled with `core.hooksPath=/dev/null`), so this is done by the
@@ -117,3 +118,7 @@ filtered.
 
 - GraphQL string literals inlined in the query text are not rewritten.
 - Commits other than HEAD in a multi-commit push keep their messages.
+- `pkg/fleetreport` still renders ` - ` separators as em-dashes in the
+  affected-hives block and the seen log (held by the emit ratchet). Moving
+  them to plain hyphens needs a parser that accepts both forms for issues
+  already filed.

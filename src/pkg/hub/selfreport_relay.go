@@ -14,7 +14,6 @@ import (
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
-	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // Self-report relay (hivecommons/hive#11868). Spokes whose GitHub credential
@@ -655,7 +654,6 @@ func findSelfReportIssueByFingerprintIn(ctx context.Context, client *http.Client
 }
 
 func postHubGitHubIssueComment(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int, body string) (int, error) {
-	body = prosefilter.Sanitize(body)
 	ctx = hubGitHubCallerContext(ctx, "selfreport_comment")
 	data, _ := json.Marshal(map[string]string{"body": body})
 	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", strings.TrimRight(apiBase, "/"), owner, repo, number)

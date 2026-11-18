@@ -3,6 +3,7 @@ package pushbroker
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,9 +14,16 @@ import (
 
 const emDashForTest = prosefilter.EmDash
 
-// commitWithMessage commits a file with an exact commit message.
-func commitWithMessage(t *testing.T, dir, msg string) {
+const testSignoff = "Signed-off-by: Hive Test <hive@example.com>\n"
+
+// commitWithMessage commits a file with an exact commit message, adding the
+// committer's Signed-off-by trailer the broker requires when it is missing,
+// and returns the message as committed.
+func commitWithMessage(t *testing.T, dir, msg string) string {
 	t.Helper()
+	if !strings.Contains(msg, testSignoff) {
+		msg += "\n" + testSignoff
+	}
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -25,6 +33,7 @@ func commitWithMessage(t *testing.T, dir, msg string) {
 	}
 	runGit(t, dir, "add", "a.txt")
 	runGit(t, dir, "commit", "--cleanup=verbatim", "-F", msgFile)
+	return msg
 }
 
 func headMessage(t *testing.T, dir string) string {
@@ -69,8 +78,7 @@ func TestBrokerLeavesCleanCommitMessageAlone(t *testing.T) {
 func TestBrokerCommitMessageSwitchOff(t *testing.T) {
 	t.Setenv(prosefilter.AgentWritesEnv, "false")
 	dir := initRepo(t)
-	msg := "fix: a " + emDashForTest + " b\n"
-	commitWithMessage(t, dir, msg)
+	msg := commitWithMessage(t, dir, "fix: a "+emDashForTest+" b\n")
 	if _, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: &recordingRunner{}}).Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -79,23 +87,27 @@ func TestBrokerCommitMessageSwitchOff(t *testing.T) {
 	}
 }
 
-func TestBrokerSurfacesCommitMessageAmendFailure(t *testing.T) {
-	dir := initRepo(t)
-	commitWithMessage(t, dir, "fix: a "+emDashForTest+" b\n")
-	r := &failingRunner{failSubstr: "--cleanup=verbatim", failErr: errors.New("amend refused")}
-	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "normalising commit message dashes") {
-		t.Fatalf("Run error = %v, want it to mention normalising commit message dashes", err)
-	}
-}
-
-func TestBrokerSurfacesCommitMessageReadFailure(t *testing.T) {
-	dir := initRepo(t)
-	commitWithMessage(t, dir, "fix: plain\n")
-	r := &failingRunner{failSubstr: "cat-file commit HEAD", failErr: errors.New("object missing")}
-	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "reading HEAD commit message") {
-		t.Fatalf("Run error = %v, want it to mention reading HEAD commit message", err)
+// A dash rewrite never blocks a push: an amend or read failure is logged and
+// the commit leaves as the agent wrote it.
+func TestBrokerCommitMessageFailuresDoNotBlockPush(t *testing.T) {
+	for _, substr := range []string{"--cleanup=verbatim", "cat-file commit HEAD"} {
+		t.Run(substr, func(t *testing.T) {
+			dir := initRepo(t)
+			msg := commitWithMessage(t, dir, "fix: a "+emDashForTest+" b\n")
+			var buf strings.Builder
+			r := &nthCallFailingRunner{failSubstr: substr, failOnCall: 1, failErr: errors.New("injected")}
+			res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r,
+				Logger: slog.New(slog.NewTextHandler(&buf, nil))}).Run(context.Background())
+			if err != nil || !res.Pushed {
+				t.Fatalf("Run = %+v, %v; want the push to go ahead", res, err)
+			}
+			if got := headMessage(t, dir); got != msg {
+				t.Fatalf("message changed despite the failure: %q", got)
+			}
+			if !strings.Contains(buf.String(), "could not rewrite dashes") {
+				t.Fatalf("failure not logged: %s", buf.String())
+			}
+		})
 	}
 }
 

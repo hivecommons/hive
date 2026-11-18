@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // Meeting attendee settings (hivecommons/hive#18396): Settings, Meeting
@@ -627,7 +626,6 @@ func (s *Server) handleMeetingsPersonaSample(w http.ResponseWriter, r *http.Requ
 // meetingsSpeak calls the TTS service. On failure it returns the HTTP
 // status to answer with.
 func meetingsSpeak(ctx context.Context, client *http.Client, cfg MeetingsTTSConfig, voice, text string) ([]byte, string, int, error) {
-	text = prosefilter.Sanitize(text)
 	body, _ := json.Marshal(meetingsTTSSpeechRequest{Model: meetingsTTSModel, Input: text, Voice: voice, ResponseFormat: meetingsTTSFormat})
 	ctx, cancel := context.WithTimeout(ctx, meetingsSampleTimeout)
 	defer cancel()
