@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.320.4)
+
+### Fixed
+
+- Startup no longer reports "failed to start agent" (and a self-report issue) when an agent is already running or launching by the time its startup launch runs ([#18936](https://github.com/hivecommons/hive/issues/18936)).
+
 ## 2026-11-18 (v5.320.3)
 
 ### Fixed

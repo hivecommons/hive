@@ -1,1 +1,0 @@
-- Startup no longer reports "failed to start agent" (and a self-report issue) when an agent is already running or launching by the time its startup launch runs ([#18936](https://github.com/hivecommons/hive/issues/18936)).
