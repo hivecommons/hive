@@ -107,6 +107,12 @@ keep it from recurring:
   queue produces) fails `native-queue-policy` with a message naming the
   violation instead of the generic "not contained" one. A human merging in the
   GitHub UI must choose **Create a merge commit**.
+- **Tide label.** Tide's default merge method is squash, which is how #19100
+  landed on v6 as a single-parent commit (f4f384962) and dropped v5 ancestry
+  ([#19140](https://github.com/hivecommons/hive/issues/19140)). The workflow
+  therefore opens the top-up PR with the `tide/merge-method-merge` label and
+  re-adds it on every refresh, so Tide makes a merge commit. A hand-opened
+  top-up or repair PR must carry the same label.
 - **Ancestry check.** Every PR the workflow opens ends with a marker line,
   `<!-- hive:topup carried=<sha> -->`, naming the v5 head it carries (refreshed
   on every push to the PR branch). On each run the workflow finds the newest
@@ -133,6 +139,22 @@ keep it from recurring:
   git merge -s ours --no-ff --signoff <that v5 head>   # only when LOST
   git merge --no-ff --signoff origin/v5
   ```
+
+### Repairing lost ancestry, and checking after every top-up
+
+If a top-up was squashed anyway, open a PR against v6 whose branch starts from
+`origin/v6` and runs `git merge -s ours --no-ff --signoff <v5 head the top-up
+carried>`, and label it `tide/merge-method-merge`. Tide may refuse it with
+"nothing to commit" because the tree does not change (#19118); in that case
+merge it with `gh pr merge --merge`. Never squash or rebase it.
+
+After every top-up merges, check that v5 ancestry survived:
+
+```
+git fetch origin
+git merge-base --is-ancestor <v5 head the top-up carried> origin/v6 && echo OK || echo LOST
+git log -1 --format=%p origin/v6   # a top-up merge commit lists two parents
+```
 
 #### DCO on top-up PRs
 

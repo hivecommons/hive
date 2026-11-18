@@ -354,15 +354,24 @@ jobs:
               gh api -X PATCH "repos/${GITHUB_REPOSITORY}/pulls/${number}" \
                 -f title="🌱 Forward-merge v5 into v6 (${BEHIND} commits)" \
                 -F body=@"$RUNNER_TEMP/v6-topup-body.md" >/dev/null
+              # #19140: re-assert the label on every refresh, in case a human removed it.
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${number}/labels" \
+                -f 'labels[]=tide/merge-method-merge' >/dev/null
               echo "PR #${number} already open for this top-up; the force-push refreshed it and its carried-head marker."
             else
               echo "::warning::PR #${number} on sync/v5-to-v6 was not opened by this workflow; its body was left alone, so no carried-head marker is recorded."
             fi
             exit 0
           fi
-          gh pr create --repo "$GITHUB_REPOSITORY" --base v6 --head sync/v5-to-v6 \
+          pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base v6 --head sync/v5-to-v6 \
             --title "🌱 Forward-merge v5 into v6 (${BEHIND} commits)" \
-            --body-file "$RUNNER_TEMP/v6-topup-body.md"
+            --body-file "$RUNNER_TEMP/v6-topup-body.md")"
+          echo "$pr_url"
+          # #19140: Tide squash-merged #19100 and dropped v5 ancestry. The
+          # tide/merge-method-merge label makes Tide use a merge commit. Added
+          # through REST so a missing label is created instead of failing the PR.
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${pr_url##*/}/labels" \
+            -f 'labels[]=tide/merge-method-merge' >/dev/null
 
       # #7930: a pull_request opened or refreshed by GITHUB_TOKEN can die at
       # workflow resolution with 0 jobs and the misleading "workflow file
