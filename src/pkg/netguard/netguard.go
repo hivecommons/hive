@@ -34,6 +34,14 @@ const (
 	ReasonThisNetwork = "this-network"
 	ReasonBroadcast   = "broadcast"
 	ReasonLocalName   = "local host name"
+	// ReasonSpecialPurpose names an IANA special-purpose range that is not
+	// globally routable and has no more specific reason: documentation,
+	// benchmarking, protocol assignments, Teredo, discard-only, the 6to4
+	// relay anycast block and deprecated site-local space.
+	ReasonSpecialPurpose = "special-purpose"
+	// ReasonNumericHost names a host written as dot-separated numbers that
+	// is not a valid IPv4 literal (for example 1.2.3.4.5).
+	ReasonNumericHost = "malformed numeric host"
 )
 
 var (
@@ -49,7 +57,33 @@ var (
 	// address that is classified in its own right.
 	nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
 	sixToFour   = netip.MustParsePrefix("2002::/16")
+
+	// specialPurposePrefixes is the table of IANA special-purpose ranges
+	// that no public service lives in. It is the range set documented in
+	// src/docs/security-model.md; keep the two in step. The ranges the
+	// switch in DenyReason already names (loopback, private, link-local,
+	// multicast, CGNAT, this-network, reserved) are not repeated here.
+	specialPurposePrefixes = mustPrefixes(
+		"192.0.0.0/24",    // IETF protocol assignments (RFC 6890)
+		"192.0.2.0/24",    // TEST-NET-1 documentation (RFC 5737)
+		"192.88.99.0/24",  // 6to4 relay anycast (RFC 7526, deprecated)
+		"198.18.0.0/15",   // benchmarking (RFC 2544)
+		"198.51.100.0/24", // TEST-NET-2 documentation (RFC 5737)
+		"203.0.113.0/24",  // TEST-NET-3 documentation (RFC 5737)
+		"100::/64",        // discard-only (RFC 6666)
+		"2001::/32",       // Teredo (RFC 4380)
+		"2001:db8::/32",   // documentation (RFC 3849)
+		"fec0::/10",       // site-local, deprecated (RFC 3879)
+	)
 )
+
+func mustPrefixes(list ...string) []netip.Prefix {
+	out := make([]netip.Prefix, len(list))
+	for i, s := range list {
+		out[i] = netip.MustParsePrefix(s)
+	}
+	return out
+}
 
 // DenyReason names the class that bars addr, or "" when addr is globally
 // routable and may be fetched. An invalid address is refused.
@@ -92,6 +126,11 @@ func DenyReason(addr netip.Addr) string {
 		return ReasonThisNetwork
 	case reservedV4.Contains(addr):
 		return ReasonBroadcast
+	}
+	for _, p := range specialPurposePrefixes {
+		if p.Contains(addr) {
+			return ReasonSpecialPurpose
+		}
 	}
 	return ""
 }
@@ -240,7 +279,46 @@ func HostDenyReason(host string) (reason string, literal bool) {
 	if addr, ok := ParseHostLiteral(h); ok {
 		return DenyReason(addr), true
 	}
+	if numericDotted(h) {
+		return ReasonNumericHost, false
+	}
 	return "", false
+}
+
+// numericDotted reports whether host has at least one dot and every label is
+// a decimal number or a 0x hex number, the shapes inet_aton reads as IPv4
+// parts. A host like that which ParseHostLiteral rejected (1.2.3.4.5,
+// 256.1.1.1, 08.0.0.1) is not a name any public service has, so it is refused
+// rather than handed to DNS.
+func numericDotted(host string) bool {
+	if !strings.Contains(host, ".") {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if !numericLabel(label) {
+			return false
+		}
+	}
+	return true
+}
+
+func numericLabel(label string) bool {
+	digits := label
+	isDigit := func(c rune) bool { return c >= '0' && c <= '9' }
+	if strings.HasPrefix(label, "0x") {
+		digits = label[len("0x"):]
+		isDigit = func(c rune) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' }
+	}
+	if digits == "" {
+		// "0x" alone is zero to inet_aton; an empty label is not a number.
+		return label != ""
+	}
+	for _, c := range digits {
+		if !isDigit(c) {
+			return false
+		}
+	}
+	return true
 }
 
 // Resolver returns the addresses a host name resolves to, as text.
