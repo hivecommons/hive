@@ -812,6 +812,7 @@ type Manager struct {
 	sandboxPRClient      PRCreator
 	sandboxMutation      effects.Boundary
 	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]
+	sandboxReadRelay     sandboxReadRelayState
 
 	// terminal is the nil-safe pane/tmux boundary. Nil means use the real tmux
 	// implementation, preserving zero-value Manager behavior in tests.
@@ -834,21 +835,6 @@ type Manager struct {
 	kickLogSourceResolver atomic.Pointer[func() string]
 	// buildInfo supplies hive_version/hive_commit for kick log headers.
 	buildInfo func() (version, commit string)
-}
-
-// SetACMMLevel updates the cached ACMM level used by agentMode() when
-// launching agents. Call this whenever the ACMM level changes.
-func (m *Manager) SetACMMLevel(level int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.project.ACMMLevel = level
-	m.removeAgentsBelowACMMGateLocked(level)
-}
-
-func (m *Manager) GetACMMLevel() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.project.ACMMLevel
 }
 
 func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, project ProjectContext) *Manager {

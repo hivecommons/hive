@@ -36,6 +36,7 @@ type (
 	ReviewModelsConfig         = cruxconfig.ReviewModelsConfig
 	RotationConfig             = cruxconfig.RotationConfig
 	SandboxJobConfig           = cruxconfig.SandboxJobConfig
+	SandboxGitHubReadProxy     = cruxconfig.SandboxGitHubReadProxy
 	SandboxPublishConfig       = cruxconfig.SandboxPublishConfig
 	SandboxJobResources        = cruxconfig.SandboxJobResources
 	SandboxJobToleration       = cruxconfig.SandboxJobToleration

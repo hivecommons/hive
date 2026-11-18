@@ -1180,8 +1180,11 @@
 
       html += '</div>'; // kb-layout
       html += '<div id="kb-effective-panel" class="kb-effective"></div>';
+      html += '<div id="kb-advisor-panel" class="kb-effective"></div>';
       panel.innerHTML = html;
       renderKbEffective();
+      renderKbAdvisor();
+      if (!_kbAdvisorData && !_kbAdvisorError && !_kbAdvisorLoading) kbAdvisorRefresh();
       if (_kbGraphView) {
         fetchKnowledgeGraph();
       } else {
@@ -1276,6 +1279,93 @@
     function kbEffectiveRefresh() {
       return kbEffectiveSelectAgent(_kbEffectiveAgent);
     }
+
+    // ── Advisor card (#18897) ──
+    // Read-only rank-versus-holdout comparison from GET /api/knowledge/advisor/summary:
+    // counts and means only, plus the advisor settings that produced them.
+    let _kbAdvisorData = null;
+    let _kbAdvisorError = '';
+    let _kbAdvisorLoading = false;
+
+    function kbAdvisorNum(v, digits) {
+      return (typeof v === 'number' && isFinite(v)) ? v.toFixed(digits) : '–';
+    }
+
+    function kbAdvisorCountsHTML(label, counts) {
+      const keys = Object.keys(counts || {}).sort();
+      if (!keys.length) return '<div><div class="section-label m-0">' + escapeHtml(label) + '</div><div class="kb-effective-meta">none recorded</div></div>';
+      return '<div><div class="section-label m-0">' + escapeHtml(label) + '</div><ul class="kb-effective-list">'
+        + keys.map(k => '<li class="kb-effective-item"><span>' + escapeHtml(k || 'unknown') + '</span><span class="kb-effective-meta">' + escapeHtml(String(counts[k])) + '</span></li>').join('')
+        + '</ul></div>';
+    }
+
+    function kbAdvisorArmRowHTML(a, note) {
+      return '<tr><td>' + escapeHtml(a.arm) + (note ? ' <span class="kb-effective-meta">' + escapeHtml(note) + '</span>' : '') + '</td><td>' + escapeHtml(String(a.beads)) + '</td><td>'
+        + kbAdvisorNum(a.mean_fix_attempts, 2) + '</td><td>' + kbAdvisorNum(a.mean_ci_failure_count, 2) + '</td><td>' + kbAdvisorNum(a.mean_kicks_received, 2) + '</td></tr>';
+    }
+
+    function kbAdvisorCardHTML(d, error, loading) {
+      let html = '<div class="kb-effective-head"><div class="section-label m-0">Advisor</div>'
+        + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbAdvisorRefresh" title="Reload the advisor rank-versus-holdout summary">Refresh</button></div>';
+      if (error) return html + '<div class="kb-notice">' + escapeHtml(error) + '</div>';
+      if (!d) return html + '<div class="dash-card-subtitle">' + (loading ? 'Loading…' : 'No advisor summary yet.') + '</div>';
+      const st = d.settings || {};
+      const w = d.window || {};
+      const cost = d.cost || {};
+      const counts = d.counts || {};
+      html += '<div class="kb-effective-scope">Settings (read-only): mode ' + escapeHtml(String(st.mode || 'off'))
+        + ' · holdout ' + escapeHtml(String(st.holdout_percent || 0)) + '%'
+        + ' · model ' + escapeHtml(String(st.model || 'not set'))
+        + ' · budget ' + escapeHtml(String(st.max_calls_per_day == null ? '–' : st.max_calls_per_day)) + '/day, '
+        + escapeHtml(String(st.max_calls_per_agent_hour == null ? '–' : st.max_calls_per_agent_hour)) + '/agent/hour'
+        + (st.enabled ? '' : ' · advisor is turned off') + '</div>';
+      html += '<div class="kb-effective-scope">' + escapeHtml(String(w.decisions || 0)) + ' decisions'
+        + (w.first_decision ? ' from ' + escapeHtml(w.first_decision) + ' to ' + escapeHtml(w.last_decision || '') : '')
+        + (w.rank_mode_start ? ' · rank mode since ' + escapeHtml(w.rank_mode_start) : '') + '</div>';
+      if (d.caveat) html += '<div class="kb-notice">' + escapeHtml(d.caveat) + '</div>';
+      html += '<div class="kb-effective-cols">'
+        + kbAdvisorCountsHTML('Decisions by mode', counts.by_mode)
+        + kbAdvisorCountsHTML('Decisions by arm', counts.by_arm)
+        + kbAdvisorCountsHTML('Decisions by outcome', counts.by_outcome) + '</div>';
+      const arms = d.arms || [];
+      html += '<div class="section-label m-0" style="margin-top:var(--sp-4)">Closed beads by arm</div>';
+      if (!arms.length && !d.mixed && !d.none) {
+        html += '<div class="kb-effective-meta">No closed beads with a closed PR yet.</div>';
+      } else {
+        html += '<table class="kb-advisor-table"><thead><tr><th>Arm</th><th>Beads</th><th>Mean fix attempts</th><th>Mean CI failures</th><th>Mean kicks</th></tr></thead><tbody>';
+        html += arms.map(a => kbAdvisorArmRowHTML(a, '')).join('');
+        if (d.mixed) html += kbAdvisorArmRowHTML(d.mixed, 'in more than one arm; not comparable');
+        if (d.none) html += kbAdvisorArmRowHTML(d.none, 'no advisor decision');
+        html += '</tbody></table>';
+        html += '<div class="kb-effective-meta">Bead means cover every closed bead with a closed PR; the since window does not narrow them.</div>';
+      }
+      html += '<div class="kb-effective-meta" style="margin-top:var(--sp-3)">Mean model latency ' + kbAdvisorNum(cost.mean_latency_ms, 0) + ' ms (' + escapeHtml(String(cost.latency_samples || 0)) + ' calls) · mean tokens '
+        + kbAdvisorNum(cost.mean_prompt_tokens, 0) + ' prompt / ' + kbAdvisorNum(cost.mean_completion_tokens, 0) + ' completion (' + escapeHtml(String(cost.token_samples || 0)) + ' calls)</div>';
+      return html;
+    }
+
+    function renderKbAdvisor() {
+      const el = document.getElementById('kb-advisor-panel');
+      if (!el) return;
+      el.innerHTML = kbAdvisorCardHTML(_kbAdvisorData, _kbAdvisorError, _kbAdvisorLoading);
+    }
+
+    async function kbAdvisorRefresh() {
+      _kbAdvisorLoading = true;
+      _kbAdvisorError = '';
+      renderKbAdvisor();
+      try {
+        const r = await fetch('/api/knowledge/advisor/summary');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbAdvisorData = data;
+      } catch (e) {
+        _kbAdvisorError = 'Could not load the advisor summary: ' + e.message;
+      }
+      _kbAdvisorLoading = false;
+      renderKbAdvisor();
+    }
+    // ── Advisor card end ──
 
     // Fact hygiene: synthesized/imported facts can carry raw markdown heading
     // markers in titles ("### Configure build...") or be nothing but a

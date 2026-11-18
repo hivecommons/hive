@@ -1,1 +1,0 @@
-- Remember per repository that Prow refuses the App's `/ok-to-test`, so a new fork PR there gets the needs-human note instead of a first command Prow rejects; the memory is re-derived from the repository's comments after a restart and clears when the `hive-ok-to-test` workflow is installed (#18608).

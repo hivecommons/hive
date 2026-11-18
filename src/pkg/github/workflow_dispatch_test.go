@@ -150,3 +150,23 @@ func TestLatestDispatchReply(t *testing.T) {
 		t.Fatal("empty reply matched")
 	}
 }
+
+// One item has one Ref whichever spelling of its repository the caller
+// carries: the enumeration's bare name and the owner's qualified one must
+// build the same dispatch (and so the same dispatch-log key).
+func TestWorkflowDispatchRepoIsCanonical(t *testing.T) {
+	c := techdocsDispatchClient(t)
+	labels := []string{"Docs analysis", "phase/assessment", "triage/accepted"}
+	bare, ok1 := c.WorkflowDispatchForIssue(Issue{Repo: "techdocs", Number: 395, Labels: labels})
+	qual, ok2 := c.WorkflowDispatchForIssue(Issue{Repo: "cncf/techdocs", Number: 395, Labels: labels})
+	if !ok1 || !ok2 {
+		t.Fatalf("dispatch ok = %v %v", ok1, ok2)
+	}
+	if bare.Ref() != "cncf/techdocs#395" || bare.Ref() != qual.Ref() || bare.Repo != "cncf/techdocs" {
+		t.Fatalf("refs differ: bare %q qualified %q", bare.Ref(), qual.Ref())
+	}
+	pr, ok := c.WorkflowDispatchForPR(PullRequest{Repo: "techdocs", Number: 400, Draft: true, Labels: []string{"Docs analysis", "phase/assessment"}})
+	if !ok || pr.Ref() != "cncf/techdocs#400" {
+		t.Fatalf("bare PR ref = %q ok=%v", pr.Ref(), ok)
+	}
+}

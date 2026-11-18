@@ -312,6 +312,62 @@ agent_sandbox:
     image_pull_secrets: [ registry-pull ]
 ```
 
+**Authenticated GitHub reads for Jobs (#18865).** A Job runs in its own pod, so by default every `api.github.com` call it makes is anonymous: GitHub allows 60 requests per hour per source IP, shared by every agent on the node, and `uv lock --upgrade` on a repo with git dependencies falls back to full clones when the API call fails. The opt-in GitHub read relay fixes that without giving the Job a credential. Default off:
+
+```yaml
+agent_sandbox:
+  job:
+    github_read_proxy:
+      enabled: true
+      listen_addr: ":8443"                           # required when enabled; there is no default
+      endpoint: https://hive.hive-system.svc:8443   # how Job pods reach hive; required, https only
+      no_proxy: [ models.internal.example ]          # optional extra direct hosts
+```
+
+The feature is **off by default**. When `enabled` is true, `listen_addr` is required (there is no default bind, so hive never opens a port you did not name) and `endpoint` must be `https://`; config validation fails with an error naming the key otherwise. With it on, hive listens on `listen_addr`, **serving TLS only** with a certificate issued by hive's existing proxy CA for the `endpoint` host (a DNS or IP SAN; no new CA, and no CA key is written anywhere new), and every `sandbox.runtime: job` kick (the agent run, not the `publish.verify` preflights) gets `HTTPS_PROXY` set to `endpoint` (an `https://` proxy URL) with a **per-kick relay key**, plus `SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and `NODE_EXTRA_CA_CERTS` pointing at a trust bundle hive writes to `<workspace>/.hive/github-read-ca.pem` (the system roots plus hive's proxy CA, so the Job still trusts the real internet). `localhost`, `.svc` and `.cluster.local` bypass the relay. The block is read from `agent_sandbox.job` only; a per-agent `job` block cannot enable or repoint it. You must expose the listener to the Job pods yourself: a Service for `listen_addr`, and a NetworkPolicy allowing only the Job pods to reach it.
+
+**Two layers guard the listener.** The first is the NetworkPolicy: it decides which pods can open a connection to the relay port at all. The second is the per-kick relay key: a connection that gets through must still present a live key, or it gets a 407 and nothing else. The key is random per kick, held by hive only as a hash, never logged, and revoked when the kick ends. Because the listener serves TLS only, the key never crosses the pod network in cleartext, and a plain-HTTP connection is dropped before any proxy handling. Example NetworkPolicy, applied in hive's namespace, allowing ingress on the relay port only from pods in the Jobs' namespace (replace the placeholders):
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hive-github-read-relay
+  namespace: <hive-namespace>
+spec:
+  podSelector:
+    matchLabels:
+      <label-selecting-the-hive-pod>: <value>
+  policyTypes: [ Ingress ]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <jobs-namespace>
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: hive-kubejob
+      ports:
+        - protocol: TCP
+          port: 8443   # your listen_addr port
+```
+
+Client support for an `https://` proxy URL varies. Go, Node (through its proxy agents) and libcurl 7.52 or newer (curl, and git built on it) can speak TLS to a proxy. libcurl checks an https proxy against its own CA setting rather than the origin's, so hive also sets `http.proxySSLCAInfo` through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` (skipped when the Job already defines `GIT_CONFIG_COUNT`). Some clients, for example Python HTTP stacks built on urllib3 older than 2.0, cannot speak TLS to a proxy; for those the Job's reads go out anonymously, as without the relay. Hive does not downgrade to a cleartext proxy for them.
+
+What the relay does:
+
+| Host | Request | What hive does |
+|---|---|---|
+| `api.github.com`, `codeload.github.com`, `raw.githubusercontent.com` | `GET`, `HEAD` | Strips any `Authorization` the Job sent and attaches hive's read token. |
+| `github.com` | `GET /<repo>.git/info/refs?service=git-upload-pack`, `POST /<repo>.git/git-upload-pack` (git fetch and clone, uv's git resolution) | Same, as Basic `x-access-token`. |
+| `github.com` | other `GET`/`HEAD` (archives, release downloads) | Forwarded with no credential. |
+| the four hosts above | every other method, GraphQL, `git-receive-pack` (push discovery included) | Refused with a 403 and never sent to GitHub. |
+| any other host | `CONNECT` on 443 | Opaque tunnel, no interception and no credential, through the same destination guard as the agent proxy (loopback, link-local metadata and private ranges are refused). |
+
+The credential is the existing **read tier** (`shared-uid-read`: metadata, contents, actions, checks, pull requests and issues, all read), minted from the Hive App and narrowed to `project.repos`. It is never the write token and never enters the Job: the Job holds only the relay key, which authenticates it to hive's listener and is worthless to GitHub. Hive caches the token for 45 minutes and logs decisions, never token bytes. The key is revoked when the kick ends. When no read token can be minted (no App auth, a repo outside the installation), reads go out anonymously, as they did before; the Job never receives an error it would not have had without the relay. Public repositories outside `project.repos`, such as a git dependency, are readable with that token because GitHub serves public data to any authenticated caller.
+
+This is separate from `HIVE_PROXY_INJECT_GH_AUTH`, which governs the placeholder token of agents running on the hive pod; the relay does not need it and is not affected by it. Limits to know: a Job that sets its own `HTTPS_PROXY` or `NO_PROXY` can route around the relay and is back to anonymous reads; `publish.verify` Jobs do not use it; GraphQL reads from a Job are refused because the relay cannot prove a query is read-only. A shared git dependency cache ([#18865](https://github.com/hivecommons/hive/issues/18865), option 3) is a separate, complementary change.
+
 **RBAC.** The spoke's ServiceAccount needs a Role for `batch/jobs` (create, get, list, delete), `pods` plus `pods/log` (get, list) and, optionally, `serviceaccounts` (get) so the Job service account's pull secrets are merged; the terminal viewer needs nothing beyond that same `pods/log` grant. The standalone kustomize base ships it as `sandbox-job-rbac.yaml`, and the hub provisioner grants it to every hosted spoke as `hive-sandbox-jobs`.
 
 Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when a job-runtime agent resolves no `workspace_claim` or names a runtime hive does not have, and refuses the kick with the same message rather than failing it after the agent is marked running.
