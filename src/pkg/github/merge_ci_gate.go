@@ -352,7 +352,6 @@ type opaqueWorkflowRunResult struct {
 	// is known and green.
 	targetStartupFailures []string
 	actionRequired        []string
-	actionRequired        []string
 	// heldButVerified lists action_required runs whose workflow already
 	// succeeded on the same head under another event; reported, not gating.
 	heldButVerified []string
