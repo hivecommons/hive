@@ -656,11 +656,36 @@ importance:
   `user_session_login_adopted` names the session, trigger, vendor and file.
   It runs when the Claude check runs, deletion included: a newer login that
   cannot be adopted keeps the session. Unlike Claude, a session still holds a
-  copy that can refresh, because whether each CLI accepts a login without its
-  refresh token has not been verified. So a session and an agent can still
-  refresh the same token within one poll; the shared file then converges on
-  the newer login at the next poll, and the hive never overwrites a shared
-  file that changed after it was compared. For all of these vendors a resume
+  copy that can refresh, on purpose. Both CLIs keep the refresh token as a
+  field their login file schema requires (from their source, not yet
+  confirmed on a live install) (Codex: `tokens.refresh_token`; OpenCode:
+  `refresh` of an `oauth` entry), so a copy with that field removed is read
+  as a corrupt or logged-out login, and one with a placeholder fails at its
+  first refresh: either would sign the person out of the session, which is
+  worse than the window it closes, and hive has no way to route a CLI's
+  refresh through the shared file. The adoption above is therefore the
+  safety net and the shared file stays the single owner: an adoption only
+  ever writes the shared file, never the session's copy, and the hive never
+  replaces a shared file that changed after it was compared, so a session
+  refresh and an agent refresh of the same token within one poll cannot
+  leave two diverged logins for long; the shared file converges on the newer
+  one at the next poll. If that file is ever needed again, the stale file the
+  adoption kept (`auth.json.stale-<UTC time>`, next to the shared login, same
+  mode) holds the login it replaced.
+  Manual check, needs a person and a real install (not run in CI, so the
+  assumed file formats stay unconfirmed until it is done,
+  [#18740](https://github.com/hivecommons/hive/issues/18740)): on a hive with
+  a signed-in Codex and OpenCode, (1) start a session, confirm
+  `.codex/auth.json` and `opencode/auth.json` in its home match the shared
+  files' shape (compare key names only, never print values); (2) in the
+  session force a refresh (Codex: `codex login status` after setting an
+  older `last_refresh`; OpenCode: wait past `expires`) and confirm the next
+  poll writes the shared file, leaves an `auth.json.stale-*` beside it and
+  audits `user_session_login_adopted` with vendor `codex` or `opencode`;
+  (3) confirm an agent of that vendor is still logged in; (4) remove the
+  session and confirm the shared login still works; (5) grep the hive log
+  for the access and refresh token values: there must be none. Attach a
+  redacted real file, with token values replaced, as the test fixture. For all of these vendors a resume
   no longer overwrites a file the session's CLI rewrote after the shared one
   was written.
 - **Terminal access is bound.** ttyd listens on loopback without a secret a

@@ -18,6 +18,10 @@ type CustomersConfig struct {
 	// never signed up, to the model the meetings feature is configured to
 	// use.
 	Inference CustomersInferenceConfig `yaml:"inference,omitempty" json:"inference,omitempty"`
+	// MentionSearch gates the one budgeted GitHub search made when an owner
+	// accepts a suggested person (step E of the RFC). Default OFF: it asks
+	// GitHub about a person's login and spends the shared API budget.
+	MentionSearch CustomersMentionSearchConfig `yaml:"mention_search,omitempty" json:"mention_search,omitempty"`
 	// Avatars gates GitHub profile pictures in the Customers list. Default
 	// ON. It is the one part of the section that makes the viewer's browser
 	// contact another site: github.com, for people already on screen.
@@ -108,4 +112,66 @@ func (c *Config) CustomersAvatarsEnabled() bool {
 		return true
 	}
 	return c.Customers.Avatars.IsEnabled()
+}
+
+// EnvCustomersMentionSearchEnabled overrides customers.mention_search.enabled
+// when it holds a recognised boolean.
+const EnvCustomersMentionSearchEnabled = "HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED"
+
+// DefaultCustomersMentionSearchMaxPerHour is how many GitHub search requests
+// the accepts of all suggested people may spend together in one hour. Each
+// accept spends at most two (customers.MentionSearchMaxRequests), so the
+// default allows about five accepts an hour.
+const DefaultCustomersMentionSearchMaxPerHour = 10
+
+// MaxCustomersMentionSearchMaxPerHour caps what a config value may ask for, so
+// a typo cannot hand the feature the whole search quota.
+const MaxCustomersMentionSearchMaxPerHour = 60
+
+// CustomersMentionSearchConfig (`customers.mention_search:`) controls the
+// budgeted GitHub search for mentions and comments that runs when an owner
+// accepts a suggested GitHub login, so the new profile starts with history
+// beyond what the hive already holds. The discovery sweep never runs it.
+type CustomersMentionSearchConfig struct {
+	// Enabled turns the search on. nil = false.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// MaxRequestsPerHour bounds the search requests all accepts may make in
+	// one hour. 0 = DefaultCustomersMentionSearchMaxPerHour; values above
+	// MaxCustomersMentionSearchMaxPerHour are lowered to it.
+	MaxRequestsPerHour int `yaml:"max_requests_per_hour,omitempty" json:"max_requests_per_hour,omitempty"`
+}
+
+// IsEnabled reports whether the search is on (default off).
+func (c CustomersMentionSearchConfig) IsEnabled() bool {
+	return c.Enabled != nil && *c.Enabled
+}
+
+// RequestsPerHour is the hourly request budget with the default and the cap
+// applied.
+func (c CustomersMentionSearchConfig) RequestsPerHour() int {
+	switch {
+	case c.MaxRequestsPerHour <= 0:
+		return DefaultCustomersMentionSearchMaxPerHour
+	case c.MaxRequestsPerHour > MaxCustomersMentionSearchMaxPerHour:
+		return MaxCustomersMentionSearchMaxPerHour
+	default:
+		return c.MaxRequestsPerHour
+	}
+}
+
+// CustomersMentionSearchEnabled reports whether the accept-time search is on:
+// the HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED env wins over
+// customers.mention_search.enabled when it holds a recognised boolean. It
+// also needs the Customers section to be on.
+func (c *Config) CustomersMentionSearchEnabled() bool {
+	if !c.CustomersEnabled() {
+		return false
+	}
+	if v, ok := parseBoolEnv(EnvCustomersMentionSearchEnabled); ok {
+		return v
+	}
+	if c == nil {
+		return false
+	}
+	return c.Customers.MentionSearch.IsEnabled()
 }

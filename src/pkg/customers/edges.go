@@ -188,6 +188,35 @@ func (x *Index) Put(edges []Edge) (int, error) {
 	return n, nil
 }
 
+// PutNew writes the edges the index does not hold yet, keyed by (person,
+// predicate, artefact), and leaves an existing edge exactly as it is, so a
+// weaker source cannot overwrite the time or source of a stronger one. An
+// edge that cannot be stored is skipped. It returns how many were written.
+func (x *Index) PutNew(edges []Edge) (int, error) {
+	n := 0
+	err := x.db.Update(func(tx *bolt.Tx) error {
+		ae := tx.Bucket(bucketArtefact)
+		for _, e := range edges {
+			if !validEdge(e) {
+				continue
+			}
+			e.At = e.At.UTC()
+			if ae.Get(artefactKey(e)) != nil {
+				continue
+			}
+			if err := putEdge(tx, e); err != nil {
+				return err
+			}
+			n++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("customers: writing edges: %w", err)
+	}
+	return n, nil
+}
+
 // ByPerson returns a page of a person's edges, newest first. predicate
 // filters when not empty. after is the cursor a previous page returned;
 // next is empty on the last page.

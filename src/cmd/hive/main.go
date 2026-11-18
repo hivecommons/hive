@@ -3633,6 +3633,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	if svc, stop := wireCustomers(b.cfg, b.customersResolvers(), b.logger); svc != nil {
 		b.cleanup.push(stop)
 		b.customers = svc
+		// Step E (#18884): the budgeted GitHub search on accept. Off unless
+		// customers.mention_search.enabled; never reached by the sweep.
+		svc.mentions = newCustomersMentionSearch(svc.svc, b.customersMentionConfig, b.currentGitHubClient)
 		b.dashSrv.SetCustomersService(svc)
 		if b.sched != nil {
 			installCustomersAgentContext(svc, b.sched.SetCustomerContextLookup)

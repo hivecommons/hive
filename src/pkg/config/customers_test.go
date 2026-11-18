@@ -110,3 +110,60 @@ func TestCustomersAvatarsEnabled(t *testing.T) {
 		t.Fatal("a nil config has avatars on")
 	}
 }
+
+func TestCustomersMentionSearchDefaultsOffAndNeedsCustomers(t *testing.T) {
+	t.Setenv(EnvCustomersEnabled, "")
+	t.Setenv(EnvCustomersMentionSearchEnabled, "")
+	var cfg Config
+	if cfg.CustomersMentionSearchEnabled() {
+		t.Fatal("the accept-time search must default off")
+	}
+	on := true
+	cfg.Customers.MentionSearch.Enabled = &on
+	if !cfg.CustomersMentionSearchEnabled() {
+		t.Fatal("config true must turn it on")
+	}
+	t.Setenv(EnvCustomersEnabled, "false")
+	if cfg.CustomersMentionSearchEnabled() {
+		t.Fatal("it must be off whenever Customers is off")
+	}
+	t.Setenv(EnvCustomersEnabled, "")
+	t.Setenv(EnvCustomersMentionSearchEnabled, "false")
+	if cfg.CustomersMentionSearchEnabled() {
+		t.Fatal("env false must win over config true")
+	}
+	t.Setenv(EnvCustomersMentionSearchEnabled, "true")
+	if !(&Config{}).CustomersMentionSearchEnabled() {
+		t.Fatal("env true must win over the default")
+	}
+	var none *Config
+	t.Setenv(EnvCustomersMentionSearchEnabled, "")
+	if none.CustomersMentionSearchEnabled() {
+		t.Fatal("a nil config is the default, off")
+	}
+}
+
+func TestCustomersMentionSearchRequestsPerHour(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want int
+	}{
+		{"absent", "customers: {}\n", DefaultCustomersMentionSearchMaxPerHour},
+		{"zero", "customers:\n  mention_search:\n    max_requests_per_hour: 0\n", DefaultCustomersMentionSearchMaxPerHour},
+		{"negative", "customers:\n  mention_search:\n    max_requests_per_hour: -3\n", DefaultCustomersMentionSearchMaxPerHour},
+		{"set", "customers:\n  mention_search:\n    max_requests_per_hour: 4\n", 4},
+		{"capped", "customers:\n  mention_search:\n    max_requests_per_hour: 100000\n", MaxCustomersMentionSearchMaxPerHour},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg Config
+			if err := yaml.Unmarshal([]byte(tc.yaml), &cfg); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got := cfg.Customers.MentionSearch.RequestsPerHour(); got != tc.want {
+				t.Fatalf("RequestsPerHour = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

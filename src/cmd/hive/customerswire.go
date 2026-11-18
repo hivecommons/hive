@@ -31,6 +31,12 @@ type customersDashboard struct {
 	svc *customers.Service
 	// graph is the read-only GraphQL engine; nil if it failed to start.
 	graph *gql.Engine
+	// mentions is the accept-time GitHub search (step E, #18884); nil when
+	// it is not wired. Only Accept and AcceptInto reach it.
+	mentions *customers.MentionSearch
+	logger   *slog.Logger
+	// spawn runs the search; nil means a goroutine. Tests run it inline.
+	spawn func(func())
 }
 
 // wireCustomers opens the people store and the edge index when
@@ -76,7 +82,7 @@ func wireCustomersAt(dataDir, graphDir string, resolvers customers.Resolvers, lo
 			logger.Error("[customers] graph endpoint unavailable", "error", err)
 		}
 	}
-	return &customersDashboard{svc: svc, graph: graph}, stop
+	return &customersDashboard{svc: svc, graph: graph, logger: logger}, stop
 }
 
 // customersError maps a store error onto the dashboard's sentinels, which
@@ -148,7 +154,12 @@ func (c *customersDashboard) Forget(v dashboard.CustomersViewer, id string) (int
 }
 
 func (c *customersDashboard) Accept(v dashboard.CustomersViewer, suggestionID string) (dashboard.CustomerResult, error) {
-	return customerResult(c.svc.Accept(customersViewer(v), suggestionID))
+	ident, found := c.suggestedIdentity(suggestionID)
+	res, err := customerResult(c.svc.Accept(customersViewer(v), suggestionID))
+	if err == nil {
+		c.searchOnAccept(res.ID, ident, found)
+	}
+	return res, err
 }
 
 func (c *customersDashboard) Dismiss(v dashboard.CustomersViewer, suggestionID string) error {
@@ -212,7 +223,12 @@ func installCustomersAgentContext(c *customersDashboard, setKickLookup func(sche
 }
 
 func (c *customersDashboard) AcceptInto(v dashboard.CustomersViewer, suggestionID, into string) (dashboard.CustomerResult, error) {
-	return customerResult(c.svc.AcceptInto(customersViewer(v), suggestionID, into))
+	ident, found := c.suggestedIdentity(suggestionID)
+	res, err := customerResult(c.svc.AcceptInto(customersViewer(v), suggestionID, into))
+	if err == nil {
+		c.searchOnAccept(res.ID, ident, found)
+	}
+	return res, err
 }
 
 func (c *customersDashboard) Merge(v dashboard.CustomersViewer, id, from string) (dashboard.CustomerResult, error) {

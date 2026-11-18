@@ -268,11 +268,13 @@ One optional sweep, `customers`. Steps:
   enumeration the hive already made.
 - **D, activity:** the audit log, operator actions, share history, meeting
   drafts, sessions, fact authors, and beads through their issue or PR.
-- **E, budgeted GitHub search on accept:** mentions and comments for a newly
-  accepted person, about two calls per person, one person per tick, shed when
-  the API budget is low.
+- **E, budgeted GitHub search on accept (opt-in, off by default):** mentions and
+  comments for a newly accepted GitHub login, at most two calls per accept and a
+  per-hour budget across accepts, shed when the API budget is low. Runs from the
+  accept handler, never from the sweep.
 
-A normal sweep (A to D) makes zero GitHub calls, and a test holds that.
+A normal sweep (A to D) makes zero GitHub calls, and a test holds that. Step E is
+not part of the sweep.
 
 What the first sweep (steps A to C, `customers` in
 `src/cmd/hive/sweep_workers.go`, every ten minutes) reads:
@@ -316,9 +318,40 @@ manual, by whom), answering no pins the pair so it is not asked again. A hint
 between two customers is answered by merging them, which is the merge and split
 UI of a later PR.
 
-Step E, the budgeted GitHub search for mentions and comments on accept, is not
-built. The GitHub client has no comment or mention search, so it needs a new
-client method and a place in the API budget. It is left for its own PR.
+Step E, the budgeted GitHub search on accept, is built and opt-in.
+`customers.mention_search.enabled` defaults to **off** (env
+`HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED`), because it asks GitHub about a person's
+login and spends shared API quota, and the section otherwise adds no outbound
+path. It also needs the Customers section on. When it is on and an owner or
+read-write user accepts a suggested person (or attaches one to an existing
+customer), the hive runs one search for that identity, so the new profile starts
+with history beyond what the hive already holds:
+
+- **Accept only.** The call path is the accept handler, never the discovery
+  sweep, which is still handed no GitHub client. A test holds both.
+- **GitHub logins only.** A suggested email address is never sent to GitHub.
+- **Scoped to the hive's own repositories.** The query is `mentions:<login>` and
+  then `commenter:<login>`, each limited to the configured project repositories
+  (as many as fit GitHub's 256-character query limit). With no repositories there
+  is nothing to search and no call is made.
+- **Hard per-accept budget.** At most two search requests, one page of 30 results
+  each, so at most 60 results kept per accept.
+- **Per-hour budget across accepts.** `customers.mention_search.max_requests_per_hour`
+  (default 10, at most 60) bounds the requests all accepts spend together in a
+  rolling hour. A spent budget skips the search; the profile still gets created.
+- **Shared quota.** The requests go through the shared GitHub transport, so they
+  count in the request accounting (caller `customers_mention_search`), carry the
+  low pacing class, and stand down when the API budget mode is not normal, when
+  the core or search remaining is low, or while the secondary-limit caution
+  window is engaged.
+- **Edges, deduplicated.** Each hit becomes a `mentioned_in` or `commented_on`
+  edge on the issue or pull request (source `github_search`). An edge the index
+  already holds is left as it is, and a hit seen by both queries is written once
+  per predicate.
+- **Privacy.** The edge is a reference, as for every other source: no title, body
+  or comment text is read into the store. The log line carries the person id and
+  counts only, never the login, a query or a token. It runs in the background, so
+  the accept does not wait for GitHub, and a failure never undoes the accept.
 
 Automatic tags come from role, association and history: `maintainer` from an
 owner or merger role or a GitHub author association of owner, member or

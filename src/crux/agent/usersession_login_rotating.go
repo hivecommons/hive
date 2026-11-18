@@ -39,11 +39,13 @@ import (
 // cannot be adopted keeps the sandbox).
 //
 // What a session is NOT given here, unlike Claude, is a copy that cannot
-// refresh. Whether each CLI accepts a login file without its refresh token
-// (Codex may reject one) has not been verified against the CLIs, so the
-// session keeps a full copy and stays a refresh holder. Adopt-back makes the
-// fleet converge on the newest login within one poll; it does not stop a
-// session and an agent refreshing the same token in the same few seconds.
+// refresh. Codex (tokens.refresh_token) and OpenCode (an oauth entry's
+// refresh) both treat the refresh token as a required field, so a copy
+// without it, or with a placeholder, would log the person out of the session
+// (#18740). The session keeps a full copy; adopt-back makes the fleet
+// converge on the newest login within one poll, and it never writes the
+// session's copy. It does not stop a session and an agent refreshing the same
+// token in the same few seconds.
 //
 // "Strictly newer" is decided from the files' own freshness fields and
 // modification times only:

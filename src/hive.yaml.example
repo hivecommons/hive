@@ -1371,6 +1371,9 @@ data:
 #     enabled: false         # true (or env HIVE_CUSTOMERS_INFERENCE_ENABLED=true) suggests goals and satisfaction with the meetings model; default off
 #   avatars:
 #     enabled: true          # false (or env HIVE_CUSTOMERS_AVATARS_ENABLED=false) shows initials and makes no browser request to github.com for pictures; default on
+#   mention_search:
+#     enabled: false         # true (or env HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED=true) runs one budgeted GitHub search for mentions and comments when an owner accepts a suggested GitHub login; default off
+#     max_requests_per_hour: 10  # search requests all accepts may spend together per hour (default 10, at most 60); each accept spends at most 2
 
 
 # Sandbox Job GitHub read relay (docs/sandbox-isolation.md): lets sandbox Jobs
