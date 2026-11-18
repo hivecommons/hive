@@ -18,6 +18,12 @@
 <p align="center">
   <a href="https://www.twitch.tv/hivecommons"><img src="https://img.shields.io/twitch/status/hivecommons?style=flat&logo=twitch&label=live" alt="Watch the hive live on Twitch"></a>
   <a href="https://app.fossa.com/projects/custom%2B162%2Fhivecommons%2Fhive?ref=badge_shield&issueType=license"><img src="https://app.fossa.com/api/projects/custom%2B162%2Fhivecommons%2Fhive.svg?type=shield&issueType=license" alt="FOSSA license scan status"></a>
+  <a href="https://github.com/hivecommons/hive/actions/workflows/v2-tests.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Ftests.json" alt="Tests on the default branch"></a>
+  <a href="https://github.com/hivecommons/hive/actions/workflows/coverage-hourly.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Fcoverage.json" alt="Test coverage"></a>
+  <a href="src/docs/quality-report.md#the-badges"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Facmm.json" alt="Maturity level"></a>
+  <a href="https://github.com/hivecommons/hive/actions/workflows/go-security-analysis.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Fsecurity.json" alt="Security scan"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/hivecommons/hive"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Fscorecard.json" alt="Supply-chain scorecard"></a>
+  <a href="src/docs/benchmarks/outcomes-2026-10.md"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Foutcomes.json" alt="Sent back, then approved"></a>
 </p>
 
 ---
