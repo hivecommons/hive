@@ -408,15 +408,18 @@ func TestMuseExplicitBypassDropsTheSandboxFlags(t *testing.T) {
 // ── opencode: command deny-list, not a sandbox ──────────────────────────
 
 func TestOpencodeLocalModeDeniesHostStateCommands(t *testing.T) {
-	out, code := runBackendsConfFunc(t, "opencode_local_perm_flag_shell", nil)
+	out, code := runBackendsConfFunc(t, "opencode_local_perm_env_shell", nil)
 	if code != 0 {
 		t.Fatalf("opencode local deny-list wiring failed: %q", out)
 	}
-	if !strings.Contains(out, "OPENCODE_PERMISSION=") {
-		t.Fatalf("opencode argv missing OPENCODE_PERMISSION: %q", out)
+	if !strings.HasPrefix(out, "OPENCODE_PERMISSION=") {
+		t.Fatalf("opencode local environment missing OPENCODE_PERMISSION: %q", out)
 	}
-	if !strings.Contains(out, "--auto") {
-		t.Fatalf("opencode argv missing --auto: %q", out)
+	// The flags carry no assignment: one after the binary is an argument,
+	// not an environment variable (see TestOpencodeLocalLaunchSetsPermissionInTheEnvironment).
+	flags, code := runBackendsConfFunc(t, "opencode_local_perm_flag_shell", nil)
+	if code != 0 || strings.TrimSpace(flags) != "--auto" {
+		t.Fatalf("opencode local flags = %q (exit %d), want just --auto", flags, code)
 	}
 
 	// Unquote the shell-escaped output the same way the real consumers do
@@ -463,13 +466,46 @@ func TestOpencodeLocalModeDeniesHostStateCommands(t *testing.T) {
 }
 
 func TestOpencodeHostStateOptOutDropsTheDenyList(t *testing.T) {
-	out, code := runBackendsConfFunc(t, "opencode_local_perm_flag_shell", nil,
+	out, code := runBackendsConfFunc(t, "opencode_local_perm_env_shell", nil,
 		"HIVE_OPENCODE_DANGEROUSLY_ALLOW_HOST_STATE=1")
 	if code != 0 {
 		t.Fatalf("opencode opt-out should not fail: %q", out)
 	}
 	if strings.Contains(out, "OPENCODE_PERMISSION=") {
 		t.Fatalf("explicit host-state opt-out should drop the deny-list entirely: %q", out)
+	}
+}
+
+// TestOpencodeLocalLaunchSetsPermissionInTheEnvironment runs the launch line
+// local mode builds (environment, binary, flags) against a stub opencode on
+// PATH. The deny-list used to ride in the flag string, which the Justfile
+// appends AFTER the binary: the shell then handed `OPENCODE_PERMISSION={...}`
+// to opencode as a positional argument (its project directory), opencode
+// exited, and the relay relaunched it in a loop with no denials applied.
+func TestOpencodeLocalLaunchSetsPermissionInTheEnvironment(t *testing.T) {
+	env, code := runBackendsConfFunc(t, "opencode_local_perm_env_shell", nil)
+	if code != 0 || !strings.HasPrefix(env, "OPENCODE_PERMISSION=") {
+		t.Fatalf("opencode local environment = %q (exit %d)", env, code)
+	}
+	flags, code := runBackendsConfFunc(t, "opencode_local_perm_flag_shell", nil)
+	if code != 0 {
+		t.Fatalf("opencode local flags failed: %q", flags)
+	}
+	dir := t.TempDir()
+	stub := "#!/bin/sh\nprintf 'ENV=%s\\n' \"$OPENCODE_PERMISSION\"\nfor a in \"$@\"; do printf 'ARG=%s\\n' \"$a\"; done\n"
+	if err := os.WriteFile(filepath.Join(dir, "opencode"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(env) + " opencode " + strings.TrimSpace(flags)
+	cmd := exec.Command("bash", "-c", line)
+	cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("launch line failed: %v\n%s", err, raw)
+	}
+	got := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(got) != 2 || !strings.HasPrefix(got[0], `ENV={"bash":`) || got[1] != "ARG=--auto" {
+		t.Fatalf("opencode saw %q; want OPENCODE_PERMISSION in its environment and --auto as its only argument", got)
 	}
 }
 

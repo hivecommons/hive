@@ -153,3 +153,19 @@ func TestTaskPromptStillReferencesTheWorkspaceVariable(t *testing.T) {
 			"a contract that is gone and should be revisited")
 	}
 }
+
+// TestLocalModeLaunchPutsPermissionEnvBeforeTheBinary pins the order on the
+// exported launch line: a backend's VAR=value posture (opencode's
+// OPENCODE_PERMISSION deny-list) must come before $CMD, where the shell reads
+// it as an environment assignment, never after it among the flags.
+func TestLocalModeLaunchPutsPermissionEnvBeforeTheBinary(t *testing.T) {
+	block := contributeHiveLaunchBlock(t)
+	launch := launchLineFor(t, block, "export AGENT_LAUNCH_CMD=", "local mode")
+	env, bin := strings.Index(launch, "$PERM_ENV"), strings.Index(launch, "$CMD")
+	if env < 0 || bin < 0 || env > bin {
+		t.Fatalf("the launch line must put $PERM_ENV before $CMD: %s", strings.TrimSpace(launch))
+	}
+	if !strings.Contains(justfileSource(t), "PERM_ENV=$(opencode_local_perm_env_shell)") {
+		t.Fatal("local mode must take opencode's deny-list from opencode_local_perm_env_shell into PERM_ENV")
+	}
+}
