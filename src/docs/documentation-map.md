@@ -40,6 +40,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Release channels](release-channels.md) — `stable`/`candidate`/`edge` moving image tags, per-line channel ownership (`v5` → `candidate`/`latest`, `v6` → `edge`, `v4` → none), switching a hive to a channel, the version pill, and the timeline for when a hive follows `stable` after the tag moves.
 - [Digest-verifiable rollback](release-rollback.md) — **Operator:** pin all three images to prior builds, stop conflicting automation, and verify running digests.
 - [Outcome benchmarks](benchmarks/README.md) — compare change quality, review, timing, and cost from stored evidence; includes monthly reports and generated README cards.
+- [Quality report and README badges](quality-report.md) — how the generated report behind the README badges is built, where each badge value comes from, how often it refreshes, and when it reads `unknown` or `stale`.
 - [v5 GA readiness bar](v5-ga.md) — measurable release-train, migration, safety, and governance criteria that must be evidenced before v5 can be promoted beyond the active-development `edge` channel.
 - [v5 GA candidate week sequencing](v5-candidate-week.md) — dependency-ordered plan for the remaining human-gated GA-bar steps: candidate-SHA designation, candidate-pinned measurements, the two bound exercises, and the v4 freeze evaluation.
 - [Stable soak and promotion policy (v5 line)](stable-soak-policy.md) — **Release maintainer:** normal promotion gates, emergency checklist, closure evidence, and per-image rollback ledger.
