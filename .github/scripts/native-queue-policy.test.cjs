@@ -428,8 +428,9 @@ test('open PR with moved head still fails closed on pull_request_target', async 
 });
 
 test('untrusted events and workflow provenance are rejected', async () => {
-  const f = fixture('pull_request');
-  await assert.rejects(evaluate(f), /Unsupported/);
+  for (const eventName of ['push', 'workflow_dispatch', 'issue_comment', 'workflow_run']) {
+    await assert.rejects(evaluate(fixture(eventName)), /Unsupported/);
+  }
   const g = fixture();
   g.state.badWorkflow = '.github/workflows/untrusted.yml';
   await assert.rejects(evaluate(g), /Unexpected workflow/);
@@ -654,7 +655,8 @@ test('replay rejects a same-named success run from another workflow', async () =
   const run = { id: 7, status: 'completed', conclusion: 'success' };
   for (const override of [
     { path: '.github/workflows/forged.yml' },
-    { event: 'pull_request' },
+    { event: 'workflow_dispatch' },
+    { event: 'push' },
     { head_sha: sha(99) },
     { check_suite_id: 1 },
   ]) {
