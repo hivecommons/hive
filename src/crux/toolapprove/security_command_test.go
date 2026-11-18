@@ -158,3 +158,103 @@ func TestDefaultSecurityScannerDestructiveCommandsWithoutTextFindings(t *testing
 		})
 	}
 }
+
+func TestDefaultSecurityScannerDdBlockDeviceWithoutTextFindings(t *testing.T) {
+	scanner := NewDefaultSecurityScanner()
+	scanner.Text = textScannerFunc(func(string) TextVerdict { return TextVerdict{} })
+
+	for _, command := range []string{
+		"dd if=/dev/zero of=/dev/sda",
+		"dd if=/dev/urandom of=/dev/sda",
+		"dd if=/dev/urandom of=/dev/sda bs=1M",
+		"dd of=/dev/sda if=/dev/urandom",
+		"dd if=image.iso of=/dev/sdb",
+		"dd if=image.iso of=/dev/nvme0n1",
+		"dd if=image.iso of=/dev/vda",
+		"dd if=image.iso of=/dev/xvda",
+		"dd if=image.iso of=/dev/hda",
+	} {
+		t.Run(command, func(t *testing.T) {
+			result, err := scanner.Scan(context.Background(), ToolRequest{Tool: "bash", Command: command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Passed {
+				t.Fatalf("Scan(%q) = %+v, want a destructive-command violation", command, result)
+			}
+		})
+	}
+
+	for _, command := range []string{
+		"dd if=image.iso of=output.img",
+		"dd if=image.iso of=/dev/null bs=1M",
+	} {
+		t.Run(command, func(t *testing.T) {
+			result, err := scanner.Scan(context.Background(), ToolRequest{Tool: "bash", Command: command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Passed || len(result.Violations) != 0 {
+				t.Fatalf("Scan(%q) = %+v, want clean scan", command, result)
+			}
+		})
+	}
+}
+
+func TestDefaultSecurityScannerCredentialExfilBypasses(t *testing.T) {
+	scanner := NewDefaultSecurityScanner()
+	scanner.Text = textScannerFunc(func(string) TextVerdict { return TextVerdict{} })
+
+	for _, command := range []string{
+		"cat ~/.ssh/id_rsa",
+		"cat /var/run/secrets/kubernetes.io/serviceaccount/token",
+		"printenv GH_TOKEN",
+		"printenv GITHUB_TOKEN",
+		"echo $GH_TOKEN",
+		"echo $GITHUB_TOKEN",
+		// Previously missed: quoting around the variable.
+		`echo "$GH_TOKEN"`,
+		`echo '$GITHUB_TOKEN'`,
+		"echo ${GH_TOKEN}",
+		// Previously missed: $HOME/${HOME} instead of ~, and /root.
+		"cat $HOME/.ssh/id_rsa",
+		`cat "$HOME/.ssh/id_rsa"`,
+		"cat ${HOME}/.ssh/id_rsa",
+		"cat /root/.ssh/id_rsa",
+		// Previously missed: readers other than cat.
+		"less ~/.ssh/id_rsa",
+		"head -c 100 ~/.ssh/id_rsa",
+		"tail -n 5 $HOME/.ssh/id_rsa",
+		"base64 ~/.ssh/id_rsa",
+		"tail /var/run/secrets/kubernetes.io/serviceaccount/token",
+	} {
+		t.Run(command, func(t *testing.T) {
+			result, err := scanner.Scan(context.Background(), ToolRequest{Tool: "bash", Command: command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Passed {
+				t.Fatalf("Scan(%q) = %+v, want a credential-exfiltration violation", command, result)
+			}
+		})
+	}
+
+	for _, command := range []string{
+		"env",
+		"printenv",
+		"echo hello",
+		"echo $PATH",
+		"cat README.md",
+		"cat ~/.ssh_backup/id_rsa",
+	} {
+		t.Run(command, func(t *testing.T) {
+			result, err := scanner.Scan(context.Background(), ToolRequest{Tool: "bash", Command: command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Passed || len(result.Violations) != 0 {
+				t.Fatalf("Scan(%q) = %+v, want clean scan", command, result)
+			}
+		})
+	}
+}
