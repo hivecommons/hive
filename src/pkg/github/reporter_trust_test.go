@@ -767,7 +767,7 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 	if len(comments) != 1 {
 		t.Fatalf("posted %d comments, want 1 explaining the hold", len(comments))
 	}
-	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665", "issue reporter, not the PR author", "not this PR's author", "untrusted **reporter**", "`needs-human`", "reporter-trust hold — issue #581 filed by @stranger"} {
+	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665", "issue reporter, not the PR author", "not this PR's author", "untrusted **reporter**", "`needs-human`", "reporter-trust hold - issue #581 filed by @stranger"} {
 		if !strings.Contains(comments[0], want) {
 			t.Errorf("hold explanation does not mention %q:\n%s", want, comments[0])
 		}
@@ -797,7 +797,7 @@ func assertReporterTrustHoldLabels(t *testing.T, applied []string) {
 
 func TestReporterTrustNeedsHumanReason(t *testing.T) {
 	held := ReporterTrust{Held: true, Issue: 581, Repo: "o/r", Reporter: "stranger", Association: "NONE"}
-	if got, want := held.NeedsHumanReason(), "reporter-trust hold — issue #581 filed by @stranger"; got != want {
+	if got, want := held.NeedsHumanReason(), "reporter-trust hold - issue #581 filed by @stranger"; got != want {
 		t.Fatalf("NeedsHumanReason() = %q, want %q", got, want)
 	}
 	if got := (ReporterTrust{}).NeedsHumanReason(); got != "" {

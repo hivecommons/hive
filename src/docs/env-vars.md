@@ -422,6 +422,7 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_TTS_TOKEN_FILE` | No | `/data/secrets/meetings_tts_token` | Keystore-sealed secret file holding the TTS service token. Overrides `meetings.tts_token_file`. |
 | `HIVE_MEETINGS_DELIVERY` | No | `chat` | Default delivery for meeting output. Only `chat` is supported. |
 | `HIVE_MEETINGS_VOICE_ON_ADDRESS` | No | `true` | Lets hive speak when addressed by name in a meeting whose voice is enabled; otherwise it answers in chat. |
+| `HIVE_MEETINGS_LISTENING_TONE` | No | `true` | Betty plays a short, soft chime when she heard her name in a spoken request and is about to answer. Set `false` to turn it off. |
 | `HIVE_MEETINGS_BOT_NAME` | No | the persona's display name (`Betty Bee from the hive`), or `hive (notes)` with the persona off | Display name the meeting bot joins with. |
 | `HIVE_MEETINGS_INVITE_POLICY` | No | `owner` | Who may send hive to a meeting. Only `owner` is supported. |
 | `HIVE_MEETINGS_RESEARCH_POOL_SIZE` | No | `2` | Number of research agents (`research-1..N`). |

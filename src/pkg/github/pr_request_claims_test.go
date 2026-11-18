@@ -265,7 +265,7 @@ func TestValidatePRRequestClaims_LeavesAgentFiledBugClosingReference(t *testing.
 	issue := map[string]any{
 		"number": 6781,
 		"title":  "[strategist] closed-unverified loop",
-		"body":   "Details.\n\n— hive: agent=strategist backend=copilot model=claude-sonnet-4-6",
+		"body":   "Details.\n\n-- hive: agent=strategist backend=copilot model=claude-sonnet-4-6",
 		"state":  "open",
 		"labels": []map[string]string{{"name": "bug"}, {"name": "agent/strategist"}},
 		"user":   map[string]any{"login": "kubestellar-hive", "type": "Bot"},

@@ -296,3 +296,37 @@ func TestHiveItemSummary(t *testing.T) {
 		t.Fatalf("long summary is %d runes: %q", n, long)
 	}
 }
+
+// No repo confirmed since the restart, yet figures exist: the brief says
+// they are last known figures, never "counted in 0 of 13 repos".
+func TestHiveStatusBriefNoRepoConfirmedYet(t *testing.T) {
+	const configured = 13
+	repos := roundTwoRepos(configured)
+	for i := range repos {
+		repos[i].CountsStale = true
+		repos[i].CountsStaleSince = "2026-11-17T15:00:00Z"
+	}
+	s := &Server{}
+	s.status = &StatusPayload{HiveID: "hive-test", Repos: repos,
+		RestartRefresh: &FrontendRestartRefresh{RestoredAt: "2026-11-17T15:20:00Z", ReposScanned: 0, ReposTotal: configured}}
+	got, err := s.HiveStatusBrief(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "at least 40 issues and at least 10 PRs, last known figures, not yet confirmed in any of the 13 repos") {
+		t.Errorf("brief lacks the honest scope:\n%s", got)
+	}
+	if strings.Contains(got, "in 0 of 13") || strings.Contains(got, "across 13 repos") {
+		t.Fatalf("contradictory or total wording: %s", got)
+	}
+	// As repos are re-read the count fills in.
+	for i := 0; i < 4; i++ {
+		repos[i].CountsStale, repos[i].CountsStaleSince = false, ""
+	}
+	s.status = &StatusPayload{HiveID: "hive-test", Repos: repos,
+		RestartRefresh: &FrontendRestartRefresh{RestoredAt: "2026-11-17T15:20:00Z", ReposScanned: 4, ReposTotal: configured}}
+	got, _ = s.HiveStatusBrief(context.Background())
+	if !strings.Contains(got, "counted in 4 of 13 repos so far") {
+		t.Errorf("a partial count does not fill in:\n%s", got)
+	}
+}
