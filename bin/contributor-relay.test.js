@@ -10759,7 +10759,8 @@ test('#18238 a classic token with the full repo scope warns at start', () => {
     assert.deepStrictEqual(relay.parseOAuthScopes(header), ['read:org', 'repo']);
     const msg = relay.warnOnBroadPersonalToken(() => relay.parseOAuthScopes(header), { GH_TOKEN: 'set' });
     assert.ok(msg && /full `repo` scope/.test(msg), `expected a broad-scope warning, got: ${msg}`);
-    assert.ok(/fine-grained/.test(msg), 'the warning must point at a fine-grained token');
+    assert.ok(/Do not swap it for a fine-grained token/.test(msg) && /#19145/.test(msg),
+      'the warning must not recommend a fine-grained token, which cannot open pull requests upstream (#19145)');
     assert.ok(warnings.some(w => /full `repo` scope/.test(w)), 'the warning never reached the log');
   } finally {
     console.warn = origWarn;
@@ -10767,14 +10768,31 @@ test('#18238 a classic token with the full repo scope warns at start', () => {
   }
 });
 
-test('#18238 a fine-grained or narrow token, no token, or a failed probe does not warn', () => {
+// #19145: a fine-grained token covers one owner, so a relay holding one cannot
+// open the pull request on an upstream repository. It is warned at start.
+test('#19145 a fine-grained token warns that it cannot open upstream pull requests', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const origWarn = console.warn;
+  const warnings = [];
+  console.warn = (m) => { warnings.push(String(m)); };
+  try {
+    // Fine-grained tokens carry no X-OAuth-Scopes header at all.
+    assert.strictEqual(relay.parseOAuthScopes('HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n{}'), null);
+    const msg = relay.warnOnBroadPersonalToken(() => null, { GH_TOKEN: 'set' });
+    assert.ok(msg && /is fine-grained/.test(msg) && /cannot open pull requests/.test(msg) && /classic token/.test(msg),
+      `expected the fine-grained warning, got: ${msg}`);
+    assert.ok(warnings.some(w => /is fine-grained/.test(w)), 'the warning never reached the log');
+  } finally {
+    console.warn = origWarn;
+    teardown(relay);
+  }
+});
+
+test('#18238 a narrow classic token, no token, or a failed probe does not warn', () => {
   const relay = loadRelay({ backend: 'claude' });
   const origWarn = console.warn;
   console.warn = () => {};
   try {
-    // Fine-grained tokens carry no X-OAuth-Scopes header at all.
-    assert.strictEqual(relay.parseOAuthScopes('HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n{}'), null);
-    assert.strictEqual(relay.warnOnBroadPersonalToken(() => null, { GH_TOKEN: 'set' }), null);
     assert.strictEqual(relay.warnOnBroadPersonalToken(() => ['public_repo', 'read:org'], { GH_TOKEN: 'set' }), null,
       'public_repo is not the full repo scope');
     let probed = false;

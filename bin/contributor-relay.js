@@ -2345,10 +2345,13 @@ function warnOnTokenExpiry(now = Date.now()) {
 // The agent this relay runs can read the contributor's personal GitHub token,
 // and every task feeds it text written by other people. A classic token with
 // the full `repo` scope can push to EVERY repository the contributor can write
-// to, so a leaked one reaches far past their hive forks. Until the agent stops
-// holding the token at all, the relay says so at start and points at a
-// fine-grained token limited to the forks. Warn-only: refusing would stop
-// every existing contributor at once.
+// to, so a leaked one reaches far past their hive forks. The relay says so at
+// start. It no longer recommends a fine-grained token: one covers a single
+// owner, so a token limited to the contributor's forks cannot open the pull
+// request on the upstream repository, and every task fails at the end
+// (hivecommons/hive#19145). A relay started with a fine-grained token is
+// warned instead. Warn-only: refusing would stop every existing contributor
+// at once.
 
 // parseOAuthScopes pulls the scope list out of `gh api --include` output. A
 // fine-grained token has no X-OAuth-Scopes header, so this returns null.
@@ -2358,14 +2361,20 @@ function parseOAuthScopes(output) {
   return m[1].split(',').map(s => s.trim()).filter(Boolean);
 }
 
-// broadTokenScopeWarning is PURE: given the token's scopes, the message to
-// log, or null when the token is not a full-`repo` classic token.
+// broadTokenScopeWarning is PURE: given the token's scopes (null for a
+// fine-grained token, which sends no X-OAuth-Scopes header), the message to
+// log, or null for a classic token without the full `repo` scope.
 function broadTokenScopeWarning(scopes) {
+  if (scopes === null) {
+    return 'WARNING: your personal GitHub token is fine-grained. It cannot open pull requests on upstream ' +
+      'repositories owned by someone else, so tasks there end without a pull request. Use a classic token ' +
+      '(`gh auth login`, then `just contribute-setup <backend>`). See hivecommons/hive#19145.';
+  }
   if (!Array.isArray(scopes) || !scopes.includes('repo')) return null;
   return 'WARNING: your personal GitHub token has the full `repo` scope, and the agent this relay runs can read it. ' +
     'A leaked copy could push to every repository you can write to, not only your hive forks. ' +
-    'Replace it with a fine-grained token limited to your forks (Contents and Pull requests: read and write), ' +
-    'then rerun `just contribute-setup <backend>`. See hivecommons/hive#18238.';
+    'Do not swap it for a fine-grained token: one cannot open pull requests on upstream repositories, so every task ' +
+    'would fail. Narrowing this token is tracked in hivecommons/hive#19145 (see also #18238).';
 }
 
 function probePersonalTokenScopes() {

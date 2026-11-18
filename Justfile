@@ -533,13 +533,14 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
       GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
       echo "Authenticated as: ${GH_USER}"
     fi
-    # hivecommons/hive#18238: the agent can read this token, so recommend a
-    # fine-grained token limited to the contributor's forks over `repo`.
+    # hivecommons/hive#18238: the agent can read this token. A fine-grained
+    # token cannot open pull requests upstream, so it is not recommended
+    # (hivecommons/hive#19145).
     echo "NOTE: the agent you run for the hive can read this GitHub token. A classic"
     echo "      token with the 'repo' scope can push to EVERY repository you can write to."
-    echo "      Prefer a fine-grained token limited to your forks (Contents and Pull"
-    echo "      requests: read and write): https://github.com/settings/personal-access-tokens/new"
-    echo "      then: gh auth login --with-token < token.txt, and rerun this setup."
+    echo "      Do not swap it for a fine-grained token: one cannot open pull requests on"
+    echo "      the upstream repositories, so every task would fail. Narrowing this token"
+    echo "      is tracked in hivecommons/hive#19145."
     GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
     if [[ -n "$GH_TOKEN" ]]; then
       echo "GH_TOKEN=${GH_TOKEN}" > "{{config_dir}}/gh-auth.env"
@@ -811,13 +812,14 @@ contribute-move backend="claude": check-version (contribute-check-backend backen
       GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
       echo "Authenticated as: ${GH_USER}"
     fi
-    # hivecommons/hive#18238: the agent can read this token, so recommend a
-    # fine-grained token limited to the contributor's forks over `repo`.
+    # hivecommons/hive#18238: the agent can read this token. A fine-grained
+    # token cannot open pull requests upstream, so it is not recommended
+    # (hivecommons/hive#19145).
     echo "NOTE: the agent you run for the hive can read this GitHub token. A classic"
     echo "      token with the 'repo' scope can push to EVERY repository you can write to."
-    echo "      Prefer a fine-grained token limited to your forks (Contents and Pull"
-    echo "      requests: read and write): https://github.com/settings/personal-access-tokens/new"
-    echo "      then: gh auth login --with-token < token.txt, and rerun this setup."
+    echo "      Do not swap it for a fine-grained token: one cannot open pull requests on"
+    echo "      the upstream repositories, so every task would fail. Narrowing this token"
+    echo "      is tracked in hivecommons/hive#19145."
     GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
     if [[ -z "$GH_USER" || -z "$GH_TOKEN" ]]; then
       echo "ERROR: could not read your GitHub identity or token from gh."
