@@ -1149,6 +1149,51 @@
         }
       }
     },
+    "/api/meetings/budget": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Meetings budget meter",
+        "description": "Any authenticated role, read-only included. The per-meeting token and intent budgets, the hive-wide hourly and daily token ceilings with what is used in the rolling hour and day, and one meter per meeting: tokens used, budget, percent, intents answered, level (ok, warning at 80 percent, degraded at 90 percent, exhausted), and the number of questions skipped because the budget ran out. Numbers only: no question or transcript text (the skipped questions' text is on the owner-only GET /api/meetings/{id}).",
+        "responses": {
+          "200": {
+            "description": "Budget overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token_budget": {
+                      "type": "integer",
+                      "description": "meetings.budget.max_tokens_per_meeting in effect"
+                    },
+                    "intent_budget": {
+                      "type": "integer",
+                      "description": "meetings.budget.max_intents_per_meeting in effect"
+                    },
+                    "ledger": {
+                      "type": "object",
+                      "description": "Hive-wide spend: hourly_used, hourly_ceiling, daily_used, daily_ceiling (a zero ceiling means none)"
+                    },
+                    "meetings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "meeting_id, tokens_used, token_budget, percent, intents_answered, intent_budget, level, warned, degraded, exhausted, exhausted_by, skipped, dropped"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
     "/api/meetings/{id}": {
       "delete": {
         "tags": [
@@ -1243,7 +1288,12 @@
                       }
                     },
                     "live": {
-                      "type": "object"
+                      "type": "object",
+                      "description": "Live-loop state. Includes skipped (the questions dropped because the budget ran out, with their text, first 200) and skipped_count."
+                    },
+                    "budget": {
+                      "type": "object",
+                      "description": "The meeting's budget meter, as in GET /api/meetings/budget."
                     }
                   }
                 }
@@ -6532,6 +6582,85 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/version/contains": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Does the running build contain a PR or commit",
+        "description": "Answers from git ancestry, computed from the commit this hive reports running (the same value as `hash` on `/api/version`) and the repository history. `contains` is `yes` when the PR's merge commit (or the commit itself) is the running commit or one of its ancestors, `no` when ancestry was resolved and it is not (including a PR that was never merged), and `unknown` when it cannot be established: the commit is not resolvable in the repository history, the lookup failed, or this hive has no GitHub access. `unknown` is never a guess. Reads the public repository through the hive's existing GitHub client; sends only commit SHAs and a PR number.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "description": "A PR number (`123`, `#123`, `PR 123`; up to six digits) or a commit SHA (7 to 40 hex characters)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Containment answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "query": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "pr",
+                            "commit"
+                          ]
+                        },
+                        "pr": {
+                          "type": "integer"
+                        },
+                        "commit": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "commit": {
+                      "type": "string",
+                      "description": "The commit whose presence was tested: the PR's merge commit, or the SHA asked about"
+                    },
+                    "running": {
+                      "type": "string",
+                      "description": "The commit this hive reports running"
+                    },
+                    "channel": {
+                      "type": "string",
+                      "description": "The release channel the hive's image follows, when known"
+                    },
+                    "contains": {
+                      "type": "string",
+                      "enum": [
+                        "yes",
+                        "no",
+                        "unknown"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "description": "Why the answer is unknown, or why a PR is not contained"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The query is neither a PR number nor a commit SHA"
           }
         }
       }
@@ -40834,7 +40963,7 @@
                       },
                       "dispatch": {
                         "type": "array",
-                        "description": "Every bound repository's profiles: repo, profile, agent, source, mode, needs, pinned, disabled, problem (why nothing fills it), states, candidates (each pinnable agent with its mode and whether it may do what the profile needs), not_started (hand-offs an agent declined or did not act on)",
+                        "description": "Every bound repository's profiles: repo, profile, agent, source, mode, needs, pinned, disabled, problem (why nothing fills it), states, candidates (each pinnable agent with its mode and whether it may do what the profile needs), not_started (hand-offs an agent declined or did not act on, each with reason_at, reason_age, reason_session and stale: true once a newer hand-off of the item exists, so the reason is history and not the current state)",
                         "items": {
                           "type": "object"
                         }

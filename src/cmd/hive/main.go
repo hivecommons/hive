@@ -1210,6 +1210,17 @@ func (b *boot) wireBootClosures() {
 			IssueClaimed: func(repo string, number int) (github.IssueClaim, bool) {
 				return getClaimLedger(b.logger).Lookup(repo, number)
 			},
+			// hivecommons/hive#18898: an issue an owner, maintainer or this hive
+			// filed inside the contributor grace window is not offered yet.
+			ContributorHold: func(repo string, number int, createdAt time.Time) string {
+				client := b.currentGitHubClient()
+				if client == nil {
+					return ""
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), openPRLinkGuardTimeout)
+				defer cancel()
+				return client.ContributorGraceGuard(ctx, repo, number, createdAt)
+			},
 			// hivecommons/hive#14799: the ledger above is one eval cycle old;
 			// ask the forge directly whether an open PR already links the
 			// issue before the contribute lane dispatches it again.
@@ -2531,6 +2542,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 			b.observeWritebackRepos()
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
 			b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+			b.ghClient.SetContributorGrace(b.cfg.Governor.Claims.EffectiveContributorGrace())
 			b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 			b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 			if len(b.cfg.Governor.Labels.Exempt) > 0 {
@@ -5869,6 +5881,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 				b.ghClient.SetHoldLabels(b.githubHoldLabels())
 				b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+				b.ghClient.SetContributorGrace(b.cfg.Governor.Claims.EffectiveContributorGrace())
 				b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 				b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)

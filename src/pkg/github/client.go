@@ -116,6 +116,9 @@ type Client struct {
 	// the config (nil = package default; see SetNeverClaimLabels).
 	neverClaimMu     sync.RWMutex
 	neverClaimLabels []string
+	// contributorGraceNanos is governor.claims.contributor_grace_s as a
+	// duration in nanoseconds (0 = off; see SetContributorGrace).
+	contributorGraceNanos atomic.Int64
 	// openPRLinkState backs the pre-dispatch open-PR guard and the
 	// duplicate-fix resolver (open_pr_links.go); built lazily.
 	openPRLinkOnce  sync.Once

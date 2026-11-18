@@ -432,6 +432,27 @@ test the credential helper itself: it runs in the hive process, not in the
 agent's UID, so any such check would answer a different question than the one
 that failed. It names the causes; you verify them from the agent's UID.
 
+### A detached HEAD is refused, not retried (#18907)
+
+`git rev-parse --abbrev-ref HEAD` prints the literal `HEAD` when the checkout is
+detached (a `git checkout <sha>`, a run-stage worktree). That is not a branch:
+GitHub answers `POST /pulls` with `422 head invalid`, and before this guard the
+request was retried every 15 minutes for 24 hours while the signed-commit step
+logged `HEAD has no changes against main`. Now:
+
+- `hive-open-pr` resolves a detached HEAD to the one local branch at the
+  checked-out commit, or exits `2` with the remedy (`git switch -c <branch>`,
+  `hive-push-branch`, then `--head <branch>`) and writes no request.
+- The watcher refuses a head that cannot be a branch (`HEAD`, empty, a tag ref, a
+  malformed name) before any GitHub call, writes `PR head rejected: ...` to the
+  `.result.json`, quarantines the request as `.rejected` and logs one ERROR,
+  `head is not a pushable branch, request rejected`, which the fleet report
+  classifies as `pr_request_head_invalid`. `CreatePR` and the signed-commit step
+  refuse the same heads, so no other caller can reach the 422.
+- A real-looking branch that still draws `422 head invalid` (GitHub's answer when
+  the push has not landed) is retried with backoff for 3 attempts, then
+  quarantined the same way.
+
 ### The log line to grep for
 
 Case 2 is also logged at ERROR on its own line, because it is work an agent

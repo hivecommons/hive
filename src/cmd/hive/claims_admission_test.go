@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
@@ -292,5 +293,41 @@ func TestRecordAgentStartFiledClaimLedgersSelfFiledIssue(t *testing.T) {
 	res, err := ledger.Claim(claims.Request{Repo: "o/r", Issue: 17243, Holder: "reviewer", HolderID: "reviewer", Kind: claims.KindAgent})
 	if err != nil || res.Outcome != claims.OutcomeHeld || res.Claim.Holder != "scanner" {
 		t.Fatalf("another agent's dispatch of the self-filed issue = %+v, %v; want held by scanner", res, err)
+	}
+}
+
+// hivecommons/hive#18898: a contributor's fresh claim on an issue an owner
+// filed moments ago is refused with the owner-grace reason; the same issue
+// after the window, or a hive agent's own claim on it, is admitted.
+func TestContributorClaimRefusedInsideOwnerGrace(t *testing.T) {
+	var ageMin atomic.Int64
+	ageMin.Store(2)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/o/r/issues/7" {
+			http.NotFound(w, r)
+			return
+		}
+		created := time.Now().Add(-time.Duration(ageMin.Load()) * time.Minute).UTC().Format(time.RFC3339)
+		fmt.Fprintf(w, `{"number":7,"state":"open","created_at":%q,"author_association":"OWNER","user":{"login":"andy"},"labels":[]}`, created)
+	}))
+	defer api.Close()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	client := github.NewClientForTest(api.URL, "o", []string{"r"}, logger)
+	client.SetContributorGrace(15 * time.Minute)
+	ledger := testClaimsLedger(t)
+	installClaimAdmissionCheck(context.Background(), ledger, func() *github.Client { return client })
+
+	req := claims.Request{Repo: "o/r", Issue: 7, Holder: "karibhou", HolderID: "c-1", Kind: claims.KindContributor}
+	res, err := ledger.Claim(req)
+	if err != nil || res.Outcome != claims.OutcomeRefused || !strings.HasPrefix(res.Reason, github.ClaimBlockReasonOwnerGracePrefix) {
+		t.Fatalf("claim inside the grace = %+v, %v; want refused with the owner grace reason", res, err)
+	}
+	if _, held := ledger.Lookup("o/r", 7); held {
+		t.Fatal("a refused contributor claim must not be recorded")
+	}
+	ageMin.Store(30)
+	res, err = ledger.Claim(req)
+	if err != nil || res.Outcome != claims.OutcomeClaimed {
+		t.Fatalf("claim after the grace = %+v, %v; want claimed", res, err)
 	}
 }
