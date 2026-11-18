@@ -298,6 +298,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Labels: append([]string(nil), issue.Labels...), CreatedAt: timePtr(issue.CreatedAt), UpdatedAt: timePtr(issue.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL)}
+		it.SHAHold = s.stageTrackerSHAHold(repoName, issue.Number, issue.Labels)
 		it.Children = issue.Children
 		if it.Children == nil {
 			it.Children = progress

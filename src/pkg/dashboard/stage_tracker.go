@@ -459,6 +459,10 @@ type StageTrackerItem struct {
 	// "Held by hive · reporter trust (issue #N by @X, contributor)" or
 	// "Held by @login" instead of a bare "hold".
 	Hold *StageTrackerHold `json:"hold,omitempty"`
+	// SHAHold says an issue is held by the SHA-hold gate (`needs-sha`) or
+	// that a maintainer waived it (`sha-waived`), with the ready-made pill,
+	// hover text and chevron note (hivecommons/hive#18866). Absent otherwise.
+	SHAHold *StageTrackerSHAHold `json:"sha_hold,omitempty"`
 	// RegressedFrom / RegressedTo / RegressedAt / RegressedReason narrate
 	// the unresolved regression behind the `regressed` modifier: the
 	// high-water stage the item fell from, the stage that fall landed on

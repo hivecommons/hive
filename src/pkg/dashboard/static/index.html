@@ -1717,6 +1717,8 @@
        rides last; past dashboard.stage_tracker.waiting_push_stale_h it takes
        the muted warning tone. "@zoe pushed abc1234 · 2m" links to the commit. */
     .ham-push-stale { color: color-mix(in srgb, var(--status-warn) 70%, var(--text-faint)); }
+    .ham-badge-sha-hold { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); }
+    .ham-badge-sha-hold.ham-sha-waived { color: var(--text-muted); border-color: color-mix(in srgb, var(--text-muted) 45%, transparent); }
     .ham-badge-push { text-decoration: none; }
     .ham-badge-push:hover { color: var(--text-muted); }
     /* Presence indicator on a waiting-on pill (hive PR 15051): who the row
@@ -20396,7 +20398,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // word, "Waiting on shared CI · #17463" (hivecommons/hive#17500).
         const incident = sg.detour && sg.number === 30 && remediation === 'deferred' && item.deferral && Number(item.deferral.incident) > 0 && item.deferral.incident_url ? '#' + Number(item.deferral.incident) : '';
         const detourText = incident && sg.detour.text.indexOf(incident) >= 0 ? esc(sg.detour.text).replace(esc(incident), `<a class="ham-incident-link" href="${esc(item.deferral.incident_url)}" target="_blank" rel="noopener" title="${esc('Shared-CI incident ' + incident)}">${esc(incident)}</a>`) : (sg.detour ? esc(sg.detour.text) : '');
-        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${detourText}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${progressHolderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${progressHolderHtml}${reasonHtml}</span>`);
+        // A held / waived SHA requirement rides the lit chevron as a note (#18866).
+        const shaHoldNote = active && !sg.cap && !sg.detour && !gateWord && typeof stageTrackerSHAHoldNoteHtml === 'function' ? stageTrackerSHAHoldNoteHtml(item) : '';
+        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${detourText}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${progressHolderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${progressHolderHtml}${reasonHtml}${shaHoldNote}</span>`);
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.
@@ -20406,9 +20410,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // the column is the row's history and wears the history mark.
         if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
         else if (active) {
+          const shaHold = typeof stageTrackerSHAHoldOf === 'function' ? stageTrackerSHAHoldOf(item) : null;
+          const shaHoldTip = shaHold ? shaHold.pill + ' — ' + shaHold.tip : '';
           const fullTip = [tip, gateCaption || (sg.detour ? sg.detour.text : sg.short + (progressActor ? ' · ' + progressActor.who : '')), item.caption, item.reason,
             item.head ? 'head ' + item.head : '',
-            item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : ''].filter(Boolean).join(' · ');
+            item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : '',
+            shaHoldTip].filter(Boolean).join(' · ');
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           const caption = gateWord || word;
           const text = decision ? stageTrackerDecisionTriggerHtml(decision, caption, fullTip) : caption;
@@ -20713,6 +20720,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const who = h.by === 'hive' ? 'hive' : '@' + h.by;
       return 'Held by ' + who + (h.reason ? ' · ' + h.reason : '');
     }
+    // Pure: the row's SHA-hold state (hivecommons/hive#18866) — `needs-sha`
+    // held, or `sha-waived` by a maintainer — as the server sends it in
+    // `sha_hold` ({state, pill, tip, note, by}); null for a PR or no state.
+    function stageTrackerSHAHoldOf(item) {
+      const h = item && item.kind === 'issue' ? item.sha_hold : null;
+      return h && (h.state === 'held' || h.state === 'waived') && h.pill ? h : null;
+    }
+    // The visible pill: "Held: needs commit SHA" / "SHA waived by <login>",
+    // its hover saying how to lift (post a SHA, or waive) or restore.
+    function stageTrackerSHAHoldChipHtml(item) {
+      const h = stageTrackerSHAHoldOf(item);
+      if (!h) return '';
+      const label = String(h.pill) + (h.tip ? ' — ' + h.tip : '');
+      return `<span class="ham-badge ham-badge-sha-hold ham-sha-${esc(h.state)}" title="${esc(h.tip || '')}" aria-label="${esc(label)}">${esc(h.pill)}</span>`;
+    }
+    // The note on the lit Open chevron, beside the stage word.
+    function stageTrackerSHAHoldNoteHtml(item) {
+      const h = stageTrackerSHAHoldOf(item);
+      return h && h.note ? `<span class="ham-human-reason ham-sha-hold-note"> · ${esc(h.note)}</span>` : '';
+    }
     // Pure: the hold pill's hover text — who, why, since when.
     function stageTrackerHoldTip(item, nowMs) {
       const h = item && item.hold;
@@ -20746,7 +20773,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // sentinel / hold / needs-human reasons itself — those chips step aside.
       const gated = !!(opts && opts.gate);
       // The informational notice is not a gate reason, so its chip stays.
-      const sentinel = (gated && !item.sentinel_notice ? '' : stageTrackerSentinelChipHtml(item)) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
+      const sentinel = (gated && !item.sentinel_notice ? '' : stageTrackerSentinelChipHtml(item)) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '') + (typeof stageTrackerSHAHoldChipHtml === 'function' ? stageTrackerSHAHoldChipHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .filter(m => !gated || STAGE_TRACKER_GATE_MODS.indexOf(m) < 0)
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
@@ -25226,7 +25253,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // is not generic: a row offers it either from the nudge (`adoption`)
     // or as a server decision option (a contributor PR's DCO / fixer
     // exhaustion, where it replaced "re-author"), never both.
-    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:close-issue'];
+    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'sha-waive', 'sha-restore', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:close-issue'];
     const _stageTrackerCloseIssueBusy = new Set();
     // Accept triage shows on an issue the chevron calls "Triage needed":
     // stage 015, or the needs-triage pill on a pre-claim stage (010 / 017 /
@@ -25674,6 +25701,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       out.push(has('hold')
         ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target }
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target });
+      // A SHA-held issue (needs-sha) offers the override next to the hold
+      // actions: Waive SHA requirement, then Restore once it is waived
+      // (hivecommons/hive#18866). Same roles as releasing a hold.
+      const shaHold = typeof stageTrackerSHAHoldOf === 'function' ? stageTrackerSHAHoldOf(item) : null;
+      if (shaHold) out.push(shaHold.state === 'waived'
+        ? { id: 'sha-restore', label: 'Restore SHA requirement', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE }
+        : { id: 'sha-waive', label: 'Waive SHA requirement', hint: 'hive works it without a SHA', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
       out.push({ id: 'retry', label: 'Re-evaluate now', hint: 'rescan', enabled: true, why: '' });
       // A model-bound row whose state the model hands to an agent profile
       // (cncf/techdocs#395): the owner can send it now.
@@ -26526,6 +26560,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       switch (id) {
         case 'hold': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: true, type } };
         case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type } };
+        case 'sha-waive': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/sha-waiver', body: { waived: true } };
+        case 'sha-restore': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/sha-waiver', body: { waived: false } };
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
         case 'wf-dispatch': return { url: '/api/workflows/dispatch', body: { repo: item.repo, number: n } };
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
@@ -27481,7 +27517,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMergeBannerMs() { return stageTrackerToastMs('info') * STAGE_TRACKER_MERGE_BANNER_FACTOR; }
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
-      'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'wf-dispatch': 'Sending to the agent…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
+      'hold': 'Holding…', 'release': 'Releasing hold…', 'sha-waive': 'Waiving SHA requirement…', 'sha-restore': 'Restoring SHA requirement…', 'retry': 'Re-evaluating…', 'wf-dispatch': 'Sending to the agent…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
       'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-deferred': 'Closing…', 'decide:close-issue': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…',
@@ -27491,7 +27527,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTION_WORDS = {
       adopted: 'adopted', approved: 'approved', dispatched: 'sent to its agent', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
       merged: 'merged', 'queued-for-merge': 'queued for merge — hive merges it on its next pass once CI is green', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
-      held: 'held', released: 'hold released', 'sentinel-confirmed': 'sentinel confirmed safe', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
+      held: 'held', released: 'hold released', 'sha-waived': 'SHA requirement waived', 'sha-restored': 'SHA requirement restored', 'sentinel-confirmed': 'sentinel confirmed safe', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
     };
     // Once the server has answered, a terminal action's caption says so

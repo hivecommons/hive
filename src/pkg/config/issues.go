@@ -45,11 +45,12 @@ type IssuesConfig struct {
 	// needs reporter verification.
 	ReporterConfirmation *bool `yaml:"reporter_confirmation,omitempty" json:"reporter_confirmation,omitempty"`
 	// SHAHoldTrustedLabel is the soft label the SHA-hold sweep applies to a
-	// bug filed by a reporter in issue_filter.reporter_trust's trusted
-	// associations (OWNER/MEMBER/COLLABORATOR by default) when no commit SHA
-	// is present. Unset uses DefaultSHAHoldTrustedLabel. Since
-	// hivecommons/hive#18468 the sweep applies this label to every reporter
-	// and never applies `hold`; "hold" is treated as unset.
+	// bug without a commit SHA. Unset uses DefaultSHAHoldTrustedLabel. Since
+	// hivecommons/hive#18468 the sweep never applies `hold` ("hold" is
+	// treated as unset); since #18866 it exempts the hive's own accounts,
+	// reporters in issue_filter.reporter_trust's trusted associations
+	// (OWNER/MEMBER/COLLABORATOR by default), issues whose body names a repo
+	// file path, and issues carrying sha-waived.
 	SHAHoldTrustedLabel *string `yaml:"sha_hold_trusted_label,omitempty" json:"sha_hold_trusted_label,omitempty"`
 	// LiftHiveHardSuppress enables the reconcile that lifts a `hold`/`blocked`
 	// label hive itself applied once a PR referencing the issue has merged

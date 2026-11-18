@@ -207,15 +207,39 @@ The hard-suppress reconcile also lifts this `hold` once a PR referencing the iss
 
 **Applies to:** Issues. **Kind:** Hard (issue gate; not a PR merge gate).
 
-A `kind/bug` without a SHA gets this label plus the `<!-- hive:sha-hold -->` notice. While it is on the issue no agent implements, decomposes or claims it, whatever the reporter-trust setting; the issue shows as filtered in the work list. The sweep removes it once a SHA appears, which releases the issue. Description: "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
+A primary-repo `kind/bug` filed by an outside reporter without a SHA gets this label plus the `<!-- hive:sha-hold -->` notice. While it is on the issue no agent implements, decomposes or claims it, whatever the reporter-trust setting; the issue shows as filtered in the work list and never reaches the Actionable stage. The sweep removes it once a SHA appears, which releases the issue. Description: "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
+
+**Exempt from the gate** ([#18866](https://github.com/hivecommons/hive/issues/18866)): the gate exists to get a reproducible build out of an outside reporter, so the sweep never applies it to
+- an issue authored by the hive's own accounts (`project.ai_author`, `[bot]` logins, the App);
+- an issue authored by an owner or maintainer: GitHub author association in `project.issue_filter.reporter_trust.trusted_associations` (default OWNER, MEMBER, COLLABORATOR);
+- an issue whose **body** names a concrete repository file path: a repo-relative path under a known top-level directory (`src/`, `pkg/`, `cmd/`, `internal/`, `docs/`, `bin/`, `config/`, `dashboard/`, `examples/`, `systemd/`, `launchd/`, `githooks/`, `.github/`) ending in a known source or config extension (`.go`, `.js`, `.ts`, `.py`, `.sh`, `.yaml`, `.json`, `.md`, ...), such as `src/pkg/github/client.go`. Absolute paths, URLs and bare file names do not count; comments are not scanned. **This signal is self-attested:** the hive only pattern-matches the text and never checks that the path exists, so any outside reporter can skip the SHA gate by writing a path such as `src/pkg/x.go` in the issue body. That is accepted by design in #18866 (a reporter who cites the code is treated as informed), not a hardened check;
+- an issue carrying `sha-waived` (below).
+
+An exemption is evaluated on every sweep, so a `needs-sha` that was applied before the issue qualified is removed by the next sweep. Outside reporters whose body has neither a SHA nor such a path are still held.
 
 **Who applies it:** Hive.
 
 **Checked by:** SHA-hold sweep. **When:** Eval tick SHA sweep.
 
-**Release or override.** Add SHA evidence, or remove the label
+**Release or override.** Post a commit SHA in a comment; or a maintainer waives the requirement (`sha-waived`, next entry); or remove the label by hand (the sweep re-adds it on the next tick unless the issue is waived or exempt).
 
-**Configuration and implementation.** `issues.sha_hold_trusted_label` (default `needs-sha`; `hold` is treated as unset, since the sweep never applies `hold`)
+**Dashboard.** An issue held by `needs-sha` shows the pill *Held: needs commit SHA* on its Activity Monitor row (hover: "Post a commit SHA in the issue, or waive this requirement.") and a *held: post a commit SHA* note on the Open chevron, from the `sha_hold` field of `GET /api/stage-tracker`. A `hold` already shows its own pill.
+
+**Configuration and implementation.** `issues.sha_hold_trusted_label` (default `needs-sha`; `hold` is treated as unset, since the sweep never applies `hold`); `project.issue_filter.reporter_trust.trusted_associations` for the maintainer exemption (`src/pkg/github/client.go` `EnforceSHAHold`, `src/pkg/github/sha_hold_exempt.go`, `src/pkg/dashboard/stage_tracker_sha_hold.go`)
+
+#### `sha-waived` from the SHA-hold override
+
+**Applies to:** Issues. **Kind:** Override (persistent marker).
+
+A maintainer's waiver of the SHA requirement for one issue ([#18866](https://github.com/hivecommons/hive/issues/18866)). While `sha-waived` is on the issue the SHA sweep neither applies nor keeps `needs-sha` (a lingering one is removed on the next sweep), and the issue is eligible for the stage-label pass and agent work like any other. Description: "A maintainer waived the commit-SHA requirement; hive will not hold this issue for a SHA."
+
+**Who applies it:** A person: the Activity Monitor row menu's *Waive SHA requirement* (`POST /api/repos/{owner}/{repo}/items/{number}/sha-waiver`, `{"waived": true}`), or by hand. The dashboard action is gated like releasing a `hold` (the verified owner role, or write/maintain/admin on the repo), removes `needs-sha` at once, and posts one App-authored comment carrying `<!-- hive:sha-waived by=<login> -->`, from which the pill reads *SHA waived by <login>*.
+
+**Checked by:** SHA-hold sweep, enumeration. **When:** Eval tick SHA sweep; enumeration.
+
+**Release or override.** *Restore SHA requirement* in the row menu (or removing the label) re-arms the gate: the next sweep holds the issue again if it still has no SHA and no exemption. The hive never adds or removes `sha-waived` itself.
+
+**Configuration and implementation.** None; the label name is fixed (`src/pkg/github/sha_hold_exempt.go` `SHAWaivedLabel`, `src/pkg/dashboard/api_repo_item_sha_waiver.go`)
 
 ### Issue admission and triage
 
