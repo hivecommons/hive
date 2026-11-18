@@ -161,6 +161,20 @@ func TestBootLaunchWithLogsServeAndStartFailures(t *testing.T) {
 	}
 }
 
+func TestBootLaunchWithAlreadyRunningAgentIsNotStartFailure(t *testing.T) {
+	b := newLaunchBoot(t, map[string]config.AgentConfig{"telemetry": {Enabled: true}})
+	var sb strings.Builder
+	b.logger = slog.New(slog.NewTextHandler(&sb, nil))
+	h := &launchHarness{
+		startErr: map[string]error{"telemetry": errors.New("agent telemetry already running")},
+	}
+	b.bootLaunchWith(h.deps())
+
+	if out := sb.String(); strings.Contains(out, "failed to start agent") {
+		t.Fatalf("already-running agent must not log a start failure:\n%s", out)
+	}
+}
+
 func TestBootLaunchWithStartsDiscordBotWhenConfigured(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

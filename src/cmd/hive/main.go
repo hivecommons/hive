@@ -4655,7 +4655,13 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			}
 			b.logger.Info("audit: starting agent", "name", name, "trigger", "startup")
 			if err := deps.startAgent(b.ctx, b.agentMgr, name); err != nil {
-				b.logger.Warn("failed to start agent", "name", name, "error", err)
+				if stoppedAgentStartErrorIsBenign(err) {
+					// Already running (adopted/raced) or launching: the desired
+					// end state holds, so this is not a start failure (#18936).
+					b.logger.Info("agent already started; skipping startup launch", "name", name, "reason", err.Error())
+				} else {
+					b.logger.Warn("failed to start agent", "name", name, "error", err)
+				}
 			} else {
 				// Surface whether a persisted operator pause was honored on this
 				// restart, so the audit log shows pause state survived (or didn't).
