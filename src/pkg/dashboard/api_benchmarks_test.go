@@ -168,7 +168,7 @@ func TestPushBenchmarksAdvancesWatermarkAndRecordsFailures(t *testing.T) {
 	}
 }
 
-// benchmarksSeedMany writes n merged agent PRs (one record each), one minute
+// benchmarksSeedMany seeds n merged agent PRs in all (one record each), one minute
 // apart, and returns the server with the state file redirected to a temp dir.
 func benchmarksSeedMany(t *testing.T, n int) *Server {
 	t.Helper()
@@ -178,7 +178,7 @@ func benchmarksSeedMany(t *testing.T, n int) *Server {
 	t.Cleanup(func() { benchmarksPublishStatePath = prevState })
 	t.Setenv(spoke.EnvHeartbeatKey, "spoke-key")
 	base := time.Now().UTC().Add(-48 * time.Hour)
-	for i := 2; i < n+2; i++ {
+	for i := 2; i < n+1; i++ { // the base fixture is record 1
 		ts := base.Add(time.Duration(i) * time.Minute)
 		writeBenchmarkFixtureBundle(t, ghpkg.ReviewEvidenceRoot, &evidence.Bundle{
 			SchemaVersion: evidence.SchemaVersion, Repo: "o/r", Number: i, HeadSHA: "sha" + strconv.Itoa(i),
