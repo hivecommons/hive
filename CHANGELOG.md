@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.317.1)
+
+### Fixed
+
+- The CLI pin-bump workflow now signs its commit off for every email GitHub may attribute the squash to (the `TOPUP_PUSH_TOKEN` owner's public and primary addresses, not only the noreply one), so the DCO app no longer flags image-bump commits and blocks v5 -> v6 top-ups (#18697).
+- Never auto-close a decomposed parent that a person reopened after a hive auto-close or that is labelled epic/hold, and add the per-repo `repos.<repo>.parent_autoclose` (`true`/`epics_too`/`false`) switch (#18869).
+
 ## 2026-11-18 (v5.317.0)
 
 ### Added
