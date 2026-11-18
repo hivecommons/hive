@@ -385,6 +385,22 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 		}
 		return adminmcp.LaunchCostResult(data, args)
 	}
+	if tool == adminmcp.ToolSpendRead {
+		// The window is checked before the call; see the dashboard provider.
+		path, err := adminmcp.SpendReadPath(args)
+		if err != nil {
+			return nil, err
+		}
+		client, _, err := p.roster.activeClient()
+		if err != nil {
+			return nil, err
+		}
+		data, err := getPath(ctx, client, path)
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
+	}
 	if tool == adminmcp.ToolGitHubAPIUsage {
 		client, _, err := p.roster.activeClient()
 		if err != nil {

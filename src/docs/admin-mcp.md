@@ -338,19 +338,19 @@ capped at 256 KiB.
 
 **Status and version**
 
-| Tool                           | Returns                                                                                                                  |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `hive_status`                  | Hive status summary                                                                                                      |
-| `fleet_status`                 | Fleet state, including memory limit and out-of-memory kills (see note 1)                                                 |
-| `version_read`                 | Running build from `/api/version` (see note 2)                                                                           |
-| `claude_auth_status`           | Claude auth mode (`long-lived token` or `dashboard sign-in`); no token                                                   |
-| `autonomy_readiness`           | Autonomy readiness                                                                                                       |
-| `spend_read`                   | Spend                                                                                                                    |
-| `launch_cost_read`             | Cost per issue and PR, as on the Cost card (see [Cost by work item](#cost-by-work-item)); optional `ref`, `offset`       |
-| `pr_models_read`               | PRs by model, as on the Governor card: outcomes, rework and effectiveness rank per model (see note 8); optional `window` |
-| `contributor_model_stats_read` | Contributor run stats by model: runs, verified-PR share, failure rate; optional `days` (0-365, default 7)                |
-| `effective_models_read`        | Operations → Most effective models: hive-agent or contributor PRs, coverage (see note 8); optional `window`, `filter`    |
-| `github_api_usage`             | GitHub API budget and who is spending it (see note 7); optional `limit`                                                  |
+| Tool                           | Returns                                                                                                                                          |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `hive_status`                  | Hive status summary                                                                                                                              |
+| `fleet_status`                 | Fleet state, including memory limit and out-of-memory kills (see note 1)                                                                         |
+| `version_read`                 | Running build from `/api/version` (see note 2)                                                                                                   |
+| `claude_auth_status`           | Claude auth mode (`long-lived token` or `dashboard sign-in`); no token                                                                           |
+| `autonomy_readiness`           | Autonomy readiness                                                                                                                               |
+| `spend_read`                   | Spend and budget; with `hours` or `since`/`until`, tokens and $ per agent over that window (see [Spend by agent](#spend-by-agent-over-a-window)) |
+| `launch_cost_read`             | Cost per issue and PR, as on the Cost card (see [Cost by work item](#cost-by-work-item)); optional `ref`, `offset`                               |
+| `pr_models_read`               | PRs by model, as on the Governor card: outcomes, rework and effectiveness rank per model (see note 8); optional `window`                         |
+| `contributor_model_stats_read` | Contributor run stats by model: runs, verified-PR share, failure rate; optional `days` (0-365, default 7)                                        |
+| `effective_models_read`        | Operations → Most effective models: hive-agent or contributor PRs, coverage (see note 8); optional `window`, `filter`                            |
+| `github_api_usage`             | GitHub API budget and who is spending it (see note 7); optional `limit`                                                                          |
 
 **Agents, runs and plans**
 
@@ -656,6 +656,26 @@ What the answer holds:
   buckets always describe the whole window. `ref` narrows only the rows.
 
 `spend_read` has spend by agent and by model, but not by work item.
+
+### Spend by agent over a window
+
+`spend_read` with no arguments reads `GET /api/cost`: the estimated all-time
+totals by model and by agent, the daily rollup and the budget. With a window it
+reads `GET /api/cost/agents` instead, the rows the Cost card's usage-by-sandbox
+table shows for the same range (#18968):
+
+- `hours` (1-720) looks back from now; `since` and `until` (RFC3339) bound the
+  window instead. `since` and `hours` can't be combined, `until` must not be
+  before `since`, and the window spans at most 720 hours. A bad window is
+  refused with its reason before any request is made.
+- Each row in `agents` is one agent, highest estimated `usd` first, with
+  `input`, `output`, `cache_read`, `cache_create` and `total_tokens`, the first
+  and last snapshot in the window and `samples`. `limit` caps the rows.
+- The figures come from the 5-minute cost snapshots, which keep about 30 days.
+  A window that starts before the oldest one answers `coverage: partial` with
+  `data_since`, not zeros. An agent's token fields are `null` where its
+  snapshots predate per-agent token recording.
+- Everything is an estimate (token counts × list price), not billed spend.
 
 ### What a read masks
 

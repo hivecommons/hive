@@ -1752,6 +1752,12 @@ type CostHistoryEntry struct {
 	// Models maps model name → cumulative token/cost snapshot, feeding the
 	// per-model mini sparklines in the cost table. Omitted on older entries.
 	Models map[string]CostModelSnap `json:"models,omitempty"`
+	// AgentTokens maps agent name → cumulative token counters at this
+	// snapshot, beside Agents' dollars, so a window can report each agent's
+	// tokens as well as its spend (GET /api/cost/agents, #18968). Omitted on
+	// entries recorded before this field existed; a window over those reads
+	// the agent's tokens as unknown, never as zero.
+	AgentTokens map[string]CostAgentSnap `json:"agent_tokens,omitempty"`
 }
 
 // CostModelSnap is one model's cumulative counters at a history snapshot.
@@ -4741,9 +4747,13 @@ func (s *Server) sampleCostHistory() bool {
 	}
 	est := s.estimatedCost()
 	perAgent := make(map[string]float64, len(est.ByAgent))
+	perAgentTokens := make(map[string]CostAgentSnap, len(est.ByAgent))
 	for _, row := range est.ByAgent {
 		if row.USD > 0 {
 			perAgent[row.Name] = row.USD
+		}
+		if row.Input > 0 || row.Output > 0 || row.CacheRead > 0 || row.CacheCreate > 0 {
+			perAgentTokens[row.Name] = CostAgentSnap{Input: row.Input, Output: row.Output, CacheRead: row.CacheRead, CacheCreate: row.CacheCreate}
 		}
 	}
 	perModel := make(map[string]CostModelSnap, len(est.ByModel))
@@ -4758,6 +4768,9 @@ func (s *Server) sampleCostHistory() bool {
 	}
 	if len(perAgent) > 0 {
 		entry.Agents = perAgent
+	}
+	if len(perAgentTokens) > 0 {
+		entry.AgentTokens = perAgentTokens
 	}
 	if len(perModel) > 0 {
 		entry.Models = perModel

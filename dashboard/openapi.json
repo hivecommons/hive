@@ -33638,6 +33638,63 @@
         }
       }
     },
+    "/api/cost/agents": {
+      "get": {
+        "tags": [
+          "Tokens"
+        ],
+        "summary": "Get per-agent tokens and estimated cost over a window",
+        "description": "Each agent's tokens (input, output, cache read, cache create, total) and estimated USD over a window, highest spend first, from the 5-minute cost snapshots (about 30 days). The window is since/until (RFC3339) or hours (1-720); none means the last 24 hours. coverage is partial, with data_since, when the window starts before the oldest snapshot. Token fields are null for an agent whose snapshots in the window predate per-agent token recording.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "RFC3339 start of the window (inclusive)."
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "RFC3339 end of the window (inclusive); default now."
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 720
+            },
+            "description": "Lookback from now in hours, instead of since."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-agent window spend",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid window parameters"
+          }
+        }
+      }
+    },
     "/api/hive-id": {
       "get": {
         "tags": [
