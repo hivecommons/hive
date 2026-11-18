@@ -1,1 +1,0 @@
-- Betty: a warm model session's cache reads now count at a tenth toward the meeting's token budget, so a long meeting no longer exhausts the default 200000 tokens after about fifteen answers and goes silent.
