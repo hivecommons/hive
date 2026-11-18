@@ -65,6 +65,13 @@ project:
 #       clanker_requested_label: clanker-requested    # default: clanker-requested; must not be blank
 #       clanker_requested_addendum: ""                # optional free text, max 1000 bytes
 
+# Agent-filed strategist and outreach proposals are held by default until
+# acknowledged. Set this to {} to disable, or configure marker lists; see
+# docs/agent-configuration.md#agent-filed-direction-proposals.
+# project:
+#   issue_filter:
+#     agent_proposal: {}
+
 # Optional merge-request safety exceptions. Hive now merges into any protected
 # or unprotected base branch the App can write, while still refusing a PR with
 # zero statuses + zero check runs + zero workflow runs. `allow_unprotected_base`
