@@ -15975,7 +15975,7 @@ test('headless failure: a CLI that rejects the launch flags is classed as an env
 });
 
 test('failCurrentTask prints the CLI output tail to the local log, not only the reason', () => {
-  const relay = loadRelay({ backend: 'opencode', mode: 'headless' });
+  const relay = loadRelay({ backend: 'claude' });
   const err = console.error; const lines = [];
   console.error = (...a) => { lines.push(a.join(' ')); };
   try {
