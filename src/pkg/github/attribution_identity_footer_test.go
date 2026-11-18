@@ -13,7 +13,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 )
 
-const contributorAttributionBody = "Done\n\n— hive: backend=codex model=gpt-6-astra effort=medium\n\n---\n🐝 **Hive Agent**: `contributor` | **SHA:** `671737a3b`"
+const contributorAttributionBody = "Done\n\n-- hive: backend=codex model=gpt-6-astra effort=medium\n\n---\n🐝 **Hive Agent**: `contributor` | **SHA:** `671737a3b`"
 
 func TestParseAttributionTrailerWithIdentityFooter(t *testing.T) {
 	for _, body := range []string{
@@ -40,7 +40,7 @@ func TestParseAttributionTrailerDoesNotScanPastOrdinaryContent(t *testing.T) {
 		strings.ReplaceAll(contributorAttributionBody, "\n\n---", "\nMore prose\n\n---"),
 		strings.ReplaceAll(contributorAttributionBody, "\n\n---", "\n\n"),
 		strings.ReplaceAll(contributorAttributionBody, "**SHA:**", "**Other:**"),
-		strings.ReplaceAll(contributorAttributionBody, "— hive:", "> — hive:"),
+		strings.ReplaceAll(contributorAttributionBody, "-- hive:", "> -- hive:"),
 		"```text\n" + contributorAttributionBody + "\n```",
 		strings.ReplaceAll(contributorAttributionBody, "\n\n---", "\n```\n\n---"),
 		contributorAttributionBody + "\n\n---\n🐝 **Hive Agent**: `contributor` | **SHA:** `unknown`",

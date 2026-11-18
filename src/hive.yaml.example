@@ -72,6 +72,13 @@ project:
 #   issue_filter:
 #     agent_proposal: {}
 
+# PR-contents merge gate posted by the hive as commit statuses (default off;
+# see docs/github-app-setup.md). shadow posts only "verify PR contents (hive)".
+# auto_merge:
+#   pr_gate:
+#     mode: shadow
+#     repos: [your-org/your-repo]
+
 # Optional merge-request safety exceptions. Hive now merges into any protected
 # or unprotected base branch the App can write, while still refusing a PR with
 # zero statuses + zero check runs + zero workflow runs. `allow_unprotected_base`
@@ -1055,6 +1062,18 @@ governor:
 #   fan_out: false
 #   max_parallel_reviews: 5
 #   reviewer_agents: [] # optional explicit list; otherwise agents with review role/keywords are used
+#   analysis_factcheck:  # independent fact-check pass for analysis/report PRs (#19074); off by default
+#     enabled: false
+#     author_agents: []  # agents whose PRs qualify, e.g. [quality]; a PR also qualifies by labels
+#     labels: []         # PR labels that qualify a PR an agent opened
+#     reviewer_agents: [] # who may run the pass; default review.reviewer_agents, else role: reviewer. The author never qualifies
+#     reviewer_model: ""  # optional model the review is pinned to (judged for independence)
+#     independence: model # agent | model | family: how different the reviewer must be from the author
+#     max_rounds: 3       # author/reviewer rounds per PR, 1-10; then a person is asked once
+#     ready_policy: human # human (default) leaves draft-to-ready to a person | hive marks ready after a pass
+#     revision_wait: 6h   # how long the author has to push a revision after findings
+#     authoritative_files: [] # source of truth for people and roles; default MAINTAINERS, OWNERS, CODEOWNERS, .project/maintainers.yaml, GOVERNANCE.md
+#     rubric: ""          # extra domain guidance for the reviewer (where the scoring rubric lives, etc.)
 #   reviewers:
 #     autoscale:        # size the reviewer lane to its backlog (#14685); off by default
 #       enabled: false

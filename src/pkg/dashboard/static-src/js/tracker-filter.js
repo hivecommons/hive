@@ -117,7 +117,15 @@
     // cannot disagree. Stage/modifier based: labels alone (needs-signal,
     // hold, …) never qualify a row. A held row is paused, not waiting.
     function stageTrackerItemNeedsHuman(item) {
-      if (!item || item.advisory || stageTrackerItemOnHold(item)) return false;
+      if (!item || item.advisory) return false;
+      // The server names every wait on a person (filed for help, a hive
+      // gate, a decision, an approval) in needs_human_why; it outranks a
+      // hold the hive itself placed.
+      if (item.needs_human_why && typeof item.needs_human_why === 'object') return true;
+      if (stageTrackerItemOnHold(item)) return false;
+      // A blocked issue whose blocker is a person's action (owner-action
+      // marker); the server also names it in needs_human_why.
+      if (item.blocked_owner_reason) return true;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       if (mods.some(m => STAGE_TRACKER_NEEDS_HUMAN_MODS.indexOf(m) >= 0)) return true;
       const n = Number(item.stage) || 0;

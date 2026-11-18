@@ -97,6 +97,14 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_HUB_MAIL_MAX_BODY_BYTES` | No | `50331648` | Largest delivery `POST /api/mail/inbound` accepts from a `hive-mx` that sends routing headers (48 MiB, this route only; [#18564](https://github.com/hivecommons/hive/issues/18564)). Without routing headers the cap stays 8 MiB. |
 | `HIVE_HUB_MAIL_CHUNK_BYTES` | No | `786432` | Piece size when the hub relays a large mail-in delivery to the spoke (768 KiB, under the 1 MiB ingress default); clamped to 64 KiB to 8 MiB. |
 | `HIVE_HUB_MAIL_SPOOL_DIR` | No | system temp directory | Where the hub keeps a delivery on disk while it relays it. |
+| `HIVE_HUB_MAIL_REPLY_DKIM_KEY_FILE` | No | none (replies off) | Path of the mounted DKIM private key the hub signs confirmation replies with ([#18746](https://github.com/hivecommons/hive/issues/18746)). Replies are off while it is unset, missing or empty; the hub only checks that the file exists and never reads or logs it. The sender that uses it is not part of this release, so setting it alone sends nothing. See [Replies to the sender](meetings.md#replies-to-the-sender-off-by-default). |
+| `HIVE_HUB_MAIL_REPLY_FROM` | With the key | none | The one fixed `From` address replies are signed as, for example `hive@hive.<project domain>`. Its domain must carry the DKIM record. Mail from this address or its domain is never answered. |
+| `HIVE_HUB_MAIL_REPLY_DKIM_SELECTOR` | With the key | none | DKIM selector of the key: the record is `<selector>._domainkey.<From domain>`. |
+| `HIVE_HUB_MAIL_REPLY_LEDGER_FILE` | No | `/data/saas/mail-reply-ledger.jsonl` | Reply ledger: ids, salted hashes and counts only, kept 8 days (no address, subject, Message-ID or body). It makes a retry or a restart unable to produce a second reply. |
+| `HIVE_HUB_MAIL_REPLY_SENDER_PER_HOUR` | No | `10` | Most replies to one sender address in an hour. Past a limit the reply is dropped and counted; the mail is unaffected. |
+| `HIVE_HUB_MAIL_REPLY_SENDER_PER_DAY` | No | `30` | Most replies to one sender address in 24 hours. |
+| `HIVE_HUB_MAIL_REPLY_DOMAIN_PER_DAY` | No | `100` | Most replies to one sender domain in 24 hours. |
+| `HIVE_HUB_MAIL_REPLY_HIVE_PER_DAY` | No | `200` | Most replies for one hive in 24 hours. |
 | `HIVE_HUB_SELFSERVICE_MAX_PER_USER` | No | `5` | Maximum self-service hives one user may have registered at once; the next registration answers `429` until one is removed. |
 | `HIVE_HUB_SELFSERVICE_MAX_REPOS` | No | `20` | Maximum repos one self-service registration may list ([#18642](https://github.com/hivecommons/hive/issues/18642)). Each listed repo costs one read-only GitHub ownership check, so values above `500` are clamped to `500`; a non-numeric or non-positive value falls back to `20`. Advertised by `GET /api/hub/v1` as `limits.max_repos`. Over the cap, `POST /api/hub/selfservice/hives` answers `400`; `POST /api/hub/v1/registrations` answers `413` with `limit: max_repos`. Read per request. Only meaningful while `HIVE_HUB_SELFSERVICE_REGISTRATION` is on. |
 | `HIVE_HUB_SELFSERVICE_EXPIRY` | No | `24h` | How long a self-service hive may go without an accepted heartbeat before the expiry sweep revokes its key and removes its registry entry (counted from the last accepted heartbeat, or from registration while there has been none). Reported by `GET /api/hub/selfservice/status` as `expiry`. Go duration syntax. |
@@ -416,6 +424,7 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_TTS_TOKEN_FILE` | No | `/data/secrets/meetings_tts_token` | Keystore-sealed secret file holding the TTS service token. Overrides `meetings.tts_token_file`. |
 | `HIVE_MEETINGS_DELIVERY` | No | `chat` | Default delivery for meeting output. Only `chat` is supported. |
 | `HIVE_MEETINGS_VOICE_ON_ADDRESS` | No | `true` | Lets hive speak when addressed by name in a meeting whose voice is enabled; otherwise it answers in chat. |
+| `HIVE_MEETINGS_LISTENING_TONE` | No | `true` | Betty plays a short, soft chime when she heard her name in a spoken request and is about to answer. Set `false` to turn it off. |
 | `HIVE_MEETINGS_BOT_NAME` | No | the persona's display name (`Betty Bee from the hive`), or `hive (notes)` with the persona off | Display name the meeting bot joins with. |
 | `HIVE_MEETINGS_INVITE_POLICY` | No | `owner` | Who may send hive to a meeting. Only `owner` is supported. |
 | `HIVE_MEETINGS_RESEARCH_POOL_SIZE` | No | `2` | Number of research agents (`research-1..N`). |

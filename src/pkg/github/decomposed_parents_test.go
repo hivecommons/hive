@@ -80,6 +80,7 @@ func parentInput(children *IssueChildren, labels ...string) Issue {
 }
 
 func TestSyncIssueStageLabels_ClosesParentWhenAllChildrenClosed(t *testing.T) {
+	resetParentReopenCacheForTest(t)
 	fake := newIssueStageServer(t)
 	c := issueStageTestClient(t, fake.srv, true)
 	store := stagelabels.NewStore("", stageNow)
@@ -179,6 +180,7 @@ func TestSyncIssueStageLabels_ParentSnapshotLagsOpenChild(t *testing.T) {
 }
 
 func TestSyncIssueStageLabels_ParentLedgerFallbackClose(t *testing.T) {
+	resetParentReopenCacheForTest(t)
 	// No native sub-issue list (the link failed at create time): the ledger
 	// names the children and each is read live.
 	fake := newIssueStageServer(t)
@@ -282,6 +284,9 @@ func TestEnumerateActionable_SubIssueSummaryBecomesChildren(t *testing.T) {
 	}
 }
 
+// resetParentReopenCacheForTest clears the process-global reopen-verdict
+// cache now and again when the test ends, so a "kept open" verdict one test
+// caches for acme/widgets#7 cannot veto the close another test expects.
 func resetParentReopenCacheForTest(t *testing.T) {
 	t.Helper()
 	clear := func() {

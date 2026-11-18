@@ -76,6 +76,10 @@ type contributorAdmissionCandidate struct {
 	// whenever claims are disabled, so the gate below never fires then.
 	issueClaim ghpkg.IssueClaimMark
 	claimed    bool
+	// createdAt is the issue's creation time from the enumerated envelope;
+	// zero when unknown. The owner-grace hold (Dependencies.ContributorHold)
+	// uses it to skip the forge read for an old issue.
+	createdAt time.Time
 }
 
 // isGitHubBacked reports whether this candidate may be handed to the two
@@ -112,6 +116,9 @@ type contributorAdmissionDecision struct {
 	// issueClaim carries the live claim behind an issue_claim refusal
 	// (#8380): who holds it and until when. Zero for every other reason.
 	issueClaim ghpkg.IssueClaimMark
+	// detail is the human-readable refusal behind owner_grace: the forge's own
+	// "owner grace: filed by ... N ago" sentence.
+	detail string
 	// convergence carries the dependency judgment behind a dependency-based
 	// refusal (#3845): which record was observed, at which generation, and
 	// which dependency IDs blocked. Zero-valued when admission never reached
@@ -157,6 +164,10 @@ const (
 	// not be resolved, so satisfaction cannot be asserted and the candidate is
 	// not mutably dispatched.
 	contributorAdmissionReasonDependencyUnknown = "dependency_unknown"
+	// contributorAdmissionReasonOwnerGrace: an owner, maintainer or this hive
+	// filed the issue inside the contributor grace window and no person has
+	// opened it to outside help yet (hivecommons/hive#18898).
+	contributorAdmissionReasonOwnerGrace = "owner_grace"
 )
 
 // evaluateContributorNeutralAdmission applies repository-global admission
@@ -229,6 +240,16 @@ func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributor
 		return contributorAdmissionDecision{
 			reason:     contributorAdmissionReasonIssueClaim,
 			issueClaim: candidate.issueClaim,
+		}
+	}
+
+	// Owner grace (#18898): an issue an owner, maintainer or this hive filed
+	// moments ago is the owner's to claim first. Checked after the claim gates
+	// (a PR or claim already on it says more) and before churn.
+	if reason := h.contributorHold(candidate); reason != "" {
+		return contributorAdmissionDecision{
+			reason: contributorAdmissionReasonOwnerGrace,
+			detail: reason,
 		}
 	}
 
@@ -348,6 +369,22 @@ func (h *ContributeWSHub) openPRLinkingIssue(candidate contributorAdmissionCandi
 		}
 	}
 	return ghpkg.OpenPRLink{}, false
+}
+
+// contributorHold asks the Dependencies.ContributorHold hook whether the
+// forge says the contributor lane must hold this candidate off. Repo
+// spellings are tried as in issueClaimedByOpenPR. No hook wired reports "".
+func (h *ContributeWSHub) contributorHold(candidate contributorAdmissionCandidate) string {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.ContributorHold == nil {
+		return ""
+	}
+	if reason := h.server.deps.ContributorHold(candidate.repoFull, candidate.number, candidate.createdAt); reason != "" {
+		return reason
+	}
+	if candidate.repoName != "" && candidate.repoName != candidate.repoFull {
+		return h.server.deps.ContributorHold(candidate.repoName, candidate.number, candidate.createdAt)
+	}
+	return ""
 }
 
 // churnTriagedMarker is the label a maintainer applies to say "I have looked

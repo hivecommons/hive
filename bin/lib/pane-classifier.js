@@ -271,6 +271,36 @@ function paneQuotaExhaustion(text) {
   return null;
 }
 
+// Claude Code's "Bypass Permissions mode" consent dialog, shown once per user
+// config when a session starts in bypassPermissions mode and
+// skipDangerousModePermissionPrompt is not set in the user settings:
+//
+//   WARNING: Claude Code running in Bypass Permissions mode
+//   ...
+//   ❯ 1. No, exit
+//     2. Yes, I accept
+//   Enter to confirm · Esc to exit
+//
+// The DEFAULT selection is "No, exit", so a bare Enter (what the generic
+// "Enter to confirm" handling sends) declines and Claude exits to the shell.
+// Accepting takes Down, then Enter. All three strings are required so a
+// transcript that merely quotes one of them cannot match.
+const CLAUDE_BYPASS_CONSENT_TAIL_LINES = 25;
+const CLAUDE_BYPASS_CONSENT_TITLE_RE = /Bypass Permissions mode/;
+const CLAUDE_BYPASS_CONSENT_ACCEPT_RE = /Yes, I accept/;
+const CLAUDE_BYPASS_CONSENT_DECLINE_RE = /No, exit/;
+const CLAUDE_BYPASS_CONSENT_ACCEPT_SELECTED_RE = /^\s*[❯>›]\s*(?:\d+\.\s*)?Yes, I accept/m;
+
+// claudeBypassConsent reports whether the consent dialog is on screen and
+// whether its selection cursor is already on "Yes, I accept".
+function claudeBypassConsent(text) {
+  const recent = paneTail(text, CLAUDE_BYPASS_CONSENT_TAIL_LINES);
+  const present = CLAUDE_BYPASS_CONSENT_TITLE_RE.test(recent) &&
+    CLAUDE_BYPASS_CONSENT_ACCEPT_RE.test(recent) &&
+    CLAUDE_BYPASS_CONSENT_DECLINE_RE.test(recent);
+  return { present, acceptSelected: present && CLAUDE_BYPASS_CONSENT_ACCEPT_SELECTED_RE.test(recent) };
+}
+
 function blockingPromptKey(text, backend) {
   // codex: "Do you trust the contents of this directory?" → 1. Yes, continue
   if (/Do you trust the contents of this directory/.test(text)) return '1';
@@ -281,6 +311,15 @@ function blockingPromptKey(text, backend) {
   // persists, so this prompt stops coming back on every restart the way a
   // plain "Skip" would.
   if (/Update available/.test(text) && /Skip until next version/.test(text)) return '3';
+  // claude: the Bypass Permissions consent. Never a bare Enter (the default
+  // selection is "No, exit"): move to "Yes, I accept" first. The caller must
+  // send the keys one at a time and confirm the selection moved (see
+  // answerClaudeBypassConsent in bin/contributor-relay.js); when the cursor is
+  // already on "Yes, I accept" a bare Enter is correct and null is returned.
+  if (backend === 'claude') {
+    const consent = claudeBypassConsent(text);
+    if (consent.present) return consent.acceptSelected ? null : 'Down';
+  }
   const recent = paneTail(text, 15);
   // claude: the folder trust prompt opens with the cursor on "No, exit", so a
   // bare Enter quits the CLI. Down moves to "Yes, I trust this folder"; the
@@ -331,6 +370,7 @@ function classifyReadiness(text, backend) {
       // flow that nothing in a container can finish. A human has to attach.
       if (/Select login method/.test(text)) return 'needs-login';
       if (/Choose the text style|trust this folder/.test(text)) return 'onboarding';
+      if (claudeBypassConsent(text).present) return 'onboarding';
       // The first alternation below is startup-only: a welcome banner, the
       // account line printed just after login, the first-run tip. That made
       // claude readiness a one-shot property of the SPLASH SCREEN — and
@@ -1122,6 +1162,7 @@ module.exports = {
   BLOCKED_REASON_MENU,
   BLOCKED_REASON_HUMAN_REQUIRED,
   blockingPromptKey,
+  claudeBypassConsent,
   classifyReadiness,
   recentPaneLines,
   classifyBlockedOnHumanReason,

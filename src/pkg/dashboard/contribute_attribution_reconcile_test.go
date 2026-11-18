@@ -44,7 +44,7 @@ func TestContributeWSHub_ReconcilePRAttribution(t *testing.T) {
 		capabilities: &ContributorCapabilities{
 			AgentCLIVersion: "0.5.2",
 		},
-	}, "— hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2")
+	}, "-- hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2")
 }
 
 // hivecommons/hive#7760: an omp connection that reported an advisor gets both
@@ -60,7 +60,7 @@ func TestContributeWSHub_ReconcilePRAttribution_AdvisorPair(t *testing.T) {
 		profile: &ContributorProfile{
 			GitHubUsername: "danathar",
 		},
-	}, "— hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium advisor=anthropic/claude-opus-5 advisor_effort=high")
+	}, "-- hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium advisor=anthropic/claude-opus-5 advisor_effort=high")
 }
 
 // reconcileTrailerFor runs reconcilePRAttribution for conn against a fake

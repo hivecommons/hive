@@ -2,10 +2,12 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -237,6 +239,15 @@ func roundTrip(t *testing.T, tc *tls.Conn, method, host, path string, headers ma
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Drain the body so a keep-alive tunnel is positioned at the next
+	// response; callers that reuse the connection would otherwise parse the
+	// leftover body bytes as a status line.
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return resp
 }
 
@@ -335,6 +346,29 @@ func TestSandboxReadRelayRequiresLiveKey(t *testing.T) {
 	}
 	if h.dials.Load() != 0 {
 		t.Fatal("no request was made, so no upstream dial was expected")
+	}
+}
+
+// TestSandboxReadRelayReleasedKeyStopsEstablishedTunnel pins #18895: the key
+// is authenticated at CONNECT, but a tunnel that is already open must stop
+// serving once the kick's key is released.
+func TestSandboxReadRelayReleasedKeyStopsEstablishedTunnel(t *testing.T) {
+	h := newRelayHarness(t, func() (string, error) { return testReadToken, nil })
+	user, release := enrollKey(t, h.relay, "deps")
+	tc, status := h.connect(t, user, "api.github.com:443")
+	if status != 200 {
+		t.Fatalf("CONNECT status = %d", status)
+	}
+	if resp := roundTrip(t, tc, "GET", "api.github.com", "/repos/o/r/tags", nil); resp.StatusCode != 200 {
+		t.Fatalf("GET with live key: status = %d, want 200", resp.StatusCode)
+	}
+	release()
+	resp := roundTrip(t, tc, "GET", "api.github.com", "/repos/o/r/tags", nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("GET after release: status = %d, want 403", resp.StatusCode)
+	}
+	if n := len(h.seen()); n != 1 {
+		t.Fatalf("upstream saw %d requests, want 1 (the post-release request must not reach GitHub)", n)
 	}
 }
 

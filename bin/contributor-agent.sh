@@ -516,6 +516,41 @@ with open(p, 'w') as f:
     json.dump(d, f, indent=2)
 SEEDEOF
   chmod 600 "${HOME}/.claude.json" 2>/dev/null || true
+
+  # Pre-accept Claude Code's "Bypass Permissions mode" consent (#19049). The
+  # dialog's default selection is "No, exit", so a bare Enter from any dismissal
+  # loop makes claude exit to the shell. The documented switch is the user-scope
+  # setting skipDangerousModePermissionPrompt in ${HOME}/.claude/settings.json
+  # (https://code.claude.com/docs/en/permission-modes). It is written only when
+  # this launch already runs claude in bypass mode (the container's own
+  # --dangerously-skip-permissions --permission-mode bypassPermissions): it
+  # answers the prompt for a posture the relay already asked for and grants
+  # nothing new. The file is merged, never replaced, so the contributor's own
+  # staged keys (proxy env, model, permissions) survive; an unreadable file is
+  # left untouched rather than overwritten.
+  if [[ "${SEED_CLAUDE_BYPASS_CONSENT:-}" == "1" ]]; then
+    python3 - <<'SETTINGSEOF' 2>/dev/null || true
+import json, os
+d = os.path.join(os.path.expanduser('~'), '.claude')
+p = os.path.join(d, 'settings.json')
+settings = {}
+if os.path.exists(p):
+    try:
+        with open(p) as f:
+            settings = json.load(f)
+    except Exception:
+        raise SystemExit(0)
+    if not isinstance(settings, dict):
+        raise SystemExit(0)
+settings['skipDangerousModePermissionPrompt'] = True
+os.makedirs(d, exist_ok=True)
+tmp = p + '.tmp'
+with open(tmp, 'w') as f:
+    json.dump(settings, f, indent=2)
+os.chmod(tmp, 0o600)
+os.replace(tmp, p)
+SETTINGSEOF
+  fi
 }
 
 if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_SEED_CLAUDE_CONFIG:-}" == "1" ]]; then
@@ -809,6 +844,10 @@ fi
 # CLI. See seed_claude_config above for why OAuth/subscription claude needs
 # this just as much as the API-key paths do.
 if [[ "$AGENT_BACKEND" == "litellm" || "$AGENT_BACKEND" == "claude" ]]; then
+  # Pre-accept the bypass consent only when this launch really is bypass mode.
+  case "$PERM_FLAG" in
+    *bypassPermissions*|*--dangerously-skip-permissions*) export SEED_CLAUDE_BYPASS_CONSENT=1 ;;
+  esac
   seed_claude_config
 fi
 
@@ -831,7 +870,21 @@ if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
     for _attempt in $(seq 1 $AUTO_DISMISS_ATTEMPTS); do
       sleep "$AUTO_DISMISS_INTERVAL"
       PANE=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -10 2>/dev/null || true)
-      if echo "$PANE" | grep -q "trust this folder\|trust the files\|Confirm folder trust\|Enter to confirm"; then
+      if echo "$PANE" | grep -q "Bypass Permissions mode" && echo "$PANE" | grep -q "No, exit" && echo "$PANE" | grep -q "Yes, I accept"; then
+        # Claude Code's bypass consent (#19049). It ALSO prints "Enter to
+        # confirm", and its default selection is "No, exit": the generic
+        # branch below would send a bare Enter and make claude exit. Move to
+        # "Yes, I accept" first and press Enter only once the pane shows the
+        # cursor there. The settings seed normally keeps this from appearing.
+        if ! echo "$PANE" | grep -Eq "^[[:space:]]*(❯|>|›)[[:space:]]*([0-9]+\.[[:space:]]*)?Yes, I accept"; then
+          tmux send-keys -t "$TMUX_SESSION" Down 2>/dev/null || true
+          sleep 1
+          PANE=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -10 2>/dev/null || true)
+        fi
+        if echo "$PANE" | grep -Eq "^[[:space:]]*(❯|>|›)[[:space:]]*([0-9]+\.[[:space:]]*)?Yes, I accept"; then
+          tmux send-keys -t "$TMUX_SESSION" Enter 2>/dev/null || true
+        fi
+      elif echo "$PANE" | grep -q "trust this folder\|trust the files\|Confirm folder trust\|Enter to confirm"; then
         tmux send-keys -t "$TMUX_SESSION" Enter 2>/dev/null || true
       elif echo "$PANE" | grep -q "Do you trust the contents of this directory"; then
         # Codex's own directory-trust prompt: a numbered menu ("1. Yes,

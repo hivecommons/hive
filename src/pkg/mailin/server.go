@@ -629,7 +629,7 @@ func (s *session) receive(r io.Reader, from string, rcpts []string, rec *message
 		}
 		d := wire.Delivery{
 			ID: newDeliveryID(), Kind: p.Kind, Recipient: rcpt, MessageID: p.MessageID,
-			ReceivedAt: now, Auth: auth, Invites: p.Invites, Files: p.Files,
+			ReceivedAt: now, Auth: auth, Facts: FactsOf(header, from), Invites: p.Invites, Files: p.Files,
 		}
 		if p.Kind == wire.KindProof {
 			d.Proof = &wire.Proof{Code: p.ProofCode}

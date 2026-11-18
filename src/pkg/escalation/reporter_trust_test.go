@@ -8,7 +8,7 @@ import (
 func TestReporterTrustHoldSurvivesGreenAndRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ledger.json")
 	store := Load(path)
-	store.SetReporterTrustReason("o/r", 42, "reporter-trust hold — issue #581 filed by @stranger")
+	store.SetReporterTrustReason("o/r", 42, "reporter-trust hold - issue #581 filed by @stranger")
 	store = Load(path)
 	obs := []Observation{{Repo: "o/r", Number: 42, HeadSHA: "green", Labeled: true}}
 	result := store.Sweep(obs, 3)[Key("o/r", 42)]

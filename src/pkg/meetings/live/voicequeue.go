@@ -36,6 +36,8 @@ const (
 	// behind: past it the ack would land seconds after the request, about
 	// when the answer itself is due.
 	ackMaxBacklog = 8 * time.Second
+	// voiceRestInChat closes a long answer said in brief.
+	voiceRestInChat = "The details are in chat."
 	// restInChatGap is the least time between two "rest in chat" notes.
 	restInChatGap = 30 * time.Second
 	// maxReplyDrain bounds the ready replies one turn of the session loop
@@ -163,6 +165,14 @@ func (s *session) flushVoice(ctx context.Context) {
 				// A short spoken form with the full text in chat (the
 				// intro): never the whole line in both channels.
 				l.spoken, l.text, l.alsoChat = short, a.text, true
+			}
+			if strings.TrimSpace(l.rep.Spoken) == "" {
+				// A long answer is said as its first sentence, the whole
+				// of it goes to chat once: first audio and the say call
+				// stay well inside their limits.
+				if brief, ok := betty.BriefVoice(l.spoken); ok {
+					l.spoken, l.alsoChat = brief+" "+voiceRestInChat, true
+				}
 			}
 			if accepted = s.sendReply(ctx, l); accepted && l.job != nil {
 				s.voice.queued(now, l.said())

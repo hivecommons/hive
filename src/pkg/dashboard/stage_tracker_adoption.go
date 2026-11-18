@@ -213,6 +213,10 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 		text += " — maintainer-owned: automatic adoption is disabled by maintainer_policy=never"
 	case a.BlockedBy == stagelabels.AdoptBlockedOperatorAdmission:
 		text += " — contributor-managed: operator approval recorded for this head; existing review/CI requirements still apply"
+	case a.BlockedBy == stagelabels.AdoptBlockedCoveredByOpenPR:
+		text += " — another open PR (a person's or the hive's) already covers the issue: the hive will not adopt this one"
+	case a.BlockedBy == stagelabels.AdoptBlockedHumanClaim:
+		text += " — an owner or maintainer has claimed the issue: the hive will not adopt this PR unless they release the claim"
 	case a.BlockedBy != "":
 		text += " — adoption blocked: " + a.BlockedBy
 	case a.AutoDue:

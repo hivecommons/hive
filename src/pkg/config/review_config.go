@@ -104,10 +104,14 @@ type ReviewConfig struct {
 	EventDriven *bool `yaml:"event_driven,omitempty" json:"event_driven,omitempty"`
 	// EventDebounceS is the per-PR quiet period before webhook-triggered
 	// dispatch. Zero uses DefaultReviewEventDebounceS.
-	EventDebounceS     int      `yaml:"event_debounce_s,omitempty" json:"event_debounce_s,omitempty"`
-	MaxParallelReviews int      `yaml:"max_parallel_reviews,omitempty" json:"max_parallel_reviews,omitempty"`
-	ReviewerAgents     []string `yaml:"reviewer_agents,omitempty" json:"reviewer_agents,omitempty"`
-	FixerAgent         string   `yaml:"fixer_agent,omitempty" json:"fixer_agent,omitempty"`
+	EventDebounceS int `yaml:"event_debounce_s,omitempty" json:"event_debounce_s,omitempty"`
+	// AnalysisFactCheck is the independent fact-check pass for analysis and
+	// report PRs (hivecommons/hive#19074); see review_factcheck.go. Off by
+	// default.
+	AnalysisFactCheck  AnalysisFactCheckConfig `yaml:"analysis_factcheck,omitempty" json:"analysis_factcheck,omitempty"`
+	MaxParallelReviews int                     `yaml:"max_parallel_reviews,omitempty" json:"max_parallel_reviews,omitempty"`
+	ReviewerAgents     []string                `yaml:"reviewer_agents,omitempty" json:"reviewer_agents,omitempty"`
+	FixerAgent         string                  `yaml:"fixer_agent,omitempty" json:"fixer_agent,omitempty"`
 	// FixerFallbackAgents opts into routing repairs around an undeliverable
 	// fixer, in list order. Empty preserves the historical delivery behavior.
 	FixerFallbackAgents []string `yaml:"fixer_fallback_agents,omitempty" json:"fixer_fallback_agents,omitempty"`
@@ -695,6 +699,58 @@ type AutoMergeConfig struct {
 	// copies of other PRs (@clubanderson: "if a pr is superseded by a pr
 	// that a hive agent creates, it should auto merge"). Default ON.
 	HiveSuperseding HiveSupersedingAutoMergeConfig `yaml:"hive_superseding,omitempty" json:"hive_superseding,omitempty"`
+	// PRGate lets the hive publish the PR-contents merge gate as commit
+	// statuses itself, for repositories whose required `verify PR contents`
+	// check comes from a pull_request_target workflow GitHub is about to
+	// block by default (hivecommons/hive#19038). Default OFF with an explicit
+	// repository scope: nothing is posted unless a mode is set AND the
+	// repository is listed.
+	PRGate PRGateConfig `yaml:"pr_gate,omitempty" json:"pr_gate,omitempty"`
+}
+
+// PR gate modes (auto_merge.pr_gate.mode).
+const (
+	PRGateModeOff     = "off"
+	PRGateModeShadow  = "shadow"
+	PRGateModeEnforce = "enforce"
+)
+
+// PRGateConfig is auto_merge.pr_gate.*.
+type PRGateConfig struct {
+	// Mode is "off" (default), "shadow" (post only the shadow-named status
+	// `verify PR contents (hive)` and compare it with the workflow result) or
+	// "enforce" (post the real required context names). Empty means off.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	// Repos is the explicit scope (owner/repo, case-insensitive). Empty means
+	// no repository: there is deliberately no "every repository" default.
+	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+}
+
+// ModeFor returns the configured mode for repo (owner/repo): off unless the
+// repository is listed and the mode is a known non-off value.
+func (g PRGateConfig) ModeFor(repo string) string {
+	mode := strings.ToLower(strings.TrimSpace(g.Mode))
+	if mode != PRGateModeShadow && mode != PRGateModeEnforce {
+		return PRGateModeOff
+	}
+	if !repoListSet(g.Repos)[strings.ToLower(strings.TrimSpace(repo))] {
+		return PRGateModeOff
+	}
+	return mode
+}
+
+// Validate rejects an unknown mode and an active mode with no repository.
+func (g PRGateConfig) Validate() error {
+	switch strings.ToLower(strings.TrimSpace(g.Mode)) {
+	case "", PRGateModeOff:
+		return nil
+	case PRGateModeShadow, PRGateModeEnforce:
+		if len(repoListSet(g.Repos)) == 0 {
+			return fmt.Errorf("auto_merge.pr_gate.mode %q needs auto_merge.pr_gate.repos (owner/repo) listing where it applies", g.Mode)
+		}
+		return nil
+	}
+	return fmt.Errorf("auto_merge.pr_gate.mode must be off, shadow or enforce, got %q", g.Mode)
 }
 
 type MergeTrainAutoMergeConfig struct {

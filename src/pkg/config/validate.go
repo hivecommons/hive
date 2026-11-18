@@ -201,6 +201,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Governor.validateReviewerBackend(); err != nil {
 		return err
 	}
+	if err := c.Review.AnalysisFactCheck.Validate(); err != nil {
+		return err
+	}
 	if err := c.validateReviewPerspectiveModels(); err != nil {
 		return err
 	}
@@ -245,6 +248,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		return err
 	}
 	if err := c.AutoMerge.TrustedAuthors.Validate(); err != nil {
+		return err
+	}
+	if err := c.AutoMerge.PRGate.Validate(); err != nil {
 		return err
 	}
 	if err := c.AutoMerge.ContributorLane.Validate(); err != nil {

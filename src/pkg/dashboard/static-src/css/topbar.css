@@ -61,6 +61,14 @@
     .oc-version-row strong a { display: block; min-width: 0; overflow-wrap: anywhere; }
     .oc-version-skew { margin-left: var(--sp-2, 8px); }
     .oc-version-stdio-time { font-weight: normal; margin-left: var(--sp-2, 8px); }
+    .oc-version-contains { display: grid; gap: var(--sp-2); padding: var(--sp-2) var(--sp-5); min-width: 0; }
+    .oc-version-contains-form { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+    .oc-version-contains-form input { flex: 1; min-width: 0; padding: var(--sp-2) var(--sp-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text); font-size: var(--fs-sm); font-family: inherit; }
+    .oc-version-contains-result { color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+    .oc-version-contains-chip { display: inline-block; padding: var(--sp-0) var(--sp-3); border-radius: var(--r-pill); border: 1px solid var(--border); font-size: var(--fs-xs); }
+    .oc-version-contains-chip.is-yes { color: var(--status-ok); border-color: var(--status-ok); }
+    .oc-version-contains-chip.is-no { color: var(--danger); border-color: var(--danger); }
+    .oc-version-contains-chip.is-unknown { color: var(--status-warn); border-color: var(--status-warn); }
     .oc-version-actions { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5); min-width: 0; }
     .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
     .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }

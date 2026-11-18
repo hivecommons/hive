@@ -100,6 +100,8 @@ that status is the thing to check before treating a page as current behaviour:
 
 - [Crux: generic tool policy for the MITM proxy](crux-tool-policy.md) — **Design only (proposed).** #14228, child of #14138: a shared operation vocabulary with per-forge adapters, a `relay(<command>)` verdict, deny-by-default for unrecognised operations, and the proxy's evaluation pipeline written down once. It also covers migrating behind a parity test and treating #14211 as the first non-GitHub adapter.
 
+- [One authorization point: decision seam, decision events and scoped credentials](authorization-decision-point.md) - **Design only (proposed).** RFC #18988: inventories today's write-side authorization decisions (proxy mode table and deny rules, push broker checks, relay authorizers, tool-approval CEL rules, mint and installation tokens, audit) with file:line citations, shows where they disagree, and proposes one evaluation seam, CEL narrowing rules for operators, one decision event per decision, fail-closed semantics per effect, and a five-phase shadow-first migration with named parity tests.
+
 - [PR follow-up session resume](pr-follow-up-resume.md) - **shipped (v5, default off).** #9583: ties each agent-opened PR to the CLI session that authored it (a `pkg/turn` envelope per PR) and feeds CI failures, changes-requested reviews, new review-bot threads and comments from people with write access back into that session without `/clear` while it is still live. When the session is gone (a restart or the next regular kick), the follow-up takes the fix-before-new path and the agent's next kick carries a compact handoff note of the PR's original reasoning. Pointers are pruned on merge or close; a live-review soak is the remaining follow-up.
 
 - [Achievement system 2.0](achievements-2.md) — **shipped (v5).** Spektacular-ready spec for #8832: teamwork-first Solo/Dual/Fireteam/Raid tiers, local-model achievements, the “local always wins” mastery tier, dark-pattern guardrails, anti-gaming rules, data sources, and shipped dossier/leaderboard rollout.
@@ -146,6 +148,8 @@ that status is the thing to check before treating a page as current behaviour:
   [#7585](https://github.com/hivecommons/hive/pull/7585), on the spine from
   [#7572](https://github.com/hivecommons/hive/pull/7572); the Events API
   accelerator remains future work.
+
+- [Session taint: remembering what an agent has read](session-taint.md) - **design only / proposed.** RFC [#18987](https://github.com/hivecommons/hive/issues/18987): a Hive-owned, session-level record of what an agent has observed (secret-shaped tool results, private-repository reads, the kick's own private target) and a small deterministic rule set that holds or denies later pushes, comments and PRs against it. Records the threat model, what exists today with file citations, source and sink coverage per path, fail-closed behaviour, the false-positive budget and observe-only exit criteria, an off-by-default phased rollout, what the design cannot catch, and the open questions.
 
 - [Gate-integrity invariants for agent lanes](gate-integrity-invariants.md) — **design only / proposed.** Names the write-gate invariants for agent lanes: no history rewrites on branches a lane did not create, no agent sign-off on other authors' commits, and ACMM demotion for gate manipulation.
 - [Standby contributors: protocol, configuration, state machine, and the suspend rule](standby-contributors.md)

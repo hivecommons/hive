@@ -1,0 +1,42 @@
+{
+  "hives": [
+    {
+      "id": "fixture-hive-1",
+      "name": "fixture-hive-1",
+      "projectName": "Example project",
+      "org": "example-org",
+      "repos": ["example-org/example-repo"],
+      "role": "owner",
+      "online": true,
+      "provStatus": "running",
+      "autoUpgrade": true,
+      "gitHash": "1a2b3c4",
+      "gitBranch": "v5",
+      "imageRef": "ghcr.io/hivecommons/hive:stable",
+      "trackedChannel": "stable",
+      "commitsBehindTarget": 0,
+      "behindTargetRef": ":stable",
+      "behindTargetSHA": "1a2b3c4",
+      "branchTipSHA": "9f8e7d6"
+    },
+    {
+      "id": "fixture-hive-2",
+      "name": "fixture-hive-2",
+      "projectName": "Second example",
+      "org": "example-org",
+      "repos": ["example-org/other-repo"],
+      "role": "owner",
+      "online": true,
+      "provStatus": "running",
+      "autoUpgrade": false,
+      "gitHash": "0c0ffee",
+      "gitBranch": "v5",
+      "imageRef": "ghcr.io/hivecommons/hive:candidate",
+      "trackedChannel": "candidate",
+      "commitsBehindTarget": 4,
+      "behindTargetRef": ":candidate",
+      "behindTargetSHA": "5ca1ab1",
+      "branchTipSHA": "9f8e7d6"
+    }
+  ]
+}

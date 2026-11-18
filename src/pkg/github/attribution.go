@@ -16,9 +16,29 @@ import (
 )
 
 // AttributionTrailerPrefix opens the visible trailer line. Neutral wording,
-// stable and greppable — also the marker AppendTrailer uses to avoid stacking
-// a second trailer onto a retried request.
-const AttributionTrailerPrefix = "— hive:"
+// stable and greppable, also the marker AppendTrailer uses to avoid stacking
+// a second trailer onto a retried request. It is a plain-ASCII "-- " because
+// em-dashes are never allowed in text hive writes.
+const AttributionTrailerPrefix = "-- hive:"
+
+// LegacyAttributionTrailerPrefix is the em-dash spelling of the trailer that
+// hive wrote before the plain-ASCII rule. Readers must keep recognising it:
+// thousands of PRs and issues already carry it. Writers never emit it.
+const LegacyAttributionTrailerPrefix = "\u2014 hive:"
+
+// trailerPrefixes lists every spelling a reader must accept, current first.
+var trailerPrefixes = []string{AttributionTrailerPrefix, LegacyAttributionTrailerPrefix}
+
+// HasAttributionTrailerPrefix reports whether s starts with either spelling of
+// the trailer prefix, and which one.
+func HasAttributionTrailerPrefix(s string) (string, bool) {
+	for _, p := range trailerPrefixes {
+		if strings.HasPrefix(s, p) {
+			return p, true
+		}
+	}
+	return "", false
+}
 
 // Audit action names for creation events, following the audit log's
 // snake_case action convention (cf. "config_governor_health").
@@ -276,7 +296,7 @@ func (m InvocationMeta) pairs() []string {
 
 // Trailer renders the one-line visible trailer, e.g.:
 //
-//	— hive: agent=quality backend=bob model=auto bobshell=1.0.6 session=abc123
+//	-- hive: agent=quality backend=bob model=auto bobshell=1.0.6 session=abc123
 //
 // Unknown fields are omitted; all-unknown metadata renders "" (no trailer at
 // all rather than a bare prefix).
@@ -379,23 +399,23 @@ func AppendTrailer(body string, m InvocationMeta) string {
 }
 
 // HasAttributionLine reports whether body has a line that starts with the
-// `— hive:` prefix: the signature line itself, read the way the repos' monthly
-// agent audit reads it (a line whose first characters are `— hive:`). A body
-// that only mentions `— hive:` in its text has none. Danathar/arch-bootc#473
+// `-- hive:` prefix (or its legacy em-dash spelling): the signature line
+// itself, read the way the repos' monthly agent audit reads it (a line whose
+// first characters are the prefix). A body that only mentions `-- hive:` in its text has none. Danathar/arch-bootc#473
 // and Danathar/atomic-image-builder#640 and #678 described that audit, so
 // their text named the prefix; AppendTrailer, which tested for the prefix
 // anywhere, took that for a signature and opened them unsigned, and the audit
 // then failed on them.
 func HasAttributionLine(body string) bool {
 	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(strings.TrimSuffix(line, "\r"), AttributionTrailerPrefix) {
+		if _, ok := HasAttributionTrailerPrefix(strings.TrimSuffix(line, "\r")); ok {
 			return true
 		}
 	}
 	return false
 }
 
-// HasAttributionTrailer reports whether body carries the visible `— hive:`
+// HasAttributionTrailer reports whether body carries the visible `-- hive:`
 // trailer, i.e. whether the artifact was hive-mediated: opened through the
 // PR-request watcher, stamped by ReconcilePRAttribution, or opened by a
 // contributor relay running on a person's own credentials (whose PRs GitHub
@@ -405,7 +425,7 @@ func HasAttributionLine(body string) bool {
 // (hivecommons/hive#7638). Author login alone cannot make this call: a relay
 // PR has a human author, and a human's hand-written PR has the same one.
 func HasAttributionTrailer(body string) bool {
-	return strings.Contains(body, AttributionTrailerPrefix)
+	return strings.Contains(body, AttributionTrailerPrefix) || strings.Contains(body, LegacyAttributionTrailerPrefix)
 }
 
 // attributionIdentityFooter matches only the terminal block emitted by
@@ -455,7 +475,7 @@ func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, AttributionTrailerPrefix) {
+		if _, ok := HasAttributionTrailerPrefix(line); ok {
 			trailer = line
 		}
 		break
@@ -464,7 +484,8 @@ func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
 		return InvocationMeta{}, false
 	}
 	meta := InvocationMeta{}
-	fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(trailer, AttributionTrailerPrefix)))
+	prefix, _ := HasAttributionTrailerPrefix(trailer)
+	fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(trailer, prefix)))
 	for _, field := range fields {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {

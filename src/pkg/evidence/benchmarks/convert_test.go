@@ -348,3 +348,13 @@ func TestConvertCanonicalisesReportedModel(t *testing.T) {
 		t.Errorf("reviewer model not canonicalised: %+v", r)
 	}
 }
+
+func TestConvertHiveHashOverridesHiveID(t *testing.T) {
+	opts := testOptions()
+	opts.HiveHash = "0123456789abcdef"
+	for _, r := range Convert(fixtureBundles(), opts) {
+		if r.Source.HiveID != "0123456789abcdef" {
+			t.Fatalf("source.hive_id = %q, want the supplied hash", r.Source.HiveID)
+		}
+	}
+}

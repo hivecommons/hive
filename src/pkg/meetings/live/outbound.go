@@ -380,7 +380,41 @@ func (s *session) finish(ctx context.Context, l *line, o outcome) {
 	if l.done != nil {
 		l.done(o.delivered())
 	}
+	if o.delivered() {
+		s.postLinks(ctx, l)
+	}
 	s.save()
+}
+
+// linksChatText is a spoken answer's links as one chat line: a header, then
+// one "label: URL" per line. Empty when there are none.
+func linksChatText(links []betty.Link) string {
+	var b strings.Builder
+	for _, k := range links {
+		if strings.TrimSpace(k.URL) == "" {
+			continue
+		}
+		if b.Len() == 0 {
+			b.WriteString("Links for my answer:")
+		}
+		b.WriteString("\n" + strings.TrimSpace(k.Label) + ": " + strings.TrimSpace(k.URL))
+	}
+	return b.String()
+}
+
+// postLinks posts, once, the links behind an answer the room asked for by
+// voice, in chat, however the answer itself reached the meeting. The
+// answer's own chat copy and the links line carry no links of their own.
+func (s *session) postLinks(ctx context.Context, l *line) {
+	r := l.rep
+	if !r.VoiceWanted || len(r.Links) == 0 || r.Trigger == TriggerLinks || r.Trigger == TriggerChatCopy {
+		return
+	}
+	text := linksChatText(r.Links)
+	if text == "" {
+		return
+	}
+	s.send(ctx, &line{rep: own(TriggerLinks, betty.KindChat, text, betty.SourceFixed), text: text, rate: rateAnswer, quiet: true})
 }
 
 // own builds the record of one of hive's own lines (not the persona's).

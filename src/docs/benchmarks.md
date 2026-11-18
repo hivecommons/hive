@@ -102,6 +102,10 @@ Until the hub publisher is rolled out, the data repo's
 `scripts/backfill-from-cluster.sh` pulls `/data/evidence` straight from spoke
 pods and a nightly workflow rebuilds the index.
 
+## Publishing by hand: `hivectl benchmarks export`
+
+An owner who does not want the hourly push, or wants to review the records first, can run `hivectl benchmarks export` over a copy of `/data/evidence`. It uses the same converter and privacy rules as the endpoint below, identifies the hive only by its hash, names repositories only when listed with `--public-repo`, and with `--by-month` writes the `data/fleet/<hash>/<YYYY-MM>.json` files ready to commit to the data repo. See [hivectl](hivectl.md#benchmarks-export-leaderboard-records-offline).
+
 ## Endpoints
 
 | Endpoint | Where | Auth | Purpose |

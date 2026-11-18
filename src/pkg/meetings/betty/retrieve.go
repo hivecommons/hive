@@ -28,6 +28,9 @@ type Snippet struct {
 	Source string `json:"source"`
 	Title  string `json:"title"`
 	Text   string `json:"text"`
+	// URL is the page the snippet came from, when it has one: shown to the
+	// meeting in chat after a spoken answer, never spoken (links.go).
+	URL string `json:"url,omitempty"`
 }
 
 // Retriever is one fast, in-memory context source. Web search (phase B)

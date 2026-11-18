@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 // ModelRejectedClass is the ProviderErrorClass set when the agent's CLI
@@ -17,7 +19,7 @@ const ModelRejectedClass = "model_rejected"
 
 // ModelRejectedTrigger is the pause trigger used when an agent is parked
 // after modelRejectionParkAfter identical model-rejection failures.
-const ModelRejectedTrigger = "model-rejected"
+const ModelRejectedTrigger = crux.ModelRejectedTrigger
 
 // modelRejectionParkAfter is how many identical rejections of the same model
 // id (one per kicked turn or launch) are tolerated before the agent is paused.

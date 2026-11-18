@@ -240,6 +240,8 @@ func decisionPlainReason(base string) string {
 		return "GitHub requires a review the hive cannot give"
 	case stageengineprstage.AutoMergeReasonMergeRefusedMethod:
 		return "GitHub refused the hive's merge method"
+	case stageengineprstage.ContributorLaneReasonNoLinkedIssue:
+		return "it links no issue, so the hive cannot tell which claim it fulfils and does not trust its author yet"
 	}
 	// The shared decision glossary (pkg/delegatedecision) covers the
 	// reasons the lane shares with the delegate — changes requested,
@@ -251,5 +253,9 @@ func decisionPlainReason(base string) string {
 	if text := humanizeStageReason(base); text != "" {
 		return text
 	}
-	return "the hive parked it"
+	return decisionPlainReasonFallback
 }
+
+// decisionPlainReasonFallback is what decisionPlainReason says of a lane
+// reason it has no words for.
+const decisionPlainReasonFallback = "the hive parked it"

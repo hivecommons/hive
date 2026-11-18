@@ -274,9 +274,17 @@ metadata, not a fabricated last-member PR event.
 
 `native-queue-policy.yml` owns the **new** `native-queue-policy` check:
 
-- On `pull_request_target`, it executes only the trusted base's validator
+- On `pull_request` (earlier runs on `pull_request_target`, which GitHub blocks
+  by default on public repositories from 2026-12-02, are still accepted as
+  replay evidence), it executes only the trusted base's validator
   and waits up to 22.5 minutes for the five existing policy checks on that
   exact PR head. No candidate code is executed; tokens are read-only.
+  `verify PR contents` is accepted from either provider: the `pr-verifier.yml`
+  check run (events `pull_request`, `pull_request_target` or `workflow_dispatch`)
+  or a commit status of that context created by the App bot named in the
+  repository variable `HIVE_PR_GATE_CREATOR_LOGIN`. With the variable unset the
+  hive status provider is not configured and the legacy check run is the only
+  evidence; a status from any other creator is always ignored.
   Label, edit, or unlabel events re-trigger this workflow and serialize behind
   any in-flight run (the concurrency group is per-PR and never cancels
   in-progress); the queued run re-reads mutable PR state after the prior run
@@ -320,6 +328,15 @@ metadata, not a fabricated last-member PR event.
   a `dco` status from any other creator is ignored. Any unmet condition falls
   back to requiring probot `DCO`. The check output names the DCO path taken
   and, on fallback, why.
+- A forward-merge PR (head `sync/vN-to-vM*` or `topup/*`) must land by merge
+  commit. On a group, every member head must already be an ancestor of the
+  synthetic head; a squash or rebase queue never contains the PR's own head, so
+  for these heads the failure names the merge-method violation (#18931) rather
+  than the generic "not contained" error. The narrow DCO exception above does
+  not cover a top-up that carries a history-restoring ours-merge (that commit is
+  not on `v5`); such a PR needs probot `DCO`, so its flagged inherited commits
+  are remediated by their own authors (see
+  [v5-sync-policy.md](v5-sync-policy.md#dco-on-top-up-prs)).
 - Draft/held PRs, changes requested, dismissed approvals and approvals on an
   old head fail closed. A `pull_request_target` run on an already closed or
   merged PR (re-fired by a post-merge label or comment edit) passes as a

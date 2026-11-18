@@ -84,6 +84,15 @@ type ClaimsConfig struct {
 	// a hive agent may claim it anyway (hivecommons/hive#13579). 0 →
 	// DefaultContributorStarvation (4h); negative turns the guard off.
 	ContributorStarvationS int `yaml:"contributor_starvation_s,omitempty" json:"contributor_starvation_s,omitempty"`
+	// ContributorGraceS is how long, in seconds, a freshly filed issue whose
+	// author is an owner/maintainer (author association OWNER, MEMBER or
+	// COLLABORATOR) or this hive's own App/bot is withheld from the
+	// contributor lane, so the owner or the owner's dispatcher can claim it
+	// first (hivecommons/hive#18898; #18866 and #18880 each grew a duplicate
+	// contributor PR inside that window). A person adding `help wanted` after
+	// filing waives it. 0 → DefaultContributorGrace (15m); negative turns the
+	// grace off.
+	ContributorGraceS int `yaml:"contributor_grace_s,omitempty" json:"contributor_grace_s,omitempty"`
 }
 
 // DefaultReclaimCooldown is the reclaim_cooldown_s default.
@@ -97,6 +106,21 @@ const (
 	DefaultContributorFlapCooloff   = 6 * time.Hour
 	DefaultContributorStarvation    = 4 * time.Hour
 )
+
+// DefaultContributorGrace is the contributor_grace_s default.
+const DefaultContributorGrace = 15 * time.Minute
+
+// EffectiveContributorGrace returns contributor_grace_s with the default
+// applied; 0 means the grace is off.
+func (c ClaimsConfig) EffectiveContributorGrace() time.Duration {
+	switch {
+	case c.ContributorGraceS < 0:
+		return 0
+	case c.ContributorGraceS == 0:
+		return DefaultContributorGrace
+	}
+	return time.Duration(c.ContributorGraceS) * time.Second
+}
 
 // EffectiveContributorFlap returns the contributor flap cool-off settings
 // with defaults applied. A threshold of 0 means the cool-off is off.

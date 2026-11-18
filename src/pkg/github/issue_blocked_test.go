@@ -2173,3 +2173,109 @@ func TestReconcileBlockedIssuesPRMarkerNamingAnIssue(t *testing.T) {
 		t.Errorf("a block that still holds was lifted:\n%s", joined)
 	}
 }
+
+func TestBlockedOwnerMarkerRoundTrip(t *testing.T) {
+	m := BlockedOwnerMarker("grant the hub app contents:write on o/other")
+	if m != `<!-- hive:blocked-on kind=owner-action reason="grant the hub app contents:write on o/other" -->` {
+		t.Fatalf("marker = %q", m)
+	}
+	if got, ok := ParseBlockedOwnerMarker("text\n" + m); !ok || got != "grant the hub app contents:write on o/other" {
+		t.Fatalf("parse = %q, %v", got, ok)
+	}
+	if got, ok := ParseBlockedOwnerMarker(BlockedOwnerMarker("")); !ok || got != "" {
+		t.Fatalf("reasonless marker parse = %q, %v", got, ok)
+	}
+	// A reason that could close the comment or break the quoting is folded.
+	if m := BlockedOwnerMarker("a \"b\" --> c\nd"); strings.Count(m, "-->") != 1 || strings.Contains(m, "\n") || strings.Count(m, `"`) != 2 {
+		t.Fatalf("unsafe marker %q", m)
+	}
+	if len([]rune(cleanBlockedOwnerReason(strings.Repeat("x", blockedOwnerReasonMaxRunes*3)))) != blockedOwnerReasonMaxRunes {
+		t.Fatal("reason not capped")
+	}
+	// Neither the PR nor the issue form matches it, and it is a blocked reason.
+	if _, _, ok := ParseBlockedOnMarker(m); ok {
+		t.Fatal("owner marker read as a PR marker")
+	}
+	if _, _, ok := parseBlockedOnIssueMarker(m); ok {
+		t.Fatal("owner marker read as an issue marker")
+	}
+	reason := blockedFilterReason(m)
+	if !IsBlockedIssueReason(reason) {
+		t.Fatalf("reason %q is not a blocked reason", reason)
+	}
+	if _, _, _, ok := parseBlockedOnReason(reason); ok {
+		t.Fatalf("reason %q read as a PR or issue blocker", reason)
+	}
+	if got, ok := ParseBlockedOwnerReason(blockedFilterReason(BlockedOwnerMarker("fix it"))); !ok || got != "fix it" {
+		t.Fatalf("reason round trip = %q, %v", got, ok)
+	}
+	if got, ok := ParseBlockedOwnerReason(blockedFilterReason(BlockedOwnerMarker(""))); !ok || got != "" {
+		t.Fatalf("reasonless round trip = %q, %v", got, ok)
+	}
+	if _, ok := ParseBlockedOwnerReason("blocked"); ok {
+		t.Fatal("bare blocked is not owner-action")
+	}
+}
+
+// A relay applies `blocked` through the hive bot, so the label's actor cannot
+// tell it from a defect; its owner-action marker can. The marker-carrying
+// block survives and the enumeration then reports the reason. (v6 handles a
+// marker-less hive-applied block by asking a human, covered elsewhere.)
+func TestReconcileBlockedIssuesOwnerActionSurvivesMarkerlessLift(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	botLabeled := `[{"event":"labeled","created_at":"2026-10-20T10:05:00Z","label":{"name":"blocked"},"actor":{"login":"` + testBot + `","type":"Bot"}}]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/80/comments":
+			body, _ := json.Marshal("relay\n" + BlockedOwnerMarker("grant the hub app contents:write on o/other") + "\nBlocked: needs an owner action")
+			_, _ = io.WriteString(w, `[{"id":1,"body":`+string(body)+`}]`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/timeline"):
+			_, _ = io.WriteString(w, botLabeled)
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/comments"):
+			_, _ = io.WriteString(w, `{"id":9}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	c.appBotLogin = testBot
+	result := &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{
+		"o/r": {Issues: []RepoWorkIssue{
+			{Repo: "o/r", Number: 80, Labels: []string{"blocked", "help wanted"}, Bucket: workBucketFiltered, Reason: "blocked"},
+			// The marker in the body shows up as the filtered reason.
+			{Repo: "o/r", Number: 82, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: blockedFilterReason(BlockedOwnerMarker("add the secret"))},
+		}},
+	}}
+	res := ReconcileBlockedIssues(context.Background(), c, result, nil)
+	if res.Items != 2 || res.Unblocked != 0 || res.Stripped != 1 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want Items=2 Unblocked=0 Stripped=1 Errors=0", res)
+	}
+	mu.Lock()
+	joined := strings.Join(calls, "\n")
+	mu.Unlock()
+	for _, never := range []string{"DELETE /repos/o/r/issues/80/labels/blocked", "GET /repos/o/r/issues/80/timeline", "DELETE /repos/o/r/issues/82/labels/blocked"} {
+		if strings.Contains(joined, never) {
+			t.Errorf("unexpected call %q in:\n%s", never, joined)
+		}
+	}
+	if !strings.Contains(joined, "DELETE /repos/o/r/issues/80/labels/help wanted") {
+		t.Errorf("help wanted not stripped on the owner-action block:\n%s", joined)
+	}
+	// The next enumeration reads the reason from the sweep's memory.
+	want := "blocked owner-action: grant the hub app contents:write on o/other"
+	if got := c.blockedReasonFor("o/r", 80, ""); got != want {
+		t.Fatalf("enumeration reason = %q, want %q", got, want)
+	}
+	if got := c.blockedReasonFor("o/r", 83, ""); got != blockedFilterReasonPrefix {
+		t.Fatalf("unknown issue reason = %q, want bare blocked", got)
+	}
+}

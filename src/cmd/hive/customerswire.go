@@ -144,7 +144,7 @@ func (c *customersDashboard) Add(v dashboard.CustomersViewer, req dashboard.Cust
 func (c *customersDashboard) Edit(v dashboard.CustomersViewer, id string, req dashboard.CustomerEditRequest) (dashboard.CustomerResult, error) {
 	return customerResult(c.svc.Edit(customersViewer(v), id, customers.Edit{
 		Op: req.Op, Name: req.Name, Notes: req.Notes, Kind: req.Kind, Value: req.Value, Key: req.Key,
-		Tag: req.Tag, State: req.State, GoalID: req.GoalID, Text: req.Text, Level: req.Level,
+		Tag: req.Tag, State: req.State, GoalID: req.GoalID, Text: req.Text, Level: req.Level, Field: req.Field,
 	}))
 }
 

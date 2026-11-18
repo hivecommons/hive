@@ -1049,6 +1049,7 @@
       // Preserve custom prompt input values across re-renders
       const savedInputs = {};
       const focusedId = document.activeElement?.id;
+      const focusSnap = agentFocusSnapshot(document.activeElement);
       el.querySelectorAll('.kick-prompt').forEach(inp => {
         if (inp.value) savedInputs[inp.id] = inp.value;
       });
@@ -1262,6 +1263,9 @@
           const prev = document.getElementById(focusedId);
           if (prev) { try { prev.focus({ preventScroll: true }); } catch (e) { prev.focus(); } }
         }
+        // Controls without an id (the method/model/effort selects) are matched
+        // by agent + action so a replaced <select> keeps focus (#18906).
+        agentFocusRestore(focusSnap);
         // Element-local scrollTop only, so the window never moves. Keep
         // following the tail only when the reader was already at the bottom
         // (or the pane is new); otherwise hold their place in the log.
@@ -1271,6 +1275,77 @@
           if (!(key in tailFollow) || tailFollow[key]) d.scrollTop = d.scrollHeight;
         });
         el.querySelectorAll('[data-agent-resize-y][data-agent-height]').forEach(d => { d.style.height = `${d.dataset.agentHeight}px`; });
+      }
+    }
+
+    // #18906: switching an agent's method/model/effort re-renders its card (and
+    // the detail panel, governor matrix and the model dropdown) while the
+    // operator is looking at that card. The card patches in place, but the
+    // <select> that was just used is replaced (its options changed), which
+    // drops focus, and the rows above/below resize, which moved the page away
+    // from the agent. These helpers hold the reader's place across such a
+    // synchronous re-render: the window scroll is re-pinned to the same card by
+    // key (delta based, so it composes with the scroll stabilizer), and focus
+    // returns to the same control by id or by (agent, action). Card ORDER is
+    // never touched here: a setting change must not re-sort the list.
+    const AGENT_VIEWPORT_MIN_DELTA_PX = 1;
+    function agentCssEscape(v) {
+      return (window.CSS && CSS.escape) ? CSS.escape(String(v)) : String(v).replace(/["\\]/g, '\\$&');
+    }
+    function agentFocusSnapshot(el) {
+      if (!el || el === document.body || typeof el.getAttribute !== 'function') return null;
+      if (el.id) return { id: el.id };
+      const agent = el.getAttribute('data-agent');
+      const action = el.getAttribute('data-change-action') || el.getAttribute('data-action');
+      return (agent && action) ? { agent, action, change: !!el.getAttribute('data-change-action') } : null;
+    }
+    function agentFocusRestore(snap) {
+      if (!snap) return;
+      let el = null;
+      if (snap.id) {
+        el = document.getElementById(snap.id);
+      } else {
+        const attr = snap.change ? 'data-change-action' : 'data-action';
+        el = document.querySelector(`#agents [data-agent="${agentCssEscape(snap.agent)}"][${attr}="${agentCssEscape(snap.action)}"]`);
+      }
+      if (!el || el.disabled || document.activeElement === el) return;
+      try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+    }
+    function agentViewportCapture(agentName, fallbackFocus) {
+      // fallbackFocus: the control focused when the switch began, used only when
+      // focus has since dropped to the document body (a disabled <select> blurs itself).
+      const snap = { scrollX: window.scrollX, scrollY: window.scrollY, key: '', top: 0, focus: agentFocusSnapshot(document.activeElement) || fallbackFocus || null };
+      const grid = document.getElementById('agents');
+      if (!grid) return snap;
+      const viewH = window.innerHeight || 0;
+      const visible = card => { const r = card.getBoundingClientRect(); return r.height > 0 && r.bottom > 0 && (!viewH || r.top < viewH); };
+      const cards = Array.from(grid.querySelectorAll('.agent-card[data-agent]'));
+      const own = cards.find(c => c.getAttribute('data-agent') === agentName);
+      const anchor = (own && visible(own)) ? own : cards.find(visible);
+      if (anchor) { snap.key = anchor.getAttribute('data-agent'); snap.top = anchor.getBoundingClientRect().top; }
+      return snap;
+    }
+    function agentViewportRestore(snap) {
+      if (!snap) return;
+      const grid = document.getElementById('agents');
+      const card = (snap.key && grid) ? grid.querySelector(`.agent-card[data-agent="${agentCssEscape(snap.key)}"]`) : null;
+      if (card && card.getClientRects().length) {
+        const delta = card.getBoundingClientRect().top - snap.top;
+        if (Math.abs(delta) >= AGENT_VIEWPORT_MIN_DELTA_PX) window.scrollBy(0, delta);
+      } else if (window.scrollY !== snap.scrollY) {
+        window.scrollTo(snap.scrollX, snap.scrollY);
+      }
+      agentFocusRestore(snap.focus);
+    }
+    // Run a synchronous re-render fn() so the reader keeps their place. A
+    // second pass on the next frame absorbs layout that settles after paint.
+    function withAgentViewportPreserved(agentName, fn, fallbackFocus) {
+      const snap = agentViewportCapture(agentName, fallbackFocus);
+      try {
+        return fn();
+      } finally {
+        agentViewportRestore(snap);
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => agentViewportRestore(snap));
       }
     }
 

@@ -69,20 +69,25 @@
         if (state === 'active' && !detour && n > 0 && n < 80 && item.rebase && item.rebase.text && !(typeof stageTrackerTrain === 'function' && stageTrackerTrain(item))) word = String(item.rebase.text);
         if (state === 'active' && n === 30 && code && code.state === 'fixing') word = codeCaption;
         const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-        const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;
+        // An issue a person must move (filed for help, held by a hive gate)
+        // reads "Needs human" in the Open column and shows the later stages
+        // as not applicable, never as a stalled strip.
+        const openNeedsHuman = n === 0 && state === 'active' && !detour && typeof stageTrackerOpenNeedsHuman === 'function' && stageTrackerOpenNeedsHuman(item);
+        const openHold = n === 0 && state === 'active' && !openNeedsHuman && mods.indexOf('hold') >= 0;
         // hold is a human instruction, so it wins over blocked when both are present.
-        const openBlocked = n === 0 && state === 'active' && !openHold && mods.indexOf('blocked') >= 0;
+        const openBlocked = n === 0 && state === 'active' && !openNeedsHuman && !openHold && mods.indexOf('blocked') >= 0;
         // A draft PR with no stage is the author's, not the hive's: the
         // Open word says so, muted, and it never tints stale (#14572).
-        const openDraft = n === 0 && state === 'active' && !openHold && !openBlocked && mods.indexOf('draft') >= 0;
+        const openDraft = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && mods.indexOf('draft') >= 0;
         // 000-new: the payload says nothing has placed the item yet and
         // names who moves it next (hivecommons/hive#15094).
-        const openNew = n === 0 && state === 'active' && !openHold && !openBlocked && !openDraft && typeof stageTrackerNewState === 'function' && !!stageTrackerNewState(item);
-        const advisory = n === 0 && state === 'active' && !openHold && !openBlocked && typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
+        const openNew = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && !openDraft && typeof stageTrackerNewState === 'function' && !!stageTrackerNewState(item);
+        const advisory = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
         // An issue waiting on a maintainer's triage says so in the column
         // (hivecommons/hive#15437 read "New" while the caption held the ask).
-        const openTriage = n === 0 && state === 'active' && !openHold && !openBlocked && !openDraft && !advisory && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item);
-        if (openHold) word = 'Open · hold';
+        const openTriage = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && !openDraft && !advisory && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item);
+        if (openNeedsHuman) word = STAGE_TRACKER_NEEDS_HUMAN_WORD;
+        else if (openHold) word = 'Open · hold';
         else if (openBlocked) word = 'Open · blocked';
         else if (advisory) word = advisory.chip || 'Advisory · read & close';
         else if (openDraft) word = 'Draft';
@@ -95,14 +100,14 @@
         let openSince = null;
         if (n === 0 && state === 'active' && !openHold && !advisory && !detour && nowMs) {
           const os = stageTrackerOpenSince(item);
-          if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: !openDraft && nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
+          if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: !openDraft && !openNeedsHuman && nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
         }
         // An issue parked on a blocker whose strip a human's covering PR
         // drives (via_pr): the issue's own column keeps the blocker in
         // view — "Blocked · App lacks workflows permission 👤" — rather
         // than reading as a passed step (hivecommons/docs#612 under #620).
         const blockerNote = state === 'done' && n === STAGE_TRACKER_ISSUE_DECISION_COLUMN && item.via_pr && item.kind === 'issue' && item.blocker && typeof stageTrackerBlockerWord === 'function' && (item.needs_human === true || (typeof stageTrackerItemNeedsHuman === 'function' && stageTrackerItemNeedsHuman(item))) ? stageTrackerBlockerWord(item) : '';
-        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, blockerNote, label: (typeof stageTrackerStageName === 'function' && (stageTrackerStageName(tipStage) || stageTrackerStageName(st))) || tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, draft: openDraft, isNew: openNew && !advisory, advisory: !!advisory, openSince };
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, blockerNote, label: (typeof stageTrackerStageName === 'function' && (stageTrackerStageName(tipStage) || stageTrackerStageName(st))) || tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, needsHuman: openNeedsHuman, na: n > 0 && anchor === 0 && !terminal && typeof stageTrackerOpenNeedsHuman === 'function' && stageTrackerOpenNeedsHuman(item), blocked: openBlocked, draft: openDraft, isNew: openNew && !advisory, advisory: !!advisory, openSince };
       });
       segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
       return segs;
@@ -337,6 +342,18 @@
     // the issue is a note for maintainers, not work — the chevron word is
     // its chip, it never reads stale or "since Nh", and the row action is
     // Close (read). Pure so the fixture tests can lift it by name.
+    // Needs human (one state for "blocked on a person, not on an agent"):
+    // the payload's needs_human_why block names the kind of wait and its
+    // one-line reason. An Open issue with one reads "Needs human" in the
+    // Open column; its later stages are not applicable until a person acts.
+    function stageTrackerNeedsHumanWhyOf(item) {
+      if (!item || item.advisory || !item.needs_human_why || typeof item.needs_human_why !== 'object') return null;
+      return item.needs_human_why;
+    }
+    function stageTrackerOpenNeedsHuman(item) {
+      if (!item || item.kind === 'pr' || (Number(item.stage) || 0) !== 0) return false;
+      return !!stageTrackerNeedsHumanWhyOf(item);
+    }
     function stageTrackerAdvisoryOf(item) {
       if (!item || item.kind === 'pr' || !item.advisory || typeof item.advisory !== 'object') return null;
       return item.advisory;

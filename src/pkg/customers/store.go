@@ -525,6 +525,57 @@ func (s *Store) SetNotes(id, notes string) (Person, error) {
 	})
 }
 
+// SetProfileField sets one profile field by hand. An empty value clears it
+// and keeps the manual mark, so the automatic source does not refill what a
+// person removed.
+func (s *Store) SetProfileField(id, field, value, by string) (Person, error) {
+	value, err := cleanText(value, MaxProfileFieldLen, false)
+	if err != nil {
+		return Person{}, err
+	}
+	return s.changePerson(id, func(p *Person) error {
+		f := p.Profile.Field(field)
+		if f == nil {
+			return fmt.Errorf("%w: unknown profile field", ErrInvalid)
+		}
+		*f = ProfileField{Value: value, Source: SourceManual, At: s.now(), By: by}
+		return nil
+	})
+}
+
+// ResetProfileField hands a field back to the automatic source: it is
+// emptied and the next accept-time fetch may fill it.
+func (s *Store) ResetProfileField(id, field string) (Person, error) {
+	return s.changePerson(id, func(p *Person) error {
+		f := p.Profile.Field(field)
+		if f == nil {
+			return fmt.Errorf("%w: unknown profile field", ErrInvalid)
+		}
+		*f = ProfileField{}
+		return nil
+	})
+}
+
+// ApplyAutoProfile fills profile fields from a public GitHub profile. It
+// only writes a field a person has not set (manual) and only with a
+// non-empty value, and it reports whether anything changed.
+func (s *Store) ApplyAutoProfile(id string, values map[string]string) (Person, bool, error) {
+	changed := false
+	p, err := s.changePerson(id, func(p *Person) error {
+		for _, name := range ProfileFields {
+			f := p.Profile.Field(name)
+			v, err := cleanText(values[name], MaxProfileFieldLen, false)
+			if err != nil || v == "" || f.Source == SourceManual || f.Value == v {
+				continue
+			}
+			*f = ProfileField{Value: v, Source: SourceAuto, Rule: ProfileSourceGitHub, At: s.now()}
+			changed = true
+		}
+		return nil
+	})
+	return p, changed, err
+}
+
 // Forget deletes a customer and leaves a salted-hash tombstone for each of
 // their confirmed identities, so a later sweep does not rebuild them. An
 // unconfirmed claim is not tombstoned: it may be someone else's. The returned

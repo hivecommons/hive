@@ -968,6 +968,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				dependsOn:  dependenciesFromIssueMap(issue),
 				issueClaim: issueClaim,
 				claimed:    claimed,
+				createdAt:  issueCreatedAtFromMap(issue),
 			})
 			// An unchanged refusal was already logged on an earlier pass.
 			if !decision.admitted && !h.admissionSkipChanged(itemKey, decision) {
@@ -994,6 +995,10 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 						"claimed_by", decision.issueClaim.Identity,
 						"claim_expires_at", decision.issueClaim.ExpiresAt.UTC().Format(time.RFC3339),
 						"claim_source", decision.issueClaim.Source)
+				case contributorAdmissionReasonOwnerGrace:
+					// #18898: the owner (or the owner's dispatcher) claims first.
+					h.logger.Info("[contribute-ws] skip: owner grace window",
+						"repo", repo.Full, "number", number, "reason", decision.detail)
 				case contributorAdmissionReasonMergedClaimStale:
 					// #8003: the fix landed days ago and the issue is still
 					// open. Logged as the question it is, so the Operations

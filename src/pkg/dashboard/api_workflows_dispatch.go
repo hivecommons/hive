@@ -77,7 +77,9 @@ func (s *Server) handleWorkflowDispatch(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), workflowDispatchStatus(err))
 		return
 	}
+	s.kickIntend(plan.Agent, kickTriggerWorkflowDispatch, by)
 	if err := s.deps.AgentMgr.SendKick(plan.Agent, plan.Message); err != nil {
+		s.kickRefusedOnError(plan.Agent, kickTriggerWorkflowDispatch, by, err)
 		status := http.StatusBadGateway
 		if errors.Is(err, crux.ErrAgentBusy) {
 			status = http.StatusConflict

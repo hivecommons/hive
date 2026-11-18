@@ -102,6 +102,11 @@ func (sc hiveCountScope) phrase(counted int) string {
 	switch {
 	case sc.Repos == 0:
 		return ""
+	case counted == 0:
+		// Figures exist (restored after a restart, or last-good) but no
+		// repo has been confirmed since: "counted in 0 of 14 repos"
+		// contradicted the numbers beside it (live test).
+		return fmt.Sprintf(", last known figures, not yet confirmed in any of the %d repos", sc.Repos)
 	case counted < sc.Repos:
 		return fmt.Sprintf(", counted in %d of %d repos so far", counted, sc.Repos)
 	case sc.Single != "":
@@ -167,6 +172,9 @@ func (sc hiveCountScope) Guide() string {
 	switch {
 	case sc.Repos == 0:
 		return ""
+	case sc.Partial() && min(sc.IssuesCounted, sc.PRsCounted) == 0:
+		return fmt.Sprintf(" Scope of every count here: the hive has %d repos and none is confirmed yet, so these are last known figures: say \"at least\" and \"last known figures, not yet confirmed in any of the %d repos\", never a total.",
+			sc.Repos, sc.Repos)
 	case sc.Partial():
 		return fmt.Sprintf(" Scope of every count here: the hive has %d repos and not all are counted yet, so say \"at least\" and \"counted in %d of %d repos so far\", never a total.",
 			sc.Repos, min(sc.IssuesCounted, sc.PRsCounted), sc.Repos)

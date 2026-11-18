@@ -990,6 +990,20 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.info("stage labels: operator forced adoption; maintainer policy, admission and presence bypassed", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "by", forcedBy, "online", presence.Online, "policy", policy.maintainerPolicy())
 	} else if c.adoptionRefusedByAdmission(ctx, store, key, obs, requested, now) {
 		return 0, nil
+	} else if cover, covered := c.adoptionCoveringPR(ctx, obs, policy); covered {
+		// Another open PR, a person's or the hive's, covers the issue
+		// (hivecommons/hive#18900): close this one as a duplicate with credit
+		// instead of opening a copy beside it.
+		return c.closeCoveredContributorPR(ctx, store, key, obs, policy, cover, now)
+	} else if claim := c.adoptionHumanClaim(ctx, obs); claim != "" {
+		// An owner or maintainer claimed an issue this PR closes
+		// (hivecommons/hive#18899): the person's claim outranks the
+		// contributor lane, so the hive does not open a copy beside it.
+		// Recorded so the tracker row says why; it lifts the moment the
+		// claim does.
+		store.NoteAdoptionBlocked(key, obs.HeadSHA, stagelabels.AdoptBlockedHumanClaim, now)
+		c.info("stage labels: adoption due but a person holds a claim on the issue; not adopting", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "claim", claim, "requested", requested)
+		return 0, nil
 	} else if held, deferred := c.maintainerHoldsAdoption(ctx, obs, policy, requested, now); held || deferred {
 		if held && !deferred {
 			// Recorded so the activity monitor says why (hivecommons/hive#14524):

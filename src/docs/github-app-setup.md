@@ -232,6 +232,27 @@ described below. To read a specific installation's grants on demand — for
 example to confirm the demo/canary install — press Re-check on that hive and
 read the line above from its logs.
 
+## PR-contents gate posted by the hive
+
+From 2026-12-02 GitHub blocks `pull_request_target` workflows by default in public repositories. A repository whose required `verify PR contents` check comes from such a workflow would stop reporting it, and its PRs would park as `required-check-missing`. The hive can post that gate itself as a **commit status** on the exact PR head, so customers do not have to change anything in their repositories. It needs the Hive App's **Commit statuses: Read and write** grant (the same optional grant the `prow/lgtm` binding uses above).
+
+It is configured in `hive.yaml` only, ships **off**, and needs an explicit repository list:
+
+```yaml
+auto_merge:
+  pr_gate:
+    mode: shadow            # off (default) | shadow | enforce
+    repos: [your-org/your-repo]
+```
+
+- `off` posts nothing and changes nothing.
+- `shadow` posts only `verify PR contents (hive)` (a name no branch rule requires) on each PR head and compares the verdicts with the workflow's own `PR Type`, `PR Issue` and `verify PR contents` results. Nothing a branch rule reads can change.
+- `enforce` is accepted in the file but runs as `shadow` until the grant check and the visible failure paths ship; it never posts the real names yet.
+
+The verdict logic is a Go port of the PR title verifier (`PR Type`, `PR Issue`); both implementations replay one shared golden corpus in CI, so they cannot drift. The poster can write exactly four contexts: `verify PR contents`, `PR Type`, `PR Issue` and `verify PR contents (hive)`. Any other context, `DCO` included, is refused in code before a request is made. Drafts and closed PRs are skipped, the head is re-read from GitHub before posting, and an identical status is never posted twice.
+
+**Verify in shadow.** Open or edit a PR in a listed repository. Within seconds its **Checks** box shows a status named `verify PR contents (hive)` whose description reads `PR Type: success; PR Issue: success` (or `failure`). In the hive log, `pr-gate: status posted` names the repository, head and context, and `pr-gate: comparison with the workflow result agrees` (or `DISAGREES`, logged as a warning) appears when the workflow's check lands on the same head. A `pr-gate: status refused with 403` line means the installation has no Commit statuses write grant: accept the App's pending permission request in the organization settings (see [Adding a permission to an existing App](#adding-a-permission-to-an-existing-app)).
+
 ## Install and configure Hive
 
 1. After creating the app, note the **App ID**, **Client ID**, and app slug from the app page/URL.

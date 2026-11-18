@@ -25,6 +25,7 @@
 # egressmark: deployment_upgrade.go dials the in-cluster Kubernetes API for the hive's own rollout; the dial must carry the forced-egress SO_MARK or nodes without xt_owner redirect it into the MITM proxy (hivecommons/hive#17817).
 # codescanning: GET/PUT /api/config/code-scanning resolve the sweep's own defaults (Policy, severity levels, default exclude list) and read its per-repository Status, so the settings view cannot drift from what the sweep runs; pkg/codescanning is a leaf with no hive imports (hivecommons/hive#18113).
 # agentsmd: the /api/status repo entries carry each repo's last AGENTS.md injection status (size, effective cap, dropped sections) from agentsmd.StatusFor, the read side of the registry the scheduler records into (hivecommons/hive#18495).
+# buildcontains: GET /api/version/contains answers "does the running build contain PR #N" through the same dependency-free ancestry resolver the hub uses (yes/no/unknown, never a guess); a leaf package importing only the standard library (hivecommons/hive#18915).
 github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agent
 github.com/hivecommons/hive/crux/agentsmd
@@ -46,6 +47,7 @@ github.com/hivecommons/hive/pkg/advisory
 github.com/hivecommons/hive/pkg/agentaudit
 github.com/hivecommons/hive/pkg/beads
 github.com/hivecommons/hive/pkg/blocker
+github.com/hivecommons/hive/pkg/buildcontains
 github.com/hivecommons/hive/pkg/celtrigger
 github.com/hivecommons/hive/pkg/claims
 github.com/hivecommons/hive/pkg/classify
@@ -92,6 +94,8 @@ github.com/hivecommons/hive/pkg/maintainernotes
 github.com/hivecommons/hive/pkg/mention
 github.com/hivecommons/hive/pkg/mergelane
 github.com/hivecommons/hive/pkg/modelfamily
+# pkg/netguard: isPrivateURL delegates to the one shared address classifier for server-side fetchers, a stdlib-only leaf package also used by pkg/hub (hivecommons/hive#18991).
+github.com/hivecommons/hive/pkg/netguard
 github.com/hivecommons/hive/pkg/notify
 github.com/hivecommons/hive/pkg/nous
 github.com/hivecommons/hive/pkg/outputschema

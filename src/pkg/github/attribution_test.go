@@ -19,7 +19,7 @@ func TestAttributionTrailer_AllFields(t *testing.T) {
 		Agent: "quality", Backend: "codex", Model: "gpt-5.6-terra", Effort: "high",
 		Tool: "codex", ToolVersion: "0.5.2", Session: "abc123",
 	}
-	want := "— hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2 session=abc123"
+	want := "-- hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2 session=abc123"
 	if got := m.Trailer(); got != want {
 		t.Errorf("Trailer() = %q, want %q", got, want)
 	}
@@ -30,7 +30,7 @@ func TestAttributionTrailer_EffortVariations(t *testing.T) {
 	mWithEffort := InvocationMeta{
 		Agent: "quality", Backend: "agy", Model: "gemini-3.7-flash", Effort: "low", Tool: "agy", ToolVersion: "1.0.0",
 	}
-	wantWithEffort := "— hive: agent=quality backend=agy model=gemini-3.7-flash effort=low agy=1.0.0"
+	wantWithEffort := "-- hive: agent=quality backend=agy model=gemini-3.7-flash effort=low agy=1.0.0"
 	if got := mWithEffort.Trailer(); got != wantWithEffort {
 		t.Errorf("Trailer() with effort = %q, want %q", got, wantWithEffort)
 	}
@@ -39,7 +39,7 @@ func TestAttributionTrailer_EffortVariations(t *testing.T) {
 	mNoEffort := InvocationMeta{
 		Agent: "quality", Backend: "claude", Model: "claude-sonnet-5", Tool: "claude", ToolVersion: "2.0.0",
 	}
-	wantNoEffort := "— hive: agent=quality backend=claude model=claude-sonnet-5 claude=2.0.0"
+	wantNoEffort := "-- hive: agent=quality backend=claude model=claude-sonnet-5 claude=2.0.0"
 	if got := mNoEffort.Trailer(); got != wantNoEffort {
 		t.Errorf("Trailer() without effort = %q, want %q", got, wantNoEffort)
 	}
@@ -56,7 +56,7 @@ func TestAttributionTrailer_AdvisorPair(t *testing.T) {
 		Backend: "omp", Model: "openai-codex/gpt-5.6-terra", Effort: "medium",
 		AdvisorModel: "anthropic/claude-opus-5", AdvisorEffort: "high",
 	}
-	want := "— hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium advisor=anthropic/claude-opus-5 advisor_effort=high"
+	want := "-- hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium advisor=anthropic/claude-opus-5 advisor_effort=high"
 	if got := m.Trailer(); got != want {
 		t.Errorf("Trailer() with advisor = %q, want %q", got, want)
 	}
@@ -66,13 +66,13 @@ func TestAttributionTrailer_AdvisorPair(t *testing.T) {
 	}
 	// An advisor model with no effort omits advisor_effort alone.
 	m.AdvisorEffort = ""
-	if got := m.Trailer(); got != "— hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium advisor=anthropic/claude-opus-5" {
+	if got := m.Trailer(); got != "-- hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium advisor=anthropic/claude-opus-5" {
 		t.Errorf("Trailer() advisor without effort = %q", got)
 	}
 	// No advisor: nothing about one appears — a bare omp reads as any
 	// single-model backend does.
 	bare := InvocationMeta{Backend: "omp", Model: "openai-codex/gpt-5.6-terra", Effort: "medium"}
-	if got := bare.Trailer(); got != "— hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium" {
+	if got := bare.Trailer(); got != "-- hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium" {
 		t.Errorf("Trailer() without advisor = %q", got)
 	}
 	if strings.Contains(bare.Trailer(), "advisor") {
@@ -82,13 +82,13 @@ func TestAttributionTrailer_AdvisorPair(t *testing.T) {
 
 func TestAttributionTrailer_OmitsUnknownFields(t *testing.T) {
 	m := InvocationMeta{Agent: "scanner", Backend: "claude"}
-	want := "— hive: agent=scanner backend=claude"
+	want := "-- hive: agent=scanner backend=claude"
 	if got := m.Trailer(); got != want {
 		t.Errorf("Trailer() = %q, want %q", got, want)
 	}
 	// Version without a tool name gets a generic key rather than being dropped.
 	m = InvocationMeta{Agent: "scanner", ToolVersion: "2.1.0"}
-	if got := m.Trailer(); got != "— hive: agent=scanner tool=2.1.0" {
+	if got := m.Trailer(); got != "-- hive: agent=scanner tool=2.1.0" {
 		t.Errorf("Trailer() = %q", got)
 	}
 }
@@ -101,7 +101,7 @@ func TestAttributionTrailer_AllUnknownRendersEmpty(t *testing.T) {
 
 func TestAttributionTrailer_StandbyPairs(t *testing.T) {
 	m := InvocationMeta{Agent: "quality", Backend: "claude", Model: "opus", StandbyLane: "quality", StandbyTier: "T2"}
-	want := "— hive: agent=quality backend=claude model=opus standby_lane=quality standby_tier=T2"
+	want := "-- hive: agent=quality backend=claude model=opus standby_lane=quality standby_tier=T2"
 	if got := m.Trailer(); got != want {
 		t.Errorf("Trailer() = %q, want %q", got, want)
 	}
@@ -110,7 +110,7 @@ func TestAttributionTrailer_StandbyPairs(t *testing.T) {
 func TestAppendTrailer(t *testing.T) {
 	m := InvocationMeta{Agent: "quality", Backend: "copilot"}
 	got := AppendTrailer("Fixes #1\n", m)
-	want := "Fixes #1\n\n— hive: agent=quality backend=copilot"
+	want := "Fixes #1\n\n-- hive: agent=quality backend=copilot"
 	if got != want {
 		t.Errorf("AppendTrailer = %q, want %q", got, want)
 	}
@@ -277,7 +277,7 @@ func TestPRRequestWatcher_TrailerOnAndAudit(t *testing.T) {
 
 	runAttribWatcherOnce(t, c)
 
-	wantTrailer := "— hive: agent=quality backend=bob model=auto bobshell=1.0.6"
+	wantTrailer := "-- hive: agent=quality backend=bob model=auto bobshell=1.0.6"
 	if !strings.Contains(posted, "Fixes #9") || !strings.Contains(posted, wantTrailer) {
 		t.Errorf("PR body missing trailer: %q", posted)
 	}
@@ -401,7 +401,7 @@ func TestReconcilePRAttribution_AppendsTrailer(t *testing.T) {
 	if editCount != 1 {
 		t.Fatalf("expected 1 edit call, got %d", editCount)
 	}
-	wantTrailer := "— hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2"
+	wantTrailer := "-- hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2"
 	if !strings.Contains(edited, wantTrailer) {
 		t.Errorf("edited body missing trailer: %q", edited)
 	}
@@ -428,7 +428,7 @@ func TestReconcilePRAttribution_AppendsTrailer(t *testing.T) {
 func TestReconcilePRAttribution_IdempotentAlreadyHasTrailer(t *testing.T) {
 	var edited string
 	var editCount int
-	initial := "Fixes #10\n\n— hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2"
+	initial := "Fixes #10\n\n-- hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2"
 	srv := reconcilePRMock(t, initial, &edited, &editCount)
 	defer srv.Close()
 	c := testClient(t, srv.URL)
@@ -548,7 +548,7 @@ func TestAppendRunTrailers(t *testing.T) {
 // --- Run trailers (#8310 reader, #8317 consumer) ---
 
 func TestParseRunTrailers(t *testing.T) {
-	body := "Fixes #42\n\nSome prose that mentions Hive-Run: in passing is not a trailer line.\n\nHive-Run: acme/hive#42\r\nHive-Plan: epic-7\n\n— hive: agent=builder backend=claude"
+	body := "Fixes #42\n\nSome prose that mentions Hive-Run: in passing is not a trailer line.\n\nHive-Run: acme/hive#42\r\nHive-Plan: epic-7\n\n-- hive: agent=builder backend=claude"
 	run, plan := ParseRunTrailers(body)
 	if run != "acme/hive#42" || plan != "epic-7" {
 		t.Fatalf("ParseRunTrailers = (%q, %q), want (acme/hive#42, epic-7)", run, plan)

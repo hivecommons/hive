@@ -451,6 +451,13 @@ type StageTrackerItem struct {
 	// HumanAttention is the current item's actionable human requirement,
 	// separate from an actor/claimant icon or optional delegation action.
 	HumanAttention *StageTrackerHumanAttention `json:"human_attention,omitempty"`
+	// NeedsHumanWhy names the kind of wait and its one-line reason on every
+	// row a person must move (filed-for-help, decision-pending, level-gate,
+	// hive-hold, needs-approval, triage, author, needs-human); NeedsHuman is
+	// true whenever it is set. FiledForHelp is the agent named by the
+	// issue body's filed-for-help marker.
+	NeedsHumanWhy *StageTrackerNeedsHumanWhy `json:"needs_human_why,omitempty"`
+	FiledForHelp  string                     `json:"filed_for_help,omitempty"`
 	// OnHold is true when the item wears a hold pill: paused on purpose,
 	// waiting on nobody.
 	OnHold bool `json:"on_hold,omitempty"`
@@ -488,6 +495,11 @@ type StageTrackerItem struct {
 	// owed something now, the verbs that would act, and what the item
 	// waits on when nothing is owed (stage_tracker_gate.go).
 	HumanGate *StageTrackerHumanGate `json:"human_gate,omitempty"`
+	// MidFlight is what a PR's CURRENT head still waits on (CI running,
+	// review queued or in progress, or activity on file for an earlier
+	// head): while set, no decision is offered on the row and the server's
+	// delegated decision answers no-effect (stage_tracker_midflight.go).
+	MidFlight *StageTrackerMidFlight `json:"mid_flight,omitempty"`
 	// Soak is the soak clock while the lane holds this head for the soak
 	// window, at 060/080/095: when it started, when it ends, the window
 	// and the head it was measured on. The SPA counts it down in place.
@@ -623,9 +635,14 @@ type StageTrackerItem struct {
 	// the block. State comes from the hive's caches only, never a fresh
 	// GitHub call (hivecommons/hive#14952; #14863 wore a bare grey `blocked`).
 	BlockedOnPR *StageTrackerBlockedOnPR `json:"blocked_on_pr,omitempty"`
-	NudgeCount  int                      `json:"nudge_count,omitempty"`
-	LastNudgeAt *time.Time               `json:"last_nudge_at,omitempty"`
-	AdoptedBy   int                      `json:"adopted_by,omitempty"`
+	// BlockedOwnerReason is set on a `blocked` issue whose blocker is a
+	// person's action (`<!-- hive:blocked-on kind=owner-action reason="..." -->`):
+	// the reason line ("needs an owner action: ..."). The row is Needs human
+	// with that line (stage_tracker_blocked_owner.go).
+	BlockedOwnerReason string     `json:"blocked_owner_reason,omitempty"`
+	NudgeCount         int        `json:"nudge_count,omitempty"`
+	LastNudgeAt        *time.Time `json:"last_nudge_at,omitempty"`
+	AdoptedBy          int        `json:"adopted_by,omitempty"`
 	// AdoptedByState qualifies AdoptedBy when the hive's copy is not simply
 	// open (hivecommons/hive#15052): "closed" — the copy was closed without
 	// merging and the hive is re-adopting; "closed-twice" — two copies were
@@ -846,6 +863,8 @@ type StageTrackerLinkedPR struct {
 	MergeTrain           *StageTrackerMergeTrain `json:"merge_train,omitempty"`
 	// HumanGate mirrors the nested PR's own row gate (stage_tracker_gate.go).
 	HumanGate *StageTrackerHumanGate `json:"human_gate,omitempty"`
+	// MidFlight mirrors the nested PR's own row field (stage_tracker_midflight.go).
+	MidFlight *StageTrackerMidFlight `json:"mid_flight,omitempty"`
 	// LeftTrain mirrors the nested PR's own row field so the sub-row's
 	// hover can say it left its train while under repair.
 	LeftTrain *StageTrackerLeftTrain `json:"left_train,omitempty"`

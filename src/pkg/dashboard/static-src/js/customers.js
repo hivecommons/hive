@@ -28,7 +28,8 @@
     const CUSTOMERS_EVIDENCE_SHOWN = 5;
     let _customersData = null;
     let _customersError = '';
-    // The open profile; null shows the list.
+    // The profile open under its row, or null when every row is collapsed. It
+    // survives a refresh: the list is drawn again around it.
     let _customersOpen = null;
     // The open profile's timeline, read from the customer graph
     // (POST /api/graph) a page at a time.
@@ -142,7 +143,7 @@
     // What the panel remembers across a refresh: which disclosures are open
     // (the Suggested group and each "Why is this suggested?"), which groups
     // are expanded, and which picker is showing.
-    let _customersUi = { open: {}, expanded: {}, picker: '', profilePicker: false };
+    let _customersUi = { open: {}, expanded: {}, picker: '', profilePicker: false, focusRow: '' };
 
     function customersInitial(name) {
       const m = /[A-Za-z0-9]/.exec(String(name || ''));
@@ -194,6 +195,28 @@
       return ids.slice(0, CUSTOMERS_SOURCE_PILLS_SHOWN).map(i =>
         '<span class="kc-pill customers-pill customers-source" data-kind="' + escapeHtml(i.kind) + '" data-claimed="' + (i.claimed ? 'true' : 'false') + '" title="' + escapeHtml(label(i)) + '">' + escapeHtml(i.value) + '</span>').join('') +
         customersMorePill(ids.slice(CUSTOMERS_SOURCE_PILLS_SHOWN).map(label));
+    }
+
+    // The optional descriptive fields of a profile, in display order.
+    const CUSTOMERS_PROFILE_FIELDS = [
+      { key: 'real_name', label: 'Real name', max: 120 },
+      { key: 'organization', label: 'Organization', max: 120 },
+      { key: 'location', label: 'Location or country', max: 120 }
+    ];
+
+    function customersProfileValue(p, key) {
+      const f = (p && p.profile && p.profile[key]) || {};
+      return typeof f.value === 'string' ? f.value : '';
+    }
+
+    // customersOrgPill: the organization as one small pill, with where it came
+    // from in its tooltip. Nothing is shown when there is none.
+    function customersOrgPill(p) {
+      const v = customersProfileValue(p, 'organization');
+      if (!v) return '';
+      const f = p.profile.organization;
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : 'From the public GitHub profile';
+      return '<span class="kc-pill customers-pill customers-org" data-source="' + (f.source === 'manual' ? 'manual' : 'auto') + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
 
     // customersOriginPill: where the person came from, in one short word.
@@ -251,9 +274,11 @@
     }
 
     // ── List ──
-    // One line per customer: picture, name, then pills (identities, origin,
-    // tags, goals to review, satisfaction), the date, the actions. On a narrow
-    // screen the pills wrap under the name.
+    // One slim line per customer: chevron, picture, name, then pills
+    // (identities, origin, tags, goals to review, satisfaction) and the date.
+    // The chevron and the row both open the profile in place, under the row;
+    // the open row stays open across a refresh. On a narrow screen the pills
+    // wrap under the name.
     function customersRowHtml(p, isMe) {
       const goals = customersGoalsSplit(p);
       const pill = customersLevelPill(p.satisfaction && p.satisfaction.level);
@@ -264,12 +289,17 @@
       if (pending) extra.push('<span class="kc-pill customers-pill" title="' + pending + ' suggestion' + (pending === 1 ? '' : 's') + ' to review">' + pending + ' to review</span>');
       const updated = customersFormatTime(p.updated_at);
       const name = p.name || p.id || '';
-      return '<div class="customers-card" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '">' +
+      const rid = escapeHtml(isMe ? 'me' : p.id);
+      const open = !!(_customersOpen && (isMe ? _customersOpen.me : (!_customersOpen.me && _customersOpen.id === p.id)));
+      const pid = 'customers-profile-' + String(isMe ? 'me' : p.id).replace(/[^A-Za-z0-9_-]/g, '_');
+      return '<div class="customers-item" data-customer-item="' + rid + '">' +
+        '<div class="customers-card" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '" data-open="' + open + '" data-action="customersToggle" data-arg0="' + rid + '">' +
+        rowChevronHtml('customersToggle', isMe ? 'me' : p.id, open, 'profile of ' + name, pid) +
         customersAvatarHtml(name, customersGithubLogin(p), '', '') +
         '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') +
-        customersSourcePills(p) + customersOriginPill(p, updated) + customersTagPills(p) + extra.join('') + pill + '</div>' +
-        (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') +
-        '<div class="customers-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersOpen" data-arg0="' + (isMe ? 'me' : escapeHtml(p.id)) + '">' + (isMe ? 'My profile' : 'Open') + '</button></div></div>';
+        customersSourcePills(p) + customersOriginPill(p, updated) + customersOrgPill(p) + customersTagPills(p) + extra.join('') + pill + '</div>' +
+        (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') + '</div>' +
+        (open ? '<div class="customers-profile" id="' + pid + '" role="region" aria-label="Profile of ' + escapeHtml(name) + '">' + customersProfileHtml(_customersOpen) + '</div>' : '') + '</div>';
     }
 
     // customersPickerHtml lists the current customers, Me first, for a
@@ -392,14 +422,21 @@
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityAdd">Add identity</button></div></div>';
     }
 
+    // customersTagChipHtml is the toggle form of the row's tag pill: the same
+    // pill classes and tones, as a button. Off is dimmed; a tag hive set carries
+    // a small "auto" marker, a tag a person set carries the dot the row shows.
     function customersTagChipHtml(name, tag) {
       const state = tag ? tag.state : 'off';
       const source = tag ? tag.source : 'auto';
       const on = state === 'on';
-      const why = !tag ? 'Not set' : (source === 'manual' ? 'Set by ' + (tag.by || 'a person') : (tag.rule ? 'Automatic: ' + tag.rule : 'Automatic'));
-      let out = '<button type="button" class="badge customers-chip" data-state="' + state + '" data-source="' + escapeHtml(source) + '" aria-pressed="' + on + '" title="' + escapeHtml(why) + '"' +
-        ' data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="' + (on ? 'off' : 'on') + '">' + escapeHtml(name) + (tag ? ' · ' + (source === 'manual' ? 'manual' : 'auto') : '') + '</button>';
-      if (tag && source === 'manual') {
+      const manual = !!tag && source === 'manual';
+      const isDefault = ((_customersData && _customersData.default_tags) || []).indexOf(name) >= 0;
+      const why = !tag ? 'Not set' : (manual ? 'Set by ' + (tag.by || 'a person') : (tag.rule ? 'Automatic: ' + tag.rule : 'Automatic'));
+      let out = '<button type="button" class="kc-pill customers-pill customers-tag customers-tag-toggle"' + (isDefault ? ' data-tag="' + escapeHtml(name) + '"' : '') + ' data-state="' + state + '" data-source="' + escapeHtml(source) + '" aria-pressed="' + on + '" title="' + escapeHtml(why) + '"' +
+        ' data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="' + (on ? 'off' : 'on') + '">' +
+        (manual ? '<span class="customers-tag-dot" aria-hidden="true"></span>' : '') + escapeHtml(name) +
+        (tag && !manual ? '<span class="customers-tag-auto">auto</span>' : '') + (manual ? '<span class="customers-sr"> (set by hand)</span>' : '') + '</button>';
+      if (manual) {
         out += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="auto" title="Hand this tag back to the automatic rules">Reset to automatic</button>';
       }
       return out;
@@ -453,6 +490,24 @@
         (sg ? '<div class="customers-row" data-satisfaction-suggestion="true"><div class="customers-row-main"><div>Hive suggests ' + customersLevelPill(sg.level) + '</div>' + customersEvidenceHtml(sg.evidence) + '</div>' +
           '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersSatisfactionConfirm">Confirm</button>' +
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersSatisfactionReject">Reject</button></div>' : '') + '</div>';
+    }
+
+    // customersDetailsHtml: real name, organization and location, compact.
+    // Each says whether GitHub or a person set it; a field set by hand has a
+    // button that hands it back to the automatic source. Everyone who can
+    // open the profile may edit these, a read-only user on their own.
+    function customersDetailsHtml(p) {
+      const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
+        const cur = (p.profile && p.profile[f.key]) || {};
+        const manual = cur.source === 'manual';
+        const mark = cur.value ? (manual ? 'set by hand' : 'from GitHub') : (manual ? 'cleared by hand' : 'not known');
+        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
+          '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
+      }).join('');
+      return '<div class="customers-block"><div class="section-label m-0">Details</div>' +
+        '<div class="customers-inline">' + rows + '</div>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>';
     }
 
     function customersNotesHtml(p) {
@@ -581,15 +636,12 @@
         '<div class="customers-inline"><button type="button" class="hv-btn btn-danger btn-sm" data-action="customersForget">Forget this person</button></div></div>';
     }
 
+    // The profile opens under its row, so the row already shows the picture,
+    // the name and the pills; the profile adds only Rename and its sections.
     function customersProfileHtml(p) {
-      const name = p.name || p.id || '';
-      return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersClose">← Customers</button>' +
-        customersAvatarHtml(name, customersGithubLogin(p), '', '') +
-        '<div class="customers-profile-name"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (p.me ? '<span class="badge customers-me">me</span>' : '') + '</div>' +
-        '<div class="customers-chips">' + customersSourcePills(p) + customersOriginPill(p, '') + customersTagPills(p) + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
-        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
+      return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
         '<div class="hive-dialog-error" role="alert" data-customers-field="profile-error"></div>' +
-        customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
+        customersDetailsHtml(p) + customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
         customersActivityHtml(p) + customersGraphHtml(p) + customersMergeHtml(p) + customersNotesHtml(p) + customersForgetHtml(p);
     }
 
@@ -610,10 +662,17 @@
       if (active && host.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
       // A refresh keeps the page where the person was reading.
       const y = window.scrollY;
-      host.innerHTML = _customersOpen ? customersProfileHtml(_customersOpen) : customersListHtml(data);
+      host.innerHTML = customersListHtml(data);
       if (Math.abs(window.scrollY - y) > 1) window.scrollTo(window.scrollX, y);
       const pick = host.querySelector('[data-customers-picker] [data-customers-field="picker-filter"]');
       if (pick && _customersUi.focusPicker) { _customersUi.focusPicker = false; pick.focus(); }
+      // A toggle re-draws the list; the focus goes back to the chevron it came from.
+      if (_customersUi.focusRow) {
+        const want = _customersUi.focusRow;
+        _customersUi.focusRow = '';
+        const chev = Array.prototype.find.call(host.querySelectorAll('.row-chevron'), c => c.getAttribute('data-arg0') === want);
+        if (chev) chev.focus();
+      }
     }
 
     // The open state of each disclosure is kept, so a refresh or an action
@@ -666,7 +725,7 @@
       if (gone && _customersData && _customersData.suggestions) _customersData.suggestions = _customersData.suggestions.filter(x => x && x.id !== gone);
       customersShow();
       await fetchCustomers();
-      if (!_customersOpen) customersFocusSuggestion(next);
+      customersFocusSuggestion(next);
     }
 
     // customersShow replaces the panel after an action, even when a field in
@@ -752,7 +811,17 @@
         _customersOpen = await customersRequest('GET', '/api/customers/' + encodeURIComponent(id));
         customersShow();
         customersTimelineLoad(true);
-      } catch (e) { showToast('Could not open the profile: ' + e.message, 'error'); }
+        const item = document.querySelector('#customers-panel [data-customer-item="' + (_customersOpen && _customersOpen.me ? 'me' : id) + '"]');
+        if (item && typeof item.scrollIntoView === 'function') item.scrollIntoView({ block: 'nearest' });
+      } catch (e) { _customersUi.focusRow = ''; showToast('Could not open the profile: ' + e.message, 'error'); }
+    }
+
+    // customersToggle opens the profile under its row, or folds it when it is
+    // already open. The chevron and the row both call it.
+    function customersToggle(id) {
+      const open = !!(_customersOpen && (id === 'me' ? _customersOpen.me : (!_customersOpen.me && _customersOpen.id === id)));
+      _customersUi.focusRow = id;
+      if (open) customersClose(); else customersOpen(id);
     }
 
     function customersClose() {
@@ -774,7 +843,8 @@
         customersShow();
         if (p.hinted) showToast('That identity already belongs to another customer. Nothing was linked; it is now a "Same person?" question on both profiles.', 'warning');
         else if (done) showToast(done, 'success');
-      } catch (e) { customersProfileError(e.message); }
+        return true;
+      } catch (e) { customersProfileError(e.message); return false; }
     }
 
     async function customersAdd() {
@@ -841,18 +911,25 @@
     // customer (an id, or "me") instead of accepting them as a new one. The
     // server folds it in with the merge, so Undo merge on that customer's
     // profile takes it back.
+    // customersIsOpenTarget: is this customer (an id, or "me") the profile
+    // that is open? A suggestion's picker can name any customer now that the
+    // list and an open profile are on the page together.
+    function customersIsOpenTarget(into) {
+      return !!(_customersOpen && (into === 'me' ? _customersOpen.me : (!_customersOpen.me && _customersOpen.id === into)));
+    }
+
     async function customersAttach(sid, into) {
       const next = customersNeighbour(sid);
       try {
         const p = await customersRequest('POST', '/api/customers/suggestions/' + encodeURIComponent(sid) + '/accept', { into: into });
         showToast('Added to ' + (p.name || 'the customer') + '. Undo it from their profile, under Merge.', 'success');
-        if (_customersOpen) {
+        if (customersIsOpenTarget(into)) {
           _customersOpen = p;
           _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
           customersTimelineLoad(true);
         }
       } catch (e) {
-        if (_customersOpen) customersProfileError(e.message); else showToast('Could not add: ' + e.message, 'error');
+        if (customersIsOpenTarget(into)) customersProfileError(e.message); else showToast('Could not add: ' + e.message, 'error');
       }
       _customersUi.picker = '';
       _customersUi.profilePicker = false;
@@ -910,6 +987,22 @@
 
     function customersSatisfactionReject() { customersEdit({ op: 'satisfaction_reject' }); }
 
+    // customersProfileSave saves the details that changed, one edit each.
+    async function customersProfileSave() {
+      if (!_customersOpen) return;
+      let saved = 0;
+      for (const f of CUSTOMERS_PROFILE_FIELDS) {
+        if (!_customersOpen) return;
+        const next = customersFieldValue('profile-' + f.key);
+        if (next === customersProfileValue(_customersOpen, f.key)) continue;
+        if (!(await customersEdit({ op: 'profile', field: f.key, value: next }))) return;
+        saved++;
+      }
+      if (saved) showToast('Details saved', 'success');
+    }
+
+    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
+
     function customersNotesSave() { customersEdit({ op: 'notes', notes: (customersField('notes') || {}).value || '' }, 'Notes saved'); }
 
     // customersHintAnswer answers a "Same person?" question about the open
@@ -926,7 +1019,7 @@
         await fetchCustomers();
         // The focus moves on to the next question, else back to the profile.
         const host = document.getElementById('customers-panel');
-        const target = host && ((nextHint && host.querySelector('[data-hint="' + nextHint + '"] button')) || host.querySelector('[data-action="customersClose"]'));
+        const target = host && ((nextHint && host.querySelector('[data-hint="' + nextHint + '"] button')) || host.querySelector('.row-chevron[aria-expanded="true"]'));
         if (target) target.focus();
       } catch (e) { customersProfileError(e.message); }
     }

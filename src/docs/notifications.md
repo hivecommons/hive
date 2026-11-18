@@ -641,6 +641,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.attentionDelivery.Post` | `attention` | condition-episode page; live write-back policy rechecked before the write |
 | `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.claimEscalationLookup` | `attention` |  |
+| `main.factCheckSweep.needsHuman` | `attention` | one note per PR when the analysis fact-check loop stops without a passing verdict (#19074) |
 | `main.liveTriageCommenter.CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.noteHeldPRUpdateStopped` | `attention` |  |
 | `main.sweepDependencyBotConflictsWith` | `attention` | asks a person to rebase or retry a dependency-bot PR, or to comment `@dependabot recreate` on a stranded Dependabot PR (the hive never posts that command: Dependabot refuses commands from apps) |
@@ -650,6 +651,7 @@ without a class. Review submissions and review requests are always counted as
 | `worksource.(*githubIssuesSource).AddComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.rfcCoverageForge.CreateComment` | `attention` |  |
 | `main.runEscalationSweep` | `attention` |  |
+| `main.reviewFeedbackSweep.needsHuman` | `attention` |  |
 | `prfollowup.postStaleHeadPushNotes` | `attention` |  |
 | `scheduler.(*Scheduler).judgePriorArt` | `attention` |  |
 | `scheduler.(*Scheduler).parkUnclearIssue` | `attention` |  |

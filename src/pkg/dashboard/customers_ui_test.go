@@ -97,7 +97,7 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersFocusSuggestion", "customersAfterSuggestion", "customersAccept", "customersDismiss", "customersShowMore",
 		"customersPickerOpen", "customersProfilePickerOpen", "customersPickerClose", "customersAttach", "customersHintAnswer",
 		"customersAvatarsOn", "customersGithubLogin", "customersAvatarHtml", "customersMorePill", "customersSourcePills",
-		"customersOriginPill", "customersTagPill", "customersTagPills",
+		"rowChevronHtml", "customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget", "customersOrgPill", "customersProfileValue", "customersDetailsHtml",
 		"graphcanvasRound", "graphcanvasLabel", "graphcanvasLayout", "graphcanvasSvg",
 	} {
 		fns = append(fns, jsFunc(t, html, name))
@@ -105,7 +105,7 @@ func TestCustomersViewGates(t *testing.T) {
 	consts := ""
 	for _, name := range []string{"CUSTOMERS_KIND_LABELS", "CUSTOMERS_ADDABLE_KINDS", "CUSTOMERS_LEVEL_LABELS", "CUSTOMERS_LEVEL_PILL", "CUSTOMERS_ORIGIN_LABELS", "CUSTOMERS_REF_KIND_LABELS",
 		"CUSTOMERS_REF_GH", "CUSTOMERS_REF_WORDS", "CUSTOMERS_GROUP_SHOWN", "CUSTOMERS_SUGGESTED_GROUPS", "CUSTOMERS_OTHER_GROUP", "CUSTOMERS_KIND_ICONS",
-		"CUSTOMERS_ORIGIN_SHORT", "CUSTOMERS_SOURCE_PILLS_SHOWN", "CUSTOMERS_TAG_PILLS_SHOWN", "CUSTOMERS_GITHUB_LOGIN", "CUSTOMERS_AVATAR_PX", "CUSTOMERS_AVATAR_FETCH_PX",
+		"CUSTOMERS_ORIGIN_SHORT", "CUSTOMERS_PROFILE_FIELDS", "CUSTOMERS_SOURCE_PILLS_SHOWN", "CUSTOMERS_TAG_PILLS_SHOWN", "CUSTOMERS_GITHUB_LOGIN", "CUSTOMERS_AVATAR_PX", "CUSTOMERS_AVATAR_FETCH_PX",
 		"GRAPHCANVAS_W", "GRAPHCANVAS_H", "GRAPHCANVAS_RING_ARTEFACT", "GRAPHCANVAS_RING_PEOPLE", "GRAPHCANVAS_MAX_ARTEFACTS", "GRAPHCANVAS_LABEL_MAX"} {
 		consts += jsConstBlock(t, html, name) + "\n"
 	}
@@ -335,7 +335,7 @@ must(!/0 goals/.test(noGoals) && !noGoals.includes('goals'), '"0 goals" is print
 must(customersRowHtml({ id: 'p_z', name: 'Zed', goals: [{ id: 'g', text: 't', state: 'confirmed' }] }, false).includes('1 goal'), 'a confirmed goal is not counted');
 const meRow = customersRowHtml({ id: 'p_me', name: 'clubanderson', origin: 'hive_user' }, true);
 must(meRow.includes('<span class="badge customers-me">me</span>') && !meRow.includes('clubanderson me'), 'me is not a badge: ' + meRow);
-must(meRow.includes('class="customers-avatar"') && meRow.includes('>C</span>') && meRow.includes('customers-row-actions') && meRow.includes('My profile'), 'a row lacks its avatar or its action group');
+must(meRow.includes('class="customers-avatar"') && meRow.includes('>C</span>') && !meRow.includes('customers-row-actions') && !meRow.includes('>My profile<') && !meRow.includes('>Open<'), 'a row lacks its avatar, or still has an Open button');
 must(customersGoalsHtml({ goals: [] }).includes('No goal yet.'), 'the profile does not say "No goal yet"');
 
 // Avatars: a confirmed GitHub login gets the GitHub picture, lazily, with no
@@ -374,9 +374,21 @@ must(!pillRow.includes('>end-user<'), 'an off tag is shown');
 must((pillRow.match(/customers-tag"/g) || []).length === CUSTOMERS_TAG_PILLS_SHOWN && pillRow.includes('customers-more" title="stakeholder">+1</span>'), 'tag overflow: ' + pillRow);
 must(pillRow.includes('customers-source" data-kind="github"') && pillRow.includes('customers-source" data-kind="email"') && pillRow.includes('customers-more" title="Slack: U9">+1</span>') && !pillRow.includes('>U9<') && !pillRow.includes('data-kind="hive_user"') && !pillRow.includes('data-kind="name"'), 'identity pills: ' + pillRow);
 must(pillRow.includes('customers-origin" title="hive user, updated ') && pillRow.includes('>hive user</span>') && pillRow.includes('data-status="ok"') && pillRow.includes('customers-updated'), 'origin, status or date: ' + pillRow);
-must(pillRow.indexOf('customers-source') < pillRow.indexOf('customers-origin') && pillRow.indexOf('customers-origin') < pillRow.indexOf('customers-tag') && pillRow.indexOf('customers-tag') < pillRow.indexOf('data-status="ok"') && pillRow.indexOf('data-status="ok"') < pillRow.indexOf('customers-updated') && pillRow.indexOf('customers-updated') < pillRow.indexOf('customers-row-actions'), 'order');
-must(!/class="customers-row-title"/.test(pillRow) && (pillRow.match(/<div/g) || []).length === 3, 'a list row is more than the card, its main line and the actions: ' + pillRow);
-must(customersProfileHtml(pillPerson).includes('customers-pill customers-tag') && customersProfileHtml(pillPerson).includes('class="customers-avatar"'), 'the profile header lacks pills or the avatar');
+must(pillRow.indexOf('customers-source') < pillRow.indexOf('customers-origin') && pillRow.indexOf('customers-origin') < pillRow.indexOf('customers-tag') && pillRow.indexOf('customers-tag') < pillRow.indexOf('data-status="ok"') && pillRow.indexOf('data-status="ok"') < pillRow.indexOf('customers-updated'), 'order');
+must(!/class="customers-row-title"/.test(pillRow) && (pillRow.match(/<div/g) || []).length === 3, 'a list row is more than its wrapper, the card and its main line: ' + pillRow);
+// Inline profile: the chevron is a real button left of the avatar, the row
+// carries the toggle, and the profile opens under the row while it is open.
+must(/<button type="button" class="row-chevron"[^>]*aria-expanded="false"/.test(pillRow) && pillRow.indexOf('row-chevron') < pillRow.indexOf('class="customers-avatar"') && !pillRow.includes('customers-profile"') && pillRow.includes('data-action="customersToggle" data-arg0="p_pl"'), 'a closed row lacks its chevron button: ' + pillRow);
+_customersOpen = pillPerson;
+const openRow = customersRowHtml(pillPerson, false);
+must(openRow.includes('aria-expanded="true"') && openRow.includes('aria-controls="customers-profile-p_pl"') && openRow.includes('<div class="customers-profile" id="customers-profile-p_pl"') && openRow.indexOf('customers-card') < openRow.indexOf('customers-profile'), 'an open row does not show its profile under it');
+must(!customersRowHtml(person, false).includes('customers-profile"') && !customersRowHtml({ id: 'p_me', name: 'Me' }, true).includes('customers-profile"'), 'another row opened too');
+must(!customersProfileHtml(pillPerson).includes('customersClose') && customersProfileHtml(pillPerson).includes('data-action="customersRename"'), 'the profile still has a back button or lost Rename');
+// The toggle chip in a profile is the row's pill: the same classes, not a second style.
+const chip = customersTagChipHtml('maintainer', pillPerson.tags[0]);
+must(chip.includes('class="kc-pill customers-pill customers-tag customers-tag-toggle" data-tag="maintainer"') && chip.includes('aria-pressed="true"') && chip.includes('<span class="customers-tag-auto">auto</span>') && !chip.includes('customers-chip'), 'the tag toggle is not the row pill: ' + chip);
+must(customersTagChipHtml('end-user', pillPerson.tags[2]).includes('data-state="off"') && customersTagChipHtml('contributor', undefined).includes('aria-pressed="false"'), 'an off tag lost its state');
+_customersOpen = null;
 
 // Groups by source, first five, "Show N more".
 const manySugg = [];
@@ -530,5 +542,28 @@ func TestGovernorFeatures_CustomersAvatarsToggleRoundTrip(t *testing.T) {
 	t.Setenv(config.EnvCustomersAvatarsEnabled, "true")
 	if got := read(); got.Features.Avatars || !got.Features.AvatarsEffective {
 		t.Fatalf("env override = %+v", got.Features)
+	}
+}
+
+// TestCustomersProfileDetailsWiring pins the real name, organization and
+// location fields: the Details block with its auto or by-hand marker, the
+// organization pill on the row, and the profile edit op.
+func TestCustomersProfileDetailsWiring(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`function customersDetailsHtml(p)`,
+		`function customersOrgPill(p)`,
+		`customersOrgPill(p) + customersTagPills(p)`,
+		`data-action="customersProfileSave"`,
+		`data-action="customersProfileReset"`,
+		`{ op: 'profile', field: f.key, value: next }`,
+		`op: 'profile', field: key, state: 'auto'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("Customers UI lacks %q", want)
+		}
+	}
+	if !strings.Contains(html, `customersDetailsHtml(p) + customersGoalsHtml(p)`) {
+		t.Error("the Details block is not part of the profile")
 	}
 }

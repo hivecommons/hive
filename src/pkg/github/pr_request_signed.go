@@ -15,6 +15,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // signedCommitResult reports what reauthorBranchSigned did.
@@ -424,6 +425,7 @@ func (c *Client) createCommitOnBranch(ctx context.Context, nameWithOwner, branch
 	const mutation = `mutation($input: CreateCommitOnBranchInput!) {
   createCommitOnBranch(input: $input) { commit { oid } }
 }`
+	headline, body = prosefilter.SanitizeTitle(headline), prosefilter.Sanitize(body)
 	message := map[string]string{"headline": headline}
 	if body != "" {
 		message["body"] = body

@@ -209,11 +209,10 @@ func parseEvidenceSince(s string, now time.Time) (time.Time, error) {
 	return now.Add(-d), nil
 }
 
-// exportEvidenceRows walks root, folds the readable v1 bundles in repo
-// (empty = all) per PR, keeps the PRs opened at or after cutoff (zero = all
-// time), and returns rows ordered by repo then PR number plus the unreadable
-// count.
-func exportEvidenceRows(root string, cutoff time.Time, repo string) ([]evidenceExportRow, int, error) {
+// readEvidenceBundles walks root and returns every readable schema v1 bundle
+// plus the count of files that were skipped as unreadable or non-v1. A missing
+// root is an empty tree, not an error.
+func readEvidenceBundles(root string) ([]*evidence.Bundle, int, error) {
 	var bundles []*evidence.Bundle
 	unreadable := 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -236,6 +235,18 @@ func exportEvidenceRows(root string, cutoff time.Time, repo string) ([]evidenceE
 	})
 	if err != nil {
 		return nil, unreadable, fmt.Errorf("reading evidence under %s: %w", root, err)
+	}
+	return bundles, unreadable, nil
+}
+
+// exportEvidenceRows walks root, folds the readable v1 bundles in repo
+// (empty = all) per PR, keeps the PRs opened at or after cutoff (zero = all
+// time), and returns rows ordered by repo then PR number plus the unreadable
+// count.
+func exportEvidenceRows(root string, cutoff time.Time, repo string) ([]evidenceExportRow, int, error) {
+	bundles, unreadable, err := readEvidenceBundles(root)
+	if err != nil {
+		return nil, unreadable, err
 	}
 	prs := evidence.FoldPRs(bundles, repo, "")
 	rows := make([]evidenceExportRow, 0, len(prs))

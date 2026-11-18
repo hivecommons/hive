@@ -19,6 +19,12 @@ func TestIsHiveStatusQuestion(t *testing.T) {
 		"what is the board pressure of hive's hive?":                                        true,
 		"Betty, what's the BP right now?":                                                   true,
 		"what does the hive dashboard say about coverage?":                                  true,
+		"are there any issues that need my attention":                                       true,
+		"Betty, are there any issues that need my attention option":                         true,
+		"is anything waiting on me?":                                                        true,
+		"which PRs need my review":                                                          true,
+		"pay attention to the demo":                                                         false,
+		"any issues with the audio":                                                         false,
 		"Betty, how does the cert rotation work?":                                           false,
 		"are we blocked on the design review?":                                              false,
 		"who owns the deploy pipeline?":                                                     false,
@@ -147,5 +153,26 @@ func TestTwoQuestionsInOneLine(t *testing.T) {
 	got := strings.Join(answers, " | ")
 	if !strings.Contains(got, "35 issues") || !strings.Contains(got, "12 PRs") {
 		t.Fatalf("both questions answered: %s", got)
+	}
+}
+
+// "are there any issues that need my attention" was sent to web search and
+// then to a research kick (live Meet test); it is answered from the hive's
+// own state and is kept off both.
+func TestAttentionQuestionStaysOnHiveStatus(t *testing.T) {
+	q := "Betty, are there any issues that need my attention option"
+	h := HiveStatusRetriever{Brief: func(context.Context) (string, error) { return "Awaiting a decision: 2.", nil }}
+	got := h.Retrieve(context.Background(), q, nil, retrieveLimit)
+	if len(got) != 1 || got[0].Source != HiveStatusSource {
+		t.Fatalf("got %+v", got)
+	}
+	if _, blocked := NewWebGuard("Betty", nil, nil).check(q); blocked != webBlockedStatus {
+		t.Fatalf("web guard blocked = %q, want %q", blocked, webBlockedStatus)
+	}
+	if !AnsweredLocally(got) && !hasHiveStatus(got) {
+		t.Fatal("hive status must settle the answer")
+	}
+	if !strings.Contains(answerPrompt(modeAddressed, "Bo", q, got, nil, false), "nothing needs attention right now") {
+		t.Fatal("prompt lacks the nothing-needs-attention instruction")
 	}
 }

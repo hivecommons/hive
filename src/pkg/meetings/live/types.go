@@ -177,7 +177,18 @@ type State struct {
 	Tokens          int                 `json:"tokens"`
 	BudgetExhausted bool                `json:"budget_exhausted,omitempty"`
 	Dropped         int                 `json:"dropped"`
-	LastHeartbeat   *time.Time          `json:"last_heartbeat,omitempty"`
+	// BudgetWarned and BudgetDegraded record that the 80 and 90 percent
+	// steps were taken, so each happens once per meeting even across a
+	// restart (budget.go).
+	BudgetWarned   bool `json:"budget_warned,omitempty"`
+	BudgetDegraded bool `json:"budget_degraded,omitempty"`
+	// BudgetReason is what ran out: "tokens", "intents" or "hive_ceiling".
+	BudgetReason string `json:"budget_reason,omitempty"`
+	// SkippedCount counts every question dropped for budget; Skipped keeps
+	// the first SkippedKept of them with their text for the inbox record.
+	SkippedCount  int               `json:"skipped_count,omitempty"`
+	Skipped       []SkippedQuestion `json:"skipped,omitempty"`
+	LastHeartbeat *time.Time        `json:"last_heartbeat,omitempty"`
 	// SpekMode describes the model Spek reasons with ("model X",
 	// "Anthropic ...", or "rules only, no model configured").
 	SpekMode string `json:"spek_mode,omitempty"`
@@ -220,6 +231,9 @@ const (
 	// EventReach reports a change in whether the bot can reach the meeting
 	// (State.Undelivered, State.Unreachable).
 	EventReach = "reach"
+	// EventBudget reports a budget step (80 percent warning, 90 percent
+	// degrade, exhaustion); Reason is the level.
+	EventBudget = "budget"
 )
 
 // Event is what live-panel observers receive.

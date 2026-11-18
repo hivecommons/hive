@@ -10,6 +10,14 @@ const (
 	// VoiceMaxSentences and VoiceMaxChars bound a spoken answer.
 	VoiceMaxSentences = 2
 	VoiceMaxChars     = 200
+	// VoiceBriefOverChars is the length past which a spoken answer is said
+	// as its first sentence only, with the rest in chat: a CPU voice
+	// synthesizes at about real time, so 200 characters (13 s of speech)
+	// took 14 s to first audio and 25 s to say in a live Meet test, and a
+	// longer one outran the 30 s say deadline.
+	VoiceBriefOverChars = 120
+	// VoiceBriefMaxChars bounds that first sentence.
+	VoiceBriefMaxChars = 110
 )
 
 // Reply triggers added in phase B.
@@ -30,16 +38,28 @@ type phrases struct {
 	// the reason); still is the progress note while it runs long.
 	failed string
 	still  string
+	// unsourced is said instead of a research figure that names no source;
+	// empty falls back to English.
+	unsourced string
+}
+
+// unsourcedText is the not-sure line for an unsourced research figure.
+func (p phrases) unsourcedText() string {
+	if p.unsourced != "" {
+		return p.unsourced
+	}
+	return localized["en"].unsourced
 }
 
 // localized phrases by primary language subtag; English is the fallback.
 var localized = map[string]phrases{
 	"en": {
-		acks:   []string{"Let me check on that.", "One moment.", "Good question, let me look.", "Let me see."},
-		digIn:  "I'll dig into that and report back.",
-		digged: "I dug into %q: %s",
-		failed: "I couldn't look that up: %s.",
-		still:  "Still looking into that; I'll report back as soon as I have it.",
+		acks:      []string{"Let me check on that.", "One moment.", "Good question, let me look.", "Let me see."},
+		digIn:     "I'll dig into that and report back.",
+		digged:    "I dug into %q: %s",
+		failed:    "I couldn't look that up: %s.",
+		still:     "Still looking into that; I'll report back as soon as I have it.",
+		unsourced: "I'm not sure: what I found gave a number but no source for it, so I won't state it.",
 	},
 	"es": {
 		acks:   []string{"Déjame revisarlo.", "Un segundo.", "Buena pregunta, lo miro.", "A ver."},
@@ -138,4 +158,20 @@ func clipSentences(text string, n, maxChars int) string {
 		text = text[:cut]
 	}
 	return clip(text, maxChars)
+}
+
+// BriefVoice is the short spoken form of a long spoken answer: its first
+// sentence, when the answer is over VoiceBriefOverChars and has more
+// sentences, the first fits VoiceBriefMaxChars and no sentence is cut. ok
+// is false when the answer is said as it is.
+func BriefVoice(text string) (string, bool) {
+	text = strings.Join(strings.Fields(text), " ")
+	if len([]rune(text)) <= VoiceBriefOverChars {
+		return text, false
+	}
+	first := clipSentences(text, 1, VoiceBriefMaxChars+1)
+	if first == text || strings.HasSuffix(first, "…") || len([]rune(first)) > VoiceBriefMaxChars {
+		return text, false
+	}
+	return first, true
 }

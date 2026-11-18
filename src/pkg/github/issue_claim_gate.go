@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
 )
@@ -206,6 +207,11 @@ type issueClaimGateResult struct {
 	// filedForHelpBy is the agent named by the issue body's filed-for-help
 	// marker, "" when there is none.
 	filedForHelpBy string
+	// author, association and createdAt describe who filed the issue and
+	// when, for the contributor grace window (hivecommons/hive#18898).
+	author      string
+	association string
+	createdAt   time.Time
 }
 
 // issueClaimGate reads the issue once and applies every label-based refusal.
@@ -225,6 +231,9 @@ func (c *Client) issueClaimGate(ctx context.Context, repo string, number int) (i
 		labels:         extractLabels(issue.Labels),
 		closed:         strings.EqualFold(issue.GetState(), "closed"),
 		filedForHelpBy: ParseFiledForHelpMarker(issue.GetBody()),
+		author:         safeGetLogin(issue.GetUser()),
+		association:    strings.TrimSpace(issue.GetAuthorAssociation()),
+		createdAt:      issue.GetCreatedAt().Time,
 	}
 	labels := res.labels
 	switch {
@@ -271,9 +280,28 @@ func (c *Client) IssueStartBlockReason(ctx context.Context, repo string, number 
 }
 
 func (c *Client) issueDispatchBlockReason(ctx context.Context, repo string, number int, agent string) (string, error) {
+	return c.dispatchBlockReason(ctx, repo, number, agent, false, time.Now())
+}
+
+// IssueContributorDispatchBlockReason is IssueDispatchBlockReason for the
+// contributor lane's fresh claim: it also refuses an issue an owner,
+// maintainer or this hive's own App filed less than
+// governor.claims.contributor_grace ago (ClaimBlockReasonOwnerGracePrefix,
+// hivecommons/hive#18898), so the owner or the owner's dispatcher can claim
+// it first.
+func (c *Client) IssueContributorDispatchBlockReason(ctx context.Context, repo string, number int) (string, error) {
+	return c.dispatchBlockReason(ctx, repo, number, "", true, time.Now())
+}
+
+func (c *Client) dispatchBlockReason(ctx context.Context, repo string, number int, agent string, contributor bool, now time.Time) (string, error) {
 	gate, err := c.issueClaimGate(ctx, repo, number)
 	if err != nil || gate.reason != "" {
 		return gate.reason, err
+	}
+	if contributor {
+		if reason := c.ownerGraceReason(ctx, repo, number, gate, now); reason != "" {
+			return reason, nil
+		}
 	}
 	if agent = strings.TrimSpace(agent); agent != "" && strings.EqualFold(gate.filedForHelpBy, agent) {
 		return ClaimBlockReasonFiledForHelpPrefix + gate.filedForHelpBy + "; it was filed without --claim, so it is open for others — leave it to them unless a maintainer removes the filed-for-help marker", nil

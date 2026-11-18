@@ -8,6 +8,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1208,6 +1209,9 @@ type ClaimLedger struct {
 	// #3768 gave the contribute WS hub a read path into it, so reads now happen
 	// concurrently with the eval cycle's Reconcile/Save writes.
 	mu sync.RWMutex
+	// saveMu serializes Save so concurrent callers cannot interleave their
+	// write-temp/rename steps (hivecommons/hive#18975).
+	saveMu sync.Mutex
 	// claims is keyed by "repo#issue".
 	claims map[string]IssueClaim
 	// history is the churn record (hivecommons/hive#7995): "repo#issue" → PR
@@ -1905,6 +1909,9 @@ func (l *ClaimLedger) Save() error {
 	if l == nil {
 		return nil
 	}
+	// Snapshot under saveMu so an older snapshot cannot rename after a newer one.
+	l.saveMu.Lock()
+	defer l.saveMu.Unlock()
 	data, err := json.MarshalIndent(ledgerFile{
 		SavedAt: l.now(),
 		Claims:  l.Claims(),
@@ -1913,11 +1920,25 @@ func (l *ClaimLedger) Save() error {
 	if err != nil {
 		return fmt.Errorf("marshaling claim ledger: %w", err)
 	}
-	tmp := l.path + ".tmp"
-	if err := os.WriteFile(tmp, data, claimLedgerFileMode); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(l.path), filepath.Base(l.path)+".*.tmp")
+	if err != nil {
 		return fmt.Errorf("writing temp claim ledger: %w", err)
 	}
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, claimLedgerFileMode)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("writing temp claim ledger: %w", werr)
+	}
 	if err := os.Rename(tmp, l.path); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("renaming claim ledger: %w", err)
 	}
 	return nil

@@ -100,6 +100,14 @@ var workflowRunFailureConclusions = map[string]bool{
 	"action_required": true,
 }
 
+const (
+	// workflowRunStartupFailure is the conclusion of a run that never started.
+	workflowRunStartupFailure = "startup_failure"
+	// workflowRunEventPullRequestTarget is the event GitHub blocks by default in
+	// public repositories from 2026-12-02.
+	workflowRunEventPullRequestTarget = "pull_request_target"
+)
+
 // SetMergeRequestPolicy installs the per-repo merge-request policy sets
 // (#6281 compatibility): allowUnprotectedBase is accepted as a deprecated no-op
 // so existing configs keep loading; noCIOK repos have the "unverified" CI verdict
@@ -254,6 +262,20 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		return mergeCIUnverified, ciGateReason("workflow-runs"), fmt.Errorf(mergeRequestCIGateReasonPrefix+"listing workflow runs for %s/%s@%s: %w", owner, name, shortSHA(sha), err)
 	}
 
+	if len(opaque.targetStartupFailures) > 0 {
+		if requiredKnown && st.Green && len(st.MissingRequired) == 0 {
+			// The required context set is known and every required context is
+			// green: a pull_request_target run that could not start (GitHub
+			// blocks the event by default) is not what gates this merge. Log
+			// it instead of turning the verdict red, so repositories that never
+			// touch their workflows keep merging (hivecommons/hive#19038).
+			c.info("merge-request CI gate ignoring zero-job startup_failure pull_request_target run(s): every required context is known and green",
+				"repo", owner+"/"+name, "pr", number, "sha", sha, "runs", opaque.targetStartupFailures)
+		} else {
+			opaque.failed = append(opaque.failed, opaque.targetStartupFailures...)
+		}
+	}
+
 	switch {
 	case len(opaque.failed) > 0:
 		return mergeCIRed, ciGateReason("required status check has not succeeded: workflow run(s) %s concluded failure without producing a job (zero check runs)", strings.Join(opaque.failed, ", ")), nil
@@ -333,8 +355,14 @@ func requiredChecksSortedKeys(set map[string]bool) []string {
 }
 
 type opaqueWorkflowRunResult struct {
-	failed         []string
-	actionRequired []string
+	failed []string
+	// targetStartupFailures lists zero-job `startup_failure` runs of event
+	// `pull_request_target`: the shape GitHub's default block of that event
+	// leaves behind (hivecommons/hive#19038). Not a verdict on the head by
+	// itself; the caller counts them as failed unless every required context
+	// is known and green.
+	targetStartupFailures []string
+	actionRequired        []string
 	// heldButVerified lists action_required runs whose workflow already
 	// succeeded on the same head under another event; reported, not gating.
 	heldButVerified []string
@@ -421,6 +449,7 @@ func (c *Client) opaqueWorkflowRuns(ctx context.Context, owner, repo, sha string
 		}
 		isActionRequired := status == "completed" && conclusion == "action_required"
 		isFailure := status == "completed" && workflowRunFailureConclusions[conclusion] && !isActionRequired
+		isTargetStartup := isFailure && conclusion == workflowRunStartupFailure && run.GetEvent() == workflowRunEventPullRequestTarget
 		isPending := status != "completed"
 		if !isFailure && !isActionRequired && !isPending {
 			continue
@@ -438,6 +467,8 @@ func (c *Client) opaqueWorkflowRuns(ctx context.Context, owner, repo, sha string
 		switch {
 		case isActionRequired:
 			out.actionRequired = append(out.actionRequired, label)
+		case isTargetStartup:
+			out.targetStartupFailures = append(out.targetStartupFailures, label)
 		case isFailure:
 			out.failed = append(out.failed, label)
 		default:

@@ -17,7 +17,7 @@ import (
 // re-filed every cycle, which is how one 1237-line file accumulated six
 // simultaneously-open issues. canonicalIssueSubject strips that qualifier so
 // the stable part of the subject can be compared instead.
-var issueTitleQualifierRE = regexp.MustCompile(`\s+(?:\x{2014}|\x{2013}|--)\s+.*$`)
+var issueTitleQualifierRE = regexp.MustCompile(`\s+(?:\x{2014}|\x{2013}|--|-)\s+.*$`)
 
 // Leading role tag such as "[scanner]" or "[sec-check]".
 var issueTitleRolePrefixRE = regexp.MustCompile(`^\s*\[[^\]\s]+\]\s*`)

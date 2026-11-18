@@ -12,7 +12,7 @@ Choose the task before choosing credentials:
 | Watch agents in a terminal | [Launch and endpoint selection](#launch-and-endpoint-selection) | A real terminal; the TUI uses `HIVE_DASHBOARD_URL`, not `--server`. |
 | Contribute my worker to Hives | [Contributor profiles](#hives--named-profiles-for-the-hives-you-contribute-to) | Local contributor setup; profiles are separate from dashboard login. |
 | Enroll a repository in hosted lite mode | [`enroll`](#enroll--spoke-based-lite-repo-enrollment) | Local `gh` authentication and repository access. |
-| Export or analyze evidence locally | [`evidence`](#evidence--export-stored-bundles) and [benchmarks](#evidence--benchmark) | The inputs named by that command; these are not agent-control procedures. |
+| Export or analyze evidence locally | [`evidence`](#evidence--export-stored-bundles), [benchmarks](#evidence--benchmark) and [leaderboard records](#benchmarks-export-leaderboard-records-offline) | The inputs named by that command; these are not agent-control procedures. |
 | Develop or record the TUI | [Seeing it run](#seeing-it-run) | A source checkout and the developer tools listed there. |
 
 A **spoke** is a Hive connected to a coordinating **hub**. These deployment names do not choose your permissions: the dashboard's authentication policy does. See the [glossary](dashboard-glossary.md#terms) for other terms.
@@ -381,6 +381,20 @@ Columns: `repo`, `pr`, `head_sha`, `bundle_id`, `author_login`, `author_kind`, `
 `created_at`, `updated_at`, `opened_at`. In CSV, lists join with `;` and each verdict is `perspective:verdict:model:backend:confidence`.
 Reporting only: nothing here reads into or alters merge eligibility. See
 [Review evidence bundle](review-evidence.md#exporting).
+
+### benchmarks: export leaderboard records offline
+
+Use this to publish to [hivecommons.dev/benchmarks](https://hivecommons.dev/benchmarks/) by hand: it is the offline twin of the spoke's `GET /api/benchmarks/export` and runs the same converter over a local copy of the evidence tree. No dashboard session or network is needed.
+
+```bash
+hivectl benchmarks export --hive-hash 0123456789abcdef --out records.json      # one JSON array
+hivectl benchmarks export --hive-id my-hive --since 2026-11-01 --by-month ./data/fleet
+hivectl benchmarks export --hive-id my-hive --public-repo my-org/app --public-repo my-org/docs
+```
+
+`--root` (default `/data/evidence`) holds the schema v1 bundles. Exactly one of `--hive-id` (hashed locally and never written out) or `--hive-hash` (the 16 hex digits from Settings > Benchmarks or `/api/status`) is required. Output is a JSON array of records sorted by id, one author record and one reviewer record per PR, matching `schema/result.schema.json` in hivecommons/benchmarks. `--since` and `--until` take an RFC3339 time, `YYYY-MM-DD` or a Go duration and window on the bundle update time. `--by-month DIR` writes `DIR/<hash>/<YYYY-MM>.json` (the `data/fleet/` layout), merging by record id into any file already there and refusing to overwrite a file that is not a record array; commit those files to hivecommons/benchmarks as a pull request.
+
+Privacy matches the HTTP exporter and is anonymized by default: records never carry logins, PR numbers, commit SHAs, prompts, finding text, paths or the hive id. `task.repo` and `source.org` appear only for repositories you list with `--public-repo owner/name`, because offline there is no GitHub client to look visibility up; list only repositories that are public. Differences from the HTTP exporter: bundle signatures are not verified, `cost.basis` is `unknown` (the launch-cost store lives on the running hive), and bundles that predate the `sandbox_runtime` stamp take `--sandbox-runtime` (default `none`). See [Benchmarks](benchmarks.md).
 
 ### evidence — benchmark
 

@@ -22,6 +22,36 @@
     const STAGE_TRACKER_GATE_NO_DECISION = 'No decision pending';
     const STAGE_TRACKER_GATE_APPROVED_BY = 'Approved by @';
     const STAGE_TRACKER_GATE_STALE = ' is not waiting on that decision';
+    /* ---- Mid-flight PRs (hivecommons/hive#18889) --------------------------
+       A decision is a call on the head as it stands. While the CURRENT
+       head's CI is running, its review is queued or unfinished, or the CI /
+       review on file belong to an earlier head (a push restarted both), the
+       call is premature. The server states it per row as `mid_flight`
+       ({kind, text, head, park}); the verbs that rest on the head being
+       checked are drawn disabled with the reason instead of offered. A park
+       recorded for an earlier head does not count. */
+    const STAGE_TRACKER_MIDFLIGHT_VERBS = ['decide:delegate', 'decide:approve', 'decide:direction', 'gate:decide'];
+    // Pure: the server's mid_flight on the row, null when the head is settled.
+    function stageTrackerMidFlightOf(item) {
+      const m = item && item.mid_flight;
+      return m && typeof m === 'object' && String(m.text || '').trim() ? m : null;
+    }
+    // Pure: the reason a decision on the row is not offered yet, '' when it is.
+    function stageTrackerMidFlightWhy(item) {
+      const m = stageTrackerMidFlightOf(item);
+      if (!m) return '';
+      const park = String(m.park || '').trim();
+      return 'Waiting on ' + String(m.text).trim() + ': the decision opens when CI and review finish on the current head' + (park ? ' (parked because ' + park + ')' : '');
+    }
+    // Pure: disables, in place, the options that rest on the head being
+    // checked while the row is mid-flight; the options come back unchanged
+    // otherwise.
+    function stageTrackerMidFlightApply(options, item) {
+      const why = stageTrackerMidFlightWhy(item);
+      if (!why) return options;
+      (options || []).forEach(o => { if (o && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(o.id) >= 0) { o.enabled = false; o.why = why; } });
+      return options;
+    }
     // Pure: the server's gate for the row (`human_gate`), null when absent.
     function stageTrackerServerGate(item) {
       const g = item && item.human_gate;

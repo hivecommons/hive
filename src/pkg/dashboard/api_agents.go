@@ -353,6 +353,7 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		client := &http.Client{
 			Timeout:       importHTTPTimeoutS * 1e9, // nanoseconds
 			CheckRedirect: noRedirectToPrivate,
+			Transport:     ssrfPinnedTransport,
 		}
 		resp, err := client.Get(body.URL)
 		if err != nil {

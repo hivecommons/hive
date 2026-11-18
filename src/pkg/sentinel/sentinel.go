@@ -130,7 +130,7 @@ var (
 	// other punctuation as separators, so "hardcoded" is not "dco" and "gateway"
 	// is not "gate" while "golangci-lint" and "required_status_checks" still count.
 	ciWeakenRemoveRE = regexp.MustCompile(`(?i)(^|[^a-z0-9])(required|coverage|ratchet(s|ing)?|lint(s|er|ers|ing)?|vet|gosec|codeql|trivy|gitleaks|semgrep|verify|gate[sd]?|protect(s|ed|ion|ions)?|signoff|dco|needs:)([^a-z0-9]|$)|--strict`)
-	remoteExecRE     = regexp.MustCompile(`(?i)((curl|wget)[^|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b|eval\s*\(?\s*(base64|atob|Buffer\.from|\$\(\s*(echo|printf)[^)]*base64)|base64\s+(-d|--decode)[^|\n]*\|\s*(sudo\s+)?(ba|z)?sh\b|\bnc\b[^\n]*\s-e\s|/dev/tcp/|\bmkfifo\b[^\n]*\bnc\b|-----BEGIN (RSA |OPENSSH |EC |DSA |PGP )?PRIVATE KEY|\bAKIA[0-9A-Z]{16}\b|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|socket\.socket\([^)]*\)[^\n]*connect|subprocess\.(Popen|call|run)\([^)]*(sh|bash)[^)]*-c|chmod\s+[0-7]*[4-7][0-7]{2,3}\s+/|LD_PRELOAD=)`)
+	remoteExecRE     = regexp.MustCompile(`(?i)((curl|wget)[^|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b|eval\s*\(?\s*(base64|atob|Buffer\.from|\$\(\s*(echo|printf)[^)]*base64)|base64\s+(-d|--decode)[^|\n]*\|\s*(sudo\s+)?(ba|z)?sh\b|\bnc\b[^\n]*\s-e\s|/dev/tcp/|\bmkfifo\b[^\n]*\bnc\b|-----BEGIN (RSA |OPENSSH |EC |DSA |PGP )?PRIVATE KEY|\bAKIA[0-9A-Z]{16}\b|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|socket\.socket\([^)]*\)[^\n]*connect|subprocess\.(Popen|call|run)\([^)\n]*\b(ba|z|da|k)?sh\b[^)\n]*-c\b[^\n]*\b(curl|wget|base64|b64decode)\b|chmod\s+0?[2-7][0-7]{3}\s+/|LD_PRELOAD=)`)
 	fenceRE          = regexp.MustCompile("^\\s*(```|~~~)")
 )
 

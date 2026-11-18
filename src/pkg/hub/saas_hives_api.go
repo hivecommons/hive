@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -2131,6 +2132,13 @@ func (s *HubServer) pushVisibilityToSpoke(id string, isPublic bool) {
 // loopback httptest server; production always uses isPrivateURL.
 var hiveConfigSSRFGuard = isPrivateURL
 
+// hiveConfigTransport dials only an address hiveConfigSSRFGuard passed, so a
+// DashboardURL whose name rebinds after the guard ran is refused at dial time
+// (#18992).
+var hiveConfigTransport = pinnedFetchTransport(func(ctx context.Context, rawURL string) bool {
+	return hiveConfigSSRFGuard(ctx, rawURL)
+})
+
 func (s *HubServer) handleProxyHiveConfig(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("hiveID")
 	caller := s.getAuthUser(r)
@@ -2177,6 +2185,7 @@ func (s *HubServer) handleProxyHiveConfig(w http.ResponseWriter, r *http.Request
 		// Do NOT follow redirects — a 30x could send us from a public
 		// DashboardURL to an internal host, re-opening the SSRF the guard closes.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Transport:     hiveConfigTransport,
 	}
 	resp, err := client.Get(strings.TrimRight(dashURL, "/") + "/api/config/download")
 	if err != nil {

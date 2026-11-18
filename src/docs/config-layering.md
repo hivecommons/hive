@@ -109,6 +109,25 @@ rational response to having one road, not duplicated effort.
 > and only ever *adds*, so a deleted agent reappears on the next config reload.
 > Tracked in #2361.
 
+### `config.env` keys
+
+`/etc/hive/config.env` (or a `config.env` next to the loaded `hive.yaml`) is a
+flat `KEY=VALUE` file. It is applied on top of whichever file the hive boots
+from, including `/data/hive.yaml.runtime`, so it is the cluster admin's way to
+pin these fields on a running Kubernetes hive. Only these keys are read:
+
+| Key | Field |
+|---|---|
+| `PROJECT_ORG` | `project.org` |
+| `PROJECT_NAME` | `project.name` |
+| `PROJECT_REPOS` | `project.repos` (space-separated) |
+| `PROJECT_AI_AUTHOR` | `project.ai_author` |
+| `PROJECT_PRIMARY_REPO` | `project.primary_repo` |
+| `PROJECT_OPEN_PRS` | `project.open_prs` (`true` / `1` / `yes`) |
+| `AGENTS_ENABLED` | enables the named agents (space-separated) |
+| `DASHBOARD_PORT` | `dashboard.port` |
+| `DASHBOARD_AUTH_TOKEN` / `HIVE_DASHBOARD_TOKEN` | `dashboard.auth_token` |
+
 ## `hive.yaml.runtime` — an input everywhere, seeded from the ConfigMap on Kubernetes
 
 This file was called `hive.yaml.bak` until the rename. The old name implied

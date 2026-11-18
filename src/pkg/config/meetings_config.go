@@ -126,6 +126,7 @@ const (
 	MeetingsTTSTokenFileEnv        = "HIVE_MEETINGS_TTS_TOKEN_FILE"
 	MeetingsDeliveryEnv            = "HIVE_MEETINGS_DELIVERY"
 	MeetingsVoiceOnAddressEnv      = "HIVE_MEETINGS_VOICE_ON_ADDRESS"
+	MeetingsListeningToneEnv       = "HIVE_MEETINGS_LISTENING_TONE"
 	MeetingsBotNameEnv             = "HIVE_MEETINGS_BOT_NAME"
 	MeetingsInvitePolicyEnv        = "HIVE_MEETINGS_INVITE_POLICY"
 	MeetingsResearchPoolSizeEnv    = "HIVE_MEETINGS_RESEARCH_POOL_SIZE"
@@ -173,6 +174,10 @@ type MeetingsConfig struct {
 	// VoiceOnAddress lets hive speak when the meeting addresses it by name
 	// and the meeting has voice enabled. Nil defaults true.
 	VoiceOnAddress *bool `yaml:"voice_on_address,omitempty" json:"voice_on_address,omitempty"`
+	// ListeningTone plays a soft two-note chime when Betty was addressed
+	// by voice and is about to answer. Nil defaults true; the only setting,
+	// there are no volume or sound options.
+	ListeningTone *bool `yaml:"listening_tone,omitempty" json:"listening_tone,omitempty"`
 	// BotName is the display name the bot joins with.
 	BotName string `yaml:"bot_name,omitempty" json:"bot_name,omitempty"`
 	// InvitePolicy is who may send hive to a meeting. Only "owner".
@@ -571,6 +576,15 @@ func (m MeetingsConfig) VoiceOnAddressEnabled() bool {
 		return v
 	}
 	return m.VoiceOnAddress == nil || *m.VoiceOnAddress
+}
+
+// ListeningToneEnabled reports whether Betty plays the listening tone when
+// she was addressed and will answer aloud. Default true.
+func (m MeetingsConfig) ListeningToneEnabled() bool {
+	if v, ok := parseBoolEnv(MeetingsListeningToneEnv); ok {
+		return v
+	}
+	return m.ListeningTone == nil || *m.ListeningTone
 }
 
 // BotNameOrDefault returns the bot display name: meetings.bot_name (env

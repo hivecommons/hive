@@ -21,8 +21,8 @@ func TestPullRequestAttributionRecordCopiesSupersedes(t *testing.T) {
 		body string
 		want int
 	}{
-		{name: "declares", body: "Re-authored.\n\nSupersedes #41\n\n— hive: agent=scanner backend=bob model=auto", want: 41},
-		{name: "none", body: "done\n\n— hive: agent=scanner backend=bob model=auto", want: 0},
+		{name: "declares", body: "Re-authored.\n\nSupersedes #41\n\n-- hive: agent=scanner backend=bob model=auto", want: 41},
+		{name: "none", body: "done\n\n-- hive: agent=scanner backend=bob model=auto", want: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pr := &gh.PullRequest{Number: gh.Ptr(42), Body: gh.Ptr(tc.body), State: gh.Ptr("closed")}
@@ -44,7 +44,7 @@ func TestFetchAttributedClosedPRsRecordsSupersedesWithoutExtraCalls(t *testing.T
 			t.Fatalf("unexpected request: %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
 		superseder := attributedClosedPR(7, now.Add(-time.Hour))
-		superseder["body"] = "Takes over the work.\n\nSupersedes #5\n\n— hive: agent=scanner backend=bob model=auto"
+		superseder["body"] = "Takes over the work.\n\nSupersedes #5\n\n-- hive: agent=scanner backend=bob model=auto"
 		writeJSON(t, w, []map[string]any{superseder, attributedClosedPR(5, now.Add(-2*time.Hour))})
 	}))
 	defer srv.Close()

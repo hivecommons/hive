@@ -34,12 +34,17 @@ const (
 	// (or has picked the rework up), so the PR goes back to them with the
 	// fix list instead of being adopted.
 	RuleReturnToContributor = "return-to-contributor"
+	// RuleCoveredByOtherPR: another open PR from a person or the hive (or a
+	// person's or the hive's claim on the issue) already covers the issue,
+	// so the contributor PR is closed as a duplicate with credit, never
+	// adopted (hivecommons/hive#18900).
+	RuleCoveredByOtherPR = "covered-by-other-pr"
 	// RuleContributorOffline: the last rung — adopt in supersede mode.
 	RuleContributorOffline = "contributor-offline"
 )
 
 // ladderRungs is the evaluation order.
-var ladderRungs = []string{RuleAlreadyFixed, RuleMergeableAsIs, RuleRebaseThenMerge, RuleReturnToContributor, RuleContributorOffline}
+var ladderRungs = []string{RuleAlreadyFixed, RuleMergeableAsIs, RuleRebaseThenMerge, RuleReturnToContributor, RuleCoveredByOtherPR, RuleContributorOffline}
 
 // AuthorTooling says what the PR's author drives: a hive, a clanker (a
 // relay), a person pushing by hand, or unknown. It picks the words a
@@ -227,6 +232,15 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 	}
 	skip(RuleReturnToContributor, in.OfflineWording())
 
+	// Rung 5a — covered by another PR or claim. Adoption takes over work a
+	// contributor abandoned; work a person or the hive already has in flight
+	// is not abandoned. "Green first, then earlier-opened" only breaks ties
+	// between equal-trust PRs, so it never lets a contributor copy win over a
+	// person's or the hive's PR (hivecommons/hive#18900).
+	if d, why, ok := decideCoveredByOtherPR(in, ref); ok {
+		return out(d, why)
+	}
+
 	// Rung 5 — adopt-supersede, the last resort. Reaching it means the
 	// author is NOT reachable (rung 4 returned the PR otherwise), and for
 	// an unreachable author a "back in your court" nudge asks for work
@@ -258,6 +272,59 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 		return out(fixThenMerge(fixList(in)), cr+" still stand; the direction names them")
 	}
 	return Decision{}, false
+}
+
+// coveringCompetitor is the open competing PR that outranks a contributor PR:
+// a person's or the hive's, and not one the merge queue holds as this PR's own
+// duplicate.
+func coveringCompetitor(in Input) (CompetingPR, bool) {
+	for _, other := range in.Competing {
+		if other.HeldDuplicate || other.Number <= 0 {
+			continue
+		}
+		if other.HiveAuthored || other.PersonAuthored {
+			return other, true
+		}
+	}
+	return CompetingPR{}, false
+}
+
+// decideCoveredByOtherPR is rung 5a: with a person's or the hive's open PR
+// covering the same issue the contributor PR is closed as a duplicate of it,
+// with credit; with only a person's or the hive's claim on the issue (no PR
+// yet) it is not adopted and the decision names the holder. A paused repo
+// gets the recommendation instead of a write.
+func decideCoveredByOtherPR(in Input, ref string) (Decision, string, bool) {
+	if other, ok := coveringCompetitor(in); ok {
+		winner := "#" + itoa(other.Number)
+		whose := "a person's"
+		if other.HiveAuthored && !other.PersonAuthored {
+			whose = "the hive's"
+		}
+		text := fmt.Sprintf("superseded by %s with credit: %s PR already covers the same issue, so %s is closed as a duplicate instead of being adopted", winner, whose, ref)
+		rationale := fmt.Sprintf("%s is %s open PR for the same issue; adoption takes over abandoned work and this is not abandoned, so %s closes as a duplicate with credit and a contributor copy never wins over it (hivecommons/hive#18900)", winner, whose, ref)
+		why := "covered by " + whose + " open PR " + winner + "; closed as a duplicate, not adopted"
+		if in.RepoPaused {
+			return recommendOnly(RuleCoveredByOtherPR, rationale+"; the repo is paused, so the hive only recommends", "close "+ref+" as a duplicate of "+winner), why + " (repo paused: recommend only)", true
+		}
+		note := fmt.Sprintf("Thank you for this PR. %s PR %s already covers the same issue and the hive keeps one PR per issue, so it is closing this one as a duplicate instead of adopting it. Your work is credited on the issue.", strings.ToUpper(whose[:1])+whose[1:], winner)
+		return Decision{
+			Verdict: VerdictCloseSuperseded, Rule: RuleCoveredByOtherPR, Text: text,
+			Rationale: rationale,
+			Actions:   []Action{{Kind: ActionCloseDuplicate, Target: other.Number, Text: note}},
+		}, why, true
+	}
+	if holder := strings.TrimSpace(in.IssueClaimHolder); holder != "" {
+		issue := "the issue"
+		if in.IssueClaimIssue > 0 {
+			issue = "issue #" + itoa(in.IssueClaimIssue)
+		}
+		why := holder + " holds a claim on " + issue + "; not adopted unless they release it"
+		return recommendOnly(RuleCoveredByOtherPR,
+			fmt.Sprintf("%s holds a live claim on %s, so the hive does not adopt %s over it", holder, issue, ref),
+			fmt.Sprintf("leave %s open: %s has claimed %s; ask them to release the claim, or close %s", ref, holder, issue, ref)), why, true
+	}
+	return Decision{}, "", false
 }
 
 // ContributorReachable reports whether the author's clanker or hive is

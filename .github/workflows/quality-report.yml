@@ -1,0 +1,95 @@
+name: Quality report
+
+# Publishes the machine-readable quality report that feeds the README badges
+# (#18979). The report is generated from real runs and published data files
+# (see src/docs/quality-report.md) and written to the single-commit
+# `quality-badges` branch, where the README badges read it through the
+# shields.io endpoint schema. No secret is used beyond the default token.
+#
+# Fail soft by design: this workflow is not a required check, every job and the
+# publish step are continue-on-error, and an entry whose source cannot be read
+# renders "unknown" instead of failing anything.
+
+on:
+  schedule:
+    # Off the top of the hour; no other workflow uses :53.
+    - cron: '53 */6 * * *'
+  # Schedule delivery is starved (see coverage-hourly.yml), so also refresh
+  # whenever a coverage measurement completes.
+  workflow_run:
+    workflows: ["Coverage Hourly"]
+    types: [completed]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/quality-report.yml'
+      - '.github/scripts/quality-report.py'
+      - '.github/scripts/test-quality-report.py'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: quality-report-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'publish' }}
+  cancel-in-progress: false
+
+env:
+  # Branch the badge files are force-published to (single commit, no history).
+  BADGE_BRANCH: quality-badges
+  # Optional public JSON exposing overall_level and last_evaluated_at for the
+  # ACMM badge. Unset renders "unknown".
+  QUALITY_ACMM_URL: ${{ vars.QUALITY_ACMM_URL }}
+
+jobs:
+  selftest:
+    # Dry run for changes to this workflow: offline unit tests, then a real
+    # generation with the read-only token whose output is only summarised.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 .github/scripts/test-quality-report.py
+      - name: Generate (dry run, nothing is published)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/quality-report.py --out "$RUNNER_TEMP/quality-badges"
+
+  publish-report:
+    if: >-
+      github.event_name != 'pull_request' && github.repository == 'hivecommons/hive' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == 'v5')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v5
+      - name: Generate the report
+        id: generate
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/quality-report.py --out "$RUNNER_TEMP/quality-badges"
+      - name: Publish to the badge branch
+        if: steps.generate.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan quality-badges-publish
+          git rm -rf --quiet .
+          cp "$RUNNER_TEMP"/quality-badges/*.json .
+          git add -- ./*.json
+          git commit -s --quiet -m "Quality report $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push --force origin "HEAD:refs/heads/${BADGE_BRANCH}"

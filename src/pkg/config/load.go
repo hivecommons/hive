@@ -393,6 +393,9 @@ func (c *Config) applyConfigEnv(path string) error {
 	if v, ok := env["PROJECT_ORG"]; ok {
 		c.Project.Org = v
 	}
+	if v, ok := env["PROJECT_NAME"]; ok {
+		c.Project.Name = v
+	}
 	if v, ok := env["PROJECT_REPOS"]; ok {
 		c.Project.Repos = strings.Fields(v)
 	}

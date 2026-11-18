@@ -1738,7 +1738,8 @@ if [[ -n "$AGENT_NAME" ]]; then
     fi
   }
 
-  # _keep_pr_attribution keeps the `— hive: agent=… backend=… model=…` line on
+  # _keep_pr_attribution keeps the `-- hive: agent=… backend=… model=…` line (or
+  # its legacy em-dash spelling) on
   # a body edit of the hive's OWN PR. The PR-request watcher appends that line
   # when it opens the PR, and `gh pr edit --body` replaces the whole body, so
   # an agent that rewrote its description a few seconds later deleted it
@@ -1767,16 +1768,17 @@ if [[ -n "$AGENT_NAME" ]]; then
       esac
     done
     ((n == 1)) || return 0
-    # Only a line that starts with `— hive:` is a signature, as the repos'
-    # agent audit reads it; a new body that merely mentions the prefix in its
-    # text (a PR about that audit) still gets the PR's line back.
-    [[ $'\n'"$val" == *$'\n— hive:'* ]] && return 0
+    # Only a line that starts with `-- hive:` (or the legacy em-dash `hive:`
+    # prefix) is a signature, as the repos' agent audit reads it; a new body
+    # that merely mentions the prefix in its text (a PR about that audit)
+    # still gets the PR's line back.
+    [[ $'\n'"$val" == *$'\n-- hive:'* || $'\n'"$val" == *$'\n— hive:'* ]] && return 0
     _extract_item
     local view_args=(pr view)
     [[ -n "$item_num" ]] && view_args+=("$item_num")
     [[ -n "$item_repo" ]] && view_args+=(--repo "$item_repo")
     old="$("$REAL_GH" "${view_args[@]}" --json body --jq '.body' 2>/dev/null)" || return 0
-    trailer="$(printf '%s\n' "$old" | tr -d '\r' | sed -n 's/^[[:space:]]*\(— hive: [^[:space:]].*\)$/\1/p' | tail -n 1)"
+    trailer="$(printf '%s\n' "$old" | tr -d '\r' | sed -n -e 's/^[[:space:]]*\(-- hive: [^[:space:]].*\)$/\1/p' -e 's/^[[:space:]]*\(— hive: [^[:space:]].*\)$/\1/p' | tail -n 1)"
     trailer="${trailer%"${trailer##*[![:space:]]}"}"
     [[ -n "$trailer" ]] || return 0
     val="${val%"${val##*[![:space:]]}"}"

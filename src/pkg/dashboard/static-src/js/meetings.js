@@ -10,7 +10,15 @@
     const MEETINGS_LIVE_STATES = { requested: 1, joining: 1, lobby: 1, live: 1 };
     let _meetingsList = null;
     let _meetingsError = '';
+    let _meetingsTrusted = [];
+    // Budget meters by meeting id and the hive-wide ceilings, from GET /api/meetings/budget.
+    let _meetingsBudget = {};
+    let _meetingsLedger = null;
+    // Levels the meter badges (the server's budget steps).
+    const MEETINGS_BUDGET_BADGES = { warning: 'budget 80%', degraded: 'budget 90%: shorter answers', exhausted: 'budget exhausted' };
     let _meetingsOpen = null; // { id, ws, meeting, lines, partial, intents, live }
+    // The row whose chevron has the focus after a toggle re-draws the list.
+    let _meetingsFocusRow = '';
     // Ended meetings are inbox items too (source "meeting").
     if (typeof INBOX_SOURCE_ICONS === 'object' && !INBOX_SOURCE_ICONS.meeting) INBOX_SOURCE_ICONS.meeting = '🎙';
 
@@ -54,13 +62,75 @@
         const r = await fetch('/api/meetings');
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { _meetingsList = []; _meetingsError = data.error || ('HTTP ' + r.status); }
-        else { _meetingsList = data.meetings || []; _meetingsError = ''; _meetingsEmailIn = data.email_in || null; }
+        else { _meetingsList = data.meetings || []; _meetingsError = ''; _meetingsEmailIn = data.email_in || null; _meetingsTrusted = data.trusted_requesters || []; }
       } catch (e) {
         // Keep the last list; say the hive is unreachable instead of leaving "Loading meetings…".
         if (_meetingsList === null) _meetingsList = [];
         _meetingsError = 'Meetings are unreachable right now; retrying.';
       }
+      await fetchMeetingsBudget();
       renderMeetings();
+    }
+
+    // The meter is numbers only; a failure leaves the last one.
+    async function fetchMeetingsBudget() {
+      try {
+        const r = await fetch('/api/meetings/budget');
+        if (!r.ok) return;
+        const data = await r.json();
+        const byId = {};
+        (data.meetings || []).forEach(b => { byId[b.meeting_id] = b; });
+        _meetingsBudget = byId;
+        _meetingsLedger = data.ledger || null;
+      } catch (e) { /* transient */ }
+    }
+
+    // meetingsBudgetText is the meter's text alternative.
+    function meetingsBudgetText(b) {
+      return (b.percent || 0) + '% of the meeting budget used';
+    }
+
+    function meetingsBudgetHtml(b) {
+      if (!b || !b.token_budget) return '';
+      const text = meetingsBudgetText(b);
+      const badge = MEETINGS_BUDGET_BADGES[b.level];
+      const detail = (b.tokens_used || 0) + ' of ' + b.token_budget + ' tokens · ' + (b.intents_answered || 0) + ' answered' +
+        (b.skipped ? ' · ' + b.skipped + ' question' + (b.skipped === 1 ? '' : 's') + ' not answered' : '');
+      return '<div class="meetings-budget" data-level="' + escapeHtml(b.level || 'ok') + '">' +
+        '<div class="meetings-budget-line"><span class="meetings-budget-text">' + escapeHtml(text) + '</span>' +
+        '<span class="meetings-budget-num">' + escapeHtml(detail) + '</span>' +
+        (badge ? '<span class="kc-pill" data-status="' + (b.level === 'warning' ? 'syncing' : 'error') + '">' + escapeHtml(badge) + '</span>' : '') + '</div>' +
+        '<meter class="meetings-meter" min="0" max="100" low="79" high="89" optimum="0" value="' + Number(b.percent || 0) + '" aria-label="' + escapeHtml(text) + '" title="' + escapeHtml(text) + '">' + escapeHtml(text) + '</meter>' +
+        '</div>';
+    }
+
+    // The ceilings hive-wide, for the live view.
+    function meetingsLedgerText(l) {
+      if (!l) return '';
+      const part = (name, used, ceil) => ceil ? name + ' ' + used + ' of ' + ceil + ' tokens' : '';
+      return [part('hour', l.hourly_used || 0, l.hourly_ceiling), part('day', l.daily_used || 0, l.daily_ceiling)].filter(Boolean).join(' · ');
+    }
+
+    // meetingsSpekNoticeHtml shows the server's Spektacular status as one calm
+    // notice: the text before the first colon is the headline, the rest is the
+    // explanation, and a repo reference (hivecommons/name#123) is a link to
+    // that issue.
+    function meetingsSpekNoticeHtml(text) {
+      const raw = String(text || '');
+      const cut = raw.indexOf(': ');
+      const title = cut > 0 ? raw.slice(0, cut) : '';
+      const body = cut > 0 ? raw.slice(cut + 2) : raw;
+      const link = t => escapeHtml(t).replace(/hivecommons\/([A-Za-z0-9._-]+)#(\d+)/g, '<a href="https://github.com/hivecommons/$1/issues/$2" target="_blank" rel="noopener noreferrer">$&</a>');
+      return '<div class="meetings-notice" role="status">' + (title ? '<div class="meetings-notice-title">' + escapeHtml(title) + '</div>' : '') +
+        '<p class="meetings-notice-body">' + link(body) + '</p></div>';
+    }
+
+    // The questions skipped for budget, with their text (owner view only).
+    function meetingsSkippedHtml(live) {
+      const list = (live && live.skipped) || [];
+      if (!list.length) return '';
+      return '<section class="meetings-section"><h4 class="section-label meetings-section-label">Not answered: budget</h4><ul class="meetings-skipped">' +
+        list.map(q => '<li>' + escapeHtml((q.who ? q.who + ': ' : '') + (q.text || '')) + '</li>').join('') + '</ul></section>';
     }
     dashboardScheduleWork('meetings', fetchMeetings).catch(console.error);
     dashboardSetInterval('meetings', fetchMeetings, MEETINGS_POLL_MS);
@@ -128,26 +198,33 @@
           '<span class="kc-pill" data-status="syncing">join request</span></div>' + meetingsReasonHtml(m) + '</div>' +
           '<div class="meetings-row-actions">' +
           '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsApproveRequest" data-arg0="' + escapeHtml(m.id) + '">Approve</button>' +
+          (m.platform === 'discord' && /^[0-9]{5,25}$/.test(m.requested_by.id || '') ?
+            '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsApproveAlways" data-arg0="' + escapeHtml(m.id) + '"' +
+            ' title="Approve now, and approve this person\'s future Discord requests automatically. Matched by their Discord user id, not their name.">Always approve this person</button>' : '') +
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button>' +
           meetingsDeleteButtonHtml(m) + '</div></div>';
       }
       const state = m.state || '';
       const when = meetingsFormatTime(m.live_at || m.created_at);
       const meta = [MEETINGS_PLATFORM_LABELS[m.platform] || m.platform || '', when].filter(Boolean).join(' · ');
-      return '<div class="meetings-row' + (open ? ' is-open' : '') + '" data-state="' + escapeHtml(state) + '">' +
-        '<div class="meetings-row-main"><div class="meetings-row-head">' +
+      const pid = 'meetings-details-' + String(m.id).replace(/[^A-Za-z0-9_-]/g, '_');
+      return '<div class="meetings-item" data-meeting-item="' + escapeHtml(m.id) + '">' +
+        '<div class="meetings-row' + (open ? ' is-open' : '') + '" data-state="' + escapeHtml(state) + '">' +
+        rowChevronHtml('meetingsToggle', m.id, open, 'details of ' + meetingsLabel(m), pid) +
+        '<div class="meetings-row-main"><div class="meetings-row-head" data-action="meetingsToggle" data-arg0="' + escapeHtml(m.id) + '">' +
         '<span class="meetings-row-title" title="' + escapeHtml(m.url || '') + '">' + escapeHtml(meetingsLabel(m)) + '</span>' +
         '<span class="kc-pill" data-status="' + escapeHtml(MEETINGS_PILL_STATUS[state] || '') + '">' + escapeHtml(state) + '</span></div>' +
         (meta ? '<div class="muted-xs">' + escapeHtml(meta) + '</div>' : '') +
+        meetingsBudgetHtml(_meetingsBudget[m.id]) +
         meetingsReasonHtml(m) +
         (active && m.consent_error && !m.consent_posted_at ? '<div class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</div>' : '') +
         (m.consent_via === 'voice' ? '<div class="muted-xs">consent notice spoken: the meeting chat could not deliver it</div>' : '') +
         (m.voice_enabled && !m.voice_capable ? '<div class="muted-xs">joined without voice; replies go to chat</div>' : '') +
         '</div><div class="meetings-row-actions">' +
-        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
         (active ? meetingsVoiceToggleHtml(m) +
           '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
-        meetingsDeleteButtonHtml(m) + '</div></div>';
+        meetingsDeleteButtonHtml(m) + '</div></div>' +
+        (open ? '<div class="meetings-details" id="' + pid + '" role="region" aria-label="Details of ' + escapeHtml(meetingsLabel(m)) + '"><div id="meetings-live-panel"></div></div>' : '') + '</div>';
     }
 
     // meetingsVoiceToggleHtml: the card's voice control names the action it
@@ -262,13 +339,19 @@
         html += '<div class="meetings-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsClearFinished"' +
           ' title="Delete every finished meeting after one confirm">🗑 Clear finished (' + finished.length + ')</button></div>';
       }
+      html += meetingsTrustedHtml();
       html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="empty-dashed">No meetings yet.</p>')) + '</div>';
-      html += '<div id="meetings-live-panel"></div>';
       host.innerHTML = html;
       const liveCount = list.filter(m => MEETINGS_LIVE_STATES[m.state]).length;
       if (typeof refreshSectionCardShell === 'function') refreshSectionCardShell('meetings-section');
       if (typeof setSectionSummary === 'function') setSectionSummary('meetings-section', liveCount ? liveCount + ' live' : 'no live meetings');
       renderMeetingsLive();
+      if (_meetingsFocusRow) {
+        const want = _meetingsFocusRow;
+        _meetingsFocusRow = '';
+        const chev = Array.prototype.find.call(host.querySelectorAll('.row-chevron'), c => c.getAttribute('data-arg0') === want);
+        if (chev) chev.focus();
+      }
     }
 
     function meetingsField(name) { return document.querySelector('[data-meetings-field="' + name + '"]'); }
@@ -313,6 +396,30 @@
       fetchMeetings();
     }
 
+    async function meetingsApproveAlways(id) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/approve', { always: true }); showToast('Hive is joining, and will join this person\'s future requests', 'success'); }
+      catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    async function meetingsUntrust(platform, uid) {
+      try {
+        const r = await fetch('/api/meetings/trusted/' + encodeURIComponent(platform) + '/' + encodeURIComponent(uid), { method: 'DELETE' });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || ('HTTP ' + r.status)); }
+        showToast('Removed. Their requests wait for approval again', 'success');
+      } catch (e) { showToast('Remove failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    // meetingsTrustedHtml lists the people whose Discord requests join at once.
+    function meetingsTrustedHtml() {
+      const list = _meetingsTrusted || [];
+      if (!list.length) return '';
+      return '<div class="meetings-trusted"><div class="section-label m-0">Always approved on Discord</div>' + list.map(t =>
+        '<div class="meetings-row-actions"><span class="muted-xs">' + escapeHtml((t.name || 'unnamed') + ' (Discord id ' + t.id + ')') + '</span>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsUntrust" data-arg0="' + escapeHtml(t.platform) + '" data-arg1="' + escapeHtml(t.id) + '">Remove</button></div>').join('') + '</div>';
+    }
+
     async function meetingsDeclineRequest(id) {
       try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/decline'); }
       catch (e) { showToast('Decline failed: ' + e.message, 'error'); }
@@ -327,6 +434,13 @@
     function meetingsClosePanel() {
       if (_meetingsOpen && _meetingsOpen.ws) { try { _meetingsOpen.ws.close(); } catch (e) { /* already closed */ } }
       _meetingsOpen = null;
+    }
+
+    // meetingsToggle opens the details under the meeting's row, or folds them
+    // when they are already open. The chevron and the row title both call it.
+    function meetingsToggle(id) {
+      _meetingsFocusRow = id;
+      meetingsOpenPanel(id);
     }
 
     function meetingsOpenPanel(id) {
@@ -373,6 +487,8 @@
           break;
         }
         case 'notes': meetingsRefreshLive(o.id); break;
+        case 'budget': meetingsRefreshLive(o.id); break;
+        case 'dropped': meetingsRefreshLive(o.id); break;
         case 'reach': meetingsRefreshLive(o.id); break;
         case 'spek': meetingsRefreshLive(o.id); break;
         default: break;
@@ -385,7 +501,11 @@
         const r = await fetch('/api/meetings/' + encodeURIComponent(id));
         if (!r.ok) return;
         const data = await r.json();
-        if (_meetingsOpen && _meetingsOpen.id === id) { _meetingsOpen.live = data.live || null; renderMeetingsLive(); }
+        if (_meetingsOpen && _meetingsOpen.id === id) {
+          _meetingsOpen.live = data.live || null;
+          if (data.budget) _meetingsBudget[id] = data.budget;
+          renderMeetingsLive();
+        }
       } catch (e) { /* transient */ }
     }
 
@@ -404,23 +524,27 @@
       const notes = live.notes || {};
       const sections = ['summary', 'decisions', 'actions', 'questions', 'notes'];
       const notesHtml = sections.filter(s => (notes[s] || []).length).map(s =>
-        '<div><div class="section-label m-0">' + escapeHtml(s) + '</div><ul>' + notes[s].map(n => '<li>' + escapeHtml(n) + '</li>').join('') + '</ul></div>').join('') || '<p class="muted-xs">No notes yet.</p>';
+        '<div class="meetings-notes-group"><div class="meetings-notes-label">' + escapeHtml(s) + '</div><ul>' + notes[s].map(n => '<li>' + escapeHtml(n) + '</li>').join('') + '</ul></div>').join('') || '<p class="meetings-empty">No notes yet.</p>';
       const research = (live.research || []).map(it =>
         '<div class="meetings-research-item"><div><span class="badge">' + escapeHtml(it.status) + '</span> ' + escapeHtml(it.query) + '</div>' +
         (it.summary ? '<div class="muted-xs">' + escapeHtml(it.summary) + '</div>' : '') +
         (it.status === 'failed' && it.error ? '<div class="meetings-row-error">' + escapeHtml(it.error) + '</div>' : '') +
         (it.waiting && it.status === 'queued' ? '<div class="muted-xs">waiting behind another question</div>' : '') +
         (it.status === 'pending_approval' ? '<button type="button" class="hv-btn btn-primary btn-sm mt-2" data-action="meetingsApprove" data-arg0="' + escapeHtml(o.id) + '" data-arg1="' + escapeHtml(it.rid) + '">Approve research</button>' : '') +
-        '</div>').join('') || '<p class="muted-xs">No research yet.</p>';
+        '</div>').join('') || '<p class="meetings-empty">No research yet.</p>';
       const lines = o.lines.map(ev => meetingsLineHtml(ev, false)).join('') + (o.partial ? meetingsLineHtml(o.partial, true) : '');
       const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
-      const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
-        (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
-      host.innerHTML = spek + meetingsReachHtml(live) + '<div class="meetings-live">' +
-        '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
-        '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
-        '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +
-        '<div><div class="section-label m-0">Spek intents</div><div class="meetings-intents">' + (intents || '<p class="muted-xs">None yet.</p>') + '</div></div></div></div>';
+      const spek = live.spek_status ? meetingsSpekNoticeHtml(live.spek_status) :
+        (live.spek_mode ? '<p class="meetings-notice-line">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
+      const ledger = meetingsLedgerText(_meetingsLedger);
+      const sect = (label, body) => '<section class="meetings-section"><h4 class="section-label meetings-section-label">' + label + '</h4>' + body + '</section>';
+      const head = spek + meetingsBudgetHtml(_meetingsBudget[o.id]) + (ledger ? '<p class="meetings-hivewide">Hive-wide: ' + escapeHtml(ledger) + '</p>' : '') + meetingsReachHtml(live);
+      host.innerHTML = (head ? '<div class="meetings-details-head">' + head + '</div>' : '') + '<div class="meetings-live">' +
+        sect('Transcript' + (o.ws ? '' : ' (disconnected)'), '<div class="meetings-transcript">' + (lines || '<p class="meetings-empty">Waiting for the first words…</p>') + '</div>') +
+        '<div class="meetings-side">' + sect('Notes', notesHtml) +
+        meetingsSkippedHtml(live) +
+        sect('Research', '<div class="meetings-research">' + research + '</div>') +
+        sect('Spek intents', '<div class="meetings-intents">' + (intents || '<p class="meetings-empty">None yet.</p>') + '</div>') + '</div></div>';
       const tr = host.querySelector('.meetings-transcript');
       if (tr) tr.scrollTop = tr.scrollHeight;
     }

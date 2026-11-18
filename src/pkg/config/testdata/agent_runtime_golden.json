@@ -796,6 +796,7 @@
   "review": {
     "severity": {},
     "backlog": {},
+    "analysis_factcheck": {},
     "contributor_prs": {},
     "recommendations": {},
     "plan_match": {}
@@ -808,7 +809,8 @@
     "contributor_tier": {},
     "merge_train": {},
     "native_merge_queue": {},
-    "hive_superseding": {}
+    "hive_superseding": {},
+    "pr_gate": {}
   },
   "decisions": {
     "delegate": {}
