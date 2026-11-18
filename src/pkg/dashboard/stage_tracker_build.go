@@ -250,6 +250,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Caption = stageTrackerTakeoverCaption(it.Caption, it.Takeover)
 		}
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)
+		if approver == "" && hasRec && stage == stagelabels.NeedsDecision {
+			// At 085 the reason carries no approver: the stage pass
+			// records the head's trusted approval on the record instead.
+			approver = rec.HeadApprover(it.Head)
+		}
 		it.HumanApprover = approver
 		it.ManualMerge = stageTrackerManualMergeReason(base)
 		if stage == stagelabels.ReadyForHumanMerge {

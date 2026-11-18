@@ -355,6 +355,15 @@ type Record struct {
 	AdmittedHead string    `json:"admitted_head,omitempty"`
 	AdmittedBy   string    `json:"admitted_by,omitempty"`
 	AdmittedAt   time.Time `json:"admitted_at,omitempty"`
+	// ApprovedHead / ApprovedBy record the trusted merger whose GitHub
+	// approval the stage pass found on a head (a lane noted it, or the
+	// 085 route read it, hivecommons/hive#18849). It is display evidence
+	// only, not a trust override like AdmittedBy: the Activity monitor reads
+	// it at 085, where the stage reason carries no `:human-approved@`
+	// suffix, so the row does not ask for the approval again. A new head
+	// makes it stale; HeadApprover checks the head.
+	ApprovedHead string `json:"approved_head,omitempty"`
+	ApprovedBy   string `json:"approved_by,omitempty"`
 	// AdoptForcedBy / AdoptForcedAt record an operator's "Adopt now": the
 	// login that forced adoption and when. The next sweep adopts by
 	// supersession at once, regardless of the author's presence and of
@@ -3008,6 +3017,35 @@ func (s *Store) NoteAuthor(key, login string) {
 	r.Author = login
 	s.items[key] = r
 	s.dirty = true
+}
+
+// NoteHeadApproval records that login, a trusted merger, approved head on
+// an existing record (Record.ApprovedHead). An empty head or login is a
+// no-op: a pass that did not read the approval says nothing about it.
+func (s *Store) NoteHeadApproval(key, head, login string) {
+	head, login = strings.TrimSpace(head), strings.TrimPrefix(strings.TrimSpace(login), "@")
+	if head == "" || login == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.ApprovedHead == head && r.ApprovedBy == login) {
+		return
+	}
+	r.ApprovedHead, r.ApprovedBy = head, login
+	s.items[key] = r
+	s.dirty = true
+}
+
+// HeadApprover is the trusted merger recorded as having approved head
+// (NoteHeadApproval), or "" when none is recorded for that head.
+func (r Record) HeadApprover(head string) string {
+	head = strings.TrimSpace(head)
+	if head == "" || !strings.EqualFold(r.ApprovedHead, head) {
+		return ""
+	}
+	return r.ApprovedBy
 }
 
 // NoteSoak records the soak the lane holds an existing record's head for:
