@@ -639,6 +639,7 @@
     "ContributeQueueHoldReasons": null,
     "ContributeRequireExplicitAccept": null,
     "ContributeDelegatableRoles": null,
+    "contribute_umbrella": {},
     "contribute_announcement": {},
     "DisabledRepos": null,
     "DisabledTiers": null,
