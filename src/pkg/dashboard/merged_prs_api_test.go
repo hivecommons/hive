@@ -196,8 +196,11 @@ func TestMergedPRsHandler(t *testing.T) {
 	if jsonInts(mergedPRsNumbers(body)) != "[1,2]" || body.NextOffset != 2 || body.Matched != 3 || body.Counts.ByHive != 3 {
 		t.Fatalf("first page = %+v", body)
 	}
-	if err := json.Unmarshal(get("limit=2&offset=2").Body.Bytes(), &body); err != nil || jsonInts(mergedPRsNumbers(body)) != "[3]" || body.NextOffset != 0 {
-		t.Fatalf("second page = %+v (%v)", body, err)
+	// A fresh value: next_offset is omitted when 0, so decoding into the
+	// first page's struct would keep its NextOffset.
+	var second MergedPRsResponse
+	if err := json.Unmarshal(get("limit=2&offset=2").Body.Bytes(), &second); err != nil || jsonInts(mergedPRsNumbers(second)) != "[3]" || second.NextOffset != 0 {
+		t.Fatalf("second page = %+v (%v)", second, err)
 	}
 	for _, bad := range []string{"since=100d", "approved=maybe", "limit=0", "limit=501", "offset=-1"} {
 		if rr := get(bad); rr.Code != http.StatusBadRequest {
