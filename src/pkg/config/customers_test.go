@@ -83,3 +83,30 @@ func TestCustomersInferenceDefaultsOffAndNeedsCustomers(t *testing.T) {
 		t.Fatal("a nil config has inference off")
 	}
 }
+
+func TestCustomersAvatarsEnabled(t *testing.T) {
+	t.Setenv(EnvCustomersAvatarsEnabled, "")
+	cfg := &Config{}
+	if !cfg.CustomersAvatarsEnabled() {
+		t.Fatal("avatars must default on")
+	}
+	off, on := false, true
+	cfg.Customers.Avatars.Enabled = &off
+	if cfg.CustomersAvatarsEnabled() {
+		t.Fatal("explicit false")
+	}
+	t.Setenv(EnvCustomersAvatarsEnabled, "true")
+	if !cfg.CustomersAvatarsEnabled() {
+		t.Fatal("env true must win over config false")
+	}
+	cfg.Customers.Avatars.Enabled = &on
+	t.Setenv(EnvCustomersAvatarsEnabled, "false")
+	if cfg.CustomersAvatarsEnabled() {
+		t.Fatal("env false must win over config true")
+	}
+	var none *Config
+	t.Setenv(EnvCustomersAvatarsEnabled, "")
+	if !none.CustomersAvatarsEnabled() {
+		t.Fatal("a nil config has avatars on")
+	}
+}

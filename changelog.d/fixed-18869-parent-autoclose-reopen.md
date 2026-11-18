@@ -1,1 +1,0 @@
-- Never auto-close a decomposed parent that a person reopened after a hive auto-close or that is labelled epic/hold, and add the per-repo `repos.<repo>.parent_autoclose` (`true`/`epics_too`/`false`) switch (#18869).

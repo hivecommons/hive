@@ -96,6 +96,8 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersSuggestionGroupHtml", "customersAttachHtml", "customersSuggestionOrder", "customersNeighbour",
 		"customersFocusSuggestion", "customersAfterSuggestion", "customersAccept", "customersDismiss", "customersShowMore",
 		"customersPickerOpen", "customersProfilePickerOpen", "customersPickerClose", "customersAttach", "customersHintAnswer",
+		"customersAvatarsOn", "customersGithubLogin", "customersAvatarHtml", "customersMorePill", "customersSourcePills",
+		"customersOriginPill", "customersTagPill", "customersTagPills",
 		"graphcanvasRound", "graphcanvasLabel", "graphcanvasLayout", "graphcanvasSvg",
 	} {
 		fns = append(fns, jsFunc(t, html, name))
@@ -103,6 +105,7 @@ func TestCustomersViewGates(t *testing.T) {
 	consts := ""
 	for _, name := range []string{"CUSTOMERS_KIND_LABELS", "CUSTOMERS_ADDABLE_KINDS", "CUSTOMERS_LEVEL_LABELS", "CUSTOMERS_LEVEL_PILL", "CUSTOMERS_ORIGIN_LABELS", "CUSTOMERS_REF_KIND_LABELS",
 		"CUSTOMERS_REF_GH", "CUSTOMERS_REF_WORDS", "CUSTOMERS_GROUP_SHOWN", "CUSTOMERS_SUGGESTED_GROUPS", "CUSTOMERS_OTHER_GROUP", "CUSTOMERS_KIND_ICONS",
+		"CUSTOMERS_ORIGIN_SHORT", "CUSTOMERS_SOURCE_PILLS_SHOWN", "CUSTOMERS_TAG_PILLS_SHOWN", "CUSTOMERS_GITHUB_LOGIN", "CUSTOMERS_AVATAR_PX", "CUSTOMERS_AVATAR_FETCH_PX",
 		"GRAPHCANVAS_W", "GRAPHCANVAS_H", "GRAPHCANVAS_RING_ARTEFACT", "GRAPHCANVAS_RING_PEOPLE", "GRAPHCANVAS_MAX_ARTEFACTS", "GRAPHCANVAS_LABEL_MAX"} {
 		consts += jsConstBlock(t, html, name) + "\n"
 	}
@@ -125,7 +128,7 @@ const person = {
   merged_from: [{ person: { id: 'p_old', name: 'Old <Ada>' }, by: 'olivia', at: '2026-10-01T00:00:00Z' }],
   counts: { authored: 3 }, hints: [{ id: 'h_1', other_kind: 'email', other_value: 'ada@<x>.org', reason: 'the address and the login start the same' }, { id: 'h_2', other_kind: 'customer', other_value: 'Ada B' }]
 };
-const base = { enabled: true, me: Object.assign({}, person, { id: 'p_me', me: true, name: 'Me' }), people: [person, { id: 'p_two', name: 'Two' }], suggestions: [{ id: 's_1', kind: 'github', value: 'stranger', counts: { authored: 2 }, evidence: ['gh:issue:o/r#9'] }], default_tags: ['maintainer', 'contributor', 'end-user', 'stakeholder'], levels: ['unknown', 'at_risk', 'neutral', 'satisfied'] };
+const base = { enabled: true, avatars: true, me: Object.assign({}, person, { id: 'p_me', me: true, name: 'Me' }), people: [person, { id: 'p_two', name: 'Two' }], suggestions: [{ id: 's_1', kind: 'github', value: 'stranger', counts: { authored: 2 }, evidence: ['gh:issue:o/r#9'] }], default_tags: ['maintainer', 'contributor', 'end-user', 'stakeholder'], levels: ['unknown', 'at_risk', 'neutral', 'satisfied'] };
 
 // Owner: everything.
 _customersData = Object.assign({}, base, { full: true, owner: true });
@@ -335,6 +338,46 @@ must(meRow.includes('<span class="badge customers-me">me</span>') && !meRow.incl
 must(meRow.includes('class="customers-avatar"') && meRow.includes('>C</span>') && meRow.includes('customers-row-actions') && meRow.includes('My profile'), 'a row lacks its avatar or its action group');
 must(customersGoalsHtml({ goals: [] }).includes('No goal yet.'), 'the profile does not say "No goal yet"');
 
+// Avatars: a confirmed GitHub login gets the GitHub picture, lazily, with no
+// referrer, at a fixed size, over the initial; nothing keyed by an email is ever
+// requested; the hive can switch them off.
+const ghPerson = { id: 'p_gh', name: 'Grace <Hopper>', origin: 'accepted', identities: [{ kind: 'email', value: 'grace@example.com' }, { kind: 'github', value: 'ghopper' }], tags: [] };
+let ghRow = customersRowHtml(ghPerson, false);
+must(ghRow.includes('<img class="customers-avatar-img" src="https://github.com/ghopper.png?size=' + CUSTOMERS_AVATAR_FETCH_PX + '"'), 'no GitHub avatar: ' + ghRow);
+must(ghRow.includes('loading="lazy"') && ghRow.includes('referrerpolicy="no-referrer"') && ghRow.includes('width="' + CUSTOMERS_AVATAR_PX + '" height="' + CUSTOMERS_AVATAR_PX + '"') && ghRow.includes('alt="Grace &lt;Hopper&gt;"') && ghRow.includes('data-error-action="gh19"'), 'avatar attributes: ' + ghRow);
+must(ghRow.includes('<span class="customers-initial" aria-hidden="true">G</span>'), 'the initial must stay under the picture');
+const hosts = (ghRow.match(/(?:src|href)="https?:\/\/[^"\/]+/g) || []);
+must(hosts.every(h => h.endsWith('://github.com')), 'a row asks a host other than github.com: ' + hosts);
+const emailOnly = customersRowHtml({ id: 'p_e', name: 'Eve', identities: [{ kind: 'email', value: 'eve@example.com' }, { kind: 'slack', value: 'U1' }, { kind: 'github', value: 'not a login', }, { kind: 'github', value: 'mallory', claimed: true }] }, false);
+must(!emailOnly.includes('<img') && !/gravatar|libravatar|md5|sha256/i.test(emailOnly), 'an email-only or unconfirmed person must not get a picture: ' + emailOnly);
+must(customersGithubLogin({ identities: [{ kind: 'github', value: 'a/../b' }] }) === '' && customersGithubLogin({ identities: [{ kind: 'github', value: 'x'.repeat(40) }] }) === '', 'a malformed login reached a URL');
+_customersData = Object.assign({}, base, { full: true, owner: true, avatars: false });
+must(!customersRowHtml(ghPerson, false).includes('<img') && customersRowHtml(ghPerson, false).includes('>G</span>'), 'avatars off must show the initial and request nothing');
+_customersData = Object.assign({}, base, { full: true, owner: true });
+delete _customersData.avatars;
+must(!customersRowHtml(ghPerson, false).includes('<img'), 'avatars must be off unless the hive says on');
+_customersData = Object.assign({}, base, { full: true, owner: true });
+must(customersSuggestionRowHtml({ id: 's_g', kind: 'github', value: 'octocat', evidence: [] }).includes('src="https://github.com/octocat.png?size='), 'a suggested GitHub person has no picture');
+must(!customersSuggestionRowHtml({ id: 's_m', kind: 'email', value: 'a@example.com', evidence: [] }).includes('<img'), 'a suggested email got a picture');
+must(customersSuggestionRowHtml({ id: 's_s', kind: 'slack', value: 'U1', evidence: [] }).includes('💬'), 'a slack suggestion lost its icon');
+
+// Pills: tags, identities, origin; "+N" beyond the limit; manual marked.
+const pillPerson = { id: 'p_pl', name: 'Pill', origin: 'hive_user', updated_at: '2026-11-17T10:00:00Z',
+  identities: [{ kind: 'hive_user', value: 'pill' }, { kind: 'github', value: 'pill' }, { kind: 'email', value: 'p@example.com' }, { kind: 'slack', value: 'U9' }, { kind: 'name', value: 'Pill' }],
+  tags: [{ name: 'maintainer', state: 'on', source: 'auto', rule: 'role:owner' }, { name: 'vip', state: 'on', source: 'manual', by: 'olivia' }, { name: 'end-user', state: 'off', source: 'auto' }, { name: 'contributor', state: 'on', source: 'auto' }, { name: 'stakeholder', state: 'on', source: 'auto' }],
+  satisfaction: { level: 'satisfied' } };
+const pillRow = customersRowHtml(pillPerson, false);
+must(pillRow.includes('<span class="kc-pill customers-pill customers-tag" data-tag="maintainer" data-source="auto" title="maintainer - Automatic: role:owner">maintainer</span>'), 'a default tag is not a toned pill: ' + pillRow);
+must(!/class="badge customers-chip"/.test(pillRow) && !pillRow.includes('customers-row-meta'), 'tags are still plain badges or the meta line is back');
+must(pillRow.includes('customers-tag" data-source="manual" title="vip - Set by olivia"') && !pillRow.includes('data-tag="vip"') && pillRow.includes('customers-tag-dot'), 'a free-form manual tag must be neutral and marked');
+must(!pillRow.includes('>end-user<'), 'an off tag is shown');
+must((pillRow.match(/customers-tag"/g) || []).length === CUSTOMERS_TAG_PILLS_SHOWN && pillRow.includes('customers-more" title="stakeholder">+1</span>'), 'tag overflow: ' + pillRow);
+must(pillRow.includes('customers-source" data-kind="github"') && pillRow.includes('customers-source" data-kind="email"') && pillRow.includes('customers-more" title="Slack: U9">+1</span>') && !pillRow.includes('>U9<') && !pillRow.includes('data-kind="hive_user"') && !pillRow.includes('data-kind="name"'), 'identity pills: ' + pillRow);
+must(pillRow.includes('customers-origin" title="hive user, updated ') && pillRow.includes('>hive user</span>') && pillRow.includes('data-status="ok"') && pillRow.includes('customers-updated'), 'origin, status or date: ' + pillRow);
+must(pillRow.indexOf('customers-source') < pillRow.indexOf('customers-origin') && pillRow.indexOf('customers-origin') < pillRow.indexOf('customers-tag') && pillRow.indexOf('customers-tag') < pillRow.indexOf('data-status="ok"') && pillRow.indexOf('data-status="ok"') < pillRow.indexOf('customers-updated') && pillRow.indexOf('customers-updated') < pillRow.indexOf('customers-row-actions'), 'order');
+must(!/class="customers-row-title"/.test(pillRow) && (pillRow.match(/<div/g) || []).length === 3, 'a list row is more than the card, its main line and the actions: ' + pillRow);
+must(customersProfileHtml(pillPerson).includes('customers-pill customers-tag') && customersProfileHtml(pillPerson).includes('class="customers-avatar"'), 'the profile header lacks pills or the avatar');
+
 // Groups by source, first five, "Show N more".
 const manySugg = [];
 for (let i = 0; i < 7; i++) manySugg.push({ id: 'g_' + i, kind: 'github', value: 'user' + i, counts: { mentioned_in: 1 }, evidence: [] });
@@ -423,3 +466,69 @@ const all = manySugg.slice();
   must(_customersUi.expanded.github === false, 'Show fewer did not fold the group');
 })().catch(e => { console.error(e.stack || e.message); process.exit(1); });
 `
+
+// The avatar request goes to github.com from the browser, which the page's
+// img-src must allow, and to nothing less narrow than https. This pins that
+// the policy admits it without ever admitting plain http or a wildcard host.
+func TestCustomersAvatarsCSPImgSrc(t *testing.T) {
+	got := cspDirective(servedCSP(t), "img-src")
+	if got != "img-src 'self' data: https:" {
+		t.Fatalf("img-src = %q; GitHub avatars (https://github.com/<login>.png, which redirects to avatars.githubusercontent.com) need https:, and nothing broader (no http:, no *) is acceptable", got)
+	}
+}
+
+// The Features tab renders the avatars switch wired to the key the API reads.
+func TestFeaturesTab_CustomersAvatarsToggleMarkup(t *testing.T) {
+	html := featuresMarkup(t)
+	for _, want := range []string{
+		`data-section="features" data-key="customersAvatarsEnabled"`,
+		`yamlHint('customers.avatars.enabled')`,
+		`f.customersAvatarsEffective !== f.customersAvatars`,
+		`HIVE_CUSTOMERS_AVATARS_ENABLED overrides this setting`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing %q", want)
+		}
+	}
+}
+
+// customers.avatars.enabled: default on, owner-only, persisted, reported with
+// the effective value, left alone by an unrelated PUT and overridden by env.
+func TestGovernorFeatures_CustomersAvatarsToggleRoundTrip(t *testing.T) {
+	t.Setenv(config.EnvCustomersAvatarsEnabled, "")
+	s := covApiServer(t)
+	type payload struct {
+		Features struct {
+			Avatars          bool `json:"customersAvatars"`
+			AvatarsEffective bool `json:"customersAvatarsEffective"`
+		} `json:"features"`
+	}
+	read := func() payload {
+		var p payload
+		if err := json.Unmarshal(doOwnerGet(s, "/api/config/governor").Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if got := read(); !got.Features.Avatars || !got.Features.AvatarsEffective {
+		t.Fatalf("default payload = %+v, want on", got.Features)
+	}
+	if rec := putFeatures(s, map[string]any{"customersAvatarsEnabled": false}, func(r *http.Request) {
+		r.Header.Set("X-Hive-Role", "read-write")
+	}); rec.Code != http.StatusForbidden || !s.deps.Config.Customers.Avatars.IsEnabled() {
+		t.Fatalf("non-owner PUT = %d", rec.Code)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"customersAvatarsEnabled": false}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT off: %d - %s", rec.Code, rec.Body.String())
+	}
+	if got := read(); got.Features.Avatars || got.Features.AvatarsEffective {
+		t.Fatalf("after disable = %+v", got.Features)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"retroEnabled": true}); rec.Code != http.StatusOK || s.deps.Config.Customers.Avatars.IsEnabled() {
+		t.Fatalf("an unrelated PUT changed it: %d", rec.Code)
+	}
+	t.Setenv(config.EnvCustomersAvatarsEnabled, "true")
+	if got := read(); got.Features.Avatars || !got.Features.AvatarsEffective {
+		t.Fatalf("env override = %+v", got.Features)
+	}
+}

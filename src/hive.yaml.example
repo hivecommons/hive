@@ -1369,3 +1369,5 @@ data:
 #   enabled: true            # false (or env HIVE_CUSTOMERS_ENABLED=false) opens no store and hides the section
 #   inference:
 #     enabled: false         # true (or env HIVE_CUSTOMERS_INFERENCE_ENABLED=true) suggests goals and satisfaction with the meetings model; default off
+#   avatars:
+#     enabled: true          # false (or env HIVE_CUSTOMERS_AVATARS_ENABLED=false) shows initials and makes no browser request to github.com for pictures; default on

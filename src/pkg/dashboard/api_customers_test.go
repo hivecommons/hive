@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // fakeCustomersService records the viewer each call was made with, so the
@@ -424,5 +426,36 @@ func TestCustomersMergeSplitExportBodiesAndAudit(t *testing.T) {
 	fake.err = ErrCustomerConflict
 	if rec := customersDo(s, custOwner, http.MethodPost, "/api/customers/p_a/merge", `{"from":"p_b"}`); rec.Code != http.StatusConflict {
 		t.Fatalf("a conflicting merge = %d", rec.Code)
+	}
+}
+
+// The list answer carries the live avatars switch, so the page asks github.com
+// for pictures only while the hive allows it.
+func TestCustomersListCarriesAvatarsSwitch(t *testing.T) {
+	t.Setenv(config.EnvCustomersAvatarsEnabled, "")
+	s, _ := apiServer(t)
+	s.SetCustomersService(&fakeCustomersService{})
+	if s.deps.Config == nil {
+		s.deps.Config = &config.Config{}
+	}
+	get := func() map[string]any {
+		rec := customersDo(s, custOwner, http.MethodGet, "/api/customers", "")
+		var m map[string]any
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &m) != nil {
+			t.Fatalf("list = %d %s", rec.Code, rec.Body.String())
+		}
+		return m
+	}
+	if got := get(); got["avatars"] != true || got["enabled"] != true {
+		t.Fatalf("default list = %v, want avatars on", got)
+	}
+	off := false
+	s.deps.Config.Customers.Avatars.Enabled = &off
+	if got := get(); got["avatars"] != false {
+		t.Fatalf("avatars off = %v", got)
+	}
+	t.Setenv(config.EnvCustomersAvatarsEnabled, "true")
+	if got := get(); got["avatars"] != true {
+		t.Fatalf("env on must win = %v", got)
 	}
 }

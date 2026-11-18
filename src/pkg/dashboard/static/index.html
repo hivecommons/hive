@@ -6403,19 +6403,36 @@
     .customers-hint { max-width: 80ch; line-height: 1.5; }
     .customers-group { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-4); min-width: 0; }
     .customers-group-title { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); }
-    /* Person and suggestion card: avatar, content, actions. */
-    .customers-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: var(--sp-4); row-gap: var(--sp-3); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); min-width: 0; max-width: 100%; }
+    /* Person and suggestion card: one line at desktop width. Avatar, a flowing line of name and pills, the date, the actions. On a narrow screen the pills wrap under the name and the actions take their own line. */
+    .customers-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; column-gap: var(--sp-3); row-gap: var(--sp-2); padding: var(--sp-1) var(--sp-3); min-height: calc(var(--tap-target) - var(--sp-1)); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); min-width: 0; max-width: 100%; }
     .customers-card[data-me="true"] { border-color: var(--accent); }
-    .customers-avatar { display: inline-grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--text); font-size: var(--fs-md); font-weight: var(--fw-semibold); flex: none; }
+    .customers-avatar { position: relative; display: inline-grid; place-items: center; width: 1.75rem; height: 1.75rem; border-radius: var(--r-pill); overflow: hidden; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--text); font-size: var(--fs-sm); font-weight: var(--fw-semibold); flex: none; }
     .customers-card[data-kind="suggestion"] .customers-avatar { background: color-mix(in srgb, var(--border) 30%, var(--surface)); }
+    .customers-avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: var(--r-pill); background: var(--surface); }
     .customers-row-main { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; flex: 1 1 16em; }
-    .customers-card .customers-row-main { flex: none; }
+    .customers-card .customers-row-main { flex: none; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); }
+    .customers-name { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .customers-card .customers-name { font-size: var(--fs-base); font-weight: var(--fw-semibold); }
+    .customers-me { flex: none; padding: 0 var(--sp-3); border: 1px solid var(--accent); border-radius: var(--r-pill); color: var(--accent); font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.6; }
+    .customers-updated { white-space: nowrap; text-align: right; }
+    /* Pills share the status pill's shape and type size (kc-pill); these are quieter: outlined, a lighter weight. */
+    .kc-pill.customers-pill { display: inline-flex; align-items: center; gap: var(--sp-2); max-width: 100%; padding: 0 var(--sp-3); line-height: 1.6; white-space: nowrap; font-weight: var(--fw-semibold); color: var(--muted); background: transparent; border: 1px solid var(--border); }
+    .kc-pill.customers-source { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; display: inline-block; font-family: var(--font-mono); font-weight: 400; color: var(--text); }
+    .kc-pill.customers-source[data-claimed="true"] { border-style: dashed; }
+    .kc-pill.customers-more { cursor: help; }
+    .kc-pill.customers-tag { color: var(--text); border-color: color-mix(in srgb, var(--customers-tone, var(--muted)) 55%, var(--border)); background: color-mix(in srgb, var(--customers-tone, var(--muted)) 16%, var(--surface)); }
+    .kc-pill.customers-tag[data-tag="maintainer"] { --customers-tone: var(--accent); }
+    .kc-pill.customers-tag[data-tag="contributor"] { --customers-tone: var(--cyan); }
+    .kc-pill.customers-tag[data-tag="end-user"] { --customers-tone: var(--green); }
+    .kc-pill.customers-tag[data-tag="stakeholder"] { --customers-tone: var(--yellow); }
+    .customers-tag-dot { width: var(--sp-3); height: var(--sp-3); border-radius: var(--r-pill); background: var(--customers-tone, var(--muted)); flex: none; }
+    .customers-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     .customers-row-title { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; font-size: var(--fs-base); font-weight: var(--fw-semibold); }
-    .customers-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .customers-me { flex: none; }
-    .customers-row-meta { overflow-wrap: anywhere; line-height: 1.5; }
     .customers-row-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
     .customers-card[data-kind="suggestion"] .customers-row-actions { width: var(--customers-actions-w); }
+    /* The disclosure sits in the pill line; opened, its body takes the full width under it. */
+    .customers-why { flex: 0 1 auto; min-width: 0; }
+    .customers-why[open] { flex-basis: 100%; }
     .customers-why summary { cursor: pointer; width: fit-content; }
     .customers-why-body { margin-top: var(--sp-1); overflow-wrap: anywhere; line-height: 1.5; }
     .customers-picker { grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--r); background: var(--bg); min-width: 0; }
@@ -6444,7 +6461,8 @@
     .customers-notes { width: 100%; min-height: 6em; }
     @media (max-width: 720px) {
       .customers-form { grid-template-columns: 1fr; }
-      .customers-card { grid-template-columns: auto minmax(0, 1fr); padding: var(--sp-3) var(--sp-4); }
+      .customers-card { grid-template-columns: auto minmax(0, 1fr); padding: var(--sp-2) var(--sp-3); align-items: start; }
+      .customers-updated { display: none; }
       .customers-card .customers-row-actions, .customers-card[data-kind="suggestion"] .customers-row-actions { grid-column: 1 / -1; width: auto; justify-content: flex-start; }
     }
     /* Graph view: one person and what they touched (hivecommons/hive issue 18742) */
@@ -53514,6 +53532,17 @@ function burnAreaChart() {
     // Satisfaction level to the kc-pill status palette.
     const CUSTOMERS_LEVEL_PILL = { at_risk: 'error', neutral: 'syncing', satisfied: 'ok' };
     const CUSTOMERS_ORIGIN_LABELS = { hive_user: 'hive user', manual: 'added by hand', accepted: 'accepted suggestion' };
+    // The short origin pill on a row; the long wording stays in its tooltip.
+    const CUSTOMERS_ORIGIN_SHORT = { hive_user: 'hive user', manual: 'added', accepted: 'accepted' };
+    // A row shows this many identity pills and tag pills, then "+N".
+    const CUSTOMERS_SOURCE_PILLS_SHOWN = 2;
+    const CUSTOMERS_TAG_PILLS_SHOWN = 3;
+    // A GitHub login: letters, digits and single hyphens, at most 39 long.
+    const CUSTOMERS_GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+    // The avatar box is 28 CSS pixels (see .customers-avatar); the picture is
+    // asked for at twice that so it stays sharp on a dense screen.
+    const CUSTOMERS_AVATAR_PX = 28;
+    const CUSTOMERS_AVATAR_FETCH_PX = 56;
     const CUSTOMERS_EVIDENCE_SHOWN = 5;
     let _customersData = null;
     let _customersError = '';
@@ -53638,6 +53667,78 @@ function burnAreaChart() {
       return m ? m[0].toUpperCase() : '?';
     }
 
+    // customersAvatarsOn: GitHub avatars show only while the hive says so
+    // (customers.avatars.enabled). Off, the list makes no request to github.com.
+    function customersAvatarsOn() { return !!(_customersData && _customersData.avatars === true); }
+
+    // customersGithubLogin is the login of a person's confirmed GitHub
+    // identity, or '' when they have none. An unconfirmed (claimed) identity
+    // never picks a picture: anyone can type any login there.
+    function customersGithubLogin(p) {
+      const ids = (p && p.identities) || [];
+      for (let n = 0; n < ids.length; n++) {
+        const i = ids[n];
+        if (i && i.kind === 'github' && !i.claimed && CUSTOMERS_GITHUB_LOGIN.test(String(i.value || ''))) return String(i.value);
+      }
+      return '';
+    }
+
+    // customersAvatarHtml draws the initial (or a source icon) in a circle and,
+    // for a GitHub login, the picture over it. The box has a fixed size, so
+    // nothing moves when the picture arrives; if it fails the picture hides
+    // itself and the initial stays. Email-only people never get a picture: no
+    // service keyed by an address is asked.
+    function customersAvatarHtml(name, login, icon, title) {
+      const face = icon || escapeHtml(customersInitial(name));
+      let img = '';
+      if (login && CUSTOMERS_GITHUB_LOGIN.test(login) && customersAvatarsOn()) {
+        img = '<img class="customers-avatar-img" src="https://github.com/' + encodeURIComponent(login) + '.png?size=' + CUSTOMERS_AVATAR_FETCH_PX + '" alt="' + escapeHtml(name) + '" width="' + CUSTOMERS_AVATAR_PX + '" height="' + CUSTOMERS_AVATAR_PX + '" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-error-action="gh19">';
+      }
+      return '<span class="customers-avatar"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '><span class="customers-initial" aria-hidden="true">' + face + '</span>' + img + '</span>';
+    }
+
+    // customersMorePill is the "+N" pill; its tooltip lists what it hides.
+    function customersMorePill(rest) {
+      if (!rest.length) return '';
+      return '<span class="kc-pill customers-pill customers-more" title="' + escapeHtml(rest.join(', ')) + '">+' + rest.length + '</span>';
+    }
+
+    // customersSourcePills: the identities a person is known by, as compact
+    // monospace pills. The dashboard-user and name identities say nothing a
+    // row does not already say.
+    function customersSourcePills(p) {
+      const ids = ((p && p.identities) || []).filter(i => i && i.value && i.kind !== 'hive_user' && i.kind !== 'name');
+      const label = i => (CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + ': ' + i.value + (i.claimed ? ' (unconfirmed)' : '');
+      return ids.slice(0, CUSTOMERS_SOURCE_PILLS_SHOWN).map(i =>
+        '<span class="kc-pill customers-pill customers-source" data-kind="' + escapeHtml(i.kind) + '" data-claimed="' + (i.claimed ? 'true' : 'false') + '" title="' + escapeHtml(label(i)) + '">' + escapeHtml(i.value) + '</span>').join('') +
+        customersMorePill(ids.slice(CUSTOMERS_SOURCE_PILLS_SHOWN).map(label));
+    }
+
+    // customersOriginPill: where the person came from, in one short word.
+    function customersOriginPill(p, updated) {
+      const origin = p && p.origin;
+      if (!origin) return '';
+      const long = (CUSTOMERS_ORIGIN_LABELS[origin] || origin) + (updated ? ', updated ' + updated : '');
+      return '<span class="kc-pill customers-pill customers-origin" title="' + escapeHtml(long) + '">' + escapeHtml(CUSTOMERS_ORIGIN_SHORT[origin] || origin) + '</span>';
+    }
+
+    // customersTagPill: a tag that is on. A default tag has its own tone; a
+    // free-form tag is neutral. A tag a person set carries a dot, and the
+    // tooltip says who set it or which rule did.
+    function customersTagPill(t) {
+      const manual = t.source === 'manual';
+      const why = manual ? 'Set by ' + (t.by || 'a person') : (t.rule ? 'Automatic: ' + t.rule : 'Automatic');
+      const isDefault = ((_customersData && _customersData.default_tags) || []).indexOf(t.name) >= 0;
+      return '<span class="kc-pill customers-pill customers-tag"' + (isDefault ? ' data-tag="' + escapeHtml(t.name) + '"' : '') + ' data-source="' + (manual ? 'manual' : 'auto') + '" title="' + escapeHtml(t.name + ' - ' + why) + '">' +
+        (manual ? '<span class="customers-tag-dot" aria-hidden="true"></span>' : '') + escapeHtml(t.name) + (manual ? '<span class="customers-sr"> (set by hand)</span>' : '') + '</span>';
+    }
+
+    function customersTagPills(p) {
+      const on = ((p && p.tags) || []).filter(t => t && t.name && t.state === 'on');
+      return on.slice(0, CUSTOMERS_TAG_PILLS_SHOWN).map(customersTagPill).join('') +
+        customersMorePill(on.slice(CUSTOMERS_TAG_PILLS_SHOWN).map(t => t.name));
+    }
+
     function customersEvidenceLabel(ref) {
       const s = String(ref || '');
       const m = CUSTOMERS_REF_GH.exec(s);
@@ -53668,23 +53769,24 @@ function burnAreaChart() {
     }
 
     // ── List ──
+    // One line per customer: picture, name, then pills (identities, origin,
+    // tags, goals to review, satisfaction), the date, the actions. On a narrow
+    // screen the pills wrap under the name.
     function customersRowHtml(p, isMe) {
       const goals = customersGoalsSplit(p);
-      const tags = customersActiveTags(p).map(t => '<span class="badge customers-chip">' + escapeHtml(t) + '</span>').join('');
       const pill = customersLevelPill(p.satisfaction && p.satisfaction.level);
       const pending = goals.suggested.length + (p.satisfaction && p.satisfaction.suggestion ? 1 : 0);
-      const meta = [CUSTOMERS_ORIGIN_LABELS[p.origin] || p.origin || ''];
+      const extra = [];
       // No goals is the usual case, so it is not said on every row.
-      if (goals.confirmed.length) meta.push(goals.confirmed.length + ' goal' + (goals.confirmed.length === 1 ? '' : 's'));
-      if (pending) meta.push(pending + ' suggestion' + (pending === 1 ? '' : 's') + ' to review');
+      if (goals.confirmed.length) extra.push('<span class="kc-pill customers-pill">' + goals.confirmed.length + ' goal' + (goals.confirmed.length === 1 ? '' : 's') + '</span>');
+      if (pending) extra.push('<span class="kc-pill customers-pill" title="' + pending + ' suggestion' + (pending === 1 ? '' : 's') + ' to review">' + pending + ' to review</span>');
       const updated = customersFormatTime(p.updated_at);
-      if (updated) meta.push('updated ' + updated);
       const name = p.name || p.id || '';
       return '<div class="customers-card" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '">' +
-        '<span class="customers-avatar" aria-hidden="true">' + escapeHtml(customersInitial(name)) + '</span>' +
-        '<div class="customers-row-main"><div class="customers-row-title"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') + '</div>' +
-        '<div class="muted-xs customers-row-meta">' + escapeHtml(meta.filter(Boolean).join(' · ')) + '</div>' +
-        (tags || pill ? '<div class="customers-chips">' + tags + pill + '</div>' : '') + '</div>' +
+        customersAvatarHtml(name, customersGithubLogin(p), '', '') +
+        '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') +
+        customersSourcePills(p) + customersOriginPill(p, updated) + customersTagPills(p) + extra.join('') + pill + '</div>' +
+        (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') +
         '<div class="customers-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersOpen" data-arg0="' + (isMe ? 'me' : escapeHtml(p.id)) + '">' + (isMe ? 'My profile' : 'Open') + '</button></div></div>';
     }
 
@@ -53703,15 +53805,18 @@ function burnAreaChart() {
 
     function customersSuggestionRowHtml(s) {
       const id = escapeHtml(s.id);
-      const counts = Object.keys(s.counts || {}).sort().map(k => s.counts[k] + ' ' + k.replace(/_/g, ' ')).join(', ');
+      const countList = Object.keys(s.counts || {}).sort().map(k => s.counts[k] + ' ' + k.replace(/_/g, ' '));
       const seen = customersFormatTime(s.last_seen);
       const value = s.value || '';
       const kind = CUSTOMERS_KIND_LABELS[s.kind] || s.kind || '';
+      const login = s.kind === 'github' ? value : '';
       return '<div class="customers-card" data-kind="suggestion" data-customer-suggestion="' + id + '">' +
-        '<span class="customers-avatar" aria-hidden="true" title="' + escapeHtml(kind) + '">' + (CUSTOMERS_KIND_ICONS[s.kind] || escapeHtml(customersInitial(value))) + '</span>' +
-        '<div class="customers-row-main"><div class="customers-row-title"><span class="customers-name" title="' + escapeHtml(value) + '">' + escapeHtml(value) + '</span></div>' +
-        '<div class="muted-xs customers-row-meta">' + escapeHtml([counts, seen ? 'last seen ' + seen : ''].filter(Boolean).join(' · ')) + '</div>' +
+        customersAvatarHtml(value, login, CUSTOMERS_KIND_ICONS[s.kind] || '', kind) +
+        '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(value) + '">' + escapeHtml(value) + '</span>' +
+        countList.slice(0, CUSTOMERS_SOURCE_PILLS_SHOWN).map(c => '<span class="kc-pill customers-pill">' + escapeHtml(c) + '</span>').join('') +
+        customersMorePill(countList.slice(CUSTOMERS_SOURCE_PILLS_SHOWN)) +
         customersWhyHtml(s.id, s.evidence) + '</div>' +
+        (seen ? '<span class="muted-xs customers-updated" title="Last seen">' + escapeHtml(seen) + '</span>' : '') +
         '<div class="customers-row-actions">' +
         '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersAccept" data-arg0="' + id + '" title="Make this person a customer and build their profile">Accept</button>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersPickerOpen" data-arg0="' + id + '" title="Add this identity to a customer you already have, instead of making a new one">Add to existing…</button>' +
@@ -53995,10 +54100,11 @@ function burnAreaChart() {
     }
 
     function customersProfileHtml(p) {
-      const tags = customersActiveTags(p).map(t => '<span class="badge customers-chip">' + escapeHtml(t) + '</span>').join('');
+      const name = p.name || p.id || '';
       return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersClose">← Customers</button>' +
-        '<div class="customers-profile-name"><span class="customers-name" title="' + escapeHtml(p.name || p.id) + '">' + escapeHtml(p.name || p.id) + '</span>' + (p.me ? '<span class="badge customers-me">me</span>' : '') + '</div>' +
-        '<div class="customers-chips">' + tags + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
+        customersAvatarHtml(name, customersGithubLogin(p), '', '') +
+        '<div class="customers-profile-name"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (p.me ? '<span class="badge customers-me">me</span>' : '') + '</div>' +
+        '<div class="customers-chips">' + customersSourcePills(p) + customersOriginPill(p, '') + customersTagPills(p) + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
         '<div class="hive-dialog-error" role="alert" data-customers-field="profile-error"></div>' +
         customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
@@ -63857,6 +63963,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Agent policy repo', key: 'policies.repo', text: 'agent policies policy repo claude.md branch path local dir poll interval policies.repo policies.branch policies.path policies.local_dir policies.poll_interval' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customers', key: 'customers.enabled', text: 'customers people profile person identities tags goals satisfaction suggested forget customer graph HIVE_CUSTOMERS_ENABLED customers.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer goal and satisfaction suggestions', key: 'customers.inference.enabled', text: 'customers inference infer suggest goals satisfaction model confirm HIVE_CUSTOMERS_INFERENCE_ENABLED customers.inference.enabled' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer avatars', key: 'customers.avatars.enabled', text: 'customers avatars avatar pictures photos github profile picture privacy HIVE_CUSTOMERS_AVATARS_ENABLED customers.avatars.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Data directories and session retention', key: 'data.metrics_dir', text: 'data directories metrics logs agent configs claude copilot bob sessions retention prune janitor data.agents_dir data.bob_sessions_dir data.claude_sessions_dir data.copilot_sessions_dir data.logs_dir data.metrics_dir data.session_retention_days' },
       { tab: 'Features', section: 'Integrations & observability', label: 'Standalone deployment upgrades', key: 'deployment.podman_mode', text: 'deployment podman quadlet rootless rootful docker compose upgrade helper request dir deployment.podman_mode deployment.upgrade_helper deployment.upgrade_request_dir' },
@@ -78439,6 +78546,11 @@ function burnAreaChart() {
             <span class="config-toggle-label">Suggest goals and satisfaction ${yamlHint('customers.inference.enabled')} ${settingHelpMark('settings', 'features', 'Customer goal and satisfaction suggestions', `OFF by default. When on, the hive reads what a customer has written (the issues they opened, the pull requests they authored and mail from them that was approved) and asks the model configured for meetings to suggest what they are trying to get done and how it is going for them. This sends that text, which can be about people who never signed up, to that model, and spends the model's daily budget (about forty thousand tokens a day). It only ever suggests: a person confirms, edits or rejects each one, a confirmed or manual value is never overwritten, and nothing suggested is shared outside the hive. Needs Customers on and a meetings model (an OpenAI-compatible endpoint or an Anthropic key). HIVE_CUSTOMERS_INFERENCE_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
           </div>
           ${f.customersInferenceEffective !== f.customersInference ? `<p class="config-help">HIVE_CUSTOMERS_INFERENCE_ENABLED (or turning Customers off) overrides this setting: suggestions are currently <b>${f.customersInferenceEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersAvatars ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersAvatarsEnabled"></div>
+            <span class="config-toggle-label">Customer avatars ${yamlHint('customers.avatars.enabled')} ${settingHelpMark('settings', 'features', 'Customer avatars', `ON by default. The Customers list shows a person's GitHub picture next to their name when they have a confirmed GitHub login. This is the one thing in Customers that leaves your browser: it asks github.com for https://github.com/<login>.png, once per person on screen, and sends no referrer. Nothing goes to the hive's server or the hub, and nobody known only by email is looked up anywhere. Off, the list shows initials and makes no request to github.com. Applies on the next refresh. HIVE_CUSTOMERS_AVATARS_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersAvatarsEffective !== f.customersAvatars ? `<p class="config-help">HIVE_CUSTOMERS_AVATARS_ENABLED overrides this setting: avatars are currently <b>${f.customersAvatarsEffective ? 'on' : 'off'}</b>.</p>` : ''}
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">
