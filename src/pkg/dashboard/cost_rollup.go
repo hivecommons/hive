@@ -158,6 +158,53 @@ func costRollupStepRegainsGround(inc, prev, cur, peak float64) bool {
 	return inc >= costRollupRestoreGapFraction*(peak-prev)
 }
 
+// costSeriesPoint is one sample of a cumulative estimated-$ counter: the
+// hive's total, or one agent's.
+type costSeriesPoint struct {
+	T   int64
+	USD float64
+}
+
+// costCorrectionGuard holds the thresholds that decide whether a positive
+// step of a cumulative $ counter is a data correction (a re-seed or restore)
+// rather than spend. costFoldDailyRollups applies it to the hive's total and
+// costAgentWindow to each agent's own counter, so a window and a day judge a
+// step the same way (#18968).
+type costCorrectionGuard struct {
+	ceiling float64
+	rate    float64
+}
+
+// newCostCorrectionGuard derives the per-step ceiling and the plausible-rate
+// ceiling from a whole series (timestamp order), as the daily fold always has.
+func newCostCorrectionGuard(pts []costSeriesPoint) costCorrectionGuard {
+	if len(pts) == 0 {
+		return costCorrectionGuard{ceiling: math.Inf(1), rate: math.Inf(1)}
+	}
+	incs := make([]float64, 0, len(pts))
+	steps := make([]costRollupStep, 0, len(pts))
+	for i := 1; i < len(pts); i++ {
+		if d := pts[i].USD - pts[i-1].USD; d > 0 {
+			incs = append(incs, d)
+			steps = append(steps, costRollupStep{USD: d, GapMs: pts[i].T - pts[i-1].T})
+		}
+	}
+	return costCorrectionGuard{
+		ceiling: costRollupDiscontinuityCeiling(incs),
+		rate:    costRollupDiscontinuityRate(steps, pts[len(pts)-1].T-pts[0].T),
+	}
+}
+
+// isCorrection reports whether the step prev → cur is discarded: a positive
+// step that regains ground below peak (the highest level seen before cur)
+// and is more than the ceiling and the elapsed time allow. Only a restore can
+// be a correction; a step to a new high is a session flush however large
+// (#13497).
+func (g costCorrectionGuard) isCorrection(prev, cur costSeriesPoint, peak float64) bool {
+	d := cur.USD - prev.USD
+	return d > 0 && costRollupStepRegainsGround(d, prev.USD, cur.USD, peak) && !costRollupStepAllowed(d, cur.T-prev.T, g.ceiling, g.rate)
+}
+
 // costFoldDailyRollups folds a cumulative snapshot series into per-UTC-day
 // spend records. Increments are attributed to the day of the snapshot that
 // revealed them, so a day's first increment counts the growth since the last
@@ -168,16 +215,11 @@ func costFoldDailyRollups(hist []CostHistoryEntry) map[string]CostDailyRollup {
 	if len(hist) == 0 {
 		return out
 	}
-	incs := make([]float64, 0, len(hist))
-	steps := make([]costRollupStep, 0, len(hist))
-	for i := 1; i < len(hist); i++ {
-		if d := hist[i].USD - hist[i-1].USD; d > 0 {
-			incs = append(incs, d)
-			steps = append(steps, costRollupStep{USD: d, GapMs: hist[i].Timestamp - hist[i-1].Timestamp})
-		}
+	pts := make([]costSeriesPoint, len(hist))
+	for i := range hist {
+		pts[i] = costSeriesPoint{T: hist[i].Timestamp, USD: hist[i].USD}
 	}
-	ceiling := costRollupDiscontinuityCeiling(incs)
-	rate := costRollupDiscontinuityRate(steps, hist[len(hist)-1].Timestamp-hist[0].Timestamp)
+	guard := newCostCorrectionGuard(pts)
 
 	var prev *CostHistoryEntry
 	peak := math.Inf(-1)
@@ -192,9 +234,7 @@ func costFoldDailyRollups(hist []CostHistoryEntry) map[string]CostDailyRollup {
 			// A step discarded as a correction takes its token deltas with
 			// it: counting the tokens of a re-seed while dropping its dollars
 			// made 800M-token / $0 days (#13482).
-			// Only a restore (regained ground) can be a correction; a step to a
-			// new high is a session flush however large (#13497).
-			if d > 0 && costRollupStepRegainsGround(d, prev.USD, e.USD, peak) && !costRollupStepAllowed(d, e.Timestamp-prev.Timestamp, ceiling, rate) {
+			if guard.isCorrection(pts[i-1], pts[i], peak) {
 				// A regained-ground step is at or below peak by definition,
 				// so peak is unchanged here.
 				out[day] = r

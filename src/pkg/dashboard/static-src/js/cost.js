@@ -224,6 +224,59 @@
       sandbox: { key: 'usd', dir: 'desc' },
       session: { key: 'started', dir: 'desc' },
     };
+
+    // Usage by sandbox follows the timeframe selector (#18968): 'range' shows
+    // each agent's tokens and $ for the selected window from
+    // GET /api/cost/agents, 'all' the all-time totals from GET /api/cost.
+    const COST_SANDBOX_SCOPE_STORAGE_KEY = 'hiveCostSandboxScope';
+    let _costSandboxScope = (() => {
+      try { if (localStorage.getItem(COST_SANDBOX_SCOPE_STORAGE_KEY) === 'all') return 'all'; } catch {}
+      return 'range';
+    })();
+    function costSandboxScope(ev, scope) {
+      if (ev && ev.type === 'keydown') {
+        if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
+        ev.preventDefault();
+      }
+      if (scope !== 'range' && scope !== 'all') return;
+      _costSandboxScope = scope;
+      try { localStorage.setItem(COST_SANDBOX_SCOPE_STORAGE_KEY, scope); } catch {}
+      if (_lastCost) renderCost(_lastCost);
+    }
+    // costSandboxRangeLabel: the selected range in words, as the agent cards'
+    // spend chips name it.
+    function costSandboxRangeLabel() {
+      return _costRange === 'custom' ? 'custom range' : `${COST_RANGES[_costRange].label} range`;
+    }
+    // costWindowTokensCell: a token count from GET /api/cost/agents; null is
+    // "no per-agent token data in this range", never 0.
+    function costWindowTokensCell(n) {
+      return (n === null || n === undefined)
+        ? '<span class="cagents-zero" title="No per-agent token data for this range: the snapshots in it predate per-agent token recording. Not zero.">—</span>'
+        : fmtTokens(n);
+    }
+    // costSandboxRangeRowsHtml: the usage-by-sandbox rows for the selected
+    // range, highest spend first unless the reader sorted otherwise.
+    function costSandboxRangeRowsHtml(data) {
+      const rows = sortCostRows(data.agents || [], 'sandbox', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
+      return rows.map(a => {
+        const cache = (a.cache_read == null && a.cache_create == null) ? ''
+          : ` title="cache read ${esc(fmtTokens(a.cache_read || 0))} · cache create ${esc(fmtTokens(a.cache_create || 0))}"`;
+        return `<tr>
+          <td class="cmodel">${esc(a.name || 'unknown')}</td>
+          <td class="cnum"${cache}>${costWindowTokensCell(a.total_tokens)}</td>
+          <td class="cnum">${costWindowTokensCell(a.input)}</td>
+          <td class="cnum">${costWindowTokensCell(a.output)}</td>
+          <td class="cnum">${fmtUSD(a.usd || 0)}</td>
+        </tr>`;
+      }).join('');
+    }
+    // costSandboxCoverageNote: says when the selected range starts before the
+    // recorded snapshots, so a short history is not read as no spend.
+    function costSandboxCoverageNote(data) {
+      if (!data || data.coverage !== 'partial' || !data.data_since) return '';
+      return `<div class="cost-disclaimer">The cost snapshots start ${esc(fmtCostDateTime(Date.parse(data.data_since)))}; this range reaches further back, so the table covers only the recorded part.</div>`;
+    }
     function costSortDir(table, key) {
       const s = COST_SORTS[table];
       return s && s.key === key ? s.dir : '';
@@ -450,8 +503,11 @@
       // ── Per-sandbox (per-agent) estimated cost ──
       // In hive each agent runs in its own sandbox, so "usage by sandbox" is the
       // per-agent breakdown. Default sort remains most-expensive first.
+      const sandboxRange = _costSandboxScope === 'range';
+      const sandboxWindow = sandboxRange ? costAgentWindowData() : null;
+      if (sandboxRange) costAgentWindowEnsure();
       const bySandbox = sortCostRows(est.by_agent || [], 'sandbox', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
-      const sandboxRows = bySandbox.map(a => {
+      const sandboxAllRows = bySandbox.map(a => {
         const approx = isTierEstimated(a);
         const usdCell = isPriceUnknown(a) ? priceUnknownCell(a) : approx
           ? `<span title="unknown exact price — tier estimate for this sandbox's model">~${fmtUSD(a.usd)}</span>`
@@ -463,13 +519,28 @@
           <td class="cnum">${usdCell}</td>
         </tr>`;
       }).join('');
+      const sandboxWindowTag = sandboxRange ? costSandboxRangeLabel() : usageWindow;
+      const sandboxScope = `<div class="cost-range cost-sandbox-scope" role="group" aria-label="Usage by sandbox: range">${[['range', 'selected range', 'Tokens and estimated $ per agent over the range chosen above'], ['all', 'all time', 'All-time totals per agent']].map(([k, lbl, tip]) =>
+        `<button type="button" class="${_costSandboxScope === k ? 'active' : ''}" aria-pressed="${_costSandboxScope === k}" title="${esc(tip)}" data-action="costSandboxScope" data-arg-types="e,s" data-arg1="${k}">${lbl}</button>`).join('')}</div>`;
+      let sandboxHead, sandboxBody, sandboxNote = '';
+      if (sandboxRange) {
+        sandboxHead = `${costSortTh('sandbox', 'name', 'sandbox (agent)')}${costSortTh('sandbox', 'total_tokens', 'tokens', { align: 'right', title: 'Input + output + cache tokens over the range' })}${costSortTh('sandbox', 'input', 'input', { align: 'right' })}${costSortTh('sandbox', 'output', 'output', { align: 'right' })}${costSortTh('sandbox', 'usd', 'est. $', { align: 'right' })}`;
+        const rangeRows = sandboxWindow ? costSandboxRangeRowsHtml(sandboxWindow.data) : '';
+        sandboxBody = rangeRows || `<tr><td class="text-muted" colspan="5">${sandboxWindow ? 'no agent usage recorded in this range' : 'loading the selected range…'}</td></tr>`;
+        sandboxNote = costSandboxCoverageNote(sandboxWindow && sandboxWindow.data);
+      } else {
+        sandboxHead = `${costSortTh('sandbox', 'name', 'sandbox (agent)')}${costSortTh('sandbox', 'input', 'input', { align: 'right' })}${costSortTh('sandbox', 'output', 'output', { align: 'right' })}${costSortTh('sandbox', 'usd', 'est. $', { align: 'right' })}`;
+        sandboxBody = sandboxAllRows || '<tr><td class="text-muted" colspan="4">no usage yet</td></tr>';
+      }
       const sandboxTable = `<div class="cost-subsection" data-cost-sub="sandbox">
-        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="${costSubAriaExpanded('sandbox')}" aria-controls="cost-sub-sandbox-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="sandbox" data-keys="*" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price). Window: ${esc(usageWindow)}. Click to collapse / expand."><span class="cost-chevron${costSubCollapsedCls('sandbox')}" aria-hidden="true">▼</span>usage by sandbox <span class="cost-window-tag">(${esc(usageWindow)})</span></div>
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="${costSubAriaExpanded('sandbox')}" aria-controls="cost-sub-sandbox-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="sandbox" data-keys="*" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price). Window: ${esc(sandboxWindowTag)}. Click to collapse / expand."><span class="cost-chevron${costSubCollapsedCls('sandbox')}" aria-hidden="true">▼</span>usage by sandbox <span class="cost-window-tag">(${esc(sandboxWindowTag)})</span></div>
         <div class="cost-sub-body${costSubCollapsedCls('sandbox')}" id="cost-sub-sandbox-body">
+        ${sandboxScope}
         <div class="cost-table-scroll"><table class="cost-table table-compact">
-          <thead><tr>${costSortTh('sandbox', 'name', 'sandbox (agent)')}${costSortTh('sandbox', 'input', 'input', { align: 'right' })}${costSortTh('sandbox', 'output', 'output', { align: 'right' })}${costSortTh('sandbox', 'usd', 'est. $', { align: 'right' })}</tr></thead>
-          <tbody>${sandboxRows || '<tr><td class="text-muted" colspan="4">no usage yet</td></tr>'}</tbody>
+          <thead><tr>${sandboxHead}</tr></thead>
+          <tbody>${sandboxBody}</tbody>
         </table></div>
+        ${sandboxNote}
         </div>
       </div>`;
 
@@ -719,7 +790,7 @@
 
     async function fetchCost() {
       try {
-        const [resp] = await Promise.all([fetch('/api/cost'), fetchCostHistory(), fetchRepoCost(), fetchAdvisorSpend(), fetchLaunchCost()]);
+        const [resp] = await Promise.all([fetch('/api/cost'), fetchCostHistory(), fetchRepoCost(), fetchAdvisorSpend(), fetchLaunchCost(), fetchCostAgentWindow()]);
         if (!resp.ok) return;
         const cost = await resp.json();
         renderCost(cost);

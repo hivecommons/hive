@@ -108,6 +108,7 @@
     .cost-range button { border: none; background: none; color: var(--muted); font-size: 0.66rem; font-weight: 600; padding: 3px 9px; border-radius: 5px; cursor: pointer; text-transform: capitalize; }
     .cost-range button:hover { color: var(--text); }
     .cost-range button.active { background: var(--panel); color: var(--green); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+    .cost-sandbox-scope { margin-bottom: var(--sp-2); }
     /* −/+ stepper beside the range pills: same pill look, count + unit between */
     .cost-range-step { display: inline-flex; align-items: center; gap: var(--sp-0); background: color-mix(in srgb, var(--muted) 14%, transparent); border-radius: var(--radius); padding: var(--sp-1); }
     .cost-range-step button { border: none; background: none; color: var(--muted); font-size: var(--fs-sm); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--radius-sm); cursor: pointer; font-family: var(--font-mono); }

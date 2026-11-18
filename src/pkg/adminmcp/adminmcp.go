@@ -368,7 +368,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolSettingsRead, settingsReadDescription()},
 		{ToolClaudeAuthStatus, "Read which Claude auth mode is active through the existing /api/claude-auth/status endpoint: mode is \"long-lived token\" (an operator-supplied claude setup-token token) or \"dashboard sign-in\", with logged_in. Never returns token material. Read-only."},
 		{ToolAutonomyReadiness, "Read autonomy/readiness status through the existing Nous status endpoint."},
-		{ToolSpendRead, "Read spend and budget status through the existing cost endpoint."},
+		{ToolSpendRead, spendReadDescription},
 		{ToolLaunchCostRead, launchCostReadDescription},
 		{ToolPRModelsRead, prModelsReadDescription},
 		{ToolContributorModelStatsRead, contributorModelStatsReadDescription},
@@ -481,6 +481,8 @@ func inputSchema(name string) map[string]any {
 		props = gitHubAPIUsageSchema()
 	case ToolLaunchCostRead:
 		props = launchCostReadSchema()
+	case ToolSpendRead:
+		props = spendReadSchema()
 	case ToolPRModelsRead:
 		props = prModelsReadSchema()
 	case ToolContributorModelStatsRead:
@@ -860,7 +862,9 @@ func ReadPath(tool string, limit int) (string, bool) {
 		path, err := LaunchCostReadPath(nil)
 		return path, err == nil
 	case ToolSpendRead:
-		return "/api/cost", true
+		// With hours or since/until it goes through SpendReadPath, which
+		// checks the window; this is its all-time read.
+		return spendPath, true
 	case ToolPRModelsRead, ToolContributorModelStatsRead, ToolEffectiveModelsRead:
 		// With arguments these go through ModelEffectivenessReadPath, which
 		// checks window, days and filter; this is their default window.

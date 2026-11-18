@@ -562,10 +562,78 @@
       }
     }
 
+    // ── Per-agent tokens and $ for the selected range (#18968) ──
+    // GET /api/cost/agents answers each agent's tokens and estimated $ over
+    // the active cost window, from the server's snapshots with the daily
+    // rollup's correction rules. The usage-by-sandbox table and the agent
+    // cards' spend chips both read it, so they agree; until it has answered
+    // for this window the chips fall back to the browser's own sum below.
+    let _costAgentWindow = null;          // { key, data, byName }
+    let _costAgentWindowLoading = '';
+    let _costAgentWindowFailed = '';
+    // costAgentWindowQuery: the request for the active window. A window that
+    // runs to now (hourly, daily, the current week or month) is asked without
+    // `until` and keyed "now", so each poll refreshes it in place; a custom
+    // range that ended in the past sends its end.
+    function costAgentWindowQuery(win, now) {
+      now = typeof now === 'number' ? now : Date.now();
+      win = win || costWindow(now);
+      const open = win.end >= now;
+      let qs = `since=${encodeURIComponent(new Date(win.start).toISOString())}`;
+      if (!open) qs += `&until=${encodeURIComponent(new Date(win.end).toISOString())}`;
+      return { key: `${win.key}|${win.start}|${open ? 'now' : win.end}`, qs };
+    }
+    // costAgentWindowData: the server's answer for the active window, or null
+    // while it has not answered for this one.
+    function costAgentWindowData() {
+      const q = costAgentWindowQuery();
+      return _costAgentWindow && _costAgentWindow.key === q.key ? _costAgentWindow : null;
+    }
+    // fetchCostAgentWindow: read the active window's rows; resolves true when
+    // fresh rows arrived (the caller re-renders), false otherwise.
+    async function fetchCostAgentWindow() {
+      const q = costAgentWindowQuery();
+      if (_costAgentWindowLoading === q.key) return false;
+      _costAgentWindowLoading = q.key;
+      try {
+        const r = await fetch('/api/cost/agents?' + q.qs);
+        if (!r.ok) { _costAgentWindowFailed = q.key; return false; }
+        const data = await r.json();
+        const byName = {};
+        for (const a of (data.agents || [])) byName[a.name] = a;
+        _costAgentWindow = { key: q.key, data, byName };
+        _costAgentWindowFailed = '';
+        return true;
+      } catch {
+        _costAgentWindowFailed = q.key;
+        return false;
+      } finally {
+        if (_costAgentWindowLoading === q.key) _costAgentWindowLoading = '';
+      }
+    }
+    // costAgentWindowEnsure: called while rendering; fetches the active
+    // window once when nothing (and no failure) is recorded for it yet, then
+    // re-renders the Cost card and the agent cards.
+    function costAgentWindowEnsure() {
+      const q = costAgentWindowQuery();
+      if (costAgentWindowData() || _costAgentWindowLoading === q.key || _costAgentWindowFailed === q.key) return;
+      fetchCostAgentWindow().then((fresh) => {
+        if (!fresh) return;
+        if (typeof _lastCost !== 'undefined' && _lastCost) renderCost(_lastCost);
+        if (window._lastAgents) renderAgents(window._lastAgents);
+      });
+    }
+
     // agentWindowSpend: estimated $ spent by one agent inside the active cost
-    // window, derived from per-agent cumulative snapshots. null = no per-agent
-    // data covering this window (e.g. history predates the feature).
+    // window: the server's row when GET /api/cost/agents has answered for this
+    // window, else derived here from per-agent cumulative snapshots. null = no
+    // per-agent data covering this window (e.g. history predates the feature).
     function agentWindowSpend(name) {
+      const srv = typeof costAgentWindowData === 'function' ? costAgentWindowData() : null;
+      if (srv) {
+        const row = srv.byName[name];
+        return row ? row.usd : null;
+      }
       const win = costWindow();
       const hist = costHist().filter(e => e.agents && typeof e.agents[name] === 'number');
       if (hist.length < 2) return null;
