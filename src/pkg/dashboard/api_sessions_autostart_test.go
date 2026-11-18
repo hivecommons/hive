@@ -347,6 +347,17 @@ func TestSessionAutostartWindowEndsAsUnknownAndReleasesTheQueue(t *testing.T) {
 		t.Fatalf("input = %d", got)
 	}
 	waitSessionsFor(t, "the Send to be delivered", func() bool { return len(e.rt.typedTexts()) == 1 })
+	// SendText records the text before the worker persists the session and
+	// exits. Wait for the worker, not just delivery, before TempDir cleanup.
+	waitSessionsFor(t, "the Send worker to stop", func() bool {
+		e.s.sessionQueuesMu.Lock()
+		defer e.s.sessionQueuesMu.Unlock()
+		q := e.s.sessionQueueFor(id, false)
+		return q != nil && !q.running
+	})
+	if typed := e.rt.typedTexts(); len(typed) != 1 || typed[0] != "hello" {
+		t.Errorf("typed = %v, want exactly one delivery of hello", typed)
+	}
 }
 
 // dashboard.sessions.autostart: false turns the whole thing off: the HOME is
