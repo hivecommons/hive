@@ -45,6 +45,9 @@ var ErrNoGitHubClient = errors.New("no github client configured (hive is running
 type Client struct {
 	client      *gh.Client
 	linearTeams map[string][]string
+	// blockedOwnerReasons maps repo#N to the owner-action reason the blocked
+	// sweep read from a comment marker (blockedReasonFor). Zero value ready.
+	blockedOwnerReasons sync.Map
 	// foldedTrackers records issues that finding folds landed on (#11587).
 	foldedTrackers foldedTrackerSet
 	// commentBudget caps automated comments per issue per day (#12733).
@@ -1992,7 +1995,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if hasBlockedLabel(labels) {
 			breakdown.Filtered++
 			breakdown.Blocked++
-			row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
+			row := c.workIssue(repo, issue, labels, "filtered", c.blockedReasonFor(repo, issue.GetNumber(), issue.GetBody()))
 			row.RecheckAfter, row.OpsTracking = blockedRecheck(issue.GetBody())
 			row.RecheckDone = blockedRecheckDone(issue.GetBody())
 			details = append(details, row)

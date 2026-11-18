@@ -14974,7 +14974,13 @@ test('#7924 end to end: blocked reaches the hub as its own verdict and the relay
     assert.ok(edits[0].includes("'https://github.com/foo/bar/issues/100'") && edits[0].includes(`--add-label '${relay.BLOCKED_WORKFLOW_LABEL}'`), edits[0]);
     assert.strictEqual(relay.BLOCKED_WORKFLOW_LABEL, 'blocked', 'must match blockedWorkflowLabel in contribute_admission.go');
     assert.strictEqual(relay.__commands.filter(c => /gh label create/.test(c)).length, 0, 'the label existed; nothing to create');
-    assert.strictEqual(relay.__commands.filter(c => /gh issue comment/.test(c)).length, 0, 'the reason comment is the agent\'s (prompt contract), not the relay\'s');
+    // The reason names no PR or issue, so the relay leaves the owner-action
+    // marker that keeps the blocked sweep from lifting the label as
+    // marker-less, and it lands before the label.
+    const comments = relay.__commands.filter(c => /gh issue comment/.test(c));
+    assert.strictEqual(comments.length, 1, `one owner-action marker comment: ${JSON.stringify(comments)}`);
+    assert.ok(comments[0].includes('<!-- hive:blocked-on kind=owner-action reason='), comments[0]);
+    assert.ok(relay.__commands.indexOf(comments[0]) < relay.__commands.indexOf(edits[0]), 'marker before label');
     // The label is never lifted by the relay.
     assert.ok(!relay.__commands.some(c => /--remove-label/.test(c)));
   } finally { console.log = log; teardown(relay); }
@@ -15074,6 +15080,24 @@ test('#11775 end to end: a tooling-failure blocked verdict applies no label and 
     assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0,
       `no blocked label for a tooling failure: ${JSON.stringify(relay.__commands.filter(c => /gh /.test(c)))}`);
     assert.ok(logged.some(l => /own tooling/.test(l) && /not applying the 'blocked' label/.test(l)), `expected the demotion to be logged, got ${JSON.stringify(logged)}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('owner-action marker: written for a reason naming no target, skipped when it names one, one safe line', () => {
+  const relay = loadRelay({});
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    assert.strictEqual(relay.ownerActionMarker('grant the app contents:write on foo/bar'),
+      '<!-- hive:blocked-on kind=owner-action reason="grant the app contents:write on foo/bar" -->');
+    assert.strictEqual(relay.ownerActionMarker('a "quoted" --> reason\nwith <b>breaks</b>'),
+      '<!-- hive:blocked-on kind=owner-action reason="a quoted reason with b breaks /b" -->');
+    assert.ok(relay.ownerActionMarker('x'.repeat(500)).length < 300);
+    const before = relay.__commands.length;
+    relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, 'waits on foo/baz#12 landing');
+    const named = relay.__commands.slice(before);
+    assert.strictEqual(named.filter(c => /gh issue comment/.test(c)).length, 0, 'a named target keeps the agent\'s own pr=/issue= marker');
+    assert.strictEqual(named.filter(c => /gh issue edit/.test(c)).length, 1);
   } finally { console.log = log; teardown(relay); }
 });
 

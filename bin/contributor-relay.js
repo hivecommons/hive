@@ -7624,7 +7624,7 @@ function hubGrantsIssuesWrite(hub) {
 // a gh that is missing, offline or refused costs a log line, never the
 // completion. gh refuses to add a label the repository does not define, so a
 // first failure creates the label and retries exactly once.
-function markIssueLabel(task, reason, label, description, issueTag) {
+function markIssueLabel(task, reason, label, description, issueTag, beforeLabel) {
   label = String(label || '').trim();
   if (!label) {
     console.log(`Task ${task && task.task_id ? task.task_id : '(unknown)'}: ${issueTag} verdict configured with no label — the hub's cooldown holds the issue`);
@@ -7645,6 +7645,11 @@ function markIssueLabel(task, reason, label, description, issueTag) {
     `gh issue edit ${shellQuote(issueURL)} --add-label ${shellQuote(label)} 2>&1`,
     { encoding: 'utf8', timeout: 20000, env });
   const describe = e => ((e && (e.stdout || e.message)) || 'unknown error').toString().trim();
+  // Anything the label's meaning depends on lands first: the blocked sweep
+  // can run between the two calls and must already find the marker.
+  if (typeof beforeLabel === 'function') {
+    try { beforeLabel(env, issueURL); } catch (e) { console.error(`Task ${task.task_id}: pre-label step for ${task.repo}#${task.number} failed: ${describe(e)}`); }
+  }
   try {
     addLabel();
   } catch (first) {
@@ -7668,7 +7673,43 @@ function markIssueBlocked(task, reason) {
     console.log(`Task ${task && task.task_id ? task.task_id : '(unknown)'}: blocked verdict describes this contributor's own tooling (${String(reason).trim().slice(0, 160)}) — not applying the '${BLOCKED_WORKFLOW_LABEL}' label; the hub re-offers the issue on the short cooldown (hivecommons/hive#11775)`);
     return;
   }
-  markIssueLabel(task, reason, BLOCKED_WORKFLOW_LABEL, 'Waiting on something outside this repository; not contributor work until a human clears the label', 'blocked');
+  markIssueLabel(task, reason, BLOCKED_WORKFLOW_LABEL, 'Waiting on something outside this repository; not contributor work until a human clears the label', 'blocked',
+    (env, issueURL) => postOwnerActionMarker(issueURL, reason, env));
+}
+
+// BLOCKED_OWNER_REASON_MAX mirrors blockedOwnerReasonMaxRunes in
+// src/pkg/github/issue_blocked.go.
+const BLOCKED_OWNER_REASON_MAX = 200;
+
+// BLOCKED_REASON_NAMES_TARGET matches a reason that already names the PR or
+// issue the block waits on ("#12", "owner/repo#12", a /pull/ or /issues/ URL):
+// the agent's own comment carries that marker (pr= / issue=), which the blocked
+// sweep follows until the target settles.
+const BLOCKED_REASON_NAMES_TARGET = /#\d+|\/(?:issues|pull)\/\d+/;
+
+// ownerActionMarker renders `<!-- hive:blocked-on kind=owner-action
+// reason="..." -->` (blockedOwnerMarker in src/pkg/github/issue_blocked.go):
+// the one-line reason is stripped of anything that could close the comment or
+// break its quoting.
+function ownerActionMarker(reason) {
+  let r = String(reason || '').replace(/-->|[<>"\u0000-\u001f]/g, ' ').split(/\s+/).filter(Boolean).join(' ');
+  if (r.length > BLOCKED_OWNER_REASON_MAX) r = r.slice(0, BLOCKED_OWNER_REASON_MAX).trim();
+  return '<!-- hive:blocked-on kind=owner-action' + (r ? ` reason="${r}"` : '') + ' -->';
+}
+
+// postOwnerActionMarker leaves the owner-action marker on a `blocked` verdict
+// that names no PR or issue. The label is applied through the same hive
+// identity the sweep treats as "the hive's own", so the label's actor cannot
+// tell a relay's deliberate block from a defect; this comment can. With it the
+// sweep keeps the label until a person lifts it and the row reads Needs human
+// with the reason. Throws on a gh failure (markIssueLabel logs it).
+function postOwnerActionMarker(issueURL, reason, env) {
+  if (BLOCKED_REASON_NAMES_TARGET.test(String(reason || ''))) return;
+  const text = String(reason || '').replace(/\s+/g, ' ').trim();
+  const body = ownerActionMarker(reason) + '\nBlocked: needs an owner action' + (text ? `: ${text}` : '.') +
+    '\n\n<sub>-- hive contributor relay</sub>';
+  execSync(`gh issue comment ${shellQuote(issueURL)} --body ${shellQuote(body)} 2>&1`,
+    { encoding: 'utf8', timeout: 20000, env });
 }
 
 function markIssueNeedsDecision(task, reason) {
@@ -9776,6 +9817,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     verdictWireFields,
     alreadyDoneVerdictFields,
     markIssueBlocked,
+    ownerActionMarker,
     markIssueNeedsDecision,
     markIssueAlreadyDone,
     detectHiveVerdict,
