@@ -38,7 +38,7 @@ hive-open-pr --repo <owner/repo> --head <branch> [--base <branch>] \
 | Flag | Required | Default |
 | --- | :---: | --- |
 | `--repo` / `-R` | yes | — |
-| `--head` / `-H` | effectively | the current git branch |
+| `--head` / `-H` | effectively | the current git branch (on a detached HEAD, the one branch at that commit) |
 | `--base` / `-B` | no | the target repo's default branch |
 | `--title` / `-t` | yes | — |
 | `--body` / `-b` | yes (or `--body-file`) | — |
@@ -47,6 +47,14 @@ hive-open-pr --repo <owner/repo> --head <branch> [--base <branch>] \
 
 `--repo`, `--head`, and `--title` must resolve or the script exits `2`. Both
 `--flag value` and `--flag=value` forms work.
+
+On a detached HEAD (a sandbox Job checkout, `git checkout <sha>`), `git
+rev-parse --abbrev-ref HEAD` prints the literal `HEAD`, which GitHub rejects
+as a PR head. The script then uses the single local (else remote-tracking)
+branch pointing at that commit, and exits `2` without writing a request when
+there is none or more than one. An explicit `--head HEAD` is refused the same
+way, and the watcher rejects such a request before any GitHub call
+([#18907](https://github.com/hivecommons/hive/issues/18907)).
 
 **Pass `--base`, and take the title from the target repository**
 ([#7159](https://github.com/hivecommons/hive/issues/7159)). Both defaults here
@@ -326,7 +334,12 @@ suffix tells you which kind of failure it was:
 | `.denied` | authorization refused (ACMM write-gate, forge-resistance) | no |
 
 A transient failure backs off exponentially from 30s to a 15-minute ceiling and
-is quarantined as `.failed` only after **24 hours** without success. So a
+is quarantined as `.failed` only after **24 hours** without success. One
+GitHub refusal is not treated as transient: a `422` with `head invalid` ends
+the request as `.rejected` after 3 attempts, and the watcher records an
+`agent_pr_rejected` audit entry naming the head, so the dropped work shows on
+the dashboard's audit view instead of retrying for a day
+([#18907](https://github.com/hivecommons/hive/issues/18907)). So a
 freshly failing request is normal-looking for a while: read `.result.json`
 rather than waiting for a rename.
 

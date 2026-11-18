@@ -33,7 +33,9 @@
 #   # rewrites or force-pushes a branch that may already be under review. The
 #   # trailer is attribution only, never a DCO sign-off; do not add
 #   # Signed-off-by on another person's behalf.
-#   # --head defaults to the current git branch. --base is OPTIONAL and should
+#   # --head defaults to the current git branch; on a detached HEAD it is the
+#   # one branch pointing at that commit, and the request is refused when there
+#   # is none (a literal "HEAD" head is always refused). --base is OPTIONAL and should
 #   # normally be omitted: an omitted base is left empty in the request so the
 #   # hive resolves the TARGET REPOSITORY's default branch when it opens the PR.
 #   # Do not pass --base main "to be safe" — that is exactly the bug that based
@@ -153,6 +155,22 @@ $(printf '%s' "$body" | extract_closing_issue_numbers)
 EOF_COAUTHOR_ISSUES
 }
 
+# resolve_detached_head prints the branch that a detached HEAD's commit is
+# the tip of: the single local branch pointing at it, else the single
+# remote-tracking branch. Prints nothing when there is none or more than one
+# (guessing between branches could open the PR from the wrong one).
+resolve_detached_head() {
+  local sha branches
+  sha="$(git rev-parse --verify --quiet HEAD 2>/dev/null)" || return 0
+  branches="$(git for-each-ref --format='%(refname:short)' --points-at "$sha" refs/heads 2>/dev/null | grep -vx 'HEAD' | sort -u || true)"
+  if [ -z "$branches" ]; then
+    branches="$(git for-each-ref --format='%(refname:lstrip=3)' --points-at "$sha" refs/remotes 2>/dev/null | grep -vx 'HEAD' | sort -u || true)"
+  fi
+  if [ -n "$branches" ] && [ "$(printf '%s\n' "$branches" | wc -l)" -eq 1 ]; then
+    printf '%s\n' "$branches"
+  fi
+}
+
 REPO=""; HEAD=""; BASE=""; TITLE=""; BODY=""; BODY_FILE=""; ISSUES=""
 H_WHY=""; H_APPROACH=""; H_REJECTED=""; H_REPRO=""; H_FILES=""
 BODY_SET=0
@@ -230,10 +248,30 @@ if [ -z "${BODY//[$' \t\r\n']/}" ]; then
   exit 2
 fi
 
-# Default head to the current branch if not given.
+# Default head to the current branch if not given. A detached worktree (a
+# sandbox Job checkout, a `git checkout <sha>`) makes `rev-parse --abbrev-ref`
+# answer the literal "HEAD", which GitHub refuses as a head (422) on every
+# retry (hivecommons/hive#18907): resolve the one branch that points at the
+# commit instead, or refuse once with the reason.
 if [ -z "$HEAD" ]; then
   HEAD="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [ "$HEAD" = "HEAD" ]; then
+    HEAD="$(resolve_detached_head)"
+    if [ -z "$HEAD" ]; then
+      echo "hive-open-pr: REFUSING: the worktree is on a detached HEAD and no single branch points at $(git rev-parse --short HEAD 2>/dev/null || echo 'its commit'), so there is no head branch to open a PR from." >&2
+      echo "hive-open-pr: create and push a named branch (git switch -c <branch> && git push -u origin <branch>), then re-run with --head <branch>." >&2
+      echo "hive-open-pr: no request was written — the PR was NOT opened." >&2
+      exit 2
+    fi
+    echo "hive-open-pr: detached HEAD; using branch '${HEAD}', which points at the same commit" >&2
+  fi
 fi
+case "$HEAD" in
+  HEAD|@|refs/heads/HEAD)
+    echo "hive-open-pr: REFUSING: --head '${HEAD}' names the checkout, not a branch; GitHub rejects it as an invalid head. Pass the branch you pushed (--head <branch>)." >&2
+    echo "hive-open-pr: no request was written — the PR was NOT opened." >&2
+    exit 2;;
+esac
 if [ -z "$REPO" ] || [ -z "$HEAD" ] || [ -z "$TITLE" ]; then
   echo "hive-open-pr: --repo, --head (or a current branch), and --title are required" >&2
   exit 2

@@ -37,7 +37,7 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 
 | Operation (`op`) | Entry point | Agent script | Audit action on success | Audited? | Typed `repo` / `target`? |
 | --- | --- | --- | --- | :---: | :---: |
-| `open_pr` | `pr_request_watcher.go` (`/var/run/hive-metrics/pr-requests`) | `hive-open-pr` | `agent_pr_created` | yes | yes / PR number |
+| `open_pr` | `pr_request_watcher.go` (`/var/run/hive-metrics/pr-requests`) | `hive-open-pr` | `agent_pr_created` (or `agent_pr_rejected` when the head can never open a PR) | yes | yes / PR number |
 | `create_issue` | `issue_request_watcher.go` kind `issue` (`.../issue-requests`) | `hive-open-issue` | `agent_issue_created` (or `agent_issue_rejected_duplicate` / `agent_issue_prior_art_refused`). With `--claim` the create is followed by a `claim` of the new issue, gated separately on `claim` (lane allowlist, `refuseWrite`), audited as `agent_issue_claimed`, and removing `help wanted`; the create stands when the claim is refused and the result reports `claim_error` | yes | yes / issue number |
 | `comment` | `issue_request_watcher.go` kind `comment` | `hive-open-issue comment` | `agent_comment_created`; a comment that defers an open PR is also audited as `agent_pr_deferred` with the PR head, successors and reason (no extra write) | yes | yes / issue or PR number |
 | `claim` | `issue_request_watcher.go` kind `claim` | `hive-open-issue claim` | `agent_issue_claimed` (adds `hive/claimed-by-<agent>` + `hive/in-progress` and one timestamped `hive:claim` marker comment; the pr-request watcher and enumeration sweep remove `hive/in-progress`) | yes | yes / issue number |

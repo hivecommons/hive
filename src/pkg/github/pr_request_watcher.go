@@ -435,6 +435,16 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
+	// A head that names the checkout rather than a branch (hive-open-pr on a
+	// detached HEAD sent "HEAD", hivecommons/hive#18907) can never open a PR.
+	// Refuse it before any GitHub call: past this point the compare and the
+	// signed-commit step resolve "HEAD" as the default branch, report "no
+	// changes", and let the request reach a 422 that it would retry all day.
+	if reason := invalidPRHeadReason(req.Head); reason != "" {
+		c.rejectPRRequestHead(path, req, reason, c.prRetries.attempts(path)+1, nowFn)
+		return
+	}
+
 	// Cheap local body checks first — before anything that spends API quota.
 	// An empty body, or a body missing the reference to its declared
 	// originating issue, is lost content (the observed failure: hive-open-pr
@@ -776,6 +786,11 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 // request remains queued and is retried with the same bounded backoff used for
 // all other forge failures.
 func (c *Client) failPRRequest(path string, req PRRequest, err error, nowFn func() time.Time) {
+	// A 422 head invalid is not transient (hivecommons/hive#18907): end it
+	// after a bounded number of attempts instead of retrying to the horizon.
+	if c.maybeEndHeadInvalidPRRequest(path, req, err, nowFn) {
+		return
+	}
 	resp := PRResponse{OK: false, Error: err.Error(), At: nowFn().UTC().Format(time.RFC3339)}
 	c.writePRResult(path, resp)
 

@@ -403,6 +403,32 @@ STDERR_OUT="$( (cd "$PUSHED_REPO" && env HIVE_AGENT=a10 HIVE_OPEN_PR_REQ_DIR="$R
 check "HIVE_OPEN_PR_SKIP_REMOTE_CHECK silences the preflight" "" "$STDERR_OUT"
 reset_reqs
 
+# --- Detached HEAD (hivecommons/hive#18907) ---
+# A detached checkout makes `rev-parse --abbrev-ref HEAD` answer "HEAD"; a
+# request carrying that head 422s at GitHub on every retry. The wrapper must
+# resolve the branch at that commit, or refuse once and write nothing.
+echo ""
+echo "--- Detached HEAD ---"
+DETACHED_REPO="$TMPDIR_ROOT/detached"
+git clone --quiet "$BARE" "$DETACHED_REPO" 2>/dev/null
+( cd "$DETACHED_REPO" && git checkout --quiet pushed/branch && git checkout --quiet --detach )
+run_detached() {
+  ( cd "$DETACHED_REPO" &&
+    env HIVE_AGENT=a11 HIVE_OPEN_PR_REQ_DIR="$REQ_DIR" HIVE_OPEN_PR_SKIP_REMOTE_CHECK=1 \
+      bash "$MODIFIED_SCRIPT" --repo o/r --title T --body B "$@" ) 2>/dev/null
+}
+check_exit "detached HEAD at a branch tip exits 0" 0 run_detached
+REQ="$(find_req a11)"
+check "detached HEAD resolves the branch at that commit, never 'HEAD'" "pushed/branch" "$(json_field "$REQ" head)"
+reset_reqs
+
+( cd "$DETACHED_REPO" && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit --quiet --allow-empty -m orphan )
+check_exit "detached HEAD with no branch at the commit exits 2" 2 run_detached
+check_exit "detached HEAD with no branch writes no request" 0 test -z "$(find_req a11)"
+check_exit "explicit --head HEAD exits 2" 2 run_detached --head HEAD
+check_exit "explicit --head HEAD writes no request" 0 test -z "$(find_req a11)"
+reset_reqs
+
 # --- Summary ---
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

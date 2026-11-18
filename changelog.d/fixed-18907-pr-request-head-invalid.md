@@ -1,0 +1,1 @@
+- Stop PR requests from a detached HEAD looping on GitHub's `422 head invalid`: `hive-open-pr` now uses the branch at the detached commit or refuses with the reason, the watcher rejects a literal `HEAD` head before any GitHub call, and a `422 head invalid` ends the request after 3 attempts with an `agent_pr_rejected` audit entry instead of retrying for 24 hours (#18907).
