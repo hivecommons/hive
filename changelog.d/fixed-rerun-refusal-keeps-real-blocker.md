@@ -1,1 +1,0 @@
-- A refused shared-CI re-run (the App has no Actions write) no longer replaces a PR's real blocker. It takes the stage (085, "re-run CI") only when CI is what holds the PR; a reviewer's changes request, a requested decision or another 085 stays the stage and caption, and the re-run ask remains as the `hive:unauthorized` note.

@@ -1,1 +1,0 @@
-- On a repo whose auto-merge is off, the contributor lane's observe-only pass no longer tries to post `/ok-to-test` on a non-member fork PR. Its mutation boundary refuses every write by design, and each pass runs on a fresh engine, so the attempt was refused and logged at WARN on every re-evaluation of the head, about every three minutes.
