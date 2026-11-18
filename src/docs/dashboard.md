@@ -500,7 +500,8 @@ hive. The rows cover hard-suppress labels (`stage/045-needs-decision`,
 `needs-spec`; `needs-human` is counted under
 blocked/needs-human), exempt labels from `governor.labels.exempt` plus permanent
 exempt labels, reporter-trust triage from
-`project.issue_filter.reporter_trust`, require-label filtering from
+`project.issue_filter.reporter_trust`, agent proposal filtering from
+`project.issue_filter.agent_proposal`, require-label filtering from
 `project.issue_filter.require_labels`, standing hive advisory/meta issues,
 bot Dependency Dashboard issues, draft PRs, exempt PR labels, and
 hold-adjacent/other remainder rows. See [Outside buckets](#outside-buckets)
@@ -531,6 +532,7 @@ and exposes the editable rows.
 | Exempt labels | Issue or PR carries a deny-list label and is never agent work. | `governor.labels.exempt` plus permanent labels such as `do-not-merge`. | Settings → Labels → Exempt labels, or edit `hive.yaml`. |
 | Reporter triage | Reporter trust is enabled and the issue author is not trusted yet. | `project.issue_filter.reporter_trust` trusted associations/logins and untrusted required labels. | Settings → Labels → Reporter trust. |
 | Project issue filter | Issue lacks every required allow-list label. | `project.issue_filter.require_labels`. | Settings → Labels → Required labels. |
+| Agent proposal | A non-human strategist or outreach proposal lacks an approved-direction label, human assignee, or acknowledged split parent. The Activity Monitor reason is `Agent proposal awaiting approved-direction`. | `project.issue_filter.agent_proposal` (omitted for defaults; `agent_proposal: {}` disables the gate). | Edit `hive.yaml`; see [Agent-filed direction proposals](agent-configuration.md#agent-filed-direction-proposals). |
 | Standing meta/advisory | Hive's own advisory report or issue labelled `hive/advisory`; it is coordination state, not work. | Fixed scanner rule: advisory title/label. | Rename/close the advisory, or remove the advisory label if it should become work. |
 | Dependency dashboard | Bot dependency dashboard control panel, not a concrete task. | Fixed scanner rule: Renovate/Dependabot-style bot author plus Dependency/Renovate Dashboard title. | File concrete child issues or close/rename the dashboard issue. |
 | Draft PRs | Pull request is open but marked draft. | GitHub draft state. | Use GitHub's **Ready for review** action. |

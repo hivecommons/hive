@@ -1,0 +1,1 @@
+- Hold unacknowledged agent strategist and outreach proposals before admission, with configurable lanes and an explicit opt-out.

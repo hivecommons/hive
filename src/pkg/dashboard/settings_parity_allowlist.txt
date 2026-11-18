@@ -498,6 +498,8 @@ project.agents_md_max_bytes # TODO #11854
 project.checkouts_dir # TODO #11854
 project.forge # TODO #11854
 project.style_max_bytes # TODO #14575
+project.issue_filter.agent_proposal.labels[] # agent proposal gate; yaml-only (#15329)
+project.issue_filter.agent_proposal.title_prefixes[] # agent proposal gate; yaml-only (#15329)
 project.issue_filter.hard_suppress_labels.needs_decision[] # TODO #11854
 project.issue_filter.hard_suppress_labels.needs_direction[] # TODO #11854
 project.issue_filter.hard_suppress_labels.needs_human[] # TODO #11854
