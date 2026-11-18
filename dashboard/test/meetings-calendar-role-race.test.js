@@ -37,7 +37,7 @@ function extractConst(name) {
 const GH_AUTH = ['hiveRoleSettled'];
 const MEETINGS = ['meetingsIsOwner', 'meetingsRoleKnown', 'meetingsOnRoleReady', 'fetchMeetings', 'renderMeetings', 'meetingsJoinFormHtml',
   'meetingsRowHtml', 'meetingsFormatTime', 'meetingsFriendlyReason', 'meetingsReasonHtml', 'meetingsLabel',
-  'meetingsFinished', 'meetingsCanDelete', 'meetingsDeleteButtonHtml', 'fetchMeetingsBudget', 'meetingsBudgetHtml', 'meetingsBudgetText'];
+  'meetingsFinished', 'meetingsCanDelete', 'meetingsDeleteButtonHtml', 'fetchMeetingsBudget', 'meetingsBudgetHtml', 'meetingsBudgetText', 'meetingsTrustedHtml'];
 const CALENDAR = ['calendarRoleKnown', 'calendarOnRoleReady', 'calendarCanView', 'calendarIsOwner', 'fetchCalendar', 'calendarRefreshMeetings',
   'fetchMeetingDrafts', 'renderCalendar', 'renderMeetingDrafts', 'meetingDraftsSplit', 'calendarFormHtml', 'calendarViewerTimeZone',
   'calendarRowHtml', 'calendarFormatTime', 'calendarPlatformLabel', 'calendarMeetingLink', 'calendarActionButtons', 'renderCalendarIndicator',
@@ -67,7 +67,7 @@ function makeSandbox(opts) {
       if (url === '/api/meetings/actions') return { ok: true, status: 200, json: async () => ({ drafts: [] }) };
       return { ok: true, status: 200, json: async () => ({}) };
     },
-    _meetingsList: null, _meetingsError: '', _meetingsOpen: null, _meetingsBudget: {}, _meetingsLedger: null,
+    _meetingsList: null, _meetingsError: '', _meetingsOpen: null, _meetingsBudget: {}, _meetingsLedger: null, _meetingsTrusted: [],
     _calendarData: null, _calendarError: '', _calendarMeetings: {},
     _meetingDrafts: null, _meetingDraftsError: '', _meetingDraftRepos: ['o/r'],
     console, Math, Number, Array, Error, Promise, String, Object, Date, Intl, isNaN,
