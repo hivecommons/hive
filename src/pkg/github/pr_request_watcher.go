@@ -437,9 +437,6 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
-	// Session taint (#18987), observe only; changes nothing here.
-	c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayPR, req.Repo)
-
 	// A head that can never be a branch (the literal HEAD of a detached
 	// checkout, an empty or malformed name) is refused before any GitHub call:
 	// no retry can fix it and every later gate would judge the wrong ref.
@@ -580,6 +577,12 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	if err != nil {
 		c.failPRRequest(path, req, err, nowFn)
 		return
+	}
+	// Session taint (#18987), observe only. Recorded once per PR this request
+	// opened, after every gate; a reused or duplicate PR is not a new write.
+	// The enforcement phases move this check before the write.
+	if !res.AlreadyExisted && !res.IsDuplicate() {
+		c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayPR, req.Repo)
 	}
 	resp.OK = true
 	resp.Number = res.Number

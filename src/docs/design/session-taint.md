@@ -375,8 +375,11 @@ What the observe-only recorder does today, and what it deliberately does not.
 - **Where labels come from.** S3 only: the existing canary leak handler sets a
   `secret` label, origin `hive-canary`, on the session of the agent whose token
   was seen. An unattributed caller is not recorded.
-- **Where it looks.** The issue, comment, PR and review relays, after every
-  existing gate has passed and immediately before the hive acts. A session with
+- **Where it looks.** The issue, comment, PR and review relays, once per relay
+  write that completed: after every existing gate, retry and dedupe step, so the
+  data never describes an action the hive refused or retried, and a reused issue,
+  comment or PR is skipped. Observe-only has nothing to gate, so it runs after the
+  write; the enforcement phases must move the check before it. A session with
   no label costs a map lookup. A session with a label triggers one destination
   visibility lookup (the hive's own credential, cached for an hour; a failed
   lookup counts as public and is not cached).
@@ -390,6 +393,10 @@ What the observe-only recorder does today, and what it deliberately does not.
   decisions in the ring and distinct logged decisions per session are all
   capped by named constants; the `session_taint` keys `max_sessions`,
   `max_labels_per_session` and `max_decisions` override the first three.
+- **Eviction.** The least recently used session is evicted at the session
+  bound, which would drop a tainted session's labels. That is harmless while
+  nothing is enforced; before enforcement, eviction must resolve to `unknown`
+  rather than clean (see the failure table).
 - **Restart.** The store is memory only. A restart starts every session clean
   and invents no `unknown` label; that failure mode belongs to enforcement
   (see [Failure and fail-closed semantics](#failure-and-fail-closed-semantics)).

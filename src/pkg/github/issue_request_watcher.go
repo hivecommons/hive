@@ -600,15 +600,6 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 		return
 	}
 
-	// Session taint (#18987), observe only: record what a session that has
-	// accrued labels would have been held for. It changes nothing here.
-	switch kind {
-	case "issue":
-		c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayIssue, req.Repo)
-	case "comment":
-		c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayComment, req.Repo)
-	}
-
 	// Content gate for the label relay: hive-controlled labels are refused in
 	// both directions, before any GitHub call (#9587). Non-risk Hive-authored
 	// decision parks are downgraded before the reserved-label gate so agents do
@@ -1036,6 +1027,20 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 
 	if startSignal != "" {
 		c.notifyAgentStart(req.Agent, req.Repo, req.Number, startSignal)
+	}
+
+	// Session taint (#18987), observe only. Recorded once per relay write
+	// that completed, after every refusal, retry and dedupe gate, so the
+	// would-act data never describes an action the hive then refused or
+	// retried. A reused issue or comment published nothing new and is
+	// skipped. The enforcement phases move this check before the write.
+	if !resp.AlreadyExisted {
+		switch kind {
+		case "issue":
+			c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayIssue, req.Repo)
+		case "comment":
+			c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayComment, req.Repo)
+		}
 	}
 
 	action := AuditActionAgentIssueCreated

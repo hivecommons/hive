@@ -341,3 +341,58 @@ func TestConcurrentUseIsSafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestNewAppliesDefaultsForNonPositiveBounds(t *testing.T) {
+	o := New(Options{Enabled: true, MaxSessions: -1, MaxLabelsPerSession: 0, MaxDecisions: -5})
+	if o.store.maxSessions != DefaultMaxSessions || o.store.maxLabels != DefaultMaxLabelsPerSession || o.opts.MaxDecisions != DefaultMaxDecisions {
+		t.Errorf("bounds = %d %d %d, want the defaults", o.store.maxSessions, o.store.maxLabels, o.opts.MaxDecisions)
+	}
+	if o.opts.Now == nil {
+		t.Error("a nil clock must default")
+	}
+	one := New(Options{Enabled: true, MaxSessions: 1, MaxLabelsPerSession: 1, MaxDecisions: 1})
+	if one.store.maxSessions != 1 || one.store.maxLabels != 1 || one.opts.MaxDecisions != 1 {
+		t.Errorf("a bound of 1 must be kept")
+	}
+}
+
+func TestFieldShapeBoundaries(t *testing.T) {
+	long := strings.Repeat("a", maxFieldLen)
+	if cleanField(long) != long {
+		t.Errorf("a field of exactly %d bytes must be kept", maxFieldLen)
+	}
+	if cleanField(long+"a") != invalidField {
+		t.Errorf("a field over %d bytes must be refused", maxFieldLen)
+	}
+	if cleanField("  ") != "" || cleanField(" ok ") != "ok" {
+		t.Errorf("trim behaviour changed")
+	}
+	slug := strings.Repeat("a", maxCategoryLen)
+	if !isCategorySlug(slug) || isCategorySlug(slug+"a") || isCategorySlug("") {
+		t.Errorf("category slug length boundary wrong")
+	}
+	if !isCategorySlug("a-z") || isCategorySlug("A") || isCategorySlug("a1") || isCategorySlug("a_b") || !isCategorySlug("-") {
+		t.Errorf("category slug alphabet wrong")
+	}
+	for repo, want := range map[string]bool{
+		"o/r": true, "My-Org/my.repo_2": true, "o/": false, "/r": false, "o": false,
+		"o/r/x": false, "o r/x": false, "o/r x": false, "o/r@x": false, "": false,
+	} {
+		if got := isRepoID(repo); got != want {
+			t.Errorf("isRepoID(%q) = %v, want %v", repo, got, want)
+		}
+	}
+	for host, want := range map[string]bool{
+		"api.example.com": true, "host:8080": true, "": false, "a b": false, "a/b": false, "a_b": false,
+	} {
+		if got := isHost(host); got != want {
+			t.Errorf("isHost(%q) = %v, want %v", host, got, want)
+		}
+	}
+	if !validOrigin(LabelSecret, invalidField) || !validOrigin(LabelPrivateRepo, unspecifiedOrigin) {
+		t.Errorf("the placeholders must always be allowed")
+	}
+	if validOrigin(Label("made-up"), "x") {
+		t.Errorf("an unknown label has no valid origin")
+	}
+}

@@ -432,9 +432,6 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 		return
 	}
 
-	// Session taint (#18987), observe only; changes nothing here.
-	c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayReview, req.Repo)
-
 	sentinelBlockNote := ""
 	if apiEvent == "APPROVE" {
 		if blocked, err := c.sentinelReviewBlockReason(ctx, req.Repo, req.Number); err != nil {
@@ -713,6 +710,10 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 			slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", err.Error()))
 		return
 	}
+	// Session taint (#18987), observe only. Recorded once per review the hive
+	// completed, after every gate and retry. The enforcement phases move this
+	// check before the write.
+	c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayReview, req.Repo)
 	resp.OK = true
 	resp.Number = req.Number
 	resp.State = state

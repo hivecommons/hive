@@ -43,22 +43,6 @@ func TestSessionTaintCanaryHitSetsSecretLabel(t *testing.T) {
 	}
 }
 
-func TestSessionTaintConfigDefaults(t *testing.T) {
-	var c config.SessionTaintConfig
-	if c.Enabled {
-		t.Error("default must be off")
-	}
-	if c.MaxSessionsOrDefault() != config.DefaultSessionTaintMaxSessions ||
-		c.MaxLabelsPerSessionOrDefault() != config.DefaultSessionTaintMaxLabelsPerSession ||
-		c.MaxDecisionsOrDefault() != config.DefaultSessionTaintMaxDecisions {
-		t.Error("zero values must resolve to the defaults")
-	}
-	c = config.SessionTaintConfig{MaxSessions: -1, MaxLabelsPerSession: 5, MaxDecisions: 7}
-	if c.MaxSessionsOrDefault() != config.DefaultSessionTaintMaxSessions || c.MaxLabelsPerSessionOrDefault() != 5 || c.MaxDecisionsOrDefault() != 7 {
-		t.Error("explicit positive values must be kept, non-positive ones defaulted")
-	}
-}
-
 // The config defaults and the observer's own bounds are the same numbers, so
 // `enabled: true` alone gives the documented limits.
 func TestSessionTaintConfigDefaultsMatchObserver(t *testing.T) {
