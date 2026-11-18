@@ -428,23 +428,6 @@ func TestSandboxReadRelayRefusesHostMismatchInsideTunnel(t *testing.T) {
 	}
 }
 
-type lockedBuffer struct {
-	mu sync.Mutex
-	b  strings.Builder
-}
-
-func (l *lockedBuffer) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.Write(p)
-}
-
-func (l *lockedBuffer) String() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.String()
-}
-
 // The read token and the per-kick relay key must never appear in the relay's
 // logs, at the most verbose level, across injected, refused and anonymous
 // requests.
