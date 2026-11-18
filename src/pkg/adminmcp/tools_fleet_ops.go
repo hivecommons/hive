@@ -150,7 +150,7 @@ func (planRejectOp) Preview(_ context.Context, args map[string]any) (WritePrevie
 
 func (featureSettingsOp) Name() string { return WriteOpFeatureSettings }
 func (featureSettingsOp) Description() string {
-	return "Update governor feature settings through PUT /api/config/governor/features. This includes workflow-run approval (governor.ci: ciAutoApproveWorkflows, ciAutoApproveWorkflowActors) and write-back containment's unsolicited knobs (writeback.unsolicited: writebackMinLevel, writebackRequireLabels, writebackBackfill); the per-kind overrides have their own operation, writeback.kind_policy."
+	return "Update governor feature settings through PUT /api/config/governor/features. This includes workflow-run approval (governor.ci: ciAutoApproveWorkflows, ciAutoApproveWorkflowActors), the shared-CI rerun sweep (shared_ci_rerun.enabled: sharedCiRerunEnabled) and write-back containment's unsolicited knobs (writeback.unsolicited: writebackMinLevel, writebackRequireLabels, writebackBackfill); the per-kind overrides have their own operation, writeback.kind_policy."
 }
 func (featureSettingsOp) InputSchema() map[string]any {
 	props := map[string]any{}
@@ -168,6 +168,7 @@ func (featureSettingsOp) InputSchema() map[string]any {
 	// governor.ci (Settings → Features → Auto-merge → Workflow approval).
 	props["ciAutoApproveWorkflows"] = map[string]any{"type": "boolean", "description": "governor.ci.auto_approve_workflows: approve the workflow runs GitHub holds behind \"Approve and run\" on trusted PR heads (default true)."}
 	props["ciAutoApproveWorkflowActors"] = map[string]any{"type": "string", "description": "governor.ci.auto_approve_workflow_actors as a comma-separated list of GitHub logins trusted besides the hive's App and dashboard-approved heads; blank restores the default (dependabot[bot], renovate[bot]), \"none\" trusts neither."}
+	props["sharedCiRerunEnabled"] = map[string]any{"type": "boolean", "description": "shared_ci_rerun.enabled: re-run the failed jobs of PRs a [shared-ci] incident held red once it is over (default true; needs Actions write on the App, which is optional)."}
 	props["otelHeaders"] = map[string]any{"type": "object", "additionalProperties": stringSchema()}
 	props["rotationProviders"] = map[string]any{"type": "object"}
 	props["rotationAgents"] = map[string]any{"type": "object", "additionalProperties": stringSchema()}
@@ -225,6 +226,11 @@ func featureDisclosure(args map[string]any) string {
 	}
 	if v, ok := args["ciAutoApproveWorkflowActors"].(string); ok && !strings.EqualFold(strings.TrimSpace(v), "none") {
 		warnings = append(warnings, "ciAutoApproveWorkflowActors sets whose PRs get held workflow runs approved; a trusted author covers every run on the head, whoever pushed it")
+	}
+	// The shared-CI rerun sweep re-runs failed jobs and comments on the PRs
+	// it re-ran (or, without Actions write, asks a maintainer to).
+	if v, ok := args["sharedCiRerunEnabled"].(bool); ok && v {
+		warnings = append(warnings, "sharedCiRerunEnabled lets the hive re-run failed jobs on PRs a shared-CI incident held red and leave a note on each")
 	}
 	for _, key := range []string{"ioscanEnabled", "checkpointSpecEnabled", "checkpointPlanEnabled", "checkpointImplementEnabled", "claimsEnabled"} {
 		if v, ok := args[key].(bool); ok && !v {

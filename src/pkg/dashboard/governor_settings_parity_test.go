@@ -390,3 +390,43 @@ func TestWorkflowApprovalSettingsRender(t *testing.T) {
 		}
 	}
 }
+
+// shared_ci_rerun.enabled round-trips through the Features PUT and renders on
+// Settings → Features → Quality with its YAML-key hint. A hive whose App has
+// no Actions write (optional) turns it off to stop the rerun attempts.
+func TestGovernorFeaturesSharedCIRerunRoundTrip(t *testing.T) {
+	s := covApiServer(t)
+	if !s.deps.Config.SharedCIRerun.IsEnabled() {
+		t.Fatal("shared_ci_rerun must default on")
+	}
+	if rec := doPut(s, opsFeaturesPath, map[string]any{"sharedCiRerunEnabled": false}); rec.Code != http.StatusOK {
+		t.Fatalf("features PUT: %d — %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.SharedCIRerun.IsEnabled() {
+		t.Fatal("shared_ci_rerun.enabled not turned off")
+	}
+	rec := doGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("governor GET: %d", rec.Code)
+	}
+	var got struct {
+		Features map[string]any `json:"features"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Features["sharedCiRerunEnabled"] != false {
+		t.Fatalf("features response sharedCiRerunEnabled = %v", got.Features["sharedCiRerunEnabled"])
+	}
+	if rec := doPut(s, opsFeaturesPath, map[string]any{"ciAutoApproveWorkflows": true}); rec.Code != http.StatusOK {
+		t.Fatalf("unrelated PUT: %d", rec.Code)
+	}
+	if s.deps.Config.SharedCIRerun.IsEnabled() {
+		t.Fatal("a PUT that did not carry the flag changed it")
+	}
+
+	features := extractJSFunction(t, indexHTML(t), "renderGovFeatures")
+	if !strings.Contains(features, "yamlHint('shared_ci_rerun.enabled')") || !strings.Contains(features, `data-section="features" data-key="sharedCiRerunEnabled"`) {
+		t.Error("shared_ci_rerun.enabled has no Features control with its YAML-key hint")
+	}
+}

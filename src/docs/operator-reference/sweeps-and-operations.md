@@ -355,7 +355,7 @@ someone re-runs it. The shared-CI rerun sweep
 
 | Key | Default | Meaning |
 |---|---|---|
-| `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes or its check passes on the base again. |
+| `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes or its check passes on the base again. Settings → Features → Quality loops & release health → **Shared-CI recovery**, or the admin MCP `governor.feature_settings` field `sharedCiRerunEnabled`. |
 
 ## Shared-CI tracking issues (`shared_ci_issues`)
 
