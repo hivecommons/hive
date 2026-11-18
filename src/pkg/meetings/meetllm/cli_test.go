@@ -27,7 +27,8 @@ const (
 	fakeSlow = "slow"
 )
 
-// fakeTokensPerTurn is what the fake reports per turn: 10+5+3+2.
+// fakeTokensPerTurn is what the fake charges per turn: 10+5+3 plus 20 cache
+// reads at 1/cacheReadWeightDivisor.
 const fakeTokensPerTurn = 20
 
 // fakeCLI writes a fake streaming claude into dir: it records its argv
@@ -51,12 +52,12 @@ while IFS= read -r line; do
     slow) sleep 0.5 ;;
     crash) exit 1 ;;
     crashonce) if [ ! -f "$D/crashed" ]; then : > "$D/crashed"; exit 1; fi ;;
-    error) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":3,"cache_read_input_tokens":2}}'; continue ;;
+    error) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":3,"cache_read_input_tokens":20}}'; continue ;;
   esac
   instr=no
   case "$line" in *"<instructions>"*) instr=yes ;; esac
   echo '{"type":"assistant","message":{"content":[]}}'
-  echo '{"type":"result","subtype":"success","is_error":false,"result":"reply '$n' pid '$$' instr '$instr'","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":3,"cache_read_input_tokens":2}}'
+  echo '{"type":"result","subtype":"success","is_error":false,"result":"reply '$n' pid '$$' instr '$instr'","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":3,"cache_read_input_tokens":20}}'
 done
 `
 	p := filepath.Join(dir, "claude")
@@ -454,5 +455,36 @@ func TestCLIHelpers(t *testing.T) {
 func TestCompletionBackendsMatchConfig(t *testing.T) {
 	if got, want := CompletionBackends(), config.MeetingsCompletionBackends; !reflect.DeepEqual(got, want) {
 		t.Fatalf("profiles %v, config %v", got, want)
+	}
+}
+
+// TestCLIUsageTotalDiscountsCacheReads pins the weighting: cache reads count
+// at 1/cacheReadWeightDivisor, everything else in full.
+func TestCLIUsageTotalDiscountsCacheReads(t *testing.T) {
+	u := cliUsage{InputTokens: 100, OutputTokens: 50, CacheCreationInputTokens: 30, CacheReadInputTokens: 1000}
+	if got, want := u.total(), 100+50+30+1000/cacheReadWeightDivisor; got != want {
+		t.Fatalf("total = %d, want %d", got, want)
+	}
+}
+
+// TestWarmSessionBudgetCoversALongMeeting is the invariant behind the Betty
+// suite going silent: a warm session's history grows every turn and is
+// re-read from the cache each time, and thirty questions at that cost must
+// still fit the default per-meeting budget instead of exhausting it.
+func TestWarmSessionBudgetCoversALongMeeting(t *testing.T) {
+	const (
+		meetingBudget = 200000 // config.DefaultMeetingsMaxTokensPerMeeting
+		questions     = 30
+		freshPerTurn  = 900  // new input, output and cache writes of one turn
+		historyGrowth = 3300 // history added to the cache by each turn
+	)
+	total := 0
+	for q := 0; q < questions; q++ {
+		turn := q % DefaultRecycleTurns // the warm session restarts every DefaultRecycleTurns
+		u := cliUsage{InputTokens: freshPerTurn, CacheReadInputTokens: historyGrowth * turn}
+		total += u.total()
+		if total > meetingBudget {
+			t.Fatalf("budget exhausted after %d of %d questions at %d tokens", q+1, questions, total)
+		}
 	}
 }

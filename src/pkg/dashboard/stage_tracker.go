@@ -484,6 +484,10 @@ type StageTrackerItem struct {
 	// 095 / 100): state, what holds it, whether hive's merge sweep is on
 	// it now, the next pass and the soak countdown (hivecommons/hive#15073).
 	MergeGate *StageTrackerMergeGate `json:"merge_gate,omitempty"`
+	// HumanGate is the row's live human-gate state: the reasons a person is
+	// owed something now, the verbs that would act, and what the item
+	// waits on when nothing is owed (stage_tracker_gate.go).
+	HumanGate *StageTrackerHumanGate `json:"human_gate,omitempty"`
 	// Soak is the soak clock while the lane holds this head for the soak
 	// window, at 060/080/095: when it started, when it ends, the window
 	// and the head it was measured on. The SPA counts it down in place.
@@ -840,6 +844,8 @@ type StageTrackerLinkedPR struct {
 	SoakRemainingSeconds int64                   `json:"soak_remaining_seconds,omitempty"`
 	MergeGate            *StageTrackerMergeGate  `json:"merge_gate,omitempty"`
 	MergeTrain           *StageTrackerMergeTrain `json:"merge_train,omitempty"`
+	// HumanGate mirrors the nested PR's own row gate (stage_tracker_gate.go).
+	HumanGate *StageTrackerHumanGate `json:"human_gate,omitempty"`
 	// LeftTrain mirrors the nested PR's own row field so the sub-row's
 	// hover can say it left its train while under repair.
 	LeftTrain *StageTrackerLeftTrain `json:"left_train,omitempty"`

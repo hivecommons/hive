@@ -468,6 +468,9 @@ type Engine struct {
 	workflowApprovalScans          map[string]time.Time
 	workflowApprovalUntrusted      map[string]bool
 	workflowApprovalWorkflowChecks map[string]okToTestWorkflowCheck
+	// prowRefusals is the repository-level memory that Prow refuses the
+	// App's /ok-to-test (automerge_prow_refusal_memory.go).
+	prowRefusals map[string]prowRefusalMemo
 	// unauthorized remembers, per PR, the head and step this process marked
 	// `hive:unauthorized` for, so the same head logs once and the mark
 	// clears when the step is done; unauthorizedLabelReady remembers the

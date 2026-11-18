@@ -176,6 +176,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source st
 	case config.SandboxRuntimeSubstrate:
 		launcher = m.substrateLauncherLocked(agent.Config.SandboxSubstrate(m.sandboxConfig))
 	}
+	m.prepareJobKickLocked(launcher, agent, runtime)
 	now := time.Now()
 	agent.State = StateRunning
 	agent.sandboxKickActive = true
@@ -332,6 +333,10 @@ func (m *Manager) runSandboxKick(ctx context.Context, agent *AgentProcess, gen i
 			}
 		},
 	}
+	if in := m.sandboxReadRelay.cur.Load(); in != nil {
+		exec.GitHubReadRelay = in.relay
+		exec.GitHubReadRelayNoProxy = in.noProxy
+	}
 	res, err := exec.Run(ctx, spec)
 	ended := time.Now()
 	// The run record is written to disk after m.mu is released (defers run
@@ -365,6 +370,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, agent *AgentProcess, gen i
 	agent.cancel = nil
 	kickSource := agent.LastKickSource
 	agent.sandboxKickActive = false
+	clearSandboxPhase(agent)
 	// The run record is what a sandboxed agent's health and activity derive
 	// from: there is no session to probe between kicks. Recorded on every
 	// outcome but an operator cancel, and persisted so a pod roll does not
@@ -401,6 +407,9 @@ func (m *Manager) runSandboxKick(ctx context.Context, agent *AgentProcess, gen i
 			}
 			m.auditSandbox(name, "sandbox_cancelled", "sandbox kick cancelled while resuming")
 			m.notifyKickObserver(agent.Name, KickObserverEventArchived, kickObserverArchiveDetail("sandbox-cancelled", kickSource))
+			return
+		}
+		if m.sandboxInfraFailureLocked(agent, name, res, err) {
 			return
 		}
 		if agent.Paused || agent.State == StatePaused {
@@ -440,6 +449,9 @@ func (m *Manager) runSandboxKick(ctx context.Context, agent *AgentProcess, gen i
 		agent.OutputBuffer.Write(msg)
 	}
 	detail := fmt.Sprintf("workspace=%s commits=%d branch=%s", res.Workspace, res.CommitCount, res.Branch)
+	if res.Sandbox.Node != "" {
+		detail += " node=" + res.Sandbox.Node
+	}
 	if res.PR != nil && res.PR.URL != "" {
 		detail += " pr=" + res.PR.URL
 	}
@@ -561,10 +573,13 @@ func JobOptionsFromConfig(job config.SandboxJobConfig) kubejob.Options {
 		WorkspaceClaim:      job.WorkspaceClaim,
 		WorkspaceClaimMount: job.WorkspaceClaimMount,
 		NodeSelector:        job.NodeSelector,
+		Affinity:            job.Affinity,
 		ServiceAccount:      job.ServiceAccount,
 		SchedulerName:       job.SchedulerName,
 		EnvFromSecrets:      append([]string(nil), job.EnvFromSecrets...),
+		ImagePullSecrets:    append([]string(nil), job.ImagePullSecrets...),
 		TTLSeconds:          job.TTLSeconds,
+		ScheduleTimeout:     time.Duration(job.ScheduleTimeoutS) * time.Second,
 		RelayImage:          job.RelayImage,
 		RelayRunAsUser:      job.RelayRunAsUser,
 		Resources: kubejob.Resources{

@@ -74,9 +74,17 @@ spoke (/data/evidence)  --hourly POST /api/benchmarks/ingest-->  hub (/data/benc
 
 1. **Spoke → hub (push, hourly).** Three minutes after start and then every
    hour, the spoke converts bundles updated since its persisted watermark
-   (`/data/benchmarks-publish.json`), caps a batch at 2000 records and POSTs
-   them to `<hub>/api/benchmarks/ingest` with the same per-hive heartbeat
-   bearer used for NPS and task-status pushes. The hub recomputes the hash
+   (`/data/benchmarks-publish.json`), splits them oldest-first into batches of
+   at most 2000 records and about 384 KB of serialized JSON (under the 1 MB
+   body default of common ingress proxies) and POSTs each to
+   `<hub>/api/benchmarks/ingest`, advancing the watermark after every accepted
+   batch. On HTTP 413 the batch is halved and retried; a single record that
+   still gets 413 is skipped (logged once) once another batch has been
+   accepted in the same run, so one oversized record cannot stall publishing.
+   A failure puts the HTTP status and a truncated response body in
+   `benchmarks.last_error`, which shows whether the hub handler
+   (`payload too large`) or a proxy in front of it refused the body. Requests
+   use the same per-hive heartbeat bearer used for NPS and task-status pushes. The hub recomputes the hash
    from the authenticated hive id and rejects any record claiming a different
    `source.hive_id`, so one spoke cannot write into another's rows. Push was
    chosen over hub-pull because the hub holds no credential for spokes and

@@ -41,7 +41,12 @@ type StageTrackerWorkflow struct {
 	// The tracker offers an owner "Send to <profile>" on such rows (POST
 	// /api/workflows/dispatch). Absent when the model dispatches nothing.
 	Dispatch map[string]StageTrackerWorkflowDispatch `json:"dispatch,omitempty"`
-	Error    string                                  `json:"error,omitempty"`
+	// Handoffs maps an item number (string key) to the hand-off of that
+	// item an agent declined or did not act on (hivecommons/hive#18749).
+	// The row wears it, so an item that looks handed off but is not being
+	// worked is not silent. Absent when every hand-off started.
+	Handoffs map[string]StageTrackerWorkflowHandoff `json:"handoffs,omitempty"`
+	Error    string                                 `json:"error,omitempty"`
 }
 
 // StageTrackerWorkflowDispatch is one state the model hands to a profile.

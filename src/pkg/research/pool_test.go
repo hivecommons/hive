@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
@@ -327,12 +328,183 @@ func TestObserveTranslatesLifecycle(t *testing.T) {
 func TestTrackBoundsMemory(t *testing.T) {
 	p, _ := NewPool(newFake("research-1"), 1)
 	for i := 0; i < maxTrackedKicks+3; i++ {
-		p.track(strings.Repeat("x", i+1), "research-1", nil)
+		p.track(strings.Repeat("x", i+1), "research-1", nil, "")
 	}
 	if len(p.tracked) != maxTrackedKicks || len(p.order) != maxTrackedKicks {
 		t.Fatalf("tracked %d / order %d, want %d", len(p.tracked), len(p.order), maxTrackedKicks)
 	}
 	if _, ok := p.tracked["x"]; ok {
 		t.Fatal("oldest tracked kick not evicted")
+	}
+}
+
+// syncPool runs the pool's background work inline with a fake clock that
+// advances on every wait.
+func syncPool(t *testing.T, f *fakeRuntime, size int) (*Pool, *time.Time) {
+	t.Helper()
+	p, err := NewPool(f, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 17, 6, 57, 29, 0, time.UTC)
+	p.now = func() time.Time { return now }
+	p.async = func(fn func()) { fn() }
+	p.wait = func(ctx context.Context, d time.Duration) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		now = now.Add(d)
+		return true
+	}
+	return p, &now
+}
+
+// The live Discord test: research-1 was started on demand, the kick was
+// typed into a pane still booting and failed "CLI did not reach input
+// prompt". A cold agent's kick now waits for it to settle.
+func TestDispatchColdAgentWaitsToSettle(t *testing.T) {
+	f := newFake("research-1")
+	p, now := syncPool(t, f, 1)
+	started := *now
+	f.states["research-1"].StartedAt = &started
+	var waited time.Duration
+	inner := p.wait
+	p.wait = func(ctx context.Context, d time.Duration) bool {
+		if len(f.queued) > 0 {
+			t.Fatal("kick queued before the agent settled")
+		}
+		waited += d
+		return inner(ctx, d)
+	}
+	id, err := p.Dispatch(context.Background(), "q", nil)
+	if err != nil || len(f.queued) != 1 || f.queued[0] != "research-1:"+id {
+		t.Fatalf("dispatch = %q %v queued %v", id, err, f.queued)
+	}
+	if waited < coldStartSettle {
+		t.Fatalf("waited %v, want at least %v", waited, coldStartSettle)
+	}
+}
+
+func TestDispatchColdAgentNeverSettlesFails(t *testing.T) {
+	f := newFake("research-1")
+	p, _ := syncPool(t, f, 1)
+	f.states["research-1"].Starting = true
+	var got []Event
+	p.Observe(func(ev Event) { got = append(got, ev) })
+	id, err := p.Dispatch(context.Background(), "q", map[string]string{"rid": "r1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.queued) != 0 || len(got) != 1 || got[0].Kind != EventFailed || got[0].KickID != id || got[0].Meta["rid"] != "r1" ||
+		!strings.Contains(got[0].Text, "did not finish starting") {
+		t.Fatalf("queued %v events %+v", f.queued, got)
+	}
+}
+
+func TestPromptNotReadyIsRetried(t *testing.T) {
+	f := newFake("research-1")
+	p, _ := syncPool(t, f, 1)
+	var got []Event
+	p.Observe(func(ev Event) { got = append(got, ev) })
+	id, err := p.Dispatch(context.Background(), "q", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := crux.KickEvent{Agent: "research-1", Event: crux.KickEventFailed, Detail: "agent research-1 CLI did not reach input prompt"}
+	for i := 0; i < maxPromptRetries; i++ {
+		last := strings.TrimPrefix(f.queued[len(f.queued)-1], "research-1:")
+		failed.KickID = last
+		f.observer(failed)
+		if len(f.queued) != i+2 {
+			t.Fatalf("retry %d not queued: %v", i, f.queued)
+		}
+		for _, ev := range got {
+			if ev.Kind == EventFailed {
+				t.Fatalf("failure reported while retries remain: %+v", got)
+			}
+		}
+	}
+	// A retry's events carry the original kick ID.
+	last := strings.TrimPrefix(f.queued[len(f.queued)-1], "research-1:")
+	if last == id {
+		t.Fatal("retry must use a fresh runtime id")
+	}
+	f.observer(crux.KickEvent{Agent: "research-1", Event: crux.KickEventOutputSignal, KickID: last, Signal: crux.OutputSignalFinding, Text: "f"})
+	if ev := got[len(got)-1]; ev.KickID != id || ev.Kind != EventFinding {
+		t.Fatalf("retry event = %+v", ev)
+	}
+	// Out of retries: the failure is reported.
+	failed.KickID = last
+	f.observer(failed)
+	if ev := got[len(got)-1]; ev.Kind != EventFailed || ev.KickID != id {
+		t.Fatalf("final failure = %+v", got)
+	}
+	if len(f.queued) != maxPromptRetries+1 {
+		t.Fatalf("queued %v", f.queued)
+	}
+}
+
+func TestWarmStartsStoppedAgents(t *testing.T) {
+	f := newFake("research-1", "research-2", "research-3")
+	f.states["research-1"].State = crux.StateStopped
+	f.states["research-2"].State = crux.StateStopped
+	f.states["research-2"].OperatorStopped = true
+	p, _ := syncPool(t, f, 3)
+	p.Warm(context.Background())
+	if strings.Join(f.started, ",") != "research-1" {
+		t.Fatalf("started = %v, want only the stopped, not operator-stopped agent", f.started)
+	}
+	p.Warm(context.Background())
+	if len(f.started) != 1 {
+		t.Fatalf("a running agent must not be started again: %v", f.started)
+	}
+}
+
+// Two questions asked close together while the agents are still booting
+// go to different agents: a kick waiting for its agent to settle counts as
+// that agent's load (both used to land on research-1, the runtime not
+// knowing the first yet), and Busy says when every agent has work.
+func TestColdDispatchesSpreadAndBusy(t *testing.T) {
+	f := newFake("research-1", "research-2")
+	p, now := syncPool(t, f, 2)
+	started := *now
+	f.states["research-1"].StartedAt = &started
+	f.states["research-2"].StartedAt = &started
+	var waiting []func()
+	p.async = func(fn func()) { waiting = append(waiting, fn) }
+	if p.Busy() {
+		t.Fatal("idle agents are not busy")
+	}
+	if _, err := p.Dispatch(context.Background(), "q1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if p.Busy() {
+		t.Fatal("research-2 is still free")
+	}
+	if _, err := p.Dispatch(context.Background(), "q2", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Busy() {
+		t.Fatal("both agents have a question waiting")
+	}
+	for _, fn := range waiting {
+		fn()
+	}
+	if len(f.queued) != 2 || !strings.HasPrefix(f.queued[0], "research-1:") || !strings.HasPrefix(f.queued[1], "research-2:") {
+		t.Fatalf("queued %v, want one question per agent", f.queued)
+	}
+	// Queued now: the load is the runtime's, counted once, not also as
+	// settling.
+	if !p.Busy() || p.load("research-1") != 1 || p.load("research-2") != 1 {
+		t.Fatalf("load %d %d, want 1 each", p.load("research-1"), p.load("research-2"))
+	}
+	f.depth["research-2"] = 0
+	if p.Busy() {
+		t.Fatal("research-2 finished its question")
+	}
+	// A pool with no available agent is not busy: Dispatch fails there.
+	f.states["research-1"].Paused, f.states["research-2"].Paused = true, true
+	if p.Busy() {
+		t.Fatal("no available agent is not busy")
 	}
 }

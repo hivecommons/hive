@@ -260,6 +260,9 @@ func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, own
 		// users: every further post gets the same rejection, so stop and
 		// hand the command to a person once.
 		c.markWorkflowApprovalUntrusted(owner, repo, number)
+		if state.rejected {
+			c.rememberProwRefusal(owner, repo)
+		}
 		if !state.rejectionNoted {
 			c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, workflowApprovalUntrustedNote(strings.TrimSpace(c.transport.AppBotLogin()), state.refusal))
 		}

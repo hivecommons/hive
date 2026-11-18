@@ -106,6 +106,31 @@ func TestProxyRequestBlockedStaysInLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#18763: the MITM proxy's upstream dial to api.github.com
+// failed with EOF (9 in 10m) and, matching no class, filed as
+// unclassified_error_repeated. Both MITM dial sites file under the existing
+// proxy_connect_dial_failed network-path class instead: still reported and
+// still in local logs, but routed to the operator's network remedy.
+func TestProxyUpstreamDialFailedFilesAsConnectDialClass(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	logger.Error("proxy upstream dial failed", "host", "api.github.com:443", "error", "EOF")
+	logger.Error("transparent proxy upstream dial failed", "host", "api.github.com", "error", "read tcp 10.0.0.1:4242->140.82.112.6:443: read: connection reset by peer")
+	if len(*seen) != 2 {
+		t.Fatalf("observations = %+v, want both dial failures", *seen)
+	}
+	for _, o := range *seen {
+		if o.class != fleetreport.ClassProxyUpstreamDegraded {
+			t.Fatalf("class = %q for %q, want %q", o.class, o.message, fleetreport.ClassProxyUpstreamDegraded)
+		}
+	}
+	if !strings.Contains((*seen)[0].diagnostics, "error=EOF") || !strings.Contains((*seen)[0].diagnostics, "host=api.github.com:443") {
+		t.Fatalf("diagnostics lost the host or error: %q", (*seen)[0].diagnostics)
+	}
+	if n := strings.Count(out.String(), "upstream dial failed"); n != 2 {
+		t.Fatalf("local logs lost a dial failure: %s", out.String())
+	}
+}
+
 // hivecommons/hive#18239: the eval cycle warns every cycle while an agent is
 // held for provider quota, so a long hold crossed the repeat threshold
 // (21 in 10m). The notices stay in local logs; other failures stay reportable.
@@ -1328,5 +1353,23 @@ func TestStageDampenerSuppressionLogsWithoutFleetReport(t *testing.T) {
 				t.Errorf("wrapped handler saw %d records, want 12", n)
 			}
 		})
+	}
+}
+
+func TestGHCRTokenTimeoutStaysInLog(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	timeout := `Get "https://ghcr.io/token?scope=repository:hivecommons/hive:pull": context deadline exceeded (Client.Timeout exceeded while awaiting headers)`
+	for i := 0; i < 10; i++ {
+		logger.Warn("channel resolve: GHCR token request failed", "repo", "hivecommons/hive", "error", timeout)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("GHCR token timeout was observed for fleet reporting (#18824): %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Fatalf("wrapped handler saw %d records, want 10", n)
+	}
+	logger.Warn("channel resolve: GHCR token request failed", "repo", "hivecommons/hive", "error", `Get "https://ghcr.io/token?scope=repository:hivecommons/hive:pull": dial tcp: lookup ghcr.io: no such host`)
+	if len(*seen) != 1 {
+		t.Fatalf("non-timeout GHCR failure must stay reportable, observed %+v", *seen)
 	}
 }

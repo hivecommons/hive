@@ -218,7 +218,7 @@ func TestLifecycleConsentTranscriptAndHiveLeave(t *testing.T) {
 	if err := m.PostChat(context.Background(), mt.ID, "hello"); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Say(context.Background(), mt.ID, "hi"); err != nil {
+	if _, err := m.Say(context.Background(), mt.ID, "hi"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -232,7 +232,7 @@ func TestLifecycleConsentTranscriptAndHiveLeave(t *testing.T) {
 	ch <- Event{Type: "mystery", MeetingID: "q1"}
 	ch <- Event{Type: EventState, MeetingID: "q1", State: "weird"}
 	eventually(t, "transcript", func() bool {
-		tr, _ := m.Transcript(mt.ID)
+		tr, _ := heardLines(m, mt.ID)
 		return len(tr) == 2
 	})
 	if got, _ := m.Get(mt.ID); got.State != StateLive {
@@ -248,7 +248,7 @@ func TestLifecycleConsentTranscriptAndHiveLeave(t *testing.T) {
 	if _, leaves := q.snapshot(); len(leaves) != 1 {
 		t.Fatalf("leave calls %v", leaves)
 	}
-	tr, _ := m.Transcript(mt.ID)
+	tr, _ := heardLines(m, mt.ID)
 	if len(tr) != 3 || tr[0].Text != "we ship friday" {
 		t.Fatalf("transcript %+v", tr)
 	}
@@ -288,7 +288,7 @@ func TestConsentRetriedAfterFailure(t *testing.T) {
 	if err := m.PostChat(context.Background(), mt.ID, "x"); !errors.Is(err, ErrConsentPending) {
 		t.Fatalf("PostChat before consent = %v", err)
 	}
-	if err := m.Say(context.Background(), mt.ID, "x"); !errors.Is(err, ErrConsentPending) {
+	if _, err := m.Say(context.Background(), mt.ID, "x"); !errors.Is(err, ErrConsentPending) {
 		t.Fatalf("Say before consent = %v", err)
 	}
 	ch <- Event{Type: EventSegment, Speaker: &Person{Name: "Ana"}, Text: "hello", Final: true}
@@ -326,10 +326,10 @@ func TestOwnerLeaveAndVoice(t *testing.T) {
 	if err := m.PostChat(context.Background(), "mtg-missing", "x"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("PostChat missing = %v", err)
 	}
-	if err := m.Say(context.Background(), "mtg-missing", "x"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.Say(context.Background(), "mtg-missing", "x"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Say missing = %v", err)
 	}
-	if err := m.Say(context.Background(), mt.ID, "x"); !errors.Is(err, ErrNotLive) {
+	if _, err := m.Say(context.Background(), mt.ID, "x"); !errors.Is(err, ErrNotLive) {
 		t.Fatalf("Say ended = %v", err)
 	}
 }
@@ -692,7 +692,7 @@ func TestPersonaLeavePhraseAndDecoratedEcho(t *testing.T) {
 	ch <- Event{Type: EventChat, MeetingID: "q1", Seq: 1, Author: &Person{Name: "Betty Bee from the hive (Guest)"}, Text: "say 'betty leave' to remove me"}
 	ch <- Event{Type: EventSegment, MeetingID: "q1", Seq: 2, Speaker: &Person{Name: "Betty Bee from the hive"}, Text: "betty leave", Final: true}
 	ch <- Event{Type: EventChat, MeetingID: "q1", Seq: 3, Author: &Person{Name: "Ana"}, Text: "hello"}
-	eventually(t, "transcript", func() bool { tr, _ := m.Transcript(mt.ID); return len(tr) == 1 })
+	eventually(t, "transcript", func() bool { tr, _ := heardLines(m, mt.ID); return len(tr) == 1 })
 	ch <- Event{Type: EventChat, MeetingID: "q1", Seq: 4, Author: &Person{Name: "Ana"}, Text: "Betty, please leave"}
 	eventually(t, "betty leave", stateIs(m, mt.ID, StateEnded))
 	if got, _ := m.Get(mt.ID); got.StateReason != ReasonHiveLeave {

@@ -48,9 +48,9 @@ func TestFlushVoiceShortestFirstAndOverflow(t *testing.T) {
 	short := "It ships Friday."
 	mid := strings.Repeat("m", 150)  // 10 s
 	long := strings.Repeat("l", 200) // about 13 s
-	s.queueVoice(long)
-	s.queueVoice(short)
-	s.queueVoice(mid)
+	s.queueVoice(betty.Reply{}, long)
+	s.queueVoice(betty.Reply{}, short)
+	s.queueVoice(betty.Reply{}, mid)
 	s.flushVoice(context.Background())
 	posts, says := h.mt.got()
 	want := []string{short, mid, "I've put the rest in chat."}
@@ -70,13 +70,14 @@ func TestFlushVoiceShortestFirstAndOverflow(t *testing.T) {
 func TestAckSkippedBehindLongSpeech(t *testing.T) {
 	_, s, clk := voiceSession(t, Policy{ChatPostsPerMinute: 6, VoiceOnAddress: true})
 	ctx := context.Background()
-	s.queueVoice(strings.Repeat("x", 180)) // 12 s
+	s.queueVoice(betty.Reply{}, strings.Repeat("x", 180)) // 12 s
 	s.flushVoice(ctx)
-	if s.speakAck(ctx, "One moment.") {
+	ack := betty.Reply{Kind: betty.KindVoice, Text: "One moment.", Trigger: betty.TriggerAck}
+	if s.speakAck(ctx, ack, ack.Text) {
 		t.Fatal("an ack behind 12 s of speech is skipped")
 	}
 	clk.add(10 * time.Second)
-	if !s.speakAck(ctx, "One moment.") {
+	if !s.speakAck(ctx, ack, ack.Text) {
 		t.Fatal("an ack behind 2 s of speech is spoken")
 	}
 }
@@ -126,5 +127,61 @@ func TestSpeechTime(t *testing.T) {
 	}
 	if b := v.backlog(now.Add(time.Minute)); b != 0 {
 		t.Fatalf("played out: %v", b)
+	}
+}
+
+// Answers flushed together each open with the topic they answer: the live
+// Discord test posted "Yes, Andy, I can hear you" (to an earlier "Betty,
+// are you there?") beside the board pressure answer with no attribution.
+func TestBatchedAnswersAreAttributed(t *testing.T) {
+	h, s, _ := voiceSession(t, Policy{ChatPostsPerMinute: 6, VoiceOnAddress: true})
+	h.m.VoiceEnabled = false
+	h.mt.m[h.m.ID] = h.m
+	ctx := context.Background()
+	hear := "Yes, Andy, I can hear you loud and clear."
+	bp := "On board pressure: BP is 40/12."
+	s.queueVoice(betty.Reply{Asker: "Andy Anderson", Topic: "are you there"}, hear)
+	s.queueVoice(betty.Reply{Asker: "Andy Anderson", Topic: "board pressure", Attributed: true}, bp)
+	s.flushVoice(ctx)
+	posts, says := h.mt.got()
+	if len(says) != 0 || len(posts) != 2 {
+		t.Fatalf("posts %q says %q", posts, says)
+	}
+	if !contains(posts, "On are you there: "+hear) || !contains(posts, bp) {
+		t.Fatalf("batched answers must each name their question: %q", posts)
+	}
+
+	// A single answer on its own stays as the persona wrote it.
+	s.queueVoice(betty.Reply{Asker: "Andy Anderson", Topic: "status"}, "All green.")
+	s.flushVoice(ctx)
+	if posts, _ := h.mt.got(); posts[len(posts)-1] != "All green." {
+		t.Fatalf("single answer = %q", posts[len(posts)-1])
+	}
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// speak says why it did not speak instead of a bare "voice unavailable".
+func TestTrySpeakReasons(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := voiceSession(t, Policy{VoiceOnAddress: true})
+	if reason, _, err := s.trySpeak(ctx, "hi"); reason != "" || err != nil {
+		t.Fatalf("voice on = %q %v", reason, err)
+	}
+	h.m.VoiceEnabled = false
+	h.mt.m[h.m.ID] = h.m
+	if reason, _, _ := s.trySpeak(ctx, "hi"); reason != speakVoiceDisabled {
+		t.Fatalf("voice off = %q", reason)
+	}
+	_, p, _ := voiceSession(t, Policy{})
+	if reason, _, _ := p.trySpeak(ctx, "hi"); reason != speakPolicyOff {
+		t.Fatalf("policy off = %q", reason)
 	}
 }

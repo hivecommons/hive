@@ -22,11 +22,19 @@ const (
 	EnvSessionsIdleTTLHours = "HIVE_SESSIONS_IDLE_TTL_HOURS"
 	// EnvSessionsWorkspaceRepo overrides dashboard.sessions.workspace_repo.
 	EnvSessionsWorkspaceRepo = "HIVE_SESSIONS_WORKSPACE_REPO"
+	// EnvSessionsAutostart overrides dashboard.sessions.autostart when set to
+	// a recognised boolean.
+	EnvSessionsAutostart = "HIVE_SESSIONS_AUTOSTART"
 
 	// DefaultSessionsEnabled is dashboard.sessions.enabled when hive.yaml
 	// leaves it unset: Inception (spek) sessions are on unless an operator
 	// turns them off (enabled: false or HIVE_SESSIONS_ENABLED=false).
 	DefaultSessionsEnabled = true
+
+	// DefaultSessionsAutostart is dashboard.sessions.autostart when hive.yaml
+	// leaves it unset: a new session's CLI is taken through its startup
+	// screens to its input prompt without a person.
+	DefaultSessionsAutostart = true
 
 	DefaultSessionsMax          = 12
 	DefaultSessionsMaxPerUser   = 4
@@ -57,6 +65,12 @@ type DashboardSessionsConfig struct {
 	// in. Empty means the hive's own project repo (project.org/primary_repo).
 	// HIVE_SESSIONS_WORKSPACE_REPO overrides it.
 	WorkspaceRepo string `yaml:"workspace_repo,omitempty" json:"workspace_repo,omitempty"`
+	// Autostart answers the vendor CLI's known startup screens (first-run
+	// notice, trust for the session's own directory, onboarding) when a
+	// session starts, so its first request runs without a person. It never
+	// answers a permission prompt or a login screen. Nil (unset) means
+	// DefaultSessionsAutostart; HIVE_SESSIONS_AUTOSTART overrides it.
+	Autostart *bool `yaml:"autostart,omitempty" json:"autostart,omitempty"`
 }
 
 // Validate rejects negative limits and a workspace repo that is not org/repo.
@@ -111,6 +125,29 @@ func (c *Config) SessionsEnabled() bool {
 		return false
 	}
 	return c.Dashboard.Sessions.EnabledOrDefault()
+}
+
+// SessionsAutostart reports whether a starting session's CLI is taken through
+// its startup screens automatically: HIVE_SESSIONS_AUTOSTART wins over
+// dashboard.sessions.autostart when it holds a recognised boolean.
+func (c *Config) SessionsAutostart() bool {
+	if v, ok := parseBoolEnv(EnvSessionsAutostart); ok {
+		return v
+	}
+	if c == nil {
+		return DefaultSessionsAutostart
+	}
+	return c.Dashboard.Sessions.AutostartOrDefault()
+}
+
+// AutostartOrDefault is the saved dashboard.sessions.autostart value, or
+// DefaultSessionsAutostart when hive.yaml leaves it unset. It ignores
+// HIVE_SESSIONS_AUTOSTART (see Config.SessionsAutostart).
+func (s DashboardSessionsConfig) AutostartOrDefault() bool {
+	if s.Autostart == nil {
+		return DefaultSessionsAutostart
+	}
+	return *s.Autostart
 }
 
 // EnabledOrDefault is the saved dashboard.sessions.enabled value, or

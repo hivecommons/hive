@@ -41,7 +41,8 @@ const MEETINGS = ['meetingsIsOwner', 'meetingsRoleKnown', 'meetingsOnRoleReady',
 const CALENDAR = ['calendarRoleKnown', 'calendarOnRoleReady', 'calendarCanView', 'calendarIsOwner', 'fetchCalendar', 'calendarRefreshMeetings',
   'fetchMeetingDrafts', 'renderCalendar', 'renderMeetingDrafts', 'meetingDraftsSplit', 'calendarFormHtml', 'calendarViewerTimeZone',
   'calendarRowHtml', 'calendarFormatTime', 'calendarPlatformLabel', 'calendarMeetingLink', 'calendarActionButtons', 'renderCalendarIndicator',
-  'calendarIndicatorState', 'calendarBadgeCount', 'calendarMeetingList', 'calendarCanDelete'];
+  'calendarIndicatorState', 'calendarBadgeCount', 'calendarMeetingList', 'calendarCanDelete',
+  'calendarDisplayTitle', 'calendarLooksForwarded', 'calendarRepeatText', 'calendarFormatRange', 'calendarWhen', 'calendarApprovalWhy'];
 
 function makeSandbox(opts) {
   const els = {};
@@ -74,7 +75,7 @@ function makeSandbox(opts) {
   vm.createContext(sb);
   const consts = ['MEETINGS_ERROR_INLINE_CHARS', 'MEETINGS_PLATFORM_LABELS', 'MEETINGS_PILL_STATUS', 'MEETINGS_LIVE_STATES',
     'CALENDAR_ACTIVE_STATES', 'CALENDAR_DEFAULT_NAME', 'CALENDAR_PLATFORM_LABELS', 'CALENDAR_PLATFORM_ICONS', 'CALENDAR_SOURCE_LABELS',
-    'CALENDAR_STATUS_LABELS', 'CALENDAR_PILL_STATUS', 'MEETINGS_FINAL_STATES', 'CALENDAR_FINISHED_STATUSES'].map(extractConst);
+    'CALENDAR_STATUS_LABELS', 'CALENDAR_PILL_STATUS', 'CALENDAR_FWD_PREFIX', 'MEETINGS_FINAL_STATES', 'CALENDAR_FINISHED_STATUSES'].map(extractConst);
   // const declarations stay script-scoped in a vm context; re-declare the
   // mutable module state with var so the extracted functions share it.
   vm.runInContext(consts.join('\n') + '\n' + GH_AUTH.concat(MEETINGS, CALENDAR).map(extractFunction).join('\n'), sb);
@@ -146,4 +147,29 @@ test('a failed meeting row shows a pill, a friendly line and the raw error under
   assert.match(html, /class="meetings-row-error">The meeting service did not accept this meeting link\./);
   assert.match(html, /<summary class="muted-xs">details<\/summary><div class="meetings-row-raw">quorum meeting\.join/);
   assert.match(html, /Zoom · /);
+});
+
+test('calendar row: forwarded prefix stripped for display, series leads with next occurrence, approval reason in words', () => {
+  const sb = makeSandbox({});
+  sb.window._hiveRole = 'owner';
+  assert.equal(sb.calendarDisplayTitle('FW: Fwd: Hive Commons Community Meeting'), 'Hive Commons Community Meeting');
+  assert.equal(sb.calendarDisplayTitle('Forward planning'), 'Forward planning');
+  assert.equal(sb.calendarDisplayTitle('FW:'), 'FW:');
+  assert.equal(sb.calendarRepeatText('FREQ=WEEKLY;BYDAY=TH'), 'repeats weekly');
+  assert.equal(sb.calendarRepeatText('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'), 'repeats every weekday');
+  assert.equal(sb.calendarRepeatText('FREQ=DAILY;INTERVAL=2'), 'repeats every 2 days');
+  const ev = {
+    id: 'e1', summary: 'FW: Hive Commons Community Meeting', status: 'awaiting_approval', source: 'email', platform: 'teams',
+    start: '2026-09-10T14:00:00Z', end: '2026-09-10T15:00:00Z', rrule: 'FREQ=WEEKLY', next_occurrences: ['2026-11-19T15:00:00Z']
+  };
+  const html = sb.calendarRowHtml(ev);
+  assert.match(html, /Hive Commons Community Meeting<\/div>/);
+  assert.doesNotMatch(html, />FW:/);
+  assert.match(html, /calendar-row-when" title="Series started /);
+  assert.match(html, /Next: .*· repeats weekly/);
+  assert.doesNotMatch(html, /· repeats ·/);
+  assert.match(html, /looks forwarded/);
+  assert.match(html, /DMARC aligned/);
+  assert.match(html, /calendar-row-actions/);
+  assert.equal(sb.calendarApprovalWhy({ status: 'scheduled', source: 'email' }), '');
 });

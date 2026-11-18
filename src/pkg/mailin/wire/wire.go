@@ -1,7 +1,8 @@
 // Package wire is the JSON contract between hive-mx (the receive-only mail
 // receiver, pkg/mailin), the hub that routes its deliveries
 // (pkg/hub, /api/mail/*) and the spoke endpoints that consume them
-// (/api/meetings/invites, /api/inbox/email, /api/meetings/calendar-emails/proof).
+// (/api/meetings/invites, /api/inbox/email, /api/meetings/calendar-emails/proof,
+// /api/inbox/email/report).
 // It has no dependencies beyond the standard library so the hub and the
 // spoke can import it without pulling in the SMTP and MIME libraries.
 //
@@ -32,6 +33,9 @@ const (
 	// SpokeFilesChunkPath receives a large files delivery in signed pieces
 	// (hivecommons/hive#18564): see ChunkDelivery.
 	SpokeFilesChunkPath = "/api/inbox/email/chunk"
+	// SpokeReportPath receives a refusal report (hivecommons/hive#18699):
+	// what hive-mx turned away for this hive and why, without any content.
+	SpokeReportPath = "/api/inbox/email/report"
 )
 
 // Headers hive-mx sets on every delivery so the hub routes it without
@@ -85,6 +89,9 @@ const (
 	KindInvite Kind = "invite"
 	KindFiles  Kind = "files"
 	KindProof  Kind = "proof"
+	// KindReport is not a message: it tells the hive that hive-mx refused
+	// one (Delivery.Report), so the owner can see why a mail is missing.
+	KindReport Kind = "report"
 )
 
 // SpokePath is the spoke endpoint for a kind, "" for an unknown kind.
@@ -96,6 +103,8 @@ func SpokePath(k Kind) string {
 		return SpokeFilesPath
 	case KindProof:
 		return SpokeProofPath
+	case KindReport:
+		return SpokeReportPath
 	}
 	return ""
 }
@@ -122,6 +131,73 @@ type Delivery struct {
 	Invites []Invite `json:"invites,omitempty"`
 	Files   *Files   `json:"files,omitempty"`
 	Proof   *Proof   `json:"proof,omitempty"`
+	Report  *Report  `json:"report,omitempty"`
+}
+
+// Reason categories of a refused message, as hive-mx logs and reports them.
+const (
+	// ReasonEmpty: no text body, calendar invite or attachment at all.
+	ReasonEmpty = "empty_message"
+	// ReasonUnsupported: every attachment's type is off the allowlist.
+	ReasonUnsupported = "unsupported_attachment"
+	// ReasonContentMismatch: an attachment's content is not what its
+	// extension says (or it is a macro-enabled or damaged document).
+	ReasonContentMismatch = "attachment_content_mismatch"
+	// ReasonAttachmentTooLarge: an attachment is over the per-file or
+	// per-message attachment limit.
+	ReasonAttachmentTooLarge = "attachment_too_large"
+	// ReasonTooManyAttachments: more attachments than one message may carry.
+	ReasonTooManyAttachments = "too_many_attachments"
+	// ReasonMessageTooLarge: the whole message is over the SIZE limit.
+	ReasonMessageTooLarge = "message_too_large"
+	// ReasonMalformed: the message could not be parsed.
+	ReasonMalformed = "malformed_message"
+	// ReasonHiveVolume: the hive received its daily volume of mail.
+	ReasonHiveVolume = "hive_daily_volume"
+	// ReasonHiveRefused: the hub or the hive refused the delivery.
+	ReasonHiveRefused = "hive_refused"
+	// ReasonMailInOff: the hive has mail-in files turned off.
+	ReasonMailInOff = "mail_in_off"
+	// ReasonHiveStorageFull: the hive's mail storage is full.
+	ReasonHiveStorageFull = "hive_storage_full"
+)
+
+// Why one attachment was left out of a delivery.
+const (
+	SkipType    = "type"    // extension not on the allowlist
+	SkipContent = "content" // content does not match the extension
+	SkipSize    = "size"    // over the per-file or per-message limit
+	SkipCount   = "count"   // more files than one message may carry
+)
+
+// Bounds of a report.
+const (
+	// MaxSkipped bounds the skipped attachments listed per message.
+	MaxSkipped = 20
+	// MaxExtRunes bounds a listed extension.
+	MaxExtRunes = 12
+)
+
+// SkippedFile is an attachment hive-mx left out: its extension only (never
+// its name) and why.
+type SkippedFile struct {
+	Ext    string `json:"ext"`
+	Reason string `json:"reason"`
+}
+
+// Report says that hive-mx refused a message for this hive. It carries no
+// content: no subject, no file name and only the sender's domain.
+type Report struct {
+	// Code is the SMTP reply code the sender got.
+	Code int `json:"code"`
+	// Reason is one of the Reason* categories.
+	Reason       string `json:"reason"`
+	SenderDomain string `json:"sender_domain,omitempty"`
+	// Bytes is the message size (0 when it was cut off over the limit).
+	Bytes int64 `json:"bytes,omitempty"`
+	// Attachments is the number of named attachments the message carried.
+	Attachments int           `json:"attachments"`
+	Skipped     []SkippedFile `json:"skipped,omitempty"`
 }
 
 // Auth is the sender authentication hive-mx recorded after DATA.
@@ -201,6 +277,8 @@ type Files struct {
 	// untrusted data, never instructions. A message with no attachment
 	// carries its body as a Markdown attachment instead (NoteFileName).
 	Note string `json:"note,omitempty"`
+	// Skipped lists the attachments hive-mx left out of this delivery.
+	Skipped []SkippedFile `json:"skipped,omitempty"`
 }
 
 // NoteFileName names the Markdown attachment a body-only message becomes.
@@ -212,12 +290,14 @@ const (
 	AttachAudio    = "audio"
 	AttachImage    = "image"
 	AttachVideo    = "video"
+	// AttachDocument is an office document: PDF, Word, PowerPoint or Excel.
+	AttachDocument = "document"
 )
 
 // Attachment is one accepted file. Data is base64 in JSON.
 type Attachment struct {
 	Name string `json:"name"`
-	// Kind is markdown, audio, image or video.
+	// Kind is markdown, audio, image, video or document.
 	Kind string `json:"kind"`
 	// ContentType is the sniffed type, not the sender's claim.
 	ContentType string `json:"content_type"`

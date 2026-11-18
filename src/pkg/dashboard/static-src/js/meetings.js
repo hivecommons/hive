@@ -54,7 +54,7 @@
         const r = await fetch('/api/meetings');
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { _meetingsList = []; _meetingsError = data.error || ('HTTP ' + r.status); }
-        else { _meetingsList = data.meetings || []; _meetingsError = ''; }
+        else { _meetingsList = data.meetings || []; _meetingsError = ''; _meetingsEmailIn = data.email_in || null; }
       } catch (e) {
         // Keep the last list; say the hive is unreachable instead of leaving "Loading meetings…".
         if (_meetingsList === null) _meetingsList = [];
@@ -98,6 +98,7 @@
         return 'The Discord bot cannot join that voice channel. In the server, give the bot\'s role View Channel, Connect and Speak on the channel, then try again.';
       }
       if (m.state === 'blocked') return 'The meeting refused a guest bot.';
+      if (/^unreachable$/.test(raw)) return 'Left: none of its replies could be delivered to the meeting, in chat or by voice.';
       if (/consent_undelivered/.test(raw)) return 'Left: the consent notice could not be delivered' + (m.consent_error ? ' (' + m.consent_error + ')' : '') + '.';
       if (/lobby_timeout/.test(raw)) return 'Nobody admitted hive from the lobby in time.';
       if (/platform_unavailable/.test(raw)) return 'This meeting platform is not available on this hive right now.';
@@ -144,9 +145,25 @@
         (m.voice_enabled && !m.voice_capable ? '<div class="muted-xs">joined without voice; replies go to chat</div>' : '') +
         '</div><div class="meetings-row-actions">' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
-        (active ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml(m.id) + '" data-arg1="' + (m.voice_enabled ? 'false' : 'true') + '">' + (m.voice_enabled ? 'Voice on' : 'Voice off') + '</button>' +
+        (active ? meetingsVoiceToggleHtml(m) +
           '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
         meetingsDeleteButtonHtml(m) + '</div></div>';
+    }
+
+    // meetingsVoiceToggleHtml: the card's voice control names the action it
+    // takes ("Turn voice off" while voice is on), never the current state
+    // alone: a "Voice on" button that turned voice off read as the control
+    // to switch it on, and an operator who had ticked Voice at join turned
+    // it off by clicking it. aria-pressed and the title carry the state.
+    function meetingsVoiceToggleHtml(m) {
+      const on = !!(m && m.voice_enabled);
+      const label = on ? 'Turn voice off' : 'Turn voice on';
+      const title = on
+        ? 'Voice replies are on: she answers out loud when addressed. Click to answer in chat only.'
+        : 'Voice replies are off: she answers in chat. Click to let her answer out loud when addressed.';
+      return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml((m && m.id) || '') +
+        '" data-arg1="' + (on ? 'false' : 'true') + '" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + escapeHtml(title) + '">' +
+        (on ? '🔊 ' : '🔇 ') + label + '</button>';
     }
 
     // meetingsCanDelete: a meeting in a final state, or a platform join
@@ -237,7 +254,7 @@
       if (_meetingsError) {
         html += '<p class="kc-error muted-xs">' + escapeHtml(_meetingsError) + '</p>';
       } else {
-        html += meetingsJoinFormHtml();
+        html += (typeof emailInRowHtml === 'function' ? emailInRowHtml('meetings', _meetingsEmailIn) : '') + meetingsJoinFormHtml();
       }
       const list = _meetingsList || [];
       const finished = meetingsFinished(list);
@@ -337,7 +354,7 @@
         case 'line': {
           const ev = f.data || {};
           if (ev.type === 'segment' && !ev.final) { o.partial = ev; break; }
-          o.partial = null;
+          if (ev.type !== 'reply') o.partial = null;
           o.lines.push(ev);
           if (o.lines.length > MEETINGS_MAX_LINES) o.lines.shift();
           break;
@@ -356,6 +373,7 @@
           break;
         }
         case 'notes': meetingsRefreshLive(o.id); break;
+        case 'reach': meetingsRefreshLive(o.id); break;
         case 'spek': meetingsRefreshLive(o.id); break;
         default: break;
       }
@@ -372,6 +390,7 @@
     }
 
     function meetingsLineHtml(ev, partial) {
+      if (ev.type === 'reply') return meetingsReplyLineHtml(ev);
       const who = (ev.speaker && ev.speaker.name) || (ev.author && ev.author.name) || '';
       return '<p class="meetings-line' + (partial ? ' is-partial' : '') + '"><span class="meetings-who">' + escapeHtml(who) + (ev.type === 'chat' ? ' (chat)' : '') + '</span>' + escapeHtml(ev.text || '') + '</p>';
     }
@@ -389,13 +408,15 @@
       const research = (live.research || []).map(it =>
         '<div class="meetings-research-item"><div><span class="badge">' + escapeHtml(it.status) + '</span> ' + escapeHtml(it.query) + '</div>' +
         (it.summary ? '<div class="muted-xs">' + escapeHtml(it.summary) + '</div>' : '') +
+        (it.status === 'failed' && it.error ? '<div class="meetings-row-error">' + escapeHtml(it.error) + '</div>' : '') +
+        (it.waiting && it.status === 'queued' ? '<div class="muted-xs">waiting behind another question</div>' : '') +
         (it.status === 'pending_approval' ? '<button type="button" class="hv-btn btn-primary btn-sm mt-2" data-action="meetingsApprove" data-arg0="' + escapeHtml(o.id) + '" data-arg1="' + escapeHtml(it.rid) + '">Approve research</button>' : '') +
         '</div>').join('') || '<p class="muted-xs">No research yet.</p>';
       const lines = o.lines.map(ev => meetingsLineHtml(ev, false)).join('') + (o.partial ? meetingsLineHtml(o.partial, true) : '');
       const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
       const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
         (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
-      host.innerHTML = spek + '<div class="meetings-live">' +
+      host.innerHTML = spek + meetingsReachHtml(live) + '<div class="meetings-live">' +
         '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
         '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
         '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +

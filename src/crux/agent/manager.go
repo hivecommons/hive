@@ -586,6 +586,7 @@ type Manager struct {
 	cliMemory             cliMemoryState         // shared-store warning and drain hook, see cli_memory_drain.go
 	strayGitIdentity      strayGitIdentityWarned // warn-once state, see git_identity_warn_dedupe.go
 	claudeFirstRunSkip    claudeFirstRunSkipLog  // warn-once state, see claude_first_run_seed.go
+	firstRunNoticeLogged  sync.Map               // agents whose first-run notice was logged; never under m.mu (claude_first_run.go)
 
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
 	// the output-capture goroutines, and taking m.mu there risks startup
@@ -605,6 +606,7 @@ type Manager struct {
 	project                       ProjectContext
 	copilotAuthToken              string
 	copilotAuthTokenAuthoritative bool
+	claudeLogin                   claudeLoginState // #18732; see claude_login_revoked.go
 	// copilotAuthTokenSource names where copilotAuthToken came from — one of
 	// the CopilotTokenSource* constants, "" when no token is held. Never a
 	// secret: it is the ONE thing a "not licensed" verdict cannot be triaged
@@ -624,12 +626,12 @@ type Manager struct {
 	// setCopilotToken installs a value that differs from the current one, so
 	// a successful recovery (or dashboard re-login) rearms authoritative
 	// precedence for whatever fresh token the operator supplied.
-	copilotAuthTokenRejected bool
-	claudeAuthToken          string
-	claudeOperatorToken      string // HIVE_CLAUDE_OAUTH_TOKEN, read once at construction; a dashboard sign-in never replaces it
-	// claudeOperatorModeLogOnce guards the one-time "re-bridge and watchdog
-	// suspended" log for operator-token mode (claude_operator_token_mode.go).
-	claudeOperatorModeLogOnce sync.Once
+	copilotAuthTokenRejected  bool
+	claudeAuthToken           string
+	claudeOperatorToken       string                   // HIVE_CLAUDE_OAUTH_TOKEN, read once at construction; a dashboard sign-in never replaces it
+	claudeOperatorModeLogOnce sync.Once                // one-time "re-bridge and watchdog suspended" log for operator-token mode (claude_operator_token_mode.go)
+	claudeSharedRefresh       claudeSharedRefreshState // hive's own refresh of the shared Claude login (claude_shared_refresh.go)
+	sessionLogins             sessionLoginCache        // user-session login copies already judged (usersession_login.go)
 	uidMap                    *UIDMap
 	sharedPool                SharedSessionPool
 	uidMapPath                string
@@ -850,6 +852,7 @@ type Manager struct {
 	sandboxPRClient      PRCreator
 	sandboxMutation      effects.Boundary
 	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]
+	sandboxReadRelay     sandboxReadRelayState
 
 	// terminal is the nil-safe pane/tmux boundary. Nil means use the real tmux
 	// implementation, preserving zero-value Manager behavior in tests.
@@ -872,21 +875,6 @@ type Manager struct {
 	kickLogSourceResolver atomic.Pointer[func() string]
 	// buildInfo supplies hive_version/hive_commit for kick log headers.
 	buildInfo func() (version, commit string)
-}
-
-// SetACMMLevel updates the cached ACMM level used by agentMode() when
-// launching agents. Call this whenever the ACMM level changes.
-func (m *Manager) SetACMMLevel(level int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.project.ACMMLevel = level
-	m.removeAgentsBelowACMMGateLocked(level)
-}
-
-func (m *Manager) GetACMMLevel() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.project.ACMMLevel
 }
 
 func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, project ProjectContext) *Manager {
@@ -1315,6 +1303,7 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 	defer ticker.Stop()
 	menuEscapes := 0
 	dialogAnswers := 0
+	var blocking kickBlockingScreen
 	// lastWorking records whether the most recent poll saw the agent mid-turn.
 	lastWorking := false
 	// Inference-routed agents run Claude Code too, so a permission dialog in
@@ -1390,6 +1379,13 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 				}
 				menuEscapes++
 				m.dismissTUIMenuForKick(agent, footer, menuEscapes)
+				continue
+			}
+			// A known blocking screen is answered, or named in a fast failure (claude_first_run.go).
+			if handled, reason := m.handleBlockingScreenForKick(agent, dialogBackend, visible, &blocking); handled {
+				if reason != "" {
+					return false, reason
+				}
 				continue
 			}
 			if paneShowsConsentScreen(visible) {

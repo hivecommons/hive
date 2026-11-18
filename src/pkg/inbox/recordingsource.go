@@ -338,25 +338,16 @@ func (s *Service) recordingFinalized(src *RecordingSource, m RecordingMeta, opts
 // for the hive-wide transcription consent: nothing runs until
 // inbox.transcription is enabled with consent_acknowledged, and then every
 // recording counts as opted in whatever inbox.transcription.mode says (the
-// transcription sweep picks up recordings finished while it was off).
+// transcription sweep picks up recordings finished while it was off). See
+// AutoTranscribe.
 func (s *Service) autoTranscribeRecording(src *RecordingSource, m RecordingMeta, opts RecordingOptions) {
 	if !s.Config().Transcription.Active() || m.AudioExpired() {
 		return
 	}
 	it := src.item(m, s.Config().Recording.EffectiveRetentionDays())
-	if !it.Pending {
-		return
+	if st, ok := s.AutoTranscribe(context.Background(), it, TranscribeOptions{Actor: opts.Actor, Audit: opts.TranscribeAudit}); ok {
+		s.Logger.Info("inbox: recording queued for transcription", "recording", m.ID, "status", st.Status)
 	}
-	actor := opts.Actor
-	if actor == "" {
-		actor = AutoTranscribeActor
-	}
-	st, err := s.Transcribe(context.Background(), it, TranscribeOptions{Actor: actor, Audit: opts.TranscribeAudit})
-	if err != nil {
-		s.Logger.Warn("inbox: auto-transcribe recording", "recording", m.ID, "error", err)
-		return
-	}
-	s.Logger.Info("inbox: recording queued for transcription", "recording", m.ID, "status", st.Status)
 }
 
 // AbortRecording discards an in-progress recording.
@@ -394,6 +385,12 @@ type RecordingDeleted struct {
 // (ErrRecordingTranscribing). Audited as inbox_recording_delete. It works
 // while recording is disabled: the recordings stay until retention.
 func (s *Service) DeleteRecording(id, user string, asOwner bool, opts RecordingOptions) (RecordingDeleted, error) {
+	return s.deleteRecording(id, user, asOwner, opts, false)
+}
+
+// deleteRecording is DeleteRecording; keepFact leaves the recording's
+// Knowledge fact (its machine transcript) in place (see DeleteItem).
+func (s *Service) deleteRecording(id, user string, asOwner bool, opts RecordingOptions, keepFact bool) (RecordingDeleted, error) {
 	src := s.recordingSource()
 	if src == nil {
 		return RecordingDeleted{}, ErrRecordingNotFound
@@ -421,7 +418,7 @@ func (s *Service) DeleteRecording(id, user string, asOwner bool, opts RecordingO
 	}
 	out := RecordingDeleted{ID: m.ID, RecordedBy: m.RecordedBy}
 	var errs []error
-	if src.FactDir != "" {
+	if src.FactDir != "" && !keepFact {
 		s.factMu.Lock()
 		err := os.Remove(src.factPath(m.ID))
 		s.factMu.Unlock()

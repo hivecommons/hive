@@ -3,9 +3,16 @@
     .ma-section h4 { margin: var(--sp-0); }
     .ma-section.is-pending { opacity: 0.75; }
     .ma-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(12em, 1fr)); gap: var(--sp-2); }
-    .ma-preset { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }
-    .ma-preset:hover, .ma-preset:focus-visible { border-color: var(--accent); }
+    .ma-preset { position: relative; display: flex; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); color: var(--text); }
+    .ma-preset:hover, .ma-preset:focus-within { border-color: var(--accent); }
     .ma-preset.is-selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    /* Voice preview (#18710): dashed while the clip loads, green while it plays. */
+    .ma-preset.is-loading { border-style: dashed; }
+    .ma-preset.is-playing { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
+    .ma-preset-pick { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); padding: var(--sp-3); border: 0; border-radius: var(--r); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+    .ma-preset-play { position: absolute; top: var(--sp-1); right: var(--sp-1); padding: var(--sp-1); border: 0; border-radius: var(--r); background: none; color: inherit; font-size: var(--fs-base); line-height: 1; cursor: pointer; }
+    .ma-preset-play:hover, .ma-preset-play:focus-visible { background: var(--border); }
+    .ma-intro-status:empty { display: none; }
     .ma-preset-flag { font-size: var(--fs-base); }
     .ma-preset-name { font-weight: 600; }
     .ma-intro { width: 100%; resize: vertical; font-family: inherit; }

@@ -177,6 +177,47 @@ fi
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
+# A cross-repo parent (hivecommons/hive#18680): owner/repo#N and an issue URL
+# both produce parent + parent_repo; a same-repo owner/repo#N omits parent_repo.
+run_script "xparentbot" --repo "hiveorg/companion" --title "Cross child" --body "body" \
+  --parent "hiveorg/widgets#100"
+REQ_FILE="$(find_req xparentbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('parent', 0), d.get('parent_repo', ''))" "$REQ_FILE")"
+  check "--parent owner/repo#N produces parent and parent_repo" "100 hiveorg/widgets" "$GOT"
+else
+  echo "  FAIL: request file not created for cross-repo --parent test"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+run_script "urlparentbot" --repo "hiveorg/companion" --title "URL child" --body "body" \
+  --parent "https://github.com/hiveorg/widgets/issues/101"
+REQ_FILE="$(find_req urlparentbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('parent', 0), d.get('parent_repo', ''))" "$REQ_FILE")"
+  check "--parent issue URL produces parent and parent_repo" "101 hiveorg/widgets" "$GOT"
+else
+  echo "  FAIL: request file not created for URL --parent test"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+run_script "sameparentbot" --repo "hiveorg/widgets" --title "Same child" --body "body" \
+  --parent "hiveorg/widgets#102"
+REQ_FILE="$(find_req sameparentbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('parent', 0), 'parent_repo' in d)" "$REQ_FILE")"
+  check "--parent naming the same repo omits parent_repo" "102 False" "$GOT"
+else
+  echo "  FAIL: request file not created for same-repo --parent test"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
 # Omitting --parent must not add the field at all (optional, not zero-valued).
 run_script "noparentbot" --repo "hiveorg/widgets" --title "No parent" --body "body"
 
@@ -465,6 +506,30 @@ for bad_case in no-park no-kind no-tag no-target mutable-target marker-injection
   check_exit "invalid release metadata: $bad_case" 2 run_script "invalidreleasebot" "${args[@]}"
 done
 check "invalid release metadata writes no request" "" "$(find_req invalidreleasebot)"
+# --not-agent-work <verdict> carries the verdict on a comment; a bad verdict or a non-comment is refused (#18675).
+run_script "nawbot" comment --repo "hiveorg/widgets" 5 --body "not startable" --not-agent-work needs-environment >/dev/null
+REQ_FILE="$(find_req nawbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT="$(python3 -c "import json,sys; r=json.load(open(sys.argv[1])); print(r.get('kind'), r.get('not_agent_work'))" "$REQ_FILE")"
+  check "--not-agent-work sets not_agent_work on the comment request" "comment needs-environment" "$GOT"
+else
+  echo "  FAIL: request file not created for --not-agent-work test"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+set +e
+run_script "nawbadbot" comment --repo "hiveorg/widgets" 5 --body "x" --not-agent-work maybe >/dev/null 2>&1
+BAD_RC=$?
+run_script "nawissuebot" --repo "hiveorg/widgets" --title "t" --body "b" --not-agent-work needs-human >/dev/null 2>&1
+BAD_ISSUE_RC=$?
+set -e
+check "--not-agent-work with an unknown verdict is refused (exit 2)" "2" "$BAD_RC"
+check "--not-agent-work on a create is refused (exit 2)" "2" "$BAD_ISSUE_RC"
+check "--not-agent-work refusals write no request" "" "$(find_req nawbadbot)$(find_req nawissuebot)"
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
 # --no-consolidate <reason> carries the reason; an empty reason or a non-create is refused.
 run_script "noconsolbot" --repo "hiveorg/widgets" --title "Unrelated" --body "b" --no-consolidate "different work"
 REQ_FILE="$(find_req noconsolbot)"

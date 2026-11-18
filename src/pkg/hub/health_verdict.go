@@ -185,6 +185,17 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 			v.Reason = "budget exhausted — agents halted"
 			return v
 		}
+		// The spoke asked the provider and was refused (#18732): a revoked
+		// Claude grant whose credential FILE still reads valid. Named ahead of
+		// the generic login-stuck leg because the remedy is exactly one thing
+		// (sign in again) and no restart, automatic or manual, can fix it —
+		// and because the spoke holds its restart budget until that sign-in.
+		if rollup.LoginRevoked > 0 {
+			v.State = HealthStateRed
+			v.cause = causeLoginRevoked
+			v.Reason = fmt.Sprintf("Claude login revoked: sign in again — %d agent(s) at the login prompt", rollup.LoginRevoked)
+			return v
+		}
 		if rollup.Problems > 0 {
 			v.State = HealthStateRed
 			switch {

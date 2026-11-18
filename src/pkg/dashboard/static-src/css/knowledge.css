@@ -155,6 +155,9 @@
     .kb-effective-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5); }
     .kb-effective-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
     .kb-effective-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-3); border-radius: var(--r); background: var(--surface); }
+    .kb-advisor-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); margin-top: var(--sp-2); }
+    .kb-advisor-table th, .kb-advisor-table td { text-align: left; padding: var(--sp-2) var(--sp-3); border-bottom: var(--line-width) solid var(--border); }
+    .kb-advisor-table th { color: var(--muted); font-weight: 600; }
     .kb-effective-meta { color: var(--muted); font-size: var(--fs-xs); }
     .kb-effective-reason { border-radius: var(--r-pill); padding: 0 var(--sp-2); font-size: var(--fs-xs); font-weight: 700; color: var(--yellow); border: var(--line-width) solid var(--yellow); }
     .kb-notice { margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); background: var(--bg); border-radius: var(--r); font-size: var(--fs-sm); color: var(--muted); border-left: 3px solid var(--yellow); }

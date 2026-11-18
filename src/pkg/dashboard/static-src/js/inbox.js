@@ -6,8 +6,10 @@
     const INBOX_BUSY_POLL_MS = 5000;
     const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗', 'hive-recording': '⏺️', upload: '📎', email: '✉️' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
-    // Summaries longer than this many characters start collapsed.
+    // Summaries longer than this many characters, or more lines than the
+    // clamp (the CSS line-clamp of .inbox-summary.is-collapsed), start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
+    const INBOX_SUMMARY_CLAMP_LINES = 3;
     let _inboxCache = null;
     let _inboxSelected = new Set();
     let _inboxShowProcessed = false;
@@ -37,8 +39,51 @@
     let _inboxAddOpen = false;
     let _inboxUploadQueue = Promise.resolve();
     let _inboxPointerInside = false;
+    // Whether the "+N more" disclosure of unconfigured sources is open.
+    let _inboxSourcesOpen = false;
 
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
+    // Inline SVG glyphs for the per-item icon buttons (play, share, text
+    // disclosure, open file, delete). Each is decorative: the button carries
+    // the accessible name (aria-label) and the tooltip (title).
+    function inboxIconSvg(name) {
+      const paths = {
+        play: '<path d="M4.5 3.2v9.6a.6.6 0 0 0 .9.5l7.6-4.8a.6.6 0 0 0 0-1L5.4 2.7a.6.6 0 0 0-.9.5z" fill="currentColor" stroke="none"/>',
+        share: '<path d="M6.8 9.2a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-1 1"/><path d="M9.2 6.8a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l1-1"/>',
+        'chevron-right': '<path d="M6 3.5 10.5 8 6 12.5"/>',
+        'chevron-down': '<path d="M3.5 6 8 10.5 12.5 6"/>',
+        file: '<path d="M10.5 5.5 6.2 9.8a1.5 1.5 0 0 0 2.1 2.1l4.6-4.6a3 3 0 0 0-4.2-4.2L4 7.8a4.2 4.2 0 0 0 6 6l3-3"/>',
+        trash: '<path d="M3 4.5h10"/><path d="M6.5 4.5V3h3v1.5"/><path d="M4.5 4.5l.6 8.2a1 1 0 0 0 1 .8h3.8a1 1 0 0 0 1-.8l.6-8.2"/>'
+      };
+      return '<svg class="inbox-ic" viewBox="0 0 16 16" aria-hidden="true" focusable="false">' + (paths[name] || '') + '</svg>';
+    }
+    // inboxTitleParts splits a trailing recording id off a title:
+    // "Meeting notes: standup 2026-11-17 (mtg-078395cc1f76)" becomes
+    // { title: "Meeting notes: standup 2026-11-17", id: "mtg-078395cc1f76" }.
+    // The id goes to the meta line; the full title stays as the tooltip.
+    function inboxTitleParts(title) {
+      const full = String(title || '');
+      const m = /^(.*\S)\s*\(((?:mtg|rec|meeting)-[A-Za-z0-9_-]+)\)\s*$/.exec(full);
+      return m ? { title: m[1], id: m[2], full } : { title: full, id: '', full };
+    }
+    // inboxMarkdownToText renders a Markdown preview as plain text: heading
+    // marks, emphasis, code ticks, list bullets, quotes and link syntax go,
+    // the words stay (mentions stay plain text). Blank runs collapse.
+    function inboxMarkdownToText(md) {
+      return String(md || '')
+        .replace(/```[^\n]*\n?/g, '')
+        .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
+        .replace(/^[ \t]*>[ \t]?/gm, '')
+        .replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/gm, '')
+        .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+        .replace(/(\*\*|__)(.+?)\1/g, '$2')
+        .replace(/(^|[^\w*])\*([^*\n]+)\*(?!\w)/g, '$1$2')
+        .replace(/`([^`\n]*)`/g, '$1')
+        .replace(/[ \t]+$/gm, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
     // Uploaded documents have no audio; uploaded audio/video does. Mailed-in
     // audio (source email) is opened as a file, not streamed.
     function inboxItemHasAudio(it) { return !it || (it.source !== 'upload' && it.source !== 'email') || (it.source === 'upload' && (it.upload_kind === 'audio' || it.upload_kind === 'video')); }
@@ -111,17 +156,21 @@
       return html;
     }
 
-    // Summary / memo text: collapsed past INBOX_SUMMARY_COLLAPSE_CHARS with a
-    // more/less toggle. Falls back to the pending note or the fact excerpt.
+    // Summary / memo text: a plain-text preview (a document's Markdown is
+    // rendered as text) clamped to INBOX_SUMMARY_CLAMP_LINES lines with a
+    // Show more / Show less toggle once it is longer than
+    // INBOX_SUMMARY_COLLAPSE_CHARS or that many lines. Falls back to the
+    // pending note or the fact excerpt.
     function inboxSummaryHtml(it, key) {
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
       const cached = _inboxContent[key];
-      const summary = (cached && cached.summary) || it.summary || '';
+      const raw = (cached && cached.summary) || it.summary || '';
+      const summary = it.source === 'upload' || it.source === 'email' ? inboxMarkdownToText(raw) : raw;
       if (summary) {
-        const long = summary.length > INBOX_SUMMARY_COLLAPSE_CHARS;
+        const long = summary.length > INBOX_SUMMARY_COLLAPSE_CHARS || summary.split('\n').length > INBOX_SUMMARY_CLAMP_LINES;
         const expanded = _inboxExpanded.has(key);
         let html = '<div class="inbox-summary' + (long && !expanded ? ' is-collapsed' : '') + '">' + escapeHtml(summary) + '</div>';
-        if (long) html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-more" data-action="inboxToggleSummary" data-arg0="' + src + '" data-arg1="' + id + '">' + (expanded ? 'less' : 'more') + '</button>';
+        if (long) html += '<button type="button" class="hv-btn btn-ghost btn-sm inbox-more" data-action="inboxToggleSummary" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (expanded ? 'true' : 'false') + '">' + (expanded ? 'Show less' : 'Show more') + '</button>';
         return html;
       }
       // Any text (a machine transcript included) means the item is not
@@ -129,7 +178,10 @@
       // transcribed yet" line would contradict the transcript shown below.
       const hasText = !!(it.has_transcript || (it.transcription && it.transcription.status === 'done') || (cached && (cached.transcript || cached.summary)));
       if (!hasText && (it.pending || (cached && cached.pending))) {
-        const tx = it.transcribable && !it.transcribe_unavailable ? ' Hive can transcribe this: click 🎧 Transcribe.'
+        // Auto-transcribed items (the hive's own recordings, dropped and
+        // mailed-in audio, auto-mode sources) need no click.
+        const tx = it.auto_transcribe && !it.transcribe_unavailable ? ' Hive transcribes this automatically; the transcript appears here when it is ready.'
+          : it.transcribable && !it.transcribe_unavailable ? ' Hive can transcribe this: click 🎧 Transcribe.'
           : (it.transcribe_unavailable ? ' Hive can transcribe this once transcription is set up (see 🎧 Transcribe below).' : '');
         // Meeting platforms whose pending items read "<label> has no transcript"
         // (inline so the extracted function stays self-contained in tests).
@@ -153,7 +205,7 @@
       if (it.source === 'upload' && !inboxItemHasAudio(it) && !c.transcript) return '<div class="inbox-transcript"><div class="muted-xs"><strong>Extracted text</strong></div><pre class="inbox-transcript-text">' + escapeHtml(c.markdown || '') + '</pre></div>';
       let html = '<div class="inbox-transcript">';
       if (c.transcript && c.transcript_label) html += '<div class="muted-xs"><strong>' + escapeHtml(c.transcript_label) + '</strong></div>';
-      if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
+      if (c.transcript) html += '<pre class="inbox-transcript-text">' + (it.source === 'meeting' ? meetingsTranscriptTextHtml(c.transcript) : escapeHtml(c.transcript)) + '</pre>';
       else html += '<div class="muted-xs">No transcript yet' + (c.pending ? (it.source === 'plaud' ? ': Plaud has not transcribed this recording.' : ': the meeting platform has not produced a transcript for this recording.') + (it.transcribable || it.transcribe_unavailable ? ' Hive can transcribe this: see 🎧 Transcribe on this item.' : '') : '.') + '</div>';
       if (c.highlights) html += '<div class="muted-xs inbox-highlights"><strong>Highlights</strong> (flagged on the device)<pre class="inbox-transcript-text">' + escapeHtml(c.highlights) + '</pre></div>';
       return html + '</div>';
@@ -216,6 +268,20 @@
         (elapsed ? '<span class="kc-progress-elapsed" title="elapsed">' + escapeHtml(elapsed) + '</span>' : '') + '</div></div>';
     }
 
+    // What the item's Knowledge fact holds, as a status word in the meta
+    // line (not a control, not a floating pill): the source's own text, this
+    // hive's machine transcript, or metadata only while no text exists yet.
+    function inboxFactStateHtml(it) {
+      if (!it.fact_slug) return '';
+      const factStates = {
+        ready: { label: 'In knowledge', status: 'ok', title: 'Stored as a Knowledge fact with the source\'s own text; knowledge search and agents see it.' },
+        machine: { label: 'In knowledge (machine text)', status: 'ok', title: 'Stored as a Knowledge fact with this hive\'s machine transcript; the source\'s own text replaces it when it exists.' },
+        pending: { label: 'Pending text', status: 'not loaded', title: 'Stored as a Knowledge fact with metadata only (title, date, duration, highlights); no text yet, so knowledge search finds no words.' },
+      };
+      const fs = factStates[it.fact_state] || factStates.ready;
+      return '<span class="inbox-meta-state" role="status" data-status="' + fs.status + '" data-fact-state="' + escapeHtml(it.fact_state || 'ready') + '" title="' + escapeHtml(fs.title) + '">' + escapeHtml(fs.label) + '</span>';
+    }
+
     // Machine transcription: a state pill (spinner while queued/running, the
     // reason when it failed or was skipped), the progress bar while busy, and
     // the 🎧 Transcribe / Retry button on pending items with audio, for
@@ -223,16 +289,7 @@
     function inboxTranscriptionHtml(it, key) {
       const st = it.transcription;
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
-      // What the item's Knowledge fact holds, as a status pill (not a
-      // control): the source's own text, this hive's machine transcript, or
-      // metadata only while no text exists yet.
-      const factStates = {
-        ready: { label: 'In knowledge', status: 'ok', title: 'Stored as a Knowledge fact with the source\'s own text; knowledge search and agents see it.' },
-        machine: { label: 'In knowledge (machine text)', status: 'ok', title: 'Stored as a Knowledge fact with this hive\'s machine transcript; the source\'s own text replaces it when it exists.' },
-        pending: { label: 'Pending text', status: 'not loaded', title: 'Stored as a Knowledge fact with metadata only (title, date, duration, highlights); no text yet, so knowledge search finds no words.' },
-      };
-      const fs = factStates[it.fact_state] || factStates.ready;
-      let html = it.fact_slug ? '<span class="kc-pill" role="status" data-status="' + fs.status + '" data-fact-state="' + escapeHtml(it.fact_state || 'ready') + '" title="' + escapeHtml(fs.title) + '">' + escapeHtml(fs.label) + '</span>' : '';
+      let html = '';
       if (st && st.status) {
         const busy = st.status === 'queued' || st.status === 'running';
         const pill = st.status === 'done' ? 'ok' : (st.status === 'failed' ? 'error' : (busy ? 'syncing' : ''));
@@ -243,6 +300,11 @@
           (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(label) + '</span>';
         if (st.reason && (st.status === 'failed' || st.status === 'skipped')) html += ' <span class="muted-xs inbox-tx-reason" role="alert">' + escapeHtml(st.reason) + '</span>';
         if (busy) html += inboxTxProgressHtml(st, undefined, inboxIntentThen(it));
+      } else if (it.auto_transcribe && !it.transcribe_unavailable) {
+        // Not started yet: the hive queues it on its own (at once, or at
+        // its next sweep), so this reads as waiting, not as a to-do.
+        html += '<span class="kc-pill" data-status="syncing" data-inbox-tx-auto title="This hive transcribes this recording automatically; no click is needed">' +
+          '<span class="inbox-tx-spinner" aria-hidden="true"></span> Transcribing soon</span>';
       }
       const why = inboxTxUnavailableText(it.transcribe_unavailable);
       if (why) {
@@ -256,7 +318,7 @@
         const retry = st && (st.status === 'failed' || st.status === 'skipped');
         html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-transcribe" data-action="inboxTranscribe" data-arg0="' + src + '" data-arg1="' + id + '"' + (inflight ? ' disabled aria-busy="true"' : '') +
           ' title="Have this hive transcribe the recording with the provider in Inbox ⚙ → Transcription; the transcript is kept on this hive only">' +
-          (inflight ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> Sending…' : (retry ? '🎧 Retry transcription' : '🎧 Transcribe')) + '</button>';
+          (inflight ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> Sending…' : (retry ? '🎧 Retry transcription' : (it.auto_transcribe ? '🎧 Transcribe now' : '🎧 Transcribe'))) + '</button>';
       }
       return html ? '<div class="inbox-tx" data-inbox-tx-slot="' + escapeHtml(key || '') + '">' + html + '</div>' : '';
     }
@@ -400,13 +462,18 @@
       // The backing Knowledge fact is a plain link in the metadata line, not
       // an action: it only opens the fact.
       const factLink = it.fact_slug ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
+      // The title is shown without its trailing recording id; the id and the
+      // Knowledge state join the meta line, and the full title is the tooltip.
+      const tp = inboxTitleParts(it.title || it.id);
+      const idMeta = tp.id ? '<span class="inbox-meta-id" title="Recording id">' + escapeHtml(tp.id) + '</span>' : '';
+      const state = inboxFactStateHtml(it);
       // Files and links someone added show where they came from and who
       // added them ("upload · notes.md · added 2h ago by ana").
       const meta = it.source === 'upload'
-        ? [escapeHtml(it.origin || 'upload'), when ? 'added ' + when : '', it.added_by ? 'by ' + escapeHtml(it.added_by) : '', dur, factLink].filter(Boolean).join(' · ')
+        ? [escapeHtml(it.origin || 'upload'), when ? 'added ' + when : '', it.added_by ? 'by ' + escapeHtml(it.added_by) : '', dur, idMeta, state, factLink].filter(Boolean).join(' · ')
         : it.source === 'email'
-          ? ['email', it.sender ? 'from ' + escapeHtml(it.sender) : '', when ? 'received ' + when : '', escapeHtml(it.upload_kind || '')].filter(Boolean).join(' · ')
-          : [escapeHtml(it.source), when ? 'recorded ' + when : '', it.recorded_by ? 'by ' + escapeHtml(it.recorded_by) : '', dur, factLink].filter(Boolean).join(' · ');
+          ? ['email', it.sender ? 'from ' + escapeHtml(it.sender) : '', when ? 'received ' + when : '', escapeHtml(it.upload_kind || ''), idMeta, state].filter(Boolean).join(' · ')
+          : [escapeHtml(it.source), when ? 'recorded ' + when : '', it.recorded_by ? 'by ' + escapeHtml(it.recorded_by) : '', dur, idMeta, state, factLink].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
@@ -419,34 +486,40 @@
       }
       const owner = viewerIsOwner();
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
+      // The action row: icon buttons of one size (play, share, open file,
+      // delete) and one compact text toggle (Transcript / Text). Every icon
+      // button names itself with aria-label and title. A destructive control
+      // goes last, after the separator: #18694's Delete for every item kind
+      // drops in there with the same inbox-action-danger class.
       let actions = '';
       // A hive recording past retention has no audio left: no play control.
       if (it.audio_expired) actions += '<span class="muted-xs inbox-audio-expired" title="The raw audio was deleted by retention; the transcript and the Knowledge fact are kept">audio expired (kept ' + (Number(it.audio_retention_days) || 5) + ' days)</span>';
-      else if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
-      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + (it.source === 'upload' && !inboxItemHasAudio(it) ? ' Text' : ' Transcript') + '</button>';
-      if (it.source === 'email' && inboxViewerCanPlay()) actions += '<a class="hv-btn btn-secondary btn-sm" href="' + escapeHtml(inboxEmailFileUrl(it)) + '" target="_blank" rel="noopener noreferrer" title="Open the mailed-in file">📎 Open file</a>';
+      else if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" aria-label="Play recording" title="Play recording (streams through this hive)">' + inboxIconSvg('play') + '</button>';
+      const txOpen = _inboxTranscriptOpen.has(key);
+      const txLabel = it.source === 'upload' && !inboxItemHasAudio(it) ? 'Text' : 'Transcript';
+      actions += '<button type="button" class="hv-btn btn-ghost btn-sm inbox-action inbox-action-text" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (txOpen ? 'true' : 'false') + '" title="' + (txOpen ? 'Hide the ' : 'Show the ') + txLabel.toLowerCase() + '">' + inboxIconSvg(txOpen ? 'chevron-down' : 'chevron-right') + txLabel + '</button>';
+      if (it.source === 'email' && inboxViewerCanPlay()) actions += '<a class="hv-btn btn-icon btn-sm inbox-action" href="' + escapeHtml(inboxEmailFileUrl(it)) + '" target="_blank" rel="noopener noreferrer" aria-label="Open file" title="Open the mailed-in file">' + inboxIconSvg('file') + '</a>';
       if (it.awaiting_approval) {
-        if (owner) actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxEmailApprove" data-arg0="' + id + '" title="Let this mailed-in item be shared and transcribed like any other">✓ Approve</button>' +
-          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxEmailDecline" data-arg0="' + id + '" title="Delete this mailed-in item">✕ Decline</button>';
+        if (owner) actions += '<button type="button" class="hv-btn btn-primary btn-sm inbox-action" data-action="inboxEmailApprove" data-arg0="' + id + '" title="Let this mailed-in item be shared and transcribed like any other">Approve</button>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm inbox-action" data-action="inboxEmailDecline" data-arg0="' + id + '" title="Delete this mailed-in item">Decline</button>';
       } else {
-        actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
+        actions += '<button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-share" data-action="inboxShare" data-arg0="' + src + '" data-arg1="' + id + '" aria-label="Share" title="Share: file this item in the hive, or copy a link to it (not the recording)" data-arg-types="s,s,t" aria-haspopup="menu" aria-expanded="false">' + inboxIconSvg('share') + '</button>';
       }
-      if (inboxCanDeleteRecording(it, window._hiveRole, window._hiveUser)) {
-        const busy = it.transcription && (it.transcription.status === 'queued' || it.transcription.status === 'running');
-        actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-delete" data-action="inboxDeleteRecording" data-arg0="' + id + '"' +
-          (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete the audio, this Inbox item and its transcript; anything already shared from it stays"') + '>🗑 Delete</button>';
-      }
+      // Delete for every item kind (#18694, inbox-delete.js) is the last
+      // control, set apart by a separator.
+      const del = typeof inboxDeleteButtonHtml === 'function' ? inboxDeleteButtonHtml(it) : '';
+      if (del) actions += '<span class="inbox-actions-sep" role="separator"></span>' + del;
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
-        (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
+        (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(tp.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
-        '<div class="kb-fact-body"><div class="kb-fact-title">' + escapeHtml(it.title || it.id) + '</div>' +
-        '<div class="muted-xs">' + meta + '</div>' +
+        '<div class="kb-fact-body"><div class="kb-fact-title inbox-title"' + (tp.id ? ' title="' + escapeHtml(tp.full) + '"' : '') + '>' + escapeHtml(tp.title) + '</div>' +
+        '<div class="muted-xs inbox-meta">' + meta + '</div>' +
         inboxSummaryHtml(it, key) +
         '<div class="inbox-media" data-inbox-media="' + escapeHtml(key) + '"></div>' +
         (it.source === 'email' && it.upload_kind === 'image' && inboxViewerCanPlay() ? '<img class="inbox-email-image" loading="lazy" src="' + escapeHtml(inboxEmailFileUrl(it)) + '" alt="' + escapeHtml(it.title || 'mailed-in image') + '">' : '') +
         (pills ? '<div class="inbox-pills">' + pills + '</div>' : '') +
         inboxTranscriptionHtml(it, key) +
-        '<div class="kc-actions mt-2">' + actions + '</div>' +
+        '<div class="inbox-actions">' + actions + '</div>' +
         inboxTranscriptHtml(it, key) + '</div></div>';
     }
 
@@ -504,7 +577,7 @@
     // retention deletes it (audio_expires_at); a third-party source's audio
     // is only streamed through and never stored here.
     function inboxAudioNoteText(it, fmtDate) {
-      const restart = ' Click ▶ Play recording again to restart.';
+      const restart = ' Click Play again to restart.';
       if (it && (it.source === 'hive-recording' || it.source === 'upload')) {
         const exp = it.audio_expires_at && !String(it.audio_expires_at).startsWith('0001') ? it.audio_expires_at : '';
         const when = exp && fmtDate ? fmtDate(exp) : '';
@@ -702,7 +775,8 @@
     }
     // inboxBulkMenu opens the Hive menu of the multi-select bar.
     function inboxBulkMenu(btn) {
-      inboxPopMenu(btn, inboxShareMenuHtml(inboxBulkMenuGroups(), '', ''), d => inboxBulkMenuRun(d.inboxShareAct));
+      const manage = typeof inboxDeleteBulkGroups === 'function' ? inboxDeleteBulkGroups() : [];
+      inboxPopMenu(btn, inboxShareMenuHtml(inboxBulkMenuGroups().concat(manage), '', ''), d => d.inboxShareGroup === 'manage' ? inboxDeleteSelected() : inboxBulkMenuRun(d.inboxShareAct));
     }
     let _inboxFocusKey = inboxFocusKeyFromHash(location.hash);
     window.addEventListener('hashchange', (e) => {
@@ -745,38 +819,62 @@
       if (badge) setSidebarCountBadge(badge, unprocessed, unprocessed + ' unprocessed');
       setSectionSummary('inbox-section', unprocessed + ' to triage · ' + items.length + ' total');
       const owner = viewerIsOwner();
-      const sources = (data.sources || []).map(s => {
-        const status = s.connected ? 'ok' : (s.configured ? 'error' : '');
-        const label = inboxSourceIcon(s.type) + ' ' + escapeHtml(s.type) + (s.connected ? (s.account ? ': ' + escapeHtml(s.account) : ': connected') : s.configured ? ': not connected' : ': not configured');
-        return '<span class="kc-pill" data-status="' + status + '">' + label + '</span>';
-      }).join(' ');
       const settings = data.settings || {};
       const rules = Array.isArray(settings.rules) ? settings.rules.length : 0;
-      let html = '<div class="row-between inbox-toolbar">' +
-        '<div class="inbox-sources">' + (sources || '<span class="muted-xs">No voice sources configured.</span>') +
-        ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenIntegrations">Connect sources</button></div>' +
-        '<div class="kc-actions">' +
+      if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
+      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
+      // Sources line: only configured sources are chips (with the account
+      // hint); the rest sit behind a "+N more" disclosure next to Connect
+      // sources, so the header is one quiet line instead of a wall of
+      // "not configured".
+      const sources = inboxSourcesHtml(data.sources || []);
+      // Toolbar, one row: primary actions on the left (Record, Add), the
+      // view controls on the right (Show processed, Select all, the bulk
+      // Hive menu, Auto-routing), every one of them a button of one size.
+      const sel = _inboxSelected.size;
+      const canSelect = inboxCanShare(window._hiveRole) && shown.length > 0;
+      let html = sources +
+        '<div class="inbox-toolbar" role="toolbar" aria-label="Inbox actions">' +
+        '<div class="inbox-toolbar-group">' +
         (typeof inboxRecordButtonHtml === 'function' ? inboxRecordButtonHtml(settings) : '') +
-        '<label class="muted-xs inbox-toggle"><input type="checkbox" data-change-action="inboxToggleProcessed"' + (_inboxShowProcessed ? ' checked' : '') + '> show processed</label>' +
-        (inboxCanAdd() ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxToggleAdd" aria-expanded="' + (_inboxAddOpen ? 'true' : 'false') + '" aria-controls="inbox-add" title="Add files to the Inbox (or drop them anywhere on it, or paste with Ctrl/Cmd+V)">＋ Add</button>' : '') +
+        (inboxCanAdd() ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxToggleAdd" aria-expanded="' + (_inboxAddOpen ? 'true' : 'false') + '" aria-controls="inbox-add" title="Add files, a link or a quick note to the Inbox (or drop files anywhere on it, or paste with Ctrl/Cmd+V)">＋ Add</button>' : '') +
+        '</div><div class="inbox-toolbar-group">' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm inbox-filter" data-action="inboxToggleProcessed" aria-pressed="' + (_inboxShowProcessed ? 'true' : 'false') + '" title="Also list items already filed or kept as Knowledge">Show processed</button>' +
+        (canSelect ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll" title="' + (sel === shown.length ? 'Clear the selection' : 'Select every listed item for the Hive menu') + '">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' : '') +
+        (canSelect && sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxBulkMenu" data-arg-types="t" aria-haspopup="menu" aria-expanded="false" title="File, keep or delete the selected items">Hive (' + sel + ') ▾</button>' : '') +
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
+      if (typeof inboxInputMethodsHtml === 'function') html += inboxInputMethodsHtml();
+      if (typeof emailInRowHtml === 'function') html += emailInRowHtml('inbox', data.email_in);
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
       if (window._hiveRoleFailed && !window._hiveRole) html += '<div class="muted-xs">Could not determine your role, so actions are read-only. It will retry automatically.</div>';
       if (inboxCanAdd()) html += inboxAddPanelHtml() + inboxUploadsHtml();
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
-      if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
-      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
-      if (inboxCanShare(window._hiveRole) && shown.length) {
-        const sel = _inboxSelected.size;
-        html += '<div class="kc-actions mb-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' +
-          (sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxBulkMenu" data-arg-types="t" aria-haspopup="menu" aria-expanded="false">Hive (' + sel + ') ▾</button>' : '') + '</div>';
-      }
       if (!shown.length) html += '<div class="muted-note">' + (items.length ? 'Everything is triaged. Toggle “show processed” to see filed and dismissed items.' : 'Nothing yet. Connect Plaud or another voice source under Knowledge → Integrations; new recordings land here after the next sync (a newly added connector starts on the next hive restart).') + '</div>';
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
-      inboxPreserveAudio(panel, () => { panel.innerHTML = html; });
+      const paint = () => { panel.innerHTML = html; };
+      inboxPreserveAudio(panel, typeof inboxNoteKeepFocus === 'function' ? () => inboxNoteKeepFocus(paint) : paint);
       inboxApplyFocus(panel);
     }
+
+    // inboxSourceChip is one source as a chip: connected (with its account),
+    // configured but not connected, or not configured.
+    function inboxSourceChip(s) {
+      const status = s.connected ? 'ok' : (s.configured ? 'error' : '');
+      const label = inboxSourceIcon(s.type) + ' ' + escapeHtml(s.type) + (s.connected ? (s.account ? ': ' + escapeHtml(s.account) : ': connected') : s.configured ? ': not connected' : ': not configured');
+      return '<span class="kc-pill inbox-source" data-status="' + status + '" data-source="' + escapeHtml(s.type) + '">' + label + '</span>';
+    }
+    function inboxSourcesHtml(all) {
+      const configured = all.filter(s => s.configured || s.connected);
+      const rest = all.filter(s => !(s.configured || s.connected));
+      const connect = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenIntegrations" title="Connect a voice or meeting source under Knowledge → Integrations">Connect sources</button>';
+      let html = '<div class="inbox-sources">' + (configured.length ? configured.map(inboxSourceChip).join(' ') : '<span class="muted-xs">No voice sources configured.</span>');
+      if (rest.length && configured.length) html += ' <button type="button" class="hv-btn btn-ghost btn-sm inbox-sources-more" data-action="inboxToggleSources" aria-expanded="' + (_inboxSourcesOpen ? 'true' : 'false') + '" aria-controls="inbox-sources-rest" title="' + (_inboxSourcesOpen ? 'Hide' : 'Show') + ' the ' + rest.length + ' sources that are not configured">' + (_inboxSourcesOpen ? 'Hide ' + rest.length + ' more' : '+' + rest.length + ' more') + '</button>';
+      html += ' ' + connect + '</div>';
+      if (rest.length && configured.length) html += '<div id="inbox-sources-rest" class="inbox-sources inbox-sources-rest"' + (_inboxSourcesOpen ? '' : ' hidden') + '>' + rest.map(inboxSourceChip).join(' ') + '</div>';
+      return html;
+    }
+    function inboxToggleSources() { _inboxSourcesOpen = !_inboxSourcesOpen; renderInbox(); }
 
     function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }
     function inboxToggleSelect(src, id) {
@@ -801,39 +899,6 @@
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
       return data;
-    }
-    // inboxCanDeleteRecording: a hive recording may be deleted by an owner,
-    // or by the read-write member who recorded it; read members never.
-    function inboxCanDeleteRecording(it, role, user) {
-      if (!it || it.source !== 'hive-recording') return false;
-      if (role === 'owner') return true;
-      return role === 'read-write' && !!user && !!it.recorded_by && String(it.recorded_by).toLowerCase() === String(user).toLowerCase();
-    }
-    // inboxDeleteRecordingText is the confirm text; with share history it
-    // says that the shared copies stay.
-    function inboxDeleteRecordingText(it) {
-      const shared = ((it && it.share_history) || []).length;
-      let text = 'This deletes the audio stored on this hive, this Inbox item and its transcript in Knowledge. It cannot be undone.';
-      if (shared) text += ' What was already shared from it (' + shared + ' share' + (shared === 1 ? '' : 's') + ': RFCs, issues, DIBS ideas, spek seeds) stays where it is.';
-      return text;
-    }
-    async function inboxDeleteRecording(id) {
-      const it = inboxFind('hive-recording', id);
-      if (!it) return;
-      const ok = await hiveConfirm({ title: 'Delete this recording?', message: inboxDeleteRecordingText(it), confirmLabel: 'Delete', danger: true });
-      if (!ok) return;
-      try {
-        const r = await fetch('/api/inbox/hive-recording/' + encodeURIComponent(id), { method: 'DELETE' });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-        const key = 'hive-recording/' + id;
-        delete _inboxContent[key];
-        _inboxSelected.delete(key);
-        showToast('Recording deleted', 'success');
-      } catch (e) {
-        showToast('Could not delete the recording: ' + e.message, 'error');
-      }
-      await fetchInbox();
     }
     // Approval queue for mailed-in files from outside the allowlist (#18395).
     async function inboxEmailAct(id, action) {
@@ -1029,10 +1094,10 @@
       const srcOpts = ['<option value=""' + (!rule.source ? ' selected' : '') + '>any source</option>'].concat(sources.map(s => '<option value="' + escapeHtml(s) + '"' + (rule.source === s ? ' selected' : '') + '>' + escapeHtml(s) + '</option>')).join('');
       const destOpts = [['spek_rfc', '→ RFC'], ['dibs', '→ dibs'], ['dismiss', 'Knowledge only']].map(([v, l]) => '<option value="' + v + '"' + (rule.destination === v ? ' selected' : '') + '>' + l + '</option>').join('');
       return '<div class="inbox-rule" data-rule-index="' + i + '">' +
-        '<select class="field-input" data-rule-field="source" aria-label="Source">' + srcOpts + '</select>' +
+        '<select class="kb-search-box" data-rule-field="source" aria-label="Source">' + srcOpts + '</select>' +
         '<input class="kb-search-box" data-rule-field="title_prefix" placeholder="title prefix (RFC:)" value="' + escapeHtml(rule.title_prefix || '') + '" aria-label="Title prefix">' +
         '<input class="kb-search-box" data-rule-field="tag" placeholder="or tag" value="' + escapeHtml(rule.tag || '') + '" aria-label="Tag">' +
-        '<select class="field-input" data-rule-field="destination" aria-label="Destination">' + destOpts + '</select>' +
+        '<select class="kb-search-box" data-rule-field="destination" aria-label="Destination">' + destOpts + '</select>' +
         '<input class="kb-search-box" data-rule-field="repo" placeholder="owner/repo (RFC only)" value="' + escapeHtml(rule.repo || '') + '" aria-label="Repository">' +
         '<button type="button" class="hv-btn btn-icon btn-sm" data-action="inboxRemoveRule" data-arg0="' + i + '" aria-label="Remove rule">✕</button></div>';
     }
@@ -1064,22 +1129,33 @@
       root = root || inboxSettingsRoot();
       const host = root ? root.querySelector('.inbox-settings-rules') : null;
       if (!host) return;
-      host.innerHTML = _inboxDraftRules.length ? _inboxDraftRules.map(inboxRuleRowHtml).join('') : '<p class="muted-xs">No rules — every item waits here for manual triage.</p>';
+      host.innerHTML = _inboxDraftRules.length ? _inboxDraftRules.map(inboxRuleRowHtml).join('') : '<p class="muted-xs">No rules: every item waits here for manual triage.</p>';
     }
+    // The form has two sections on one vertical rhythm: Routing (default RFC
+    // repository, dibs URL, rules) and Transcription. Config keys sit in a
+    // "Config keys" footnote at the end of each section, away from the
+    // labels. In the modal the Save bar stays visible while the body scrolls.
     function inboxSettingsFormHtml(settings, inline) {
       const buttons = inline
         ? '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>'
         : '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
           '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>';
-      return '<div class="inbox-settings-form" data-inbox-form="' + (inline ? 'inline' : 'modal') + '"><p class="muted-note m-0">New items are checked against these rules in order after every connector sync; the first match routes the item automatically. Items that arrived before a rule existed are never re-routed.</p>' +
+      const keys = list => '<details class="inbox-set-keys"><summary class="muted-xs">Config keys</summary><p class="muted-xs">' + list.map(yamlHint).join(' ') + '</p></details>';
+      return '<div class="inbox-settings-form" data-inbox-form="' + (inline ? 'inline' : 'modal') + '">' +
+        '<section class="inbox-set-section" data-inbox-set="routing" aria-label="Routing">' +
+        '<h4 class="section-label inbox-set-title">Routing</h4>' +
+        '<p class="muted-xs">New items are checked against the rules below, in order, after every connector sync; the first match routes the item automatically. Items that arrived before a rule existed are never re-routed.</p>' +
         '<div class="inbox-settings-grid">' +
-        '<label class="muted-note inbox-field">Default RFC repository<input class="kb-search-box mt-2" type="text" data-inbox-field="spek-repo" placeholder="owner/repo" autocomplete="off" value="' + escapeHtml(settings.spek_repo || '') + '"></label>' +
-        '<label class="muted-note inbox-field">dibs URL<input class="kb-search-box mt-2" type="text" data-inbox-field="dibs-url" placeholder="https://dibs.example.org" autocomplete="off" value="' + escapeHtml(settings.dibs_url || '') + '"></label></div>' +
-        '<p class="muted-xs">The dibs token is read from the environment variable named by <code>inbox.dibs.token_env</code>' + (settings.dibs_token_set ? ' (set)' : ' (not set)') + '.</p>' +
-        '<div class="row-between mt-4 mb-2"><div class="section-label m-0">Rules</div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddRule">Add rule</button></div>' +
+        '<label class="inbox-field"><span class="inbox-field-label">Default RFC repository</span><input class="kb-search-box" type="text" data-inbox-field="spek-repo" placeholder="owner/repo" autocomplete="off" value="' + escapeHtml(settings.spek_repo || '') + '"></label>' +
+        '<label class="inbox-field"><span class="inbox-field-label">dibs URL</span><input class="kb-search-box" type="text" data-inbox-field="dibs-url" placeholder="https://dibs.example.org" autocomplete="off" value="' + escapeHtml(settings.dibs_url || '') + '"></label></div>' +
+        '<p class="muted-xs inbox-set-status" data-inbox-dibs-token><span>dibs token</span> <span class="kc-pill" data-status="' + (settings.dibs_token_set ? 'ok' : 'error') + '">' + (settings.dibs_token_set ? 'set' : 'not set') + '</span> ' +
+        '<span>' + (settings.dibs_token_set ? 'Read from this hive\'s environment.' : 'Set it in this hive\'s environment; it is never stored in hive.yaml.') + '</span></p>' +
+        '<div class="row-between inbox-set-subhead"><span class="inbox-field-label">Rules</span><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddRule">Add rule</button></div>' +
         '<div class="inbox-settings-rules"></div>' +
+        keys(['inbox.spek.repo', 'inbox.dibs.url', 'inbox.dibs.token_env', 'inbox.rules']) +
+        '</section>' +
         inboxTranscriptionFormHtml(settings.transcription) +
-        '<div class="hive-dialog-error" role="alert" data-inbox-field="error"></div>' + buttons + '</div>';
+        '<div class="inbox-set-footer"><div class="hive-dialog-error" role="alert" data-inbox-field="error"></div>' + buttons + '</div></div>';
     }
 
     // Provider choices for ⚙ → Transcription: one line on speed, speakers
@@ -1103,7 +1179,9 @@
       }[p] || 'Depending on the provider the audio stays on this hive (whisper) or is sent to Google (Gemini) or Deepgram under the hive\'s own account.';
       return (provider === 'auto' && resolved ? 'Auto currently picks ' + resolved + '. ' : '') + dest;
     }
-    // Provider selector with each provider's readiness (never a key value).
+    // Provider selector, then one row per provider: name, one-line
+    // description, a status pill in its own column, and what is missing (or
+    // any other detail) on its own muted line. Never a key value.
     function inboxTxProviderHtml(tx) {
       const info = inboxTxProviderInfo();
       const current = info[tx.provider] ? tx.provider : 'auto';
@@ -1118,53 +1196,92 @@
       let rows = '';
       for (const name of ['auto', 'whisper', 'gemini', 'deepgram']) {
         const st = status[name];
-        const pill = name === 'auto' ? '' : (st ? '<span class="kc-pill" data-status="' + (st.available ? 'ok' : 'error') + '">' + (st.available ? 'ready' : 'not ready') + '</span> ' + escapeHtml(st.detail || '') : '');
-        rows += '<li data-inbox-tx-provider="' + name + '"><strong>' + name + '</strong>: ' + escapeHtml(info[name]) + (pill ? ' ' + pill : '') + '</li>';
+        const pill = name === 'auto'
+          ? (tx.resolved_provider ? '<span class="kc-pill" data-status="ok">now: ' + escapeHtml(tx.resolved_provider) + '</span>' : '')
+          : (st ? '<span class="kc-pill" data-status="' + (st.available ? 'ok' : 'error') + '">' + (st.available ? 'ready' : 'not ready') + '</span>' : '');
+        const detail = name !== 'auto' && st && st.detail ? '<span class="muted-xs inbox-tx-provider-detail">' + escapeHtml(st.detail) + '</span>' : '';
+        rows += '<div class="inbox-tx-provider" role="listitem" data-inbox-tx-provider="' + name + '">' +
+          '<span class="inbox-tx-provider-name">' + name + '</span>' +
+          '<span class="inbox-tx-provider-desc">' + escapeHtml(info[name]) + '</span>' +
+          '<span class="inbox-tx-provider-status">' + pill + '</span>' + detail + '</div>';
       }
-      return '<label class="muted-note inbox-field">Provider<select class="field-input field-input-block mt-2" data-inbox-tx-field="provider">' + opts + '</select></label>' +
-        '<ul class="muted-xs inbox-tx-providers">' + rows + '</ul>';
+      return '<label class="inbox-field"><span class="inbox-field-label">Provider</span><select class="kb-search-box" data-inbox-tx-field="provider" data-change-action="inboxTxFieldsChanged" data-arg-types="t">' + opts + '</select></label>' +
+        '<div class="inbox-tx-providers" role="list" aria-label="Transcription providers">' + rows + '</div>';
     }
 
     // Transcription section: spoke-local transcription with whisper (on the
     // hive), the hive's Gemini credentials, or the owner's Deepgram key. Key
     // values are never shown, only whether they are present on this hive.
+    // A provider's own fields show only while that provider is selected, or
+    // while auto could pick it (it is ready, or its readiness is unknown);
+    // hidden fields keep their values, so saving sends the same payload.
     function inboxTranscriptionFormHtml(tx) {
       tx = tx || {};
-      const field = (name, label, value, placeholder, type) => '<label class="muted-note inbox-field">' + label +
-        '<input class="kb-search-box mt-2" type="' + (type || 'text') + '" data-inbox-tx-field="' + name + '" autocomplete="off" placeholder="' + escapeHtml(placeholder || '') + '" value="' + escapeHtml(value == null ? '' : String(value)) + '"></label>';
+      const provider = inboxTxProviderInfo()[tx.provider] ? tx.provider : 'auto';
+      const unready = (Array.isArray(tx.providers) ? tx.providers : []).filter(p => p && p.available === false).map(p => p.name);
+      const shows = names => names.split(' ').some(n => provider === n || (provider === 'auto' && unready.indexOf(n) < 0));
+      const only = names => ' data-inbox-tx-for="' + names + '"' + (shows(names) ? '' : ' hidden');
+      const field = (name, label, value, placeholder, type, attrs) => '<label class="inbox-field"' + (attrs || '') + '><span class="inbox-field-label">' + label + '</span>' +
+        '<input class="kb-search-box" type="' + (type || 'text') + '" data-inbox-tx-field="' + name + '" autocomplete="off" placeholder="' + escapeHtml(placeholder || '') + '" value="' + escapeHtml(value == null ? '' : String(value)) + '"></label>';
       const mode = tx.mode === 'auto' ? 'auto' : 'manual';
       const env = tx.api_key_env || 'DEEPGRAM_API_KEY';
       const sizeMB = tx.max_bytes ? Math.round(Number(tx.max_bytes) / INBOX_TX_BYTES_PER_MB) : '';
-      return '<div class="inbox-tx-settings" data-inbox-tx-section="1">' +
-        '<div class="section-label mt-4 mb-2">Transcription</div>' +
-        '<p class="muted-xs">Recordings that arrive without text can be transcribed by this hive. Each hive transcribes on its own: with whisper on its own CPU, or with its own Gemini or Deepgram account. Nothing is shared with other hives or paid for centrally, and the transcript is stored only on this hive. ' + yamlHint('inbox.transcription.enabled') + '</p>' +
+      const whisperLabels = { 'tiny.en': ' (78 MB, fastest)', tiny: ' (78 MB, any language)', 'base.en': ' (148 MB)', base: ' (148 MB, any language)', 'small.en': ' (488 MB, about 3x slower)', small: ' (488 MB, any language, about 3x slower)' };
+      const keys = ['enabled', 'consent_acknowledged', 'provider', 'mode', 'sources[]', 'language', 'whisper_model', 'whisper_threads', 'gemini_model', 'api_key_env', 'model', 'diarize',
+        'monthly_budget_minutes', 'daily_max_items', 'max_duration_minutes', 'max_bytes'];
+      return '<section class="inbox-set-section inbox-tx-settings" data-inbox-tx-section="1" data-inbox-set="transcription" aria-label="Transcription"' +
+        ' data-inbox-tx-unready="' + escapeHtml(unready.join(',')) + '" data-inbox-tx-resolved="' + escapeHtml(tx.resolved_provider || '') + '">' +
+        '<h4 class="section-label inbox-set-title">Transcription</h4>' +
+        '<p class="muted-xs">Recordings that arrive without text can be transcribed by this hive. Each hive transcribes on its own: with whisper on its own CPU, or with its own Gemini or Deepgram account. Nothing is shared with other hives or paid for centrally, and the transcript is stored only on this hive.</p>' +
         inboxTxProviderHtml(tx) +
-        '<div class="inbox-tx-notice" role="note"><strong>Before you enable this:</strong> recordings contain other people\'s voices. ' + escapeHtml(inboxTxConsentText(tx.provider || 'auto', tx.resolved_provider)) + ' Make sure the people you record are comfortable with that.</div>' +
-        '<label class="muted-note inbox-toggle mt-2"><input type="checkbox" data-inbox-tx-field="consent_acknowledged"' + (tx.consent_acknowledged ? ' checked' : '') + '> I understand where the audio goes with the provider above ' + yamlHint('inbox.transcription.consent_acknowledged') + '</label>' +
-        '<label class="muted-note inbox-toggle mt-2"><input type="checkbox" data-inbox-tx-field="enabled"' + (tx.enabled ? ' checked' : '') + '> Enable transcription</label>' +
+        '<div class="inbox-set-consent" role="group" aria-label="Consent and enable">' +
+        '<div class="inbox-tx-notice" role="note"><strong>Before you enable this:</strong> recordings contain other people\'s voices. <span data-inbox-tx-consent>' + escapeHtml(inboxTxConsentText(tx.provider || 'auto', tx.resolved_provider)) + '</span> Make sure the people you record are comfortable with that.</div>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-inbox-tx-field="consent_acknowledged"' + (tx.consent_acknowledged ? ' checked' : '') + '><span>I understand where the audio goes with the provider above</span></label>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-inbox-tx-field="enabled"' + (tx.enabled ? ' checked' : '') + '><span>Enable transcription</span></label></div>' +
+        '<div class="inbox-set-subhead"><span class="inbox-field-label">Options</span></div>' +
+        '<p class="muted-xs">Audio this hive holds itself (dashboard recordings, dropped audio and video files) is transcribed when it arrives. Mode decides what happens to recordings from synced sources.</p>' +
         '<div class="inbox-settings-grid">' +
-        '<label class="muted-note inbox-field">Mode<select class="field-input field-input-block mt-2" data-inbox-tx-field="mode">' +
-        '<option value="manual"' + (mode === 'manual' ? ' selected' : '') + '>manual: only when someone clicks Transcribe</option>' +
-        '<option value="auto"' + (mode === 'auto' ? ' selected' : '') + '>auto: also new recordings from the sources below</option></select></label>' +
-        field('sources', 'Auto-mode sources', (tx.sources || []).join(', '), 'plaud') +
-        field('api_key_env', 'Deepgram key environment variable', env, 'DEEPGRAM_API_KEY') +
-        field('model', 'Deepgram model', tx.model || 'nova-3', 'nova-3') +
+        '<label class="inbox-field"><span class="inbox-field-label">Mode</span><select class="kb-search-box" data-inbox-tx-field="mode" data-change-action="inboxTxFieldsChanged" data-arg-types="t">' +
+        '<option value="manual"' + (mode === 'manual' ? ' selected' : '') + '>manual: synced recordings wait for a click on Transcribe</option>' +
+        '<option value="auto"' + (mode === 'auto' ? ' selected' : '') + '>auto: also new recordings from the sources listed</option></select></label>' +
+        field('sources', 'Auto-mode sources', (tx.sources || []).join(', '), 'plaud', 'text', ' data-inbox-tx-mode="auto"' + (mode === 'auto' ? '' : ' hidden')) +
         field('language', 'Language', tx.language || 'auto', 'auto or en, de, pt-BR') +
-        '<label class="muted-note inbox-field">Whisper model<select class="field-input field-input-block mt-2" data-inbox-tx-field="whisper_model">' +
-        ['', 'tiny.en', 'tiny', 'base.en', 'base', 'small.en', 'small'].map(m => '<option value="' + m + '"' + ((tx.whisper_model || '') === m ? ' selected' : '') + '>' + (m ? m + ({ 'tiny.en': ' (78 MB, fastest)', tiny: ' (78 MB, any language)', 'base.en': ' (148 MB)', base: ' (148 MB, any language)', 'small.en': ' (488 MB, about 3x slower)', small: ' (488 MB, any language, about 3x slower)' })[m] : 'default: base.en (base for other languages)') + '</option>').join('') + '</select></label>' +
-        field('whisper_threads', 'Whisper threads', tx.whisper_threads || '', 'half the CPUs', 'number') +
-        field('gemini_model', 'Gemini model', tx.gemini_model || '', 'gemini-3.5-flash') +
+        '<label class="inbox-field"' + only('whisper') + '><span class="inbox-field-label">Whisper model</span><select class="kb-search-box" data-inbox-tx-field="whisper_model">' +
+        ['', 'tiny.en', 'tiny', 'base.en', 'base', 'small.en', 'small'].map(m => '<option value="' + m + '"' + ((tx.whisper_model || '') === m ? ' selected' : '') + '>' + (m ? m + whisperLabels[m] : 'default: base.en (base for other languages)') + '</option>').join('') + '</select></label>' +
+        field('whisper_threads', 'Whisper threads', tx.whisper_threads || '', 'half the CPUs', 'number', only('whisper')) +
+        field('gemini_model', 'Gemini model', tx.gemini_model || '', 'gemini-3.5-flash', 'text', only('gemini')) +
+        field('api_key_env', 'Deepgram key environment variable', env, 'DEEPGRAM_API_KEY', 'text', only('deepgram')) +
+        field('model', 'Deepgram model', tx.model || 'nova-3', 'nova-3', 'text', only('deepgram')) +
+        '</div>' +
+        '<label class="inbox-toggle"' + only('gemini deepgram') + '><input type="checkbox" data-inbox-tx-field="diarize"' + (tx.diarize !== false ? ' checked' : '') + '><span>Label speakers (Speaker 1, Speaker 2, …; Deepgram and Gemini, whisper has no speaker labels)</span></label>' +
+        '<p class="muted-xs inbox-set-status"' + only('deepgram') + '>Deepgram key <code>$' + escapeHtml(env) + '</code>: ' + (tx.key_present ? '<span class="kc-pill" data-status="ok">key present</span>' : '<span class="kc-pill" data-status="error">key missing</span> <span>set it in this hive\'s environment (it is never stored in hive.yaml)</span>') + '</p>' +
+        '<div class="inbox-set-subhead"><span class="inbox-field-label">Limits</span></div>' +
+        '<div class="inbox-settings-grid">' +
         field('monthly_budget_minutes', 'Monthly budget (minutes)', tx.monthly_budget_minutes || '', '600', 'number') +
         field('daily_max_items', 'Daily limit (recordings)', tx.daily_max_items || '', '20', 'number') +
         field('max_duration_minutes', 'Longest recording (minutes)', tx.max_duration_minutes || '', '120', 'number') +
         field('max_mb', 'Largest upload (MB)', sizeMB, '500', 'number') +
         '</div>' +
-        '<label class="muted-note inbox-toggle mt-2"><input type="checkbox" data-inbox-tx-field="diarize"' + (tx.diarize !== false ? ' checked' : '') + '> Label speakers (Speaker 1, Speaker 2, …; Deepgram and Gemini, whisper has no speaker labels)</label>' +
         inboxTranscriptionUsageHtml(tx) +
-        '<p class="muted-xs">Deepgram key <code>$' + escapeHtml(env) + '</code>: ' + (tx.key_present ? '<span class="kc-pill" data-status="ok">key present</span>' : '<span class="kc-pill" data-status="error">key missing</span> set it in this hive\'s environment (it is never stored in hive.yaml)') + '. ' +
-        yamlHint('inbox.transcription.mode') + ' ' + yamlHint('inbox.transcription.sources[]') + ' ' + yamlHint('inbox.transcription.api_key_env') + ' ' + yamlHint('inbox.transcription.provider') + ' ' + yamlHint('inbox.transcription.model') + ' ' + yamlHint('inbox.transcription.diarize') + ' ' + yamlHint('inbox.transcription.language') + ' ' +
-        yamlHint('inbox.transcription.whisper_model') + ' ' + yamlHint('inbox.transcription.whisper_threads') + ' ' + yamlHint('inbox.transcription.gemini_model') + ' ' +
-        yamlHint('inbox.transcription.max_duration_minutes') + ' ' + yamlHint('inbox.transcription.max_bytes') + ' ' + yamlHint('inbox.transcription.monthly_budget_minutes') + ' ' + yamlHint('inbox.transcription.daily_max_items') + '</p></div>';
+        '<details class="inbox-set-keys"><summary class="muted-xs">Config keys</summary><p class="muted-xs">' + keys.map(k => yamlHint('inbox.transcription.' + k)).join(' ') + '</p></details>' +
+        '</section>';
+    }
+    // inboxTxFieldsChanged follows the Provider and Mode selectors: it shows
+    // only the fields of the provider in use (or of the ones auto could
+    // pick) and the auto-mode sources, and rewrites the consent notice for
+    // the selected provider. Values are left alone.
+    function inboxTxFieldsChanged(el) {
+      const root = el && el.closest ? el.closest('[data-inbox-tx-section]') : null;
+      if (!root) return;
+      const val = name => { const e = root.querySelector('[data-inbox-tx-field="' + name + '"]'); return e ? String(e.value || '') : ''; };
+      const provider = val('provider') || 'auto';
+      const unready = String(root.dataset.inboxTxUnready || '').split(',').filter(Boolean);
+      root.querySelectorAll('[data-inbox-tx-for]').forEach(n => {
+        n.hidden = !String(n.dataset.inboxTxFor || '').split(' ').some(p => provider === p || (provider === 'auto' && unready.indexOf(p) < 0));
+      });
+      root.querySelectorAll('[data-inbox-tx-mode]').forEach(n => { n.hidden = val('mode') !== n.dataset.inboxTxMode; });
+      const notice = root.querySelector('[data-inbox-tx-consent]');
+      if (notice) notice.textContent = inboxTxConsentText(provider, root.dataset.inboxTxResolved || '');
     }
     // This month's minutes (money with Gemini or Deepgram, CPU time with
     // whisper), today's runs, the egress the hive needs, and a hint when auto
@@ -1370,13 +1487,14 @@
       const u = inboxUploadSettings();
       const exts = (Array.isArray(u.extensions) ? u.extensions : []).concat(Array.isArray(u.media_extensions) ? u.media_extensions : []);
       const limit = (u.max_files_per_drop ? 'up to ' + u.max_files_per_drop + ' files' : 'several files') + (u.max_file_bytes ? ' of ' + inboxFmtBytes(u.max_file_bytes) + ' each' : '') + (u.max_media_bytes ? ' (audio and video up to ' + inboxFmtBytes(u.max_media_bytes) + ', transcribed when transcription is on)' : '');
-      return '<div class="inbox-add" id="inbox-add" role="group" aria-label="Add files to the Inbox">' +
+      return '<div class="inbox-add" id="inbox-add" role="group" aria-label="Add files, links and notes to the Inbox">' +
         '<p class="muted-xs m-0">Drop files anywhere on the Inbox, paste them with Ctrl/Cmd+V, or choose them here: ' + escapeHtml(limit) + '. Supported: ' + escapeHtml(exts.join(' ')) + '. Files stay on this hive; their text reaches an LLM only when you share the item.</p>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxChooseFiles">Choose files…</button>' +
         '<input type="file" multiple hidden class="inbox-file-input" id="inbox-file-input" accept="' + escapeHtml(exts.join(',')) + '" data-change-action="inboxPickFiles" data-arg-types="t" aria-label="Files to add to the Inbox"></div>' +
         (u.links ? '<div class="kc-actions mt-2"><input type="url" class="kb-search-box inbox-add-url" id="inbox-add-url" placeholder="https://… (a page, or a linked md, json, csv… file)" autocomplete="off" aria-label="Link to add to the Inbox" data-enter-action="inboxAddUrlFromField">' +
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddUrlFromField">Add link</button></div>' +
-          '<p class="muted-xs m-0">The hive fetches the link itself (public http/https addresses only, at most 3 redirects) and reads it like a dropped file.</p>' : '') + '</div>';
+          '<p class="muted-xs m-0">The hive fetches the link itself (public http/https addresses only, at most 3 redirects) and reads it like a dropped file.</p>' : '') +
+        (typeof inboxNoteHtml === 'function' ? inboxNoteHtml() : '') + '</div>';
     }
     function inboxToggleAdd() { _inboxAddOpen = !_inboxAddOpen; renderInbox(); if (_inboxAddOpen) { const b = document.querySelector('#inbox-add [data-action="inboxChooseFiles"]'); if (b && b.focus) b.focus(); } }
     function inboxChooseFiles() { const el = document.getElementById('inbox-file-input'); if (el) el.click(); }
@@ -1466,7 +1584,10 @@
       // like a dropped one; pasting into a field stays a normal paste.
       const text = String((e.clipboardData && e.clipboardData.getData && e.clipboardData.getData('text')) || '').trim();
       const field = e.target && e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]');
-      if (field || !inboxUploadSettings().links || !INBOX_URL_RE.test(text)) return;
+      if (field) return;
+      // Text of several lines goes to the Quick note box for review.
+      if (typeof inboxPasteAsNote === 'function' && inboxPasteAsNote(text)) { e.preventDefault(); return; }
+      if (!inboxUploadSettings().links || !INBOX_URL_RE.test(text)) return;
       e.preventDefault();
       inboxAddUrl(text);
     }

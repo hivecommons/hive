@@ -465,6 +465,8 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassProxyPlainForwardRefused, message: "proxy: plain HTTP forward refused — destination is not globally routable"},
 		{class: ClassInferenceCallerUnknown, message: "inference request from unidentified caller refused"},
 		{class: ClassInferenceNoRoute, message: "inference no route"},
+		{class: ClassProxyUpstreamDegraded, message: "proxy upstream dial failed"},
+		{class: ClassProxyWriterUnidentified, message: "proxy: agent could not be identified — defaulting to ADVISORY and blocking a write; UID attribution failed (see reason)"},
 		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
 		{class: ClassSHAPollCommitMsgUnavail, message: "SHA poll: commit message fetch non-200"},
 		{class: ClassKickFreshnessWithheld, message: "kick withheld: every ref failed the freshness check"},
@@ -472,6 +474,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassModelsEndpointEmpty, message: "no models found from any endpoint"},
 		{class: ClassAgentLoginRequired, message: "login required detected"},
 		{class: ClassPRRequestHeadUnpushed, message: "pr-request watcher: head branch is not on the remote"},
+		{class: ClassPRRequestHeadInvalid, message: "pr-request watcher: head is not a pushable branch, request rejected"},
 		{class: ClassIOScanClassifierUnavail, message: "ioscan classifier failed closed; text withheld"},
 		{class: ClassIOScanClassifierUnavail, message: "ioscan classifier failed open; text passes on unclassified"},
 		{class: ClassIOScanClassifierUnavail, message: "ioscan fail-closed blocked kick"},
@@ -1270,6 +1273,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"no models found from any endpoint":                                                              ClassModelsEndpointEmpty,
 		"login required detected":                                                                        ClassAgentLoginRequired,
 		"pr-request watcher: head branch is not on the remote":                                           ClassPRRequestHeadUnpushed,
+		"pr-request watcher: head is not a pushable branch, request rejected":                            ClassPRRequestHeadInvalid,
 		"ioscan classifier failed closed; text withheld":                                                 ClassIOScanClassifierUnavail,
 		"watchdog: agent credential failure":                                                             ClassAgentLoginRequired,
 		"ioscan classifier failed open; text passes on unclassified":                                     ClassIOScanClassifierUnavail,
@@ -1295,6 +1299,9 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"proxy: plain HTTP forward refused — destination is not globally routable":                       ClassProxyPlainForwardRefused,
 		"proxy: CONNECT dial failed":                                                                     ClassProxyConnectDialFailed,
 		"copilot sniff: upstream dial failed":                                                            ClassProxyConnectDialFailed,
+		"proxy upstream dial failed":                                                                     ClassProxyUpstreamDegraded,
+		"transparent proxy upstream dial failed":                                                         ClassProxyUpstreamDegraded,
+		"proxy: agent could not be identified — defaulting to ADVISORY and blocking a write":             ClassProxyWriterUnidentified,
 		"inference no route":                                                                             ClassInferenceNoRoute,
 		"inference upstream error":                                                                       ClassInferenceUpstreamError,
 		"copilot transcript activity scan outlived its interval; agent liveness reads may lag":           ClassTranscriptScanSlow,
@@ -1410,4 +1417,109 @@ func TestAllowClearedCommentPacesAndRespectsClose(t *testing.T) {
 	if !AllowClearedComment(posted, now.Add(limits.SeenGap), limits) {
 		t.Fatal("cleared comment refused after the gap")
 	}
+}
+
+// TestSeenLogKeepsOneSectionPerHive (#18608): sightings fold into one
+// comment body, newest first, with each hive's earlier section replaced.
+func TestSeenLogKeepsOneSectionPerHive(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	ev := Evidence{Class: ClassRestartStorm, Count: 2, Diagnostics: "line one\nline two"}
+	first := SeenLog("", SeenComment("fp1", "hive-a", "v5.1.0", "c1", ev, t0))
+	if !strings.HasPrefix(first, SeenLogMarker) || strings.Count(first, SelfReportSeenMarkerPrefix) != 1 {
+		t.Fatalf("first = %q", first)
+	}
+	second := SeenLog(first, SeenComment("fp1", "hive-b", "v5.1.0", "c2", ev, t0.Add(time.Hour)))
+	third := SeenLog(second, SeenComment("fp1", "hive-a", "v5.2.0", "c1", ev, t0.Add(2*time.Hour)))
+	if strings.Count(third, SeenLogMarker) != 1 || strings.Count(third, SelfReportSeenMarkerPrefix) != 2 {
+		t.Fatalf("third = %q, want one header and two hive sections", third)
+	}
+	a, b := strings.Index(third, "hive=hive-a "), strings.Index(third, "hive=hive-b ")
+	if a < 0 || b < 0 || a > b || !strings.Contains(third, "(v5.2.0, c1)") || strings.Contains(third, "(v5.1.0, c1)") {
+		t.Fatalf("third = %q, want hive-a's newer section first and its old one gone", third)
+	}
+	// A previous body without the seen-log header (a legacy per-sighting
+	// comment) is not folded in.
+	if got := SeenLog(SeenComment("fp1", "hive-c", "v5", "c", ev, t0), SeenComment("fp1", "hive-a", "v5", "c", ev, t0)); strings.Contains(got, "hive=hive-c ") {
+		t.Fatalf("legacy body folded in: %q", got)
+	}
+	// The section cap bounds the comment.
+	body := ""
+	for i := 0; i < seenLogMaxHives+5; i++ {
+		body = SeenLog(body, SeenComment("fp1", fmt.Sprintf("hive-%d", i), "v5", "c", Evidence{}, t0))
+	}
+	if n := strings.Count(body, SelfReportSeenMarkerPrefix); n != seenLogMaxHives {
+		t.Fatalf("sections = %d, want cap %d", n, seenLogMaxHives)
+	}
+}
+
+// Full-size diagnostics must not push the comment past GitHub's size limit.
+func TestSeenLogStaysUnderCommentSizeLimit(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	ev := Evidence{Class: ClassRestartStorm, Count: 2, Diagnostics: strings.Repeat("x", maxDiagnosticsBytes)}
+	body := ""
+	for i := 0; i < seenLogMaxHives; i++ {
+		body = SeenLog(body, SeenComment("fp1", fmt.Sprintf("hive-%d", i), "v5", "c", ev, t0))
+		if len(body) > seenLogMaxBytes {
+			t.Fatalf("after %d hives body = %d bytes, want <= %d", i+1, len(body), seenLogMaxBytes)
+		}
+	}
+	if !strings.Contains(body, fmt.Sprintf("hive=hive-%d ", seenLogMaxHives-1)) {
+		t.Fatalf("newest section dropped")
+	}
+	if n := strings.Count(body, SelfReportSeenMarkerPrefix); n < 2 || n >= seenLogMaxHives {
+		t.Fatalf("sections = %d, want some oldest trimmed", n)
+	}
+}
+
+// hivecommons/hive#18867: a burst of upstream dial failures to a GitHub host
+// is a flaky egress path, not a fleet bug. It is reportable only once it has
+// persisted past proxyUpstreamSustained without a quiet gap.
+func TestProxyUpstreamDegradedReportsOnlyWhenSustained(t *testing.T) {
+	const msg = "proxy upstream dial failed"
+	start := time.Date(2026, 11, 18, 3, 0, 0, 0, time.UTC)
+
+	t.Run("a burst is not reported", func(t *testing.T) {
+		now, advance := fakeClock(start)
+		tr := NewRuntimeTracker(now)
+		for i := 0; i < 50; i++ { // far above the repeat count, inside minutes
+			tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+			advance(10 * time.Second)
+		}
+		if ev := tr.Evidence(); len(ev) != 0 {
+			t.Fatalf("a short burst produced evidence: %#v", ev)
+		}
+	})
+
+	t.Run("repeated bursts separated by quiet gaps never add up", func(t *testing.T) {
+		now, advance := fakeClock(start)
+		tr := NewRuntimeTracker(now)
+		for burst := 0; burst < 4; burst++ {
+			for i := 0; i < 10; i++ {
+				tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+				advance(10 * time.Second)
+			}
+			advance(proxyUpstreamIdleClear + time.Minute)
+			if ev := tr.Evidence(); len(ev) != 0 {
+				t.Fatalf("burst %d reported after a quiet gap: %#v", burst, ev)
+			}
+		}
+	})
+
+	t.Run("a failure that persists past the sustained bar is reported", func(t *testing.T) {
+		now, advance := fakeClock(start)
+		tr := NewRuntimeTracker(now)
+		for elapsed := time.Duration(0); elapsed < proxyUpstreamSustained-10*time.Minute; elapsed += 5 * time.Minute {
+			tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+			advance(5 * time.Minute)
+		}
+		if ev := tr.Evidence(); len(ev) != 0 {
+			t.Fatalf("reported before the sustained bar: %#v", ev)
+		}
+		advance(11 * time.Minute)
+		tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+		ev := tr.Evidence()
+		if len(ev) != 1 || ev[0].Class != ClassProxyUpstreamDegraded {
+			t.Fatalf("a sustained outage must still be reported, got %#v", ev)
+		}
+	})
 }

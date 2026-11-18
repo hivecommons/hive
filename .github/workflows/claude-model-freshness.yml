@@ -1,0 +1,255 @@
+name: Claude model freshness
+
+# Weekly PR that adds new Claude models to the dashboard's lists and price
+# table once the Claude Code version pinned in src/Dockerfile accepts them
+# (#18754). Adding a model used to take five hand edits nobody was told to
+# make, so the lists fell behind (Fable 5.1/5.2 and Haiku 5.5, #18753).
+#
+# .github/scripts/claude-model-freshness.sh does the work:
+#   - candidates: Claude ids on OpenRouter's public catalogue
+#     (https://openrouter.ai/api/v1/models, no key) newer than the lists'
+#     newest of the same line (Fable, Opus, Sonnet, Haiku) — the comparison
+#     static-model-freshness.yml reports, via the same script. Mythos and ids
+#     OpenRouter has scheduled for withdrawal are never candidates;
+#   - gate: each candidate is put to the PINNED Claude Code, installed the way
+#     the image installs it and run unauthenticated (empty HOME, no key). The
+#     CLI prints an `unrecognized_model` diagnostic for an id its built-in
+#     model table does not know, before it stops at "Not logged in"; two
+#     controls (a listed id, a made-up id) must behave as expected or nothing
+#     is added. The "version X or newer is required" refusal (#8417) comes
+#     from the API after login, so it cannot be probed without credentials.
+#     A candidate not shown to be accepted is listed under "needs a check"
+#     and never added;
+#   - edits per accepted model: claudePinnedCLIModels (the closed allowlist,
+#     #8418), claudeStaticModels, CLAUDE_CLI_MODELS with a label,
+#     static/index.html via `make dashboard-gen`, a cli-model-requirements.txt
+#     line at the pin (#9805), and a modelPrices row from `pricetable --add`,
+#     which applies the price refresh's plausibility rules and leaves out (and
+#     reports) a quote that fails them.
+#
+# Its own workflow rather than a job in static-model-freshness.yml (which only
+# needs issues: write) or price-table-refresh.yml (which reprices existing
+# rows on its own branch): the write permissions stay on the job that opens
+# this PR, and a model addition and a repricing are reviewed separately.
+#
+# One PR on bot/claude-model-freshness, force-pushed and edited in place by
+# later runs until merged; no candidates accepted means no branch and no PR.
+# Never auto-merged: model and price changes reach every hive, so it carries
+# needs-human. Credentials as in price-table-refresh.yml: TOPUP_PUSH_TOKEN
+# when set (so the PR gets normal pull_request CI runs), else GITHUB_TOKEN.
+#
+# On a pull_request touching this machinery the selftest job runs the
+# hermetic tests and a DRY RUN of the whole pipeline against the live
+# catalogue and the real pin; it has read-only permissions and opens nothing.
+
+on:
+  schedule:
+    - cron: '47 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 'Branch whose lists to update and to open the PR against'
+        type: string
+        default: v5
+      dry_run:
+        description: 'Print every edit; do not push a branch or open a PR'
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - '.github/workflows/claude-model-freshness.yml'
+      - '.github/scripts/claude-model-freshness.sh'
+      - '.github/scripts/check-static-model-freshness.py'
+      - '.github/scripts/test-claude-model-freshness.py'
+      - '.github/scripts/testdata/claude-model-freshness/**'
+      - 'src/internal/tools/pricetable/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-model-freshness-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.base || 'v5' }}
+  cancel-in-progress: false
+
+env:
+  BASE_BRANCH: ${{ inputs.base || 'v5' }}
+  HEAD_BRANCH: bot/claude-model-freshness
+
+jobs:
+  selftest:
+    name: self-test and dry run
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Hermetic tests (no network)
+        run: |
+          set -euo pipefail
+          bash -n .github/scripts/claude-model-freshness.sh
+          python3 .github/scripts/test-claude-model-freshness.py
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: |
+            src/go.sum
+            src/crux/go.sum
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Dry run against the live catalogue and the pinned CLI
+        env:
+          DRY_RUN: '1'
+        run: |
+          set -euo pipefail
+          bash .github/scripts/claude-model-freshness.sh "$RUNNER_TEMP/cmf"
+          cat "$RUNNER_TEMP/cmf/report.md" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/cmf/report.md"
+          test -z "$(git status --porcelain)" || { echo "::error::the dry run changed the working tree"; git status --short; exit 1; }
+
+  refresh:
+    name: add new Claude models
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: |
+            src/go.sum
+            src/crux/go.sum
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Find, gate and apply new Claude models
+        id: apply
+        env:
+          DRY_RUN: ${{ inputs.dry_run == true && '1' || '' }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/claude-model-freshness.sh "$RUNNER_TEMP/cmf"
+          cat "$RUNNER_TEMP/cmf/report.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ -s "$RUNNER_TEMP/cmf/accepted.txt" ] && [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "pin=$(cat "$RUNNER_TEMP/cmf/pin.txt")" >> "$GITHUB_OUTPUT"
+          echo "ids=$(paste -sd, "$RUNNER_TEMP/cmf/accepted.txt")" >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to do
+        if: steps.apply.outputs.changed != 'true'
+        env:
+          DRY_RUN: ${{ inputs.dry_run == true && '1' || '' }}
+        run: |
+          if [ "$DRY_RUN" = "1" ]; then
+            echo "Dry run: the edits above were printed; no branch or PR is created."
+          else
+            echo "No Claude model to add; no branch, no PR."
+          fi
+          cat "$RUNNER_TEMP/cmf/report.md"
+
+      - name: Find the open PR
+        if: steps.apply.outputs.changed == 'true'
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          number="$(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+            --state open --json number --jq '.[0].number // empty')"
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
+          [ -z "$number" ] || echo "will refresh open PR #${number}"
+
+      - name: Commit the additions
+        if: steps.apply.outputs.changed == 'true'
+        env:
+          IDS: ${{ steps.apply.outputs.ids }}
+          PIN: ${{ steps.apply.outputs.pin }}
+          PR_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$HEAD_BRANCH"
+          # One fragment per run; drop any earlier unmerged one on this branch.
+          while IFS= read -r -d '' fragment; do
+            if ! git cat-file -e "origin/${BASE_BRANCH}:${fragment}" 2>/dev/null; then
+              git rm -q -- "$fragment"
+            fi
+          done < <(git ls-files -z -- 'changelog.d/added-claude-models-*.md')
+          date="$(date -u +%Y-%m-%d)"
+          printf -- '- The Claude model dropdowns and price table now include %s, which the pinned Claude Code %s accepts.\n' \
+            "$(printf '%s' "$IDS" | sed 's/,/, /g')" "$PIN" > "changelog.d/added-claude-models-${date}.md"
+          git add src/pkg/dashboard/cli_models.go src/pkg/dashboard/static-src/js/backends-tokens.js \
+            src/pkg/dashboard/static/index.html src/scripts/cli-model-requirements.txt \
+            src/pkg/tokens/pricing.go changelog.d
+          {
+            echo "✨ dashboard: add Claude models ${IDS}"
+            echo
+            echo "Automated by claude-model-freshness.yml: each id is newer than the"
+            echo "Claude lists on OpenRouter and recognised by the pinned Claude Code"
+            echo "${PIN}; see the PR body for the gate and the price quotes."
+          } > "$RUNNER_TEMP/commit-msg.txt"
+          git commit -s -F "$RUNNER_TEMP/commit-msg.txt"
+          # Same reasoning as price-table-refresh.yml and #11412 in
+          # cli-pin-bump.yml: a PAT-opened PR squashes under the PAT owner,
+          # so add their sign-off too.
+          if [ -n "$PR_TOKEN" ]; then
+            owner="$(GH_TOKEN="$PR_TOKEN" gh api user --jq '"\(.login) \(.id)"')"
+            login="${owner% *}"
+            id="${owner##* }"
+            if [ -z "$login" ] || [ -z "$id" ] || [ "$login" = "$id" ]; then
+              echo "::error::Could not resolve the TOPUP_PUSH_TOKEN owner; a PR it opens would squash to a mismatched sign-off."
+              exit 1
+            fi
+            git commit --amend --no-edit \
+              --trailer "Signed-off-by: ${login} <${id}+${login}@users.noreply.github.com>"
+          fi
+          git push --force origin "$HEAD_BRANCH"
+
+      - name: Open or refresh the PR
+        if: steps.apply.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
+          IDS: ${{ steps.apply.outputs.ids }}
+          EXISTING: ${{ steps.existing.outputs.number }}
+        run: |
+          set -euo pipefail
+          title="✨ dashboard: add Claude models ${IDS}"
+          {
+            cat "$RUNNER_TEMP/cmf/report.md"
+            echo
+            echo "### Review"
+            echo
+            echo "- [ ] Each added id is in the Claude Code changelog for the pinned version or earlier"
+            echo "- [ ] Each new price row matches Anthropic's price page (OpenRouter mirrors list price but can lag or round)"
+            echo "- [ ] Anything under *Needs a check* or *Held for review* is followed up by hand"
+            echo
+            echo "Generated by [claude-model-freshness](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) with \`.github/scripts/claude-model-freshness.sh\`; the branch is force-pushed by later runs until merged. Not auto-merged: a human reviews model and price changes."
+          } > "$RUNNER_TEMP/pr-body.md"
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/pr-body.md" --add-label needs-human
+            echo "refreshed PR #${EXISTING}"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+              --title "$title" --body-file "$RUNNER_TEMP/pr-body.md" --label needs-human
+          fi

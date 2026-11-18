@@ -93,14 +93,25 @@ type session struct {
 	persona *betty.Engine
 	// fileTokens is the usage-ledger total already charged.
 	fileTokens int
-	// lastSay is how long the meeting's last say call took (timing.go).
-	lastSay time.Duration
+	// voiceQ and chatQ are the ordered queues of lines going out by voice
+	// and in chat, each drained by its own worker so a slow say or post
+	// never stops the session; outDone brings each result back. async is
+	// set once the workers run (outbound.go).
+	voiceQ, chatQ chan *outJob
+	outDone       chan outDone
+	async         bool
+	// heard is when the last final lines reached the session (timing.go).
+	heard []heardLine
+	// leaveTried is when leaving an unreachable meeting was last tried.
+	leaveTried time.Time
 	// spekQueue keeps Spek's asks and chat offers in order while an ask is
 	// being restyled by the persona off the session goroutine; restyled
 	// carries the results back.
 	spekQueue []queuedSpek
 	nextSeq   int
 	restyled  chan restyledAsk
+	// warmedAt is when the research pool was last warmed.
+	warmedAt time.Time
 
 	updates  chan meetings.Update
 	signals  chan ResearchSignal
@@ -120,6 +131,7 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 		approves: make(chan approveReq),
 		snaps:    make(chan chan State),
 		restyled: make(chan restyledAsk, sessionInbox),
+		outDone:  make(chan outDone, sessionInbox),
 		ended:    make(chan struct{}),
 		done:     make(chan struct{}),
 	}
@@ -186,22 +198,28 @@ func (s *session) run(ctx context.Context) {
 		s.spekGone, lines = true, nil
 		s.setSpekStatus(spekStoppedStatus)
 	}
+	s.startOutbound(ctx)
+	s.warmResearch(ctx)
 	var replies <-chan betty.Reply
-	var researchTick <-chan time.Time
 	if s.persona != nil {
 		s.persona.Start(ctx)
 		defer s.persona.Close()
 		replies = s.persona.Replies()
-		t := time.NewTicker(s.r.opts.ResearchCheckEvery)
-		defer t.Stop()
-		researchTick = t.C
 	}
+	tick := time.NewTicker(s.r.opts.ResearchCheckEvery)
+	defer tick.Stop()
 	for {
 		select {
-		case <-researchTick:
+		case <-tick.C:
 			if !ending {
-				s.checkDeepDives(ctx)
+				if s.persona != nil {
+					s.checkDeepDives(ctx)
+					s.warmResearch(ctx)
+				}
+				s.checkReach(ctx)
 			}
+		case d := <-s.outDone:
+			d.job.after(ctx, d.res)
 		case rep := <-replies:
 			if !ending {
 				s.onPersonaReply(ctx, rep)
@@ -262,6 +280,25 @@ func (s *session) run(ctx context.Context) {
 	}
 }
 
+// researchWarmEvery is how often a running meeting re-warms the research
+// pool (a no-op while its agents run).
+const researchWarmEvery = time.Minute
+
+// warmResearch boots the research agents when the dispatcher can, at most
+// once per researchWarmEvery.
+func (s *session) warmResearch(ctx context.Context) {
+	w, ok := s.r.opts.Research.(ResearchWarmer)
+	if !ok || w == nil {
+		return
+	}
+	now := s.now()
+	if !s.warmedAt.IsZero() && now.Sub(s.warmedAt) < researchWarmEvery {
+		return
+	}
+	s.warmedAt = now
+	w.Warm(ctx)
+}
+
 func (s *session) snapshot() State {
 	b, _ := json.Marshal(s.state)
 	var out State
@@ -306,6 +343,7 @@ func (s *session) onUpdate(u meetings.Update) {
 			}
 		}
 	}
+	s.noteHeard(ev.Text)
 	if s.persona != nil {
 		s.persona.Observe(betty.Line{Who: ev.Who(), Text: ev.Text, Spoken: ev.Type == meetings.EventSegment})
 	}
@@ -432,7 +470,7 @@ func (s *session) account(ctx context.Context, in intent) {
 		if s.persona != nil {
 			s.persona.SetExhausted()
 		}
-		s.deliver(ctx, budgetNotice(s.personaName()))
+		s.sayLine(ctx, TriggerNotice, false, budgetNotice(s.personaName()))
 	}
 }
 
@@ -451,45 +489,10 @@ func (s *session) drop(reason string) {
 	s.emit(Event{Kind: EventDropped, Reason: reason})
 }
 
-// post is the rate-limited chat path for Spek-originated text.
-func (s *session) post(ctx context.Context, text string) bool {
-	if strings.TrimSpace(text) == "" {
-		return false
-	}
-	if !s.rate.allow(s.now()) {
-		s.drop("rate_limited")
-		return false
-	}
-	return s.deliver(ctx, text)
-}
-
-// deliver posts without the rate limit (consent and one summary per
-// research item).
-func (s *session) deliver(ctx context.Context, text string) bool {
-	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
-	defer cancel()
-	if err := s.r.opts.Meetings.PostChat(cctx, s.id, truncate(text, ChatMaxChars)); err != nil {
-		s.log().Warn("[meetings] chat post refused", "error", err)
-		s.drop("chat_failed")
-		return false
-	}
-	return true
-}
-
 // say speaks only when the meeting has voice on and voice_on_address is
 // allowed; otherwise, or when the bot has no voice, it answers in chat.
 func (s *session) say(ctx context.Context, text string) {
-	m, err := s.r.opts.Meetings.Get(s.id)
-	if err == nil && m.VoiceEnabled && s.r.opts.Policy.VoiceOnAddress {
-		cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
-		err = s.timedSay(func() error { return s.r.opts.Meetings.Say(cctx, s.id, text) })
-		cancel()
-		if err == nil {
-			return
-		}
-		s.log().Info("[meetings] voice unavailable; answering in chat", "error", err)
-	}
-	s.post(ctx, text)
+	s.send(ctx, &line{rep: own(TriggerSay, betty.KindVoice, text, SourceSpek), text: text, voice: true, rate: rateChat})
 }
 
 func (s *session) appendNote(ctx context.Context, section, text string) {
@@ -509,7 +512,9 @@ func (s *session) appendNote(ctx context.Context, section, text string) {
 	s.state.Notes[section] = append(s.state.Notes[section], text)
 	s.emit(Event{Kind: EventNotes})
 	m, _ := s.r.opts.Meetings.Get(s.id)
-	s.upsertFact(ctx, NotesTitle(m), RenderNotesBy(s.personaName(), m, s.state.Notes), []string{"meeting-notes"})
+	// The notes fact carries what the attendee said as well as her notes.
+	tr, _ := s.r.opts.Store.Transcript(s.id)
+	s.upsertFact(ctx, NotesTitle(m), RenderNotesWithReplies(s.personaName(), m, s.state.Notes, tr), []string{"meeting-notes"})
 }
 
 func (s *session) upsertFact(ctx context.Context, title, body string, tags []string) {
@@ -589,6 +594,13 @@ func (s *session) dispatchedCount() int {
 
 func (s *session) update(it *ResearchItem, status, summary string) {
 	it.Status, it.UpdatedAt = status, s.now()
+	if status == ResearchFailed {
+		// Kept on the item: the panel and session.json say why it failed.
+		it.Error = strings.TrimSpace(summary)
+		if it.Error == "" {
+			it.Error = researchNoAnswer
+		}
+	}
 	msg := map[string]string{"type": "research_update", "rid": it.RID, "status": status}
 	if summary != "" {
 		msg["summary"] = summary
@@ -641,6 +653,11 @@ func (s *session) dispatch(ctx context.Context, it *ResearchItem) {
 	if it.Betty {
 		meta["betty"] = "1"
 	}
+	// Asked before the dispatch: afterwards this item is part of the load.
+	busy := false
+	if l, ok := s.r.opts.Research.(ResearchLoad); ok && l != nil {
+		busy = l.Busy()
+	}
 	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
 	kick, err := s.r.opts.Research.Dispatch(cctx, it.Query, meta)
 	cancel()
@@ -654,9 +671,23 @@ func (s *session) dispatch(ctx context.Context, it *ResearchItem) {
 	it.KickID = kick
 	at := s.now()
 	it.DispatchedAt = &at
+	it.Waiting = busy
 	s.r.registerKick(kick, s.id)
 	s.update(it, ResearchQueued, "")
+	if busy && it.Betty && s.persona != nil {
+		// Every research agent has work: the request waits its turn, and
+		// she says so rather than fail it or leave the room guessing.
+		s.log().Info("[meetings] research agents busy; the request is queued behind another", "rid", it.RID)
+		s.sayLine(ctx, TriggerBusy, it.Voice, researchBusyText)
+	}
 }
+
+// researchBusyText is what she says when a deep dive is queued behind
+// another question because every research agent has work.
+const researchBusyText = "I'm busy with another question, yours is next."
+
+// researchNoAnswer is the failure reason when the research agent gave none.
+const researchNoAnswer = "the research agent stopped without an answer"
 
 func (s *session) approve(ctx context.Context, rid string) error {
 	it := s.find(rid)
@@ -679,6 +710,15 @@ func (s *session) onSignal(ctx context.Context, sig ResearchSignal) {
 	}
 	text := strings.TrimSpace(sig.Text)
 	switch sig.Kind {
+	case SignalRunning:
+		// The kick reached its agent: the wait behind other questions is
+		// over, and the deep dive's clock starts now.
+		if it.StartedAt != nil || (it.Status != ResearchQueued && it.Status != ResearchRunning) {
+			return
+		}
+		at := s.now()
+		it.StartedAt, it.Waiting = &at, false
+		s.update(it, ResearchRunning, "")
 	case SignalFinding:
 		if text != "" && len(it.Findings) < maxFindings {
 			it.Findings = append(it.Findings, text)
@@ -698,17 +738,19 @@ func (s *session) onSignal(ctx context.Context, sig ResearchSignal) {
 				// session goroutine; it comes back as a persona reply.
 				s.persona.FollowUpIn(it.Query, summary, it.Voice)
 			} else {
-				s.deliver(ctx, fmt.Sprintf("Research on %q: %s", it.Query, summary))
+				text := fmt.Sprintf("Research on %q: %s", it.Query, summary)
+				s.send(ctx, &line{rep: own(TriggerResearch, betty.KindChat, text, betty.SourceResearch), text: text})
 			}
 		}
 		s.upsertFact(ctx, researchTitle(s.id, it), renderResearch(it), []string{"meeting-research"})
 		s.r.unregisterKick(sig.KickID)
 	case SignalError:
-		s.update(it, ResearchFailed, text)
 		reason := text
 		if reason == "" {
-			reason = "the research agent stopped without an answer"
+			reason = researchNoAnswer
 		}
+		s.log().Warn("[meetings] research failed", "rid", it.RID, "kick", sig.KickID, "reason", reason)
+		s.update(it, ResearchFailed, reason)
 		s.deepDiveFailed(ctx, it, reason)
 		s.r.unregisterKick(sig.KickID)
 	default:
@@ -748,35 +790,36 @@ func renderResearch(it *ResearchItem) string {
 // spoken, with the chat fallback, for a voice reply). A spoken
 // acknowledgement is never charged and never falls back to chat; a deep
 // dive's follow-up is delivered like a research summary; a reply carrying
-// Research starts the deep dive after it is out.
+// Research starts the deep dive once the reply is on its way. Nothing here
+// waits for the meeting: every line goes out through the outbound queues
+// and is recorded when its call returns (outbound.go, timing.go).
 func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 	text := strings.TrimSpace(rep.Text)
 	if text == "" {
 		return
 	}
-	if rep.Trigger == betty.TriggerQueue {
-		s.onQueueNote(ctx, rep, text)
-		return
-	}
+	voice := rep.Kind == betty.KindVoice
 	switch rep.Trigger {
+	case betty.TriggerQueue:
+		// The "I have N questions" note: chat only, through the rate
+		// limit, never charged (no model call made it).
+		if !s.state.BudgetExhausted {
+			s.send(ctx, &line{rep: rep, text: text, rate: rateChat, quiet: true})
+		}
+		return
 	case betty.TriggerAck:
 		if s.state.BudgetExhausted {
 			return
 		}
-		if s.speakAck(ctx, text) {
-			s.recordAckSay()
-			s.emitPersona(rep)
-		} else {
+		if !s.speakAck(ctx, rep, text) {
 			s.drop("ack_no_voice")
 		}
 		return
 	case betty.TriggerFollowUp:
 		// In the channel the question was asked in: spoken when it was
 		// spoken and the meeting can hear her, else chat.
-		if (rep.Kind == betty.KindVoice && s.speak(ctx, text)) || s.deliver(ctx, text) {
-			s.state.PersonaReplies++
-		}
-		s.emitPersona(rep)
+		s.followUpTiming(&rep)
+		s.sendReply(ctx, &line{rep: rep, text: text, voice: voice})
 		s.save()
 		return
 	case betty.TriggerOffer:
@@ -788,42 +831,23 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 		s.save()
 		return
 	}
-	posted := true
+	dive := func(accepted bool) {
+		if accepted && strings.TrimSpace(rep.Research) != "" {
+			s.deepDive(ctx, rep, voice || rep.VoiceWanted)
+		}
+	}
 	switch {
-	case rep.Kind == betty.KindVoice:
+	case voice:
 		// Spoken with the other answers ready now, shortest first
 		// (flushVoice), falling back to chat.
-		s.queueVoice(text)
+		s.queueVoiceThen(rep, text, dive)
 	case rep.Trigger == betty.TriggerAddressed:
-		posted = s.postAnswer(ctx, text)
+		s.cancelAcks()
+		dive(s.sendReply(ctx, &line{rep: rep, text: text, rate: rateAnswer}))
 	default:
-		posted = s.post(ctx, text)
-	}
-	if posted {
-		s.state.PersonaReplies++
-	}
-	s.emitPersona(rep)
-	if posted && strings.TrimSpace(rep.Research) != "" {
-		s.deepDive(ctx, rep.Research, rep.Kind == betty.KindVoice)
+		dive(s.sendReply(ctx, &line{rep: rep, text: text, rate: rateChat}))
 	}
 	s.save()
-}
-
-// onQueueNote posts the persona's "I have N questions" note: chat only,
-// through the rate limit, never charged (no model call made it).
-func (s *session) onQueueNote(ctx context.Context, rep betty.Reply, text string) {
-	if s.state.BudgetExhausted {
-		return
-	}
-	if s.post(ctx, text) {
-		s.emitPersona(rep)
-	}
-}
-
-func (s *session) emitPersona(rep betty.Reply) {
-	s.recordTiming(rep)
-	raw, _ := json.Marshal(rep)
-	s.emit(Event{Kind: EventPersona, Reason: rep.Trigger, Intent: raw})
 }
 
 // bettyRIDPrefix names the persona's research items.
@@ -832,7 +856,8 @@ const bettyRIDPrefix = "betty-"
 // deepDive starts the persona's research on an addressed question through
 // the meeting's research path (same cap and approval as Spek's research),
 // marked betty=1.
-func (s *session) deepDive(ctx context.Context, query string, voice bool) {
+func (s *session) deepDive(ctx context.Context, rep betty.Reply, voice bool) {
+	query := rep.Research
 	n := 1
 	for _, it := range s.state.Research {
 		if it.Betty {
@@ -846,6 +871,10 @@ func (s *session) deepDive(ctx context.Context, query string, voice bool) {
 		RID: bettyRIDPrefix + strconv.Itoa(n), Query: query, Reason: "asked of " + s.personaName(), Betty: true, Voice: voice, CreatedAt: now,
 	})
 	it := &s.state.Research[len(s.state.Research)-1]
+	if rep.Timing != nil && !rep.Timing.HeardAt.IsZero() {
+		heard := rep.Timing.HeardAt
+		it.HeardAt = &heard
+	}
 	if overCap {
 		s.update(it, ResearchPendingApproval, "")
 		return
@@ -876,17 +905,7 @@ func (s *session) deepDiveFailed(ctx context.Context, it *ResearchItem, reason s
 		return
 	}
 	it.Posted = true
-	s.tell(ctx, it.Voice, s.persona.ResearchFailedText(reason))
-}
-
-// tell delivers one of hive's own follow-through lines for a deep dive
-// (not rate limited, like a research summary): spoken when voice is set
-// and the meeting can hear her, else in chat.
-func (s *session) tell(ctx context.Context, voice bool, text string) {
-	if voice && s.speak(ctx, text) {
-		return
-	}
-	s.deliver(ctx, text)
+	s.sayLine(ctx, TriggerResearchFailed, it.Voice, s.persona.ResearchFailedText(reason))
 }
 
 // checkDeepDives runs on the session's research tick: a persona deep dive
@@ -899,7 +918,17 @@ func (s *session) checkDeepDives(ctx context.Context) {
 		if !it.Betty || it.Posted || it.DispatchedAt == nil || (it.Status != ResearchQueued && it.Status != ResearchRunning) {
 			continue
 		}
+		// The clock runs from when the agent took the kick; an item queued
+		// behind another question (Waiting) gets ResearchQueueWait on top
+		// to reach the head of the queue, and no progress note (she said
+		// "yours is next").
 		age := now.Sub(*it.DispatchedAt)
+		switch {
+		case it.StartedAt != nil:
+			age = now.Sub(*it.StartedAt)
+		case it.Waiting:
+			age -= s.r.opts.ResearchQueueWait
+		}
 		switch {
 		case age >= s.r.opts.ResearchTimeout:
 			s.log().Warn("[meetings] persona deep dive timed out", "rid", it.RID, "after", age.Round(time.Second))
@@ -911,25 +940,13 @@ func (s *session) checkDeepDives(ctx context.Context) {
 			changed = true
 		case age >= s.r.opts.ResearchProgressAfter && !it.ProgressSent:
 			it.ProgressSent = true
-			s.tell(ctx, it.Voice, s.persona.ResearchProgressText())
+			s.sayLine(ctx, TriggerProgress, it.Voice, s.persona.ResearchProgressText())
 			changed = true
 		}
 	}
 	if changed {
 		s.save()
 	}
-}
-
-// speak says text when the meeting can hear the bot, without a chat
-// fallback; it reports whether it was spoken.
-func (s *session) speak(ctx context.Context, text string) bool {
-	m, err := s.r.opts.Meetings.Get(s.id)
-	if err != nil || !m.VoiceEnabled || !s.r.opts.Policy.VoiceOnAddress {
-		return false
-	}
-	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
-	defer cancel()
-	return s.timedSay(func() error { return s.r.opts.Meetings.Say(cctx, s.id, text) }) == nil
 }
 
 // queuedSpek is one of Spek's asks or chat offers waiting its turn while an
@@ -1012,9 +1029,26 @@ func (s *session) flushSpek(ctx context.Context) {
 	}
 }
 
-// postAsk posts a clarifying question and tracks it for answers.
+// postAsk posts a clarifying question and tracks it for answers: from the
+// moment it is accepted, so an answer that arrives right behind it is
+// matched, and no longer if the post then fails.
 func (s *session) postAsk(ctx context.Context, qid, text string) {
-	if s.post(ctx, text) {
+	tracked, failed := false, false
+	l := &line{rep: own(TriggerAsk, betty.KindChat, text, SourceSpek), text: text, rate: rateChat}
+	l.done = func(delivered bool) {
+		failed = !delivered
+		if !failed || !tracked {
+			return
+		}
+		for i := range s.state.Asks {
+			if s.state.Asks[i].QID == qid && s.state.Asks[i].AnsweredAt == nil {
+				s.state.Asks = append(s.state.Asks[:i], s.state.Asks[i+1:]...)
+				return
+			}
+		}
+	}
+	if s.send(ctx, l) && !failed {
 		s.state.Asks = append(s.state.Asks, Ask{QID: qid, Text: text, AskedAt: s.now()})
+		tracked = true
 	}
 }

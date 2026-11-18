@@ -439,6 +439,9 @@ type AgentSandboxConfig struct {
 	Substrate *SandboxSubstrateConfig `yaml:"substrate,omitempty" json:"substrate,omitempty"`
 	// Publish gates what a sandboxed run may publish; see SandboxPublishConfig.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`
+	// Preflight is the node health check run before the agent starts on the
+	// job runtime; see SandboxPreflightConfig.
+	Preflight *SandboxPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
 }
 
 // SandboxPublishConfig is the deterministic preflight hive runs before it
@@ -484,6 +487,9 @@ type AgentSandboxOverride struct {
 	// Publish, when set, replaces the global publish preflight for this
 	// agent; an empty verify list here turns the preflight off for it.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`
+	// Preflight, when set, replaces the global preflight for this agent; an
+	// empty commands list here turns it off for the agent.
+	Preflight *SandboxPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
 }
 
 // BobConfig configures the IBM bobshell ("bob") CLI backend. Only the

@@ -14,7 +14,8 @@ assert.ok(start >= 0 && end > start, 'sessions helper block not found in index.h
 const names = ['sessionsRoleCanWrite', 'sessionsGroupSessions', 'sessionsExistingGroups', 'sessionsPickSelected', 'sessionsTabOrder',
   'sessionsNextTab', 'sessionsViewMode', 'sessionsCheckInput', 'sessionsCheckUpload', 'sessionsCanCreate', 'sessionsTerminalPath',
   'sessionsFormatBytes', 'sessionsIsEnabled', 'sessionsWorkspaceLabel', 'sessionsSessionWorkspace', 'sessionsIsLive', 'sessionsHasPreparing',
-  'sessionsStatusText', 'sessionsCanSend', 'sessionsKeyboardAction', 'sessionsPresenceText', 'sessionsQueueLabel', 'sessionsQueuedToast'];
+  'sessionsStatusText', 'sessionsCanSend', 'sessionsKeyboardAction', 'sessionsPresenceText', 'sessionsQueueLabel', 'sessionsQueuedToast',
+  'sessionsStartupBadge', 'sessionsHasStartupPreparing'];
 const h = new Function('window', html.slice(start, end) + '\nreturn {' + names.join(',') + '};')({});
 
 const S = (id, group, status) => ({ id, name: id, group, status: status || 'running' });
@@ -259,4 +260,43 @@ test('an ended pane offers Resume only when resumable, and Start again either wa
   assert.match(js, /restartBtn\('btn-secondary'\)/, 'resumable panes get a secondary Start again');
   assert.match(js, /restartBtn\('btn-primary'\)/, 'non-resumable panes get a primary Start again');
   assert.match(html, /async function sessionsRestart\(id\)[^]*sessionsSubmitCreate\(body\)/);
+});
+
+test('startup badge: getting the CLI ready, started, and which screen needs a person', () => {
+  const now = Date.parse('2026-11-17T12:00:00Z');
+  const run = (startup) => ({ id: 'a', name: 'a', status: 'running', startup });
+  const busy = h.sessionsStartupBadge(run({ state: 'preparing', message: 'Getting the CLI ready…' }), now);
+  assert.strictEqual(busy.kind, 'busy');
+  assert.strictEqual(busy.text, 'Getting the CLI ready…');
+  assert.match(busy.title, /never answers a permission prompt and never signs in/);
+  assert.strictEqual(h.sessionsStartupBadge(run({ state: 'preparing' }), now).text, 'Getting the CLI ready…', 'a missing message still reads as progress');
+
+  const started = h.sessionsStartupBadge(run({ state: 'started', message: 'Started', since: '2026-11-17T11:59:30Z', answered: ['claude workspace trust'] }), now);
+  assert.strictEqual(started.kind, 'ok');
+  assert.strictEqual(started.text, 'Started');
+  assert.match(started.title, /Hive answered: claude workspace trust/);
+  assert.strictEqual(h.sessionsStartupBadge(run({ state: 'started', since: '2026-11-17T11:00:00Z' }), now), null, 'Started is shown only for a moment');
+  assert.strictEqual(h.sessionsStartupBadge(run({ state: 'started' }), now), null);
+
+  const signin = h.sessionsStartupBadge(run({ state: 'needs_signin', message: 'Needs sign-in. Sign in from the terminal; Hive never signs in for you.' }), now);
+  assert.strictEqual(signin.kind, 'attention');
+  assert.strictEqual(signin.text, 'Needs sign-in');
+  assert.match(signin.title, /never signs in for you/);
+  const blocked = h.sessionsStartupBadge(run({ state: 'blocked', screen: 'claude permission dialog', message: 'Waiting for you: claude permission dialog is on screen, and Hive does not answer it.' }), now);
+  assert.strictEqual(blocked.text, 'Waiting for you: claude permission dialog', 'the badge names the screen');
+  assert.match(blocked.title, /does not answer it/);
+  assert.strictEqual(h.sessionsStartupBadge(run({ state: 'manual' }), now).text, 'Left to you');
+  assert.strictEqual(h.sessionsStartupBadge(run({ state: 'unknown' }), now).text, 'Check the terminal');
+  assert.strictEqual(h.sessionsStartupBadge(run({ state: 'something-new' }), now).kind, 'attention');
+
+  assert.strictEqual(h.sessionsStartupBadge(run(undefined), now), null, 'no startup block, no badge');
+  assert.strictEqual(h.sessionsStartupBadge({ id: 'a', status: 'ended', startup: { state: 'preparing' } }, now), null, 'only running sessions');
+  assert.strictEqual(h.sessionsStartupBadge(null, now), null);
+
+  assert.strictEqual(h.sessionsHasStartupPreparing([run({ state: 'started' }), run({ state: 'preparing' })]), true, 'polls faster while the CLI is being readied');
+  assert.strictEqual(h.sessionsHasStartupPreparing([run({ state: 'needs_signin' }), run(undefined)]), false);
+  assert.strictEqual(h.sessionsHasStartupPreparing(undefined), false);
+  assert.match(html, /presence \+ sessionsStartupHtml\(s\)/, 'the pane header renders the badge');
+  assert.match(html, /sessionsHasPreparing\(sessions\) \|\| sessionsHasStartupPreparing\(sessions\)/);
+  assert.match(html, /data-section="dashboard-sessions" data-key="autostart"/, 'the startup switch is rendered in the Dashboard tab');
 });

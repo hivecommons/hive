@@ -36,6 +36,9 @@ func TestWorkflowDispatchProfilePin(t *testing.T) {
 	const writer = "techdocs-writer"
 	s := workflowTestServer(t, true)
 	cfg := s.deps.Config
+	// At this level the scanner's sessions may open pull requests.
+	level := 5
+	cfg.ACMMLevel = &level
 	if rec := wfReq(s, http.MethodPost, "/api/workflows", techdocsModel(t), true); rec.Code != http.StatusCreated {
 		t.Fatalf("save: %d %s", rec.Code, rec.Body)
 	}
@@ -63,18 +66,42 @@ func TestWorkflowDispatchProfilePin(t *testing.T) {
 		t.Fatalf("bound writer profile = %+v", d)
 	}
 
-	// No agent can fill it: the entry carries the reason, not silence.
+	if d := wfDispatchOf(t, bound, writer); d.Mode != "ISSUES_AND_PRS" || len(d.Candidates) != 1 || !d.Candidates[0].Qualifies {
+		t.Fatalf("bound writer profile mode and candidates = %+v", d)
+	}
+
+	// No agent can fill it: the only enabled agent is advisory, and the
+	// entry carries that reason, not silence (hivecommons/hive#18749).
 	scanner := cfg.Agents["scanner"]
 	scanner.Enabled = false
 	cfg.Agents["scanner"] = scanner
-	cfg.Agents["guide"] = config.AgentConfig{Enabled: true}
+	cfg.Agents["guide"] = config.AgentConfig{Enabled: true, Mode: "ADVISORY"}
 	got := list()
-	if d := wfDispatchOf(t, got, writer); d.Agent != "" || !strings.Contains(d.Problem, "no agent fills "+writer) {
+	if d := wfDispatchOf(t, got, writer); d.Agent != "" || d.Problem != "no agent on this hive may open pull requests in repo1; agents are advisory-only" {
 		t.Fatalf("unfilled writer profile = %+v", d)
 	}
 	if len(got.Agents) != 1 || got.Agents[0] != "guide" {
 		t.Fatalf("picker agents = %v", got.Agents)
 	}
+	// The picker is told which agents do not qualify, and why.
+	if c := wfDispatchOf(t, got, writer).Candidates; len(c) != 1 || c[0].Agent != "guide" || c[0].Qualifies || c[0].Mode != "ADVISORY" || !strings.Contains(c[0].Reason, "may not open pull requests in repo1") {
+		t.Fatalf("candidates = %+v", c)
+	}
+	// A pin to the advisory agent is saved and flagged: never a silent
+	// pick, never a fallback.
+	rec = wfReq(s, http.MethodPut, "/api/workflows/dispatch/profiles", map[string]string{"profile": writer, "agent": "guide"}, true)
+	var flagged wfDispatchListing
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &flagged) != nil {
+		t.Fatalf("advisory pin: %d %s", rec.Code, rec.Body)
+	}
+	if d := wfDispatchOf(t, flagged, writer); d.Agent != "" || d.Pinned != "guide" || d.Problem != `the pinned agent "guide" may not open pull requests in repo1 (mode ADVISORY)` {
+		t.Fatalf("advisory pin = %+v", d)
+	}
+	if rec = wfReq(s, http.MethodPut, "/api/workflows/dispatch/profiles", map[string]string{"profile": writer, "agent": ""}, true); rec.Code != http.StatusOK {
+		t.Fatalf("clearing the advisory pin: %d %s", rec.Code, rec.Body)
+	}
+	// The owner raises the agent's mode; from here it can fill the profile.
+	cfg.Agents["guide"] = config.AgentConfig{Enabled: true, Mode: "ISSUES_AND_PRS"}
 
 	pin := map[string]string{"profile": writer, "agent": "guide"}
 	if rec := wfReq(s, http.MethodPut, "/api/workflows/dispatch/profiles", pin, false); rec.Code != http.StatusForbidden {
@@ -131,7 +158,8 @@ func TestWorkflowDispatchVisibleReason(t *testing.T) {
 			"90": {Profile: "gone", State: "not-in-the-model"},
 		}}
 	}
-	cfg := &config.Config{}
+	level := 5
+	cfg := &config.Config{ACMMLevel: &level}
 	cfg.Agents = map[string]config.AgentConfig{"scanner": {Enabled: true}, "reviewer": {Enabled: true}, "supervisor": {Enabled: true}}
 
 	b := block()
@@ -146,17 +174,18 @@ func TestWorkflowDispatchVisibleReason(t *testing.T) {
 		t.Fatalf("a state the model does not dispatch was annotated: %+v", d)
 	}
 
-	cfg.Agents = map[string]config.AgentConfig{"supervisor": {Enabled: true}, "guide": {Enabled: true}, "brainstorm": {Enabled: true}}
+	adv := config.AgentConfig{Enabled: true, Mode: "ADVISORY"}
+	cfg.Agents = map[string]config.AgentConfig{"supervisor": {Enabled: true}, "guide": adv, "brainstorm": adv, "scanner": adv, "reviewer": adv}
 	b = block()
 	annotateWorkflowDispatch(cfg, "cncf/techdocs", p, b)
-	if d := b.Dispatch["20"]; d.Agent != "" || !strings.Contains(d.Problem, "no agent fills techdocs-drafter") {
+	if d := b.Dispatch["20"]; d.Agent != "" || d.Problem != "no agent on this hive may open pull requests in cncf/techdocs; agents are advisory-only" {
 		t.Fatalf("unfilled drafter = %+v", d)
 	}
-	if d := b.Dispatch["70"]; d.Agent != "" || !strings.Contains(d.Problem, "no agent fills techdocs-verifier") {
+	if d := b.Dispatch["70"]; d.Agent != "" || d.Problem != "no agent on this hive may comment in cncf/techdocs; agents are advisory-only" {
 		t.Fatalf("unfilled verifier = %+v", d)
 	}
 	raw, err := json.Marshal(b.Dispatch["20"])
-	if err != nil || !strings.Contains(string(raw), `"problem":"no agent fills techdocs-drafter`) {
+	if err != nil || !strings.Contains(string(raw), `"problem":"no agent on this hive may open pull requests in cncf/techdocs; agents are advisory-only"`) {
 		t.Fatalf("the row payload does not carry the reason: %s %v", raw, err)
 	}
 	annotateWorkflowDispatch(nil, "cncf/techdocs", p, b)
@@ -168,7 +197,7 @@ func TestWorkflowDispatchVisibleReason(t *testing.T) {
 	if !errors.Is(sendErr, ErrWorkflowDispatchNoAgent) || workflowDispatchStatus(sendErr) != http.StatusConflict {
 		t.Fatalf("send error %v does not map to a conflict", sendErr)
 	}
-	for _, want := range []string{"no agent fills techdocs-drafter", "Settings → Repos", "workflow.dispatch.profiles.techdocs-drafter.agent"} {
+	for _, want := range []string{"no agent on this hive may open pull requests in cncf/techdocs; agents are advisory-only", "Settings → Repos", "workflow.dispatch.profiles.techdocs-drafter.agent"} {
 		if !strings.Contains(sendErr.Error(), want) {
 			t.Errorf("send error %q does not say %q", sendErr, want)
 		}

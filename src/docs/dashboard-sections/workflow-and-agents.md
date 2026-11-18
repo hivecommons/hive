@@ -189,11 +189,15 @@ Named terminal sessions where a command-line AI agent runs inside Hive; everyone
 
 **From the Inbox.** **🔗 Share ▾ → Hive → spek…** on an Inbox item (or **Hive ▾ → spek…** on a selection) sends recordings into a new or running session: the hive writes each one to `.hive/inbox/` in the workspace, inside an untrusted-data envelope, queues a Send asking the CLI to start a spec from those files with the spek-new skill, and opens the session's tab. See [Inbox and voice sources](../inbox-voice-sources.md#from-recording-to-an-inception-spek-session).
 
+**Starting up.** When a session starts, the pane header shows **Getting the CLI ready…** while the hive answers the vendor CLI's startup screens (first-run notice, trust for the session's folder, onboarding), then **Started**; whatever was queued for the session, such as Inbox items sent to spek, is delivered at that point with nobody at the keyboard. The hive never answers a tool or command permission prompt and never signs in: the header says **Needs sign-in**, or names the screen it stopped at, and leaves the terminal to you. See [Startup auto-answer](../api-reference/sessions.md#startup-auto-answer).
+
 **Example.** You start a session named "fix flaky test" in the group "ci" with the Claude CLI, paste the failing log into the input bar and press Send and run. A teammate opens the same tab and watches.
 
 **When it appears.** Whenever sessions are enabled on the hive, which is the default (`GET /api/sessions` reports `enabled: true`); with `dashboard.sessions.enabled: false` or `HIVE_SESSIONS_ENABLED=false` the section is hidden. Old `#inception-section` links open this section.
 
-**Settings that change it.** Settings → Dashboard → **Inception (spek) sessions** (`dashboard.sessions.enabled`, default on) and the three limits beside it (`max_sessions`, `max_per_user`, `idle_ttl_hours`; 0 keeps the default). `HIVE_SESSIONS_ENABLED` and the matching `HIVE_SESSIONS_*` variables override the saved values. The terminal is drawn in the dashboard's terminal colours, so it matches the current theme. See [Inception](../inception.md) for the inception API it sits beside.
+**Closing and deleting.** **Close session** ends a running session's CLI and keeps the session, ended, so it can be resumed. **Delete session** on an ended or failed session removes its record and files; work in its workspace stays on its branch of the shared checkout. Deleting can take a minute or more for a session with large caches, so it runs in the background: the tab shows **Deleting…** with a spinner and no controls, and closes by itself when the hive is done. If the delete fails, the tab comes back as it was with the reason and a **Retry delete** button. See [Deleting a session](../api-reference/sessions.md#deleting-a-session).
+
+**Settings that change it.** Settings → Dashboard → **Inception (spek) sessions** (`dashboard.sessions.enabled`, default on) and the three limits beside it (`max_sessions`, `max_per_user`, `idle_ttl_hours`; 0 keeps the default). **Answer the CLI startup screens** (`dashboard.sessions.autostart`, default on) turns the startup auto-answer off or on. `HIVE_SESSIONS_ENABLED`, `HIVE_SESSIONS_AUTOSTART` and the matching `HIVE_SESSIONS_*` variables override the saved values. The terminal is drawn in the dashboard's terminal colours, so it matches the current theme. See [Inception](../inception.md) for the inception API it sits beside.
 
 ## Knowledge
 
@@ -220,7 +224,11 @@ Voice recordings and dictations waiting for you to file them as an RFC or keep a
 - The sidebar count and the summary count items with no destination yet and not marked "Knowledge only".
 - Each item shows one pill per destination it was sent to: queued, running, filed (with a link) or failed.
 - Auto-routing rules run once per new item after a sync; the first matching rule wins.
-- The default RFC repository, dibs URL and rules can also be edited under Settings → Inbox.
+- The default RFC repository, dibs URL and rules can also be edited under Settings → Inbox. The **⚙ Auto-routing** dialog has two parts, Routing and Transcription; the config key of each setting is under **Config keys** at the end of its part.
+- **＋ Add** takes files, a link or a **Quick note**: typed or dictated text that becomes an item like an uploaded markdown file ([Quick note](../inbox-uploads.md#quick-note)).
+- Under the source chips, **Works today** and **Neural input (coming soon)** list input methods. They are not sources: a chip only shows a short explanation ([Input methods and the Inbox](../inbox-input-methods.md)).
+- **Send to this inbox**, under the toolbar, is the hive's email address (`hive@<dashboard host>`) as a link that opens a new mail, with a **Copy** button: email or forward a recording, document or note to it and it lands here. Owner and read-write users see it. On a hive that mail cannot reach it says **Not set up yet** and links to the setup guide.
+- **🗑 Delete** removes an item for good; tick several and use **Hive (n) ▾ → Delete…** to delete them together. The dialog says what goes: the file or recording this hive stores and its transcript record, or only the Inbox item for a synced source (which does not come back on the next sync) and for a meeting (its record stays in Meetings). The Knowledge copy is kept unless you tick the box. Owner and read-write users.
 
 **What it is good for.** Record an idea on your recorder, then turn it into an RFC with child issues (🔗 Share → Hive → RFC…), send it to dibs (DIBS), or just keep it searchable (Knowledge) without leaving the dashboard. See [Inbox and voice sources](../inbox-voice-sources.md).
 
@@ -316,6 +324,8 @@ Each worker Hive runs, what it is doing now, and buttons to pause, restart or co
 **How the numbers are worked out.**
 
 - The header counts running workers and all workers.
+- At autonomy level L6 the hive runs itself, so the Agents section starts collapsed. Its summary still counts the workers and shows how many need your attention, such as a worker that is signed out or stopped. Open or close the section once and Hive remembers your choice on that browser, whatever the level. With no choice made, the section opens again if the level drops below L6.
+- In the left menu, **+ Add agent** and **+ Group** sit at the end of the Agents group and hide when you collapse it.
 - A worker's state comes from the hive, for example running, idle, paused or needs login.
 - A worker outside your autonomy level's usual set still shows when it is running or turned on.
 - The **Now:** line is on every card, in the full and the compact layout, and in the worker's detail panel. The next part explains its words.

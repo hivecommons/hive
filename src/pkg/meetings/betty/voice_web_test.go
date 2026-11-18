@@ -262,7 +262,8 @@ func TestWebRetriever(t *testing.T) {
 		t.Fatal(w.Name())
 	}
 	got := w.Retrieve(context.Background(), "what is kubernetes?", nil, retrieveLimit)
-	if gotQuery != "what is kubernetes?" || gotFormat != "json" || gotCats != "general,it" {
+	// The query is cleaned: the trailing "?" is not sent.
+	if gotQuery != "what is kubernetes" || gotFormat != "json" || gotCats != "general,it" {
 		t.Fatalf("query %q format %q", gotQuery, gotFormat)
 	}
 	if len(got) != webResults {
@@ -279,7 +280,11 @@ func TestWebRetriever(t *testing.T) {
 	if n := w.Retrieve(context.Background(), "q", nil, 1); len(n) != 1 {
 		t.Fatalf("limit %d", len(n))
 	}
-	// Blank queries, no URL, errors, non-200 and bad JSON return nothing.
+	// Blank queries and no URL return nothing; errors, non-200 and bad JSON
+	// say the web search is unavailable (WebUnavailableSource).
+	down := func(got []Snippet) bool {
+		return len(got) == 1 && got[0].Source == WebUnavailableSource && got[0].Text == webNoteDown
+	}
 	if w.Retrieve(context.Background(), " ", nil, 3) != nil || (WebRetriever{}).Retrieve(context.Background(), "q", nil, 3) != nil {
 		t.Fatal("blank")
 	}
@@ -292,15 +297,15 @@ func TestWebRetriever(t *testing.T) {
 	}))
 	defer bad.Close()
 	bw := WebRetriever{BaseURL: bad.URL}
-	if bw.Retrieve(context.Background(), "q", nil, 3) != nil || bw.Retrieve(context.Background(), "json", nil, 3) != nil {
+	if !down(bw.Retrieve(context.Background(), "q", nil, 3)) || !down(bw.Retrieve(context.Background(), "json", nil, 3)) {
 		t.Fatal("bad responses")
 	}
-	if (WebRetriever{BaseURL: "http://[::1"}).Retrieve(context.Background(), "q", nil, 3) != nil {
+	if !down((WebRetriever{BaseURL: "http://[::1"}).Retrieve(context.Background(), "q", nil, 3)) {
 		t.Fatal("bad url")
 	}
 	closed := httptest.NewServer(http.NotFoundHandler())
 	closed.Close()
-	if (WebRetriever{BaseURL: closed.URL}).Retrieve(context.Background(), "q", nil, 3) != nil {
+	if !down((WebRetriever{BaseURL: closed.URL}).Retrieve(context.Background(), "q", nil, 3)) {
 		t.Fatal("unreachable")
 	}
 }
@@ -316,7 +321,7 @@ func TestWebRetrieverTimeout(t *testing.T) {
 	defer srv.Close()
 	defer close(release)
 	start := time.Now()
-	if got := (WebRetriever{BaseURL: srv.URL, Timeout: 50 * time.Millisecond}).Retrieve(context.Background(), "q", nil, 3); got != nil {
+	if got := (WebRetriever{BaseURL: srv.URL, Timeout: 50 * time.Millisecond}).Retrieve(context.Background(), "q", nil, 3); len(got) != 1 || got[0].Source != WebUnavailableSource {
 		t.Fatal(got)
 	}
 	if time.Since(start) > 2*time.Second {

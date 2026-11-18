@@ -155,6 +155,19 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		PRFollowUpEnabled *bool `json:"prFollowUpEnabled"`
 
+		// #18742: customers.enabled, the one switch for the Customers
+		// section. Read at boot, so a change applies on the next restart.
+		CustomersEnabled *bool `json:"customersEnabled"`
+		// #18742: customers.inference.enabled, goal and satisfaction
+		// suggestions made with a model. Default off.
+		CustomersInferenceEnabled *bool `json:"customersInferenceEnabled"`
+		// customers.avatars.enabled: GitHub profile pictures on the
+		// Customers list. Default on.
+		CustomersAvatarsEnabled *bool `json:"customersAvatarsEnabled"`
+		// #18884: customers.mention_search.enabled, the budgeted GitHub
+		// search made when a suggested person is accepted. Default off.
+		CustomersSearchEnabled *bool `json:"customersSearchEnabled"`
+
 		AutonomyAutoPromote  *bool   `json:"autonomyAutoPromote"`
 		AutonomyAutoDemote   *bool   `json:"autonomyAutoDemote"`
 		AutonomyPromoteAfter *int    `json:"autonomyPromoteAfter"`
@@ -488,6 +501,22 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.ClaimsEnabled != nil {
 		cfg.Governor.Claims.Enabled = *body.ClaimsEnabled
 	}
+	if body.CustomersEnabled != nil {
+		on := *body.CustomersEnabled
+		cfg.Customers.Enabled = &on
+	}
+	if body.CustomersInferenceEnabled != nil {
+		on := *body.CustomersInferenceEnabled
+		cfg.Customers.Inference.Enabled = &on
+	}
+	if body.CustomersAvatarsEnabled != nil {
+		on := *body.CustomersAvatarsEnabled
+		cfg.Customers.Avatars.Enabled = &on
+	}
+	if body.CustomersSearchEnabled != nil {
+		on := *body.CustomersSearchEnabled
+		cfg.Customers.MentionSearch.Enabled = &on
+	}
 	if claimsTTLsChanged {
 		applyClaimsTTLs(&cfg.Governor.Claims, body.ClaimsTTLS, body.ClaimsHumanTTLS, body.ClaimsAgentTTLS, body.ClaimsContributorTTLS, body.ClaimsMaxTTLS)
 		// Live claims keep their expiry; claims made or renewed from now on
@@ -793,6 +822,14 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"claimsTtlS":                          int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
 		"prFollowUpEnabled":                   cfg.Turn.PRFollowUp.Enabled,
 		"prFollowUpEffective":                 cfg.PRFollowUpResumeEnabled(),
+		"customersEnabled":                    cfg.Customers.IsEnabled(),
+		"customersEffective":                  cfg.CustomersEnabled(),
+		"customersInference":                  cfg.Customers.Inference.IsEnabled(),
+		"customersInferenceEffective":         cfg.CustomersInferenceEnabled(),
+		"customersAvatars":                    cfg.Customers.Avatars.IsEnabled(),
+		"customersAvatarsEffective":           cfg.CustomersAvatarsEnabled(),
+		"customersSearch":                     cfg.Customers.MentionSearch.IsEnabled(),
+		"customersSearchEffective":            cfg.CustomersMentionSearchEnabled(),
 		"publicationEnabled":                  cfg.Publication.Enabled,
 		"publicationPrivateChannel":           cfg.Publication.PrivateChannel,
 		"publicationOwner":                    cfg.Publication.Owner,

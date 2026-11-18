@@ -205,9 +205,12 @@ func credentialWatches() []credentialWatch {
 // StartCredentialWatchdog periodically verifies that each in-use CLI backend's
 // durable credential file (Copilot device-flow token, Claude OAuth credentials)
 // is present and usable, and emits an audit event + logs a warning when it is
-// not. It is a SAFETY NET, not a fixer: it never reads, writes, or otherwise
-// touches token material (recovery is an operator dashboard device-flow login,
-// per the manual-login rule). It exists because the loudest failure mode we
+// not. The presence check is a SAFETY NET, not a fixer: it never reads, writes,
+// or otherwise touches token material (recovery is an operator dashboard
+// device-flow login, per the manual-login rule). The same loop also drives the
+// two Claude shared-login keepers that DO write the shared credential, each
+// on its own ticker: the per-agent credential re-bridge and the hive's
+// central refresh of the shared grant (claude_shared_refresh.go, #18731). It exists because the loudest failure mode we
 // see is silent: a fresh agent pod after an upgrade roll finds no durable
 // credential, every agent CLI hangs at its login prompt, and — absent this —
 // the only signal is agents quietly ceasing work for hours. Turning that into
@@ -237,10 +240,28 @@ func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 	defer ticker.Stop()
 	bridgeTicker := time.NewTicker(claudeBridgeInterval())
 	defer bridgeTicker.Stop()
+	// The hive's own refresh of the shared Claude login, ahead of expiry, so
+	// the CLIs sharing that grant never refresh it concurrently
+	// (claude_shared_refresh.go, #18731). Gated like the bridge.
+	refreshTicker := time.NewTicker(claudeSharedRefreshInterval())
+	defer refreshTicker.Stop()
 	// Per-backend transition tracker so we log/audit on TRANSITIONS (usable ->
 	// unusable and back) rather than every tick — a standing condition would
 	// otherwise flood the Audit Log at the tick rate.
 	lastUnusable := make(map[string]bool)
+	// Recovery at boot: a hive whose only valid Claude login sits in a user
+	// session's HOME (a session refreshed a copy of the login and rotated the
+	// grant under the fleet) gets it back into the shared file before the
+	// first probe, without a sign-in (usersession_login.go). The same check
+	// then runs on every bridge poll. It is not gated on an agent using
+	// Claude: sessions use the shared login either way.
+	m.syncUserSessionClaudeLogins(sessionLoginTriggerBoot)
+	// A refreshed grant an earlier run saved but never got into the shared
+	// file is adopted now, before anything can present the dead token
+	// (claude_shared_grant.go).
+	if !m.claudeOperatorTokenMode() {
+		m.settlePendingSharedClaudeGrant(claudeSharedRefreshNow())
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -249,6 +270,11 @@ func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 			if m.backendInUse("claude") {
 				m.RepairClaudeCredentialBridges(claudeBridgeTriggerWatchdog)
 			}
+			m.syncUserSessionClaudeLogins(sessionLoginTriggerWatchdog)
+		case <-refreshTicker.C:
+			if m.backendInUse("claude") {
+				m.refreshSharedClaudeCredential()
+			}
 		case <-ticker.C:
 			// Re-bridge BEFORE probing: a Claude token refresh can leave one
 			// agent on a private copy holding the only live grant, and the
@@ -256,6 +282,7 @@ func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 			if m.backendInUse("claude") {
 				m.RepairClaudeCredentialBridges(claudeBridgeTriggerWatchdog)
 			}
+			m.syncUserSessionClaudeLogins(sessionLoginTriggerWatchdog)
 			for _, w := range credentialWatches() {
 				m.evalCredentialWatch(w, lastUnusable)
 			}

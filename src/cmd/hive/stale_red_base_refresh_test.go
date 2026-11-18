@@ -182,9 +182,11 @@ func TestStaleRedRefreshSkip(t *testing.T) {
 		{"no base ref", func(p *github.PullRequest) { p.BaseRef = "" }, "head-or-base-unknown"},
 		{"fork without maintainer edits", func(p *github.PullRequest) { p.MaintainerCanModify = false }, "fork-not-editable"},
 		{"dependency bot branch", func(p *github.PullRequest) { p.HeadRef = "renovate/actions"; p.Author = "app/mergeraptor" }, "dependency-bot-branch"},
+		// The base cleared the red, so a 072 PR is a candidate
+		// (projectbluefin/actions#765).
 		{"returned to contributor", func(p *github.PullRequest) {
 			p.Labels = append(p.Labels, stagelabels.ReturnedToContributor.Label())
-		}, "returned-to-contributor"},
+		}, ""},
 		{"adopted by the hive", func(p *github.PullRequest) { p.Labels = append(p.Labels, stagelabels.AdoptedByHive.Label()) }, "adopted-by-hive"},
 	}
 	for _, tc := range cases {

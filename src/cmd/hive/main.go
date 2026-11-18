@@ -1132,15 +1132,16 @@ func (b *boot) wireBootClosures() {
 			WorkflowPostMerge: func(ctx context.Context, repo string, m *workflowmodel.Model, defaultBranch string, prs []workflowmodel.MergedPR) (map[int]*stageengine.PostMergeFacts, error) {
 				return b.ghClient.ObservePostMerge(ctx, repo, m, defaultBranch, prs)
 			},
-			WorkflowRepoFile:        workflowRepoFile(func() *github.Client { return b.ghClient }),
-			WorkflowProvisionLabels: workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
-			WorkflowDispatchPrepare: workflowDispatchPrepare(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
-			WorkflowEmitChecks:      workflowEmitChecks(b.cfg, func() *github.Client { return b.ghClient }),
-			WorkflowClusterRunner:   workflowClusterRunner(),
-			WorkflowSpecLLM:         newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
-			AgentMgr:                b.agentMgr,
-			Sessions:                b.userSessionRuntime(),
-			CruxRuntimeHealth:       cruxRuntimeHealthFunc(b.cruxSupervision),
+			WorkflowRepoFile:         workflowRepoFile(func() *github.Client { return b.ghClient }),
+			WorkflowProvisionLabels:  workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
+			WorkflowDispatchPrepare:  workflowDispatchPrepare(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
+			WorkflowDispatchHandoffs: workflowDispatchHandoffs(b.cfg, b.logger),
+			WorkflowEmitChecks:       workflowEmitChecks(b.cfg, func() *github.Client { return b.ghClient }),
+			WorkflowClusterRunner:    workflowClusterRunner(),
+			WorkflowSpecLLM:          newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
+			AgentMgr:                 b.agentMgr,
+			Sessions:                 b.userSessionRuntime(),
+			CruxRuntimeHealth:        cruxRuntimeHealthFunc(b.cruxSupervision),
 			// Provider gateways (#5565 slice 3): concrete openrouter/watsonx/
 			// linearagent adapters behind the dashboard's consumer-defined
 			// interfaces — this composition root is the only non-test place that
@@ -3812,6 +3813,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	b.dashSrv.SetSpektacularReconfigureFn(func() bool {
 		return rewireSpektacular(b.cfg, b.dashSrv, b.logger, spekCloneAuth)
 	})
+	// The meetings TTS service, for the persona sample and the preset
+	// voice previews in Settings, Meeting attendee (#18710).
+	wireMeetingsTTS(b.cfg, b.dashSrv)
 	// Meetings (hivecommons/hive#18289): the Quorum child, only when
 	// meetings.enabled is set. Stopped on shutdown.
 	if sup := wireMeetings(b.ctx, b.cfg, b.logger); sup != nil {
@@ -3829,7 +3833,11 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 			if fn := meetingsResearchStatus(b.cfg, researchPool); fn != nil {
 				b.dashSrv.SetMeetingsResearchStatus(fn)
 			}
-			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, b.dashSrv.HiveStatusBrief); lr != nil {
+			var hiveStatus hiveStatusSource
+			if b.dashSrv != nil {
+				hiveStatus = b.dashSrv
+			}
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, hiveStatus); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
 				b.cleanup.push(routeResearch(researchPool, lr))
@@ -3844,11 +3852,24 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				b.cleanup.push(stop)
 				b.dashSrv.SetMeetingsScheduleService(svc)
 				md.sched = svc.sched
+				b.meetingsSched = svc.sched
 			}
 			b.dashSrv.SetMeetingsService(md)
 			// Ended meetings become inbox items; transcripts are purged
 			// after meetings.retention_days (#18293).
 			b.wireMeetingsInbox(mgr, store)
+		}
+	}
+	// Customers: the people store behind the Customers section (#18742).
+	if svc, stop := wireCustomers(b.cfg, b.customersResolvers(), b.logger); svc != nil {
+		b.cleanup.push(stop)
+		b.customers = svc
+		// Step E (#18884): the budgeted GitHub search on accept. Off unless
+		// customers.mention_search.enabled; never reached by the sweep.
+		svc.mentions = newCustomersMentionSearch(svc.svc, b.customersMentionConfig, b.currentGitHubClient)
+		b.dashSrv.SetCustomersService(svc)
+		if b.sched != nil {
+			installCustomersAgentContext(svc, b.sched.SetCustomerContextLookup)
 		}
 	}
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
@@ -4369,6 +4390,10 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// line inside the pod.
 	b.agentMgr.SetAuditSink(b.dashSrv.AgentAuditSink())
 	configureEscalationDispatcher(b.ctx, b.cfg, b.notifier, b.dashSrv.AgentAuditSink(), b.logger)
+	// The Sessions runtime records in the same store when it adopts a login
+	// from a session HOME into the shared login (at a session's start or
+	// removal); the credential watchdog's adoptions go through the manager.
+	b.userSessionRuntime().SetAuditSink(b.dashSrv.AgentAuditSink())
 
 	// Compile the operator's state-triggered hooks (RFC #4001). Every sink the
 	// vetted actions act through exists by this point: the notifier, the agent
@@ -4738,6 +4763,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		)
 
 		deps.startProxy(b.githubProxy, b.logger)
+		b.wireSandboxGitHubReadRelay()
 		// Jev decision endpoint (hivecommons/hive#8939). Always bound so a
 		// jev_mode toggle in the dashboard takes effect on the agent's next
 		// call; every predicate reads the LIVE config, and an agent whose
@@ -6567,6 +6593,15 @@ func (b *boot) bootLanes() {
 			"max_kicks", b.cfg.Retro.MaxKicks,
 			"long_stall_days", b.cfg.Retro.LongStallDays,
 			"analysis_enabled", b.cfg.Retro.AnalysisModel != "")
+	}
+	if b.dashSrv != nil {
+		// Read-only rank-versus-holdout summary route (#18897). The arm
+		// comparison needs the retro lane; the decision counts do not.
+		var armSummary func() []retro.ArmSummary
+		if b.retroLane != nil {
+			armSummary = b.retroLane.AdvisorArmSummary
+		}
+		b.dashSrv.SetKnowledgeAdvisorSummary(b.knowledgeAdvisorDecisions(), armSummary)
 	}
 }
 

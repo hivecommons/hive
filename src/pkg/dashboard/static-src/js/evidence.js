@@ -549,6 +549,27 @@
       }).join('');
     }
 
+    // Change failures per canonical author model (#18720), read from
+    // outcomes_by_author_model. Most PRs first; the person and no-model
+    // buckets trail. n is every PR with an evidence record for that model,
+    // so a small sample is visible next to its rate. Absent on an older
+    // server: nothing is rendered.
+    function evOutcomesByModelHtml(byModel) {
+      byModel = byModel && typeof byModel === 'object' ? byModel : {};
+      const tail = ['human', 'unknown'];
+      const keys = Object.keys(byModel).filter((k) => Number(byModel[k] && byModel[k].n) > 0);
+      if (!keys.length) return '';
+      keys.sort((a, b) => (tail.indexOf(a) - tail.indexOf(b)) || ((Number(byModel[b].n) || 0) - (Number(byModel[a].n) || 0)) || a.localeCompare(b));
+      const rows = keys.map((k) => {
+        const o = byModel[k] || {};
+        const merged = Number(o.merged) || 0, rv = Number(o.reverted_14d) || 0, ro = Number(o.issue_reopened_14d) || 0;
+        const rate = o.change_failure_rate == null ? null : Number(o.change_failure_rate);
+        const label = k === 'human' ? 'human (no model)' : k === 'unknown' ? 'unknown (model not recorded)' : k;
+        return `<tr><td>${escapeHtml(label)}</td><td>${Number(o.n) || 0}</td><td>${merged}</td><td>${rv}</td><td>${ro}</td><td>${evPct(rate)}</td></tr>`;
+      }).join('');
+      return `<div class="ev-note">Change failures by author model: reverted or issue re-opened within 14 d of merge, ÷ merged. n counts only PRs with an evidence record, so it can differ from PRs by model; a rate on a small n is weak evidence.</div><div class="ev-table-wrap"><table class="ev-table ev-model-outcomes"><thead><tr><th>Author model</th><th>n</th><th>Merged</th><th>Reverted</th><th>Re-opened</th><th>Change failure</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+
     function evOutcomesSvg(outcomes) {
       outcomes = outcomes || {};
       const kinds = EV_AUTHOR_KINDS.concat(Object.keys(outcomes).filter((k) => !EV_AUTHOR_KINDS.includes(k)).sort());
@@ -1158,7 +1179,7 @@
       const windowHint = Number(dto.n) > 0 ? '' : evWindowHint(dto);
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
         + (windowHint ? `<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>` : '')
-        + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes) + evControlArmHtml(dto.control_arm),
+        + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes) + evOutcomesByModelHtml(dto.outcomes_by_author_model) + evControlArmHtml(dto.control_arm),
           `PRs are placed in the window by their open time, never by when a record was written. Undone counts two change-failure signals, each within 14 d of merge: reverted means a reverted_by link from a later merged PR whose title or body named this PR or its commit (Reverts #N, Revert "…", This reverts commit <sha>) — a revert that names nothing is missed; re-opened means an issue this PR closed was re-opened by a person after the merge, as seen by the issues webhook or the issue listing — an issue closed by hand rather than by a closing keyword is not tracked. A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead${outcomeLedger ? ` (${outcomeLedger} PR(s) in this window)` : ''}: ${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open. A PR the ledger never saw${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''} is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
         + evIssueReopenRatesHtml(dto)
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationControls() + evCalibrationSvg(calib),

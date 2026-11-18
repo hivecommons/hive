@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -109,6 +110,11 @@ type SessionRuntime interface {
 	// ResumeInfo captures the vendor's newest conversation for the session;
 	// workDir is where the CLI ran ("" = the session's own work dir).
 	ResumeInfo(id, vendor, workDir string) (crux.UserSessionResume, bool)
+	// StartupStep reads the session's visible screen once for the startup
+	// auto-answer and, when answer is true and it is a known startup screen
+	// nobody has typed into, answers it. It never answers a permission prompt
+	// or a login screen (api_sessions_autostart.go).
+	StartupStep(id, vendor string, answer bool) crux.UserSessionStartupStep
 	// StoreUpload writes src as the named file under the session's uploads
 	// directory, as the session's own uid, and returns its absolute path.
 	StoreUpload(id, fileName string, src io.Reader, maxBytes int64, maxFiles int) (string, int64, error)
@@ -116,8 +122,12 @@ type SessionRuntime interface {
 	// session's own uid with the sessions group and mode 0640, where cwd is
 	// workspace ("" = the session's own work dir); it returns the path.
 	StoreInboxFile(id, workspace, fileName string, data []byte) (string, error)
-	// Remove ends the session and deletes everything it owned on disk.
+	// Remove ends the session and deletes everything it owned on disk. Safe
+	// to call again after a failure or on a session that is already gone.
 	Remove(id string) error
+	// Removed reports whether nothing of the session is left on disk; false
+	// when that cannot be told.
+	Removed(id string) bool
 }
 
 type sessionLimits struct {
@@ -166,6 +176,12 @@ type sessionView struct {
 	// theirs is the writable one; Queue (additive) is the pending Send queue.
 	Viewers []sessionViewer  `json:"viewers"`
 	Queue   sessionQueueView `json:"queue"`
+	// Startup (additive) is the startup auto-answer's state for a running
+	// session: getting the CLI ready, started, or the screen it stopped at
+	// (api_sessions_autostart.go). Absent when the hive has none for it.
+	Startup *sessionStartupView `json:"startup,omitempty"`
+	// DeleteError (additive) is why the last delete of the session failed.
+	DeleteError string `json:"delete_error"`
 }
 
 func (s *Server) registerSessionRoutes() {
@@ -282,7 +298,7 @@ func (st sessionRecord) view(p *crux.UserSessionProbe, rt SessionRuntime) sessio
 		CreatedAt: st.CreatedAt, LastActivity: st.LastActivity, Status: st.Status,
 		TmuxName: sessionTmuxPrefix + st.ID, Shared: st.Shared,
 		WorkspaceRepo: st.WorkspaceRepo, Workspace: st.Workspace,
-		Message: st.Message, Error: st.Error,
+		Message: st.Message, Error: st.Error, DeleteError: st.DeleteError,
 	}
 	if st.Status == sessionStatusRunning && p != nil {
 		v.Attached = p.Attached
@@ -308,6 +324,7 @@ func (s *Server) sessionViewFor(rec sessionRecord, p *crux.UserSessionProbe, rt 
 	if rec.Status == sessionStatusRunning {
 		v.Viewers = s.sessionViewers(rec.ID)
 		v.Queue = s.sessionQueueSnapshot(rec.ID, actor.user)
+		v.Startup = s.sessionStartupViewOf(rec.ID)
 	}
 	return v
 }
@@ -319,18 +336,19 @@ func (s *Server) sessionViewFor(rec sessionRecord, p *crux.UserSessionProbe, rt 
 func (s *Server) reconcileSessions(rt SessionRuntime, st *sessionStore) map[string]crux.UserSessionProbe {
 	probes := map[string]crux.UserSessionProbe{}
 	now := time.Now().UTC().Format(time.RFC3339)
-	for _, rec := range st.list() {
-		if rec.Status == sessionStatusPreparing && !s.sessionStartInFlight(rec.ID) {
-			// Only a restart leaves a preparing record with no goroutine
-			// behind it; nothing will ever move it on, so say so.
-			status := sessionStatusFailed
-			if rec.ResumeCommand != "" {
-				status = sessionStatusEnded
-			}
-			s.markSessionFailed(st, rec.ID, status, sessionRestartedWhilePreparing, now)
+	recs := st.list()
+	if hook := sessionsAfterReconcileSnapshot.Load(); hook != nil {
+		(*hook)(s)
+	}
+	for _, rec := range recs {
+		if rec.Status == sessionStatusPreparing {
+			// The snapshot is not what decides: a start may have finished
+			// since it was taken (failOrphanedPreparingSession).
+			s.failOrphanedPreparingSession(st, rec.ID, now)
 			continue
 		}
 		if rec.Status != sessionStatusRunning {
+			s.reconcileSessionRemoval(rt, st, rec)
 			continue
 		}
 		p := rt.Probe(rec.ID)
@@ -640,6 +658,9 @@ func (s *Server) setSessionStartInFlightLocked(id string, inFlight bool) {
 // here is tied to the request that asked: the runtime's privileged steps run
 // under their own deadlines.
 func (s *Server) startSessionInBackground(rt SessionRuntime, st *sessionStore, spec crux.UserSessionSpec, user, failStatus string) {
+	// First line of the startup auto-answer: a seeded HOME skips the CLI's
+	// first-run screens altogether.
+	spec.SeedOnboarding = s.deps.Config.SessionsAutostart()
 	err := rt.Start(spec)
 	now := time.Now().UTC().Format(time.RFC3339)
 	s.sessionsMu.Lock()
@@ -669,6 +690,44 @@ func (s *Server) startSessionInBackground(rt SessionRuntime, st *sessionStore, s
 		s.logger.Warn("sessions: persisting running state failed", "id", spec.ID, "error", err)
 	}
 	s.auditSession(user, auditSessionStarted, auditDetail("session", spec.ID, "vendor", spec.Vendor, "outcome", sessionStatusRunning))
+	// Take the CLI through its startup screens to the input prompt; the Send
+	// queue (and with it a parked Inbox seed) waits for that.
+	s.beginSessionAutostart(rt, st, spec.ID, spec.Vendor, user)
+}
+
+// sessionsAfterReconcileSnapshot, when set, runs in reconcileSessions right
+// after the records are listed and before any is judged. A test seam: it
+// places "a start finishes" exactly in the window the list and the judgement
+// used to race over. Never set in production.
+var sessionsAfterReconcileSnapshot atomic.Pointer[func(*Server)]
+
+// failOrphanedPreparingSession fails a `preparing` record that has no start
+// behind it, which only a restart of the hive leaves: nothing will ever move
+// it on, so the record says so.
+//
+// The decision is made under sessionsMu on the record as it is NOW, never on
+// the caller's snapshot. reconcileSessions lists the records without that
+// lock, and startSessionInBackground clears the in-flight mark and saves
+// `running` in one hold of it. A reconcile that listed the record as
+// `preparing` and then asked "is a start in flight?" used to get "no" from a
+// start that had just finished, and overwrote the running record with "the
+// hive restarted while this session was being prepared". Any session list
+// that overlapped the end of a start could do it.
+func (s *Server) failOrphanedPreparingSession(st *sessionStore, id, now string) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	if s.sessionsPreparing[id] {
+		return
+	}
+	cur, ok := st.get(id)
+	if !ok || cur.Status != sessionStatusPreparing {
+		return
+	}
+	status := sessionStatusFailed
+	if cur.ResumeCommand != "" {
+		status = sessionStatusEnded
+	}
+	s.markSessionFailed(st, id, status, sessionRestartedWhilePreparing, now)
 }
 
 // markSessionFailed records why a start did not happen: status is `failed`
@@ -753,55 +812,6 @@ func (s *Server) handleSessionPatch(w http.ResponseWriter, r *http.Request) {
 	s.auditSession(actor.user, auditSessionRenamed, auditDetail("session", rec.ID))
 	p := rt.Probe(rec.ID)
 	jsonResponse(w, map[string]any{"ok": true, "session": updated.view(&p, rt)})
-}
-
-// handleSessionDelete closes a running session: tmux is killed and the
-// metadata is kept, marked ended, so the session can be resumed where the
-// vendor supports it. DELETE on an already ended session removes its metadata.
-func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
-	rt, st, ok := s.sessionsGate(w)
-	if !ok {
-		return
-	}
-	rec, actor, ok := s.sessionForMutation(w, r, st)
-	if !ok {
-		return
-	}
-	if rec.Status == sessionStatusPreparing {
-		// A start is in flight; the record changes under it as soon as it
-		// finishes, so the client is asked to come back then.
-		jsonError(w, "session is still being prepared; close it once it is running or failed", http.StatusConflict)
-		return
-	}
-	if rec.Status == sessionStatusEnded || rec.Status == sessionStatusFailed {
-		// Files first: if they cannot be removed the record (and its uid slot)
-		// stays, so the slot is never handed to a new session over old data.
-		if err := rt.Remove(rec.ID); err != nil {
-			if s.logger != nil {
-				s.logger.Warn("sessions: removing session files failed", "id", rec.ID, "error", err)
-			}
-			jsonError(w, "could not remove the session's files", http.StatusInternalServerError)
-			return
-		}
-		if err := st.remove(rec.ID); err != nil {
-			jsonError(w, "could not save the session store", http.StatusInternalServerError)
-			return
-		}
-		s.auditSession(actor.user, auditSessionClosed, auditDetail("session", rec.ID, "removed", "true"))
-		jsonResponse(w, map[string]any{"ok": true})
-		return
-	}
-	// Capture the resume handle before the tmux server goes away.
-	s.markSessionEnded(rt, st, rec, time.Now().UTC().Format(time.RFC3339))
-	if err := rt.Kill(rec.ID); err != nil {
-		if s.logger != nil {
-			s.logger.Warn("sessions: kill failed", "id", rec.ID, "error", err)
-		}
-		jsonError(w, "could not close the session", http.StatusBadGateway)
-		return
-	}
-	s.auditSession(actor.user, auditSessionClosed, auditDetail("session", rec.ID))
-	jsonResponse(w, map[string]any{"ok": true})
 }
 
 func (s *Server) handleSessionLog(w http.ResponseWriter, r *http.Request) {
@@ -1075,15 +1085,9 @@ func (s *Server) sweepSessions(now time.Time) {
 			s.auditSession("system", auditSessionClosed, auditDetail("session", rec.ID, "reason", "idle"))
 		case sessionStatusEnded, sessionStatusFailed:
 			if ended, err := time.Parse(time.RFC3339, rec.EndedAt); err == nil && now.Sub(ended) > sessionEndedRetention {
-				// Files first; a failure keeps the record (and its uid slot)
-				// so the next sweep retries instead of orphaning the data.
-				if err := rt.Remove(rec.ID); err != nil {
-					if s.logger != nil {
-						s.logger.Warn("sessions: pruning session files failed", "id", rec.ID, "error", err)
-					}
-					continue
-				}
-				_ = st.remove(rec.ID)
+				// The same job a person's delete runs: files first, the
+				// record (and its uid slot) only once they are gone.
+				s.beginSessionDelete(rt, st, rec.ID, sessionDeleteActorSystem, sessionDeleteReasonRetention, "")
 			}
 		}
 	}

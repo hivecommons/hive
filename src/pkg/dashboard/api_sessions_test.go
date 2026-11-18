@@ -38,6 +38,13 @@ type fakeSessionRuntime struct {
 	removed  []string
 	// removeErr, when set, makes Remove fail (the files could not be deleted).
 	removeErr error
+	// removeHook, when set, replaces Remove's own work and runs without the
+	// fake's lock, so a test can hold a removal open; removeCalls counts
+	// every Remove; gone holds the ids Removed reports as having nothing left
+	// on disk (set by a successful Remove, or by a test).
+	removeHook  func(id string) error
+	removeCalls int
+	gone        map[string]bool
 	// resumeDirs records the workDir each ResumeInfo call was given.
 	resumeDirs []string
 	// detached records each DetachWritableClients call (keyboard hand-over).
@@ -50,6 +57,9 @@ type fakeSessionRuntime struct {
 	swept       [][]string
 	// secured counts SecureWorkspaces calls (the boot lock of shared clones).
 	secured int
+	// startup scripts StartupStep (api_sessions_autostart_test.go); nil means
+	// the CLI is at its input prompt from the first read.
+	startup *fakeStartup
 }
 
 // fakeInboxFile is one StoreInboxFile call.
@@ -183,13 +193,62 @@ func (f *fakeSessionRuntime) SendText(id, text string, submit bool) error {
 }
 func (f *fakeSessionRuntime) Remove(id string) error {
 	f.mu.Lock()
+	f.removeCalls++
+	hook := f.removeHook
+	f.mu.Unlock()
+	if hook != nil {
+		return hook(id)
+	}
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.removeErr != nil {
 		return f.removeErr
 	}
 	f.removed = append(f.removed, id)
 	delete(f.alive, id)
+	f.markGoneLocked(id)
 	return os.RemoveAll(filepath.Join(f.workDir, id))
+}
+
+func (f *fakeSessionRuntime) markGoneLocked(id string) {
+	if f.gone == nil {
+		f.gone = map[string]bool{}
+	}
+	f.gone[id] = true
+}
+
+// markGone makes Removed report that nothing of id is left on disk.
+func (f *fakeSessionRuntime) markGone(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.markGoneLocked(id)
+}
+
+// setRemoveErr makes Remove fail with err (nil: succeed again).
+func (f *fakeSessionRuntime) setRemoveErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removeErr = err
+}
+
+// removeCount is how many times Remove has been called.
+func (f *fakeSessionRuntime) removeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.removeCalls
+}
+
+// removedIDs copies the ids whose files Remove deleted.
+func (f *fakeSessionRuntime) removedIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.removed...)
+}
+
+func (f *fakeSessionRuntime) Removed(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gone[id]
 }
 
 // StoreUpload mimics the real runtime's contract: an exclusive 0600 file under
@@ -992,13 +1051,12 @@ func TestSessionsCloseKeepsMetadataAndAudits(t *testing.T) {
 	if !ok || rec.Status != sessionStatusEnded {
 		t.Fatalf("record after close = %+v, %v", rec, ok)
 	}
-	// A second DELETE removes the metadata.
-	if rec := e.do(t, callerRW, "DELETE", "/api/sessions/"+id, nil); rec.Code != http.StatusOK {
+	// A second DELETE removes the files and then the metadata, in the
+	// background.
+	if rec := e.do(t, callerRW, "DELETE", "/api/sessions/"+id, nil); rec.Code != http.StatusAccepted {
 		t.Fatalf("second delete = %d", rec.Code)
 	}
-	if _, ok := e.s.sessionStoreOrNil().get(id); ok {
-		t.Error("metadata not removed by deleting an ended session")
-	}
+	e.waitDeleted(t, id)
 	want := map[string]bool{auditSessionCreated: false, auditSessionClosed: false}
 	for _, a := range e.auditActions() {
 		if _, ok := want[a.Action]; ok {
@@ -1199,9 +1257,7 @@ func TestSessionsIdleSweeper(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.s.sweepSessions(time.Now())
-	if _, ok := e.s.sessionStoreOrNil().get(idle); ok {
-		t.Error("expired ended session was not pruned")
-	}
+	e.waitDeleted(t, idle)
 }
 
 func TestSessionLabelValidation(t *testing.T) {

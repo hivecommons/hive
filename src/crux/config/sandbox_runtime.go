@@ -30,6 +30,7 @@ type SandboxJobConfig struct {
 	WorkspaceClaim      string                 `yaml:"workspace_claim,omitempty" json:"workspace_claim,omitempty"`
 	WorkspaceClaimMount string                 `yaml:"workspace_claim_mount,omitempty" json:"workspace_claim_mount,omitempty"`
 	NodeSelector        map[string]string      `yaml:"node_selector,omitempty" json:"node_selector,omitempty"`
+	Affinity            *SandboxJobAffinity    `yaml:"affinity,omitempty" json:"affinity,omitempty"`
 	Tolerations         []SandboxJobToleration `yaml:"tolerations,omitempty" json:"tolerations,omitempty"`
 	Resources           SandboxJobResources    `yaml:"resources,omitempty" json:"resources,omitempty"`
 	ServiceAccount      string                 `yaml:"service_account,omitempty" json:"service_account,omitempty"`
@@ -41,6 +42,9 @@ type SandboxJobConfig struct {
 	EnvFromSecrets []string           `yaml:"env_from_secrets,omitempty" json:"env_from_secrets,omitempty"`
 	Volumes        []SandboxJobVolume `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	TTLSeconds     int                `yaml:"ttl_seconds,omitempty" json:"ttl_seconds,omitempty"`
+	// ScheduleTimeoutS fails a kick whose pod stays Unschedulable this long
+	// (reason waiting_for_node, #18811). Zero uses DefaultSandboxScheduleTimeoutS.
+	ScheduleTimeoutS int `yaml:"schedule_timeout_s,omitempty" json:"schedule_timeout_s,omitempty"`
 	// RelayImage is the image of the init container that copies hive's
 	// sandbox relays (hive-review) into the Job (#18512). Empty resolves the
 	// running hive image by digest from hive's own pod; "none" skips the
@@ -49,32 +53,13 @@ type SandboxJobConfig struct {
 	// RelayRunAsUser pins the relay init container's uid. Unset leaves it to
 	// the cluster on OpenShift (the SCC assigns one from the namespace range)
 	// and uses 65534 elsewhere, since the hive image's default user is root.
-	RelayRunAsUser *int64 `yaml:"relay_run_as_user,omitempty" json:"relay_run_as_user,omitempty"`
-}
-
-// SandboxJobToleration mirrors the subset of a Kubernetes toleration an
-// operator writes by hand.
-type SandboxJobToleration struct {
-	Key      string `yaml:"key,omitempty" json:"key,omitempty"`
-	Operator string `yaml:"operator,omitempty" json:"operator,omitempty"`
-	Value    string `yaml:"value,omitempty" json:"value,omitempty"`
-	Effect   string `yaml:"effect,omitempty" json:"effect,omitempty"`
-}
-
-// SandboxJobResources mirrors Kubernetes resource requirements with string
-// quantities so a device limit (`<vendor>.com/<device>: "2"`) passes through.
-type SandboxJobResources struct {
-	Limits   map[string]string `yaml:"limits,omitempty" json:"limits,omitempty"`
-	Requests map[string]string `yaml:"requests,omitempty" json:"requests,omitempty"`
-}
-
-// SandboxJobVolume is an additional PVC mounted into the Job (a compile
-// cache, a model store).
-type SandboxJobVolume struct {
-	Name      string `yaml:"name,omitempty" json:"name,omitempty"`
-	Claim     string `yaml:"claim" json:"claim"`
-	MountPath string `yaml:"mount_path" json:"mount_path"`
-	ReadOnly  bool   `yaml:"read_only,omitempty" json:"read_only,omitempty"`
+	RelayRunAsUser   *int64   `yaml:"relay_run_as_user,omitempty" json:"relay_run_as_user,omitempty"`
+	ImagePullSecrets []string `yaml:"image_pull_secrets,omitempty" json:"image_pull_secrets,omitempty"`
+	// GitHubReadProxy routes a Job's GitHub READS through a hive-hosted relay
+	// that attaches a read-only credential the Job never sees (#18865). It is
+	// read from the hive-wide agent_sandbox.job block only; a per-agent job
+	// block cannot enable, disable or repoint it.
+	GitHubReadProxy *SandboxGitHubReadProxy `yaml:"github_read_proxy,omitempty" json:"github_read_proxy,omitempty"`
 }
 
 // SandboxRuntime returns the per-agent runtime override, then the global
@@ -92,11 +77,10 @@ func (a *AgentConfig) SandboxRuntime(global AgentSandboxConfig) string {
 
 // SandboxJob returns the effective Job runtime settings. A per-agent job
 // block replaces the global one wholesale for the pod-template fields (node
-// selector, tolerations, resources, secrets, volumes, service account) — an
-// agent that needs an accelerator names its own scheduling. The claim
-// fields and the TTL are cluster facts rather than per-agent choices, so
-// they fall back to the global block when the per-agent one leaves them
-// empty.
+// selector, affinity, tolerations, resources, secrets, volumes, service
+// account) — an agent that needs an accelerator names its own scheduling. The
+// claim fields and the TTL are cluster facts, not per-agent choices, so they
+// fall back to the global block when the per-agent one leaves them empty.
 func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	var g SandboxJobConfig
 	if global.Job != nil {
@@ -106,6 +90,8 @@ func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 		return g
 	}
 	out := *a.Sandbox.Job
+	// The read relay is hive-wide: a per-agent block cannot enable it.
+	out.GitHubReadProxy = g.GitHubReadProxy
 	if strings.TrimSpace(out.WorkspaceClaim) == "" {
 		out.WorkspaceClaim = g.WorkspaceClaim
 	}
@@ -115,5 +101,8 @@ func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	if out.TTLSeconds == 0 {
 		out.TTLSeconds = g.TTLSeconds
 	}
-	return out
+	if out.ScheduleTimeoutS == 0 {
+		out.ScheduleTimeoutS = g.ScheduleTimeoutS
+	}
+	return inheritPullSecrets(out, g)
 }

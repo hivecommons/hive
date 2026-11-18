@@ -104,6 +104,11 @@ type StageLabelPolicy struct {
 	// Every other contributor-lane gate still applies; the head must be
 	// exactly the one the stage store records as adopted/pushed by the hive.
 	AdoptionAutoMerge bool
+	// NudgeWithholdWhenAdopting withholds the nudge comment for a head the
+	// hive adopts anyway (always on in production, see stageLabelPolicyFunc;
+	// off in the zero policy so older tests keep their nudge;
+	// hivecommons/hive#18872).
+	NudgeWithholdWhenAdopting bool
 	// AdoptionMaintainerPolicy is governor.labels.stage.adoption.maintainer_policy
 	// (config.AdoptionMaintainerPolicy*): what adoption does when the PR
 	// author holds admin or maintain on the repository. "" reads as the
@@ -1496,6 +1501,12 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// list "PRs returned to this contributor" from the store alone.
 			store.NoteAuthor(key, obs.Author)
 			store.NoteHold(key, obs.Hold)
+			// The head's trusted approval, for the Activity monitor's 085
+			// row (hivecommons/hive#18849 follow-up): the reason carries no
+			// approver there.
+			if obs.Detail.HumanApprovalHead == obs.HeadSHA {
+				store.NoteHeadApproval(key, obs.HeadSHA, obs.Detail.HumanApprover)
+			}
 			soakFirstGreen, _ := c.contributorSoak.FirstGreen(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
 			noteSoak(store, key, obs.Reason, obs.HeadSHA, pass.Route, c.currentContributorLanePolicy().Soak, soakFirstGreen, now)
 			if dcoRead {
@@ -1717,7 +1728,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 			if kind == authorkind.Clanker {
 				if policy.ContributorNudge && !adoptionRetry {
-					n, err := c.nudgeContributor(ctx, store, key, obs, policy, now)
+					n, err := c.nudgeContributor(ctx, store, key, obs, policy, presence, hasPresence, now)
 					result.Comments += n
 					if err != nil && firstErr == nil {
 						firstErr = err

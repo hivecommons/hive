@@ -18,26 +18,31 @@ const (
 )
 
 // TranscribeSweep queues machine transcriptions for pending items from the
-// sources listed in inbox.transcription.sources. It runs only in auto mode
-// with transcription enabled and consented, and is called after each
-// connector sync. Runs still execute one at a time; the sweep only queues
+// sources listed in inbox.transcription.sources (auto mode) and for every
+// pending item whose audio this hive holds itself (recordings, uploads,
+// mail-in audio: see autoOptedIn), with transcription enabled and
+// consented. It is called after each connector sync, by the recording
+// sweep and once at boot, after RecoverTranscriptions, so a run the hive
+// restarted under is picked up again. Runs still execute one at a time; the sweep only queues
 // what today's item cap and this month's minutes leave room for, so a
 // backlog never turns into a burst of budget skips.
 //
 // Retries: a failed item is retried after a backoff (1h, then 2h) until it
-// has had TranscriptionMaxAttempts runs; an item skipped for budget is
-// retried once the UTC day has turned; too long, too large and unsupported
-// skips are never retried automatically (the owner can still click
-// Transcribe).
+// has had TranscriptionMaxAttempts runs, across restarts too (the state is
+// on disk); a run interrupted by a restart is retried at the next sweep
+// without a backoff, within the same attempt bound; an item skipped for
+// budget is retried once the UTC day has turned; too long, too large and
+// unsupported skips are never retried automatically (the owner can still
+// click Retry transcription).
 func (s *Service) TranscribeSweep(ctx context.Context, opts TranscribeOptions) (queued int, err error) {
 	cfg := s.Config().Transcription
 	store := s.transcriptStore()
-	// Dashboard recordings are transcribed whatever the mode: recording one
-	// opts it in, once transcription is enabled with consent.
+	// Hive-local audio is transcribed whatever the mode: recording or
+	// dropping it opts it in, once transcription is enabled with consent.
 	if store == nil || !cfg.Active() {
 		return 0, nil
 	}
-	if cfg.EffectiveMode() != config.InboxTranscriptionModeAuto && s.recordingSource() == nil {
+	if cfg.EffectiveMode() != config.InboxTranscriptionModeAuto && !s.hasLocalAudioSource() {
 		return 0, nil
 	}
 	items, err := s.Items(ctx)
@@ -50,8 +55,7 @@ func (s *Service) TranscribeSweep(ctx context.Context, opts TranscribeOptions) (
 		if itemsLeft <= 0 {
 			break
 		}
-		optedIn := it.Source == RecordingType || cfg.AutoSource(it.Source) || cfg.AutoSource(it.Connector)
-		if seen[it.Key()] || !it.Transcribable || !optedIn || !autoDue(it.Transcription, now) {
+		if seen[it.Key()] || !it.Transcribable || !s.autoOptedIn(it, cfg) || !autoDue(it.Transcription, now) {
 			continue
 		}
 		seen[it.Key()] = true
@@ -84,6 +88,11 @@ func autoDue(st *TranscriptionState, now time.Time) bool {
 	}
 	switch st.Status {
 	case TranscriptionFailed:
+		if strings.HasPrefix(st.Reason, ReasonInterrupted) {
+			// The hive restarted under the run: no backoff, the attempt
+			// bound above still stops a recording that keeps crashing it.
+			return true
+		}
 		return !now.Before(st.UpdatedAt.Add(transcribe.ExponentialBackoff(autoRetryBase)(st.Attempts)))
 	case TranscriptionSkipped:
 		return strings.HasPrefix(st.Reason, SkipBudget) && now.UTC().Format(usageDayLayout) != st.UpdatedAt.UTC().Format(usageDayLayout)

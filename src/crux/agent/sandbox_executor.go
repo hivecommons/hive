@@ -184,11 +184,13 @@ type SandboxExecutor struct {
 	// PRTargetReader reads an existing PR a kick pushes to (spec.TargetPR):
 	// before the checkout and again before the push. Nil refuses every
 	// TargetPR kick.
-	PRTargetReader crux.PRPushTargetReader
-	Logger         *slog.Logger
-	Now            func() time.Time
-	Mutation       effects.Boundary
-	onStarted      func()
+	PRTargetReader         crux.PRPushTargetReader
+	Logger                 *slog.Logger
+	Now                    func() time.Time
+	Mutation               effects.Boundary
+	onStarted              func()
+	GitHubReadRelay        SandboxGitHubReadRelay // routes a Job kick's GitHub reads through hive's read relay (#18865); nil leaves the Job as before
+	GitHubReadRelayNoProxy []string               // extra NO_PROXY entries for relayed Jobs
 }
 
 func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (SandboxKickResult, error) {
@@ -254,6 +256,8 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 			e.Logger.Warn("sandbox review spool: could not mark the kick ended", "agent", spec.Agent, "error", err)
 		}
 	}()
+	relayEnv, releaseRelay := e.enrollGitHubReadRelay(spec, workspace)
+	defer releaseRelay()
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
 	var notifyStarted func()
@@ -268,7 +272,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		WorkspaceMount: sandbox.DefaultWorkspaceMount,
 		WorkDir:        sandbox.DefaultWorkspaceMount,
 		Command:        command,
-		Env:            spool.sandboxEnv(),
+		Env:            mergeSandboxEnv(spool.sandboxEnv(), relayEnv),
 		EnvAllowlist:   spec.EnvAllowlist,
 		NetworkMode:    spec.NetworkMode,
 		ClineProvider:  provider,

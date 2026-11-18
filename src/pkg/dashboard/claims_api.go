@@ -269,7 +269,9 @@ func (h *ContributeWSHub) recordCompletionPRClaim(task *WSTaskAssign, prURL, use
 // covers the issue the hold is renewed; once it merged, closed, or stopped
 // covering the issue the claim is released. Without the duplicate-PR ledger
 // wired there is nothing to re-check against, so the holds are left to their
-// own TTL. Returns how many claims were released.
+// own TTL. A hive agent's claim is renewed the same way while an open hive
+// PR covers its issue, in any managed repo (sweepAgentPRHeldClaim,
+// hivecommons/hive#18676). Returns how many claims were released.
 func (h *ContributeWSHub) sweepPRHeldClaims() int {
 	l := h.claimsLedger()
 	if l == nil || h.server == nil || h.server.deps == nil || h.server.deps.IssueClaimed == nil {
@@ -277,6 +279,10 @@ func (h *ContributeWSHub) sweepPRHeldClaims() int {
 	}
 	released := 0
 	for _, c := range l.List() {
+		if c.Kind == claims.KindAgent && c.HolderID != "" {
+			released += h.sweepAgentPRHeldClaim(l, c)
+			continue
+		}
 		if c.Kind != claims.KindContributor || c.PRNumber <= 0 || c.HolderID == "" {
 			continue
 		}
@@ -292,6 +298,50 @@ func (h *ContributeWSHub) sweepPRHeldClaims() int {
 		}
 	}
 	return released
+}
+
+// sweepAgentPRHeldClaim keeps a hive agent's claim alive while an open PR
+// the hive authored covers the issue, in whatever managed repo that PR lives
+// (hivecommons/hive#18676): the scanner claimed hivecommons/hive#18660 and
+// opened hivecommons/quorum-companion#3 with `Refs hivecommons/hive#18660`;
+// nothing renewed the claim once the agent's session ended, so it lapsed
+// two hours later while the PR waited on a decision and the issue read as
+// abandoned. A claim held this way (Claim.PRNumber set) is released once no
+// open hive PR covers the issue any more. A claim the sweep never held is
+// left to its own TTL. Returns 1 when it released the claim.
+func (h *ContributeWSHub) sweepAgentPRHeldClaim(l *claims.Ledger, c claims.Claim) int {
+	if pr, ok := h.agentCoveringPR(c); ok {
+		l.HoldForPR(c.HolderID, c.Key(), coveringPRRepo(pr), pr.PRNumber)
+		return 0
+	}
+	if c.PRNumber <= 0 {
+		return 0
+	}
+	released := 0
+	for _, r := range l.ReleaseByHolderID(c.HolderID, claims.ReasonCoveringPRDone, c.Key()) {
+		released++
+		h.logger.Info("[claims] PR-held agent claim released", "issue", r.Key(), "holder", r.Holder, "pr", r.PRNumber, "pr_repo", r.PRRepo)
+	}
+	return released
+}
+
+// agentCoveringPR reports the open, hive-authored pull request the
+// duplicate-PR claim ledger records against an agent claim's issue —
+// closing or a non-closing `Refs`, same repo or another managed repo (the
+// ledger keys a cross-repo `Refs owner/repo#N` under the issue's repo).
+func (h *ContributeWSHub) agentCoveringPR(c claims.Claim) (ghpkg.IssueClaim, bool) {
+	name := c.Repo
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	pr, ok := h.issueClaimedByOpenPR(c.Repo, name, c.Issue)
+	if !ok || pr.PRNumber <= 0 || pr.MergedPR || pr.ExternalAuthor {
+		return ghpkg.IssueClaim{}, false
+	}
+	if state := strings.TrimSpace(pr.PRState); state != "" && state != ghpkg.PRStateOpen {
+		return ghpkg.IssueClaim{}, false
+	}
+	return pr, true
 }
 
 // removeLegacyClaimLabelForLease tells the stage engine the contributor
