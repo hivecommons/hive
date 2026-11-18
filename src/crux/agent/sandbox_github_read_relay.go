@@ -71,10 +71,18 @@ func sandboxReadEnv(proxyURL, caPath string, extraNoProxy []string) map[string]s
 		"REQUESTS_CA_BUNDLE":  caPath,
 		"CURL_CA_BUNDLE":      caPath,
 		"NODE_EXTRA_CA_CERTS": caPath,
+		// libcurl (so git) verifies an https PROXY against its own CA setting,
+		// separate from the one for the origin server: GIT_SSL_CAINFO alone
+		// does not cover it. Git reads this entry from the environment.
+		"GIT_CONFIG_COUNT":   "1",
+		"GIT_CONFIG_KEY_0":   "http.proxySSLCAInfo",
+		"GIT_CONFIG_VALUE_0": caPath,
 	}
 }
 
 // mergeSandboxEnv returns base overlaid with extra; neither input is mutated.
+// GIT_CONFIG_* entries in extra are dropped when base already defines
+// GIT_CONFIG_COUNT, so the relay never rewrites a git config the Job has set.
 func mergeSandboxEnv(base, extra map[string]string) map[string]string {
 	if len(extra) == 0 {
 		return base
@@ -83,7 +91,11 @@ func mergeSandboxEnv(base, extra map[string]string) map[string]string {
 	for k, v := range base {
 		out[k] = v
 	}
+	_, baseGitConfig := base["GIT_CONFIG_COUNT"]
 	for k, v := range extra {
+		if baseGitConfig && strings.HasPrefix(k, "GIT_CONFIG_") {
+			continue
+		}
 		out[k] = v
 	}
 	return out

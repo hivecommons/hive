@@ -411,6 +411,11 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 
 func (c *Config) validateJobAffinities() error {
 	if c.AgentSandbox.Job != nil {
+		if err := c.AgentSandbox.Job.GitHubReadProxy.Validate(); err != nil {
+			return err
+		}
+	}
+	if c.AgentSandbox.Job != nil {
 		if err := cruxconfig.ValidateSandboxJobAffinity(c.AgentSandbox.Job.Affinity); err != nil {
 			return fmt.Errorf("agent_sandbox.job.%w", err)
 		}

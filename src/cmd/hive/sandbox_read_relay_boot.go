@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"os"
@@ -65,12 +66,16 @@ func (b *boot) wireSandboxGitHubReadRelay() {
 		b.logger.Error("sandbox GitHub read relay not started: cannot listen", "addr", rp.Listen(), "error", err.Error())
 		return
 	}
+	// TLS only: the per-kick key is carried in Proxy-Authorization, so a
+	// plain-HTTP connection is never served. The certificate comes from the
+	// hive proxy CA for the endpoint's host.
+	tlsLn := tls.NewListener(ln, relay.TLSConfig())
 	go func() {
 		// Serve only returns when the listener fails, always with an error.
-		b.logger.Error("sandbox GitHub read relay stopped", "error", relay.Serve(ln).Error())
+		b.logger.Error("sandbox GitHub read relay stopped", "error", relay.Serve(tlsLn).Error())
 	}()
 	b.agentMgr.SetSandboxGitHubReadRelay(relay, rp.NoProxy)
-	b.logger.Info("sandbox GitHub read relay enabled: Job GitHub reads use a read-only, repo-scoped token held by hive; writes are refused", "listen", rp.Listen())
+	b.logger.Info("sandbox GitHub read relay enabled (TLS): Job GitHub reads use a read-only, repo-scoped token held by hive; writes are refused", "listen", rp.Listen(), "endpoint", rp.Endpoint)
 }
 
 // sandboxReadToken mints the READ identity the relay attaches: the

@@ -22,7 +22,7 @@ func TestManifestRelayEnvCarriesNoGitHubToken(t *testing.T) {
 		Image:        "i",
 		EnvAllowlist: []string{"GITHUB_TOKEN", "GH_TOKEN", "HIVE_GITHUB_TOKEN"},
 		Env: map[string]string{
-			"HTTPS_PROXY":    "http://hive-sandbox:relaykey@hive.ns.svc:18445",
+			"HTTPS_PROXY":    "https://hive-sandbox:relaykey@hive.ns.svc:18445",
 			"SSL_CERT_FILE":  "/workspace/.hive/github-read-ca.pem",
 			"GIT_SSL_CAINFO": "/workspace/.hive/github-read-ca.pem",
 			"GITHUB_TOKEN":   secret,

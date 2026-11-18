@@ -167,10 +167,30 @@ func NewSandboxReadRelay(p *GitHubProxy, opts SandboxReadRelayOptions) (*Sandbox
 		return nil, errors.New("sandbox read relay: no proxy")
 	}
 	u, err := url.Parse(strings.TrimSpace(opts.Endpoint))
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
-		return nil, errors.New("sandbox read relay: endpoint must be an http(s)://host:port URL without credentials")
+	if err != nil || u.Hostname() == "" || u.Scheme != "https" || u.User != nil {
+		return nil, errors.New("sandbox read relay: endpoint must be an https://host:port URL without credentials")
 	}
 	return &SandboxReadRelay{p: p, opts: opts, endpoint: u, keys: map[[sha256.Size]byte]string{}, now: time.Now}, nil
+}
+
+// TLSConfig is the server configuration for the relay's listener. The relay
+// is only ever served over TLS: the per-kick key travels in Proxy-Authorization,
+// so a plain-HTTP connection is never accepted. The certificate is issued by
+// the hive proxy CA (the same CA and forging the GitHub interception uses, no
+// new CA and no new key material on disk) for the endpoint's host, as a DNS or
+// IP SAN. Jobs already trust that CA through the bundle Enroll returns.
+func (r *SandboxReadRelay) TLSConfig() *tls.Config {
+	host := canonicalHost(r.endpoint.Hostname())
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			cert, err := r.p.forgeCert(host)
+			if err != nil {
+				return nil, fmt.Errorf("sandbox read relay: issuing listener certificate for %q: %w", host, err)
+			}
+			return &cert, nil
+		},
+	}
 }
 
 // Enroll admits one kick: it mints a per-kick relay key and returns the proxy

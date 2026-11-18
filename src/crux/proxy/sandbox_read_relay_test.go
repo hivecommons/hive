@@ -16,7 +16,11 @@ import (
 	"time"
 )
 
-const testReadToken = "ghs_READONLYTOKEN"
+const (
+	testReadToken = "ghs_READONLYTOKEN"
+	// relayTestHost is the endpoint host the test relay's certificate is for.
+	relayTestHost = "hive.example.svc"
+)
 
 func TestSandboxReadPolicy(t *testing.T) {
 	cases := []struct {
@@ -144,7 +148,7 @@ func newRelayHarnessWithLogger(t *testing.T, token SandboxReadTokenFunc, logger 
 	if logger != nil {
 		p.logger = logger
 	}
-	relay, err := NewSandboxReadRelay(p, SandboxReadRelayOptions{Endpoint: "http://hive.example.svc:18445", Token: token})
+	relay, err := NewSandboxReadRelay(p, SandboxReadRelayOptions{Endpoint: "https://" + relayTestHost + ":18445", Token: token})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +178,8 @@ func newRelayHarnessWithLogger(t *testing.T, token SandboxReadTokenFunc, logger 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	go func() { _ = relay.Serve(ln) }()
+	// The relay is only ever served over TLS, exactly as boot does it.
+	go func() { _ = relay.Serve(tls.NewListener(ln, relay.TLSConfig())) }()
 	h.addr = ln.Addr().String()
 	return h
 }
@@ -189,10 +194,13 @@ func (h *relayHarness) seen() []*http.Request {
 // conn, or the raw HTTP status when the relay refused the CONNECT.
 func (h *relayHarness) connect(t *testing.T, proxyURLUser, target string) (*tls.Conn, int) {
 	t.Helper()
-	conn, err := net.DialTimeout("tcp", h.addr, 5*time.Second)
+	raw, err := net.DialTimeout("tcp", h.addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Leg 1: TLS to the relay itself, verified against the hive CA for the
+	// endpoint host. Leg 2 (below) is the CONNECT tunnel's own TLS.
+	var conn net.Conn = tls.Client(raw, &tls.Config{RootCAs: h.pool, ServerName: relayTestHost})
 	t.Cleanup(func() { _ = conn.Close() })
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	hdr := ""
@@ -238,7 +246,7 @@ func enrollKey(t *testing.T, r *SandboxReadRelay, agentName string) (userinfo st
 	if err != nil {
 		t.Fatal(err)
 	}
-	rest := strings.TrimPrefix(proxyURL, "http://")
+	rest := strings.TrimPrefix(proxyURL, "https://")
 	userinfo, _, _ = strings.Cut(rest, "@")
 	return userinfo, rel
 }
@@ -360,7 +368,7 @@ func TestSandboxReadRelayEnrollCarriesNoGitHubToken(t *testing.T) {
 	if strings.Contains(proxyURL, testReadToken) || strings.Contains(string(bundle), testReadToken) {
 		t.Fatal("the GitHub token must never be in what a Job receives")
 	}
-	if !strings.HasPrefix(proxyURL, "http://"+SandboxReadProxyUser+":") || !strings.Contains(string(bundle), "BEGIN CERTIFICATE") {
+	if !strings.HasPrefix(proxyURL, "https://"+SandboxReadProxyUser+":") || !strings.Contains(string(bundle), "BEGIN CERTIFICATE") {
 		t.Fatalf("unexpected enrollment: %q", proxyURL)
 	}
 }
@@ -387,7 +395,7 @@ func TestSandboxReadRelayTokenIsCached(t *testing.T) {
 
 func TestNewSandboxReadRelayRejectsCredentialedEndpoint(t *testing.T) {
 	p, _ := newTestProxyWithCA(t)
-	for _, ep := range []string{"", "ftp://x:1", "http://u:p@host:1", "host:1"} {
+	for _, ep := range []string{"", "ftp://x:1", "http://host:1", "https://u:p@host:1", "host:1"} {
 		if _, err := NewSandboxReadRelay(p, SandboxReadRelayOptions{Endpoint: ep}); err == nil {
 			t.Errorf("endpoint %q accepted", ep)
 		}
@@ -505,5 +513,67 @@ func TestSandboxReadRelayFailedMintIsNotRetriedPerRequest(t *testing.T) {
 	now = now.Add(sandboxReadTokenRetryAfter + time.Second)
 	if h.relay.readToken() != testReadToken {
 		t.Fatal("relay did not recover after the retry interval")
+	}
+}
+
+// The listener serves TLS only. A plain-HTTP client, even one holding a live
+// key, gets no tunnel and no proxy handling, and the key it sent in the clear
+// is never logged.
+func TestSandboxReadRelayRefusesPlainHTTP(t *testing.T) {
+	var logs lockedBuffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	h := newRelayHarnessWithLogger(t, func() (string, error) { return testReadToken, nil }, logger)
+	user, release := enrollKey(t, h.relay, "deps")
+	defer release()
+	_, key, _ := strings.Cut(user, ":")
+
+	conn, err := net.DialTimeout("tcp", h.addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	auth := base64.StdEncoding.EncodeToString([]byte(user))
+	_, _ = fmt.Fprintf(conn, "CONNECT api.github.com:443 HTTP/1.1\r\nHost: api.github.com:443\r\nProxy-Authorization: Basic %s\r\n\r\n", auth)
+	reply, _ := bufio.NewReader(conn).ReadString('\n')
+	if strings.Contains(reply, "200") || strings.Contains(reply, "407") {
+		t.Fatalf("plain HTTP reached the relay's proxy handler: %q", reply)
+	}
+	if h.dials.Load() != 0 || len(h.seen()) != 0 {
+		t.Fatal("a plain-HTTP request produced upstream traffic")
+	}
+	if strings.Contains(logs.String(), key) || strings.Contains(logs.String(), auth) {
+		t.Fatalf("the key sent over plain HTTP was logged:\n%s", logs.String())
+	}
+}
+
+// The listener certificate is issued by the hive CA for the endpoint host, as a
+// DNS or IP SAN, and for nothing else.
+func TestSandboxReadRelayCertificateHasEndpointSAN(t *testing.T) {
+	for _, tc := range []struct{ endpoint, name string }{
+		{"https://hive.example.svc:18445", "hive.example.svc"},
+		{"https://10.20.30.40:18445", "10.20.30.40"},
+	} {
+		p, _ := newTestProxyWithCA(t)
+		relay, err := NewSandboxReadRelay(p, SandboxReadRelayOptions{Endpoint: tc.endpoint})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := relay.TLSConfig().GetCertificate(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		leaf, err := x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		pool := x509.NewCertPool()
+		pool.AddCert(p.caX509)
+		if _, err := leaf.Verify(x509.VerifyOptions{DNSName: tc.name, Roots: pool}); err != nil {
+			t.Errorf("%s: certificate does not verify for the endpoint host against the hive CA: %v", tc.endpoint, err)
+		}
+		if _, err := leaf.Verify(x509.VerifyOptions{DNSName: "other.example", Roots: pool}); err == nil {
+			t.Errorf("%s: certificate verifies for an unrelated host", tc.endpoint)
+		}
 	}
 }

@@ -24,11 +24,11 @@ func (f *fakeReadRelay) Enroll(agentName string) (string, []byte, func(), error)
 		return "", nil, nil, f.err
 	}
 	f.enrolled = append(f.enrolled, agentName)
-	return "http://hive-sandbox:kickkey@hive.ns.svc:18445", []byte("-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----\n"), func() { f.released++ }, nil
+	return "https://hive-sandbox:kickkey@hive.ns.svc:18445", []byte("-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----\n"), func() { f.released++ }, nil
 }
 
 func TestSandboxReadEnvCarriesNoGitHubToken(t *testing.T) {
-	env := sandboxReadEnv("http://hive-sandbox:kickkey@hive.ns.svc:18445", "/workspace/.hive/github-read-ca.pem", []string{"internal.example"})
+	env := sandboxReadEnv("https://hive-sandbox:kickkey@hive.ns.svc:18445", "/workspace/.hive/github-read-ca.pem", []string{"internal.example"})
 	for k, v := range env {
 		if strings.Contains(v, relayTestGitHubToken) || strings.Contains(strings.ToUpper(k), "TOKEN") {
 			t.Errorf("env %s=%s looks like a GitHub credential", k, v)
@@ -44,6 +44,23 @@ func TestSandboxReadEnvCarriesNoGitHubToken(t *testing.T) {
 	}
 	if _, ok := env["HTTP_PROXY"]; ok {
 		t.Error("plain HTTP must not be proxied")
+	}
+	if !strings.HasPrefix(env["HTTPS_PROXY"], "https://") {
+		t.Errorf("HTTPS_PROXY = %q, want an https:// proxy URL so the key is not sent in cleartext", env["HTTPS_PROXY"])
+	}
+	if env["GIT_CONFIG_KEY_0"] != "http.proxySSLCAInfo" || env["GIT_CONFIG_VALUE_0"] != env["GIT_SSL_CAINFO"] {
+		t.Errorf("git must verify the https proxy against the hive CA bundle: %v", env)
+	}
+}
+
+func TestMergeSandboxEnvKeepsJobGitConfig(t *testing.T) {
+	base := map[string]string{"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "a.b", "GIT_CONFIG_VALUE_0": "c"}
+	got := mergeSandboxEnv(base, sandboxReadEnv("https://u:k@h:1", "/ca.pem", nil))
+	if got["GIT_CONFIG_COUNT"] != "2" || got["GIT_CONFIG_KEY_0"] != "a.b" {
+		t.Fatalf("the relay overwrote the Job's git config: %v", got)
+	}
+	if got["HTTPS_PROXY"] == "" {
+		t.Fatal("the proxy env must still be applied")
 	}
 }
 

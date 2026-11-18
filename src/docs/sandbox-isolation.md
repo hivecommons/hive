@@ -287,12 +287,40 @@ agent_sandbox:
   job:
     github_read_proxy:
       enabled: true
-      endpoint: http://hive.hive-system.svc:18445   # how Job pods reach hive; required
-      listen_addr: ":18445"                          # optional, this is the default
+      listen_addr: ":8443"                           # required when enabled; there is no default
+      endpoint: https://hive.hive-system.svc:8443   # how Job pods reach hive; required, https only
       no_proxy: [ models.internal.example ]          # optional extra direct hosts
 ```
 
-With it on, hive listens on `listen_addr` and every `sandbox.runtime: job` kick (the agent run, not the `publish.verify` preflights) gets `HTTPS_PROXY` set to `endpoint` with a **per-kick relay key**, plus `SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and `NODE_EXTRA_CA_CERTS` pointing at a trust bundle hive writes to `<workspace>/.hive/github-read-ca.pem` (the system roots plus hive's proxy CA, so the Job still trusts the real internet). `localhost`, `.svc` and `.cluster.local` bypass the relay. The block is read from `agent_sandbox.job` only; a per-agent `job` block cannot enable or repoint it. You must expose the listener to the Job pods yourself: a Service for `listen_addr`, and a NetworkPolicy allowing the Job pods to reach it.
+The feature is **off by default**. When `enabled` is true, `listen_addr` is required (there is no default bind, so hive never opens a port you did not name) and `endpoint` must be `https://`; config validation fails with an error naming the key otherwise. With it on, hive listens on `listen_addr`, **serving TLS only** with a certificate issued by hive's existing proxy CA for the `endpoint` host (a DNS or IP SAN; no new CA, and no CA key is written anywhere new), and every `sandbox.runtime: job` kick (the agent run, not the `publish.verify` preflights) gets `HTTPS_PROXY` set to `endpoint` (an `https://` proxy URL) with a **per-kick relay key**, plus `SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and `NODE_EXTRA_CA_CERTS` pointing at a trust bundle hive writes to `<workspace>/.hive/github-read-ca.pem` (the system roots plus hive's proxy CA, so the Job still trusts the real internet). `localhost`, `.svc` and `.cluster.local` bypass the relay. The block is read from `agent_sandbox.job` only; a per-agent `job` block cannot enable or repoint it. You must expose the listener to the Job pods yourself: a Service for `listen_addr`, and a NetworkPolicy allowing only the Job pods to reach it.
+
+**Two layers guard the listener.** The first is the NetworkPolicy: it decides which pods can open a connection to the relay port at all. The second is the per-kick relay key: a connection that gets through must still present a live key, or it gets a 407 and nothing else. The key is random per kick, held by hive only as a hash, never logged, and revoked when the kick ends. Because the listener serves TLS only, the key never crosses the pod network in cleartext, and a plain-HTTP connection is dropped before any proxy handling. Example NetworkPolicy, applied in hive's namespace, allowing ingress on the relay port only from pods in the Jobs' namespace (replace the placeholders):
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hive-github-read-relay
+  namespace: <hive-namespace>
+spec:
+  podSelector:
+    matchLabels:
+      <label-selecting-the-hive-pod>: <value>
+  policyTypes: [ Ingress ]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <jobs-namespace>
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: hive-kubejob
+      ports:
+        - protocol: TCP
+          port: 8443   # your listen_addr port
+```
+
+Client support for an `https://` proxy URL varies. Go, Node (through its proxy agents) and libcurl 7.52 or newer (curl, and git built on it) can speak TLS to a proxy. libcurl checks an https proxy against its own CA setting rather than the origin's, so hive also sets `http.proxySSLCAInfo` through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` (skipped when the Job already defines `GIT_CONFIG_COUNT`). Some clients, for example Python HTTP stacks built on urllib3 older than 2.0, cannot speak TLS to a proxy; for those the Job's reads go out anonymously, as without the relay. Hive does not downgrade to a cleartext proxy for them.
 
 What the relay does:
 
