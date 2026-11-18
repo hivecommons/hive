@@ -1,6 +1,8 @@
 package reviewfeedback
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -215,5 +217,93 @@ func TestEnabled(t *testing.T) {
 	t.Setenv(DisableEnvVar, "off")
 	if Enabled() {
 		t.Fatal("off must disable")
+	}
+}
+
+func TestDir_EnvOverrideAndDefault(t *testing.T) {
+	if Dir() != DefaultDir {
+		t.Fatalf("Dir() = %q", Dir())
+	}
+	t.Setenv(DirEnvVar, "/tmp/x-feedback")
+	if Dir() != "/tmp/x-feedback" {
+		t.Fatalf("Dir() = %q", Dir())
+	}
+}
+
+func TestOpen_CorruptFileGivesUsableEmptyStore(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, stateFile), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir)
+	if err == nil || s == nil || len(s.PRs) != 0 {
+		t.Fatalf("store = %+v err = %v, want an error and a usable empty store", s, err)
+	}
+	if err := s.RecordKick("o/r#1", []github.FeedbackItem{item("inline:1")}, time.Now()); err != nil {
+		t.Fatalf("store must still persist: %v", err)
+	}
+}
+
+func TestOpen_UnreadablePathReportsError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, stateFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(dir); err == nil {
+		t.Fatal("a directory in place of the state file must report an error")
+	}
+}
+
+func TestRecordKick_PrunesStaleRecords(t *testing.T) {
+	s, _ := Open(t.TempDir())
+	now := time.Now()
+	_ = s.RecordKick("o/r#old", []github.FeedbackItem{item("inline:1")}, now.Add(-handledRetention-time.Hour))
+	_ = s.RecordKick("o/r#new", []github.FeedbackItem{item("inline:2")}, now)
+	if _, ok := s.PRs["o/r#old"]; ok {
+		t.Fatal("stale PR record kept")
+	}
+}
+
+func TestPlan_MaxItemsBoundsOneBrief(t *testing.T) {
+	s, _ := Open(t.TempDir())
+	var items []github.FeedbackItem
+	for i := 0; i < 5; i++ {
+		items = append(items, item("inline:"+string(rune('a'+i))))
+	}
+	lim := testLimits
+	lim.MaxItems = 2
+	if d := s.Plan("o/r#1", items, time.Now(), lim); len(d.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(d.Items))
+	}
+}
+
+func TestLimitsNormalized_FillsInvalidKnobs(t *testing.T) {
+	l := Limits{Debounce: -1}.Normalized()
+	if l.Debounce != DefaultDebounce || l.Window != DefaultWindow || l.WindowCap != DefaultWindowCap || l.MaxItems != DefaultMaxItems {
+		t.Fatalf("normalized = %+v", l)
+	}
+}
+
+func TestNeedsHumanNote_CarriesMarkerReasonAndLinks(t *testing.T) {
+	note := NeedsHumanNote("no agent", []github.FeedbackItem{item("inline:1"), item("inline:2")})
+	for _, want := range []string{github.FeedbackNeedsHumanMarker, "no agent", "https://example.invalid/inline:1", "https://example.invalid/inline:2"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note missing %q", want)
+		}
+	}
+}
+
+func TestBuildBrief_TruncatesLongBodiesAndShowsThreadlessInlineItem(t *testing.T) {
+	long := item("inline:5")
+	long.Body = strings.Repeat("x", bodyRunes+50)
+	long.Line = 0
+	brief := BuildBrief("o/r", 1, "", "", []github.FeedbackItem{long})
+	if !strings.Contains(brief, "...") || !strings.Contains(brief, "thread T-inline:5") {
+		t.Fatal("long body must be truncated and the thread id named")
+	}
+	withURL := github.FeedbackItem{ID: "inline:6", ThreadID: "T6", Kind: github.PRCommentInline, Author: "n", Body: "b", Path: "a.md", Line: 3, URL: "https://example.invalid/6",
+		Thread: []github.FeedbackMessage{{ID: "inline:6", Author: "n", Body: "b", URL: "https://example.invalid/6"}}}
+	if b := BuildBrief("o/r", 1, "", "", []github.FeedbackItem{withURL}); !strings.Contains(b, "a.md:3") || !strings.Contains(b, "https://example.invalid/6") {
+		t.Fatal("thread header must carry path:line and message url")
 	}
 }
