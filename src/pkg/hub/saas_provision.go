@@ -1505,22 +1505,21 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 // hosted-<name>-qcd0.apps... — same hive, same display name, different random
 // suffix, and nothing in the hub ever compared the two.
 //
-// Reality wins. The Route is what actually serves traffic, so when the live host
-// disagrees with the stored one the stored one is what is wrong, and we adopt
-// the live host rather than trying to make the cluster match the registry.
+// Reality wins. When none of the live hosts matches the stored one, we adopt
+// the first live host rather than trying to make the cluster match the registry.
 //
 // Conservative by design, mirroring the mint paths it sits beside:
 //   - A cluster that cannot be read (unreachable, kubectl error, no vanity
-//     route) yields "" from existingVanityHost, which is NOT evidence of drift.
+//     route) yields no existingVanityHosts, which is NOT evidence of drift.
 //     We return early and keep the stored value; a heartbeat-only cluster must
 //     never have its working URL blanked by an inability to look.
-//   - A live host that already matches the stored one is the overwhelmingly
-//     common case and writes nothing.
+//   - Any live host that matches the stored one writes nothing, even when an
+//     ingress also serves aliases before it in rule order.
 //   - No makeVanityHostServable call: the host we are adopting is, by
 //     construction, the one an existing Route already serves, so it needs no
 //     ingress work. That also keeps this path free of any cluster WRITE.
 //   - The record is RE-LOADED before writing, for the same reason every other
-//     path in this file does it: existingVanityHost can block for minutes in
+//     path in this file does it: existingVanityHosts can block for minutes in
 //     kubectl while the heartbeat path keeps load-modify-writing this hive
 //     (ClaimDelivered/ACMMDelivered latches, forge handshakes), and saving
 //     through a pre-window copy would silently revert them.
@@ -1529,18 +1528,20 @@ func (s *HubServer) reconcileStaleVanityURL(hiveID string, h *SaaSHive, cluster 
 	if stored == "" {
 		return false
 	}
-	liveHost := s.existingVanityHost(hiveID, cluster)
-	if liveHost == "" {
+	liveHosts := s.existingVanityHosts(hiveID, cluster)
+	if len(liveHosts) == 0 {
 		// Could not read the cluster, or there is no vanity route to compare
 		// against. Absence of evidence is not evidence of drift — keep what we
 		// have, since it is the only link the dashboard can offer.
 		s.recordVanityRepairFailure(hiveID, "could not read existing vanity route")
 		return false
 	}
-	liveURL := "https://" + liveHost
-	if stored == liveURL {
-		return false // already tracking the live route
+	for _, host := range liveHosts {
+		if stored == "https://"+host {
+			return false // already tracking a live route, not necessarily the first
+		}
 	}
+	liveURL := "https://" + liveHosts[0]
 	// Re-load before writing so we do not clobber fields written while the
 	// kubectl read above was blocked.
 	h = loadSaaSHive(hiveID)
@@ -1941,8 +1942,18 @@ func (s *HubServer) mintClaimVanityURL(hiveID string) {
 // Best-effort by design: on any error it returns "" and the caller mints a
 // fresh host exactly as before, so an unreachable cluster is no worse off.
 func (s *HubServer) existingVanityHost(hiveID string, cluster *ClusterConfig) string {
-	if cluster == nil {
+	hosts := s.existingVanityHosts(hiveID, cluster)
+	if len(hosts) == 0 {
 		return ""
+	}
+	return hosts[0]
+}
+
+// existingVanityHosts returns every non-placeholder host served by the live
+// vanity Route/Ingress, in rule order. An empty result is not evidence of drift.
+func (s *HubServer) existingVanityHosts(hiveID string, cluster *ClusterConfig) []string {
+	if cluster == nil {
+		return nil
 	}
 	ns := "hive-hosted-" + hiveID
 	placeholderHost := hiveID + "." + cluster.Domain
@@ -1951,23 +1962,28 @@ func (s *HubServer) existingVanityHost(hiveID string, cluster *ClusterConfig) st
 		out, err := kubectlForCluster(cluster, "-n", ns, "get", "route",
 			routeBaseDashboard+"-vanity", "-o", "jsonpath={.spec.host}").Output()
 		if err != nil {
-			return ""
+			return nil
 		}
-		return strings.TrimSpace(string(out))
+		host := strings.TrimSpace(string(out))
+		if host == "" || host == placeholderHost {
+			return nil
+		}
+		return []string{host}
 	}
 
-	// nginx: the vanity host is the rule whose host is not the placeholder.
+	// nginx: multiple rules may serve vanity hosts alongside the placeholder.
 	out, err := kubectlForCluster(cluster, "-n", ns, "get", "ingress", "hive",
 		"-o", "jsonpath={.spec.rules[*].host}").Output()
 	if err != nil {
-		return ""
+		return nil
 	}
+	var hosts []string
 	for _, host := range strings.Fields(string(out)) {
-		if host != placeholderHost && host != "" {
-			return host
+		if host != placeholderHost {
+			hosts = append(hosts, host)
 		}
 	}
-	return ""
+	return hosts
 }
 
 // makeVanityHostServable creates the ingress/route that makes vanityHost resolve,
