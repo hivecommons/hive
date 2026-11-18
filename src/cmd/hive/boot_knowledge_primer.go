@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/reviewrules"
 )
 
 // beadSynthVaultPath is where the bead synthesizer writes its facts.
@@ -52,9 +55,45 @@ func (b *boot) registerKnowledgeStores(p *knowledge.Primer) {
 			b.logger.Info("bead-synth vault registered with primer", "layer", layer)
 		}
 	}
+	b.registerReviewRuleVault(api, p)
 	if gs := api.GraphStore(); gs != nil {
 		p.SetGraphStore(gs)
 		api.WireContext7Suggester(p)
+	}
+}
+
+// registerReviewRuleVault connects the local channel the review-feedback sweep
+// writes reviewer-stated rules into (hivecommons/hive#19046) and registers it
+// with p as a pinned store: an approved rule whose scope admits a kick reaches
+// that kick whatever its keywords are. The channel shows in the dashboard's
+// knowledge list like any other, with each rule's source comment and reviewer.
+func (b *boot) registerReviewRuleVault(api *knowledge.KnowledgeAPI, p *knowledge.Primer) {
+	if !reviewrules.Enabled() {
+		return
+	}
+	dir := reviewrules.VaultDir()
+	store := api.GetVaultStore(dir)
+	if store == nil {
+		// Create the channel only beside the hive's other vaults. A host
+		// with no vaults directory gets the channel on the first capture
+		// and connects it at the next boot.
+		if _, err := os.Stat(filepath.Dir(dir)); err != nil {
+			if _, derr := os.Stat(dir); derr != nil {
+				return
+			}
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			b.logger.Debug("review-rule vault not created; reviewer rules are not primed", "dir", dir, "error", err)
+			return
+		}
+		if err := api.ConnectVault(dir, reviewrules.VaultName); err != nil {
+			b.logger.Warn("review-rule vault not connected; reviewer rules are not primed", "dir", dir, "error", err)
+			return
+		}
+		store = api.GetVaultStore(dir)
+	}
+	if store != nil {
+		p.AddPinnedFileStore(reviewrules.VaultName, store, knowledge.LayerProject)
 	}
 }
 
