@@ -11,6 +11,12 @@ import "time"
 // paused by something else.
 const BreakerTrigger = "fleet-breaker"
 
+// ModelRejectedTrigger is the PausedTrigger of the park the runtime applies
+// after repeated CLI model rejections (crux/agent). Hosts read it to tell
+// that pause from every other: an operator's model or backend change lifts
+// it, and nothing else does.
+const ModelRejectedTrigger = "model-rejected"
+
 // PauseCausation is hook causation metadata carried in agent pause/resume
 // events without making the runtime import the host's hook package.
 type PauseCausation struct {

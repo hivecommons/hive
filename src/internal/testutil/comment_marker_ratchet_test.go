@@ -25,8 +25,12 @@ import (
 //
 // v6 carries one more than v5's 45: its own emitters (ApproveIssueRelease,
 // inheritDeferredDecisions, noteSignoffAttributionDecision,
-// postAdoptionEscalationNote) outnumber the v5-only ones it lacks.
-const commentMarkerBaseline = 46
+// postAdoptionEscalationNote) outnumber the v5-only ones it lacks. The
+// 2026-11-18 v5 top-up added v5's closeCoveredContributorPR, which writes an
+// `adoption-covered` marker and posts once per head (the stage record's
+// AdoptBlockedCoveredByOpenPR guard) but is not one of the in-place editors
+// this scan recognises.
+const commentMarkerBaseline = 47
 
 // commentEmitterCalls are the raw comment-create calls the ratchet looks
 // for. Marker-aware helpers (EditIssueMarkerComment, UpsertPRStatusSection,

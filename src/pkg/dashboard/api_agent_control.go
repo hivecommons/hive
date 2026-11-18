@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
-	cruxagent "github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
@@ -373,10 +372,6 @@ func (s *Server) validateModelForAgent(name, model string) error {
 		// Unknown agents are reported by the caller.
 		return nil
 	}
-	backend := proc.Config.Backend
-	if proc.BackendOverride != "" {
-		backend = proc.BackendOverride
-	}
 	// Shape check first: it needs no catalogue, so it also holds when the
 	// list below cannot be enumerated and the value would otherwise pass.
 	if err := malformedModelIDError(backend, model); err != nil {
@@ -504,7 +499,7 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	// Restart the agent session so the new backend takes effect immediately —
 	// unless the agent is stopped or paused, where a restart would be wrong:
 	// the saved choice applies when it next starts.
-	if agentHoldsNoSession(proc) && proc.PausedTrigger != cruxagent.ModelRejectedTrigger {
+	if agentHoldsNoSession(proc) && proc.PausedTrigger != crux.ModelRejectedTrigger {
 		minStatusSeq := s.refreshAndPersistSeq()
 		jsonResponse(w, savedNotRunningResponse("backend_saved", name, "backend", backend, minStatusSeq))
 		return
@@ -573,7 +568,7 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 	// Restart the agent session so the new model takes effect immediately —
 	// unless the agent is stopped or paused: the saved choice applies when it
 	// next starts, and a restart must not wake it.
-	if agentHoldsNoSession(proc) && proc.PausedTrigger != cruxagent.ModelRejectedTrigger {
+	if agentHoldsNoSession(proc) && proc.PausedTrigger != crux.ModelRejectedTrigger {
 		minStatusSeq := s.refreshAndPersistSeq()
 		jsonResponse(w, savedNotRunningResponse("model_saved", name, "model", model, minStatusSeq))
 		return
