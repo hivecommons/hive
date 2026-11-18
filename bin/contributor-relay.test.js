@@ -15990,6 +15990,7 @@ test('#19049 answerClaudeBypassConsent presses Enter once the pane shows Yes sel
     paneText: () => (captures++ === 0 ? CLAUDE_CONSENT_PANE_NO_SELECTED : CLAUDE_CONSENT_PANE_YES_SELECTED) });
   const log = console.log; console.log = () => {};
   try {
+    captures = 0; // the relay's own startup poll already consumed captures
     const before = relay.__tmuxSends().length;
     assert.strictEqual(relay.answerClaudeBypassConsent(), true);
     const sent = sendsAfter(relay, before);
