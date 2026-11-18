@@ -31,6 +31,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/delegation"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
+	"github.com/hivecommons/hive/pkg/netguard"
 	"github.com/hivecommons/hive/pkg/reach"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
@@ -5162,35 +5163,10 @@ func isPrivateURL(ctx context.Context, rawURL string) bool {
 			break
 		}
 	}
-	host := rawURL
-	if idx := strings.IndexAny(host, ":/"); idx >= 0 {
-		host = host[:idx]
-	}
-	host = strings.ToLower(host)
-	blocked := []string{"localhost", "127.", "10.", "172.16.", "172.17.", "172.18.", "172.19.",
-		"172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
-		"172.28.", "172.29.", "172.30.", "172.31.", "192.168.", "169.254.", "[::1]", "[::ffff:", "0.0.0.0", "0."}
-	for _, p := range blocked {
-		if strings.HasPrefix(host, p) {
-			return true
-		}
-	}
-
-	// Resolve hostname to catch DNS names that map to private IPs (DNS rebinding).
-	addrs, err := privateURLResolver(ctx, host)
-	if err != nil {
-		// If DNS fails, treat as private (fail-closed) to prevent bypass.
-		return true
-	}
-	for _, addr := range addrs {
-		for _, p := range blocked {
-			if strings.HasPrefix(addr, p) {
-				return true
-			}
-		}
-	}
-
-	return false
+	// One shared, netip-based classifier (pkg/netguard) judges the host, so
+	// the string-prefix blind spots (CGNAT, fc00::/7, fe80::/10, bare ::1,
+	// userinfo before an internal host, integer IP literals) cannot reopen.
+	return netguard.HostBlocked(ctx, rawURL, netguard.Resolver(privateURLResolver))
 }
 
 func clampInt(v, min, max int) int {

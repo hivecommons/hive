@@ -343,6 +343,24 @@ on the same evidence as a literal IP. Set
 destination is intended; it lifts the guard for all three legs at once, and the
 proxy warns at boot when it is set.
 
+**Server-side fetchers.** Every place the hive fetches a URL that a user or
+a remote party supplied (the dashboard and hub SSRF checks, which gate
+contribute, knowledge, gateway, webhook and enrollment URLs) classifies the
+destination with one shared, `net/netip`-based classifier rather than a text
+prefix list. It refuses loopback, RFC 1918, CGNAT (`100.64.0.0/10`),
+link-local including the metadata address, unique-local `fc00::/7`,
+IPv6 link-local, multicast, unspecified, reserved and documentation ranges,
+and IPv4 carried in IPv4-mapped, NAT64 and 6to4 addresses. A userinfo section
+before the host, a port, brackets, a zone, a trailing dot and non-canonical
+IPv4 spellings (decimal, octal, hex, short form) are normalised or refused,
+and a failed, empty or unparseable resolution is refused. The inbox link
+fetcher uses the same ranges. Set `HIVE_FETCH_ALLOW_CGNAT=true` only where
+hubs and spokes reach each other over a CGNAT-numbered overlay network; it
+lifts only that range for the dashboard and hub checks. Accepted limits,
+tracked on #18986: these checks resolve once and the HTTP client resolves
+again at dial time (a rebinding window the inbox link fetcher does not have),
+and the operator-configured gateway endpoints are treated as trusted.
+
 **Hub-to-spoke channel.** Heartbeats carry a per-hive bearer key derived from
 the hub master secret and are compared in constant time. The payload is
 telemetry only: health, version, agent and governor summaries and 24-hour

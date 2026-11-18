@@ -1,0 +1,1 @@
+- Security: one shared address classifier now guards server-side URL fetches; the dashboard and hub checks no longer miss CGNAT, unique-local, link-local IPv6, IPv4-in-IPv6, userinfo-prefixed and integer-spelled internal addresses (#18986)

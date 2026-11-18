@@ -102,6 +102,13 @@ Read each control's exceptions and the residual risks, not just its name.
   fails closed at L5–L6. The deterministic rules, canaries and proxy denials
   are the floor; the language-model classifier adds coverage above it.
 * **Trajectory review reads transcripts, not reasoning**, and fails open.
+* **Fetcher DNS rebinding window.** The dashboard, hub and knowledge
+  fetchers validate a resolved address and then let the HTTP client resolve
+  the name again, unlike the inbox link fetcher and the proxy, which dial
+  the checked address
+  ([#18986](https://github.com/hivecommons/hive/issues/18986)). The address
+  classifier itself is shared and covers CGNAT, unique-local, link-local,
+  IPv4-in-IPv6 and non-canonical IPv4 spellings.
 * **Hub compromise is high impact.** The hub still coordinates callbacks,
   registry data, terminal authorization and fleet visibility.
 

@@ -48,10 +48,12 @@ func stubPrivateURLResolver(t *testing.T, publicHosts ...string) {
 }
 
 // publicTestResolvedAddr is the address stubPrivateURLResolver returns for
-// hosts a test declares public. 203.0.113.0/24 is TEST-NET-3 (RFC 5737),
-// reserved for documentation, so it is guaranteed never to be routed and never
-// to collide with any private range isPrivateURL blocks.
-const publicTestResolvedAddr = "203.0.113.10"
+// hosts a test declares public. It must be globally routable: the shared
+// classifier (pkg/netguard) refuses documentation ranges such as TEST-NET-3
+// as well as every private prefix, so a documentation address would be
+// classified private. 93.184.216.34 is a public address no private rule
+// matches; no connection is ever made to it.
+const publicTestResolvedAddr = "93.184.216.34"
 
 // TestStubPrivateURLResolverIsFailClosed is the positive control for the helper
 // above: it proves the stub does not accidentally make isPrivateURL permissive.
