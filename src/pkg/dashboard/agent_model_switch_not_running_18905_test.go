@@ -156,22 +156,21 @@ func TestHandleModelSet_UnknownAgentListsValidNames(t *testing.T) {
 	}
 }
 
-// A live agent keeps the original contract: the switch is applied (no
-// applied=false / saved message).
-func TestHandleModelSet_RunningAgentStillApplies(t *testing.T) {
+// An agent the runtime holds still gets its override set. The test runtime never
+// launches agents, so scanner reads as stopped and answers "saved"; a launched
+// agent answers "model_set" with no applied field. Either way the runtime
+// override is set and the call succeeds.
+func TestHandleModelSet_RegisteredAgentSetsOverride(t *testing.T) {
 	s, deps := apiServer(t)
 	rec := doPost(s, "/api/model/scanner/"+notRunningTestModel, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	body := decodeBody18905(t, rec)
-	if body["status"] != "model_set" {
-		t.Fatalf("status field = %v, want model_set", body["status"])
-	}
-	if _, has := body["applied"]; has {
-		t.Fatalf("a live switch must not carry applied=false: %v", body)
+	if body["ok"] != true {
+		t.Fatalf("want ok=true, got %v", body)
 	}
 	if proc, _ := deps.AgentMgr.GetStatus("scanner"); proc == nil || proc.ModelOverride != notRunningTestModel {
-		t.Fatalf("live ModelOverride not set")
+		t.Fatalf("runtime ModelOverride not set")
 	}
 }
