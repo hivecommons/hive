@@ -1,0 +1,1 @@
+- A `blocked` issue waiting on a person's action (the owner-action blocked-on marker) now carries `needs_human_why` with source `blocked-on-owner` and the reason "needs an owner action: ...", so the row, the Needs human filter and the waiting-on-you list agree with the caption. See `src/docs/dashboard-sections/activity-monitor.md`
