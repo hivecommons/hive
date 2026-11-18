@@ -629,6 +629,15 @@ type AutoMergeConfig struct {
 	// automerge sweep and /approve gates (#16266), and the hive-merge relay
 	// (#16265).
 	HumanMergePinOnly map[string]PinOnlyException `yaml:"human_merge_pin_only,omitempty" json:"human_merge_pin_only,omitempty"`
+	// HumanMergeOwnerApproval lists owner/repo names where a trusted
+	// merger's explicit approval of a pull request's current head releases
+	// the human-merge-path hold: the merge lanes then merge it once every
+	// other gate passes. Explicit approval is a GitHub Approve review on that
+	// head, a `/hive decision approve` (typed or from the dashboard) or a
+	// `/hive approve` posted after the head, by a trusted merger. A later push
+	// needs a new approval. Unset (the default) keeps the rule absolute: a
+	// person merges every such pull request by hand.
+	HumanMergeOwnerApproval []string `yaml:"human_merge_owner_approval,omitempty" json:"human_merge_owner_approval,omitempty"`
 	// Unset uses the default owner-merge rule; explicit empty lists disable
 	// their half of the title/label rule.
 	HumanMergeTitlePrefixes []string `yaml:"human_merge_title_prefixes,omitempty" json:"human_merge_title_prefixes,omitempty"`
@@ -827,6 +836,13 @@ func (a AutoMergeConfig) MergeForwardTrustedHumanFor(repo string) bool {
 // is listed in auto_merge.squash_only.
 func (a AutoMergeConfig) SquashOnlyFor(repo string) bool {
 	return repoListSet(a.SquashOnly)[strings.ToLower(strings.TrimSpace(repo))]
+}
+
+// HumanMergeOwnerApprovalFor reports whether repo (owner/repo) is listed in
+// auto_merge.human_merge_owner_approval: an owner's explicit approval of a
+// pull request's current head releases its human-merge-path hold there.
+func (a AutoMergeConfig) HumanMergeOwnerApprovalFor(repo string) bool {
+	return repoListSet(a.HumanMergeOwnerApproval)[strings.ToLower(strings.TrimSpace(repo))]
 }
 
 // SupersessionSweepConfig tunes the supersession sweep

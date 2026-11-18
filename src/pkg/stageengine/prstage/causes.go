@@ -17,6 +17,10 @@ const (
 	CauseTestsRemoved      = "the PR removes tests, which the lane never merges unattended"
 	CauseReporterTrustHold = "the reporter-trust hold is in place"
 	CauseHumanMergePath    = "the PR touches a human-merge path (auto_merge.human_merge_paths)"
+	// CauseHumanMergePathAwaitingApproval: the same refusal on a repository
+	// listed in auto_merge.human_merge_owner_approval, where a trusted
+	// merger's approval of the current head releases it.
+	CauseHumanMergePathAwaitingApproval = "the PR touches a human-merge path (auto_merge.human_merge_paths): awaiting a trusted merger's approval of the current head, which on this repository (auto_merge.human_merge_owner_approval) releases the hive's hold so it merges the PR once the other gates clear"
 	// CauseHumanMergeRequired: the breaking-change title or the
 	// needs-owner-merge label; the words the 090 chip and gate reuse.
 	CauseHumanMergeRequired   = "breaking change — owner merges"

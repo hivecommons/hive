@@ -56,6 +56,7 @@ func autoMergeFixture() map[string]any {
 		"squash_only":                  []string{"org/a", "org/b"},
 		"require_current_base":         []string{},
 		"human_merge_paths":            map[string][]string{"org/a": {".github/workflows/**", ".claude/hooks/**"}, "org/b": {"CODEOWNERS"}},
+		"human_merge_owner_approval":   []string{"org/b"},
 		"project_repos":                []string{"org/a", "org/b", "org/c"},
 		"trusted_bot_authors":          []string{"dependabot[bot]"},
 		"bot_takeover_enabled":         false,
@@ -282,5 +283,36 @@ func TestAutoMergeUpdateRefusesNonOwner(t *testing.T) {
 	}
 	if len(p.requests) != 0 {
 		t.Fatalf("wrote without owner access: %+v", p.requests)
+	}
+}
+
+// auto_merge.human_merge_owner_approval is a repository list like
+// squash_only: a change sends the whole list, keeping the repositories it
+// does not name, and adding one is widening (an owner's approval then lets
+// the hive merge that repository's human-merge paths); removing one is not.
+func TestAutoMergeUpdateHumanMergeOwnerApproval(t *testing.T) {
+	p := &autoMergeProvider{settings: autoMergeFixture()}
+	h := autoMergeHandler(p)
+	preview, id := autoMergePreview(t, h, map[string]any{"human_merge_owner_approval": map[string]any{"add": []any{"org/a"}}})
+	want := `{"human_merge_owner_approval":["org/b","org/a"]}`
+	if got := compactJSON(preview.Request.Body); got != want {
+		t.Fatalf("body = %s, want %s", got, want)
+	}
+	if !strings.HasPrefix(preview.WideningDisclosure, "Widening:") || !strings.Contains(preview.WideningDisclosure, "human_merge_owner_approval") {
+		t.Fatalf("adding a repository must be widening: %s", preview.WideningDisclosure)
+	}
+	if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if len(p.requests) != 1 || compactJSON(p.requests[0].Body) != want {
+		t.Fatalf("executed %+v, want body %s", p.requests, want)
+	}
+
+	removal, _ := autoMergePreview(t, autoMergeHandler(&autoMergeProvider{settings: autoMergeFixture()}), map[string]any{"human_merge_owner_approval": map[string]any{"remove": []any{"org/b"}}})
+	if got := compactJSON(removal.Request.Body); got != `{"human_merge_owner_approval":[]}` {
+		t.Fatalf("removal body = %s", got)
+	}
+	if strings.HasPrefix(removal.WideningDisclosure, "Widening:") {
+		t.Fatalf("removing a repository is not widening: %s", removal.WideningDisclosure)
 	}
 }

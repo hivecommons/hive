@@ -112,12 +112,44 @@ func humanMergeHeadMarker(head string) string {
 // Callers must supply the process writeback gate (nil fails closed), re-read
 // labels after release, and retain exact-head merge binding.
 func ReleaseHumanMergePathHold(ctx context.Context, client *gh.Client, gate *writeback.Gate, owner, repo string, number int, appLogin, expectedHead string, qualified bool) (bool, error) {
-	if !qualified || client == nil || gate == nil || strings.TrimSpace(appLogin) == "" || !validHumanMergeHead(expectedHead) {
+	if !qualified || gate == nil {
+		return false, nil
+	}
+	allowed := func(item writeback.Item) bool {
+		return gate.Allowed(owner+"/"+repo, item, writeback.KindHoldGateNotice).Allowed
+	}
+	return releaseHumanMergePathHold(ctx, client, allowed, owner, repo, number, appLogin, expectedHead, false)
+}
+
+// ReleaseApprovedHumanMergePathHold removes the `hold` the human-merge-path
+// gate put on PR number once a trusted merger explicitly approved
+// expectedHead on a repository listed in auto_merge.human_merge_owner_approval
+// (the caller establishes both). Unlike the pin-only release it may lift a
+// hold recorded for expectedHead itself, which is the point: the person
+// approved exactly what the hold was put on. The provenance rules are the
+// pin-only release's, widened only for the hold the gate re-adds on a later
+// head (it posts no second notice): every `hold` the PR was ever labelled
+// with must be the App's, the first of them added within a minute before
+// the App's single, unedited, head-stamped notice, and the hold the PR
+// wears now the latest of them. A hold a person added or re-added at any
+// point is never removed. allowed is the caller's write-back decision for
+// the item (nil fails closed). It only removes a label: CI, soak, review and
+// every other merge gate still apply.
+func ReleaseApprovedHumanMergePathHold(ctx context.Context, client *gh.Client, allowed func(writeback.Item) bool, owner, repo string, number int, appLogin, expectedHead string) (bool, error) {
+	return releaseHumanMergePathHold(ctx, client, allowed, owner, repo, number, appLogin, expectedHead, true)
+}
+
+// releaseHumanMergePathHold is the shared body. approved selects the
+// owner-approval rules described on ReleaseApprovedHumanMergePathHold;
+// otherwise the pin-only rules apply (a stale head only, exactly one hold
+// application).
+func releaseHumanMergePathHold(ctx context.Context, client *gh.Client, allowed func(writeback.Item) bool, owner, repo string, number int, appLogin, expectedHead string, approved bool) (bool, error) {
+	if client == nil || allowed == nil || strings.TrimSpace(appLogin) == "" || !validHumanMergeHead(expectedHead) {
 		return false, nil
 	}
 	pr, _, err := client.PullRequests.Get(ctx, owner, repo, number)
 	if err != nil {
-		return false, fmt.Errorf("fetching pin-only head: %w", err)
+		return false, fmt.Errorf("fetching human-merge-path head: %w", err)
 	}
 	if pr.GetHead().GetSHA() != expectedHead {
 		return false, nil
@@ -155,8 +187,12 @@ func ReleaseHumanMergePathHold(ctx context.Context, client *gh.Client, gate *wri
 			if len(tail) < 44 || !validHumanMergeHead(tail[:40]) || !strings.HasPrefix(tail[40:], " -->") {
 				return false, nil
 			}
-			// Only stale path holds may be released, never the currently refused head.
-			if tail[:40] == expectedHead || comment.GetCreatedAt().IsZero() || !comment.GetUpdatedAt().Time.Equal(comment.GetCreatedAt().Time) {
+			if comment.GetCreatedAt().IsZero() || !comment.GetUpdatedAt().Time.Equal(comment.GetCreatedAt().Time) {
+				return false, nil
+			}
+			// The pin-only release lifts only a stale path hold, never the
+			// currently refused head; an owner's approval of that head may.
+			if !approved && tail[:40] == expectedHead {
 				return false, nil
 			}
 			notice = comment
@@ -173,10 +209,13 @@ func ReleaseHumanMergePathHold(ctx context.Context, client *gh.Client, gate *wri
 		return false, nil
 	}
 
-	// Require exactly one hold transition in the complete history, owned by the
-	// configured App and immediately preceding its notice. Older remove/re-add
-	// cycles are deliberately not guessed at, even when the latest actor is App.
-	var applied *gh.IssueEvent
+	// Pin-only: exactly one hold transition in the complete history, owned
+	// by the configured App and immediately preceding its notice. Older
+	// remove/re-add cycles are deliberately not guessed at, even when the
+	// latest actor is App. Approved: the first application is that one,
+	// every later application is also the App's (the gate re-holding a new
+	// head), and the latest transition is an application.
+	var first, last *gh.IssueEvent
 	eventsOpts := &gh.ListOptions{PerPage: 100}
 	for {
 		events, resp, err := client.Issues.ListIssueEvents(ctx, owner, repo, number, eventsOpts)
@@ -190,14 +229,25 @@ func ReleaseHumanMergePathHold(ctx context.Context, client *gh.Client, gate *wri
 			if event.GetEvent() != "labeled" && event.GetEvent() != "unlabeled" {
 				continue
 			}
-			if applied != nil || event.GetEvent() != "labeled" || !strings.EqualFold(event.GetActor().GetLogin(), appLogin) || event.GetActor().GetType() != "Bot" {
+			appApplied := event.GetEvent() == "labeled" && strings.EqualFold(event.GetActor().GetLogin(), appLogin) && event.GetActor().GetType() == "Bot"
+			if first == nil {
+				if !appApplied {
+					return false, nil
+				}
+				delta := notice.GetCreatedAt().Sub(event.GetCreatedAt().Time)
+				if event.GetCreatedAt().IsZero() || delta < 0 || delta > time.Minute {
+					return false, nil
+				}
+				first, last = event, event
+				continue
+			}
+			if !approved {
 				return false, nil
 			}
-			delta := notice.GetCreatedAt().Sub(event.GetCreatedAt().Time)
-			if event.GetCreatedAt().IsZero() || delta < 0 || delta > time.Minute {
+			if event.GetEvent() == "labeled" && !appApplied {
 				return false, nil
 			}
-			applied = event
+			last = event
 		}
 		if resp == nil {
 			return false, nil
@@ -207,7 +257,7 @@ func ReleaseHumanMergePathHold(ctx context.Context, client *gh.Client, gate *wri
 		}
 		eventsOpts.Page = resp.NextPage
 	}
-	if applied == nil {
+	if first == nil || last == nil || last.GetEvent() != "labeled" {
 		return false, nil
 	}
 	// Refetch the head immediately before the write; GitHub label deletion has no
@@ -229,7 +279,7 @@ func ReleaseHumanMergePathHold(ctx context.Context, client *gh.Client, gate *wri
 	for _, label := range current.Labels {
 		item.Labels = append(item.Labels, label.GetName())
 	}
-	if !gate.Allowed(owner+"/"+repo, item, writeback.KindHoldGateNotice).Allowed {
+	if !allowed(item) {
 		return false, nil
 	}
 	if _, err := client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, HumanMergePathHoldLabel); err != nil { // writeback:gated

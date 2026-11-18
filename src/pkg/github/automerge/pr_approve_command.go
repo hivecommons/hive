@@ -99,6 +99,9 @@ func (c *Engine) PRApproveReply(ctx context.Context, displayRepo string, number 
 		if len(matches) == 0 && diffReason == contributorLaneReasonWorkflowPath && contributorLaneTestsRemovedReason(files) == "" && c.currentContributorLanePolicy().OwnerApprovalReleasesWorkflowFence {
 			return "`/hive approve` acknowledged, but it does not release this PR's fence: the PR edits CI workflow / action files, which the contributor lane merges only on a hive owner's explicit approval of the current head (`" + stagelabels.ShortSHA(head) + "`). That is a trusted merger's GitHub **Approve** review, or a `/hive decision approve` reply (typed here or from the Hive dashboard), and either one also answers a `requires_human` review verdict on that head; the owner of their own PR, whom GitHub refuses as a reviewer, replies `/hive decision approve`. The lane merges once CI and the other gates are clear. Approval on an earlier head carries over only the hive's own merge of the base branch, never another push.", nil
 		}
+		if len(matches) > 0 && diffReason == "" && c.humanMergeOwnerApprovalEnabled(owner+"/"+repo) {
+			return c.humanMergeOwnerApprovalReply(ctx, owner, repo, pr, head)
+		}
 		if len(matches) > 0 || diffReason != "" {
 			return "`/hive approve` acknowledged, but this PR changes files that its lane requires a person to merge manually. The command cannot override that rule; a maintainer must review and merge it.", nil
 		}

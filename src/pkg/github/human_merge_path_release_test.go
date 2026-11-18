@@ -163,3 +163,80 @@ func TestHumanMergeHoldHeadAttribution(t *testing.T) {
 		})
 	}
 }
+
+// The owner-approval release (auto_merge.human_merge_owner_approval) may lift
+// the hold on the head it was put on, and a hold the gate re-added on a later
+// head with no second notice; a person's application anywhere in the history,
+// a history that ends removed, or a write-back refusal keeps the hold. The
+// pin-only release still refuses the same head.
+func TestReleaseApprovedHumanMergePathHold(t *testing.T) {
+	head := strings.Repeat("b", 40)
+	oldHead := strings.Repeat("a", 40)
+	app := map[string]string{"login": "hive[bot]", "type": "Bot"}
+	person := map[string]string{"login": "person", "type": "User"}
+	event := func(kind, at string, actor map[string]string) map[string]any {
+		return map[string]any{"event": kind, "created_at": at, "label": map[string]string{"name": "hold"}, "actor": actor}
+	}
+	appHold := event("labeled", "2026-11-02T12:00:01Z", app)
+	for _, tc := range []struct {
+		name       string
+		noticeHead string
+		events     []map[string]any
+		pinOnly    bool
+		refuse     bool
+		want       bool
+	}{
+		{name: "hold on the approved head", noticeHead: head, events: []map[string]any{appHold}, want: true},
+		{name: "pin-only keeps the same-head hold", noticeHead: head, events: []map[string]any{appHold}, pinOnly: true},
+		{name: "App re-held a later head", noticeHead: oldHead, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app)}, want: true},
+		{name: "person re-added the hold", noticeHead: head, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", person), event("labeled", "2026-11-03T10:00:00Z", person)}},
+		{name: "person's hold first", noticeHead: head, events: []map[string]any{event("labeled", "2026-11-02T12:00:01Z", person)}},
+		{name: "history ends removed", noticeHead: head, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app)}},
+		{name: "write-back gate refuses", noticeHead: head, events: []map[string]any{appHold}, refuse: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deletes := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/1"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": head}, "labels": []map[string]string{{"name": "hold"}}})
+				case strings.HasSuffix(r.URL.Path, "/comments"):
+					body := HumanMergePathComment([]string{"Containerfile"}) + humanMergeHeadMarker(tc.noticeHead)
+					_ = json.NewEncoder(w).Encode([]map[string]any{{"body": body, "created_at": "2026-11-02T12:00:02Z", "updated_at": "2026-11-02T12:00:02Z", "user": app}})
+				case strings.HasSuffix(r.URL.Path, "/events"):
+					_ = json.NewEncoder(w).Encode(tc.events)
+				case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/labels/hold"):
+					deletes++
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(404)
+				}
+			}))
+			defer srv.Close()
+			client, err := gh.NewClient(srv.Client()).WithEnterpriseURLs(srv.URL, srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var released bool
+			if tc.pinOnly {
+				gate := writeback.New(writeback.Config{PerRepo: map[string]writeback.RepoOverride{"o/r": {Mode: writeback.RepoModeFull}}}, writeback.Deps{}, "")
+				released, err = ReleaseHumanMergePathHold(context.Background(), client, gate, "o", "r", 1, "hive[bot]", head, true)
+			} else {
+				allowed := func(writeback.Item) bool { return !tc.refuse }
+				released, err = ReleaseApprovedHumanMergePathHold(context.Background(), client, allowed, "o", "r", 1, "hive[bot]", head)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if released != tc.want || (deletes == 1) != tc.want {
+				t.Fatalf("released=%v deletes=%d, want %v", released, deletes, tc.want)
+			}
+		})
+	}
+
+	if released, err := ReleaseApprovedHumanMergePathHold(context.Background(), gh.NewClient(nil), nil, "o", "r", 1, "hive[bot]", head); released || err != nil {
+		t.Fatalf("nil write-back decision: released=%v err=%v, want a refusal with no call", released, err)
+	}
+}

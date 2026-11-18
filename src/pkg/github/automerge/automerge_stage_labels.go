@@ -1196,6 +1196,24 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 				if stale {
 					prov = staleHumanMergePathHold(prov)
+				} else {
+					// The head still touches the path: on a repository
+					// that lets an owner's approval release it, an
+					// approved head's hold comes off here and the lanes
+					// take the PR from the gate.
+					released, err := c.releaseApprovedHumanMergePathHold(ctx, obs, prov)
+					if err != nil {
+						c.warn("stage labels: could not release approved human-merge-path hold", "repo", obs.Display, "pr", obs.Number, "error", err)
+						if firstErr == nil {
+							firstErr = err
+						}
+					}
+					if released {
+						result.Comments++
+						result.Skipped++
+						store.ClearHold(key)
+						continue
+					}
 				}
 			}
 			obs.Hold = prov

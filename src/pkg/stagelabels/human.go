@@ -170,6 +170,12 @@ type Evidence struct {
 	// stays true until that approval, but the 085 actions must ask for the
 	// approval rather than say no approval helps.
 	ApprovalReleasesFence bool
+	// ApprovalReleasesPathHold is true when the manual-merge reason is a
+	// human-merge path on a repository listed in
+	// auto_merge.human_merge_owner_approval: a trusted merger's explicit
+	// approval of Head releases the hive's hold and the hive merges the PR
+	// once the other gates clear, so the 085 actions ask for that approval.
+	ApprovalReleasesPathHold bool
 	// CauseAwaitsApproval is true when CauseReason is that fence awaiting
 	// the owner's approval. Once HumanApprover is set the approval has
 	// released it, so the 085 note stops listing it: a lane stopped at a
@@ -356,6 +362,10 @@ type Route struct {
 	// ApprovalReleasesFence is Evidence.ApprovalReleasesFence: the
 	// manual-merge reason is a workflow-path fence an approval releases.
 	ApprovalReleasesFence bool
+	// ApprovalReleasesPathHold is Evidence.ApprovalReleasesPathHold: the
+	// 085 actions ask for the approval that releases the human-merge-path
+	// hold.
+	ApprovalReleasesPathHold bool
 	// HumanApprover is the trusted merger whose approval on Head settled
 	// the requires_human verdict / manual-merge rule ("" when none).
 	HumanApprover string
@@ -727,7 +737,7 @@ func routeProgress(e Evidence) Route {
 	}
 	if len(decide) > 0 {
 		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict,
-			Holds: append([]string(nil), e.Holds...), Sentinel: e.Sentinel, ManualMerge: e.ManualMerge, ApprovalReleasesFence: e.ManualMerge && e.ApprovalReleasesFence, HumanApprover: approver, Hold: e.Hold}
+			Holds: append([]string(nil), e.Holds...), Sentinel: e.Sentinel, ManualMerge: e.ManualMerge, ApprovalReleasesFence: e.ManualMerge && e.ApprovalReleasesFence, ApprovalReleasesPathHold: e.ManualMerge && e.ApprovalReleasesPathHold, HumanApprover: approver, Hold: e.Hold}
 	}
 	if e.HeadDirty {
 		// GitHub reports this very head `dirty`: it cannot merge, by the
@@ -1016,12 +1026,20 @@ func readyCommentAccept(r Route) string {
 	return "`/lgtm` `/approve` (or merge)"
 }
 
+// approvalReleases reports whether a trusted merger's approval of the head
+// releases the manual-merge reason: the workflow-path fence
+// (ApprovalReleasesFence) or a human-merge path on a repository listed in
+// auto_merge.human_merge_owner_approval (ApprovalReleasesPathHold).
+func (r Route) approvalReleases() bool {
+	return r.ApprovalReleasesFence || r.ApprovalReleasesPathHold
+}
+
 // DecisionComment renders the 085 entry comment naming what is owed. A
 // route with no reasons names DecisionReasonUnnamed instead of an empty list.
 func DecisionComment(r Route) string {
 	var b strings.Builder
 	b.WriteString(DecisionCommentMarker)
-	if r.ManualMerge && !r.ApprovalReleasesFence {
+	if r.ManualMerge && !r.approvalReleases() {
 		b.WriteString("\nNeeds a manual merge decision")
 	} else {
 		b.WriteString("\nNeeds a decision, not a merge")
@@ -1150,7 +1168,7 @@ func DecisionActions(r Route) string {
 	if r.Stage != NeedsDecision {
 		return ""
 	}
-	if r.ManualMerge && !r.ApprovalReleasesFence {
+	if r.ManualMerge && !r.approvalReleases() {
 		return "**What to do:** a maintainer must review and merge this PR manually; an approving review or `/hive approve` does not override this lane's manual-merge rule."
 	}
 	var steps []string
@@ -1162,6 +1180,15 @@ func DecisionActions(r Route) string {
 		// "a trusted merger approves this head" next to "approved by
 		// @Danathar"). Say it is done; the reasons name what is left.
 		steps = append(steps, "nothing more to approve: @"+approver+" approved this head ("+head+"); resolve the other reasons listed above")
+	} else if r.ManualMerge && r.ApprovalReleasesPathHold {
+		// auto_merge.human_merge_owner_approval: an explicit approval of the
+		// head releases the hive's human-merge-path hold; `/hive approve`
+		// counts here, unlike for the workflow-path fence.
+		settles := ""
+		if r.Verdict == VerdictRequiresHuman {
+			settles = " (a GitHub **Approve** review or `/hive decision approve` also settles the reviewer's `requires_human` verdict)"
+		}
+		steps = append(steps, "a trusted merger approves this head ("+head+") with a GitHub **Approve** review, a `/hive decision approve` reply (typed here or from the dashboard) or a `/hive approve` reply; that releases the hive's hold for this repository's human-merge paths"+settles+", and the hive merges the PR once the other gates clear. A new push needs a new approval, except the hive's own update from the base branch")
 	} else if r.ManualMerge {
 		// Only `/hive decision approve` (typed or from the dashboard) and
 		// an Approve review release the fence; `/hive approve` never does

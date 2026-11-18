@@ -170,6 +170,11 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// map, replaced whole like HumanMergePaths: an empty (non-nil) map
 		// clears it, absent leaves it untouched.
 		HumanMergePinOnly map[string]config.PinOnlyException `json:"human_merge_pin_only"`
+		// HumanMergeOwnerApproval is the FULL desired
+		// auto_merge.human_merge_owner_approval list, keyed and stored like
+		// RequireCurrentBase: an empty (non-nil) list clears it, absent
+		// leaves it untouched.
+		HumanMergeOwnerApproval []string `json:"human_merge_owner_approval"`
 		// TrustedBotSkipReview is auto_merge.trusted_bot_skip_review: the
 		// review swarm's verdict is advisory on the trusted-bot lane.
 		TrustedBotSkipReview *bool `json:"trusted_bot_skip_review"`
@@ -254,6 +259,15 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		requireCurrentBase = repos
+	}
+	var humanMergeOwnerApproval []string
+	if body.HumanMergeOwnerApproval != nil {
+		repos, msg := s.autoMergeWatchedRepoList("human_merge_owner_approval", body.HumanMergeOwnerApproval)
+		if msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+		humanMergeOwnerApproval = repos
 	}
 	var humanMergePaths map[string][]string
 	if body.HumanMergePaths != nil {
@@ -431,6 +445,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.HumanMergePinOnly != nil {
 		cfg.AutoMerge.HumanMergePinOnly = humanMergePinOnly
 	}
+	if body.HumanMergeOwnerApproval != nil {
+		cfg.AutoMerge.HumanMergeOwnerApproval = humanMergeOwnerApproval
+	}
 	if body.TrustedBotSkipReview != nil {
 		v := *body.TrustedBotSkipReview
 		cfg.AutoMerge.TrustedBotSkipReview = &v
@@ -562,6 +579,10 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 	if requireCurrentBase == nil {
 		requireCurrentBase = []string{}
 	}
+	humanMergeOwnerApproval := am.HumanMergeOwnerApproval
+	if humanMergeOwnerApproval == nil {
+		humanMergeOwnerApproval = []string{}
+	}
 	humanMergePaths := am.HumanMergePaths
 	if humanMergePaths == nil {
 		humanMergePaths = map[string][]string{}
@@ -620,6 +641,7 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"require_current_base":         requireCurrentBase,
 		"human_merge_paths":            humanMergePaths,
 		"human_merge_pin_only":         humanMergePinOnly,
+		"human_merge_owner_approval":   humanMergeOwnerApproval,
 		"pin_only_kinds":               config.PinOnlyKinds,
 		"project_repos":                projectRepos,
 		"trusted_bot_authors":          trustedBots,

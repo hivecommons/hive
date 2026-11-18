@@ -27,7 +27,7 @@ const sentinelLabelOnlyStep = "resolve the sentinel alert and have a maintainer 
 //     label is left for the alert, removed on GitHub or with the row's
 //     Confirm safe, which clears the label and records no approval.
 func oneApproveSentinelStep(r Route) string {
-	if (r.ManualMerge && !r.ApprovalReleasesFence) || (!r.ManualMerge && r.Verdict != VerdictRequiresHuman) {
+	if (r.ManualMerge && !r.approvalReleases()) || (!r.ManualMerge && r.Verdict != VerdictRequiresHuman) {
 		return sentinelLabelOnlyStep
 	}
 	if strings.TrimPrefix(strings.TrimSpace(r.HumanApprover), "@") != "" {

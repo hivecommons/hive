@@ -165,7 +165,13 @@ func (c *Engine) humanMergePathFencePersonMerge(ctx context.Context, tracker *St
 // hand-off for another decision (a sentinel alert with a requires_human
 // verdict, needs-human, a reporter-trust hold, …) keeps its own route and
 // wording.
-func applyHumanMergePathFenceRoute(e *stagelabels.Evidence, obs stageObservation) {
+//
+// ownerApproval is true on a repository listed in
+// auto_merge.human_merge_owner_approval (and the head not yet approved):
+// there a trusted merger's approval of the head does release the refusal,
+// so instead of the manual-merge rule the route asks for that approval at
+// 085 (ApprovalReleasesPathHold).
+func applyHumanMergePathFenceRoute(e *stagelabels.Evidence, obs stageObservation, ownerApproval bool) {
 	e.ApprovalReleasesFence = false
 	hiveHold := obs.Hold.SelfImposed() && obs.Hold.HumanMergePath()
 	for _, h := range e.Holds {
@@ -183,9 +189,15 @@ func applyHumanMergePathFenceRoute(e *stagelabels.Evidence, obs stageObservation
 	if e.Cause == stagelabels.CauseDecision && !owns {
 		return
 	}
+	e.LaneReason = autoMergeReasonHumanMergePath
+	if ownerApproval {
+		e.CauseReason = prstage.CauseHumanMergePathAwaitingApproval
+		e.ApprovalReleasesPathHold = true
+		e.Cause = stagelabels.CauseDecision
+		return
+	}
 	e.CauseReason = prstage.CauseHumanMergePath
 	e.ManualMergeRule = true
-	e.LaneReason = autoMergeReasonHumanMergePath
 	if e.Cause == stagelabels.CauseDecision && (e.Verdict != stagelabels.VerdictRequiresHuman || strings.TrimSpace(e.HumanApprover) != "") {
 		e.Cause = stagelabels.CauseTrust
 	}

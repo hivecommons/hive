@@ -130,6 +130,11 @@ type Options struct {
 	// A qualifying pin-only PR by a trusted author is not held by
 	// HumanMergePaths. nil, or false, means no exception.
 	HumanMergePinOnly func(repo string) (config.PinOnlyException, bool)
+	// HumanMergeOwnerApproval reports whether an owner/repo is listed in
+	// auto_merge.human_merge_owner_approval: a trusted merger's explicit
+	// approval of a PR's current head releases the HumanMergePaths refusal
+	// there. nil, or false, keeps the refusal absolute.
+	HumanMergeOwnerApproval func(repo string) bool
 	// HumanMergeRule returns the live auto_merge.human_merge_title_prefixes /
 	// human_merge_labels rule (hivecommons/hive#15442). Every lane and the
 	// merge train skip a PR RequiresHumanMerge. nil means the defaults.
@@ -406,6 +411,7 @@ type Engine struct {
 	recordReviewHoldRelease ReviewHoldReleaseFunc
 	humanMergePinOnlyMu     sync.RWMutex
 	humanMergePinOnly       func(repo string) (config.PinOnlyException, bool)
+	humanMergeOwnerApproval func(repo string) bool
 
 	humanMergeRuleMu sync.RWMutex
 	humanMergeRule   func() prstage.HumanMergeRule
@@ -558,6 +564,7 @@ func New(transport Transport, opts Options) *Engine {
 		recordReviewHoldRelease:           opts.RecordReviewHoldRelease,
 		scanCommitClosingKeywords:         opts.ScanCommitClosingKeywords,
 		humanMergePinOnly:                 opts.HumanMergePinOnly,
+		humanMergeOwnerApproval:           opts.HumanMergeOwnerApproval,
 		humanMergeRule:                    opts.HumanMergeRule,
 		requireCurrentBase:                opts.RequireCurrentBase,
 		requireCurrentBaseStrict:          opts.RequireCurrentBaseStrict,
