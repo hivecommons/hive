@@ -119,6 +119,9 @@ type Client struct {
 	// contributorGraceNanos is governor.claims.contributor_grace_s as a
 	// duration in nanoseconds (0 = off; see SetContributorGrace).
 	contributorGraceNanos atomic.Int64
+	// humanClaims caches the out-of-ledger human-claim verdicts and the
+	// maintainer lookups behind them (IssueHumanClaimReason).
+	humanClaims humanClaimState
 	// openPRLinkState backs the pre-dispatch open-PR guard and the
 	// duplicate-fix resolver (open_pr_links.go); built lazily.
 	openPRLinkOnce  sync.Once

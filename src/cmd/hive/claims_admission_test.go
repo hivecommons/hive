@@ -331,3 +331,84 @@ func TestContributorClaimRefusedInsideOwnerGrace(t *testing.T) {
 		t.Fatalf("claim after the grace = %+v, %v; want claimed", res, err)
 	}
 }
+
+// hivecommons/hive#18899: the operator's dispatcher claims with an assignee
+// plus a plain comment and no ledger entry. A contributor's live lease is
+// released on the release tick with the human-claim reason, a renewal and a
+// fresh claim are refused, and the contributor's own assignment is not a claim
+// against it.
+func TestContributorLeaseReleasedByOutOfLedgerHumanClaim(t *testing.T) {
+	var assigned atomic.Bool
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/o/r/issues/9":
+			if assigned.Load() {
+				fmt.Fprint(w, `{"number":9,"state":"open","assignees":[{"login":"andy"}],"labels":[]}`)
+				return
+			}
+			fmt.Fprint(w, `{"number":9,"state":"open","assignees":[],"labels":[]}`)
+		case "/repos/o/r/issues/9/timeline":
+			fmt.Fprint(w, `[{"event":"assigned","assignee":{"login":"andy"},"actor":{"login":"andy"}}]`)
+		case "/repos/o/r/issues/9/comments":
+			if assigned.Load() {
+				fmt.Fprint(w, `[{"user":{"login":"andy"},"author_association":"MEMBER","body":"Claimed; fix in progress."}]`)
+				return
+			}
+			fmt.Fprint(w, `[]`)
+		case "/repos/o/r/collaborators/andy/permission":
+			fmt.Fprint(w, `{"permission":"admin","role_name":"admin","user":{"login":"andy"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer api.Close()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	client := github.NewClientForTest(api.URL, "o", []string{"r"}, logger)
+	var released atomic.Value
+	ledger, err := claims.New(filepath.Join(t.TempDir(), "claims.json"), claims.DefaultPolicy(), claims.Hooks{
+		OnReleased: func(c claims.Claim, reason string) { released.Store(reason) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installClaimAdmissionCheck(context.Background(), ledger, func() *github.Client { return client })
+
+	req := claims.Request{Repo: "o/r", Issue: 9, Holder: "karibhou", HolderID: "c-1", Kind: claims.KindContributor}
+	if res, err := ledger.Claim(req); err != nil || res.Outcome != claims.OutcomeClaimed {
+		t.Fatalf("claim before the owner acts = %+v, %v; want claimed", res, err)
+	}
+	if n := ledger.ReleaseBlocked(); n != 0 {
+		t.Fatalf("released %d claims with no human claim on the forge", n)
+	}
+
+	// The owner assigns the issue and posts "Claimed; fix in progress.".
+	assigned.Store(true)
+	// The verdict cache would still answer "no claim" for a minute in
+	// production; this client has not asked since, but use a fresh one so the
+	// test does not depend on that window.
+	client = github.NewClientForTest(api.URL, "o", []string{"r"}, logger)
+	res, err := ledger.Claim(req)
+	if err != nil || res.Outcome != claims.OutcomeRefused {
+		t.Fatalf("renewal after the owner claimed = %+v, %v; want refused", res, err)
+	}
+	if login, ok := claims.ParseHumanClaimReason(res.Reason); !ok || login != "andy" {
+		t.Fatalf("renewal refusal reason = %q, want a human-claim reason naming andy", res.Reason)
+	}
+	if n := ledger.ReleaseBlocked(); n != 1 {
+		t.Fatalf("release tick released %d claims, want 1", n)
+	}
+	if reason, _ := released.Load().(string); !strings.HasPrefix(reason, claims.ReasonHumanClaim) {
+		t.Fatalf("release reason = %q, want the human-claim reason", reason)
+	}
+	if _, held := ledger.Lookup("o/r", 9); held {
+		t.Fatal("contributor claim survived the release tick")
+	}
+	// A fresh contributor claim is refused while the person's claim stands.
+	if res, err := ledger.Claim(claims.Request{Repo: "o/r", Issue: 9, Holder: "other", HolderID: "c-2", Kind: claims.KindContributor}); err != nil || res.Outcome != claims.OutcomeRefused {
+		t.Fatalf("fresh contributor claim = %+v, %v; want refused", res, err)
+	}
+	// The person's own ledger claim is unaffected.
+	if res, err := ledger.Claim(claims.Request{Repo: "o/r", Issue: 9, Holder: "andy", Kind: claims.KindHuman}); err != nil || res.Outcome != claims.OutcomeClaimed {
+		t.Fatalf("human claim = %+v, %v; want claimed", res, err)
+	}
+}

@@ -1425,6 +1425,20 @@ comment and the dashboard claim detail (`@login` next to the claim).
 | A relay contributor or external bot | `kind=contributor` / `kind=external`, `who=<login>` | `hive/claimed-by-human` |
 | A hive agent with no human principal | `kind=agent who=<agent>` | `hive/claimed-by-<agent>` (e.g. `hive/claimed-by-scanner`) |
 
+**A person outranks a contributor, ledger entry or not.** The ledger ranks
+`kind=human` over `kind=contributor`, but an owner's claim made outside it
+(the assignee set by an owner or maintainer, a `/claim` comment, or
+`hive/claimed-by-human` applied by hand rather than by the hive) used to leave
+a live contributor lease untouched (#18866: the owner claimed at 03:21Z and the
+contributor still opened a PR at 03:32Z). Since
+[#18899](https://github.com/hivecommons/hive/issues/18899) the contributor
+claim's admission check reads those signals, so the next renewal or the
+five-minute release tick releases the lease (reason `human claim: ...`), yanks
+the relay task and records the person as the claim holder; see
+[Maintainer commands](../maintainer-commands.md#claiming-an-issue). The hive's
+own `hive/claimed-by-human` label (applied for a person's or a contributor's
+ledger claim) is never read as a person's claim; only a hand-applied one is.
+
 A backend or model name (`copilot`, `claude`, `codex`, `gemini`, `pi`) is
 **never** a suffix: it names the tool, not who answers for the work. A
 hive-agent claim whose name is a backend falls back to

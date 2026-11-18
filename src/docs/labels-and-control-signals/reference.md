@@ -1017,7 +1017,7 @@ Retired ([#12683](https://github.com/hivecommons/hive/issues/12683)): nothing wr
 
 **Applies to:** Issues. **Kind:** Display-only.
 
-A claim is a comment; the `claimed` label is a mirror Hive keeps in sync. Go claim gates use comments/assignees/ledger, not these labels.
+A claim is a comment; the `claimed` label is a mirror Hive keeps in sync. Go claim gates use comments/assignees/ledger, not these labels. The one exception is a `hive/claimed-by-human` applied by hand (not by the hive App): the contributor claim gate reads it as a person's claim, like a human assignee or `/claim` comment, and releases a live contributor lease for it ([#18899](https://github.com/hivecommons/hive/issues/18899)).
 
 **Who applies it:** Hive/claim flows.
 
