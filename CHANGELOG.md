@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v6.47.0)
+
+### Added
+
+- The Cost card's usage-by-sandbox table now follows the timeframe selector: each agent's tokens and estimated $ for the selected range, highest first, with an "all time" switch for the old totals. The agent cards' spend chips read the same numbers. They come from a new `GET /api/cost/agents` (`since`/`until` or `hours`), which applies the daily rollup's correction rules and says when the range starts before the recorded snapshots. The admin MCP's `spend_read` takes `hours` or `since`/`until` and returns the same rows (#18968).
+
 ## 2026-11-18 (v6.46.0)
 
 ### Added
