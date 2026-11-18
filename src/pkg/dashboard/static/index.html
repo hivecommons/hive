@@ -67229,6 +67229,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Autonomy & ACMM', label: 'Design-first planning', key: 'planning.design_approved_label', text: 'planning design approved label architect revisions concurrent designs plan from label planning.design_approved_label planning.max_concurrent_designs planning.max_design_revisions planning.plan_from_label' },
       { tab: 'Features', section: 'Autonomy & ACMM', label: 'Write-back containment', key: 'writeback.unsolicited.min_level', text: 'write-back writeback containment unsolicited comments labels sentinel hold-gate stage labels opt-in label backfill per repo mode suppressed acmm level duplicate dedupe burst rate cap hourly writeback.unsolicited.min_level writeback.unsolicited.require_labels writeback.unsolicited.backfill writeback.per_repo writeback.kinds unlabeled_min_level own_only without label hive-authored only writeback.dedupe.enabled writeback.dedupe.same_item_ttl writeback.dedupe.burst_items writeback.dedupe.burst_window writeback.dedupe.hourly_cap' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Superseded PR grace period', key: 'supersession_sweep.grace_period', text: 'supersession superseded grace period close contributor pr supersession_sweep.grace_period' },
+      { tab: 'Features', section: 'Quality loops & release health', label: 'Shared-CI recovery', key: 'shared_ci_rerun.enabled', text: 'shared ci rerun re-run failed jobs incident recovery tracking issue outage actions write shared_ci_rerun.enabled' },
       { tab: 'Features', section: 'Quality loops & release health', label: 'Compliance posture windows', key: 'compliance.posture_checks.window_days', text: 'compliance posture look-back window history retention compliance.posture_checks.window_days compliance.posture_checks.history_days' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Swarm banner wording', key: 'swarm.event_name', text: 'swarm event name call to arms leaderboard title banner swarm.event_name swarm.call_to_arms swarm.leaderboard_title' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Tool approval inbox path', key: 'tool_approval.inbox_path', text: 'tool approval inbox pending approvals path tool_approval.inbox_path' },
@@ -83130,6 +83131,14 @@ function burnAreaChart() {
             <div class="config-field"><label>Posture history (days) ${yamlHint('compliance.posture_checks.history_days')} ${settingHelpMark('settings', 'features', 'Posture history', `How long posture-check results are kept, 30 to 1095 days. 0 uses the default (${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}).`)}</label><input type="number" min="0" max="1095" step="1" value="${esc(String(f.compliancePostureHistoryDays || ''))}" placeholder="${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}" data-change-action="markDirty" data-arg0="features" data-arg1="compliancePostureHistoryDays" data-arg-types="s,s,N"></div>
           </div>
           <div class="config-help">Applies on the next posture pass.</div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Shared-CI recovery ${settingHelpMark('settings', 'features', 'Shared-CI recovery', `When one check fails across many PRs at once, the hive files a [shared-ci] tracking issue. Once that incident is over (the issue is closed, or its check has passed on the PR's base branch again) the rerun sweep re-runs the failed jobs of each PR the incident held red, once per PR per incident, and leaves a short note on the PR.`)}</div>
+          <div class="config-toggle" data-setting-key="shared_ci_rerun.enabled">
+            <div class="config-toggle-switch ${f.sharedCiRerunEnabled !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="sharedCiRerunEnabled"></div>
+            <span class="config-toggle-label">Re-run PRs after a shared-CI incident ${yamlHint('shared_ci_rerun.enabled')} ${settingHelpMark('settings', 'features', 'Re-run PRs after a shared-CI incident', `On by default. Re-running failed jobs needs Actions: Read and write on the App, which is optional. Without it GitHub refuses each re-run (403) and the PR gets a note asking a maintainer to re-run it; turn this off to stop those attempts and notes. Applies from the next sweep.`)}</span>
+          </div>
         </div>
         `)}
 

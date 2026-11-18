@@ -17,8 +17,9 @@ import (
 // featuresOpsBody is the part of the Features PUT that covers the operational
 // hive.yaml blocks issues.*, jev.*, duplicate_sweep.*, policies.*, the
 // turn.pr_follow_up / turn.reentrant knobs, good_first_issue.*, the
-// governor claim-mirroring and rotation headroom-source keys, and
-// governor.ci's workflow-approval keys. Every field is a pointer so an
+// governor claim-mirroring and rotation headroom-source keys,
+// governor.ci's workflow-approval keys, and shared_ci_rerun.enabled. Every
+// field is a pointer so an
 // absent key leaves the config untouched. Durations travel as Go duration
 // strings ("10m", "24h"); an empty string means the built-in default.
 type featuresOpsBody struct {
@@ -86,6 +87,12 @@ type featuresOpsBody struct {
 	// explicit empty list. The approval sweep reads both every cycle.
 	CIAutoApproveWorkflows      *bool   `json:"ciAutoApproveWorkflows"`
 	CIAutoApproveWorkflowActors *string `json:"ciAutoApproveWorkflowActors"`
+	// shared_ci_rerun.enabled: whether the shared-CI rerun sweep re-runs the
+	// failed jobs of PRs a [shared-ci] incident held red once it is over. A
+	// hive whose App has no Actions write (an optional permission,
+	// docs/github-app-setup.md) may turn it off to stop the attempts and
+	// their notes. The sweep reads it every pass.
+	SharedCIRerunEnabled *bool `json:"sharedCiRerunEnabled"`
 }
 
 // envVarNamePattern is the shape of a POSIX environment variable name.
@@ -389,6 +396,10 @@ func (b featuresOpsBody) prepare(cur *config.Config) (func(*config.Config), erro
 			c.Governor.CI.AutoApproveWorkflowActors = &v
 		})
 	}
+	if b.SharedCIRerunEnabled != nil {
+		v := *b.SharedCIRerunEnabled
+		steps = append(steps, func(c *config.Config) { c.SharedCIRerun.Enabled = &v })
+	}
 
 	return func(c *config.Config) {
 		for _, step := range steps {
@@ -425,6 +436,7 @@ func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 		"ciAutoApproveWorkflows":       cfg.Governor.CI.AutoApproveWorkflowsEnabled(),
 		"ciAutoApproveWorkflowActors":  ciAutoApproveActorsResponse(cfg.Governor.CI),
 		"ciAutoApproveActorsDefault":   strings.Join(config.DefaultAutoApproveWorkflowActors, ", "),
+		"sharedCiRerunEnabled":         cfg.SharedCIRerun.IsEnabled(),
 
 		"issuesCloseOnMerge":                 cfg.Issues.CloseOnMergeEnabled(),
 		"issuesCloseOnMergeInterval":         settingsDurationString(cfg.Issues.CloseOnMergeInterval),

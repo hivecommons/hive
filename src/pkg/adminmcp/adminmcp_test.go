@@ -1090,6 +1090,24 @@ func TestFeatureSettingsWorkflowApproval(t *testing.T) {
 	}
 }
 
+// shared_ci_rerun.enabled is writable through governor.feature_settings;
+// turning the sweep on is disclosed, turning it off is not.
+func TestFeatureSettingsSharedCIRerun(t *testing.T) {
+	preview, err := featureSettingsOp{}.Preview(context.Background(), map[string]any{"sharedCiRerunEnabled": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := preview.Request.Body.(map[string]any); body["sharedCiRerunEnabled"] != true {
+		t.Fatalf("body = %#v", body)
+	}
+	if !strings.Contains(preview.WideningDisclosure, "sharedCiRerunEnabled") {
+		t.Fatalf("disclosure %q does not name sharedCiRerunEnabled", preview.WideningDisclosure)
+	}
+	if p, err := (featureSettingsOp{}).Preview(context.Background(), map[string]any{"sharedCiRerunEnabled": false}); err != nil || strings.Contains(p.WideningDisclosure, "sharedCiRerunEnabled") {
+		t.Fatalf("turning the rerun sweep off is no widening: %q, %v", p.WideningDisclosure, err)
+	}
+}
+
 // Write-back containment's unsolicited knobs (Settings → Features →
 // Write-back containment) are writable here too, and the preview names
 // each change that lets the hive write to more items (#18846 follow-up).

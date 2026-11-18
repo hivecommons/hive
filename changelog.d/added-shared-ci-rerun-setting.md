@@ -1,0 +1,1 @@
+- `shared_ci_rerun.enabled` is now a Settings toggle (Features → Quality loops & release health → Shared-CI recovery) and an admin-MCP `governor.feature_settings` field (`sharedCiRerunEnabled`), so a hive whose App has no Actions write (an optional permission) can turn the shared-CI rerun attempts and their notes off without editing its config file.

@@ -144,7 +144,11 @@ a source-code defect: Hive records `unauthorized:rerun-shared-ci`, posts one
 head-scoped actionable note using the existing unauthorized mechanism, and
 retries no more than once per repository per permission cooldown (one hour).
 An unchanged PR remains eligible after the cooldown; a successful rerun or
-observing no failed runs clears the recovery block.
+observing no failed runs clears the recovery block. A hive that does not grant
+the permission can turn the sweep off with the **Re-run PRs after a shared-CI
+incident** toggle (Settings → Features → Quality loops & release health →
+Shared-CI recovery) or the admin MCP `governor.feature_settings` field
+`sharedCiRerunEnabled`, which stops the attempts and their notes.
 
 The transient-CI re-run (a red hive or trusted-bot PR whose failing runs all
 carry `hive-ci-transient`, see ADR-0010) uses the same `rerun-failed-jobs`
