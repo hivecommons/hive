@@ -14,7 +14,8 @@
 //   AGENT_BACKEND          — CLI backend name (claude, copilot, gemini, etc.)
 //   AGENT_MODEL            — model override (optional). When unset, the relay
 //                           auto-detects the running model from the CLI's own
-//                           session transcript for claude/copilot/bob (#4117);
+//                           session transcript for claude/copilot/bob/omp (#4117)
+//                           and codex (rollout files, then config.toml);
 //                           other backends report no model, as before.
 //   AGENT_REASONING_EFFORT — reasoning effort override (optional). Consumed by
 //                           codex (-c model_reasoning_effort), by agy
@@ -4263,6 +4264,7 @@ const MODEL_DETECT_TAIL_BYTES = 65536;
 const CLAUDE_PROJECTS_DIR = process.env.HIVE_CLAUDE_PROJECTS_DIR || path.join(MODEL_DETECT_HOME, '.claude', 'projects');
 const COPILOT_SESSIONS_DIR = process.env.HIVE_COPILOT_SESSIONS_DIR || path.join(MODEL_DETECT_HOME, '.copilot', 'session-state');
 const BOB_HOME_DIR = process.env.HIVE_BOB_DIR || path.join(MODEL_DETECT_HOME, '.bob');
+const CODEX_HOME_DIR = process.env.CODEX_HOME || path.join(MODEL_DETECT_HOME, '.codex');
 
 // readFileTail returns at most the last maxBytes of a file as UTF-8, without
 // reading the rest — the "minimal tail" privacy bound above.
@@ -4357,6 +4359,45 @@ function detectCopilotModel() {
     const data = (obj && obj.data) || {};
     const m = data.model || data.currentModel || data.selectedModel;
     if (looksLikeModelName(m)) return m;
+  }
+  return '';
+}
+
+// sortedNames lists a directory's entries matching re, newest name first
+// (codex's YYYY/MM/DD layout and rollout-<timestamp> names sort chronologically).
+function sortedNames(dir, re) {
+  try { return fs.readdirSync(dir).filter(n => re.test(n)).sort().reverse(); } catch (_) { return []; }
+}
+
+// detectCodexModel: the model codex is actually running, read without starting
+// codex or touching the network. Primary: newest
+// $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl, latest record naming a
+// model (turn_context carries payload.model). Fallback: top-level
+// `model = "..."` in $CODEX_HOME/config.toml.
+function detectCodexModel() {
+  const root = path.join(CODEX_HOME_DIR, 'sessions');
+  for (const y of sortedNames(root, /^\d{4}$/)) {
+    for (const m of sortedNames(path.join(root, y), /^\d{2}$/)) {
+      for (const d of sortedNames(path.join(root, y, m), /^\d{2}$/)) {
+        const dir = path.join(root, y, m, d);
+        for (const f of sortedNames(dir, /^rollout-.*\.jsonl$/)) {
+          try {
+            for (const obj of tailLinesReversed(path.join(dir, f))) {
+              const model = obj && ((obj.payload && obj.payload.model) || obj.model);
+              if (looksLikeModelName(model)) return model;
+            }
+          } catch (_) {}
+        }
+      }
+    }
+  }
+  let cfg = '';
+  try { cfg = readFileTail(path.join(CODEX_HOME_DIR, 'config.toml'), MODEL_DETECT_TAIL_BYTES); } catch (_) { return ''; }
+  for (const line of cfg.split('\n')) {
+    const t = line.trim();
+    if (t.startsWith('[')) break; // top-level keys only
+    const mm = /^model\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(t);
+    if (mm) return looksLikeModelName(mm[1] || mm[2]) ? (mm[1] || mm[2]) : '';
   }
   return '';
 }
@@ -4619,7 +4660,7 @@ function detectOmpSelection() {
   return out;
 }
 
-const MODEL_DETECTORS = { claude: detectClaudeModel, copilot: detectCopilotModel, bob: detectBobModel, omp: () => detectOmpSelection().model };
+const MODEL_DETECTORS = { claude: detectClaudeModel, copilot: detectCopilotModel, bob: detectBobModel, codex: detectCodexModel, omp: () => detectOmpSelection().model };
 
 // Backends whose transcript yields more than a model name: the effort in
 // effect and a second, reviewing model (#7760). Read on the same schedule as

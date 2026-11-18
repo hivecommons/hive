@@ -464,8 +464,14 @@ type Server struct {
 	sessionQueues   map[string]*sessionQueue
 	// sessionQueueTiming overrides the workers' pacing (tests); zero = defaults.
 	sessionQueueTiming sessionQueuePacing
-	terminalHandoffMu  sync.Mutex
-	terminalHandoffs   map[string]terminalHandoff
+	// sessionStartups holds the startup auto-answer state of running sessions
+	// (api_sessions_autostart.go); guarded by sessionStartupMu, a leaf lock.
+	sessionStartupMu sync.Mutex
+	sessionStartups  map[string]*sessionStartup
+	// sessionAutostartTiming overrides the auto-answer's pacing (tests).
+	sessionAutostartTiming sessionAutostartPacing
+	terminalHandoffMu      sync.Mutex
+	terminalHandoffs       map[string]terminalHandoff
 
 	claudeOAuthFlow claudeOAuthFlow
 
@@ -492,6 +498,9 @@ type Server struct {
 	// meetingsSchedule is the meeting scheduler behind the Calendar
 	// section (hivecommons/hive#18394); nil while meetings are off.
 	meetingsSchedule atomic.Pointer[meetingsScheduleHolder]
+	// customers is the people store behind the Customers section
+	// (hivecommons/hive#18742); nil while customers are off.
+	customers atomic.Pointer[customersHolder]
 	// meetingsAttendee is Settings, Meeting attendee: the boot persona,
 	// the TTS service and the email-in data (hivecommons/hive#18396).
 	meetingsAttendee meetingsAttendeeState
@@ -656,6 +665,8 @@ type Server struct {
 	// is JSON-encoded as-is (cmd/hive passes gfi.Stats); typed as any so the
 	// dashboard does not import pkg/gfi (import ratchets).
 	goodFirstIssueStats atomic.Pointer[func() any]
+	// advisorSummary feeds GET /api/knowledge/advisor/summary (api_knowledge_advisor.go).
+	advisorSummary atomic.Pointer[knowledgeAdvisorSource]
 	// writebackGate is the unsolicited write-back gate (api_writeback.go);
 	// sentinelFindings is the ring behind /api/sentinel.
 	writebackMu      sync.RWMutex
@@ -2859,9 +2870,14 @@ func (s *Server) isPublicPath(path string) bool {
 		// browser comes back from linear.app with no hive session. The
 		// single-use state token is the credential, verified server-side.
 		return true
-	case path == meetingsInvitesPath || path == meetingsCalendarProofPath || path == inboxEmailPath:
+	case path == meetingsInvitesPath || path == meetingsCalendarProofPath || path == inboxEmailPath ||
+		path == inboxEmailChunkPath || path == inboxEmailReportPath:
 		// hive-mx mail relayed by the hub (#18395): hive-mx and the hub hold
-		// no dashboard session. NOT actually open: each handler fails closed
+		// no dashboard session. The chunk path carries every delivery over
+		// one relay piece (#18564): left out of this list, a mail with more
+		// than about 512 KiB of attachments was turned away here with a 401
+		// and retried by its sender until it expired (#18699).
+		// NOT actually open: each handler fails closed
 		// without this hive's relay key and verifies the hub's relay
 		// signature (X-Hive-Relay-Delivery, skew and replay checks) over the
 		// raw body before reading it.
@@ -3060,7 +3076,7 @@ func (s *Server) roleEnforcement(next http.Handler) http.Handler {
 			// "/api/contributors/...", letting a "read" viewer promote/revoke/delete
 			// contributors past this gate.
 			isContributeFlow := r.URL.Path == "/api/contribute" || strings.HasPrefix(r.URL.Path, "/api/contribute/")
-			if !isContributeFlow && r.URL.Path != "/api/gh-user-auth/status" {
+			if !isContributeFlow && r.URL.Path != "/api/gh-user-auth/status" && !readOnlySelfService(r) {
 				http.Error(w, `{"error":"your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions."}`, http.StatusForbidden)
 				return
 			}

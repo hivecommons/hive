@@ -72,6 +72,9 @@ var (
 	// errSelfServiceCapReached is returned by registerCapped when the owner
 	// already holds the maximum number of hives (#18166).
 	errSelfServiceCapReached = errors.New("self-service per-owner cap reached")
+	// errSelfServiceStale is returned by update when the caller's ETag no
+	// longer names the stored record (#18642): someone else changed it first.
+	errSelfServiceStale = errors.New("self-service hive changed since it was read")
 )
 
 // SelfServiceHive is one owner-registered hive. Only hashes of its keys are
@@ -94,10 +97,71 @@ type SelfServiceHive struct {
 	// OwnershipCheckedAt is when the hub last confirmed the owner's admin
 	// permission on Repos. Zero when never checked.
 	OwnershipCheckedAt time.Time `json:"ownership_checked_at,omitempty"`
+	// RepoProofs is when the owner's admin permission was last proven, per
+	// repo, keyed by the lower-cased owner/name (#18642). Create sets every
+	// repo; a v1 PATCH sets only the repos it adds and drops the ones it
+	// removes. Records from before the field have no entries; their repos
+	// were all proven at OwnershipCheckedAt.
+	RepoProofs map[string]time.Time `json:"repo_proofs,omitempty"`
 	// LastAcceptedHeartbeatAt is the last heartbeat that passed the bearer
 	// check. Zero until the first one; the expiry sweep (selfservice_expiry.go)
 	// counts the window from here, or from CreatedAt while it is zero.
 	LastAcceptedHeartbeatAt time.Time `json:"last_accepted_heartbeat_at,omitempty"`
+	// Revision counts owner-visible changes (register, PATCH, key rotation)
+	// and feeds the v1 API's ETag (#18642). A heartbeat stamp does not bump
+	// it, so a live spoke does not invalidate an operator's ETag. Records
+	// written before the field existed load as 0, which is still a valid
+	// revision.
+	Revision int64 `json:"revision,omitempty"`
+}
+
+// selfServiceProofTimes returns the per-repo proof map for repos: repos in
+// proven are stamped at; any other repo keeps its entry in prev, or gets
+// fallback (a record's OwnershipCheckedAt) when it has none. Repos not in
+// repos are dropped. prev is never modified.
+func selfServiceProofTimes(prev map[string]time.Time, repos []string, fallback, at time.Time, proven []string) map[string]time.Time {
+	stamp := make(map[string]struct{}, len(proven))
+	for _, repo := range proven {
+		stamp[strings.ToLower(repo)] = struct{}{}
+	}
+	out := make(map[string]time.Time, len(repos))
+	for _, repo := range repos {
+		key := strings.ToLower(repo)
+		if _, fresh := stamp[key]; fresh {
+			out[key] = at.UTC()
+		} else if t, ok := prev[key]; ok {
+			out[key] = t
+		} else if !fallback.IsZero() {
+			out[key] = fallback.UTC()
+		}
+	}
+	return out
+}
+
+// selfServiceETag is the strong ETag for h. It covers the ID, the creation
+// time (so a delete and re-register of the same ID never reuses an ETag) and
+// the revision. It reveals nothing about the key.
+func selfServiceETag(h SelfServiceHive) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%d", h.ID, h.CreatedAt.UnixNano(), h.Revision)))
+	return `"` + hex.EncodeToString(sum[:12]) + `"`
+}
+
+// selfServiceETagMatches applies an If-Match value to h: empty (no
+// precondition) and "*" always match; otherwise one listed ETag must equal
+// h's current one. If-Match uses the strong comparison (RFC 9110 13.1.1), so
+// a W/ tag never matches.
+func selfServiceETagMatches(h SelfServiceHive, ifMatch string) bool {
+	ifMatch = strings.TrimSpace(ifMatch)
+	if ifMatch == "" || ifMatch == "*" {
+		return true
+	}
+	current := selfServiceETag(h)
+	for _, tag := range strings.Split(ifMatch, ",") {
+		if strings.TrimSpace(tag) == current {
+			return true
+		}
+	}
+	return false
 }
 
 // selfServiceStore holds every SelfServiceHive and persists them as one JSON
@@ -261,6 +325,7 @@ func (st *selfServiceStore) registerCapped(h SelfServiceHive, maxPerOwner int) (
 	h.PrevKeyExpiresAt = time.Time{}
 	h.CreatedAt = st.clock().UTC()
 	h.LastAcceptedHeartbeatAt = time.Time{}
+	h.Revision = 1
 	st.hives[h.ID] = &h
 	if err := st.saveLocked(); err != nil {
 		delete(st.hives, h.ID)
@@ -272,6 +337,12 @@ func (st *selfServiceStore) registerCapped(h SelfServiceHive, maxPerOwner int) (
 // rotate mints a new key for id and returns it ONCE. The previous key keeps
 // authenticating until selfServiceKeyRotationOverlap has passed.
 func (st *selfServiceStore) rotate(id string) (string, error) {
+	return st.rotateIfMatch(id, "")
+}
+
+// rotateIfMatch is rotate guarded by an ETag precondition (see update for
+// the ifMatch rules); a mismatch returns errSelfServiceStale.
+func (st *selfServiceStore) rotateIfMatch(id, ifMatch string) (string, error) {
 	if st == nil {
 		return "", errSelfServiceNilStore
 	}
@@ -285,10 +356,14 @@ func (st *selfServiceStore) rotate(id string) (string, error) {
 	if !ok {
 		return "", errSelfServiceNotFound
 	}
+	if !selfServiceETagMatches(*h, ifMatch) {
+		return "", errSelfServiceStale
+	}
 	before := *h
 	h.PrevKeyHash = h.KeyHash
 	h.PrevKeyExpiresAt = st.clock().UTC().Add(selfServiceKeyRotationOverlap)
 	h.KeyHash = hash
+	h.Revision++
 	if err := st.saveLocked(); err != nil {
 		*h = before
 		return "", err
@@ -296,8 +371,56 @@ func (st *selfServiceStore) rotate(id string) (string, error) {
 	return raw, nil
 }
 
+// update applies mutate to the record for id when ifMatch is empty, "*", or
+// the record's current ETag, bumps its revision and persists it. The key
+// hashes, owner, ID and timestamps other than what mutate sets are restored
+// after mutate runs, so an edit can never touch the credential: the hive's
+// key stays valid across every update. A mutate error or a failed write
+// leaves the record as it was. Returns the stored copy.
+func (st *selfServiceStore) update(id, ifMatch string, mutate func(*SelfServiceHive) error) (SelfServiceHive, error) {
+	if st == nil {
+		return SelfServiceHive{}, errSelfServiceNilStore
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	h, ok := st.hives[id]
+	if !ok {
+		return SelfServiceHive{}, errSelfServiceNotFound
+	}
+	if !selfServiceETagMatches(*h, ifMatch) {
+		return SelfServiceHive{}, errSelfServiceStale
+	}
+	before := *h
+	next := *h
+	next.Repos = append([]string(nil), h.Repos...)
+	next.RepoProofs = make(map[string]time.Time, len(h.RepoProofs))
+	for k, v := range h.RepoProofs {
+		next.RepoProofs[k] = v
+	}
+	if err := mutate(&next); err != nil {
+		return SelfServiceHive{}, err
+	}
+	// Fields an edit may never change.
+	next.ID, next.Owner, next.CreatedAt = before.ID, before.Owner, before.CreatedAt
+	next.KeyHash, next.PrevKeyHash, next.PrevKeyExpiresAt = before.KeyHash, before.PrevKeyHash, before.PrevKeyExpiresAt
+	next.LastAcceptedHeartbeatAt = before.LastAcceptedHeartbeatAt
+	next.Revision = before.Revision + 1
+	*h = next
+	if err := st.saveLocked(); err != nil {
+		*h = before
+		return SelfServiceHive{}, err
+	}
+	return *h, nil
+}
+
 // revoke removes id. After it, no key authenticates the hive.
 func (st *selfServiceStore) revoke(id string) (bool, error) {
+	return st.revokeIfMatch(id, "")
+}
+
+// revokeIfMatch is revoke guarded by an ETag precondition (see update for
+// the ifMatch rules); a mismatch returns errSelfServiceStale.
+func (st *selfServiceStore) revokeIfMatch(id, ifMatch string) (bool, error) {
 	if st == nil {
 		return false, errSelfServiceNilStore
 	}
@@ -306,6 +429,9 @@ func (st *selfServiceStore) revoke(id string) (bool, error) {
 	h, ok := st.hives[id]
 	if !ok {
 		return false, nil
+	}
+	if !selfServiceETagMatches(*h, ifMatch) {
+		return false, errSelfServiceStale
 	}
 	delete(st.hives, id)
 	if err := st.saveLocked(); err != nil {

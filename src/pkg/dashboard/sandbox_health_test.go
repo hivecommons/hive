@@ -118,3 +118,30 @@ func TestBuildAgents_SandboxedAgentCarriesLastRun(t *testing.T) {
 		t.Errorf("non-sandboxed agent must not carry sandboxRun")
 	}
 }
+
+// A Job whose pod cannot be scheduled and a node whose preflight failed are
+// their own verdicts, distinct from running and from a failed agent (#18811).
+func TestSandboxRunHealthInfrastructureStates(t *testing.T) {
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	phase := &crux.SandboxPhase{Phase: "waiting_for_node", Detail: "0/38 nodes are available: 38 node(s) didn't match Pod's node affinity/selector.", Since: now}
+	waiting := sandboxRunHealth(&crux.Process{State: crux.StateRunning, SandboxPhase: phase}, "1h", false, now)
+	if waiting.Health != SandboxHealthWaitingForNode || !strings.Contains(waiting.WaitDetail, "0/38 nodes") {
+		t.Errorf("waiting: %+v", waiting)
+	}
+	if running := sandboxRunHealth(&crux.Process{State: crux.StateRunning}, "1h", false, now); running.Health != SandboxHealthRunning || running.WaitDetail != "" {
+		t.Errorf("a running kick with no phase must stay running: %+v", running)
+	}
+	bad := &crux.SandboxRun{Runtime: "job", StartedAt: now.Add(-time.Minute), EndedAt: now.Add(-50 * time.Second), Error: "sandbox: node_unhealthy on node p1-worker-93: smoke failed", FailReason: "node_unhealthy", Node: "p1-worker-93"}
+	got := sandboxRunHealth(&crux.Process{State: crux.StateIdle, SandboxLastRun: bad}, "1h", false, now)
+	if got.Health != SandboxHealthNodeUnhealthy || got.FailReason != "node_unhealthy" || got.Node != "p1-worker-93" || got.Succeeded {
+		t.Errorf("node unhealthy: %+v", got)
+	}
+	noNode := &crux.SandboxRun{Runtime: "job", StartedAt: now.Add(-time.Hour), EndedAt: now.Add(-50 * time.Minute), Error: "sandbox: waiting_for_node: ...", FailReason: "waiting_for_node"}
+	if got := sandboxRunHealth(&crux.Process{State: crux.StateIdle, SandboxLastRun: noNode}, "1h", false, now); got.Health != SandboxHealthFailed || got.FailReason != "waiting_for_node" {
+		t.Errorf("a kick that never got a node reads as a failed run carrying its reason: %+v", got)
+	}
+	a := FrontendAgent{Sandboxed: true, State: "idle", SandboxRun: &FrontendSandboxRun{Health: SandboxHealthNodeUnhealthy}}
+	if got := hiveAgentClassOf(a); got != hiveAgentDown {
+		t.Errorf("a node_unhealthy agent must read as down in the agent roster, got %q", got)
+	}
+}

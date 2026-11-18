@@ -287,7 +287,7 @@ final, and maps each row ([#12436](https://github.com/hivecommons/hive/issues/12
 | reporter triage (human-filed, held by the #9665 gate until the triage label lands) | `015-triage-needed` — the gate still withholds it from agents |
 | exempt / filtered / advisory / dependency dashboard | no stage |
 | filtered by `project.issue_filter.require_labels` (reason `Project issue filter`) | no stage — the filter is the admission gate, and the issue stays out of the actionable queue, governor counts and kick prompts until a required label lands. An out-of-cycle fact that reports the issue actionable (`/hive approve`, a claim release, a covering PR closed) is checked against the filter too, so it writes no 010/015 for the sweep to strip. An accepted `/hive approve` / `/hive decision` still takes `stage/045-needs-decision` off such an issue: the decision ends the park whether or not the filter admits the issue. The un-park reply reports a stage label as removed only when a re-read after the stage engine ran no longer finds it, and says the issue is still outside the agent queue and names the required label(s) that would admit it. The blocked sweep's unblocked notes say "re-triaging", never "actionable again" |
-| **decomposed parent** — an issue with tracked child issues (GitHub sub-issues the relay linked with `parent: N`; see below) | keeps the stage the rows above give it while any child is open, **never `stage/stalled`**; once every child is closed the parent is **closed as completed** by the sweep ([#12857](https://github.com/hivecommons/hive/issues/12857)) |
+| **decomposed parent** — an issue with tracked child issues (GitHub sub-issues the relay linked with `parent: N`; see below) | keeps the stage the rows above give it while any child is open, **never `stage/stalled`**; once every child is closed the parent is **closed as completed** by the sweep unless it is an epic/hold, was reopened by a person, or the repo disables it ([#12857](https://github.com/hivecommons/hive/issues/12857)) |
 
 **An issue the hive answered without a PR.** An agent that answers an issue
 with no pull request ("no code change can fix this; the owner decides") is
@@ -810,9 +810,34 @@ closes nothing: the parent closes through the sweep above, when its children
 have. A webhook re-read of the parent keeps the sub-issue count on its row,
 so the relation holds between enumerations too.
 
-Reopen the parent if something it asked for is still missing; the sweep does
-not close it again until a child is reopened and closed once more (the
-sub-issue summary is read fresh each cycle).
+Reopen the parent if something it asked for is still missing. A parent a
+person reopens after a hive auto-close is **never auto-closed again**
+([#18869](https://github.com/hivecommons/hive/issues/18869)): once every
+child is confirmed closed the sweep reads the parent's timeline (one read,
+only at that point, cached per parent) and keeps it open when a non-bot
+`reopened` event follows the `<!-- hive:parent-autoclose -->` comment (or a
+bot's close). The timeline is the record, so the rule survives restarts;
+an unreadable timeline means no close that cycle. This holds under every
+config value below.
+
+**Epics and holds are never auto-closed.** An issue labelled `epic` (any
+case) or `hold` stays open for a person to close, with all children closed.
+Per repo, `repos.<repo>.parent_autoclose` chooses the policy:
+
+| value | behaviour |
+|---|---|
+| `true` (default) | close a decomposed parent when all children are closed, except `epic`/`hold`-labelled issues |
+| `epics_too` | also close `epic`/`hold`-labelled parents |
+| `false` | never auto-close a parent in this repo |
+
+```yaml
+repos:
+  torch-spyre/spyre-inference:
+    parent_autoclose: false
+```
+
+The dashboard does not yet show a "kept open: reopened by <login>" pill; the
+kept-open decision is logged (`decomposed parent kept open`).
 
 ### `stage/stalled` — "nobody is working this"
 
@@ -923,6 +948,21 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    (default 6h) is folded into the comment too; after the cooldown it
    counts as a fresh nudge. The ledger lives in the stage-label store, so
    a restart does not re-nudge.
+   One outcome per head (hivecommons/hive#18872): a head the hive adopts
+   anyway gets **no** "back in your court" comment. When the author's relay
+   is offline or not registered here (live presence is known), adoption is
+   enabled and nothing blocks it (no hold label, no fork guard, no workflow
+   path, `maintainer_policy: adopt`), the `AutoAdoption` clock will adopt the
+   head regardless of what the author does next, so the nudge is only
+   *recorded* (the clock starts on it, the relay still receives its
+   `fix-pr` task) and the adoption note is the author's one notification.
+   An author whose relay is online keeps the nudge and the full online grace
+   (`contributor_grace_online`); a withheld nudge is posted as soon as the
+   adoption stops being certain (the relay reconnects, the adoption is held
+   or blocked). The operator's "Let hive decide" ladder agrees: rung 5
+   (`contributor-offline`, supersede now) only fires for an author who is not
+   reachable, the same condition. This follows the documented rule that a
+   contributor who has gone quiet is superseded now (#13975).
 2. Relay contributors (the author has a contributor profile and a live relay
    connection) also receive the diagnosis in their relay session as a
    `fix-pr` task with `priority: interrupt`. Presence = a relay heartbeat

@@ -143,6 +143,12 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 		// allowed every bot starts able to speak; the meeting's voice toggle
 		// still decides whether hive does.
 		VoiceOnAddress: cfg.Meetings.VoiceOnAddressEnabled(),
+		// The persona's fixed spoken lines (short intro, acknowledgements,
+		// goodbye) are pre-rendered when a meeting that can speak goes live,
+		// so her first words do not wait for speech synthesis.
+		FixedSpokenLines: func(meetings.Meeting) []string {
+			return betty.FixedSpokenLines(cfg.Meetings.Persona.Resolve())
+		},
 	})
 	if err != nil {
 		if logger != nil {
@@ -181,7 +187,7 @@ func meetingSpekArgs(m meetings.Meeting, contextDir string) []string {
 // retrieval and may be nil.
 func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings.Store, kapi *knowledge.KnowledgeAPI,
 	beadStores func() map[string]*beads.Store, research live.ResearchDispatcher, logger *slog.Logger,
-	hiveStatus func(context.Context) (string, error)) *live.Runner {
+	hiveStatus hiveStatusSource) *live.Runner {
 	if cfg == nil || mgr == nil || store == nil {
 		return nil
 	}
@@ -268,16 +274,18 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPersona, llm config.ResolvedMeetingsLLM,
 	store *meetings.Store, kapi *knowledge.KnowledgeAPI, beadStores func() map[string]*beads.Store,
 	slotsDir string, maxTokens int, canResearch bool, logger *slog.Logger,
-	hiveStatus func(context.Context) (string, error)) func(meetings.Meeting) *betty.Engine {
+	hiveStatus hiveStatusSource) func(meetings.Meeting) *betty.Engine {
 	if !persona.Enabled {
 		return nil
 	}
 	var retrievers []betty.Retriever
 	if hiveStatus != nil {
-		retrievers = append(retrievers, betty.HiveStatusRetriever{Brief: hiveStatus})
+		retrievers = append(retrievers, betty.HiveStatusRetriever{Brief: hiveStatus.HiveStatusBrief, Item: hiveStatus.HiveItemBrief})
 	}
 	if kapi != nil {
-		stores := betty.FileStores(kapi.FileStores)
+		// Vaults and ready git sources: the hive's own docs are a git
+		// source, which FileStores alone does not list.
+		stores := betty.KnowledgeStores(kapi)
 		retrievers = append(retrievers, betty.KnowledgeRetriever{Stores: stores})
 		if cfg.Knowledge.CodeMaps.IsEnabled() {
 			retrievers = append(retrievers, betty.CodeMapRetriever{Stores: stores})
@@ -286,10 +294,21 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 	if beadStores != nil {
 		retrievers = append(retrievers, betty.BeadRetriever{Stores: beadStores})
 	}
+	// Customers the question names (#18742): read at call time, so it is
+	// empty while customers are off or not yet wired.
+	retrievers = append(retrievers, betty.PeopleRetriever{Directory: meetingsPeopleDirectory})
 	client := &http.Client{}
-	if persona.SearxngURL != "" {
-		retrievers = append(retrievers, betty.WebRetriever{BaseURL: persona.SearxngURL, Client: client})
-	}
+	// Web answers (opt-in through searxng_url): SearXNG and the keyless
+	// direct sources, behind a guard that keeps questions about this hive,
+	// its org and its repos off the public web. The client carries no
+	// credentials.
+	private := append([]string{cfg.Project.Org, cfg.Project.Name, cfg.Project.PrimaryRepo}, cfg.Project.Repos...)
+	retrievers = append(retrievers, betty.PublicWebRetrievers(betty.PublicWeb{
+		SearxngURL: persona.SearxngURL, Client: client, Logger: logger,
+		Guard: betty.NewWebGuard(persona.Name, persona.Aliases, private),
+	})...)
+	// Product questions are answered from the docs brief (betty/product.go).
+	retrievers = betty.WithProductBrief(retrievers)
 	// A model gateway with a private CA (its ca_bundle) gets its own client;
 	// one that cannot be built leaves the persona model-less, never
 	// unverified.
@@ -528,4 +547,11 @@ func meetingSpekEnv(getenv func(string) string, llm config.ResolvedMeetingsLLM, 
 		env = append(env, "SPEK_MEETING_LLM=none")
 	}
 	return env
+}
+
+// hiveStatusSource is the dashboard's live hive state for the meeting
+// attendee (*dashboard.Server): the status brief and one-item lookups.
+type hiveStatusSource interface {
+	HiveStatusBrief(ctx context.Context) (string, error)
+	HiveItemBrief(ctx context.Context, number int) (string, bool)
 }

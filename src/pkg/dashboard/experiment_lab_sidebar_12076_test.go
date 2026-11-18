@@ -14,7 +14,7 @@ import (
 // ACMM_NOUS_MIN_LEVEL = 4 on the next tick, and the toggle never said so.
 // The owner's decision: the gate stays but drops to L3, and both gates must
 // pass. This test EXECUTES applyACMMVisibility against a DOM stub and pins
-// that the nous-section nav item, section and sidebar summary are hidden at
+// that the nous-section nav item and section are hidden at
 // L0/L2 even with the flag on, shown at L3/L6 with the flag on, and hidden at
 // L6 with the flag off.
 func TestApplyACMMVisibilityExperimentLabRequiresFlagAndL3_12076(t *testing.T) {
@@ -48,7 +48,7 @@ function makeEl(attrs) {
   };
 }
 const byId = {};
-['governor','advisory-section','token-panel','repos-section','contributors-section','leaderboard-section','nous-section','nous-sidebar-config','debug-section','logs-section','agents','oc-agent-detail'].forEach(id => { byId[id] = makeEl({ id }); });
+['governor','advisory-section','token-panel','repos-section','contributors-section','leaderboard-section','nous-section','debug-section','logs-section','agents','oc-agent-detail'].forEach(id => { byId[id] = makeEl({ id }); });
 const navNous = makeEl({ 'data-section': 'nous-section' });
 const navTokens = makeEl({ 'data-section': 'token-panel' });
 global.document = {
@@ -66,7 +66,6 @@ for (const lvl of [0, 2]) {
   applyACMMVisibility(lvl, null);
   check('L' + lvl + ' + flag on: sidebar entry hidden', navNous.style.display === 'none');
   check('L' + lvl + ' + flag on: section hidden', byId['nous-section'].style.display === 'none');
-  check('L' + lvl + ' + flag on: sidebar scope/mode summary hidden', byId['nous-sidebar-config'].style.display === 'none');
 }
 
 // Flag on, L3 (the new ACMM_NOUS_MIN_LEVEL) and L6: visible.
@@ -74,7 +73,6 @@ for (const lvl of [3, 6]) {
   applyACMMVisibility(lvl, null);
   check('L' + lvl + ' + flag on: sidebar entry visible', navNous.style.display !== 'none');
   check('L' + lvl + ' + flag on: section visible', byId['nous-section'].style.display !== 'none');
-  check('L' + lvl + ' + flag on: sidebar scope/mode summary visible', byId['nous-sidebar-config'].style.display !== 'none');
 }
 check('L6: tokens nav visible (control)', navTokens.style.display !== 'none');
 
@@ -83,7 +81,6 @@ flag = false;
 applyACMMVisibility(6, null);
 check('L6 + flag off: sidebar entry hidden', navNous.style.display === 'none');
 check('L6 + flag off: section hidden', byId['nous-section'].style.display === 'none');
-check('L6 + flag off: sidebar scope/mode summary hidden', byId['nous-sidebar-config'].style.display === 'none');
 
 process.exit(fails ? 1 : 0);
 `

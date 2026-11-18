@@ -36,3 +36,28 @@ func TestParseAttributionTrailerRequiresHiveLine(t *testing.T) {
 		t.Fatal("non-trailing hive template mention must not count as an attribution footer")
 	}
 }
+
+func TestParseAttributionTrailerReadsEffort(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"present", "Done\n\n— hive: agent=scanner backend=codex model=gpt-6-astra effort=high", "high"},
+		{"absent", "Done\n\n— hive: agent=scanner backend=codex model=gpt-6-astra", ""},
+		{"upper-case", "— hive: agent=scanner backend=codex model=gpt-6-astra EFFORT=Medium", "medium"},
+		{"quoted", "— hive: agent=scanner backend=codex model=gpt-6-astra effort=\"Low\"", "low"},
+		{"empty", "— hive: agent=scanner backend=codex model=gpt-6-astra effort=", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta, ok := ParseAttributionTrailer(tc.body)
+			if !ok {
+				t.Fatal("expected attribution trailer")
+			}
+			if meta.Effort != tc.want {
+				t.Fatalf("effort = %q, want %q", meta.Effort, tc.want)
+			}
+			if meta.Agent != "scanner" || meta.Backend != "codex" || meta.Model != "gpt-6-astra" {
+				t.Fatalf("meta = %+v, want scanner/codex/gpt-6-astra unchanged", meta)
+			}
+		})
+	}
+}

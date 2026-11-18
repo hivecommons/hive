@@ -43,6 +43,7 @@ function makeSandbox(opts) {
     escapeHtml: (s) => String(s),
     viewerIsOwner: () => sb.window._hiveRole === 'owner',
     inboxSourceIcon: () => '',
+    inboxSourcesHtml: () => '',
     inboxCanAdd: () => false,
     inboxItemHtml: () => '<div class="item"></div>',
     inboxPreserveAudio: (p, fn) => fn(),

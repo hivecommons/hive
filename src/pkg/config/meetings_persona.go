@@ -174,8 +174,8 @@ var MeetingsPersonaPresets = map[string]MeetingsPersonaPreset{
 		VoiceType:          MeetingsPersonaVoiceFemale,
 		Accent:             "Spanish (Spain)",
 		Humor:              MeetingsPersonaHumorLight,
-		IntroTemplate:      "Hola, soy {display_name} ({pronouns}). Tomo notas, guardo la transcripción de esta reunión y respondo preguntas con lo que sabe la colmena: su base de conocimiento y sus tareas. Di mi nombre para preguntarme algo. Di \"{leave}\" y saldré volando.",
-		PlainIntroTemplate: "Hola, soy {display_name} ({pronouns}). Tomo notas, guardo la transcripción de esta reunión y respondo preguntas con la base de conocimiento y las tareas de la colmena. Di mi nombre para preguntarme algo, o di \"{leave}\" para que me vaya.",
+		IntroTemplate:      "Hola, soy {display_name}. Tomo notas, guardo la transcripción de esta reunión y respondo preguntas con lo que sabe la colmena: su base de conocimiento y sus tareas. Di mi nombre para preguntarme algo. Di \"{leave}\" y saldré volando.",
+		PlainIntroTemplate: "Hola, soy {display_name}. Tomo notas, guardo la transcripción de esta reunión y respondo preguntas con la base de conocimiento y las tareas de la colmena. Di mi nombre para preguntarme algo, o di \"{leave}\" para que me vaya.",
 		LeavePhrases:       []string{"melisa vete", "hive leave"},
 		SampleLine:         "Hola, soy {display_name}. Pregúntame lo que quieras sobre el trabajo de la colmena.",
 	},
@@ -190,8 +190,8 @@ var MeetingsPersonaPresets = map[string]MeetingsPersonaPreset{
 		VoiceType:          MeetingsPersonaVoiceFemale,
 		Accent:             "French",
 		Humor:              MeetingsPersonaHumorLight,
-		IntroTemplate:      "Bonjour, je suis {display_name} ({pronouns}). Je prends des notes, je garde la transcription de cette réunion et je réponds aux questions avec ce que sait la ruche : sa base de connaissances et ses tâches. Dites mon nom pour me poser une question. Dites « {leave} » et je m'envole.",
-		PlainIntroTemplate: "Bonjour, je suis {display_name} ({pronouns}). Je prends des notes, je garde la transcription de cette réunion et je réponds aux questions à partir de la base de connaissances et des tâches de la ruche. Dites mon nom pour me poser une question, ou dites « {leave} » pour me retirer.",
+		IntroTemplate:      "Bonjour, je suis {display_name}. Je prends des notes, je garde la transcription de cette réunion et je réponds aux questions avec ce que sait la ruche : sa base de connaissances et ses tâches. Dites mon nom pour me poser une question. Dites « {leave} » et je m'envole.",
+		PlainIntroTemplate: "Bonjour, je suis {display_name}. Je prends des notes, je garde la transcription de cette réunion et je réponds aux questions à partir de la base de connaissances et des tâches de la ruche. Dites mon nom pour me poser une question, ou dites « {leave} » pour me retirer.",
 		LeavePhrases:       []string{"melie pars", "hive leave"},
 		SampleLine:         "Bonjour, je suis {display_name}. Posez-moi vos questions sur le travail de la ruche.",
 	},
@@ -206,8 +206,8 @@ var MeetingsPersonaPresets = map[string]MeetingsPersonaPreset{
 		VoiceType:          MeetingsPersonaVoiceFemale,
 		Accent:             "Italian",
 		Humor:              MeetingsPersonaHumorLight,
-		IntroTemplate:      "Ciao, sono {display_name} ({pronouns}). Prendo appunti, conservo la trascrizione di questa riunione e rispondo alle domande con ciò che sa l'alveare: la sua base di conoscenza e le sue attività. Di' il mio nome per farmi una domanda. Di' \"{leave}\" e volo via.",
-		PlainIntroTemplate: "Ciao, sono {display_name} ({pronouns}). Prendo appunti, conservo la trascrizione di questa riunione e rispondo alle domande con la base di conoscenza e le attività dell'alveare. Di' il mio nome per farmi una domanda, oppure di' \"{leave}\" per farmi uscire.",
+		IntroTemplate:      "Ciao, sono {display_name}. Prendo appunti, conservo la trascrizione di questa riunione e rispondo alle domande con ciò che sa l'alveare: la sua base di conoscenza e le sue attività. Di' il mio nome per farmi una domanda. Di' \"{leave}\" e volo via.",
+		PlainIntroTemplate: "Ciao, sono {display_name}. Prendo appunti, conservo la trascrizione di questa riunione e rispondo alle domande con la base di conoscenza e le attività dell'alveare. Di' il mio nome per farmi una domanda, oppure di' \"{leave}\" per farmi uscire.",
 		LeavePhrases:       []string{"melina esci", "hive leave"},
 		SampleLine:         "Ciao, sono {display_name}. Chiedimi pure qualcosa sul lavoro dell'alveare.",
 	},
@@ -222,8 +222,8 @@ var MeetingsPersonaPresets = map[string]MeetingsPersonaPreset{
 		VoiceType:          MeetingsPersonaVoiceFemale,
 		Accent:             "Brazilian",
 		Humor:              MeetingsPersonaHumorLight,
-		IntroTemplate:      "Oi, eu sou a {display_name} ({pronouns}). Faço anotações, guardo a transcrição desta reunião e respondo perguntas com o que a colmeia sabe: a base de conhecimento e as tarefas dela. Diga meu nome para me perguntar algo. Diga \"{leave}\" e eu saio voando.",
-		PlainIntroTemplate: "Oi, eu sou a {display_name} ({pronouns}). Faço anotações, guardo a transcrição desta reunião e respondo perguntas com a base de conhecimento e as tarefas da colmeia. Diga meu nome para me perguntar algo, ou diga \"{leave}\" para me remover.",
+		IntroTemplate:      "Oi, eu sou a {display_name}. Faço anotações, guardo a transcrição desta reunião e respondo perguntas com o que a colmeia sabe: a base de conhecimento e as tarefas dela. Diga meu nome para me perguntar algo. Diga \"{leave}\" e eu saio voando.",
+		PlainIntroTemplate: "Oi, eu sou a {display_name}. Faço anotações, guardo a transcrição desta reunião e respondo perguntas com a base de conhecimento e as tarefas da colmeia. Diga meu nome para me perguntar algo, ou diga \"{leave}\" para me remover.",
 		LeavePhrases:       []string{"bia sai", "hive leave"},
 		SampleLine:         "Oi, eu sou a {display_name}. Pode me perguntar qualquer coisa sobre o trabalho da colmeia.",
 	},
@@ -238,8 +238,8 @@ var MeetingsPersonaPresets = map[string]MeetingsPersonaPreset{
 		VoiceType:          MeetingsPersonaVoiceFemale,
 		Accent:             "Indian",
 		Humor:              MeetingsPersonaHumorLight,
-		IntroTemplate:      "नमस्ते, मैं {display_name} हूँ ({pronouns})। मैं नोट्स लेती हूँ, इस मीटिंग का ट्रांसक्रिप्ट रखती हूँ, और छत्ते की जानकारी, यानी उसके नॉलेज बेस और काम की चीज़ों से सवालों के जवाब देती हूँ। कुछ पूछना हो तो मेरा नाम लीजिए। \"{leave}\" कहिए और मैं उड़ जाऊँगी।",
-		PlainIntroTemplate: "नमस्ते, मैं {display_name} हूँ ({pronouns})। मैं नोट्स लेती हूँ, इस मीटिंग का ट्रांसक्रिप्ट रखती हूँ, और छत्ते के नॉलेज बेस और काम की चीज़ों से सवालों के जवाब देती हूँ। कुछ पूछना हो तो मेरा नाम लीजिए, या मुझे हटाने के लिए \"{leave}\" कहिए।",
+		IntroTemplate:      "नमस्ते, मैं {display_name} हूँ। मैं नोट्स लेती हूँ, इस मीटिंग का ट्रांसक्रिप्ट रखती हूँ, और छत्ते की जानकारी, यानी उसके नॉलेज बेस और काम की चीज़ों से सवालों के जवाब देती हूँ। कुछ पूछना हो तो मेरा नाम लीजिए। \"{leave}\" कहिए और मैं उड़ जाऊँगी।",
+		PlainIntroTemplate: "नमस्ते, मैं {display_name} हूँ। मैं नोट्स लेती हूँ, इस मीटिंग का ट्रांसक्रिप्ट रखती हूँ, और छत्ते के नॉलेज बेस और काम की चीज़ों से सवालों के जवाब देती हूँ। कुछ पूछना हो तो मेरा नाम लीजिए, या मुझे हटाने के लिए \"{leave}\" कहिए।",
 		LeavePhrases:       []string{"madhu leave", "hive leave"},
 		SampleLine:         "नमस्ते, मैं {display_name} हूँ। छत्ते के काम के बारे में मुझसे कुछ भी पूछिए।",
 	},
@@ -254,8 +254,8 @@ var MeetingsPersonaPresets = map[string]MeetingsPersonaPreset{
 		VoiceType:          MeetingsPersonaVoiceFemale,
 		Accent:             "Standard Japanese",
 		Humor:              MeetingsPersonaHumorLight,
-		IntroTemplate:      "こんにちは、{display_name}です（{pronouns}）。メモを取り、この会議の文字起こしを記録し、ハイブのナレッジベースと作業項目をもとに質問にお答えします。質問があるときは私の名前を呼んでください。「{leave}」と言えば、ぶーんと飛んで帰ります。",
-		PlainIntroTemplate: "こんにちは、{display_name}です（{pronouns}）。メモを取り、この会議の文字起こしを記録し、ハイブのナレッジベースと作業項目をもとに質問にお答えします。質問があるときは私の名前を呼んでください。退出させるには「{leave}」と言ってください。",
+		IntroTemplate:      "こんにちは、{display_name}です。メモを取り、この会議の文字起こしを記録し、ハイブのナレッジベースと作業項目をもとに質問にお答えします。質問があるときは私の名前を呼んでください。「{leave}」と言えば、ぶーんと飛んで帰ります。",
+		PlainIntroTemplate: "こんにちは、{display_name}です。メモを取り、この会議の文字起こしを記録し、ハイブのナレッジベースと作業項目をもとに質問にお答えします。質問があるときは私の名前を呼んでください。退出させるには「{leave}」と言ってください。",
 		LeavePhrases:       []string{"mitsu leave", "hive leave"},
 		SampleLine:         "こんにちは、{display_name}です。ハイブの作業について何でも聞いてください。",
 	},
@@ -270,8 +270,8 @@ var MeetingsPersonaPresets = map[string]MeetingsPersonaPreset{
 		VoiceType:          MeetingsPersonaVoiceFemale,
 		Accent:             "Standard Mandarin",
 		Humor:              MeetingsPersonaHumorLight,
-		IntroTemplate:      "大家好，我是{display_name}（{pronouns}）。我负责记笔记、保存这次会议的文字记录，并根据蜂巢的知识库和工作项回答问题。想问我问题，就叫我的名字。说“{leave}”，我就嗡嗡飞走啦。",
-		PlainIntroTemplate: "大家好，我是{display_name}（{pronouns}）。我负责记笔记、保存这次会议的文字记录，并根据蜂巢的知识库和工作项回答问题。想问我问题，就叫我的名字；要让我离开，请说“{leave}”。",
+		IntroTemplate:      "大家好，我是{display_name}。我负责记笔记、保存这次会议的文字记录，并根据蜂巢的知识库和工作项回答问题。想问我问题，就叫我的名字。说“{leave}”，我就嗡嗡飞走啦。",
+		PlainIntroTemplate: "大家好，我是{display_name}。我负责记笔记、保存这次会议的文字记录，并根据蜂巢的知识库和工作项回答问题。想问我问题，就叫我的名字；要让我离开，请说“{leave}”。",
 		LeavePhrases:       []string{"mimi leave", "hive leave"},
 		SampleLine:         "大家好，我是{display_name}。关于蜂巢的工作，尽管问我。",
 	},
@@ -279,8 +279,8 @@ var MeetingsPersonaPresets = map[string]MeetingsPersonaPreset{
 
 // The English presets share their intro and sample templates.
 const (
-	meetingsIntroEnglish      = "Hi, I'm {display_name} ({pronouns}). I take notes, keep this meeting's transcript, and answer questions from what the hive knows: its knowledge base and work items. Say my name to ask me something. Say \"{leave}\" and I'll buzz off."
-	meetingsPlainIntroEnglish = "Hi, I'm {display_name} ({pronouns}). I take notes, keep this meeting's transcript, and answer questions from the hive's knowledge base and work items. Say my name to ask me something, or say \"{leave}\" to remove me."
+	meetingsIntroEnglish      = "Hi, I'm {display_name}. I take notes, keep this meeting's transcript, and answer questions from what the hive knows: its knowledge base and work items. Say my name to ask me something. Say \"{leave}\" and I'll buzz off."
+	meetingsPlainIntroEnglish = "Hi, I'm {display_name}. I take notes, keep this meeting's transcript, and answer questions from the hive's knowledge base and work items. Say my name to ask me something, or say \"{leave}\" to remove me."
 	meetingsSampleEnglish     = "Hi, I'm {display_name}. Ask me anything about the hive's work and I'll keep it short and sweet."
 )
 
@@ -491,10 +491,27 @@ func (r ResolvedMeetingsPersona) Intro() string {
 	if len(r.LeavePhrases) > 0 {
 		leave = r.LeavePhrases[0]
 	}
-	return strings.NewReplacer(
-		"{name}", r.Name, "{display_name}", r.DisplayName, "{pronouns}", r.Pronouns,
+	out := strings.NewReplacer(
+		"{name}", r.Name, "{display_name}", r.DisplayName, "{pronouns}", "",
 		"{leave}", leave, "{accent}", r.Accent, "{voice_type}", r.VoiceType, "{language}", r.Language,
 	).Replace(r.IntroTemplate)
+	return StripPronouns(out)
+}
+
+// The persona never states pronouns in a reply (operator ruling after the
+// live Meet test, where "(she/her)" was also read aloud as "she slash
+// her"). {pronouns} renders empty, and a pronoun parenthetical a custom
+// template spells out is dropped.
+var (
+	pronounParen = regexp.MustCompile(`(?i)\s*[\(（]\s*(?:(?:she|he|they|xe|ze|it|any|ella|elle|lei|ela|il|er|sie)\s*(?:/\s*[\pL]+\s*){0,2})?[\)）]`)
+	pronounSpace = regexp.MustCompile(`\s+([.,;:!?。，、])`)
+)
+
+// StripPronouns removes pronoun parentheticals ("(she/her)", "(they/them)")
+// and the empty parentheses a blank {pronouns} leaves.
+func StripPronouns(s string) string {
+	s = pronounParen.ReplaceAllString(s, "")
+	return pronounSpace.ReplaceAllString(s, "$1")
 }
 
 // ConsentText is the default consent notice for this persona: it names the

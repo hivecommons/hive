@@ -67,14 +67,24 @@
       return { profile: String(t.profile), state: String(t.state || ''), reply: String(t.reply || ''), agent: String(t.agent || ''), problem: String(t.problem || '') };
     }
 
-    // Pure: the row's short reason when no hive agent fills the profile
-    // its state is handed to (hivecommons/hive#18690): the hand-off cannot
-    // happen and no other lane is offered the item, so the row says so
-    // instead of looking claimed and idle. '' when an agent fills it.
+    // Pure: the row's short reason when its hand-off cannot happen or did
+    // not start. No hive agent fills the profile its state is handed to
+    // (hivecommons/hive#18690), or the agent it was handed to declined or
+    // did not act (`workflows.repos[repo].handoffs` keyed by item number,
+    // hivecommons/hive#18749). No other lane is offered the item either
+    // way, so the row says so instead of looking claimed and idle. null
+    // when an agent fills the profile and the hand-off is under way.
     function stageTrackerWorkflowGapOf(item, workflows) {
       const t = stageTrackerWorkflowDispatchOf(item, workflows);
-      if (!t || !t.problem) return null;
-      return { profile: t.profile, word: 'no agent for ' + t.profile, tip: 'Not handed off: ' + t.problem + '. Pick an agent for it on the repository\'s workflow row in Settings → Repos.' };
+      if (!t) return null;
+      if (t.problem) return { profile: t.profile, word: 'no agent for ' + t.profile, tip: 'Not handed off: ' + t.problem + '. Pick an agent for it on the repository\'s workflow row in Settings → Repos.' };
+      const wf = stageTrackerWorkflowOf({ workflows }, item.repo);
+      const h = wf && wf.handoffs ? wf.handoffs[String(Number(item.number) || 0)] : null;
+      if (!h || String(h.profile || '') !== t.profile || (h.state && String(h.state) !== t.state)) return null;
+      const next = h.retrying
+        ? 'The hive hands it to another agent that may do the work, if there is one.'
+        : 'It waits for an owner: use Send to ' + t.profile + ' in this row\'s ⋯ menu.';
+      return { profile: t.profile, word: 'not started: ' + t.profile, tip: 'Hand-off not started: ' + String(h.reason || (String(h.agent || 'the agent') + ' did not act')) + '. ' + next };
     }
     function stageTrackerWorkflowGapHtml(item, workflows) {
       const g = stageTrackerWorkflowGapOf(item, workflows);

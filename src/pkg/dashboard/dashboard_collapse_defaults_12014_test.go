@@ -33,6 +33,7 @@ func dashboardCollapseDefaultsPreamble12014(t *testing.T, html string) string {
 	for _, name := range []string{
 		"DASHBOARD_DEFAULT_COLLAPSED_SECTIONS", "DASHBOARD_COLLAPSE_DEFAULTS_KEY", "DASHBOARD_COLLAPSE_DEFAULTS_VERSION",
 		"DASHBOARD_COLLAPSE_DEFAULTS_LEGACY", "DASHBOARD_PRIOR_STATE_KEY_PREFIX", "DASHBOARD_PRIOR_STATE_IGNORED_KEYS",
+		"ACMM_AUTONOMOUS_LEVEL", "DASHBOARD_LEVEL_COLLAPSED_SECTIONS", "DASHBOARD_ACMM_LEVEL_CACHE_KEY",
 	} {
 		b.WriteString(jsConstBlock(t, html, name))
 		b.WriteByte('\n')
@@ -43,7 +44,7 @@ function dashboardUpdateLayoutMenuState(){}
 `)
 	for _, name := range []string{
 		"dashboardHasPriorState", "dashboardSeedCollapseDefaults", "dashboardCollapseDefaultsActive", "dashboardDefaultCollapsed",
-		"isSectionCollapsed", "writeSectionCollapsedKey", "setSectionCollapsed", "dashboardLayoutAllIds", "dashboardLayoutDefaultCollapsed",
+		"dashboardAcmmLevel", "dashboardRememberAcmmLevel", "dashboardLevelDefaultCollapsed", "isSectionCollapsed", "writeSectionCollapsedKey", "setSectionCollapsed", "dashboardLayoutAllIds", "dashboardLayoutDefaultCollapsed",
 	} {
 		b.WriteString(jsFunc(t, html, name))
 		b.WriteByte('\n')
@@ -108,9 +109,14 @@ if (isSectionCollapsed('cost-panel')) throw new Error('explicit expand lost to d
 // Explicit collapse of a default-expanded card persists as '1'.
 setSectionCollapsed('agents-section', true);
 if (localStorage.getItem(SECTION_LS_PREFIX+'agents-section') !== '1' || !isSectionCollapsed('agents-section')) throw new Error('explicit collapse not persisted');
-// Expanding a default-expanded card leaves no key behind (unchanged behaviour).
+// Expanding a default-expanded card leaves no key behind (unchanged behaviour)...
+setSectionCollapsed('cost-panel', true);
+setSectionCollapsed('overview-section', true);
+setSectionCollapsed('overview-section', false);
+if (localStorage.getItem(SECTION_LS_PREFIX+'overview-section') !== null) throw new Error('default-expanded card should not keep a key');
+// ...except the level-driven Agents card, which keeps an explicit '0' so a later L6 cannot undo the choice.
 setSectionCollapsed('agents-section', false);
-if (localStorage.getItem(SECTION_LS_PREFIX+'agents-section') !== null) throw new Error('default-expanded card should not keep a key');
+if (localStorage.getItem(SECTION_LS_PREFIX+'agents-section') !== '0') throw new Error('agents expand must be remembered explicitly');
 // Reset (removing the per-section keys) returns to the defaults, marker survives.
 Object.keys(localStorage.data).filter(k => k.indexOf(SECTION_LS_PREFIX) === 0).forEach(k => localStorage.removeItem(k));
 if (!isSectionCollapsed('cost-panel')) throw new Error('reset should restore collapsed default');

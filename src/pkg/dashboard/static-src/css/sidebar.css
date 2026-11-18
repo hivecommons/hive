@@ -106,10 +106,7 @@
     .oc-sidebar-footer .layout-toggle { width: 100%; text-align: center; padding: var(--sp-4); margin: var(--sp-0); }
     .oc-agent-actions {
       display: flex; gap: var(--sp-2); padding: var(--sp-4) var(--sp-5);
-      margin: var(--sp-3) var(--sp-0) var(--sp-0);
-      border-top: 1px solid var(--border);
-      background: var(--bg-soft);
-      position: sticky; bottom: var(--sp-0); z-index: var(--z-sticky);
+      margin: var(--sp-0);
     }
     .oc-agent-actions .oc-agent-add-btn { flex: 1 1 auto; }
     .oc-agent-actions .oc-agent-group-btn { flex: 0 0 auto; }

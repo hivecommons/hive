@@ -336,10 +336,19 @@ type cliUsage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 }
 
-// total is every token the turn processed, cached ones included, so the
-// budget sees what the history costs.
+// cacheReadWeightDivisor discounts cache-read tokens in the budget: a warm
+// session re-reads its whole history on every turn, so counting those reads
+// at full weight made the charge per turn grow with the turn number and
+// spent a 200000-token meeting budget in about fifteen answers (the Betty
+// suite's meeting went silent at 210360 tokens). Cache reads bill at about a
+// tenth of fresh input, so they count at a tenth here.
+const cacheReadWeightDivisor = 10
+
+// total is what the turn cost the budget: fresh input, output and cache
+// writes in full, and cache reads at 1/cacheReadWeightDivisor, so the budget
+// sees what the history costs without re-charging it in full every turn.
 func (u cliUsage) total() int {
-	return u.InputTokens + u.OutputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+	return u.InputTokens + u.OutputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens/cacheReadWeightDivisor
 }
 
 type cliEvent struct {

@@ -1,0 +1,6 @@
+    /* Email-in address row shared by Inbox, Calendar and Meetings (#18693) */
+    .email-in { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
+    .email-in-label { font-size: var(--fs-xs); font-weight: 700; color: var(--muted); }
+    .email-in-address { font-family: var(--font-mono); font-size: var(--fs-base); font-weight: 600; overflow-wrap: anywhere; color: var(--accent); }
+    .email-in-hint { flex-basis: 100%; max-width: 80ch; line-height: 1.5; }
+    .email-in.is-off .email-in-hint { flex-basis: auto; }

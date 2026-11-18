@@ -87,6 +87,10 @@ type IssueStagePolicy struct {
 	// the generic human one, a retired per-login one, another hive's
 	// agent — is never touched by that sweep.
 	AgentNames []string
+	// ParentAutoClose returns the decomposed-parent auto-close policy for a
+	// repo (config.ParentAutoCloseOn / Off / EpicsToo, repos.<repo>.
+	// parent_autoclose, hivecommons/hive#18869). Nil means the default.
+	ParentAutoClose func(repo string) string
 }
 
 // SetIssueStageLabels installs the live policy resolver. Nil disables.

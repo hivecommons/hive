@@ -955,6 +955,7 @@ func (c *Client) RecordOpenedPRClaims(ledger *ClaimLedger, d PROpenedDetail, ide
 		return nil
 	}
 	claims := ClaimsFromPROpened(d, c.getRepos(), identity, now)
+	c.canonicalizeClaimRepos(claims)
 	for _, claim := range claims {
 		if err := ledger.Record(claim); err != nil && c.logger != nil {
 			c.logger.Warn("duplicate-PR guard: could not persist claim from just-opened PR",
@@ -1048,6 +1049,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 					continue
 				}
 				prClaims := claimsFromPR(pr, repo, identity, now)
+				c.canonicalizeClaimRepos(prClaims)
 				for i := range prClaims {
 					prClaims[i].PRState = PRStateOpen
 				}
@@ -1142,6 +1144,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 				// #16116: other people's reviews reach the throughput card's
 				// Reviewed row the way their merges reach Merged·Closed.
 				prClaims := claimsFromPR(pr, repo, identity, now)
+				c.canonicalizeClaimRepos(prClaims)
 				history = append(history, prHistoryFromClaims(prClaims, PRStateMerged, now)...)
 				for _, claim := range prClaims {
 					claim.MergedPR = true

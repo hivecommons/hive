@@ -87,6 +87,11 @@ func newSelfServiceTestEnv(t *testing.T) *selfServiceTestEnv {
 		}
 		repo := strings.TrimPrefix(r.URL.Path, "/repos/")
 		admin, known := env.adminRepos[repo]
+		// alice/bulk-* are admin repos for the repo-cap tests, which need more
+		// of them than are worth listing.
+		if strings.HasPrefix(repo, "alice/bulk-") {
+			admin, known = true, true
+		}
 		if !known {
 			w.WriteHeader(http.StatusNotFound)
 			return

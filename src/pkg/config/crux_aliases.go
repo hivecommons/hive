@@ -37,6 +37,7 @@ type (
 	ReviewModelsConfig         = cruxconfig.ReviewModelsConfig
 	RotationConfig             = cruxconfig.RotationConfig
 	SandboxJobConfig           = cruxconfig.SandboxJobConfig
+	SandboxGitHubReadProxy     = cruxconfig.SandboxGitHubReadProxy
 	SandboxPublishConfig       = cruxconfig.SandboxPublishConfig
 	SandboxJobResources        = cruxconfig.SandboxJobResources
 	SandboxJobToleration       = cruxconfig.SandboxJobToleration
@@ -55,6 +56,16 @@ type (
 	WatchdogLivenessConfig     = cruxconfig.WatchdogLivenessConfig
 	WatchdogReadinessConfig    = cruxconfig.WatchdogReadinessConfig
 	WatchdogRestartConfig      = cruxconfig.WatchdogRestartConfig
+)
+
+type (
+	SandboxJobAffinity                = cruxconfig.SandboxJobAffinity
+	SandboxPreflightConfig            = cruxconfig.SandboxPreflightConfig
+	SandboxJobNodeAffinity            = cruxconfig.SandboxJobNodeAffinity
+	SandboxJobNodeSelector            = cruxconfig.SandboxJobNodeSelector
+	SandboxJobNodeSelectorTerm        = cruxconfig.SandboxJobNodeSelectorTerm
+	SandboxJobNodeSelectorRequirement = cruxconfig.SandboxJobNodeSelectorRequirement
+	SandboxJobPreferredSchedulingTerm = cruxconfig.SandboxJobPreferredSchedulingTerm
 )
 
 const (
@@ -149,6 +160,7 @@ const (
 	ReviewModelsFallbackSkip            = cruxconfig.ReviewModelsFallbackSkip
 	RotationHeadroomSourceBuiltin       = cruxconfig.RotationHeadroomSourceBuiltin
 	RotationHeadroomSourceCCLeft        = cruxconfig.RotationHeadroomSourceCCLeft
+	MaxJobImagePullSecrets              = cruxconfig.MaxJobImagePullSecrets
 	SandboxRuntimeJob                   = cruxconfig.SandboxRuntimeJob
 	SandboxRuntimeOpenShell             = cruxconfig.SandboxRuntimeOpenShell
 	SandboxRuntimeSubstrate             = cruxconfig.SandboxRuntimeSubstrate
@@ -169,6 +181,7 @@ var (
 	ReasoningEffortsByBackend = cruxconfig.ReasoningEffortsByBackend
 	ToolPresets               = cruxconfig.ToolPresets
 	ValidSandboxRuntimes      = cruxconfig.ValidSandboxRuntimes
+	ValidateImagePullSecrets  = cruxconfig.ValidateImagePullSecrets
 )
 
 var (

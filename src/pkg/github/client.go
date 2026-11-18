@@ -61,6 +61,11 @@ type Client struct {
 	// transiently refused fetch does not publish the repo as empty
 	// (enumerate_lastgood.go). Zero value is ready to use.
 	lastGoodEnum lastGoodEnumeration
+	// openSnapshots keeps each repo's newest set of open issue numbers so a
+	// parent's tracker progress counts children filed in another managed
+	// repo (cross_repo_children.go, hivecommons/hive#18680). Zero value is
+	// ready to use.
+	openSnapshots openIssueSnapshots
 	// forge is the per-repo state cache EnumerateActionable reads listings
 	// from when attached (forgestate_reader.go, hivecommons/hive#13375).
 	// Nil lists GitHub directly.
@@ -1084,6 +1089,9 @@ type PullRequest struct {
 	HiveAgent      string `json:"hive_agent,omitempty"`
 	HiveBackend    string `json:"hive_backend,omitempty"`
 	HiveModel      string `json:"hive_model,omitempty"`
+	// HiveEffort is the trailer's effort= value (reasoning effort requested
+	// at launch), "" when the trailer has none.
+	HiveEffort string `json:"hive_effort,omitempty"`
 	// HiveRun and HivePlan are the `Hive-Run:` / `Hive-Plan:` trailer values
 	// (ParseRunTrailers, hivecommons/hive#8310), read from the same list
 	// payload as the attribution trailer so the plan_match review perspective
@@ -2065,11 +2073,14 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		splitParents = nil
 	}
 	openByNumber := make(map[int]*gh.Issue, len(allIssues))
+	openNumbers := make(map[int]struct{}, len(allIssues))
 	for _, issue := range allIssues {
 		if !issue.IsPullRequest() {
 			openByNumber[issue.GetNumber()] = issue
+			openNumbers[issue.GetNumber()] = struct{}{}
 		}
 	}
+	c.openSnapshots.store(fullRepoName(owner, repoName), openNumbers)
 
 	holdSources := c.newHoldSourceDetector(HoldKindIssue, owner, repoName, passStart)
 	defer holdSources.flush()
@@ -2230,6 +2241,15 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 				ackSource = ackSourceForParent(parentNum)
 			}
 		}
+		// A known non-human author's proposal needs a human acknowledgement,
+		// including acknowledgement inherited from a relay-linked parent.
+		if !acknowledged && c.isKnownNonHumanAuthor(issue.GetUser()) {
+			if gate, ok := issueFilter.(AgentProposalGate); ok && gate.IsAgentProposal(labels, issue.GetTitle()) {
+				breakdown.Filtered++
+				details = append(details, c.workIssue(repo, issue, labels, "filtered", agentProposalFilterReason))
+				continue
+			}
+		}
 
 		// #9839: GitHub "blocked by" links become DependsOn edges. An
 		// unreadable blocker list fails OPEN with a warning: hiding work
@@ -2270,7 +2290,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		})
 	}
 	dropMutualBlocks(actionable, c.logger)
-	annotateIssueChildren(repo, subIssueSummaries, splitParents, openByNumber, actionable, details)
+	annotateIssueChildren(fullRepoName(owner, repoName), subIssueSummaries, splitParents, openByNumber, c.openSnapshots.isOpen, actionable, details)
 
 	// Keep an honest fallback if a future exclusion path is added without a
 	// dedicated category. This is the same enumeration snapshot, not a second
@@ -2482,6 +2502,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 					HiveAgent:           attrMeta.Agent,
 					HiveBackend:         attrMeta.Backend,
 					HiveModel:           attrMeta.Model,
+					HiveEffort:          attrMeta.Effort,
 					HiveRun:             runKey,
 					HivePlan:            planRef,
 					ScopeContract:       scopeContract,
@@ -2574,6 +2595,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 			HiveAgent:      attrMeta.Agent,
 			HiveBackend:    attrMeta.Backend,
 			HiveModel:      attrMeta.Model,
+			HiveEffort:     attrMeta.Effort,
 			HiveRun:        runKey,
 			HivePlan:       planRef,
 			ScopeContract:  scopeContract,
@@ -2766,6 +2788,11 @@ func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta Invocati
 		HiveAgent:      meta.Agent,
 		HiveBackend:    meta.Backend,
 		HiveModel:      meta.Model,
+		HiveEffort:     meta.Effort,
+		// Supersedes lets the PRs-by-model card count a closed PR that
+		// another PR replaced as superseded (#18719); the body is already
+		// in hand, so this costs no GitHub call.
+		Supersedes: prSupersedesNumberOrZero(pr.GetBody()),
 	}
 }
 

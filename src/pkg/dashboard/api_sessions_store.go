@@ -34,6 +34,10 @@ const (
 	sessionStatusRunning   = "running"
 	sessionStatusEnded     = "ended"
 	sessionStatusFailed    = "failed"
+	// sessionStatusDeleting is a session whose files are being removed by a
+	// background job (api_sessions_delete.go). The record goes when the files
+	// are confirmed gone; a job that fails puts the previous status back.
+	sessionStatusDeleting = "deleting"
 
 	// sessionIDBytes random bytes -> 2x hex chars; matches the runtime's id
 	// pattern ([a-f0-9]{8,32}).
@@ -85,6 +89,12 @@ type sessionRecord struct {
 	// KeyboardSince is when the current holder took it (RFC3339).
 	KeyboardHolder string `json:"keyboard_holder,omitempty"`
 	KeyboardSince  string `json:"keyboard_since,omitempty"`
+	// DeleteFrom is the status a `deleting` session had before its delete
+	// started (`ended` or `failed`), put back when the delete fails.
+	// DeleteError is why the last delete failed, shown as-is in the dashboard
+	// and cleared by the next attempt.
+	DeleteFrom  string `json:"delete_from,omitempty"`
+	DeleteError string `json:"delete_error,omitempty"`
 }
 
 type sessionStore struct {
@@ -94,6 +104,38 @@ type sessionStore struct {
 	// loadErr is why the store could not be loaded at open (it then starts
 	// empty); nil for a clean load. Set once, before the store is shared.
 	loadErr error
+	// deleting holds the ids whose delete job is running in this process, so
+	// one session never has two (api_sessions_delete.go). Not persisted: a
+	// `deleting` record without an entry here is a job a restart interrupted.
+	deleting map[string]bool
+}
+
+// claimDelete marks id as having a delete job; false when it already has one.
+func (st *sessionStore) claimDelete(id string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.deleting[id] {
+		return false
+	}
+	if st.deleting == nil {
+		st.deleting = map[string]bool{}
+	}
+	st.deleting[id] = true
+	return true
+}
+
+// releaseDelete ends id's delete job.
+func (st *sessionStore) releaseDelete(id string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	delete(st.deleting, id)
+}
+
+// deleteInFlight reports whether id has a delete job in this process.
+func (st *sessionStore) deleteInFlight(id string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.deleting[id]
 }
 
 // sessionsStoreCorruptSuffix (plus a unix time) names the copy an unreadable

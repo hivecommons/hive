@@ -197,6 +197,16 @@ A target in another repository is ignored, because the workspace clones the prim
 
 **Refusals fail the kick and push nothing.** A closed PR, a fork PR, a PR another agent opened, a PR no hive agent opened, a head that moved since checkout, an unreadable PR or a failed scan all fail the kick with a reason that names the PR. The run record carries the reason, and the audit log gets a `sandbox_target_pr_refused` line with `repo=`, `number=`, `source=` and `reason=`, or the broker's usual `sandbox_broker_rejected`. If the refusal comes after the run, the commits stay in the workspace, and the run record notes them as withheld.
 
+## Setting up a sandbox from the dashboard
+
+Nothing about a sandbox needs a hand edit of the config files (hivecommons/hive#18797). Everything below saves through the normal config API, which writes both `/data/hive.yaml.runtime` and `/data/hive.yaml.dashboard`.
+
+- **Hive-wide defaults.** Settings, Security, "Advanced sandbox: default image and Job settings" edits `agent_sandbox.image`, `runtime`, the Job defaults (workspace claim and mount, service account, scheduler name, TTL) and `agent_sandbox.job.env_from_secrets`. The section opens by itself when the sandbox is on and no image is set. API: `PUT /api/config/governor/security` with `agentSandboxImage`, `agentSandboxRuntime`, `agentSandboxJobWorkspaceClaim`, `agentSandboxJobEnvFromSecrets` and the other `agentSandbox*` keys.
+- **One agent.** The agent's General tab has "Sandbox settings: image, runtime and Job" with its own `sandbox.image`, `sandbox.runtime` and Job fields. A blank field inherits the hive default, shown as the placeholder. API: `PUT /api/config/agent/<name>/general` with `sandboxImage`, `sandboxRuntime` and `sandboxJob` (`workspaceClaim`, `workspaceClaimMount`, `serviceAccount`, `schedulerName`, `ttlSeconds`, `envFromSecrets`). Node selector, tolerations, resources and volumes have no field; they travel with the copy action below and survive an edit.
+- **Copy from another agent.** "Copy sandbox settings from..." lists the agents whose block is complete (an image and a usable runtime, plus a workspace claim for `runtime: job`) and copies the block, turning the sandbox on. API: `PUT /api/config/agent/<name>/general` with `{"sandboxCopyFrom": "<agent>"}`. The copy is deep. The source's `publish.verify` commands are not copied (they are written for the source's repository); the receiving agent keeps its own.
+- **Secrets are names only.** `env_from_secrets` holds Kubernetes Secret names. The API refuses anything that is not a valid name (a `KEY=value` pair, for one), so a value can never be written to the config file through these controls.
+- **Refused without an image.** Turning the sandbox on, or saving an enabled sandbox, when no image resolves from the agent or `agent_sandbox.image` is refused with 400 and a message naming `sandbox.image` and `agent_sandbox.image`. The "no sandbox image" warning on the agent card and in the General tab links to the agent's Sandbox settings and to the default image controls.
+
 ## Running sandboxed kicks as Kubernetes Jobs
 
 `sandbox.runtime: job` runs an agent's sandboxed kicks as a Kubernetes `Job` in the hive's own namespace instead of a rootless Podman container on the hive pod's node ([#6311](https://github.com/hivecommons/hive/issues/6311)). It exists for work that must run in a **different runtime than the hive image** - a different base OS, a heavyweight toolchain, or on **accelerator hardware** reached through a device plugin - while hive stays the orchestrator.
@@ -228,6 +238,62 @@ agents:
         ttl_seconds: 3600
 ```
 
+To run on any Spyre node except a known bad host, add Kubernetes node affinity
+under `job` (replace `bad-spyre-node` with the node's actual hostname):
+
+```yaml
+agent_sandbox:
+  job:
+    node_selector: { accelerator: spyre }
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: NotIn
+                  values: [bad-spyre-node]
+```
+
+The node selector and required node affinity both have to match. Do not pin
+`node_selector` to a particular `kubernetes.io/hostname` if the Job should
+move among Spyre nodes; a hostname selector can restrict it to one node or
+conflict with the exclusion and leave the Job pending. If using a custom
+`scheduler_name`, ensure that scheduler honors Kubernetes `nodeAffinity`;
+otherwise the exclusion is not guaranteed.
+
+### Node preflight and failing fast on an unschedulable Job
+
+Two checks keep a bad or missing node from costing a whole kick ([#18811](https://github.com/hivecommons/hive/issues/18811)). Both are for `runtime: job`.
+
+**`sandbox.preflight`: a node health check before the agent starts.** An accelerator card can be unusable on one node (a VFIO mmap failure, a crashed device) while the pod starts fine; without a check hive learns that only when the agent's own tests fail, minutes in. `preflight.commands` is a list of shell commands run in the Job's main container after hive's relay check and before the agent, in the same image, workspace and environment. Each runs as `sh -lc <cmd>`, like `publish.verify`, under `timeout_s` (default 120 s) and a `total_timeout_s` for the whole list (default 300 s). It is off unless `commands` is set, per agent (`agents.<name>.sandbox.preflight`) or hive-wide (`agent_sandbox.preflight`); an agent's block replaces the global one, and an empty `commands` there turns it off for that agent. Timeouts left at zero fall back to the global block, then the defaults.
+
+```yaml
+agent_sandbox:
+  preflight:
+    commands:
+      # A device smoke test: fails on a node whose Spyre card is unusable.
+      - python -c 'import torch; torch.ones(1).to("spyre")'
+    timeout_s: 120          # per command
+    total_timeout_s: 300    # all commands
+    retry_delay_s: 0        # wait before the retry on another node; 0 = immediately
+```
+
+A failing command ends the container in seconds with exit code 75 after printing `hive-node-preflight: FAILED command 1 of 1 exited 1: <cmd>`, and hive reports the kick as `node_unhealthy`:
+
+- The command's output is in the kick transcript and the kick log, the run record carries `failReason: node_unhealthy` and the `node` the pod ran on (`spec.nodeName`), and the audit log names the node (`sandbox_node_unhealthy`).
+- It is **not an agent failure.** The agent never ran, so it returns to `idle` rather than `failed`, nothing that watches failed agents (restart, escalation, a failure-fix loop) sees it, and the next cadence tries again. The dashboard shows `node unhealthy` with the node, distinct from `last run failed`.
+- **One retry on another node.** Hive re-creates the Job once, after `retry_delay_s`, with a node-affinity `NotIn` on `kubernetes.io/hostname` for the failed node, added to every required term of the `affinity` above and never pinning a node (`sandbox_node_unhealthy_retry` in the audit log; the first attempt's output is kept at the top of the transcript). If the retry fails its preflight too, the kick fails as `node_unhealthy`. A cluster whose node names differ from the `kubernetes.io/hostname` label, or a custom `scheduler_name` that ignores node affinity, cannot honor the exclusion.
+
+The commands come from configuration only, never from a kick message, like `publish.verify`. They are part of the Job manifest and their output is in the pod log, so never put a credential on a command line; the script prints nothing from the environment. A preflight set for a runtime other than `job` is logged and ignored, and only agent kicks run it (the `publish.verify` Jobs do not).
+
+**`job.schedule_timeout_s`: fail fast when no node takes the pod.** While waiting on the Job, hive also reads its pod. If the pod stays `PodScheduled=False` with reason `Unschedulable` for `schedule_timeout_s` (default 600 s, in `job`, with the global value as the fallback for an agent's own `job` block), hive fails the kick as `waiting_for_node` with the scheduler's message (for example `0/38 nodes are available: ...`), deletes the Job and releases the agent, instead of holding its slot for the whole kick timeout plus the cluster-side deadline margin. There is no retry; the next cadence tries again. While it waits the dashboard shows `Job waiting for a node` with the scheduler's message, distinct from `Job running`, and the audit log records `sandbox_waiting_for_node`, then `sandbox_waiting_for_node_failed` if it gives up. If your cluster autoscaler needs longer than ten minutes to add an accelerator node, raise `schedule_timeout_s`; the kick timeout still bounds the wait.
+
+| Reason | Meaning | What to check |
+|--------|---------|---------------|
+| `node_unhealthy` | `preflight` failed on the node, and again on the retry node | The command's output in the kick log; the node named in the run record; cordon or fix the node |
+| `waiting_for_node` | the pod stayed Unschedulable past `schedule_timeout_s` | The scheduler's message in the kick log: `node_selector`, `affinity`, `tolerations`, device `resources` and `scheduler_name` against the cluster's nodes; a retry excluding the only fitting node ends here |
+
 **Workspace transport is a shared claim, not a copy.** The Job mounts `workspace_claim` with a `subPath` pointing at the per-kick workspace, at the same `/workspace` mount the Podman launcher uses. The sandbox `workspace_dir` must therefore live under `workspace_claim_mount` (it does by default: `/data/agents/sandbox`). When the Job is scheduled onto a different node than hive, which is the whole point of a node selector, the claim must be **ReadWriteMany**. Hive cannot check the access mode from inside its pod; a Job that fails to start with a multi-attach error is the symptom.
 
 **The credential boundary.** The Job receives exactly the Secrets named in `env_from_secrets`, resolved by Kubernetes from the pod template; hive never reads them. Environment variables from the allowlist are copied in with the same credential-name filter Podman applies. An allowlisted `ANTHROPIC_BASE_URL` that points at a pod-local proxy (such as `127.0.0.1:18444`) is not reachable from a Job pod, so operators must supply a routable endpoint or model credentials via `env_from_secrets`. Hive's brokered GitHub token **never enters the Job**, so a Job cannot push or open a PR itself; hive does both from the returned workspace, with the same scan and scoped-token minting as the Podman path. If a workload needs its own registry or model credentials, they go in a Secret named here, and they are that workload's to protect.
@@ -241,7 +307,72 @@ agents:
 
 **The terminal pane.** A job-runtime agent has no tmux session in the hive pod, so the dashboard's ▶ terminal does not attach ttyd for it. Instead it opens `/terminal/job/<agent>`, a read-only viewer that streams the newest Job pod's log through the same in-cluster client and RBAC the launcher already uses ([#14798](https://github.com/hivecommons/hive/issues/14798)): it follows the pod while the kick runs (waiting while the pod is `Pending`, e.g. for an accelerator node), prints the container exit code when it ends, and between kicks, when the completed Job has already been deleted, shows the last run's persisted transcript (`<workspace>/.hive/sandbox-transcript.log`, which now ends with an `exit code: N` line) or a clear "no sandbox run yet" state. The pane is observation only; there is no input path into the Job. The same terminal handoff and role check as the tmux pane apply.
 
-**RBAC.** The spoke's ServiceAccount needs a Role for `batch/jobs` (create, get, list, delete) and `pods` plus `pods/log` (get, list); the terminal viewer needs nothing beyond that same `pods/log` grant. The standalone kustomize base ships it as `sandbox-job-rbac.yaml`, and the hub provisioner grants it to every hosted spoke as `hive-sandbox-jobs`.
+**Private-registry images (#18819).** The Job pod's `imagePullSecrets` are the deduplicated union, in this order, of: hive's own pod secrets (so the `hive-relays` init container can pull the hive image), the Job service account's `imagePullSecrets`, and `sandbox.job.image_pull_secrets`. Kubernetes adds a service account's pull secrets only to a pod that has none of its own, so hive reads the service account through the API (`get serviceaccounts`) and merges the names itself. When that grant is missing or the read fails, hive logs a warning and carries on with the other two lists; it never fails the kick. `image_pull_secrets` holds Secret **names** only (DNS-1123 names, at most 32; a value is refused). A per-agent `job` block that names none inherits the `agent_sandbox.job` list. Hive reads, logs and writes names, never Secret contents. When `service_account` is set and `image_pull_secrets` is not, the boot and reload warning reminds the operator to set it if the grant is absent. The dashboard sandbox controls do not carry this field yet; the per-agent API accepts `sandboxJob.imagePullSecrets`.
+
+```yaml
+agent_sandbox:
+  job:
+    service_account: hive-spyre-job
+    image_pull_secrets: [ registry-pull ]
+```
+
+**Authenticated GitHub reads for Jobs (#18865).** A Job runs in its own pod, so by default every `api.github.com` call it makes is anonymous: GitHub allows 60 requests per hour per source IP, shared by every agent on the node, and `uv lock --upgrade` on a repo with git dependencies falls back to full clones when the API call fails. The opt-in GitHub read relay fixes that without giving the Job a credential. Default off:
+
+```yaml
+agent_sandbox:
+  job:
+    github_read_proxy:
+      enabled: true
+      listen_addr: ":8443"                           # required when enabled; there is no default
+      endpoint: https://hive.hive-system.svc:8443   # how Job pods reach hive; required, https only
+      no_proxy: [ models.internal.example ]          # optional extra direct hosts
+```
+
+The feature is **off by default**. When `enabled` is true, `listen_addr` is required (there is no default bind, so hive never opens a port you did not name) and `endpoint` must be `https://`; config validation fails with an error naming the key otherwise. With it on, hive listens on `listen_addr`, **serving TLS only** with a certificate issued by hive's existing proxy CA for the `endpoint` host (a DNS or IP SAN; no new CA, and no CA key is written anywhere new), and every `sandbox.runtime: job` kick (the agent run, not the `publish.verify` preflights) gets `HTTPS_PROXY` set to `endpoint` (an `https://` proxy URL) with a **per-kick relay key**, plus `SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and `NODE_EXTRA_CA_CERTS` pointing at a trust bundle hive writes to `<workspace>/.hive/github-read-ca.pem` (the system roots plus hive's proxy CA, so the Job still trusts the real internet). `localhost`, `.svc` and `.cluster.local` bypass the relay. The block is read from `agent_sandbox.job` only; a per-agent `job` block cannot enable or repoint it. You must expose the listener to the Job pods yourself: a Service for `listen_addr`, and a NetworkPolicy allowing only the Job pods to reach it.
+
+**Two layers guard the listener.** The first is the NetworkPolicy: it decides which pods can open a connection to the relay port at all. The second is the per-kick relay key: a connection that gets through must still present a live key, or it gets a 407 and nothing else. The key is random per kick, held by hive only as a hash, never logged, and revoked when the kick ends. Because the listener serves TLS only, the key never crosses the pod network in cleartext, and a plain-HTTP connection is dropped before any proxy handling. Example NetworkPolicy, applied in hive's namespace, allowing ingress on the relay port only from pods in the Jobs' namespace (replace the placeholders):
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hive-github-read-relay
+  namespace: <hive-namespace>
+spec:
+  podSelector:
+    matchLabels:
+      <label-selecting-the-hive-pod>: <value>
+  policyTypes: [ Ingress ]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <jobs-namespace>
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: hive-kubejob
+      ports:
+        - protocol: TCP
+          port: 8443   # your listen_addr port
+```
+
+Client support for an `https://` proxy URL varies. Go, Node (through its proxy agents) and libcurl 7.52 or newer (curl, and git built on it) can speak TLS to a proxy. libcurl checks an https proxy against its own CA setting rather than the origin's, so hive also sets `http.proxySSLCAInfo` through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` (skipped when the Job already defines `GIT_CONFIG_COUNT`). Some clients, for example Python HTTP stacks built on urllib3 older than 2.0, cannot speak TLS to a proxy; for those the Job's reads go out anonymously, as without the relay. Hive does not downgrade to a cleartext proxy for them.
+
+What the relay does:
+
+| Host | Request | What hive does |
+|---|---|---|
+| `api.github.com`, `codeload.github.com`, `raw.githubusercontent.com` | `GET`, `HEAD` | Strips any `Authorization` the Job sent and attaches hive's read token. |
+| `github.com` | `GET /<repo>.git/info/refs?service=git-upload-pack`, `POST /<repo>.git/git-upload-pack` (git fetch and clone, uv's git resolution) | Same, as Basic `x-access-token`. |
+| `github.com` | other `GET`/`HEAD` (archives, release downloads) | Forwarded with no credential. |
+| the four hosts above | every other method, GraphQL, `git-receive-pack` (push discovery included) | Refused with a 403 and never sent to GitHub. |
+| any other host | `CONNECT` on 443 | Opaque tunnel, no interception and no credential, through the same destination guard as the agent proxy (loopback, link-local metadata and private ranges are refused). |
+
+The credential is the existing **read tier** (`shared-uid-read`: metadata, contents, actions, checks, pull requests and issues, all read), minted from the Hive App and narrowed to `project.repos`. It is never the write token and never enters the Job: the Job holds only the relay key, which authenticates it to hive's listener and is worthless to GitHub. Hive caches the token for 45 minutes and logs decisions, never token bytes. The key is revoked when the kick ends. When no read token can be minted (no App auth, a repo outside the installation), reads go out anonymously, as they did before; the Job never receives an error it would not have had without the relay. Public repositories outside `project.repos`, such as a git dependency, are readable with that token because GitHub serves public data to any authenticated caller.
+
+This is separate from `HIVE_PROXY_INJECT_GH_AUTH`, which governs the placeholder token of agents running on the hive pod; the relay does not need it and is not affected by it. Limits to know: a Job that sets its own `HTTPS_PROXY` or `NO_PROXY` can route around the relay and is back to anonymous reads; `publish.verify` Jobs do not use it; GraphQL reads from a Job are refused because the relay cannot prove a query is read-only. A shared git dependency cache ([#18865](https://github.com/hivecommons/hive/issues/18865), option 3) is a separate, complementary change.
+
+**RBAC.** The spoke's ServiceAccount needs a Role for `batch/jobs` (create, get, list, delete), `pods` plus `pods/log` (get, list) and, optionally, `serviceaccounts` (get) so the Job service account's pull secrets are merged; the terminal viewer needs nothing beyond that same `pods/log` grant. The standalone kustomize base ships it as `sandbox-job-rbac.yaml`, and the hub provisioner grants it to every hosted spoke as `hive-sandbox-jobs`.
 
 Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when a job-runtime agent resolves no `workspace_claim` or names a runtime hive does not have, and refuses the kick with the same message rather than failing it after the agent is marked running.
 
@@ -428,7 +559,9 @@ A sandboxed agent (Podman or Job runtime) has no tmux session, no in-pod process
 | `health`  | Meaning | Dot |
 |-----------|---------|-----|
 | `ok`      | last run succeeded (or no run yet) and the next cadence occurrence is still in the future | green |
-| `running` | a kick is in flight (container or Job running/pending) | amber |
+| `running` | a kick is in flight (container or Job running) | amber |
+| `waiting_for_node` | a kick is in flight but its Job's pod is Pending and Unschedulable; `waitDetail` has the scheduler's message | amber |
+| `node_unhealthy` | the last kick never reached the agent: the node `preflight` failed, also on the retry; `failReason` and `node` say why and where | red |
 | `failed`  | the last run failed or timed out — see the agent's log | red |
 | `overdue` | the cadence had a due occurrence that never started, older than the grace (half the period, clamped to 15 min – 2 h); `dueAt` names it | red |
 

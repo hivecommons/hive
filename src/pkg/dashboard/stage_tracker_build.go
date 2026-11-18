@@ -58,6 +58,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	resp.NeedsHumanLabels = needsHumanPresetLabels(cfg, status.HiveID)
 	resp.Workflows = stageTrackerWorkflows(cfg, s.workflowProfileLookup(), qualifyRepo)
+	attachWorkflowHandoffsToTracker(resp.Workflows, s.workflowDispatchHandoffs())
 	expectedPerspectives := stageTrackerExpectedPerspectives(cfg)
 	// A Review track only waits on "the hive reviewer" when this hive's
 	// planner dispatches one; with the swarm off it says a person reviews.
@@ -250,6 +251,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Caption = stageTrackerTakeoverCaption(it.Caption, it.Takeover)
 		}
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)
+		if approver == "" && hasRec && stage == stagelabels.NeedsDecision {
+			// At 085 the reason carries no approver: the stage pass
+			// records the head's trusted approval on the record instead.
+			approver = rec.HeadApprover(it.Head)
+		}
 		it.HumanApprover = approver
 		it.ManualMerge = stageTrackerManualMergeReason(base)
 		if stage == stagelabels.ReadyForHumanMerge {
@@ -655,6 +661,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
 	stageTrackerResolveHumanAttention(resp.Items)
+	stageTrackerResolveHumanGates(resp.Items, now)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
 }

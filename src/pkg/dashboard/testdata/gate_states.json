@@ -1,0 +1,108 @@
+{
+  "_comment": "One table for the human gate (hivecommons/hive#18769). Each case is a tracker row as /api/stage-tracker emits it and what the gate must show: the reasons on the pill, the verbs offered (exactly the ones the action accepts), whether a sign-off ask is answered, and the kind of blocker named when no decision is pending. stage_tracker_gate_test.go (the server rule) and stage_tracker_gate_truth.test.js (the page's pill and its action mapping) both run it.",
+  "cases": [
+    {
+      "name": "hive#18667: a person approved the head, two required checks are stuck",
+      "item": { "repo": "hivecommons/hive", "number": 18667, "kind": "pr", "stage": 60, "head": "ac459c3c3", "base_ref": "v6", "author_kind": "hive", "modifiers": [],
+        "reason": "verdict-requires-human:human-approved@clubanderson", "human_approver": "clubanderson",
+        "review_activity": { "head": "ac459c3c3", "state": "human_decision", "caption": "Review findings · needs owner sign-off", "blocker": "Should a maintainer sign off on the DCO change?", "source": "verified-review-bundle" },
+        "ci_activity": { "head": "ac459c3c3", "state": "running", "caption": "CI running · 15 checks pending", "source": "checks", "checks_passed": 54, "checks_total": 69,
+          "checks_pending": ["PR Type", "PR Issue", "build", "lint"], "checks_stuck": ["PR Type", "PR Issue"], "stuck_since": "2026-11-17T09:00:00Z" } },
+      "want": { "reasons": [], "actions": [], "answered": true, "answered_by": "clubanderson", "wait": "checks-stuck" }
+    },
+    {
+      "name": "parked at 085 on the reviewer's sign-off question",
+      "item": { "repo": "acme/api", "number": 1, "kind": "pr", "stage": 85, "head": "aaa1111", "author_kind": "hive", "modifiers": ["needs-decision"], "needs_human": true,
+        "review_activity": { "head": "aaa1111", "state": "human_decision", "caption": "Review findings · needs owner sign-off", "source": "verified-review-bundle" } },
+      "want": { "reasons": ["review"], "actions": ["decide:approve", "gate:request-changes", "decide:delegate"], "answered": false, "wait": "" }
+    },
+    {
+      "name": "parked at 085 on a decision with no reviewer verdict",
+      "item": { "repo": "acme/api", "number": 2, "kind": "pr", "stage": 85, "head": "bbb2222", "author_kind": "hive", "modifiers": [], "needs_human": true },
+      "want": { "reasons": ["decision"], "actions": ["gate:decide", "decide:approve", "decide:delegate"], "answered": false, "wait": "" }
+    },
+    {
+      "name": "parked decision that is also held",
+      "item": { "repo": "acme/api", "number": 3, "kind": "pr", "stage": 85, "head": "ccc3333", "author_kind": "hive", "modifiers": ["needs-decision", "hold"], "hold": { "by": "octocat" } },
+      "want": { "reasons": ["decision", "hold"], "actions": ["gate:decide", "decide:approve", "decide:delegate", "release"], "answered": false, "wait": "" }
+    },
+    {
+      "name": "sentinel alert on a PR still in CI: only the alert's own answer acts",
+      "item": { "repo": "acme/api", "number": 4, "kind": "pr", "stage": 60, "head": "ddd4444", "author_kind": "hive", "modifiers": [], "sentinel_alert": true, "sentinel_reason": "touches .github/workflows" },
+      "want": { "reasons": ["sentinel"], "actions": ["gate:confirm-sentinel"], "answered": false, "wait": "" }
+    },
+    {
+      "name": "hold on a PR that is not parked: only Release hold acts",
+      "item": { "repo": "acme/api", "number": 5, "kind": "pr", "stage": 60, "head": "eee5555", "author_kind": "hive", "modifiers": ["hold"], "hold": { "by": "octocat" } },
+      "want": { "reasons": ["hold"], "actions": ["release"], "answered": false, "wait": "" }
+    },
+    {
+      "name": "ready for human merge behind a sentinel alert",
+      "item": { "repo": "acme/api", "number": 6, "kind": "pr", "stage": 90, "head": "fff6666", "author_kind": "hive", "modifiers": [], "needs_human": true, "human_merge_reason": "sentinel-alert", "sentinel_alert": true },
+      "want": { "reasons": ["decision", "sentinel"], "actions": ["gate:decide", "decide:approve", "decide:delegate", "gate:confirm-sentinel"], "answered": false, "wait": "" }
+    },
+    {
+      "name": "needs-human label on a PR the hive has not parked: a direction is the only verb",
+      "item": { "repo": "acme/api", "number": 7, "kind": "pr", "stage": 60, "head": "abc7777", "author_kind": "hive", "modifiers": ["needs-human"], "needs_human": true },
+      "want": { "reasons": ["decision"], "actions": ["gate:decide"], "answered": false, "wait": "" }
+    },
+    {
+      "name": "author-owned PR returned to its contributor: nobody is asked to decide",
+      "item": { "repo": "acme/api", "number": 8, "kind": "pr", "stage": 72, "head": "abc8888", "author": "mona", "author_kind": "human", "modifiers": [], "needs_human": true },
+      "want": { "reasons": [], "actions": [], "answered": false, "wait": "author" }
+    },
+    {
+      "name": "triage needed: the lead is Accept triage, not a decision",
+      "item": { "repo": "acme/api", "number": 9, "kind": "issue", "stage": 15, "modifiers": ["needs-triage"], "needs_human": true },
+      "want": { "reasons": [], "actions": [], "answered": false, "wait": "" }
+    },
+    {
+      "name": "issue parked at 045",
+      "item": { "repo": "acme/api", "number": 10, "kind": "issue", "stage": 45, "modifiers": [], "needs_human": true },
+      "want": { "reasons": ["decision"], "actions": ["gate:decide", "decide:delegate"], "answered": false, "wait": "" }
+    },
+    {
+      "name": "CI running, nothing asked",
+      "item": { "repo": "acme/api", "number": 11, "kind": "pr", "stage": 50, "head": "abc1111", "author_kind": "hive", "modifiers": [],
+        "ci_activity": { "head": "abc1111", "state": "running", "caption": "CI running", "source": "checks", "checks_passed": 3, "checks_total": 10, "checks_pending": ["build"] } },
+      "want": { "reasons": [], "actions": [], "answered": false, "wait": "ci-running" }
+    },
+    {
+      "name": "required check never reported",
+      "item": { "repo": "acme/api", "number": 12, "kind": "pr", "stage": 50, "head": "abc1212", "author_kind": "hive", "modifiers": [],
+        "ci_activity": { "head": "abc1212", "state": "missing", "caption": "CI waiting", "source": "checks", "checks_passed": 9, "checks_total": 10, "checks_pending": ["PR Type"] } },
+      "want": { "reasons": [], "actions": [], "answered": false, "wait": "checks-missing" }
+    },
+    {
+      "name": "required check red",
+      "item": { "repo": "acme/api", "number": 13, "kind": "pr", "stage": 50, "head": "abc1313", "author_kind": "hive", "modifiers": [],
+        "ci_activity": { "head": "abc1313", "state": "failing", "caption": "CI failing", "source": "checks", "checks_passed": 9, "checks_total": 10, "checks_failed": 1, "checks_failing": ["lint"] } },
+      "want": { "reasons": [], "actions": [], "answered": false, "wait": "checks-failing" }
+    },
+    {
+      "name": "green head whose review re-runs on the new commit",
+      "item": { "repo": "acme/api", "number": 14, "kind": "pr", "stage": 50, "head": "abc1414", "author_kind": "hive", "modifiers": [],
+        "ci_activity": { "head": "abc1414", "state": "passing", "caption": "CI green", "source": "checks", "checks_passed": 10, "checks_total": 10 },
+        "review_activity": { "head": "abc1414", "state": "assigned", "caption": "Review assigned", "source": "review-dispatch" } },
+      "want": { "reasons": [], "actions": [], "answered": false, "wait": "review-pending" }
+    },
+    {
+      "name": "approved and green: the merge queue",
+      "item": { "repo": "acme/api", "number": 15, "kind": "pr", "stage": 80, "head": "abc1515", "author_kind": "hive", "modifiers": [],
+        "ci_activity": { "head": "abc1515", "state": "passing", "caption": "CI green", "source": "checks", "checks_passed": 10, "checks_total": 10 },
+        "review_activity": { "head": "abc1515", "state": "approved", "caption": "Review approved", "source": "verified-review-bundle" } },
+      "want": { "reasons": [], "actions": [], "answered": false, "wait": "merge-queue" }
+    },
+    {
+      "name": "blocked by a conflict",
+      "item": { "repo": "acme/api", "number": 16, "kind": "pr", "stage": 60, "head": "abc1616", "base_ref": "main", "author_kind": "hive", "modifiers": ["needs-rebase"] },
+      "want": { "reasons": [], "actions": [], "answered": false, "wait": "conflict" }
+    },
+    {
+      "name": "a draft carries no gate even with a sign-off verdict",
+      "item": { "repo": "acme/api", "number": 17, "kind": "pr", "stage": 85, "head": "abc1717", "author_kind": "hive", "modifiers": ["draft"],
+        "review_activity": { "head": "abc1717", "state": "human_decision", "caption": "Review findings · needs owner sign-off", "source": "verified-review-bundle" } },
+      "want": { "reasons": [], "actions": [], "answered": false, "wait": "", "inert": true }
+    }
+  ]
+}

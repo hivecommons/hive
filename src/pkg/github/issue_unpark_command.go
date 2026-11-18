@@ -639,6 +639,13 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 
 	answered := c.answeredUnparkCommentIDs(comments)
 	verbs := issueModelReplyVerbs(profile, issue)
+	// A person's comment after the hive's not-agent-work verdict puts the
+	// issue back in the queue (hivecommons/hive#18675).
+	if !labelDriven {
+		if acted, err := c.tryRequeueNotAgentWork(ctx, displayRepo, owner, repo, issue, comments, answered, verbs, result, audit); err != nil || acted {
+			return acted, err
+		}
+	}
 	candidate, command, err := c.eligibleUnparkCommand(ctx, owner, repo, comments, answered, cutoff, labelDriven && la.enabled, verbs)
 	if err != nil {
 		return false, err

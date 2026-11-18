@@ -403,11 +403,17 @@ in repositories with auto-merge off:
 - It merges the base in with `update-branch`, pinned to the evaluated head
   (the same merge commit the "Update branch" button makes). It posts nothing.
 - It skips drafts, held and exempt PRs, fork PRs with "allow edits by
-  maintainers" off, dependency-bot branches (the bot rebases them), PRs at
-  `stage/072-returned-to-contributor` (the author's hive pushes there) and at
+  maintainers" off, dependency-bot branches (the bot rebases them) and PRs at
   `stage/074-adopted-by-hive` (the adoption recovery owns them). Repositories
   in `auto_merge.require_current_base` are left to the automerge preparation
   front.
+- PRs at `stage/072-returned-to-contributor` are candidates. The update only
+  happens when the base fixed every failing check, so the red is the base's,
+  and the 072 nudge asked the contributor to fix something nobody tells them
+  to merge in: projectbluefin/actions#765 and #766 stayed red at 072 for ten
+  hours after main fixed their checks, until a person pressed "Update
+  branch". The update is pinned to the evaluated head, so a push from the
+  contributor (or their hive) wins.
 - Each update goes through the write-back gate as `base_refresh`: allowed on
   hive-authored PRs, and on other PRs at L6 with the opt-in label by default.
   `writeback.kinds.base_refresh.unlabeled_min_level: 6` lets it reach every
@@ -641,7 +647,7 @@ that level, the power the write-back exists to govern?
 | Shared-CI tracking issues (`shared_ci_issues.go`) | 15-min sweep (`shared_ci_issues`) | **new** `[shared-ci] <check> failing across <owner/repo>` issue, body edits of its own issue | repos where one check fails on `shared_ci_issues.min_prs`+ open PRs or trips the red-main breaker | `issue_file` → L3, no label (own items) |
 | Shared-CI rerun (`shared_ci_rerun.go`) | CI failure watcher | `rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment | PRs with failed shared workflows | `ci_rerun` → L6 + label |
 | Transient-CI rerun (`transient_ci_rerun.go`) | eval cycle, before the stuck-PR reaper | `rerun-failed-jobs`, once per head, no comment | hive-authored and `auto_merge.trusted_bot_authors` red PRs whose every failing run carries `hive-ci-transient` | `ci_rerun` (own items: allowed unless the repo is paused, off or issues-only; trusted-bot PRs: L6 + label, or `writeback.kinds.ci_rerun.unlabeled_min_level`; a refused re-run hands the bot PR to a person with the reason) |
-| Stale-red base refresh (`cmd/hive/stale_red_base_refresh.go`, `pkg/github/stale_red_base_refresh.go`) | eval cycle, before the stuck-PR reaper, at most every 5 min | **branch push** (`update-branch` merge of the base), once per head and base tip, no comment | red PRs behind their base whose every failing check is green on the base tip; not drafts, held, non-editable forks, dependency-bot branches, 072 or 074 | `base_refresh` → hive-authored PRs, else L6 + label |
+| Stale-red base refresh (`cmd/hive/stale_red_base_refresh.go`, `pkg/github/stale_red_base_refresh.go`) | eval cycle, before the stuck-PR reaper, at most every 5 min | **branch push** (`update-branch` merge of the base), once per head and base tip, no comment | red PRs behind their base whose every failing check is green on the base tip, 072 included; not drafts, held, non-editable forks, dependency-bot branches or 074 | `base_refresh` → hive-authored PRs, else L6 + label |
 | Missing-check base refresh (`cmd/hive/missing_check_base_refresh.go`, `pkg/github/missing_check_base_refresh.go`) | eval cycle, after the stale-red base refresh, at most every 5 min | **branch push** (`update-branch` merge of the base), once per head and base tip and once per set of missing checks, no comment | PRs behind their base, otherwise green, whose head has no run at all for a required check that runs on the base tip or another open PR; not drafts, held, parked, waiting on workflow approval, non-editable forks, dependency-bot branches, 072 or 074 | `base_refresh` → hive-authored PRs, else L6 + label |
 | Dependency-bot rebase request (`cmd/hive/dependency_bot_rebase_request.go`, `pkg/github/dependency_bot_rebase.go`) | governor eval, in the dependency-bot hand-off sweep | ticks Renovate's rebase/retry checkbox (only that line of the PR description changes); once per head, no other comment. Never asks Dependabot, which refuses commands from apps: a stranded Dependabot PR is handed to a person at once | dependency-bot PRs behind or conflicting with their base past `governor.dependency_bot_rebase_after_s` (4h) whose bot stopped rebasing them; never a branch carrying someone else's non-merge commit | `bot_rebase_request` → L6 + label; refused: the PR is handed to a person instead (see [README](README.md)) |
 | Dependency-bot adoption request (`cmd/hive/dependency_bot_adopt.go`) | governor eval, in the dependency-bot hand-off sweep, where the red-CI hand-off would fire; only with `auto_merge.dependency_bot_adopt.enabled` (default off) | `adoption/supersede` label (the dashboard Adopt decision's label); once per head, no comment | red dependency-bot PRs by a `trusted_bot_authors` bot whose head the review swarm marked `changes_requested`; never held, human-merge-labelled or `human_merge_paths` PRs, or with stage adoption off | `contributor_adopt` → L6 + label; refused: the PR gets the usual person hand-off |

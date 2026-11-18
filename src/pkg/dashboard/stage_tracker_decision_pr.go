@@ -50,6 +50,11 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	// pushed past: the reviewer re-reviews, not the author
 	// (projectbluefin/chairlift#799).
 	reReviewers, reReview := stageengineprstage.ParseReReviewRequested(base)
+	// A trusted merger already approved this head (hivecommons/hive#18849
+	// follow-up): that approval answers a reviewer's requires_human
+	// question, so the question is not asked again, and a second Approve
+	// adds nothing — what holds the PR at 085 is something else.
+	approvedBy := strings.TrimPrefix(strings.TrimSpace(it.HumanApprover), "@")
 
 	// WHAT it is waiting on: the question, most specific source first. A
 	// reviewer's own question is quoted verbatim — it is the text the
@@ -68,7 +73,7 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		// class; the caption names which stop, never "needs your decision".
 		d.AskedBy = decisionAskedByLane
 		d.Question = "The hive's superseding PR would auto-merge (owner rule), but " + stagelabels.HiveSupersederHardStopProse(hiveSupersederStop) + ". Clear that stop and the lane merges it on its next pass, or close it?"
-	case verdict != nil && strings.TrimSpace(verdict.DecisionQuestion) != "":
+	case approvedBy == "" && verdict != nil && strings.TrimSpace(verdict.DecisionQuestion) != "":
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = strings.TrimSpace(verdict.DecisionQuestion)
 		if !verdict.RecordedAt.IsZero() {
@@ -114,14 +119,14 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 			}
 		}
 		d.Question += ". Fix it on the base branch, merge it as is, or close it?"
-	case verdict != nil && decisionFirstNonEmpty(verdict.HumanSummaries) != "":
+	case approvedBy == "" && verdict != nil && decisionFirstNonEmpty(verdict.HumanSummaries) != "":
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = "A reviewer handed this to a person: " + decisionFirstNonEmpty(verdict.HumanSummaries)
 		if !verdict.RecordedAt.IsZero() {
 			t := verdict.RecordedAt
 			d.Since = &t
 		}
-	case reviewerDeferred:
+	case approvedBy == "" && reviewerDeferred:
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = "A reviewer handed this PR to a person without a specific question. Merge it as is, give direction, or close it?"
 	case sentinel:
@@ -200,6 +205,11 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		if verdict != nil && strings.TrimSpace(verdict.DecisionFinding) != "" {
 			d.Blocker = "The review found: " + strings.TrimSpace(verdict.DecisionFinding) + ". " + d.Blocker
 		}
+	}
+	if approvedBy != "" && approveOK && !sentinel {
+		// A sentinel alert keeps Approve: on this row it also clears the
+		// alert's label in the same click.
+		approveOK, approveWhy = false, "@"+approvedBy+" already approved this head on GitHub; another approval does not clear what holds it here."
 	}
 	if held && selfHold == nil {
 		if d.Blocker != "" {

@@ -94,6 +94,9 @@ func (c *Client) reauthorBranchSigned(ctx context.Context, req PRRequest) signed
 	if c == nil || c.client == nil {
 		return signedCommitResult{Skipped: "no GitHub client"}
 	}
+	if reason := invalidHeadReason(req.Head); reason != "" {
+		return signedCommitResult{Skipped: "head is not a branch: " + reason}
+	}
 	owner, repo := c.splitRepo(strings.TrimSpace(req.Repo))
 	head := strings.TrimSpace(req.Head)
 	base := strings.TrimSpace(req.Base)

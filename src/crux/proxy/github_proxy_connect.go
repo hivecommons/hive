@@ -215,7 +215,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 
 	upstreamConn, err := p.dialUpstreamTLS(host+":443", host, upstreamDialTimeout)
 	if err != nil {
-		p.logger.Error("transparent proxy upstream dial failed", "host", host, "error", err)
+		p.logger.Error("transparent proxy upstream dial failed", "host", host, "error_class", classifyDialError(err), "error", err)
 		return
 	}
 	defer func() { _ = upstreamConn.Close() }()
@@ -536,7 +536,7 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	// time-boxed.
 	upstreamConn, err := p.dialUpstreamTLS(r.Host, host, upstreamDialTimeout)
 	if err != nil {
-		p.logger.Error("proxy upstream dial failed", "host", r.Host, "error", err)
+		p.logger.Error("proxy upstream dial failed", "host", r.Host, "error_class", classifyDialError(err), "error", err)
 		return
 	}
 	defer func() { _ = upstreamConn.Close() }()
@@ -637,7 +637,7 @@ func (p *GitHubProxy) logConnectDialFailed(host string, err error) {
 	if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 		level = slog.LevelDebug
 	}
-	p.logger.Log(context.Background(), level, "proxy: CONNECT dial failed", "host", host, "error", err)
+	p.logger.Log(context.Background(), level, "proxy: CONNECT dial failed", "host", host, "error_class", classifyDialError(err), "error", err)
 }
 
 // refuseTunnel answers a CONNECT whose destination the guard barred, with the

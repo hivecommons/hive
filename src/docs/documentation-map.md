@@ -179,6 +179,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Knowledge connectors](knowledge-connectors.md) — **Owner configuration:** connect, validate, and sync external document/wiki sources; includes scope and API reference.
 - [Inbox and voice sources](inbox-voice-sources.md) — triage Plaud/Wispr Flow recordings into spektacular RFCs, dibs ideas, or knowledge only; hosted-hive Plaud sign-in.
 - [Add files and links to the Inbox](inbox-uploads.md) — drop or paste md, txt, json, jsonl, yaml, csv and tsv files onto the Inbox: content sniffing, limits, retention and privacy.
+- [Input methods and the Inbox](inbox-input-methods.md) — which input methods reach the Inbox today (dictation, gaze typing, switch access, through Quick note), why there is no neural source yet, and the "coming soon" list
 - [Inbox transcription](inbox-transcription.md) — spoke-local Deepgram transcription of recordings without text, with the owner's own key, budget and consent gate.
 - [Recording into the Inbox](inbox-recording.md) — record a meeting or note from the dashboard (● Record): consent notice before every recording, chunked upload, 5-day audio retention, browser support.
 - [Meetings](meetings.md) — send hive into Google Meet, Teams, Zoom or Discord meetings to take notes, ask questions and run research; consent, setup and settings.
@@ -250,6 +251,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [CI runner labels](ci-runner-labels.md) — how `runs-on:` picks the self-hosted fleet, why a fork must degrade to a GitHub-hosted runner, and the one variable `hivecommons` sets.
 - [Gate-integrity invariants for agent lanes](design/gate-integrity-invariants.md) — proposed write-gate rules for agent lanes: no history rewrites on branches a lane did not create, no sign-off on other authors' commits, and hold-gated demotion for gate manipulation.
 - [Crux: the agent runtime boundary](design/crux.md) — **Design record:** runtime separation, module boundary, staged rollout, and naming decision.
+- [Customers: a profile per person and a customer graph](design/customers.md) — proposed design for the Customers section, the people store, the read-only graph endpoint, and inferred goals and satisfaction (RFC #18742).
 - [Design documents](design/README.md) — browse records labelled shipped, partly shipped, design-only, or historical; proposals are not current behavior.
 - [Discord reaction-consensus issue promotion](design/discord-issue-promotion.md) — proposed design for turning Discord reaction consensus into an audited Hive label write that composes with `project.issue_filter.require_labels` (RFC #6239).
 - [GitHub @-mention triggers](design/github-mention-triggers.md) — **v6 development branch only:** summon agents from issues/PRs with the existing permission guards; not a v5 feature.

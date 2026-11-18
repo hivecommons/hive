@@ -30,7 +30,12 @@ import (
 //     profile and the idempotency key of the hand-off (item, profile,
 //     state, and the triggering reply for a reply-started profile), so a
 //     hand-off happens once however many cycles or restarts pass;
-//   - BuildWorkflowDispatchPrompt renders what the agent is told.
+//   - BuildWorkflowDispatchPrompt renders what the agent is told;
+//   - a delivered kick is only a hand-off made, not work started
+//     (workflow_dispatch_handoff.go): ReviewWorkflowHandoff decides, from
+//     how the agent's turn ended and whether the deliverable showed up,
+//     whether the hand-off started, and a hand-off that did not is planned
+//     once more for a different agent (hivecommons/hive#18749).
 //
 // cmd/hive/workflow_dispatch.go wires these to the claim ledger, the kick
 // dispatcher and the durable WorkflowDispatchLog.
@@ -106,6 +111,12 @@ type WorkflowDispatchCandidate struct {
 	// ManualBy names the person who sent the item from the dashboard
 	// ("Send to <profile>"); empty for an automatic hand-off.
 	ManualBy string
+	// AgentMode is the interaction mode Agent's session runs in
+	// (ISSUES_AND_PRS, ...), which the prompt states; empty when unknown.
+	AgentMode string
+	// Prior is the earlier hand-off of the same key that was not started,
+	// when this one is its retry.
+	Prior *WorkflowDispatchEntry
 }
 
 // WorkflowDispatchSkip is an item the plan did not hand off, and why.
@@ -123,6 +134,9 @@ const (
 	WorkflowSkipNoReply    = "waiting for the reply"
 	WorkflowSkipReplyError = "reply lookup failed"
 	WorkflowSkipDone       = "already dispatched"
+	// WorkflowSkipNotStarted prefixes the reason of an item whose earlier
+	// hand-off was not started and that no other agent can take.
+	WorkflowSkipNotStarted = "earlier hand-off not started and no other agent qualifies"
 )
 
 // WorkflowDispatchPlanDeps are the decisions PlanWorkflowDispatch defers.
@@ -138,8 +152,15 @@ type WorkflowDispatchPlanDeps struct {
 	// profile on the item; it is called only for such items.
 	Reply func(d github.WorkflowDispatch) (github.DispatchReply, bool, error)
 	// Done reports whether a key was already dispatched (durably or in
-	// flight).
+	// flight). A hand-off that was not started and may still be retried
+	// is not done.
 	Done func(key string) bool
+	// Prior returns the earlier hand-off of key that was not started and
+	// may be retried automatically (WorkflowDispatchEntry.Retryable).
+	Prior func(key string) (WorkflowDispatchEntry, bool)
+	// RetryAgent resolves the agent for the retry of a hand-off the agents
+	// in tried did not start: never one of them.
+	RetryAgent func(d github.WorkflowDispatch, tried []string) (string, bool)
 }
 
 // PlanWorkflowDispatch decides which owned items to hand off now. Items
@@ -191,7 +212,28 @@ func PlanWorkflowDispatch(items []github.WorkflowDispatch, deps WorkflowDispatch
 			skips = append(skips, WorkflowDispatchSkip{Ref: ref, Profile: d.Target.Profile, Reason: WorkflowSkipDone})
 			continue
 		}
-		out = append(out, WorkflowDispatchCandidate{Dispatch: d, Agent: agent, Key: key, Trigger: trigger})
+		var prior *WorkflowDispatchEntry
+		if deps.Prior != nil {
+			if p, retry := deps.Prior(key); retry {
+				prior = &p
+			}
+		}
+		if prior != nil && len(prior.Tried) > 0 {
+			// The retry goes to a different agent, or to nobody.
+			agent, ok = "", false
+			if deps.RetryAgent != nil {
+				agent, ok = deps.RetryAgent(d, prior.Tried)
+			}
+			if !ok {
+				skips = append(skips, WorkflowDispatchSkip{Ref: ref, Profile: d.Target.Profile, Reason: WorkflowSkipNotStarted + ": " + prior.Reason})
+				continue
+			}
+			if deps.Eligible != nil && !deps.Eligible(agent) {
+				skips = append(skips, WorkflowDispatchSkip{Ref: ref, Profile: d.Target.Profile, Reason: WorkflowSkipIneligible})
+				continue
+			}
+		}
+		out = append(out, WorkflowDispatchCandidate{Dispatch: d, Agent: agent, Key: key, Trigger: trigger, Prior: prior})
 	}
 	return out, skips
 }
@@ -199,12 +241,12 @@ func PlanWorkflowDispatch(items []github.WorkflowDispatch, deps WorkflowDispatch
 // BuildWorkflowDispatchPrompt renders the kick for one hand-off. A
 // non-empty template replaces the built-in prompt; ${VAR} placeholders
 // (REF, REPO, NUMBER, TITLE, URL, KIND, MODEL, STATE, STATE_LABEL, PROFILE,
-// AGENT, TRIGGER, INSTRUCTIONS, DELIVERABLE) are expanded in either.
+// AGENT, AGENT_MODE, TRIGGER, INSTRUCTIONS, DELIVERABLE) are expanded in
+// either.
 func BuildWorkflowDispatchPrompt(c WorkflowDispatchCandidate, template string) string {
-	d := c.Dispatch
 	vars := workflowPromptVars(c)
 	if strings.TrimSpace(template) == "" {
-		template = defaultWorkflowDispatchTemplate(d)
+		template = defaultWorkflowDispatchTemplate(c)
 	}
 	pairs := make([]string, 0, len(vars)*2)
 	for k, v := range vars {
@@ -238,6 +280,7 @@ func workflowPromptVars(c WorkflowDispatchCandidate) map[string]string {
 		"STATE_LABEL":  label,
 		"PROFILE":      d.Target.Profile,
 		"AGENT":        c.Agent,
+		"AGENT_MODE":   c.AgentMode,
 		"TRIGGER":      trigger,
 		"INSTRUCTIONS": bulletList(d.Target.Instructions),
 		"DELIVERABLE":  bulletList(workflowDeliverableLines(d)),
@@ -251,27 +294,79 @@ func workflowKindWord(k workflowmodel.ItemKind) string {
 	return "issue"
 }
 
-func defaultWorkflowDispatchTemplate(d github.WorkflowDispatch) string {
+// WorkflowDeclineMarker is how a kicked agent says it will not take a
+// hand-off: a final line that starts with it. It is the stand-down the kick
+// outcome classifier already recognises (crux KickOutcomeStandDown), so the
+// decline reaches the hand-off review with its reason.
+const WorkflowDeclineMarker = "STAND DOWN"
+
+func defaultWorkflowDispatchTemplate(c WorkflowDispatchCandidate) string {
+	d := c.Dispatch
 	var b strings.Builder
 	b.WriteString("## Workflow hand-off: ${PROFILE} for ${REF}\n\n")
-	b.WriteString("${REPO} is bound to the workflow model `${MODEL}`. The ${KIND} ${REF} (\"${TITLE}\", ${URL}) is in the model state **${STATE_LABEL}** (`${STATE}`), which the model hands to the `${PROFILE}` profile. You are that profile for this item. ")
+	b.WriteString("${REPO} is bound to the workflow model `${MODEL}`. The ${KIND} ${REF} (\"${TITLE}\", ${URL}) is in the model state **${STATE_LABEL}** (`${STATE}`), which the model hands to the `${PROFILE}` profile. The hive picked you to do that profile's work on this item. ")
 	if d.Kind == workflowmodel.KindIssue {
 		b.WriteString("The hive claimed the issue for you before this kick, and no other lane is offered it.")
 	} else {
 		b.WriteString("No other lane is offered it.")
 	}
-	b.WriteString("\n\nStarted by: ${TRIGGER}.\n\n")
+	b.WriteString("\n\nStarted by: ${TRIGGER}.\n")
+	if c.Prior != nil && c.Prior.Agent != "" && c.Prior.Agent != c.Agent {
+		fmt.Fprintf(&b, "An earlier hand-off of this item to %s was not started (%s), so it comes to you.\n", c.Prior.Agent, c.Prior.Reason)
+	}
+	b.WriteString("\n")
 	if len(d.Target.Instructions) > 0 {
 		b.WriteString("What this state asks for:\n${INSTRUCTIONS}\n\n")
 	}
-	if len(d.Target.Tools) > 0 {
-		fmt.Fprintf(&b, "Tools the model grants this profile: %s.\n", strings.Join(d.Target.Tools, ", "))
-	}
-	if len(d.Target.Produces) > 0 {
-		fmt.Fprintf(&b, "It may produce: %s.\n", strings.Join(d.Target.Produces, ", "))
-	}
+	b.WriteString(workflowPermissionLines(c))
 	b.WriteString("\nDeliverable:\n${DELIVERABLE}\n\n")
 	b.WriteString("Read the ${KIND} and every comment on it first. Stop after the deliverable: each later step is a person's gate.\n")
+	return b.String()
+}
+
+// workflowPermissionLines says what the kicked session may do, and only
+// that. The model's grant (its tools and outputs) describes the profile's
+// role; it gives the session nothing. The session acts with its own mode,
+// which the resolver checked against the deliverable before picking the
+// agent, so the prompt never tells an agent to act beyond what it holds
+// (hivecommons/hive#18749).
+func workflowPermissionLines(c WorkflowDispatchCandidate) string {
+	d := c.Dispatch
+	t := d.Target
+	var b strings.Builder
+	var role []string
+	if len(t.Tools) > 0 {
+		role = append(role, "uses "+strings.Join(t.Tools, ", "))
+	}
+	if len(t.Produces) > 0 {
+		role = append(role, "produces "+strings.Join(t.Produces, ", "))
+	}
+	if len(role) > 0 {
+		fmt.Fprintf(&b, "The model describes the role: it %s. That is a description of the work, not a permission: it grants your session nothing.\n", strings.Join(role, " and "))
+	}
+	needs := "push a branch and open a pull request through `hive-open-pr`"
+	if !t.ProducesChange() {
+		needs = "comment on the item"
+	}
+	if c.AgentMode != "" {
+		fmt.Fprintf(&b, "You act with your own session's permissions, nothing more. Your session runs in mode `%s`, which lets it %s; that is why the hive picked you.\n", c.AgentMode, needs)
+	} else {
+		fmt.Fprintf(&b, "You act with your own session's permissions, nothing more. The deliverable needs a session that may %s.\n", needs)
+	}
+	if t.ProducesChange() {
+		// The write path is shell commands, not a tool the CLI lists: a
+		// session that looked for a tool named hive-open-pr, found none and
+		// stood down never ran a command (hivecommons/hive#18777).
+		fmt.Fprintf(&b, "`git` and `hive-open-pr` are commands in your shell, not entries in your tool list, so do not look for a tool by that name. In a checkout of %s on a new topic branch: commit with `git commit -s`, run `git push origin <branch>`, then run `hive-open-pr --repo %s --head <branch> --title \"<title>\" --body-file <file>`", d.Repo, d.Repo)
+		if d.Kind == workflowmodel.KindIssue {
+			fmt.Fprintf(&b, " with `--issues %d`", d.Number)
+		}
+		b.WriteString(". `command -v hive-open-pr` shows where it is.\n")
+	}
+	// The marker is spelled as two separately quoted words so that this
+	// instruction, echoed into the pane and wrapped, can never itself read
+	// as a stated stand-down.
+	b.WriteString("If the hive's write gates refuse what the deliverable needs, do not work around them: end your reply with one line that starts with the words `STAND` `DOWN` (upper case, one space between them), then a colon and the reason, and stop. The hive then hands the item to another agent. Stand down only after you ran the command and it was refused (quote its output); an empty tool list is not a refusal.\n")
 	return b.String()
 }
 
@@ -398,6 +493,19 @@ type WorkflowDispatchEntry struct {
 	Agent   string    `json:"agent"`
 	By      string    `json:"by,omitempty"`
 	At      time.Time `json:"at"`
+	// Status is one of the WorkflowHandoff* values. Empty is a record
+	// written before outcomes were tracked (hivecommons/hive#18749): the
+	// kick landed and nothing more is known.
+	Status string `json:"status,omitempty"`
+	// Reason says why a hand-off was not started.
+	Reason string `json:"reason,omitempty"`
+	// Attempts counts the hand-offs of this key to an agent that could do
+	// the work; Tried names those agents. A hand-off to an agent that may
+	// not do what the profile needs counts for neither.
+	Attempts int      `json:"attempts,omitempty"`
+	Tried    []string `json:"tried,omitempty"`
+	// CheckedAt is when Status was last decided.
+	CheckedAt *time.Time `json:"checked_at,omitempty"`
 }
 
 // workflowDispatchLogMax bounds the durable log; past it the oldest
@@ -440,25 +548,55 @@ func OpenWorkflowDispatchLog(path string) (*WorkflowDispatchLog, error) {
 	return l, nil
 }
 
-// Done reports whether key was dispatched.
+// Done reports whether key was dispatched and needs no further hand-off: a
+// record exists and it is not a hand-off that was not started and may still
+// be retried (WorkflowDispatchEntry.Retryable).
 func (l *WorkflowDispatchLog) Done(key string) bool {
+	e, ok := l.Get(key)
+	return ok && !e.Retryable()
+}
+
+// Get returns the record of key.
+func (l *WorkflowDispatchLog) Get(key string) (WorkflowDispatchEntry, bool) {
 	if l == nil {
-		return false
+		return WorkflowDispatchEntry{}, false
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, ok := l.entries[key]
-	return ok
+	e, ok := l.entries[key]
+	return e, ok
 }
 
 // Record stores e and persists the log atomically.
 func (l *WorkflowDispatchLog) Record(e WorkflowDispatchEntry) error {
-	if l == nil || e.Key == "" {
+	return l.RecordAll([]WorkflowDispatchEntry{e})
+}
+
+// RecordAll stores every entry that has a key and persists the log once,
+// atomically.
+func (l *WorkflowDispatchLog) RecordAll(entries []WorkflowDispatchEntry) error {
+	if l == nil {
 		return nil
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.entries[e.Key] = e
+	stored := 0
+	for _, e := range entries {
+		if e.Key == "" {
+			continue
+		}
+		l.entries[e.Key] = e
+		stored++
+	}
+	if stored == 0 {
+		return nil
+	}
+	return l.persistLocked()
+}
+
+// persistLocked trims the log to workflowDispatchLogMax (oldest first) and
+// writes it atomically. l.mu is held.
+func (l *WorkflowDispatchLog) persistLocked() error {
 	list := make([]WorkflowDispatchEntry, 0, len(l.entries))
 	for _, v := range l.entries {
 		list = append(list, v)
@@ -490,6 +628,89 @@ func (l *WorkflowDispatchLog) Record(e WorkflowDispatchEntry) error {
 		return err
 	}
 	return os.Rename(tmp, l.path)
+}
+
+// qualifyDispatchRef qualifies the repository of an "repo#N" reference (or
+// of a key that opens with one) with org. A reference that already names an
+// owner, or has no "#", is returned unchanged, so the rewrite is idempotent.
+func qualifyDispatchRef(org, s string) string {
+	hash := strings.Index(s, "#")
+	if org == "" || hash <= 0 || strings.Contains(s[:hash], "/") {
+		return s
+	}
+	return org + "/" + s
+}
+
+// mergeMigratedEntries picks the record two spellings of one key collapse
+// to. A hand-off that was made (pending or started) is never displaced by a
+// not-started one; otherwise the newest record (At) wins. Attempts and the
+// agents tried are carried over from both so a retry limit is not reset.
+func mergeMigratedEntries(a, b WorkflowDispatchEntry) WorkflowDispatchEntry {
+	win, lose := a, b
+	switch {
+	case a.Status == WorkflowHandoffNotStarted && b.Status != WorkflowHandoffNotStarted:
+		win, lose = b, a
+	case b.Status == WorkflowHandoffNotStarted && a.Status != WorkflowHandoffNotStarted:
+	case b.At.After(a.At):
+		win, lose = b, a
+	}
+	if lose.Attempts > win.Attempts {
+		win.Attempts = lose.Attempts
+	}
+	tried := append([]string(nil), win.Tried...)
+	for _, t := range lose.Tried {
+		tried = appendUnique(tried, t)
+	}
+	win.Tried = tried
+	return win
+}
+
+// MigrateQualifiedRefs rewrites records stored under the short repository
+// form ("techdocs#395|...") to the canonical qualified one
+// ("cncf/techdocs#395|..."), the form github.WorkflowDispatch.Ref now
+// builds on every path. Before it, the owner's manual hand-off wrote the
+// qualified key and the governor's pass the short one, so neither saw the
+// other's record. Where both forms exist for one item the records collapse
+// by mergeMigratedEntries. It is idempotent (a qualified record is left
+// alone), bounded by the log's own size, persists only when something
+// changed, and returns how many records it rewrote or merged away.
+func (l *WorkflowDispatchLog) MigrateQualifiedRefs(org string) (int, error) {
+	if l == nil || org == "" {
+		return 0, nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	changed := 0
+	out := make(map[string]WorkflowDispatchEntry, len(l.entries))
+	// Qualified records first, so a short one merges into them rather than
+	// the other way round; map order then cannot change the result.
+	keys := make([]string, 0, len(l.entries))
+	for k := range l.entries {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for pass := 0; pass < 2; pass++ {
+		for _, k := range keys {
+			e := l.entries[k]
+			nk := qualifyDispatchRef(org, k)
+			if (nk != k) != (pass == 1) {
+				continue
+			}
+			if nk != k {
+				e.Key, e.Ref = nk, qualifyDispatchRef(org, e.Ref)
+				changed++
+			}
+			if prev, dup := out[nk]; dup {
+				e = mergeMigratedEntries(prev, e)
+			}
+			out[nk] = e
+		}
+	}
+	if changed == 0 {
+		return 0, nil
+	}
+	l.entries = out
+	return changed, l.persistLocked()
 }
 
 // Entries returns the records, newest first.

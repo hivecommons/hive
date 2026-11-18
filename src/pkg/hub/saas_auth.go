@@ -891,6 +891,8 @@ var publicExactPaths = map[string]struct{}{
 	wire.SpokeProofPath:   {},
 	// Large mail-in files arrive in signed pieces (#18564).
 	wire.SpokeFilesChunkPath: {},
+	// What hive-mx refused for the hive and why (#18699).
+	wire.SpokeReportPath: {},
 }
 
 var publicTreePaths = []string{"/api/contribute", "/api/leaderboard", "/contribute", "/leaderboard", "/snapshot", spokeCompanionMeetingsPath}

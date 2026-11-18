@@ -79,7 +79,7 @@
         switch (state) {
           case 'passing': return count + ' passed';
           case 'failing': return count + ' · ' + (failing || 'failing' + (blocker ? ' (' + q(blocker) + ')' : ''));
-          case 'running': return count + ' · ' + pending('running') + (failing ? ' · ' + failing : '');
+          case 'running': return count + ' · ' + ((typeof stageTrackerStuckChecksWord === 'function' && stageTrackerStuckChecksWord(matches ? a : null, pendingCount)) || pending('running')) + (failing ? ' · ' + failing : '');
           case 'queued': return count + ' · ' + pending('queued') + (failing ? ' · ' + failing : '');
           case 'skipped': return count + ' · ' + (blocker ? q(blocker) + ' skipped' : 'skipped');
           case 'missing': {
@@ -121,6 +121,7 @@
           const q = item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question).toLowerCase() : '';
           const me = typeof window !== 'undefined' && window._hiveUser ? String(window._hiveUser).toLowerCase() : '';
           const mine = !!me && new RegExp('@' + me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-])').test(q);
+          if (typeof stageTrackerGateAnswered === 'function' && stageTrackerGateAnswered(item)) return count + (String(item.human_approver || '').trim() ? ' · signed off' : ' · no sign-off pending');
           return count + (mine ? ' · needs your sign-off' : ' · needs owner sign-off');
         }
         case 'reviewing': return count + ' · ' + (actor ? actor + ' reviewing' : 'in progress');
@@ -396,7 +397,7 @@
       const humanGated = lit && !(opts && opts.gateElsewhere) && ((typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) || (typeof stageTrackerHumanGateReasons === 'function' && stageTrackerHumanGateReasons(item).length > 0));
       const cls = lit ? 'active' + (stalled ? ' ham-stalled' : '') + (humanGated ? ' ham-human-gated' : '') : (finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : 'todo') + (queued ? ' ham-track-queued' : '');
       const approvalPending = kind === 'ci' && matches ? stageTrackerWorkflowApprovalPending(a) : 0;
-      const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' ? 'Needs a person\'s decision' : '';
+      const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' && !(typeof stageTrackerGateAnswered === 'function' && stageTrackerGateAnswered(item)) ? 'Needs a person\'s decision' : '';
       const personIco = stalled && humanAction ? stageTrackerIcon('human', 'ham-ico ham-actor-ico', humanAction) : '';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString() + ' (' + stageTrackerAgoWord(observed, clock) + ')';

@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +40,28 @@ const (
 	benchmarksPushTimeout = 60 * time.Second
 	// benchmarksPushMaxRecords caps one batch; the rest go next hour.
 	benchmarksPushMaxRecords = 2000
+	// benchmarksPushMaxBatchBytes caps one batch's serialized records. It
+	// sits well under the 1 MB request-body default of common ingress
+	// proxies (nginx client_max_body_size), which a 2000-record batch at
+	// ~900 B/record (~1.8 MB) exceeds.
+	benchmarksPushMaxBatchBytes = 384 << 10
+	// benchmarksPushMaxBatchesPerTick bounds hub POSTs in one tick; any
+	// remainder follows next hour (the watermark is already advanced).
+	benchmarksPushMaxBatchesPerTick = 50
+	// benchmarksPushMaxShrinkAttempts bounds halve-and-retry rounds for one
+	// batch after HTTP 413. 2000 halves to 1 in 11 steps.
+	benchmarksPushMaxShrinkAttempts = 12
+	// benchmarksPushMaxUnprovenSkips is how many single records may be skipped
+	// on 413 before any batch of the tick was accepted. Skipping is only
+	// safe once the path is proven to work; if every record is refused the
+	// cause is the path (a proxy cap), not the records, and nothing is dropped.
+	benchmarksPushMaxUnprovenSkips = 3
+	// benchmarksErrBodyMaxBytes truncates the hub response body quoted in
+	// last_error and logs so a proxy HTML page cannot bloat status.
+	benchmarksErrBodyMaxBytes = 200
+	// benchmarksEnvelopeOverheadBytes approximates the payload JSON around
+	// the records array (hive id, hash, watermark, keys).
+	benchmarksEnvelopeOverheadBytes = 512
 	// benchmarksHubIngestPath is the hub route.
 	benchmarksHubIngestPath = "/api/benchmarks/ingest"
 	// benchmarksRepoVisibilityTTL bounds how long a repo's public/private
@@ -284,7 +308,95 @@ type benchmarksIngestPayload struct {
 	Records   []benchmarks.Record `json:"records"`
 }
 
-// pushBenchmarks sends one batch and advances the watermark on 2xx.
+// benchmarksBatchEnd returns the exclusive end index of the batch that
+// starts at start: at most maxRecords records and at most maxBytes of
+// serialized records (sizes[i] is record i's JSON length). A batch always
+// holds at least one record, so a single oversized record still gets sent.
+func benchmarksBatchEnd(sizes []int, start, maxRecords, maxBytes int) int {
+	total := benchmarksEnvelopeOverheadBytes
+	end := start
+	for end < len(sizes) && end-start < maxRecords {
+		next := total + sizes[end] + 1 // +1 for the array comma
+		if end > start && next > maxBytes {
+			break
+		}
+		total = next
+		end++
+	}
+	return end
+}
+
+// benchmarksTruncateBody renders a hub response body for last_error: control
+// characters and runs of whitespace collapse to one space and the result is
+// cut to benchmarksErrBodyMaxBytes.
+func benchmarksTruncateBody(raw []byte, bearer string) string {
+	text := string(raw)
+	if bearer != "" {
+		text = strings.ReplaceAll(text, bearer, "[redacted]")
+	}
+	text = strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if r < ' ' || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, text)), " ")
+	if len(text) > benchmarksErrBodyMaxBytes {
+		text = strings.ToValidUTF8(text[:benchmarksErrBodyMaxBytes], "") + "..."
+	}
+	return text
+}
+
+// benchmarksSendResult is the outcome of one hub POST.
+type benchmarksSendResult struct {
+	status int
+	// failure is the last_error text; empty on a 2xx.
+	failure string
+}
+
+// postBenchmarksBatch POSTs one batch. The failure text carries the HTTP
+// status and the truncated response body so the owner can tell the hub
+// handler ("payload too large") from a proxy in front of it.
+func (s *Server) postBenchmarksBatch(ctx context.Context, hubURL, bearer string, recs []benchmarks.Record, watermark time.Time) benchmarksSendResult {
+	cfg := s.deps.Config
+	body, err := json.Marshal(benchmarksIngestPayload{
+		HiveID:    cfg.HiveID,
+		HiveHash:  benchmarks.HiveHash(cfg.HiveID),
+		Watermark: watermark.UTC().Format(time.RFC3339),
+		Records:   recs,
+	})
+	if err != nil {
+		return benchmarksSendResult{failure: "marshal: " + err.Error()}
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, benchmarksPushTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, hubURL+benchmarksHubIngestPath, bytes.NewReader(body))
+	if err != nil {
+		return benchmarksSendResult{failure: "request: " + err.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return benchmarksSendResult{failure: "post: " + err.Error()}
+	}
+	defer closeHTTPBody(resp.Body)
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, benchmarksErrBodyMaxBytes))
+		return benchmarksSendResult{status: resp.StatusCode}
+	}
+	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, benchmarksErrBodyMaxBytes*2))
+	failure := "hub answered " + resp.Status
+	if text := benchmarksTruncateBody(snippet, bearer); text != "" {
+		failure += ": " + text
+	}
+	return benchmarksSendResult{status: resp.StatusCode, failure: failure}
+}
+
+// pushBenchmarks sends the records newer than the watermark in byte- and
+// count-bounded batches, advancing the watermark after every accepted batch
+// so partial progress survives a later failure. On HTTP 413 the batch is
+// halved and retried; a single record that still gets 413 is skipped and
+// logged so it cannot wedge the publisher.
 func (s *Server) pushBenchmarks(ctx context.Context, hubURL string, logger *slog.Logger) {
 	cfg := s.deps.Config
 	p := s.benchmarks()
@@ -308,48 +420,119 @@ func (s *Server) pushBenchmarks(ctx context.Context, hubURL string, logger *slog
 	if len(recs) == 0 {
 		return
 	}
-	if len(recs) > benchmarksPushMaxRecords {
-		recs = recs[:benchmarksPushMaxRecords]
-		newest = since // partial batch: keep the watermark so the rest follows
-	}
-	body, err := json.Marshal(benchmarksIngestPayload{
-		HiveID:    cfg.HiveID,
-		HiveHash:  benchmarks.HiveHash(cfg.HiveID),
-		Watermark: newest.UTC().Format(time.RFC3339),
-		Records:   recs,
+	// Oldest first so the watermark can advance monotonically per batch.
+	sort.SliceStable(recs, func(i, j int) bool {
+		if !recs[i].UpdatedAt.Equal(recs[j].UpdatedAt) {
+			return recs[i].UpdatedAt.Before(recs[j].UpdatedAt)
+		}
+		return recs[i].ID < recs[j].ID
 	})
-	if err != nil {
+	sizes := make([]int, len(recs))
+	for i := range recs {
+		b, err := json.Marshal(recs[i])
+		if err != nil {
+			s.benchmarksFail(p, "marshal record: "+err.Error())
+			return
+		}
+		sizes[i] = len(b)
+	}
+
+	maxRecords := benchmarksPushMaxRecords
+	pushed, unproven := 0, 0
+	lastFailure := ""
+	for batches, start := 0, 0; start < len(recs) && batches < benchmarksPushMaxBatchesPerTick; batches++ {
+		end := benchmarksBatchEnd(sizes, start, maxRecords, benchmarksPushMaxBatchBytes)
+		var res benchmarksSendResult
+		var wm time.Time
+		for attempt := 0; ; attempt++ {
+			wm = benchmarksBatchWatermark(recs, end, newest)
+			res = s.postBenchmarksBatch(ctx, hubURL, bearer, recs[start:end], wm)
+			if res.failure == "" || res.status != http.StatusRequestEntityTooLarge {
+				break
+			}
+			if end-start == 1 {
+				break
+			}
+			if attempt >= benchmarksPushMaxShrinkAttempts {
+				break
+			}
+			// Halve and remember the smaller size for the rest of the tick.
+			maxRecords = (end - start + 1) / 2
+			end = start + maxRecords
+			logger.Info("benchmarks: hub rejected batch as too large, halving", "records", maxRecords, "detail", res.failure)
+		}
+		if res.failure != "" {
+			if res.status == http.StatusRequestEntityTooLarge && end-start == 1 {
+				if pushed == 0 {
+					// Unproven path: defer the watermark; a later accepted
+					// batch covers this record, otherwise nothing is dropped.
+					unproven++
+					lastFailure = res.failure
+					if unproven >= benchmarksPushMaxUnprovenSkips {
+						s.benchmarksFail(p, lastFailure)
+						return
+					}
+					start = end
+					continue
+				}
+				logger.Warn("benchmarks: skipping record the hub rejects even alone", "record_id", recs[start].ID, "bytes", sizes[start], "detail", res.failure)
+				s.benchmarksAdvance(p, wm, 0)
+				start = end
+				continue
+			}
+			s.benchmarksFail(p, res.failure)
+			return
+		}
+		pushed += end - start
+		unproven = 0
+		s.benchmarksAdvance(p, wm, end-start)
+		start = end
+	}
+	if pushed == 0 && unproven > 0 {
+		s.benchmarksFail(p, lastFailure)
 		return
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, benchmarksPushTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, hubURL+benchmarksHubIngestPath, bytes.NewReader(body))
-	if err != nil {
-		return
+	if pushed > 0 {
+		logger.Info("benchmarks: pushed records to hub", "count", pushed, "watermark", p.watermark().UTC().Format(time.RFC3339))
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+bearer)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		s.benchmarksFail(p, "post: "+err.Error())
-		return
+}
+
+// benchmarksBatchWatermark is the watermark to record once recs[:end] are
+// acknowledged. The last batch takes the newest bundle time seen (as before).
+// A mid-run batch takes its last record's time; when the next record shares
+// that time the watermark steps back one nanosecond so the tie is resent
+// rather than dropped (the hub merges by record id, so a resend is harmless).
+func benchmarksBatchWatermark(recs []benchmarks.Record, end int, newest time.Time) time.Time {
+	if end >= len(recs) {
+		return newest
 	}
-	defer closeHTTPBody(resp.Body)
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		s.benchmarksFail(p, "hub answered "+resp.Status)
-		return
+	last := recs[end-1].UpdatedAt
+	if recs[end].UpdatedAt.After(last) {
+		return last
 	}
+	return last.Add(-time.Nanosecond)
+}
+
+func (p *benchmarksPublisher) watermark() time.Time {
 	p.mu.Lock()
-	if newest.After(p.state.Watermark) {
-		p.state.Watermark = newest
+	defer p.mu.Unlock()
+	return p.state.Watermark
+}
+
+// benchmarksAdvance records an accepted batch (or a skipped record, n=0).
+func (s *Server) benchmarksAdvance(p *benchmarksPublisher, wm time.Time, n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if wm.After(p.state.Watermark) {
+		p.state.Watermark = wm
 	}
-	p.state.LastPushAt = time.Now()
-	p.state.LastCount = len(recs)
-	p.state.TotalPushed += len(recs)
+	if n > 0 {
+		p.state.LastPushAt = time.Now()
+		p.state.LastCount = n
+		p.state.TotalPushed += n
+	}
 	p.state.LastError = ""
 	p.save()
-	p.mu.Unlock()
-	logger.Info("benchmarks: pushed records to hub", "count", len(recs), "watermark", newest.UTC().Format(time.RFC3339))
 }
 
 func (s *Server) benchmarksFail(p *benchmarksPublisher, msg string) {

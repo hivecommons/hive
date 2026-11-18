@@ -65,6 +65,13 @@ project:
 #       clanker_requested_label: clanker-requested    # default: clanker-requested; must not be blank
 #       clanker_requested_addendum: ""                # optional free text, max 1000 bytes
 
+# Agent-filed strategist and outreach proposals are held by default until
+# acknowledged. Set this to {} to disable, or configure marker lists; see
+# docs/agent-configuration.md#agent-filed-direction-proposals.
+# project:
+#   issue_filter:
+#     agent_proposal: {}
+
 # Optional merge-request safety exceptions. Hive now merges into any protected
 # or unprotected base branch the App can write, while still refusing a PR with
 # zero statuses + zero check runs + zero workflow runs. `allow_unprotected_base`
@@ -1230,6 +1237,7 @@ dashboard:
   #   max_per_user: 4                   # live sessions per creator (env HIVE_SESSIONS_MAX_PER_USER)
   #   idle_ttl_hours: 72                # close after this idle time (env HIVE_SESSIONS_IDLE_TTL_HOURS)
   #   workspace_repo: org/repo          # shared checkout sessions open in; default project.org/primary_repo (env HIVE_SESSIONS_WORKSPACE_REPO)
+  #   autostart: true                   # answer the CLI's startup screens (first-run notice, folder trust) so the first request runs unattended; never permission prompts or sign-in (env HIVE_SESSIONS_AUTOSTART)
   # stage_tracker:
   #   cache_ttl_s: 300                    # Hive activity monitor payload cache; default = governor.eval_interval_s
   # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord); or custom
@@ -1582,3 +1590,33 @@ nous:
 #         prompt_template: ""  # default: the built-in dispatch prompt
 #       techdocs-verifier:
 #         disabled: false    # true: never dispatch automatically (Send to … still works)
+
+# Customers (docs/design/customers.md): one profile per person, built from
+# what the hive already holds. Dashboard users and people added by hand are
+# customers; anyone else the hive has seen is only a suggestion until someone
+# accepts them. Stored in /data/customers and /data/graph; nothing leaves the
+# hive. Default on.
+# customers:
+#   enabled: true            # false (or env HIVE_CUSTOMERS_ENABLED=false) opens no store and hides the section
+#   inference:
+#     enabled: false         # true (or env HIVE_CUSTOMERS_INFERENCE_ENABLED=true) suggests goals and satisfaction with the meetings model; default off
+#   avatars:
+#     enabled: true          # false (or env HIVE_CUSTOMERS_AVATARS_ENABLED=false) shows initials and makes no browser request to github.com for pictures; default on
+#   mention_search:
+#     enabled: false         # true (or env HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED=true) runs one budgeted GitHub search for mentions and comments when an owner accepts a suggested GitHub login; default off
+#     max_requests_per_hour: 10  # search requests all accepts may spend together per hour (default 10, at most 60); each accept spends at most 2
+
+
+# Sandbox Job GitHub read relay (docs/sandbox-isolation.md): lets sandbox Jobs
+# make authenticated, read-only GitHub reads without ever holding a credential.
+# Default off. There is NO default bind: with enabled: true, listen_addr is
+# required, and endpoint must be https:// (hive serves TLS with a certificate
+# from its proxy CA for the endpoint host). Hive-wide only; a per-agent job
+# block cannot enable or repoint it. Pair it with a NetworkPolicy.
+# agent_sandbox:
+#   job:
+#     github_read_proxy:
+#       enabled: false
+#       listen_addr: ":8443"                       # required when enabled; no default
+#       endpoint: https://hive.hive-system.svc:8443  # how Job pods reach hive; required when enabled
+#       no_proxy: []                               # optional extra hosts Jobs reach directly

@@ -76,6 +76,10 @@ type issueStageServer struct {
 	openPRs     []map[string]any
 	openPRsFail bool
 	pullsCalls  int
+	// timelines is what GET /issues/N/timeline reports per issue (empty by
+	// default); timelineGets counts the reads.
+	timelines    map[int][]map[string]any
+	timelineGets int
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
@@ -216,6 +220,15 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 				state = "closed"
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels, "state": state, "body": s.bodies[n], "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/timeline"):
+			var n int
+			_, _ = sscanIssue(rest, &n)
+			s.timelineGets++
+			out := s.timelines[n]
+			if out == nil {
+				out = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/comments"):
 			var n int
 			_, _ = sscanIssue(rest, &n)
