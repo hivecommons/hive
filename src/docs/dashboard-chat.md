@@ -72,3 +72,12 @@ than one run is pending for that author, the bot lists the run keys and requires
 the explicit `!runs approve <key>` or `!runs reject <key> <reason>` form. No
 other plain language is interpreted as a run decision, and stale generations are
 refused by the dashboard endpoint.
+
+## Retired: `!inception`
+
+`!inception` no longer drives anything. The `/api/inception/*` routes it called
+answer `410 Gone` (replacement `/api/sessions`), so the command is a stub: every
+subcommand replies `Start an Inception session from the dashboard Sessions
+section`, multi-line input is refused as a whole, and the former state-changing
+subcommands stay owner-only. Unprefixed replies are not interpreted as
+inception answers. See [Inception](inception.md).

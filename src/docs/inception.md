@@ -34,6 +34,12 @@ Now the backend is gone too:
   `/api/inception/start` and friends) should start an Inception (spek)
   session instead (`POST /api/sessions`, see the
   [Sessions API](api-reference/sessions.md)).
+- **The `!inception` chat command** is a stub. Every subcommand answers
+  with a pointer to the dashboard Sessions section, multi-line input is
+  refused as a whole, and the former state-changing subcommands (`start`,
+  `scan`, `answer`, `skip`, `submit`, `facts`, `approve`, `reset`) stay
+  owner-only. It makes no dashboard calls, and plain chat replies are no longer
+  read as inception answers. Start the session from the dashboard instead.
 - **The inception watcher** that turned brainstorm beads into inception
   questions and facts no longer runs.
 - **Inception approval as a run admission path** is gone. Spektacular runs are

@@ -39,11 +39,10 @@ type agentStatusFrame struct {
 }
 
 type statusSnapshot struct {
-	Agents    []agentSnapshot   `json:"agents"`
-	Governor  governorSnapshot  `json:"governor"`
-	Budget    budgetSnapshot    `json:"budget"`
-	Inception inceptionSnapshot `json:"inception"`
-	Runs      runSnapshotList   `json:"runs"`
+	Agents   []agentSnapshot  `json:"agents"`
+	Governor governorSnapshot `json:"governor"`
+	Budget   budgetSnapshot   `json:"budget"`
+	Runs     runSnapshotList  `json:"runs"`
 }
 
 type agentSnapshot struct {
@@ -239,7 +238,6 @@ func (s *Service) onSSEEvent(snap *statusSnapshot) {
 
 	s.diffAgents(prev, snap)
 	s.diffGovernor(prev, snap)
-	s.diffInception(prev, snap)
 	s.refreshRunsFromSnapshot(snap)
 	s.updateTopic(snap)
 }

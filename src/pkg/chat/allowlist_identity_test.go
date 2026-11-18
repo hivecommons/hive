@@ -2,7 +2,6 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,37 +39,6 @@ func TestRouteMessage_AllowlistMatchesIdentityLikeDashboard(t *testing.T) {
 				t.Fatalf("role for %q under %v = %q, want %q", tc.author, tc.allowed, got, tc.role)
 			}
 		})
-	}
-}
-
-// Pending interviews are seeded from the configured allowlist identities and
-// answered by the transport author ID; both sides must match the way the
-// allowlist does, or an allowlisted owner's plain-text answer is dropped.
-func TestRouteMessage_PendingInterviewAnswerMatchesNormalizedIdentity(t *testing.T) {
-	var got map[string]map[string]string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/inception/state":
-			writeClarifyState(t, w, []map[string]string{{"id": "q1", "text": "First?"}})
-		case "/api/inception/answer":
-			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-				t.Errorf("decode answer body: %v", err)
-			}
-			w.WriteHeader(http.StatusOK)
-		default:
-			t.Errorf("unexpected path %q", r.URL.Path)
-		}
-	}))
-	defer ts.Close()
-
-	s := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL, AllowedUsers: []string{"github:Alice:owner"}}, discardLogger())
-	s.client = ts.Client()
-	s.diffInception(&statusSnapshot{}, &statusSnapshot{Inception: inceptionSnapshot{
-		Active: true, Phase: "clarify", Questions: []inceptionQuestion{{ID: "q1", Text: "First?"}},
-	}})
-	s.routeMessage(context.Background(), Message{ID: "2", Text: "my answer", AuthorID: "alice"})
-	if got["answers"]["q1"] != "my answer" {
-		t.Fatalf("answer body = %#v, want q1=my answer", got)
 	}
 }
 

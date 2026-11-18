@@ -175,8 +175,6 @@ type Service struct {
 	lastTopic          string
 	pendingTopic       string
 	topicTimer         *time.Timer
-	pendingInterviews  map[pendingInterviewKey]*pendingInterview
-	inceptionBuffers   map[string]*inceptionBuffer
 	pendingPersonas    map[pendingPersonaKey]*pendingPersonaSetup
 	pendingCheckpoints map[pendingCheckpointKey]*pendingCheckpoint
 	// expandedRuns and shownSummaries are the per-author, per-run marks the
@@ -236,7 +234,6 @@ func NewService(backend Backend, cfg Config, logger *slog.Logger) *Service {
 		audit:              cfg.AuditSink,
 		now:                time.Now,
 		msgQueue:           make(chan msgItem, 100),
-		pendingInterviews:  make(map[pendingInterviewKey]*pendingInterview),
 		pendingPersonas:    make(map[pendingPersonaKey]*pendingPersonaSetup),
 		pendingCheckpoints: make(map[pendingCheckpointKey]*pendingCheckpoint),
 		expandedRuns:       make(map[personaRunKey]struct{}),
