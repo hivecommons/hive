@@ -180,6 +180,10 @@ func TestIssueHumanClaim_NotAClaim(t *testing.T) {
 func TestIssueHumanClaim_VerdictIsCached(t *testing.T) {
 	reads := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/comments") {
+			fmt.Fprint(w, `[]`)
+			return
+		}
 		reads++
 		fmt.Fprint(w, `{"number":42,"state":"open"}`)
 	}))
