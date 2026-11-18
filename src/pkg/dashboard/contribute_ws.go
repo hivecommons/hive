@@ -639,8 +639,14 @@ type WSMessage struct {
 	// with it. Additive; a relay that ignores it keeps whatever default it ships.
 	MaxMessageBytes int                            `json:"max_message_bytes,omitempty"`
 	Announcement    *config.ContributeAnnouncement `json:"announcement,omitempty"`
-	HelpLinks       []config.ContributeHelpLink    `json:"help_links,omitempty"`
-	Role            string                         `json:"role,omitempty"`
+	// HiveName is the hive's display name, stated on auth_ok so a relay can
+	// name the hive to its contributor without parsing the hostname, which is
+	// minted once at claim time and never follows a rename. Additive and
+	// omitted when the hive has no name; a relay that ignores it keeps its
+	// hostname-derived short name.
+	HiveName  string                      `json:"hive_name,omitempty"`
+	HelpLinks []config.ContributeHelpLink `json:"help_links,omitempty"`
+	Role      string                      `json:"role,omitempty"`
 	// WorkbenchVersion and Incarnation are optional on auth_response for an
 	// external-execution workbench peer; ext_* frames below are routed to the
 	// attached peer after auth_ok.
@@ -3009,6 +3015,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		Announcement:                 announcement,
 		ContributeNeedsDecisionLabel: &needsDecisionLabel,
 		HelpLinks:                    h.server.contributeHelpLinks(),
+		HiveName:                     h.server.contributeHiveName(),
 		AuditShareRequested:          h.server.contributeAuditShareRequest(),
 	}); err != nil {
 		h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
