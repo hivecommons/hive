@@ -117,7 +117,7 @@ func TestWithheldNudgeIsPostedWhenTheAuthorReappears(t *testing.T) {
 }
 
 func TestNudgeNotWithheldWithoutCertainAdoption(t *testing.T) {
-	t.Run("config off", func(t *testing.T) {
+	t.Run("policy flag off", func(t *testing.T) {
 		h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "queued"}, adoptPolicy())
 		defer done()
 		h.sink.presence = &ContributorPresence{Registered: true}
