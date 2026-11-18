@@ -784,7 +784,8 @@
   },
   "customers": {
     "inference": {},
-    "avatars": {}
+    "avatars": {},
+    "mention_search": {}
   },
   "duplicate_sweep": {},
   "good_first_issue": {},
