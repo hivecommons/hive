@@ -1142,10 +1142,9 @@ type ProjectConfig struct {
 	// GitHub-only configs are unaffected. Use ForgeKind() to read it with the
 	// default applied.
 	Forge string `yaml:"forge,omitempty"`
-	// IssueFilter gates which open issues agents may initiate work on: the
-	// require_labels allow-list ("only work issues labeled X"). The exclude
-	// polarity is Governor.Labels.Exempt, which wins on conflict. Absent/empty
-	// = no filtering, the pre-existing behavior. See IssueFilterConfig.
+	// IssueFilter controls admission by label, reporter, and agent proposal
+	// markers. The require_labels allow-list is optional; the proposal gate
+	// defaults to strategist/outreach markers. See IssueFilterConfig.
 	IssueFilter IssueFilterConfig `yaml:"issue_filter,omitempty"`
 	// AgentIssueDecisionPolicy is "resolve" (default) or "escalate". Resolve
 	// keeps Hive-authored issues actionable when the only parking reason is a

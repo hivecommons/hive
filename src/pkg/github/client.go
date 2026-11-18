@@ -2053,6 +2053,15 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 				ackSource = ackSourceForParent(parentNum)
 			}
 		}
+		// A known non-human author's proposal needs a human acknowledgement,
+		// including acknowledgement inherited from a relay-linked parent.
+		if !acknowledged && c.isKnownNonHumanAuthor(issue.GetUser()) {
+			if gate, ok := issueFilter.(AgentProposalGate); ok && gate.IsAgentProposal(labels, issue.GetTitle()) {
+				breakdown.Filtered++
+				details = append(details, c.workIssue(repo, issue, labels, "filtered", agentProposalFilterReason))
+				continue
+			}
+		}
 
 		// #9839: GitHub "blocked by" links become DependsOn edges. An
 		// unreadable blocker list fails OPEN with a warning: hiding work

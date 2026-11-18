@@ -1325,7 +1325,7 @@ There is exactly **one** label-policy surface for the hive's own agents — the 
 | **Exempt (deny-list)** | `governor.labels.exempt` (+ permanent `hold`/`on-hold`/`hold/review`, `do-not-merge`) | "**Never** touch issues labeled with these." Everything else is eligible. This has always existed. |
 | **Required (allow-list)** | `project.issue_filter.require_labels` | "**Only** touch issues labeled with these." Empty = every issue is eligible. **This is what "only work approved issues" means.** |
 
-By default a hive treats **every open issue** in its repos as candidate work. Projects that gate automation on a maintainer's explicit approval label want the require polarity: a maintainer reviews an issue, applies the approval/queue label, and only then may agents touch it. (A fleet running against a busy upstream repo hit exactly this — the hive opened a PR for an issue the owner had not yet labeled for agent work; an exempt list cannot express that policy, because it can only name what to avoid, not demand a label be present.)
+By default a hive treats open issues in its repos as candidate work, subject to the agent-proposal gate described below and other admission rules. Projects that gate automation on a maintainer's explicit approval label want the require polarity: a maintainer reviews an issue, applies the approval/queue label, and only then may agents touch it.
 
 ```yaml
 project:
@@ -1337,13 +1337,29 @@ project:
 
 Semantics:
 
-- **Absent/empty `require_labels` = no gate** — existing hives are unchanged; there is no default-on filtering.
+- **Absent/empty `require_labels` = no allow-list gate**; other admission rules still apply.
 - An issue must carry **at least one** required label to be eligible. Matching is case-insensitive and **exact** (a prefix like `approved-for-agents-maybe` does not satisfy `approved-for-agents` — prefix matching would over-admit through an approval gate).
 - **Exempt wins on conflict**: an issue carrying both an exempt label and a required label stays excluded. There is deliberately no separate `exclude_labels` field — the exempt list *is* the exclusion mechanism, applied first.
 - PRs and the Hold list are unaffected: open PRs are in-flight work, and held issues still appear under On Hold.
 - PRs have their own, separate allow-list for **reviews**: `review.require_labels` (Settings → Features → Review Gate → "Only review labelled PRs") keeps the hive from reviewing a PR until it carries an approval label; see [review-swarm.md](review-swarm.md#only-review-labelled-prs-reviewrequire_labels). Use a distinct label from the issue gate if the two approvals mean different things to your maintainers.
 
 Both polarities are enforced at **enumeration** — the point where GitHub issues become the hive's actionable set — not in the prompt. A filtered issue never enters the queue, never appears in a kick, never triggers plan-from-label, and cannot be re-selected by a confused (or prompt-injected) agent re-listing the repo. Kick prompts additionally state the active require policy so agents know the list is intentionally short. Both lists are edited on the Labels tab; an active require gate is also noted read-only under **Projects**, and hub-managed hives can receive `issue_filter` with their project config over the heartbeat.
+
+### Agent-filed direction proposals
+
+By default, an issue filed by the Hive app or another bot is held out of the actionable queue when it has an `agent/strategist` or `agent/outreach` label, or its title starts with `[strategist]` or `[outreach]`. Labels match exactly and title prefixes match from the start, both case-insensitively. Human-filed issues and agent-filed issues without these markers are unaffected. A proposal becomes eligible when it has `approved-direction`, a human assignee, or an acknowledged split parent, subject to the other admission rules. Filtered proposals show the reason **Agent proposal awaiting approved-direction**.
+
+Set `project.issue_filter.agent_proposal` to replace the default markers; architect is opt-in:
+
+```yaml
+project:
+  issue_filter:
+    agent_proposal:
+      labels: [agent/architect, agent/strategist, agent/outreach]
+      title_prefixes: ["[architect]", "[strategist]", "[outreach]"]
+```
+
+Both lists are independent and replace their defaults, so omitting one leaves it empty. To disable this gate entirely, set `agent_proposal: {}` under `project.issue_filter`. Omitting the block instead enables the defaults.
 
 ### Reporter trust: who filed it, not only what it is labelled
 
