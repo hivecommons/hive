@@ -294,6 +294,11 @@ func TestUserSessionLoginsAreCopiedNeverSymlinkedOrBridgedConfig(t *testing.T) {
 			// (usersession_login.go); the fixture is synthetic.
 			content = string(bridgeTestCreds(t, "shared", time.Now().Add(time.Hour).UnixMilli()))
 		}
+		if l, ok := rotatingSessionLoginFor(rel); ok {
+			// Codex and OpenCode logins are copied only when they parse as a
+			// login of that vendor (usersession_login_rotating.go).
+			content = string(rotatingTestVendors()[l.vendor].login("shared", time.Now()))
+		}
 		writeSharedLogin(t, rel, content)
 	}
 	// Files that execute commands or hold unrelated secrets must never travel.

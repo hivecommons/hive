@@ -31,6 +31,30 @@ func (c *Client) ReviewPreflightTree(ctx context.Context, repo, ref string) (ent
 	return entries, true
 }
 
+// reviewPreflightMaxFileBytes caps one rule document read for reference
+// discovery; a larger file is skipped rather than downloaded.
+const reviewPreflightMaxFileBytes = 1 << 20
+
+// ReviewPreflightFile reads one file at ref so rule-document discovery can
+// follow the links and file mentions in it. ok is false on any failure, for a
+// directory, and for a file over reviewPreflightMaxFileBytes.
+func (c *Client) ReviewPreflightFile(ctx context.Context, repo, ref, path string) (content []byte, ok bool) {
+	ref, path = strings.TrimSpace(ref), strings.TrimSpace(path)
+	if c == nil || c.client == nil || ref == "" || path == "" {
+		return nil, false
+	}
+	owner, name := c.splitRepo(strings.TrimSpace(repo))
+	fc, _, _, err := c.client.Repositories.GetContents(WithRESTCaller(ctx, "hive:review_preflight_file"), owner, name, path, &gh.RepositoryContentGetOptions{Ref: ref})
+	if err != nil || fc == nil || fc.GetSize() > reviewPreflightMaxFileBytes {
+		return nil, false
+	}
+	text, err := fc.GetContent()
+	if err != nil {
+		return nil, false
+	}
+	return []byte(text), true
+}
+
 // ReviewPreflightFiles lists a PR's changed files with their patches for the
 // dependency checks. known is false on any failure or an incomplete list.
 func (c *Client) ReviewPreflightFiles(ctx context.Context, repo string, number int) (files []reviewpreflight.ChangedFile, known bool) {

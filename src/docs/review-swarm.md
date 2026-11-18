@@ -740,15 +740,15 @@ State lives in `/data/factcheck/state.json` (`HIVE_FACTCHECK_DIR` overrides it).
 
 ## Review preflight (`review.preflight`)
 
-The reviewer reads the diff and the tree. Review preflight adds facts the hive gathers before the review starts, so a finding can rest on a rule the repository published or on an advisory id instead of on a hunch (hivecommons/hive#19069). It is a general mechanism: it works for any repository and language, and every part can be turned off.
+The reviewer reads the diff and the tree. Review preflight adds facts the hive gathers before the review starts, so a finding can rest on a rule the repository published or on an advisory id instead of on a hunch (hivecommons/hive#19069, #19106). It is a general mechanism: it works for any repository and language, and every part can be turned off.
 
-Hive-wide defaults live under `review.preflight`; a repository overrides them under `repos.<repo>.review_preflight`. Precedence per field is repo, then hive-wide, then the default. Lists replace (the repo's list wins) except `rule_doc_paths`, `rules` and `ignore`, which add to the hive-wide entries (same `id`, or same `id` and `package`, is replaced by the repo's).
+Hive-wide defaults live under `review.preflight`; a repository overrides them under `repos.<repo>.review_preflight`. Precedence per field is repo, then hive-wide, then the default. Lists replace (the repo's list wins, including `rule_doc_paths`) except `rules` and `ignore`, which add to the hive-wide entries (same `id`, or same `id` and `package`, is replaced by the repo's).
 
 ```yaml
 review:
   preflight:
     rule_docs: true                  # default on
-    rule_doc_paths: ["handbook/**"]  # added to the default patterns below
+    # rule_doc_paths: ["handbook/**"] # optional explicit list; replaces discovery when set
     rule_doc_exclude: ["CODEOWNERS"] # documents matching these are never listed
     rule_doc_budget_bytes: 60000     # total bytes of rule documents one review reads (default 60000)
     rules:                           # short named rules the reviewer enforces
@@ -757,11 +757,11 @@ review:
         text: Tests must not use fixed sleeps; wait on a condition.
     dependencies: false              # default OFF, see "What leaves the hive"
     vulnerabilities: true            # default on when dependencies is on; OSV lookup
-    release_age: true                # default on when dependencies is on; registry publish date
+    release_age: true                # default on when dependencies is on; registry publish date, reported as a fact
     offline: false                   # true (or HIVE_REVIEW_PREFLIGHT_OFFLINE=true) makes every lookup say "could not check: offline"
     osv_url: https://api.osv.dev     # point at an internal mirror if you run one
     registry_urls: {npm: https://npm.mirror.example}   # per ecosystem id, see the table below
-    min_release_age_days: 14         # a version published more recently is a supply-chain note (default 14; negative disables)
+    # min_release_age_days: 7        # optional declared policy; unset (default) means no policy and no verdict on age
     severity_floor: low              # advisories below this are not listed (default low; unstated severity is always listed)
     block_severity: high             # advisories at or above this are in-scope blockers, lower ones are notes (default high)
     cache_ttl: 6h                    # reuse registry and advisory answers (default 6h)
@@ -779,7 +779,13 @@ repos:
 
 ### Repository rules
 
-With `rule_docs` on, the hive lists the repository at the PR's base commit and tells the reviewer which rule documents exist, how many bytes of each to read, and how to read them. The default patterns are matched case-insensitively (a pattern without a slash matches at the repository root; `dir/**` matches any text file below `dir`): `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING*`, `DESIGN*.md`, `ARCHITECTURE*.md`, `STYLE*.md`, `CODEOWNERS` (also under `.github/` and `docs/`), `.github/copilot-instructions.md`, `.cursor/rules/**`, `docs/design/**`, `docs/adr/**`, `docs/architecture/**`. Selection is deterministic: patterns in list order, then path order, each document capped at half the budget, documents past the budget listed as omitted. The reviewer must name the document and the rule it applied, and quote it; a finding that invokes a rule it did not read is a false positive.
+With `rule_docs` on, the hive does not guess what a repository calls its rule documents. It starts from the standard entry files the repository has at the PR's base commit, in this order: `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING*` (also under `.github/` and `docs/`), `README` (`.md`, `.rst`, `.adoc` or none), `docs/README` and `docs/index` pages, and `CODEOWNERS` (root, `.github/`, `docs/`) for context. It reads each entry file and follows the repository-relative references in it: markdown links and reference definitions, HTML `href`s, reStructuredText links, links to this repository's own files on github.com, and bare file mentions such as `docs/rules.md`. A link to a directory resolves to its README or index page. Only Markdown, MDX, reStructuredText and AsciiDoc files are followed, so a README that mentions `LICENSE` or `requirements.txt` does not pull them in; references that leave the repository or name a missing file are skipped, and a file already found is not found again, so cycles end.
+
+Discovery is breadth first and deterministic: entry files first, then the documents they point to (depth 1), then the documents those point to (depth 2), each in the order the references appear. Each document gets a read allowance of at most a quarter of `rule_doc_budget_bytes`, at most 40 documents are listed, and documents past either bound are named as not listed, with how they were found. Every listed document says how the hive found it (`entry file`, `linked from CONTRIBUTING.md`, `mentioned in docs/README.md`), so the reviewer and the reader can see that the repository itself points there. A file the hive could not read is reported, and the reviewer is told to follow its references itself. `CODEOWNERS` is listed for context and never followed.
+
+`rule_doc_paths` is the owner's override: when set, those patterns (matched case-insensitively; a pattern without a slash matches at the root, `dir/**` matches any text file below `dir`) name the documents and discovery is skipped. A repository's list replaces the hive-wide one. `rule_doc_exclude` removes documents in either mode.
+
+Either way the reviewer must name the document and the rule it applied, and quote it; a finding that invokes a rule it did not read is a false positive.
 
 `rules` are the operator's own named rules, for conventions no document states. The reviewer enforces them at the stated severity and cites the id.
 
@@ -804,19 +810,21 @@ A changed manifest of a kind that has no entry yet (Pipfile.lock, mix.lock, pubs
 
 **Adding an ecosystem** is a table entry plus a test: append an `Ecosystem` to `Ecosystems` in `src/pkg/reviewpreflight/ecosystems.go` (manifest patterns, a parser over the patch lines, the OSV ecosystem id, and an `Age` lookup with its default registry URL), add a case to `TestEcosystemParsers`, and add a row to the table above.
 
-**Noise control.** A vulnerable-dependency finding needs an advisory id from the list; an age note needs the publish date and is never a blocker on its own. `block_severity` decides which advisories are in-scope blockers (`changes_requested`) and which are notes; `severity_floor` hides low-severity noise. An accepted risk goes in `ignore` with a reason (required) and an expiry; an expired entry stops suppressing and the evidence says so. The id `release-age` with a `package` silences the release-age note for that package.
+**Release age is a fact, not a verdict.** There is no universal right minimum age: new versions carry the risk of a compromised release that has not been caught yet, and old pins carry the risk of known holes. So by default the hive reports each looked-up version's publish date ("published 2026-11-02 (16 days ago)") with no pass or fail, and tells the reviewer to apply a release-age policy only if the repository's own documents state one, quoting it. A hive owner who wants a policy declares it with `min_release_age_days` (hive-wide or per repo; a negative value in a repo clears a hive-wide policy for that repo); a version younger than a declared policy is marked against it and the reviewer cites the policy.
+
+**Noise control.** A vulnerable-dependency finding needs an advisory id from the list. `block_severity` decides which advisories are in-scope blockers (`changes_requested`) and which are notes; `severity_floor` hides low-severity noise. An accepted risk goes in `ignore` with a reason (required) and an expiry; an expired entry stops suppressing and the evidence says so. The id `release-age` with a `package` exempts that package from a declared release-age policy.
 
 ### What leaves the hive, and how to turn it off
 
-- **Rule documents** use the GitHub API the hive already calls (one repository tree listing per PR head). Nothing new leaves. Turn off with `rule_docs: false`.
+- **Rule documents** use the GitHub API the hive already calls (one repository tree listing per PR head, plus one file read per followed document, at most 40). Nothing new leaves. Turn off with `rule_docs: false`.
 - **Dependency checks are off by default** because they contact third-party services about a repository that may be private. When on, per changed dependency the hive sends: to OSV (`osv_url`, default api.osv.dev) the package name, ecosystem and version; to the registry (see the table, overridable with `registry_urls`) a GET for that package or version. No token, credential, repository name, PR text or source code is sent, and requests carry no `Authorization` header. Requests follow the hive's upstream proxy settings (`network.upstream_proxy`, `HTTPS_PROXY`). The services see the hive's egress IP and the dependency names of the PRs it reviews.
 - **Offline or air-gapped:** set `offline: true` or `HIVE_REVIEW_PREFLIGHT_OFFLINE=true`; no request is made and the evidence says `could not check: offline`. An unreachable service, a timeout, a 429 or a 5xx degrades the same way, per check, with the reason. Answers are cached in memory for `cache_ttl`, and a PR head is looked up once.
 - **Internal mirrors:** set `osv_url` and `registry_urls` to your own endpoints.
 - **Disable entirely:** `dependencies: false` (the default), per repo with `repos.<repo>.review_preflight.dependencies: false`.
 
-### Two extra reviewer checks
+### Understanding the change
 
-The correctness perspective (and a combined review that includes it) now also asks for two defect classes a diff-only read tends to miss: error, log and test-failure messages and comments that stopped describing behavior after the change, and sentinel values (zero, -1, an unset marker) flowing into min, max, sum or comparison aggregates. Each finding must cite the line and a concrete input.
+The correctness perspective (and a combined review that includes it) asks for understanding rather than a checklist of bug patterns: state the intended behavior change in the reviewer's own words from the diff and the PR description, trace the changed code paths and their callers, identify the invariants and contracts the change relies on or alters and check each, check that everything describing the behavior (comments, docs, messages, tests) still matches, and report only findings backed by concrete evidence from the code. It names no specific defect classes on purpose (#19106).
 
 ## Revising a recorded verdict
 
