@@ -612,6 +612,8 @@ type Server struct {
 	// is JSON-encoded as-is (cmd/hive passes gfi.Stats); typed as any so the
 	// dashboard does not import pkg/gfi (import ratchets).
 	goodFirstIssueStats atomic.Pointer[func() any]
+	// advisorSummary feeds GET /api/knowledge/advisor/summary (api_knowledge_advisor.go).
+	advisorSummary atomic.Pointer[knowledgeAdvisorSource]
 	// writebackGate is the unsolicited write-back gate (api_writeback.go);
 	// sentinelFindings is the ring behind /api/sentinel.
 	writebackMu      sync.RWMutex

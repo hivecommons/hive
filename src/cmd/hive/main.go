@@ -6120,6 +6120,15 @@ func (b *boot) bootLanes() {
 			"long_stall_days", b.cfg.Retro.LongStallDays,
 			"analysis_enabled", b.cfg.Retro.AnalysisModel != "")
 	}
+	if b.dashSrv != nil {
+		// Read-only rank-versus-holdout summary route (#18897). The arm
+		// comparison needs the retro lane; the decision counts do not.
+		var armSummary func() []retro.ArmSummary
+		if b.retroLane != nil {
+			armSummary = b.retroLane.AdvisorArmSummary
+		}
+		b.dashSrv.SetKnowledgeAdvisorSummary(b.knowledgeAdvisorDecisions(), armSummary)
+	}
 }
 
 // runLoop waits for the CLIs to come up, runs the first eval cycle, then
