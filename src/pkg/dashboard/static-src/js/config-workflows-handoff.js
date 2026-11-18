@@ -10,9 +10,9 @@
       const reason = String(h && h.reason || 'the agent did not act');
       const age = h && h.reason_age ? String(h.reason_age) + ' ago' : 'at an unknown time';
       const session = h && h.reason_session ? String(h.reason_session) : 'unknown (before provenance was recorded)';
-      const origin = 'decided ' + age + ' in session ' + session;
+      const origin = 'Decided ' + age + ' in session ' + session + '.';
       if (h && h.stale) {
-        return 'Earlier hand-off of ' + ref + ' (stale, ' + origin + '): ' + reason + '. A newer hand-off of this item exists, so this is history, not its state now.';
+        return 'Earlier hand-off of ' + ref + ' (stale): ' + reason + '. ' + origin + ' A newer hand-off of this item exists, so this is history, not its state now.';
       }
-      return 'Hand-off of ' + ref + ' not started: ' + reason + ' (' + origin + '). ' + (h && h.retrying ? 'The hive hands it to another agent that may do the work, if there is one.' : 'It waits for an owner: use Send to ' + String(profile) + ' on the item\'s row in the Activity Monitor.');
+      return 'Hand-off of ' + ref + ' not started: ' + reason + '. ' + origin + ' ' + (h && h.retrying ? 'The hive hands it to another agent that may do the work, if there is one.' : 'It waits for an owner: use Send to ' + String(profile) + ' on the item\'s row in the Activity Monitor.');
     }
