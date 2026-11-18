@@ -1,1 +1,0 @@
-- **Proxy write gates fail closed when a policy check fails.** If the repo pause, agent repo scope, auto-merge or write_surface.enforce check panics or hangs, the proxy now refuses that one request with a 403 naming the failed check, instead of crashing the whole proxy or holding the request open.
