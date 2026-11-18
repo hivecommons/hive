@@ -149,7 +149,7 @@ func (s reviewFeedbackSweep) needsHuman(ctx context.Context, key, repo string, n
 		return
 	}
 	s.Logger.Warn("review feedback: cannot route to an agent, asking a person", "repo", repo, "pr", number, "reason", reason, "comments", len(items))
-	if err := s.Source.CreateIssueComment(ctx, repo, number, reviewfeedback.NeedsHumanNote(reason, items)); err != nil {
+	if err := s.Source.CreateIssueComment(ctx, repo, number, reviewfeedback.NeedsHumanNote(reason, items)); err != nil { // writeback:solicited a person's review feedback on this hive-authored PR
 		s.Logger.Warn("review feedback: needs-human note not posted", "repo", repo, "pr", number, "error", err)
 		return
 	}
