@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v6.49.1)
+
+### Fixed
+
+- With `auto_merge.native_merge_queue.skip_current_base_gate` on, a head that GitHub's merge queue removed without merging is no longer queued again unchanged. A behind head gets its branch updated instead, and any other head reports `native-merge-queue-rejected` until it changes. Before, a PR behind a pipeline change was re-queued every few minutes at the same head, each time costing a full merge-group CI run.
+
 ## 2026-11-18 (v6.49.0)
 
 ### Added
