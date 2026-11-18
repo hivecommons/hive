@@ -1831,6 +1831,9 @@ func (l *ClaimLedger) Save() error {
 	if l == nil {
 		return nil
 	}
+	// Snapshot under saveMu so an older snapshot cannot rename after a newer one.
+	l.saveMu.Lock()
+	defer l.saveMu.Unlock()
 	data, err := json.MarshalIndent(ledgerFile{
 		SavedAt: l.now(),
 		Claims:  l.Claims(),
@@ -1839,8 +1842,6 @@ func (l *ClaimLedger) Save() error {
 	if err != nil {
 		return fmt.Errorf("marshaling claim ledger: %w", err)
 	}
-	l.saveMu.Lock()
-	defer l.saveMu.Unlock()
 	f, err := os.CreateTemp(filepath.Dir(l.path), filepath.Base(l.path)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("writing temp claim ledger: %w", err)
