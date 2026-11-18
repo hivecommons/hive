@@ -49,7 +49,8 @@ ARG RUNNER_BASE_IMAGE=summerwind/actions-runner:v2.337.0-ubuntu-24.04
 FROM ${RUNNER_BASE_IMAGE}
 
 ARG GITHUB_CLI_VERSION=2.105.0
-ARG GITHUB_CLI_KEYRING_SHA256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
+ARG GITHUB_CLI_SHA256_AMD64=79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f
+ARG GITHUB_CLI_SHA256_ARM64=b1278c75107423d818f1937fd92cafc9e5e9b606631568f68d7fb816f5885a02
 
 # The base image runs as uid 1001 (`runner`), which does not own /etc/apt.
 USER root
@@ -93,9 +94,11 @@ RUN set -eux; \
 #
 # The Ubuntu packages are precisely what ci-install-tool.sh is asked to install
 # across .github/workflows/*, so this list is what makes every one of those call
-# sites take the no-op path. GitHub CLI comes from the official apt repository:
-# the package version is pinned by ARG and the repository keyring is fetched as a
-# binary keyring, SHA256-checked, and referenced with Signed-By.
+# sites take the no-op path. GitHub CLI comes from the
+# cli/cli GitHub release asset (per-arch tarball), pinned by ARG and checked
+# against a per-arch SHA-256, the same way src/Dockerfile installs it. The
+# cli.github.com apt repository is not used: it serves only the latest release,
+# so an exact pin stopped resolving on every new release (#19129).
 #
 # Verification runs in the build, not just in the cluster: if a future base
 # image drops one of these or the mirror goes stale, the build fails here
@@ -108,17 +111,19 @@ RUN set -eux; \
       gcc \
       libc6-dev \
       tmux; \
-    install -d -m 0755 /usr/share/keyrings; \
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      -o /usr/share/keyrings/githubcli-archive-keyring.gpg; \
-    echo "${GITHUB_CLI_KEYRING_SHA256}  /usr/share/keyrings/githubcli-archive-keyring.gpg" | sha256sum -c -; \
-    chmod 0644 /usr/share/keyrings/githubcli-archive-keyring.gpg; \
-    printf 'deb [arch=%s signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' "$(dpkg --print-architecture)" \
-      > /etc/apt/sources.list.d/github-cli.list; \
-    apt-get update; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      "gh=${GITHUB_CLI_VERSION}"; \
     rm -rf /var/lib/apt/lists/*; \
+    ARCH="$(dpkg --print-architecture)"; \
+    case "$ARCH" in \
+      amd64) GH_SHA256="${GITHUB_CLI_SHA256_AMD64}" ;; \
+      arm64) GH_SHA256="${GITHUB_CLI_SHA256_ARM64}" ;; \
+      *) echo "unsupported arch for gh: $ARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+      -o /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${GITHUB_CLI_VERSION}/gh_${GITHUB_CLI_VERSION}_linux_${ARCH}.tar.gz"; \
+    echo "${GH_SHA256}  /tmp/gh.tar.gz" | sha256sum -c -; \
+    tar xz --strip-components=2 -C /usr/local/bin -f /tmp/gh.tar.gz "gh_${GITHUB_CLI_VERSION}_linux_${ARCH}/bin/gh"; \
+    chmod 0755 /usr/local/bin/gh; \
+    rm -f /tmp/gh.tar.gz; \
     gcc --version; \
     tmux -V; \
     gh --version; \

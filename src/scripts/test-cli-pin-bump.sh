@@ -76,7 +76,8 @@ DF
   cat > "$TMP/runner.Dockerfile" <<'DF'
 FROM scratch
 ARG GITHUB_CLI_VERSION=2.101.0
-ARG GITHUB_CLI_KEYRING_SHA256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
+ARG GITHUB_CLI_SHA256_AMD64=1111111111111111111111111111111111111111111111111111111111111111
+ARG GITHUB_CLI_SHA256_ARM64=2222222222222222222222222222222222222222222222222222222222222222
 DF
   cat > "$TMP/pi_test.go" <<'GO'
 	for _, want := range []string{
@@ -131,8 +132,8 @@ run apply gh "$TMP/gh.kv"
   && ! grep -q GH_VERSION "$TMP/Dockerfile.contributor" \
   && pass "gh is hub-only" || fail "gh apply" "$ERR"
 [ "$(arg runner.Dockerfile GITHUB_CLI_VERSION)" = "2.102.0" ] \
-  && grep -q '^ARG GITHUB_CLI_KEYRING_SHA256=6084d5d7' "$TMP/runner.Dockerfile" \
-  && pass "gh also bumps the runner image GITHUB_CLI_VERSION and leaves the keyring sha" || fail "gh runner apply" "$ERR"
+  && [ "$(arg runner.Dockerfile GITHUB_CLI_SHA256_AMD64)" = "$SHA256_A" ] && [ "$(arg runner.Dockerfile GITHUB_CLI_SHA256_ARM64)" = "$SHA256_B" ] \
+  && pass "gh also bumps the runner image GITHUB_CLI_VERSION and per-arch digests" || fail "gh runner apply" "$ERR"
 printf 'VERSION=1.2.9\nBUILD=5905287731871744\nSHA256_AMD64=%s\nSHA256_ARM64=%s\nSHA512_AMD64=%s\nSHA512_ARM64=%s\n' \
   "$SHA256_A" "$SHA256_B" "$SHA512_C" "$SHA512_D" > "$TMP/agy.kv"
 run apply agy "$TMP/agy.kv"
@@ -263,6 +264,7 @@ GH_ARM64="$(printf 'gh-arm64' | shasum -a 256 | cut -d' ' -f1)"
   && [ "$(arg Dockerfile GH_VERSION)" = "2.101.1" ] \
   && [ "$(arg Dockerfile GH_SHA256_AMD64)" = "$GH_AMD64" ] && [ "$(arg Dockerfile GH_SHA256_ARM64)" = "$GH_ARM64" ] \
   && [ "$(arg runner.Dockerfile GITHUB_CLI_VERSION)" = "2.101.1" ] \
+  && [ "$(arg runner.Dockerfile GITHUB_CLI_SHA256_AMD64)" = "$GH_AMD64" ] \
   && pass "gh patch-only bump (2.101.0 -> 2.101.1) applies by default because gh is now patch-eligible" || fail "gh patch-eligible" "$OUT $ERR"
 
 make_fixtures
