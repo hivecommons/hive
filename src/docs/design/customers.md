@@ -92,7 +92,7 @@ contributor is one of several sources of identity for a person.
 | `goals` | See section 8. |
 | `satisfaction` | See section 8. |
 | `notes` | Free text, written by people only. |
-| `profile` | Optional `real_name`, `organization` and `location`, each `{value, source, rule, at, by}`. `source` is `auto` (the person's own public GitHub profile name, company and location, fetched once on accept) or `manual` (a person typed it or cleared it; the fetch never changes it; `auto` hands it back). Nothing here comes from the hub. |
+| `profile` | Optional `real_name`, `organization`, `location` and `country`, each `{value, source, rule, at, by}`. `source` is `auto` (the person's own public GitHub profile name, company and location, fetched once on accept; the country derived offline from the location, rule `location`) or `manual` (a person typed it or cleared it; neither the fetch nor the location changes it; `auto` hands it back). `country` is an ISO 3166 alpha-2 code. Also `dismissed_affiliations`, the suggested organizations a person refused (at most 20). Nothing here comes from the hub. |
 | `merged_from` | Merge history, so a merge can be undone. |
 
 **Identity** `{kind, value, source, confidence, manual, at, by}`. Kinds:
@@ -327,6 +327,26 @@ suggested person has no profile fields until accepted. Forget deletes the fields
 with the person and export includes them. The hub's own records of the same people
 (name, company, country, notes, inferred affiliation) are not read or copied: that
 is the open question in section 15 and needs a consent decision first.
+
+Country and likely affiliation add no request of their own. The country is derived
+from the location text by a bundled table (country names and aliases, ISO codes, US
+states and Canadian provinces, major cities; `pkg/customers/country_data.go`), offline
+and deterministically. The last comma-separated piece decides, a bare two-letter code
+after a comma reads as a US state first unless a city of another country precedes it
+("Berlin, DE"), and "remote", "Earth" or an empty location give no country. It is a
+guess about free text: a small city with no state or country, or a location that is
+a joke, can be wrong or empty, so it is an automatic field a person overwrites or
+clears, and a hand-set or hand-cleared country is never touched. A likely
+affiliation is a view-time suggestion, never stored: the GitHub company text tidied
+(legal suffix and "@" dropped, a bare handle capitalized), or, while the organization
+is empty, the domain of an email identity a person confirmed by hand (never a
+free-mail or code-host domain, and the address itself is not shown). It carries its
+evidence ("from GitHub company field"), Accept writes it as a by-hand organization,
+Dismiss remembers the refusal on the profile. Public GitHub organization membership
+is deliberately not used: it is not fetched, and fetching it would be a new request.
+Notes are free text up to 4000 bytes, written by the owner and read-write users, never
+shown to a read-only user (not even on their own profile), part of the owner's export
+and deleted with the person on Forget.
 
 Step E, the budgeted GitHub search on accept, is built and opt-in.
 `customers.mention_search.enabled` defaults to **off** (env

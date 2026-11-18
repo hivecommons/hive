@@ -98,6 +98,7 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersPickerOpen", "customersProfilePickerOpen", "customersPickerClose", "customersAttach", "customersHintAnswer",
 		"customersAvatarsOn", "customersGithubLogin", "customersAvatarHtml", "customersMorePill", "customersSourcePills",
 		"rowChevronHtml", "customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget", "customersOrgPill", "customersProfileValue", "customersDetailsHtml",
+		"customersFlagEmoji", "customersCountryName", "customersCountryPill", "customersAffiliationHtml",
 		"graphcanvasRound", "graphcanvasLabel", "graphcanvasLayout", "graphcanvasSvg",
 	} {
 		fns = append(fns, jsFunc(t, html, name))
@@ -124,6 +125,8 @@ const person = {
   identities: [{ kind: 'hive_user', value: 'ada' }, { kind: 'email', value: 'ada@example.com', claimed: true }, { kind: 'github', value: 'ada', manual: true, by: 'olivia' }],
   tags: [{ name: 'maintainer', state: 'on', source: 'auto', rule: 'role:owner' }, { name: 'vip', state: 'on', source: 'manual', by: 'olivia' }, { name: 'end-user', state: 'off', source: 'auto' }],
   goals: [{ id: 'g_1', text: 'Ship exports', state: 'confirmed', source: 'manual', by: 'ada' }, { id: 'g_2', text: 'Wants SSO', state: 'suggested', source: 'auto', evidence: ['gh:issue:o/r#1'] }],
+  profile: { organization: { value: 'acme', source: 'auto', rule: 'github_profile' }, location: { value: 'Berlin', source: 'auto', rule: 'github_profile' }, country: { value: 'DE', source: 'auto', rule: 'location' } },
+  affiliation_suggestion: { value: 'Acme', rule: 'github_company', evidence: 'from GitHub company field "acme"' },
   satisfaction: { level: 'at_risk', source: 'manual', by: 'olivia', suggestion: { level: 'neutral', evidence: ['gh:pr:o/r#2'] } },
   merged_from: [{ person: { id: 'p_old', name: 'Old <Ada>' }, by: 'olivia', at: '2026-10-01T00:00:00Z' }],
   counts: { authored: 3 }, hints: [{ id: 'h_1', other_kind: 'email', other_value: 'ada@<x>.org', reason: 'the address and the login start the same' }, { id: 'h_2', other_kind: 'customer', other_value: 'Ada B' }]
@@ -138,6 +141,12 @@ must(list.includes('data-action="customersAccept"') && list.includes('data-actio
 must(list.includes('data-arg0="me"') && list.includes('data-arg0="p_abc"'), 'list rows do not open me and the customer');
 must(!list.includes('<b>Ada</b>') && list.includes('&lt;b&gt;Ada&lt;/b&gt;'), 'a name reached the page unescaped');
 must(prof.includes('data-action="customersForget"'), 'owner profile lacks Forget');
+must(customersFlagEmoji('DE') === '\u{1F1E9}\u{1F1EA}' && customersFlagEmoji('de') === '' && customersFlagEmoji('<b>') === '' && customersFlagEmoji(null) === '', 'flag emoji');
+must(list.includes('class="kc-pill customers-pill customers-country" role="img" aria-label="Country: ') && list.includes(' DE</span>'), 'the row lacks the country pill with its text code and accessible name');
+must(customersCountryPill({ profile: { country: { value: '<b>' } } }) === '' && customersCountryPill({}) === '', 'a malformed or missing country must render nothing');
+must(prof.includes('data-customers-field="country-line"') && prof.includes('data-customers-field="profile-country"') && prof.includes('(from location)'), 'Details lack the country line, its field or its provenance');
+must(prof.includes('Likely: <strong>Acme</strong>') && prof.includes('from GitHub company field &quot;acme&quot;') && prof.includes('data-action="customersAffiliationAccept" data-arg0="Acme"') && prof.includes('data-action="customersAffiliationDismiss" data-arg0="Acme"'), 'the likely affiliation lacks its evidence, Accept or Dismiss');
+must(customersAffiliationHtml({}) === '' && customersAffiliationHtml({ affiliation_suggestion: { value: '' } }) === '', 'no suggestion must render nothing');
 must(prof.includes('data-action="customersSatisfactionSet"') && prof.includes('data-action="customersSatisfactionConfirm"') && prof.includes('private note'), 'owner profile lacks satisfaction or notes');
 must(prof.includes('data-action="customersIdentityConfirm"'), 'owner cannot confirm a claimed identity');
 must(prof.includes('data-action="customersHintAnswer" data-arg0="h_1" data-arg1="yes"') && prof.includes('data-arg0="h_1" data-arg1="no"') && prof.includes('ada@&lt;x&gt;.org'), 'a suggested-identity hint lacks Yes, No or an escaped identity');
@@ -556,6 +565,10 @@ func TestCustomersProfileDetailsWiring(t *testing.T) {
 		`customersOrgPill(p) + customersTagPills(p)`,
 		`data-action="customersProfileSave"`,
 		`data-action="customersProfileReset"`,
+		`function customersCountryPill(p)`,
+		`customersOrgPill(p) + customersCountryPill(p) + customersTagPills(p)`,
+		`{ op: 'affiliation_dismiss', value: value }`,
+		`{ op: 'profile', field: 'organization', value: value }`,
 		`{ op: 'profile', field: f.key, value: next }`,
 		`op: 'profile', field: key, state: 'auto'`,
 	} {

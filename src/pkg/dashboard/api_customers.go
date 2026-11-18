@@ -72,7 +72,7 @@ type CustomerAddRequest struct {
 }
 
 // CustomerEditRequest is the body of POST /api/customers/{id}/edit: one
-// change, named by Op (name, notes, profile, identity_add, identity_remove, tag,
+// change, named by Op (name, notes, profile, affiliation_dismiss, identity_add, identity_remove, tag,
 // goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set,
 // satisfaction_confirm, satisfaction_reject).
 type CustomerEditRequest struct {
@@ -88,7 +88,7 @@ type CustomerEditRequest struct {
 	Text   string `json:"text,omitempty"`
 	Level  string `json:"level,omitempty"`
 	// Field names the profile field an "profile" op sets (real_name,
-	// organization, location); Value is its text and State "auto" hands it
+	// organization, location, country); Value is its text and State "auto" hands it
 	// back to the automatic source.
 	Field string `json:"field,omitempty"`
 }
