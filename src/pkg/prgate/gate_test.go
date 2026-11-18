@@ -3,6 +3,7 @@ package prgate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -172,5 +173,21 @@ func TestEnforcePlanPostsRealNames(t *testing.T) {
 	}
 	if len(Plan(ModeOff, "✨ x")) != 0 {
 		t.Error("off must plan nothing")
+	}
+}
+
+func TestPostedMemoryIsBounded(t *testing.T) {
+	api := &recordingAPI{subject: Subject{HeadSHA: headA, Title: "✨ add thing", State: "open"}}
+	g := newGate(api, ModeShadow)
+	// Posting many distinct heads never grows the memory past the bound.
+	for i := 0; i < maxSentEntries+50; i++ {
+		head := fmt.Sprintf("%040x", i)
+		api.subject.HeadSHA = head
+		g.HandleEvent(context.Background(), "o/r", 7, head)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.sent) > maxSentEntries {
+		t.Fatalf("posted memory holds %d entries, want at most %d", len(g.sent), maxSentEntries)
 	}
 }

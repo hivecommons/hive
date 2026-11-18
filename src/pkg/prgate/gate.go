@@ -58,7 +58,10 @@ const (
 	StatusDescriptionMax = 140
 
 	maxExpectations = 512
-	maxInflight     = 8
+	// maxSentEntries bounds the memory of statuses already posted. Past it the
+	// memory restarts empty: the worst case is one repeated, harmless post.
+	maxSentEntries = 4096
+	maxInflight    = 8
 )
 
 var headSHARe = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -306,6 +309,9 @@ func (g *Gate) HandleEvent(ctx context.Context, repo string, number int, eventHe
 			break
 		}
 		g.mu.Lock()
+		if len(g.sent) >= maxSentEntries {
+			g.sent = map[string]posted{}
+		}
 		g.sent[key] = posted{st.State, st.Description}
 		g.mu.Unlock()
 		out.Posted = append(out.Posted, st.Context)
