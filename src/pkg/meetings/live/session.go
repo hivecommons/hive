@@ -58,11 +58,6 @@ func (s *session) setSpekStatus(status string) {
 // persona.
 const defaultPersonaName = "Hive"
 
-// budgetNotice is posted once when a meeting's budget runs out.
-func budgetNotice(name string) string {
-	return name + " reached the budget for this meeting and keeps taking notes, but will not ask or answer questions or start research."
-}
-
 type approveReq struct {
 	rid   string
 	reply chan error
@@ -93,6 +88,12 @@ type session struct {
 	persona *betty.Engine
 	// fileTokens is the usage-ledger total already charged.
 	fileTokens int
+	// skips carries questions dropped for budget from any goroutine;
+	// skipWake wakes the session to merge them; nextSkipNotice is the
+	// skipped count at which the budget notice is next repeated (budget.go).
+	skips          skipQueue
+	skipWake       chan struct{}
+	nextSkipNotice int
 	// voiceQ and chatQ are the ordered queues of lines going out by voice
 	// and in chat, each drained by its own worker so a slow say or post
 	// never stops the session; outDone brings each result back. async is
@@ -131,6 +132,7 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 		approves: make(chan approveReq),
 		snaps:    make(chan chan State),
 		restyled: make(chan restyledAsk, sessionInbox),
+		skipWake: make(chan struct{}, 1),
 		outDone:  make(chan outDone, sessionInbox),
 		ended:    make(chan struct{}),
 		done:     make(chan struct{}),
@@ -151,7 +153,12 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 		if s.state.BudgetExhausted {
 			s.persona.SetExhausted()
 		}
+		if s.state.BudgetDegraded {
+			s.persona.SetDegraded()
+		}
+		s.persona.OnBudgetSkip(func(q betty.BudgetSkip) { s.queueSkip(q.Who, q.Text, q.Addressed) })
 	}
+	s.nextSkipNotice = nextNoticeAfter(s.state.SkippedCount)
 	if r.opts.UsageFile != nil {
 		s.fileTokens, _ = meetllm.UsageTotal(r.opts.UsageFile(m.ID))
 	}
@@ -182,6 +189,7 @@ func (s *session) isLeave(text string) bool {
 func (s *session) now() time.Time { return s.r.opts.Now() }
 
 func (s *session) save() {
+	s.mergeSkips()
 	if err := s.r.opts.Store.SaveDoc(s.id, StateDoc, s.state); err != nil {
 		s.log().Warn("[meetings] saving live state", "error", err)
 	}
@@ -218,6 +226,8 @@ func (s *session) run(ctx context.Context) {
 				}
 				s.checkReach(ctx)
 			}
+		case <-s.skipWake:
+			s.onSkips(ctx)
 		case d := <-s.outDone:
 			d.job.after(ctx, d.res)
 		case rep := <-replies:
@@ -300,6 +310,7 @@ func (s *session) warmResearch(ctx context.Context) {
 }
 
 func (s *session) snapshot() State {
+	s.mergeSkips()
 	b, _ := json.Marshal(s.state)
 	var out State
 	_ = json.Unmarshal(b, &out)
@@ -461,12 +472,27 @@ func (s *session) account(ctx context.Context, in intent) {
 	} else {
 		s.state.Intents++
 	}
-	over := (p.MaxTokensPerMeeting > 0 && s.state.Tokens > p.MaxTokensPerMeeting) ||
-		(p.MaxIntentsPerMeeting > 0 && s.state.Intents > p.MaxIntentsPerMeeting) ||
-		s.r.opts.Ledger.Exceeded(s.now())
-	if over && !s.state.BudgetExhausted {
-		s.state.BudgetExhausted = true
-		s.log().Warn("[meetings] meeting budget exhausted", "tokens", s.state.Tokens, "intents", s.state.Intents)
+	reason := ""
+	switch {
+	case p.MaxTokensPerMeeting > 0 && s.state.Tokens > p.MaxTokensPerMeeting:
+		reason = BudgetReasonTokens
+	case p.MaxIntentsPerMeeting > 0 && s.state.Intents > p.MaxIntentsPerMeeting:
+		reason = BudgetReasonIntents
+	case s.r.opts.Ledger.Exceeded(s.now()):
+		reason = BudgetReasonHiveCeiling
+	}
+	if reason == "" {
+		if !s.state.BudgetExhausted {
+			s.budgetSteps(ctx)
+		}
+		return
+	}
+	if !s.state.BudgetExhausted {
+		s.state.BudgetExhausted, s.state.BudgetReason = true, reason
+		// The earlier steps are moot: no repeat warn or degrade later.
+		s.state.BudgetWarned, s.state.BudgetDegraded = true, true
+		s.log().Warn("[meetings] meeting budget exhausted", "tokens", s.state.Tokens, "intents", s.state.Intents, "reason", reason)
+		s.emit(Event{Kind: EventBudget, Reason: BudgetLevelExhausted})
 		if s.persona != nil {
 			s.persona.SetExhausted()
 		}
@@ -619,6 +645,14 @@ func (s *session) update(it *ResearchItem, status, summary string) {
 // else hold for owner approval.
 func (s *session) research(ctx context.Context, in intent) {
 	rid, query := strings.TrimSpace(in.RID), strings.TrimSpace(in.Query)
+	if s.state.BudgetDegraded {
+		// At BudgetDegradePercent no new research starts.
+		s.drop("budget_degraded")
+		if rid != "" {
+			_ = s.spek.Send(map[string]string{"type": "research_update", "rid": rid, "status": ResearchFailed, "summary": "not started: the meeting budget is nearly used"})
+		}
+		return
+	}
 	if rid == "" || query == "" || s.find(rid) != nil {
 		s.drop("research_invalid_or_duplicate")
 		return
@@ -828,6 +862,11 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 		s.account(ctx, intent{Type: intentPersona})
 	}
 	if !s.spendable() {
+		// The model answered but the budget ran out before it could be
+		// posted: the question is still recorded as not answered.
+		if rep.Question != "" && (rep.Trigger == betty.TriggerAddressed || rep.Trigger == betty.TriggerQuestion) {
+			s.queueSkip(rep.Asker, rep.Question, rep.Trigger == betty.TriggerAddressed)
+		}
 		s.save()
 		return
 	}
@@ -857,6 +896,10 @@ const bettyRIDPrefix = "betty-"
 // the meeting's research path (same cap and approval as Spek's research),
 // marked betty=1.
 func (s *session) deepDive(ctx context.Context, rep betty.Reply, voice bool) {
+	if s.state.BudgetDegraded {
+		s.drop("budget_degraded")
+		return
+	}
 	query := rep.Research
 	n := 1
 	for _, it := range s.state.Research {
