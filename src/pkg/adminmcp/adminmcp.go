@@ -364,7 +364,8 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolLeasesList, "Read active run leases through the existing runs surface."},
 		{ToolClaimsList, "Read the capped list of issue claims known to this hive."},
 		{ToolPlansList, "Read the capped list of saved plans."},
-		{ToolAuditLog, "Read the capped audit log for this hive."},
+		{ToolAuditLog, auditLogDescription},
+		{ToolItemHistoryRead, itemHistoryReadDescription},
 		{ToolSettingsRead, settingsReadDescription()},
 		{ToolClaudeAuthStatus, "Read which Claude auth mode is active through the existing /api/claude-auth/status endpoint: mode is \"long-lived token\" (an operator-supplied claude setup-token token) or \"dashboard sign-in\", with logged_in. Never returns token material. Read-only."},
 		{ToolAutonomyReadiness, "Read autonomy/readiness status through the existing Nous status endpoint."},
@@ -415,7 +416,7 @@ func AllowedTool(name string) bool {
 	case ToolLaunchCostRead:
 		return true
 	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolClaudeAuthStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
-		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead, ToolPRModelsRead, ToolContributorModelStatsRead, ToolEffectiveModelsRead, ToolGitHubAPIUsage,
+		ToolPlansList, ToolAuditLog, ToolItemHistoryRead, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead, ToolPRModelsRead, ToolContributorModelStatsRead, ToolEffectiveModelsRead, ToolGitHubAPIUsage,
 		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAdvisorRecords, ToolAgentNudgeStatus,
 		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolContributorQueue, ToolStageTrackerRead, ToolDelegatedDecisionStatus, ToolGovernorSetup, ToolLogRead, ToolLogSources, ToolWritePreview, ToolWriteConfirm,
 		ToolExclusionCatalogue, ToolRefuseOperation:
@@ -483,6 +484,10 @@ func inputSchema(name string) map[string]any {
 		props = launchCostReadSchema()
 	case ToolSpendRead:
 		props = spendReadSchema()
+	case ToolAuditLog:
+		props = auditLogSchema()
+	case ToolItemHistoryRead:
+		props, required = itemHistoryReadSchema()
 	case ToolPRModelsRead:
 		props = prModelsReadSchema()
 	case ToolContributorModelStatsRead:

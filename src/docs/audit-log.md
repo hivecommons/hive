@@ -286,6 +286,60 @@ The dashboard serves recent entries at `GET /api/audit`
 - **Enrichment**: `user_name` is stamped here, on served copies only (see
   above).
 
+### Filtering the whole retained log
+
+`?repo=`, `?number=`, `?action=` and `?since=` search **every retained audit
+file**, not the ring: the current `audit.jsonl` and its rotated and compressed
+backups, the same sources the activity collector reads
+(`pkg/dashboard/audit_query.go`). The filters apply before the 200-entry cap,
+so the cap never hides a match a narrower query would have shown.
+
+- `repo`: `owner/name` or the bare name. It matches the typed `repo` field or a
+  `repo=` pair in `detail`, so entries written before the typed field existed
+  still match.
+- `number`: an issue or PR number. It matches the typed `target` or a
+  `number=` pair in `detail`.
+- `action`: one or more action names, comma-separated. A trailing `*` matches
+  a prefix (`pr_*`, `relay_*`).
+- `since`: RFC3339, or a duration back from now (`24h`, `7d`), at most 90 days.
+  A malformed value answers `400`.
+- `contributor` and `sensitive` combine with them on the same pass. With
+  `sensitive` and no `since`, the window stays the last 24 hours.
+
+A filtered answer adds `matched` (how many entries matched before the cap),
+`truncated` and `scanned` (`files`, or `ring` on a hive with no audit files,
+such as a local run). The Audit Log section's filter row sends the same
+parameters, and the admin MCP's `audit_log` tool takes them as arguments.
+
+## `GET /api/audit/item`
+
+`GET /api/audit/item?repo=owner/name&number=N` answers everything the hive
+recorded about one issue or PR, open or closed. It has the same read-write
+role gate. The answer has these fields:
+
+- `state`:
+  - `open`: the item is on the Activity monitor.
+  - `merged`: the item is in the merged ledger.
+  - `closed`: the hive closed it, or it left the monitor closed in the last 30
+    minutes.
+  - `unknown`: none of the above.
+- `entries`: every retained audit row naming this repository and number,
+  newest first. When the PR was nested under an issue (`linked_issue`), the
+  issue's rows are included too, because an agent's claim is recorded on the
+  issue. Each row's `target` says which item it is about.
+- `merged`: the merged-ledger entry: `merged_at`, `merged_by` (`hive` or a
+  login), `lane` and `issue`.
+- `tracker`: the Activity monitor row, while the item is open.
+- `closed`: the monitor's recently-closed record.
+
+The dashboard's item history dialog reads it. The dialog opens from an audit
+row that names an item, from the filter row once repo and number are set, and
+from the Activity monitor's Merged list. The admin MCP's `item_history_read`
+reads the same endpoint.
+
+What the audit log records about a PR's life is listed in
+[admin-mcp.md](admin-mcp.md#item-history).
+
 ## In-memory ring vs the file
 
 The dashboard also keeps the most recent 500 entries in memory
