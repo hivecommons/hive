@@ -161,10 +161,10 @@ func TestNewQuorumSupervisorDefault(t *testing.T) {
 }
 
 func TestWireMeetingsManager(t *testing.T) {
-	if m, _ := wireMeetingsManager(nil, &fakeQuorumSup{}, nil); m != nil {
+	if m, _ := wireMeetingsManager(nil, &fakeQuorumSup{}, nil, nil); m != nil {
 		t.Fatal("nil config must not build a manager")
 	}
-	if m, _ := wireMeetingsManager(&config.Config{}, nil, nil); m != nil {
+	if m, _ := wireMeetingsManager(&config.Config{}, nil, nil, nil); m != nil {
 		t.Fatal("nil inputs must not build a manager")
 	}
 	dir := t.TempDir()
@@ -177,7 +177,7 @@ func TestWireMeetingsManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
-	mgr, mstore := wireMeetingsManager(cfg, &fakeQuorumSup{}, slog.New(slog.NewTextHandler(&logs, nil)))
+	mgr, mstore := wireMeetingsManager(cfg, &fakeQuorumSup{}, nil, slog.New(slog.NewTextHandler(&logs, nil)))
 	if mgr == nil || mstore == nil {
 		t.Fatal("want a manager")
 	}
@@ -190,10 +190,10 @@ func TestWireMeetingsManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.Meetings.DataDir = filepath.Join(blocker, "sub")
-	if m, _ := wireMeetingsManager(cfg, &fakeQuorumSup{}, slog.New(slog.DiscardHandler)); m != nil {
+	if m, _ := wireMeetingsManager(cfg, &fakeQuorumSup{}, nil, slog.New(slog.DiscardHandler)); m != nil {
 		t.Fatal("an unusable store must leave meetings unwired")
 	}
-	if m, _ := wireMeetingsManager(cfg, &fakeQuorumSup{}, nil); m != nil {
+	if m, _ := wireMeetingsManager(cfg, &fakeQuorumSup{}, nil, nil); m != nil {
 		t.Fatal("an unusable store must leave meetings unwired")
 	}
 }

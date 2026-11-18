@@ -109,13 +109,68 @@ func (m *Manager) onRequest(ev Event) {
 	}
 	m.log.Info("[meetings] join request from the platform", "meeting", mt.ID, "platform", platform, "by", who.Name)
 	m.emit(Update{Meeting: mt, Event: &ev})
-	if m.opts.AutoApprove != nil && m.opts.AutoApprove(who) {
+	if m.autoApproves(platform, who) {
 		ctx, cancel := m.callCtx()
 		defer cancel()
-		if _, err := m.ApproveRequest(ctx, mt.ID, false); err != nil {
+		approved, err := m.ApproveRequest(ctx, mt.ID, false)
+		if err != nil {
 			m.log.Warn("[meetings] auto-approving join request", "meeting", mt.ID, "error", err)
+			return
+		}
+		m.log.Info("[meetings] join request approved automatically", "meeting", mt.ID, "platform", platform, "requester_id", who.ID)
+		if m.opts.OnAutoApproved != nil {
+			m.opts.OnAutoApproved(approved, who)
 		}
 	}
+}
+
+// autoApproves decides whether a request is approved without the owner: the
+// AutoApprove hook says so, or the requester's platform user id is on the
+// owner's trusted list. A request with no user id (the snapshot a reconnect
+// opens with) and a display name are never enough.
+func (m *Manager) autoApproves(platform string, who Person) bool {
+	if m.opts.AutoApprove != nil && m.opts.AutoApprove(who) {
+		return true
+	}
+	return who.ID != "" && m.opts.Trust.IsTrusted(platform, who.ID)
+}
+
+// ApproveAndTrust approves a pending request and trusts its requester by the
+// platform user id the request carries, so their later requests are approved
+// automatically. The id comes from the request, never from the caller. By
+// names the owner who chose it.
+func (m *Manager) ApproveAndTrust(ctx context.Context, id string, voice bool, by string) (Meeting, Trusted, error) {
+	mt, err := m.pendingRequest(id)
+	if err != nil {
+		return mt, Trusted{}, err
+	}
+	// Check the id is trustable before joining, so a refusal joins nothing.
+	if m.opts.Trust == nil || mt.Platform != PlatformDiscord || !discordID.MatchString(mt.RequestedBy.ID) {
+		return mt, Trusted{}, ErrTrustInvalid
+	}
+	approved, err := m.ApproveRequest(ctx, id, voice)
+	if err != nil {
+		return approved, Trusted{}, err
+	}
+	t, err := m.opts.Trust.Add(Trusted{Platform: mt.Platform, ID: mt.RequestedBy.ID, Name: mt.RequestedBy.Name, By: by, At: m.opts.Now()})
+	return approved, t, err
+}
+
+// TrustedRequesters lists the people whose join requests are approved
+// automatically.
+func (m *Manager) TrustedRequesters() ([]Trusted, error) {
+	if m.opts.Trust == nil {
+		return nil, nil
+	}
+	return m.opts.Trust.List()
+}
+
+// Untrust removes a trusted requester and reports whether they were listed.
+func (m *Manager) Untrust(platform, id string) (bool, error) {
+	if m.opts.Trust == nil {
+		return false, nil
+	}
+	return m.opts.Trust.Remove(platform, id)
 }
 
 func (m *Manager) pendingRequest(id string) (Meeting, error) {
