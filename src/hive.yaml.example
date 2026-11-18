@@ -927,6 +927,17 @@ governor:
 #                         # File: "kind: ReviewPerspectives" + "perspectives: [{name, focus}]". Names and
 #                         # focus only; combined_perspectives, plan_match and max_perspectives_per_pr stay
 #                         # here. Format: src/docs/review-swarm.md, "Live-linked perspectives".
+#   preflight:           # facts gathered for the reviewer before it starts (#19069); per-repo
+#                       # overrides under repos.<repo>.review_preflight. src/docs/review-swarm.md,
+#                       # "Review preflight", lists every key and exactly what leaves the hive.
+#     rule_docs: true   # default on: point the reviewer at the repo's own rule documents
+#     rules: []         # named operator rules: [{id, text, severity}]
+#     dependencies: false # default OFF: advisory and release-age lookups send package names
+#                       # and versions to OSV and the package registries
+#     offline: false    # or HIVE_REVIEW_PREFLIGHT_OFFLINE=true: no lookups, "could not check: offline"
+#     min_release_age_days: 14
+#     block_severity: high
+#     ignore: []        # accepted risks: [{id, package, reason, expires}]
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
 #   fixer_fallback_agents: [] # opt-in ordered repair lanes, e.g. [fixer, scanner-2]
 #   fixer_fallback_after_undeliverable: 3 # consecutive refusals before rerouting;
