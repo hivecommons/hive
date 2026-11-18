@@ -24,3 +24,22 @@ func TestNavbarRightClusterCannotSpillOverTitle(t *testing.T) {
 		t.Fatal("right cluster min-width guard must also cover 769-900px, where the dashboard was still overlapping")
 	}
 }
+
+// TestNavbarChipsGoIconOnlyWhenTheBarIsNarrow guards the tablet case: the bar
+// is the viewport minus the sidebar, so a wide sidebar on a 1180px iPad in
+// landscape left an ~860px bar where the viewport media query above never
+// fired. The full-width right cluster squeezed the title and ACMM badge into
+// ~44px and WebKit drew them over the chips (and over the ☾ dark-mode
+// button). The same icon-only rule therefore also keys on the bar's own width.
+func TestNavbarChipsGoIconOnlyWhenTheBarIsNarrow(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		".oc-topbar { container: oc-topbar / inline-size; }",
+		"@container oc-topbar (max-width: 1000px) {\n      .oc-health-badge .nav-chip__label,\n      #oc-settings-btn .nav-chip__label,\n      #oc-subscription-gauge .nav-chip__label,\n      #welcome-topbar-btn .nav-chip__label { display: none; }",
+		"@container oc-topbar (max-width: 760px) {\n      #acmm-badge { display: none; }",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("narrow-bar icon-only rule missing %q", want)
+		}
+	}
+}
