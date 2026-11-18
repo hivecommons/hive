@@ -65,17 +65,28 @@ func infraManager(t *testing.T, launcher sandbox.Launcher) (*Manager, *auditLog)
 	return m, audits
 }
 
+// pollUntil re-checks cond on a ticker until it holds or the deadline passes.
+func pollUntil(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	deadline := time.After(3 * time.Second)
+	for !cond() {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for %s", what)
+		case <-tick.C:
+		}
+	}
+}
+
 func waitLastRun(t *testing.T, m *Manager) *crux.Process {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if p := m.AllStatuses()["deps"]; p.SandboxLastRun != nil && p.State != StateRunning {
-			return p
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("the kick never finished: %+v", m.AllStatuses()["deps"])
-	return nil
+	pollUntil(t, "the kick to finish", func() bool {
+		p := m.AllStatuses()["deps"]
+		return p.SandboxLastRun != nil && p.State != StateRunning
+	})
+	return m.AllStatuses()["deps"]
 }
 
 func TestNodeUnhealthyKickIsNotAnAgentFailure(t *testing.T) {
@@ -130,10 +141,7 @@ func TestOrdinaryJobFailureStillFailsTheAgent(t *testing.T) {
 	if err := m.SendKick("deps", "bump"); err != nil {
 		t.Fatalf("SendKick: %v", err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && m.AllStatuses()["deps"].State != StateFailed {
-		time.Sleep(10 * time.Millisecond)
-	}
+	pollUntil(t, "the agent to fail", func() bool { return m.AllStatuses()["deps"].State == StateFailed })
 	p := m.AllStatuses()["deps"]
 	if p.State != StateFailed || p.SandboxLastRun == nil || p.SandboxLastRun.FailReason != "" {
 		t.Fatalf("state=%s run=%+v, want failed with no infrastructure reason", p.State, p.SandboxLastRun)
