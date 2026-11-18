@@ -490,13 +490,14 @@ func TestFactCheckMarkerHelpers(t *testing.T) {
 }
 
 func TestFactCheckConfigResolution(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
+	cfg := &config.Config{}
+	cfg.Agents = map[string]config.AgentConfig{
 		"quality":    {Enabled: true, Backend: "copilot", Model: "claude-opus-4-6", Role: "quality"},
 		"reviewer":   {Enabled: true, Backend: "copilot", Model: "claude-fable-5", Role: "reviewer"},
 		"reviewer-2": {Enabled: true, Role: "reviewer", ReplicaOf: "reviewer"},
 		"off":        {Enabled: false, Role: "reviewer"},
 		"zeta":       {Enabled: true, Role: "Reviewer"},
-	}}
+	}
 	if got := factCheckReviewerNames(cfg); strings.Join(got, ",") != "reviewer,zeta" {
 		t.Fatalf("role-derived reviewers (enabled, no replicas, sorted) = %v", got)
 	}
