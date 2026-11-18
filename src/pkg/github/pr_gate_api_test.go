@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
@@ -129,5 +131,59 @@ func TestReadPRGateSubjectReadsLiveHead(t *testing.T) {
 	want := PRGateSubject{HeadSHA: prGateTestHead, Title: "✨ add thing", State: "open", Draft: true}
 	if got != want {
 		t.Errorf("subject = %+v, want %+v", got, want)
+	}
+}
+
+func TestListPRGateOpenHeadsReadsOpenPRsNewestFirstWithinTheLimit(t *testing.T) {
+	var gotQuery string
+	c := prGateTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`[
+			{"number": 9, "draft": false, "head": {"sha": "` + prGateTestHead + `"}},
+			{"number": 8, "draft": true, "head": {"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+			{"number": 7, "draft": false, "head": {"sha": "cccccccccccccccccccccccccccccccccccccccc"}}
+		]`))
+	})
+	got, err := c.ListPRGateOpenHeads(t.Context(), "example-org/example-repo", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []PRGateOpenHead{{Number: 9, HeadSHA: prGateTestHead}, {Number: 8, HeadSHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Draft: true}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("heads = %+v, want %+v", got, want)
+	}
+	for _, part := range []string{"state=open", "sort=created", "direction=desc"} {
+		if !strings.Contains(gotQuery, part) {
+			t.Errorf("query %q lacks %q", gotQuery, part)
+		}
+	}
+}
+
+func TestPRGateHeadHasContext(t *testing.T) {
+	tests := []struct {
+		name       string
+		statuses   string
+		checkTotal int
+		want       bool
+	}{
+		{"a status with the name", `[{"context": "verify PR contents", "state": "success"}]`, 0, true},
+		{"only other statuses and no check run", `[{"context": "DCO", "state": "success"}]`, 0, false},
+		{"a check run with the name", `[]`, 1, true},
+		{"nothing", `[]`, 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := prGateTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/status") {
+					_, _ = w.Write([]byte(`{"state": "success", "statuses": ` + tc.statuses + `}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"total_count": ` + strconv.Itoa(tc.checkTotal) + `, "check_runs": []}`))
+			})
+			got, err := c.PRGateHeadHasContext(t.Context(), "example-org/example-repo", prGateTestHead, "verify PR contents")
+			if err != nil || got != tc.want {
+				t.Errorf("has = %t, err = %v, want %t", got, err, tc.want)
+			}
+		})
 	}
 }

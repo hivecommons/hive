@@ -39,6 +39,7 @@ func (s *Server) prGateInstance() *github.PRGate {
 		// The merge lanes read the gate for the held reason of a PR whose
 		// required context the hive cannot post.
 		s.prGate.RegisterAsDefault()
+		go s.runPRGateSweep(s.prGate)
 	})
 	return s.prGate
 }
@@ -193,4 +194,40 @@ func (s *Server) PRGateCause() (cause string, dependsOn bool) {
 		return "", false
 	}
 	return h.Cause, h.DependsOnGate
+}
+
+// prGateSweepTimeout bounds one backstop pass.
+const prGateSweepTimeout = 4 * time.Minute
+
+// runPRGateSweep is the backstop for missed webhook deliveries: it starts a
+// minute after the gate is built (so a restart re-covers open heads) and then
+// runs every few minutes until the server context ends. Each pass reads the
+// scope live, so a config change takes effect without a restart, and a pass
+// with the mode off in every repository does nothing.
+func (s *Server) runPRGateSweep(g *github.PRGate) {
+	ctx := context.Background()
+	if s.deps != nil && s.deps.Ctx != nil {
+		ctx = s.deps.Ctx
+	}
+	timer := time.NewTimer(github.PRGateSweepStartDelay)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		s.sweepPRGateOnce(ctx, g)
+		timer.Reset(github.PRGateSweepInterval)
+	}
+}
+
+func (s *Server) sweepPRGateOnce(ctx context.Context, g *github.PRGate) {
+	scope := s.prGateScope()
+	if len(scope) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, prGateSweepTimeout)
+	defer cancel()
+	g.Sweep(ctx, scope)
 }

@@ -246,7 +246,7 @@ workflow. Default is `off`.
 **Limit:** needs the Hive App's Commit statuses read and write grant. A missing
 grant forces the gate off and raises a dashboard banner and a hub health cause
 (red when a required check depends on the gate, amber otherwise); `shadow`
-cannot satisfy a required context, and `enforce` runs as `shadow` for now.
+cannot satisfy a required context, while `enforce` posts the real names and is for a repository where `shadow` has shown agreement.
 
 #### H3. Leave no-CI exceptions empty
 

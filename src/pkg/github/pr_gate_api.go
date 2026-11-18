@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/prgate"
 )
 
@@ -90,4 +92,80 @@ func (c *Client) ReadPRGateGrant(ctx context.Context) (PRGateGrant, error) {
 		return PRGateGrant{}, err
 	}
 	return PRGateGrant{Applicable: true, Installation: info.Account, Level: info.Permissions[PermissionStatuses]}, nil
+}
+
+// PRGateOpenHead is an open PR head the backstop sweep considers.
+type PRGateOpenHead struct {
+	Number  int
+	HeadSHA string
+	Draft   bool
+}
+
+// prGateListPageSize is the page size of the open-PR listing.
+const prGateListPageSize = 100
+
+// ListPRGateOpenHeads lists up to limit open PRs of repo, newest first. It
+// reads straight from GitHub: a cached list could name a superseded head.
+func (c *Client) ListPRGateOpenHeads(ctx context.Context, repo string, limit int) ([]PRGateOpenHead, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	opts := &gh.PullRequestListOptions{
+		State: "open", Sort: "created", Direction: "desc",
+		ListOptions: gh.ListOptions{PerPage: prGateListPageSize},
+	}
+	var out []PRGateOpenHead
+	for len(out) < limit {
+		prs, resp, err := c.client.PullRequests.List(WithRESTCaller(ctx, "hive:pr_gate_sweep"), owner, repoName, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, pr := range prs {
+			out = append(out, PRGateOpenHead{Number: pr.GetNumber(), HeadSHA: pr.GetHead().GetSHA(), Draft: pr.GetDraft()})
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// PRGateHeadHasContext reports whether a commit status context or a check run
+// named name exists on sha. Statuses are read first (the hive's own posts land
+// there); the check-run listing runs only when no status matches.
+func (c *Client) PRGateHeadHasContext(ctx context.Context, repo, sha, name string) (bool, error) {
+	if c == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	ctx = WithRESTCaller(ctx, "hive:pr_gate_sweep")
+	statusOpts := &gh.ListOptions{PerPage: prGateListPageSize}
+	for {
+		combined, resp, err := c.client.Repositories.GetCombinedStatus(ctx, owner, repoName, sha, statusOpts)
+		if err != nil {
+			return false, err
+		}
+		for _, st := range combined.Statuses {
+			if st.GetContext() == name {
+				return true, nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		statusOpts.Page = resp.NextPage
+	}
+	runs, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, sha, &gh.ListCheckRunsOptions{
+		CheckName:   gh.Ptr(name),
+		ListOptions: gh.ListOptions{PerPage: 1},
+	})
+	if err != nil {
+		return false, err
+	}
+	return runs != nil && runs.GetTotal() > 0, nil
 }

@@ -37,19 +37,6 @@ func ParseMode(s string) (Mode, bool) {
 	return ModeOff, false
 }
 
-// EnforceAvailable is false until the grant check and the visible failure
-// paths land. While false, a configured `enforce` runs as `shadow`: it never
-// posts the real required names.
-const EnforceAvailable = false
-
-// Effective returns the mode the gate actually runs in for a configured one.
-func Effective(m Mode) Mode {
-	if m == ModeEnforce && !EnforceAvailable {
-		return ModeShadow
-	}
-	return m
-}
-
 const (
 	// StateSuccess and StateFailure are commit status states.
 	StateSuccess = "success"
@@ -194,6 +181,7 @@ type Gate struct {
 	prLocks  map[string]*prLock
 	inflight int
 	grant    grantState
+	known    map[string]struct{}
 }
 
 type prLock struct {
@@ -211,13 +199,13 @@ func New(api API, modeOf func(string) Mode, log *slog.Logger) *Gate {
 }
 
 // mode is the mode the gate actually runs in for repo: the configured one,
-// with enforce clamped while unavailable, and forced off while the last grant
-// check found the Commit statuses write grant missing. It never promotes.
+// forced off while the last grant check found the Commit statuses write grant
+// missing. It never promotes: shadow stays shadow, off stays off.
 func (g *Gate) mode(repo string) Mode {
 	if g == nil || g.ModeOf == nil {
 		return ModeOff
 	}
-	m := Effective(g.ModeOf(repo))
+	m := g.ModeOf(repo)
 	if m != ModeOff && g.GrantMissing() {
 		return ModeOff
 	}
@@ -227,7 +215,7 @@ func (g *Gate) mode(repo string) Mode {
 // Active reports whether repo is configured for the gate (a mode other than
 // off). A forced-off gate is still active: its events must reach the grant
 // check, which is how it notices the grant arriving.
-func (g *Gate) Active(repo string) bool { return Effective(g.ConfiguredMode(repo)) != ModeOff }
+func (g *Gate) Active(repo string) bool { return g.ConfiguredMode(repo) != ModeOff }
 
 // TryAcquire reserves one of a bounded number of concurrent event slots; the
 // caller releases it with Release. A burst beyond the bound is dropped and
@@ -284,7 +272,7 @@ func (g *Gate) repoStats(repo string) *RepoStats {
 // read of the PR still shows that head. Nothing is posted for a draft or
 // closed PR. Already-posted identical statuses are not posted again.
 func (g *Gate) HandleEvent(ctx context.Context, repo string, number int, eventHead string) Outcome {
-	if Effective(g.ConfiguredMode(repo)) == ModeOff {
+	if g.ConfiguredMode(repo) == ModeOff {
 		return Outcome{Skipped: SkipModeOff}
 	}
 	if g.RepoForbidden(repo) {

@@ -35,6 +35,24 @@ func (a prGateAPI) PostStatus(ctx context.Context, repo string, number int, sha,
 	return err
 }
 
+// ListOpenHeads lists the repository's open PRs, newest first, up to limit.
+func (a prGateAPI) ListOpenHeads(ctx context.Context, repo string, limit int) ([]prgate.OpenHead, error) {
+	heads, err := a.c.ListPRGateOpenHeads(ctx, repo, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]prgate.OpenHead, 0, len(heads))
+	for _, h := range heads {
+		out = append(out, prgate.OpenHead{Number: h.Number, HeadSHA: h.HeadSHA, Draft: h.Draft})
+	}
+	return out, nil
+}
+
+// HeadHasContext reports whether a commit status or a check run named name is on sha.
+func (a prGateAPI) HeadHasContext(ctx context.Context, repo, sha, name string) (bool, error) {
+	return a.c.PRGateHeadHasContext(ctx, repo, sha, name)
+}
+
 // NewPRGate builds the gate over c. modeOf returns the configured mode string
 // of a repository ("off", "shadow" or "enforce"; anything else reads as off).
 func NewPRGate(c *Client, modeOf func(repo string) string, log *slog.Logger) *PRGate {
@@ -158,3 +176,17 @@ func (p *PRGate) CompareWorkflow(repo, head, name, conclusion string) bool {
 
 // Snapshot returns the per-repository stats.
 func (p *PRGate) Snapshot() map[string]prgate.RepoStats { return p.gate.Snapshot() }
+
+// Sweep runs the backstop pass over repos (owner/repo).
+func (p *PRGate) Sweep(ctx context.Context, repos []string) prgate.SweepResult {
+	if p == nil {
+		return prgate.SweepResult{}
+	}
+	return p.gate.Sweep(ctx, repos)
+}
+
+// Backstop sweep timing, for the server that runs it.
+const (
+	PRGateSweepInterval   = prgate.SweepInterval
+	PRGateSweepStartDelay = prgate.SweepStartDelay
+)

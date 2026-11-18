@@ -161,8 +161,8 @@ type Health struct {
 	CannotPost bool
 }
 
-// ConfiguredMode is the configured mode of repo with enforce NOT clamped and
-// the grant check NOT applied: what the operator asked for.
+// ConfiguredMode is the configured mode of repo with the grant check NOT
+// applied: what the operator asked for.
 func (g *Gate) ConfiguredMode(repo string) Mode {
 	if g == nil || g.ModeOf == nil {
 		return ModeOff
@@ -206,7 +206,7 @@ func (g *Gate) HealthFor(repos []string) Health {
 			h.ForbiddenRepos = append(h.ForbiddenRepos, repo)
 		}
 	}
-	h.Effective = Effective(h.Configured)
+	h.Effective = h.Configured
 	if h.GrantMissing {
 		h.Effective = ModeOff
 	}
