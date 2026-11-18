@@ -710,58 +710,61 @@ importance:
   session in with an account of their own, and that login becomes the hive's
   when it is newer. The audit entry is the record of it, and a dashboard
   sign-in puts the hive back on the operator's account.
-  The other vendors' files are still plain copies, refresh token included
-  where the vendor stores one. Gemini's Google refresh token and the Copilot
-  CLI token do not rotate. Codex's ChatGPT login (`.codex/auth.json`) and an
-  OpenCode OAuth entry (`opencode/auth.json`) do, so a session that refreshes
-  its copy holds the only valid login; for these two the hive **adopts** that
-  login back into the shared file the agents link to
-  ([#18740](https://github.com/hivecommons/hive/issues/18740)). Codex: the
-  session's file was written after the shared one, holds a ChatGPT login
-  with a different refresh token and records a later `last_refresh`, and the
-  shared file itself holds a ChatGPT login (an API-key login does not rotate
-  and is never replaced). OpenCode, per provider entry: both entries are
-  `oauth`, the session's has a different refresh token and a later
-  `expires`, and the session's file was written after the shared one; only
-  those entries are replaced, every other entry of the shared file is kept,
-  and a provider the shared file does not hold is not added. Only those
-  fields and modification times decide; token values are never logged. The
-  replaced file is kept as `auth.json.stale-<UTC time>`, the new one keeps the
-  old one's mode (and owner, where the hive may set it), and
-  `user_session_login_adopted` names the session, trigger, vendor and file.
-  It runs when the Claude check runs, deletion included: a newer login that
-  cannot be adopted keeps the session. Unlike Claude, a session still holds a
-  copy that can refresh, on purpose. Both CLIs keep the refresh token as a
-  field their login file schema requires (from their source, not yet
-  confirmed on a live install) (Codex: `tokens.refresh_token`; OpenCode:
-  `refresh` of an `oauth` entry), so a copy with that field removed is read
-  as a corrupt or logged-out login, and one with a placeholder fails at its
-  first refresh: either would sign the person out of the session, which is
-  worse than the window it closes, and hive has no way to route a CLI's
-  refresh through the shared file. The adoption above is therefore the
-  safety net and the shared file stays the single owner: an adoption only
-  ever writes the shared file, never the session's copy, and the hive never
-  replaces a shared file that changed after it was compared, so a session
-  refresh and an agent refresh of the same token within one poll cannot
-  leave two diverged logins for long; the shared file converges on the newer
-  one at the next poll. If that file is ever needed again, the stale file the
-  adoption kept (`auth.json.stale-<UTC time>`, next to the shared login, same
-  mode) holds the login it replaced.
+  Codex's ChatGPT login (`.codex/auth.json`) and an OpenCode OAuth entry
+  (`opencode/auth.json`) rotate too, and follow the same three rules
+  ([#18740](https://github.com/hivecommons/hive/issues/18740)). A session
+  gets them **without a refresh token**: the key stays (Codex:
+  `tokens.refresh_token`; OpenCode: `refresh` of an `oauth` entry), because
+  both CLIs require it in their login file, but its value is empty. Both CLIs
+  accept an empty value (from their sources, Codex 0.170.0 and OpenCode v1;
+  the live check below confirms it on a real install): the CLI keeps using
+  the access token, and a refresh it attempts fails without rotating
+  anything. Every other field is copied as it is. So the shared file, which
+  each agent links to, is the only refreshable holder of the grant, and only
+  the agents' CLIs refresh it; a session refresh and an agent refresh can no
+  longer race. The hive replaces a session's copy, atomically and as the
+  session's uid, when the shared file was written after it. A session
+  therefore depends on an agent or a sign-in refreshing that login before
+  its access token expires. As a safety net, a complete login that is in a
+  session home anyway (a full copy from an earlier release, refreshed there,
+  or a person signing in inside the session) is **adopted** into the shared
+  file when it is strictly newer. Codex: the session's file was written
+  after the shared one, holds a ChatGPT login with a different refresh token
+  and records a later `last_refresh`, and the shared file itself holds a
+  ChatGPT login (an API-key login does not rotate and is never replaced).
+  OpenCode, per provider entry: both entries are `oauth`, the session's has a
+  different refresh token and a later `expires`, and the session's file was
+  written after the shared one; only those entries are replaced, every other
+  entry of the shared file is kept, and a provider the shared file does not
+  hold is not added. Only those fields and modification times decide; token
+  values are never logged. The replaced file is kept as
+  `auth.json.stale-<UTC time>`, the new one keeps the old one's mode (and
+  owner, where the hive may set it), `user_session_login_adopted` names the
+  session, trigger, vendor and file, and the session is put back on a
+  refresh-less copy. A full copy that carries the shared file's own refresh
+  token is put on a refresh-less copy too; a refresh token the shared file
+  does not hold that is not newer is the session's own login and is left
+  alone. It runs when the Claude check runs, deletion included: a newer login
+  that cannot be adopted keeps the session. The hive never replaces a shared
+  file that changed after it was compared, so an agent refresh that lands
+  during a check is never overwritten. Gemini's Google refresh token and the
+  Copilot CLI token do not rotate and are still plain copies.
   Manual check, needs a person and a real install (not run in CI, so the
   assumed file formats stay unconfirmed until it is done,
   [#18740](https://github.com/hivecommons/hive/issues/18740)): on a hive with
   a signed-in Codex and OpenCode, (1) start a session, confirm
   `.codex/auth.json` and `opencode/auth.json` in its home match the shared
-  files' shape (compare key names only, never print values); (2) in the
-  session force a refresh (Codex: `codex login status` after setting an
-  older `last_refresh`; OpenCode: wait past `expires`) and confirm the next
-  poll writes the shared file, leaves an `auth.json.stale-*` beside it and
-  audits `user_session_login_adopted` with vendor `codex` or `opencode`;
+  files' shape (compare key names only, never print values); (2) confirm
+  the refresh keys in the session's copies are present and empty, that the
+  CLI in the session still works, and that once its access token expires
+  (Codex: a request past the token's expiry; OpenCode: past `expires`) its
+  refresh attempt fails without changing the shared file and without an
+  `auth.json.stale-*` or a `user_session_login_adopted` entry;
   (3) confirm an agent of that vendor is still logged in; (4) remove the
   session and confirm the shared login still works; (5) grep the hive log
   for the access and refresh token values: there must be none. Attach a
-  redacted real file, with token values replaced, as the test fixture. For all of these vendors a resume
-  no longer overwrites a file the session's CLI rewrote after the shared one
+  redacted real file, with token values replaced, as the test fixture. For Gemini and Copilot a resume no
+  longer overwrites a file the session's CLI rewrote after the shared one
   was written.
 - **Terminal access is bound.** ttyd listens on loopback without a secret a
   session uid could not read (its `-c` credential is visible in `/proc`), so
