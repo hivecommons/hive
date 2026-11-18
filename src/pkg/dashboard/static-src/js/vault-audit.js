@@ -219,6 +219,23 @@
       return p.length ? '?' + p.join('&') : '';
     }
 
+    // Pure: whether the filters ask the server to scan every retained audit
+    // file (repo, number, action or since). Such a view is a query: the
+    // section's 30s poll skips it, and it re-runs when the filters change.
+    function auditServerScanActive(filters) {
+      var f = filters || {};
+      return ['repo', 'number', 'action', 'since'].some(function(k) {
+        return String(f[k] == null ? '' : f[k]).trim() !== '';
+      });
+    }
+
+    // The Audit Log section's poll: a scanning query is not re-run every
+    // AUDIT_POLL_MS, since each run decompresses the rotated files.
+    function auditPollTick() {
+      if (auditServerScanActive(_auditServerFilters)) return Promise.resolve();
+      return fetchAuditLog();
+    }
+
     // Pure: the match note the count shows for a server-filtered page.
     function auditServerMatchNote(meta) {
       if (!meta || !meta.active) return '';

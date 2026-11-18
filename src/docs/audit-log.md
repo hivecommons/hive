@@ -311,6 +311,11 @@ A filtered answer adds `matched` (how many entries matched before the cap),
 such as a local run). The Audit Log section's filter row sends the same
 parameters, and the admin MCP's `audit_log` tool takes them as arguments.
 
+A scan reads every retained file, decompressing the rotated ones, so it runs
+only when asked. While `repo`, `number`, `action` or `since` is set, the Audit
+Log section skips its 30-second refresh, and the query runs again when a filter
+changes. The MCP tools and the item history panel scan once per call.
+
 ## `GET /api/audit/item`
 
 `GET /api/audit/item?repo=owner/name&number=N` answers everything the hive

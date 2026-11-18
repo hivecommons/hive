@@ -101,6 +101,12 @@ func parseAuditDuration(raw string) (time.Duration, error) {
 		if err != nil {
 			return 0, err
 		}
+		// Past the window the query is refused anyway; cap n before
+		// multiplying, since a large day count overflows int64 and wraps to
+		// a short window that would pass the checks.
+		if maxDays := int(auditQueryMaxWindow / (24 * time.Hour)); n > maxDays {
+			return auditQueryMaxWindow + 24*time.Hour, nil
+		}
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
 	return time.ParseDuration(raw)

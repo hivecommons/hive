@@ -142,7 +142,7 @@ func TestHandleAuditLogActionSinceContributorSensitive(t *testing.T) {
 func TestHandleAuditLogRejectsBadFilters(t *testing.T) {
 	noAuditFiles(t)
 	s := &Server{audit: &AuditLog{}}
-	for _, target := range []string{"/api/audit?number=abc", "/api/audit?number=0", "/api/audit?since=yesterday", "/api/audit?since=120d"} {
+	for _, target := range []string{"/api/audit?number=abc", "/api/audit?number=0", "/api/audit?since=yesterday", "/api/audit?since=120d", "/api/audit?since=300000d"} {
 		if rec, _ := auditGet(t, s, target, config.RoleReadWrite); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400", target, rec.Code)
 		}
@@ -274,6 +274,10 @@ func TestAuditItemHistoryRefusesBadRequests(t *testing.T) {
 // item_history_read reads GET /api/audit/item, both as the caller.
 func TestAdminMCPAuditLogFiltersAndItemHistory(t *testing.T) {
 	s := NewServerWithAuth(0, "secret", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// NewServerWithAuth registers only the core routes; the provider serves
+	// these two through the mux (api.go registers them on a full server).
+	s.mux.HandleFunc("GET /api/audit", s.handleAuditLog)
+	s.mux.HandleFunc("GET /api/audit/item", s.handleAuditItemHistory)
 	noAuditFiles(t)
 	s.merged = newMergedLedger("")
 	s.mergedOnce.Do(func() {})

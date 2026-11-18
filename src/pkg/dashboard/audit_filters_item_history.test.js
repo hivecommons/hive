@@ -24,7 +24,7 @@ function fn(name) {
 
 const esc = s => typeof s === 'string' ? s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') : '';
 const ctx = vm.createContext({ esc, formatDashboardDateTime: d => d.toISOString(), renderAuditRow: e => '<tr><td>' + esc(e.action) + '</td></tr>' });
-vm.runInContext([fn('auditEntryHistoryLink'), fn('auditServerQueryString'), fn('auditServerMatchNote'), fn('auditItemHistoryHtml')].join('\n'), ctx);
+vm.runInContext([fn('auditEntryHistoryLink'), fn('auditServerQueryString'), fn('auditServerScanActive'), fn('auditServerMatchNote'), fn('auditItemHistoryHtml')].join('\n'), ctx);
 
 test('the filter row sends every filter, and the sensitive chip, to GET /api/audit', () => {
   assert.strictEqual(ctx.auditServerQueryString({}, false), '');
@@ -66,4 +66,17 @@ test('the item history body shows state, who merged, the monitor row and the row
 test('the Merged list offers each PR\'s history', () => {
   const pop = pick(/function stageTrackerMergedPopHtml\([\s\S]*?\n    \}\n/, 'stageTrackerMergedPopHtml');
   assert.ok(pop.includes('class="ham-merged-hist" data-action="openAuditItemHistory"'), pop);
+});
+
+// A filter that makes the server scan every retained file turns the view
+// into a query: the section's 30s poll skips it (review on #19153).
+test('a scanning filter stops the audit poll; contributor and sensitive alone do not', () => {
+  assert.strictEqual(ctx.auditServerScanActive({}), false);
+  assert.strictEqual(ctx.auditServerScanActive({ contributor: 'alice' }), false);
+  for (const k of ['repo', 'number', 'action', 'since']) {
+    assert.strictEqual(ctx.auditServerScanActive({ [k]: 'x' }), true, k);
+  }
+  assert.strictEqual(ctx.auditServerScanActive({ repo: '  ' }), false);
+  assert.ok(html.includes("dashboardSetInterval('audit-log', auditPollTick, AUDIT_POLL_MS)"), 'the poll must go through auditPollTick');
+  assert.ok(/function auditPollTick\(\) \{\s+if \(auditServerScanActive\(_auditServerFilters\)\) return Promise\.resolve\(\);\s+return fetchAuditLog\(\);/.test(html), 'auditPollTick must skip a scanning query');
 });

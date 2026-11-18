@@ -217,7 +217,7 @@ func TestStaticAuditCollapsedSummaryUsesSharedSparklineAndRiskChip(t *testing.T)
 		"id=\"audit-sensitive-filter\"",
 		"function toggleAuditSensitiveFilter()",
 		"function showAuditSensitiveEntries()",
-		"fetch('/api/audit' + (_auditSensitiveOnly ? '?sensitive=1' : ''))",
+		"fetch('/api/audit' + auditServerQueryString(_auditServerFilters, _auditSensitiveOnly))",
 		".audit-entry-sensitive-tag",
 		"id=\"audit-relay-filter\"",
 		"data-action=\"toggleAuditRelayFilter\"",
