@@ -82,6 +82,7 @@ Optional capabilities, each off or inert until you turn it on. Where a feature h
 - Auto-merge: [App self-merge sweep](operator-reference.md#app-self-merge-sweep-auto_merge), [Trusted bot authors](hive-merge.md#trusted-bot-authors), and [Trusted-author auto-merge](hive-merge.md#trusted-author-auto-merge).
 - Review gate: [Review swarm](review-swarm.md#configuration), [Blocking line and backlog](review-swarm.md#blocking-line-reviewseverity-reviewbacklog), and [external review bot threads](review-bot-threads.md).
 - Trajectory review: [Trajectory-Review Lane](trajectory-review.md#configuration).
+- Reviewer-stated rules: [Reviewer-stated rules from review feedback](review-feedback-rules.md#settings). A card under Review (owner only, `review_feedback.rules.*`) turns capture on or off, picks whose rules are recorded at once, adds phrases that count, and switches built-in signals off; each control shows its default and where the current value comes from.
 - Linear agent: [Linear agent integration](linear-agent.md).
 - Upstream watch: [Upstream watch](upstream-watch.md#configuration).
 
