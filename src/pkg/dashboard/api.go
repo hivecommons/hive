@@ -571,6 +571,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// api_repo_agents.go): list, approve, reject, rescan.
 	s.registerRepoAgentRoutes()
 	s.registerVersionContainsRoute()
+	// Per-kick outcome record (#18916, api_kick_outcomes.go).
+	s.registerKickOutcomeRoutes()
 }
 
 var (

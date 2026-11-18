@@ -1075,6 +1075,7 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 		// A deferral on a PR is a decision the activity monitor shows
 		// ("Deferred · waiting on #N"), not an absence of pickup (#17347).
 		c.recordPRDeferral(ctx, req, meta, resp.URL)
+		c.notifyAgentAction(AgentAction{Agent: req.Agent, Kind: AgentActionComment, Repo: req.Repo, Number: resp.Number, At: nowFn()})
 	}
 	c.logger.Info("issue-request watcher: request completed",
 		slog.String("repo", req.Repo), slog.String("kind", kind),
