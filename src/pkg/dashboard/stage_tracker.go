@@ -475,6 +475,11 @@ type StageTrackerItem struct {
 	// owed something now, the verbs that would act, and what the item
 	// waits on when nothing is owed (stage_tracker_gate.go).
 	HumanGate *StageTrackerHumanGate `json:"human_gate,omitempty"`
+	// MidFlight is what a PR's CURRENT head still waits on (CI running,
+	// review queued or in progress, or activity on file for an earlier
+	// head): while set, no decision is offered on the row and the server's
+	// delegated decision answers no-effect (stage_tracker_midflight.go).
+	MidFlight *StageTrackerMidFlight `json:"mid_flight,omitempty"`
 	// Soak is the soak clock while the lane holds this head for the soak
 	// window, at 060/080/095: when it started, when it ends, the window
 	// and the head it was measured on. The SPA counts it down in place.
@@ -819,6 +824,8 @@ type StageTrackerLinkedPR struct {
 	MergeTrain           *StageTrackerMergeTrain `json:"merge_train,omitempty"`
 	// HumanGate mirrors the nested PR's own row gate (stage_tracker_gate.go).
 	HumanGate *StageTrackerHumanGate `json:"human_gate,omitempty"`
+	// MidFlight mirrors the nested PR's own row field (stage_tracker_midflight.go).
+	MidFlight *StageTrackerMidFlight `json:"mid_flight,omitempty"`
 	// LeftTrain mirrors the nested PR's own row field so the sub-row's
 	// hover can say it left its train while under repair.
 	LeftTrain *StageTrackerLeftTrain `json:"left_train,omitempty"`

@@ -840,6 +840,25 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    (`contributor-offline`, supersede now) only fires for an author who is not
    reachable, the same condition. This follows the documented rule that a
    contributor who has gone quiet is superseded now (#13975).
+   **A contributor PR another open PR already covers is never adopted**
+   ([#18900](https://github.com/hivecommons/hive/issues/18900), child of
+   #18890: the hive adopted #18870 as #18879 while the owner's #18873 for the
+   same issue was open). Before it adopts, the automatic path (`adoptContributorPR`,
+   the executor behind the `AutoAdoption` clock) and the ladder (rung 5a,
+   `covered-by-other-pr`, just before rung 5) look for another open PR, on the
+   same base branch, that closes an issue this PR closes and is a person's (an
+   owner or `author/human`, or an owner/member/collaborator not driving a
+   clanker) or the hive's. If there is one the contributor PR is closed as a
+   duplicate of it with one thank-you note that credits the contributor, and the
+   head records the block `covered-by-open-pr` (tracker row: "another open PR
+   already covers the issue"); a write-back gate refusal or a failed close
+   leaves the PR open with adoption still off. The hive's own copy of this PR
+   (`Supersedes #N`), a PR on another release line, another contributor's PR and
+   a duplicate the merge queue holds behind this one do not count: "green first,
+   then earlier-opened" only breaks ties between PRs of equal trust. With no
+   competing PR but a live claim by a person or a hive agent on the issue, the
+   ladder recommends leaving the PR open and names the holder, and the engine
+   refuses adoption (`human-claim`, see [maintainer commands](../maintainer-commands.md#claiming-an-issue)).
 2. Relay contributors (the author has a contributor profile and a live relay
    connection) also receive the diagnosis in their relay session as a
    `fix-pr` task with `priority: interrupt`. Presence = a relay heartbeat
@@ -1424,6 +1443,20 @@ comment and the dashboard claim detail (`@login` next to the claim).
 | A person — dashboard, `/claim`, hivectl, or a Copilot CLI / Claude Code / Codex session acting on their behalf | `kind=human who=<login>` | `hive/claimed-by-human` |
 | A relay contributor or external bot | `kind=contributor` / `kind=external`, `who=<login>` | `hive/claimed-by-human` |
 | A hive agent with no human principal | `kind=agent who=<agent>` | `hive/claimed-by-<agent>` (e.g. `hive/claimed-by-scanner`) |
+
+**A person outranks a contributor, ledger entry or not.** The ledger ranks
+`kind=human` over `kind=contributor`, but an owner's claim made outside it
+(the assignee set by an owner or maintainer, a `/claim` comment, or
+`hive/claimed-by-human` applied by hand rather than by the hive) used to leave
+a live contributor lease untouched (#18866: the owner claimed at 03:21Z and the
+contributor still opened a PR at 03:32Z). Since
+[#18899](https://github.com/hivecommons/hive/issues/18899) the contributor
+claim's admission check reads those signals, so the next renewal or the
+five-minute release tick releases the lease (reason `human claim: ...`), yanks
+the relay task and records the person as the claim holder; see
+[Maintainer commands](../maintainer-commands.md#claiming-an-issue). The hive's
+own `hive/claimed-by-human` label (applied for a person's or a contributor's
+ledger claim) is never read as a person's claim; only a hand-applied one is.
 
 A backend or model name (`copilot`, `claude`, `codex`, `gemini`, `pi`) is
 **never** a suffix: it names the tool, not who answers for the work. A

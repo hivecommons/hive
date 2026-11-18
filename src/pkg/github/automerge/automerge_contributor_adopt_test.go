@@ -21,10 +21,13 @@ import (
 // adoptAPI layers the git-ref / pull-request routes the adoption needs on
 // top of stageAPI and records what the hive did.
 type adoptAPI struct {
-	mu          sync.Mutex
-	refs        map[string]string // refs/heads/x → sha
-	refUpdates  []string
-	pulls       []map[string]any
+	mu         sync.Mutex
+	refs       map[string]string // refs/heads/x → sha
+	refUpdates []string
+	pulls      []map[string]any
+	// openPRs is what GET pulls (the open-PR listing the covering-PR check
+	// reads, hivecommons/hive#18900) serves; none by default.
+	openPRs     []map[string]any
 	nextPR      int
 	superseders map[int]map[string]any // number → GET payload
 	prEdits     []string
@@ -105,6 +108,13 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 	defer a.mu.Unlock()
 	path := r.URL.Path
 	switch {
+	case r.Method == http.MethodGet && path == "/repos/acme/widget/pulls":
+		out := a.openPRs
+		if out == nil {
+			out = []map[string]any{}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+		return true
 	case r.Method == http.MethodGet && strings.Contains(path, "/collaborators/") && strings.HasSuffix(path, "/permission"):
 		a.permissionReads++
 		if a.onPermission != nil {

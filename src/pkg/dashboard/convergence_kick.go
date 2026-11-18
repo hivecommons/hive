@@ -98,5 +98,6 @@ func kickAdmissionCandidate(issue ghpkg.Issue) contributorAdmissionCandidate {
 		},
 		labels:    issue.Labels,
 		dependsOn: issue.DependsOn,
+		createdAt: issue.CreatedAt,
 	}
 }

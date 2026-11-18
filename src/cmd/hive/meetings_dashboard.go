@@ -138,6 +138,8 @@ type meetingLive struct {
 	Meeting    meetings.Meeting `json:"meeting"`
 	Transcript []meetings.Event `json:"transcript"`
 	Live       *live.State      `json:"live,omitempty"`
+	// Budget is the meeting's budget meter (numbers only).
+	Budget *live.BudgetView `json:"budget,omitempty"`
 }
 
 func (d *meetingsDashboard) Live(id string) (any, error) {
@@ -156,9 +158,32 @@ func (d *meetingsDashboard) Live(id string) (any, error) {
 	if d.live != nil {
 		if st, err := d.live.State(id); err == nil {
 			out.Live = &st
+			bv := live.NewBudgetView(d.live.Policy(), st, id)
+			out.Budget = &bv
 		}
 	}
 	return out, nil
+}
+
+// Budget is the hive's meetings budget: the per-meeting limits, the
+// hourly and daily ceilings used, and every meeting's meter. It carries
+// numbers only, so the dashboard serves it to any role.
+func (d *meetingsDashboard) Budget() (any, error) {
+	if d.live == nil {
+		return live.BudgetOverview{Meetings: []live.BudgetView{}}, nil
+	}
+	list, err := d.mgr.List()
+	if err != nil {
+		return nil, meetingsDashboardError(err)
+	}
+	ids := make([]string, 0, len(list))
+	for _, m := range list {
+		ids = append(ids, m.ID)
+	}
+	return d.live.NewBudgetOverview(ids, func(id string) (live.State, bool) {
+		st, err := d.live.State(id)
+		return st, err == nil
+	}), nil
 }
 
 // Subscribe forwards meeting changes, transcript lines and live-loop

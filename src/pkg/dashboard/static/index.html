@@ -428,6 +428,14 @@
     .oc-version-row strong { min-width: 0; text-align: right; overflow-wrap: anywhere; }
     .oc-version-row strong, .oc-version-row a { color: var(--text); }
     .oc-version-row strong a { display: block; min-width: 0; overflow-wrap: anywhere; }
+    .oc-version-contains { display: grid; gap: var(--sp-2); padding: var(--sp-2) var(--sp-5); min-width: 0; }
+    .oc-version-contains-form { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+    .oc-version-contains-form input { flex: 1; min-width: 0; padding: var(--sp-2) var(--sp-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text); font-size: var(--fs-sm); font-family: inherit; }
+    .oc-version-contains-result { color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+    .oc-version-contains-chip { display: inline-block; padding: var(--sp-0) var(--sp-3); border-radius: var(--r-pill); border: 1px solid var(--border); font-size: var(--fs-xs); }
+    .oc-version-contains-chip.is-yes { color: var(--status-ok); border-color: var(--status-ok); }
+    .oc-version-contains-chip.is-no { color: var(--danger); border-color: var(--danger); }
+    .oc-version-contains-chip.is-unknown { color: var(--status-warn); border-color: var(--status-warn); }
     .oc-version-actions { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5); min-width: 0; }
     .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
     .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }
@@ -2369,6 +2377,7 @@
     .ham-human-gate .ham-gate-more[aria-expanded="true"] { background: color-mix(in srgb, var(--amber) 22%, transparent); }
     .ham-human-gate.ham-gate-settling { opacity: 0.75; border-style: dashed; }
     .ham-human-gate.ham-gate-settling > .ham-gate-status { color: var(--cue-work); }
+    .ham-human-gate > .ham-gate-wait { display: inline-flex; align-items: center; min-width: 0; padding: 0 var(--sp-2); color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ham-gate-menu[hidden] { display: none; }
     /* The passive "decision pending on #N" chip is a link to the primary row. */
     .ham-decision-pending[data-ham-scroll-to] { text-decoration: underline dotted; text-underline-offset: var(--sp-1); }
@@ -6105,6 +6114,9 @@
     .kb-effective-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5); }
     .kb-effective-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
     .kb-effective-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-3); border-radius: var(--r); background: var(--surface); }
+    .kb-advisor-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); margin-top: var(--sp-2); }
+    .kb-advisor-table th, .kb-advisor-table td { text-align: left; padding: var(--sp-2) var(--sp-3); border-bottom: var(--line-width) solid var(--border); }
+    .kb-advisor-table th { color: var(--muted); font-weight: 600; }
     .kb-effective-meta { color: var(--muted); font-size: var(--fs-xs); }
     .kb-effective-reason { border-radius: var(--r-pill); padding: 0 var(--sp-2); font-size: var(--fs-xs); font-weight: 700; color: var(--yellow); border: var(--line-width) solid var(--yellow); }
     .kb-notice { margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); background: var(--bg); border-radius: var(--r); font-size: var(--fs-sm); color: var(--muted); border-left: 3px solid var(--yellow); }
@@ -6316,6 +6328,11 @@
     .meetings-row-error { font-size: var(--fs-xs); color: var(--red); overflow-wrap: anywhere; }
     .meetings-row-raw { margin-top: var(--sp-1); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
     .meetings-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .meetings-budget { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .meetings-meter { flex: 0 0 8em; height: var(--sp-2); }
+    .meetings-budget[data-level="warning"] .muted-xs, .meetings-budget[data-level="degraded"] .muted-xs { color: var(--yellow); }
+    .meetings-budget[data-level="exhausted"] .muted-xs { color: var(--red); }
+    .meetings-skipped { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-sm); overflow-wrap: anywhere; }
     .meetings-live { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--sp-4); }
     .meetings-transcript { max-height: 28em; overflow: auto; font-size: var(--fs-sm); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
     .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }
@@ -21513,7 +21530,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '',
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
-        decided: lp.decided || null, human_gate: lp.human_gate || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
+        decided: lp.decided || null, human_gate: lp.human_gate || null, mid_flight: lp.mid_flight || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
     // Pure: whether a linked PR is still open (not merged / closed /
     // superseded). With `issue`, an adopted original whose hive copy is
@@ -22010,7 +22027,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
             terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '', hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null, human_gate: lp.human_gate || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '', hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null, human_gate: lp.human_gate || null, mid_flight: lp.mid_flight || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -24965,6 +24982,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "adoption-undone": {"kind": "reason", "plain": "the hive's copy was closed without merging and the adoption was undone", "detail": "The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub."},
       "adoption/supersede": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "advisory-in-progress": {"kind": "rule", "plain": "a hive advisory the hive is still working; nothing to decide", "detail": "The issue is a hive advisory whose items are still being worked: the sweep ticks each as it closes or merges and closes the advisory when all are resolved. Nothing is written and nobody is parked on it."},
+      "ci-pending": {"kind": "rule", "plain": "CI is still running on this branch; nothing to decide yet", "detail": "The pull request's checks have not finished and none has failed, so there is no fix to ask for and no green head to approve. The hive writes nothing and leaves it parked; decide again once the checks finish."},
+      "mid-flight": {"kind": "rule", "plain": "checks or review are still running on this branch's current head; nothing decided", "detail": "CI is running, or the review of the current head is queued or unfinished, so a decision now would rest on a head nobody has finished checking. The hive writes nothing; decide once CI and review finish on that head."},
       "advisory-resolved": {"kind": "rule", "plain": "a hive advisory whose items are all resolved; closed as completed", "detail": "The issue is a hive advisory (a dedupe checklist or triage note) and every item it lists is closed or merged, so nothing is left to read; the hive closes it as completed."},
       "already-fixed": {"kind": "rule", "plain": "the issue was already fixed by a merged PR; closed as superseded", "detail": "The issue this PR fixes is already closed and a merged PR closed it (or a merged PR declares it supersedes this one), so nothing is left to deliver. The hive closes the PR as superseded with a note naming the merging PR; it never adopts it."},
       "approve": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
@@ -24998,6 +25017,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "contributor-lane:sentinel-blocked": {"kind": "reason", "plain": "security-sensitive files changed; a maintainer must approve", "detail": "Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label."},
       "contributor-lane:workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
       "contributor-offline": {"kind": "rule", "plain": "the author hasn't been reachable since the nudge", "detail": "The PR's author (or their clanker or hive) has been offline since the hive nudged them, so the hive takes the work over instead of waiting. The decision itself names which: the author's clanker, a connected hive, or the author."},
+      "covered-by-other-pr": {"kind": "rule", "plain": "a person's or the hive's PR already covers the issue; closed as a duplicate, not adopted", "detail": "Another open PR from a person or from the hive covers the same issue (or a person or the hive holds a live claim on it). Adoption takes over work a contributor abandoned, and this work is not abandoned, so the hive closes the contributor PR as a duplicate with a thank-you note and credit instead of opening a copy beside it. Green first, then earlier-opened only breaks ties between PRs of equal trust."},
       "dco": {"kind": "reason", "plain": "a commit is missing its sign-off", "detail": "A commit on the branch is missing its Developer Certificate of Origin sign-off; the author must sign it off."},
       "dco-missing": {"kind": "reason", "plain": "a commit is missing its sign-off", "detail": "A commit on the branch is missing its Developer Certificate of Origin sign-off; the author must sign it off."},
       "dedupe": {"kind": "rule", "plain": "an older issue already tracks this", "detail": "An older issue already tracks the same work; one thread keeps it moving."},
@@ -25356,7 +25376,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
         out.push({ id: 'decide:close-wontfix', label: "Won't fix…", enabled, why, danger: true });
         out.push({ id: 'decide:direction', label: 'Give direction…', enabled, why });
-        return out;
+        // A head whose CI or review is still running is not decided on yet.
+        return typeof stageTrackerMidFlightApply === 'function' ? stageTrackerMidFlightApply(out, item) : out;
       }
       out.push({ id: 'decide:approve', label: 'Approve direction', enabled, why });
       out.push({ id: 'decide:direction', label: 'Send back to the hive…', enabled, why });
@@ -25520,7 +25541,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nested = stageTrackerNestedOpenPRs(item);
       if (nested.length >= STAGE_TRACKER_DELEGATE_ALL_MIN) {
         const can = write && !!ctx.user;
-        out.push({ id: 'decide:delegate-all', label: 'Let hive decide — all ' + nested.length + ' PRs', hint: 'per PR', enabled: can, why: can ? '' : STAGE_TRACKER_WHY_WRITE, prs: nested.map(p => p.number) });
+        // PRs whose CI or review is still running on the current head are
+        // skipped by the fan-out (the server answers each one no-effect);
+        // when every PR is mid-flight the action is disabled with the reason
+        // (hivecommons/hive#18889).
+        const flying = typeof stageTrackerMidFlightOf === 'function' ? nested.filter(stageTrackerMidFlightOf) : [];
+        const allFlying = flying.length === nested.length;
+        const flightWhy = allFlying ? 'Every PR is still waiting: ' + flying.map(p => '#' + p.number + ' ' + stageTrackerMidFlightOf(p).text).join('; ') : '';
+        out.push({ id: 'decide:delegate-all', label: 'Let hive decide — all ' + nested.length + ' PRs', hint: flying.length && !allFlying ? 'per PR · skips ' + flying.length + ' still running' : 'per PR', enabled: can && !allFlying, why: !can ? STAGE_TRACKER_WHY_WRITE : flightWhy, prs: nested.map(p => p.number) });
       }
       // The row asks the human for something (decision_needed on the item
       // or its one asking nested PR): the server's answers lead the menu,
@@ -27773,6 +27801,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       } else if (id === 'decide:delegate-all') {
         // The issue row itself is the request; the server fans out per PR.
         items = items.filter(it => stageTrackerNestedOpenPRs(it).length >= STAGE_TRACKER_DELEGATE_ALL_MIN);
+        // Every PR still mid-flight: nothing to send (the menu disables it).
+        if (typeof stageTrackerMidFlightOf === 'function' && items.length && items.every(it => stageTrackerNestedOpenPRs(it).every(stageTrackerMidFlightOf))) {
+          showToast('Let hive decide — all PRs: not yet, CI or review is still running on each', 'info');
+          return { toasts: [], pending: [] };
+        }
       } else if (id === 'decide:adopt-now' || stageTrackerActionBase(id) === 'decide:reroute') {
         // Adopt now / Reroute act on the PR waiting on its contributor (072 / 071).
         items = items.map(stageTrackerTakeoverTarget).filter(Boolean);
@@ -27820,6 +27853,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         items = [].concat(...items.map(it => stageTrackerGateTargets(it, id)))
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
+        // A decision on a head whose CI or review is still running is not
+        // sent (hivecommons/hive#18889): the menu draws it disabled, and a
+        // click that beat the repaint is answered with the reason.
+        if (typeof stageTrackerMidFlightApply === 'function' && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(id) >= 0) {
+          const ready = items.filter(t => !stageTrackerMidFlightOf(t));
+          if (ready.length < items.length) {
+            const held = items.filter(t => stageTrackerMidFlightOf(t));
+            showToast(stageTrackerActionLabel(id) + ': not yet — ' + held.map(t => stageTrackerRefOf(t) + ' ' + stageTrackerMidFlightWhy(t)).join('; '), 'info');
+            if (!ready.length) return { toasts: [], pending: [] };
+            items = ready;
+          }
+        }
       }
       const payload = await stageTrackerActionPayload(items, id, rows);
       if (payload == null) return { toasts: [], pending: [], cancelled: true };
@@ -28122,6 +28167,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // row's own lead actions (server-judged delegate, approve) are trusted
     // first; the rest follow the hold permission the endpoints share.
     function stageTrackerHumanGateVerbState(id, item, ctx, leads) {
+      // A head whose CI or review is still running is not decided on yet
+      // (hivecommons/hive#18889): the verb stays, disabled, with the reason.
+      const flight = typeof stageTrackerMidFlightOf === 'function' && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(id) >= 0 && stageTrackerMidFlightOf(item) ? stageTrackerMidFlightWhy(item) : '';
+      if (flight) return { enabled: false, why: flight };
       const lead = (leads || []).find(a => a && a.id === id);
       if (lead) return { enabled: lead.enabled !== false, why: lead.enabled === false ? String(lead.why || '') : '' };
       return typeof stageTrackerActionAllowed === 'function' ? stageTrackerActionAllowed(id, ctx) : { enabled: true, why: '' };
@@ -28196,7 +28245,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // stamped into the wrap the first time the … opens.
       const more = moreVerbs.length ? `<span class="ham-gate-more-wrap"><button type="button" class="ham-lead-act ham-gate-act ham-gate-more" data-ham-gate-more aria-haspopup="menu" aria-expanded="false" aria-label="More ways to settle this gate" title="${esc(moreVerbs.map(v => v.label).join(' · '))}">…</button><template class="ham-gate-menu-tpl"><div class="ham-menu ham-gate-menu" role="menu" aria-label="More ways to settle this gate" hidden>${moreVerbs.map(v => stageTrackerHumanGateVerbHtml(item, v, stageTrackerHumanGateVerbState(v.id, shown, ctx, leads), true)).join('')}</div></template></span>` : '';
       const key = typeof stageTrackerItemKey === 'function' ? stageTrackerItemKey(item) : '';
-      return `<span class="ham-human-gate" data-ham-gate="${esc(key)}" data-ham-gate-reasons="${esc(reasons.map(r => r.key).join(' '))}" role="group" aria-label="${esc(text)}">${status}${acts}${more}</span>`;
+      // The real reason the verbs are not live yet: the head's CI or review
+      // is still running (hivecommons/hive#18889). The pill still names what
+      // parked the row; this says why nothing can be decided on it now.
+      const flightWhy = typeof stageTrackerMidFlightWhy === 'function' ? stageTrackerMidFlightWhy(shown) : '';
+      const flightWord = flightWhy ? String(stageTrackerMidFlightOf(shown).text).trim() : '';
+      const wait = flightWhy ? `<span class="ham-gate-wait" data-ham-gate-wait="${esc(String(stageTrackerMidFlightOf(shown).kind || ''))}" title="${esc(flightWhy)}" role="status">waiting on ${esc(flightWord)}</span>` : '';
+      return `<span class="ham-human-gate" data-ham-gate="${esc(key)}" data-ham-gate-reasons="${esc(reasons.map(r => r.key).join(' '))}" role="group" aria-label="${esc(text + (flightWord ? ' — waiting on ' + flightWord : ''))}">${status}${wait}${acts}${more}</span>`;
     }
     // The pill's optimistic state after one of its verbs ran: the status
     // reads "settling…" until the next snapshot re-renders the row.
@@ -28250,6 +28305,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_GATE_NO_DECISION = 'No decision pending';
     const STAGE_TRACKER_GATE_APPROVED_BY = 'Approved by @';
     const STAGE_TRACKER_GATE_STALE = ' is not waiting on that decision';
+    /* ---- Mid-flight PRs (hivecommons/hive#18889) --------------------------
+       A decision is a call on the head as it stands. While the CURRENT
+       head's CI is running, its review is queued or unfinished, or the CI /
+       review on file belong to an earlier head (a push restarted both), the
+       call is premature. The server states it per row as `mid_flight`
+       ({kind, text, head, park}); the verbs that rest on the head being
+       checked are drawn disabled with the reason instead of offered. A park
+       recorded for an earlier head does not count. */
+    const STAGE_TRACKER_MIDFLIGHT_VERBS = ['decide:delegate', 'decide:approve', 'decide:direction', 'gate:decide'];
+    // Pure: the server's mid_flight on the row, null when the head is settled.
+    function stageTrackerMidFlightOf(item) {
+      const m = item && item.mid_flight;
+      return m && typeof m === 'object' && String(m.text || '').trim() ? m : null;
+    }
+    // Pure: the reason a decision on the row is not offered yet, '' when it is.
+    function stageTrackerMidFlightWhy(item) {
+      const m = stageTrackerMidFlightOf(item);
+      if (!m) return '';
+      const park = String(m.park || '').trim();
+      return 'Waiting on ' + String(m.text).trim() + ': the decision opens when CI and review finish on the current head' + (park ? ' (parked because ' + park + ')' : '');
+    }
+    // Pure: disables, in place, the options that rest on the head being
+    // checked while the row is mid-flight; the options come back unchanged
+    // otherwise.
+    function stageTrackerMidFlightApply(options, item) {
+      const why = stageTrackerMidFlightWhy(item);
+      if (!why) return options;
+      (options || []).forEach(o => { if (o && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(o.id) >= 0) { o.enabled = false; o.why = why; } });
+      return options;
+    }
     // Pure: the server's gate for the row (`human_gate`), null when absent.
     function stageTrackerServerGate(item) {
       const g = item && item.human_gate;
@@ -46840,8 +46925,11 @@ function burnAreaChart() {
 
       html += '</div>'; // kb-layout
       html += '<div id="kb-effective-panel" class="kb-effective"></div>';
+      html += '<div id="kb-advisor-panel" class="kb-effective"></div>';
       panel.innerHTML = html;
       renderKbEffective();
+      renderKbAdvisor();
+      if (!_kbAdvisorData && !_kbAdvisorError && !_kbAdvisorLoading) kbAdvisorRefresh();
       if (_kbGraphView) {
         fetchKnowledgeGraph();
       } else {
@@ -46936,6 +47024,93 @@ function burnAreaChart() {
     function kbEffectiveRefresh() {
       return kbEffectiveSelectAgent(_kbEffectiveAgent);
     }
+
+    // ── Advisor card (#18897) ──
+    // Read-only rank-versus-holdout comparison from GET /api/knowledge/advisor/summary:
+    // counts and means only, plus the advisor settings that produced them.
+    let _kbAdvisorData = null;
+    let _kbAdvisorError = '';
+    let _kbAdvisorLoading = false;
+
+    function kbAdvisorNum(v, digits) {
+      return (typeof v === 'number' && isFinite(v)) ? v.toFixed(digits) : '–';
+    }
+
+    function kbAdvisorCountsHTML(label, counts) {
+      const keys = Object.keys(counts || {}).sort();
+      if (!keys.length) return '<div><div class="section-label m-0">' + escapeHtml(label) + '</div><div class="kb-effective-meta">none recorded</div></div>';
+      return '<div><div class="section-label m-0">' + escapeHtml(label) + '</div><ul class="kb-effective-list">'
+        + keys.map(k => '<li class="kb-effective-item"><span>' + escapeHtml(k || 'unknown') + '</span><span class="kb-effective-meta">' + escapeHtml(String(counts[k])) + '</span></li>').join('')
+        + '</ul></div>';
+    }
+
+    function kbAdvisorArmRowHTML(a, note) {
+      return '<tr><td>' + escapeHtml(a.arm) + (note ? ' <span class="kb-effective-meta">' + escapeHtml(note) + '</span>' : '') + '</td><td>' + escapeHtml(String(a.beads)) + '</td><td>'
+        + kbAdvisorNum(a.mean_fix_attempts, 2) + '</td><td>' + kbAdvisorNum(a.mean_ci_failure_count, 2) + '</td><td>' + kbAdvisorNum(a.mean_kicks_received, 2) + '</td></tr>';
+    }
+
+    function kbAdvisorCardHTML(d, error, loading) {
+      let html = '<div class="kb-effective-head"><div class="section-label m-0">Advisor</div>'
+        + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbAdvisorRefresh" title="Reload the advisor rank-versus-holdout summary">Refresh</button></div>';
+      if (error) return html + '<div class="kb-notice">' + escapeHtml(error) + '</div>';
+      if (!d) return html + '<div class="dash-card-subtitle">' + (loading ? 'Loading…' : 'No advisor summary yet.') + '</div>';
+      const st = d.settings || {};
+      const w = d.window || {};
+      const cost = d.cost || {};
+      const counts = d.counts || {};
+      html += '<div class="kb-effective-scope">Settings (read-only): mode ' + escapeHtml(String(st.mode || 'off'))
+        + ' · holdout ' + escapeHtml(String(st.holdout_percent || 0)) + '%'
+        + ' · model ' + escapeHtml(String(st.model || 'not set'))
+        + ' · budget ' + escapeHtml(String(st.max_calls_per_day == null ? '–' : st.max_calls_per_day)) + '/day, '
+        + escapeHtml(String(st.max_calls_per_agent_hour == null ? '–' : st.max_calls_per_agent_hour)) + '/agent/hour'
+        + (st.enabled ? '' : ' · advisor is turned off') + '</div>';
+      html += '<div class="kb-effective-scope">' + escapeHtml(String(w.decisions || 0)) + ' decisions'
+        + (w.first_decision ? ' from ' + escapeHtml(w.first_decision) + ' to ' + escapeHtml(w.last_decision || '') : '')
+        + (w.rank_mode_start ? ' · rank mode since ' + escapeHtml(w.rank_mode_start) : '') + '</div>';
+      if (d.caveat) html += '<div class="kb-notice">' + escapeHtml(d.caveat) + '</div>';
+      html += '<div class="kb-effective-cols">'
+        + kbAdvisorCountsHTML('Decisions by mode', counts.by_mode)
+        + kbAdvisorCountsHTML('Decisions by arm', counts.by_arm)
+        + kbAdvisorCountsHTML('Decisions by outcome', counts.by_outcome) + '</div>';
+      const arms = d.arms || [];
+      html += '<div class="section-label m-0" style="margin-top:var(--sp-4)">Closed beads by arm</div>';
+      if (!arms.length && !d.mixed && !d.none) {
+        html += '<div class="kb-effective-meta">No closed beads with a closed PR yet.</div>';
+      } else {
+        html += '<table class="kb-advisor-table"><thead><tr><th>Arm</th><th>Beads</th><th>Mean fix attempts</th><th>Mean CI failures</th><th>Mean kicks</th></tr></thead><tbody>';
+        html += arms.map(a => kbAdvisorArmRowHTML(a, '')).join('');
+        if (d.mixed) html += kbAdvisorArmRowHTML(d.mixed, 'in more than one arm; not comparable');
+        if (d.none) html += kbAdvisorArmRowHTML(d.none, 'no advisor decision');
+        html += '</tbody></table>';
+        html += '<div class="kb-effective-meta">Bead means cover every closed bead with a closed PR; the since window does not narrow them.</div>';
+      }
+      html += '<div class="kb-effective-meta" style="margin-top:var(--sp-3)">Mean model latency ' + kbAdvisorNum(cost.mean_latency_ms, 0) + ' ms (' + escapeHtml(String(cost.latency_samples || 0)) + ' calls) · mean tokens '
+        + kbAdvisorNum(cost.mean_prompt_tokens, 0) + ' prompt / ' + kbAdvisorNum(cost.mean_completion_tokens, 0) + ' completion (' + escapeHtml(String(cost.token_samples || 0)) + ' calls)</div>';
+      return html;
+    }
+
+    function renderKbAdvisor() {
+      const el = document.getElementById('kb-advisor-panel');
+      if (!el) return;
+      el.innerHTML = kbAdvisorCardHTML(_kbAdvisorData, _kbAdvisorError, _kbAdvisorLoading);
+    }
+
+    async function kbAdvisorRefresh() {
+      _kbAdvisorLoading = true;
+      _kbAdvisorError = '';
+      renderKbAdvisor();
+      try {
+        const r = await fetch('/api/knowledge/advisor/summary');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbAdvisorData = data;
+      } catch (e) {
+        _kbAdvisorError = 'Could not load the advisor summary: ' + e.message;
+      }
+      _kbAdvisorLoading = false;
+      renderKbAdvisor();
+    }
+    // ── Advisor card end ──
 
     // Fact hygiene: synthesized/imported facts can carry raw markdown heading
     // markers in titles ("### Configure build...") or be nothing but a
@@ -51721,6 +51896,11 @@ function burnAreaChart() {
     const MEETINGS_LIVE_STATES = { requested: 1, joining: 1, lobby: 1, live: 1 };
     let _meetingsList = null;
     let _meetingsError = '';
+    // Budget meters by meeting id and the hive-wide ceilings, from GET /api/meetings/budget.
+    let _meetingsBudget = {};
+    let _meetingsLedger = null;
+    // Levels the meter badges (the server's budget steps).
+    const MEETINGS_BUDGET_BADGES = { warning: 'budget 80%', degraded: 'budget 90%: shorter answers', exhausted: 'budget exhausted' };
     let _meetingsOpen = null; // { id, ws, meeting, lines, partial, intents, live }
     // Ended meetings are inbox items too (source "meeting").
     if (typeof INBOX_SOURCE_ICONS === 'object' && !INBOX_SOURCE_ICONS.meeting) INBOX_SOURCE_ICONS.meeting = '🎙';
@@ -51771,7 +51951,54 @@ function burnAreaChart() {
         if (_meetingsList === null) _meetingsList = [];
         _meetingsError = 'Meetings are unreachable right now; retrying.';
       }
+      await fetchMeetingsBudget();
       renderMeetings();
+    }
+
+    // The meter is numbers only; a failure leaves the last one.
+    async function fetchMeetingsBudget() {
+      try {
+        const r = await fetch('/api/meetings/budget');
+        if (!r.ok) return;
+        const data = await r.json();
+        const byId = {};
+        (data.meetings || []).forEach(b => { byId[b.meeting_id] = b; });
+        _meetingsBudget = byId;
+        _meetingsLedger = data.ledger || null;
+      } catch (e) { /* transient */ }
+    }
+
+    // meetingsBudgetText is the meter's text alternative.
+    function meetingsBudgetText(b) {
+      return (b.percent || 0) + '% of the meeting budget used';
+    }
+
+    function meetingsBudgetHtml(b) {
+      if (!b || !b.token_budget) return '';
+      const text = meetingsBudgetText(b);
+      const badge = MEETINGS_BUDGET_BADGES[b.level];
+      const detail = (b.tokens_used || 0) + ' of ' + b.token_budget + ' tokens · ' + (b.intents_answered || 0) + ' answered' +
+        (b.skipped ? ' · ' + b.skipped + ' question' + (b.skipped === 1 ? '' : 's') + ' not answered' : '');
+      return '<div class="meetings-budget" data-level="' + escapeHtml(b.level || 'ok') + '">' +
+        '<meter class="meetings-meter" min="0" max="100" low="79" high="89" optimum="0" value="' + Number(b.percent || 0) + '" aria-label="' + escapeHtml(text) + '" title="' + escapeHtml(text) + '">' + escapeHtml(text) + '</meter>' +
+        '<span class="muted-xs">' + escapeHtml(text) + ' · ' + escapeHtml(detail) + '</span>' +
+        (badge ? '<span class="kc-pill" data-status="' + (b.level === 'warning' ? 'syncing' : 'error') + '">' + escapeHtml(badge) + '</span>' : '') +
+        '</div>';
+    }
+
+    // The ceilings hive-wide, for the live view.
+    function meetingsLedgerText(l) {
+      if (!l) return '';
+      const part = (name, used, ceil) => ceil ? name + ' ' + used + ' of ' + ceil + ' tokens' : '';
+      return [part('hour', l.hourly_used || 0, l.hourly_ceiling), part('day', l.daily_used || 0, l.daily_ceiling)].filter(Boolean).join(' · ');
+    }
+
+    // The questions skipped for budget, with their text (owner view only).
+    function meetingsSkippedHtml(live) {
+      const list = (live && live.skipped) || [];
+      if (!list.length) return '';
+      return '<div><div class="section-label m-0">Not answered: budget</div><ul class="meetings-skipped">' +
+        list.map(q => '<li>' + escapeHtml((q.who ? q.who + ': ' : '') + (q.text || '')) + '</li>').join('') + '</ul></div>';
     }
     dashboardScheduleWork('meetings', fetchMeetings).catch(console.error);
     dashboardSetInterval('meetings', fetchMeetings, MEETINGS_POLL_MS);
@@ -51850,6 +52077,7 @@ function burnAreaChart() {
         '<span class="meetings-row-title" title="' + escapeHtml(m.url || '') + '">' + escapeHtml(meetingsLabel(m)) + '</span>' +
         '<span class="kc-pill" data-status="' + escapeHtml(MEETINGS_PILL_STATUS[state] || '') + '">' + escapeHtml(state) + '</span></div>' +
         (meta ? '<div class="muted-xs">' + escapeHtml(meta) + '</div>' : '') +
+        meetingsBudgetHtml(_meetingsBudget[m.id]) +
         meetingsReasonHtml(m) +
         (active && m.consent_error && !m.consent_posted_at ? '<div class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</div>' : '') +
         (m.consent_via === 'voice' ? '<div class="muted-xs">consent notice spoken: the meeting chat could not deliver it</div>' : '') +
@@ -52084,6 +52312,8 @@ function burnAreaChart() {
           break;
         }
         case 'notes': meetingsRefreshLive(o.id); break;
+        case 'budget': meetingsRefreshLive(o.id); break;
+        case 'dropped': meetingsRefreshLive(o.id); break;
         case 'reach': meetingsRefreshLive(o.id); break;
         case 'spek': meetingsRefreshLive(o.id); break;
         default: break;
@@ -52096,7 +52326,11 @@ function burnAreaChart() {
         const r = await fetch('/api/meetings/' + encodeURIComponent(id));
         if (!r.ok) return;
         const data = await r.json();
-        if (_meetingsOpen && _meetingsOpen.id === id) { _meetingsOpen.live = data.live || null; renderMeetingsLive(); }
+        if (_meetingsOpen && _meetingsOpen.id === id) {
+          _meetingsOpen.live = data.live || null;
+          if (data.budget) _meetingsBudget[id] = data.budget;
+          renderMeetingsLive();
+        }
       } catch (e) { /* transient */ }
     }
 
@@ -52127,9 +52361,11 @@ function burnAreaChart() {
       const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
       const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
         (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
-      host.innerHTML = spek + meetingsReachHtml(live) + '<div class="meetings-live">' +
+      const ledger = meetingsLedgerText(_meetingsLedger);
+      host.innerHTML = spek + meetingsBudgetHtml(_meetingsBudget[o.id]) + (ledger ? '<p class="muted-xs">Hive-wide: ' + escapeHtml(ledger) + '</p>' : '') + meetingsReachHtml(live) + '<div class="meetings-live">' +
         '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
         '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
+        meetingsSkippedHtml(live) +
         '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +
         '<div><div class="section-label m-0">Spek intents</div><div class="meetings-intents">' + (intents || '<p class="muted-xs">None yet.</p>') + '</div></div></div></div>';
       const tr = host.querySelector('.meetings-transcript');
@@ -62799,6 +63035,75 @@ function burnAreaChart() {
       return versionButtonHTML('Upgrade to ' + targetShort, 'Upgrade this Hive' + runtimeDeploymentSuffix + ' to ' + (ctx.offeredUpgradeLabel || 'target') + ' ' + targetShort + ' now', target.ref || targetHash, true);
     }
 
+    /* "Does this build contain PR #N?" (#18915). The lookup is answered by
+       GET /api/version/contains from git ancestry of the running commit: yes,
+       no, or unknown. Unknown is never a guess (commit not resolvable, PR not
+       found, lookup failed, or no GitHub access) and the reason says which.
+       The query and last answer live in window._versionContains so the menu,
+       which re-renders on every version poll, does not lose them. */
+    function versionContainsResultHTML(r) {
+      if (!r) return '';
+      if (r.error) return '<span class="text-muted">' + escapeHtml(String(r.error)) + '</span>';
+      const verdict = r.contains === 'yes' || r.contains === 'no' ? r.contains : 'unknown';
+      const q = r.query || {};
+      const what = q.kind === 'pr' ? 'PR #' + q.pr : 'commit ' + String(q.commit || '').slice(0, 7);
+      const tested = r.commit ? ' (' + String(r.commit).slice(0, 7) + ')' : '';
+      return '<span class="oc-version-contains-chip is-' + verdict + '">' + verdict + '</span> ' +
+        escapeHtml(what + tested) + (r.reason ? ': ' + escapeHtml(String(r.reason)) : '');
+    }
+
+    /* The newest image commit and the newest merged commit are shown
+       separately: a channel image can sit on an older commit than the newest
+       merge (merged, not yet built), and one number would hide that. */
+    function versionBuildBlockHTML(v) {
+      const newestImage = String((v && v.target && v.target.short) || (v && v.stableV4Short) || '');
+      const newestMerged = String((v && v.latestShort) || '');
+      const cell = function(label, text, title) {
+        return '<div class="oc-version-row" title="' + escapeHtml(title) + '"><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(text) + '</strong></div>';
+      };
+      let html = '';
+      if (newestImage) html += cell('Newest image', newestImage, 'The newest commit whose image is published for the channel this hive follows');
+      if (newestMerged) {
+        const unbuilt = newestImage && !versionSameCommit(newestImage, newestMerged);
+        html += cell('Newest merged', newestMerged + (unbuilt ? ' (not in the newest image)' : ''), 'The newest commit merged on this hive\'s branch');
+      }
+      const st = window._versionContains || {};
+      html += '<div class="oc-version-contains">' +
+        '<div class="oc-version-contains-form">' +
+        '<input type="text" id="oc-version-contains-q" placeholder="Contains PR # or commit SHA?" autocomplete="off" aria-label="Does this build contain a PR number or commit SHA" value="' + escapeHtml(st.q || '') + '" data-input-action="versionContainsDraft" data-arg-types="w" data-keydown-action="runVersionContains" data-keys="Enter">' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="runVersionContains">Check</button>' +
+        '</div>' +
+        '<div id="oc-version-contains-result" class="oc-version-contains-result" role="status" aria-live="polite">' + (st.html || '') + '</div>' +
+        '</div>';
+      return html;
+    }
+
+    function versionContainsDraft(value) {
+      window._versionContains = Object.assign({}, window._versionContains, { q: String(value || '') });
+    }
+
+    async function runVersionContains() {
+      const input = document.getElementById('oc-version-contains-q');
+      const out = document.getElementById('oc-version-contains-result');
+      const q = String((input && input.value) || (window._versionContains && window._versionContains.q) || '').trim();
+      if (!out || !q) return;
+      const seq = (window._versionContainsSeq = (window._versionContainsSeq || 0) + 1);
+      window._versionContains = { q: q, html: 'Checking…' };
+      out.textContent = 'Checking…';
+      let html;
+      try {
+        const res = await fetch('/api/version/contains?q=' + encodeURIComponent(q));
+        const body = await res.json();
+        html = versionContainsResultHTML(res.ok ? body : { error: body && body.error || 'Lookup failed; try again.' });
+      } catch (_) {
+        html = versionContainsResultHTML({ error: 'Lookup failed; try again.' });
+      }
+      if (seq !== window._versionContainsSeq) return;
+      window._versionContains = { q: q, html: html };
+      const live = document.getElementById('oc-version-contains-result');
+      if (live) live.innerHTML = html;
+    }
+
     function renderVersionDetails(v, ctx) {
       ctx = ctx || {};
       const fullHash = String(v && v.hash || 'unknown');
@@ -62851,6 +63156,7 @@ function burnAreaChart() {
       if (lastUpgrade) html += row('History', value(lastUpgrade.text, lastUpgrade.title || lastUpgrade.text), lastUpgrade.title || lastUpgrade.text);
       const historyHTML = versionUpgradeHistoryHTML(v);
       if (historyHTML) html += '<div class="oc-version-row" title="Recent scheduled and manual upgrade attempts, as recorded by the hub"><span>Upgrade history</span></div>' + historyHTML;
+      html += versionBuildBlockHTML(v);
       if (compareURL && (v && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0)))) {
         html += '<a class="avatar-menu-item" href="' + escapeHtml(compareURL) + '" target="_blank" rel="noopener noreferrer">Compare with target ↗</a>';
       }
@@ -64059,6 +64365,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Customers', key: 'customers.enabled', text: 'customers people profile person identities tags goals satisfaction suggested forget customer graph HIVE_CUSTOMERS_ENABLED customers.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer goal and satisfaction suggestions', key: 'customers.inference.enabled', text: 'customers inference infer suggest goals satisfaction model confirm HIVE_CUSTOMERS_INFERENCE_ENABLED customers.inference.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer avatars', key: 'customers.avatars.enabled', text: 'customers avatars avatar pictures photos github profile picture privacy HIVE_CUSTOMERS_AVATARS_ENABLED customers.avatars.enabled' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer GitHub search on accept', key: 'customers.mention_search.enabled', text: 'customers github search accept mention mentions comments history quota budget suggested person HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED customers.mention_search.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Data directories and session retention', key: 'data.metrics_dir', text: 'data directories metrics logs agent configs claude copilot bob sessions retention prune janitor data.agents_dir data.bob_sessions_dir data.claude_sessions_dir data.copilot_sessions_dir data.logs_dir data.metrics_dir data.session_retention_days' },
       { tab: 'Features', section: 'Integrations & observability', label: 'Standalone deployment upgrades', key: 'deployment.podman_mode', text: 'deployment podman quadlet rootless rootful docker compose upgrade helper request dir deployment.podman_mode deployment.upgrade_helper deployment.upgrade_request_dir' },
@@ -72941,7 +73248,7 @@ function burnAreaChart() {
       const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent that may do the work is picked.' : '';
       const how = pinned ? 'pinned' : (WORKFLOW_DISPATCH_SOURCE_WORD[String(d.source || '')] || '');
       const note = warning ? '' : (agent ? 'handed to ' + agent + (how ? ' (' + how + ')' : '') : '') + (d.disabled ? ' · automatic hand-off off, manual send only' : '');
-      const stalled = (Array.isArray(d.not_started) ? d.not_started : []).map(h => 'Hand-off of ' + String(h.ref || '') + ' not started: ' + String(h.reason || 'the agent did not act') + '. ' + (h.retrying ? 'The hive hands it to another agent that may do the work, if there is one.' : 'It waits for an owner: use Send to ' + String(d.profile) + ' on the item\'s row in the Activity Monitor.'));
+      const stalled = (Array.isArray(d.not_started) ? d.not_started : []).map(h => workflowHandoffNote(h, d.profile));
       return { profile: String(d.profile), options, warning, note, stalled };
     }
 
@@ -73011,6 +73318,24 @@ function burnAreaChart() {
         showToast('Failed to bind workflow: ' + err.message, 'error');
       }
       renderConfigTab('Repos');
+    }
+    // The Settings → Repos line for a hand-off an agent did not start
+    // (hivecommons/hive#18749), with where its reason came from
+    // (hivecommons/hive#18916). The reason is text an agent wrote in a session
+    // that may be over: it carries its age and session, and once a newer
+    // hand-off of the item exists (`stale`) it is shown as an earlier
+    // decline, never as the item's current state. Pure: the caller escapes
+    // the result when it puts it in markup.
+    function workflowHandoffNote(h, profile) {
+      const ref = String(h && h.ref || '');
+      const reason = String(h && h.reason || 'the agent did not act');
+      const age = h && h.reason_age ? String(h.reason_age) + ' ago' : 'at an unknown time';
+      const session = h && h.reason_session ? String(h.reason_session) : 'unknown (before provenance was recorded)';
+      const origin = 'Decided ' + age + ' in session ' + session + '.';
+      if (h && h.stale) {
+        return 'Earlier hand-off of ' + ref + ' (stale): ' + reason + '. ' + origin + ' A newer hand-off of this item exists, so this is history, not its state now.';
+      }
+      return 'Hand-off of ' + ref + ' not started: ' + reason + '. ' + origin + ' ' + (h && h.retrying ? 'The hive hands it to another agent that may do the work, if there is one.' : 'It waits for an owner: use Send to ' + String(profile) + ' on the item\'s row in the Activity Monitor.');
     }
 // Settings → Workflows (hivecommons/hive#17620, RFC phase 3).
     //
@@ -78646,6 +78971,11 @@ function burnAreaChart() {
             <span class="config-toggle-label">Customer avatars ${yamlHint('customers.avatars.enabled')} ${settingHelpMark('settings', 'features', 'Customer avatars', `ON by default. The Customers list shows a person's GitHub picture next to their name when they have a confirmed GitHub login. This is the one thing in Customers that leaves your browser: it asks github.com for https://github.com/<login>.png, once per person on screen, and sends no referrer. Nothing goes to the hive's server or the hub, and nobody known only by email is looked up anywhere. Off, the list shows initials and makes no request to github.com. Applies on the next refresh. HIVE_CUSTOMERS_AVATARS_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
           </div>
           ${f.customersAvatarsEffective !== f.customersAvatars ? `<p class="config-help">HIVE_CUSTOMERS_AVATARS_ENABLED overrides this setting: avatars are currently <b>${f.customersAvatarsEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersSearch ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersSearchEnabled"></div>
+            <span class="config-toggle-label">Search GitHub when accepting a person ${yamlHint('customers.mention_search.enabled')} ${settingHelpMark('settings', 'features', 'Customer GitHub search on accept', `OFF by default. When on, accepting a suggested GitHub login makes one budgeted GitHub search (issues and pull requests that mention the login and ones it commented on, in this hive's own repositories) so the new profile starts with history beyond what the hive already holds. The results are stored as references only, never text. It is never run by the discovery sweep and never for an email address. It sends the login to GitHub, makes at most two search requests per accept, shares an hourly request budget across accepts (customers.mention_search.max_requests_per_hour in the config file, default 10), counts against the shared GitHub quota, and stands down while that quota is low or GitHub's secondary limit is engaged. Needs Customers on. HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersSearchEffective !== f.customersSearch ? `<p class="config-help">HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED (or turning Customers off) overrides this setting: the search is currently <b>${f.customersSearchEffective ? 'on' : 'off'}</b>.</p>` : ''}
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">

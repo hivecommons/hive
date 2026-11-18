@@ -126,6 +126,15 @@ func (rt *workflowDispatchRuntime) dispatchLog(cfg *config.Config, logger *slog.
 		if err != nil && logger != nil {
 			logger.Warn("workflow dispatch log unreadable; starting empty", "path", path, "error", err)
 		}
+		if cfg != nil {
+			// One-time: records the governor wrote under the short repo form
+			// join the owner's qualified ones (hivecommons/hive#18901).
+			if n, merr := l.MigrateQualifiedRefs(cfg.Project.Org); merr != nil && logger != nil {
+				logger.Warn("workflow dispatch log: migrating to qualified refs failed", "path", path, "error", merr)
+			} else if n > 0 && logger != nil {
+				logger.Info("workflow dispatch log: migrated records to qualified refs", "records", n)
+			}
+		}
 		rt.log = l
 	})
 	return rt.log
@@ -323,8 +332,9 @@ func buildWorkflowDispatchKicks(cfg *config.Config, rt *workflowDispatchRuntime,
 	})
 	for _, s := range skips {
 		if logger != nil && s.Reason != scheduler.WorkflowSkipDone && s.Reason != scheduler.WorkflowSkipNoReply {
-			logger.Info("workflow dispatch: item not handed off", "item", s.Ref, "profile", s.Profile, "reason", s.Reason,
-				"problem", problems[s.Ref], "fix", workflowDispatchFix(s.Profile))
+			reason, prov := workflowSkipReasonLog(s, dlog, now)
+			logger.Info("workflow dispatch: item not handed off", append([]any{"item", s.Ref, "profile", s.Profile, "reason", reason,
+				"problem", problems[s.Ref], "fix", workflowDispatchFix(s.Profile)}, prov...)...)
 		}
 	}
 	var out []workflowDispatchKick

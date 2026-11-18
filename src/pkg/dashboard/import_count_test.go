@@ -77,8 +77,10 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// subpackage, the hive-mx delivery contract) behind the email-in routes
 	// (hivecommons/hive#18395), plus pkg/repoagents, the .hive/agents/
 	// discoverer behind the /api/agents/discovered approval routes
-	// (hivecommons/hive#18491).
-	const maxDashboardInternalImports = 65
+	// (hivecommons/hive#18491), plus pkg/buildcontains, the dependency-free
+	// ancestry resolver shared with the hub behind GET /api/version/contains
+	// (hivecommons/hive#18915).
+	const maxDashboardInternalImports = 66
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

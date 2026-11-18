@@ -226,6 +226,11 @@ type Engine struct {
 	retrieved chan retrieval
 	answers   chan answered
 	exhausted atomic.Bool
+	// degraded is set at BudgetDegradePercent of the meeting budget:
+	// shorter answers, no deep dives (budget.go).
+	degraded atomic.Bool
+	// onSkip observes a question dropped for budget; set before Start.
+	onSkip func(BudgetSkip)
 
 	startOnce sync.Once
 	closeOnce sync.Once
@@ -360,6 +365,30 @@ func (e *Engine) Offer(text string) {
 // SetExhausted stops further model calls once the meeting's budget is
 // spent.
 func (e *Engine) SetExhausted() { e.exhausted.Store(true) }
+
+// SetDegraded shortens answers and stops asking for deep dives once the
+// meeting's budget is nearly spent.
+func (e *Engine) SetDegraded() { e.degraded.Store(true) }
+
+// BudgetSkip is a question the engine did not answer because the meeting's
+// budget is spent. The text is meeting speech: the session keeps it in the
+// meeting's own records, never in logs.
+type BudgetSkip struct {
+	Who       string
+	Text      string
+	Addressed bool
+}
+
+// OnBudgetSkip sets the observer of questions dropped for budget. It must
+// be set before Start and must not block.
+func (e *Engine) OnBudgetSkip(fn func(BudgetSkip)) { e.onSkip = fn }
+
+func (e *Engine) budgetSkip(l Line, addressed bool) {
+	e.drop("budget")
+	if e.onSkip != nil {
+		e.onSkip(BudgetSkip{Who: l.Who, Text: l.Text, Addressed: addressed})
+	}
+}
 
 // Skip reports whether a line is for the persona rather than an answer to
 // someone's question: addressed to her, or a leave command.

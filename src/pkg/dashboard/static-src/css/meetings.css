@@ -14,6 +14,11 @@
     .meetings-row-error { font-size: var(--fs-xs); color: var(--red); overflow-wrap: anywhere; }
     .meetings-row-raw { margin-top: var(--sp-1); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
     .meetings-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .meetings-budget { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .meetings-meter { flex: 0 0 8em; height: var(--sp-2); }
+    .meetings-budget[data-level="warning"] .muted-xs, .meetings-budget[data-level="degraded"] .muted-xs { color: var(--yellow); }
+    .meetings-budget[data-level="exhausted"] .muted-xs { color: var(--red); }
+    .meetings-skipped { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-sm); overflow-wrap: anywhere; }
     .meetings-live { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--sp-4); }
     .meetings-transcript { max-height: 28em; overflow: auto; font-size: var(--fs-sm); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
     .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }

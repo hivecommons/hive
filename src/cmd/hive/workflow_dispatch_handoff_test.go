@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -380,5 +381,58 @@ func TestWorkflowDispatchItemThatLeftTheStateIsSettled(t *testing.T) {
 	}
 	if listed := rt.notStarted(cfg, nil); len(listed) != 0 {
 		t.Fatalf("a started hand-off is listed as not started: %+v", listed)
+	}
+}
+
+// cncf/techdocs#395: the owner's manual hand-off and the governor's pass
+// are one item with one key. After the governor had declined the item
+// (a record under the short repo form, before the key was canonical) and
+// the owner then handed it off by hand, the next governor pass sees the
+// hand-off: nothing is kicked again, no stale "declined" reason is logged,
+// and the dashboard's not-started list does not show the item.
+func TestWorkflowDispatchManualHandoffThenGovernorPass(t *testing.T) {
+	cfg := handoffFleet()
+	at := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "workflow-dispatch.json")
+	declined := scheduler.WorkflowDispatchEntry{
+		Key: "techdocs#395|techdocs-drafter|accepted", Ref: "techdocs#395", Profile: "techdocs-drafter", State: "accepted",
+		Agent: "quality", By: "governor", At: at, Status: scheduler.WorkflowHandoffNotStarted,
+		Reason: "quality declined the hand-off: stale text", Attempts: 1, Tried: []string{"quality"},
+	}
+	// The manual path's record, built by the same key function the planner uses.
+	d := handoffDrafterItem()
+	manual := scheduler.NextWorkflowDispatchEntry(scheduler.WorkflowDispatchEntry{
+		Key: scheduler.WorkflowDispatchKey(d, nil), Ref: d.Ref(), Profile: "techdocs-drafter", State: "accepted", Agent: "ci-maintainer", By: "clubanderson", At: at.Add(time.Hour),
+	}, nil)
+	seed, _ := scheduler.OpenWorkflowDispatchLog(path)
+	if err := seed.RecordAll([]scheduler.WorkflowDispatchEntry{declined, manual}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A restart: the log opens, migrates once, and the governor pass runs.
+	dlog, err := scheduler.OpenWorkflowDispatchLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := dlog.MigrateQualifiedRefs(cfg.Project.Org); err != nil || n != 1 {
+		t.Fatalf("migration = %d, %v", n, err)
+	}
+	rt := handoffRuntime(dlog)
+	items := []github.WorkflowDispatch{d}
+	if e, ok := dlog.Get(scheduler.WorkflowDispatchKey(d, nil)); !ok || e.Status != scheduler.WorkflowHandoffPending || e.By != "clubanderson" {
+		t.Fatalf("the governor's key does not find the manual hand-off: %+v %v", e, ok)
+	}
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	kicks := buildWorkflowDispatchKicks(cfg, rt, dlog, items, nil, handoffLedger(t), nil, at.Add(2*time.Hour), logger)
+	if len(kicks) != 0 {
+		t.Fatalf("a manual hand-off was kicked again: %+v", kicks)
+	}
+	if strings.Contains(logs.String(), "declined") || strings.Contains(logs.String(), "item not handed off") {
+		t.Fatalf("a stale reason was logged:\n%s", logs.String())
+	}
+	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, items, nil, nil, nil, true, nil, at.Add(2*time.Hour), logger))
+	if listed := rt.notStarted(cfg, nil); len(listed) != 0 {
+		t.Fatalf("the dashboard lists a stale not-started record: %+v", listed)
 	}
 }

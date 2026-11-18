@@ -103,6 +103,7 @@ func ReviewWorkflowHandoff(e WorkflowDispatchEntry, ev WorkflowHandoffEvidence) 
 	}
 	notStarted := func(reason string, counts bool) (WorkflowDispatchEntry, bool) {
 		e.Status, e.Reason = WorkflowHandoffNotStarted, reason
+		e = stampReason(e, ev.Now)
 		if counts {
 			if e.Attempts < 1 {
 				e.Attempts = 1
@@ -122,6 +123,7 @@ func ReviewWorkflowHandoff(e WorkflowDispatchEntry, ev WorkflowHandoffEvidence) 
 	}
 	started := func() (WorkflowDispatchEntry, bool) {
 		e.Status, e.Reason = WorkflowHandoffStarted, ""
+		e = clearReason(e)
 		at := ev.Now
 		e.CheckedAt = &at
 		return e, true
@@ -157,6 +159,7 @@ func ReviewWorkflowHandoff(e WorkflowDispatchEntry, ev WorkflowHandoffEvidence) 
 // person's choice.
 func WorkflowHandoffLeftState(e WorkflowDispatchEntry, now time.Time) WorkflowDispatchEntry {
 	e.Status, e.Reason = WorkflowHandoffStarted, ""
+	e = clearReason(e)
 	e.CheckedAt = &now
 	return e
 }
@@ -166,6 +169,7 @@ func WorkflowHandoffLeftState(e WorkflowDispatchEntry, now time.Time) WorkflowDi
 // hand-offs before it carried over.
 func NextWorkflowDispatchEntry(e WorkflowDispatchEntry, prior *WorkflowDispatchEntry) WorkflowDispatchEntry {
 	e.Status, e.Reason, e.CheckedAt = WorkflowHandoffPending, "", nil
+	e = clearReason(e)
 	e.Attempts, e.Tried = 1, []string{e.Agent}
 	if prior != nil {
 		e.Attempts = prior.Attempts + 1

@@ -187,6 +187,12 @@ type SandboxExecutor struct {
 	Logger         *slog.Logger
 	Now            func() time.Time
 	Mutation       effects.Boundary
+	// GitHubReadRelay, when set, routes a Job-runtime kick's GitHub reads
+	// through hive's read relay (#18865). Nil leaves the Job on its own
+	// network path, exactly as before.
+	GitHubReadRelay SandboxGitHubReadRelay
+	// GitHubReadRelayNoProxy is extra NO_PROXY entries for relayed Jobs.
+	GitHubReadRelayNoProxy []string
 }
 
 func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (SandboxKickResult, error) {
@@ -252,6 +258,8 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 			e.Logger.Warn("sandbox review spool: could not mark the kick ended", "agent", spec.Agent, "error", err)
 		}
 	}()
+	relayEnv, releaseRelay := e.enrollGitHubReadRelay(spec, workspace)
+	defer releaseRelay()
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
 	sres, runErr := e.launcher().Run(runCtx, sandbox.LaunchSpec{
@@ -261,7 +269,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		WorkspaceMount: sandbox.DefaultWorkspaceMount,
 		WorkDir:        sandbox.DefaultWorkspaceMount,
 		Command:        command,
-		Env:            spool.sandboxEnv(),
+		Env:            mergeSandboxEnv(spool.sandboxEnv(), relayEnv),
 		EnvAllowlist:   spec.EnvAllowlist,
 		NetworkMode:    spec.NetworkMode,
 		ClineProvider:  provider,

@@ -766,12 +766,6 @@ const (
 	HostSetterInProcessOnly HostSetterKind = "inprocess"
 )
 
-// HostSetter is one row of HostSetters.
-type HostSetter struct {
-	Kind HostSetterKind
-	Via  string
-}
-
 // Callback endpoint routes the table refers to, spelled here because
 // crux/api/callback imports this package; its tests hold the two in step.
 const (
@@ -826,6 +820,7 @@ var HostSetters = map[string]HostSetter{
 	"SetAuditSink":               {HostSetterEvent, EventAudit},
 	"SetConditionReporter":       {HostSetterEvent, EventCondition + ", " + hostViaConditions},
 	// In-process only.
-	"SetSpanStarter":      {HostSetterInProcessOnly, "OpenTelemetry global tracer in the runtime process; trajectory events are independent of spans"},
-	"SetKnowledgeAdviser": {HostSetterInProcessOnly, "the knowledge store lives in the hive process; a sidecar runtime runs without the mid-task knowledge advisor (hivecommons/hive#17052 phase 1)"},
+	"SetSpanStarter":            {HostSetterInProcessOnly, "OpenTelemetry global tracer in the runtime process; trajectory events are independent of spans"},
+	"SetSandboxGitHubReadRelay": {HostSetterInProcessOnly, "the relay holds the read-only GitHub credential and Enroll is a Go call into hive's proxy; neither crosses into a runtime process, so a sidecar runtime's Job kicks read GitHub without the relay (hivecommons/hive#18865)"},
+	"SetKnowledgeAdviser":       {HostSetterInProcessOnly, "the knowledge store lives in the hive process; a sidecar runtime runs without the mid-task knowledge advisor (hivecommons/hive#17052 phase 1)"},
 }

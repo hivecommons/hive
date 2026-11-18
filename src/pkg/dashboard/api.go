@@ -366,6 +366,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/export", s.handleKnowledgeExport)
 	s.mux.HandleFunc("GET /api/knowledge/search", s.handleKnowledgeSearch)
 	s.mux.HandleFunc("GET /api/knowledge/toc", s.handleKnowledgeTOC)
+	s.mux.HandleFunc("GET /api/knowledge/advisor/summary", s.handleKnowledgeAdvisorSummary)
 	s.mux.HandleFunc("GET /api/knowledge/effective", s.handleKnowledgeEffective)
 	s.mux.HandleFunc("GET /api/knowledge/entry/{id}", s.handleKnowledgeEntry)
 	s.mux.HandleFunc("PUT /api/knowledge/entry/{id}/state", s.handleKnowledgeEntryState)
@@ -569,6 +570,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Agents discovered in managed repos' .hive/agents/ (#18491,
 	// api_repo_agents.go): list, approve, reject, rescan.
 	s.registerRepoAgentRoutes()
+	s.registerVersionContainsRoute()
 }
 
 var (

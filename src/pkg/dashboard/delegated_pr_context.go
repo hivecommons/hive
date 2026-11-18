@@ -9,6 +9,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
@@ -125,14 +126,59 @@ func (s *Server) gatherDelegatedPRContext(ctx context.Context, repo string, pr *
 		winner, _ := delegatedTrainDuplicate(s.stageStoreOrShared(), repo, number)
 		in.Competing = append(in.Competing, delegatedecision.CompetingPR{
 			Number: number, HiveAuthored: s.deps.GHClient.IsHiveAuthorLogin(other.GetUser().GetLogin()),
-			Mergeable:     mergeable,
-			Current:       state != "behind" && state != "unknown" && state != "" && !other.GetDraft(),
-			HeldDuplicate: winner == pr.GetNumber(),
+			PersonAuthored: s.delegatedPersonAuthoredCompetitor(other),
+			Mergeable:      mergeable,
+			Current:        state != "behind" && state != "unknown" && state != "" && !other.GetDraft(),
+			HeldDuplicate:  winner == pr.GetNumber(),
 		})
 	}
+	in.IssueClaimHolder, in.IssueClaimIssue = s.delegatedIssueClaimHolder(repo, pr)
 	in.TrainDuplicateOf, in.TrainDuplicateIssue = delegatedTrainDuplicate(s.stageStoreOrShared(), repo, pr.GetNumber())
 	in.ClaimConflictWith, in.ClaimConflictIssue = delegatedClaimConflict(s.stageStoreOrShared(), repo, pr.GetNumber())
 	return nil
+}
+
+// delegatedPersonAuthoredCompetitor reports whether a competing PR was
+// pushed by a person: author/human, one of this hive's owners, or an
+// owner/member/collaborator who is not driving a clanker (a contributor
+// relay's PR is a clanker's whoever its login is). The ladder lets only a
+// person's or the hive's competitor cover a contributor PR's issue
+// (hivecommons/hive#18900).
+func (s *Server) delegatedPersonAuthoredCompetitor(other *gh.PullRequest) bool {
+	var labels []string
+	for _, l := range other.Labels {
+		labels = append(labels, l.GetName())
+	}
+	if s.delegatedHumanAuthor(labels) || s.isAuthorizedUserLogin(other.GetUser().GetLogin()) {
+		return true
+	}
+	if s.delegatedClankerAuthor(labels) {
+		return false
+	}
+	switch strings.ToUpper(other.GetAuthorAssociation()) {
+	case "OWNER", "MEMBER", "COLLABORATOR":
+		return true
+	}
+	return false
+}
+
+// delegatedIssueClaimHolder names the person or hive agent holding a live
+// claim in the issue ledger on an issue pr closes, with that issue; "" when
+// none. Contributor and external claims are not a person's or the hive's.
+func (s *Server) delegatedIssueClaimHolder(repo string, pr *gh.PullRequest) (string, int) {
+	l := s.claimsLedger()
+	if l == nil {
+		return "", 0
+	}
+	for _, ref := range github.ParseClaimedIssues(pr.GetTitle()+"\n"+pr.GetBody(), repo) {
+		if ref.Issue <= 0 || (ref.Repo != "" && !strings.EqualFold(ref.Repo, repo)) {
+			continue
+		}
+		if c, ok := l.Lookup(repo, ref.Issue); ok && (c.Kind == claims.KindHuman || c.Kind == claims.KindAgent) {
+			return c.Holder, ref.Issue
+		}
+	}
+	return "", 0
 }
 
 // delegatedClaimConflict reads the stage store for the cross-lane
@@ -203,6 +249,23 @@ func (s *Server) delegatedHumanAuthor(labels []string) bool {
 		}
 	}
 	return isHuman
+}
+
+// delegatedClankerAuthor: the labels carry the configured author/clanker
+// label, i.e. a contributor relay drove the PR.
+func (s *Server) delegatedClankerAuthor(labels []string) bool {
+	clanker := authorKindLabelPfx + authorKindClanker
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		if c := strings.TrimSpace(s.deps.Config.Governor.Labels.Author.Clanker); c != "" {
+			clanker = c
+		}
+	}
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l), clanker) {
+			return true
+		}
+	}
+	return false
 }
 
 // isAuthorizedUserLogin: login is one of this hive's dashboard.authorized_users.

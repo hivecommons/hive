@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -352,5 +354,118 @@ func TestWorkflowDispatchPromptStatesOnlyHeldRights(t *testing.T) {
 	}
 	if got := BuildWorkflowDispatchPrompt(WorkflowDispatchCandidate{Dispatch: d, Agent: "quality", AgentMode: "ISSUES_AND_PRS"}, "${AGENT} in ${AGENT_MODE}"); got != "quality in ISSUES_AND_PRS" {
 		t.Fatalf("template = %q", got)
+	}
+}
+
+// writeDispatchLog writes entries as the log's JSON file.
+func writeDispatchLog(t *testing.T, entries []WorkflowDispatchEntry) string {
+	t.Helper()
+	b, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "workflow-dispatch.json")
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The live file of cncf/techdocs#395: the governor's declined record under
+// the short repo form, and the owner's later manual hand-off under the
+// qualified one. After the migration there is one record, the manual
+// hand-off, under the qualified key.
+func TestMigrateQualifiedRefsTwoEntryFixture(t *testing.T) {
+	declinedAt := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	manualAt := declinedAt.Add(3 * time.Hour)
+	short := WorkflowDispatchEntry{
+		Key: "techdocs#395|techdocs-drafter|accepted", Ref: "techdocs#395", Profile: "techdocs-drafter", State: "accepted",
+		Agent: "quality", By: "governor", At: declinedAt, Status: WorkflowHandoffNotStarted,
+		Reason:   "quality declined the hand-off: advisory session",
+		Attempts: 1, Tried: []string{"quality"},
+	}
+	manual := WorkflowDispatchEntry{
+		Key: "cncf/techdocs#395|techdocs-drafter|accepted", Ref: "cncf/techdocs#395", Profile: "techdocs-drafter", State: "accepted",
+		Agent: "ci-maintainer", By: "clubanderson", At: manualAt, Status: WorkflowHandoffPending,
+		Attempts: 1, Tried: []string{"ci-maintainer"},
+	}
+	path := writeDispatchLog(t, []WorkflowDispatchEntry{manual, short})
+	l, err := OpenWorkflowDispatchLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := l.MigrateQualifiedRefs("cncf")
+	if err != nil || n != 1 {
+		t.Fatalf("migrated %d, %v", n, err)
+	}
+	got := l.Entries()
+	if len(got) != 1 {
+		t.Fatalf("entries after migration = %+v", got)
+	}
+	e := got[0]
+	if e.Key != manual.Key || e.Ref != "cncf/techdocs#395" || e.Status != WorkflowHandoffPending || e.By != "clubanderson" || e.Agent != "ci-maintainer" || e.Reason != "" {
+		t.Fatalf("the handed-off record did not win: %+v", e)
+	}
+	if e.Attempts != 1 || strings.Join(e.Tried, ",") != "ci-maintainer,quality" {
+		t.Fatalf("attempts/tried not carried over: %+v", e)
+	}
+	if _, ok := l.Get(short.Key); ok {
+		t.Fatal("the short-form key is still stored")
+	}
+	if !l.Done(manual.Key) || len(l.NotStarted()) != 0 {
+		t.Fatal("the item is not seen as handed off after the migration")
+	}
+
+	// Persisted, and idempotent: a reload migrates nothing and a second run
+	// is a no-op.
+	re, err := OpenWorkflowDispatchLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := re.Entries(); len(got) != 1 || got[0].Key != manual.Key {
+		t.Fatalf("persisted entries = %+v", got)
+	}
+	if n, err := re.MigrateQualifiedRefs("cncf"); err != nil || n != 0 {
+		t.Fatalf("second migration = %d, %v", n, err)
+	}
+}
+
+// A short record alone is renamed; a not-started record never displaces a
+// handed-off one even when it is newer; a comment-triggered key keeps its
+// suffix; an empty org changes nothing; the log stays bounded.
+func TestMigrateQualifiedRefsRules(t *testing.T) {
+	at := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	mk := func(key string, status string, when time.Time) WorkflowDispatchEntry {
+		ref := key[:strings.Index(key, "|")]
+		return WorkflowDispatchEntry{Key: key, Ref: ref, Profile: "p", State: "s", Agent: "a", At: when, Status: status}
+	}
+	l, _ := OpenWorkflowDispatchLog("")
+	_ = l.RecordAll([]WorkflowDispatchEntry{
+		mk("techdocs#1|p|s", WorkflowHandoffStarted, at),
+		mk("techdocs#2|p|s", WorkflowHandoffNotStarted, at.Add(time.Hour)),
+		mk("cncf/techdocs#2|p|s", WorkflowHandoffPending, at),
+		mk("techdocs#3|p|s|77", WorkflowHandoffPending, at),
+		mk("cncf/techdocs#4|p|s", WorkflowHandoffPending, at),
+	})
+	if n, _ := l.MigrateQualifiedRefs(""); n != 0 {
+		t.Fatalf("empty org migrated %d", n)
+	}
+	if n, err := l.MigrateQualifiedRefs("cncf"); err != nil || n != 3 {
+		t.Fatalf("migrated %d, %v", n, err)
+	}
+	if e, ok := l.Get("cncf/techdocs#1|p|s"); !ok || e.Ref != "cncf/techdocs#1" || e.Status != WorkflowHandoffStarted {
+		t.Fatalf("renamed record = %+v %v", e, ok)
+	}
+	if e, ok := l.Get("cncf/techdocs#2|p|s"); !ok || e.Status != WorkflowHandoffPending {
+		t.Fatalf("a newer not-started record displaced a handed-off one: %+v %v", e, ok)
+	}
+	if _, ok := l.Get("cncf/techdocs#3|p|s|77"); !ok {
+		t.Fatal("the trigger suffix was lost")
+	}
+	if got := len(l.Entries()); got != 4 {
+		t.Fatalf("entries = %d, want 4", got)
+	}
+	if n, _ := l.MigrateQualifiedRefs("cncf"); n != 0 {
+		t.Fatalf("second run migrated %d", n)
 	}
 }

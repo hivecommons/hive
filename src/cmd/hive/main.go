@@ -1210,6 +1210,17 @@ func (b *boot) wireBootClosures() {
 			IssueClaimed: func(repo string, number int) (github.IssueClaim, bool) {
 				return getClaimLedger(b.logger).Lookup(repo, number)
 			},
+			// hivecommons/hive#18898: an issue an owner, maintainer or this hive
+			// filed inside the contributor grace window is not offered yet.
+			ContributorHold: func(repo string, number int, createdAt time.Time) string {
+				client := b.currentGitHubClient()
+				if client == nil {
+					return ""
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), openPRLinkGuardTimeout)
+				defer cancel()
+				return client.ContributorGraceGuard(ctx, repo, number, createdAt)
+			},
 			// hivecommons/hive#14799: the ledger above is one eval cycle old;
 			// ask the forge directly whether an open PR already links the
 			// issue before the contribute lane dispatches it again.
@@ -2531,6 +2542,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 			b.observeWritebackRepos()
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
 			b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+			b.ghClient.SetContributorGrace(b.cfg.Governor.Claims.EffectiveContributorGrace())
 			b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 			b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 			if len(b.cfg.Governor.Labels.Exempt) > 0 {
@@ -3633,6 +3645,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	if svc, stop := wireCustomers(b.cfg, b.customersResolvers(), b.logger); svc != nil {
 		b.cleanup.push(stop)
 		b.customers = svc
+		// Step E (#18884): the budgeted GitHub search on accept. Off unless
+		// customers.mention_search.enabled; never reached by the sweep.
+		svc.mentions = newCustomersMentionSearch(svc.svc, b.customersMentionConfig, b.currentGitHubClient)
 		b.dashSrv.SetCustomersService(svc)
 		if b.sched != nil {
 			installCustomersAgentContext(svc, b.sched.SetCustomerContextLookup)
@@ -4515,6 +4530,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		)
 
 		deps.startProxy(b.githubProxy, b.logger)
+		b.wireSandboxGitHubReadRelay()
 		// Jev decision endpoint (hivecommons/hive#8939). Always bound so a
 		// jev_mode toggle in the dashboard takes effect on the agent's next
 		// call; every predicate reads the LIVE config, and an agent whose
@@ -5865,6 +5881,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 				b.ghClient.SetHoldLabels(b.githubHoldLabels())
 				b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+				b.ghClient.SetContributorGrace(b.cfg.Governor.Claims.EffectiveContributorGrace())
 				b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 				b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
@@ -6115,6 +6132,15 @@ func (b *boot) bootLanes() {
 			"max_kicks", b.cfg.Retro.MaxKicks,
 			"long_stall_days", b.cfg.Retro.LongStallDays,
 			"analysis_enabled", b.cfg.Retro.AnalysisModel != "")
+	}
+	if b.dashSrv != nil {
+		// Read-only rank-versus-holdout summary route (#18897). The arm
+		// comparison needs the retro lane; the decision counts do not.
+		var armSummary func() []retro.ArmSummary
+		if b.retroLane != nil {
+			armSummary = b.retroLane.AdvisorArmSummary
+		}
+		b.dashSrv.SetKnowledgeAdvisorSummary(b.knowledgeAdvisorDecisions(), armSummary)
 	}
 }
 
