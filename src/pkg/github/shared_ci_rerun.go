@@ -111,12 +111,18 @@ func (c *Client) hasSharedCIRerunBlocks(owner, repo string) bool {
 }
 
 // SweepSharedCIReruns re-runs the failed jobs on open PRs that a fix lane
-// deferred to a [shared-ci] incident (`<!-- hive-shared-ci-<n> -->`) once that
-// incident is closed, so a PR left red by the broken baseline gets a fresh
-// verdict without a human pushing or clicking re-run (hivecommons/hive#12253).
-// It pushes nothing to the branch, so it applies to every author. Each PR is
-// re-run at most once per incident: the `<!-- hive-shared-ci-rerun-<n> -->`
-// comment it leaves afterwards is the dedupe record.
+// deferred to a [shared-ci] incident (`<!-- hive-shared-ci-<n> -->`), or that
+// the incident's tracker lists, once that incident is over, so a PR left red
+// by the broken baseline gets a fresh verdict without a human pushing or
+// clicking re-run (hivecommons/hive#12253). An incident is over when it is
+// closed, or, while it stays open, once its check has completed green on the
+// PR's base tip after the incident was filed: the hive never closes a
+// tracker itself (#17546), and an outside outage that ends on its own
+// (projectbluefin/utah#1336, codeberg.org DNS) left every PR red until a
+// person closed it. It pushes nothing to the branch, so it applies to every
+// author, bot branches included. Each PR is re-run at most once per
+// incident: the `<!-- hive-shared-ci-rerun-<n> -->` comment it leaves
+// afterwards is the dedupe record.
 func (c *Client) SweepSharedCIReruns(ctx context.Context, opts SharedCIRerunOptions) (*SharedCIRerunResult, error) {
 	if c == nil {
 		return nil, ErrNoGitHubClient
@@ -141,15 +147,20 @@ func (c *Client) SweepSharedCIReruns(ctx context.Context, opts SharedCIRerunOpti
 			break
 		}
 		owner, repoName := c.splitRepo(repo)
-		closed, err := c.recentlyClosedSharedCIIncidents(ctx, owner, repoName, now.Add(-lookback))
+		incs := &sharedCIRerunIncidents{listed: map[int]map[int]bool{}}
+		closed, err := c.recentlyClosedSharedCIIncidents(ctx, owner, repoName, now.Add(-lookback), incs.listed)
 		if err != nil {
 			return result, err
 		}
-		if len(closed) == 0 && !c.hasSharedCIRerunBlocks(owner, repoName) {
+		incs.closed = closed
+		if incs.recovered, err = c.recoveredOpenSharedCIIncidents(ctx, owner, repoName, incs.listed); err != nil {
+			return result, err
+		}
+		if len(closed) == 0 && len(incs.recovered) == 0 && !c.hasSharedCIRerunBlocks(owner, repoName) {
 			continue
 		}
-		result.Incidents += len(closed)
-		incidentKey := sharedCIIncidentSetKey(closed)
+		result.Incidents += len(closed) + len(incs.recovered)
+		incidentKey := incs.key()
 		prs, err := c.listOpenPRsForSupersessionSweep(ctx, owner, repoName)
 		if err != nil {
 			return result, err
@@ -162,7 +173,7 @@ func (c *Client) SweepSharedCIReruns(ctx context.Context, opts SharedCIRerunOpti
 				continue
 			}
 			result.Seen++
-			event, ok, err := c.trySharedCIRerun(ctx, repo, owner, repoName, pr, closed, incidentKey)
+			event, ok, err := c.trySharedCIRerun(ctx, repo, owner, repoName, pr, incs, incidentKey)
 			if err != nil {
 				return result, err
 			}
@@ -179,10 +190,126 @@ func (c *Client) SweepSharedCIReruns(ctx context.Context, opts SharedCIRerunOpti
 	return result, nil
 }
 
+// sharedCIRerunIncidents is what one repository's [shared-ci] incidents
+// say for one sweep pass.
+type sharedCIRerunIncidents struct {
+	// closed are the incidents closed as completed within the lookback.
+	closed map[int]bool
+	// recovered are the open incidents whose check has completed green on a
+	// base tip of the repository since the incident was filed. A PR is due
+	// a rerun for one only when the check passed on its own base.
+	recovered map[int]sharedCIOpenIncident
+	// listed maps an incident to the PRs its tracker body names.
+	listed map[int]map[int]bool
+}
+
+// sharedCIOpenIncident is an open incident's check and filing time.
+type sharedCIOpenIncident struct {
+	check  string
+	opened time.Time
+}
+
+// key is the sorted set of incidents that can trigger a rerun this pass,
+// for the per-PR "nothing to do" memo.
+func (s *sharedCIRerunIncidents) key() string {
+	all := maps.Clone(s.closed)
+	if all == nil {
+		all = map[int]bool{}
+	}
+	for n := range s.recovered {
+		all[n] = true
+	}
+	return sharedCIIncidentSetKey(all)
+}
+
+// eligibleFor is the incidents over for a PR on baseRef: every closed one,
+// and each open one whose check passed on that base after it was filed (on
+// any base of the repo when the PR's base is unknown).
+func (s *sharedCIRerunIncidents) eligibleFor(c *Client, owner, repo, baseRef string) map[int]bool {
+	out := maps.Clone(s.closed)
+	if out == nil {
+		out = map[int]bool{}
+	}
+	for n, inc := range s.recovered {
+		if c.baseRed.greenAfter(owner, repo, baseRef, inc.check, inc.opened) {
+			out[n] = true
+		}
+	}
+	return out
+}
+
+// listedFor is the incidents whose tracker lists PR number, ascending.
+func (s *sharedCIRerunIncidents) listedFor(number int) []int {
+	var out []int
+	for n, prs := range s.listed {
+		if prs[number] {
+			out = append(out, n)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+// sharedCITrackerPRLineRE matches the line of a [shared-ci] tracker body
+// that lists the PRs failing its check: the hive's own tracker ("- Open
+// pull requests failing it (18): #1, #2") or an agent's ("Affected PRs:
+// #1274, #1295").
+var sharedCITrackerPRLineRE = regexp.MustCompile(`(?im)^[ \t>*-]*(?:open pull requests failing it(?: \(\d+\))?|affected (?:prs|pull requests))\**:\**(.*)$`)
+
+var sharedCITrackerPRRefRE = regexp.MustCompile(`#([1-9][0-9]*)\b`)
+
+// sharedCITrackerListedPRs returns the PR numbers a tracker body lists.
+func sharedCITrackerListedPRs(body string) map[int]bool {
+	var out map[int]bool
+	for _, line := range sharedCITrackerPRLineRE.FindAllStringSubmatch(body, -1) {
+		for _, m := range sharedCITrackerPRRefRE.FindAllStringSubmatch(line[1], -1) {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				if out == nil {
+					out = map[int]bool{}
+				}
+				out[n] = true
+			}
+		}
+	}
+	return out
+}
+
+// recoveredOpenSharedCIIncidents returns the open [shared-ci] incidents in
+// owner/repo whose check has completed green on a base tip since the
+// incident was filed, and records the PRs each one's tracker lists. The
+// green times come from the base-red gate's own base-tip reads
+// (baseRedMemory.noteGreen); with none recorded for the repo it lists
+// nothing.
+func (c *Client) recoveredOpenSharedCIIncidents(ctx context.Context, owner, repo string, listed map[int]map[int]bool) (map[int]sharedCIOpenIncident, error) {
+	if !c.baseRed.anyGreen(owner, repo) {
+		return nil, nil
+	}
+	open, err := c.openSharedCIIncidentIssues(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	var out map[int]sharedCIOpenIncident
+	for check, issue := range open {
+		opened := issue.GetCreatedAt().Time
+		if opened.IsZero() || !c.baseRed.greenAfter(owner, repo, "", check, opened) {
+			continue
+		}
+		if out == nil {
+			out = map[int]sharedCIOpenIncident{}
+		}
+		out[issue.GetNumber()] = sharedCIOpenIncident{check: check, opened: opened}
+		if prs := sharedCITrackerListedPRs(issue.GetBody()); len(prs) > 0 {
+			listed[issue.GetNumber()] = prs
+		}
+	}
+	return out, nil
+}
+
 // recentlyClosedSharedCIIncidents returns the [shared-ci] incident issues in
-// owner/repo closed at or after since. Incidents closed as not planned are
-// excluded, matching .github/scripts/pr-auto-update.sh: nothing was fixed.
-func (c *Client) recentlyClosedSharedCIIncidents(ctx context.Context, owner, repo string, since time.Time) (map[int]bool, error) {
+// owner/repo closed at or after since, and records in listed the PRs each
+// one's tracker body names. Incidents closed as not planned are excluded,
+// matching .github/scripts/pr-auto-update.sh: nothing was fixed.
+func (c *Client) recentlyClosedSharedCIIncidents(ctx context.Context, owner, repo string, since time.Time, listed map[int]map[int]bool) (map[int]bool, error) {
 	opts := &gh.IssueListByRepoOptions{
 		State:       "closed",
 		Sort:        "updated",
@@ -210,6 +337,9 @@ func (c *Client) recentlyClosedSharedCIIncidents(ctx context.Context, owner, rep
 				continue
 			}
 			out[issue.GetNumber()] = true
+			if prs := sharedCITrackerListedPRs(issue.GetBody()); len(prs) > 0 && listed != nil {
+				listed[issue.GetNumber()] = prs
+			}
 		}
 		if resp == nil || resp.NextPage == 0 {
 			break
@@ -232,15 +362,20 @@ func sharedCIIncidentSetKey(incidents map[int]bool) string {
 	return strings.Join(parts, ",")
 }
 
-// pendingSharedCIReruns returns the closed incidents a PR's comments (oldest
-// first) defer it to that have not been re-run yet. A PR whose newest marker
-// names an incident outside closed is still deferred elsewhere and gets none.
-func pendingSharedCIReruns(texts []string, closed map[int]bool) []int {
+// pendingSharedCIReruns returns the incidents in over (closed, or open and
+// recovered) that a PR's comments (oldest first) defer it to, or whose
+// tracker lists it (listed), and that have not been re-run yet. A PR whose
+// newest marker names an incident outside over is still deferred elsewhere
+// and gets none.
+func pendingSharedCIReruns(texts []string, over map[int]bool, listed ...int) []int {
 	newest := newestSharedCIMarker(texts)
-	if newest == 0 || !closed[newest] {
+	if newest != 0 && !over[newest] {
 		return nil
 	}
 	stamped := map[int]bool{}
+	for _, n := range listed {
+		stamped[n] = true
+	}
 	done := map[int]bool{}
 	for _, text := range texts {
 		for _, m := range sharedCIMarkerRE.FindAllStringSubmatch(text, -1) {
@@ -261,7 +396,7 @@ func pendingSharedCIReruns(texts []string, closed map[int]bool) []int {
 	}
 	var out []int
 	for n := range stamped {
-		if closed[n] && !done[n] {
+		if over[n] && !done[n] {
 			out = append(out, n)
 		}
 	}
@@ -269,7 +404,7 @@ func pendingSharedCIReruns(texts []string, closed map[int]bool) []int {
 	return out
 }
 
-func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName string, pr *gh.PullRequest, closed map[int]bool, incidentKey string) (SharedCIRerunEvent, bool, error) {
+func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName string, pr *gh.PullRequest, incs *sharedCIRerunIncidents, incidentKey string) (SharedCIRerunEvent, bool, error) {
 	if labels := labelNames(pr.Labels); c.isHeld(labels) || c.isExempt(labels) {
 		return SharedCIRerunEvent{}, false, nil
 	}
@@ -309,21 +444,18 @@ func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName str
 	for _, cm := range comments {
 		texts = append(texts, cm.GetBody())
 	}
+	over := incs.eligibleFor(c, owner, repoName, pr.GetBase().GetRef())
 	if prev.block.RunID != 0 && prev.block.HeadSHA == pr.GetHead().GetSHA() {
 		// Discovery's lookback must not strand an already-observed refusal.
 		// Keep its incident eligible without broadening discovery for other PRs.
-		closed = maps.Clone(closed)
-		if closed == nil {
-			closed = map[int]bool{}
-		}
 		for _, raw := range strings.Split(prev.incidents, ",") {
 			if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-				closed[n] = true
+				over[n] = true
 			}
 		}
-		incidentKey = sharedCIIncidentSetKey(closed)
+		incidentKey = sharedCIIncidentSetKey(over)
 	}
-	incidents := pendingSharedCIReruns(texts, closed)
+	incidents := pendingSharedCIReruns(texts, over, incs.listedFor(pr.GetNumber())...)
 	if len(incidents) == 0 {
 		markSeen()
 		return SharedCIRerunEvent{}, false, nil
@@ -381,7 +513,13 @@ func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName str
 		return event, true, nil
 	}
 
-	body := renderSharedCIRerunComment(incidents, sha, rerun)
+	recovered := map[int]string{}
+	for _, n := range incidents {
+		if inc, ok := incs.recovered[n]; ok && !incs.closed[n] {
+			recovered[n] = inc.check
+		}
+	}
+	body := renderSharedCIRerunComment(incidents, recovered, sha, rerun)
 	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, pr.GetNumber(), &gh.IssueComment{Body: &body}); err != nil {
 		return event, false, fmt.Errorf("stamping shared-CI rerun marker on %s#%d: %w", repo, pr.GetNumber(), err)
 	}
@@ -479,13 +617,19 @@ func (c *Client) latestFailedWorkflowRuns(ctx context.Context, owner, repo, sha 
 	return out, nil
 }
 
-func renderSharedCIRerunComment(incidents []int, sha string, runs []*gh.WorkflowRun) string {
+// renderSharedCIRerunComment is the rerun comment for incidents; recovered
+// names the still-open ones (incident → check) whose check passed on the
+// base again.
+func renderSharedCIRerunComment(incidents []int, recovered map[int]string, sha string, runs []*gh.WorkflowRun) string {
 	var b strings.Builder
 	refs := make([]string, len(incidents))
 	for i, n := range incidents {
 		fmt.Fprintln(&b, sharedCIRerunMarker(n))
 		fmt.Fprintln(&b, sharedCILiftedMarker(n))
 		refs[i] = "#" + strconv.Itoa(n)
+		if check, ok := recovered[n]; ok {
+			refs[i] += " (still open; `" + check + "` has passed on the base branch since it was filed)"
+		}
 	}
 	short := sha
 	if len(short) > 7 {
@@ -499,7 +643,11 @@ func renderSharedCIRerunComment(incidents []int, sha string, runs []*gh.Workflow
 		}
 		names = append(names, "`"+name+"`")
 	}
-	fmt.Fprintf(&b, "Shared-CI incident %s closed — re-running %s on `%s`:\n\n", strings.Join(refs, ", "), strings.Join(names, ", "), short)
+	over := "closed"
+	if len(recovered) > 0 {
+		over = "is over"
+	}
+	fmt.Fprintf(&b, "Shared-CI incident %s %s — re-running %s on `%s`:\n\n", strings.Join(refs, ", "), over, strings.Join(names, ", "), short)
 	for _, run := range runs {
 		name := run.GetName()
 		if name == "" {

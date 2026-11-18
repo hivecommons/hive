@@ -843,8 +843,10 @@ type SupersessionSweepConfig struct {
 
 // SharedCIRerunConfig gates the shared-CI rerun sweep
 // (github.SweepSharedCIReruns): when a `[shared-ci]` incident issue closes,
-// Hive re-runs the failed jobs of every open PR stamped with that incident's
-// `<!-- hive-shared-ci-<n> -->` marker, once per PR per incident.
+// or its check passes on the PR's base tip again while it stays open, Hive
+// re-runs the failed jobs of every open PR stamped with that incident's
+// `<!-- hive-shared-ci-<n> -->` marker or listed in its tracker, once per PR
+// per incident.
 type SharedCIRerunConfig struct {
 	// Enabled is *bool so unset means on; set `shared_ci_rerun.enabled: false`
 	// to disable.

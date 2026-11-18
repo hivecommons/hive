@@ -34,12 +34,22 @@ const (
 	baseCheckGreen
 )
 
+// baseGreenMemoryTTL bounds the green record: a check's green completion
+// older than the shared-CI rerun lookback can no longer show that an open
+// incident recovered.
+const baseGreenMemoryTTL = DefaultSharedCIRerunLookback
+
 // baseRedMemory is the per-base red set. The zero value is ready to use.
 type baseRedMemory struct {
 	mu sync.Mutex
 	// bases maps baseRedMemoryKey → check name → when it was last seen red.
 	bases map[string]map[string]time.Time
-	now   func() time.Time
+	// greens maps baseRedMemoryKey → lower-cased check name → when the
+	// tip's newest run of it completed green, from the same reads. The
+	// shared-CI rerun sweep reads it to tell that an open incident's check
+	// passed on the base again (sharedCIIncidentRecovered).
+	greens map[string]map[string]time.Time
+	now    func() time.Time
 }
 
 func baseRedMemoryKey(owner, repo, ref string) string {
@@ -77,6 +87,77 @@ func (m *baseRedMemory) observe(key string, states map[string]baseCheckState) ma
 		}
 	}
 	return m.liveLocked(key, now)
+}
+
+// noteGreen records when each check in completed last completed green on
+// the base tip key, keeping the newest time and dropping times past
+// baseGreenMemoryTTL.
+func (m *baseRedMemory) noteGreen(key string, completed map[string]time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.clock()
+	if m.greens == nil {
+		m.greens = map[string]map[string]time.Time{}
+	}
+	checks := m.greens[key]
+	if checks == nil {
+		checks = map[string]time.Time{}
+	}
+	for name, at := range completed {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" || at.IsZero() {
+			continue
+		}
+		if prev, ok := checks[name]; !ok || at.After(prev) {
+			checks[name] = at
+		}
+	}
+	for name, at := range checks {
+		if now.Sub(at) >= baseGreenMemoryTTL {
+			delete(checks, name)
+		}
+	}
+	if len(checks) == 0 {
+		delete(m.greens, key)
+		return
+	}
+	m.greens[key] = checks
+}
+
+// anyGreen reports whether any check is recorded green on a base of
+// owner/repo, so a sweep with nothing to test skips its issue listing.
+func (m *baseRedMemory) anyGreen(owner, repo string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := baseRedMemoryKey(owner, repo, "")
+	for key, checks := range m.greens {
+		if strings.HasPrefix(key, prefix) && len(checks) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// greenAfter reports whether check completed green on a tip of owner/repo
+// after since: on the base ref when ref is set, on any base of the repo
+// otherwise.
+func (m *baseRedMemory) greenAfter(owner, repo, ref, check string, since time.Time) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	check = strings.ToLower(strings.TrimSpace(check))
+	prefix := baseRedMemoryKey(owner, repo, "")
+	for key, checks := range m.greens {
+		if ref != "" && key != baseRedMemoryKey(owner, repo, ref) {
+			continue
+		}
+		if ref == "" && !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if at, ok := checks[check]; ok && at.After(since) {
+			return true
+		}
+	}
+	return false
 }
 
 // remembered is the base's red set for a pass whose read failed, or nil.

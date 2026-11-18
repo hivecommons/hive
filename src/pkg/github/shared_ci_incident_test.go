@@ -217,3 +217,20 @@ func TestEnrichCIStatus_GreenPRSkipsSharedCILookup(t *testing.T) {
 		t.Errorf("green PR: comment calls = %d, SharedCIIncident = %d; want 0, 0", commentCalls, prs[0].SharedCIIncident)
 	}
 }
+
+// The rerun sweep re-runs a PR for an open incident only after the
+// incident's check passed on the base again, so its rerun marker lifts the
+// deferral while the tracker stays open: a red that survives the re-run is
+// the PR's own. A PR not yet re-run stays deferred.
+func TestEnrichCIStatus_SharedCIRerunMarkerLiftsOpenIncident(t *testing.T) {
+	srv, _, _ := sharedCIServer(t, map[int][]string{
+		1: {"<!-- hive-shared-ci-1336 -->", "<!-- hive-shared-ci-rerun-1336 -->\n<!-- hive-shared-ci-lifted-1336 -->"},
+		2: {"<!-- hive-shared-ci-1336 -->"},
+	}, map[int]string{1336: "open"})
+	c := newTestClient(t, srv, "org", []string{"repo"})
+	prs := []PullRequest{{Repo: "org/repo", Number: 1, HeadSHA: "a1"}, {Repo: "org/repo", Number: 2, HeadSHA: "a2"}}
+	c.EnrichCIStatus(context.Background(), prs)
+	if prs[0].SharedCIIncident != 0 || prs[1].SharedCIIncident != 1336 {
+		t.Fatalf("SharedCIIncident = %d, %d; want 0 (re-run after recovery) and 1336 (still deferred)", prs[0].SharedCIIncident, prs[1].SharedCIIncident)
+	}
+}
