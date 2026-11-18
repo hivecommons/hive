@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v6.47.1)
+
+### Fixed
+
+- A `<!-- hive:blocked-on pr=owner/repo#N -->` marker that names an issue no longer fails the blocked sweep on every pass. When the PR lookup answers 404 and #N is an issue, the sweep reads the blocker as that issue, so the block lifts when the issue closes, and it logs the mismatch once.
+- `just contribute-hive opencode local` now takes work. The relay has no pane classifier for opencode, so the interactive tmux launch never read as ready ("CLI is not ready yet — withholding ready") and no task was ever sent. opencode now runs headless in every mode, like cline: the relay and the container entrypoint select headless for it, and local mode starts no tmux pane and exports the `OPENCODE_PERMISSION` deny-list into the relay's environment, so each `opencode run` it starts keeps the host-state denials.
+
 ## 2026-11-18 (v6.47.0)
 
 ### Added
