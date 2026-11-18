@@ -353,11 +353,18 @@ type StageTrackerItem struct {
 	Author        string                        `json:"author,omitempty"`
 	// Head is the PR head SHA the lane last evaluated ("" for issues), so
 	// a "waiting for a verdict" caption can name the revision it waits on.
-	Head           string                `json:"head,omitempty"`
-	BaseRef        string                `json:"base_ref,omitempty"`
-	ClaimReference bool                  `json:"claim_reference,omitempty"`
-	IsTracker      bool                  `json:"is_tracker,omitempty"`
-	Children       *github.IssueChildren `json:"children,omitempty"`
+	Head           string `json:"head,omitempty"`
+	BaseRef        string `json:"base_ref,omitempty"`
+	ClaimReference bool   `json:"claim_reference,omitempty"`
+	IsTracker      bool   `json:"is_tracker,omitempty"`
+	// Umbrella is the rule that marks an open issue an umbrella (label:epic,
+	// marker, title-prefix:[epic], task-list, sub-issues, tracker-detector),
+	// and OwnerOnly the rule that marks it owner-only (hivecommons/hive#19078).
+	// Display only: the issue keeps its stage and stays actionable for the
+	// owner and the hive; the contributor relay is never offered it.
+	Umbrella  string                `json:"umbrella,omitempty"`
+	OwnerOnly string                `json:"owner_only,omitempty"`
+	Children  *github.IssueChildren `json:"children,omitempty"`
 	// OpenChildren is how many sub-issues of a decomposed parent are still
 	// open (the stage engine's "waiting on N open child issue(s)" suffix on
 	// a 010 reason). Non-zero means the parent is tracking its children,

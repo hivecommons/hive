@@ -990,6 +990,8 @@ Withheld rows carry a stable reason code and, where the refusing gate had one, t
 | `dependency_unknown` | A declared dependency could not be resolved, so satisfaction cannot be asserted. | Blocker keys, observed record/generation |
 | `disabled_repo` | The repository is switched off for contribution (`disabled_repos`). | — |
 | `tracker` | A tracker/umbrella issue; its children carry the work and queue independently. Recognised by an `epic`/`tracker`/`tracking`/`meta-tracker` label (including prefixed spellings such as `kind/epic`), an `[Epic]`/`[Tracker]` title prefix, or a body listing three or more child issues. | — |
+| `umbrella` | An umbrella, epic, tracker or decomposed parent under the `hub.contribute_umbrella` rules: a label (default `umbrella`, `tracker`, `epic`, `meta-tracker`), the `<!-- hive:umbrella -->` body marker, a title prefix (default `[Tracking]`, `[Epic]`, `[Umbrella]`, `[Tracker]`), a task list of two or more issue or PR references, or sub-issues. It stays actionable for the owner and the hive and is never offered to a contributor ([#19078](https://github.com/hivecommons/hive/issues/19078)). | Matched rule |
+| `human_only` | The issue waits on a person: label `needs-human`, `human-only` or `human-only:*`, or the `<!-- hive:human-only -->` body marker. Never offered to a contributor. | Matched rule |
 | `cooldown` | The issue completed recently and is inside its post-completion cooldown. | Expiry timestamp |
 | `failure_cooldown` | The issue failed recently and is inside its failure cooldown or quarantine window. | Expiry timestamp |
 | `no_work_needed` | A live `no_work_needed` verdict is suppressing the issue until it changes again. | — |
@@ -1199,7 +1201,7 @@ sequenceDiagram
     R->>H: result (PR opened / success / failure)
 ```
 
-- The **work queue** includes monitored-repository candidates that pass disabled-repository, hold, cooldown, in-flight, dependency, assignment, and title/author/label gates. `GET /api/contribute/status` reports the offerable total as `actionable_items` and the raw scanner population as `candidate_items`. `GET /api/contribute/queue` returns bounded ordered rows, uncapped `queue_total`, and separate `held_total`.
+- The **work queue** includes monitored-repository candidates that pass disabled-repository, hold, cooldown, in-flight, dependency, assignment, and title/author/label gates. `GET /api/contribute/status` reports the offerable total as `actionable_items` and the contributor-workable scanner population as `candidate_items`; umbrella and owner-only issues are counted separately as `umbrella_items` and `human_only_items` and are never offered, and the raw scanner population stays available as `candidate_items_raw` ([#19078](https://github.com/hivecommons/hive/issues/19078)). The contributor page shows "N workable" and one line, "M umbrella and owner-only items are not offered to contributors". `GET /api/contribute/queue` returns bounded ordered rows, uncapped `queue_total`, and separate `held_total`, `umbrella_total` and `human_only_total`.
 - The **relay** authenticates with its registration token and renews heartbeats every 30 s, reconnecting with exponential backoff. No forward progress for 30 minutes abandons a task; an absolute 4-hour backstop also applies. A task GitHub token lasts 55 minutes and is re-minted before expiry, so the task may outlive one token; see [token renewal](#the-github-token-outlives-the-task-because-the-hub-re-mints-it).
 - A **trust tier** controls per-tier rate limits; see [trust tiers and delegated roles](contributor-trust-and-roles.md).
 - Hives advertise small, well-specified issues with `good first issue` and `help wanted` labels and a welcome link (`/contribute?issue=<owner>/<repo>%23<n>`). A label is not a reservation: claim before starting, sign the PR with DCO, and use `Fixes #n`. See [Hive-curated good first issues](good-first-issue.md).
@@ -2295,3 +2297,24 @@ That checklist is design history, not a statement that today's relay lacks deliv
 ## Custom stylesheets
 
 The contributor leaderboard and spoke dashboard accept a shareable custom stylesheet parameter, letting a hive brand its public surfaces from a public GitHub repo. See [Custom stylesheets](custom-stylesheets.md) for the accepted `owner/repo/path.css@ref` form, the server-side sanitizer rules, scoping, and the size cap.
+
+## Umbrella and owner-only issues are never handed to a relay
+
+A relay cannot finish an umbrella (its children carry the work) or an issue that waits on a person, and a claim on one wastes a task. The hub therefore refuses both at offer time, drops them from `actionable_items` / `candidate_items`, and counts them as `umbrella_items` / `human_only_items`. Nothing is edited on the issue: it keeps its stage, stays actionable for the owner and the hive in the dashboard, and an umbrella is closable (the owner, the per-repo `parent_autoclose` policy, the tracker-closing sweep). This is deliberately not the `hive/tracking` marker, which blocks every automatic close.
+
+```yaml
+hub:
+  contribute_umbrella:
+    enabled: true                    # default; false restores the old tracker check only
+    labels: [umbrella, tracker, epic, meta-tracker]
+    title_prefixes: ["[Tracking]", "[Epic]", "[Umbrella]", "[Tracker]"]
+    task_list_min: 2                 # issue or PR references in a checklist
+    human_only_labels: [needs-human, human-only]
+    withdraw_advertisement: true     # remove help wanted / good first issue from an umbrella on the next sweep
+    per_repo:
+      owner/repo:
+        labels: [umbrella, program]
+        withdraw_advertisement: false
+```
+
+A per-repo field that is left out inherits the hive-wide value. The relay's own empty-queue message can name these counts; that is a relay-side follow-up.
