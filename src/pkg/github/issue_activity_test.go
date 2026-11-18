@@ -51,13 +51,13 @@ func TestIssueActivityAuthorKindClassification(t *testing.T) {
 		{
 			"agent by attribution trailer wins over human account",
 			"alice", "User",
-			"Closes #1\n\n— hive: agent=quality backend=copilot model=claude-fable-5.1 copilot=1.0.88",
+			"Closes #1\n\n-- hive: agent=quality backend=copilot model=claude-fable-5.1 copilot=1.0.88",
 			issueActivityKindAgent,
 		},
 		{
 			"agent by attribution trailer wins over Bot account",
 			"hivecommons-hive[bot]", "Bot",
-			"Closes #1\n\n— hive: agent=scanner backend=codex model=gpt-5.6-terra codex=0.5.2",
+			"Closes #1\n\n-- hive: agent=scanner backend=codex model=gpt-5.6-terra codex=0.5.2",
 			issueActivityKindAgent,
 		},
 		{
@@ -203,7 +203,7 @@ func TestIssueActivitySince_QueryAndMapping(t *testing.T) {
 			{ // agent issue filed by the hive's own App account
 				"number":     12,
 				"state":      "closed",
-				"body":       "Found a gap\n\n— hive: agent=quality backend=copilot model=claude-fable-5.1 copilot=1.0.88",
+				"body":       "Found a gap\n\n-- hive: agent=quality backend=copilot model=claude-fable-5.1 copilot=1.0.88",
 				"created_at": created.Format(time.RFC3339),
 				"closed_at":  closed.Format(time.RFC3339),
 				"user":       map[string]any{"login": "hivecommons-hive[bot]", "type": "Bot"},

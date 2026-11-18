@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // The audited write surface (hivecommons/hive#9587, phase 1).
@@ -146,6 +147,7 @@ func (c *Client) SetMentionNeutralizeFunc(fn func(agent string) bool) {
 // on the agent-supplied text only, before the attribution trailer is
 // appended, so hive-generated additions are never rewritten.
 func (c *Client) relayBody(agent, body string) string {
+	body = prosefilter.Sanitize(body)
 	if c == nil || body == "" || strings.TrimSpace(agent) == "" {
 		return body
 	}

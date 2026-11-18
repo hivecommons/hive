@@ -57,7 +57,7 @@ func TestAggregateContributeEffectiveModelsThresholdRankingAndPrivacy(t *testing
 
 func TestAggregateContributeEffectiveModelsIdentityFooterAttribution(t *testing.T) {
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
-	body := "Done\n\n— hive: backend=codex model=gpt-6-astra effort=medium\n\n---\n🐝 **Hive Agent**: `contributor` | **SHA:** `671737a3b`"
+	body := "Done\n\n-- hive: backend=codex model=gpt-6-astra effort=medium\n\n---\n🐝 **Hive Agent**: `contributor` | **SHA:** `671737a3b`"
 	var prs []ghpkg.PullRequest
 	var runs []TaskRunRecord
 	for number := 1; number <= effectiveModelsDefaultMinMergedPRs; number++ {

@@ -10,7 +10,7 @@ import (
 )
 
 func TestReporterTrustHoldSurfacesHumanReason(t *testing.T) {
-	const reason = "reporter-trust hold — issue #581 filed by @stranger (o/r)"
+	const reason = "reporter-trust hold - issue #581 filed by @stranger (o/r)"
 	pr := github.PullRequest{Repo: "o/r", Number: 42, Labels: []string{"hold", "needs-human"}, HiveAttributed: true, ReporterTrustReason: reason}
 	band := PRBand(pr, true, config.DashboardIssueBandsConfig{}, time.Now())
 	if band.Band != "waiting" || !strings.Contains(band.HoldReason, reason) || strings.Contains(band.HoldReason, "attempts exhausted") {
