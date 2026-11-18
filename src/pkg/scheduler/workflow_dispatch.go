@@ -591,6 +591,12 @@ func (l *WorkflowDispatchLog) RecordAll(entries []WorkflowDispatchEntry) error {
 	if stored == 0 {
 		return nil
 	}
+	return l.persistLocked()
+}
+
+// persistLocked trims the log to workflowDispatchLogMax (oldest first) and
+// writes it atomically. l.mu is held.
+func (l *WorkflowDispatchLog) persistLocked() error {
 	list := make([]WorkflowDispatchEntry, 0, len(l.entries))
 	for _, v := range l.entries {
 		list = append(list, v)
@@ -622,6 +628,89 @@ func (l *WorkflowDispatchLog) RecordAll(entries []WorkflowDispatchEntry) error {
 		return err
 	}
 	return os.Rename(tmp, l.path)
+}
+
+// qualifyDispatchRef qualifies the repository of an "repo#N" reference (or
+// of a key that opens with one) with org. A reference that already names an
+// owner, or has no "#", is returned unchanged, so the rewrite is idempotent.
+func qualifyDispatchRef(org, s string) string {
+	hash := strings.Index(s, "#")
+	if org == "" || hash <= 0 || strings.Contains(s[:hash], "/") {
+		return s
+	}
+	return org + "/" + s
+}
+
+// mergeMigratedEntries picks the record two spellings of one key collapse
+// to. A hand-off that was made (pending or started) is never displaced by a
+// not-started one; otherwise the newest record (At) wins. Attempts and the
+// agents tried are carried over from both so a retry limit is not reset.
+func mergeMigratedEntries(a, b WorkflowDispatchEntry) WorkflowDispatchEntry {
+	win, lose := a, b
+	switch {
+	case a.Status == WorkflowHandoffNotStarted && b.Status != WorkflowHandoffNotStarted:
+		win, lose = b, a
+	case b.Status == WorkflowHandoffNotStarted && a.Status != WorkflowHandoffNotStarted:
+	case b.At.After(a.At):
+		win, lose = b, a
+	}
+	if lose.Attempts > win.Attempts {
+		win.Attempts = lose.Attempts
+	}
+	tried := append([]string(nil), win.Tried...)
+	for _, t := range lose.Tried {
+		tried = appendUnique(tried, t)
+	}
+	win.Tried = tried
+	return win
+}
+
+// MigrateQualifiedRefs rewrites records stored under the short repository
+// form ("techdocs#395|...") to the canonical qualified one
+// ("cncf/techdocs#395|..."), the form github.WorkflowDispatch.Ref now
+// builds on every path. Before it, the owner's manual hand-off wrote the
+// qualified key and the governor's pass the short one, so neither saw the
+// other's record. Where both forms exist for one item the records collapse
+// by mergeMigratedEntries. It is idempotent (a qualified record is left
+// alone), bounded by the log's own size, persists only when something
+// changed, and returns how many records it rewrote or merged away.
+func (l *WorkflowDispatchLog) MigrateQualifiedRefs(org string) (int, error) {
+	if l == nil || org == "" {
+		return 0, nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	changed := 0
+	out := make(map[string]WorkflowDispatchEntry, len(l.entries))
+	// Qualified records first, so a short one merges into them rather than
+	// the other way round; map order then cannot change the result.
+	keys := make([]string, 0, len(l.entries))
+	for k := range l.entries {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for pass := 0; pass < 2; pass++ {
+		for _, k := range keys {
+			e := l.entries[k]
+			nk := qualifyDispatchRef(org, k)
+			if (nk != k) != (pass == 1) {
+				continue
+			}
+			if nk != k {
+				e.Key, e.Ref = nk, qualifyDispatchRef(org, e.Ref)
+				changed++
+			}
+			if prev, dup := out[nk]; dup {
+				e = mergeMigratedEntries(prev, e)
+			}
+			out[nk] = e
+		}
+	}
+	if changed == 0 {
+		return 0, nil
+	}
+	l.entries = out
+	return changed, l.persistLocked()
 }
 
 // Entries returns the records, newest first.
