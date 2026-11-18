@@ -16,6 +16,19 @@ type NativeMergeQueueEntry struct {
 	}
 }
 
+// NativeMergeQueueRemoval is a RemovedFromMergeQueueEvent: who took the PR
+// out of its queue. The merge queue itself acts as the github-merge-queue
+// Bot (a failed group, a conflict); the App withdrawing its own entry acts
+// as the App's Bot; a person acts as a User.
+type NativeMergeQueueRemoval struct {
+	ID     string
+	Reason string
+	Actor  struct {
+		Typename string `json:"__typename"`
+		Login    string
+	}
+}
+
 // NativeMergeQueueState describes the queue on a PR's target branch.
 type NativeMergeQueueState struct {
 	ID                  string
@@ -23,7 +36,8 @@ type NativeMergeQueueState struct {
 	IsMergeQueueEnabled bool
 	IsInMergeQueue      bool
 	MergeQueueEntry     *NativeMergeQueueEntry
-	TimelineItems       struct{ Nodes []struct{ ID string } }
+	// TimelineItems holds the PR's latest removal from the queue, if any.
+	TimelineItems struct{ Nodes []NativeMergeQueueRemoval }
 }
 
 // NativeMergeQueueAvailable excludes static tokens, notably workflow tokens:
@@ -35,7 +49,7 @@ func (c *Client) ReadNativeMergeQueue(ctx context.Context, id string) (NativeMer
 	err := c.graphQL(ctx, `query($id: ID!) { node(id: $id) { ... on PullRequest {
  id headRefOid isMergeQueueEnabled isInMergeQueue
  mergeQueueEntry { id position state enqueuer { __typename login } }
- timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { id } } }
+ timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { id reason actor { __typename login } } } }
  } } }`, map[string]any{"id": id}, &out)
 	if err != nil {
 		return NativeMergeQueueState{}, err

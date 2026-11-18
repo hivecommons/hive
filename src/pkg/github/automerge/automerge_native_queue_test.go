@@ -359,7 +359,7 @@ func TestNativeQueueNewCycleAfterRemoval(t *testing.T) {
 	}
 	f.state.IsInMergeQueue = false
 	f.state.MergeQueueEntry = nil
-	f.state.TimelineItems.Nodes = append(f.state.TimelineItems.Nodes, struct{ ID string }{ID: "removal1"})
+	f.state.TimelineItems.Nodes = append(f.state.TimelineItems.Nodes, hgithub.NativeMergeQueueRemoval{ID: "removal1"})
 	if _, err := c.tryNativeQueue(context.Background(), pr, claim); err != nil {
 		t.Fatal(err)
 	}
