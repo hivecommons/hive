@@ -219,6 +219,18 @@ login. The hub put that entry there after it signed the person in with GitHub,
 so the hive trusts it. If your access list is edited by hand, an entry like
 that gives the named person's profile the matching GitHub activity.
 
+One part of the section is a request your browser makes, not the hive. The list
+shows a GitHub picture for each person with a confirmed GitHub login, so the
+browser asks `https://github.com/<login>.png` for the people on screen, lazily
+and with no referrer. GitHub learns the viewer's IP address and which logins were requested, so it can
+tell that this viewer has those GitHub users in their customer list, and nothing
+else about them. The hive does not proxy or store pictures, and
+nobody known only by an email address is looked up anywhere (no Gravatar or
+other service keyed by a hash of an address). The dashboard's `img-src` already
+allows `https:`, so no policy changes; a test pins it. Set
+`customers.avatars.enabled: false`, `HIVE_CUSTOMERS_AVATARS_ENABLED=false` or the
+Settings, Features switch to show initials and make no such request.
+
 A read-only user sees only their own profile. An identity they add is shown as
 unconfirmed. It links nothing until the owner or a read-write user confirms it.
 

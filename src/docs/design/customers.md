@@ -468,12 +468,31 @@ position:
 3. The owner can forget anyone; the tombstone stops a rebuild.
 4. Retention follows the source: an edge cannot outlive its artefact.
 5. Nothing leaves the hive. No hub sync, nothing written to GitHub, nothing in
-   a heartbeat.
+   a heartbeat. The one thing a browser fetches for this section is a public GitHub
+   picture, described next.
+
+**Avatars.** The one exception to "nothing leaves the hive" is not data the hive
+sends. The Customers list shows a GitHub picture next to a person who has a
+confirmed GitHub login, so the viewer's browser requests
+`https://github.com/<login>.png` (GitHub redirects to its own image host) for
+each such person on screen, lazily, with `referrerpolicy="no-referrer"`. GitHub
+sees the viewer's IP address and which logins were requested, so it can tell
+that someone looking at this dashboard has those GitHub users in their customer
+list. It is not sent the hive's address, the page, a token, a name, a tag or
+anything else about the person. The hive's server does not fetch, proxy or
+store the pictures. A person known only by
+email, Slack, Discord, Teams or Meet gets an initial or a source icon, and no
+service keyed by an email address or its hash (Gravatar and the like) is ever
+asked, because that would hand the address to a third party. To turn pictures
+off set `customers.avatars.enabled: false`, set `HIVE_CUSTOMERS_AVATARS_ENABLED=false`,
+or switch **Customer avatars** off in Settings, Features; the list then shows
+initials and makes no request to github.com. The default is on, because the
+dashboard already loads GitHub avatars for contributors and sign-ins.
 
 [telemetry.md](../telemetry.md) records the review of Hive's outbound paths
 against the Linux Foundation telemetry policy, which says project software
 should not collect telemetry by default without review and prior consent. This
-feature adds no outbound path, which is what allows it to be on by default.
+feature adds no outbound path from the hive, which is what allows it to be on by default. The avatar request above is made by the viewer's browser to a site they already use, and has its own switch.
 Any later proposal to send customer data to a hub is its own RFC and falls
 under that review.
 

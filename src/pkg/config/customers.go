@@ -18,6 +18,29 @@ type CustomersConfig struct {
 	// never signed up, to the model the meetings feature is configured to
 	// use.
 	Inference CustomersInferenceConfig `yaml:"inference,omitempty" json:"inference,omitempty"`
+	// Avatars gates GitHub profile pictures in the Customers list. Default
+	// ON. It is the one part of the section that makes the viewer's browser
+	// contact another site: github.com, for people already on screen.
+	Avatars CustomersAvatarsConfig `yaml:"avatars,omitempty" json:"avatars,omitempty"`
+}
+
+// EnvCustomersAvatarsEnabled overrides customers.avatars.enabled when it
+// holds a recognised boolean.
+const EnvCustomersAvatarsEnabled = "HIVE_CUSTOMERS_AVATARS_ENABLED"
+
+// CustomersAvatarsConfig (`customers.avatars:`) turns GitHub profile pictures
+// on the Customers list on or off. On, the viewer's browser requests
+// https://github.com/<login>.png for each customer or suggestion whose
+// identity is a GitHub login, with no referrer. Off, the list shows initials
+// and makes no such request.
+type CustomersAvatarsConfig struct {
+	// Enabled turns avatars on. nil = true.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether avatars are on (default on).
+func (c CustomersAvatarsConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 // EnvCustomersInferenceEnabled overrides customers.inference.enabled when it
@@ -71,4 +94,18 @@ func (c *Config) CustomersInferenceEnabled() bool {
 		return false
 	}
 	return c.Customers.Inference.IsEnabled()
+}
+
+// CustomersAvatarsEnabled reports whether GitHub avatars show on the
+// Customers list: the HIVE_CUSTOMERS_AVATARS_ENABLED env wins over
+// customers.avatars.enabled when it holds a recognised boolean. A nil config
+// is the default, on.
+func (c *Config) CustomersAvatarsEnabled() bool {
+	if v, ok := parseBoolEnv(EnvCustomersAvatarsEnabled); ok {
+		return v
+	}
+	if c == nil {
+		return true
+	}
+	return c.Customers.Avatars.IsEnabled()
 }

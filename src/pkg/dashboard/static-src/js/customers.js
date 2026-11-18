@@ -14,6 +14,17 @@
     // Satisfaction level to the kc-pill status palette.
     const CUSTOMERS_LEVEL_PILL = { at_risk: 'error', neutral: 'syncing', satisfied: 'ok' };
     const CUSTOMERS_ORIGIN_LABELS = { hive_user: 'hive user', manual: 'added by hand', accepted: 'accepted suggestion' };
+    // The short origin pill on a row; the long wording stays in its tooltip.
+    const CUSTOMERS_ORIGIN_SHORT = { hive_user: 'hive user', manual: 'added', accepted: 'accepted' };
+    // A row shows this many identity pills and tag pills, then "+N".
+    const CUSTOMERS_SOURCE_PILLS_SHOWN = 2;
+    const CUSTOMERS_TAG_PILLS_SHOWN = 3;
+    // A GitHub login: letters, digits and single hyphens, at most 39 long.
+    const CUSTOMERS_GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+    // The avatar box is 28 CSS pixels (see .customers-avatar); the picture is
+    // asked for at twice that so it stays sharp on a dense screen.
+    const CUSTOMERS_AVATAR_PX = 28;
+    const CUSTOMERS_AVATAR_FETCH_PX = 56;
     const CUSTOMERS_EVIDENCE_SHOWN = 5;
     let _customersData = null;
     let _customersError = '';
@@ -138,6 +149,78 @@
       return m ? m[0].toUpperCase() : '?';
     }
 
+    // customersAvatarsOn: GitHub avatars show only while the hive says so
+    // (customers.avatars.enabled). Off, the list makes no request to github.com.
+    function customersAvatarsOn() { return !!(_customersData && _customersData.avatars === true); }
+
+    // customersGithubLogin is the login of a person's confirmed GitHub
+    // identity, or '' when they have none. An unconfirmed (claimed) identity
+    // never picks a picture: anyone can type any login there.
+    function customersGithubLogin(p) {
+      const ids = (p && p.identities) || [];
+      for (let n = 0; n < ids.length; n++) {
+        const i = ids[n];
+        if (i && i.kind === 'github' && !i.claimed && CUSTOMERS_GITHUB_LOGIN.test(String(i.value || ''))) return String(i.value);
+      }
+      return '';
+    }
+
+    // customersAvatarHtml draws the initial (or a source icon) in a circle and,
+    // for a GitHub login, the picture over it. The box has a fixed size, so
+    // nothing moves when the picture arrives; if it fails the picture hides
+    // itself and the initial stays. Email-only people never get a picture: no
+    // service keyed by an address is asked.
+    function customersAvatarHtml(name, login, icon, title) {
+      const face = icon || escapeHtml(customersInitial(name));
+      let img = '';
+      if (login && CUSTOMERS_GITHUB_LOGIN.test(login) && customersAvatarsOn()) {
+        img = '<img class="customers-avatar-img" src="https://github.com/' + encodeURIComponent(login) + '.png?size=' + CUSTOMERS_AVATAR_FETCH_PX + '" alt="' + escapeHtml(name) + '" width="' + CUSTOMERS_AVATAR_PX + '" height="' + CUSTOMERS_AVATAR_PX + '" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-error-action="gh19">';
+      }
+      return '<span class="customers-avatar"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '><span class="customers-initial" aria-hidden="true">' + face + '</span>' + img + '</span>';
+    }
+
+    // customersMorePill is the "+N" pill; its tooltip lists what it hides.
+    function customersMorePill(rest) {
+      if (!rest.length) return '';
+      return '<span class="kc-pill customers-pill customers-more" title="' + escapeHtml(rest.join(', ')) + '">+' + rest.length + '</span>';
+    }
+
+    // customersSourcePills: the identities a person is known by, as compact
+    // monospace pills. The dashboard-user and name identities say nothing a
+    // row does not already say.
+    function customersSourcePills(p) {
+      const ids = ((p && p.identities) || []).filter(i => i && i.value && i.kind !== 'hive_user' && i.kind !== 'name');
+      const label = i => (CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + ': ' + i.value + (i.claimed ? ' (unconfirmed)' : '');
+      return ids.slice(0, CUSTOMERS_SOURCE_PILLS_SHOWN).map(i =>
+        '<span class="kc-pill customers-pill customers-source" data-kind="' + escapeHtml(i.kind) + '" data-claimed="' + (i.claimed ? 'true' : 'false') + '" title="' + escapeHtml(label(i)) + '">' + escapeHtml(i.value) + '</span>').join('') +
+        customersMorePill(ids.slice(CUSTOMERS_SOURCE_PILLS_SHOWN).map(label));
+    }
+
+    // customersOriginPill: where the person came from, in one short word.
+    function customersOriginPill(p, updated) {
+      const origin = p && p.origin;
+      if (!origin) return '';
+      const long = (CUSTOMERS_ORIGIN_LABELS[origin] || origin) + (updated ? ', updated ' + updated : '');
+      return '<span class="kc-pill customers-pill customers-origin" title="' + escapeHtml(long) + '">' + escapeHtml(CUSTOMERS_ORIGIN_SHORT[origin] || origin) + '</span>';
+    }
+
+    // customersTagPill: a tag that is on. A default tag has its own tone; a
+    // free-form tag is neutral. A tag a person set carries a dot, and the
+    // tooltip says who set it or which rule did.
+    function customersTagPill(t) {
+      const manual = t.source === 'manual';
+      const why = manual ? 'Set by ' + (t.by || 'a person') : (t.rule ? 'Automatic: ' + t.rule : 'Automatic');
+      const isDefault = ((_customersData && _customersData.default_tags) || []).indexOf(t.name) >= 0;
+      return '<span class="kc-pill customers-pill customers-tag"' + (isDefault ? ' data-tag="' + escapeHtml(t.name) + '"' : '') + ' data-source="' + (manual ? 'manual' : 'auto') + '" title="' + escapeHtml(t.name + ' - ' + why) + '">' +
+        (manual ? '<span class="customers-tag-dot" aria-hidden="true"></span>' : '') + escapeHtml(t.name) + (manual ? '<span class="customers-sr"> (set by hand)</span>' : '') + '</span>';
+    }
+
+    function customersTagPills(p) {
+      const on = ((p && p.tags) || []).filter(t => t && t.name && t.state === 'on');
+      return on.slice(0, CUSTOMERS_TAG_PILLS_SHOWN).map(customersTagPill).join('') +
+        customersMorePill(on.slice(CUSTOMERS_TAG_PILLS_SHOWN).map(t => t.name));
+    }
+
     function customersEvidenceLabel(ref) {
       const s = String(ref || '');
       const m = CUSTOMERS_REF_GH.exec(s);
@@ -168,23 +251,24 @@
     }
 
     // ── List ──
+    // One line per customer: picture, name, then pills (identities, origin,
+    // tags, goals to review, satisfaction), the date, the actions. On a narrow
+    // screen the pills wrap under the name.
     function customersRowHtml(p, isMe) {
       const goals = customersGoalsSplit(p);
-      const tags = customersActiveTags(p).map(t => '<span class="badge customers-chip">' + escapeHtml(t) + '</span>').join('');
       const pill = customersLevelPill(p.satisfaction && p.satisfaction.level);
       const pending = goals.suggested.length + (p.satisfaction && p.satisfaction.suggestion ? 1 : 0);
-      const meta = [CUSTOMERS_ORIGIN_LABELS[p.origin] || p.origin || ''];
+      const extra = [];
       // No goals is the usual case, so it is not said on every row.
-      if (goals.confirmed.length) meta.push(goals.confirmed.length + ' goal' + (goals.confirmed.length === 1 ? '' : 's'));
-      if (pending) meta.push(pending + ' suggestion' + (pending === 1 ? '' : 's') + ' to review');
+      if (goals.confirmed.length) extra.push('<span class="kc-pill customers-pill">' + goals.confirmed.length + ' goal' + (goals.confirmed.length === 1 ? '' : 's') + '</span>');
+      if (pending) extra.push('<span class="kc-pill customers-pill" title="' + pending + ' suggestion' + (pending === 1 ? '' : 's') + ' to review">' + pending + ' to review</span>');
       const updated = customersFormatTime(p.updated_at);
-      if (updated) meta.push('updated ' + updated);
       const name = p.name || p.id || '';
       return '<div class="customers-card" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '">' +
-        '<span class="customers-avatar" aria-hidden="true">' + escapeHtml(customersInitial(name)) + '</span>' +
-        '<div class="customers-row-main"><div class="customers-row-title"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') + '</div>' +
-        '<div class="muted-xs customers-row-meta">' + escapeHtml(meta.filter(Boolean).join(' · ')) + '</div>' +
-        (tags || pill ? '<div class="customers-chips">' + tags + pill + '</div>' : '') + '</div>' +
+        customersAvatarHtml(name, customersGithubLogin(p), '', '') +
+        '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') +
+        customersSourcePills(p) + customersOriginPill(p, updated) + customersTagPills(p) + extra.join('') + pill + '</div>' +
+        (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') +
         '<div class="customers-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersOpen" data-arg0="' + (isMe ? 'me' : escapeHtml(p.id)) + '">' + (isMe ? 'My profile' : 'Open') + '</button></div></div>';
     }
 
@@ -203,15 +287,18 @@
 
     function customersSuggestionRowHtml(s) {
       const id = escapeHtml(s.id);
-      const counts = Object.keys(s.counts || {}).sort().map(k => s.counts[k] + ' ' + k.replace(/_/g, ' ')).join(', ');
+      const countList = Object.keys(s.counts || {}).sort().map(k => s.counts[k] + ' ' + k.replace(/_/g, ' '));
       const seen = customersFormatTime(s.last_seen);
       const value = s.value || '';
       const kind = CUSTOMERS_KIND_LABELS[s.kind] || s.kind || '';
+      const login = s.kind === 'github' ? value : '';
       return '<div class="customers-card" data-kind="suggestion" data-customer-suggestion="' + id + '">' +
-        '<span class="customers-avatar" aria-hidden="true" title="' + escapeHtml(kind) + '">' + (CUSTOMERS_KIND_ICONS[s.kind] || escapeHtml(customersInitial(value))) + '</span>' +
-        '<div class="customers-row-main"><div class="customers-row-title"><span class="customers-name" title="' + escapeHtml(value) + '">' + escapeHtml(value) + '</span></div>' +
-        '<div class="muted-xs customers-row-meta">' + escapeHtml([counts, seen ? 'last seen ' + seen : ''].filter(Boolean).join(' · ')) + '</div>' +
+        customersAvatarHtml(value, login, CUSTOMERS_KIND_ICONS[s.kind] || '', kind) +
+        '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(value) + '">' + escapeHtml(value) + '</span>' +
+        countList.slice(0, CUSTOMERS_SOURCE_PILLS_SHOWN).map(c => '<span class="kc-pill customers-pill">' + escapeHtml(c) + '</span>').join('') +
+        customersMorePill(countList.slice(CUSTOMERS_SOURCE_PILLS_SHOWN)) +
         customersWhyHtml(s.id, s.evidence) + '</div>' +
+        (seen ? '<span class="muted-xs customers-updated" title="Last seen">' + escapeHtml(seen) + '</span>' : '') +
         '<div class="customers-row-actions">' +
         '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersAccept" data-arg0="' + id + '" title="Make this person a customer and build their profile">Accept</button>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersPickerOpen" data-arg0="' + id + '" title="Add this identity to a customer you already have, instead of making a new one">Add to existing…</button>' +
@@ -495,10 +582,11 @@
     }
 
     function customersProfileHtml(p) {
-      const tags = customersActiveTags(p).map(t => '<span class="badge customers-chip">' + escapeHtml(t) + '</span>').join('');
+      const name = p.name || p.id || '';
       return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersClose">← Customers</button>' +
-        '<div class="customers-profile-name"><span class="customers-name" title="' + escapeHtml(p.name || p.id) + '">' + escapeHtml(p.name || p.id) + '</span>' + (p.me ? '<span class="badge customers-me">me</span>' : '') + '</div>' +
-        '<div class="customers-chips">' + tags + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
+        customersAvatarHtml(name, customersGithubLogin(p), '', '') +
+        '<div class="customers-profile-name"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (p.me ? '<span class="badge customers-me">me</span>' : '') + '</div>' +
+        '<div class="customers-chips">' + customersSourcePills(p) + customersOriginPill(p, '') + customersTagPills(p) + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
         '<div class="hive-dialog-error" role="alert" data-customers-field="profile-error"></div>' +
         customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
