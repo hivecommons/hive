@@ -231,7 +231,13 @@ const MCP_CONFIG_FILE = process.env.HIVE_MCP_CONFIG_FILE || path.join(CONTRIBUTO
 // (#2537) are the explicit follow-ons and are NOT built here.
 const MODE_INTERACTIVE = 'interactive';
 const MODE_HEADLESS = 'headless';
-const CONTRIBUTOR_MODE = BACKEND === 'cline' || process.env.CONTRIBUTOR_MODE === MODE_HEADLESS
+// HEADLESS_ONLY_BACKENDS run headless whatever CONTRIBUTOR_MODE says: the relay
+// has no pane classifier for them (bin/lib/pane-classifier.js), so an
+// interactive tmux launch never reads as ready and no task is ever sent. An
+// opencode contributor in local mode sat at "CLI is not ready yet —
+// withholding ready" in front of an idle opencode prompt.
+const HEADLESS_ONLY_BACKENDS = new Set(['cline', 'opencode']);
+const CONTRIBUTOR_MODE = HEADLESS_ONLY_BACKENDS.has(BACKEND) || process.env.CONTRIBUTOR_MODE === MODE_HEADLESS
   ? MODE_HEADLESS
   : MODE_INTERACTIVE;
 // contributor-agent.sh creates and exports this before starting the relay. Pin
