@@ -105,6 +105,9 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 		}
 		return res, fmt.Errorf("kubejob: creating job %s: %w", name, err)
 	}
+	if spec.OnStarted != nil {
+		spec.OnStarted()
+	}
 	jobPath := jobsPath + "/" + name
 
 	done, waitErr := l.waitJob(ctx, ns, name, jobPath)
