@@ -722,6 +722,13 @@ repos:
     parent_autoclose: false
 ```
 
+You can also set it without editing YAML: Settings, Repos tab, "Parent auto-close"
+(owner only). Each monitored repo has a choice of "Close finished parents
+(default)", "Also close epics and holds" and "Never auto-close parents"; saving
+applies it without a restart and is recorded in the audit log. Issues marked as
+tracking issues (`hive/tracking`, the `<!-- hive:tracking -->` marker, or "Keep
+this issue open") are never auto-closed under any value.
+
 The dashboard does not yet show a "kept open: reopened by <login>" pill; the
 kept-open decision is logged (`decomposed parent kept open`).
 
