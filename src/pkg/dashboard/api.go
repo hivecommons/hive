@@ -556,6 +556,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// project.reference_repos editor on the Repos tab (#18136, api_config_reference_repos.go).
 	s.mux.HandleFunc("GET /api/config/reference-repos", s.handleReferenceReposGet)
 	s.mux.HandleFunc("PUT /api/config/reference-repos", s.handleReferenceReposPut)
+	// repos.<repo>.parent_autoclose editor on the Repos tab (#19070, api_config_parent_autoclose.go).
+	s.mux.HandleFunc("GET /api/config/repos/parent-autoclose", s.handleParentAutoCloseGet)
+	s.mux.HandleFunc("PUT /api/config/repos/parent-autoclose", s.handleParentAutoClosePut)
 	// project.remote_write_identity on the same Settings section (#18516, api_config_remote_write_identity.go).
 	s.mux.HandleFunc("PUT /api/config/reference-repos/write-identity", s.handleRemoteWriteIdentityPut)
 	// The hive owner's GitHub identity for remote repos (#18197,

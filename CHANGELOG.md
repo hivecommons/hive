@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.325.0)
+
+### Added
+
+- `auth_ok` now carries the hive's display name (`hive_name`), and the relay records it and prints `[hive: <name>]` on connect, so contributors can tell hives apart by their real name instead of a hostname minted before a rename. Additive: a hub that sends nothing keeps today's output ([#19059](https://github.com/hivecommons/hive/issues/19059)).
+
+### Fixed
+
+- Server-side fetches of user- or spoke-chosen URLs (dashboard agent import and workflow spec URLs, the hub's hive config proxy and webhook relay to a spoke's dashboard URL, knowledge document imports) now resolve each connection once, refuse it when any DNS answer is private, loopback, link-local or otherwise not globally routable, and dial the address that was checked. A name that rebinds between the SSRF check and the dial is refused instead of reached, and every redirect hop is checked at dial time ([#18992](https://github.com/hivecommons/hive/issues/18992), part of [#18986](https://github.com/hivecommons/hive/issues/18986)).
+- The hive now answers human review feedback on PRs its own agents opened, whatever the PR's state ([#19027](https://github.com/hivecommons/hive/issues/19027)). A person's inline review comment, `COMMENTED` or `CHANGES_REQUESTED` review, or a comment addressed to the hive used to reach no one when the PR was a draft, carried `ready-for-review`, or lived in a repo the hive does not manage (the session-resume router skips drafts and the held-PR path required `CHANGES_REQUESTED`). A new polling sweep reads each agent-opened PR (owner from the audit trail, GraphQL first with a REST fallback), finds comments the hive has not answered, and kicks the authoring agent with a brief to verify the claim against the evidence, push a signed revision or reply with evidence, and reply on the thread. Handled comment ids are persisted (and named in a hidden marker in the reply) so nothing is routed twice. A burst of comments is coalesced into one kick after a short debounce (`HIVE_REVIEW_FEEDBACK_DEBOUNCE`, default 3m); comments that arrive while the agent works are never dropped and get their own follow-up kick; each PR has a generous rolling cap (`HIVE_REVIEW_FEEDBACK_WINDOW_CAP` per `HIVE_REVIEW_FEEDBACK_WINDOW`, default 12 per 24h) that posts a visible needs-human note and resets when a person comments again. Review threads reach the agent whole and in order, so a reply that refines an earlier comment wins. The brief tells the agent to fix wrong attributions first, re-verify every cited source, keep the analysis honest in both directions, and record rules reviewers state in the hive's knowledge store. Paused agents stay paused, and a needs-human note is posted once when no agent can take the feedback. Existing unanswered feedback is picked up on the first pass after upgrade. Set `HIVE_REVIEW_FEEDBACK_RESPONSE=off` to disable.
+- The merge-request CI gate no longer turns a head red for a zero-job `startup_failure` run of event `pull_request_target` when the repository's required contexts are known and all green: GitHub blocks that event by default in public repositories from 2026-12-02, so repositories that never touch their workflows would otherwise stop merging. The run is logged instead. With the required set unknown, a required context missing or red, or any other zero-job failure, the verdict stays red (refs #19038).
+
 ## 2026-11-18 (v5.324.0)
 
 ### Added

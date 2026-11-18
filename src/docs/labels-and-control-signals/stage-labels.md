@@ -217,6 +217,8 @@ stateDiagram-v2
     s100 --> [*]: merged (labels removed)
 ```
 
+**Umbrella and owner-only issues have no stage of their own.** An umbrella or tracker issue (and an issue that waits on a person) keeps whatever stage the engine derives (`010`, `018`, `040`, `045`) and stays actionable for the owner and the hive; it is shown with a derived **Umbrella · owner** or **Owner only** pill and is never handed to a contributor relay (`hub.contribute_umbrella`, [reference](reference.md#umbrella-also-tracker-epic-meta-tracker----hiveumbrella----human-only)). A dedicated `stage/0NN-umbrella` label was considered and not added: a stage is keyed in the engine table, the transition table, the dashboard column and filter vocabulary and every stage-aware harness (the `018` change touched more than fifty files), and the umbrella property is orthogonal to pipeline progress (a decomposed parent is still `010` while it waits on children and `040` while a PR covers it). The pill reads the same rules the contributor gate uses, so nothing can disagree. Because an umbrella is not a tracking archive, it is closable and closing it removes its stage labels like any other close.
+
 #### The regressed marker: when it is set, when it clears
 
 The dashboard's `regressed` chip and the `<!-- hive:stage-regressed -->`
@@ -719,6 +721,13 @@ repos:
   torch-spyre/spyre-inference:
     parent_autoclose: false
 ```
+
+You can also set it without editing YAML: Settings, Repos tab, "Parent auto-close"
+(owner only). Each monitored repo has a choice of "Close finished parents
+(default)", "Also close epics and holds" and "Never auto-close parents"; saving
+applies it without a restart and is recorded in the audit log. Issues marked as
+tracking issues (`hive/tracking`, the `<!-- hive:tracking -->` marker, or "Keep
+this issue open") are never auto-closed under any value.
 
 The dashboard does not yet show a "kept open: reopened by <login>" pill; the
 kept-open decision is logged (`decomposed parent kept open`).

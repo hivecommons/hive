@@ -20,6 +20,7 @@ const (
 	OpName                = "name"
 	OpNotes               = "notes"
 	OpProfile             = "profile"
+	OpAffiliationDismiss  = "affiliation_dismiss"
 	OpIdentityAdd         = "identity_add"
 	OpIdentityRemove      = "identity_remove"
 	OpTag                 = "tag"
@@ -38,7 +39,7 @@ const TagAuto = "auto"
 // selfOps is what a viewer without the full view may do, and only to their
 // own profile: name, identities, tags and goals.
 var selfOps = map[string]bool{
-	OpName: true, OpProfile: true, OpIdentityAdd: true, OpIdentityRemove: true, OpTag: true,
+	OpName: true, OpProfile: true, OpAffiliationDismiss: true, OpIdentityAdd: true, OpIdentityRemove: true, OpTag: true,
 	OpGoalAdd: true, OpGoalEdit: true, OpGoalConfirm: true, OpGoalReject: true,
 }
 
@@ -79,6 +80,10 @@ type PersonView struct {
 	// the identity belongs to someone else, and was raised as a question
 	// instead.
 	Hinted bool `json:"hinted,omitempty"`
+	// Affiliation is a suggested organization with its evidence, never a
+	// stored fact: Accept writes it as a by-hand organization. Detail views
+	// only.
+	Affiliation *AffiliationSuggestion `json:"affiliation_suggestion,omitempty"`
 }
 
 // ListView is the Customers list as one viewer sees it.
@@ -154,6 +159,9 @@ func (s *Service) CanSee(v Viewer, id string) bool {
 // view builds what the viewer sees of p.
 func (s *Service) view(v Viewer, p Person, isMe, detail bool) PersonView {
 	out := PersonView{Person: p, Me: isMe}
+	if detail {
+		out.Affiliation = SuggestAffiliation(p)
+	}
 	if !v.Full {
 		// A viewer without the full view sees what they may edit. Notes,
 		// the satisfaction assessment, merge history and hints are the
@@ -247,6 +255,8 @@ func (s *Service) Edit(v Viewer, id string, e Edit) (PersonView, error) {
 		} else {
 			p, err = s.store.SetProfileField(p.ID, e.Field, e.Value, v.User)
 		}
+	case OpAffiliationDismiss:
+		p, err = s.store.DismissAffiliation(p.ID, e.Value)
 	case OpIdentityAdd:
 		id := Identity{Kind: IdentityKind(e.Kind), Value: e.Value}
 		if !v.Full {

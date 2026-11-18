@@ -122,12 +122,18 @@ const admissionCoveragePolicy = "readable blocked records are gated; unmapped lo
 // cannot disagree about the state they judged. It lives for exactly one
 // request/hydration and is never cached.
 type queueAdmissionSnapshot struct {
-	queue          []ReadyQueueItem
-	candidateTotal int
-	offerableTotal int
-	heldTotal      int
-	withheld       []AdmissionWithheldItem
-	coverage       AdmissionCoverage
+	queue []ReadyQueueItem
+	// candidateTotal is the contributor-workable candidate count: the raw
+	// scanner population minus umbrella and owner-only issues
+	// (hivecommons/hive#19078). candidateRawTotal is the raw population.
+	candidateTotal    int
+	candidateRawTotal int
+	umbrellaTotal     int
+	humanOnlyTotal    int
+	offerableTotal    int
+	heldTotal         int
+	withheld          []AdmissionWithheldItem
+	coverage          AdmissionCoverage
 }
 
 // convergenceDiagnosticsEnabled reports whether the #4246 diagnostics surface

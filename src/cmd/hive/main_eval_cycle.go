@@ -770,6 +770,14 @@ func runEvalCycle(
 	// issues only, never PRs; the watermark and dedupe index live on the PVC.
 	runUpstreamWatch(ctx, cfg, ghClient, logger)
 
+	// Analysis fact-check (hivecommons/hive#19074), opt-in and default OFF:
+	// an independent reviewer agent re-verifies the analysis and report PRs
+	// the configured agents opened, the author revises, and the loop stops on
+	// a pass, the round limit, or a person reviewing. Polling; no webhook.
+	if !budgetDecision.SkipOptional {
+		sweepAnalysisFactCheck(ctx, cfg, ghClient, agentMgr, logger)
+	}
+
 	// Merge-hotspot advisor: at most hourly, score the files concurrent
 	// PRs keep colliding on (from the merge train's own records) and file
 	// one modularize issue per hotspot for the ci-maintainer lane through
@@ -1067,6 +1075,7 @@ func runEvalCycle(
 		}
 		return workflowAgentTurnFrom(st)
 	}, logger) {
+		k.Message = sched.PrimeWorkflowDispatch(k.Message, k.Dispatch)
 		workflowMessages = append(workflowMessages, k.Message)
 		workflowKickByMessage[workflowDispatchKickKey(k.Message)] = k
 	}
