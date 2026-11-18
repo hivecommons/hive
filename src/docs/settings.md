@@ -81,6 +81,7 @@ Optional capabilities, each off or inert until you turn it on. Where a feature h
 - Spek stage runner: [Spektacular](spektacular.md).
 - Auto-merge: [App self-merge sweep](operator-reference.md#app-self-merge-sweep-auto_merge), [Trusted bot authors](hive-merge.md#trusted-bot-authors), and [Trusted-author auto-merge](hive-merge.md#trusted-author-auto-merge).
 - Review gate: [Review swarm](review-swarm.md#configuration), [Blocking line and backlog](review-swarm.md#blocking-line-reviewseverity-reviewbacklog), and [external review bot threads](review-bot-threads.md).
+- Rules from review feedback: [Reviewer-stated rules](review-feedback-rules.md#settings). Owner only; the card edits `review_feedback.rules.*` and applies on the next sweep pass.
 - Trajectory review: [Trajectory-Review Lane](trajectory-review.md#configuration).
 - Linear agent: [Linear agent integration](linear-agent.md).
 - Upstream watch: [Upstream watch](upstream-watch.md#configuration).

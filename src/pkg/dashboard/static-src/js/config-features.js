@@ -139,6 +139,9 @@
     // into FEATURES_SECTIONS; keep new controls inside the section they belong
     // to rather than appending to the end of the template.
     function renderGovFeatures(f, am, rv) {
+      /* Review feedback rules (#19138): painted asynchronously from their own
+         owner-only endpoint, like the Repos tab's parent auto-close. */
+      loadReviewFeedbackRules();
       f = f || {};
       am = am || {};
       rv = rv || {};
@@ -658,6 +661,11 @@
             <span class="config-toggle-label">Name public repositories ${yamlHint('benchmarks.repo_consent')} ${settingHelpMark('settings', 'features', 'Name public repositories', `On by default: records for PUBLIC repositories carry the repository and org name, since that activity is already public. Off anonymizes every record. Private repositories are never named.`)}</span>
           </div>
           <div class="config-field settings-subsection-row"><label>Your hive on the leaderboard ${settingHelpMark('settings', 'features', 'Your hive on the leaderboard', `Salted SHA-256 of this hive's id (first 16 hex chars) — the only identifier that leaves the hive. Published records are keyed by it, so this is how you find your own row.`)}</label><input type="text" value="${esc(f.benchmarksHiveHash || '')}" readonly aria-readonly="true"><div class="config-help">Look this hash up in the &quot;Contributing hives&quot; table at <a href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener">hivecommons.dev/benchmarks</a> to verify your records arrived${f.benchmarksLastPushAt ? ` &middot; last pushed ${esc(f.benchmarksLastPushAt)} (${esc(String(f.benchmarksLastPushCount || 0))} records)` : ' &middot; nothing pushed yet'}.</div></div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Rules from review feedback ${yamlHint('review_feedback.rules')} ${settingHelpMark('review-feedback-rules', 'settings', 'Rules from review feedback', `When a person reviewing a hive PR states a rule (&quot;X is the source of truth&quot;, &quot;going forward ...&quot;), the hive records it in its knowledge for later work. Choose whether it does, whose rules count at once (every other reviewer's rule waits for approval), extra phrases that mark a comment as a rule, and built-in signals to ignore. Owner only. Applies on the next sweep pass, without a restart.`)}</div>
+          <div id="cfg-review-feedback-rules-host"><div class="fs-sm text-muted">Loading&hellip;</div></div>
         </div>
 
         <div class="settings-subsection">

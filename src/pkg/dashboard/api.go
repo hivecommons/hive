@@ -577,6 +577,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerVersionContainsRoute()
 	// Per-kick outcome record (#18916, api_kick_outcomes.go).
 	s.registerKickOutcomeRoutes()
+	// review_feedback.rules.* editor (#19138, api_config_review_feedback_rules.go).
+	s.registerReviewFeedbackRulesRoutes()
 }
 
 var (

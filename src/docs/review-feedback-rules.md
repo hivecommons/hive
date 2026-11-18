@@ -15,7 +15,7 @@ leaving it to the agent's discretion ([#19046](https://github.com/hivecommons/hi
    and `knowledge-base`. Comment text is data: it is matched and quoted, never executed, fetched or followed.
 2. **Extract.** The rule text is the sentences that carry a signal, without clauses that only ask for the capture, bounded to 600 characters.
 3. **Gate on trust.** A rule changes what every later run is told, so only reviewers whose GitHub association is in
-   `HIVE_REVIEW_FEEDBACK_RULE_TRUSTED_ASSOCIATIONS` (default `OWNER,MEMBER,COLLABORATOR`) are captured at once. Any other reviewer's rule is
+   `review_feedback.rules.trusted_associations` (default `OWNER,MEMBER,COLLABORATOR`; see [Settings](#settings)) are captured at once. Any other reviewer's rule is
    queued as a draft knowledge entry that a person approves. A trusted reviewer restating a queued rule activates it.
 4. **Persist.** The rule gets an id (`R-1`, `R-2`, ...) and is written to the `review-rules` local knowledge channel as an entry tagged `pin`,
    with provenance: the PR, the comment id and URL (the entry's `source`), the reviewer, their association, the time, and whether the hive or
@@ -77,10 +77,30 @@ neither kicks nor the dashboard wait for a restart. After a change, the primer r
 
 ## Settings
 
+The preferences are `review_feedback.rules.*` keys in `hive.yaml`, and the owner edits them in Settings, **Features** tab, **Review** section, **Rules from review feedback**. A change applies on the sweep's next pass (every five minutes) without a restart. The card is owner-only; every other role sees that it is.
+
+```yaml
+review_feedback:
+  rules:
+    enabled: true                  # false stops capture; the sweep keeps running
+    trusted_associations: [OWNER, MEMBER, COLLABORATOR]
+    extra_phrases: ["house rule"]  # phrases that also mark a comment as a rule
+    disabled_signals: [knowledge-base]
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `review_feedback.rules.enabled` | on | `false` stops rule capture. Rules already recorded keep loading into kicks until retracted. |
+| `review_feedback.rules.trusted_associations` | `OWNER,MEMBER,COLLABORATOR` | Associations whose rules are captured at once; others are queued. An empty list is the default. |
+| `review_feedback.rules.extra_phrases` | none | Extra phrases that count as a signal named `extra-phrase`. Matched case-insensitively as whole words, never as patterns; 4 to 100 characters, at most 50. |
+| `review_feedback.rules.disabled_signals` | none | Built-in signals (`source-of-truth`, `authoritative`, `always`, `never`, `going-forward`, `capture-request`, `assessment-criteria`, `knowledge-base`) that no longer count. |
+
+The environment variables keep working and win over the yaml keys when they are set; the Settings card says so when one is, and the key is still saved. Extra phrases and disabled signals have no environment variable.
+
 | Variable | Default | Meaning |
 |---|---|---|
-| `HIVE_REVIEW_FEEDBACK_RULES` | on | Set to `0`, `false`, `off` or `no` to stop rule capture. The sweep keeps running. |
-| `HIVE_REVIEW_FEEDBACK_RULE_TRUSTED_ASSOCIATIONS` | `OWNER,MEMBER,COLLABORATOR` | Associations whose rules are captured at once; others are queued. |
+| `HIVE_REVIEW_FEEDBACK_RULES` | on | Set to `0`, `false`, `off` or `no` to stop rule capture, or to any other value to keep it on whatever `review_feedback.rules.enabled` says. Unlike the yaml key, it also keeps the review-rules channel out of the kick primer. |
+| `HIVE_REVIEW_FEEDBACK_RULE_TRUSTED_ASSOCIATIONS` | `OWNER,MEMBER,COLLABORATOR` | Overrides `review_feedback.rules.trusted_associations`. |
 | `HIVE_REVIEW_FEEDBACK_RULES_MAX` | `200` | Bound on live (active or queued) rules. |
 | `HIVE_REVIEW_FEEDBACK_RULE_MERGE_THRESHOLD` | `0.8` | Text similarity at which same-scope rules merge. |
 | `HIVE_REVIEW_FEEDBACK_RULES_VAULT` | `/data/vaults/review-rules` | Knowledge channel the rules are written to. |

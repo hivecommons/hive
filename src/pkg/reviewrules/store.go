@@ -255,7 +255,9 @@ type Store struct {
 	dir   string
 	vault string
 	cfg   Config
-	st    index
+	// policy is the operator's live phrase and signal preferences.
+	policy Policy
+	st     index
 	// Reindex, when set, is called after the vault changed so the primer's
 	// view is current without waiting for its periodic refresh.
 	Reindex func()
@@ -341,6 +343,19 @@ type Result struct {
 	// Signals are the classification signals that matched.
 	Signals []string
 	Err     error
+}
+
+// SetPolicy applies an operator's policy to a running store: the trusted
+// associations, the extra phrases and the disabled signals take effect on the
+// next comment, without a restart (hivecommons/hive#19138). The caps in the
+// store's Config are unchanged.
+func (s *Store) SetPolicy(p Policy) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.policy = p
+	if p.Trusted != nil {
+		s.cfg.Trusted = p.Trusted
+	}
 }
 
 func (s *Store) trusted(assoc string) bool {
@@ -449,16 +464,16 @@ func (s *Store) Remember(c Comment, now time.Time) error {
 // It is idempotent per comment: a comment id that was captured, queued or
 // merged before returns OutcomeDuplicate and changes nothing.
 func (s *Store) CaptureComment(c Comment, now time.Time) Result {
-	cl := Classify(c.Body)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cl := ClassifyWith(c.Body, s.policy)
 	if cl.Kind != KindRule {
 		return Result{Outcome: OutcomeNotRule}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if id, ok := s.st.Comments[c.key()]; ok {
 		return Result{Outcome: OutcomeDuplicate, Rule: s.copyOf(s.resolve(s.byID(id))), Signals: cl.Signals}
 	}
-	text := ExtractRuleText(c.Body)
+	text := ExtractRuleTextWith(c.Body, s.policy)
 	if text == "" {
 		return Result{Outcome: OutcomeRefused, Signals: cl.Signals, Err: errors.New("the comment has no text to record")}
 	}

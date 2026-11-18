@@ -52,6 +52,9 @@ const (
 	SignalCaptureRequest = "capture-request"
 	SignalCriteria       = "assessment-criteria"
 	SignalKnowledgeBase  = "knowledge-base"
+	// SignalExtraPhrase marks a match on an operator-supplied phrase
+	// (review_feedback.rules.extra_phrases).
+	SignalExtraPhrase = "extra-phrase"
 )
 
 type signal struct {
@@ -135,13 +138,24 @@ type Classification struct {
 
 // Classify says whether body states a rule for future work. It is a pure
 // function of the text: every signal is an explicit phrase from ruleSignals.
-func Classify(body string) Classification {
+func Classify(body string) Classification { return ClassifyWith(body, Policy{}) }
+
+// ClassifyWith is Classify under an operator's policy: built-in signals the
+// policy disables do not count, and its extra phrases count as one more signal
+// named SignalExtraPhrase.
+func ClassifyWith(body string, p Policy) Classification {
 	body = stripNoise(body)
 	var hit []string
 	for _, s := range ruleSignals {
+		if p.DisabledSignals[s.name] {
+			continue
+		}
 		if s.re.MatchString(body) {
 			hit = append(hit, s.name)
 		}
+	}
+	if re := p.extraRegexp(); re != nil && re.MatchString(body) {
+		hit = append(hit, SignalExtraPhrase)
 	}
 	if len(hit) == 0 {
 		return Classification{Kind: KindCorrection}
@@ -156,14 +170,18 @@ func ForeignHomeHint(body string) bool { return foreignHomeHint.MatchString(body
 // ExtractRuleText returns the rule a comment states: the sentences that carry a
 // signal, without the clauses that only ask for the capture, normalised and
 // bounded. A comment with no signal yields its whole body, bounded.
-func ExtractRuleText(body string) string {
+func ExtractRuleText(body string) string { return ExtractRuleTextWith(body, Policy{}) }
+
+// ExtractRuleTextWith is ExtractRuleText under an operator's policy, so a
+// sentence carrying only an extra phrase is kept as the rule.
+func ExtractRuleTextWith(body string, p Policy) string {
 	clean := stripNoise(body)
 	var kept []string
 	for _, sent := range sentenceSplit.Split(clean, -1) {
 		if strings.TrimSpace(sent) == "" {
 			continue
 		}
-		if Classify(sent).Kind == KindRule {
+		if ClassifyWith(sent, p).Kind == KindRule {
 			kept = append(kept, sent)
 		}
 	}

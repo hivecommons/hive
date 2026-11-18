@@ -386,16 +386,27 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		}
 		reviewFeedbackStore = st
 	}
-	if reviewRuleStore == nil && reviewrules.Enabled() {
-		rs, err := reviewrules.Open(reviewrules.Dir(), reviewrules.VaultDir(), reviewrules.ConfigFromEnv())
+	// The rule preferences are read from hive.yaml on every pass, so an owner's
+	// edit in Settings takes effect on the next pass without a restart
+	// (hivecommons/hive#19138). The environment variables still win.
+	rulePolicy := reviewRulePolicy(cfg)
+	if reviewRuleStore == nil && !rulePolicy.Off {
+		rcfg := reviewrules.ConfigFromEnv()
+		rcfg.Trusted = rulePolicy.Trusted
+		rs, err := reviewrules.Open(reviewrules.Dir(), reviewrules.VaultDir(), rcfg)
 		if err != nil {
 			logger.Warn("review feedback: rule index unreadable or not writable; rules kept in memory only", "dir", reviewrules.Dir(), "error", err)
 		}
 		reviewRuleStore = rs
 	}
+	var ruleStore *reviewrules.Store
 	if reviewRuleStore != nil {
+		reviewRuleStore.SetPolicy(rulePolicy)
 		for _, line := range reviewRuleStore.Reconcile(now) {
 			logger.Info("review feedback: rule changed by an operator", "change", line)
+		}
+		if !rulePolicy.Off {
+			ruleStore = reviewRuleStore
 		}
 	}
 	available := agentAvailability(cfg, agentMgr)
@@ -410,7 +421,7 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		Cursor:       reviewFeedbackCursor,
 		Now:          now,
 		Logger:       logger,
-		Rules:        reviewRuleStore,
+		Rules:        ruleStore,
 		Lane:         cfg.BaseAgentName,
 		Managed:      cfg.IsManagedRepo,
 		Route: func(owner string) reviewFeedbackRoute {
@@ -435,5 +446,22 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		logger.Info("review feedback pass", "checked", res.Checked, "kicked", res.Kicked, "debounced", res.Debounced,
 			"cap_reached", res.CapReached, "needs_human", res.NeedsHuman, "errors", res.Errors,
 			"rules_captured", res.RulesCaptured, "rules_queued", res.RulesQueued, "rules_merged", res.RulesMerged)
+	}
+}
+
+// reviewRulePolicy is the effective rule-capture policy: review_feedback.rules
+// in hive.yaml merged with the environment variables, which still win.
+func reviewRulePolicy(cfg *config.Config) reviewrules.Policy {
+	return reviewrules.Resolve(reviewRuleSettings(cfg)).Policy
+}
+
+// reviewRuleSettings converts the yaml block to the package's plain settings.
+func reviewRuleSettings(cfg *config.Config) reviewrules.Settings {
+	r := cfg.ReviewFeedbackRules()
+	return reviewrules.Settings{
+		Enabled:             r.Enabled,
+		TrustedAssociations: r.TrustedAssociations,
+		ExtraPhrases:        r.ExtraPhrases,
+		DisabledSignals:     r.DisabledSignals,
 	}
 }
