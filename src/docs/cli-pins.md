@@ -121,6 +121,15 @@ A pin change can leave Hive's model lists behind. Two layers cover it:
   and a `modelPrices` row from `pricetable --add` (same plausibility rules as
   the price refresh). Everything else is listed under "needs a check" in one
   PR on `bot/claude-model-freshness`, which carries `needs-human`.
+- Gemini: `geminiPinnedCLIModels` is kept by hand. Neither `src/Dockerfile`
+  nor `src/Dockerfile.contributor` installs a Gemini CLI, so there is no
+  pinned binary to check ids against. The weekly
+  `static-model-freshness.yml` report still flags drift for it.
+- Goose: out of scope. Its models depend on whichever provider an operator
+  configures, so there is no single list to keep fresh; the dashboard's ACP
+  probe asks the configured provider at run time.
+- Copilot, codex, agy and omp are tracked under
+  [#19028](https://github.com/hivecommons/hive/issues/19028).
 
 The PR then runs the normal gates. The docker workflow builds both images for
 linux/amd64 and linux/arm64, where every hash-verified layer runs
