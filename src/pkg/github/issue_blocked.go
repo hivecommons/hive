@@ -607,7 +607,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 			scanned = err == nil
 			if scan.ok {
 				prRepo, prNumber, onIssue, ok = scan.prRepo, scan.pr, scan.issue, scan.ok
-				noteBlockedOnSeen(t.repo, t.number, scan.prRepo, scan.pr)
+				noteBlockedOnSeenRef(t.repo, t.number, blockedOnRef{repo: scan.prRepo, number: scan.pr, issue: scan.issue})
 				blockers, fromComment = scan.refs, true
 			}
 			if !ok && !t.recheckAfter.IsZero() && !now.Before(t.recheckAfter) {
@@ -910,9 +910,18 @@ func blockedOnSeenKey(repo string, number int) string {
 }
 
 func noteBlockedOnSeen(repo string, number int, prRepo string, pr int) {
+	noteBlockedOnSeenRef(repo, number, blockedOnRef{repo: prRepo, number: pr})
+}
+
+// noteBlockedOnSeenRef is noteBlockedOnSeen for either marker form. It keeps
+// the issue form's "issue " word, so the reason the enumeration rebuilds from
+// it ("blocked on issue owner/repo#N") still names an issue: in the PR form, a
+// later pass whose comment budget skipped the issue read the reason back as a
+// PR and looked the blocker up with GET /pulls/N, which 404s for an issue.
+func noteBlockedOnSeenRef(repo string, number int, ref blockedOnRef) {
 	blockedOnSeen.Lock()
 	defer blockedOnSeen.Unlock()
-	blockedOnSeen.m[blockedOnSeenKey(repo, number)] = prRepo + "#" + strconv.Itoa(pr)
+	blockedOnSeen.m[blockedOnSeenKey(repo, number)] = ref.reasonRef()
 }
 
 func forgetBlockedOnSeen(repo string, number int) {
@@ -1156,7 +1165,7 @@ func reconcileBlockedOnAll(ctx context.Context, c *Client, t blockedIssueTarget,
 		logger.Info("blocked sweep: issue unblocked; every blocker settled", "repo", t.repo, "issue", t.number, "blockers", blockedOnRefList(settled))
 		return
 	}
-	noteBlockedOnSeen(t.repo, t.number, open[0].repo, open[0].number)
+	noteBlockedOnSeenRef(t.repo, t.number, open[0])
 	if len(moves) > 0 {
 		retargetBlockedOnAll(ctx, c, t, open, moves, scanned, res, logger)
 	}
