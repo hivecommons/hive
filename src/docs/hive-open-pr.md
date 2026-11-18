@@ -160,7 +160,7 @@ look for the PR.
 Because the PR is authored by the App bot, the bot identity alone cannot answer
 "which agent/backend/model produced this?". So when the watcher opens the PR,
 it appends a visible one-line trailer to the body you wrote
-(`pkg/github.AppendTrailer`): the `— hive:` prefix followed by
+(`pkg/github.AppendTrailer`): the `-- hive:` prefix followed by
 space-separated `key=value` pairs, e.g. `agent=quality backend=bob model=auto
 bobshell=1.0.6 requested_by=@octocat`. (A verbatim trailer line is not
 reproduced here on purpose: the watcher's content check rejects a request whose
@@ -172,9 +172,9 @@ possible fields are `agent`, `backend`, `model`, `effort`, `<tool>=<version>`,
 `session`, and `requested_by`. The trailer is gated by
 `governor.attribution_trailer` (default ON), but the matching audit entry
 (`agent_pr_created` in `audit.jsonl`, same key=value pairs — see
-[audit-log.md](audit-log.md)) is written regardless of the toggle. The `— hive:`
+[audit-log.md](audit-log.md)) is written regardless of the toggle. The `-- hive:`
 prefix doubles as the stacking guard: a request the watcher retries after a
-partial failure will not gain a second trailer. Do not write a `— hive:` line
+partial failure will not gain a second trailer. Do not write a `-- hive:` line
 into your own body — the watcher will treat it as an existing trailer and skip
 its own.
 

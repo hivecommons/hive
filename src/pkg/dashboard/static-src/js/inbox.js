@@ -86,7 +86,10 @@
     }
     // Uploaded documents have no audio; uploaded audio/video does. Mailed-in
     // audio (source email) is opened as a file, not streamed.
-    function inboxItemHasAudio(it) { return !it || (it.source !== 'upload' && it.source !== 'email') || (it.source === 'upload' && (it.upload_kind === 'audio' || it.upload_kind === 'video')); }
+    // Meetings hive attended (source meeting) never keep audio: the bot only
+    // transcribes (docs/meetings.md, "No audio is stored"), so there is nothing
+    // to play and no player, play button or error toast is offered.
+    function inboxItemHasAudio(it) { return !it || (it.source !== 'upload' && it.source !== 'email' && it.source !== 'meeting') || (it.source === 'upload' && (it.upload_kind === 'audio' || it.upload_kind === 'video')); }
     // Mailed-in files (source email) are opened from the hive itself: GET /api/inbox/email/{id}/file.
     function inboxEmailFileUrl(it) { return '/api/inbox/email/' + encodeURIComponent(it.id) + '/file'; }
     // The role is known once /api/role settled (answered, or retries gave up:
@@ -516,6 +519,7 @@
         '<div class="muted-xs inbox-meta">' + meta + '</div>' +
         inboxSummaryHtml(it, key) +
         '<div class="inbox-media" data-inbox-media="' + escapeHtml(key) + '"></div>' +
+        (it.source === 'meeting' ? '<div class="muted-xs inbox-audio-none">Audio is not kept for live meetings</div>' : '') +
         (it.source === 'email' && it.upload_kind === 'image' && inboxViewerCanPlay() ? '<img class="inbox-email-image" loading="lazy" src="' + escapeHtml(inboxEmailFileUrl(it)) + '" alt="' + escapeHtml(it.title || 'mailed-in image') + '">' : '') +
         (pills ? '<div class="inbox-pills">' + pills + '</div>' : '') +
         inboxTranscriptionHtml(it, key) +
@@ -586,6 +590,7 @@
       return 'Streaming through this hive; the recording is not stored.' + restart;
     }
     function inboxPlay(src, id) {
+      if (src === 'meeting') return;
       const key = src + '/' + id;
       const target = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
       if (!target) return;

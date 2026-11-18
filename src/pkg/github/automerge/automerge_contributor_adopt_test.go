@@ -424,7 +424,7 @@ func adoptPR(number int, head string, labels ...string) *gh.PullRequest {
 	pr := nudgePR(number, head, labels...)
 	pr.Base = &gh.PullRequestBranch{Ref: gh.Ptr("v5")}
 	pr.Head.Repo = &gh.Repository{FullName: gh.Ptr("mallory/widget")}
-	pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\nfixes #13\n\n— hive: backend=pi model=gpt-6\n")
+	pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\nfixes #13\n\n-- hive: backend=pi model=gpt-6\n")
 	return pr
 }
 
@@ -776,7 +776,7 @@ func TestAdoptionOnlineGraceThenAdopt(t *testing.T) {
 // superseding PR. Once the superseder merges the original is closed.
 func TestAdoptionOfflineGraceThenSupersederMergedClosesOriginal(t *testing.T) {
 	// A sink without Presence: the nudge-time graces apply (the author's
-	// `— hive:` trailer still makes the PR a clanker's).
+	// `-- hive:` trailer still makes the PR a clanker's).
 	fake := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "comment"}}
 	h, done := newAdoptHarnessWith(t, fake, nudgeOnlySink{fake}, adoptPolicy())
 	defer done()

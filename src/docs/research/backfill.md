@@ -50,7 +50,7 @@ simply repeated.
 
 Agent logins: pass `--agent-login <login>` for any account the hive uses to
 open PRs under its own name (the GitHub App bot login is usually already caught
-by the `— hive:` trailer or the 🐝 footer, and lands as `author_kind_rule:
+by the `-- hive:` trailer or the 🐝 footer, and lands as `author_kind_rule:
 attribution_trailer` / `identity_footer`). Check the first dry run's
 `agent` count against what the hive's throughput card reports for the window.
 

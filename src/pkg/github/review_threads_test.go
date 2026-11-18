@@ -314,7 +314,7 @@ func TestCollectReviewThreads(t *testing.T) {
 	mock.add(&gqlThread{ID: "PRRT_7", Comments: []gqlComment{bot}, PRNumber: 7, RepoOwner: "o", RepoName: "r", HeadRef: "hive/blocked", DatabaseID: 70})
 	// PR 8 is the hivecommons/hive#7638 case: a hive agent opened it on the
 	// operator's own credentials, so GitHub shows a human author, but the body
-	// carries the `— hive:` trailer. Its bot thread must be listed; the human
+	// carries the `-- hive:` trailer. Its bot thread must be listed; the human
 	// thread beside it must not. PR 4 (same author, no trailer) stays dropped.
 	mock.add(&gqlThread{ID: "PRRT_8", Path: "docs/perm.md", Line: 12, Comments: []gqlComment{{Author: "chatgpt-codex-connector", Body: "Update the permission note"}}, PRNumber: 8, RepoOwner: "o", RepoName: "r", HeadRef: "relay/fix-8", DatabaseID: 80})
 	mock.add(&gqlThread{ID: "PRRT_8h", Path: "docs/perm.md", Line: 30, Comments: []gqlComment{{Author: "dave", Body: "typo"}}, PRNumber: 8, RepoOwner: "o", RepoName: "r", HeadRef: "relay/fix-8", DatabaseID: 90})

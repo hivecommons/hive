@@ -42,7 +42,7 @@ func hiveFixingPR(number int, head string, labels ...string) *gh.PullRequest {
 // re-author for, so exhaustion parks it for a person.
 func hiveFixingPRNoIssue(number int, head string, labels ...string) *gh.PullRequest {
 	pr := hiveFixingPR(number, head, labels...)
-	pr.Body = gh.Ptr("Tidy the widget.\n\n— hive: backend=pi model=gpt-6\n")
+	pr.Body = gh.Ptr("Tidy the widget.\n\n-- hive: backend=pi model=gpt-6\n")
 	return pr
 }
 
