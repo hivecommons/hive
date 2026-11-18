@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -132,7 +133,17 @@ type relayHarness struct {
 
 func newRelayHarness(t *testing.T, token SandboxReadTokenFunc) *relayHarness {
 	t.Helper()
+	return newRelayHarnessWithLogger(t, token, nil)
+}
+
+// newRelayHarnessWithLogger is newRelayHarness with the proxy's logger replaced
+// before the listener starts, so a test can read back everything the relay logs.
+func newRelayHarnessWithLogger(t *testing.T, token SandboxReadTokenFunc, logger *slog.Logger) *relayHarness {
+	t.Helper()
 	p, _ := newTestProxyWithCA(t)
+	if logger != nil {
+		p.logger = logger
+	}
 	relay, err := NewSandboxReadRelay(p, SandboxReadRelayOptions{Endpoint: "http://hive.example.svc:18445", Token: token})
 	if err != nil {
 		t.Fatal(err)
@@ -380,5 +391,106 @@ func TestNewSandboxReadRelayRejectsCredentialedEndpoint(t *testing.T) {
 		if _, err := NewSandboxReadRelay(p, SandboxReadRelayOptions{Endpoint: ep}); err == nil {
 			t.Errorf("endpoint %q accepted", ep)
 		}
+	}
+}
+
+// A request inside the tunnel that names another host (Host header or absolute
+// URL) must not borrow the CONNECT host's credential decision.
+func TestSandboxReadRelayRefusesHostMismatchInsideTunnel(t *testing.T) {
+	h := newRelayHarness(t, func() (string, error) { return testReadToken, nil })
+	user, release := enrollKey(t, h.relay, "deps")
+	defer release()
+
+	for _, tc := range []struct{ name, hostHeader, target string }{
+		{"host header", "github.com", "/repos/o/r"},
+		{"absolute url", "api.github.com", "https://evil.example/repos/o/r"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, status := h.connect(t, user, "api.github.com:443")
+			if status != 200 {
+				t.Fatalf("CONNECT status = %d", status)
+			}
+			_, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", tc.target, tc.hostHeader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403", resp.StatusCode)
+			}
+			if len(h.seen()) != 0 {
+				t.Fatal("a mismatched-host request reached upstream with the CONNECT host's credential")
+			}
+		})
+	}
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// The read token and the per-kick relay key must never appear in the relay's
+// logs, at the most verbose level, across injected, refused and anonymous
+// requests.
+func TestSandboxReadRelayNeverLogsTokenOrKey(t *testing.T) {
+	var logs lockedBuffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	h := newRelayHarnessWithLogger(t, func() (string, error) { return testReadToken, nil }, logger)
+	user, release := enrollKey(t, h.relay, "deps")
+	defer release()
+	_, key, _ := strings.Cut(user, ":")
+
+	tc, _ := h.connect(t, user, "api.github.com:443")
+	_ = roundTrip(t, tc, "GET", "api.github.com", "/repos/o/r", map[string]string{"Authorization": "token AGENT_SUPPLIED"})
+	tc2, _ := h.connect(t, user, "api.github.com:443")
+	_ = roundTrip(t, tc2, "POST", "api.github.com", "/repos/o/r/issues", map[string]string{"Authorization": "token AGENT_SUPPLIED"})
+	_, _ = h.connect(t, SandboxReadProxyUser+":"+key+"x", "api.github.com:443")
+
+	out := logs.String()
+	if out == "" {
+		t.Fatal("expected the relay to log its decisions")
+	}
+	for _, secret := range []string{testReadToken, key, "AGENT_SUPPLIED"} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("relay logs contain a secret (%q):\n%s", secret, out)
+		}
+	}
+}
+
+// Each kick gets its own key, keys are unguessable, and releasing one kick
+// leaves the others live.
+func TestSandboxReadRelayKeysArePerKick(t *testing.T) {
+	h := newRelayHarness(t, nil)
+	u1, rel1 := enrollKey(t, h.relay, "deps")
+	u2, rel2 := enrollKey(t, h.relay, "deps")
+	defer rel2()
+	if u1 == u2 {
+		t.Fatal("two kicks of one agent shared a relay key")
+	}
+	if _, key, _ := strings.Cut(u1, ":"); len(key) < 2*sandboxReadKeyBytes {
+		t.Fatalf("relay key too short: %d chars", len(key))
+	}
+	rel1()
+	if _, status := h.connect(t, u1, "api.github.com:443"); status != http.StatusProxyAuthRequired {
+		t.Fatalf("released kick key: status = %d, want 407", status)
+	}
+	if _, status := h.connect(t, u2, "api.github.com:443"); status != 200 {
+		t.Fatalf("other kick key: status = %d, want 200", status)
 	}
 }

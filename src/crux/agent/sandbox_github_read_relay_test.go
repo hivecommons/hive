@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -107,5 +108,28 @@ func TestMergeSandboxEnvDoesNotMutateInputs(t *testing.T) {
 	}
 	if got := mergeSandboxEnv(nil, nil); got != nil {
 		t.Fatalf("merge of nothing = %v", got)
+	}
+}
+
+// The relay is installed through crux.Host like every other host capability
+// (no type assertion in boot).
+func TestManagerSetSandboxGitHubReadRelayInstallsAndClears(t *testing.T) {
+	m := &Manager{}
+	var host crux.Host = m
+	relay := &fakeReadRelay{}
+	noProxy := []string{"internal.example"}
+	host.SetSandboxGitHubReadRelay(relay, noProxy)
+	noProxy[0] = "mutated.example"
+
+	in := m.sandboxReadRelay.cur.Load()
+	if in == nil || in.relay != SandboxGitHubReadRelay(relay) {
+		t.Fatal("relay was not installed")
+	}
+	if len(in.noProxy) != 1 || in.noProxy[0] != "internal.example" {
+		t.Fatalf("noProxy = %v; the caller's slice must be copied", in.noProxy)
+	}
+	host.SetSandboxGitHubReadRelay(nil, []string{"ignored.example"})
+	if m.sandboxReadRelay.cur.Load() != nil {
+		t.Fatal("a nil relay must switch the feature off")
 	}
 }

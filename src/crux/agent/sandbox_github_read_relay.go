@@ -6,19 +6,38 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
 
-// SandboxGitHubReadRelay is the hive-hosted relay a sandbox Job sends its
-// GitHub reads through (#18865). Enroll admits one kick and returns the proxy
-// URL for it (carrying a per-kick relay key, never a GitHub credential), the
-// PEM trust bundle the Job needs to accept the relay's certificates, and a
-// release func that revokes the key. It lives behind an interface so this
-// package does not depend on the proxy.
-type SandboxGitHubReadRelay interface {
-	Enroll(agentName string) (proxyURL string, caBundlePEM []byte, release func(), err error)
+// SandboxGitHubReadRelay is the relay a sandbox Job sends its GitHub reads
+// through (#18865); see crux.SandboxGitHubReadRelay.
+type SandboxGitHubReadRelay = crux.SandboxGitHubReadRelay
+
+// sandboxReadRelayState is the Manager's relay wiring; the zero value is off.
+// The relay and its extra NO_PROXY hosts are stored as one value so a reader
+// never sees one from a previous install paired with the other.
+type sandboxReadRelayState struct {
+	cur atomic.Pointer[sandboxReadRelayInstall]
+}
+
+type sandboxReadRelayInstall struct {
+	relay   SandboxGitHubReadRelay
+	noProxy []string
+}
+
+// SetSandboxGitHubReadRelay installs (or, with nil, removes) the relay that
+// carries sandbox Job GitHub reads (#18865). noProxy adds hosts Jobs reach
+// directly.
+func (m *Manager) SetSandboxGitHubReadRelay(relay SandboxGitHubReadRelay, noProxy []string) {
+	if relay == nil {
+		m.sandboxReadRelay.cur.Store(nil)
+		return
+	}
+	m.sandboxReadRelay.cur.Store(&sandboxReadRelayInstall{relay: relay, noProxy: append([]string(nil), noProxy...)})
 }
 
 const (

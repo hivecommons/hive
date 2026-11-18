@@ -357,6 +357,12 @@ func (r *SandboxReadRelay) intercept(conn net.Conn, host, agentName string) {
 			return
 		}
 		d := SandboxReadPolicy(host, req.Method, req.URL.Path, req.URL.RawQuery)
+		if d.Allowed && !sandboxReadRequestTargetsHost(req, host) {
+			// The policy and the credential decision were made for the CONNECT
+			// host; a request naming a different Host or an absolute URL for
+			// another host must not ride that decision.
+			d = SandboxReadDecision{Reason: "the request names a different host than the CONNECT target"}
+		}
 		if !d.Allowed {
 			r.p.logger.Info("sandbox read relay: request refused", "agent", agentName, "host", host, "method", req.Method)
 			writeRelayRefusal(client, d.Reason)
@@ -398,6 +404,24 @@ func (r *SandboxReadRelay) intercept(conn net.Conn, host, agentName string) {
 			return
 		}
 	}
+}
+
+// sandboxReadRequestTargetsHost reports whether the Host header and any
+// absolute request URL name the host the tunnel was opened for.
+func sandboxReadRequestTargetsHost(req *http.Request, host string) bool {
+	want := canonicalHost(host)
+	for _, got := range []string{req.Host, req.URL.Host} {
+		if got == "" {
+			continue
+		}
+		if h, _, err := net.SplitHostPort(got); err == nil {
+			got = h
+		}
+		if canonicalHost(got) != want {
+			return false
+		}
+	}
+	return true
 }
 
 // dialUpstream opens the TLS leg to a read host. It is a method so
