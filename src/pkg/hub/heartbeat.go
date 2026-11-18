@@ -308,6 +308,8 @@ type HeartbeatPayload struct {
 	RepoTargetMisconfigured      bool                            `json:"repo_target_misconfigured,omitempty"`
 	RepoTargetIssue              string                          `json:"repo_target_issue,omitempty"`
 	GitHubAppState               string                          `json:"github_app_state,omitempty"`
+	PRGateCause                  string                          `json:"pr_gate_cause,omitempty"`
+	PRGateDependsOn              bool                            `json:"pr_gate_depends_on,omitempty"`
 	AutoUpgrade                  bool                            `json:"auto_upgrade,omitempty"`
 	Upgrading                    bool                            `json:"upgrading,omitempty"`
 	UpgradeTargetSHA             string                          `json:"upgrade_target_sha,omitempty"`

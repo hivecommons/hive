@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/prgate"
 )
@@ -36,10 +38,95 @@ func (a prGateAPI) PostStatus(ctx context.Context, repo string, number int, sha,
 // NewPRGate builds the gate over c. modeOf returns the configured mode string
 // of a repository ("off", "shadow" or "enforce"; anything else reads as off).
 func NewPRGate(c *Client, modeOf func(repo string) string, log *slog.Logger) *PRGate {
-	return &PRGate{gate: prgate.New(prGateAPI{c: c}, func(repo string) prgate.Mode {
+	g := prgate.New(prGateAPI{c: c}, func(repo string) prgate.Mode {
 		m, _ := prgate.ParseMode(modeOf(repo))
 		return m
-	}, log)}
+	}, log)
+	g.Grant = func(ctx context.Context) (prgate.GrantInfo, error) {
+		grant, err := c.ReadPRGateGrant(ctx)
+		return prgate.GrantInfo{Applicable: grant.Applicable, Installation: grant.Installation, Level: grant.Level}, err
+	}
+	return &PRGate{gate: g}
+}
+
+// Causes a gate cannot be posted, as the spoke reports them to the hub.
+const (
+	PRGateCauseGrantMissing = "grant-missing"
+	PRGateCauseWriteRefused = "write-refused"
+)
+
+// PRGateHealth is the gate's visible state on /api/status and the heartbeat.
+// It is only present while at least one repository is configured for the gate.
+type PRGateHealth struct {
+	Configured string `json:"configured"`
+	Effective  string `json:"effective"`
+	// Cause is "" while the gate can post, else PRGateCauseGrantMissing or
+	// PRGateCauseWriteRefused.
+	Cause          string   `json:"cause,omitempty"`
+	Installation   string   `json:"installation,omitempty"`
+	Granted        string   `json:"granted,omitempty"`
+	ForbiddenRepos []string `json:"forbiddenRepos,omitempty"`
+	// DependsOnGate is true when a required context of a scoped repository is
+	// one the gate posts, and the gate is (or from the cutoff will be) what
+	// supplies it: a failure to post then stalls merges.
+	DependsOnGate   bool   `json:"dependsOnGate"`
+	DaysUntilCutoff int    `json:"daysUntilCutoff"`
+	Cutoff          string `json:"cutoff"`
+	// Message says what is missing and where an owner accepts it; set only
+	// while Cause is.
+	Message string `json:"message,omitempty"`
+}
+
+// Health summarises the gate over the configured scope. dependsOnRequired is
+// whether any scoped repository's required checks include a gate context (or
+// are unknown); now supplies the cutoff countdown.
+func (p *PRGate) Health(repos []string, dependsOnRequired bool, now time.Time) *PRGateHealth {
+	if p == nil {
+		return nil
+	}
+	h := p.gate.HealthFor(repos)
+	if h.Configured == prgate.ModeOff {
+		return nil
+	}
+	out := &PRGateHealth{
+		Configured: string(h.Configured), Effective: string(h.Effective),
+		Installation: h.Installation, Granted: h.Granted, ForbiddenRepos: h.ForbiddenRepos,
+		DaysUntilCutoff: prgate.DaysUntilCutoff(now), Cutoff: prgate.Cutoff.Format(time.DateOnly),
+	}
+	switch {
+	case h.GrantMissing:
+		out.Cause = PRGateCauseGrantMissing
+		out.Message = prgate.MissingGrantHint
+	case len(h.ForbiddenRepos) > 0:
+		out.Cause = PRGateCauseWriteRefused
+		out.Message = "GitHub refused the gate's commit status write (403) on: " + strings.Join(h.ForbiddenRepos, ", ") + ". " + prgate.MissingGrantHint
+	}
+	// Shadow posts a name no branch rule reads: it only stalls merges once the
+	// workflow can no longer supply the required context (the cutoff), or when
+	// the operator asked for enforce.
+	out.DependsOnGate = dependsOnRequired && (h.Configured == prgate.ModeEnforce || !now.Before(prgate.Cutoff))
+	return out
+}
+
+// GrantStale reports whether the installation grant is due for a re-read.
+func (p *PRGate) GrantStale() bool { return p != nil && p.gate.GrantStale() }
+
+// RefreshGrant re-reads the installation grant when it is stale; a fresh
+// answer costs no request.
+func (p *PRGate) RefreshGrant(ctx context.Context) {
+	if p != nil {
+		p.gate.RefreshGrant(ctx)
+	}
+}
+
+// RegisterAsDefault makes this the gate the merge lanes consult for the held
+// reason. Nil clears it.
+func (p *PRGate) RegisterAsDefault() {
+	if p == nil {
+		prgate.SetDefault(nil)
+		return
+	}
+	prgate.SetDefault(p.gate)
 }
 
 // IsPRGateCheckName reports whether name is one of the workflow-recorded

@@ -79,9 +79,14 @@ const (
 	// edits `.github/workflows/**` needs `workflows: write`; without it the
 	// lane parks the PR for a person's merge click (hivecommons/hive#14664).
 	UnauthorizedStepMergeWorkflowPath = "merge-workflow-path"
-	TrustedAuthorReasonAppAuthored    = "trusted-author:app-authored"
-	TrustedBotLaneSkipReason          = "trusted-bot-lane"
-	WorkflowApprovalRequiredPrefix    = "workflow-approval-required:"
+	// UnauthorizedStepPostPRGateStatus: the hive posts the required PR-contents
+	// check itself (auto_merge.pr_gate, enforce) and its installation lacks
+	// Commit statuses write, or GitHub refused the write; an organization
+	// owner accepts the permission (hivecommons/hive#19038).
+	UnauthorizedStepPostPRGateStatus = "post-pr-gate-status"
+	TrustedAuthorReasonAppAuthored   = "trusted-author:app-authored"
+	TrustedBotLaneSkipReason         = "trusted-bot-lane"
+	WorkflowApprovalRequiredPrefix   = "workflow-approval-required:"
 	// RequiredCheckNeverReportedPrefix: auto_merge.required_checks names a
 	// check that has never reported on this repo, so the trusted-bot lane
 	// cannot gate on it and no other check vouches for the head. A person

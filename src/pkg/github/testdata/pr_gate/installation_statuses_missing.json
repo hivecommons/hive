@@ -1,0 +1,1 @@
+{"id": 1, "account": {"login": "example-org"}, "permissions": {"metadata": "read", "issues": "write", "pull_requests": "write", "statuses": "read"}}
