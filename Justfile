@@ -1391,6 +1391,9 @@ contribute-hive backend="" mode="docker": check-version
       # are shell syntax and the pane dies with `syntax error near token '('`
       # before the CLI ever starts. backend_perm_flag stays raw for argv
       # consumers (agent-launch.sh); see backends.conf.
+      # PERM_ENV: VAR=value assignments the backend's posture needs; the
+      # launch line puts them before the binary (opencode's deny-list).
+      PERM_ENV=""
       case "$BACKEND" in
         claude|litellm)
           PERM_FLAG=$(claude_family_local_perm_flag_shell)
@@ -1399,6 +1402,9 @@ contribute-hive backend="" mode="docker": check-version
           PERM_FLAG=$(copilot_local_perm_flag_shell)
           ;;
         opencode)
+          # The deny-list is an environment assignment; it goes on the
+          # launch line before the binary (PERM_ENV below), never after it.
+          PERM_ENV=$(opencode_local_perm_env_shell)
           PERM_FLAG=$(opencode_local_perm_flag_shell)
           ;;
         muse)
@@ -1569,7 +1575,7 @@ contribute-hive backend="" mode="docker": check-version
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV GOTMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV TMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV CCACHE_DIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/ccache")"
-      export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }${BUILD_CACHE_ENV} $CMD${PERM_FLAG:+ $PERM_FLAG}${SELECTION_FLAGS:+ $SELECTION_FLAGS}"
+      export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }${BUILD_CACHE_ENV}${PERM_ENV:+ $PERM_ENV} $CMD${PERM_FLAG:+ $PERM_FLAG}${SELECTION_FLAGS:+ $SELECTION_FLAGS}"
 
       # Registered before anything long-lived is forked below (knowledge
       # refresh, tmux session, quota publisher, relay); the PID variables it
