@@ -2050,3 +2050,65 @@ func TestBlockedSuccessorRefused(t *testing.T) {
 		}
 	}
 }
+
+// An issue-form marker read from a comment is remembered in the issue form:
+// the enumeration's next reason is "blocked on issue o/r#100", so a later
+// pass whose comment budget skips the issue looks the blocker up as an
+// issue. It used to be remembered as "o/r#100", read back as a PR, and
+// looked up with GET /repos/o/r/pulls/100, which 404s for an issue.
+func TestBlockedOnSeenKeepsIssueForm(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/40/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"<!-- hive:blocked-on issue=o/r#100 -->\nblocked on #100"}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/100":
+			_, _ = io.WriteString(w, `{"number":100,"state":"open"}`)
+		case r.Method == "GET" && (strings.HasSuffix(r.URL.Path, "/comments") || strings.HasSuffix(r.URL.Path, "/timeline")):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "DELETE":
+			_, _ = io.WriteString(w, `[]`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	t.Cleanup(func() { forgetBlockedOnSeen("o/r", 40) })
+	result := &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{
+		"o/r": {Issues: []RepoWorkIssue{{Repo: "o/r", Number: 40, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked"}}},
+	}}
+	if res := ReconcileBlockedIssues(context.Background(), c, result, nil); res.Errors != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	reason := blockedFilterReasonFor("o/r", 40, "")
+	if reason != "blocked on issue o/r#100" {
+		t.Fatalf("remembered reason = %q, want the issue form", reason)
+	}
+	// reconcileBlockedTargets reads a pass's blocker from this reason when
+	// its comment budget is spent; it must name an issue, not a PR.
+	if _, _, isIssue, ok := parseBlockedOnReason(reason); !ok || !isIssue {
+		t.Fatalf("reason %q reads back as a PR", reason)
+	}
+	mu.Lock()
+	for _, call := range calls {
+		if strings.Contains(call, "/pulls/") {
+			mu.Unlock()
+			t.Fatalf("issue blocker looked up as a PR: %v", calls)
+		}
+	}
+	mu.Unlock()
+
+	// The PR form is unchanged.
+	noteBlockedOnSeenRef("o/r", 41, blockedOnRef{repo: "o/r", number: 3})
+	t.Cleanup(func() { forgetBlockedOnSeen("o/r", 41) })
+	if got := blockedFilterReasonFor("o/r", 41, ""); got != "blocked on o/r#3" {
+		t.Fatalf("PR-form reason = %q", got)
+	}
+}
