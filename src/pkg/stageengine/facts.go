@@ -264,7 +264,11 @@ type PRFacts struct {
 	// because it is from a fork; non-empty only when every failing check
 	// does (the PR is then parked for a maintainer with reason fork-guard).
 	ForkGuardChecks []string
-	Lanes           []LaneFact // automerge lane opinions, precedence order (self > trusted > contributor)
+	// HeldWorkflowRuns are the head's workflow runs GitHub holds for
+	// approval that the hive did not approve (the PR is then parked for a
+	// maintainer with reason workflow-approval-required:held-runs).
+	HeldWorkflowRuns []int64
+	Lanes            []LaneFact // automerge lane opinions, precedence order (self > trusted > contributor)
 	// PostMerge is the observed post-merge pipeline status of a merged PR
 	// (pipeline.status); nil when no observer reported on it.
 	PostMerge *PostMergeFacts

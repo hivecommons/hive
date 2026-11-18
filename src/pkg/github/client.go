@@ -2796,12 +2796,6 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 	incidents := map[string]sharedCIIncidentState{}
 	for i := range prs {
 		reported := c.enrichPRCI(ctx, &prs[i])
-		// Unreported checks may be workflow runs waiting on GitHub's
-		// approve-workflows gate (dependabot, forks); only a pending head
-		// pays for the extra listing (hivecommons/hive#16599).
-		if prs[i].CIStatus == "pending" && prs[i].CIActivity != nil {
-			prs[i].CIActivity.WorkflowApproval = c.workflowApprovalWithLedger(prs[i].Repo, prs[i].Number, prs[i].HeadSHA, c.workflowRunsAwaitingApproval(ctx, prs[i].Repo, prs[i].HeadSHA))
-		}
 		if prs[i].CIStatus == "failure" {
 			if texts, hiveTexts, ok := c.redPRCommentTexts(ctx, &prs[i]); ok {
 				prs[i].SharedCIIncident = c.openSharedCIIncident(ctx, &prs[i], texts, incidents)
@@ -2810,6 +2804,12 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			}
 		}
 		facts.attach(ctx, &prs[i], reported)
+		// Unreported checks may be workflow runs waiting on GitHub's
+		// approve-workflows gate (dependabot, forks); only a head that may
+		// be held pays for the extra listing (hivecommons/hive#16599).
+		if workflowApprovalProbeWanted(prs[i]) {
+			prs[i].CIActivity.WorkflowApproval = c.workflowApprovalWithLedger(prs[i].Repo, prs[i].Number, prs[i].HeadSHA, c.workflowRunsAwaitingApproval(ctx, prs[i].Repo, prs[i].HeadSHA))
+		}
 		// The listing is the head's complete observation; checks delivered
 		// by webhook since then are laid over it (hivecommons/hive#16521).
 		owner, name := c.splitRepo(prs[i].Repo)

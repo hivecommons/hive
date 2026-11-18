@@ -176,6 +176,11 @@ type Observation struct {
 	// because it is from a fork (StageLabelPolicy.ForkGuard); non-empty only
 	// when every failing check does.
 	ForkGuardChecks []string
+	// HeldWorkflowRuns are the workflow runs GitHub holds behind its
+	// approve-workflows gate on the head that the hive did not approve
+	// (StageLabelPolicy.HeldWorkflowRuns); the PR is parked for a
+	// maintainer at 085 with reason workflow-approval-required:held-runs.
+	HeldWorkflowRuns []int64
 	// ForkGuardCarried marks ForkGuardChecks as carried from the PR's stage
 	// record onto a head the shared-CI index has not read yet (the lane's
 	// red check is one the guard refused before) rather than fresh evidence

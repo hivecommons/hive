@@ -67,3 +67,52 @@ func TestWorkflowApprovalCacheEvictsAndForgets(t *testing.T) {
 	}
 	workflowApprovalCache.Delete("org/repo@old2")
 }
+
+// The probe runs on every head that may be held, including a green head
+// missing a required check: a fork PR whose pull_request_target workflow
+// (Prow) passed while its pull_request runs wait for approval reads
+// "success" (projectbluefin/server#686).
+func TestWorkflowApprovalProbeWanted(t *testing.T) {
+	activity := &PRCIActivity{Head: "h"}
+	missing := &ProtectionFacts{RequiredChecksKnown: true, MissingRequiredChecks: []string{"Build"}}
+	for _, tc := range []struct {
+		name string
+		pr   PullRequest
+		want bool
+	}{
+		{name: "pending head", pr: PullRequest{CIStatus: "pending", CIActivity: activity}, want: true},
+		{name: "green head missing a required check", pr: PullRequest{CIStatus: "success", CIActivity: activity, Protection: missing}, want: true},
+		{name: "green head with every required check", pr: PullRequest{CIStatus: "success", CIActivity: activity, Protection: &ProtectionFacts{RequiredChecksKnown: true}}},
+		{name: "green head, protection unknown", pr: PullRequest{CIStatus: "success", CIActivity: activity}},
+		{name: "red head", pr: PullRequest{CIStatus: "failure", CIActivity: activity, Protection: missing}},
+		{name: "no check listing", pr: PullRequest{CIStatus: "pending"}},
+	} {
+		if got := workflowApprovalProbeWanted(tc.pr); got != tc.want {
+			t.Errorf("%s: probe wanted = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestHeldWorkflowRunIDs(t *testing.T) {
+	held := func(head string, wa *PRWorkflowApproval) PullRequest {
+		return PullRequest{HeadSHA: "h1", CIActivity: &PRCIActivity{Head: head, WorkflowApproval: wa}}
+	}
+	if got := held("h1", &PRWorkflowApproval{Pending: 2, RunIDs: []int64{11, 12}, Denied: true}).HeldWorkflowRunIDs(); len(got) != 2 || got[0] != 11 || got[1] != 12 {
+		t.Fatalf("denied runs = %v", got)
+	}
+	if got := held("h1", &PRWorkflowApproval{Pending: 1, RunIDs: []int64{11}, PermissionDenied: true}).HeldWorkflowRunIDs(); len(got) != 1 {
+		t.Fatalf("refused runs = %v", got)
+	}
+	if got := held("h1", &PRWorkflowApproval{Pending: 2, RunIDs: []int64{11, 12}}).HeldWorkflowRunIDs(); got != nil {
+		t.Fatalf("runs the sweep has not decided on read as held: %v", got)
+	}
+	if got := held("h0", &PRWorkflowApproval{Pending: 1, RunIDs: []int64{11}, Denied: true}).HeldWorkflowRunIDs(); got != nil {
+		t.Fatalf("another head's runs read as held: %v", got)
+	}
+	if got := held("h1", nil).HeldWorkflowRunIDs(); got != nil {
+		t.Fatalf("no probe, still held: %v", got)
+	}
+	if got := (PullRequest{HeadSHA: "h1"}).HeldWorkflowRunIDs(); got != nil {
+		t.Fatalf("no CI activity, still held: %v", got)
+	}
+}

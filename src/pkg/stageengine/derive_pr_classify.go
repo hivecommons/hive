@@ -378,6 +378,9 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		// it at a merge train's front (projectbluefin/utah-packages#917).
 		return stageVerdict{}
 	}
+	if v, ok := HeldWorkflowRunsStage(o); ok {
+		return v
+	}
 	if o.Err {
 		// The lane tripped before deciding. If every author-side gate is
 		// already satisfied the PR is waiting on the hive, not the author.
@@ -940,4 +943,33 @@ func SharedCIDeferredStage(o stageObservation) (stageVerdict, bool) {
 		stage = stagelabels.Reviewed
 	}
 	return stageVerdict{Stage: stage, Rank: stageRankOwned, Reason: stageReasonSharedCIIncident + strconv.Itoa(o.SharedCIIncident)}, true
+}
+
+// HeldWorkflowRunsStage parks a PR whose head has workflow runs GitHub holds
+// behind its approve-workflows gate, and that the hive did not approve, at
+// 085 for a maintainer, with the runs named in the recorded reason. Until a
+// person clicks "Approve and run" no required check reports, so whatever the
+// lane said next (author association, no linked issue, waiting for a
+// verdict) is not what the PR waits on (projectbluefin/server#686,
+// projectbluefin/documentation#1709). A closed, merged or draft PR keeps its
+// own stage, a lane that handed the PR off keeps its silence, a lane that
+// already names the gate (its own workflow-approval-required:<ctx> after
+// posting /ok-to-test, or unauthorized:<step>) keeps its more specific
+// reason, and a held or sentinel-flagged PR keeps the person's gate it
+// already has (the approval sweep never approves runs on those).
+func HeldWorkflowRunsStage(o stageObservation) (stageVerdict, bool) {
+	if len(o.HeldWorkflowRuns) == 0 || o.Merged || stageHandoffReasons[o.Reason] {
+		return stageVerdict{}, false
+	}
+	if strings.HasPrefix(o.Reason, workflowApprovalRequiredPrefix) || strings.HasPrefix(o.Reason, stageReasonUnauthorizedPrefix) {
+		return stageVerdict{}, false
+	}
+	switch o.Reason {
+	case "closed", "gone", "label-removed", "draft":
+		return stageVerdict{}, false
+	}
+	if o.Detail.SentinelAlert || len(stagelabels.Holds(o.Labels)) > 0 {
+		return stageVerdict{}, false
+	}
+	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: prstage.WorkflowRunsHeldReason(o.HeldWorkflowRuns)}, true
 }

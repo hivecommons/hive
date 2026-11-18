@@ -1,6 +1,10 @@
 package prstage
 
-import "github.com/hivecommons/hive/pkg/oktotest"
+import (
+	"strings"
+
+	"github.com/hivecommons/hive/pkg/oktotest"
+)
 
 // WorkflowApprovalCommand is the comment the hive posts to have the
 // repository's ok-to-test workflow approve held workflow runs.
@@ -45,6 +49,22 @@ func CauseWorkflowApprovalWorkflowMissing() string {
 // has just posted the command.
 func CauseWorkflowApprovalRequired() string {
 	return "GitHub Actions is waiting for workflow approval. Hive posted `" + WorkflowApprovalCommand + "`; install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) if the runs do not start, or manually approve them from the PR checks banner."
+}
+
+// CauseWorkflowRunsHeld is the cause when GitHub holds the head's workflow
+// runs for approval and the hive did not approve them (WorkflowRunsHeldPrefix):
+// nothing the hive posts starts them, and its base refreshes would only make
+// a new head whose runs are held again.
+func CauseWorkflowRunsHeld(ids []string) string {
+	runs := "the workflow runs"
+	switch len(ids) {
+	case 0:
+	case 1:
+		runs = "workflow run " + ids[0]
+	default:
+		runs = "workflow runs " + strings.Join(ids, ", ")
+	}
+	return "GitHub Actions is holding " + runs + " on this head for a maintainer's approval, and the hive's approval policy does not approve them on its own (an untrusted or fork head, or auto-approval is off). Until a maintainer reviews the change and clicks **Approve and run** in the PR's checks banner, no required check can report"
 }
 
 // CauseLaneReported is the fallback cause naming an unrecognised lane reason.

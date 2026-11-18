@@ -660,9 +660,12 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
 - **Gated workflow runs are approved for trusted heads.** GitHub holds
   workflow runs for dependabot and first-time/fork contributors behind
   "Approve and run workflows" (`action_required`); such runs create no check
-  runs, so CI never reports. `EnrichCIStatus` detects them on pending heads
-  and the CI caption reads `CI waiting · N workflow runs need approval on
-  GitHub`. Right after it, the eval cycle runs the workflow-approval sweep,
+  runs, so CI never reports. `EnrichCIStatus` detects them on pending heads,
+  and on green heads where a required check never reported at all (a fork
+  head whose `pull_request_target` workflow, such as Prow, passed while its
+  `pull_request` runs are held reads green otherwise,
+  projectbluefin/server#686), and the CI caption reads `CI waiting · N
+  workflow runs need approval on GitHub`. Right after it, the eval cycle runs the workflow-approval sweep,
   which approves a head's gated `pull_request` runs **at most once per PR
   head** ([#16603](https://github.com/hivecommons/hive/issues/16603)) when
   the head is trusted: a person admitted **this head** (a verified owner's
@@ -716,7 +719,13 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   older `/ok-to-test` path, in which the contributor lane posts a comment
   and the repository's own `hive-ok-to-test` workflow approves with its
   `GITHUB_TOKEN` — operators who want to stay on Actions: Read and that
-  path alone set `governor.ci.auto_approve_workflows: false`. Each approved
+  path alone set `governor.ci.auto_approve_workflows: false`. A head the
+  sweep will not approve (no run its policy trusts, or auto-approval off) is
+  recorded per head like a permission refusal, and the stage engine parks
+  the PR at `085-needs-decision` with reason
+  `workflow-approval-required:held-runs:<run ids>` instead of the lane's
+  next reason (author association, no linked issue, waiting for a
+  verdict), so the activity monitor names the real blocker. Each approved
   run logs one `approved gated workflow run` INFO line; counts since boot
   are at `/api/status` `workflow_approvals` (`approved`, `denied`,
   `permission_errors`, `last`). Approved runs execute the head's workflow

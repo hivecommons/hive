@@ -34,6 +34,7 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	laneRule := decisionLaneRule(base)
 	adoptionLane, adoptionStalled := strings.CutPrefix(base, stagelabels.LaneReasonAdoptionStalledPrefix)
 	forkGuard, forkGuarded := strings.CutPrefix(base, stageengineprstage.StageReasonForkGuard)
+	heldRuns, runsHeld := stageengineprstage.ParseWorkflowRunsHeld(base)
 	// hivecommons/hive#15307: the hive's adoption copy (or the original it
 	// supersedes) after the fixer's two rebase-resolve attempts failed.
 	rebaseFailedTwice := lower == stagelabels.LaneReasonRebaseFailedTwice || (adoptionStalled && adoptionLane == stagelabels.LaneReasonRebaseFailedTwice)
@@ -140,6 +141,12 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Question = "The hive's copy of this PR (#" + strconv.Itoa(it.AdoptedBy) + ") failed, so this PR was reopened. Ask the hive to supersede it again, give direction, or close it?"
 	case adoptionStalled:
 		d.Question = "The hive took this PR over but could not move it (" + decisionPlainReason(adoptionLane) + "). Give direction, or close it?"
+	case runsHeld:
+		// GitHub holds the head's workflow runs and the hive's approval
+		// policy did not approve them: a person reviews the change and
+		// lets them run. An Approve here admits this head, which the
+		// approval sweep honours when workflow auto-approval is on.
+		d.Question = "GitHub is holding " + decisionHeldRunsWords(heldRuns) + at + " for a maintainer's approval, and the hive does not approve them on its own. Review the change, then Approve here (this admits the head, and the hive approves its runs) or click Approve and run on GitHub, or close it?"
 	case forkGuarded:
 		d.Question = "CI will not run for this fork PR (" + strings.ReplaceAll(forkGuard, ",", ", ") + "). A maintainer must push the branch to this repo — or close it?"
 	case reReview:
@@ -180,6 +187,8 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Blocker = "The hive never merges this by itself. After approval, a maintainer merges."
 	case forkGuarded:
 		d.Blocker = "Neither the author nor the hive can make CI run for this fork PR."
+	case runsHeld:
+		d.Blocker = "No required check can report until the held workflow runs are approved. The hive will not update the branch meanwhile: a new head's runs would be held again."
 	case botAuthorFinding:
 		d.Blocker = "A reviewer requested changes" + at + ". The bot that opened this PR rewrites its branch, so no fix is pushed here; the fix lands on the base branch, and the bot's next run brings it in."
 		approveOK, approveWhy = false, "Approving does not clear the reviewer's change request. Merge it yourself on GitHub to take it as is."
@@ -489,4 +498,17 @@ func decisionFirstNonEmpty(ss []string) string {
 		}
 	}
 	return ""
+}
+
+// decisionHeldRunsWords names the held workflow runs of a
+// workflow-approval-required:held-runs reason: "workflow runs 1, 2", or
+// "workflow runs" when the reason carries no ids.
+func decisionHeldRunsWords(ids []string) string {
+	switch len(ids) {
+	case 0:
+		return "workflow runs"
+	case 1:
+		return "workflow run " + ids[0]
+	}
+	return "workflow runs " + strings.Join(ids, ", ")
 }

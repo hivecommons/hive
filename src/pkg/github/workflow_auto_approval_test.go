@@ -486,3 +486,52 @@ func TestWorkflowApprovalLedgerEviction(t *testing.T) {
 		t.Fatalf("TTL eviction wrong: %+v", l.attempts)
 	}
 }
+
+// The stage pass reads HeldWorkflowRunIDs: a head the sweep approved, or
+// has not decided yet, is not held for a person; a head the policy denies
+// is, on this cycle and on later ones that skip the sweep (the ledger
+// carries the denial); an owner admission lifts it.
+func TestSweepWorkflowApprovalsMarksDeniedHeads(t *testing.T) {
+	c, _, prs := newWorkflowApprovalFixture(t)
+	t.Cleanup(func() { forgetWorkflowApproval("org/repo", "head1") })
+	if got := prs[0].HeldWorkflowRunIDs(); got != nil {
+		t.Fatalf("held before the sweep decided: %v", got)
+	}
+	c.SweepWorkflowApprovals(context.Background(), prs, config.GovernorCIConfig{})
+	if got := prs[0].HeldWorkflowRunIDs(); got != nil {
+		t.Fatalf("trusted head held after approval: %v", got)
+	}
+
+	c, f, _ := newWorkflowApprovalFixture(t)
+	f.fresh.User.Login = gh.Ptr("outsider")
+	untrusted := []PullRequest{gatedPR("outsider", gatedRun(11, "head1", "outsider"), gatedRun(12, "head1", "outsider"))}
+	c.SweepWorkflowApprovals(context.Background(), untrusted, config.GovernorCIConfig{})
+	if got := untrusted[0].HeldWorkflowRunIDs(); len(got) != 2 || got[0] != 11 {
+		t.Fatalf("untrusted head's runs not held: %v", got)
+	}
+	// A later cycle's probe, with no sweep: the ledger carries the denial.
+	probe := gatedPR("outsider", gatedRun(11, "head1", "outsider")).CIActivity.WorkflowApproval
+	if wa := c.workflowApprovalWithLedger("org/repo", 7, "head1", probe); wa == nil || !wa.Denied || probe.Denied {
+		t.Fatalf("ledger did not carry the denial onto a fresh probe (or mutated it): %+v", wa)
+	}
+	// A person admits the head: the next pass approves and lifts the denial.
+	admitHead(t, c, "head1")
+	again := []PullRequest{gatedPR("outsider", gatedRun(11, "head1", "outsider"))}
+	c.SweepWorkflowApprovals(context.Background(), again, config.GovernorCIConfig{})
+	if posts, _ := f.counts(); posts != 1 {
+		t.Fatalf("admitted head not approved: posts=%d", posts)
+	}
+	if wa := c.workflowApprovalWithLedger("org/repo", 7, "head1", probe); wa.Denied {
+		t.Fatal("denial kept after the admitted head's runs were approved")
+	}
+
+	// Auto-approval off: every gated run is a person's.
+	c, f, prs = newWorkflowApprovalFixture(t)
+	c.SweepWorkflowApprovals(context.Background(), prs, config.GovernorCIConfig{AutoApproveWorkflows: gh.Ptr(false)})
+	if posts, _ := f.counts(); posts != 0 {
+		t.Fatalf("auto-approval off, still approved: posts=%d", posts)
+	}
+	if got := prs[0].HeldWorkflowRunIDs(); len(got) != 2 {
+		t.Fatalf("auto-approval off, runs not held: %v", got)
+	}
+}

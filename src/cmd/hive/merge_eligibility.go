@@ -167,6 +167,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			BaseBranchRed:             stageBaseBranchRed,
 			BaseRedRemembered:         stageBaseRedRemembered,
 			ForkGuard:                 stageForkGuard,
+			HeldWorkflowRuns:          stageHeldWorkflowRuns,
 			DCORequired:               stage.DCO.RequiredFor,
 			SquashOnly:                cfg.AutoMerge.SquashOnlyFor,
 			QuietNotifications:        cfg.GitHub.Notifications.Quiet(),
