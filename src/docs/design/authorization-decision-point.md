@@ -656,8 +656,7 @@ decisions, not rewritten.
    worth the coupling, or should each keep its own environment?
 10. **Credential reality.** Given the forge limits, is the action-shaped tier
     set worth its complexity, or is the honest minimum "a complete-scope requirement
-    plus a decision record"? The `MintToken` expiry reading should be
-    resolved first.
+    plus a decision record"? Credential expiry reporting should be reconciled first.
 11. **Per-agent mode file as an input.** The mode and capability files are
     plain files in `/tmp`. The seam would read them through the same path.
     Should the evaluator take mode from a Hive-supplied value instead, and is
