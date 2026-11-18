@@ -135,6 +135,7 @@ const window = {};
 		jsFunc(t, html, "versionStatusSummary") + "\n" +
 		jsFunc(t, html, "versionButtonHTML") + "\n" +
 		jsFunc(t, html, "renderVersionUpgradeAction") + "\n" +
+		jsFunc(t, html, "versionBuildBlockHTML") + "\n" +
 		jsFunc(t, html, "renderVersionDetails") + `
 const out = renderVersionDetails({hash:'07d99d8426ec7b5ae364e25abcdef0123456789', short:'07d99d8', branch:'v5', channel:'candidate', tracking:'floating', latestHash:'07d99d8426ec7b5ae364e25abcdef0123456789', target:{sha:'07d99d8426ec7b5ae364e25abcdef0123456789', short:'07d99d8', managedBy:'hub'}, autoUpdate:{state:'up_to_date', managedBy:'hub', enabled:true, detail:'ok'}, releaseStatus:{attempt:{state:'succeeded', completedAt:'2026-10-02T10:00:00Z'}}}, {deliveryLabel:'candidate (v5)', offeredUpgradeHash:'07d99d8426ec7b5ae364e25abcdef0123456789', offeredUpgradeShort:'07d99d8'});
 if (!out.includes('>07d99d8<')) throw new Error('short sha missing: '+out);
