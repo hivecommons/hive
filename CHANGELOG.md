@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.324.0)
+
+### Added
+
+- The hive can now post the PR-contents merge gate as a commit status itself, for repositories whose required `verify PR contents` check comes from a `pull_request_target` workflow that GitHub blocks by default from 2026-12-02. New `auto_merge.pr_gate.mode` (`off` default, `shadow`, `enforce`) with an explicit `auto_merge.pr_gate.repos` scope. This release ships `shadow`: only `verify PR contents (hive)` is posted on the exact PR head, a Go port of the title verdicts replays the same golden corpus as the JS verifier, a hard allowlist limits the poster to four contexts, and a comparison with the workflow result is logged. Nothing changes while the mode is `off` (refs #19038).
+
+### Changed
+
+- The native-queue admission script now accepts `verify PR contents` from either the legacy `pr-verifier.yml` check run (events `pull_request`, `pull_request_target` or `workflow_dispatch`, which also fixes a verifier run dispatched after a github.token autofix push being rejected) or a commit status of that context created by the App bot named in the repository variable `HIVE_PR_GATE_CREATOR_LOGIN`; with the variable unset only the legacy evidence counts, and a status from any other creator is ignored. The `native-queue-policy` workflow's PR-side trigger moves from `pull_request_target` to `pull_request` (merge-group handling and the trusted base checkout are unchanged), ahead of GitHub blocking `pull_request_target` by default on public repositories. Nothing changes until the hive-posted status is enabled; the evidence it accepts is only widened.
+
+### Security
+
+- Security: the Inbox link validator now runs the shared host check from `pkg/netguard` before any DNS lookup, so a link to a loose IPv4 literal (`2130706433`, `0x7f.1`), a documentation or other special-purpose address, or a malformed all-numeric host such as `1.2.3.4.5` is refused at validation. Before, only a strict IP literal was checked there and the others were caught after resolution (#19020)
+
 ## 2026-11-18 (v5.323.3)
 
 ### Changed

@@ -735,6 +735,13 @@ func runEvalCycle(
 	// fix-before-new path above, unchanged.
 	routePRFollowUps(ctx, cfg, ghClient, actionable, escalatedPRs, agentMgr, logger)
 
+	// Human review feedback on PRs the hive's agents opened (hivecommons/hive#19027):
+	// kick the authoring agent to verify and answer it, whatever the PR's draft
+	// state, hold labels or repo lane. Polling; no webhook needed.
+	if !budgetDecision.SkipOptional {
+		sweepReviewFeedback(ctx, cfg, ghClient, agentMgr, logger)
+	}
+
 	// Stuck-PR reaper (backstop): DELIVER a targeted FIX-BEFORE-NEW kick for any
 	// hive-authored PR that is red on a required check AND stale (its red head
 	// SHA unchanged past RedPRStaleAfter). writeMergeEligible already surfaces
