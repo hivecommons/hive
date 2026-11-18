@@ -792,6 +792,12 @@ const ReasonLeaseExpired = "lease expired"
 // HumanClaimReason: "human claim: assigned by andy".
 const ReasonHumanClaim = "human claim"
 
+// ReasonHiveClaim prefixes the reason for a live ledger claim by one of the
+// hive's own agents: "hive claim: scanner". Adoption does not open a copy
+// beside work the hive already holds (hivecommons/hive#18900). It is not a
+// HumanClaimReason, so it never triggers the contributor yank.
+const ReasonHiveClaim = "hive claim"
+
 const humanClaimBy = " by "
 
 // HumanClaimReason renders the admission/release reason for a person's claim

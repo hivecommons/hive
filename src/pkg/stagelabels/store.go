@@ -1853,6 +1853,13 @@ const AdoptBlockedSelfAuthored = "self-authored"
 // work.
 const AdoptBlockedHumanClaim = "human-claim"
 
+// AdoptBlockedCoveredByOpenPR is the AdoptBlockedBy reason for a contributor
+// PR the hive did not adopt because another open PR (a person's or the
+// hive's) already covers an issue it closes (hivecommons/hive#18900). The
+// hive closes it as a duplicate with a thank-you note; if the close is
+// suppressed or fails the block still keeps the adoption off.
+const AdoptBlockedCoveredByOpenPR = "covered-by-open-pr"
+
 // AdoptBlockedSupersedeConflict is the AdoptBlockedBy reason (and the 07x
 // lane reason) for a supersession whose head could not be replayed onto a
 // fresh base: the hive copy would open conflicting, so the attempt is
