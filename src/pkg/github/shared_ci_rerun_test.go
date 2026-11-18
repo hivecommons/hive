@@ -649,3 +649,33 @@ func TestPendingSharedCIRerunsListed(t *testing.T) {
 		t.Fatalf("listed by an incident that is not over = %v", got)
 	}
 }
+
+// A PR on a base that has not recovered yet is looked at again once that
+// base goes green, though neither the PR nor the repo's incident set changed
+// (#18946 review): the "nothing to do" memo is keyed on the incidents over
+// for the PR's own base.
+func TestSweepSharedCIReruns_SecondBaseRecoversLater(t *testing.T) {
+	now := sharedCIRerunNow()
+	prs := []*sharedCIRerunPR{
+		{Number: 1, SHA: "aaaaaaaaaa", Base: "main", Runs: []sharedCIRerunRun{failedRun(11, 1)}},
+		{Number: 2, SHA: "bbbbbbbbbb", Base: "v5", Runs: []sharedCIRerunRun{failedRun(21, 1)}},
+	}
+	srv, fake := newSharedCIRerunFake(t, []sharedCIRerunIssue{openOutageIncident(now, "Affected PRs: #1, #2.\n")}, prs)
+	c := newTestClient(t, srv, "org", []string{"org/repo"})
+	c.baseRed.now = sharedCIRerunNow
+	c.baseRed.noteGreen(baseRedMemoryKey("org", "repo", "main"), map[string]time.Time{"contract": now.Add(-time.Hour)})
+	opts := SharedCIRerunOptions{Now: sharedCIRerunNow}
+	if _, err := c.SweepSharedCIReruns(context.Background(), opts); err != nil {
+		t.Fatalf("first sweep: %v", err)
+	}
+	if reruns, _, _ := fake.snap(); !reflect.DeepEqual(reruns, []int64{11}) {
+		t.Fatalf("first sweep reruns = %v, want only PR 1 (main recovered, v5 not yet)", reruns)
+	}
+	c.baseRed.noteGreen(baseRedMemoryKey("org", "repo", "v5"), map[string]time.Time{"contract": now.Add(-time.Minute)})
+	if _, err := c.SweepSharedCIReruns(context.Background(), opts); err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if reruns, _, _ := fake.snap(); !reflect.DeepEqual(reruns, []int64{11, 21}) {
+		t.Fatalf("second sweep reruns = %v, want PR 2 re-run once v5 recovered", reruns)
+	}
+}

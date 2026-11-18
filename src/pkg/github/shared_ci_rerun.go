@@ -160,7 +160,6 @@ func (c *Client) SweepSharedCIReruns(ctx context.Context, opts SharedCIRerunOpti
 			continue
 		}
 		result.Incidents += len(closed) + len(incs.recovered)
-		incidentKey := incs.key()
 		prs, err := c.listOpenPRsForSupersessionSweep(ctx, owner, repoName)
 		if err != nil {
 			return result, err
@@ -173,7 +172,7 @@ func (c *Client) SweepSharedCIReruns(ctx context.Context, opts SharedCIRerunOpti
 				continue
 			}
 			result.Seen++
-			event, ok, err := c.trySharedCIRerun(ctx, repo, owner, repoName, pr, incs, incidentKey)
+			event, ok, err := c.trySharedCIRerun(ctx, repo, owner, repoName, pr, incs)
 			if err != nil {
 				return result, err
 			}
@@ -207,19 +206,6 @@ type sharedCIRerunIncidents struct {
 type sharedCIOpenIncident struct {
 	check  string
 	opened time.Time
-}
-
-// key is the sorted set of incidents that can trigger a rerun this pass,
-// for the per-PR "nothing to do" memo.
-func (s *sharedCIRerunIncidents) key() string {
-	all := maps.Clone(s.closed)
-	if all == nil {
-		all = map[int]bool{}
-	}
-	for n := range s.recovered {
-		all[n] = true
-	}
-	return sharedCIIncidentSetKey(all)
 }
 
 // eligibleFor is the incidents over for a PR on baseRef: every closed one,
@@ -404,10 +390,15 @@ func pendingSharedCIReruns(texts []string, over map[int]bool, listed ...int) []i
 	return out
 }
 
-func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName string, pr *gh.PullRequest, incs *sharedCIRerunIncidents, incidentKey string) (SharedCIRerunEvent, bool, error) {
+func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName string, pr *gh.PullRequest, incs *sharedCIRerunIncidents) (SharedCIRerunEvent, bool, error) {
 	if labels := labelNames(pr.Labels); c.isHeld(labels) || c.isExempt(labels) {
 		return SharedCIRerunEvent{}, false, nil
 	}
+	// The memo is keyed on the incidents over for this PR's own base, not
+	// the repo's: a PR seen while its base was still red must be looked at
+	// again once that base goes green, though nothing else changed.
+	over := incs.eligibleFor(c, owner, repoName, pr.GetBase().GetRef())
+	incidentKey := sharedCIIncidentSetKey(over)
 	seenKey := fmt.Sprintf("%s/%s#%d", owner, repoName, pr.GetNumber())
 	updatedAt := pr.GetUpdatedAt().Time
 	c.sharedCIRerunMu.Lock()
@@ -444,7 +435,6 @@ func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName str
 	for _, cm := range comments {
 		texts = append(texts, cm.GetBody())
 	}
-	over := incs.eligibleFor(c, owner, repoName, pr.GetBase().GetRef())
 	if prev.block.RunID != 0 && prev.block.HeadSHA == pr.GetHead().GetSHA() {
 		// Discovery's lookback must not strand an already-observed refusal.
 		// Keep its incident eligible without broadening discovery for other PRs.
