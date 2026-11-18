@@ -173,8 +173,8 @@ func (sc hiveCountScope) Guide() string {
 	case sc.Repos == 0:
 		return ""
 	case sc.Partial() && min(sc.IssuesCounted, sc.PRsCounted) == 0:
-		return fmt.Sprintf(" Scope of every count here: the hive has %d repos and none is confirmed yet, so these are last known figures: say \"at least\" and \"last known figures, not yet confirmed in any of the %d repos\", never a total and never \"counted in 0 of %d\".",
-			sc.Repos, sc.Repos, sc.Repos)
+		return fmt.Sprintf(" Scope of every count here: the hive has %d repos and none is confirmed yet, so these are last known figures: say \"at least\" and \"last known figures, not yet confirmed in any of the %d repos\", never a total.",
+			sc.Repos, sc.Repos)
 	case sc.Partial():
 		return fmt.Sprintf(" Scope of every count here: the hive has %d repos and not all are counted yet, so say \"at least\" and \"counted in %d of %d repos so far\", never a total.",
 			sc.Repos, min(sc.IssuesCounted, sc.PRsCounted), sc.Repos)
