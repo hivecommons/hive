@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v6.51.0)
+
+### Added
+
+- Operators can now ask what the hive did with an issue or PR after it left the Activity monitor. The admin MCP's `audit_log` takes `repo`, `number`, `action`, `since`, `contributor` and `sensitive`. With any of them, `GET /api/audit` searches every retained audit file (the current log and its rotated, compressed backups) and filters before its 200-row cap, so a match is no longer lost to the newest-page window. The answer says how many rows matched. A new `item_history_read` tool, backed by `GET /api/audit/item`, returns everything the hive recorded about one item, open or closed: its audit rows (plus the linked issue's, where an agent's claim is recorded), its merged-ledger entry (when it merged and who merged it), and its Activity monitor row while it is open. The dashboard's Audit Log section has the same filters, and an item history dialog opens from audit rows, the filter row and the Merged list.
+
+### Fixed
+
+- The CI runner image now installs `gh` from the pinned GitHub release tarball with a per-arch SHA-256 check instead of the cli.github.com apt repository, which only serves the latest release and broke the exact `GITHUB_CLI_VERSION` pin on every new gh release ([#19129](https://github.com/hivecommons/hive/issues/19129)). `cli-pin-bump` now moves the runner image's `GITHUB_CLI_SHA256_*` digests along with the version.
+
 ## 2026-11-18 (v6.50.1)
 
 ### Fixed
