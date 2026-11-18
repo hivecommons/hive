@@ -615,6 +615,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerVersionContainsRoute()
 	// Per-kick outcome record (#18916, api_kick_outcomes.go).
 	s.registerKickOutcomeRoutes()
+	// The merged ledger over a window (merged_prs_api.go).
+	s.registerMergedPRsRoute()
 }
 
 var (

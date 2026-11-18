@@ -831,6 +831,8 @@
     .ham-merged-pop .ham-empty { padding: var(--sp-2) 0; }
     .ham-queue-pop { width: auto; min-width: 22rem; max-width: 34rem; }
     .ham-merged-pop-foot { margin-top: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); }
+    .ham-merged-filter { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: calc(-1 * var(--sp-1)) 0 var(--sp-3); }
+    .ham-merged-filter select { min-width: 0; max-width: 100%; font-size: var(--fs-xs); }
     .ham-merged-list .ham-merged-repo { display: none; }
     @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
       .ham-pop-sheet .ham-merged-pop-head > span:first-child { display: none; }

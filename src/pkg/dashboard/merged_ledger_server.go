@@ -114,19 +114,34 @@ func (s *Server) recordMergedSnapshots(snaps []github.WebhookItemSnapshot) {
 		default:
 			entry.MergedBy = strings.TrimSpace(snap.MergedBy)
 		}
+		entry.Author = strings.TrimSpace(snap.Author)
+		entry.AuthorKind = mergedAuthorKind(entry.Author, "", snap.AppAuthored, snap.HiveAttributed)
 		s.mergedLedger().Record(s.enrichMergedEntry(entry), now)
 	}
 }
 
-// enrichMergedEntry fills the title, URL, lane and issue from what the
-// tracker last knew about the PR (the cached /api/stage-tracker body, then
-// the status snapshot). Best effort: a PR the tracker never drew keeps
-// whatever the source knew.
+// enrichMergedEntry fills the title, URL, lane, issue, author and the
+// human approvals the hive recorded from what the tracker last knew about
+// the PR (the cached /api/stage-tracker body, then the status snapshot).
+// Best effort: a PR the tracker never drew keeps whatever the source knew,
+// and its approvals stay unknown. No GitHub call is made.
 func (s *Server) enrichMergedEntry(e MergedLedgerEntry) MergedLedgerEntry {
-	if s == nil || (e.Title != "" && e.Lane != "" && e.Issue != 0 && e.URL != "") {
+	if s == nil || (e.Title != "" && e.Lane != "" && e.Issue != 0 && e.URL != "" && e.Author != "" && e.ApprovalsKnown) {
 		return e
 	}
 	if it, ok := s.stageTrackerCachedPR(e.Repo, e.Number); ok {
+		if e.Author == "" {
+			e.Author = strings.TrimSpace(it.Author)
+		}
+		// The tracker's kind (hive / clanker / human) knows a relay's agent
+		// from its human owner, which the snapshot cannot.
+		if kind := mergedAuthorKind(e.Author, it.AuthorKind, false, false); kind != "" && (e.AuthorKind == "" || it.AuthorKind != "") {
+			e.AuthorKind = kind
+		}
+		if !e.ApprovalsKnown {
+			e.ApprovedBy = mergedApprovers(it)
+			e.ApprovalsKnown = true
+		}
 		if e.Title == "" {
 			e.Title = it.Title
 		}
@@ -168,6 +183,30 @@ func (s *Server) enrichMergedEntry(e MergedLedgerEntry) MergedLedgerEntry {
 		}
 	}
 	return e
+}
+
+// mergedApprovers lists the people whose approval the tracker row records
+// on the head: the trusted merger who settled a human gate and the
+// operator whose Approve admitted the head ("operator-approval:<login>").
+func mergedApprovers(it StageTrackerItem) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(login string) {
+		login = strings.TrimPrefix(strings.TrimSpace(login), "@")
+		if login == "" || seen[strings.ToLower(login)] {
+			return
+		}
+		seen[strings.ToLower(login)] = true
+		out = append(out, login)
+	}
+	add(it.HumanApprover)
+	if by := strings.TrimSpace(it.AdmittedBy); by != "" {
+		if i := strings.LastIndex(by, ":"); i >= 0 {
+			by = by[i+1:]
+		}
+		add(by)
+	}
+	return out
 }
 
 // stageTrackerCachedPR finds a PR row in the last tracker body served.

@@ -73,6 +73,55 @@ type MergedLedgerEntry struct {
 	// contributor), Issue the issue it was nested under; both best effort.
 	Lane  string `json:"lane,omitempty"`
 	Issue int    `json:"issue,omitempty"`
+	// Author is the PR author's login and AuthorKind what kind of author
+	// that is (MergedAuthorAgent, MergedAuthorBot, MergedAuthorHuman),
+	// recorded at merge time from what the merge path already had: the
+	// tracker's last row for the PR, else the webhook / sweep snapshot.
+	// "" on both means unknown, as on every entry recorded before these
+	// fields existed.
+	Author     string `json:"author,omitempty"`
+	AuthorKind string `json:"author_kind,omitempty"`
+	// ApprovedBy lists the people whose approval the hive recorded on the
+	// merged head: the trusted merger whose Approve settled a human gate
+	// (the tracker row's human_approver) and the operator whose Approve
+	// admitted the head (admitted_by). Other Approve reviews are not
+	// recorded: no merge path reads the PR's reviews. ApprovalsKnown is
+	// true when the tracker row was read at merge time, so an empty
+	// ApprovedBy means "no human approval recorded" rather than unknown.
+	ApprovedBy     []string `json:"approved_by,omitempty"`
+	ApprovalsKnown bool     `json:"approvals_known,omitempty"`
+}
+
+// Author kinds on MergedLedgerEntry.AuthorKind.
+const (
+	// MergedAuthorAgent is a PR an AI agent wrote: the hive's own agents
+	// (App-authored or hive-attributed) or a contributor relay's agent.
+	MergedAuthorAgent = "agent"
+	// MergedAuthorBot is a PR another bot opened (Renovate, Dependabot, …).
+	MergedAuthorBot = "bot"
+	// MergedAuthorHuman is a PR a person opened.
+	MergedAuthorHuman = "human"
+)
+
+// mergedAuthorKind classifies a PR author. trackerKind is the tracker
+// row's author_kind (hive / clanker / human, "" unknown); appAuthored and
+// hiveAttributed are the snapshot's flags. "" when nothing says.
+func mergedAuthorKind(author, trackerKind string, appAuthored, hiveAttributed bool) string {
+	switch strings.ToLower(strings.TrimSpace(trackerKind)) {
+	case "hive", "clanker":
+		return MergedAuthorAgent
+	}
+	if appAuthored || hiveAttributed {
+		return MergedAuthorAgent
+	}
+	login := strings.ToLower(strings.TrimSpace(author))
+	if login == "" {
+		return ""
+	}
+	if strings.HasSuffix(login, "[bot]") || strings.HasPrefix(login, "app/") {
+		return MergedAuthorBot
+	}
+	return MergedAuthorHuman
 }
 
 func (e MergedLedgerEntry) key() string { return mergedLedgerKey(e.Repo, e.Number) }
@@ -254,6 +303,16 @@ func (l *MergedLedger) upsertLocked(e MergedLedgerEntry) {
 	}
 	if cur.Issue == 0 {
 		cur.Issue = e.Issue
+	}
+	if cur.Author == "" {
+		cur.Author = e.Author
+	}
+	if cur.AuthorKind == "" {
+		cur.AuthorKind = e.AuthorKind
+	}
+	if !cur.ApprovalsKnown && e.ApprovalsKnown {
+		cur.ApprovedBy = append([]string(nil), e.ApprovedBy...)
+		cur.ApprovalsKnown = true
 	}
 	if !e.MergedAt.IsZero() && (cur.MergedAt.IsZero() || e.MergedAt.Before(cur.MergedAt)) {
 		cur.MergedAt = e.MergedAt

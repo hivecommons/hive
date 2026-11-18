@@ -369,6 +369,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolClaudeAuthStatus, "Read which Claude auth mode is active through the existing /api/claude-auth/status endpoint: mode is \"long-lived token\" (an operator-supplied claude setup-token token) or \"dashboard sign-in\", with logged_in. Never returns token material. Read-only."},
 		{ToolAutonomyReadiness, "Read autonomy/readiness status through the existing Nous status endpoint."},
 		{ToolSpendRead, spendReadDescription},
+		{ToolMergedPRsRead, mergedPRsReadDescription},
 		{ToolLaunchCostRead, launchCostReadDescription},
 		{ToolPRModelsRead, prModelsReadDescription},
 		{ToolContributorModelStatsRead, contributorModelStatsReadDescription},
@@ -412,7 +413,7 @@ func AllowedTool(name string) bool {
 		return true
 	}
 	switch name {
-	case ToolLaunchCostRead:
+	case ToolLaunchCostRead, ToolMergedPRsRead:
 		return true
 	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolClaudeAuthStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead, ToolPRModelsRead, ToolContributorModelStatsRead, ToolEffectiveModelsRead, ToolGitHubAPIUsage,
@@ -483,6 +484,8 @@ func inputSchema(name string) map[string]any {
 		props = launchCostReadSchema()
 	case ToolSpendRead:
 		props = spendReadSchema()
+	case ToolMergedPRsRead:
+		props = mergedPRsReadSchema()
 	case ToolPRModelsRead:
 		props = prModelsReadSchema()
 	case ToolContributorModelStatsRead:
@@ -861,6 +864,10 @@ func ReadPath(tool string, limit int) (string, bool) {
 		// offset and ref; this is its first page.
 		path, err := LaunchCostReadPath(nil)
 		return path, err == nil
+	case ToolMergedPRsRead:
+		// With arguments it goes through MergedPRsReadPath, which checks
+		// them; this is its default (the last 24 hours).
+		return mergedPRsPath, true
 	case ToolSpendRead:
 		// With hours or since/until it goes through SpendReadPath, which
 		// checks the window; this is its all-time read.
