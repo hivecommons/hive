@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -36,8 +37,11 @@ const (
 	benchmarksPushInitialDelay = 3 * time.Minute
 	// benchmarksPushTimeout bounds one hub POST.
 	benchmarksPushTimeout = 60 * time.Second
-	// benchmarksPushMaxRecords caps one batch; the rest go next hour.
+	// benchmarksPushMaxRecords caps each batch.
 	benchmarksPushMaxRecords = 2000
+	// Leave room below common 1 MiB ingress limits, including the envelope.
+	benchmarksPushMaxBytes  = 512 << 10
+	benchmarksErrorMaxBytes = 1024
 	// benchmarksHubIngestPath is the hub route.
 	benchmarksHubIngestPath = "/api/benchmarks/ingest"
 	// benchmarksRepoVisibilityTTL bounds how long a repo's public/private
@@ -278,13 +282,14 @@ func (s *Server) StartBenchmarksPublisher(ctx context.Context) {
 
 // benchmarksIngestPayload is the body of POST /api/benchmarks/ingest.
 type benchmarksIngestPayload struct {
-	HiveID    string              `json:"hive_id"`
-	HiveHash  string              `json:"hive_hash"`
-	Watermark string              `json:"watermark"`
-	Records   []benchmarks.Record `json:"records"`
+	HiveID    string            `json:"hive_id"`
+	HiveHash  string            `json:"hive_hash"`
+	Watermark string            `json:"watermark"`
+	Records   []json.RawMessage `json:"records"`
 }
 
-// pushBenchmarks sends one batch and advances the watermark on 2xx.
+// pushBenchmarks sends all batches before advancing the watermark. The hub
+// merges records by ID, so a failed run can safely resend earlier batches.
 func (s *Server) pushBenchmarks(ctx context.Context, hubURL string, logger *slog.Logger) {
 	cfg := s.deps.Config
 	p := s.benchmarks()
@@ -308,45 +313,92 @@ func (s *Server) pushBenchmarks(ctx context.Context, hubURL string, logger *slog
 	if len(recs) == 0 {
 		return
 	}
-	if len(recs) > benchmarksPushMaxRecords {
-		recs = recs[:benchmarksPushMaxRecords]
-		newest = since // partial batch: keep the watermark so the rest follows
+	encoded := make([]json.RawMessage, len(recs))
+	for i := range recs {
+		encoded[i], err = json.Marshal(recs[i])
+		if err != nil {
+			s.benchmarksFail(p, "encode record: "+err.Error())
+			return
+		}
 	}
-	body, err := json.Marshal(benchmarksIngestPayload{
-		HiveID:    cfg.HiveID,
-		HiveHash:  benchmarks.HiveHash(cfg.HiveID),
-		Watermark: newest.UTC().Format(time.RFC3339),
-		Records:   recs,
-	})
+	payload := benchmarksIngestPayload{
+		HiveID: cfg.HiveID, HiveHash: benchmarks.HiveHash(cfg.HiveID),
+		Watermark: newest.UTC().Format(time.RFC3339), Records: []json.RawMessage{},
+	}
+	empty, err := json.Marshal(payload)
 	if err != nil {
+		s.benchmarksFail(p, "encode payload: "+err.Error())
 		return
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, benchmarksPushTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, hubURL+benchmarksHubIngestPath, bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+bearer)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		s.benchmarksFail(p, "post: "+err.Error())
-		return
-	}
-	defer closeHTTPBody(resp.Body)
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		s.benchmarksFail(p, "hub answered "+resp.Status)
-		return
+	for start := 0; start < len(encoded); {
+		end, size := start, len(empty)
+		for end < len(encoded) && end-start < benchmarksPushMaxRecords {
+			extra := len(encoded[end])
+			if end > start {
+				extra++ // comma
+			}
+			if end > start && size+extra > benchmarksPushMaxBytes {
+				break
+			}
+			size += extra
+			end++
+		}
+		for {
+			payload.Records = encoded[start:end]
+			body, err := json.Marshal(payload)
+			if err != nil {
+				s.benchmarksFail(p, "encode payload: "+err.Error())
+				return
+			}
+			reqCtx, cancel := context.WithTimeout(ctx, benchmarksPushTimeout)
+			req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, hubURL+benchmarksHubIngestPath, bytes.NewReader(body))
+			if err != nil {
+				cancel()
+				s.benchmarksFail(p, "post: "+err.Error())
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+bearer)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				cancel()
+				s.benchmarksFail(p, "post: "+err.Error())
+				return
+			}
+			var detail string
+			if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+				data, _ := io.ReadAll(io.LimitReader(resp.Body, benchmarksErrorMaxBytes))
+				detail = strings.TrimSpace(string(data))
+			}
+			closeHTTPBody(resp.Body)
+			cancel()
+			if resp.StatusCode == http.StatusRequestEntityTooLarge && end-start > 1 {
+				end = start + (end-start)/2
+				continue
+			}
+			if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+				msg := "hub answered " + resp.Status
+				if detail != "" {
+					msg += ": " + detail
+				}
+				s.benchmarksFail(p, msg)
+				return
+			}
+			p.mu.Lock()
+			p.state.LastPushAt = time.Now()
+			p.state.LastCount = end - start
+			p.state.TotalPushed += end - start
+			p.state.LastError = ""
+			p.save()
+			p.mu.Unlock()
+			start = end
+			break
+		}
 	}
 	p.mu.Lock()
 	if newest.After(p.state.Watermark) {
 		p.state.Watermark = newest
 	}
-	p.state.LastPushAt = time.Now()
-	p.state.LastCount = len(recs)
-	p.state.TotalPushed += len(recs)
-	p.state.LastError = ""
 	p.save()
 	p.mu.Unlock()
 	logger.Info("benchmarks: pushed records to hub", "count", len(recs), "watermark", newest.UTC().Format(time.RFC3339))

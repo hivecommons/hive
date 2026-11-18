@@ -1,0 +1,1 @@
+- Benchmark publishing splits batches by size and retries smaller batches after a hub or ingress rejects an oversized request, instead of repeatedly sending the same payload.

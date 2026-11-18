@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,5 +164,94 @@ func TestPushBenchmarksAdvancesWatermarkAndRecordsFailures(t *testing.T) {
 	s.pushBenchmarks(t.Context(), hub.URL, logger)
 	if bearer != "" {
 		t.Fatal("publish:false must not push")
+	}
+}
+
+func TestPushBenchmarksSplitsRejectedBatchAndCompletes(t *testing.T) {
+	s := benchmarksTestServer(t, true)
+	prevState := benchmarksPublishStatePath
+	benchmarksPublishStatePath = filepath.Join(t.TempDir(), "state.json")
+	t.Cleanup(func() { benchmarksPublishStatePath = prevState })
+	t.Setenv(spoke.EnvHeartbeatKey, "spoke-key")
+	now := time.Now().UTC().Add(-time.Hour)
+	for _, repo := range []string{"o/s", "o/t", "o/u"} {
+		writeBenchmarkFixtureBundle(t, ghpkg.ReviewEvidenceRoot, &evidence.Bundle{
+			SchemaVersion: evidence.SchemaVersion, Repo: repo, Number: 1, HeadSHA: "abc1234",
+			Author:    evidence.Author{Kind: evidence.AuthorAgent, Model: "claude-fable-5.1"},
+			CreatedAt: now, UpdatedAt: now,
+		})
+	}
+	var attempts []int
+	received := map[string]bool{}
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload benchmarksIngestPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		attempts = append(attempts, len(payload.Records))
+		if len(payload.Records) > 1 {
+			http.Error(w, "proxy limit", http.StatusRequestEntityTooLarge)
+			return
+		}
+		var rec benchmarks.Record
+		if err := json.Unmarshal(payload.Records[0], &rec); err != nil {
+			t.Errorf("decode record: %v", err)
+		}
+		received[rec.ID] = true
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer hub.Close()
+	s.pushBenchmarks(t.Context(), hub.URL, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	st := s.BenchmarksStatusBlock()
+	if len(received) != 4 || len(attempts) < 5 || attempts[0] != 4 || st.WatermarkAt == "" || st.LastError != "" {
+		t.Fatalf("attempts=%v received=%d status=%+v", attempts, len(received), st)
+	}
+}
+
+func TestPushBenchmarksSingleRecord413ReportsBody(t *testing.T) {
+	s := benchmarksTestServer(t, true)
+	prevState := benchmarksPublishStatePath
+	benchmarksPublishStatePath = filepath.Join(t.TempDir(), "state.json")
+	t.Cleanup(func() { benchmarksPublishStatePath = prevState })
+	t.Setenv(spoke.EnvHeartbeatKey, "spoke-key")
+	attempts := 0
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "proxy limit "+strings.Repeat("x", 2048), http.StatusRequestEntityTooLarge)
+	}))
+	defer hub.Close()
+	s.pushBenchmarks(t.Context(), hub.URL, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	st := s.BenchmarksStatusBlock()
+	if attempts != 1 || st.WatermarkAt != "" || !strings.Contains(st.LastError, "proxy limit") || len(st.LastError) > benchmarksErrorMaxBytes+100 {
+		t.Fatalf("attempts=%d status=%+v", attempts, st)
+	}
+}
+
+func TestPushBenchmarksCapsSerializedBytes(t *testing.T) {
+	s := benchmarksTestServer(t, true)
+	prevState := benchmarksPublishStatePath
+	benchmarksPublishStatePath = filepath.Join(t.TempDir(), "state.json")
+	t.Cleanup(func() { benchmarksPublishStatePath = prevState })
+	t.Setenv(spoke.EnvHeartbeatKey, "spoke-key")
+	now := time.Now().UTC().Add(-time.Hour)
+	for _, repo := range []string{"o/s", "o/t"} {
+		writeBenchmarkFixtureBundle(t, ghpkg.ReviewEvidenceRoot, &evidence.Bundle{
+			SchemaVersion: evidence.SchemaVersion, Repo: repo, Number: 1, HeadSHA: "abc1234",
+			Author:    evidence.Author{Kind: evidence.AuthorAgent, Agent: strings.Repeat("a", 300000), Model: "claude-fable-5.1"},
+			CreatedAt: now, UpdatedAt: now,
+		})
+	}
+	var sizes []int
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		sizes = append(sizes, len(data))
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer hub.Close()
+	s.pushBenchmarks(t.Context(), hub.URL, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if len(sizes) != 2 || sizes[0] > benchmarksPushMaxBytes || sizes[1] > benchmarksPushMaxBytes || s.BenchmarksStatusBlock().WatermarkAt == "" {
+		t.Fatalf("sizes=%v status=%+v", sizes, s.BenchmarksStatusBlock())
 	}
 }
