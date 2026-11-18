@@ -190,11 +190,18 @@ func TestResolveCommitBehindErrorNotCached(t *testing.T) {
 }
 
 func TestFetchCommitBehindCountHTTP(t *testing.T) {
+	// Drain any resolver goroutine leaked by an earlier test before swapping
+	// githubAPIBase and http.DefaultTransport; a resolver reading them mid-swap
+	// races and hits the failing transport. Also restores fetchCommitBehindCount.
+	resetCommitBehindState(t)
 	oldBase := githubAPIBase
 	oldDefaultTransport := http.DefaultTransport
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/hivecommons/hive/compare/base111...head999" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
+			// Handler runs off the test goroutine; Fatalf is not allowed here.
+			t.Errorf("unexpected path %s", r.URL.Path)
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
 		}
 		_, _ = w.Write([]byte(`{"ahead_by":7}`))
 	}))
