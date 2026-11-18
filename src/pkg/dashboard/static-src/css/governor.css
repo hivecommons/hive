@@ -43,7 +43,7 @@
     .gov-pr-models-toggle { display:flex; gap:var(--sp-2); }
     .gov-pr-models-toggle button { border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg); color:var(--muted); padding:3px 8px; font-size:var(--fs-xs); cursor:pointer; }
     .gov-pr-models-toggle button.active { color:var(--text); border-color:var(--amber); background:color-mix(in srgb, var(--amber) 14%, transparent); }
-    .gov-pr-models-empty { color:var(--muted); font-size:var(--fs-base); padding:var(--sp-4) var(--sp-0); }
+    .gov-pr-models-empty { color:var(--muted); font-size:var(--fs-sm); padding:var(--sp-4) var(--sp-0); }
     .gov-pr-model-row { display:grid; grid-template-columns:minmax(120px, 1.2fr) minmax(140px, 2fr) minmax(240px, 2fr) 92px; gap:10px; align-items:center; margin:7px 0; font-size:0.78rem; }
     .gov-pr-model-row > * { min-width: 0; }
     .gov-pr-model-name { overflow-wrap:anywhere; color:var(--text); font-weight:600; }

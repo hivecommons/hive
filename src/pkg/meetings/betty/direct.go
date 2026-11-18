@@ -47,6 +47,7 @@ const (
 const (
 	SourceWikipedia      = "Wikipedia"
 	SourceOpenMeteo      = "Open-Meteo"
+	SourceNWS            = "National Weather Service"
 	SourceGitHubReleases = "GitHub releases"
 )
 
@@ -67,6 +68,10 @@ type DirectRetriever struct {
 	// WikipediaURL, GeocodeURL, ForecastURL and GitHubAPIURL override the
 	// public endpoints (tests).
 	WikipediaURL, GeocodeURL, ForecastURL, GitHubAPIURL string
+	// NWSURL overrides the National Weather Service API root (tests).
+	NWSURL string
+	// Now is the clock for observation freshness; nil means time.Now.
+	Now func() time.Time
 }
 
 // Name implements Retriever.
@@ -107,6 +112,9 @@ func (d DirectRetriever) answer(ctx context.Context, c cleanedQuery) []Snippet {
 			return []Snippet{needsPlaceSnippet()}
 		}
 		source, out = SourceOpenMeteo, d.weather(ctx, place)
+		if len(out) > 0 {
+			source = out[0].Source
+		}
 	} else if repo, ok := releaseRepo(c.Query); ok {
 		source, out = SourceGitHubReleases, d.release(ctx, repo)
 	} else if topic, ok := definitionTopic(c); ok {

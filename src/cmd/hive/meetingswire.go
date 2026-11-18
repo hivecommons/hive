@@ -118,7 +118,7 @@ func wireMeetings(ctx context.Context, cfg *config.Config, logger *slog.Logger) 
 // supervisor (hivecommons/hive#18290) and re-attaches to meetings that were
 // live before a restart. It returns nil (logged) when the store cannot be
 // opened.
-func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.Logger) (*meetings.Manager, *meetings.Store) {
+func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, audit func(user, action, detail, agent string), logger *slog.Logger) (*meetings.Manager, *meetings.Store) {
 	if cfg == nil || sup == nil {
 		return nil, nil
 	}
@@ -139,6 +139,16 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 		VoiceID:      cfg.Meetings.Persona.Resolve().Voice,
 		LobbyTimeout: time.Duration(cfg.Meetings.LobbyTimeoutSOrDefault()) * time.Second,
 		Logger:       logger,
+		// Discord `/hive join` requests from a person the owner chose to
+		// always approve (matched by Discord user id) join at once; every
+		// such approval is audited.
+		Trust: meetings.NewTrustStore(cfg.Meetings.DataDirOrDefault()),
+		OnAutoApproved: func(m meetings.Meeting, who meetings.Person) {
+			if audit != nil {
+				audit("hive", "meeting_request_auto_approve",
+					"meeting="+m.ID+", platform="+m.Platform+", requester_id="+who.ID+", requester_name="+who.Name+", guild="+m.GuildID+", channel="+m.ChannelID, "")
+			}
+		},
 		// Vexa fixes speaking ability at join time, so with voice-on-address
 		// allowed every bot starts able to speak; the meeting's voice toggle
 		// still decides whether hive does.
@@ -156,9 +166,10 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 		}
 		return nil, nil
 	}
-	// Discord `/hive join` requests arrive on the all-meetings stream. No
-	// Discord identity is mapped to the hive owner yet, so none is approved
-	// automatically: each waits for the owner in the dashboard.
+	// Discord `/hive join` requests arrive on the all-meetings stream. Each
+	// waits for the owner in the dashboard unless its requester's Discord
+	// user id is on the trusted list (the owner's "Always approve this
+	// person" on an earlier request).
 	mgr.StartRequests()
 	if n := mgr.Resume(); n > 0 && logger != nil {
 		logger.Info("[meetings] re-attached to meetings", "count", n)
@@ -339,6 +350,7 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 			model = betty.MeetLLM{Client: client, Config: mc}
 		}
 		settings := betty.SettingsFrom(persona)
+		settings.ListeningTone = cfg.Meetings.ListeningToneEnabled()
 		if llm.Backend == config.MeetingsLLMModeAgentBackend {
 			if m, ok := meetingCLIModel(llm, mc, mt.ID, logger); ok {
 				model = m

@@ -37,6 +37,9 @@ const (
 	TriggerAddressed = "addressed"
 	TriggerQuestion  = "question"
 	TriggerOffer     = "spek_offer"
+	// TriggerTone is not a line: it asks the session to play the listening
+	// tone (tone.go). It carries no text and is never recorded or charged.
+	TriggerTone = "tone"
 )
 
 // Reply is one thing the persona wants to say.
@@ -55,6 +58,9 @@ type Reply struct {
 	VoiceWanted   bool     `json:"voice_wanted,omitempty"`
 	NeedsResearch bool     `json:"needs_research,omitempty"`
 	Sources       []string `json:"sources,omitempty"`
+	// Links are the pages behind a spoken answer, posted in chat after it
+	// is said and never spoken (links.go).
+	Links []Link `json:"links,omitempty"`
 	// Research, when set, asks the session to start a deep dive on this
 	// query through the meeting's research path and to report back with
 	// FollowUp when it completes.
@@ -111,6 +117,10 @@ type Settings struct {
 	// fast answer comes with no filler and no request is acked twice. Zero
 	// acks at once (and allows early acks from partial lines).
 	AckDelay time.Duration
+	// ListeningTone asks the session for the soft chime when she was
+	// addressed by voice and will answer (meetings.listening_tone). Off in
+	// the zero value; the live wiring sets it from the config, default on.
+	ListeningTone bool
 }
 
 // Engine timing defaults beyond the persona config.
@@ -257,6 +267,8 @@ type Engine struct {
 	// lastAnswerAt is when she last answered anything (attribution.go).
 	queueNoteAt  time.Time
 	lastAnswerAt time.Time
+	// lastToneAt is when the last listening tone was asked for (tone.go).
+	lastToneAt time.Time
 }
 
 type timedLine struct {
@@ -430,13 +442,18 @@ func (e *Engine) FollowUpIn(query, summary string, voice bool) {
 	}
 	p := phrasesFor(e.s.Persona.Language)
 	raw := clipFn(fmt.Sprintf(p.digged, clip(query, maxFollowUpQuery), strings.TrimSpace(summary)))
+	if hasUnsourcedFigure(summary) {
+		// A figure with no source behind it is not stated (live test:
+		// an attendance figure with nothing to check it against).
+		raw = clipFn(p.unsourcedText())
+	}
 	ctx := e.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	go func() {
 		text := raw
-		if e.d.LLM != nil && !e.exhausted.Load() && strings.TrimSpace(summary) != "" {
+		if e.d.LLM != nil && !e.exhausted.Load() && strings.TrimSpace(summary) != "" && !hasUnsourcedFigure(summary) {
 			cctx, cancel := context.WithTimeout(ctx, e.s.AddressedTimeout)
 			out, err := e.d.LLM.Complete(cctx, SystemPrompt(e.s.Persona), followUpPrompt(query, summary))
 			cancel()
@@ -455,12 +472,25 @@ func (e *Engine) FollowUpIn(query, summary string, voice bool) {
 
 // ResearchFailedText is what she says when a deep dive could not start or
 // finish, in the persona's language: "I couldn't look that up: <reason>."
+// It is one short sentence: a research agent's reason can be a paragraph
+// with links, which took 25 s to speak (live Meet test), so only the first
+// sentence is kept, links removed, clipped to maxFailReason.
 func (e *Engine) ResearchFailedText(reason string) string {
-	reason = strings.TrimRight(strings.TrimSpace(reason), ".")
+	reason = shortReason(reason)
 	if reason == "" {
 		reason = "something went wrong"
 	}
-	return fmt.Sprintf(phrasesFor(e.s.Persona.Language).failed, clip(reason, maxFailReason))
+	return fmt.Sprintf(phrasesFor(e.s.Persona.Language).failed, reason)
+}
+
+// shortReason is the first sentence of a failure reason, without links or
+// Markdown, no longer than maxFailReason, and without its closing period.
+func shortReason(reason string) string {
+	reason = strings.Join(strings.Fields(speakable(reason)), " ")
+	if i := strings.IndexAny(reason, ".!?\n"); i > 0 && (i+1 >= len(reason) || reason[i+1] == ' ') {
+		reason = reason[:i]
+	}
+	return strings.TrimRight(clip(strings.TrimSpace(reason), maxFailReason), ". …")
 }
 
 // ResearchProgressText is the one progress note for a deep dive that runs
@@ -470,7 +500,7 @@ func (e *Engine) ResearchProgressText() string {
 }
 
 // maxFailReason bounds the reason quoted in a failure notice.
-const maxFailReason = 160
+const maxFailReason = 90
 
 // maxFollowUpQuery bounds the question quoted in a raw follow-up.
 const maxFollowUpQuery = 80
@@ -502,7 +532,7 @@ func (e *Engine) emit(r Reply) bool {
 	}
 	select {
 	case e.out <- r:
-		if r.Trigger != TriggerAck && r.Trigger != TriggerQueue {
+		if r.Trigger != TriggerAck && r.Trigger != TriggerQueue && r.Trigger != TriggerTone {
 			e.lastAnswerAt = e.d.Now()
 		}
 		return true

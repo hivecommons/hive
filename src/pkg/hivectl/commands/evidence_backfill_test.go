@@ -444,7 +444,7 @@ func TestBackfillAuthorRules(t *testing.T) {
 		kind string
 		rule string
 	}{
-		{"trailer beats bot", pr("hive[bot]", "Bot", "x\n\n— hive: agent=a backend=b model=m"), evidence.AuthorAgent, authorRuleTrailer},
+		{"trailer beats bot", pr("hive[bot]", "Bot", "x\n\n-- hive: agent=a backend=b model=m"), evidence.AuthorAgent, authorRuleTrailer},
 		{"listed login", pr("Robo", "User", ""), evidence.AuthorAgent, authorRuleAgentList},
 		{"footer", pr("x", "User", "y\n---\n🐝 **Hive Agent**: `a` | **SHA:** `s`\n"), evidence.AuthorAgent, authorRuleFooter},
 		{"bot type", pr("dependabot", "Bot", ""), evidence.AuthorBot, authorRuleBot},

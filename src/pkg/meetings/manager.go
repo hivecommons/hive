@@ -207,6 +207,12 @@ type Options struct {
 	// `/hive join`) is approved without the owner. Nil approves none: every
 	// request waits in the dashboard.
 	AutoApprove func(requester Person) bool
+	// Trust lists the platform users the owner chose to always approve,
+	// matched by user id only. Nil trusts nobody.
+	Trust *TrustStore
+	// OnAutoApproved is called after a join request was approved without
+	// the owner, so the approval can be audited.
+	OnAutoApproved func(m Meeting, requester Person)
 	// FixedSpokenLines returns the lines the persona says in every meeting
 	// (its spoken introduction, acknowledgements, the goodbye), which hive
 	// asks Quorum to pre-render when a meeting that can speak goes live

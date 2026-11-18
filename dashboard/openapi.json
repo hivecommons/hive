@@ -658,7 +658,7 @@
           "Meetings"
         ],
         "summary": "Approve a platform join request",
-        "description": "Lets hive into a meeting someone asked for from the platform (Discord /hive join): calls meeting.join for that channel. Optional body {voice}. Owner only.",
+        "description": "Lets hive into a meeting someone asked for from the platform (Discord /hive join): calls meeting.join for that channel. Optional body {voice, always}. With always, the requester's Discord user id (taken from the request, never from the caller) is also trusted, so their later requests are approved automatically; audited as meeting_requester_trust. Owner only.",
         "parameters": [
           {
             "name": "id",
@@ -678,6 +678,10 @@
                 "properties": {
                   "voice": {
                     "type": "boolean"
+                  },
+                  "always": {
+                    "type": "boolean",
+                    "description": "Also trust this requester by Discord user id"
                   }
                 }
               }
@@ -894,6 +898,47 @@
           },
           "409": {
             "description": "Not a pending join request"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/trusted/{platform}/{uid}": {
+      "delete": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Stop auto-approving a trusted requester",
+        "description": "Removes a person from the list whose Discord join requests are approved automatically; their next request waits for the owner again. Audited as meeting_requester_untrust. Owner only.",
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Not a trusted requester"
           },
           "503": {
             "description": "Meetings are not enabled on this hive"
@@ -13952,7 +13997,7 @@
           "Governor"
         ],
         "summary": "Update the attribution-trailer toggle",
-        "description": "Sets the hive-wide toggle for appending a visible \"— hive: …\" trailer to hive-created PRs and issues. Does not affect the audit log, which always records the invocation. Requires owner role.",
+        "description": "Sets the hive-wide toggle for appending a visible \"-- hive: …\" trailer to hive-created PRs and issues. Does not affect the audit log, which always records the invocation. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {

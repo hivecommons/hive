@@ -103,14 +103,14 @@ func TestDirectWeather(t *testing.T) {
 	if len(got) != 1 || got[0].Source != SourceOpenMeteo || got[0].Title != "Weather in Boston, Massachusetts, United States" {
 		t.Fatalf("weather %+v", got)
 	}
-	for _, w := range []string{"Now: 8.4 C (47.1 F)", "feels like 4.7 C", "clear sky", "wind 13 km/h", "humidity 65%", "Today: high 11.8 C (53.2 F), low -0.7 C (30.7 F)", "Tomorrow: high 9.0 C", "According to Open-Meteo"} {
+	for _, w := range []string{"Now (forecast-model estimate, not a station reading, can be off by several degrees): 8.4 C (47.1 F)", "feels like 4.7 C", "clear sky", "wind 13 km/h", "humidity 65%", "Today (forecast): high 11.8 C (53.2 F), low -0.7 C (30.7 F)", "Tomorrow (forecast): high 9.0 C", "According to Open-Meteo"} {
 		if !strings.Contains(got[0].Text, w) {
 			t.Errorf("weather text lacks %q: %s", w, got[0].Text)
 		}
 	}
-	// "boston massachusetts" found nothing, so the last word was dropped:
-	// two geocoding calls and one forecast.
-	if p.requests() != 3 {
+	// "boston massachusetts" is split into the name and the state: one
+	// geocoding call and one forecast.
+	if p.requests() != 2 {
 		t.Fatalf("requests %v", p.paths)
 	}
 	for i := range p.paths {
@@ -423,9 +423,10 @@ func TestWebRetrieverWithDirectSources(t *testing.T) {
 	}
 	w.Direct = &d
 	ctx := context.Background()
-	// The direct answer comes first, the search results after it.
+	// A weather answer is the direct source alone: search pages are cached
+	// forecasts and are never offered beside it.
 	got := w.Retrieve(ctx, "Betty, what's the weather in Boston right now?", nil, retrieveLimit)
-	if len(got) != 2 || got[0].Source != SourceOpenMeteo || got[1].Source != "web one.example" {
+	if len(got) != 1 || got[0].Source != SourceOpenMeteo {
 		t.Fatalf("weather %+v", got)
 	}
 	// A direct answer stands when the search returns nothing.
@@ -444,5 +445,129 @@ func TestWebRetrieverWithDirectSources(t *testing.T) {
 	// Hive questions reach neither.
 	if w.Retrieve(ctx, "what is hive", nil, retrieveLimit) != nil || len(s.sent()) != before || p.requests() != calls {
 		t.Fatal("a hive question reached the web")
+	}
+}
+
+// nwsWeb fakes the National Weather Service and Open-Meteo for a US town
+// the geocoder only finds with its state.
+func nwsWeb(t *testing.T, obsTime string, obsTemp string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	var srv *httptest.Server
+	write := func(w http.ResponseWriter, body string) { _, _ = w.Write([]byte(body)) }
+	mux.HandleFunc("/v1/search", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("name") != "carmel" {
+			write(w, `{"generationtime_ms":0.1}`)
+			return
+		}
+		write(w, `{"results":[
+			{"name":"Carmel","admin1":"Indiana","country":"United States","country_code":"US","latitude":39.978,"longitude":-86.118},
+			{"name":"Carmel","admin1":"New York","country":"United States","country_code":"US","latitude":41.4301,"longitude":-73.6801}]}`)
+	})
+	mux.HandleFunc("/v1/forecast", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("latitude") != "41.4301" {
+			http.Error(w, "wrong place", http.StatusBadRequest)
+			return
+		}
+		write(w, `{"current":{"time":"2026-11-18T07:15","temperature_2m":3.9,"apparent_temperature":1,"weather_code":0,"wind_speed_10m":5,"relative_humidity_2m":70},
+			"daily":{"temperature_2m_max":[17,12],"temperature_2m_min":[3.9,5]}}`)
+	})
+	mux.HandleFunc("/points/", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, `{"properties":{"observationStations":"`+srv.URL+`/gridpoints/OKX/39,76/stations"}}`)
+	})
+	mux.HandleFunc("/gridpoints/OKX/39,76/stations", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, `{"features":[{"id":"`+srv.URL+`/stations/KPOU","properties":{"stationIdentifier":"KPOU"}}]}`)
+	})
+	mux.HandleFunc("/stations/KPOU/observations/latest", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, `{"properties":{"timestamp":"`+obsTime+`","textDescription":"Mostly Cloudy","temperature":{"value":`+obsTemp+`}}}`)
+	})
+	srv = httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestWeatherCityWithStateUsesStationReading(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 16, 0, 0, time.UTC)
+	srv := nwsWeb(t, "2026-11-18T11:51:00+00:00", "9.4")
+	d := DirectRetriever{Client: srv.Client(), GeocodeURL: srv.URL, ForecastURL: srv.URL, NWSURL: srv.URL, Now: func() time.Time { return now }}
+	got := d.weather(context.Background(), "carmel new york")
+	if len(got) != 1 || got[0].Source != SourceNWS || got[0].Title != "Weather in Carmel, New York, United States" {
+		t.Fatalf("got %+v", got)
+	}
+	for _, w := range []string{"Now (measured at station KPOU at 11:51 UTC): 9.4 C (48.9 F), mostly cloudy", "Today (forecast): high 17.0 C", "According to National Weather Service"} {
+		if !strings.Contains(got[0].Text, w) {
+			t.Errorf("lacks %q: %s", w, got[0].Text)
+		}
+	}
+	// The model's own "now" (3.9 C) is not presented as current.
+	if strings.Contains(got[0].Text, "3.9 C (39.0 F), feels") {
+		t.Errorf("model value stated as current: %s", got[0].Text)
+	}
+	// "carmel, ny" is the same place.
+	if got = d.weather(context.Background(), "carmel, ny"); len(got) != 1 || !strings.Contains(got[0].Title, "New York") {
+		t.Fatalf("postal code %+v", got)
+	}
+	// A state no match carries is a miss, not another state's weather.
+	if got = d.weather(context.Background(), "carmel texas"); got != nil {
+		t.Fatalf("wrong state answered: %+v", got)
+	}
+}
+
+func TestWeatherStaleStationReadingFallsBackToLabelledModel(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 16, 0, 0, time.UTC)
+	srv := nwsWeb(t, "2026-11-18T06:00:00+00:00", "9.4")
+	d := DirectRetriever{Client: srv.Client(), GeocodeURL: srv.URL, ForecastURL: srv.URL, NWSURL: srv.URL, Now: func() time.Time { return now }}
+	got := d.weather(context.Background(), "carmel new york")
+	if len(got) != 1 || got[0].Source != SourceOpenMeteo || !strings.Contains(got[0].Text, "forecast-model estimate, not a station reading") ||
+		strings.Contains(got[0].Text, "KPOU") {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestSplitRegion(t *testing.T) {
+	for _, c := range []struct{ in, name, region string }{
+		{"carmel new york", "carmel", "new york"},
+		{"Carmel, NY", "carmel", "new york"},
+		{"portland maine", "portland", "maine"},
+		{"new york city", "new york city", ""},
+		{"new york", "new york", ""},
+		{"paris", "paris", ""},
+		{"boston in", "boston in", ""},
+	} {
+		if n, r := splitRegion(c.in); n != c.name || r != c.region {
+			t.Errorf("splitRegion(%q) = %q, %q; want %q, %q", c.in, n, r, c.name, c.region)
+		}
+	}
+}
+
+// Weather the direct sources cannot read is never answered from search
+// pages: the live Meet test spoke cached forecasts of other days.
+func TestWebRetrieverWeatherNeverFromSearchPages(t *testing.T) {
+	s := newSearx(t, `{"results":[{"title":"Carmel forecast","url":"https://wx.example/a","content":"High 71"},{"title":"Carmel","url":"https://wx.example/b","content":"High 40"}]}`)
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "down", http.StatusServiceUnavailable) }))
+	defer bad.Close()
+	d := DirectRetriever{GeocodeURL: bad.URL, ForecastURL: bad.URL, NWSURL: bad.URL}
+	w := WebRetriever{BaseURL: s.srv.URL, Client: s.srv.Client(), Direct: &d}
+	got := w.Retrieve(context.Background(), "what's the weather like in carmel new york", nil, retrieveLimit)
+	if len(got) != 1 || got[0].Source != WeatherUnavailableSource {
+		t.Fatalf("got %+v", got)
+	}
+	if !AnsweredLocally(got) || !strings.Contains(LocalAnswerNotes(got), "state no temperature") {
+		t.Fatal("an unavailable note must stop research and forbid a figure")
+	}
+}
+
+func TestResearchFailedTextIsShort(t *testing.T) {
+	e := New(testSettings(), Deps{})
+	long := "I couldn't get current conditions for Carmel, NY from any source I can reach. Search pages show stale forecasts (https://weather.com/a, https://wx.example/b) and the NWS site did not load, so check weather.gov directly."
+	got := e.ResearchFailedText(long)
+	if got != "I couldn't look that up: I couldn't get current conditions for Carmel, NY from any source I can reach." || strings.Contains(got, "http") {
+		t.Fatalf("got %q", got)
+	}
+	if got = e.ResearchFailedText("   "); got != "I couldn't look that up: something went wrong." {
+		t.Fatalf("empty %q", got)
+	}
+	if n := len([]rune(e.ResearchFailedText(strings.Repeat("word ", 100)))); n > 140 {
+		t.Fatalf("not short: %d", n)
 	}
 }
