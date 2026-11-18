@@ -185,6 +185,30 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 		}
 		return adminmcp.ModelEffectivenessResult(tool, data, args)
 	}
+	if tool == adminmcp.ToolAuditLog {
+		// GET /api/audit as the caller (read-write role); with filters the
+		// endpoint searches every retained audit file and filters before
+		// its own cap (audit_query.go), then the tool's limit applies.
+		path, err := adminmcp.AuditLogReadPath(args)
+		if err != nil {
+			return nil, err
+		}
+		data, err := p.get(tool, path)
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
+	}
+	if tool == adminmcp.ToolItemHistoryRead {
+		// GET /api/audit/item as the caller: one item's audit rows, ledger
+		// entry and Activity monitor row. Not a list to page; the text cap
+		// still bounds the answer.
+		path, err := adminmcp.ItemHistoryReadPath(args)
+		if err != nil {
+			return nil, err
+		}
+		return p.get(tool, path)
+	}
 	if tool == adminmcp.ToolStageTrackerRead {
 		data, err := p.get(tool, adminmcp.StageTrackerReadPath())
 		if err != nil {

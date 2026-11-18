@@ -4031,7 +4031,70 @@
           "Audit"
         ],
         "summary": "Recent audit log entries",
-        "description": "Returns up to 200 newest audit entries from the dashboard audit ring. Requires read-write or higher access.",
+        "description": "Returns up to 200 newest audit entries from the dashboard audit ring. With repo, number, action or since (and the existing contributor and sensitive filters), the hive searches every retained audit file (the current log and its rotated, compressed backups; the ring on a hive without audit files) and filters before the 200-row cap, and the answer adds matched, truncated and scanned. Requires read-write or higher access.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "owner/name or the bare repository name; matches the entry's typed repo or a repo= pair in detail."
+          },
+          {
+            "name": "number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Issue or PR number; matches the entry's typed target or a number= pair in detail."
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Action name(s), comma-separated; a trailing * matches a prefix."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "RFC3339, or a duration back from now (24h, 7d); at most 90 days. A bad value answers 400."
+          },
+          {
+            "name": "contributor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only entries whose user is this login (case-insensitive)."
+          },
+          {
+            "name": "sensitive",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "true",
+                "yes",
+                "on"
+              ]
+            },
+            "description": "Only sensitive actions; without since, the last 24 hours."
+          }
+        ],
         "responses": {
           "200": {
             "description": "Audit entries, newest first",
@@ -4077,11 +4140,163 @@
                         },
                         "description": "dashboard.AuditEntry (src/pkg/dashboard/audit.go)."
                       }
+                    },
+                    "matched": {
+                      "type": "integer",
+                      "description": "Filtered requests only: how many retained entries matched, before the 200-row cap."
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "Filtered requests only: true when more entries matched than are returned."
+                    },
+                    "scanned": {
+                      "type": "string",
+                      "enum": [
+                        "files",
+                        "ring",
+                        "none"
+                      ],
+                      "description": "Filtered requests only: where the entries came from (every retained audit file, or the in-memory ring on a hive without audit files)."
                     }
                   }
                 }
               }
             }
+          },
+          "403": {
+            "description": "Insufficient access"
+          },
+          "400": {
+            "description": "A filter is malformed (number not a positive integer, since unparseable or wider than 90 days)"
+          }
+        }
+      }
+    },
+    "/api/audit/item": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "summary": "One issue or PR's hive history",
+        "description": "Everything the hive recorded about one issue or PR, open or closed: its audit entries newest first (every retained row naming this repo and number, plus the rows of the issue the PR was nested under), its merged-ledger entry when it merged in the last 90 days, its Activity monitor row while it is open, and the monitor's recently-closed record for 30 minutes after it closed. Backs the dashboard's item history dialog and the admin MCP's item_history_read. Requires read-write or higher access.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "owner/name (a bare name is qualified with the hive's org)."
+          },
+          {
+            "name": "number",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Issue or PR number."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "AuditItemHistory (src/pkg/dashboard/audit_query.go)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "open",
+                        "merged",
+                        "closed",
+                        "unknown"
+                      ],
+                      "description": "open: on the Activity monitor. merged: in the merged ledger. closed: closed by the hive, or left the monitor closed in the last 30 minutes. unknown: none of those."
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ts": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "user": {
+                            "type": "string",
+                            "description": "Actor identity. May be an opaque OIDC identity key rather than a human-readable name — see user_name."
+                          },
+                          "action": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          },
+                          "agent": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string",
+                            "description": "Repository a hive-mediated GitHub write went to (#9587). Absent on entries that are not GitHub writes and on entries written before the field existed; those may still carry repo= in detail."
+                          },
+                          "target": {
+                            "type": "integer",
+                            "description": "Issue or PR number a hive-mediated GitHub write went to (#9587). Absent when the write has no numbered target."
+                          },
+                          "user_name": {
+                            "type": "string",
+                            "description": "Hub-delivered display name, stamped at SERVE time only when `user` is an opaque OIDC identity key. The audit ring and the on-disk log keep the raw key, so history survives name changes. Absent when there is no display name to add."
+                          }
+                        },
+                        "description": "dashboard.AuditEntry (src/pkg/dashboard/audit.go)."
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "More than 500 entries matched; the newest are returned."
+                    },
+                    "scanned": {
+                      "type": "string",
+                      "enum": [
+                        "files",
+                        "ring",
+                        "none"
+                      ]
+                    },
+                    "linked_issue": {
+                      "type": "integer",
+                      "description": "The issue the PR was nested under (from the ledger or the monitor row); its entries are included."
+                    },
+                    "merged": {
+                      "type": "object",
+                      "description": "dashboard.MergedLedgerEntry (src/pkg/dashboard/merged_ledger.go): repo, number, title, url, merged_at, merged_by (hive or a login), lane, issue."
+                    },
+                    "tracker": {
+                      "type": "object",
+                      "description": "dashboard.StageTrackerItem: the item's Activity monitor row while it is open."
+                    },
+                    "closed": {
+                      "type": "object",
+                      "description": "dashboard.StageTrackerClosed: repo, number, closed_at."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "repo or number missing or malformed"
           },
           "403": {
             "description": "Insufficient access"
