@@ -1001,6 +1001,8 @@
       /* Reference repos (#18136): painted asynchronously from their own
          owner-only endpoint, like the Security tab's write allowlist. */
       loadReferenceRepos();
+      /* Parent auto-close (#19070): per-repo policy, same async pattern. */
+      loadParentAutoClose();
       const primary = _configState.data.primaryRepo || '';
       const selfAuthDefault = _configState.data.selfAuthorizationHold !== false;
       const selfAuthEnvLocked = !!_configState.data.selfAuthorizationHoldEnvLocked;
@@ -1149,6 +1151,8 @@
         </div>
         <div class="settings-subsection-title mt-4">Reference repos ${yamlHint('project.reference_repos[]')} ${settingHelpMark('settings', 'repos', 'Reference repos', 'Repositories outside this project that agents may clone and read but do not manage: no queue, no kicks, no work items. Read-only by default; a write opt-in allows opening issues and/or PRs there with a credential the hive verifies on save. Post on other projects as (project.remote_write_identity) picks whether those posts appear as the hive bot or as you. A repo is either monitored above or a reference repo, never both.')}</div>
         <div id="cfg-reference-repos-host"><div class="fs-sm text-muted">Loading…</div></div>
+        <div class="settings-subsection-title mt-4">Parent auto-close ${yamlHint('repos.<key>.parent_autoclose')} ${settingHelpMark('settings', 'repos', 'Parent auto-close', 'Per repo: whether the hive closes a split-up parent issue once all of its children are closed. Close finished parents (default) skips parents labelled epic or hold; Also close epics and holds includes them; Never auto-close parents leaves every parent to a person. A parent a person reopened is never closed again, and issues marked as tracking issues are never auto-closed.')}</div>
+        <div id="cfg-parent-autoclose-host"><div class="fs-sm text-muted">Loading…</div></div>
         ${anyLabelDriven ? `<div class="ld-defaults" id="cfg-label-driven-defaults">
           <div class="config-toggle">
             <div class="config-toggle-switch ${ldApproval.trustOrgMembers !== false ? 'on' : ''} ${ldLocked ? 'disabled' : ''}" data-action="${ldLocked ? '' : 'toggleLabelDrivenTrustOrgMembers'}" data-arg-types="t" title="Prow's own rule: public members of the repo's org may apply the approval label. Off: only triage/write/maintain/admin collaborators and trusted bots."></div>

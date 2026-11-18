@@ -106,6 +106,7 @@ var auditSensitiveActions = map[string]bool{
 	"config_governor_watchdog":              true,
 	"config_governor_work_source":           true,
 	"config_reference_repos":                true,
+	"config_repo_parent_autoclose":          true,
 	"config_remote_write_identity":          true,
 	"config_review":                         true,
 	"config_write_surface":                  true,

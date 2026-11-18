@@ -567,7 +567,6 @@ project.repos[] # TODO #11854
 providers.status.enabled # TODO #11854
 removed_agents[] # TODO #11854
 repos.<key>.agents_md_max_bytes # TODO #18495 (per-repo AGENTS.md cap; Settings control pending)
-repos.<key>.parent_autoclose # TODO #18869 (per-repo decomposed-parent auto-close policy; Settings control pending)
 review.backlog.labels[] # TODO #11854
 review.bot_author_full_review_paths[] # TODO #14625
 review.bot_author_model # TODO #14625
