@@ -66,9 +66,8 @@ func (b *boot) wireSandboxGitHubReadRelay() {
 		return
 	}
 	go func() {
-		if err := relay.Serve(ln); err != nil {
-			b.logger.Error("sandbox GitHub read relay stopped", "error", err.Error())
-		}
+		// Serve only returns when the listener fails, always with an error.
+		b.logger.Error("sandbox GitHub read relay stopped", "error", relay.Serve(ln).Error())
 	}()
 	b.agentMgr.SetSandboxGitHubReadRelay(relay, rp.NoProxy)
 	b.logger.Info("sandbox GitHub read relay enabled: Job GitHub reads use a read-only, repo-scoped token held by hive; writes are refused", "listen", rp.Listen())
