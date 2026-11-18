@@ -21,7 +21,7 @@ type FactScope struct {
 	Paths []string `json:"paths,omitempty"`
 	// Labels are issue labels, compared case-insensitively.
 	Labels []string `json:"labels,omitempty"`
-	// Lanes are base agent / lane names, compared case-insensitively.
+	// Lanes are base agent / lane or workflow model names, compared case-insensitively.
 	Lanes []string `json:"lanes,omitempty"`
 }
 
@@ -34,14 +34,17 @@ func (s *FactScope) IsZero() bool {
 // scheduler fills Lane and Labels from the lane name and the primed issues;
 // Paths is filled only by callers that know which files are being touched.
 type KickContext struct {
-	Lane   string
-	Labels []string
-	Paths  []string
+	Lane string
+	// Workflow is the bound workflow model name, without its version. It is
+	// an additional lane match, not a replacement for the base agent lane.
+	Workflow string
+	Labels   []string
+	Paths    []string
 }
 
 // IsZero reports whether the context carries nothing to match on.
 func (kc KickContext) IsZero() bool {
-	return kc.Lane == "" && len(kc.Labels) == 0 && len(kc.Paths) == 0
+	return kc.Lane == "" && kc.Workflow == "" && len(kc.Labels) == 0 && len(kc.Paths) == 0
 }
 
 // Admits reports whether a fact carrying scope s may be shown for kc. An
@@ -55,7 +58,8 @@ func (s *FactScope) Admits(kc KickContext) bool {
 	if s.IsZero() {
 		return true
 	}
-	if kc.Lane != "" && containsFold(s.Lanes, kc.Lane) {
+	if (kc.Lane != "" && containsFold(s.Lanes, kc.Lane)) ||
+		(kc.Workflow != "" && containsFold(s.Lanes, kc.Workflow)) {
 		return true
 	}
 	for _, l := range kc.Labels {

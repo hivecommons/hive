@@ -1,0 +1,1 @@
+- Workflow-dispatch kicks now receive scoped knowledge, including source-linked TechDocs reviewer rules for evidence-based assessment scores and authoritative project ownership, without applying assessment-only rules to unrelated quality work ([#19050](https://github.com/hivecommons/hive/issues/19050)).

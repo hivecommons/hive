@@ -166,8 +166,9 @@ func (rt *workflowDispatchRuntime) clearPending(key string) {
 // workflowDispatchKick is one planned hand-off and the record its delivery
 // writes.
 type workflowDispatchKick struct {
-	Message scheduler.KickMessage
-	Entry   scheduler.WorkflowDispatchEntry
+	Message  scheduler.KickMessage
+	Entry    scheduler.WorkflowDispatchEntry
+	Dispatch github.WorkflowDispatch
 }
 
 // workflowDispatchActive reports whether the cycle dispatches at all.
@@ -351,7 +352,8 @@ func buildWorkflowDispatchKicks(cfg *config.Config, rt *workflowDispatchRuntime,
 		}
 		rt.markPending(c.Key, now)
 		out = append(out, workflowDispatchKick{
-			Message: scheduler.KickMessage{Agent: c.Agent, Message: msg, IssueRefs: refs},
+			Dispatch: c.Dispatch,
+			Message:  scheduler.KickMessage{Agent: c.Agent, Message: msg, IssueRefs: refs},
 			Entry: scheduler.NextWorkflowDispatchEntry(scheduler.WorkflowDispatchEntry{
 				Key: c.Key, Ref: c.Dispatch.Ref(), Profile: c.Dispatch.Target.Profile,
 				State: c.Dispatch.State, Agent: c.Agent, By: "governor",

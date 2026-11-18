@@ -332,6 +332,25 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 
 // primeKnowledgeStats is primeKnowledge without the summary log line.
 func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue) knowledgeInjection {
+	return s.primeKnowledgeStatsForWorkflow(agentName, issues, "")
+}
+
+// PrimeWorkflowDispatch adds the same scoped, lifecycle-filtered and byte-capped
+// knowledge as a generic kick, plus the bound model as an additional lane. The
+// model name is a search term so reviewer rules do not depend on an intake
+// issue's title mentioning the assessment rubric.
+func (s *Scheduler) PrimeWorkflowDispatch(msg KickMessage, d github.WorkflowDispatch) KickMessage {
+	model, _, _ := strings.Cut(d.Model, "@")
+	issues := []github.Issue{{Repo: d.Repo, Number: d.Number, Title: d.Title + " " + model, Labels: d.Labels}}
+	inj := s.primeKnowledgeStatsForWorkflow(msg.Agent, issues, model)
+	s.logKnowledgeInjection(msg.Agent, inj, 0, 0)
+	if inj.Section != "" {
+		msg.Message = inj.Section + "\n\n" + msg.Message
+	}
+	return msg
+}
+
+func (s *Scheduler) primeKnowledgeStatsForWorkflow(agentName string, issues []github.Issue, workflow string) knowledgeInjection {
 	s.mu.RLock()
 	primer := s.primer
 	cfg := s.cfg
@@ -363,7 +382,9 @@ func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue)
 		}
 		scope = &agentScope
 	}
-	primed := primer.PrimeForKick(context.Background(), scope, kickContextFor(cfg, agentName, issues[:limit]), keywords)
+	kc := kickContextFor(cfg, agentName, issues[:limit])
+	kc.Workflow = workflow
+	primed := primer.PrimeForKick(context.Background(), scope, kc, keywords)
 	result, omitted := primed.Render()
 	s.primedSlugs.Store(agentName, primed.RenderedSlugs())
 	inj := knowledgeInjection{
