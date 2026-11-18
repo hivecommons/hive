@@ -1369,10 +1369,9 @@ data:
 #   enabled: true            # false (or env HIVE_CUSTOMERS_ENABLED=false) opens no store and hides the section
 #   inference:
 #     enabled: false         # true (or env HIVE_CUSTOMERS_INFERENCE_ENABLED=true) suggests goals and satisfaction with the meetings model; default off
-<<<<<<< HEAD
 #   avatars:
 #     enabled: true          # false (or env HIVE_CUSTOMERS_AVATARS_ENABLED=false) shows initials and makes no browser request to github.com for pictures; default on
-=======
+
 
 # Sandbox Job GitHub read relay (docs/sandbox-isolation.md): lets sandbox Jobs
 # make authenticated, read-only GitHub reads without ever holding a credential.
@@ -1387,4 +1386,3 @@ data:
 #       listen_addr: ":8443"                       # required when enabled; no default
 #       endpoint: https://hive.hive-system.svc:8443  # how Job pods reach hive; required when enabled
 #       no_proxy: []                               # optional extra hosts Jobs reach directly
->>>>>>> a0579d902 (🔒 sandbox read relay: TLS-only listener, no default bind, https endpoint, NetworkPolicy docs (#18865))
