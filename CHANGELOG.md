@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.314.0)
+
+### Added
+
+- **Governor PRs by model says why unmerged PRs were closed (#18719).** Each `/api/governor/pr-models` bucket gains `closed_unmerged_reasons` (`superseded`, `duplicate`, `other`), which always sum to `closed_unmerged`. A PR counts as superseded when it carries `hive/superseded` or another PR in the same repository says `Supersedes #N` for it; duplicate when it has a `duplicate` label; anything else is other. Hover a row to see the split after the closed-unmerged count. Closed attributed PR records now keep their `Supersedes #N` number too, read from the body the scan already fetches, so no new GitHub calls. Existing fields, the bar, merge rate and rank are unchanged.
+- A weekly workflow (`claude-model-freshness.yml`) now opens one `needs-human` PR adding new Claude models to the dashboard's model lists, `cli-model-requirements.txt` and the price table, once the Claude Code version pinned in the image accepts them; models the pinned CLI does not recognise are listed for a manual check instead of added, and price rows come only through the price refresh's plausibility rules (`pricetable --add`) (#18754).
+
+### Fixed
+
+- Kubernetes: a reload that starts from the ConfigMap seed (a first boot or reprovision on a read-only ConfigMap mount, `hive config-check`, a watcher reload of the seed path) dropped the dashboard-saved `review` block (`combined_perspectives`, `require_labels`, `perspectives_source`) and `agent_sandbox` block (`image`, `job.*`), the same shape as the cadence and work-source losses. The dashboard overlay now wins for both blocks when it carries them, and a silent overlay leaves the seed's untouched. `variables.security` stays seed-only (#18804).
+- Kubernetes: a `paused: true` or `sandbox:` block an operator put in `/data/agent-configs/<name>.yaml` was replaced by the dashboard overlay's older copy of the same agent on every load that applies the overlay, so it never took effect. Those two fields are now carried forward from the agent file (#18804).
+
 ## 2026-11-18 (v5.313.0)
 
 ### Added
