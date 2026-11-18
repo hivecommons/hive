@@ -14,6 +14,17 @@ Copilot, Codex, Antigravity, Goose…) to deal with it: triage, fixes, reviews,
 releases. You decide how much it is allowed to do. Humans keep every decision
 that matters; agents do the chores.
 
+## What Hive is and is not
+
+Hive is the work-governance plane for AI coding agents that maintain
+repositories: claims, stage labels, ACMM levels, DCO sign-off and the merge
+path. It is not a model gateway, not a traffic proxy or router for model calls,
+and not an inference server. It does not serve models. Hive deploys alongside
+whatever proxy, gateway or inference backend an operator already runs, and uses
+it as the backend its agents call. The in-process proxy and inference translator
+described in the [architecture reference](architecture.md) exist to enforce
+policy and adapt agent calls, not to be used as a general gateway.
+
 ## "I already use an agent. How is this different?"
 
 A terminal agent is a tool you hold, aim, and stop. Hive runs those tools for

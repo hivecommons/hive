@@ -24,6 +24,8 @@
 
 Hive helps people and AI agents work together across their projects.
 
+Hive is the work-governance plane for AI coding agents that maintain repositories. It is not a model gateway or an inference server. See [what Hive is and is not](src/docs/what-is-hive.md#what-hive-is-and-is-not).
+
 It connects the work, the rules and the review history. Bring your own agents. You decide what they can do.
 
 Keep code in **GitHub or GitHub Enterprise**. Bring tasks from **GitHub Issues, GitHub Projects, Linear or Jira**.
