@@ -50,12 +50,24 @@ const (
 	selfServiceExpiryEnv     = "HIVE_HUB_SELFSERVICE_EXPIRY"
 	selfServiceExpiryDefault = 24 * time.Hour
 
-	// selfServiceMaxRequestBody bounds a registration body; the largest legal
-	// body is selfServiceMaxRepos repo refs plus a URL, far under this.
+	// selfServiceMaxRequestBody is the floor for a registration body; the
+	// largest legal body at the default repo cap is far under this.
+	// selfServiceRequestBodyLimit raises it when the cap is configured higher.
 	selfServiceMaxRequestBody = 64 << 10
-	// selfServiceMaxRepos bounds how many repos one registration may prove
-	// ownership of, and so how many GitHub calls one request can trigger.
-	selfServiceMaxRepos = 20
+	// selfServiceRequestBodyPerRepo is the body budget allowed per repo ref
+	// above the floor (an owner/name ref is at most ~140 bytes, plus JSON).
+	selfServiceRequestBodyPerRepo = 256
+	// selfServiceMaxReposEnv sets how many repos one registration may list
+	// (#18642). Each repo is one GitHub ownership call, so the value is also a
+	// bound on the calls one request can trigger.
+	selfServiceMaxReposEnv = "HIVE_HUB_SELFSERVICE_MAX_REPOS"
+	// selfServiceMaxReposDefault is the cap when the env is unset; it is the
+	// previous fixed cap, so behaviour does not change until an operator
+	// raises it.
+	selfServiceMaxReposDefault = 20
+	// selfServiceMaxReposCeiling clamps a configured cap so a typo cannot turn
+	// one request into thousands of GitHub calls.
+	selfServiceMaxReposCeiling = 500
 	// selfServiceGitHubAPIBase is the production API the ownership proof
 	// calls; tests point selfServiceOwnershipChecker.apiBase at a stub.
 	selfServiceGitHubAPIBase = "https://api.github.com"
@@ -114,6 +126,18 @@ func selfServiceMaxPerUser() int {
 
 func selfServiceExpiry() time.Duration {
 	return durationEnv(selfServiceExpiryEnv, selfServiceExpiryDefault)
+}
+
+// selfServiceMaxRepos is how many repos one registration may list. Read per
+// request like the other self-service limits; advertised by GET /api/hub/v1.
+func selfServiceMaxRepos() int {
+	return min(positiveIntEnv(selfServiceMaxReposEnv, selfServiceMaxReposDefault), selfServiceMaxReposCeiling)
+}
+
+// selfServiceRequestBodyLimit bounds a registration body so the largest legal
+// body at the configured repo cap still fits.
+func selfServiceRequestBodyLimit() int64 {
+	return max(int64(selfServiceMaxRequestBody), int64(selfServiceMaxRepos())*selfServiceRequestBodyPerRepo+selfServiceMaxRequestBody)
 }
 
 // selfServiceOwnershipChecker asks GitHub whether a token's user administers
@@ -335,8 +359,8 @@ func selfServiceValidateRepos(repos []string) ([]string, error) {
 	if len(repos) == 0 {
 		return nil, errors.New("at least one owner/name repo is required")
 	}
-	if len(repos) > selfServiceMaxRepos {
-		return nil, fmt.Errorf("at most %d repos per registration", selfServiceMaxRepos)
+	if maxRepos := selfServiceMaxRepos(); len(repos) > maxRepos {
+		return nil, fmt.Errorf("at most %d repos per registration", maxRepos)
 	}
 	out := make([]string, 0, len(repos))
 	seen := make(map[string]struct{}, len(repos))
@@ -424,7 +448,7 @@ func (s *HubServer) handleSelfServiceRegister(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body selfServiceRegisterRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, selfServiceMaxRequestBody)).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, selfServiceRequestBodyLimit())).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
@@ -512,7 +536,7 @@ func (s *HubServer) handleSelfServiceRegister(w http.ResponseWriter, r *http.Req
 
 	now := time.Now().UTC()
 	// The cap is enforced again inside the store, under the lock that inserts
-	// the record: the count above ran before up to selfServiceMaxRepos GitHub
+	// the record: the count above ran before up to selfServiceMaxRepos() GitHub
 	// calls, so concurrent POSTs from one user could all have passed it.
 	maxPerUser := selfServiceMaxPerUser()
 	rawKey, err := s.selfService.registerCapped(SelfServiceHive{
