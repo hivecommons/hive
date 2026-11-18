@@ -457,9 +457,9 @@ apply_cli() {
       for f in "$DOCKERFILE" "$CONTRIB"; do set_arg "$f" BOBSHELL_VERSION "$v"; apply_sha_pair "$f" BOBSHELL "$kv" 256; done ;;
     gh)
       set_arg "$DOCKERFILE" GH_VERSION "$v"; apply_sha_pair "$DOCKERFILE" GH "$kv" 256
-      # The runner image installs gh from the apt repo, which only serves the
-      # latest release, so its exact pin goes stale unless it moves with this one.
-      set_arg "$RUNNER" GITHUB_CLI_VERSION "$v" ;;
+      # The runner image installs the same release tarball (GITHUB_CLI_*), so
+      # its pin and per-arch digests move with this one.
+      set_arg "$RUNNER" GITHUB_CLI_VERSION "$v"; apply_sha_pair "$RUNNER" GITHUB_CLI "$kv" 256 ;;
     agy)
       # The two images spell the same release differently: the hub image
       # keeps version and build id in separate ARGs and verifies SHA-512, the
