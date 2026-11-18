@@ -66,13 +66,21 @@ func TestCIRunnerDockerfileBakesCIToolchain(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(dockerfile, "\"gh=${GITHUB_CLI_VERSION}\"") {
-		t.Fatal("ci-runners/Dockerfile must install the GitHub CLI with the pinned GITHUB_CLI_VERSION ARG so gh-using workflows can move to the fleet after rollout")
+	// gh comes from the cli/cli release asset, never the cli.github.com apt repo,
+	// which only serves the latest release so an exact pin stops resolving (#19129).
+	for _, want := range []string{
+		"ARG GITHUB_CLI_VERSION=",
+		"ARG GITHUB_CLI_SHA256_AMD64=",
+		"ARG GITHUB_CLI_SHA256_ARM64=",
+		"https://github.com/cli/cli/releases/download/v${GITHUB_CLI_VERSION}/gh_${GITHUB_CLI_VERSION}_linux_${ARCH}.tar.gz",
+		"sha256sum -c -",
+	} {
+		if !strings.Contains(dockerfile, want) {
+			t.Fatalf("ci-runners/Dockerfile must install the GitHub CLI from the pinned release asset and verify its SHA-256 (missing %q)", want)
+		}
 	}
-	if !strings.Contains(dockerfile, "githubcli-archive-keyring.gpg") ||
-		!strings.Contains(dockerfile, "sha256sum -c -") ||
-		!strings.Contains(dockerfile, "signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg") {
-		t.Fatal("ci-runners/Dockerfile must fetch the official GitHub CLI keyring, verify its checksum, and bind the apt source with Signed-By")
+	if strings.Contains(dockerfile, "cli.github.com/packages stable") || strings.Contains(dockerfile, "\"gh=${GITHUB_CLI_VERSION}\"") {
+		t.Fatal("ci-runners/Dockerfile must not install gh from the cli.github.com apt repo: it only serves the latest release (#19129)")
 	}
 }
 
