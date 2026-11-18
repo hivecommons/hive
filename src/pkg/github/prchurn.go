@@ -286,6 +286,7 @@ func (l *ClaimLedger) insertHistoryLocked(r IssuePRRecord) {
 	if r.ObservedAt.IsZero() {
 		r.ObservedAt = l.now()
 	}
+	r.Repo = l.repoLocked(r.Repo)
 	if l.history == nil {
 		l.history = make(map[string]map[int]IssuePRRecord)
 	}
@@ -335,7 +336,7 @@ func (l *ClaimLedger) Churn(repo string, issue int) (IssueChurn, bool) {
 	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	byPR, ok := l.history[claimKey(repo, issue)]
+	byPR, ok := l.history[l.keyLocked(repo, issue)]
 	if !ok || len(byPR) == 0 {
 		return IssueChurn{}, false
 	}
