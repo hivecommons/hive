@@ -1,0 +1,1 @@
+- **The egress proxy no longer forwards agent-asserted identity headers.** Proxy-Authorization, Proxy-Connection, Forwarded, X-Forwarded-* and X-Hive-* headers on an agent request are now stripped by the plain-HTTP forward, the MITM relay and the sandbox read relay before the request reaches an origin.

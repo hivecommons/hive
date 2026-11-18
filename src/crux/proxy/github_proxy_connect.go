@@ -666,9 +666,9 @@ func (p *GitHubProxy) forwardPlainDirect(conn net.Conn, r *http.Request) {
 	// identity they assert is the one identifyAgentFromConn just decided
 	// whether to believe, and forwarding it would hand an agent's claimed name
 	// (and, in the Basic form, whatever it put in the password field) to every
-	// plain-HTTP host it can name.
-	r.Header.Del("Proxy-Authorization")
-	r.Header.Del("Proxy-Connection")
+	// plain-HTTP host it can name. X-Forwarded-* and X-Hive-* go with them
+	// (see stripAgentHopIdentityHeaders).
+	stripAgentHopIdentityHeaders(r.Header)
 
 	resp, err := p.plainForwardTransport().RoundTrip(r)
 	if err != nil {

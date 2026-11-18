@@ -295,7 +295,7 @@ func (r *SandboxReadRelay) readToken() string {
 // attached only when d allows injection.
 func applySandboxReadAuth(req *http.Request, d SandboxReadDecision, token string) {
 	req.Header.Del("Authorization")
-	req.Header.Del("Proxy-Authorization")
+	stripAgentHopIdentityHeaders(req.Header)
 	req.Header.Del("Expect")
 	if !d.Allowed || !d.Inject || token == "" {
 		return

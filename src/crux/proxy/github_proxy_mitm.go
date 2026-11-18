@@ -343,6 +343,12 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// credential handed to a third party - whenever the Linear lane below
 		// does not overwrite the header (an ADVISORY agent, or a hive with no
 		// Linear credential).
+		if agentName != internalCallerName {
+			// Gates above have read the request as the agent sent it; what
+			// travels on must not carry the agent's hop or hive identity
+			// assertions (#18993).
+			stripAgentHopIdentityHeaders(req.Header)
+		}
 		if injectsGitHubAuthForHost(host) {
 			p.rewriteGitHubAuth(req, agentName)
 		}
