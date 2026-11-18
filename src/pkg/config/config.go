@@ -8588,6 +8588,10 @@ type ReviewConfig struct {
 	// dispatch (hivecommons/hive#11091); see review_dispatch.go.
 	EventDriven    *bool `yaml:"event_driven,omitempty" json:"event_driven,omitempty"`
 	EventDebounceS int   `yaml:"event_debounce_s,omitempty" json:"event_debounce_s,omitempty"`
+	// AnalysisFactCheck is the independent fact-check pass for analysis and
+	// report PRs (hivecommons/hive#19074); see review_factcheck.go. Off by
+	// default.
+	AnalysisFactCheck AnalysisFactCheckConfig `yaml:"analysis_factcheck,omitempty" json:"analysis_factcheck,omitempty"`
 	// MaxPerspectivesPerPR caps how many review perspectives one PR may be
 	// given, as a LIFETIME budget per head SHA — not a per-cycle limit. It
 	// exists because parallel review slots are a fixed budget spent in PR

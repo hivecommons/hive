@@ -568,6 +568,17 @@ providers.status.enabled # TODO #11854
 removed_agents[] # TODO #11854
 repos.<key>.agents_md_max_bytes # TODO #18495 (per-repo AGENTS.md cap; Settings control pending)
 repos.<key>.parent_autoclose # TODO #18869 (per-repo decomposed-parent auto-close policy; Settings control pending)
+review.analysis_factcheck.author_agents[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.authoritative_files[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.enabled # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.independence # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.labels[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.max_rounds # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.ready_policy # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.reviewer_agents[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.reviewer_model # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.revision_wait # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.rubric # TODO #19074 (yaml-only at first; Settings control pending)
 review.backlog.labels[] # TODO #11854
 review.bot_author_full_review_paths[] # TODO #14625
 review.bot_author_model # TODO #14625
