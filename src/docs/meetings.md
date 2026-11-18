@@ -240,7 +240,7 @@ What `hive-mx` does with a message:
 - **Sender authentication:** after DATA it checks SPF, DKIM and DMARC and records whether SPF or DKIM passed for a domain aligned with the `From` address (`adkim`/`aspf` honoured). Only an aligned sender can ever be trusted by a hive; the receiver itself decides nothing.
 - **Calendar invites:** only `text/calendar` and `application/ics` parts are read. It keeps UID, SEQUENCE, METHOD (REQUEST or CANCEL), RECURRENCE-ID, the summary (200 characters), organizer and attendees, start and end converted to UTC (Outlook's Windows time zone names such as "Eastern Standard Time" are mapped to IANA zones), RRULE and EXDATE, and the join details: the link from `X-GOOGLE-CONFERENCE`, `X-MICROSOFT-SKYPETEAMSMEETINGURL`, `LOCATION` or a link to `meet.google.com`, `teams.microsoft.com`, `teams.live.com` or `*.zoom.us` found in the description, the platform, and the meeting id and passcode where the platform uses one (Zoom `pwd`, the Teams "Meeting ID" and "Passcode" lines). Nothing else from the description is kept.
 - **Mail-in files:** a message with no invite may carry Markdown (`.md`), office document (`.pdf`, `.docx`, `.pptx`, `.xlsx`), audio (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`), video (`.mp4`, `.mov`, `.mkv`) and image (`.png`, `.jpg`, `.gif`, `.webp`) attachments. The type is decided by the file's content, not its name, and must agree with the extension; a Word, PowerPoint or Excel file must be a readable container of that kind with no macro project. At most 10 files, 25 MB per file and 30 MB in all ([#18564](https://github.com/hivecommons/hive/issues/18564), [#18699](https://github.com/hivecommons/hive/issues/18699)). The subject becomes the title. Nothing in the message is executed or followed, and a document is stored, never opened.
-- **Refusals say why:** a message that leaves nothing to deliver is refused after DATA with a reply the sender's provider returns in its bounce, naming each attachment's extension and what was wrong with it, for example `550 5.6.0 nothing to deliver: a .key attachment is not an accepted type. Accepted types: md, pdf, docx, pptx, xlsx, ...` or `552 5.3.4 nothing to deliver: a .mp4 attachment is over the 25 MB per-file limit (30 MB of attachments per message)`. An attachment left out of a message that is otherwise delivered is listed in the delivery (`files.skipped`: extension and reason) so the hive can show it. Every refusal that is about the message or the address ends with three more lines: how to try again, a link to the reason's entry in [Mailing your hive: what the replies mean](inbox-voice-sources.md#mailing-your-hive-what-the-replies-mean), and where to report a problem ([#18744](https://github.com/hivecommons/hive/issues/18744)). The lines are the same for every sender. This bounce is the only message a sender gets: neither the receiver nor a hive sends mail, so nothing is ever sent to an address that may be forged (a reply to authenticated senders is designed in [#18746](https://github.com/hivecommons/hive/issues/18746)).
+- **Refusals say why:** a message that leaves nothing to deliver is refused after DATA with a reply the sender's provider returns in its bounce, naming each attachment's extension and what was wrong with it, for example `550 5.6.0 nothing to deliver: a .key attachment is not an accepted type. Accepted types: md, pdf, docx, pptx, xlsx, ...` or `552 5.3.4 nothing to deliver: a .mp4 attachment is over the 25 MB per-file limit (30 MB of attachments per message)`. An attachment left out of a message that is otherwise delivered is listed in the delivery (`files.skipped`: extension and reason) so the hive can show it. Every refusal that is about the message or the address ends with three more lines: how to try again, a link to the reason's entry in [Mailing your hive: what the replies mean](inbox-voice-sources.md#mailing-your-hive-what-the-replies-mean), and where to report a problem ([#18744](https://github.com/hivecommons/hive/issues/18744)). The lines are the same for every sender. This bounce is the only message a sender gets unless the hub's confirmation reply is turned on, and the receiver never sends mail: nothing is ever sent to an address that may be forged, and a confirmation reply goes only to a sender whose mail passed DMARC alignment ([Replies to the sender](#replies-to-the-sender-off-by-default), [#18746](https://github.com/hivecommons/hive/issues/18746)).
 - **Text body:** the message's body becomes a Markdown note. `text/plain` is kept as sent; an HTML-only body is reduced to its text, headings, lists and link targets, with no scripts, styles, images or other remote content. A message with no attachment becomes one Markdown item (`message.md`); a message with attachments keeps its body as the note on each of its items. The same allowlist, DMARC and approval rules apply as to attachments, and the body is untrusted data, never instructions. At most 256 KiB of it is kept.
 - **Proof mails:** a message whose subject carries a proof code (`hive-proof-` and 12 letters or digits) is reported as a proof of the sender address.
 
@@ -305,15 +305,16 @@ nothing for the sender.
 [#18746](https://github.com/hivecommons/hive/issues/18746) designs a short
 reply from the hive to whoever mailed it ("received", or "waiting for the
 owner's approval"). Hive has never sent mail, and `hive-mx` still does not:
-the reply is composed and decided by the hub (option A of the design: a
-hub-side sender with DKIM, one fixed `From`, the hive's own address as
-`Reply-To`). This release ships the decision, the ledger and the two
-templates; the SMTP and DKIM sender is a later step. With no sender built
-in, a hub sends nothing whatever it is configured with.
+the reply is composed, decided and sent by the hub (option A of the design:
+a hub-side sender with DKIM, one fixed `From`, the hive's own address as
+`Reply-To`).
 
 It is off unless `HIVE_HUB_MAIL_REPLY_DKIM_KEY_FILE` names a file that
-exists and is not empty (the variables are in
-[env-vars.md](env-vars.md)). Removing the file stops replies at once.
+exists and is not empty, and the `From` address, DKIM selector and HELO name
+are set (the variables are in [env-vars.md](env-vars.md)). Removing the key
+file stops replies at once; a key file that cannot be loaded sends nothing
+and does not use up the mail's one reply. A hub with none of this set builds
+no sender and opens no connection.
 
 What decides a reply, all of it enforced in the hub:
 
@@ -352,6 +353,50 @@ outcome and salted hashes of the message id, sender, sender domain and hive:
 no address, subject or body. The hub logs a sent reply with the delivery id,
 the hive id and the outcome only, never a key or any part of a mail.
 
+#### How a reply is sent
+
+The sender (`src/pkg/hub/mail_reply_smtp.go`) runs only after the decision
+and the ledger above allowed the reply, so the limits are applied before
+anything is sent.
+
+- **Plain text, null envelope sender.** One `text/plain` message, 7-bit,
+  with the headers of the design, and `MAIL FROM:<>`. A failed reply
+  therefore never bounces into a hive.
+- **DKIM.** The message is signed (relaxed/relaxed, `rsa-sha256` or
+  `ed25519-sha256`) as the `From` domain with the configured selector, over
+  `From`, `To`, `Subject`, `Date`, `Message-ID`, `Reply-To`, `In-Reply-To`,
+  `References`, `Auto-Submitted`, `X-Auto-Response-Suppress`, `Precedence`
+  and the MIME headers. The signature expires after 72 hours.
+- **Direct delivery to one MX host.** The hub looks up the sender domain's
+  MX records and uses only the best-preference host: one connection, one
+  message, no second host, no retry, no redirect. A domain with no MX record
+  or a null MX gets no reply. The hub connects to a public IPv4 address of
+  that host (IPv6 only if it has no IPv4 address), on port 25. Addresses in
+  private, loopback, link-local, shared (100.64.0.0/10), documentation
+  (IPv6) and similar ranges are refused, because the sender domain is
+  chosen by whoever sent the mail.
+- **STARTTLS is required**, with a certificate that verifies for the MX host
+  name (TLS 1.2 or later). A server without it, or with a certificate that
+  does not verify, gets nothing.
+- **Bounded.** 10 seconds for each DNS lookup, 15 for the connection, 45
+  for the whole SMTP conversation, 90 for the whole reply. At most 8 replies
+  are in flight; past that a reply is dropped and counted.
+- **Any failure is final.** A refused recipient, a DNS or TLS failure, a
+  timeout or a server error ends the reply: it is not retried and the
+  ledger keeps the claim, so the same message is never answered twice.
+- **Refused before sending.** A header value with a control character or a
+  line break, an address with a display name or outside ASCII, a
+  `Message-ID` that is not a plain token, a body that is not 7-bit text, or
+  a `From` other than the configured one is refused before any DNS lookup
+  or connection. The sender's subject only reaches the `Subject` header,
+  after the template removed control and invisible characters, and is sent
+  as an RFC 2047 encoded word when it has letters outside ASCII.
+- **Nothing private in the log.** The hub logs a failed reply with the
+  delivery id, the hive id, a reason class (for example `mx_lookup`,
+  `no_mx`, `timeout`, `starttls`, `recipient_refused`, `connect`,
+  `signing_key_unusable`) and, when the server refused, its numeric code.
+  Never a key, an address, a domain, a subject, a body or a server's text.
+
 #### DNS records and network the hosted hub needs
 
 For option A with one fixed `From` (shape 1), `<project domain>` being the
@@ -361,7 +406,7 @@ project's organizational domain and `<selector>` the DKIM selector:
 |---|---|---|
 | `<selector>._domainkey.hive.<project domain>` | TXT | `v=DKIM1; k=rsa; p=<base64 public key>` (2048-bit; the private key stays in the hub's Secret) |
 | `hive.<project domain>` | TXT | `v=spf1 ip4:<sending IP> -all` (recommended: DKIM alone satisfies DMARC, since the envelope sender is null) |
-| `<sending host name>` | TXT | `v=spf1 a -all` (recommended: covers the HELO identity used with a null envelope sender) |
+| `<sending host name>` | TXT | `v=spf1 a -all` (recommended: covers the HELO identity used with a null envelope sender); this is the name to set in `HIVE_HUB_MAIL_REPLY_HELO` |
 | reverse DNS of `<sending IP>` | PTR | `<sending host name>`, set at the cloud provider, not in the zone |
 
 No existing record changes: the organizational DMARC policy (`p=reject`,

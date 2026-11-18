@@ -19,10 +19,10 @@ import (
 //
 // This file is the decision: whether a reply may be sent for a delivery the
 // hub just relayed, and what outcome it states. It sends nothing itself: a
-// mailReplySender does, and this release ships none, so a hub never sends
-// mail. Everything is off unless the DKIM signing key file named by
-// HIVE_HUB_MAIL_REPLY_DKIM_KEY_FILE exists; without the key (or the From
-// address, or a sender) no delivery is even parsed for a reply.
+// mailReplySender does (mail_reply_smtp.go). Everything is off unless the
+// DKIM signing key file named by HIVE_HUB_MAIL_REPLY_DKIM_KEY_FILE exists;
+// without the key (or the From address, the selector or the HELO name) no
+// delivery is even parsed for a reply, and nothing is ever sent.
 //
 // The safety rules of the issue are enforced here, not left to a sender:
 // only an authenticated (DMARC-aligned) sender is answered; never automatic,
@@ -72,6 +72,7 @@ const (
 	skipUnreadable     = "delivery_unreadable"
 	skipBusy           = "busy"
 	skipSendFailed     = "send_failed"
+	skipKeyUnusable    = "signing_key_unusable"
 	mailReplyStatSent  = "sent"
 	mailReplyLogPrefix = "mail reply: "
 )
@@ -97,14 +98,15 @@ type mailReplyConfig struct {
 	From     string
 	Selector string
 	KeyFile  string
-	Limits   mailReplyLimits
+	// Helo is the host name the sender introduces itself with.
+	Helo   string
+	Limits mailReplyLimits
 }
 
-// mailReplySenderFactory builds the real sender from the configuration. It
-// is nil in this release: no outbound path exists yet (#18746 step 3 builds
-// the decision, the ledger and the templates; the sender follows once the
-// DNS records and outbound TCP 25 are confirmed).
-var mailReplySenderFactory func(cfg mailReplyConfig) (mailReplySender, error)
+// mailReplySenderFactory builds the sender from the configuration. Tests
+// replace it; it is only called once the gate in newMailReplierFromEnv has
+// passed, so a hub without the key never builds a sender.
+var mailReplySenderFactory = newSMTPReplySender
 
 // mailReplier decides and sends replies; a nil one does nothing.
 type mailReplier struct {
@@ -128,6 +130,7 @@ func newMailReplierFromEnv(logger *slog.Logger, hosts func() map[string]string) 
 		From:     strings.ToLower(strings.TrimSpace(os.Getenv(envMailReplyFrom))),
 		Selector: strings.TrimSpace(os.Getenv(envMailReplySelector)),
 		KeyFile:  strings.TrimSpace(os.Getenv(envMailReplyKeyFile)),
+		Helo:     strings.TrimSpace(os.Getenv(envMailReplyHelo)),
 		Limits: mailReplyLimits{
 			SenderPerHour: int(mailEnvInt64(envMailReplySenderH, defaultReplySenderPerHour)),
 			SenderPerDay:  int(mailEnvInt64(envMailReplySenderD, defaultReplySenderPerDay)),
@@ -174,7 +177,7 @@ func newMailReplier(cfg mailReplyConfig, sender mailReplySender, ledgerPath stri
 }
 
 // enabled is true only while the signing key file exists and is not empty,
-// and a sender is set. The key is never read here.
+// and a sender is set. The key is not read here; the sender reads it to sign.
 func (r *mailReplier) enabled() bool {
 	if r == nil || r.sender == nil || r.ledger == nil || r.cfg.KeyFile == "" {
 		return false
@@ -362,6 +365,13 @@ func (r *mailReplier) handle(ctx context.Context, c mailReplyCandidate) string {
 	if !r.enabled() {
 		return "disabled"
 	}
+	// A key the sender cannot load sends nothing and claims nothing, so the
+	// reply can still go once the key is fixed.
+	if rd, ok := r.sender.(mailReplyReadier); ok && rd.Ready() != nil {
+		r.count(skipKeyUnusable)
+		r.logger.Warn(mailReplyLogPrefix+"signing key unusable; no reply is sent", "delivery", c.DeliveryID)
+		return skipKeyUnusable
+	}
 	claim, reason := r.ledger.reserve(r.now(), c.HiveID, c.MessageID, c.To, c.Domain, c.DeliveryID, c.Outcome, r.cfg.Limits)
 	if reason != "" {
 		r.count(reason)
@@ -372,7 +382,8 @@ func (r *mailReplier) handle(ctx context.Context, c mailReplyCandidate) string {
 	if err := r.sender.Send(ctx, msg); err != nil {
 		r.ledger.finish(claim, resultFailed)
 		r.count(skipSendFailed)
-		r.logger.Warn(mailReplyLogPrefix+"send failed", "delivery", c.DeliveryID, "hive_id", c.HiveID)
+		reasonClass, code := mailReplyFailure(err)
+		r.logger.Warn(mailReplyLogPrefix+"send failed", "delivery", c.DeliveryID, "hive_id", c.HiveID, "reason", reasonClass, "smtp_code", code)
 		return skipSendFailed
 	}
 	r.ledger.finish(claim, resultSent)
