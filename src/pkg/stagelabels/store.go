@@ -104,6 +104,11 @@ type Record struct {
 	NudgeCIAt       time.Time `json:"nudge_ci_at,omitempty"`
 	NudgeCIAttempts int       `json:"nudge_ci_attempts,omitempty"`
 	NudgeMode       string    `json:"nudge_mode,omitempty"`
+	// NudgeWithheldHead is the head whose nudge was withheld because the
+	// contributor ladder supersedes it at once (hivecommons/hive#18872): the
+	// adoption clock runs (MarkNudged) but no comment was posted, so the
+	// adoption note is the author's one notification. A posted nudge clears it.
+	NudgeWithheldHead string `json:"nudge_withheld_head,omitempty"`
 	// AdoptedHead / AdoptedBy / AdoptedAt record the stage-074 adoption: the
 	// contributor head the hive adopted, the superseding App PR's number
 	// (0 while the attempt is recorded but no PR exists) and when. One
@@ -1483,6 +1488,7 @@ func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) 
 		r.NudgeOnline = online
 	}
 	r.NudgeHead = head
+	r.NudgeWithheldHead = ""
 	if n > r.NudgeCount {
 		r.NudgeCount = n
 	} else {
@@ -1491,6 +1497,27 @@ func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) 
 	r.LastNudgeAt = now
 	s.items[key] = r
 	s.dirty = true
+}
+
+// MarkNudgeWithheld records that the nudge for head was withheld (no comment
+// posted) because the ladder supersedes the head at once. Call it after
+// MarkNudged, which starts the adoption clock and clears the mark.
+func (s *Store) MarkNudgeWithheld(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.NudgeWithheldHead == head {
+		return
+	}
+	r.NudgeWithheldHead = head
+	s.items[key] = r
+	s.dirty = true
+}
+
+// NudgeWithheld reports whether the nudge for head was withheld rather
+// than posted.
+func (r Record) NudgeWithheld(head string) bool {
+	return head != "" && r.NudgeWithheldHead == head
 }
 
 // MarkNudgedReason records that nudge number n for reason class reason was

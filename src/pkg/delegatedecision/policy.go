@@ -270,6 +270,12 @@ type Input struct {
 	// or nothing moved). The delegate picks Adopt now
 	// (RuleAdoptNow) rather than wait any longer (hivecommons/hive#15038).
 	AdoptionGraceElapsed bool
+	// NudgeGracePending: the author was nudged on this head (a comment was
+	// posted, not withheld) and the shortest adoption wait since that nudge
+	// has not run out. The hive gave them a real chance, so the ladder's
+	// immediate supersede waits for the grace instead of firing minutes
+	// after the nudge on the same red/conflicting head (hivecommons/hive#18872).
+	NudgeGracePending bool
 	// WorkflowPath: the PR edits `.github/workflows/*` (read from its file
 	// list or from an `adoption-stalled:…workflow-path` park reason). The
 	// hive's App has no `workflows` permission, so supersede-adoption is

@@ -36,6 +36,10 @@ func TestForkGuardHeadNeitherNudgedNorAdopted(t *testing.T) {
 			p.ForkGuard = func(string, int, string) []string { return guard }
 			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
 			defer done()
+			// The relay is connected: a red head of an offline relay is
+			// one the ladder supersedes at once and is not nudged at all
+			// (hivecommons/hive#18872), which is not what this test is about.
+			h.sink.presence = &ContributorPresence{Registered: true, Online: true}
 			h.e.checkSummary = func(_ context.Context, _, _, sha string) (hgithub.CommitChecksSummary, error) {
 				if sha == "aaa" {
 					return hgithub.CommitChecksSummary{Total: 3, Green: 2, Red: []string{"Canary"}, DCO: 1}, nil

@@ -89,6 +89,8 @@ var glossary = []GlossaryEntry{
 	// Rules — why the delegate chose what it chose.
 	{Slug: RuleContributorOffline, Kind: GlossaryRule, Plain: "the author hasn't been reachable since the nudge",
 		Detail: "The PR's author (or their clanker or hive) has been offline since the hive nudged them, so the hive takes the work over instead of waiting. The decision itself names which: the author's clanker, a connected hive, or the author."},
+	{Slug: RuleNudgeGrace, Kind: GlossaryRule, Plain: "the author was just nudged on this head; waiting out the grace",
+		Detail: "The hive nudged the author on this exact head and the adoption grace has not run out, so it does not take the PR over on the same condition the nudge named. If nothing moves the hive adopts it at the grace on its own; an operator can still press Adopt now."},
 	{Slug: RuleAlreadyFixed, Kind: GlossaryRule, Plain: "the issue was already fixed by a merged PR; closed as superseded",
 		Detail: "The issue this PR fixes is already closed and a merged PR closed it (or a merged PR declares it supersedes this one), so nothing is left to deliver. The hive closes the PR as superseded with a note naming the merging PR; it never adopts it."},
 	{Slug: RuleMergeableAsIs, Kind: GlossaryRule, Plain: "mergeable and green as it is; handed to the merge queue",

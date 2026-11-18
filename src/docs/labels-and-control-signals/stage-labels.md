@@ -825,6 +825,24 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    (default 6h) is folded into the comment too; after the cooldown it
    counts as a fresh nudge. The ledger lives in the stage-label store, so
    a restart does not re-nudge.
+   **One notification per head** (hivecommons/hive#18872). Before writing,
+   the sender asks the contributor ladder
+   (`delegatedecision.SupersedesImmediately`) whether it would supersede
+   this head at once. It would when the head is red, conflicting or
+   missing DCO and the author's relay is registered here but not
+   connected. In that case no nudge comment is posted. The relay still
+   gets the `fix-pr` task, the adoption clock starts as if the author had
+   been nudged (the stage record keeps `nudge_withheld_head`), and the
+   adoption note that follows is the only comment the author gets. The
+   sender only withholds when adoption would actually follow. It still
+   nudges when adoption is off, when a hold label or a recorded adoption
+   block stops it, for a person's PR, for a head red only on a fork guard,
+   for an author with no relay registered here (the comment is their only
+   channel), and for a head the author pushed since the last nudge. The
+   other side of the rule: when a head did get a nudge comment, *Let hive
+   decide* does not supersede it on the same condition before the
+   shortest adoption wait has passed. Until then the ladder answers
+   `nudge-grace` (recommend waiting; Adopt now stays the override).
 2. Relay contributors (the author has a contributor profile and a live relay
    connection) also receive the diagnosis in their relay session as a
    `fix-pr` task with `priority: interrupt`. Presence = a relay heartbeat

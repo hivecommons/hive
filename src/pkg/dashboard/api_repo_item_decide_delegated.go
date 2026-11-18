@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
@@ -739,6 +740,7 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	in.AdoptionStalled = strings.HasPrefix(lowerReason, stagelabels.LaneReasonAdoptionStalledPrefix)
 	if in.Kind == delegatedecision.KindPR && !in.HiveAuthored {
 		in.AdoptionGraceElapsed = s.delegatedAdoptionGraceElapsed(repoFull, number)
+		in.NudgeGracePending = s.delegatedNudgeGracePending(repoFull, number, in.HeadSHA, time.Now())
 	}
 	if strings.Contains(lowerReason, stageengineprstage.ContributorLaneReasonWorkflowPath) {
 		in.WorkflowPath = true
@@ -771,6 +773,18 @@ func (s *Server) delegatedAdoptionGraceElapsed(repoFull string, number int) bool
 		return false
 	}
 	return rec.AdoptionBlocked(rec.NudgeHead) != ""
+}
+
+// delegatedNudgeGracePending reads the stage store: the author was nudged
+// with a comment on head and the shortest adoption wait since has not run
+// out, so the ladder does not supersede on the condition the nudge just
+// named (hivecommons/hive#18872).
+func (s *Server) delegatedNudgeGracePending(repoFull string, number int, head string, now time.Time) bool {
+	rec, ok := s.stageStoreOrShared().Get(stagelabels.Key(repoFull, number))
+	if !ok {
+		return false
+	}
+	return automerge.NudgeGracePending(rec, head, s.stageTrackerAdoptionClock().AdoptionClock, now)
 }
 
 // delegatedSentinelReason is the sentinel reason the decider and its comment

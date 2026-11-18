@@ -1429,7 +1429,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 			if kind == authorkind.Clanker {
 				if policy.ContributorNudge && !adoptionRetry {
-					n, err := c.nudgeContributor(ctx, store, key, obs, policy, now)
+					n, err := c.nudgeContributor(ctx, store, key, obs, policy, presence, hasPresence, now)
 					result.Comments += n
 					if err != nil && firstErr == nil {
 						firstErr = err

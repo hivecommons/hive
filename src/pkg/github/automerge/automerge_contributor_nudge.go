@@ -379,7 +379,11 @@ func ciNudgeDue(rec stagelabels.Record, head string, checks []string, repeatAfte
 
 // nudgeContributor runs the stage-072 nudge for one observation. It returns
 // the number of GitHub comments posted.
-func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) (int, error) {
+//
+// presence is the author's live relay presence (hasPresence false when the
+// sink has none): a head the contributor ladder supersedes at once gets no
+// comment, only the adoption note that follows (hivecommons/hive#18872).
+func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, presence ContributorPresence, hasPresence bool, now time.Time) (int, error) {
 	rec, ok := store.Get(key)
 	if !ok || obs.Author == "" {
 		return 0, nil
@@ -429,6 +433,16 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 		Reason: obs.Reason, FailingChecks: checks, ReviewAsks: asks, HumanChangesRequested: human,
 		Nudge: shown, Stalled: ordinal > 1, Attempt: attempt,
 	}
+	// One notification per head (hivecommons/hive#18872): a head the
+	// contributor ladder supersedes at once is not nudged, because the
+	// adoption note follows on the same condition minutes later. Once the
+	// clock runs silently on this head there is nothing more to do here.
+	// A head already nudged with a comment keeps its grace and its comment.
+	postedHere := rec.NudgeHead == obs.HeadSHA && rec.NudgeCount > 0 && !rec.NudgeWithheld(obs.HeadSHA)
+	withhold := !postedHere && ladderSupersedesNudgeHead(rec, obs, policy, checks, presence, hasPresence)
+	if withhold && rec.NudgeWithheld(obs.HeadSHA) {
+		return 0, nil
+	}
 	// Another check going red on the head the relay already has as a
 	// fix-pr task is folded into the comment, not dispatched again
 	// (hivecommons/hive#17328); the recorded delivery mode keeps the
@@ -439,6 +453,18 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 		out = ContributorNudgeOutcome{Mode: rec.NudgeMode, Online: rec.NudgeOnline}
 	} else if c.contributorNudge != nil {
 		out = c.contributorNudge.Nudge(ctx, n)
+	}
+	reached := out.Online || out.Mode == "spawn" || out.Mode == "preempt"
+	if withhold && !reached {
+		// The relay keeps the fix-pr task (a queue entry, not a GitHub
+		// notification) and the adoption clock starts as if nudged, so the
+		// author's one comment is the adoption note. The reason class is
+		// not counted: should the adoption be held later, the nudge is
+		// still owed and goes out then.
+		store.MarkNudged(key, obs.HeadSHA, 1, false, now)
+		store.MarkNudgeWithheld(key, obs.HeadSHA)
+		c.info("stage labels: contributor nudge withheld; the ladder supersedes this head at once, the adoption note is the one notification", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", obs.Reason, "mode", nonEmpty(out.Mode, "comment"))
+		return 0, nil
 	}
 	body := ContributorNudgeComment(n, out)
 	// One nudge comment per PR (hivecommons/hive#17067): the hive's
@@ -463,7 +489,7 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 	// "queued" only says the author has a relay registered here; the work
 	// sits in its queue whether or not that relay is connected. Counting it
 	// as online gave an offline clanker the 2h online grace (#15566).
-	store.MarkNudged(key, obs.HeadSHA, max(ordinal, 1), out.Online || out.Mode == "spawn" || out.Mode == "preempt", now)
+	store.MarkNudged(key, obs.HeadSHA, max(ordinal, 1), reached, now)
 	store.MarkNudgedReason(key, obs.Reason, ordinal, now)
 	if ciFailure {
 		store.MarkNudgedCIFailure(key, checks, obs.HeadSHA, nonEmpty(out.Mode, "comment"), attempt, ordinal == 1, now)

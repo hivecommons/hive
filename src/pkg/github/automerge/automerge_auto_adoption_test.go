@@ -66,7 +66,18 @@ func TestAutoAdoptionTriggerMatrix(t *testing.T) {
 						h.e.noteStageRedChecks("acme", "widget", 7, "aaa", []string{"overlayfs-exec-guard"})
 					}
 					h.observe(adoptPR(7, "aaa"), laneReason)
-					if len(nudgeComments(h.api)) != 1 {
+					// hivecommons/hive#18872: a red or conflicting head of an
+					// offline relay is one the contributor ladder supersedes
+					// at once, so it gets no nudge comment; the relay still
+					// gets the fix-pr task and the adoption note is the one
+					// notification. Changes requested and a fork Hive cannot
+					// update carry no red check here, so they are nudged.
+					withheld := !pc.online && (reason == "conflicting" || reason == optionalRed || strings.HasPrefix(reason, "required-check-failing:"))
+					if withheld {
+						if len(nudgeComments(h.api)) != 0 || len(h.sink.nudges) != 1 {
+							t.Fatalf("nudge for a head the ladder supersedes at once, %q: comments=%v sink=%d", reason, h.api.comments, len(h.sink.nudges))
+						}
+					} else if len(nudgeComments(h.api)) != 1 {
 						t.Fatalf("no nudge for %q: %v", reason, h.api.comments)
 					}
 					labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
@@ -107,6 +118,9 @@ func TestAutoAdoptionTriggerMatrix(t *testing.T) {
 						if got {
 							if c := adoptionComments(h.api); len(c) != 1 || !strings.Contains(c[0], "reason="+AdoptReasonOffline) {
 								t.Fatalf("adoption note: %v", c)
+							}
+							if withheld && !headMoved && len(nudgeComments(h.api)) != 0 {
+								t.Fatalf("a nudge posted alongside the adoption note: %v", h.api.comments)
 							}
 							break
 						}

@@ -1093,8 +1093,11 @@ func TestAdoptionInPlaceForConflictingOfflineContributor(t *testing.T) {
 	defer done()
 	h.adopt.allowMaintainerEdits(7, true)
 	h.observe(adoptPR(7, "aaa"), "conflicting")
-	if got := nudgeComments(h.api); len(got) != 1 || !strings.Contains(got[0], "needs a rebase") {
-		t.Fatalf("conflict nudge: %v", h.api.comments)
+	// The relay is registered and offline and the head conflicts: the
+	// contributor ladder supersedes it at once, so no nudge comment goes
+	// out (hivecommons/hive#18872); the relay still gets the task.
+	if got := nudgeComments(h.api); len(got) != 0 || len(h.sink.nudges) != 1 {
+		t.Fatalf("conflict nudge for a head adopted at once: comments=%v sink=%d", h.api.comments, len(h.sink.nudges))
 	}
 	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
 	h.api.reset()

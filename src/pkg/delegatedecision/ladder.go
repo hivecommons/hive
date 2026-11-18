@@ -36,6 +36,10 @@ const (
 	RuleReturnToContributor = "return-to-contributor"
 	// RuleContributorOffline: the last rung — adopt in supersede mode.
 	RuleContributorOffline = "contributor-offline"
+	// RuleNudgeGrace: rung 5 reached on a head whose author was nudged and
+	// whose grace is still running; the hive recommends waiting instead of
+	// superseding minutes after the nudge (hivecommons/hive#18872).
+	RuleNudgeGrace = "nudge-grace"
 )
 
 // ladderRungs is the evaluation order.
@@ -232,7 +236,20 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 		}
 		return out(d, in.OfflineWording()+" and the grace has elapsed; adopted now")
 	}
-	if in.AdoptionStalled || in.Conflicting || in.CIRed() || in.DCOMissing {
+	redHead := in.Conflicting || in.CIRed() || in.DCOMissing
+	if redHead && !in.AdoptionStalled && in.NudgeGracePending {
+		// The author was nudged on this very head and the grace is still
+		// running: the hive gave them a real chance, so it does not take the
+		// PR over minutes later on the same condition the nudge named
+		// (hivecommons/hive#18872). The adoption engine adopts at the grace
+		// if nothing moves; Adopt now stays the operator's override.
+		skip(RuleContributorOffline, "the author was nudged on this head and the grace has not run out")
+		d := recommendOnly(RuleNudgeGrace,
+			"the author was nudged on "+ref+" at this head and the adoption grace is still running; superseding now would contradict the nudge (hivecommons/hive#18872)",
+			"wait for the nudge grace on "+ref+": the hive adopts it on its own if nothing moves, or press Adopt now")
+		return out(d, "nudged on this head; waiting for the grace")
+	}
+	if in.AdoptionStalled || redHead {
 		text := "supersede now: adopt " + ref + " in supersede mode, preserving the author's commits and sign-off; do not wait for the grace deadline"
 		d := Decision{
 			Verdict: VerdictAdoptSupersede, Rule: RuleContributorOffline, Text: text,
@@ -242,6 +259,17 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 		return out(d, in.OfflineWording()+"; adopted in supersede mode")
 	}
 	return Decision{}, false
+}
+
+// SupersedesImmediately reports whether the ladder would adopt this PR head
+// in supersede mode right now, without waiting for a grace. The contributor
+// nudge sender asks it before writing: a head the ladder takes over at once
+// gets no "back in your court" comment, only the adoption note
+// (hivecommons/hive#18872). It is decideLadder itself, so the two cannot
+// drift.
+func SupersedesImmediately(in Input) bool {
+	d, ok := decideLadder(in, "#"+itoa(in.Number))
+	return ok && d.Verdict == VerdictAdoptSupersede
 }
 
 // decideAlreadyFixed is rung 1: close as superseded by the merged closer,
