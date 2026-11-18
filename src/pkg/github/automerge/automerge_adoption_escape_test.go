@@ -299,6 +299,11 @@ func TestAdoptionEscapeHelpers(t *testing.T) {
 		{"stale red head escalates", stageObservation{HeadSHA: "aaa", Reason: "check-failing:unit", LaneReason: "check-failing:unit"}, inPlace, now.Add(adoptedDwell), "", "adoption-stalled:check-failing:unit"},
 		{"stale required-red head escalates", stageObservation{HeadSHA: "aaa", Reason: "required-check-failing:unit", LaneReason: "required-check-failing:unit"}, inPlace, now.Add(adoptedDwell), "", "adoption-stalled:required-check-failing:unit"},
 		{"stale optional-red head is not a blocker", stageObservation{HeadSHA: "aaa", Reason: stageReasonOptionalCheckFailing + "overlap", LaneReason: contributorLaneReasonNoVerdict, Detail: stageDetail{RedChecks: []string{"overlap"}, RedChecksHead: "aaa"}}, inPlace, now.Add(2 * adoptedDwell), "", ""},
+		// projectbluefin/actions#752: auto-merge is off, so a person merges and
+		// the red optional check is theirs to weigh once the head sits idle.
+		{"stale optional-red head on an auto-merge-off repo escalates", stageObservation{HeadSHA: "aaa", Reason: stageReasonOptionalCheckFailing + "consumer", LaneReason: observeOnlyReasonRepoAutoMergeDisabled, Detail: stageDetail{RedChecks: []string{"consumer"}, RedChecksHead: "aaa"}}, inPlace, now.Add(adoptedDwell), "", "adoption-stalled:optional-check-failing:consumer"},
+		{"fresh optional-red head on an auto-merge-off repo waits", stageObservation{HeadSHA: "aaa", Reason: stageReasonOptionalCheckFailing + "consumer", LaneReason: observeOnlyReasonRepoAutoMergeDisabled, Detail: stageDetail{RedChecks: []string{"consumer"}, RedChecksHead: "aaa"}}, inPlace, now.Add(time.Hour), "", ""},
+		{"legacy head clock on an auto-merge-off repo is not stale", stageObservation{HeadSHA: "92fba9a", Reason: stageReasonOptionalCheckFailing + "consumer", LaneReason: observeOnlyReasonRepoAutoMergeDisabled, Detail: stageDetail{RedChecks: []string{"consumer"}, RedChecksHead: "92fba9a"}}, stagelabels.Record{AdoptedHead: "92fba9a", AdoptMode: stagelabels.AdoptModeInPlace, AdoptedAt: now, HivePushedHeads: []string{"92fba9a"}}, now.Add(28 * time.Hour), "", ""},
 		{"stale optional-red head with finding re-homes", stageObservation{HeadSHA: "aaa", Reason: stageReasonOptionalCheckFailing + "overlap", LaneReason: contributorLaneReasonChangesRequested, Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}, RedChecks: []string{"overlap"}, RedChecksHead: "aaa"}}, inPlace, now.Add(adoptedDwell), AdoptReasonInPlaceStalled, "adoption-stalled:optional-check-failing:overlap"},
 		{"legacy record without a head clock is not stale", stageObservation{HeadSHA: "92fba9a", Reason: "check-failing:unit", LaneReason: "check-failing:unit"}, stagelabels.Record{AdoptedHead: "92fba9a", AdoptMode: stagelabels.AdoptModeInPlace, AdoptedAt: now, HivePushedHeads: []string{"92fba9a"}}, now.Add(28 * time.Hour), "", ""},
 		{"live superseder is progress", stageObservation{HeadSHA: "aaa", Reason: "check-failing:unit", LaneReason: "check-failing:unit"}, stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeSupersede, AdoptedBy: 90, AdoptedAt: now}, now.Add(adoptedDwell), "", ""},
@@ -313,6 +318,31 @@ func TestAdoptionEscapeHelpers(t *testing.T) {
 				t.Fatalf("adoptionStalledReason=%q, want %q", got, tc.wantStall)
 			}
 		})
+	}
+}
+
+// projectbluefin/actions#752: on a repo whose auto-merge is off, the stall
+// note for a red optional check says a person merges and may merge past
+// it; elsewhere, and when a required check is the stall reason, it does not.
+func TestAdoptionStalledCommentOptionalCheckAutoMergeOff(t *testing.T) {
+	red := stageDetail{RedChecks: []string{"consumer"}, RedChecksHead: "aaa"}
+	off := stageObservation{HeadSHA: "aaa", Number: 752, Reason: stageReasonOptionalCheckFailing + "consumer", LaneReason: observeOnlyReasonRepoAutoMergeDisabled, Detail: red}
+	note := AdoptionStalledComment(off, stagelabels.Record{}, "adoption-stalled:optional-check-failing:consumer", 35*time.Hour)
+	for _, want := range []string{"reason=adoption-stalled:optional-check-failing:consumer", "check `consumer` is red on this head", "auto-merge is off for this repository, so a person merges this PR", "merge past it"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("note missing %q:\n%s", want, note)
+		}
+	}
+	required := off
+	required.Reason = "required-check-failing:unit"
+	required.LaneReason = "required-check-failing:unit"
+	if note := AdoptionStalledComment(required, stagelabels.Record{}, "adoption-stalled:required-check-failing:unit", 35*time.Hour); strings.Contains(note, "merge past it") {
+		t.Fatalf("a required-check stall must not offer merging past it:\n%s", note)
+	}
+	on := off
+	on.LaneReason = contributorLaneReasonNoVerdict
+	if note := AdoptionStalledComment(on, stagelabels.Record{}, "adoption-stalled:optional-check-failing:consumer", 35*time.Hour); strings.Contains(note, "auto-merge is off") {
+		t.Fatalf("an auto-merge repo's note must not claim auto-merge is off:\n%s", note)
 	}
 }
 

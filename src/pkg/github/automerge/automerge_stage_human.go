@@ -112,6 +112,50 @@ type humanFenceEntry struct {
 	fence string
 }
 
+// humanApprovalEntry is one head's trusted approval as the human route read
+// it ("" when there is none), and when it was read.
+type humanApprovalEntry struct {
+	head  string
+	at    time.Time
+	login string
+}
+
+// headTrustedApproval is the trusted approval on obs's head for a route
+// that would ask for one when no lane noted it this pass: an APPROVED review
+// that reaches the head (on it, or carried over the hive's base merges) and,
+// for a requires_human verdict, a recorded `/hive decision approve`
+// (trustedHumanApprovalForRequiresHuman). It is read once per head per
+// humanChecksTTL, like the head's checks: a new head is a miss, and an
+// approval given on a parked head shows within the TTL.
+func (c *Engine) headTrustedApproval(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, verdict ContributorLaneVerdict, now time.Time) string {
+	if c == nil || tracker == nil || strings.TrimSpace(obs.HeadSHA) == "" {
+		return ""
+	}
+	tracker.mu.Lock()
+	entry, ok := tracker.approvals[key]
+	tracker.mu.Unlock()
+	if ok && entry.head == obs.HeadSHA && now.Sub(entry.at) < humanChecksTTL {
+		return entry.login
+	}
+	// Only a trusted merger's approval counts, so with none configured
+	// there is nothing to read (as for the sign-off election's own read).
+	var login string
+	if _, configured := c.isTrustedMerger(""); configured {
+		if verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true}) {
+			login, _ = c.trustedHumanApprovalForRequiresHuman(ctx, obs.Owner, obs.Repo, obs.Number, obs.HeadSHA, verdict)
+		} else {
+			login, _ = c.latestTrustedHumanApproval(ctx, obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
+		}
+	}
+	tracker.mu.Lock()
+	if tracker.approvals == nil {
+		tracker.approvals = map[string]humanApprovalEntry{}
+	}
+	tracker.approvals[key] = humanApprovalEntry{head: obs.HeadSHA, at: now, login: login}
+	tracker.mu.Unlock()
+	return login
+}
+
 // headDiffFence returns the contributor lane's merge diff fence for obs's
 // head (contributorLaneMergeFence: workflow / action files as
 // workflow_fence_scope scopes them, tests removed), cached per head and
@@ -577,9 +621,18 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 			}
 		}
 	}
+	if e.HumanApprover == "" && e.HumanChangeRequester == "" && (e.Verdict == stagelabels.VerdictRequiresHuman || (e.ManualMerge && e.ApprovalReleasesFence)) {
+		// A lane that stopped at an earlier gate (a fork-guard check, a
+		// hold) never reached the review gate or the workflow fence, so
+		// nothing noted the approval on this head: read it here rather
+		// than ask for one a maintainer already gave
+		// (projectbluefin/utah-packages#1181, #1013).
+		e.HumanApprover = c.headTrustedApproval(ctx, tracker, key, obs, contributorVerdict, now)
+	}
 	if humanMergePath {
 		applyHumanMergePathFenceRoute(&e, obs)
 	}
+	e.CauseAwaitsApproval = e.ApprovalReleasesFence && strings.HasSuffix(e.CauseReason, prstage.CauseWorkflowPathAwaitingApproval)
 	if strings.HasPrefix(obs.Reason, stageReasonForkGuard) {
 		e.ForkGuard = append([]string(nil), obs.ForkGuardChecks...)
 	}
@@ -885,8 +938,37 @@ func sameHeadDecisionRoute(obs stageObservation) stagelabels.Route {
 	}
 	v := normalizeContributorLaneVerdict(obs.Detail.Verdict)
 	route.Verdict = stagelabels.VerdictRequiresHuman
+	if approver := strings.TrimSpace(obs.Detail.HumanApprover); approver != "" && obs.HeadSHA != "" && strings.TrimSpace(obs.Detail.HumanApprovalHead) == obs.HeadSHA {
+		// The trusted approval on this head answered the verdict, as in
+		// humanEvidence: the re-park does not ask the reviewer's question again.
+		route.HumanApprover = approver
+		return route
+	}
 	route.Reasons = stagelabels.RequiresHumanReasons(obs.HeadSHA, v.DecisionFinding, v.DecisionQuestion, v.HumanSummaries)
 	return route
+}
+
+// sameHeadApproved reports whether a trusted approval stands on obs's head
+// when the same-head 085 re-park is about to keep asking for one. A lane
+// that stopped before the review gate noted none this pass, so it is read
+// here (headTrustedApproval) and stamped on obs; the approval answers the
+// parked question, so the PR is not re-parked on it.
+func (c *Engine) sameHeadApproved(ctx context.Context, tracker *StageTracker, key string, obs *stageObservation, now time.Time) bool {
+	if obs == nil || obs.HeadSHA == "" {
+		return false
+	}
+	if strings.TrimSpace(obs.Detail.HumanApprover) != "" && strings.TrimSpace(obs.Detail.HumanApprovalHead) == obs.HeadSHA {
+		return true
+	}
+	if strings.TrimSpace(obs.Detail.HumanChangeRequester) != "" && strings.TrimSpace(obs.Detail.HumanChangeRequestHead) == obs.HeadSHA {
+		return false
+	}
+	login := c.headTrustedApproval(ctx, tracker, key, *obs, normalizeContributorLaneVerdict(obs.Detail.Verdict), now)
+	if login == "" {
+		return false
+	}
+	obs.Detail.HumanApprover, obs.Detail.HumanApprovalHead = login, obs.HeadSHA
+	return true
 }
 
 func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, role stagelabels.Role, route stagelabels.Route) (int, error) {

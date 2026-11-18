@@ -11,8 +11,33 @@ import (
 
 const (
 	wrongBaseValidationTimeout = 15 * time.Second
-	wrongBaseParkMarker        = "<!-- hive:wrong-base-park -->"
+	wrongBaseParkMarkerPrefix  = "<!-- hive:wrong-base-park"
 )
+
+// wrongBaseNoTargetReason is the park reason when the verdict named no `vN`
+// branch. It does not say "release branch was supplied": a repository on
+// main/testing/stable has no release branch to supply (projectbluefin/utah#1272).
+const wrongBaseNoTargetReason = "wrong_base: the agent named no `vN` release branch, the only kind Hive can re-dispatch to"
+
+// wrongBaseParkMarker tags the park note for one task, so a re-delivered
+// completion posts nothing twice while a later task's park still gets its own
+// note with that agent's reason.
+func wrongBaseParkMarker(taskID string) string {
+	if id := sanitizeParkTaskID(taskID); id != "" {
+		return wrongBaseParkMarkerPrefix + " task=" + id + " -->"
+	}
+	return wrongBaseParkMarkerPrefix + " -->"
+}
+
+// wrongBaseParkReason is the reason a parked wrong_base verdict is recorded
+// and logged with: the hub's finding plus the agent's own words, which are
+// the only thing a maintainer can act on. agentReason is already sanitized.
+func wrongBaseParkReason(detail, agentReason string) string {
+	if agentReason == "" {
+		return detail
+	}
+	return detail + "; the agent said: " + agentReason
+}
 
 // normalizeWrongBaseTarget accepts the release-line vocabulary contributor
 // dispatch can route. Keeping this identical to declared issue targets prevents
@@ -35,8 +60,7 @@ func (h *ContributeWSHub) resolveWrongBaseVerdict(task *WSTaskAssign, verdict, p
 	}
 	target = normalizeWrongBaseTarget(proposed)
 	if task == nil || task.Repo == "" || target == "" {
-		return completionVerdictNeedsDecision, target,
-			"wrong_base: no valid target release branch was supplied", true
+		return completionVerdictNeedsDecision, target, wrongBaseNoTargetReason, true
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), wrongBaseValidationTimeout)
@@ -64,42 +88,56 @@ func (h *ContributeWSHub) wrongBaseBranchExists(ctx context.Context, repo, branc
 	return h.server.deps.GHClient.BranchExists(ctx, repo, branch)
 }
 
-func wrongBaseParkComment(reporter, target, detail, label string) string {
+// wrongBaseParkComment is the one note a parked wrong_base verdict posts; it
+// is also the park's question, so the generic needs-decision question is not
+// posted beside it. agentReason is the agent's own text, sanitized by the
+// caller (no mentions, backticks, HTML comments or line breaks), quoted as
+// untrusted text and never used as a branch.
+func wrongBaseParkComment(taskID, reporter, target, detail, agentReason, label string) string {
 	who := "a contributor's agent"
 	if reporter = strings.TrimSpace(reporter); reporter != "" {
 		who = "@" + reporter + "'s agent"
 	}
-	branch := "no valid branch"
+	var line string
 	if target != "" {
-		branch = "`" + target + "`"
+		line = fmt.Sprintf("Hive could not re-dispatch %s wrong-base verdict to `%s` (%s), so `%s` remains until a maintainer corrects the target branch.",
+			who, target, detail, label)
+	} else {
+		line = fmt.Sprintf("Hive could not re-dispatch %s wrong-base verdict: it named no `vN` release branch, the only kind Hive re-dispatches to, so `%s` remains until a maintainer decides where this work belongs.",
+			who, label)
 	}
-	return fmt.Sprintf("%s Hive could not re-dispatch %s wrong-base verdict to %s (%s), so `%s` remains until a maintainer corrects the target branch.",
-		wrongBaseParkMarker, who, branch, detail, label)
+	said := "The agent gave no reason."
+	if agentReason != "" {
+		said = "The agent said: \u201c" + agentReason + "\u201d"
+	}
+	return fmt.Sprintf("%s %s %s Reply `/hive decision <your instructions>` to send the issue back with direction.",
+		wrongBaseParkMarker(taskID), line, said)
 }
 
 // parkWrongBaseIssue records the fallback required when the proposed branch is
 // absent or GitHub cannot validate it. Runs detached from the WebSocket loop.
-func (h *ContributeWSHub) parkWrongBaseIssue(task *WSTaskAssign, reporter, target, detail string) {
+func (h *ContributeWSHub) parkWrongBaseIssue(task *WSTaskAssign, taskID, reporter, target, detail, agentReason string) {
 	if h == nil || task == nil || task.Kind != "issue" || task.Repo == "" || task.Number <= 0 || task.ExternalID != "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gateParkReleaseTimeout)
 	defer cancel()
-	if err := h.parkWrongBase(ctx, task.Repo, task.Number, reporter, target, detail); err != nil {
+	body := wrongBaseParkComment(taskID, reporter, target, detail, agentReason, h.configuredNeedsDecisionLabel())
+	if err := h.parkWrongBase(ctx, task.Repo, task.Number, wrongBaseParkMarker(taskID), body); err != nil {
 		h.logger.Warn("[contribute-ws] wrong-base verdict: could not park invalid target",
 			"repo", task.Repo, "number", task.Number, "target_branch", target, "error", err)
 	}
 }
 
-func (h *ContributeWSHub) parkWrongBase(ctx context.Context, repo string, number int, reporter, target, detail string) error {
+func (h *ContributeWSHub) parkWrongBase(ctx context.Context, repo string, number int, marker, body string) error {
 	if h.wrongBaseParker != nil {
-		return h.wrongBaseParker(ctx, repo, number, reporter, target, detail)
+		return h.wrongBaseParker(ctx, repo, number, marker, body)
 	}
 	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
 		return ghpkg.ErrNoGitHubClient
 	}
 	client := h.server.deps.GHClient
-	posted, err := client.IssueCommentsContain(ctx, repo, number, wrongBaseParkMarker)
+	posted, err := client.IssueCommentsContain(ctx, repo, number, marker)
 	if err != nil {
 		return err
 	}
@@ -114,6 +152,5 @@ func (h *ContributeWSHub) parkWrongBase(ctx context.Context, repo string, number
 	if posted {
 		return nil
 	}
-	return client.CreateIssueComment(ctx, repo, number,
-		wrongBaseParkComment(reporter, target, detail, label))
+	return client.CreateIssueComment(ctx, repo, number, body)
 }

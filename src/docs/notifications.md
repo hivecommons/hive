@@ -663,6 +663,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).postBlockedOnPRMarker` | `protocol_command` | carries the machine-consumed blocked-on marker; shared by a relay's blocked verdict and a PR's `Depends-on:` placement |
 | `github.(*Client).markBlockedPRSuccessor` | `protocol_command` | moves a PR's `Depends-on:` hold to the open pull request that replaced a target closed without merging; carries the blocked-on marker and the `hive:depends-on-successor` link the sweep reads back |
 | `github.blockedSuccessorRetargetIssue` | `protocol_command` | moves an issue's block to the open issue that replaced its closed blocker (a duplicate closure or a trusted "Superseded by"); carries the issue-form blocked-on marker |
+| `github.retargetBlockedOnAll` | `protocol_command` | moves one or more of an issue's several blockers to their open replacements; carries the blocked-on marker of every blocker still open, so the newest marker-bearing comment names all of them |
 | `github.(*Client).handleOnePRRequest` | `security_event` |  |
 | `github.(*Client).markReporterTrustAwaiting` | `security_event` |  |
 | `github.(*Client).reconcileReporterTrustSignal` | `security_event` |  |

@@ -277,6 +277,16 @@ type Record struct {
 	// a reset on a read that finds the label briefly absent would restart
 	// the remove / re-add loop.
 	TriageClearYielded bool `json:"triage_clear_yielded,omitempty"`
+	// OpenPRLabelClearedAt is when the hive's stage write last took
+	// `has-open-pr` off this issue because no open PR links it any more.
+	// Zero when the hive never removed it, or since a linking PR was seen
+	// beside the label again (ResetOpenPRLabelClear).
+	OpenPRLabelClearedAt time.Time `json:"open_pr_label_cleared_at,omitempty"`
+	// OpenPRLabelClearYielded is set once `has-open-pr` was seen back on
+	// the issue, with no open PR linking it, after the hive removed it:
+	// another writer owns it there, so the hive leaves it until a linking
+	// PR is seen beside it again.
+	OpenPRLabelClearYielded bool `json:"open_pr_label_clear_yielded,omitempty"`
 	// AdoptedHeadAt is when AdoptedHead last moved under a live in-place
 	// adoption: the adoption itself, then each hive push. Zero only on
 	// records written before it existed (hivecommons/hive#13040); the
@@ -1486,6 +1496,52 @@ func (s *Store) MarkTriageClearYielded(key string) bool {
 	s.items[key] = r
 	s.dirty = true
 	return true
+}
+
+// NoteOpenPRLabelCleared records that the hive's stage write took
+// `has-open-pr` off key at now. A missing record is left missing.
+func (s *Store) NoteOpenPRLabelCleared(key string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.OpenPRLabelClearedAt.Equal(now) {
+		return
+	}
+	r.OpenPRLabelClearedAt = now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkOpenPRLabelClearYielded records that `has-open-pr` came back on key
+// after the hive removed it while no open PR linked the issue. It reports
+// whether this call set the mark, so the caller logs the yield once.
+func (s *Store) MarkOpenPRLabelClearYielded(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.OpenPRLabelClearYielded {
+		return false
+	}
+	r.OpenPRLabelClearYielded = true
+	s.items[key] = r
+	s.dirty = true
+	return true
+}
+
+// ResetOpenPRLabelClear forgets the one removal and any yield on key: a
+// linking PR was seen beside `has-open-pr`, so the label is accurate again
+// and may come off once more when that PR goes.
+func (s *Store) ResetOpenPRLabelClear(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.OpenPRLabelClearedAt.IsZero() && !r.OpenPRLabelClearYielded) {
+		return
+	}
+	r.OpenPRLabelClearedAt = time.Time{}
+	r.OpenPRLabelClearYielded = false
+	s.items[key] = r
+	s.dirty = true
 }
 
 // MarkNudged records that nudge number n for head was posted at now. A new
