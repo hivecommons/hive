@@ -461,13 +461,13 @@ Work that follows from it:
 Hub first, then hive. Each phase is its own issue, is off by default, and is
 blocked by the one before. No phase changes the CSP.
 
-| Phase | Scope |
-|---|---|
-| 1 | **Hub backend:** the `ask:` config and env, secret loading, the vendor client, the per-person consent record and routes, credential-shape refusal, source filtering, limits, circuit breaker, audit lines, `POST /api/ask` on the hub. Tests against a fake vendor server. No panel. |
-| 2 | **Hub panel:** the chat panel on the hub dashboard (consent notice, answer with sources, "AI generated" label, accessibility, the docs-link fallback), the hub operator switch with its help mark. |
-| 3 | **Docs coverage:** sync-list and nav-map gaps, the generated UI map page, ingestion exclusions, the vendor-side checklist, the docs and telemetry page updates. |
-| 4 | **Hive backend:** `ask.mode` `hub` and `direct`, the hive route, the per-person consent record on the hive, the hub relay endpoint with the per-hive bearer, per-hive quota and per-hive disable, the Settings, Features toggle. |
-| 5 | **Hive panel and live verification:** the panel on the hive dashboard (reusing phase 2's component), self-hosted direct-mode docs, and a live check on a hosted hive, a self-hosted hive and the hub. |
+| Phase | Issue | Scope |
+|---|---|---|
+| 1 | [#19180](https://github.com/hivecommons/hive/issues/19180) | **Hub backend:** the `ask:` config and env, secret loading, the vendor client, the per-person consent record and routes, credential-shape refusal, source filtering, limits, circuit breaker, audit lines, `POST /api/ask` on the hub. Tests against a fake vendor server. No panel. |
+| 2 | [#19181](https://github.com/hivecommons/hive/issues/19181) | **Hub panel:** the chat panel on the hub dashboard (consent notice, answer with sources, "AI generated" label, accessibility, the docs-link fallback), the hub operator switch with its help mark. |
+| 3 | [#19182](https://github.com/hivecommons/hive/issues/19182) | **Docs coverage:** sync-list and nav-map gaps, the generated UI map page, ingestion exclusions, the vendor-side checklist, the docs and telemetry page updates. |
+| 4 | [#19183](https://github.com/hivecommons/hive/issues/19183) | **Hive backend:** `ask.mode` `hub` and `direct`, the hive route, the per-person consent record on the hive, the hub relay endpoint with the per-hive bearer, per-hive quota and per-hive disable, the Settings, Features toggle. |
+| 5 | [#19184](https://github.com/hivecommons/hive/issues/19184) | **Hive panel and live verification:** the panel on the hive dashboard (reusing phase 2's component), self-hosted direct-mode docs, and a live check on a hosted hive, a self-hosted hive and the hub. |
 
 Phase 1 is useful on its own for the hub operator to try against the real project
 behind the switch. Phase 3 can run beside phase 2 but is chained after it so nothing goes
@@ -532,7 +532,7 @@ The recommended defaults are stated; the operator may overrule any.
 ## Exit criteria
 
 #19177 closes when this page is merged and phases 1 to 5 exist as issues linked
-to it and to each other. Implementation then proceeds through those issues.
+to it and to each other (done: the table above, each blocked by the one before). Implementation then proceeds through those issues.
 
 ## Verification notes
 
