@@ -1,0 +1,1 @@
+- The GitHub egress proxy now rewrites em-dashes in the text fields of agent-written GitHub JSON requests (comments, reviews, PR and issue titles and bodies), using the shared filter now in `crux/prosefilter`; set `HIVE_PROXY_DASH_FILTER=off` to disable (#19103).

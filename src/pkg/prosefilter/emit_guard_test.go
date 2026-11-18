@@ -11,6 +11,11 @@ import (
 	"testing"
 )
 
+const (
+	emDash = "\u2014"
+	enDash = "\u2013"
+)
+
 // emitDirs are the source trees (relative to src/) whose non-test Go files
 // build text that hive sends to a forge or an agent: PR, issue and comment
 // templates, status lines, notices and kick prompts. Docs, tests and

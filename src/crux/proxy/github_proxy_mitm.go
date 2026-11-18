@@ -379,6 +379,11 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			return
 		}
 
+		// Agent-written text must not carry em-dashes onto GitHub (#19103).
+		if injectsGitHubAuthForHost(host) {
+			p.filterOutboundDashes(req, agentName)
+		}
+
 		// Forward to upstream. The client read deadline stays in force until
 		// the body is fully drained (req.Write pipes req.Body from the client),
 		// so a client stalling mid-body cannot hang the relay.
