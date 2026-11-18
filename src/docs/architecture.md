@@ -7,6 +7,8 @@ Hive checks a reported problem, assigns an agent, and applies the configured
 review and merge gates. That example describes a permitted workflow, not what
 every ACMM level allows.
 
+Hive is the work-governance plane for AI coding agents, not a model gateway or inference server; see [what Hive is and is not](what-is-hive.md#what-hive-is-and-is-not).
+
 Hive is AI-agent orchestration for open-source projects. A single Go binary
 enumerates GitHub issues and PRs, classifies them, and dispatches work to AI
 coding agents (Claude, Copilot, Codex, Antigravity, Goose) on adaptive cadences governed by
