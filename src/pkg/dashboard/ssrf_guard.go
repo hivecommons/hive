@@ -5,9 +5,30 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/netguard"
 )
 
 const ssrfMaxRedirects = 3
+
+// ssrfPinnedTransport is the transport for every fetch whose URL a user or a
+// remote party chooses and that isPrivateURL already checked (#18992). The
+// pre-fetch check resolves the name, and a default http.Client resolves it
+// again when it dials, so a rebinding name passed the check as public and was
+// connected to as private. This transport resolves each dial once through
+// privateURLResolver, runs isPrivateURL on every answer (so the dial-time
+// check is the pre-fetch check, test exemptions included), and connects to
+// an address it checked. It runs for every redirect hop's connection too.
+//
+// Not used for operator-configured gateway endpoints (governor probes, model
+// discovery), which may legitimately be private, nor for /api/style, whose
+// host is the fixed raw.githubusercontent.com; a redirect off either is still
+// bounded by noRedirectToPrivate. A package var so import tests can route the
+// same seam to an httptest server.
+var ssrfPinnedTransport http.RoundTripper = netguard.PinnedDialer{
+	Resolve: func(ctx context.Context, host string) ([]string, error) { return privateURLResolver(ctx, host) },
+	Refuse:  func(ctx context.Context, target string) bool { return isPrivateURL(ctx, "http://"+target) },
+}.Transport()
 
 // noRedirectToPrivate returns an http.Client CheckRedirect function that
 // rejects any redirect whose target resolves to a private/internal host.
