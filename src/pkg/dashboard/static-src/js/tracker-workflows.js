@@ -51,6 +51,46 @@
       return Array.isArray(list) ? list.map(v => String(v || '').trim()).filter(Boolean) : [];
     }
 
+    // Pure: the agent profile the bound model hands the item's current
+    // state to (`workflows.repos[repo].dispatch` keyed by stage number,
+    // cncf/techdocs#395), or null: an unbound repository, a PR row drawn
+    // under its issue, a state the model keeps for people, or a state that
+    // does not apply to the row's kind.
+    function stageTrackerWorkflowDispatchOf(item, workflows) {
+      if (!item || item.via_pr) return null;
+      const wf = stageTrackerWorkflowOf({ workflows }, item.repo);
+      if (!wf || !wf.dispatch) return null;
+      const t = wf.dispatch[String(Number(item.stage) || 0)];
+      if (!t || !t.profile) return null;
+      const kind = item.kind === 'pr' ? 'pr' : 'issue';
+      if (Array.isArray(t.kinds) && t.kinds.length && t.kinds.indexOf(kind) < 0) return null;
+      return { profile: String(t.profile), state: String(t.state || ''), reply: String(t.reply || ''), agent: String(t.agent || ''), problem: String(t.problem || '') };
+    }
+
+    // Pure: the row's short reason when no hive agent fills the profile
+    // its state is handed to (hivecommons/hive#18690): the hand-off cannot
+    // happen and no other lane is offered the item, so the row says so
+    // instead of looking claimed and idle. '' when an agent fills it.
+    function stageTrackerWorkflowGapOf(item, workflows) {
+      const t = stageTrackerWorkflowDispatchOf(item, workflows);
+      if (!t || !t.problem) return null;
+      return { profile: t.profile, word: 'no agent for ' + t.profile, tip: 'Not handed off: ' + t.problem + '. Pick an agent for it on the repository\'s workflow row in Settings → Repos.' };
+    }
+    function stageTrackerWorkflowGapHtml(item, workflows) {
+      const g = stageTrackerWorkflowGapOf(item, workflows);
+      return g ? `<span class="ham-badge ham-badge-wf-gap" title="${esc(g.tip)}">${esc(g.word)}</span>` : '';
+    }
+
+    // Pure: the ⋯ menu entry for that hand-off — owner only, since it
+    // kicks an agent with a prompt.
+    function stageTrackerWorkflowDispatchAction(item, workflows, ctx) {
+      const t = stageTrackerWorkflowDispatchOf(item, workflows);
+      if (!t) return null;
+      const owner = !!(ctx && ctx.owner);
+      const hint = t.problem ? 'no agent fills it' : (t.reply ? 'also runs on ' + t.reply : 'hand off now');
+      return { id: 'wf-dispatch', label: 'Send to ' + t.profile, hint, profile: t.profile, enabled: owner, why: owner ? '' : 'Needs the owner role' };
+    }
+
     // Pure: a model verb as the pill prints it — "approve analysis" →
     // "Approve analysis".
     function stageTrackerWorkflowReplyLabel(verb) {

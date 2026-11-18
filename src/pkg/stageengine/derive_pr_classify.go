@@ -563,8 +563,11 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: stageRankOwned, Human: true}, humanApprovalReason)
 	}
 	// An open issue the PR closes is held or parked on a person:
-	// removing the issue's label releases the PR on the next sweep.
-	if _, _, _, linked := prstage.ParseLinkedIssueReason(reason); linked ||
+	// removing the issue's label releases the PR on the next sweep. A
+	// change request left on an older commit waits on its reviewer's
+	// re-review, never on the author who pushed past it.
+	_, reReview := prstage.ParseReReviewRequested(reason)
+	if _, _, _, linked := prstage.ParseLinkedIssueReason(reason); linked || reReview ||
 		strings.HasPrefix(reason, "excluded-label:") || stageNeedsHumanReasons[reason] {
 		if HasLabelFold(o.Labels, "needs-rebase") {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}

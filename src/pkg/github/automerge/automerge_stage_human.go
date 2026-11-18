@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/oktotest"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
@@ -109,6 +110,50 @@ type humanFenceEntry struct {
 	head  string
 	scope string
 	fence string
+}
+
+// humanApprovalEntry is one head's trusted approval as the human route read
+// it ("" when there is none), and when it was read.
+type humanApprovalEntry struct {
+	head  string
+	at    time.Time
+	login string
+}
+
+// headTrustedApproval is the trusted approval on obs's head for a route
+// that would ask for one when no lane noted it this pass: an APPROVED review
+// that reaches the head (on it, or carried over the hive's base merges) and,
+// for a requires_human verdict, a recorded `/hive decision approve`
+// (trustedHumanApprovalForRequiresHuman). It is read once per head per
+// humanChecksTTL, like the head's checks: a new head is a miss, and an
+// approval given on a parked head shows within the TTL.
+func (c *Engine) headTrustedApproval(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, verdict ContributorLaneVerdict, now time.Time) string {
+	if c == nil || tracker == nil || strings.TrimSpace(obs.HeadSHA) == "" {
+		return ""
+	}
+	tracker.mu.Lock()
+	entry, ok := tracker.approvals[key]
+	tracker.mu.Unlock()
+	if ok && entry.head == obs.HeadSHA && now.Sub(entry.at) < humanChecksTTL {
+		return entry.login
+	}
+	// Only a trusted merger's approval counts, so with none configured
+	// there is nothing to read (as for the sign-off election's own read).
+	var login string
+	if _, configured := c.isTrustedMerger(""); configured {
+		if verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true}) {
+			login, _ = c.trustedHumanApprovalForRequiresHuman(ctx, obs.Owner, obs.Repo, obs.Number, obs.HeadSHA, verdict)
+		} else {
+			login, _ = c.latestTrustedHumanApproval(ctx, obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
+		}
+	}
+	tracker.mu.Lock()
+	if tracker.approvals == nil {
+		tracker.approvals = map[string]humanApprovalEntry{}
+	}
+	tracker.approvals[key] = humanApprovalEntry{head: obs.HeadSHA, at: now, login: login}
+	tracker.mu.Unlock()
+	return login
 }
 
 // headDiffFence returns the contributor lane's merge diff fence for obs's
@@ -549,6 +594,11 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 			e.CauseReason = cause
 		}
 	}
+	if reviewers, ok := prstage.ParseReReviewRequested(obs.Reason); ok {
+		// Name each reviewer's review, the commit it was on and the author's
+		// push since, from the lane's own ListReviews walk.
+		e.CauseReason = reReviewRequestedCause(obs.HeadSHA, obs.Author, reviewers, obs.Detail.StandingChangeRequests)
+	}
 	if rec, ok := c.stageStoreOrShared().Get(key); ok && rec.AdoptedHead != "" && rec.AdoptDiffFence != "" && rec.AdoptDiffFence == obs.Reason && e.CauseReason != "" {
 		// An adopted head whose diff fence is the blocker: the 085 note
 		// says the hive repaired it and why it still will not merge it.
@@ -571,9 +621,18 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 			}
 		}
 	}
+	if e.HumanApprover == "" && e.HumanChangeRequester == "" && (e.Verdict == stagelabels.VerdictRequiresHuman || (e.ManualMerge && e.ApprovalReleasesFence)) {
+		// A lane that stopped at an earlier gate (a fork-guard check, a
+		// hold) never reached the review gate or the workflow fence, so
+		// nothing noted the approval on this head: read it here rather
+		// than ask for one a maintainer already gave
+		// (projectbluefin/utah-packages#1181, #1013).
+		e.HumanApprover = c.headTrustedApproval(ctx, tracker, key, obs, contributorVerdict, now)
+	}
 	if humanMergePath {
 		applyHumanMergePathFenceRoute(&e, obs)
 	}
+	e.CauseAwaitsApproval = e.ApprovalReleasesFence && strings.HasSuffix(e.CauseReason, prstage.CauseWorkflowPathAwaitingApproval)
 	if strings.HasPrefix(obs.Reason, stageReasonForkGuard) {
 		e.ForkGuard = append([]string(nil), obs.ForkGuardChecks...)
 	}
@@ -735,6 +794,9 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 		}
 	case reason == autoMergeReasonMergeRefusedReview:
 		return "GitHub refused the merge: branch protection requires an approving review from someone with write access, and the Hive App cannot give it. A GitHub **Approve** review on this head (or an App bypass in the branch rules) lets the hive merge it; the hive retries once GitHub reports the PR unblocked, or within 30 minutes"
+	case strings.HasPrefix(reason, prstage.ReReviewRequestedReasonPrefix):
+		reviewers, _ := prstage.ParseReReviewRequested(reason)
+		return reReviewRequestedCause("", "", reviewers, nil)
 	case reason == autoMergeReasonMergeRefusedMethod:
 		return "GitHub refused the merge: the repository does not allow the merge method the hive chose for this PR. The hive does not switch methods on its own: a forward merge or a `" + stagelabels.MergeCommitLabel + "` PR must never be squashed. Merge it by hand with an allowed method, or allow the method in the repository settings and the hive retries within 30 minutes"
 	case reason == "":
@@ -763,28 +825,7 @@ func mergeRefusedReviewChangeRequestCause(head string, requests []prstage.Change
 			continue
 		}
 		names = append(names, "@"+login)
-		var b strings.Builder
-		b.WriteString("@" + login + " requested changes")
-		if !r.SubmittedAt.IsZero() {
-			b.WriteString(" on " + r.SubmittedAt.UTC().Format("2006-01-02"))
-		}
-		commit := strings.TrimSpace(r.CommitID)
-		switch {
-		case commit != "" && commit == head:
-			b.WriteString(" on this head")
-		case commit != "":
-			b.WriteString(" at `" + stagelabels.ShortSHA(commit) + "`")
-		}
-		if url := strings.TrimSpace(r.URL); url != "" {
-			b.WriteString(" ([review](" + url + "))")
-		}
-		if commit != "" && head != "" && commit != head {
-			b.WriteString(", and the hive has pushed since")
-			if i := strings.Index(r.URL, "/pull/"); i > 0 {
-				b.WriteString(" ([changes since that review](" + r.URL[:i] + "/compare/" + commit + "..." + head + "))")
-			}
-		}
-		said = append(said, b.String())
+		said = append(said, changeRequestClause(r, head, "the hive"))
 	}
 	if len(said) == 0 {
 		return ""
@@ -794,6 +835,67 @@ func mergeRefusedReviewChangeRequestCause(head string, requests []prstage.Change
 		"GitHub keeps a change request standing across pushes until its reviewer re-reviews or it is dismissed, so settle it before anyone approves: " +
 		joinNames(names) + ", please re-review this head; if the request no longer applies, a maintainer can dismiss the review. " +
 		"The hive retries once GitHub reports the PR unblocked, or within 30 minutes"
+}
+
+// changeRequestClause renders one standing change request: who, when, on
+// which commit, a link to the review, and, when the commit is not head,
+// that pusher ("the hive", "@author") has pushed since, with a compare
+// link for what changed.
+func changeRequestClause(r prstage.ChangeRequestRef, head, pusher string) string {
+	var b strings.Builder
+	b.WriteString("@" + strings.TrimSpace(r.Login) + " requested changes")
+	if !r.SubmittedAt.IsZero() {
+		b.WriteString(" on " + r.SubmittedAt.UTC().Format("2006-01-02"))
+	}
+	commit := strings.TrimSpace(r.CommitID)
+	switch {
+	case commit != "" && commit == head:
+		b.WriteString(" on this head")
+	case commit != "":
+		b.WriteString(" at `" + stagelabels.ShortSHA(commit) + "`")
+	}
+	if url := strings.TrimSpace(r.URL); url != "" {
+		b.WriteString(" ([review](" + url + "))")
+	}
+	if commit != "" && head != "" && commit != head {
+		b.WriteString(", and " + pusher + " has pushed since")
+		if i := strings.Index(r.URL, "/pull/"); i > 0 {
+			b.WriteString(" ([changes since that review](" + r.URL[:i] + "/compare/" + commit + "..." + head + "))")
+		}
+	}
+	return b.String()
+}
+
+// reReviewRequestedCause is the 085 prose for a ReReviewRequestedReason:
+// every change request standing on the PR is on an older commit the author
+// has pushed past, so the PR waits on those reviewers, not on its author
+// (projectbluefin/chairlift#799). requests are the lane's standing change
+// requests; the clauses name the reviewers' own reviews when they are known
+// and fall back to the logins the reason carries.
+func reReviewRequestedCause(head, author string, reviewers []string, requests []prstage.ChangeRequestRef) string {
+	head = strings.TrimSpace(head)
+	pusher := "the author"
+	if a := strings.TrimPrefix(strings.TrimSpace(author), "@"); a != "" {
+		pusher = "@" + a
+	}
+	var said, names []string
+	for _, login := range reviewers {
+		names = append(names, "@"+login)
+		for _, r := range requests {
+			if strings.EqualFold(strings.TrimSpace(r.Login), login) && strings.TrimSpace(r.CommitID) != "" && strings.TrimSpace(r.CommitID) != head {
+				said = append(said, changeRequestClause(r, head, pusher))
+			}
+		}
+	}
+	if len(names) == 0 {
+		names = []string{"the reviewer"}
+	}
+	lead := joinNames(names) + " requested changes on an older commit, and " + pusher + " has pushed since"
+	if len(said) > 0 {
+		lead = "A change request on an older commit still stands: " + strings.Join(said, "; ")
+	}
+	return lead + ". GitHub keeps a change request blocking across pushes until its reviewer re-reviews or it is dismissed, so this PR now waits on the reviewer, not on " + pusher + ": " +
+		joinNames(names) + ", please re-review this head; if the request no longer applies, a maintainer can dismiss the review"
 }
 
 // joinNames renders "a", "a and b", "a, b and c".
@@ -818,6 +920,56 @@ func joinNames(names []string) string {
 // readyEntryCause is the entry-comment cause of a 090 route with no
 // reasons of its own (trust is the only objection).
 var readyEntryCause = stagelabels.EntryCause([]string{"ready for a human merge"})
+
+// sameHeadDecisionRoute is the 085 route preserveNeedsDecisionOnSameHead
+// re-parks a head on. The human route built this pass can disagree with
+// the stage pass's own verdict read: on projectbluefin/fsdk-containers#553
+// the contributor lane's verdict cache read no verdict while the stage pass
+// held `requires_human` with its finding, the route came back without a
+// decision, and the re-park posted "Needs a decision, not a merge:" with no
+// reason at all. The reasons come from the stage pass's verdict instead;
+// with no verdict known for the head the comment names
+// stagelabels.DecisionReasonUnnamed.
+func sameHeadDecisionRoute(obs stageObservation) stagelabels.Route {
+	route := stagelabels.Route{Stage: stagelabels.NeedsDecision, Head: obs.HeadSHA, SelfAuthored: obs.Lane == stageLaneSelf,
+		Holds: stagelabels.Holds(obs.Labels), Hold: obs.Hold}
+	if !obs.Detail.VerdictKnown {
+		return route
+	}
+	v := normalizeContributorLaneVerdict(obs.Detail.Verdict)
+	route.Verdict = stagelabels.VerdictRequiresHuman
+	if approver := strings.TrimSpace(obs.Detail.HumanApprover); approver != "" && obs.HeadSHA != "" && strings.TrimSpace(obs.Detail.HumanApprovalHead) == obs.HeadSHA {
+		// The trusted approval on this head answered the verdict, as in
+		// humanEvidence: the re-park does not ask the reviewer's question again.
+		route.HumanApprover = approver
+		return route
+	}
+	route.Reasons = stagelabels.RequiresHumanReasons(obs.HeadSHA, v.DecisionFinding, v.DecisionQuestion, v.HumanSummaries)
+	return route
+}
+
+// sameHeadApproved reports whether a trusted approval stands on obs's head
+// when the same-head 085 re-park is about to keep asking for one. A lane
+// that stopped before the review gate noted none this pass, so it is read
+// here (headTrustedApproval) and stamped on obs; the approval answers the
+// parked question, so the PR is not re-parked on it.
+func (c *Engine) sameHeadApproved(ctx context.Context, tracker *StageTracker, key string, obs *stageObservation, now time.Time) bool {
+	if obs == nil || obs.HeadSHA == "" {
+		return false
+	}
+	if strings.TrimSpace(obs.Detail.HumanApprover) != "" && strings.TrimSpace(obs.Detail.HumanApprovalHead) == obs.HeadSHA {
+		return true
+	}
+	if strings.TrimSpace(obs.Detail.HumanChangeRequester) != "" && strings.TrimSpace(obs.Detail.HumanChangeRequestHead) == obs.HeadSHA {
+		return false
+	}
+	login := c.headTrustedApproval(ctx, tracker, key, *obs, normalizeContributorLaneVerdict(obs.Detail.Verdict), now)
+	if login == "" {
+		return false
+	}
+	obs.Detail.HumanApprover, obs.Detail.HumanApprovalHead = login, obs.HeadSHA
+	return true
+}
 
 func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, role stagelabels.Role, route stagelabels.Route) (int, error) {
 	rec, ok := store.Get(key)
@@ -871,6 +1023,11 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	case stagelabels.ReadyForHumanMerge:
 		body = stagelabels.ReadyComment(route, trustCause(obs.Reason, role))
 	case stagelabels.NeedsDecision:
+		if len(route.Reasons) == 0 {
+			// The comment falls back to DecisionReasonUnnamed; name the
+			// route that carried no reason so it can be found.
+			c.warn("stage labels: 085 route carries no reason; the entry comment names a generic one", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", obs.Reason, "lane", obs.Lane)
+		}
 		body = stagelabels.DecisionComment(route) + c.workflowApprovalSnippet(obs.Reason)
 	default:
 		return 0, nil
@@ -895,7 +1052,27 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	// (hivecommons/hive#16433): a later head or cause rewrites the hive's
 	// existing 085 / 090 comment with an "updated" line instead of posting
 	// another copy, which emailed everyone again to say the same thing.
-	if existing := c.findOwnEntryComment(ctx, obs, stagelabels.EntryCommentMarker(route.Stage)); existing != nil {
+	existing := c.findOwnEntryComment(ctx, obs, stagelabels.EntryCommentMarker(route.Stage))
+	if route.Stage == stagelabels.ReadyForHumanMerge && existing == nil && c.stagePolicy().QuietNotifications {
+		if readyEntryFolds(route) {
+			n, err := c.writeStatusSectionWith(ctx, obs.Owner, obs.Repo, obs.Number, prstatus.KeyStageReady, readyCardSection(body), prstatus.Write)
+			if err != nil {
+				c.warn("stage labels: ready line on the status card failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+				return 0, err
+			}
+			store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
+			store.MarkEntryCommentedDecisionKey(key, decisionKey)
+			c.info("stage labels: ready entry folded into the status card", "repo", obs.Display, "pr", obs.Number)
+			return n, nil
+		}
+		// A held or manual-merge 090 is a person's step and posts its own
+		// comment below; the plain "ready" line it replaces is dropped so
+		// the card never reads ready next to the hold. Best effort.
+		if _, err := c.writeStatusSectionWith(ctx, obs.Owner, obs.Repo, obs.Number, prstatus.KeyStageReady, "", prstatus.Write); err != nil {
+			c.warn("stage labels: clearing the ready line on the status card failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+		}
+	}
+	if existing != nil {
 		updated := stagelabels.EntryCommentUpdated(body, c.now())
 		// Rewrites the comment the gate admitted when it was posted; an edit notifies nobody.
 		if _, _, err := c.gh.Issues.EditComment(ctx, obs.Owner, obs.Repo, existing.GetID(), &gh.IssueComment{Body: gh.Ptr(updated)}); err != nil { // writeback:gated
@@ -915,6 +1092,28 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	store.MarkEntryCommentedDecisionKey(key, decisionKey)
 	c.info("stage labels: entry comment posted", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reasons", route.Reasons)
 	return 1, nil
+}
+
+// readyCardMarker stamps the 090 status-card line. It deliberately is not
+// stagelabels.ReadyCommentMarker: findOwnEntryComment would read a card
+// carrying that marker as the entry comment and overwrite the whole card.
+const readyCardMarker = "<!-- hive:stage-ready-card -->"
+
+// readyEntryFolds reports whether a 090 entry is the plain "ready for a
+// human merge" note that quiet mode writes as the stage-ready line of the
+// PR's hive:status card (hivecommons/hive#18606): the PR's only objection is
+// the author's trust tier and the stage/090 label and tracker already show
+// it. A held head (a sentinel alert or hold label, route.Gates) or an
+// approved manual-merge route asks a person for a specific step, so it
+// keeps its own notifying comment, as does every 085 entry.
+func readyEntryFolds(route stagelabels.Route) bool {
+	return route.Stage == stagelabels.ReadyForHumanMerge && !route.ManualMerge && len(route.Gates) == 0
+}
+
+// readyCardSection is body (a stagelabels.ReadyComment) as a status-card
+// section: the same text under readyCardMarker.
+func readyCardSection(body string) string {
+	return strings.Replace(body, stagelabels.ReadyCommentMarker, readyCardMarker, 1)
 }
 
 // findOwnEntryComment returns the hive's existing entry comment carrying

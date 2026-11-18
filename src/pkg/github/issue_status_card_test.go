@@ -241,3 +241,54 @@ func TestIssueStatusCardAttentionGateRefusalRetries(t *testing.T) {
 		t.Fatalf("repeat: posted=%v err=%v creates=%d", posted, err, s.creates)
 	}
 }
+
+// The PR-link stage note names the PR covering the issue; nobody has to
+// act on it, so in github.notifications.mode: quiet it is the issue card's
+// issue-pr-link section even with the attention pilot off, and an issue
+// that already has a card gets no new comment (hivecommons/hive#18606).
+// Mode normal with the pilot off keeps the legacy comment.
+func TestInformationalIssueNoteFoldsInQuietMode(t *testing.T) {
+	ctx := context.Background()
+	link := issueStagePRLinkComment("https://github.com/o/r/pull/42", 42, "Partial work.")
+
+	s := &statusCommentServer{}
+	c := testClient(t, s.start(t).URL)
+	c.SetAppBotLogin("hive-app[bot]")
+	c.SetNotificationsQuiet(func() bool { return true })
+	noLegacy := func(context.Context) error {
+		t.Error("legacy write ran in quiet mode")
+		return nil
+	}
+	if _, err := c.UpsertPRStatusSection(ctx, "o/r", 5, prstatus.KeyStageRegressed, "stage regressed"); err != nil {
+		t.Fatal(err)
+	}
+	if s.creates != 1 {
+		t.Fatalf("setup: creates=%d, want the card", s.creates)
+	}
+	created, err := c.PostInformationalIssueNote(ctx, "o/r", 5, prstatus.KeyIssuePRLink, link, noLegacy)
+	if err != nil || created {
+		t.Fatalf("created=%v err=%v, want an in-place edit", created, err)
+	}
+	if s.creates != 1 || len(s.comments) != 1 {
+		t.Fatalf("creates=%d comments=%d, want no new comment", s.creates, len(s.comments))
+	}
+	body, _ := s.comments[0]["body"].(string)
+	section, ok := prstatus.Get(body, prstatus.KeyIssuePRLink)
+	if !ok || !strings.Contains(section, "<!-- hive:issue-stage-pr-link pr=42 -->") || !strings.Contains(section, "PR #42 covers this issue: https://github.com/o/r/pull/42") {
+		t.Fatalf("pr-link section = %q (found %v)", section, ok)
+	}
+
+	normal := &statusCommentServer{}
+	n := testClient(t, normal.start(t).URL)
+	n.SetNotificationsQuiet(func() bool { return false })
+	legacyCalls := 0
+	if _, err := n.PostInformationalIssueNote(ctx, "o/r", 5, prstatus.KeyIssuePRLink, link, func(ctx context.Context) error {
+		legacyCalls++
+		return n.CreateIssueComment(ctx, "o/r", 5, link)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if legacyCalls != 1 || normal.creates != 1 {
+		t.Fatalf("normal mode: legacy=%d creates=%d, want the comment of its own", legacyCalls, normal.creates)
+	}
+}

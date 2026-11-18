@@ -707,6 +707,60 @@ agent (by name) whose role is `writer`, then `docs`, then `feature`. A configure
 not exist or is disabled fills nothing: a typo never falls back to another agent. Replica
 overlays are never chosen; the base agent is kicked.
 
+**The dispatch pass** (`pkg/scheduler/workflow_dispatch.go`, `cmd/hive/workflow_dispatch.go`).
+Every eval cycle, with `workflow.enabled` on:
+
+- `scheduler.WithholdWorkflowOwned` removes every issue and pull request whose bound model
+  hands its current state to a profile from the set the generic kicks (and manual kicks from
+  the cache) are built from. This holds whatever `workflow.dispatch` says: the item is the
+  profile's.
+- With `workflow.dispatch.enabled` on, the owned items (the enumerated ones, plus the open
+  drafts of repositories whose model dispatches a pull-request state: the enumeration leaves
+  drafts out) are planned by `scheduler.PlanWorkflowDispatch`: the agent that fills the
+  profile, the triggering reply for a reply-started profile (`github.LatestDispatchReply`: the
+  newest unedited comment whose first line opens with the reply, by a human with write
+  access; cached on the item's `updated_at`), and the idempotency key
+  `<ref>|<profile>|<state>[|<comment id>]`.
+- An issue is claimed for that agent on the issue-claims ledger first (agent claim, 8 h); a
+  claim someone else holds stops the hand-off. A pull request is not claimed.
+- The kick goes ahead of the governor kicks (a lane takes one kick per pass). On delivery the
+  key is written to `workflow-dispatch.json` under the workflow store root and a
+  `workflow-dispatch` audit row is recorded; a failed or deferred kick frees the key for the
+  next pass, and an in-flight mark lapses after 30 minutes.
+
+**Which agent fills a profile.** `Config.ResolveWorkflowDispatch(profile, need, manual)` is the
+one resolver (hivecommons/hive#18690). In order: the pin
+`workflow.dispatch.profiles.<profile>.agent` (a pin that names no enabled agent is a problem,
+never a fallback); an agent named after the profile; the first enabled `writer`, `docs` or
+`feature` agent; then the last resort, which needs the item (`need`): for a target that
+produces a pull request or a push the issue worker (`WorkflowDispatchIssueWorkerRole`, the
+`scanner` role, kept equal to `classify.DefaultLane` by a test), for a reviewing target the
+`reviewer` role, in both cases only an agent whose `repos:` scope serves the item's repository
+(`AgentServesRepo`). No other role is picked on its own. The result carries `Agent` and
+`Source`, or `Problem`: one sentence saying why nothing fills the profile. The pass logs it
+with the profile; `GET /api/workflows` lists it per bound repository and profile (`dispatch`,
+with the pickable `agents`) for the workflow row on Settings → Repos, whose picker saves the
+pin through `PUT /api/workflows/dispatch/profiles {profile, agent}`
+(`Config.SetWorkflowDispatchAgent`); and the tracker's dispatch block carries `agent` /
+`problem` so the row wears a `no agent for <profile>` badge (`stageTrackerWorkflowGapHtml`).
+
+**Send to a profile.** The tracker payload's `workflows.repos[repo].dispatch` maps a stage
+number to `{profile, state, kinds, reply, agent, problem}`; a row in such a state offers the owner **Send to *profile*** in its ⋯ menu (`stageTrackerWorkflowDispatchAction`), which posts
+`POST /api/workflows/dispatch {repo, number}`. cmd/hive's `WorkflowDispatchPrepare` reads the
+item fresh (`github.WorkflowDispatchForRef`), resolves the agent with the manual form of
+`Config.ResolveWorkflowDispatch` (a profile `disabled` for automatic dispatch still
+resolves; when nothing fills it the error gives the reason and names the picker), claims an issue first and renders the prompt; the handler kicks the agent and, once
+the kick lands, records the hand-off under the automatic key, so the pass does not repeat it.
+
+The built-in prompt names the item, model, state and trigger, the state's guidance
+(`dispatch.instructions`, waiting reasons, column hint), the tools and outputs the grant
+allows, and the deliverable: for a PR-producing profile a (draft) pull request labeled with
+the deliverable state's labels plus the item's stateless model labels, `hive-open-pr --issues
+N` and `Refs #N`; for a reviewing profile one comment on the item. Gate labels (`GuardedLabels`)
+are never to be applied. `prompt_template` replaces it; placeholders: `${REF}`, `${REPO}`,
+`${NUMBER}`, `${TITLE}`, `${URL}`, `${KIND}`, `${MODEL}`, `${STATE}`, `${STATE_LABEL}`,
+`${PROFILE}`, `${AGENT}`, `${TRIGGER}`, `${INSTRUCTIONS}`, `${DELIVERABLE}`.
+
 ## Ingest from cluster and from written specs (RFC phase 6)
 
 Two more ways into a draft model, beside the repository ingest of phase 3a. Both end in the

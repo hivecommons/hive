@@ -3021,6 +3021,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"hive_id", payload.HiveID, "cluster_id", cid)
 	}
 
+	// Deliver the cluster's host_aliases on every beat so the spoke converges
+	// its own Deployment, including on push-reported clusters the hub cannot
+	// patch (#18637). Keyed on the SaaS record's cluster, never the report.
+	resp.HostAliases = s.hostAliasesForHeartbeat(saasClusterID)
+
 	// Check if the hive should self-upgrade via heartbeat response.
 	//
 	// Three upgrade paths, all controlled by a single toggle:

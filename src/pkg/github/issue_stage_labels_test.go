@@ -70,6 +70,12 @@ type issueStageServer struct {
 	// counts them in prLookups (guarded by mu).
 	prRateLimited bool
 	prLookups     int
+	// openPRs is what GET /repos/acme/widgets/pulls (the open-PR guard's
+	// listing) answers; openPRsFail makes it answer 502. pullsCalls counts
+	// the listings.
+	openPRs     []map[string]any
+	openPRsFail bool
+	pullsCalls  int
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
@@ -158,6 +164,17 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			s.prPatches[pr] = body.Body
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": pr, "body": body.Body})
+		case r.Method == http.MethodGet && rest == "pulls":
+			s.pullsCalls++
+			if s.openPRsFail {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			out := s.openPRs
+			if out == nil {
+				out = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodGet && rest == "issues":
 			// List-by-label used by the legacy decision-label retirement:
 			// answer from truth so carriers block definition deletion.

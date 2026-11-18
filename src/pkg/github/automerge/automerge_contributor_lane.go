@@ -1619,10 +1619,15 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	} else if held {
 		return eval, contributorLaneReasonReporterTrustHold, nil
 	}
-	if blocked, err := c.hasOutstandingChangesRequested(ctx, owner, repo, number); err != nil {
+	// A change request on an older commit the author pushed past waits on
+	// its reviewer (re-review-requested), not on the author: routed as
+	// changes-requested it read as the author's turn, nudged them and ran
+	// the adoption clock against an author who had done the work
+	// (projectbluefin/chairlift#799).
+	if standing, err := c.hasOutstandingChangesRequested(ctx, owner, repo, number, headSHA); err != nil {
 		return eval, "review-state-check", err
-	} else if blocked {
-		return eval, contributorLaneReasonChangesRequested, nil
+	} else if reason := standing.reason(contributorLaneReasonChangesRequested); reason != "" {
+		return eval, reason, nil
 	}
 	serialized, _ := c.serializedLane(displayRepo)
 	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))

@@ -369,6 +369,22 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 		}
 		return adminmcp.ContributorQueueReadResult(tool, data, args)
 	}
+	if tool == adminmcp.ToolLaunchCostRead {
+		// offset and ref are checked before the call; see the dashboard provider.
+		path, err := adminmcp.LaunchCostReadPath(args)
+		if err != nil {
+			return nil, err
+		}
+		client, _, err := p.roster.activeClient()
+		if err != nil {
+			return nil, err
+		}
+		data, err := getPath(ctx, client, path)
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.LaunchCostResult(data, args)
+	}
 	if tool == adminmcp.ToolGitHubAPIUsage {
 		client, _, err := p.roster.activeClient()
 		if err != nil {

@@ -73,24 +73,32 @@ func (c *approvalReachCache) put(key string, r approvalReach) {
 // review and head never changes, so it is memoised; a lookup failure is
 // not memoised and reads as false (the fence stays, the person is asked).
 func (c *Engine) reviewReachesHead(ctx context.Context, owner, repo string, number int, head string, rv *gh.PullRequestReview) approvalReach {
+	r, _ := c.reviewReachesHeadKnown(ctx, owner, repo, number, head, rv)
+	return r
+}
+
+// reviewReachesHeadKnown is reviewReachesHead with known false when GitHub
+// could not be read, for a caller whose safe answer on a failed read is
+// not "does not reach" (changeRequestBindsHead).
+func (c *Engine) reviewReachesHeadKnown(ctx context.Context, owner, repo string, number int, head string, rv *gh.PullRequestReview) (approvalReach, bool) {
 	head = strings.TrimSpace(head)
 	reviewed := strings.TrimSpace(rv.GetCommitID())
 	submitted := rv.GetSubmittedAt().Time
 	if submitted.IsZero() {
-		return approvalReach{ok: reviewed == head}
+		return approvalReach{ok: reviewed == head}, true
 	}
 	if c == nil || c.gh == nil || head == "" {
-		return approvalReach{}
+		return approvalReach{}, false
 	}
 	key := owner + "/" + repo + "#" + strconv.Itoa(number) + "@" + head + "<-" + strconv.FormatInt(rv.GetID(), 10) + ":" + reviewed
 	if r, ok := c.approvalReach.get(key); ok {
-		return r
+		return r, true
 	}
 	r, known := c.walkApprovalToHead(ctx, owner, repo, number, head, reviewed, submitted)
 	if known {
 		c.approvalReach.put(key, r)
 	}
-	return r
+	return r, known
 }
 
 // walkApprovalToHead does the reads. known is false when GitHub could not be

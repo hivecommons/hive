@@ -100,6 +100,50 @@ func TestBlockedOnIssueMarker(t *testing.T) {
 	}
 }
 
+// One comment or body may name several blockers, in either form; every
+// distinct one is read, in order. A single marker keeps the one-target path
+// (no BlockedOn on the row).
+func TestParseBlockedOnRefs(t *testing.T) {
+	text := "<!-- hive:blocked-on issue=projectbluefin/utah#1198 -->\n" +
+		BlockedOnMarker("o/r", 7) + "\n" +
+		"<!-- hive:blocked-on issue=projectbluefin/testsuite#1215 -->\n" +
+		"<!-- hive:blocked-on issue=projectbluefin/UTAH#1198 -->\n" +
+		"<!-- hive:blocked-on issue=o/r#0 -->"
+	got := parseBlockedOnRefs(text)
+	want := []blockedOnRef{
+		{repo: "projectbluefin/utah", number: 1198, issue: true},
+		{repo: "o/r", number: 7},
+		{repo: "projectbluefin/testsuite", number: 1215, issue: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("parseBlockedOnRefs = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("parseBlockedOnRefs[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if blockedOnRefsIfSeveral(BlockedOnMarker("o/r", 7)) != nil {
+		t.Fatal("a single marker must keep the one-target path")
+	}
+	var row RepoWorkIssue
+	setBlockedRowFacts(&row, BlockedOnMarker("o/r", 7), 0)
+	if row.BlockedOn != nil {
+		t.Fatalf("single marker BlockedOn = %q, want nil", row.BlockedOn)
+	}
+	setBlockedRowFacts(&row, text, 0)
+	if strings.Join(row.BlockedOn, ",") != "issue projectbluefin/utah#1198,o/r#7,issue projectbluefin/testsuite#1215" {
+		t.Fatalf("BlockedOn = %q", row.BlockedOn)
+	}
+	back := blockedOnRefsFromReasons(row.BlockedOn)
+	if len(back) != 3 || back[0] != want[0] || back[1] != want[1] || back[2] != want[2] {
+		t.Fatalf("BlockedOn round trip = %+v", back)
+	}
+	if got := blockedOnRefList(want); got != "projectbluefin/utah#1198, o/r#7 and projectbluefin/testsuite#1215" {
+		t.Fatalf("blockedOnRefList = %q", got)
+	}
+}
+
 // projectbluefin/utah#10 and #855: a `blocked` set for an issue dependency
 // was lifted as marker-less and re-verified "still blocked" nine times. A
 // block whose marker names an open issue stays (only `help wanted` comes
@@ -213,6 +257,109 @@ func TestReconcileBlockedIssuesBlockedOnIssue(t *testing.T) {
 	}
 	if !strings.Contains(notesJoined, "/repos/o/r/issues/30/comments "+blockedMarkerlessAskNote) {
 		t.Errorf("marker-less note missing for the malformed marker: %q", notesJoined)
+	}
+}
+
+// projectbluefin/testsuite#1023: one comment named two issue blockers. The
+// sweep read only the first, lifted `blocked` and called the issue
+// "actionable again" the moment it closed, while the second was still open.
+// Every marker in the newest marker-bearing comment (else the body) now
+// counts, PR and issue forms alike: the block lifts only once all of them
+// are settled, with one note naming them all, and a re-target of one carries
+// the other's marker forward.
+func TestReconcileBlockedIssuesWaitsOnEveryMarker(t *testing.T) {
+	f := newBlockedSuccessorFake()
+	marker := func(ref string) string { return `{"id":1,"body":` + strconv.Quote(ref) + `}` }
+	closed := `{"number":%d,"state":"closed","state_reason":"completed","closed_at":"2026-11-16T15:06:00Z","user":{"login":"reporter"}}`
+	// #1: the testsuite#1023 shape, first blocker closed, second open.
+	f.issues["o/r#100"] = fmt.Sprintf(closed, 100)
+	f.issues["o/r#101"] = `{"number":101,"state":"open"}`
+	f.comments["o/r#1"] = []string{marker("<!-- hive:blocked-on issue=o/r#100 -->\n<!-- hive:blocked-on issue=o/r#101 -->\nRemaining: o/r#100, o/r#101")}
+	// #2: both closed.
+	f.issues["o/r#200"] = fmt.Sprintf(closed, 200)
+	f.issues["o/r#201"] = fmt.Sprintf(closed, 201)
+	f.comments["o/r#2"] = []string{marker("<!-- hive:blocked-on issue=o/r#200 -->\n<!-- hive:blocked-on issue=o/r#201 -->")}
+	// #3: a PR marker and an issue marker; the PR merged, the issue is open.
+	// Reading only the PR marker lifted the block.
+	f.pulls["o/r#31"] = `{"number":31,"state":"closed","merged":true}`
+	f.issues["o/r#301"] = `{"number":301,"state":"open"}`
+	f.comments["o/r#3"] = []string{marker(BlockedOnMarker("o/r", 31) + "\n<!-- hive:blocked-on issue=o/r#301 -->")}
+	// #4: one of two blockers was replaced by an open issue.
+	f.issues["o/r#400"] = `{"number":400,"state":"closed","state_reason":"not_planned","closed_at":"2026-11-16T15:06:00Z","user":{"login":"reporter"}}`
+	f.comments["o/r#400"] = []string{`{"id":1,"body":"Superseded by #401.","user":{"login":"maintainer"},"author_association":"MEMBER"}`}
+	f.issues["o/r#401"] = `{"number":401,"state":"open"}`
+	f.issues["o/r#402"] = `{"number":402,"state":"open"}`
+	f.comments["o/r#4"] = []string{marker("<!-- hive:blocked-on issue=o/r#400 -->\n<!-- hive:blocked-on issue=o/r#402 -->")}
+	// #5: the markers are in the body only (the enumeration row carries
+	// them); first closed, second open.
+	f.issues["o/r#500"] = fmt.Sprintf(closed, 500)
+	f.issues["o/r#501"] = `{"number":501,"state":"open"}`
+
+	c := testClient(t, f.server(t).URL)
+	c.appBotLogin = testBot
+	t.Cleanup(func() {
+		for n := 1; n <= 5; n++ {
+			forgetBlockedOnSeen("o/r", n)
+		}
+	})
+	var body5 RepoWorkIssue
+	setBlockedRowFacts(&body5, "<!-- hive:blocked-on issue=o/r#500 -->\n<!-- hive:blocked-on issue=o/r#501 -->", 0)
+	rows := func() []RepoWorkIssue {
+		return []RepoWorkIssue{
+			{Repo: "o/r", Number: 1, Labels: []string{"blocked", "help wanted"}, Bucket: workBucketFiltered, Reason: "blocked"},
+			{Repo: "o/r", Number: 2, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked"},
+			{Repo: "o/r", Number: 3, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked"},
+			{Repo: "o/r", Number: 4, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked"},
+			{Repo: "o/r", Number: 5, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on issue o/r#500", BlockedOn: body5.BlockedOn},
+		}
+	}
+	res := ReconcileBlockedIssues(context.Background(), c, &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{"o/r": {Issues: rows()}}}, nil)
+	if res.Items != 5 || res.Unblocked != 1 || res.Retargeted != 1 || res.Stripped != 1 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want Items=5 Unblocked=1 Retargeted=1 Stripped=1 Errors=0", res)
+	}
+
+	f.mu.Lock()
+	posts, removed := f.posts, strings.Join(f.removed, "\n")
+	f.mu.Unlock()
+	for _, ref := range []string{"o/r#1", "o/r#3", "o/r#4", "o/r#5"} {
+		if strings.Contains(removed, ref+" blocked") {
+			t.Errorf("%s has an open blocker and must stay blocked; removed labels:\n%s", ref, removed)
+		}
+	}
+	for _, ref := range []string{"o/r#1", "o/r#3", "o/r#5"} {
+		if len(posts[ref]) != 0 {
+			t.Errorf("%s must get no note while a blocker is open: %q", ref, posts[ref])
+		}
+	}
+	if !strings.Contains(removed, "o/r#1 help wanted") {
+		t.Errorf("the parked issue must not advertise itself; removed labels:\n%s", removed)
+	}
+	if !strings.Contains(removed, "o/r#2 blocked") {
+		t.Errorf("both blockers closed: o/r#2 must be unblocked; removed labels:\n%s", removed)
+	}
+	wantNote := blockedUnblockedMarker + "\nUnblocked: o/r#200 and o/r#201 are no longer open. This issue is actionable again."
+	if got := posts["o/r#2"]; len(got) != 1 || got[0] != wantNote {
+		t.Errorf("o/r#2 notes = %q, want exactly %q", got, wantNote)
+	}
+	wantRetarget := "<!-- hive:blocked-on issue=o/r#401 -->\n<!-- hive:blocked-on issue=o/r#402 -->\nRe-targeted: blocker o/r#400 was replaced by o/r#401. Still blocked on o/r#401 and o/r#402."
+	if got := posts["o/r#4"]; len(got) != 1 || got[0] != wantRetarget {
+		t.Errorf("o/r#4 comments = %q, want exactly %q", got, wantRetarget)
+	}
+	if !f.called("GET /repos/o/r/issues/301") {
+		t.Error("the issue marker beside a PR marker must be read")
+	}
+
+	// A later pass: nothing moved, so nothing is written again, and the
+	// re-targeted issue now reads its open blockers from the new comment.
+	again := rows()[2:]
+	res = ReconcileBlockedIssues(context.Background(), c, &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{"o/r": {Issues: again}}}, nil)
+	if res.Unblocked != 0 || res.Retargeted != 0 || res.Errors != 0 {
+		t.Fatalf("second pass = %+v, want nothing unblocked or re-targeted", res)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.posts["o/r#4"]) != 1 {
+		t.Errorf("o/r#4 got a second re-target comment: %q", f.posts["o/r#4"])
 	}
 }
 
@@ -1408,6 +1555,9 @@ type blockedSuccessorFake struct {
 	duplicateOf map[string]string
 	// moved maps "owner/repo#N" to the path GitHub redirects it to.
 	moved map[string]string
+	// pulls maps "owner/repo#N" to a pull request's JSON, for a blocker
+	// that is a PR.
+	pulls map[string]string
 	// commentsStatus maps "owner/repo#N" to the HTTP status its comment
 	// listing answers with instead of the comments.
 	commentsStatus map[string]int
@@ -1423,7 +1573,7 @@ type blockedSuccessorFake struct {
 }
 
 func newBlockedSuccessorFake() *blockedSuccessorFake {
-	return &blockedSuccessorFake{issues: map[string]string{}, comments: map[string][]string{}, duplicateOf: map[string]string{}, moved: map[string]string{}, commentsStatus: map[string]int{}, posts: map[string][]string{}}
+	return &blockedSuccessorFake{issues: map[string]string{}, comments: map[string][]string{}, duplicateOf: map[string]string{}, moved: map[string]string{}, pulls: map[string]string{}, commentsStatus: map[string]int{}, posts: map[string][]string{}}
 }
 
 func (f *blockedSuccessorFake) server(t *testing.T) *httptest.Server {
@@ -1458,6 +1608,12 @@ func (f *blockedSuccessorFake) server(t *testing.T) *httptest.Server {
 			return
 		}
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/repos/"), "/")
+		if len(parts) == 4 && parts[2] == "pulls" && r.Method == http.MethodGet {
+			if pr, ok := f.pulls[parts[0]+"/"+parts[1]+"#"+parts[3]]; ok {
+				_, _ = io.WriteString(w, pr)
+				return
+			}
+		}
 		if len(parts) < 4 || parts[2] != "issues" {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `{"message":"Not Found"}`)

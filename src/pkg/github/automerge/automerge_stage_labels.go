@@ -291,6 +291,10 @@ type StageTracker struct {
 	// (automerge_human_merge_path_fence.go); created on first use. Unlike
 	// obs it survives drain: it is per head, not per pass.
 	humanMergePathFence map[string]humanMergePathFenceEntry
+	// approvals remembers, per key, the trusted approval the human route
+	// read for a head no lane noted one on (headTrustedApproval); created
+	// on first use. Like humanMergePathFence it survives drain.
+	approvals map[string]humanApprovalEntry
 }
 
 // stageOwner is the lane that set a PR's current stage, for which head, and
@@ -1190,6 +1194,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			var evidence stagelabels.Evidence
 			route, evidence = c.routeHuman(ctx, tracker, key, obs, verdict.Stage, now)
 			pass.Route = &evidence
+			if approver := evidence.HumanApprover; approver != "" && obs.HeadSHA != "" && obs.Detail.HumanApprovalHead != obs.HeadSHA {
+				// The route read the approval no lane noted this pass
+				// (headTrustedApproval): the steps below see it too.
+				obs.Detail.HumanApprover, obs.Detail.HumanApprovalHead = approver, obs.HeadSHA
+			}
 			verdict.Stage = route.Stage
 			if route.LaneReason != "" {
 				obs.Reason = route.LaneReason
@@ -1450,15 +1459,18 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				verdict.Rank = stageRankOwned
 				obs.Reason = unauthorizedReason(step)
 				route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
+				if cause := decisionCause(obs.Reason); cause != "" {
+					route.Reasons = []string{cause}
+				}
 				obs.Route = &route
 			}
 			// Only re-park when the post-steps would leave 085: an adoption
 			// that cleared it, or a fresher 085 reason, must stand.
 			if verdict.Stage != stagelabels.NeedsDecision && !pass.AdoptionLive {
-				if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok {
+				if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok && !c.sameHeadApproved(ctx, tracker, key, &obs, now) {
 					verdict = replacement
 					obs.Reason = replacement.Reason
-					route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
+					route := sameHeadDecisionRoute(obs)
 					obs.Route = &route
 				}
 			}

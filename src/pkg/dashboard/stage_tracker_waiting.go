@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -34,6 +35,10 @@ const (
 	// waitKindOther: any other stage only a person can advance (015
 	// triage-needed).
 	waitKindOther = "other-human-wait"
+	// waitKindReReview: 085 because every change request standing on the
+	// PR is on an older commit the author pushed past; Who is the first
+	// reviewer, who re-reviews (or a maintainer dismisses the review).
+	waitKindReReview = "re-review-requested"
 )
 
 // waitWhoOperator is the Who value for a wait that falls to the signed-in
@@ -60,8 +65,9 @@ type StageTrackerWaitingItem struct {
 	// recorded, else when the item entered its stage.
 	Since *time.Time `json:"since,omitempty"`
 	// Who is the login the wait is attributed to: "operator" for the
-	// signed-in operator / maintainers, else the contributor whose
-	// offline grace ran out (the operator is their fallback).
+	// signed-in operator / maintainers, the reviewer a re-review waits on,
+	// else the contributor whose offline grace ran out (the operator is
+	// their fallback).
 	Who string `json:"who"`
 }
 
@@ -75,12 +81,18 @@ var stageTrackerReturnedStages = []int{stagelabels.NeedsAuthor.Number(), stagela
 // standing meta issues and already-decided rows never count: hold is the
 // operator's own choice, an advisory asks for nothing, a bot Dependency
 // Dashboard is a control panel whatever labels it wears, and a decided
-// row is the hive's to act on next.
+// row is the hive's to act on next. A decision whose effect timed out is
+// no longer the hive's: nothing re-runs it, so the row waits on a person
+// again by its real stage (projectbluefin/bluefin-bling#128 sat five days
+// as "no effect after 30m" and never reached Waiting on you).
 func stageTrackerWaitKind(it StageTrackerItem) (kind, who string) {
-	if stageTrackerOnHold(it) || it.Advisory != nil || it.Decided != nil || stageTrackerWaitStandingMeta(it) {
+	decided := it.Decided != nil && it.Decided.Effect != decidedEffectTimedOut
+	if stageTrackerOnHold(it) || it.Advisory != nil || decided || stageTrackerWaitStandingMeta(it) {
 		return "", ""
 	}
 	switch {
+	case it.Kind == "pr" && it.Stage == stagelabels.NeedsDecision.Number() && stageTrackerReReviewer(it) != "":
+		return waitKindReReview, stageTrackerReReviewer(it)
 	case it.Stage == stagelabels.NeedsDecision.Number(), it.Stage == stagelabels.IssueNeedsDecision.Number(), slices.Contains(it.Modifiers, modNeedsDecision):
 		return waitKindNeedsDecision, waitWhoOperator
 	case it.Stage == stagelabels.ReadyForHumanMerge.Number():
@@ -103,6 +115,16 @@ func stageTrackerWaitKind(it StageTrackerItem) (kind, who string) {
 		return waitKindOther, waitWhoOperator
 	}
 	return "", ""
+}
+
+// stageTrackerReReviewer is the first reviewer a re-review-requested row
+// waits on, "" for any other row.
+func stageTrackerReReviewer(it StageTrackerItem) string {
+	base, _ := stagelabels.HumanApprovedReason(it.Reason)
+	if reviewers, ok := stageengineprstage.ParseReReviewRequested(base); ok && len(reviewers) > 0 {
+		return reviewers[0]
+	}
+	return ""
 }
 
 // stageTrackerWaitStandingMeta reports whether it is a standing meta

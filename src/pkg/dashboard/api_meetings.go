@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -63,6 +64,11 @@ type MeetingsService interface {
 	// (Discord `/hive join`) waiting for the owner.
 	ApproveRequest(ctx context.Context, id string, voice bool) (any, error)
 	DeclineRequest(ctx context.Context, id string) (any, error)
+	// Delete removes a finished meeting or a pending join request for good
+	// (ErrMeetingConflict while hive is still in it); ClearFinished deletes
+	// every finished meeting that ended before the cutoff.
+	Delete(ctx context.Context, id string) (MeetingDeleted, error)
+	ClearFinished(ctx context.Context, before time.Time) ([]MeetingDeleted, error)
 	// Live is the panel snapshot: meeting, transcript, live state.
 	Live(id string) (any, error)
 	Subscribe(fn func(MeetingFrame)) (cancel func())
@@ -131,19 +137,47 @@ func (s *Server) registerMeetingsRoutes() {
 	s.mux.HandleFunc("POST /api/meetings/{id}/approve", s.handleMeetingsRequestApprove)
 	s.mux.HandleFunc("POST /api/meetings/{id}/decline", s.handleMeetingsRequestDecline)
 	s.mux.HandleFunc("GET /api/meetings/{id}/ws", s.handleMeetingsWS)
+	s.registerMeetingsDeleteRoutes()
 }
 
-func meetingsError(w http.ResponseWriter, err error) {
+// meetingsErrorStatus maps a MeetingsService error to its HTTP status: the
+// dashboard sentinels to 404/400/409, anything else (Quorum refusing or
+// failing a call, a store error) to 502.
+func meetingsErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, ErrMeetingNotFound):
-		jsonError(w, err.Error(), http.StatusNotFound)
+		return http.StatusNotFound
 	case errors.Is(err, ErrMeetingInvalid):
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		return http.StatusBadRequest
 	case errors.Is(err, ErrMeetingConflict):
-		jsonError(w, err.Error(), http.StatusConflict)
+		return http.StatusConflict
 	default:
-		jsonError(w, err.Error(), http.StatusBadGateway)
+		return http.StatusBadGateway
 	}
+}
+
+// meetingsError answers a failed meetings call with its mapped status.
+func (s *Server) meetingsError(w http.ResponseWriter, r *http.Request, err error) {
+	s.writeMeetingsError(w, r, err, meetingsErrorStatus(err))
+}
+
+// writeMeetingsError logs a failed meetings call, then answers it. Every
+// failure is logged with the error because the answer alone is not enough:
+// the hosted ingress replaces a 502 body with its generic "hive unavailable"
+// page, so a Discord join Quorum refused ("blocked: the bot has no
+// permission...") reached the owner as "hive is restarting" and left no
+// trace in the spoke log. A caller mistake (4xx) logs at Info, a dependency
+// or store failure at Warn.
+func (s *Server) writeMeetingsError(w http.ResponseWriter, r *http.Request, err error, status int) {
+	if s.logger != nil {
+		level := slog.LevelInfo
+		if status >= http.StatusInternalServerError {
+			level = slog.LevelWarn
+		}
+		s.logger.Log(r.Context(), level, "[meetings] call failed",
+			"method", r.Method, "path", r.URL.Path, "status", status, "error", err.Error())
+	}
+	jsonError(w, err.Error(), status)
 }
 
 func (s *Server) handleMeetingsJoin(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +197,7 @@ func (s *Server) handleMeetingsJoin(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	m, err := svc.Join(ctx, req, strings.TrimSpace(r.Header.Get("X-Hive-User")))
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_join", auditDetail("platform", req.Platform, "voice", boolString(req.Voice)), "")
@@ -187,7 +221,7 @@ func (s *Server) handleMeetingsList(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := svc.List()
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	jsonResponse(w, map[string]any{"meetings": list})
@@ -203,7 +237,7 @@ func (s *Server) handleMeetingsGet(w http.ResponseWriter, r *http.Request) {
 	}
 	m, err := svc.Live(r.PathValue("id"))
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	jsonResponse(w, m)
@@ -221,7 +255,7 @@ func (s *Server) handleMeetingsLeave(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	m, err := svc.Leave(ctx, r.PathValue("id"))
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_leave", auditDetail("meeting", r.PathValue("id")), "")
@@ -247,7 +281,7 @@ func (s *Server) handleMeetingsVoice(w http.ResponseWriter, r *http.Request) {
 	}
 	m, err := svc.SetVoice(r.PathValue("id"), *req.Enabled)
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_voice", auditDetail("meeting", r.PathValue("id"), "enabled", boolString(*req.Enabled)), "")
@@ -264,7 +298,7 @@ func (s *Server) handleMeetingsApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	id, rid := r.PathValue("id"), r.PathValue("rid")
 	if err := svc.ApproveResearch(id, rid); err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_research_approve", auditDetail("meeting", id, "rid", rid), "")
@@ -297,7 +331,7 @@ func (s *Server) handleMeetingsRequestApprove(w http.ResponseWriter, r *http.Req
 	defer cancel()
 	m, err := svc.ApproveRequest(ctx, r.PathValue("id"), body.Voice)
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_request_approve", auditDetail("meeting", r.PathValue("id"), "voice", boolString(body.Voice)), "")
@@ -316,7 +350,7 @@ func (s *Server) handleMeetingsRequestDecline(w http.ResponseWriter, r *http.Req
 	defer cancel()
 	m, err := svc.DeclineRequest(ctx, r.PathValue("id"))
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_request_decline", auditDetail("meeting", r.PathValue("id")), "")
@@ -340,7 +374,7 @@ func (s *Server) handleMeetingsWS(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	snap, err := svc.Live(id)
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	conn, err := meetingsUpgrader.Upgrade(w, r, nil)
@@ -453,6 +487,7 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 			"meetings.research_pool_size":                strconv.Itoa(m.ResearchPoolSizeOrDefault()),
 			"meetings.research_per_meeting":              strconv.Itoa(m.ResearchPerMeetingOrDefault()),
 			"meetings.chat_posts_per_minute":             strconv.Itoa(m.ChatPostsPerMinuteOrDefault()),
+			"meetings.chat_answer_burst":                 strconv.Itoa(m.ChatAnswerBurstOrDefault()),
 			"meetings.lobby_timeout_s":                   strconv.Itoa(m.LobbyTimeoutSOrDefault()),
 			"meetings.retention_days":                    strconv.Itoa(m.RetentionDaysOrDefault()),
 			"meetings.consent_text":                      m.ConsentTextOrDefault(),
@@ -470,6 +505,7 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 			"meetings.llm.anthropic_model":               m.LLM.AnthropicModel,
 			"meetings.llm.timeout_ms":                    strconv.Itoa(m.LLM.TimeoutMS),
 			"meetings.llm.max_in_flight":                 strconv.Itoa(m.LLM.MaxInFlight),
+			"meetings.llm.per_meeting_in_flight":         strconv.Itoa(meetingsPerMeetingInFlight(m.LLM)),
 			"meetings.persona.enabled":                   boolString(persona.Enabled),
 			"meetings.persona.preset":                    persona.Preset,
 			"meetings.persona.name":                      persona.Name,
@@ -593,4 +629,17 @@ func (s *Server) handleMeetingsSettingsPost(w http.ResponseWriter, r *http.Reque
 	out := s.meetingsSettings(r.Context(), next)
 	out.RestartRequired = changed
 	jsonResponse(w, out)
+}
+
+// meetingsPerMeetingInFlight is meetings.llm.per_meeting_in_flight as it
+// applies: the default when unset, never above max_in_flight.
+func meetingsPerMeetingInFlight(l config.MeetingsLLMConfig) int {
+	n, ceiling := l.PerMeetingInFlight, l.MaxInFlight
+	if n <= 0 {
+		n = config.DefaultMeetingsLLMPerMeetingInFlight
+	}
+	if ceiling <= 0 {
+		ceiling = config.DefaultMeetingsLLMMaxInFlight
+	}
+	return min(n, ceiling)
 }

@@ -249,7 +249,7 @@ func (r *reviewerAutoscaleRuntime) reconcile(ctx context.Context, cfg *config.Co
 		return
 	}
 	enabled := cfg.EnabledAgents()
-	for _, added := range agentMgr.ReconcileAgents(enabled) {
+	for _, added := range agentMgr.ReconcileAgents(withResearchAgents(enabled)) {
 		if ac, ok := cfg.Agents[added]; ok && !ac.OnDemand {
 			if err := agentMgr.Start(ctx, added); err != nil {
 				logger.Warn("reviewer autoscale: failed to start reviewer", "agent", added, "error", err)

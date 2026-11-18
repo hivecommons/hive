@@ -734,10 +734,10 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 			return AutoMergeSweepEvent{}, "fork-non-member", nil
 		}
 	}
-	if blocked, err := c.hasOutstandingChangesRequested(ctx, owner, repo, number); err != nil {
+	if standing, err := c.hasOutstandingChangesRequested(ctx, owner, repo, number, pr.GetHead().GetSHA()); err != nil {
 		return AutoMergeSweepEvent{}, "review-state-check", err
-	} else if blocked {
-		return AutoMergeSweepEvent{}, "changes-requested", nil
+	} else if reason := standing.reason("changes-requested"); reason != "" {
+		return AutoMergeSweepEvent{}, reason, nil
 	}
 	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
 	// See trySweepSelfAuthoredPR: the queue bypass is an explicit opt-in.
@@ -1073,14 +1073,46 @@ func (c *Engine) executeUpdateBranchEffect(ctx context.Context, owner, repo stri
 	return err
 }
 
-func (c *Engine) hasOutstandingChangesRequested(ctx context.Context, owner, repo string, number int) (bool, error) {
+// changeRequestStanding is what the change requests standing on a PR ask
+// for at its head (hasOutstandingChangesRequested).
+type changeRequestStanding struct {
+	// onHead: at least one standing change request still binds to the head
+	// (changeRequestBindsHead), so the author owes a change.
+	onHead bool
+	// reReview names the reviewers whose standing change requests are all
+	// on older commits the author has pushed past, when none binds to the
+	// head: the PR waits on them to re-review, not on its author.
+	reReview []string
+}
+
+// reason is the lane reason for the standing change requests: onHeadReason
+// (the lane's own changes-requested reason) when the author owes a change,
+// a ReReviewRequestedReason when only the reviewers can move it, "" when
+// nothing stands.
+func (s changeRequestStanding) reason(onHeadReason string) string {
+	switch {
+	case s.onHead:
+		return onHeadReason
+	case len(s.reReview) > 0:
+		return prstage.ReReviewRequestedReason(s.reReview)
+	}
+	return ""
+}
+
+// hasOutstandingChangesRequested reads every login's latest opinionated
+// review (APPROVED / CHANGES_REQUESTED / DISMISSED), so a later approval or
+// a dismissal clears a change request, and sorts the CHANGES_REQUESTED ones
+// by whether they still bind to head. GitHub keeps a change request
+// blocking across pushes until its reviewer re-reviews, so an outdated one
+// still stops the merge; it just stops being the author's to answer.
+func (c *Engine) hasOutstandingChangesRequested(ctx context.Context, owner, repo string, number int, head string) (changeRequestStanding, error) {
 	opts := &gh.ListOptions{PerPage: 100}
-	latest := map[string]string{}
+	latest := map[string]*gh.PullRequestReview{}
 	var seen []*gh.PullRequestReview
 	for {
 		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
-			return false, err
+			return changeRequestStanding{}, err
 		}
 		seen = append(seen, reviews...)
 		for _, review := range reviews {
@@ -1090,7 +1122,7 @@ func (c *Engine) hasOutstandingChangesRequested(ctx context.Context, owner, repo
 			}
 			state := strings.ToUpper(strings.TrimSpace(review.GetState()))
 			if state == "APPROVED" || state == "CHANGES_REQUESTED" || state == "DISMISSED" {
-				latest[login] = state
+				latest[login] = review
 			}
 		}
 		if resp.NextPage == 0 {
@@ -1099,12 +1131,35 @@ func (c *Engine) hasOutstandingChangesRequested(ctx context.Context, owner, repo
 		opts.Page = resp.NextPage
 	}
 	c.noteStageReviews(owner, repo, number, seen)
-	for _, state := range latest {
-		if state == "CHANGES_REQUESTED" {
-			return true, nil
+	var out changeRequestStanding
+	for _, review := range latest {
+		if !strings.EqualFold(strings.TrimSpace(review.GetState()), "CHANGES_REQUESTED") {
+			continue
 		}
+		if c.changeRequestBindsHead(ctx, owner, repo, number, head, review) {
+			out.onHead = true
+			continue
+		}
+		out.reReview = append(out.reReview, strings.TrimSpace(hgithub.SafeGetLogin(review.GetUser())))
 	}
-	return false, nil
+	return out, nil
+}
+
+// changeRequestBindsHead reports whether a standing CHANGES_REQUESTED review
+// still asks the author for something at head. It does unless it names an
+// older commit and the commits since are more than base merges: the walk
+// an approval uses (reviewReachesHead) carries a review over a merge of the
+// base, which leaves the reviewed change as it was. A review with no
+// commit, no head, or a walk GitHub could not answer binds, which keeps the
+// author's turn. The head-scoped rule is latestTrustedHumanChangesRequested's
+// (hivecommons/hive#13041): the author already pushed past an older review.
+func (c *Engine) changeRequestBindsHead(ctx context.Context, owner, repo string, number int, head string, rv *gh.PullRequestReview) bool {
+	commit, head := strings.TrimSpace(rv.GetCommitID()), strings.TrimSpace(head)
+	if commit == "" || head == "" || commit == head {
+		return true
+	}
+	reach, known := c.reviewReachesHeadKnown(ctx, owner, repo, number, head, rv)
+	return !known || reach.ok
 }
 
 func (c *Engine) commentTrustedAuthorMerge(ctx context.Context, owner, repo string, number int, author, role, permission, sha string) error {

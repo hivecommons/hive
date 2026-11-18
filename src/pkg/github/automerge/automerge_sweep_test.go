@@ -357,11 +357,11 @@ func TestTrustedAuthorGitHubSignals(t *testing.T) {
 	if err != nil || permission.Allowed {
 		t.Fatalf("bob permission = %+v err=%v, want denied", permission, err)
 	}
-	if blocked, err := engine.hasOutstandingChangesRequested(context.Background(), "acme", "widget", 7); err != nil || blocked {
-		t.Fatalf("PR 7 blocked=%v err=%v, want cleared by later approval", blocked, err)
+	if standing, err := engine.hasOutstandingChangesRequested(context.Background(), "acme", "widget", 7, "sha7"); err != nil || standing.reason("changes-requested") != "" {
+		t.Fatalf("PR 7 standing=%+v err=%v, want cleared by later approval", standing, err)
 	}
-	if blocked, err := engine.hasOutstandingChangesRequested(context.Background(), "acme", "widget", 8); err != nil || !blocked {
-		t.Fatalf("PR 8 blocked=%v err=%v, want outstanding changes requested", blocked, err)
+	if standing, err := engine.hasOutstandingChangesRequested(context.Background(), "acme", "widget", 8, "sha7"); err != nil || standing.reason("changes-requested") != "changes-requested" {
+		t.Fatalf("PR 8 standing=%+v err=%v, want outstanding changes requested", standing, err)
 	}
 	if !engine.isForkPR(&gh.PullRequest{
 		Head: &gh.PullRequestBranch{Repo: &gh.Repository{FullName: gh.Ptr("alice/widget")}},

@@ -99,8 +99,13 @@ func quiesceThenMarkReady(t *testing.T, m *Manager, name string) (wait func()) {
 			// One poll interval (3s) with margin, so the poller has observed
 			// ctx.Done before anything below makes the pane interesting.
 			time.Sleep(4 * time.Second)
-			_ = testTmuxCommand("send-keys", "-t", session, "-l", ": goose is ready").Run()
-			_ = testTmuxCommand("send-keys", "-t", session, "Enter").Run()
+			if out, err := testTmuxCommand("send-keys", "-t", session, "-l", ": goose is ready").CombinedOutput(); err != nil {
+				t.Errorf("inject readiness marker into %s: %v: %s", session, err, out)
+				return
+			}
+			if out, err := testTmuxCommand("send-keys", "-t", session, "Enter").CombinedOutput(); err != nil {
+				t.Errorf("submit readiness marker into %s: %v: %s", session, err, out)
+			}
 			return
 		}
 	}()
@@ -120,11 +125,12 @@ func TestSendKick_RestartsCrashedCLIThenDelivers(t *testing.T) {
 	t.Setenv("HIVE_WORK_DIR", t.TempDir())
 	forceFastPaneShell(t)
 
+	const name = "kick-crash-recovery"
 	m := NewManager(map[string]config.AgentConfig{
-		"worker": makeAgentConfig("claude", "sonnet"),
+		name: makeAgentConfig("claude", "sonnet"),
 	}, discardLogger(), ProjectContext{})
 	m.mu.RLock()
-	agent := m.agents["worker"]
+	agent := m.agents[name]
 	m.mu.RUnlock()
 
 	// A real session whose pane is a bare shell: session exists, CLI does not.
@@ -133,11 +139,11 @@ func TestSendKick_RestartsCrashedCLIThenDelivers(t *testing.T) {
 	agent.State = StateRunning
 	m.mu.Unlock()
 
-	wait := quiesceThenMarkReady(t, m, "worker")
+	wait := quiesceThenMarkReady(t, m, name)
+	defer cleanupAgent(t, m, name)
 	defer wait()
-	defer cleanupAgent(t, m, "worker")
 
-	if err := m.SendKick("worker", "recover and continue the sweep"); err != nil {
+	if err := m.SendKick(name, "recover and continue the sweep"); err != nil {
 		t.Fatalf("SendKick on crashed CLI: %v", err)
 	}
 
@@ -168,20 +174,23 @@ func TestRestartThenSendKick_CleanSlateThenDelivers(t *testing.T) {
 	t.Setenv("HIVE_WORK_DIR", t.TempDir())
 	forceFastPaneShell(t)
 
+	// Other shuffled tests use "worker" and can leave delayed tmux operations
+	// against hive-worker. Give this test a session they cannot tear down.
+	const name = "kick-clean-slate"
 	m := NewManager(map[string]config.AgentConfig{
-		"worker": makeAgentConfig("claude", "sonnet"),
+		name: makeAgentConfig("claude", "sonnet"),
 	}, discardLogger(), ProjectContext{})
 
-	wait := quiesceThenMarkReady(t, m, "worker")
+	wait := quiesceThenMarkReady(t, m, name)
+	defer cleanupAgent(t, m, name)
 	defer wait()
-	defer cleanupAgent(t, m, "worker")
 
-	if err := m.RestartThenSendKick(context.Background(), "worker", "fresh context, take the next issue"); err != nil {
-		t.Fatalf("RestartThenSendKick: %v", err)
+	if err := m.RestartThenSendKick(context.Background(), name, "fresh context, take the next issue"); err != nil {
+		t.Fatalf("RestartThenSendKick: %v; pane: %q", err, m.captureVisiblePaneForAgent(m.agents[name]))
 	}
 
 	m.mu.RLock()
-	agent := m.agents["worker"]
+	agent := m.agents[name]
 	restarts := agent.RestartCount
 	lastMsg := agent.LastKickMessage
 	m.mu.RUnlock()

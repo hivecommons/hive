@@ -447,7 +447,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.325
+ARG CLAUDE_CODE_VERSION=2.1.326
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -530,8 +530,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # Bump note: see src/docs/cli-pins.md (quorum row); update QUORUM_VERSION and
 # QUORUM_SHA256 together from the release's quorum.mjs.sha256, and
 # QUORUM_DAVEY_VERSION from quorum's package-lock.json.
-ARG QUORUM_VERSION=v0.2.2
-ARG QUORUM_SHA256=f36ab9b3618f9a0b9a017f67a8404001e449255f74ce8b34f2c70f287c08e1fc
+ARG QUORUM_VERSION=v0.3.0
+ARG QUORUM_SHA256=bda595d8fa3ce98771b5be74c90dcbbbca0ef0cf919b4ab50fdb37b63103fc5c
 ARG QUORUM_DAVEY_VERSION=0.1.12
 RUN if [ -n "${QUORUM_VERSION}" ]; then \
       test -n "${QUORUM_SHA256}" || { echo "QUORUM_SHA256 is required with QUORUM_VERSION" >&2; exit 1; } && \
@@ -577,9 +577,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=18.20.0
-ARG OMP_SHA256_AMD64=c8694be8c6e6a1f45e3636dd8a8e9eaa78878ad629a89000b403ec5e456d3f89
-ARG OMP_SHA256_ARM64=8b5e197db7c58b7ebabf83c6f03597f89bae3a766a84c6481b3a942a125f5e22
+ARG OMP_VERSION=18.22.0
+ARG OMP_SHA256_AMD64=f706b27ba845834d8f8360705a2e9ba1534f3593fa24411d41358272de33642b
+ARG OMP_SHA256_ARM64=7238dd213d5c61bc9bf51735d552bc71901fdd44329f862b0a971146b1cdac3e
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \

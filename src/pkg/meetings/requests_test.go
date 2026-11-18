@@ -66,9 +66,13 @@ func TestConsentErrorRecordedAndThrottled(t *testing.T) {
 	ch <- Event{Type: EventState, State: StateLive}
 	eventually(t, "consent error", func() bool { got, _ := m.Get(mt.ID); return got.ConsentError != "" })
 	ch <- Event{Type: EventChat, Author: &Person{Name: "Ana"}, Text: "hi"}
-	eventually(t, "line stored", func() bool { tr, _ := m.Transcript(mt.ID); return len(tr) == 1 })
+	// The line came before the notice: counted, never stored.
+	eventually(t, "line dropped", func() bool { got, _ := m.Get(mt.ID); return got.PreConsentDropped == 1 })
 	if got, _ := m.Get(mt.ID); got.ConsentPostedAt != nil || got.State != StateLive {
 		t.Fatalf("a throttled retry must not post: %+v", got)
+	}
+	if tr, _ := m.Transcript(mt.ID); len(tr) != 0 {
+		t.Fatalf("a pre-consent line was stored: %+v", tr)
 	}
 }
 
@@ -156,7 +160,15 @@ func TestPlatformJoinRequests(t *testing.T) {
 	if _, err := m.ApproveRequest(context.Background(), third.ID, false); err == nil {
 		t.Fatal("want the join error")
 	}
+	// The failed approval keeps the request open and names why.
+	if x, _ := m.Get(third.ID); x.State != StateRequested || x.StateReason != "join failed" {
+		t.Fatalf("after a failed approve = %+v", x)
+	}
 	q.joinErr = nil
+	q.joinRes = JoinResult{MeetingID: "q-d3", State: StateJoining}
+	if x, err := m.ApproveRequest(context.Background(), third.ID, false); err != nil || x.State != StateJoining || x.StateReason != "" {
+		t.Fatalf("retried approve = %+v, %v", x, err)
+	}
 
 	// A snapshot-only request (no requester) is still recorded.
 	all <- Event{Type: EventState, MeetingID: "q-d5", State: StateRequested, GuildID: "g5", ChannelID: "c5"}

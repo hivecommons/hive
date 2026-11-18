@@ -106,6 +106,9 @@ func gfiSweepOptions(cfg *config.Config, dashSrv *dashboard.Server, logger *slog
 		Links:    gfi.Links{Origin: gfiPublicOrigin(cfg), HiveID: cfg.HiveID, DocsBase: gc.DocsURL},
 		Template: gc.CommentTemplate,
 		Logger:   logger,
+		// The invite promises an automatic merge only where the contributor
+		// lane would merge (repo_policies[].auto_merge, L6).
+		RepoAutoMerge: cfg.RepoAutoMergeEnabled,
 	}
 	if dashSrv != nil {
 		opts.Audit = func(e gfi.Event) {

@@ -214,6 +214,13 @@ type IssueFacts struct {
 	// writer owns it on this issue, so the deriver no longer asks for it
 	// to be cleared (hivecommons/hive#18387).
 	TriageClearYielded bool
+	// StaleOpenPRLabel is the `has-open-pr` label the issue wears when the
+	// issue sweep found, on a successful open-PR listing, that no open PR
+	// links the issue any more; "" otherwise. The deriver asks the writer
+	// to clear it in the same label write as the stage. Only the sweep sets
+	// it: the evidence is its listing, so an out-of-cycle fact keeps the
+	// label as found.
+	StaleOpenPRLabel string
 }
 
 // ClaimFact is the live claim on an issue.
@@ -258,6 +265,9 @@ type PRFacts struct {
 	// does (the PR is then parked for a maintainer with reason fork-guard).
 	ForkGuardChecks []string
 	Lanes           []LaneFact // automerge lane opinions, precedence order (self > trusted > contributor)
+	// PostMerge is the observed post-merge pipeline status of a merged PR
+	// (pipeline.status); nil when no observer reported on it.
+	PostMerge *PostMergeFacts
 	// Pass is what the sweep's own pass learned after the lanes spoke and
 	// before the stage was written: the inputs of ApplyStageLabels' pure
 	// post-steps (author-kind split, normalized-fixing guard, human route,

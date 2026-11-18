@@ -126,9 +126,18 @@ one hostname; hostnames are lowercased). An invalid `host_aliases` block is
 logged and ignored — it never drops the cluster. New pool slots on the cluster
 are provisioned with the matching `spec.template.spec.hostAliases`, and a
 throttled reconcile sweep (at most 3 patches per 15 minutes, since each one
-rolls that hive's pod) converges existing hives. Unrelated hand-applied
-aliases for other IPs are preserved. Non-hub (standalone) deployments add the
-same `hostAliases` block to their own pod spec.
+rolls that hive's pod) converges existing hives on clusters the hub can reach
+with kubectl. The hub also sends the aliases on every heartbeat response
+(`host_aliases`), and each hosted spoke converges its own Deployment from it
+(at most one check per 15 minutes, sooner when the set changes). That is the
+only path on a push-reported (`pull_only`) cluster, where the hub never
+patches Deployments. Convergence is exact for the hostnames `clusters.json`
+lists: each resolves only to its configured IP. Unrelated hand-applied
+aliases for other hosts are preserved, and a cluster with no `host_aliases`
+is never touched. A spoke that cannot patch itself (missing get/patch on
+`deployments/hive`) logs a WARN, as does the hub sweep when it cannot read or
+patch a Deployment. Non-hub (standalone) deployments add the same
+`hostAliases` block to their own pod spec.
 
 ## Firewall recommendations
 

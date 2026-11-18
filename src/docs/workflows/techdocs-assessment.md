@@ -209,21 +209,111 @@ What the operator of the TechDocs hive (authorized repo `cncf/techdocs`) does an
 
 ## Starting the drafter (Accepted → Draft)
 
-Nothing dispatches the drafter automatically yet. `techdocs-drafter` and
-`techdocs-verifier` are profiles the model declares so the compiler can check that every
-agent action is followed by a human gate; they are not hive agents, and the scheduler does
-not read the bound model. An accepted issue therefore sits in **Accepted** until someone
-starts a draft. The model leaves Accepted only when a pull request covers the issue
-(`issue.covered`), which moves it to `draft-open`.
+The hive hands the phase to its agents itself. The model grants `techdocs-drafter` the
+`accepted` and `drafting` states and `techdocs-verifier` the `drafting` state; the compiler
+resolves where each takes over ([Agent dispatch](../design/workflow-models.md#agent-dispatch)):
 
-A hive owner starts the draft by hand:
+| State | Profile | Starts when |
+|-------|---------|-------------|
+| Accepted (issue) | `techdocs-drafter` | `triage/accepted` is on the issue and no PR covers it |
+| Drafting (draft PR) | `techdocs-verifier` | a person with write access comments `/verify` on the draft PR |
+
+On each pass the hive:
+
+1. withholds every item in those states from the generic lanes, so the scanner or a feature
+   agent never picks up an accepted request before the drafter does;
+2. resolves the hive agent that fills the profile, in the order listed under
+   [Which agent fills a profile](#which-agent-fills-a-profile);
+3. for the issue, takes the agent claim on the hive's claim ledger first; a claim someone
+   else holds (a person working the phase by hand) stops the hand-off;
+4. kicks that agent once with the issue, the state's guidance and the deliverable the model
+   requires: a draft PR in `cncf/techdocs` labeled `Docs analysis` plus the issue's phase
+   label, named in the PR request (`hive-open-pr --issues N`) and referenced with `Refs #N`,
+   not marked ready and without the `verified` / `confirmed` gate labels;
+5. records the hand-off in `workflow-dispatch.json` under the workflow store root when the
+   kick lands, so neither a later pass nor a restart repeats it. A kick that could not be
+   delivered (busy, paused, failed) is retried on a later pass.
+
+The verifier runs once per `/verify` comment: each new `/verify` from the reviewer is a new
+pass, posting its report as a PR comment. A `/hive verify` command is the model-reply path
+instead: it applies `verified` directly, which is how a reviewer records a deliberate skip.
+
+### Which agent fills a profile
+
+The first of these that names an enabled agent is the one kicked (a replica is never
+chosen: its base agent is):
+
+1. the pin, `workflow.dispatch.profiles.<profile>.agent`. A pin that names no enabled agent
+   stops the hand-off; it never falls through to another agent;
+2. an agent named after the profile (`techdocs-drafter`);
+3. the first enabled `writer`, `docs` or `feature` agent, in that role order, by name;
+4. the hive's standard agent for the work, so a default fleet needs no setup: for a profile
+   that opens a pull request (`techdocs-drafter`) the issue worker, the `scanner` role that
+   every issue without a lane of its own goes to; for a profile that reviews
+   (`techdocs-verifier`) the `reviewer`. It must be allowed to work on the bound repository
+   (its `repos:` scope, when it has one, includes `cncf/techdocs`).
+
+No other agent is picked on its own: a supervisor, guide or brainstorm agent opens no pull
+requests. On a hive with the standard roster (scanner, reviewer, ci-maintainer, quality,
+guide, brainstorm, supervisor) the drafter is therefore the scanner and the verifier the
+reviewer.
+
+When nothing fills a profile the hand-off cannot happen, and the item stays withheld from the
+generic lanes, so the hive says so in three places:
+
+- **Settings → Repos**: the repository's workflow row lists each profile of the bound model
+  with the agent it is handed to. A profile nothing fills shows a warning naming it, and
+  the picker next to it saves the pin (owner only, `PUT /api/workflows/dispatch/profiles`,
+  audited `workflow_dispatch_agent`). **Automatic** clears the pin. The next pass uses the
+  pick; no restart is needed.
+- **Activity Monitor**: the item's row wears a `no agent for <profile>` badge whose hover
+  gives the reason.
+- **Send to *profile***: the manual send answers with the same reason and where to fix it.
+
+The hive log repeats it on each pass (`workflow dispatch: item not handed off`, with the
+profile and the reason).
+
+To use the workflow, the hive needs `workflow.enabled: true` and `cncf/techdocs` bound to
+`cncf-techdocs-assessment`; dispatch is on by default (`workflow.dispatch.enabled`). Pin the
+agents, here or with the picker, if the default pick is wrong:
+
+```yaml
+workflow:
+  enabled: true
+  dispatch:
+    profiles:
+      techdocs-drafter: {agent: writer}
+      techdocs-verifier: {agent: reviewer}
+```
+
+`workflow.dispatch.profiles.<profile>.disabled: true` stops one profile's automatic
+hand-off, and `workflow.dispatch.enabled: false` stops them all (owned items stay withheld
+from the generic lanes either way). `prompt_template` replaces the built-in prompt; see the
+design doc for its `${VAR}` placeholders.
+
+### Send to drafter (owner)
+
+On the Activity Monitor, the **⋯** menu of a `cncf/techdocs` row in a dispatched state offers
+**Send to techdocs-drafter** (an Accepted issue) or **Send to techdocs-verifier** (a draft PR in
+Drafting). It is owner-only and runs the same hand-off on demand: it reads the item fresh,
+resolves the agent (a profile set `disabled` for automatic dispatch still resolves), takes the
+claim, kicks the agent and records the hand-off (`POST /api/workflows/dispatch`, audited
+`workflow_dispatch`). Use it to restart after a discarded draft (a hand-off happens once per
+issue and state on its own: retries are a person's choice, spec §5) or to run the verifier
+without a `/verify` comment.
+
+### Starting the drafter by hand (fallback)
+
+When no agent fills the profile (pick one first: see
+[Which agent fills a profile](#which-agent-fills-a-profile)) or the hive predates automatic
+dispatch, a hive owner starts the draft by hand:
 
 1. Check the request is accepted: `triage/accepted` is on the issue, applied by a maintainer
    with write access to `cncf/techdocs`, and the hive's workflow column shows **Accepted**.
 2. On the hive dashboard, signed in with the **owner** role (kicks with a prompt are
-   owner-only), open the agent card of an agent that may work on `cncf/techdocs` (the
-   scanner or a feature agent) and type the drafting instruction into its **Send a message
-   to …** box, then **Send**. Name the issue, the phase and the deliverable, for example:
+   owner-only), open the agent card of an agent that may work on `cncf/techdocs` and type the
+   drafting instruction into its **Send a message to …** box, then **Send**. Name the issue,
+   the phase and the deliverable, for example:
 
    ```text
    Draft the Phase A (assessment) deliverable for cncf/techdocs#395 following the CNCF
@@ -241,9 +331,6 @@ A hive owner starts the draft by hand:
    the reviewer runs or skips the verifier (`/verify`, the `verified` label), marks the PR
    ready (`/ready`), stakeholders `/confirm`, and an independent approver merges.
 
-If the draft is discarded (`/discard`, PR closed unmerged), the issue returns to Accepted and
-the same kick starts a fresh draft.
-
 ## Not representable today
 
 These parts of the spec are documented in the model's annotations but not enforced by
@@ -255,7 +342,5 @@ the engine:
 - Phase as a state dimension and the A→C skip — carried by labels; the
   `open-next-phase-tracking-issue`, `notify-contacts` and `mention-stakeholders`
   bookkeeping actions are declarative only.
-- Dispatching the drafter on Accepted and the verifier on `/verify` — the profiles and
-  gates exist, the dispatch does not yet (see [Starting the drafter](#starting-the-drafter-accepted--draft)).
 - Membership of the frozen stakeholder set — the gate exists, the check does not yet.
 - Data-collection scripts and the strict provenance check — a manual check.

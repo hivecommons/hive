@@ -119,6 +119,13 @@ func ReadConfig(path string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ParseConfig(data)
+}
+
+// ParseConfig is ReadConfig over bytes the caller already read (for example
+// with sharedfile.ReadNoFollow): it strips the CLI's // comment lines and
+// unmarshals the remainder, returning an empty map for a JSON null.
+func ParseConfig(data []byte) (map[string]interface{}, error) {
 	var cleaned []byte
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "//") {

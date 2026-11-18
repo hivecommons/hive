@@ -995,3 +995,52 @@ func TestDecisionActionsDoNotReaskARecordedApproval(t *testing.T) {
 		t.Fatalf("requires_human actions = %q", got)
 	}
 }
+
+// TestDecisionCommentReasonList pins projectbluefin/fsdk-containers#553: a
+// route that reaches 085 with no reasons names DecisionReasonUnnamed, never
+// "Needs a decision, not a merge:" over an empty list; one reason and
+// several reasons render as before.
+func TestDecisionCommentReasonList(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		reasons []string
+		want    string
+	}{
+		{name: "zero reasons name the generic cause", want: "\nNeeds a decision, not a merge: the reviewer asked for a human decision.\n\n"},
+		{name: "one reason is inline", reasons: []string{"the review found: the reviewer marked this change high-risk"}, want: "\nNeeds a decision, not a merge: the review found: the reviewer marked this change high-risk.\n\n"},
+		{name: "several reasons are a list", reasons: []string{"first", "second"}, want: "\nNeeds a decision, not a merge:\n- first\n- second\n\n\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DecisionComment(Route{Stage: NeedsDecision, Reasons: tc.reasons})
+			if !strings.HasPrefix(got, DecisionCommentMarker+tc.want) {
+				t.Fatalf("DecisionComment =\n%q\nwant prefix\n%q", got, DecisionCommentMarker+tc.want)
+			}
+			if strings.Contains(got, "not a merge:\n\n") {
+				t.Fatalf("DecisionComment has an empty reason list:\n%s", got)
+			}
+		})
+	}
+}
+
+// RequiresHumanReasons is the one wording of a requires_human verdict, shared
+// by RouteHuman and the same-head 085 re-park.
+func TestRequiresHumanReasons(t *testing.T) {
+	got := RequiresHumanReasons("0afe7c60b570d5b0", "the reviewer marked this change high-risk", "", []string{" ", "privacy impact unclear"})
+	want := []string{
+		"the reviewer swarm returned `requires_human` @0afe7c6",
+		"the review found: the reviewer marked this change high-risk",
+		"reviewer summary: privacy impact unclear",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("RequiresHumanReasons = %q, want %q", got, want)
+	}
+	e := readyEvidence()
+	e.AuthorKind = authorkind.Clanker
+	e.Verdict = VerdictRequiresHuman
+	e.DecisionFinding = "the reviewer marked this change high-risk"
+	e.DecisionQuestion = "ship it?"
+	r := RouteHuman(e)
+	if want := RequiresHumanReasons(e.Head, e.DecisionFinding, e.DecisionQuestion, nil); r.Stage != NeedsDecision || strings.Join(r.Reasons, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("RouteHuman reasons = %q, want %q", r.Reasons, want)
+	}
+}

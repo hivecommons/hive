@@ -84,7 +84,43 @@ func withSeedInboxSource(t *testing.T, e *sessionTestEnv, audio bool) *seedTestS
 	// Deliver at once: the pane fake shows an idle prompt.
 	e.s.sessionQueueTiming = sessionQueuePacing{poll: time.Millisecond, postDeliver: time.Millisecond}
 	e.rt.setCapture("›")
+	// Workers can touch the session store after a handler returns.
+	t.Cleanup(func() {
+		waitSessionsFor(t, "all session queue workers to stop", func() bool {
+			e.s.sessionQueuesMu.Lock()
+			defer e.s.sessionQueuesMu.Unlock()
+			for _, q := range e.s.sessionQueues {
+				if q.running {
+					return false
+				}
+			}
+			return true
+		})
+	})
 	return src
+}
+
+func waitSeedAudit(t *testing.T, e *sessionTestEnv) {
+	t.Helper()
+	waitSessionsFor(t, "the pending seed delivery", func() bool {
+		for _, a := range e.auditActions() {
+			if a.Action == auditInboxToSession {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func waitPendingSeedOnCleanup(t *testing.T, e *sessionTestEnv) func() {
+	t.Helper()
+	pending := false
+	t.Cleanup(func() {
+		if pending {
+			waitSeedAudit(t, e)
+		}
+	})
+	return func() { pending = true }
 }
 
 func seedBody(ids ...string) map[string]any {
@@ -184,6 +220,7 @@ func TestSessionSeedUsesQueuedSendAsSender(t *testing.T) {
 	// A busy pane: the Send waits in the queue (idle-prompt gating) instead of
 	// being typed into a running CLI.
 	e.rt.setCapture("⠋ Thinking… (esc to interrupt)")
+	t.Cleanup(func() { e.rt.setCapture("›") })
 	e.s.sessionQueueTiming.deliverAfter = time.Hour
 	rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/seed", seedBody("rec-2"))
 	if rec.Code != http.StatusAccepted {
@@ -300,11 +337,15 @@ func TestSessionCreateWithSeedWaitsForRunning(t *testing.T) {
 	release, entered := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	e.rt.startFn = func(crux.UserSessionSpec) error { close(entered); <-release; return nil }
-	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	markPending := waitPendingSeedOnCleanup(t, e)
+	t.Cleanup(func() {
+		once.Do(func() { close(release) })
+	})
 	rec := e.do(t, callerRW, "POST", "/api/sessions", map[string]any{"name": "nate v2", "group": "inbox", "vendor": "claude", "seed_items": []map[string]string{{"source": "plaud", "id": "rec-2"}}})
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("create with seed = %d: %s", rec.Code, rec.Body.String())
 	}
+	markPending()
 	m := decodeSessionJSON(t, rec)
 	sess := m["session"].(map[string]any)
 	id := sess["id"].(string)
@@ -333,6 +374,33 @@ func TestSessionCreateWithSeedWaitsForRunning(t *testing.T) {
 	if !strings.Contains(e.rt.typedTexts()[0], ".hive/inbox/plaud-rec-2.md") {
 		t.Errorf("instruction = %q", e.rt.typedTexts()[0])
 	}
+	// The instruction is typed before the worker's follow-up writes (touch,
+	// audit, routing the inbox item) land. Wait for them so TempDir cleanup
+	// does not race a store write (#18545).
+	e.waitSeedDeliveryQuiet(t, id)
+}
+
+// waitSeedDeliveryQuiet waits until the seed delivery for id has finished all
+// of its persistent writes: the inbox_to_session audit (written after the items
+// are routed) is present and the session's queue worker has exited.
+func (e *sessionTestEnv) waitSeedDeliveryQuiet(t *testing.T, id string) {
+	t.Helper()
+	waitSessionsFor(t, "the seed delivery to finish", func() bool {
+		audited := false
+		for _, a := range e.auditActions() {
+			if a.Action == auditInboxToSession && strings.Contains(a.Detail, "outcome="+sessionSeedOutcomeQueued) {
+				audited = true
+				break
+			}
+		}
+		if !audited {
+			return false
+		}
+		e.s.sessionQueuesMu.Lock()
+		defer e.s.sessionQueuesMu.Unlock()
+		q := e.s.sessionQueueFor(id, false)
+		return q == nil || (!q.running && len(q.items) == 0)
+	})
 }
 
 func TestSessionCreateWithSeedRefusesItemWithoutTextBeforeCreating(t *testing.T) {
@@ -409,17 +477,25 @@ func TestSpekIntentRunnerParksWhilePreparing(t *testing.T) {
 	release, entered := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	e.rt.startFn = func(crux.UserSessionSpec) error { close(entered); <-release; return nil }
-	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	var id string
+	markPending := waitPendingSeedOnCleanup(t, e)
+	t.Cleanup(func() {
+		once.Do(func() { close(release) })
+		if id != "" {
+			waitSessionsFor(t, "the session start to finish", func() bool { return !e.s.sessionStartInFlight(id) })
+		}
+	})
 	rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]any{"name": "prep", "vendor": "claude"})
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("create = %d", rec.Code)
 	}
-	id := decodeSessionJSON(t, rec)["session"].(map[string]any)["id"].(string)
+	id = decodeSessionJSON(t, rec)["session"].(map[string]any)["id"].(string)
 	<-entered
 	src.contents["rec-3"] = inbox.Content{Transcript: "now text", Provenance: "plaud://recordings/rec-3"}
 	if err := e.s.runSpekIntent(context.Background(), inbox.Item{Source: "plaud", ID: "rec-3"}, inbox.ShareIntent{Actor: callerOwner.user, Params: map[string]string{sessionSeedParamSession: id}}); err != nil {
 		t.Fatal(err)
 	}
+	markPending()
 	if _, err := os.Stat(filepath.Join(e.rt.WorkDir(id), ".hive", "inbox", "plaud-rec-3.md")); err == nil {
 		t.Fatal("wrote into a preparing session")
 	}

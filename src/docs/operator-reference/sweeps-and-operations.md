@@ -492,7 +492,14 @@ between. Two mechanisms close that gap
   logged as `claim skipped: open PR already linked` with the PR number, URL
   and author, and the tracker's withheld list shows *An open pull request
   already links this issue (claim skipped)* with the PR as evidence
-  (reason `open_pr_linked`). A failed listing fails **open**: the
+  (reason `open_pr_linked`). The label comes off once the PR is gone: the
+  issue stage-label sweep asks the same listing for every open issue
+  wearing it and, when the listing succeeds and no open PR links the issue
+  any more (the PR merged or closed), removes it in the same write as the
+  stage, with no comment. A failed listing keeps it, and with the guard off
+  the sweep leaves it alone. The hive removes it once per linking PR: if it
+  comes back while still no PR links the issue, another writer owns it and
+  the hive logs that once and leaves it. A failed listing fails **open**: the
   ledger-backed guards still apply, and a flaky listing must not stall every
   claim. The gate also refuses an issue the confirming read says is already
   **closed** (`issue closed`), so an issue closed between enumerations is
@@ -671,11 +678,30 @@ and the backfill banner. `/api/status` carries the same state under
 
 The gate persists `first_seen` per repo in `/data/metrics/writeback.json`
 (`HIVE_WRITEBACK_STATE_PATH`), and records the moment a repo first answers
-2xx after 403/404s as `writable_at`. Items created before the later of the
-two are never written to unsolicited while `backfill: false`. The sweep logs
-one line — `writeback: skipped N pre-existing items on <repo> (backfill
-off)` — and the dashboard shows "hive can now write to `<repo>`; N existing
-PRs were left untouched — enable backfill to process them".
+2xx after 403/404s as `writable_at`. A 2xx with no 403/404 before it does
+not set `writable_at`: the repo was writable all along, so `first_seen` alone
+is the cut-off (a `writable_at` an older hive stamped that way is cleared at
+startup, logged as `writeback: cleared writable_at …`). Items created before
+the later of the two are never written to unsolicited while
+`backfill: false`. The sweep logs one line — `writeback: skipped N
+pre-existing items on <repo> (backfill off)` — and the dashboard shows
+"hive can now write to `<repo>`; N existing PRs were left untouched —
+enable backfill to process them".
+
+The guard keeps the hive from *starting* to write on old items. Three
+writes on an item the hive has already written to are upkeep of its own
+state, so the guard does not apply to them: the blocked repair of a
+`blocked` the hive applied (`hive-applied-block`), the park re-check note on
+a park the hive applied (`hive-applied-park`), and a stage-label move on a PR
+whose `stage/*` labels the hive applied (`hive-applied-stage`). For the last,
+the stage labeler reads the PR's timeline once the guard would hold the
+write (and again when its stage labels change, or after 30 minutes): every
+`stage/*` label it carries must have been applied last by one of the hive's
+own accounts. A stage label a person applied, or a PR with none, stays under
+the guard. Only the guard is lifted: the opt-in label, the level, a pause,
+the repo mode and `own_only` still decide the write as they would for a
+newer PR. Such a write is not counted among the pre-existing items left
+untouched.
 
 ### Duplicate-write suppression
 
@@ -737,9 +763,16 @@ not what it records:
   Hive trusted-author auto-merge …" or "merged by Hive on behalf of …") is
   the card's `auto-merge` section too, with its @-mentions neutralised, so
   a merge no longer emails the author and every watcher; in `normal` it is
-  still its own comment. A merge that waits on a person (the 085
-  needs-decision and 090 ready-for-human-merge entry comments) still posts
-  a comment of its own.
+  still its own comment. The review Follow-ups checklist (findings held
+  below `review.backlog.min_severity`) is the card's collapsible
+  `review-followups` section, ticks kept across passes (a PR that already
+  has the old Follow-ups comment keeps editing that one), and a 090
+  ready-for-human-merge entry whose only objection is the author's trust
+  tier is the card's `stage-ready` line (hivecommons/hive#18606). A merge
+  that waits on a specific step from a person (every 085 needs-decision
+  entry, and a held or manual-merge 090) still posts a comment of its own.
+  On the issue side the stage note naming the covering PR
+  (`issue-pr-link`) is a section of the issue's card in quiet mode too.
 - **No "no findings" reviews.** A reviewer whose whole body is the clean
   acknowledgement — or whose body says it has no findings while its verdict
   report approves with an empty findings list, as the plain `reviewer`

@@ -957,6 +957,17 @@ func IsBenignMessage(msg string) bool {
 	if strings.TrimSpace(m) == "proxy request blocked" {
 		return true
 	}
+	// ioscan fail-closed withholding a kick because untrusted issue/PR text
+	// tripped the injection policy is the defense working as designed on
+	// content, not a classifier outage or hive defect (hivecommons/hive#18459);
+	// it is audited and warned once per agent. The classifier-outage variant
+	// ("ioscan fail-closed blocked kick", ClassIOScanClassifierUnavail) stays
+	// reportable. Strings from pkg/scheduler warnBlockedKick.
+	switch strings.TrimSpace(m) {
+	case "ioscan fail-closed withheld kick on an injection finding",
+		"ioscan fail-closed withheld held-pr coordination kick on an injection finding":
+		return true
+	}
 	// A CI gate refusal is the merge safety policy working as designed, even
 	// when a required check remains unsuccessful across repeated polls (#14364).
 	// Keep the operator warning, but do not turn it into a runtime defect.

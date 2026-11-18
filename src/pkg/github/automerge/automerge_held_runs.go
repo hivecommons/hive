@@ -114,6 +114,11 @@ const (
 	// prowOkToTestRejection is the reply Prow's trigger plugin posts when the
 	// commenter is not one of its trusted users.
 	prowOkToTestRejection = "Cannot trigger testing until a trusted user"
+	// prowActionsOkToTestRefusal opens the reply cncf/prow-github-actions
+	// posts instead ("Cannot /ok-to-test because Error: <login> is not a
+	// reviewer or approver for any changed file"); the reason after it names
+	// the commenter without an @.
+	prowActionsOkToTestRefusal = "Cannot " + workflowApprovalCommand + " because "
 	// prowApprovalNotifier appears in every comment Prow's approve plugin
 	// posts; its presence means `/ok-to-test` on this PR is Prow's command.
 	prowApprovalNotifier = "[APPROVALNOTIFIER]"
@@ -256,7 +261,7 @@ func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, own
 		// hand the command to a person once.
 		c.markWorkflowApprovalUntrusted(owner, repo, number)
 		if !state.rejectionNoted {
-			c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, workflowApprovalUntrustedNote(strings.TrimSpace(c.transport.AppBotLogin()), state.rejected))
+			c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, workflowApprovalUntrustedNote(strings.TrimSpace(c.transport.AppBotLogin()), state.refusal))
 		}
 		c.warn("automerge workflow approval cannot be requested by the App; merge bot trusts only its own users",
 			"repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "rejected", state.rejected, "prow", state.prowManaged)
@@ -345,10 +350,63 @@ type workflowApprovalComments struct {
 	postedForHead bool
 	// rejected: the merge bot replied that the commenter is not trusted.
 	rejected bool
+	// refusal is the merge bot's wording for that reply, quoted in the
+	// needs-human note: prowOkToTestRejection or prowActionsOkToTestRefusal.
+	refusal string
+	// earlierPosts are the App's commands for heads other than this one.
+	earlierPosts []okToTestPost
 	// rejectionNoted: the App already posted its needs-human note.
 	rejectionNoted bool
 	// prowManaged: Prow's approve plugin comments on this PR.
 	prowManaged bool
+}
+
+// okToTestPost is one of the App's /ok-to-test comments: the head its marker
+// names and when it was posted (zero when GitHub did not say).
+type okToTestPost struct {
+	sha string
+	at  time.Time
+}
+
+// okToTestRefusal returns the merge bot's wording when body refuses the
+// App's /ok-to-test, or "" when it does not. Upstream Prow's trigger plugin
+// @-mentions the commenter; cncf/prow-github-actions opens its reply with
+// "Cannot /ok-to-test because" and names the commenter bare. Either reply
+// must name the App, so a refusal of someone else's command does not count.
+// Like Prow's check, the author is not restricted beyond not being the App.
+func okToTestRefusal(body, appLogin string) string {
+	names := func(withAt bool) bool {
+		if appLogin == "" {
+			return true
+		}
+		login := strings.ToLower(appLogin)
+		if withAt {
+			login = "@" + login
+		}
+		return strings.Contains(strings.ToLower(body), login)
+	}
+	switch {
+	case strings.Contains(body, prowOkToTestRejection) && names(true):
+		return prowOkToTestRejection
+	case strings.HasPrefix(strings.TrimSpace(body), prowActionsOkToTestRefusal) && names(false):
+		return prowActionsOkToTestRefusal + "…"
+	}
+	return ""
+}
+
+// okToTestPostSHA returns the head an App comment's command marker names,
+// or "" when body carries no marker.
+func okToTestPostSHA(body string) string {
+	i := strings.Index(body, workflowApprovalCommandMarkerPrefix)
+	if i < 0 {
+		return ""
+	}
+	rest := body[i+len(workflowApprovalCommandMarkerPrefix):]
+	j := strings.Index(rest, " -->")
+	if j < 0 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(rest[:j]))
 }
 
 // workflowApprovalCommentState reads the PR's comments when a scan is due.
@@ -380,6 +438,8 @@ func (c *Engine) workflowApprovalCommentState(ctx context.Context, displayRepo, 
 			if appLogin != "" && strings.EqualFold(login, appLogin) {
 				if strings.Contains(body, marker) {
 					state.postedForHead = true
+				} else if sha := okToTestPostSHA(body); sha != "" {
+					state.earlierPosts = append(state.earlierPosts, okToTestPost{sha: sha, at: comment.GetCreatedAt().Time})
 				}
 				if strings.Contains(body, workflowApprovalRejectedMarker) {
 					state.rejectionNoted = true
@@ -389,8 +449,9 @@ func (c *Engine) workflowApprovalCommentState(ctx context.Context, displayRepo, 
 			if strings.Contains(body, prowApprovalNotifier) {
 				state.prowManaged = true
 			}
-			if strings.Contains(body, prowOkToTestRejection) && (appLogin == "" || strings.Contains(strings.ToLower(body), "@"+strings.ToLower(appLogin))) {
+			if refusal := okToTestRefusal(body, appLogin); refusal != "" {
 				state.rejected = true
+				state.refusal = refusal
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
@@ -468,8 +529,9 @@ func (c *Engine) postWorkflowApprovalCommand(ctx context.Context, displayRepo, o
 }
 
 // workflowApprovalUntrustedNote is the one needs-human comment posted when
-// the merge bot refuses the App's command.
-func workflowApprovalUntrustedNote(appLogin string, rejected bool) string {
+// the merge bot refuses the App's command; refusal is the bot's wording, ""
+// when it never replied.
+func workflowApprovalUntrustedNote(appLogin, refusal string) string {
 	if appLogin == "" {
 		appLogin = "the Hive App"
 	}
@@ -478,11 +540,11 @@ func workflowApprovalUntrustedNote(appLogin string, rejected bool) string {
 	b.WriteString("\nneeds-human: GitHub Actions is holding this PR's workflow runs for approval, and Hive cannot start them. `")
 	b.WriteString(workflowApprovalCommand)
 	b.WriteString("` on this repository belongs to Prow, which only accepts it from its trusted users")
-	if rejected {
+	if refusal != "" {
 		b.WriteString("; it rejected `")
 		b.WriteString(appLogin)
 		b.WriteString("` (\"")
-		b.WriteString(prowOkToTestRejection)
+		b.WriteString(refusal)
 		b.WriteString("\")")
 	} else {
 		b.WriteString(", and `")
