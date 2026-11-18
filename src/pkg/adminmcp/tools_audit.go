@@ -41,8 +41,8 @@ func itemHistoryReadSchema() (map[string]any, []string) {
 	}, []string{"repo", "number"}
 }
 
-// positiveIntArg reads an integer argument that must be positive when set.
-func positiveIntArg(args map[string]any, name string) (int, bool, error) {
+// auditNumberArg reads an integer argument that must be positive when set.
+func auditNumberArg(args map[string]any, name string) (int, bool, error) {
 	switch v := args[name].(type) {
 	case nil:
 		return 0, false, nil
@@ -81,7 +81,7 @@ func AuditLogReadPath(args map[string]any) (string, error) {
 			values.Set(name, v)
 		}
 	}
-	n, ok, err := positiveIntArg(args, "number")
+	n, ok, err := auditNumberArg(args, "number")
 	if err != nil {
 		return "", err
 	}
@@ -115,7 +115,7 @@ func ItemHistoryReadPath(args map[string]any) (string, error) {
 	if repo == "" {
 		return "", fmt.Errorf("repo is required (owner/name)")
 	}
-	n, ok, err := positiveIntArg(args, "number")
+	n, ok, err := auditNumberArg(args, "number")
 	if err != nil {
 		return "", err
 	}
