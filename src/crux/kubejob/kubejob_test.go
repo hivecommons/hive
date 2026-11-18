@@ -49,6 +49,30 @@ type fakeAPI struct {
 	selfPodGets           int
 	serviceAccounts       map[string]string // SA name -> JSON body; absent = 404
 	saForbidden           bool              // SA reads answer 403
+
+	// Scripted per-call behavior for the node preflight and scheduling tests
+	// (#18811). Each slice is indexed by how many such calls came before and
+	// its last entry repeats; empty keeps the single-value fields above.
+	createdAll   []map[string]any // every Job manifest POSTed, in order
+	exitCodes    []int            // terminated exit code per pod GET
+	podNodes     []string         // spec.nodeName per pod GET ("" = none)
+	logs         []string         // pod log per log GET
+	podLists     []string         // body per pods-list GET (the schedule watch)
+	podGets      int
+	logGets      int
+	podListGets  int
+	jobCreations int
+}
+
+// pick returns the i-th entry of a script, repeating the last.
+func pick[T any](script []T, i int, def T) T {
+	if len(script) == 0 {
+		return def
+	}
+	if i >= len(script) {
+		i = len(script) - 1
+	}
+	return script[i]
 }
 
 func newFakeAPI() *fakeAPI {
@@ -95,6 +119,8 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 				t.Errorf("manifest is not JSON: %v", err)
 			}
 			f.created = m
+			f.createdAll = append(f.createdAll, m)
+			f.jobCreations++
 			f.order = append(f.order, "job")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write(body)
@@ -120,12 +146,23 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 				_, _ = w.Write([]byte(`{"items":[]}`))
 				return
 			}
+			if len(f.podLists) > 0 {
+				body := pick(f.podLists, f.podListGets, "")
+				f.podListGets++
+				_, _ = w.Write([]byte(body))
+				return
+			}
 			_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"` + f.podName + `"}}]}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/log"):
 			if f.jobCompleted && f.onPodLogAfterComplete != nil {
 				f.onPodLogAfterComplete()
 			}
-			_, _ = w.Write([]byte(f.logBody))
+			body := f.logBody
+			if len(f.logs) > 0 {
+				body = pick(f.logs, f.logGets, "")
+				f.logGets++
+			}
+			_, _ = w.Write([]byte(body))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/serviceaccounts/"):
 			if f.saForbidden {
 				w.WriteHeader(http.StatusForbidden)
@@ -148,11 +185,18 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 			}
 			_, _ = w.Write([]byte(f.selfPod))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/pods/"):
-			state := `{"terminated":{"exitCode":` + itoa(f.exitCode) + `}}`
+			code := pick(f.exitCodes, f.podGets, f.exitCode)
+			node := pick(f.podNodes, f.podGets, "")
+			f.podGets++
+			state := `{"terminated":{"exitCode":` + itoa(code) + `}}`
 			if f.podStatus != "terminated" {
 				state = `{"running":{}}`
 			}
-			_, _ = w.Write([]byte(`{"status":{"containerStatuses":[{"name":"kick","state":` + state + `}]}}`))
+			spec := ""
+			if node != "" {
+				spec = `"spec":{"nodeName":"` + node + `"},`
+			}
+			_, _ = w.Write([]byte(`{` + spec + `"status":{"containerStatuses":[{"name":"kick","state":` + state + `}]}}`))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL)
 			w.WriteHeader(http.StatusNotFound)

@@ -45,6 +45,9 @@ type SandboxJobConfig struct {
 	EnvFromSecrets []string           `yaml:"env_from_secrets,omitempty" json:"env_from_secrets,omitempty"`
 	Volumes        []SandboxJobVolume `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	TTLSeconds     int                `yaml:"ttl_seconds,omitempty" json:"ttl_seconds,omitempty"`
+	// ScheduleTimeoutS fails a kick whose pod stays Unschedulable this long
+	// (reason waiting_for_node, #18811). Zero uses DefaultSandboxScheduleTimeoutS.
+	ScheduleTimeoutS int `yaml:"schedule_timeout_s,omitempty" json:"schedule_timeout_s,omitempty"`
 	// RelayImage is the image of the init container that copies hive's
 	// sandbox relays (hive-review) into the Job (#18512). Empty resolves the
 	// running hive image by digest from hive's own pod; "none" skips the
@@ -55,31 +58,6 @@ type SandboxJobConfig struct {
 	// and uses 65534 elsewhere, since the hive image's default user is root.
 	RelayRunAsUser   *int64   `yaml:"relay_run_as_user,omitempty" json:"relay_run_as_user,omitempty"`
 	ImagePullSecrets []string `yaml:"image_pull_secrets,omitempty" json:"image_pull_secrets,omitempty"`
-}
-
-// SandboxJobToleration mirrors the subset of a Kubernetes toleration an
-// operator writes by hand.
-type SandboxJobToleration struct {
-	Key      string `yaml:"key,omitempty" json:"key,omitempty"`
-	Operator string `yaml:"operator,omitempty" json:"operator,omitempty"`
-	Value    string `yaml:"value,omitempty" json:"value,omitempty"`
-	Effect   string `yaml:"effect,omitempty" json:"effect,omitempty"`
-}
-
-// SandboxJobResources mirrors Kubernetes resource requirements with string
-// quantities so a device limit (`<vendor>.com/<device>: "2"`) passes through.
-type SandboxJobResources struct {
-	Limits   map[string]string `yaml:"limits,omitempty" json:"limits,omitempty"`
-	Requests map[string]string `yaml:"requests,omitempty" json:"requests,omitempty"`
-}
-
-// SandboxJobVolume is an additional PVC mounted into the Job (a compile
-// cache, a model store).
-type SandboxJobVolume struct {
-	Name      string `yaml:"name,omitempty" json:"name,omitempty"`
-	Claim     string `yaml:"claim" json:"claim"`
-	MountPath string `yaml:"mount_path" json:"mount_path"`
-	ReadOnly  bool   `yaml:"read_only,omitempty" json:"read_only,omitempty"`
 }
 
 // SandboxRuntime returns the per-agent runtime override, then the global
@@ -118,6 +96,9 @@ func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	}
 	if out.TTLSeconds == 0 {
 		out.TTLSeconds = g.TTLSeconds
+	}
+	if out.ScheduleTimeoutS == 0 {
+		out.ScheduleTimeoutS = g.ScheduleTimeoutS
 	}
 	return inheritPullSecrets(out, g)
 }
@@ -514,6 +495,9 @@ type AgentSandboxConfig struct {
 	Substrate *SandboxSubstrateConfig `yaml:"substrate,omitempty" json:"substrate,omitempty"`
 	// Publish gates what a sandboxed run may publish; see SandboxPublishConfig.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`
+	// Preflight is the node health check run before the agent starts on the
+	// job runtime; see SandboxPreflightConfig.
+	Preflight *SandboxPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
 }
 
 // SandboxPublishConfig is the deterministic preflight hive runs before it
@@ -559,6 +543,9 @@ type AgentSandboxOverride struct {
 	// Publish, when set, replaces the global publish preflight for this
 	// agent; an empty verify list here turns the preflight off for it.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`
+	// Preflight, when set, replaces the global preflight for this agent; an
+	// empty commands list here turns it off for the agent.
+	Preflight *SandboxPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
 }
 
 // BobConfig configures the IBM bobshell ("bob") CLI backend. Only the

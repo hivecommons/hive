@@ -258,6 +258,38 @@ conflict with the exclusion and leave the Job pending. If using a custom
 `scheduler_name`, ensure that scheduler honors Kubernetes `nodeAffinity`;
 otherwise the exclusion is not guaranteed.
 
+### Node preflight and failing fast on an unschedulable Job
+
+Two checks keep a bad or missing node from costing a whole kick ([#18811](https://github.com/hivecommons/hive/issues/18811)). Both are for `runtime: job`.
+
+**`sandbox.preflight`: a node health check before the agent starts.** An accelerator card can be unusable on one node (a VFIO mmap failure, a crashed device) while the pod starts fine; without a check hive learns that only when the agent's own tests fail, minutes in. `preflight.commands` is a list of shell commands run in the Job's main container after hive's relay check and before the agent, in the same image, workspace and environment. Each runs as `sh -lc <cmd>`, like `publish.verify`, under `timeout_s` (default 120 s) and a `total_timeout_s` for the whole list (default 300 s). It is off unless `commands` is set, per agent (`agents.<name>.sandbox.preflight`) or hive-wide (`agent_sandbox.preflight`); an agent's block replaces the global one, and an empty `commands` there turns it off for that agent. Timeouts left at zero fall back to the global block, then the defaults.
+
+```yaml
+agent_sandbox:
+  preflight:
+    commands:
+      # A device smoke test: fails on a node whose Spyre card is unusable.
+      - python -c 'import torch; torch.ones(1).to("spyre")'
+    timeout_s: 120          # per command
+    total_timeout_s: 300    # all commands
+    retry_delay_s: 0        # wait before the retry on another node; 0 = immediately
+```
+
+A failing command ends the container in seconds with exit code 75 after printing `hive-node-preflight: FAILED command 1 of 1 exited 1: <cmd>`, and hive reports the kick as `node_unhealthy`:
+
+- The command's output is in the kick transcript and the kick log, the run record carries `failReason: node_unhealthy` and the `node` the pod ran on (`spec.nodeName`), and the audit log names the node (`sandbox_node_unhealthy`).
+- It is **not an agent failure.** The agent never ran, so it returns to `idle` rather than `failed`, nothing that watches failed agents (restart, escalation, a failure-fix loop) sees it, and the next cadence tries again. The dashboard shows `node unhealthy` with the node, distinct from `last run failed`.
+- **One retry on another node.** Hive re-creates the Job once, after `retry_delay_s`, with a node-affinity `NotIn` on `kubernetes.io/hostname` for the failed node, added to every required term of the `affinity` above and never pinning a node (`sandbox_node_unhealthy_retry` in the audit log; the first attempt's output is kept at the top of the transcript). If the retry fails its preflight too, the kick fails as `node_unhealthy`. A cluster whose node names differ from the `kubernetes.io/hostname` label, or a custom `scheduler_name` that ignores node affinity, cannot honor the exclusion.
+
+The commands come from configuration only, never from a kick message, like `publish.verify`. They are part of the Job manifest and their output is in the pod log, so never put a credential on a command line; the script prints nothing from the environment. A preflight set for a runtime other than `job` is logged and ignored, and only agent kicks run it (the `publish.verify` Jobs do not).
+
+**`job.schedule_timeout_s`: fail fast when no node takes the pod.** While waiting on the Job, hive also reads its pod. If the pod stays `PodScheduled=False` with reason `Unschedulable` for `schedule_timeout_s` (default 600 s, in `job`, with the global value as the fallback for an agent's own `job` block), hive fails the kick as `waiting_for_node` with the scheduler's message (for example `0/38 nodes are available: ...`), deletes the Job and releases the agent, instead of holding its slot for the whole kick timeout plus the cluster-side deadline margin. There is no retry; the next cadence tries again. While it waits the dashboard shows `Job waiting for a node` with the scheduler's message, distinct from `Job running`, and the audit log records `sandbox_waiting_for_node`, then `sandbox_waiting_for_node_failed` if it gives up. If your cluster autoscaler needs longer than ten minutes to add an accelerator node, raise `schedule_timeout_s`; the kick timeout still bounds the wait.
+
+| Reason | Meaning | What to check |
+|--------|---------|---------------|
+| `node_unhealthy` | `preflight` failed on the node, and again on the retry node | The command's output in the kick log; the node named in the run record; cordon or fix the node |
+| `waiting_for_node` | the pod stayed Unschedulable past `schedule_timeout_s` | The scheduler's message in the kick log: `node_selector`, `affinity`, `tolerations`, device `resources` and `scheduler_name` against the cluster's nodes; a retry excluding the only fitting node ends here |
+
 **Workspace transport is a shared claim, not a copy.** The Job mounts `workspace_claim` with a `subPath` pointing at the per-kick workspace, at the same `/workspace` mount the Podman launcher uses. The sandbox `workspace_dir` must therefore live under `workspace_claim_mount` (it does by default: `/data/agents/sandbox`). When the Job is scheduled onto a different node than hive, which is the whole point of a node selector, the claim must be **ReadWriteMany**. Hive cannot check the access mode from inside its pod; a Job that fails to start with a multi-attach error is the symptom.
 
 **The credential boundary.** The Job receives exactly the Secrets named in `env_from_secrets`, resolved by Kubernetes from the pod template; hive never reads them. Environment variables from the allowlist are copied in with the same credential-name filter Podman applies. An allowlisted `ANTHROPIC_BASE_URL` that points at a pod-local proxy (such as `127.0.0.1:18444`) is not reachable from a Job pod, so operators must supply a routable endpoint or model credentials via `env_from_secrets`. Hive's brokered GitHub token **never enters the Job**, so a Job cannot push or open a PR itself; hive does both from the returned workspace, with the same scan and scoped-token minting as the Podman path. If a workload needs its own registry or model credentials, they go in a Secret named here, and they are that workload's to protect.
@@ -467,7 +499,9 @@ A sandboxed agent (Podman or Job runtime) has no tmux session, no in-pod process
 | `health`  | Meaning | Dot |
 |-----------|---------|-----|
 | `ok`      | last run succeeded (or no run yet) and the next cadence occurrence is still in the future | green |
-| `running` | a kick is in flight (container or Job running/pending) | amber |
+| `running` | a kick is in flight (container or Job running) | amber |
+| `waiting_for_node` | a kick is in flight but its Job's pod is Pending and Unschedulable; `waitDetail` has the scheduler's message | amber |
+| `node_unhealthy` | the last kick never reached the agent: the node `preflight` failed, also on the retry; `failReason` and `node` say why and where | red |
 | `failed`  | the last run failed or timed out — see the agent's log | red |
 | `overdue` | the cadence had a due occurrence that never started, older than the grace (half the period, clamped to 15 min – 2 h); `dueAt` names it | red |
 

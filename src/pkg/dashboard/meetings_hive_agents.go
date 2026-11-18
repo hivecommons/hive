@@ -54,7 +54,7 @@ func hiveAgentClassOf(a FrontendAgent) hiveAgentClass {
 	starting := a.Starting && a.State != hiveAgentStateRunning && !paused && !off
 	sessionDown := a.State != hiveAgentStateRunning
 	if a.Sandboxed && a.SandboxRun != nil && a.SandboxRun.Health != "" {
-		sessionDown = a.SandboxRun.Health == SandboxHealthFailed || a.SandboxRun.Health == SandboxHealthOverdue
+		sessionDown = a.SandboxRun.Health == SandboxHealthFailed || a.SandboxRun.Health == SandboxHealthNodeUnhealthy || a.SandboxRun.Health == SandboxHealthOverdue
 	}
 	down := sessionDown && !paused && !off && !a.OnDemand && !starting
 	working := a.Busy == hiveAgentBusyWorking && !paused && !off && !down
