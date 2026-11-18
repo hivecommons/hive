@@ -618,6 +618,12 @@ func TestOpencodeLocalModeRunsHeadlessWithTheDenyList(t *testing.T) {
 			t.Errorf("the local opencode branch does not contain %q:\n%s", want, branch)
 		}
 	}
+	// Container mode too (#19009 review): the host side exports headless for
+	// opencode next to cline, or it offers a tmux attach to a container with
+	// no session and takes the interactive krun branch.
+	if !strings.Contains(src, "if [[ \"$BACKEND\" == \"opencode\" ]]; then\n      export CONTRIBUTOR_MODE=headless\n    fi") {
+		t.Error("contribute-hive must export CONTRIBUTOR_MODE=headless for opencode in every mode, as it does for cline")
+	}
 	if !strings.Contains(src, `if [[ "$BACKEND" != "cline" && "${CONTRIBUTOR_MODE:-}" != "headless" ]]; then`) {
 		t.Error("local mode must not start a tmux pane for a headless backend: the relay never reads it")
 	}

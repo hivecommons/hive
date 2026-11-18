@@ -1135,6 +1135,13 @@ contribute-hive backend="" mode="docker": check-version
         fi
       fi
     fi
+    # opencode runs headless only (HEADLESS_ONLY_BACKENDS in
+    # bin/contributor-relay.js, the container entrypoint): the host side must
+    # agree, in container mode too, or it offers a `tmux attach` to a container
+    # with no session and takes the interactive krun branch.
+    if [[ "$BACKEND" == "opencode" ]]; then
+      export CONTRIBUTOR_MODE=headless
+    fi
     if [[ "$BACKEND" == "cline" ]]; then
       export CONTRIBUTOR_MODE=headless
       if ! command -v "${HIVE_CLINE_RUNNER:-crux}" >/dev/null 2>&1; then
