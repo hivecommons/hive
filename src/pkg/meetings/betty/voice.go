@@ -10,6 +10,14 @@ const (
 	// VoiceMaxSentences and VoiceMaxChars bound a spoken answer.
 	VoiceMaxSentences = 2
 	VoiceMaxChars     = 200
+	// VoiceBriefOverChars is the length past which a spoken answer is said
+	// as its first sentence only, with the rest in chat: a CPU voice
+	// synthesizes at about real time, so 200 characters (13 s of speech)
+	// took 14 s to first audio and 25 s to say in a live Meet test, and a
+	// longer one outran the 30 s say deadline.
+	VoiceBriefOverChars = 120
+	// VoiceBriefMaxChars bounds that first sentence.
+	VoiceBriefMaxChars = 110
 )
 
 // Reply triggers added in phase B.
@@ -150,4 +158,20 @@ func clipSentences(text string, n, maxChars int) string {
 		text = text[:cut]
 	}
 	return clip(text, maxChars)
+}
+
+// BriefVoice is the short spoken form of a long spoken answer: its first
+// sentence, when the answer is over VoiceBriefOverChars and has more
+// sentences, the first fits VoiceBriefMaxChars and no sentence is cut. ok
+// is false when the answer is said as it is.
+func BriefVoice(text string) (string, bool) {
+	text = strings.Join(strings.Fields(text), " ")
+	if len([]rune(text)) <= VoiceBriefOverChars {
+		return text, false
+	}
+	first := clipSentences(text, 1, VoiceBriefMaxChars+1)
+	if first == text || strings.HasSuffix(first, "…") || len([]rune(first)) > VoiceBriefMaxChars {
+		return text, false
+	}
+	return first, true
 }

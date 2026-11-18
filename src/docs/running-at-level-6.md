@@ -230,6 +230,22 @@ fail-closed. The [path-specific CI limits](#test-coverage-of-90-or-better)
 still apply. Evidence: [config](../pkg/config/config.go),
 [commit CI](../pkg/github/commit_ci.go).
 
+#### H2a. Post the PR-contents gate from the hive (optional)
+
+**Action:** from 2026-12-02 GitHub blocks `pull_request_target` workflows by
+default in public repositories, which would stop the required `verify PR
+contents` check from reporting. Set `auto_merge.pr_gate.mode: shadow` and list
+the repository in `auto_merge.pr_gate.repos`; the hive then posts
+`verify PR contents (hive)` on every PR head and logs how it compares with the
+workflow. Default is `off`.
+
+**Verify:** the status appears on a new PR head and the log shows
+`pr-gate: comparison with the workflow result agrees`. See
+[the setup note](github-app-setup.md#pr-contents-gate-posted-by-the-hive).
+
+**Limit:** needs the Hive App's Commit statuses read and write grant; `shadow`
+cannot satisfy a required context, and `enforce` runs as `shadow` for now.
+
 #### H3. Leave no-CI exceptions empty
 
 **Action — runtime YAML, no dashboard field:** `auto_merge.no_ci_ok: []`.

@@ -1,0 +1,10 @@
+{
+  "action": "completed",
+  "check_run": {
+    "name": "PR Type",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "repository": {"full_name": "example-org/example-repo"}
+}

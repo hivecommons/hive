@@ -697,12 +697,46 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 	attempt := m.consentTries[mt.ID]
 	m.mu.Unlock()
 
-	chatErr := m.postConsentChat(ctx, mt)
+	chatCh := make(chan error, 1)
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		chatCh <- m.postConsentChat(ctx, mt)
+	}()
+	var chatErr error
+	spoken := false
+	var sayErr error
+	if mt.VoiceCapable {
+		select {
+		case chatErr = <-chatCh:
+		case <-time.After(ConsentChatGrace):
+			// A chat post that is still waiting (Teams holds it up to 10 s
+			// for a composer) never holds the spoken notice back.
+			sayErr = m.speakConsent(ctx, mt)
+			spoken = sayErr == nil
+			chatErr = <-chatCh
+		}
+	} else {
+		chatErr = <-chatCh
+	}
 	if chatErr == nil {
-		m.markConsent(ctx, mt, ConsentViaChat)
+		if !spoken {
+			m.markConsent(ctx, mt, ConsentViaChat)
+		}
 		return false
 	}
-	if consentTransient(chatErr) && attempt < m.opts.ConsentAttempts {
+	more := attempt < m.opts.ConsentAttempts
+	if !spoken && mt.VoiceCapable && (!consentTransient(chatErr) || isNoComposer(chatErr)) {
+		sayErr = m.speakConsent(ctx, mt)
+		spoken = sayErr == nil
+	}
+	if spoken {
+		if consentTransient(chatErr) && more {
+			m.retryConsentChat(mt, m.opts.ConsentAttempts-attempt)
+		}
+		return false
+	}
+	if consentTransient(chatErr) && more && sayErr == nil {
 		m.log.Warn("[meetings] consent notice not posted; will retry", "meeting", mt.ID, "attempt", attempt, "error", chatErr)
 		if mt.ConsentError != chatErr.Error() {
 			_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentError = chatErr.Error() })
@@ -710,23 +744,10 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 		return false
 	}
 	why := "chat unavailable (" + chatErr.Error() + ")"
-	// The consent notice is not a voice reply: the voice setting governs
-	// whether she answers out loud, but telling the room it is recorded
-	// comes first, so a bot that can speak says it whenever chat cannot
-	// carry it, even with replies set to chat (a Teams join where chat had
-	// no composer and the owner had turned voice replies off left at once).
-	if mt.VoiceCapable {
-		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
-		sayErr := m.sayConsent(cctx, mt.NativeID)
-		cancel()
-		if sayErr == nil {
-			m.log.Info("[meetings] consent notice spoken; chat could not deliver it", "meeting", mt.ID, "chat_error", chatErr)
-			m.markConsent(ctx, mt, ConsentViaVoice)
-			return false
-		}
-		why += ", voice failed (" + sayErr.Error() + ")"
-	} else {
+	if !mt.VoiceCapable {
 		why += ", the bot joined without voice"
+	} else if sayErr != nil {
+		why += ", voice failed (" + sayErr.Error() + ")"
 	}
 	m.log.Warn("[meetings] consent notice could not be delivered; leaving the meeting", "meeting", mt.ID, "reason", why)
 	_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentError = why })
@@ -740,6 +761,60 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 		_, _ = m.finish(mt.ID, StateEnded, ReasonConsentUndelivered, nil)
 	}
 	return true
+}
+
+// ConsentChatGrace is how long the consent chat post is waited for before a
+// bot that can speak says the notice too.
+const ConsentChatGrace = 2 * time.Second
+
+// isNoComposer reports a Teams chat that had no composer on screen: the
+// platform could not take the line yet, and may later (the control bar and
+// chat panel mount some seconds after admission).
+func isNoComposer(err error) bool {
+	var te *ToolError
+	return errors.As(err, &te) && te.Code == CodePlatformUnavailable && strings.Contains(te.Message, "no_composer")
+}
+
+// speakConsent says the consent notice and records it delivered by voice.
+// The notice is not a voice reply: the voice setting governs whether she
+// answers out loud, but telling the room it is recorded comes first.
+func (m *Manager) speakConsent(ctx context.Context, mt Meeting) error {
+	cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
+	defer cancel()
+	if err := m.sayConsent(cctx, mt.NativeID); err != nil {
+		return err
+	}
+	m.log.Info("[meetings] consent notice spoken; chat could not deliver it", "meeting", mt.ID)
+	m.markConsent(ctx, mt, ConsentViaVoice)
+	return nil
+}
+
+// retryConsentChat keeps posting the notice in chat after it was spoken,
+// at most tries more times, ConsentRetry apart, until a post is confirmed
+// or the meeting is over.
+func (m *Manager) retryConsentChat(mt Meeting, tries int) {
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		for i := 0; i < tries; i++ {
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-time.After(m.opts.ConsentRetry):
+			}
+			if cur, err := m.Get(mt.ID); err != nil || cur.State != StateLive {
+				return
+			}
+			err := m.postConsentChat(m.ctx, mt)
+			if err == nil {
+				m.log.Info("[meetings] consent notice also posted in chat", "meeting", mt.ID, "attempt", i+2)
+				return
+			}
+			if !consentTransient(err) && !isNoComposer(err) {
+				return
+			}
+		}
+	}()
 }
 
 // errConsentNotSpoken is a voice notice Quorum accepted but reported with no
@@ -788,6 +863,9 @@ var errConsentUnconfirmed = errors.New("chat delivery not confirmed")
 // rather than a definite "chat cannot deliver this": the bot not admitted
 // yet, a rate limit, or a call that never got an answer.
 func consentTransient(err error) bool {
+	if isNoComposer(err) {
+		return true
+	}
 	if errors.Is(err, errConsentUnconfirmed) || IsCode(err, CodePlatformUnavailable) ||
 		IsCode(err, CodeInvalidArgument) || IsCode(err, CodeNotFound) {
 		return false

@@ -45,6 +45,9 @@ var ErrNoGitHubClient = errors.New("no github client configured (hive is running
 type Client struct {
 	client      *gh.Client
 	linearTeams map[string][]string
+	// blockedOwnerReasons maps repo#N to the owner-action reason the blocked
+	// sweep read from a comment marker (blockedReasonFor). Zero value ready.
+	blockedOwnerReasons sync.Map
 	// foldedTrackers records issues that finding folds landed on (#11587).
 	foldedTrackers foldedTrackerSet
 	// commentBudget caps automated comments per issue per day (#12733).
@@ -1992,7 +1995,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if hasBlockedLabel(labels) {
 			breakdown.Filtered++
 			breakdown.Blocked++
-			row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
+			row := c.workIssue(repo, issue, labels, "filtered", c.blockedReasonFor(repo, issue.GetNumber(), issue.GetBody()))
 			row.RecheckAfter, row.OpsTracking = blockedRecheck(issue.GetBody())
 			row.RecheckDone = blockedRecheckDone(issue.GetBody())
 			details = append(details, row)
@@ -3438,6 +3441,28 @@ func isStatusesPermissionDenied(err error) bool {
 	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusForbidden
 }
 
+// createCommitStatus is the one commit-status writer: it records state on
+// headSHA under statusContext through the external-effect boundary. The
+// prow/lgtm binding and the PR gate poster both go through it, so a 403 reads
+// the same everywhere (see isStatusesPermissionDenied). caller names the REST
+// caller for rate accounting; number is the PR the status belongs to.
+func (c *Client) createCommitStatus(ctx context.Context, owner, repoName string, number int, headSHA, statusContext, state, desc, caller string) error {
+	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repoName,
+		Kind:   effects.KindStatusCreate,
+		Target: strconv.Itoa(number),
+		Inputs: map[string]string{"context": statusContext, "state": state, "head_sha": headSHA, "description": effects.StableDigest(desc)},
+	}, func(ctx context.Context) (effects.Result, error) {
+		_, _, apiErr := c.client.Repositories.CreateStatus(WithRESTCaller(ctx, caller), owner, repoName, headSHA, &gh.RepoStatus{
+			Context:     gh.Ptr(statusContext),
+			State:       gh.Ptr(state),
+			Description: gh.Ptr(desc),
+		})
+		return effects.Result{Provenance: owner + "/" + repoName + "@" + headSHA}, apiErr
+	})
+	return err
+}
+
 // bindProwLgtm records the `prow/lgtm` success status on headSHA, the commit
 // the queue review approved. On failure it returns the error, logs it when a
 // logger is available, and attempts to surface a warning on the PR. The caller
@@ -3451,19 +3476,7 @@ func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, numbe
 	if len(desc) > prowStatusDescMaxLen {
 		desc = desc[:prowStatusDescMaxLen]
 	}
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
-		Repo:   owner + "/" + repoName,
-		Kind:   effects.KindStatusCreate,
-		Target: strconv.Itoa(number),
-		Inputs: map[string]string{"context": prowLgtmStatusContext, "state": "success", "head_sha": headSHA, "description": effects.StableDigest(desc)},
-	}, func(ctx context.Context) (effects.Result, error) {
-		_, _, apiErr := c.client.Repositories.CreateStatus(WithRESTCaller(ctx, "hive:queue_pr_automerge_status"), owner, repoName, headSHA, &gh.RepoStatus{
-			Context:     gh.Ptr(prowLgtmStatusContext),
-			State:       gh.Ptr("success"),
-			Description: gh.Ptr(desc),
-		})
-		return effects.Result{Provenance: owner + "/" + repoName + "@" + headSHA}, apiErr
-	})
+	err := c.createCommitStatus(ctx, owner, repoName, number, headSHA, prowLgtmStatusContext, "success", desc, "hive:queue_pr_automerge_status")
 	if err == nil {
 		return nil
 	}

@@ -123,6 +123,9 @@
       // hold the hive itself placed.
       if (item.needs_human_why && typeof item.needs_human_why === 'object') return true;
       if (stageTrackerItemOnHold(item)) return false;
+      // A blocked issue whose blocker is a person's action (owner-action
+      // marker); the server also names it in needs_human_why.
+      if (item.blocked_owner_reason) return true;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       if (mods.some(m => STAGE_TRACKER_NEEDS_HUMAN_MODS.indexOf(m) >= 0)) return true;
       const n = Number(item.stage) || 0;

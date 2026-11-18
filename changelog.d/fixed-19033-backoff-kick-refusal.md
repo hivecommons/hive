@@ -1,0 +1,1 @@
+- Record a governor kick withheld during provider backoff as a `refused` (`provider_backoff`) outcome in `GET /api/kick-outcomes`, without quoting the provider error line (#19033).

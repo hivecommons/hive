@@ -735,6 +735,13 @@ func runEvalCycle(
 	// fix-before-new path above, unchanged.
 	routePRFollowUps(ctx, cfg, ghClient, actionable, escalatedPRs, agentMgr, logger)
 
+	// Human review feedback on PRs the hive's agents opened (hivecommons/hive#19027):
+	// kick the authoring agent to verify and answer it, whatever the PR's draft
+	// state, hold labels or repo lane. Polling; no webhook needed.
+	if !budgetDecision.SkipOptional {
+		sweepReviewFeedback(ctx, cfg, ghClient, agentMgr, logger)
+	}
+
 	// Stuck-PR reaper (backstop): DELIVER a targeted FIX-BEFORE-NEW kick for any
 	// hive-authored PR that is red on a required check AND stale (its red head
 	// SHA unchanged past RedPRStaleAfter). writeMergeEligible already surfaces
@@ -762,6 +769,14 @@ func runEvalCycle(
 	// upstream merged PR or release that still applies to the fork. Opens
 	// issues only, never PRs; the watermark and dedupe index live on the PVC.
 	runUpstreamWatch(ctx, cfg, ghClient, logger)
+
+	// Analysis fact-check (hivecommons/hive#19074), opt-in and default OFF:
+	// an independent reviewer agent re-verifies the analysis and report PRs
+	// the configured agents opened, the author revises, and the loop stops on
+	// a pass, the round limit, or a person reviewing. Polling; no webhook.
+	if !budgetDecision.SkipOptional {
+		sweepAnalysisFactCheck(ctx, cfg, ghClient, agentMgr, logger)
+	}
 
 	// Merge-hotspot advisor: at most hourly, score the files concurrent
 	// PRs keep colliding on (from the merge train's own records) and file
@@ -1094,6 +1109,7 @@ func runEvalCycle(
 					"class", class,
 					"retry_in", remaining.Round(time.Second),
 					"error", line)
+				kickOutcomeBackoffWithheld(kickOutcomesFor(cfg, logger), msg.Agent, class, remaining, time.Now())
 				gov.RecordKickFailure(msg.Agent, fmt.Errorf("provider inference backoff (%s): %s", class, line), time.Now())
 				continue
 			}

@@ -8588,6 +8588,10 @@ type ReviewConfig struct {
 	// dispatch (hivecommons/hive#11091); see review_dispatch.go.
 	EventDriven    *bool `yaml:"event_driven,omitempty" json:"event_driven,omitempty"`
 	EventDebounceS int   `yaml:"event_debounce_s,omitempty" json:"event_debounce_s,omitempty"`
+	// AnalysisFactCheck is the independent fact-check pass for analysis and
+	// report PRs (hivecommons/hive#19074); see review_factcheck.go. Off by
+	// default.
+	AnalysisFactCheck AnalysisFactCheckConfig `yaml:"analysis_factcheck,omitempty" json:"analysis_factcheck,omitempty"`
 	// MaxPerspectivesPerPR caps how many review perspectives one PR may be
 	// given, as a LIFETIME budget per head SHA — not a per-cycle limit. It
 	// exists because parallel review slots are a fixed budget spent in PR
@@ -9233,6 +9237,58 @@ type AutoMergeConfig struct {
 	// copies of other PRs (@clubanderson: "if a pr is superseded by a pr
 	// that a hive agent creates, it should auto merge"). Default ON.
 	HiveSuperseding HiveSupersedingAutoMergeConfig `yaml:"hive_superseding,omitempty" json:"hive_superseding,omitempty"`
+	// PRGate lets the hive publish the PR-contents merge gate as commit
+	// statuses itself, for repositories whose required `verify PR contents`
+	// check comes from a pull_request_target workflow GitHub is about to
+	// block by default (hivecommons/hive#19038). Default OFF with an explicit
+	// repository scope: nothing is posted unless a mode is set AND the
+	// repository is listed.
+	PRGate PRGateConfig `yaml:"pr_gate,omitempty" json:"pr_gate,omitempty"`
+}
+
+// PR gate modes (auto_merge.pr_gate.mode).
+const (
+	PRGateModeOff     = "off"
+	PRGateModeShadow  = "shadow"
+	PRGateModeEnforce = "enforce"
+)
+
+// PRGateConfig is auto_merge.pr_gate.*.
+type PRGateConfig struct {
+	// Mode is "off" (default), "shadow" (post only the shadow-named status
+	// `verify PR contents (hive)` and compare it with the workflow result) or
+	// "enforce" (post the real required context names). Empty means off.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	// Repos is the explicit scope (owner/repo, case-insensitive). Empty means
+	// no repository: there is deliberately no "every repository" default.
+	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+}
+
+// ModeFor returns the configured mode for repo (owner/repo): off unless the
+// repository is listed and the mode is a known non-off value.
+func (g PRGateConfig) ModeFor(repo string) string {
+	mode := strings.ToLower(strings.TrimSpace(g.Mode))
+	if mode != PRGateModeShadow && mode != PRGateModeEnforce {
+		return PRGateModeOff
+	}
+	if !repoListSet(g.Repos)[strings.ToLower(strings.TrimSpace(repo))] {
+		return PRGateModeOff
+	}
+	return mode
+}
+
+// Validate rejects an unknown mode and an active mode with no repository.
+func (g PRGateConfig) Validate() error {
+	switch strings.ToLower(strings.TrimSpace(g.Mode)) {
+	case "", PRGateModeOff:
+		return nil
+	case PRGateModeShadow, PRGateModeEnforce:
+		if len(repoListSet(g.Repos)) == 0 {
+			return fmt.Errorf("auto_merge.pr_gate.mode %q needs auto_merge.pr_gate.repos (owner/repo) listing where it applies", g.Mode)
+		}
+		return nil
+	}
+	return fmt.Errorf("auto_merge.pr_gate.mode must be off, shadow or enforce, got %q", g.Mode)
 }
 
 // NativeMergeQueueAutoMergeConfig is auto_merge.native_merge_queue.*.

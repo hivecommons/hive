@@ -139,6 +139,9 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	if moved := s.noteForgeOutcome(event, body); moved {
 		resp["outcome_counted"] = true
 	}
+	if outcome := s.observePRGateEvent(event, body); outcome != "" {
+		resp["pr_gate"] = outcome
+	}
 	if reason, ok := webhookWakeReason(event, res); ok && s.deps.WebhookWake != nil {
 		s.deps.WebhookWake(reason)
 		resp["wake"] = reason

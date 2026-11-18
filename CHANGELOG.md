@@ -11,6 +11,69 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.324.0)
+
+### Added
+
+- The hive can now post the PR-contents merge gate as a commit status itself, for repositories whose required `verify PR contents` check comes from a `pull_request_target` workflow that GitHub blocks by default from 2026-12-02. New `auto_merge.pr_gate.mode` (`off` default, `shadow`, `enforce`) with an explicit `auto_merge.pr_gate.repos` scope. This release ships `shadow`: only `verify PR contents (hive)` is posted on the exact PR head, a Go port of the title verdicts replays the same golden corpus as the JS verifier, a hard allowlist limits the poster to four contexts, and a comparison with the workflow result is logged. Nothing changes while the mode is `off` (refs #19038).
+
+### Changed
+
+- The native-queue admission script now accepts `verify PR contents` from either the legacy `pr-verifier.yml` check run (events `pull_request`, `pull_request_target` or `workflow_dispatch`, which also fixes a verifier run dispatched after a github.token autofix push being rejected) or a commit status of that context created by the App bot named in the repository variable `HIVE_PR_GATE_CREATOR_LOGIN`; with the variable unset only the legacy evidence counts, and a status from any other creator is ignored. The `native-queue-policy` workflow's PR-side trigger moves from `pull_request_target` to `pull_request` (merge-group handling and the trusted base checkout are unchanged), ahead of GitHub blocking `pull_request_target` by default on public repositories. Nothing changes until the hive-posted status is enabled; the evidence it accepts is only widened.
+
+### Security
+
+- Security: the Inbox link validator now runs the shared host check from `pkg/netguard` before any DNS lookup, so a link to a loose IPv4 literal (`2130706433`, `0x7f.1`), a documentation or other special-purpose address, or a malformed all-numeric host such as `1.2.3.4.5` is refused at validation. Before, only a strict IP literal was checked there and the others were caught after resolution (#19020)
+
+## 2026-11-18 (v5.323.3)
+
+### Changed
+
+- A `blocked` issue waiting on a person's action (the owner-action blocked-on marker) now carries `needs_human_why` with source `blocked-on-owner` and the reason "needs an owner action: ...", so the row, the Needs human filter and the waiting-on-you list agree with the caption. See `src/docs/dashboard-sections/activity-monitor.md`
+
+### Fixed
+
+- A hub restart (502/503/504) during the feedback issue refresh is now logged at INFO and retried by the existing backoff instead of filing a `feedback_issue_refresh_failed` self-report ([#19008](https://github.com/hivecommons/hive/issues/19008)).
+
+### Security
+
+- Security: the shared address classifier behind the dashboard and hub URL guards and the Inbox link fetcher now refuses every IANA special-purpose range, not only the private ones. Added IPv4 `192.0.0.0/24`, `192.0.2.0/24`, `192.88.99.0/24`, `198.18.0.0/15`, `198.51.100.0/24` and `203.0.113.0/24`, and IPv6 `100::/64`, `2001::/32` (Teredo), `2001:db8::/32` and `fec0::/10`, including their IPv4-mapped, NAT64 and 6to4 forms. A host written as dot-separated numbers that is not a valid IPv4 literal (such as `1.2.3.4.5`) is refused instead of being sent to DNS. The Inbox link fetcher now uses the same classifier instead of its own range list, and the range set is listed in `src/docs/security-model.md` and `src/docs/security-threat-model.md`. Public addresses and ranges already refused are unaffected; no `100.64.0.0/10` opt-in was added because no registered hive or hub URL needs one (#19020)
+
+## 2026-11-18 (v5.323.2)
+
+### Fixed
+
+- A `blocked` verdict whose blocker is a person's action no longer gets lifted by the blocked sweep as a marker-less hive block. The contributor relay now posts a `hive:blocked-on kind=owner-action` marker with the reason before it labels, the sweep keeps such a block (it only strips `help wanted`), and the activity monitor row reads Needs human with "needs an owner action: ..." instead of Actionable. A hive-applied block with no marker is still lifted. See `src/docs/labels-and-control-signals/reference.md`
+
+## 2026-11-18 (v5.323.1)
+
+### Changed
+
+- Docs: a new design record, [One authorization point](src/docs/design/authorization-decision-point.md), turns RFC #18988 into a reviewable proposal: an inventory of today's write-side authorization decisions with code citations, a single evaluation seam, operator narrowing rules in CEL, one decision event per decision, fail-closed semantics per effect and a shadow-first migration with named parity tests. Design only; no behaviour changes (#18988).
+
+### Fixed
+
+- fix(meetings): say a long answer in brief, full text in chat (#18962)
+- Security: the SSRF guard on dashboard and hub outbound fetches now classifies addresses with one netip-based classifier, refusing CGNAT, IPv6 unique-local and link-local, bare ::1, mapped/NAT64/6to4 embeddings of private IPv4, multicast, and decimal/hex/octal/short IPv4 literal spellings (#18991)
+
+## 2026-11-18 (v5.323.0)
+
+### Added
+
+- `hivectl benchmarks export` converts a local evidence tree into the same anonymized benchmark records as `GET /api/benchmarks/export`, offline, so an owner can publish to hivecommons.dev/benchmarks by hand. Name the hive with `--hive-id` or `--hive-hash`, repositories are named only when listed with `--public-repo`, and `--by-month` writes the `data/fleet/<hash>/<YYYY-MM>.json` layout. See `src/docs/hivectl.md` (#18990)
+- Customers: a profile can now carry a real name, an organization and a location or country, each marked as filled from the person's public GitHub profile or set by hand. The organization shows as a small pill on the row; the other two are in the expanded profile under Details. The owner and read-write users edit anyone, a read-only user edits their own; "Auto" hands a field back to GitHub, and a field set by hand is never overwritten. GitHub fills them with one profile request when a suggested login is accepted, under the same off-by-default switch and hourly budget as the accept-time search. Nothing is taken from the hub. Forget removes the fields and export includes them.
+- The activity monitor shows one **Needs human** state for any row that waits on a person instead of an agent. An issue an agent filed for outside help (the filed-for-help marker) no longer reads as a stalled "Open · since 4h" row: its Open column says Needs human with the reason in one line, its later stages show as not applicable, and it joins the Needs human filter and the waiting-on-you list. Pending decisions, PRs held for a maintainer by the level gate, holds the hive placed and approval waits use the same state and the same wording, derived on the server from data the hive already has (payload field `needs_human_why`).
+- README now shows live badges for tests, coverage, maturity level, security scan, supply-chain scorecard and the review follow-up rate. A new `Quality report` workflow builds a small generated report from real runs and the published outcomes file every six hours, after each coverage run and on demand, and publishes it to the `quality-badges` branch. A value that cannot be computed shows `unknown` and an old one shows `stale`. The maturity badge needs the optional `QUALITY_ACMM_URL` repository variable. See `src/docs/quality-report.md` (#18979)
+
+### Changed
+
+- Docs: a new [RFC and proposal process](src/docs/rfc-process.md) page explains when a change needs an RFC, how to file a `📝 RFC:` issue with the `proposal` label (and what the older `[v5 RFC]` tags mean), who decides under `GOVERNANCE.md`, what accepted and held mean, how accepted RFCs are tracked and closed, and links live searches for open RFCs. An RFC issue template under `.github/ISSUE_TEMPLATE/` gives filers a consistent structure, and `CONTRIBUTING.md`, `GOVERNANCE.md` and the documentation map link to the page (#18980).
+- Docs: a new [AI gateway evaluation](src/docs/ai-gateway-evaluation.md) page, linked from the inference backends guide and the documentation map, traces how model traffic flows through the inference translator today, gives a vendor-neutral recipe for placing a generic OpenAI-compatible gateway in front of the model backend using existing `governor.gateways` configuration, lists what that configuration cannot express (agent identity upstream, custom gateway headers, translator timeouts and retries), and defines a spike with named pass/fail thresholds for latency, failure behavior, metering, per-agent quotas, credentials and operations cost. It is an evaluation, not a commitment: the bundled LiteLLM proxy and all defaults are unchanged (#18989).
+
+### Fixed
+
+- **Claim ledger saves no longer fail under concurrency.** Concurrent saves of the PR claim ledger now serialize and use a unique temp file, so one save can no longer rename away another's temp file and log "renaming claim ledger: no such file or directory".
+
 ## 2026-11-18 (v5.322.1)
 
 ### Changed

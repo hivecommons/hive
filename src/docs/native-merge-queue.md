@@ -256,9 +256,17 @@ metadata, not a fabricated last-member PR event.
 
 `native-queue-policy.yml` owns the **new** `native-queue-policy` check:
 
-- On `pull_request_target`, it executes only the trusted base's validator
+- On `pull_request` (earlier runs on `pull_request_target`, which GitHub blocks
+  by default on public repositories from 2026-12-02, are still accepted as
+  replay evidence), it executes only the trusted base's validator
   and waits up to 22.5 minutes for the five existing policy checks on that
   exact PR head. No candidate code is executed; tokens are read-only.
+  `verify PR contents` is accepted from either provider: the `pr-verifier.yml`
+  check run (events `pull_request`, `pull_request_target` or `workflow_dispatch`)
+  or a commit status of that context created by the App bot named in the
+  repository variable `HIVE_PR_GATE_CREATOR_LOGIN`. With the variable unset the
+  hive status provider is not configured and the legacy check run is the only
+  evidence; a status from any other creator is always ignored.
   Label, edit, or unlabel events re-trigger this workflow and serialize behind
   any in-flight run (the concurrency group is per-PR and never cancels
   in-progress); the queued run re-reads mutable PR state after the prior run

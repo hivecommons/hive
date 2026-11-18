@@ -112,6 +112,8 @@ type Server struct {
 	nativeQueueTracker  nativeQueueTrackerRuntime
 	integration         integrationRuntime
 	webhookNoSecretOnce sync.Once               // warn once per process about a missing webhook secret (#13666)
+	prGateOnce          sync.Once               // builds the PR gate on first use (#19038)
+	prGate              *github.PRGate          // nil until built, and when no GitHub client is configured
 	webhookRelaySeen    webhookRelayReplayCache // hub-relayed delivery IDs already accepted (#17911)
 
 	feedbackRefreshBackoff feedbackBackoff

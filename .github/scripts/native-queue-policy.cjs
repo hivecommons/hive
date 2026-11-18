@@ -3,11 +3,25 @@
 // This is an owned evidence gate, not a publisher of another App's statuses.
 const ACTIONS_APP_ID = 15368;
 const DCO_APP_ID = 1861;
+// The PR-side events the gate and its legacy providers may run on.
+// `pull_request_target` is blocked by default on public repositories from
+// 2026-12-02, so the plain `pull_request` event is accepted beside it.
+const PR_EVENTS = ['pull_request', 'pull_request_target'];
+// The PR verifier also runs from `workflow_dispatch` (the github.token autofix
+// path, where no PR event fires); that run is a legitimate source of evidence.
+const LEGACY_VERIFIER_EVENTS = ['pull_request', 'pull_request_target', 'workflow_dispatch'];
+// Contexts the hive may post as a commit status instead of an Actions check
+// run. During migration either provider satisfies the context.
+const HIVE_STATUS_CHECKS = new Set(['verify PR contents']);
+// Repository variable naming the App bot login whose statuses count as hive
+// evidence. Installations use differently named Apps, so it is configuration.
+// Unset or blank means the hive provider is not configured, never "any creator".
+const HIVE_CREATOR_ENV = 'HIVE_PR_GATE_CREATOR_LOGIN';
 const POLICY_CHECKS = {
   gate: ['docker.yml', ['push', 'pull_request']],
   DCO: null,
   'changelog-fragment-guard': ['changelog-fragment-guard.yml', ['pull_request']],
-  'verify PR contents': ['pr-verifier.yml', ['pull_request_target']],
+  'verify PR contents': ['pr-verifier.yml', LEGACY_VERIFIER_EVENTS],
   'Sign-off survives the squash': ['dco-squash-attribution.yml', ['pull_request']],
 };
 const BUILD_CHECKS = {
@@ -22,7 +36,7 @@ const SHA = /^[a-f0-9]{40}$/;
 const BLOCKED_LABEL = /^(hold|needs-human|release-in-progress|do-not-merge(?:\/.*)?)$/i;
 const MAX_QUEUE_PAGES = 10;
 const POLICY_CHECK_NAME = 'native-queue-policy';
-const POLICY_CHECK_SOURCE = ['native-queue-policy.yml', ['pull_request_target']];
+const POLICY_CHECK_SOURCE = ['native-queue-policy.yml', PR_EVENTS];
 // Decision B on #17030: a v5→v6 forward-merge opened by v6-topup.yml carries
 // commits that already passed v5's DCO gate, and probot DCO cannot be repaired
 // PR-side. Only that exact shape may substitute prow's `dco` status.
@@ -254,10 +268,66 @@ async function assertProwDCO(github, repo, head) {
   if (status.state !== 'success') throw new ProviderVerdict(`prow ${PROW.context}`, status.state, head);
 }
 
+// The configured hive App bot login, or '' when the hive provider is not
+// configured. Whitespace-only counts as unset.
+function hiveCreatorLogin(env = process.env) {
+  const value = env?.[HIVE_CREATOR_ENV];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+// Hive-posted commit status as evidence for a context. Anyone with a workflow
+// token can post a status of any name, so only the configured App bot's own
+// status counts; every other creator is ignored. Not configured is a plain
+// error (never PendingEvidence: waiting cannot configure it), and callers
+// only reach this when a login is set.
+async function assertHiveStatus(github, repo, head, name, creatorLogin = hiveCreatorLogin()) {
+  if (!creatorLogin) throw new Error(`Hive status provider is not configured (${HIVE_CREATOR_ENV} is unset)`);
+  const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
+    ...repo, ref: head, per_page: 100,
+  });
+  const wanted = creatorLogin.toLowerCase();
+  const status = statuses
+    .filter(s => s.context === name && typeof s.creator?.login === 'string' &&
+      s.creator.login.toLowerCase() === wanted)
+    .sort((a, b) => b.id - a.id)[0];
+  if (!status) throw new PendingEvidence(`Missing hive ${name} status on ${head}`);
+  if (status.state === 'pending') throw new PendingEvidence(`hive ${name} status is pending`);
+  if (status.state !== 'success') throw new ProviderVerdict(`hive ${name} status`, status.state, head);
+}
+
+// Accept either provider for one context. The legacy Actions evidence is
+// validated exactly as before; the hive status is only consulted when it
+// fails. A completed (non-pending) failure from either provider outranks a
+// pending one, so a real verdict is never hidden behind a wait.
+async function assertEitherProvider(github, repo, number, head, name, source, runs, workflows, creatorLogin) {
+  let legacy;
+  try {
+    for (const { run, source: src } of evidenceForHead(runs, head, { [name]: source })) {
+      await assertActionsProvenance(github, repo, number, head, run, src, workflows);
+    }
+    return 'actions';
+  } catch (error) {
+    legacy = error;
+  }
+  try {
+    await assertHiveStatus(github, repo, head, name, creatorLogin);
+    return 'hive';
+  } catch (hive) {
+    throw !(legacy instanceof PendingEvidence) ? legacy : !(hive instanceof PendingEvidence) ? hive : legacy;
+  }
+}
+
 async function assertEvidence(github, repo, number, head, checks, pr) {
   const dco = Object.hasOwn(checks, 'DCO') ? await forwardMergeDCOPath(github, repo, pr, head) : null;
   const required = { ...checks };
   if (dco?.prow) delete required.DCO;
+  // With the hive provider unconfigured this set is empty and the legacy
+  // path below is exactly what it was before.
+  const creatorLogin = hiveCreatorLogin();
+  const either = creatorLogin ? Object.keys(required).filter(n => HIVE_STATUS_CHECKS.has(n)) : [];
+  const eitherSources = Object.fromEntries(either.map(n => [n, required[n]]));
+  for (const n of either) delete required[n];
+  const viaHive = [];
   const runs = await github.paginate(github.rest.checks.listForRef, {
     ...repo, ref: head, per_page: 100, filter: 'latest',
   });
@@ -268,11 +338,17 @@ async function assertEvidence(github, repo, number, head, checks, pr) {
       await assertActionsProvenance(github, repo, number, head, run, source, workflows);
     }
     if (dco?.prow) await assertProwDCO(github, repo, head);
+    for (const [n, source] of Object.entries(eitherSources)) {
+      if (await assertEitherProvider(github, repo, number, head, n, source, runs, workflows, creatorLogin) === 'hive') {
+        viaHive.push(n);
+      }
+    }
   } catch (error) {
     if (dco && !(error instanceof ProviderUnavailable)) error.message += ` [${dco.path}]`;
     throw error;
   }
-  return dco?.path || PROBOT_DCO_PATH;
+  const path = dco?.path || PROBOT_DCO_PATH;
+  return viaHive.length ? `${path}; hive status accepted for ${viaHive.join(', ')}` : path;
 }
 
 async function assertReviews(github, repo, number, head) {
@@ -344,7 +420,7 @@ async function evaluate(args) {
 // A labeled/unlabeled event only matters when the label is one assertEligible
 // reads (BLOCKED_LABEL); every other flip cannot change the verdict.
 function isCosmeticLabelFlip({ eventName, payload }) {
-  return eventName === 'pull_request_target' &&
+  return PR_EVENTS.includes(eventName) &&
     ['labeled', 'unlabeled'].includes(payload.action) &&
     typeof payload.label?.name === 'string' &&
     !BLOCKED_LABEL.test(payload.label.name);
@@ -396,7 +472,7 @@ async function replayLastVerdict({ github, context, currentCheckRunId }) {
 
 async function evaluateOnce({ github, context }) {
   const repo = context.repo;
-  if (context.eventName === 'pull_request_target') {
+  if (PR_EVENTS.includes(context.eventName)) {
     const event = context.payload.pull_request;
     const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
     // Post-merge label/comment edits re-fire this event; a closed PR has nothing to gate.
@@ -456,6 +532,8 @@ module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict, BLOCKED_LABEL,
+  PR_EVENTS, LEGACY_VERIFIER_EVENTS, HIVE_STATUS_CHECKS, HIVE_CREATOR_ENV, POLICY_CHECK_SOURCE,
+  hiveCreatorLogin, assertHiveStatus, assertEvidence,
   ProviderUnavailable, ProviderVerdict, PROVIDER_VERDICT_NOTE, FORWARD_MERGE, FORWARD_MERGE_HEAD, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX, DCO_ENUMERATION_SUMMARY_FALLBACK,
   DCO_PROVIDER_UNAVAILABLE_TEXT, DCO_PROVIDER_RUNBOOK,

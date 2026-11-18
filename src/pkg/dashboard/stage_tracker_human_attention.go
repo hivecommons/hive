@@ -40,7 +40,7 @@ func stageTrackerHumanAttention(it StageTrackerItem) *StageTrackerHumanAttention
 	}
 	if why != nil {
 		switch why.Source {
-		case needsHumanSourceFiledForHelp, needsHumanSourceLevelGate, needsHumanSourceHiveHold:
+		case needsHumanSourceFiledForHelp, needsHumanSourceLevelGate, needsHumanSourceHiveHold, needsHumanSourceBlockedOnOwner:
 			a.Reason = why.Reason
 		}
 	}

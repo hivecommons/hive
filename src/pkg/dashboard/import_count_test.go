@@ -79,8 +79,10 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// discoverer behind the /api/agents/discovered approval routes
 	// (hivecommons/hive#18491), plus pkg/buildcontains, the dependency-free
 	// ancestry resolver shared with the hub behind GET /api/version/contains
-	// (hivecommons/hive#18915).
-	const maxDashboardInternalImports = 66
+	// (hivecommons/hive#18915), plus pkg/netguard, the stdlib-only address
+	// classifier behind isPrivateURL that the hub shares so the two copies
+	// cannot drift (hivecommons/hive#18991).
+	const maxDashboardInternalImports = 67
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

@@ -1,1 +1,0 @@
-- **Claim ledger saves no longer fail under concurrency.** Concurrent saves of the PR claim ledger now serialize and use a unique temp file, so one save can no longer rename away another's temp file and log "renaming claim ledger: no such file or directory".

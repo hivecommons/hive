@@ -31,6 +31,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/delegation"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
+	"github.com/hivecommons/hive/pkg/netguard"
 	"github.com/hivecommons/hive/pkg/reach"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
@@ -5155,42 +5156,29 @@ func defaultHostResolver(ctx context.Context, host string) ([]string, error) {
 	return (&net.Resolver{}).LookupHost(resolveCtx, host)
 }
 
+// isPrivateURL reports whether rawURL targets a destination that is not
+// globally routable. It delegates to netguard, the one address classifier
+// shared by every isPrivateURL site (#18991): literals in any spelling are
+// classified with net/netip, names are resolved through privateURLResolver,
+// and a resolver failure fails closed.
 func isPrivateURL(ctx context.Context, rawURL string) bool {
-	for _, scheme := range []string{"https://", "http://", "wss://", "ws://"} {
-		if strings.HasPrefix(rawURL, scheme) {
-			rawURL = strings.TrimPrefix(rawURL, scheme)
-			break
-		}
-	}
-	host := rawURL
-	if idx := strings.IndexAny(host, ":/"); idx >= 0 {
-		host = host[:idx]
-	}
-	host = strings.ToLower(host)
-	blocked := []string{"localhost", "127.", "10.", "172.16.", "172.17.", "172.18.", "172.19.",
-		"172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
-		"172.28.", "172.29.", "172.30.", "172.31.", "192.168.", "169.254.", "[::1]", "[::ffff:", "0.0.0.0", "0."}
-	for _, p := range blocked {
-		if strings.HasPrefix(host, p) {
-			return true
-		}
-	}
+	return netguard.IsPrivateURL(ctx, rawURL, netguard.Resolver(privateURLResolver))
+}
 
-	// Resolve hostname to catch DNS names that map to private IPs (DNS rebinding).
-	addrs, err := privateURLResolver(ctx, host)
-	if err != nil {
-		// If DNS fails, treat as private (fail-closed) to prevent bypass.
-		return true
-	}
-	for _, addr := range addrs {
-		for _, p := range blocked {
-			if strings.HasPrefix(addr, p) {
-				return true
-			}
-		}
-	}
-
-	return false
+// pinnedFetchTransport returns the transport for a fetch whose URL a remote
+// party chose and that guard already checked (#18992). The pre-fetch guard
+// resolves the name, and a default http.Client resolves it again when it
+// dials, so a self-reported DashboardURL whose name rebinds passed the guard
+// as public and was connected to as private. This transport resolves each
+// dial once through privateURLResolver, runs guard on every answer, and
+// connects to an address it checked, for every connection including redirect
+// hops. guard is called on each dial, not captured, so a test that swaps the
+// guard var behind it reaches its loopback server through the same path.
+func pinnedFetchTransport(guard func(ctx context.Context, rawURL string) bool) *http.Transport {
+	return netguard.PinnedDialer{
+		Resolve: func(ctx context.Context, host string) ([]string, error) { return privateURLResolver(ctx, host) },
+		Refuse:  func(ctx context.Context, target string) bool { return guard(ctx, "http://"+target) },
+	}.Transport()
 }
 
 func clampInt(v, min, max int) int {

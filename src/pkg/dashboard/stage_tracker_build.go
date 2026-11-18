@@ -651,6 +651,9 @@ func stageTrackerNeedsHuman(it StageTrackerItem) bool {
 	if stageTrackerOnHold(it) || it.Advisory != nil {
 		return false
 	}
+	if it.BlockedOwnerReason != "" {
+		return true
+	}
 	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerNeedsHumanMods, m) }) {
 		return true
 	}

@@ -179,6 +179,9 @@ func stageTrackerBlockedOnPR(it *StageTrackerItem, body, reason string, baseURL 
 	}
 	repo, number, ok := github.BlockedOnTarget(body, reason)
 	if !ok {
+		if stageTrackerBlockedOwner(it, reason) {
+			return
+		}
 		stageTrackerBlockedOnIssue(it, body, reason)
 		return
 	}

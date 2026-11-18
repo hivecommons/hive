@@ -365,7 +365,14 @@ func (s *Server) handleFeedbackMine(w http.ResponseWriter, r *http.Request) {
 			s.feedbackRefreshBackoff.fail(time.Now())
 			warning = "Could not refresh issue activity right now."
 			if s.logger != nil {
-				s.logger.Warn("feedback: issue refresh failed", "error", err)
+				// A 502/503/504 means the hub (or GitHub) is restarting or
+				// briefly unreachable: the backoff already retries, so log it
+				// below WARN to keep it out of the fleet self-report (#19008).
+				if errors.Is(err, errFeedbackUpstreamUnavailable) {
+					s.logger.Info("feedback: issue refresh deferred, upstream temporarily unavailable", "error", err)
+				} else {
+					s.logger.Warn("feedback: issue refresh failed", "error", err)
+				}
 			}
 		} else {
 			s.feedbackRefreshBackoff.succeed()
@@ -451,10 +458,18 @@ func (s *Server) fetchFeedbackStatusesFromHub(ctx context.Context, refs []feedba
 // checkFeedbackJSONResponse rejects non-2xx and non-JSON (e.g. HTML proxy or
 // login page) responses with the status and body head, so callers never
 // surface a bare json "invalid character '<'" error.
+// errFeedbackUpstreamUnavailable marks a 502/503/504 from the hub or GitHub:
+// the upstream is restarting or briefly unreachable, not broken.
+var errFeedbackUpstreamUnavailable = errors.New("upstream temporarily unavailable")
+
 func checkFeedbackJSONResponse(what string, resp *http.Response, body []byte) error {
 	head := strings.TrimSpace(string(body))
 	if len(head) > 200 {
 		head = head[:200]
+	}
+	switch resp.StatusCode {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return fmt.Errorf("%s answered %d: %s: %w", what, resp.StatusCode, head, errFeedbackUpstreamUnavailable)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("%s answered %d: %s", what, resp.StatusCode, head)

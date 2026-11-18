@@ -195,6 +195,7 @@ The label row under the toolbar starts with two synthetic chips, then one chip p
 | `source` | Row | Example reason |
 |---|---|---|
 | `filed-for-help` | An open, unclaimed issue whose body carries the `<!-- hive:filed-for-help <agent> -->` marker; the filing agent is never handed it back, so it waits on a person | filed for help by outreach: needs a person outside the hive |
+| `blocked-on-owner` | A `blocked` issue whose blocker is a person's action (`<!-- hive:blocked-on kind=owner-action reason="..." -->`, posted by the contributor relay when a blocked verdict names no PR or issue); the blocked sweep keeps the label | needs an owner action: grant the hub app contents:write on another repository |
 | `decision-pending` | A decision was requested and not answered (045 / 085, `needs-decision`, the `decision-needed` gate label) | the decision's own question |
 | `level-gate` | A PR held for a maintainer by the ACMM level gate (the `ready-for-review` gate label) | held for a maintainer by the level gate; review it, then remove the label |
 | `hive-hold` | A hold the hive placed itself (a hold a person set is their own pause and stays *On hold*) | the hold's own pill text |
