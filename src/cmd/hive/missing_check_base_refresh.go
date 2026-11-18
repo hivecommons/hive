@@ -184,12 +184,17 @@ func refreshMissingCheckBehindPRs(
 			}
 			continue
 		}
-		// One update answers every check missing at the time: a fresh head
-		// that still lacks them will not grow them on the next base move
-		// either, so none of them earns another update
-		// (projectbluefin/server#686 has 12 missing checks).
+		// One update answers every missing check that already runs today (a
+		// run on the base tip or another open PR): a fresh head that still
+		// lacks them will not grow them on the next base move either, so
+		// none of them earns another update (projectbluefin/server#686 has
+		// 12 missing checks). A missing check with no such evidence yet did
+		// not justify this update; it keeps its own once the workflow that
+		// reports it lands on the base (#18945 review).
 		for _, name := range pending {
-			st.refreshed[memoKey+"|"+name] = true
+			if base.state.Reported[name] || seenOnPRs[bk][name] {
+				st.refreshed[memoKey+"|"+name] = true
+			}
 		}
 		perRepo[repo]++
 		total++
