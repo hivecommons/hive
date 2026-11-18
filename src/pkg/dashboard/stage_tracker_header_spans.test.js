@@ -190,7 +190,9 @@ test('long metadata wraps in bounded slots and the narrow layout resets both gri
   assert.match(rule('.ham-head-cols .ham-seg.ham-head-pr > .ham-badges'), /justify-content: flex-end/);
   assert.match(rule('.ham-head-cols .ham-badge'), /white-space: normal; overflow-wrap: anywhere/);
   assert.match(html, /\.ham-head-main > \.ham-title \{ flex: 1 1 0; min-width: 0; white-space: normal; overflow: visible; overflow-wrap: anywhere; \}/);
-  assert.match(html, /\.ham-head-pr \.ham-pr-title \{ flex: 1 1 0; white-space: normal; overflow: visible; overflow-wrap: anywhere; \}/);
+  assert.match(html, /\.ham-head-pr \.ham-pr-title \{ flex: 1 1 0; min-width: min\(100%, 8em\); white-space: normal; overflow: visible; overflow-wrap: anywhere; \}/,
+    'the PR title keeps a minimum width, so a crowded line moves it down instead of drawing it one letter per line (utah-packages#1212)');
+  assert.match(html, /\.ham-head-cols \.ham-seg\.ham-head-pr > \.ham-pr-line > \.ham-pr-ref \{ flex: 1 1 0; min-width: min\(100%, 12em\); \}/);
   assert.match(html, /@media \(max-width: 1100px\) \{[\s\S]*?\.ham-head-cols \.ham-strip > \.ham-seg \{ grid-column: 1 \/ -1; grid-row: auto; padding: 0; \}/);
   assert.doesNotMatch(html, /\.ham-strip:not\(\.ham-head-cols\)/, 'the old ancestor/element selector mistake must not return');
 });
