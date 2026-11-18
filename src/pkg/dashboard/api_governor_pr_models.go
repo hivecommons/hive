@@ -57,6 +57,10 @@ type governorPRModelBucket struct {
 	// Efforts splits the bucket by the trailer's effort= value ("unknown"
 	// when absent), sorted by PRs descending (hivecommons/hive#18715).
 	Efforts []governorPRModelEffort `json:"efforts,omitempty"`
+
+	// ClosedUnmergedReasons splits ClosedUnmerged by why the PR was closed
+	// (#18719); the three counts always sum to ClosedUnmerged.
+	ClosedUnmergedReasons governorPRModelCloseReasons `json:"closed_unmerged_reasons"`
 	// Repos splits the bucket by canonical owner/repo (effectivePRRepo), PRs
 	// descending. Weeks splits it by ISO week (Monday, UTC) of created_at,
 	// oldest first, and is omitted for window=7d. Rework figures in both
@@ -254,6 +258,7 @@ func (s *Server) handleGovernorPRModels(w http.ResponseWriter, r *http.Request) 
 	minMergedPRs := effectiveModelsMinMergedPRs()
 	actionable := s.lastActionableForPRModels()
 	resp := aggregateGovernorPRModels(actionable.PRs.Attributed, window, time.Now())
+	applyGovernorPRModelCloseReasons(&resp, actionable.PRs.Attributed, governorPRModelsSupersededKeys(actionable.PRs.Attributed, actionable.PRs.Items), time.Now())
 	resp.FixerQueue = s.governorFixerQueue()
 	now := time.Now()
 	runs, rotated, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), governorPRModelsWindowDuration(window))
