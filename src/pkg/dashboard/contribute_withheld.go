@@ -46,6 +46,14 @@ const (
 	// withheldReasonTracker: a tracker/umbrella issue is coordination-only; its
 	// children carry the work and are queued independently.
 	withheldReasonTracker = "tracker"
+	// withheldReasonUmbrella: an umbrella, epic or decomposed parent by the
+	// hub.contribute_umbrella rules (label, marker, title prefix, task list,
+	// sub-issues). Coordination work for the owner and the hive, never offered
+	// to a contributor (hivecommons/hive#19078).
+	withheldReasonUmbrella = "umbrella"
+	// withheldReasonHumanOnly: waiting on something only a person can do
+	// (`needs-human`, `human-only`, the human-only body marker).
+	withheldReasonHumanOnly = "human_only"
 	// withheldReasonCooldown: the issue completed recently and is inside its
 	// post-completion cooldown window.
 	withheldReasonCooldown = "cooldown"
@@ -84,6 +92,8 @@ var withheldReasonLabels = map[string]string{
 	withheldReasonDisabledRepo:                  "Repository is disabled for contribution",
 	withheldReasonRepoUnmintable:                "Repository excluded after a GitHub App token mint failure",
 	withheldReasonTracker:                       "Tracker / umbrella issue",
+	withheldReasonUmbrella:                      "Umbrella issue: the owner and the hive coordinate it, its children carry the work",
+	withheldReasonHumanOnly:                     "Owner-only: needs a person, not a contributor",
 	withheldReasonCooldown:                      "Completion cooldown",
 	withheldReasonNoWorkNeeded:                  "Previous no_work_needed verdict",
 	completionVerdictNeedsDecision:              "Waiting on a maintainer decision",
@@ -120,6 +130,8 @@ func isConvergenceWithheldReason(reason string) bool {
 		withheldReasonDisabledRepo,
 		withheldReasonRepoUnmintable,
 		withheldReasonTracker,
+		withheldReasonUmbrella,
+		withheldReasonHumanOnly,
 		withheldReasonCooldown,
 		withheldReasonNoWorkNeeded,
 		completionVerdictNeedsDecision,

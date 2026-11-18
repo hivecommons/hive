@@ -1107,6 +1107,20 @@ dashboard:
 #       deny_titles: ["WIP*"]
 #       authors_mode: deny
 #       deny_authors: [dependabot[bot]]
+#   # Umbrella / tracker / owner-only issues are never handed to a contributor relay
+#   # (they stay actionable for the owner and the hive, and stay closable). All keys
+#   # are optional; per_repo fields left out inherit the hive-wide value.
+#   contribute_umbrella:
+#     enabled: true
+#     labels: [umbrella, tracker, epic, meta-tracker]
+#     title_prefixes: ["[Tracking]", "[Epic]", "[Umbrella]", "[Tracker]"]
+#     task_list_min: 2                  # issue or PR references in a checklist
+#     human_only_labels: [needs-human, human-only]
+#     withdraw_advertisement: true      # drop help wanted / good first issue from an umbrella on the next sweep
+#     per_repo:
+#       owner/repo:
+#         labels: [umbrella, program]
+#         withdraw_advertisement: false
 #   contribute_needs_decision_label: needs-decision  # label relays apply for no_work_needed — decision: ...; empty disables
 #   # Relay audit level this hive ASKS contributors to share (lifecycle |
 #   # commands | reasoning), shown on auth_ok and /contribute. A request only:

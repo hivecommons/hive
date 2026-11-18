@@ -428,6 +428,18 @@ hub.contribute_repo_filters.<key>.deny_titles[] # TODO #11854
 hub.contribute_repo_filters.<key>.labels_mode # TODO #11854
 hub.contribute_repo_filters.<key>.titles_mode # TODO #11854
 hub.contribute_skip_labels[] # TODO #11854
+hub.contribute_umbrella.enabled # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.human_only_labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.task_list_min # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.title_prefixes[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.withdraw_advertisement # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.enabled # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.human_only_labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.task_list_min # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.title_prefixes[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.withdraw_advertisement # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
 hub.disabled_repos[] # TODO #11854
 hub.disabled_tiers[] # TODO #11854
 hub.heartbeat_omit[] # TODO #11854
