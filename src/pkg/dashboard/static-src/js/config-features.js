@@ -785,6 +785,18 @@
               Integration-aware multi-agent orchestration is planned, not a selectable implementation.</p>
           </div>
         </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Workflow approval ${settingHelpMark('settings', 'features', 'Workflow approval', `GitHub holds workflow runs for Dependabot, first-time and fork contributors behind "Approve and run workflows" (action_required); such runs report no checks, so CI never finishes. When on, the hive approves those runs itself, once per PR head, for heads it trusts: its own App's (same-repo heads only), a head a person approved on the dashboard, or a PR whose author or triggering actor is in the list below. Approval starts CI only: review, hold and merge gates still apply. Runs it does not trust stay for a person, and the PR shows "workflow runs held for a maintainer's approval". Needs Actions: Read and write on the App.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.ciAutoApproveWorkflows !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="ciAutoApproveWorkflows"></div>
+            <span class="config-toggle-label">Approve held workflow runs on trusted heads ${yamlHint('governor.ci.auto_approve_workflows')} ${settingHelpMark('settings', 'features', 'Approve held workflow runs', `On by default. Off leaves every held run for a maintainer to approve on GitHub. Operators on self-hosted runners who want an explicit opt-in turn it off. Applies from the next eval cycle.`)}</span>
+          </div>
+          <div class="config-field mt-3">
+            <label>Trusted actors ${yamlHint('governor.ci.auto_approve_workflow_actors')} ${settingHelpMark('settings', 'features', 'Trusted workflow-approval actors', `GitHub logins (comma-separated) whose PRs, or whose pushes, get held runs approved. A trusted author covers every held run on the head, whoever pushed it, so keep this to bot logins unless that is acceptable for a person. github-actions[bot] covers PRs a repository's own workflows open (metrics refreshes, promotions). Blank uses the default; "none" trusts only the hive's App and heads a person approved.`)}</label>
+            <input type="text" value="${esc(f.ciAutoApproveWorkflowActors || '')}" placeholder="${esc(f.ciAutoApproveActorsDefault || 'dependabot[bot], renovate[bot]')}" data-change-action="markDirty" data-arg0="features" data-arg1="ciAutoApproveWorkflowActors" data-arg-types="s,s,s">
+            <div class="config-help">Blank uses the default (${esc(f.ciAutoApproveActorsDefault || 'dependabot[bot], renovate[bot]')}); "none" trusts only the App and dashboard-approved heads. Applies from the next eval cycle.</div>
+          </div>
+        </div>
         `)}
 
         ${featuresSectionHtml('review', `

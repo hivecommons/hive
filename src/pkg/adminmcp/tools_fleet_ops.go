@@ -150,7 +150,7 @@ func (planRejectOp) Preview(_ context.Context, args map[string]any) (WritePrevie
 
 func (featureSettingsOp) Name() string { return WriteOpFeatureSettings }
 func (featureSettingsOp) Description() string {
-	return "Update governor feature settings through PUT /api/config/governor/features."
+	return "Update governor feature settings through PUT /api/config/governor/features. This includes workflow-run approval (governor.ci: ciAutoApproveWorkflows, ciAutoApproveWorkflowActors)."
 }
 func (featureSettingsOp) InputSchema() map[string]any {
 	props := map[string]any{}
@@ -165,6 +165,9 @@ func (featureSettingsOp) InputSchema() map[string]any {
 	}
 	props["triageSpecLabels"] = map[string]any{"type": "array", "items": stringSchema()}
 	props["triageFixLabels"] = map[string]any{"type": "array", "items": stringSchema()}
+	// governor.ci (Settings → Features → Auto-merge → Workflow approval).
+	props["ciAutoApproveWorkflows"] = map[string]any{"type": "boolean", "description": "governor.ci.auto_approve_workflows: approve the workflow runs GitHub holds behind \"Approve and run\" on trusted PR heads (default true)."}
+	props["ciAutoApproveWorkflowActors"] = map[string]any{"type": "string", "description": "governor.ci.auto_approve_workflow_actors as a comma-separated list of GitHub logins trusted besides the hive's App and dashboard-approved heads; blank restores the default (dependabot[bot], renovate[bot]), \"none\" trusts neither."}
 	props["otelHeaders"] = map[string]any{"type": "object", "additionalProperties": stringSchema()}
 	props["rotationProviders"] = map[string]any{"type": "object"}
 	props["rotationAgents"] = map[string]any{"type": "object", "additionalProperties": stringSchema()}
@@ -215,6 +218,14 @@ func capabilityWidens(mode string) bool {
 
 func featureDisclosure(args map[string]any) string {
 	var warnings []string
+	// Approving held workflow runs lets a PR head's workflow files run on
+	// the repository's runners without a person's click.
+	if v, ok := args["ciAutoApproveWorkflows"].(bool); ok && v {
+		warnings = append(warnings, "ciAutoApproveWorkflows lets the hive approve held workflow runs on trusted PR heads, so their workflow files run on the repository's runners without a maintainer's click")
+	}
+	if v, ok := args["ciAutoApproveWorkflowActors"].(string); ok && !strings.EqualFold(strings.TrimSpace(v), "none") {
+		warnings = append(warnings, "ciAutoApproveWorkflowActors sets whose PRs get held workflow runs approved; a trusted author covers every run on the head, whoever pushed it")
+	}
 	for _, key := range []string{"ioscanEnabled", "checkpointSpecEnabled", "checkpointPlanEnabled", "checkpointImplementEnabled", "claimsEnabled"} {
 		if v, ok := args[key].(bool); ok && !v {
 			warnings = append(warnings, key+" disables a protection or coordination gate")

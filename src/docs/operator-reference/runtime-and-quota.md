@@ -676,6 +676,11 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   gated run on the head regardless of who pushed it — including commits a
   fork collaborator pushed to the author's branch — so keep the actor list
   to bot logins unless that is acceptable for a human login you add.
+  Both keys are on Settings → Features → Auto-merge → **Workflow approval**
+  (the actor list as comma-separated logins; blank restores the default,
+  `none` stores `[]`), and the admin MCP `governor.feature_settings`
+  operation writes them as `ciAutoApproveWorkflows` and
+  `ciAutoApproveWorkflowActors`; the sweep reads them every cycle.
   Trusting the App as triggering actor
   covers heads the App pushed itself (its own PRs, rebases, review-fix
   commits), and only when the run's head repository is the PR's base
