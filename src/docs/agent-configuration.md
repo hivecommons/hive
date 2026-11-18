@@ -838,6 +838,17 @@ Two consequences worth knowing:
 - **Model validation does not save you here.** `POST /api/model/...` checks the model against the agent's *current effective* backend, and deliberately fails **open** when that backend's model list cannot be enumerated (see `validateModelForAgent`). Codex is exactly such a backend, so `switch` to codex followed by `model` set to a Claude id is accepted. Reverse the order and the model is validated against the backend you are about to leave. Neither order gives you a checked pair.
 - **The atomic route does not restart the agent.** It persists the pair and syncs it into the live process config, so the running CLI keeps its current method until the agent next restarts. That is usually what you want for a scripted change — the two-call path pays for two restarts — but if you need the change to take effect now, restart the agent afterwards.
 
+### Switching the method or model of an agent that is not running
+
+`POST /api/switch/{agent}/{backend}` and `POST /api/model/{agent}/{model}` accept a change for any **configured** agent, not only a live one ([#18905](https://github.com/hivecommons/hive/issues/18905)). An agent can be configured but absent from the runtime (stopped, held back by the ACMM level gate) or present but paused:
+
+- **Not in the runtime (stopped or gated):** the choice is persisted to both config layers (`hive.yaml` and the per-agent overlay, see [config-layering](config-layering.md)), marked operator-owned, and nothing is restarted. The model is validated against the agent's saved backend and a backend against the supported list or a configured gateway name, exactly as for a running agent.
+- **Paused or stopped in the runtime:** the override is set and persisted as usual, but the agent is **not** restarted, so a model change does not wake a paused agent.
+
+In both cases the response is `{"ok": true, "applied": false, "message": "saved; applies when <agent> starts", ...}` and the dashboard shows that message instead of "session restarted". A live switch is unchanged and carries no `applied` field. A name that is neither running nor configured still fails with `400` and `agent <name> not found (valid agents: ...)`.
+
+On the dashboard, switching an agent's method, model or reasoning effort keeps the page where it was: the re-render re-pins the window to the same agent card, returns focus to the dropdown you used (including after the model list reloads), and never re-sorts the cards ([#18906](https://github.com/hivecommons/hive/issues/18906)).
+
 ### `launch_cmd` and `backend`
 
 `backend` is the operator-owned field; `launch_cmd` is derived from it. The two must agree: a `launch_cmd` whose executable is a different agentic CLI than `backend` names (say `backend: codex` next to `launch_cmd: /usr/bin/bob …`) is rejected by config validation, because the agent would be launched as one CLI and health-checked as another. Hive enforces this on every path that can move the two apart:

@@ -606,6 +606,7 @@
     async function switchCli(agent, backend) {
       if (!backend) return;
       const label = isInferenceBackendName(backend) ? 'method' : 'CLI';
+      const focusSnap = agentFocusSnapshot(document.activeElement);
       const toast = showToast(`Switching ${agent} ${label} → ${backend} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/switch/${agent}/${backend}`, { method: 'POST' });
       const data = await res.json();
@@ -626,44 +627,50 @@
         dismissToast(toast, `Switch failed: ${data.error || 'unknown'}`, 'error');
         return;
       }
-      dismissToast(toast, `${agent} ${label} → ${backend} (session restarted)`, 'success');
+      dismissToast(toast, data.applied === false && data.message ? `${agent} ${label} → ${backend}: ${data.message}` : `${agent} ${label} → ${backend} (session restarted)`, 'success');
       // The selection is saved; if its backing config is missing, land the
       // user on the Settings tab that fixes it (never blocks).
       maybeOpenMethodConfig(backend);
-      await updateModelDropdown(agent, backend);
-      if (window._lastAgents) {
-        const a = window._lastAgents.find(x => x.name === agent);
-        if (a) { a.cli = backend; renderAgents(window._lastAgents); }
-      }
-      // Reflect the switch everywhere it is shown (focused detail panel,
-      // cadence-matrix method column), then confirm against the server.
-      ocRenderAgentDetail();
-      const lastData = window._lastStatus || {};
-      renderGovernor(lastData.governor || {}, lastData.cadenceMatrix || [], lastData);
+      await updateModelDropdown(agent, backend, focusSnap);
+      // #18906: hold the operator's scroll position, focus and the agent's place
+      // in the list across the re-render; a setting change never re-sorts.
+      withAgentViewportPreserved(agent, () => {
+        if (window._lastAgents) {
+          const a = window._lastAgents.find(x => x.name === agent);
+          if (a) { a.cli = backend; renderAgents(window._lastAgents); }
+        }
+        // Reflect the switch everywhere it is shown (focused detail panel,
+        // cadence-matrix method column), then confirm against the server.
+        ocRenderAgentDetail();
+        const lastData = window._lastStatus || {};
+        renderGovernor(lastData.governor || {}, lastData.cadenceMatrix || [], lastData);
+      }, focusSnap);
       fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
     }
 
-    async function updateModelDropdown(agent, backend) {
+    async function updateModelDropdown(agent, backend, focusSnap) {
       const modelSelects = document.querySelectorAll(`select[data-change-action="switchModel"][data-agent="${agent}"]`);
       const isInference = isInferenceBackendName(backend);
       const isCli = CLI_BACKENDS.includes(backend);
       if (isInference || isCli) {
-        modelSelects.forEach(sel => {
+        // Disabling a focused <select> drops focus to the document body, and the option
+        // swap resizes it; both are re-pinned so the page does not move (#18906).
+        withAgentViewportPreserved(agent, () => modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">loading models…</option>';
           sel.disabled = true;
-        });
+        }), focusSnap);
         const models = isInference ? await fetchInferenceModels(canonicalInferenceBackendName(backend)) : (await fetchBackendsConfig(), modelsForBackend(backend));
-        modelSelects.forEach(sel => {
+        withAgentViewportPreserved(agent, () => modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">model ▾</option>' +
             models.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
           sel.disabled = false;
           applyModelNoticeTitle(sel, backend);
-        });
+        }), focusSnap);
       } else {
-        modelSelects.forEach(sel => {
+        withAgentViewportPreserved(agent, () => modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">model ▾</option>' +
             KNOWN_MODELS.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
-        });
+        }), focusSnap);
       }
     }
 
@@ -695,20 +702,26 @@
 
     async function switchModel(agent, model) {
       if (!model) return;
+      const focusSnap = agentFocusSnapshot(document.activeElement);
       const toast = showToast(`Switching ${agent} model → ${model} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/model/${agent}/${encodeURIComponent(model)}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Model switch failed: ${data.error || 'unknown'}`, 'error'); return; }
-      dismissToast(toast, `${agent} model → ${model} (session restarted)`, 'success');
-      if (window._lastAgents) {
-        const a = window._lastAgents.find(x => x.name === agent);
-        if (a) { a.model = model; renderAgents(window._lastAgents); }
-      }
-      // Reflect the switch everywhere it is shown (focused detail panel,
-      // cadence-matrix model column), then confirm against the server.
-      ocRenderAgentDetail();
-      const lastData = window._lastStatus || {};
-      renderGovernor(lastData.governor || {}, lastData.cadenceMatrix || [], lastData);
+      // A change saved for an agent that is not running restarts nothing: show
+      // the server's "saved; applies when <agent> starts" instead (#18905).
+      dismissToast(toast, data.applied === false && data.message ? `${agent} model → ${model}: ${data.message}` : `${agent} model → ${model} (session restarted)`, 'success');
+      // #18906: hold scroll position, focus and list order across the re-render.
+      withAgentViewportPreserved(agent, () => {
+        if (window._lastAgents) {
+          const a = window._lastAgents.find(x => x.name === agent);
+          if (a) { a.model = model; renderAgents(window._lastAgents); }
+        }
+        // Reflect the switch everywhere it is shown (focused detail panel,
+        // cadence-matrix model column), then confirm against the server.
+        ocRenderAgentDetail();
+        const lastData = window._lastStatus || {};
+        renderGovernor(lastData.governor || {}, lastData.cadenceMatrix || [], lastData);
+      }, focusSnap);
       fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
     }
 
@@ -718,16 +731,19 @@
     // confirm against the server. "default" clears the stored effort.
     async function switchEffort(agent, effort) {
       if (!effort) return;
+      const focusSnap = agentFocusSnapshot(document.activeElement);
       const toast = showToast(`Switching ${agent} reasoning effort → ${effort} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/effort/${agent}/${encodeURIComponent(effort)}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Effort switch failed: ${data.error || 'unknown'}`, 'error'); return; }
       dismissToast(toast, `${agent} reasoning effort → ${effort} (session restarted)`, 'success');
-      if (window._lastAgents) {
-        const a = window._lastAgents.find(x => x.name === agent);
-        if (a) { a.reasoningEffort = effort === 'default' ? '' : effort; renderAgents(window._lastAgents); }
-      }
-      ocRenderAgentDetail();
+      withAgentViewportPreserved(agent, () => {
+        if (window._lastAgents) {
+          const a = window._lastAgents.find(x => x.name === agent);
+          if (a) { a.reasoningEffort = effort === 'default' ? '' : effort; renderAgents(window._lastAgents); }
+        }
+        ocRenderAgentDetail();
+      }, focusSnap);
       fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
     }
 
