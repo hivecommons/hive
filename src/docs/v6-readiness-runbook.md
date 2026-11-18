@@ -470,66 +470,20 @@ Evidence checklist:
 
 ## Inception via chat
 
-The row requires one greenfield inception to reach `complete` driven only from
-chat: no Inception-tab form, no direct `/api/inception/*` calls to move it
-forward. `just runs-e2e` does not cover this row: it runs
-`go test -tags integration ./test -run Runs`, which selects the staged-run
-acceptance tests (`TestRunsE2EAcceptance`, `TestRunsE2EV6Surfaces`). Those do
-not start an inception, and `TestInceptionE2E` drives the REST API rather than
-the chat spine. The exercise is manual.
+Retired (#18565). This row used to require one greenfield inception to reach
+`complete` driven only from chat. The `/api/inception/*` routes that flow
+called were retired in #18419 (they answer `410 Gone`, replacement
+`/api/sessions`), so the `!inception` command is now a stub: every subcommand
+answers `Start an Inception session from the dashboard Sessions section`
+(`src/pkg/chat/inception.go`), multi-line input is refused as a whole, and the
+state-changing subcommands (`start`, `scan`, `answer`, `skip`, `submit`,
+`facts`, `approve`, `reset`) still refuse below owner with
+`❌ owner role required` (`requireCommandOwner`). It makes no dashboard calls,
+and unprefixed chat replies are no longer taken as inception answers.
 
-Prerequisites:
-
-- Any chat surface on the spine: the dashboard chat panel (see the identity
-  prerequisite above) or an external backend from the sections above.
-- The chat author must resolve to `owner` in that surface's allowlist (an
-  `id:owner` entry, or the first bare entry). Every state-changing
-  `!inception` subcommand refuses below owner with `❌ owner role required`
-  (`requireCommandOwner` in `src/pkg/chat/inception.go`).
-- The spine's own dashboard calls must pass the inception owner gate, which
-  requires an owner `X-Hive-Role` and the owner-verification header
-  (`requireOwnerRole` in `src/pkg/dashboard/api.go`). A
-  `❌ Failed to start inception: … owner access required` reply means the spine's
-  dashboard credential cannot do that on this hive. Record it as a blocker and
-  do not tick the row.
-- The `brainstorm` agent is enabled (the inception API this row exercises was retired on v5, see [Inception](inception.md#retired-the-inception-api-watcher-and-brainstorm-inception-mode)),
-  and no inception is in progress. Only one run can be active; archive an
-  earlier one with `!inception reset` first.
-
-Run:
-
-1. Send `!inception start <one-line greenfield idea>`. Expect
-   `✅ Inception started.`
-2. Wait for the spine to post the numbered clarification questions when the
-   engine enters `clarify`. Answer each one with an ordinary unprefixed reply;
-   each reply is submitted to the next unanswered question.
-   `!inception answer <n> <text>` is the explicit form.
-3. Wait for the brainstorm agent's fact beads. The inception watcher records
-   them and advances `structure → scaffold`
-   (`InceptionWatcher` in `src/pkg/dashboard/inception_watcher.go`). Use
-   `!inception state` to watch the phase. If transcript-derived facts are
-   listed as proposals, confirm them from chat, or record facts explicitly with
-   `!inception facts <json-array-of-facts>`.
-4. Once `!inception state` reports `scaffold`, send `!inception approve`.
-   Expect `✅ Inception approved and brainstorm re-paused.`
-5. Save `GET /api/inception/state` showing `phase: complete` as read-only
-   evidence. Reading state does not drive the run, so it does not break the
-   chat-only requirement.
-
-Evidence checklist:
-
-- [ ] Chat transcript (links or screenshots) from `!inception start` through
-      the `approve` reply, including the posted question list and the answers.
-- [ ] `!inception state` output at `scaffold`, and the final state showing
-      `phase: complete` with the recorded fact count.
-- [ ] Surface and identity used, and the allowlist entry that resolved to
-      `owner`.
-- [ ] Hive log/audit for the `/api/inception/*` calls made on the spine's
-      behalf (start, answer, approve).
-- [ ] A statement that no dashboard-form or direct API call drove any phase.
-- [ ] Paste the template as a comment on #7563, tick the Inception via chat row
-      in its **v6 readiness bar** section, and link the evidence comment from
-      the row.
+There is nothing to exercise and no evidence to collect for this row. Inception
+now runs as Inception (spek) sessions in the dashboard; see
+[Inception](inception.md) and the [Sessions API](api-reference/sessions.md).
 
 <a id="email"></a>
 

@@ -14,18 +14,12 @@ import (
 	"github.com/hivecommons/hive/internal/testutil"
 )
 
-func fullFrame(t *testing.T, busy, mode, phase string) string {
+func fullFrame(t *testing.T, busy, mode string) string {
 	t.Helper()
 	snap := statusSnapshot{
 		Agents:   []agentSnapshot{{Name: "scanner", Busy: busy}},
 		Governor: governorSnapshot{Mode: mode, Issues: 1},
-		Inception: inceptionSnapshot{
-			Active:    true,
-			Phase:     phase,
-			Questions: []inceptionQuestion{{ID: "q1", Text: "First?"}},
-			Answers:   map[string]string{},
-		},
-		Runs: runSnapshotList{{Key: "repo/a#1", Stage: "spec", WaitingOn: "agent"}},
+		Runs:     runSnapshotList{{Key: "repo/a#1", Stage: "spec", WaitingOn: "agent"}},
 	}
 	data, err := json.Marshal(snap)
 	if err != nil {
@@ -44,34 +38,25 @@ func TestHandleSSEBlock_AgentStatusPreservesFullState(t *testing.T) {
 	s := NewService(backend, Config{AllowedUsers: []string{"uid:owner"}}, discardLogger())
 	s.topicDebounce = 20 * time.Millisecond
 
-	s.handleSSEBlock(fullFrame(t, "idle", "idle", ""))
-	s.handleSSEBlock(fullFrame(t, "idle", "idle", "clarify"))
+	s.handleSSEBlock(fullFrame(t, "idle", "idle"))
+	s.handleSSEBlock(fullFrame(t, "idle", "idle"))
 	s.handleSSEBlock(agentStatusFrameBlock("idle"))
-	s.handleSSEBlock(fullFrame(t, "idle", "busy", "clarify"))
+	s.handleSSEBlock(fullFrame(t, "idle", "busy"))
 	s.handleSSEBlock(agentStatusFrameBlock("idle"))
-	if got := len(s.pendingInterviews); got != 1 {
-		t.Fatalf("pendingInterviews after agent-status frame = %d, want 1", got)
-	}
-	s.handleSSEBlock(fullFrame(t, "idle", "busy", "clarify"))
+	s.handleSSEBlock(fullFrame(t, "idle", "busy"))
 
 	var sent []string
 	drainQueue(s, &sent)
-	var gov, questions int
+	var gov int
 	for _, msg := range sent {
 		if strings.Contains(msg, "Governor mode change") {
 			gov++
-		}
-		if strings.Contains(msg, "Inception clarification questions") {
-			questions++
 		}
 	}
 	if gov != 1 {
 		t.Fatalf("governor announcements = %d, want 1: %v", gov, sent)
 	}
-	if questions != 1 {
-		t.Fatalf("questions posted %d times, want 1: %v", questions, sent)
-	}
-	if st := s.lastState; st.Governor.Mode != "busy" || st.Inception.Phase != "clarify" || len(st.Runs) != 1 {
+	if st := s.lastState; st.Governor.Mode != "busy" || len(st.Runs) != 1 {
 		t.Fatalf("full-frame state lost: %+v", st)
 	}
 
@@ -94,7 +79,7 @@ func TestHandleSSEBlock_AgentStatusDiffsAgents(t *testing.T) {
 	if s.lastState != nil {
 		t.Fatal("agent-status frame without a baseline should not seed state")
 	}
-	s.handleSSEBlock(fullFrame(t, "idle", "idle", ""))
+	s.handleSSEBlock(fullFrame(t, "idle", "idle"))
 	s.handleSSEBlock(agentStatusFrameBlock("working"))
 	s.handleSSEBlock(agentStatusFrameBlock("working"))
 	s.handleSSEBlock("event: other\ndata: {}")
