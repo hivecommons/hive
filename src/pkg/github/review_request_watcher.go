@@ -13,6 +13,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/sessiontaint"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/factcheck"
@@ -430,6 +431,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 		c.handleReviewThreadRequest(ctx, path, req, threadID, resolveThread, nowFn)
 		return
 	}
+
+	// Session taint (#18987), observe only; changes nothing here.
+	c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayReview, req.Repo)
 
 	sentinelBlockNote := ""
 	if apiEvent == "APPROVE" {

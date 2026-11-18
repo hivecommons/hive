@@ -17,6 +17,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/crux/sessiontaint"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/effects"
@@ -597,6 +598,15 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 	if !c.AgentServesRepo(req.Agent, req.Repo) {
 		c.denyIssueRequest(path, req, AgentRepoScopeReason(req.Agent, req.Repo), nowFn)
 		return
+	}
+
+	// Session taint (#18987), observe only: record what a session that has
+	// accrued labels would have been held for. It changes nothing here.
+	switch kind {
+	case "issue":
+		c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayIssue, req.Repo)
+	case "comment":
+		c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayComment, req.Repo)
 	}
 
 	// Content gate for the label relay: hive-controlled labels are refused in

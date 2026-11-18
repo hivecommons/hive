@@ -474,12 +474,15 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 	})
 	client.SetAgentActionHook(func(a github.AgentAction) { kickOutcomeAgentAction(kickOutcomesFor(b.cfg, b.logger), a) })
 	client.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, b.handleCanaryLeak)
+	// Observe-only session taint (#18987, phase 0): nil unless enabled.
+	client.SetSessionTaint(b.sessionTaintObserver())
 }
 
 // handleCanaryLeak records an ioscan canary leak on the audit log and as a
 // critical advisory bead for the leaking agent. Shared by the GitHub client
 // and the GitHub proxy scanners.
 func (b *boot) handleCanaryLeak(leak ioscan.CanaryLeak) {
+	b.recordCanaryTaint(leak)
 	detail := fmt.Sprintf("rule=%s, agent=%s, source=%s", ioscan.CanaryLeakRule, leak.Agent, leak.Source)
 	b.dashSrv.AuditLog(leak.Agent, "ioscan_canary_leak", detail, leak.Agent)
 	if store, ok := b.beadStores[leak.Agent]; ok && store != nil {

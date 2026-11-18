@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/sessiontaint"
 )
 
 // PRRequestDir is where agents drop PR-open requests. An agent pushes its branch
@@ -434,6 +436,9 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		c.rejectPRRequest(path, req, "repo-scope", AgentRepoScopeReason(req.Agent, req.Repo), nowFn)
 		return
 	}
+
+	// Session taint (#18987), observe only; changes nothing here.
+	c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayPR, req.Repo)
 
 	// A head that can never be a branch (the literal HEAD of a detached
 	// checkout, an empty or malformed name) is refused before any GitHub call:

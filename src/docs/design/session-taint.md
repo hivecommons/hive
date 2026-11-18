@@ -1,10 +1,12 @@
 # Session taint: remembering what an agent has read (#18987)
 
-Status: **Proposed (design only).** Spec for RFC
-[#18987](https://github.com/hivecommons/hive/issues/18987). No code or
-behaviour changes with this record. Every phase below is off by default and
-ships behind its own issue; the RFC stays open for discussion after this page
-merges. The parent defence pages are [ioscan](../ioscan.md),
+Status: **Proposed, with the observe-only recorder built (phase 0 slice, see
+[Phase status](#phase-status)).** Spec for RFC
+[#18987](https://github.com/hivecommons/hive/issues/18987). The recorder is off
+by default and never blocks, holds, restricts or changes any request or
+action; no enforcement exists yet. Every phase below is off by default and
+ships behind its own issue; the RFC stays open for discussion, and until it
+decides the enforcement phases nothing here changes what an agent may do. The parent defence pages are [ioscan](../ioscan.md),
 [the security model](../security-model.md) and
 [the tool policy](crux-tool-policy.md).
 
@@ -337,22 +339,63 @@ Every phase is independently shippable, default off, and ends with a decision
 point. Config is a single `session_taint` block; absent means off, which is
 byte-for-byte today's behaviour.
 
-| Phase | Change | Behaviour change | Exit |
-|---|---|---|---|
-| 0 | This record merges; RFC decides labels, scope, sink list, budget | none | RFC acceptance criteria met |
-| 1 | Taint store, audit entry type, read-only API and `hivectl` view, no sources | none | Store passes its tests |
-| 2a | S0 and S3 sources, observe | audit only | Labels appear for real kicks |
-| 2b | S1 source, observe, off the request path | audit only | Latency and miss rate measured |
-| 2c | S2 source with visibility cache and response status hook, observe | audit only | Visibility lookup rate and failure rate known |
-| 3a | Rules on relays and the sandbox PR step, `would-act` logging | audit and counters | Per-rule data against the exit criteria above |
-| 3b | Same on proxy writes and the push broker | audit and counters | Same |
-| 4 | Enforce one rule at a time as `hold`, with release and clear | holds appear | Hold review shows the false hold budget met |
-| 5 | Persistence across restart, long-lived scoping, in-memory dynamic canary, desk integration, optional egress rule, cross-agent | varies | Each split into its own issue |
+| Phase | Change | Behaviour change | Exit | Status |
+|---|---|---|---|---|
+| 0 | This record merges; RFC decides labels, scope, sink list, budget | none | RFC acceptance criteria met | Record merged; decisions proposed in the recorder PR, RFC open |
+| 1 | Taint store, audit entry type, read-only API and `hivectl` view, no sources | none | Store passes its tests | Store and audit entries built (in memory, bounded); read-only API and `hivectl` view not yet |
+| 2a | S0 and S3 sources, observe | audit only | Labels appear for real kicks | S3 (canary hit) built; S0 (kick target) not yet |
+| 2b | S1 source, observe, off the request path | audit only | Latency and miss rate measured | Not started |
+| 2c | S2 source with visibility cache and response status hook, observe | audit only | Visibility lookup rate and failure rate known | Not started |
+| 3a | Rules on relays and the sandbox PR step, `would-act` logging | audit and counters | Per-rule data against the exit criteria above | Rules and would-act logging built for the issue, comment, PR and review relays; sandbox PR step not yet |
+| 3b | Same on proxy writes and the push broker | audit and counters | Same | Not started (waits for the proxy changes in flight to land) |
+| 4 | Enforce one rule at a time as `hold`, with release and clear | holds appear | Hold review shows the false hold budget met | Not started; nothing in the tree can hold or deny |
+| 5 | Persistence across restart, long-lived scoping, in-memory dynamic canary, desk integration, optional egress rule, cross-agent | varies | Each split into its own issue | Not started |
 
 Phases 2a to 2c are separate so the cheapest, highest-coverage source (S0)
 does not wait for the harder ones. Phase 3 splits by sink class because the
 relays are host-side and easy, and the proxy and broker carry the
 attribution and latency risk.
+
+## Phase status
+
+What the observe-only recorder does today, and what it deliberately does not.
+
+- **Off by default.** `session_taint.enabled` is absent or false: the observer
+  is never built, no lookup is made, nothing is recorded or logged, and
+  behaviour is byte-for-byte what it was. A change needs a restart.
+- **Package.** `crux/sessiontaint`, stdlib only, so the Crux ring can take the
+  same observer later. The evaluator (`Evaluate`) is a pure function of
+  `(labels, sink)`; the observer wraps it with a bounded store.
+- **What it records.** Labels (`secret` today; the others exist in the type and
+  the rule table but have no source yet) and would-be verdicts. A label is a
+  kind, an origin that is a category name or an owner/repo id, a source name and
+  a timestamp. No credential, token, body, title or file content is stored,
+  logged or audited, and free text given as an origin is replaced by the
+  placeholder `invalid`.
+- **Where labels come from.** S3 only: the existing canary leak handler sets a
+  `secret` label, origin `hive-canary`, on the session of the agent whose token
+  was seen. An unattributed caller is not recorded.
+- **Where it looks.** The issue, comment, PR and review relays, after every
+  existing gate has passed and immediately before the hive acts. A session with
+  no label costs a map lookup. A session with a label triggers one destination
+  visibility lookup (the hive's own credential, cached for an hour; a failed
+  lookup counts as public and is not cached).
+- **What it does with a finding.** One log line and one audit entry per
+  distinct would-act decision per session, a counter per rule for every
+  request, and a bounded ring of recent decisions. The only verdict that
+  exists is `hold`, and it is only ever recorded. The observer entry points
+  return nothing, so no caller can branch on them, and a panic inside them is
+  absorbed.
+- **Bounds.** Sessions (least recently used evicted), labels per session,
+  decisions in the ring and distinct logged decisions per session are all
+  capped by named constants; the `session_taint` keys `max_sessions`,
+  `max_labels_per_session` and `max_decisions` override the first three.
+- **Restart.** The store is memory only. A restart starts every session clean
+  and invents no `unknown` label; that failure mode belongs to enforcement
+  (see [Failure and fail-closed semantics](#failure-and-fail-closed-semantics)).
+- **Not built.** S0, S1 and S2 sources, the proxy and push-broker sinks, the
+  sandbox PR step, the read-only API and `hivectl` view, operator release and
+  clear, persistence, and any `hold` or `deny` behaviour.
 
 ## Test strategy
 

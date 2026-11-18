@@ -471,6 +471,19 @@ compares each agent's assigned intent with the last 120 lines of its rendered
 terminal transcript and pauses the agent on divergence. It fails open if the
 reviewer is unavailable.
 
+**Session taint (observe only, off by default).** `session_taint.enabled`
+turns on a recorder that remembers which coarse labels an agent session has
+accrued (today: a canary hit sets `secret`) and, when that session later asks
+the issue, comment, PR or review relay to write, records which rule would have
+held the write. It writes a log line and an audit entry (`session_taint_label`,
+`session_taint_would_act`) and keeps bounded in-memory counters; it never
+blocks, holds, restricts or alters a request or an action, and it stores
+labels, counts and ids only, never a credential or any content. A restart
+starts every session clean. It is a measurement step toward the design in
+[design/session-taint.md](design/session-taint.md); no enforcement exists, so
+it adds no protection yet and must not be read as a control. Reads Hive cannot
+see (local files, shell output, direct provider traffic) produce no label.
+
 **Audit trails.** The dashboard audit log records every dashboard and API
 mutation, merge decision, sentinel finding and watchdog action to
 `/data/audit.jsonl`, rotated at 5 MB with three backups and a 90-day
@@ -866,6 +879,11 @@ until code-owner review is required in branch protection.
 ## 11. What Hive does not do yet
 
 * **Rootless containers cannot enforce the egress gate.**
+* **Nothing remembers what a session has read.** Pattern scanning checks each
+  outgoing message on its own, so a reworded copy of something an agent read
+  earlier passes. Session taint is designed for this
+  ([design/session-taint.md](design/session-taint.md)); only its observe-only
+  recorder exists, and it does not block anything.
 * **The proxy inspects GitHub API traffic only.** Other destinations are
   tunnelled. Use Kubernetes NetworkPolicies for full egress control.
 * **The L5 `hold` label is applied by agent policy.** The hard guarantee at
