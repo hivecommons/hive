@@ -3,6 +3,10 @@
 // This is an owned evidence gate, not a publisher of another App's statuses.
 const ACTIONS_APP_ID = 15368;
 const DCO_APP_ID = 1861;
+// The PR-side events the gate may run on. `pull_request_target` is blocked by
+// default on public repositories from 2026-12-02, so the plain `pull_request`
+// event is accepted beside it.
+const PR_EVENTS = ['pull_request', 'pull_request_target'];
 const POLICY_CHECKS = {
   gate: ['docker.yml', ['push', 'pull_request']],
   DCO: null,
@@ -22,7 +26,7 @@ const SHA = /^[a-f0-9]{40}$/;
 const BLOCKED_LABEL = /^(hold|needs-human|release-in-progress|do-not-merge(?:\/.*)?)$/i;
 const MAX_QUEUE_PAGES = 10;
 const POLICY_CHECK_NAME = 'native-queue-policy';
-const POLICY_CHECK_SOURCE = ['native-queue-policy.yml', ['pull_request_target']];
+const POLICY_CHECK_SOURCE = ['native-queue-policy.yml', PR_EVENTS];
 // Decision B on #17030: a v5→v6 forward-merge opened by v6-topup.yml carries
 // commits that already passed v5's DCO gate, and probot DCO cannot be repaired
 // PR-side. Only that exact shape may substitute prow's `dco` status.
@@ -339,7 +343,7 @@ async function evaluate(args) {
 // A labeled/unlabeled event only matters when the label is one assertEligible
 // reads (BLOCKED_LABEL); every other flip cannot change the verdict.
 function isCosmeticLabelFlip({ eventName, payload }) {
-  return eventName === 'pull_request_target' &&
+  return PR_EVENTS.includes(eventName) &&
     ['labeled', 'unlabeled'].includes(payload.action) &&
     typeof payload.label?.name === 'string' &&
     !BLOCKED_LABEL.test(payload.label.name);
@@ -391,7 +395,7 @@ async function replayLastVerdict({ github, context, currentCheckRunId }) {
 
 async function evaluateOnce({ github, context }) {
   const repo = context.repo;
-  if (context.eventName === 'pull_request_target') {
+  if (PR_EVENTS.includes(context.eventName)) {
     const event = context.payload.pull_request;
     const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
     // Post-merge label/comment edits re-fire this event; a closed PR has nothing to gate.
@@ -443,7 +447,7 @@ async function evaluateOnce({ github, context }) {
 module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
-  isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict, BLOCKED_LABEL,
+  isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict, BLOCKED_LABEL, PR_EVENTS,
   ProviderUnavailable, ProviderVerdict, PROVIDER_VERDICT_NOTE, FORWARD_MERGE, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX, DCO_ENUMERATION_SUMMARY_FALLBACK,
   DCO_PROVIDER_UNAVAILABLE_TEXT, DCO_PROVIDER_RUNBOOK,

@@ -365,6 +365,12 @@ test('PR-target admission consumes policy providers without group APIs', async (
   assert.equal(f.state.seen.length, 0);
 });
 
+test('open PR on the plain pull_request event is evaluated, not rejected as unsupported', async () => {
+  const f = fixture('pull_request');
+  assert.match(await evaluate(f), /five existing policy providers/);
+  assert.equal(f.state.queueReads, 0);
+});
+
 test('closed PR on pull_request_target passes as a no-op and skips evidence lookup', async () => {
   const f = fixture('pull_request_target');
   f.state.prs[0].state = 'closed';
@@ -527,6 +533,8 @@ test('isCosmeticLabelFlip is true only for unread labels on label events', () =>
   assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'synchronize', 'size/L')), false);
   assert.equal(isCosmeticLabelFlip(ctx('merge_group', 'checks_requested')), false);
   assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'labeled')), false);
+  assert.equal(isCosmeticLabelFlip(ctx('pull_request', 'labeled', 'size/L')), true);
+  assert.equal(isCosmeticLabelFlip(ctx('pull_request', 'labeled', 'hold')), false);
 });
 
 function replayFixture(priorRuns, labels = [], workflowOverride = {}) {
