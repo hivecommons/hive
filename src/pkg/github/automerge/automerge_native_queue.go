@@ -193,8 +193,13 @@ func (c *Engine) nativeQueueEnabled(ctx context.Context, repo string, pr *gh.Pul
 // current-base gate and the behind update-branch for pr: only when the
 // operator set auto_merge.native_merge_queue.skip_current_base_gate AND the
 // base has a queue. By default the gate stays in force on queue bases.
+//
+// A head the merge queue already rejected (knownNativeQueueRejection) keeps
+// the gates too: queueing the same behind head again buys the same
+// rejection, so the lane updates the branch instead.
 func (c *Engine) nativeQueueSkipsCurrentBase(ctx context.Context, repo string, pr *gh.PullRequest) bool {
-	return c.nativeQueuePolicy().SkipCurrentBaseGate && c.nativeQueueEnabled(ctx, repo, pr)
+	return c.nativeQueuePolicy().SkipCurrentBaseGate && c.nativeQueueEnabled(ctx, repo, pr) &&
+		!c.knownNativeQueueRejection(repo, pr.GetNumber(), pr.GetHead().GetSHA())
 }
 
 // nativeQueueGatedState: a PR not yet merged through a required queue reads
@@ -311,6 +316,12 @@ func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequ
 	if state.HeadRefOid != claim.Inputs["expect_sha"] {
 		return "head-changed-since-eval", nil
 	}
+	// The queue already turned this exact head away. A behind head is
+	// updated on the next pass (nativeQueueSkipsCurrentBase); any other
+	// head waits here instead of buying the same merge-group run again.
+	if c.nativeQueueHeadRejected(claim.Repo, pr.GetNumber(), state) {
+		return nativeQueueReasonRejected, nil
+	}
 	// A queue chooses its own merge method. Preserve the attribution gate
 	// that elected a merge commit to retain each author's signed commits.
 	if claim.Inputs["method_reason"] == mergeMethodReasonMixedAuthorship {
@@ -363,6 +374,9 @@ func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequ
 		})
 		if err != nil {
 			return nativeQueueReasonEnqueue, err
+		}
+		if state.MergeQueueEntry != nil {
+			c.noteNativeQueueOwnEntry(claim.Repo, pr.GetNumber(), state.HeadRefOid, cycle)
 		}
 	}
 	if e := state.MergeQueueEntry; e != nil {

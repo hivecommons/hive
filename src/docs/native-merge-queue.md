@@ -225,6 +225,12 @@ operator who prefers to let the queue own freshness can set
 explicit and hive-wide for opted-in repos; it is never implied by the presence
 of a queue.
 
+If GitHub's merge queue then removes the hive's own entry without merging it,
+the hive remembers that head for 30 minutes and does not queue it again: a
+behind head gets the update-branch the bypass skipped, and any other head
+reports `native-merge-queue-rejected` until it changes or a person acts. A
+removal by the hive itself or by a person is not counted.
+
 ## API cost
 
 Each `isMergeQueueEnabled` probe is a GraphQL read. The answer is cached per
