@@ -1461,6 +1461,14 @@ Issues managed by [GitHub Agentic Workflows](https://github.com/github/gh-aw) (`
 
 The `hive/tracking` label also satisfies the tracker-issue check used by `/contribute`, so a tracking issue is never handed to an external contributor either.
 
+### Umbrella and owner-only issues
+
+Umbrella, epic, tracker and decomposed-parent issues, and issues that wait on a person, are the opposite of a tracking archive: they stay actionable for the owner and the hive and **can be closed**. They are never handed to a contributor relay. Mark one with a label (`umbrella`, `tracker`, `epic`, `meta-tracker`), the body marker `<!-- hive:umbrella -->`, a `[Tracking]` / `[Epic]` / `[Umbrella]` / `[Tracker]` title prefix, a task list of two or more issue or PR references, or sub-issues; owner-only by `needs-human`, `human-only`, `human-only:*` or `<!-- hive:human-only -->`. The rules, defaults and per-repo overrides live under `hub.contribute_umbrella` (see the [label reference](labels-and-control-signals/reference.md) and [Contributor relay](contributor-relay.md#umbrella-and-owner-only-issues-are-never-handed-to-a-relay)).
+
+- **Not offered.** `/contribute` selection and the ready-work queue refuse them (withheld reasons `umbrella` and `human_only`); `/api/contribute/status` counts them as `umbrella_items` and `human_only_items` and leaves them out of `actionable_items` and `candidate_items`.
+- **Not advertised.** The good-first-issue sweep scores them `umbrella:<rule>` / `human-only:<rule>` and withdraws `help wanted` and `good first issue` on the next sweep (logged and audited as `gfi-withdraw`; `withdraw_advertisement: false` opts out).
+- **Still closable.** Unlike `hive/tracking`, none of these markers blocks `CloseIssue`, `parent_autoclose` or the tracker-closing rule.
+
 **Not the same thing as the contribute filters.** `hub.contribute_labels_mode` + its label list gate which issues are *handed out to external contributors* over `/contribute` — they have never gated the hive's **own** agents, so an operator who allow-listed a queue label there (a common setup for routing labeled issues to contributors) still had a hive whose own scanner could work every other open issue. `project.issue_filter.require_labels` is the agent-side gate; configure both if you want the same label to govern both lanes.
 
 ## Write-back containment (`writeback`)

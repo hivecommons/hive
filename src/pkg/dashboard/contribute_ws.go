@@ -502,6 +502,7 @@ type WSMessage struct {
 	TrustTier                    string                      `json:"trust_tier,omitempty"`
 	Permissions                  []string                    `json:"permissions,omitempty"`
 	Reason                       string                      `json:"reason,omitempty"`
+	Filtered                     map[string]int              `json:"filtered,omitempty"`
 	State                        string                      `json:"state,omitempty"`
 	ContributeNeedsDecisionLabel *string                     `json:"contribute_needs_decision_label,omitempty"`
 	OperatorMessage              *ContributorOperatorMessage `json:"operator_message,omitempty"`
@@ -639,8 +640,14 @@ type WSMessage struct {
 	// with it. Additive; a relay that ignores it keeps whatever default it ships.
 	MaxMessageBytes int                            `json:"max_message_bytes,omitempty"`
 	Announcement    *config.ContributeAnnouncement `json:"announcement,omitempty"`
-	HelpLinks       []config.ContributeHelpLink    `json:"help_links,omitempty"`
-	Role            string                         `json:"role,omitempty"`
+	// HiveName is the hive's display name, stated on auth_ok so a relay can
+	// name the hive to its contributor without parsing the hostname, which is
+	// minted once at claim time and never follows a rename. Additive and
+	// omitted when the hive has no name; a relay that ignores it keeps its
+	// hostname-derived short name.
+	HiveName  string                      `json:"hive_name,omitempty"`
+	HelpLinks []config.ContributeHelpLink `json:"help_links,omitempty"`
+	Role      string                      `json:"role,omitempty"`
 	// WorkbenchVersion and Incarnation are optional on auth_response for an
 	// external-execution workbench peer; ext_* frames below are routed to the
 	// attached peer after auth_ok.
@@ -872,6 +879,16 @@ type ActivityEntry struct {
 	AdvisorModel  string `json:"advisor_model,omitempty"`
 	AdvisorEffort string `json:"advisor_effort,omitempty"`
 	Task          string `json:"task,omitempty"`
+	// Reason is the bounded, scrubbed failure reason carried ONLY by "failed"
+	// entries, so the feed says why a run failed instead of just that it did.
+	Reason string `json:"reason,omitempty"`
+}
+
+// activityFailureReason scrubs (emails, links, tokens, repo refs) and bounds
+// (scrubBattleLogText caps at 120 runes) a relay-reported failure reason for
+// the public activity feed.
+func activityFailureReason(reason string) string {
+	return scrubBattleLogText(reason)
 }
 
 // advisorInfo is the optional trailing argument to addActivity: the advisor
@@ -1345,6 +1362,12 @@ func taskDescOf(task *WSTaskAssign) string {
 }
 
 func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort, task string, advisor ...advisorInfo) {
+	h.addActivityWithReason("", username, action, role, cli, model, effort, task, advisor...)
+}
+
+// addActivityWithReason is addActivity plus the failure reason shown on a
+// "failed" feed entry.
+func (h *ContributeWSHub) addActivityWithReason(reason, username, action, role, cli, model, effort, task string, advisor ...advisorInfo) {
 	adv := advisorInfo{}
 	if len(advisor) > 0 {
 		adv = advisor[0]
@@ -1395,6 +1418,7 @@ func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort
 		AdvisorModel:  adv.Model,
 		AdvisorEffort: adv.Effort,
 		Task:          task,
+		Reason:        activityFailureReason(reason),
 	}
 	h.activity = append(h.activity, entry)
 	if len(h.activity) > maxActivityEntries {
@@ -3009,6 +3033,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		Announcement:                 announcement,
 		ContributeNeedsDecisionLabel: &needsDecisionLabel,
 		HelpLinks:                    h.server.contributeHelpLinks(),
+		HiveName:                     h.server.contributeHiveName(),
 		AuditShareRequested:          h.server.contributeAuditShareRequest(),
 	}); err != nil {
 		h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
@@ -4364,7 +4389,7 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			if s.contributor.cliBackend == "pi" {
 				provider, _, _ = strings.Cut(s.contributor.model, "/")
 			}
-			h.addActivity(s.contributor.profile.GitHubUsername, "failed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, failedDesc, s.contributor.advisor())
+			h.addActivityWithReason(msg.Reason, s.contributor.profile.GitHubUsername, "failed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, failedDesc, s.contributor.advisor())
 			h.logger.Info("[contribute-ws] task failed",
 				"username", s.contributor.profile.GitHubUsername,
 				"task", msg.TaskID,

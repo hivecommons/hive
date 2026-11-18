@@ -2042,7 +2042,7 @@
           "Customers"
         ],
         "summary": "Edit a customer profile",
-        "description": "Applies one change, named by op: name, notes, profile (field real_name, organization or location, with value; state auto hands it back to GitHub), identity_add, identity_remove, tag (state on, off or auto), goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set, satisfaction_confirm, satisfaction_reject. Owner and read-write users may edit anyone. A read-only user may post only to /api/customers/me/edit, and only name, profile, identity, tag and goal changes; an identity they add is an unconfirmed claim that resolves nobody until someone with the full view confirms it. Audited as customer_edit with the person and the op, never the value.",
+        "description": "Applies one change, named by op: name, notes, profile (field real_name, organization, location or country, with value; a country is an ISO 3166 alpha-2 code or a country name; state auto hands it back to the automatic source, which derives a country from the location), affiliation_dismiss (value: a suggested organization the person refused), identity_add, identity_remove, tag (state on, off or auto), goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set, satisfaction_confirm, satisfaction_reject. Owner and read-write users may edit anyone. A read-only user may post only to /api/customers/me/edit, and only name, profile, affiliation_dismiss, identity, tag and goal changes; an identity they add is an unconfirmed claim that resolves nobody until someone with the full view confirms it. Audited as customer_edit with the person and the op, never the value.",
         "parameters": [
           {
             "name": "id",
@@ -2070,6 +2070,7 @@
                       "name",
                       "notes",
                       "profile",
+                      "affiliation_dismiss",
                       "identity_add",
                       "identity_remove",
                       "tag",
@@ -2114,7 +2115,8 @@
                     "enum": [
                       "real_name",
                       "organization",
-                      "location"
+                      "location",
+                      "country"
                     ]
                   },
                   "goal_id": {
@@ -8312,6 +8314,116 @@
         }
       }
     },
+    "/api/config/repos/parent-autoclose": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Parent auto-close policy per repo",
+        "description": "Returns repos.<repo>.parent_autoclose for every monitored repo (effective value and whether the repo carries its own), the default, and the three options the Settings editor offers. Owner only.",
+        "responses": {
+          "200": {
+            "description": "Current policy per monitored repo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set a repo's parent auto-close policy",
+        "description": "Sets repos.<repo>.parent_autoclose for one monitored repo: true (close finished parents, the default and clears the override), epics_too (also close epic and hold parents) or false (never auto-close parents). Applies without a restart. Parents a person reopened and tracking issues are never auto-closed under any value. Audited as config_repo_parent_autoclose. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "value"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string",
+                    "enum": [
+                      "true",
+                      "epics_too",
+                      "false"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current policy per monitored repo (same body as GET)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing repo or invalid value; nothing was stored"
+          },
+          "404": {
+            "description": "The repo is not a monitored repo"
+          },
+          "500": {
+            "description": "The config file could not be written; the previous value is restored"
+          }
+        }
+      }
+    },
     "/api/config/reference-repos": {
       "get": {
         "tags": [
@@ -9381,7 +9493,7 @@
           "Contributors"
         ],
         "summary": "Contributor hub status",
-        "description": "Returns contributor hub registration state and work counts. actionable_items is the uncapped number of issues currently offerable after contributor admission; candidate_items is the raw pre-admission scanner population.",
+        "description": "Returns contributor hub registration state and work counts. actionable_items is the uncapped number of issues currently offerable after contributor admission; candidate_items is the contributor-workable scanner population (the raw population minus umbrella and owner-only issues); candidate_items_raw is the raw pre-admission scanner population; umbrella_items and human_only_items count the umbrella/tracker and owner-only issues that are never offered to a contributor.",
         "responses": {
           "200": {
             "description": "Hub status",
@@ -9405,7 +9517,19 @@
                     },
                     "candidate_items": {
                       "type": "integer",
-                      "description": "Raw scanner candidate count before contributor admission"
+                      "description": "Scanner candidate count before contributor admission, excluding umbrella and owner-only issues (contributor-workable candidates)"
+                    },
+                    "candidate_items_raw": {
+                      "type": "integer",
+                      "description": "Raw scanner candidate count before contributor admission and before the umbrella and owner-only exclusion (the previous meaning of candidate_items)"
+                    },
+                    "umbrella_items": {
+                      "type": "integer",
+                      "description": "Umbrella, epic, tracker and decomposed-parent issues. They stay actionable for the owner and the hive and are never offered to a contributor"
+                    },
+                    "human_only_items": {
+                      "type": "integer",
+                      "description": "Owner-only issues (needs-human, human-only, human-only marker). They are never offered to a contributor"
                     },
                     "surface": {
                       "type": "string"
@@ -36369,6 +36493,120 @@
           },
           "503": {
             "description": "GitHub client not configured"
+          }
+        }
+      }
+    },
+    "/api/repos/{owner}/{repo}/items/{number}/sha-waiver": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Waive or restore the SHA-hold requirement on one issue",
+        "description": "Backs the activity monitor's row menu Waive SHA requirement / Restore SHA requirement entries on an issue held by the SHA-hold gate (needs-sha). Waiving adds the persistent sha-waived label (created if missing), removes needs-sha at once and posts one App-authored comment with a hive:sha-waived marker naming the dashboard user; the SHA sweep never re-adds needs-sha while sha-waived is on. Restoring removes sha-waived and the next sweep holds the issue again if it still has no SHA and no exemption. A repeat is a no-op; pull requests have no SHA requirement (404). Same authorisation as the hold toggle; every write is audited as repo_item_sha_waiver under the dashboard user.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Waived or restored (or already so)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "waived": {
+                      "type": "boolean"
+                    },
+                    "added": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "removed": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "minStatusSeq": {
+                      "type": "integer",
+                      "description": "Status sequence the caller should wait for before trusting /api/status again"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid repository item"
+          },
+          "401": {
+            "description": "GitHub user session required"
+          },
+          "403": {
+            "description": "Write permission required"
+          },
+          "404": {
+            "description": "Not an issue (pull request) or unknown item"
+          },
+          "502": {
+            "description": "GitHub API error"
+          },
+          "503": {
+            "description": "GitHub client not configured"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "waived": {
+                    "type": "boolean",
+                    "description": "true waives the requirement, false restores it"
+                  }
+                },
+                "required": [
+                  "waived"
+                ]
+              }
+            }
           }
         }
       }

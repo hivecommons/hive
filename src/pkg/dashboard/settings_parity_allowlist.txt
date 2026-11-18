@@ -435,6 +435,18 @@ hub.contribute_repo_filters.<key>.deny_titles[] # TODO #11854
 hub.contribute_repo_filters.<key>.labels_mode # TODO #11854
 hub.contribute_repo_filters.<key>.titles_mode # TODO #11854
 hub.contribute_skip_labels[] # TODO #11854
+hub.contribute_umbrella.enabled # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.human_only_labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.task_list_min # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.title_prefixes[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.withdraw_advertisement # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.enabled # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.human_only_labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.task_list_min # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.title_prefixes[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.withdraw_advertisement # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
 hub.disabled_repos[] # TODO #11854
 hub.disabled_tiers[] # TODO #11854
 hub.heartbeat_omit[] # TODO #11854
@@ -574,7 +586,40 @@ project.repos[] # TODO #11854
 providers.status.enabled # TODO #11854
 removed_agents[] # TODO #11854
 repos.<key>.agents_md_max_bytes # TODO #18495 (per-repo AGENTS.md cap; Settings control pending)
-repos.<key>.parent_autoclose # TODO #18869 (per-repo decomposed-parent auto-close policy; Settings control pending)
+repos.<key>.review_preflight.block_severity # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.cache_ttl # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.dependencies # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.ignore[].expires # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.ignore[].id # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.ignore[].package # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.ignore[].reason # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.max_dependencies # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.min_release_age_days # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.offline # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.osv_url # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.registry_urls.<key> # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.release_age # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.request_timeout # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rule_doc_budget_bytes # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rule_doc_exclude[] # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rule_doc_paths[] # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rule_docs # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rules[].id # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rules[].severity # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rules[].text # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.severity_floor # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.vulnerabilities # TODO #19069 (review preflight; Settings control pending)
+review.analysis_factcheck.author_agents[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.authoritative_files[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.enabled # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.independence # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.labels[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.max_rounds # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.ready_policy # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.reviewer_agents[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.reviewer_model # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.revision_wait # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.rubric # TODO #19074 (yaml-only at first; Settings control pending)
 review.backlog.labels[] # TODO #11854
 review.bot_author_full_review_paths[] # TODO #14625
 review.bot_author_model # TODO #14625
@@ -582,6 +627,29 @@ review.bot_authors[] # TODO #14625
 review.delta_max_age # TODO #14621
 review.delta_rereview # TODO #14621
 review.delta_trivial_lines # TODO #14621
+review.preflight.block_severity # TODO #19069 (review preflight; Settings control pending)
+review.preflight.cache_ttl # TODO #19069 (review preflight; Settings control pending)
+review.preflight.dependencies # TODO #19069 (review preflight; Settings control pending)
+review.preflight.ignore[].expires # TODO #19069 (review preflight; Settings control pending)
+review.preflight.ignore[].id # TODO #19069 (review preflight; Settings control pending)
+review.preflight.ignore[].package # TODO #19069 (review preflight; Settings control pending)
+review.preflight.ignore[].reason # TODO #19069 (review preflight; Settings control pending)
+review.preflight.max_dependencies # TODO #19069 (review preflight; Settings control pending)
+review.preflight.min_release_age_days # TODO #19069 (review preflight; Settings control pending)
+review.preflight.offline # TODO #19069 (review preflight; Settings control pending)
+review.preflight.osv_url # TODO #19069 (review preflight; Settings control pending)
+review.preflight.registry_urls.<key> # TODO #19069 (review preflight; Settings control pending)
+review.preflight.release_age # TODO #19069 (review preflight; Settings control pending)
+review.preflight.request_timeout # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rule_doc_budget_bytes # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rule_doc_exclude[] # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rule_doc_paths[] # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rule_docs # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rules[].id # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rules[].severity # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rules[].text # TODO #19069 (review preflight; Settings control pending)
+review.preflight.severity_floor # TODO #19069 (review preflight; Settings control pending)
+review.preflight.vulnerabilities # TODO #19069 (review preflight; Settings control pending)
 review.pending_fix_ttl # TODO #14643
 review.perspective_models.<key>.backend # TODO #13243
 review.perspective_models.<key>.model # TODO #13243

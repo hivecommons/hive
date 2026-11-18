@@ -473,6 +473,7 @@ without a class. Review submissions and review requests are always counted as
 | `dashboard.(*Server).handleRepoItemBlockerClosePartial` | `status` |  |
 | `dashboard.(*Server).handleRepoItemDecision` | `status` |  |
 | `dashboard.(*Server).handleRepoItemSentinelConfirm` | `status` |  |
+| `dashboard.(*Server).handleRepoItemSHAWaiver` | `status` |  |
 | `dashboard.(*Server).handleReviewQueueSupersededClose` | `status` |  |
 | `dashboard.(*Server).mirrorPlanWith` | `status` |  |
 | `github.(*Client).CloseIssueForConfiguredLinePR` | `status` |  |
@@ -508,6 +509,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.handleMergedPRIssueStage` | `status` |  |
 | `github.runRecheckSoak` | `status` |  |
 | `main.postReviewAcknowledgements` | `status` |  |
+| `main.reviewFeedbackSweep.acknowledgeRules` | `status` |  |
 | `main.rfcNotifySource.Comment` | `status` |  |
 | `main.unparkEscalatedPR` | `status` |  |
 | `dashboard.(*ContributeWSHub).parkWrongBase` | `attention` |  |
@@ -532,10 +534,14 @@ without a class. Review submissions and review requests are always counted as
 | `github.attentionDelivery.Post` | `attention` | condition-episode page; live write-back policy rechecked before the write |
 | `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.claimEscalationLookup` | `attention` |  |
+| `main.factCheckSweep.needsHuman` | `attention` | one note per PR when the analysis fact-check loop stops without a passing verdict (#19074) |
 | `main.liveTriageCommenter.CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.maintainHeldPRMergeability` | `attention` |  |
 | `main.rfcCoverageForge.CreateComment` | `attention` |  |
 | `main.runEscalationSweep` | `attention` |  |
+| `main.reviewFeedbackSweep.checkRuleReply` | `attention` |  |
+| `main.reviewFeedbackSweep.needsHuman` | `attention` |  |
+| `main.reviewFeedbackSweep.proposeRuleHome` | `attention` |  |
 | `prfollowup.postStaleHeadPushNotes` | `attention` |  |
 | `scheduler.(*Scheduler).judgePriorArt` | `attention` |  |
 | `scheduler.(*Scheduler).parkUnclearIssue` | `attention` |  |

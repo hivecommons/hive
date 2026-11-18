@@ -313,6 +313,54 @@ hand-off, and `workflow.dispatch.enabled: false` stops them all (owned items sta
 from the generic lanes either way). `prompt_template` replaces the built-in prompt; see the
 design doc for its `${VAR}` placeholders.
 
+### Assessment criteria and reviewer rules
+
+The assessment rubric lives in the TechDocs repository's
+[`docs/analysis/criteria.md`](https://github.com/cncf/techdocs/blob/main/docs/analysis/criteria.md)
+and its assessment specification (linked above). The curated workflow model defines
+lifecycle states, human gates and drafter/verifier profiles, not a second scoring
+rubric. Hive selects an eligible agent (which may be `quality`, as described above)
+and builds its instructions with `scheduler.BuildWorkflowDispatchPrompt` or the
+profile's configured `prompt_template`.
+
+Reviewer-stated corrections belong in the shared knowledge store as small,
+source-linked entries, not only in a reply or the agent's private memory. Scope
+assessment rules to the **workflow model name**, independent of its version and
+of which agent fills the profile:
+
+```yaml
+title: cncf-techdocs-assessment reviewer rule for <criterion>
+type: gotcha
+layer: project
+state: approved
+tags: [repo:cncf/techdocs, techdocs, assessment, reviewer-rule]
+source: https://github.com/cncf/techdocs/pull/<pr>#discussion_r<comment-id>
+scope:
+  lanes: [cncf-techdocs-assessment]
+```
+
+This is frontmatter for a [knowledge entry](../knowledge-entries.md); follow it
+with the verified rule and its project-specific limits. Preserve the originating
+comment URL/id when capturing a rule. Draft rules remain excluded until approved.
+Do not use `lanes: [quality]` alone: that would teach unrelated quality work an
+assessment-specific rule and miss a drafter assigned to a different agent.
+
+Workflow hand-offs run the knowledge primer before delivery. The bound model's
+unversioned name is an additional lane match and search term, alongside the base
+agent lane and item labels. The usual agent knowledge scope, lifecycle filter,
+relevance selection and byte cap still apply. A rule must be in a registered
+vault/git source and fit the primer budget to reach the next kick. See
+[registering repository knowledge](../knowledge-entries.md#how-the-directory-reaches-the-primer).
+
+The initial reviewer rules from `cncf/techdocs#424` live in
+[`techdocs-assessment-evidence.md`](../knowledge/techdocs-assessment-evidence.md)
+and [`techdocs-assessment-ownership.md`](../knowledge/techdocs-assessment-ownership.md).
+They cover evidence-based readiness grading on the documentation domain and the
+project's authoritative maintainer roster. They supplement rather than replace
+the upstream rubric. Automated review-feedback capture and reply verification
+are tracked separately in hivecommons/hive#19048; this injection path also accepts
+subsequent captured entries with the same scope.
+
 ### When the agent does not start
 
 A kick that landed only means the agent was told. An agent can decline (one whose session
@@ -391,6 +439,40 @@ dispatch, a hive owner starts the draft by hand:
    `draft-open` (stage 40) and the PR to `drafting`. From there every step is a human gate:
    the reviewer runs or skips the verifier (`/verify`, the `verified` label), marks the PR
    ready (`/ready`), stakeholders `/confirm`, and an independent approver merges.
+
+## Independent fact-check before a person reviews (optional)
+
+The first review of a drafted deliverable can be done by a second agent instead of the
+reviewer's own pass over the draft. The hive's opt-in fact-check pass
+(`review.analysis_factcheck`, [Independent fact-check for analysis PRs](../review-swarm.md#independent-fact-check-for-analysis-prs-reviewanalysis_factcheck))
+runs a different agent over a draft `Docs analysis` pull request after the drafter opens it
+and before anyone marks it ready. It re-verifies each claim, score and attribution against
+the cited source, checks the judgments for skew in both directions, checks that the material
+rated was actually inspected, and checks people and roles against the project's maintainers
+file. Its findings go back to the drafter, which revises the same branch, for a bounded
+number of rounds.
+
+It is off by default and the model does not turn it on: the qualifying agents and labels are
+the operator's choice in `hive.yaml`. For a hive bound to `cncf/techdocs`, for example:
+
+```yaml
+review:
+  analysis_factcheck:
+    enabled: true
+    author_agents: [quality]     # the agent that fills the techdocs-drafter profile
+    labels: [Docs analysis]      # the deliverable label this model uses
+    reviewer_agents: [reviewer]  # must be a different agent or model from the drafter
+```
+
+How it fits the lifecycle above:
+
+- The PR stays in `drafting` while the pass runs. The pass never applies `verified`, never
+  marks the PR ready on the default `ready_policy: human`, and never merges; `/verify`,
+  `/ready`, `/confirm` and `/approve` stay human gates.
+- It is separate from the `techdocs-verifier` profile and the `verified` label. The pass
+  gives the reviewer a PR that already carries an independent review.
+- It stops as soon as a person reviews the PR, so a reviewer's own comments reach the
+  drafter through the review-feedback sweep instead.
 
 ## Not representable today
 

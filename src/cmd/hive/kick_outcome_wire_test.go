@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,4 +68,24 @@ func TestKickOutcomeDeliveredIgnoresOtherEvents(t *testing.T) {
 	if len(s.Records("a", 0)) != 1 {
 		t.Fatal("a delivered event did not")
 	}
+}
+
+func TestKickOutcomeBackoffWithheldIsRefusedWithoutAgentText(t *testing.T) {
+	s, _ := kickoutcome.Open("", nil)
+	kickOutcomeBackoffWithheld(s, "scanner", "rate_limit", 90*time.Second, time.Now())
+	latest, detail := kickOutcomeSource{s}.Recent("scanner", 10)
+	b, err := json.Marshal(map[string]any{"latest": latest, "kicks": detail})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(b)
+	if !strings.Contains(out, `"refused"`) || !strings.Contains(out, "provider_backoff") {
+		t.Fatalf("withheld kick not recorded as a provider_backoff refusal: %s", out)
+	}
+	// The reason is the hive's own text; the provider error line (agent
+	// output) is never passed in, so nothing of it can be quoted.
+	if strings.Contains(out, "quota exceeded") {
+		t.Fatalf("agent text quoted: %s", out)
+	}
+	kickOutcomeBackoffWithheld(nil, "scanner", "x", 0, time.Now())
 }

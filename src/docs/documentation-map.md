@@ -106,6 +106,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Native merge queue](native-merge-queue.md) — how the auto-merge lanes enqueue eligible PRs into GitHub's native merge queue (App auth only), the `native-merge-queued`/`native-merge-queue-*` stage reasons, and how Hive withdraws only its own entries when a gate breaks.
 - [`hive-open-issue`](hive-open-issue.md) — **Agent/developer reference:** request issue creation, comments, or claims through the App bot, with deduplication and retries.
 - [Review-bot threads on hive-mediated PRs](review-bot-threads.md) — route bot feedback back to the authoring agent while protecting human review threads.
+- [Reviewer-stated rules from review feedback](review-feedback-rules.md): how the review-feedback sweep captures rules and sources of truth a person states on a hive PR into the knowledge store, gates them on reviewer trust, loads them into the matching agent's next runs, and proposes the text when its home is another project's repo.
 - [Network and port requirements](network-requirements.md) — inbound ports, proxy paths, egress, and firewall guidance.
 - [TLS, HTTPS, and certificates](tls-setup.md) — termination patterns and certificate ownership.
 - [Security notes](security.md) — log scrubbing and secret redaction guarantees/limits.
@@ -252,7 +253,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Session taint design](design/session-taint.md) - **design/proposal:** a session-level record of what an agent has read and the rules that would hold or deny later pushes, comments and PRs against it, off by default with an observe-only first phase (RFC #18987).
 - [Gate-integrity invariants for agent lanes](design/gate-integrity-invariants.md) — proposed write-gate rules for agent lanes: no history rewrites on branches a lane did not create, no sign-off on other authors' commits, and hold-gated demotion for gate manipulation.
 - [Crux: the agent runtime boundary](design/crux.md) — **Design record:** runtime separation, module boundary, staged rollout, and naming decision.
-- [One authorization point for writes](design/authorization-decision-point.md) - proposed design for a single decision seam, decision events and per-decision scoped credentials across the proxy, relays and push broker (RFC #18988).
+- [One authorization point for writes](design/authorization-decision-point.md) - design for a single decision seam, decision events and per-decision scoped credentials across the proxy, relays and push broker (RFC #18988); the first slice, a shadow-mode check of the push broker's changed-files guard, is shipped, off by default and enforces nothing.
 - [Customers: a profile per person and a customer graph](design/customers.md) — proposed design for the Customers section, the people store, the read-only graph endpoint, and inferred goals and satisfaction (RFC #18742).
 - [Design documents](design/README.md) — browse records labelled shipped, partly shipped, design-only, or historical; proposals are not current behavior.
 - [Discord reaction-consensus issue promotion](design/discord-issue-promotion.md) — proposed design for turning Discord reaction consensus into an audited Hive label write that composes with `project.issue_filter.require_labels` (RFC #6239).

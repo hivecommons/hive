@@ -298,6 +298,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Labels: append([]string(nil), issue.Labels...), CreatedAt: timePtr(issue.CreatedAt), UpdatedAt: timePtr(issue.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL)}
+		it.SHAHold = s.stageTrackerSHAHold(repoName, issue.Number, issue.Labels)
 		it.Children = issue.Children
 		if it.Children == nil {
 			it.Children = progress
@@ -306,6 +307,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Children = github.TrackerTaskProgress(issue.Body)
 		}
 		it.IsTracker = github.RendersAsTracker(issue.IsTracker, issue.Labels, it.Children)
+		it.Umbrella, it.OwnerOnly = stageTrackerOwnerFlags(cfg, repoName, issue)
 		it.ClaimReference = issue.ClaimContext != nil && !issue.ClaimContext.MergedPR && issue.ClaimContext.Reference && issue.ClaimContext.Decision != github.ClaimDecisionReleasedRedStalePR
 		if issue.AuthorIsHuman {
 			it.AuthorKind, it.AuthorKindSource = authorKindHuman, authorKindSrcInfer

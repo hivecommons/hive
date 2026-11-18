@@ -150,6 +150,7 @@ func TestFetchDocumentFacts_URL(t *testing.T) {
 		_, _ = w.Write([]byte("<html><head><title>Page Title</title></head><body><p>Body text here.</p></body></html>"))
 	}))
 	defer srv.Close()
+	allowDocFetchTo(t, srv)
 
 	facts, title, err := FetchDocumentFacts(context.Background(), DocSourceConfig{URL: srv.URL + "/doc"}, "", "", nil)
 	if err != nil {

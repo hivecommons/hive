@@ -201,7 +201,8 @@
     const CUSTOMERS_PROFILE_FIELDS = [
       { key: 'real_name', label: 'Real name', max: 120 },
       { key: 'organization', label: 'Organization', max: 120 },
-      { key: 'location', label: 'Location or country', max: 120 }
+      { key: 'location', label: 'Location', max: 120 },
+      { key: 'country', label: 'Country (code or name)', max: 120 }
     ];
 
     function customersProfileValue(p, key) {
@@ -217,6 +218,44 @@
       const f = p.profile.organization;
       const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : 'From the public GitHub profile';
       return '<span class="kc-pill customers-pill customers-org" data-source="' + (f.source === 'manual' ? 'manual' : 'auto') + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
+    }
+
+    // customersFlagEmoji: the flag for an ISO 3166 alpha-2 code, or '' when the
+    // code is not two letters. Some systems draw the flag as the two letters,
+    // so the code is always shown as text beside it.
+    function customersFlagEmoji(code) {
+      if (typeof code !== 'string' || !/^[A-Z]{2}$/.test(code)) return '';
+      return String.fromCodePoint(0x1F1E6 + code.charCodeAt(0) - 65, 0x1F1E6 + code.charCodeAt(1) - 65);
+    }
+
+    // customersCountryName: the country's name in the browser language, or the
+    // code itself when the browser cannot name it.
+    function customersCountryName(code) {
+      try {
+        const n = new Intl.DisplayNames(undefined, { type: 'region' }).of(code);
+        if (n) return n;
+      } catch (e) { /* no Intl.DisplayNames: fall back to the code */ }
+      return code;
+    }
+
+    // customersCountryPill: a compact flag and ISO code on the row. The name is
+    // the accessible label, so the meaning never depends on the emoji.
+    function customersCountryPill(p) {
+      const code = customersProfileValue(p, 'country');
+      if (!/^[A-Z]{2}$/.test(code)) return '';
+      const name = customersCountryName(code);
+      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name) + '">' +
+        '<span aria-hidden="true">' + customersFlagEmoji(code) + '</span> ' + escapeHtml(code) + '</span>';
+    }
+
+    // customersAffiliationHtml: the likely organization, with its evidence, as
+    // a suggestion to accept or dismiss. Nothing is saved until Accept.
+    function customersAffiliationHtml(p) {
+      const s = p && p.affiliation_suggestion;
+      if (!s || !s.value) return '';
+      return '<div class="customers-inline" data-customers-field="affiliation-suggestion"><span>Likely: <strong>' + escapeHtml(s.value) + '</strong> <span class="muted-xs">(' + escapeHtml(s.evidence || 'a guess') + ')</span></span>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationAccept" data-arg0="' + escapeHtml(s.value) + '">Accept</button>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationDismiss" data-arg0="' + escapeHtml(s.value) + '">Dismiss</button></div>';
     }
 
     // customersOriginPill: where the person came from, in one short word.
@@ -297,7 +336,7 @@
         rowChevronHtml('customersToggle', isMe ? 'me' : p.id, open, 'profile of ' + name, pid) +
         customersAvatarHtml(name, customersGithubLogin(p), '', '') +
         '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') +
-        customersSourcePills(p) + customersOriginPill(p, updated) + customersOrgPill(p) + customersTagPills(p) + extra.join('') + pill + '</div>' +
+        customersSourcePills(p) + customersOriginPill(p, updated) + customersOrgPill(p) + customersCountryPill(p) + customersTagPills(p) + extra.join('') + pill + '</div>' +
         (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') + '</div>' +
         (open ? '<div class="customers-profile" id="' + pid + '" role="region" aria-label="Profile of ' + escapeHtml(name) + '">' + customersProfileHtml(_customersOpen) + '</div>' : '') + '</div>';
     }
@@ -407,16 +446,17 @@
       if (!fixed) {
         buttons += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityRemove" data-arg0="' + escapeHtml(key) + '">Remove</button>';
       }
-      return '<div class="customers-row" data-claimed="' + (i.claimed ? 'true' : 'false') + '"><span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + '</span>' +
-        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(i.value) + '</div>' +
-        (meta.length ? '<div class="muted-xs">' + escapeHtml(meta.join(' · ')) + '</div>' : '') + '</div>' + buttons + '</div>';
+      return '<tr data-claimed="' + (i.claimed ? 'true' : 'false') + '"><td><span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + '</span></td>' +
+        '<th scope="row" class="customers-ident-value">' + escapeHtml(i.value) + '</th>' +
+        '<td class="muted-xs">' + escapeHtml(meta.join(' · ')) + '</td>' +
+        '<td class="customers-ident-actions">' + buttons + '</td></tr>';
     }
 
     function customersIdentitiesHtml(p) {
       const ids = p.identities || [];
       const note = customersIsFull() ? '' : '<p class="muted-xs">What you add here is shown as unconfirmed until the hive owner or a read-write user confirms it.</p>';
       return '<div class="customers-block"><div class="section-label m-0">Identities</div>' + note +
-        '<div class="customers-list">' + (ids.length ? ids.map(i => customersIdentityRowHtml(p, i)).join('') : '<p class="empty-dashed">No identities.</p>') + '</div>' +
+        (ids.length ? '<div class="customers-table-wrap"><table class="customers-ident-table"><thead><tr><th scope="col">Type</th><th scope="col">Identity</th><th scope="col">Source</th><th scope="col" aria-label="Actions"></th></tr></thead><tbody>' + ids.map(i => customersIdentityRowHtml(p, i)).join('') + '</tbody></table></div>' : '<p class="empty-dashed">No identities.</p>') +
         '<div class="customers-inline"><label>Known by<select class="kb-search-box" data-customers-field="identity-kind">' + customersKindOptions() + '</select></label>' +
         '<label>Login, address or id<input class="kb-search-box" type="text" maxlength="254" data-customers-field="identity-value" autocomplete="off"></label>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityAdd">Add identity</button></div></div>';
@@ -500,13 +540,15 @@
       const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
         const cur = (p.profile && p.profile[f.key]) || {};
         const manual = cur.source === 'manual';
-        const mark = cur.value ? (manual ? 'set by hand' : 'from GitHub') : (manual ? 'cleared by hand' : 'not known');
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.rule === 'location' ? 'from location' : 'from GitHub')) : (manual ? 'cleared by hand' : 'not known');
         return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
           (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
       }).join('');
-      return '<div class="customers-block"><div class="section-label m-0">Details</div>' +
-        '<div class="customers-inline">' + rows + '</div>' +
+      const cc = customersProfileValue(p, 'country');
+      const ccLine = /^[A-Z]{2}$/.test(cc) ? '<div class="muted-xs" data-customers-field="country-line"><span aria-hidden="true">' + customersFlagEmoji(cc) + '</span> ' + escapeHtml(cc) + ' ' + escapeHtml(customersCountryName(cc)) + '</div>' : '';
+      return '<div class="customers-block"><div class="section-label m-0">Details</div>' + ccLine +
+        '<div class="customers-inline">' + rows + '</div>' + customersAffiliationHtml(p) +
         '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>';
     }
 
@@ -1002,6 +1044,10 @@
     }
 
     function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
+
+    function customersAffiliationAccept(value) { customersEdit({ op: 'profile', field: 'organization', value: value }, 'Organization set'); }
+
+    function customersAffiliationDismiss(value) { customersEdit({ op: 'affiliation_dismiss', value: value }, 'Suggestion dismissed'); }
 
     function customersNotesSave() { customersEdit({ op: 'notes', notes: (customersField('notes') || {}).value || '' }, 'Notes saved'); }
 

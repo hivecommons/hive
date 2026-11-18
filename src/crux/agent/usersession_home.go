@@ -23,9 +23,10 @@ import (
 // session write access to the shared file (and, for settings.json, a hook that
 // every agent would run). Instead a fixed allowlist of the minimal login
 // files per vendor (userSessionLoginFiles) is COPIED into the session HOME as
-// read-only (0400), session-owned files; the Claude login is copied without
-// its refresh token, so a session can never rotate the fleet's login
-// (usersession_login.go). Nothing that can execute a command
+// read-only (0400), session-owned files; the Claude, Codex and OpenCode
+// logins are copied without their refresh tokens, so a session can never
+// rotate the fleet's login (usersession_login.go,
+// usersession_login_rotating.go). Nothing that can execute a command
 // (settings.json, hooks, MCP/extension config) is ever copied, and ~/.config
 // (gh's hosts.yml, goose extensions) is not bridged at all.
 const (
@@ -168,10 +169,11 @@ func (r *UserSessionRuntime) prepareSandbox(id string, uid int) error {
 // refresh token, and a newer login already in the session HOME is adopted
 // into the shared file first (usersession_login.go).
 //
-// A Codex or OpenCode login the session's CLI refreshed is adopted into the
-// shared file first when it is strictly newer (usersession_login_rotating.go).
+// Codex and OpenCode logins follow the same rules: the session gets them with
+// the refresh token emptied, and a strictly newer login in the session HOME is
+// adopted into the shared file first (usersession_login_rotating.go).
 //
-// For every vendor but Claude the copy is skipped when the session's file was
+// For the other vendors the copy is skipped when the session's file was
 // written after the shared one. That is the state of an unchanged copy from
 // an earlier start, and also of a login the CLI in the session rewrote itself
 // (a token refresh): re-copying an older shared file over it on a resume
@@ -187,10 +189,12 @@ func (r *UserSessionRuntime) copyLoginFiles(id string, uid int) {
 			continue
 		}
 		if l, ok := rotatingSessionLoginFor(rel); ok {
-			// A login the session's CLI refreshed (Codex, OpenCode) goes into
-			// the shared file first (usersession_login_rotating.go). Reported
-			// inside; a failure must not block the session.
-			_ = r.syncRotatingLogin(id, sessionLoginTriggerStart, l)
+			// Codex and OpenCode: a newer login in the session goes into the
+			// shared file first, and the session gets a refresh-less copy
+			// (usersession_login_rotating.go). Reported inside; a failure
+			// must not block the session.
+			_ = r.syncRotatingLogin(id, sessionLoginTriggerStart, l, sessionLoginModeStart)
+			continue
 		}
 		src := filepath.Join(sharedAgentHome, rel)
 		dest := filepath.Join(home, rel)

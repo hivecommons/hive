@@ -73,6 +73,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// as paused even when the agent is also out of scope for it.
 		blockJSON := false
 		graphQLMutation := false
+		var graphQLBody []byte
 		// A direct write from a lane under write_surface.enforce (#9772) is
 		// refused and audited as agent_write_refused. Checked after pause and
 		// scope so their more specific reasons win when both apply.
@@ -114,7 +115,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
 			} else if !isLinear {
-				if reason, kind, refused := WriteSurfaceEnforceRefusal(p.writeSurfaceEnforcedFunc(), agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
+				if reason, kind, refused := p.writeSurfaceEnforceRefusal(agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
 					blocked = true
 					blockReason = reason
 					blockCode = DenyReasonWriteSurfaceEnforced
@@ -155,13 +156,18 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				p.logTimeout("proxy GraphQL request body read timed out", readErr, "agent", agentName, "path", req.URL.Path)
 				return
 			}
-			if reason, refused := p.graphQLAutoMergeRefusal(body); agentName != internalCallerName && refused {
+			graphQLBody = body
+			if reason, refused := p.graphQLAgentRepoScopeRefusal(agentName, body); agentName != internalCallerName && refused {
+				blocked = true
+				blockReason = reason
+				blockCode = DenyReasonAgentRepoScope
+			} else if reason, refused := p.graphQLAutoMergeRefusal(body); agentName != internalCallerName && refused {
 				blocked = true
 				blockReason = reason
 				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
 			} else if agentName != internalCallerName {
-				if reason, refused := WriteSurfaceGraphQLRefusal(p.writeSurfaceEnforcedFunc(), agentName, body); refused {
+				if reason, refused := p.writeSurfaceGraphQLRefusal(agentName, body); refused {
 					blocked = true
 					blockReason = reason
 					blockCode = DenyReasonWriteSurfaceEnforced
@@ -415,6 +421,15 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// longer than responseBodyStallTimeout errors out and lets the
 		// handler's deferred Closes reclaim the sockets.
 		resp.Body = &stallBoundedBody{body: resp.Body, conn: upstream, idle: p.bodyStallTimeoutDuration()}
+		if graphQLBody != nil && resp.StatusCode == http.StatusOK {
+			resp.Body = &graphQLRepoCapture{
+				ReadCloser: resp.Body,
+				length:     resp.ContentLength,
+				observe: func(body []byte) {
+					p.observeGraphQLRepoResponse(agentName, graphQLBody, body, resp.Header.Get("Content-Encoding"))
+				},
+			}
+		}
 
 		// Rolling per-Write deadline (see stallBoundedWriter): a response that
 		// keeps flowing is never cut for being long, while a client that stops

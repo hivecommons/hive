@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/netguard"
 )
 
 const (
@@ -321,6 +323,30 @@ func knowledgeNoRedirectToPrivate(req *http.Request, via []*http.Request) error 
 	return nil
 }
 
+// docFetchRefuse decides, at dial time, whether a document fetch may connect
+// to an already-resolved "ip:port". Nil means the netguard classifier. A
+// package var only so tests can reach a loopback httptest server; production
+// never sets it.
+var docFetchRefuse func(ctx context.Context, target string) bool
+
+// docFetchTransport pins every document fetch connection to an address it
+// checked (#18992). The dashboard's pre-fetch isPrivateURL check and the
+// redirect check above each resolve the name, and a default http.Client
+// resolves it a further time when it dials, so a name that rebinds between
+// those lookups was validated as public and connected to as private. This
+// transport resolves each dial once through docRedirectResolver, refuses it
+// when any answer is not globally routable, and dials the checked address,
+// for the first request and every redirect hop.
+var docFetchTransport = netguard.PinnedDialer{
+	Resolve: func(ctx context.Context, host string) ([]string, error) { return docRedirectResolver(ctx, host) },
+	Refuse: func(ctx context.Context, target string) bool {
+		if docFetchRefuse != nil {
+			return docFetchRefuse(ctx, target)
+		}
+		return netguard.IsPrivateURL(ctx, "http://"+target, nil)
+	},
+}.Transport()
+
 func (ds *DocumentSource) fetchURL(ctx context.Context, url string) ([]byte, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, docFetchTimeout)
 	defer cancel()
@@ -331,7 +357,7 @@ func (ds *DocumentSource) fetchURL(ctx context.Context, url string) ([]byte, str
 	}
 	req.Header.Set("User-Agent", docUserAgent)
 
-	client := &http.Client{CheckRedirect: docNoRedirectToPrivate}
+	client := &http.Client{CheckRedirect: docNoRedirectToPrivate, Transport: docFetchTransport}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("HTTP GET: %w", err)

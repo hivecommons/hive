@@ -125,6 +125,19 @@ The registry entry becomes a `self-hosted` hive in Active Hives and the fleet vi
 - The owner never receives `HIVE_HUB_SECRET`. The hub never consults it in the self-service routes and never returns it.
 - Everything the fence withholds still applies: the hub sends the hive no GitHub App config, gateway, cluster ID, authorized users, upgrade or branch-switch instructions, restarts or fleet-breaker actions. Listing is directory metadata only.
 
+#### Editing a registration
+
+`PATCH /api/hub/v1/registrations/{id}` changes `repos` and `dashboard_url` in place, so adding a repo no longer means deleting the registration and registering again (which revoked the key and took the spoke offline). The heartbeat key is not touched: the spoke keeps heartbeating with the key it has.
+
+- **Who:** the owner, signed in to the hub. A registration key cannot edit its own record, and a hub admin who does not own the hive gets `404`.
+- **`If-Match` is required.** `GET /api/hub/v1/registrations/{id}` returns the `ETag`; send it back on the `PATCH`. A missing header is `428`, a stale one is `412` with the current `ETag`, so two operators editing at once cannot silently overwrite each other. Heartbeats do not change the `ETag`.
+- **`repos`:** a full list replaces the repos, or `{"add": [...], "remove": [...]}` changes them. Only the repos an edit adds are checked against GitHub (the same read-only `permissions.admin` check as registration, with the owner's own stored token); one failing repo refuses the whole edit and nothing is applied. Kept repos keep their proof time, and removed repos lose theirs. At least one repo must remain, and `HIVE_HUB_SELFSERVICE_MAX_REPOS` applies (`413 {limit: "max_repos"}`).
+- **`dashboard_url`:** an `https` URL to a public address, or `""` to clear it.
+- **Not editable:** `org`, the owner, the ID and the keys. To change the `org`, delete the registration and register it again.
+- **No GitHub writes.** The edit changes the hub's own registry only.
+
+The route is part of the v1 registration protocol and follows the same switch as the rest of it, `HIVE_HUB_SELFSERVICE_REGISTRATION`; discovery (`GET /api/hub/v1`) lists it under `operations` with `if_match: "required"` and its fields under `patch_fields`, so a hub that does not offer it does not advertise it. The v6 `/api/hub/selfservice/*` routes are unchanged.
+
 #### Rotation
 
 The owner can rotate from the **Self-hosted hives** list or with `POST /api/hub/selfservice/hives/{id}/rotate`. The hub mints a new key and keeps the previous hash live for a 10 minute overlap so a running spoke can pick up the new value without a gap. After the overlap only the new key is accepted. Only the owner can rotate; a hub admin who does not own the hive gets `404`, the same answer as for a missing hive.
@@ -144,7 +157,8 @@ Every decision writes one structured log line, documented in [audit-log.md](audi
 | Event | When |
 |---|---|
 | `selfservice_hive_registered` | A registration passed every check and a key was minted. |
-| `selfservice_hive_refused` | A registration was turned away; `reason` is one of `invalid_name`, `reserved_prefix`, `duplicate_id`, `invalid_repos`, `invalid_dashboard_url`, `per_user_cap`, `no_github_token`, `no_github_login`, `not_repo_admin`, `ownership_check_error`. |
+| `selfservice_hive_refused` | A registration was turned away; `reason` is one of `invalid_name`, `reserved_prefix`, `duplicate_id`, `invalid_repos`, `invalid_dashboard_url`, `invalid_update` (a `PATCH` body that was refused), `per_user_cap`, `no_github_token`, `no_github_login`, `not_repo_admin`, `ownership_check_error`. |
+| `selfservice_hive_updated` | The owner edited the repos or dashboard URL with `PATCH`; the line counts repos added and removed and carries no key. |
 | `selfservice_hive_rotated` | The owner rotated the key; `overlap` is how long the old key keeps working. |
 | `selfservice_hive_revoked` | The owner or an admin removed the hive; `by_admin` tells which. |
 | `selfservice_hive_expired` | The sweep removed a hive; `last_heartbeat` is RFC 3339 or `never`. |

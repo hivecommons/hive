@@ -8,6 +8,12 @@
       box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
     .oc-agent-detail.active { display: block; }
+    .kick-outcomes { min-width: 0; margin-block: var(--sp-5); font-size: var(--fs-sm); }
+    .kick-outcomes h3 { font-size: var(--fs-sm); margin-bottom: var(--sp-3); }
+    .kick-outcome-list { list-style: none; padding: 0; margin: 0; max-height: 24rem; overflow-y: auto; }
+    .kick-outcome-list li { border-top: 1px solid var(--border); padding-block: var(--sp-3); overflow-wrap: anywhere; }
+    .kick-outcome-list blockquote { margin: var(--sp-2) 0; padding-inline-start: var(--sp-3); border-inline-start: 2px solid var(--line); white-space: pre-wrap; }
+    .kick-outcome-list code { white-space: normal; overflow-wrap: anywhere; }
     .oc-agent-detail.state-running, .oc-agent-detail[data-status="ok"] { border-color: var(--status-ok); }
     .oc-agent-detail.state-idle { border-color: var(--status-ok); }
     .oc-agent-detail.state-paused, .oc-agent-detail[data-status="warn"] { border-color: var(--status-warn); }

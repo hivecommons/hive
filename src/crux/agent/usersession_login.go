@@ -239,18 +239,27 @@ func (o sessionLoginOps) writeSessionLogin(home, path, target string) (bool, err
 	if !ok {
 		return false, nil
 	}
+	if err := o.writeSessionCopy(home, path, copyBytes); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// writeSessionCopy replaces the session's login file at path with data,
+// atomically, read-only (0400) and as the session's own uid.
+func (o sessionLoginOps) writeSessionCopy(home, path string, data []byte) error {
 	uid, err := o.sessionUID(home)
 	if err != nil {
-		return false, err
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), userSessionCmdTimeout)
 	defer cancel()
 	// The script writes nothing to its output, so the output is safe to keep
 	// in the error.
-	if out, err := o.priv(ctx, userSessionSpec(uid), bytes.NewReader(copyBytes), "sh", "-c", userSessionCopyLoginScript, "sh", path); err != nil {
-		return false, outputErr("writing the session's login copy", err, out)
+	if out, err := o.priv(ctx, userSessionSpec(uid), bytes.NewReader(data), "sh", "-c", userSessionCopyLoginScript, "sh", path); err != nil {
+		return outputErr("writing the session's login copy", err, out)
 	}
-	return true, nil
+	return nil
 }
 
 // fileModTime is the modification time of path, zero when it cannot be read.
