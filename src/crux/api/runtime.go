@@ -766,12 +766,6 @@ const (
 	HostSetterInProcessOnly HostSetterKind = "inprocess"
 )
 
-// HostSetter is one row of HostSetters.
-type HostSetter struct {
-	Kind HostSetterKind
-	Via  string
-}
-
 // Callback endpoint routes the table refers to, spelled here because
 // crux/api/callback imports this package; its tests hold the two in step.
 const (
