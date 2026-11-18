@@ -15384,6 +15384,48 @@ test('sanitizeHubText strips ANSI/OSC escapes, C1 controls, and bounds length', 
   } finally { teardown(relay); }
 });
 
+test('#19059 hiveNameSlug turns the hive-stated display name into the short public form', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    const cases = [
+      ['hivecommons hive', 'hivecommons-hive'],
+      ['  Acme   Platform ', 'acme-platform'],
+      ['already-slugged', 'already-slugged'],
+      ['evil\x1b[2Jname', 'evil-[2jname'],
+      ['', null],
+      [null, null],
+      [undefined, null],
+      [42, null],
+      ['---', null],
+    ];
+    for (const [raw, want] of cases) assert.strictEqual(relay.hiveNameSlug(raw), want, JSON.stringify(raw));
+    assert.ok(!relay.hiveNameSlug('evil\x1b[2Jname').includes('\x1b'), 'escape sequences never survive');
+    assert.strictEqual(Array.from(relay.hiveNameSlug('x'.repeat(500))).length, 64);
+  } finally { teardown(relay); }
+});
+
+test('#19059 auth_ok stores the hive-stated name and hiveDisplayName prefers it, null when absent', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  const hub = relay.getHubs()[0];
+  const oldLog = console.log;
+  const logged = [];
+  console.log = (...a) => logged.push(a.join(' '));
+  try {
+    assert.strictEqual(relay.hiveDisplayName(hub), null, 'nothing before auth_ok');
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c-1', trust_tier: 'contributor', hive_name: 'hivecommons hive' }), hub);
+    assert.strictEqual(relay.hiveDisplayName(hub), 'hivecommons-hive');
+    assert.ok(logged.some(l => l.includes('Authenticated with') && l.includes('[hive: hivecommons-hive]')), logged.join('\n'));
+    logged.length = 0;
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c-1', trust_tier: 'contributor' }), hub);
+    assert.strictEqual(relay.hiveDisplayName(hub), null, 'an older hub that sends no name leaves the hostname fallback in charge');
+    assert.ok(logged.some(l => l.includes('Authenticated with') && !l.includes('[hive:')), logged.join('\n'));
+    assert.strictEqual(relay.hiveDisplayName(null), null);
+  } finally {
+    console.log = oldLog;
+    teardown(relay);
+  }
+});
+
 test('hub announcement text is sanitized before printing', () => {
   const relay = loadRelay({ backend: 'agy' });
   const hub = relay.getHubs()[0];

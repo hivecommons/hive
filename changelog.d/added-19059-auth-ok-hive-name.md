@@ -1,0 +1,1 @@
+- `auth_ok` now carries the hive's display name (`hive_name`), and the relay records it and prints `[hive: <name>]` on connect, so contributors can tell hives apart by their real name instead of a hostname minted before a rename. Additive: a hub that sends nothing keeps today's output ([#19059](https://github.com/hivecommons/hive/issues/19059)).

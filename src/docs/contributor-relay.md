@@ -186,7 +186,7 @@ With an explicitly configured shared pool, `just contribute-quota status` inspec
 
 ## What happens on a task
 
-1. A successful connection logs `Connected to …`, followed by `Authenticated with … as … (tier: …)`. Authentication is not yet a task assignment.
+1. A successful connection logs `Connected to …`, followed by `Authenticated with … as … (tier: …)`, plus `[hive: <name>]` when the hive states its display name on `auth_ok` (`hive_name`; the relay shows it lowercased with dashes, so "hivecommons hive" reads `hivecommons-hive`). A hub that sends no name leaves the relay on the short name derived from the hostname. Authentication is not yet a task assignment.
 2. The hive assigns an issue that fits your trust tier and its filters. If it says `No task assigned … reason: no_matching_work`, the relay is connected and waiting; it retries. Other reasons may require the hive operator, not another registration.
 3. The relay prepares the checkout, injects a short-lived GitHub token, and drives your coding CLI. In interactive mode, use the **attach command printed by your launch** to watch the tmux session. Container mode prints the Docker/Podman form; native mode prints `tmux attach`. Headless backends have no interactive pane.
 4. Progress is reported every 2 minutes; completion/PR metadata is reported when the CLI finishes. Check the linked PR and its checks, not just a local “success” line. PRs retain the task's base branch, required hold gates, and DCO sign-off (`git commit -s`).
