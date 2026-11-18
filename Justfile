@@ -295,8 +295,8 @@ contribute-check-backend backend="claude":
           echo "opencode CLI detected ($(opencode --version 2>&1 | head -1))"
           echo "  Provider-agnostic (75+ providers); set model: export AGENT_MODEL=provider/model"
           echo "  Auth: run 'opencode auth login' — credential stored at ~/.local/share/opencode/auth.json"
-          echo "  opencode only runs in headless mode (CONTRIBUTOR_MODE=headless): 'opencode run' is its"
-          echo "  one-shot entry point and there is no interactive-tmux wiring for it."
+          echo "  opencode only runs in headless mode: 'opencode run' is its one-shot entry point and"
+          echo "  there is no interactive-tmux wiring for it, so contribute-hive selects headless for it."
         else
           echo "ERROR: opencode CLI not found. Install: https://opencode.ai/docs/"
           exit 1
@@ -1406,6 +1406,16 @@ contribute-hive backend="" mode="docker": check-version
           # launch line before the binary (PERM_ENV below), never after it.
           PERM_ENV=$(opencode_local_perm_env_shell)
           PERM_FLAG=$(opencode_local_perm_flag_shell)
+          # opencode runs headless only: the relay has no pane classifier for
+          # it, so an interactive tmux launch never reads as ready and no task
+          # is ever sent. Headless, the relay starts `opencode run --auto` per
+          # task with its own environment, so the deny-list is exported into
+          # that environment (PERM_ENV is shell-quoted by
+          # opencode_local_perm_env_shell, so eval restores the raw JSON).
+          export CONTRIBUTOR_MODE=headless
+          if [[ -n "$PERM_ENV" ]]; then
+            eval "export $PERM_ENV"
+          fi
           ;;
         muse)
           # muse has a real OS sandbox of its own (bubblewrap/seccomp on
@@ -1609,7 +1619,9 @@ contribute-hive backend="" mode="docker": check-version
       knowledge_export_sync_start "$HIVE_AGENT_MD"
       link_backend_knowledge "$BACKEND" "$HIVE_AGENT_MD" "$HIVE_AGENT_CWD"
 
-      if [[ "$BACKEND" != "cline" ]]; then
+      # Headless backends (cline, opencode, or CONTRIBUTOR_MODE=headless) get no
+      # pane: the relay runs one CLI process per task and never reads tmux.
+      if [[ "$BACKEND" != "cline" && "${CONTRIBUTOR_MODE:-}" != "headless" ]]; then
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$HIVE_WORKSPACE_DIR"
       tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && $AGENT_LAUNCH_CMD" Enter

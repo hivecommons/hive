@@ -101,7 +101,9 @@ source "${SCRIPT_DIR}/lib/knowledge-export.sh"
 # TTY — suitable for an unattended / future Kubernetes contributor (#2549).
 # Only the two literals are accepted; anything else falls back to interactive.
 CONTRIBUTOR_MODE="${CONTRIBUTOR_MODE:-interactive}"
-if [[ "${AGENT_BACKEND:-}" == "cline" ]]; then CONTRIBUTOR_MODE="headless"; fi
+# cline and opencode run headless only: the relay has no pane classifier for
+# them (HEADLESS_ONLY_BACKENDS in contributor-relay.js).
+if [[ "${AGENT_BACKEND:-}" == "cline" || "${AGENT_BACKEND:-}" == "opencode" ]]; then CONTRIBUTOR_MODE="headless"; fi
 if [[ "$CONTRIBUTOR_MODE" != "headless" ]]; then
   CONTRIBUTOR_MODE="interactive"
 fi

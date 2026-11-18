@@ -437,6 +437,21 @@ test('Cline routes both relay modes through the bounded canonical adapter withou
   } finally { teardown(relay); }
 });
 
+test('opencode runs headless whatever CONTRIBUTOR_MODE says: the relay has no pane classifier for it', () => {
+  // An opencode contributor in local mode sat at "CLI is not ready yet —
+  // withholding ready" in front of an idle opencode prompt: the interactive
+  // path waits for a prompt classifyPane() cannot recognise for opencode.
+  const relay = loadRelay({ backend: 'opencode', backendPerm: '--auto', mode: 'interactive', model: 'opencode/test-model' });
+  try {
+    assert.strictEqual(relay.CONTRIBUTOR_MODE, relay.MODE_HEADLESS);
+    assert.strictEqual(relay.headlessSupportsBackend(), true);
+    const built = relay.buildHeadlessArgv('fix the thing');
+    assert.strictEqual(built.args[built.args.length - 1], 'fix the thing');
+    assert(built.args.includes('run'), `opencode one-shot argv has no run: ${JSON.stringify(built.args)}`);
+    assert(built.args.includes('--auto'), `opencode one-shot argv has no --auto: ${JSON.stringify(built.args)}`);
+  } finally { teardown(relay); }
+});
+
 test('Cline stdin EPIPE is a bounded task failure, not an uncaught relay error', () => {
   const relay = loadRelay({ backend: 'cline', mode: 'headless', model: 'openrouter/test', execFileResult: { defer: true } });
   try {
