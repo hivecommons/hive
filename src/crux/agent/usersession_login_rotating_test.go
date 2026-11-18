@@ -262,6 +262,53 @@ func TestSessionRefresh_CodexAndOpenCodeNeverLeaveTheSharedLoginStale(t *testing
 	}
 }
 
+// The shared login stays the single owner of the refresh token (#18740): an
+// adoption moves the session's login INTO the shared file and never writes
+// the session's own copy, so after it exactly one file the hive manages
+// holds the refreshed token as its authority, and a later agent refresh of
+// the shared file is not undone by the session's older copy.
+func TestSessionRefresh_AdoptionNeverWritesTheSessionCopy(t *testing.T) {
+	for vendor, v := range rotatingTestVendors() {
+		t.Run(vendor, func(t *testing.T) {
+			f := newSessionLoginFixture(t)
+			now := time.Now()
+			target := filepath.Join(sharedAgentHome, v.rel)
+			writeLoginAt(t, target, v.login("shared", now.Add(-2*time.Hour)), now.Add(-time.Hour))
+			f.start(t)
+			path := filepath.Join(userSessionHome(testSessionID), v.rel)
+			writeLoginAt(t, path, v.login("rotated", now.Add(8*time.Hour)), now)
+			sessBefore := mustRead(t, path)
+			infoBefore, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			f.m.syncUserSessionClaudeLogins(sessionLoginTriggerWatchdog)
+			if len(f.adoptionsOf(vendor)) != 1 {
+				t.Fatal("the session's refreshed login was not adopted")
+			}
+			infoAfter, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(mustRead(t, path), sessBefore) || !infoAfter.ModTime().Equal(infoBefore.ModTime()) {
+				t.Error("an adoption wrote the session's own copy")
+			}
+
+			// An agent refreshes the shared login afterwards: the session's
+			// older copy must not take it back.
+			agent := v.login("agent", now.Add(16*time.Hour))
+			writeLoginAt(t, target, agent, now.Add(time.Minute))
+			f.m.syncUserSessionClaudeLogins(sessionLoginTriggerSignIn)
+			f.r.copyLoginFiles(testSessionID, testSessionUID)
+			if !bytes.Equal(mustRead(t, target), agent) || len(f.adoptionsOf(vendor)) != 1 {
+				t.Error("the session's older copy displaced the agents' newer shared login")
+			}
+			f.assertNoTokenMaterial(t)
+		})
+	}
+}
+
 // A session start or resume adopts first, so the shared file the copy is
 // then compared with is already the newer login.
 func TestUserSessionStart_AdoptsANewerCodexLogin(t *testing.T) {
