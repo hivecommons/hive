@@ -12,7 +12,10 @@ import (
 
 // Options parameterise one export.
 type Options struct {
-	HiveID      string
+	HiveID string
+	// HiveHash is an already-computed HiveHash(hive id), for offline callers
+	// that only know the published hash. It wins over HiveID when set.
+	HiveHash    string
 	HiveVersion string
 	Cluster     string
 	// Since drops PRs whose newest record is not strictly newer than it (the
@@ -76,6 +79,9 @@ func Convert(bundles []*evidence.Bundle, opts Options) []Record {
 	}
 	now = now.UTC()
 	hash := HiveHash(opts.HiveID)
+	if h := strings.ToLower(strings.TrimSpace(opts.HiveHash)); h != "" {
+		hash = h
+	}
 	version := strings.TrimSpace(opts.HiveVersion)
 	if version == "" {
 		version = kindUnknown
