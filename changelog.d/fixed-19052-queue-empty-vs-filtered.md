@@ -1,0 +1,1 @@
+- Send `queue_empty` instead of `no_matching_work` when the contribute queue has no actionable work, and add a `filtered` per-filter count to `no_matching_work` when work existed but every item was dropped (#19052).

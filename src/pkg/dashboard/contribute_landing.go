@@ -5299,7 +5299,7 @@ function knowledgeLine(c){
 // raw reason as a fallback so a new server-side reason still renders legibly.
 function idleReasonLabel(r){
   var m={contribution_suspended:'contribution suspended',hub_not_ready:'hub not ready',
-    no_matching_work:'no matching work',token_mint_failed:'token mint failed',
+    no_matching_work:'no matching work',queue_empty:'queue empty',token_mint_failed:'token mint failed',
     tier_disabled:'tier disabled',concurrency_limit:'concurrency limit'};
   return m[r]||String(r).replace(/_/g,' ');
 }
