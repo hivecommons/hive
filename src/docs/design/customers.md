@@ -618,7 +618,8 @@ On a live hive:
 
 - Should a hub send a spoke the email and linked GitHub login it already holds
   for its users? It fills most blanks at once, but it is a hub change and a
-  consent question.
+  consent question. Decided in [customers-hub-consent.md](customers-hub-consent.md):
+  only on the person's per-hive consent, only values they entered, off by default.
 - Does `/data/customers` belong in backups? That moves personal data off the
   hive's volume.
 - Is the four-value satisfaction ordinal enough, or is a value above
