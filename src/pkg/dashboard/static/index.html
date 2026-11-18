@@ -66468,8 +66468,8 @@ function burnAreaChart() {
       return `
         <div class="card-inset mt-5">
           <div class="settings-subsection-title">Mid-task advisor for sidecar runtimes</div>
-          ${toggle('sa-enabled', 'Serve the mid-task knowledge advisor to a sidecar runtime', 'knowledge.sidecar_advise', d.sidecar_advise, 'off by default; with it off a sidecar runtime gets no advisor.', true, 'Lets a sidecar-mode runtime ask this hive for mid-task knowledge hints over the callback endpoint. Needs knowledge.advisor, which stays in hive.yaml. The hive runs the same advisor it runs in-process and sends no model settings or credentials to the runtime. Off unless turned on.')}
-          ${advisorOn ? '' : '<div class="config-help">knowledge.advisor is off in hive.yaml, so this has no effect until it is on.</div>'}
+          ${toggle('sa-enabled', 'Serve the mid-task knowledge advisor to a sidecar runtime', 'knowledge.sidecar_advise', d.sidecar_advise, 'off by default; with it off a sidecar runtime gets no advisor.', true, 'Lets a sidecar-mode runtime ask this hive for mid-task knowledge hints over the callback endpoint. Needs the mid-task advisor, which is switched on in hive.yaml. The hive runs the same advisor it runs in-process and sends no model settings or credentials to the runtime. Off unless turned on.')}
+          ${advisorOn ? '' : '<div class="config-help">The mid-task advisor is off in hive.yaml, so this has no effect until it is on.</div>'}
         </div>
         <div class="card-inset mt-5">
           <div class="settings-subsection-title">Bead synthesizer</div>
