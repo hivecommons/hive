@@ -438,6 +438,13 @@ type StageTrackerItem struct {
 	// HumanAttention is the current item's actionable human requirement,
 	// separate from an actor/claimant icon or optional delegation action.
 	HumanAttention *StageTrackerHumanAttention `json:"human_attention,omitempty"`
+	// NeedsHumanWhy names the kind of wait and its one-line reason on every
+	// row a person must move (filed-for-help, decision-pending, level-gate,
+	// hive-hold, needs-approval, triage, author, needs-human); NeedsHuman is
+	// true whenever it is set. FiledForHelp is the agent named by the
+	// issue body's filed-for-help marker.
+	NeedsHumanWhy *StageTrackerNeedsHumanWhy `json:"needs_human_why,omitempty"`
+	FiledForHelp  string                     `json:"filed_for_help,omitempty"`
 	// OnHold is true when the item wears a hold pill: paused on purpose,
 	// waiting on nobody.
 	OnHold bool `json:"on_hold,omitempty"`

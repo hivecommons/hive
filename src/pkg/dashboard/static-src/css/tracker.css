@@ -509,6 +509,12 @@
        work — muted, never stale-tinted, read then close. */
     .ham-seg.active.ham-open-advisory { background: var(--surface-2); color: var(--muted); }
     .ham-seg.active.ham-open-advisory .ham-seg-t::before { content: 'ⓘ'; margin-right: var(--sp-1); }
+    /* Needs human (an Open issue only a person can move, such as one an agent
+       filed for outside help): calm attention tint, not red, and the later
+       stages are not applicable rather than a stalled strip. */
+    .ham-seg.active.ham-open-needs-human { background: color-mix(in srgb, var(--status-attention) 22%, var(--surface-2)); color: var(--text); }
+    .ham-seg.active.ham-open-needs-human .ham-seg-t::before { content: '\1F64B'; margin-right: var(--sp-1); }
+    .ham-seg.ham-na { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.35; }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
     /* While a CI / Review track runs, the stage chevron is settled-current:
        the neutral still location, icon only (rule 2, hivecommons/hive#16643).

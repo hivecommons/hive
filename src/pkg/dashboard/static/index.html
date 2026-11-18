@@ -1881,6 +1881,12 @@
        work — muted, never stale-tinted, read then close. */
     .ham-seg.active.ham-open-advisory { background: var(--surface-2); color: var(--muted); }
     .ham-seg.active.ham-open-advisory .ham-seg-t::before { content: 'ⓘ'; margin-right: var(--sp-1); }
+    /* Needs human (an Open issue only a person can move, such as one an agent
+       filed for outside help): calm attention tint, not red, and the later
+       stages are not applicable rather than a stalled strip. */
+    .ham-seg.active.ham-open-needs-human { background: color-mix(in srgb, var(--status-attention) 22%, var(--surface-2)); color: var(--text); }
+    .ham-seg.active.ham-open-needs-human .ham-seg-t::before { content: '\1F64B'; margin-right: var(--sp-1); }
+    .ham-seg.ham-na { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.35; }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
     /* While a CI / Review track runs, the stage chevron is settled-current:
        the neutral still location, icon only (rule 2, hivecommons/hive#16643).
@@ -17893,7 +17899,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_NEEDS_HUMAN_STAGES = [15, 45, 85, 90];
     const STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES = [71, 72];
     const STAGE_TRACKER_NEEDS_HUMAN_MODS = ['needs-human', 'needs-decision', 'unauthorized'];
-    const STAGE_TRACKER_NEEDS_HUMAN_TIP = 'Only a person can move these: triage needed, needs decision, human author must act, human merge, or a needs-human / hive-bot-lacks-permission pill';
+    const STAGE_TRACKER_NEEDS_HUMAN_TIP = 'Only a person can move these: triage needed, needs decision, human author must act, human merge, a needs-human / hive-bot-lacks-permission pill, an issue filed for outside help, or a PR held for a maintainer by a hive gate';
     const STAGE_TRACKER_ON_HOLD_TIP = 'Paused on purpose with a hold label — waiting on nobody; remove the hold to resume';
     // Label families a chip row is built from, in display order; other
     // labels follow when at least two items carry them.
@@ -17950,6 +17956,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (mods.indexOf('regressed') >= 0 && !stageTrackerRegressionHandled(item)) return 'Sent back';
       // Advisory (hivecommons/hive#15381): the chip is the headline.
       if (n === 0 && item.kind !== 'pr' && item.advisory && typeof item.advisory === 'object') return item.advisory.chip || 'Advisory · read & close';
+      // One state for a row a person must move (filed for help, gated by the hive).
+      if (typeof stageTrackerOpenNeedsHuman === 'function' && stageTrackerOpenNeedsHuman(item)) return STAGE_TRACKER_NEEDS_HUMAN_WORD + ' · ' + String(item.needs_human_why.reason || '').trim();
       if (n === 0 && mods.indexOf('hold') >= 0) return 'Open · on hold' + (holdLabels.length ? ' (' + holdLabels.join(', ') + ')' : '');
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
@@ -19253,20 +19261,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (state === 'active' && !detour && n > 0 && n < 80 && item.rebase && item.rebase.text && !(typeof stageTrackerTrain === 'function' && stageTrackerTrain(item))) word = String(item.rebase.text);
         if (state === 'active' && n === 30 && code && code.state === 'fixing') word = codeCaption;
         const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-        const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;
+        // An issue a person must move (filed for help, held by a hive gate)
+        // reads "Needs human" in the Open column and shows the later stages
+        // as not applicable, never as a stalled strip.
+        const openNeedsHuman = n === 0 && state === 'active' && !detour && typeof stageTrackerOpenNeedsHuman === 'function' && stageTrackerOpenNeedsHuman(item);
+        const openHold = n === 0 && state === 'active' && !openNeedsHuman && mods.indexOf('hold') >= 0;
         // hold is a human instruction, so it wins over blocked when both are present.
-        const openBlocked = n === 0 && state === 'active' && !openHold && mods.indexOf('blocked') >= 0;
+        const openBlocked = n === 0 && state === 'active' && !openNeedsHuman && !openHold && mods.indexOf('blocked') >= 0;
         // A draft PR with no stage is the author's, not the hive's: the
         // Open word says so, muted, and it never tints stale (#14572).
-        const openDraft = n === 0 && state === 'active' && !openHold && !openBlocked && mods.indexOf('draft') >= 0;
+        const openDraft = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && mods.indexOf('draft') >= 0;
         // 000-new: the payload says nothing has placed the item yet and
         // names who moves it next (hivecommons/hive#15094).
-        const openNew = n === 0 && state === 'active' && !openHold && !openBlocked && !openDraft && typeof stageTrackerNewState === 'function' && !!stageTrackerNewState(item);
-        const advisory = n === 0 && state === 'active' && !openHold && !openBlocked && typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
+        const openNew = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && !openDraft && typeof stageTrackerNewState === 'function' && !!stageTrackerNewState(item);
+        const advisory = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
         // An issue waiting on a maintainer's triage says so in the column
         // (hivecommons/hive#15437 read "New" while the caption held the ask).
-        const openTriage = n === 0 && state === 'active' && !openHold && !openBlocked && !openDraft && !advisory && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item);
-        if (openHold) word = 'Open · hold';
+        const openTriage = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && !openDraft && !advisory && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item);
+        if (openNeedsHuman) word = STAGE_TRACKER_NEEDS_HUMAN_WORD;
+        else if (openHold) word = 'Open · hold';
         else if (openBlocked) word = 'Open · blocked';
         else if (advisory) word = advisory.chip || 'Advisory · read & close';
         else if (openDraft) word = 'Draft';
@@ -19279,14 +19292,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         let openSince = null;
         if (n === 0 && state === 'active' && !openHold && !advisory && !detour && nowMs) {
           const os = stageTrackerOpenSince(item);
-          if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: !openDraft && nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
+          if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: !openDraft && !openNeedsHuman && nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
         }
         // An issue parked on a blocker whose strip a human's covering PR
         // drives (via_pr): the issue's own column keeps the blocker in
         // view — "Blocked · App lacks workflows permission 👤" — rather
         // than reading as a passed step (hivecommons/docs#612 under #620).
         const blockerNote = state === 'done' && n === STAGE_TRACKER_ISSUE_DECISION_COLUMN && item.via_pr && item.kind === 'issue' && item.blocker && typeof stageTrackerBlockerWord === 'function' && (item.needs_human === true || (typeof stageTrackerItemNeedsHuman === 'function' && stageTrackerItemNeedsHuman(item))) ? stageTrackerBlockerWord(item) : '';
-        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, blockerNote, label: (typeof stageTrackerStageName === 'function' && (stageTrackerStageName(tipStage) || stageTrackerStageName(st))) || tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, draft: openDraft, isNew: openNew && !advisory, advisory: !!advisory, openSince };
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, blockerNote, label: (typeof stageTrackerStageName === 'function' && (stageTrackerStageName(tipStage) || stageTrackerStageName(st))) || tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, needsHuman: openNeedsHuman, na: n > 0 && anchor === 0 && !terminal && typeof stageTrackerOpenNeedsHuman === 'function' && stageTrackerOpenNeedsHuman(item), blocked: openBlocked, draft: openDraft, isNew: openNew && !advisory, advisory: !!advisory, openSince };
       });
       segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
       return segs;
@@ -19516,6 +19529,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // the issue is a note for maintainers, not work — the chevron word is
     // its chip, it never reads stale or "since Nh", and the row action is
     // Close (read). Pure so the fixture tests can lift it by name.
+    // Needs human (one state for "blocked on a person, not on an agent"):
+    // the payload's needs_human_why block names the kind of wait and its
+    // one-line reason. An Open issue with one reads "Needs human" in the
+    // Open column; its later stages are not applicable until a person acts.
+    function stageTrackerNeedsHumanWhyOf(item) {
+      if (!item || item.advisory || !item.needs_human_why || typeof item.needs_human_why !== 'object') return null;
+      return item.needs_human_why;
+    }
+    function stageTrackerOpenNeedsHuman(item) {
+      if (!item || item.kind === 'pr' || (Number(item.stage) || 0) !== 0) return false;
+      return !!stageTrackerNeedsHumanWhyOf(item);
+    }
     function stageTrackerAdvisoryOf(item) {
       if (!item || item.kind === 'pr' || !item.advisory || typeof item.advisory !== 'object') return null;
       return item.advisory;
@@ -20295,7 +20320,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const gateHere = sg.state === 'active' && !sg.cap && !(ctx && ctx.gateElsewhere) && typeof stageTrackerHumanGateReasons === 'function' && stageTrackerHumanGateReasons(item).length > 0;
         const fixPushed = sg.number === 30 && sg.state === 'done' && remediation === 'fix_pushed';
         const blockerNote = sg.state === 'done' && sg.blockerNote ? String(sg.blockerNote) : '';
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', gateHere ? 'ham-human-gated' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.needsHuman ? 'ham-open-needs-human' : '', sg.na ? 'ham-na' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', gateHere ? 'ham-human-gated' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         let gateCaption = '';
@@ -20304,6 +20329,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
           if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
           if (sg.isNew && typeof stageTrackerNewLines === 'function') tip = (typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item) ? 'Triage needed — ' : 'New — ') + stageTrackerNewLines(item, nowMs).join(' — ');
+          if (sg.needsHuman) tip = STAGE_TRACKER_NEEDS_HUMAN_WORD + ': ' + String((item.needs_human_why && item.needs_human_why.reason) || '').trim() + '. Later stages are not applicable until a person acts.';
           if (sg.advisory) tip = (item.advisory && item.advisory.caption) || 'Advisory for maintainers · read, then close';
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
@@ -20342,6 +20368,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (waitingOnTracks && !sg.cap) tip = (tracksRunning === 2 ? 'Waiting on CI and review, both running' : 'Waiting on ' + (stageTrackerTrackRunning(item, 'ci') ? 'CI' : 'review') + ', running') + ' — ' + tip;
         }
         let inner;
+        const naTip = sg.na && !sg.cap ? 'Not applicable: waiting on a person (' + String((item.needs_human_why && item.needs_human_why.reason) || STAGE_TRACKER_NEEDS_HUMAN_WORD).trim() + ')' : '';
         // A lit chevron on a row parked on a person ("Needs human decision",
         // "Triage needed") is the trigger of the decision popover: the word
         // becomes a button and the chevron drops its native title so the
@@ -20406,7 +20433,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const noteTip = [blockerNote, b.detail, item.human_attention && item.human_attention.reason].filter(Boolean).join(' — ');
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(noteTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span class="ham-chevron-copy"><span class="ham-seg-t">${esc(blockerNote)}</span></span>${stageTrackerIcon('human', 'ham-ico ham-actor-ico', 'Next move: human')}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(noteTip)}</span></span>`;
-        } else inner = stageTrackerIcon(sg.number, 'ham-ico');
+        } else if (naTip) inner = `<span class="ham-chevron-info" title="${esc(naTip)}" aria-label="${esc(naTip)}">${stageTrackerIcon(sg.number, 'ham-ico')}</span>`;
+        else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}>${inner}</li>`;
       }).join('');
     }
@@ -21241,10 +21269,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Only the finished server snapshot supplies human_attention; its identity
     // must still match the PR this row actually represents.
     function stageTrackerHumanAttentionOf(item) {
-      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
+      if (!item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
         || item.superseded_by || item.adopted_by) return null;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged')) return null;
+      if (mods.some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged')) return null;
       const a = item.human_attention;
       if (!a || a.kind !== item.kind || Number(a.number) !== Number(item.number)) return null;
       if (a.kind === 'pr' && String(a.head || '') !== String(item.head || '')) return null;
@@ -21257,10 +21285,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // so the note line reads the same either way. null when the row is not
     // parked on a person, or when human_attention already says it.
     function stageTrackerNeedsHumanAsk(item) {
-      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
+      if (!item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
         || item.superseded_by || item.adopted_by) return null;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged')) return null;
+      if (mods.some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged')) return null;
       if (stageTrackerHumanAttentionOf(item)) return null;
       const n = Number(item.stage) || 0;
       const flagged = item.needs_human === true || mods.indexOf('needs-human') >= 0 || mods.indexOf('needs-decision') >= 0
@@ -21328,8 +21356,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return parts.join(' · ');
     }
     function stageTrackerHumanRequirementText(item, subRows) {
-      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL || item.superseded_by || item.adopted_by ||
-        (item.modifiers || []).some(m => m === 'draft' || m === 'hold' || m === 'merged')) return '';
+      if (!item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL || item.superseded_by || item.adopted_by ||
+        (item.modifiers || []).some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged')) return '';
       const human = stageTrackerHumanAttentionLine(item, subRows);
       const d = item && item.decided;
       const review = d && d.current_blocker && String(d.head || '') === String(item.head || '')
@@ -21404,7 +21432,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const view = href ? 'View ' + (it.kind === 'pr' ? 'PR' : 'issue') + ' #' + Number(it.number) : '';
         return entry(esc(e.text) + (view ? ` <a href="${esc(href)}" target="_blank" rel="noopener">${view}</a>` : ''), e.text + (view ? ' · ' + view : ''));
       });
-      if (lines.length || !item || item.advisory || item.hold || item.state === 'closed') return lines;
+      if (lines.length || !item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed') return lines;
       const stale = item.human_attention && !stageTrackerHumanAttentionOf(item);
       const staleLinks = item.kind === 'issue' ? (item.linked_prs || []).filter(lp =>
         stageTrackerLinkedPROpen(lp, item) && lp.human_attention && !stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp))) : [];
@@ -21417,7 +21445,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (linked.length > 1 || item.kind === 'issue' && (item.linked_prs || []).some(lp =>
         stageTrackerLinkedPROpen(lp, item) && stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp)))) return [];
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged') || item.superseded_by) return [];
+      if (mods.some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged') || item.superseded_by) return [];
       const actor = item.stage_actor;
       const actorHuman = actor && (actor.kind === 'human' || actor.kind === 'maintainer');
       const claimant = item.claimant;
@@ -23122,7 +23150,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // cannot disagree. Stage/modifier based: labels alone (needs-signal,
     // hold, …) never qualify a row. A held row is paused, not waiting.
     function stageTrackerItemNeedsHuman(item) {
-      if (!item || item.advisory || stageTrackerItemOnHold(item)) return false;
+      if (!item || item.advisory) return false;
+      // The server names every wait on a person (filed for help, a hive
+      // gate, a decision, an approval) in needs_human_why; it outranks a
+      // hold the hive itself placed.
+      if (item.needs_human_why && typeof item.needs_human_why === 'object') return true;
+      if (stageTrackerItemOnHold(item)) return false;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       if (mods.some(m => STAGE_TRACKER_NEEDS_HUMAN_MODS.indexOf(m) >= 0)) return true;
       const n = Number(item.stage) || 0;
@@ -54155,6 +54188,28 @@ function burnAreaChart() {
         customersMorePill(ids.slice(CUSTOMERS_SOURCE_PILLS_SHOWN).map(label));
     }
 
+    // The optional descriptive fields of a profile, in display order.
+    const CUSTOMERS_PROFILE_FIELDS = [
+      { key: 'real_name', label: 'Real name', max: 120 },
+      { key: 'organization', label: 'Organization', max: 120 },
+      { key: 'location', label: 'Location or country', max: 120 }
+    ];
+
+    function customersProfileValue(p, key) {
+      const f = (p && p.profile && p.profile[key]) || {};
+      return typeof f.value === 'string' ? f.value : '';
+    }
+
+    // customersOrgPill: the organization as one small pill, with where it came
+    // from in its tooltip. Nothing is shown when there is none.
+    function customersOrgPill(p) {
+      const v = customersProfileValue(p, 'organization');
+      if (!v) return '';
+      const f = p.profile.organization;
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : 'From the public GitHub profile';
+      return '<span class="kc-pill customers-pill customers-org" data-source="' + (f.source === 'manual' ? 'manual' : 'auto') + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
+    }
+
     // customersOriginPill: where the person came from, in one short word.
     function customersOriginPill(p, updated) {
       const origin = p && p.origin;
@@ -54233,7 +54288,7 @@ function burnAreaChart() {
         rowChevronHtml('customersToggle', isMe ? 'me' : p.id, open, 'profile of ' + name, pid) +
         customersAvatarHtml(name, customersGithubLogin(p), '', '') +
         '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') +
-        customersSourcePills(p) + customersOriginPill(p, updated) + customersTagPills(p) + extra.join('') + pill + '</div>' +
+        customersSourcePills(p) + customersOriginPill(p, updated) + customersOrgPill(p) + customersTagPills(p) + extra.join('') + pill + '</div>' +
         (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') + '</div>' +
         (open ? '<div class="customers-profile" id="' + pid + '" role="region" aria-label="Profile of ' + escapeHtml(name) + '">' + customersProfileHtml(_customersOpen) + '</div>' : '') + '</div>';
     }
@@ -54428,6 +54483,24 @@ function burnAreaChart() {
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersSatisfactionReject">Reject</button></div>' : '') + '</div>';
     }
 
+    // customersDetailsHtml: real name, organization and location, compact.
+    // Each says whether GitHub or a person set it; a field set by hand has a
+    // button that hands it back to the automatic source. Everyone who can
+    // open the profile may edit these, a read-only user on their own.
+    function customersDetailsHtml(p) {
+      const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
+        const cur = (p.profile && p.profile[f.key]) || {};
+        const manual = cur.source === 'manual';
+        const mark = cur.value ? (manual ? 'set by hand' : 'from GitHub') : (manual ? 'cleared by hand' : 'not known');
+        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
+          '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
+      }).join('');
+      return '<div class="customers-block"><div class="section-label m-0">Details</div>' +
+        '<div class="customers-inline">' + rows + '</div>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>';
+    }
+
     function customersNotesHtml(p) {
       if (!customersIsFull()) return '';
       return '<div class="customers-block"><div class="section-label m-0">Notes</div>' +
@@ -54559,7 +54632,7 @@ function burnAreaChart() {
     function customersProfileHtml(p) {
       return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
         '<div class="hive-dialog-error" role="alert" data-customers-field="profile-error"></div>' +
-        customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
+        customersDetailsHtml(p) + customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
         customersActivityHtml(p) + customersGraphHtml(p) + customersMergeHtml(p) + customersNotesHtml(p) + customersForgetHtml(p);
     }
 
@@ -54761,7 +54834,8 @@ function burnAreaChart() {
         customersShow();
         if (p.hinted) showToast('That identity already belongs to another customer. Nothing was linked; it is now a "Same person?" question on both profiles.', 'warning');
         else if (done) showToast(done, 'success');
-      } catch (e) { customersProfileError(e.message); }
+        return true;
+      } catch (e) { customersProfileError(e.message); return false; }
     }
 
     async function customersAdd() {
@@ -54903,6 +54977,22 @@ function burnAreaChart() {
     function customersSatisfactionConfirm() { customersEdit({ op: 'satisfaction_confirm' }, 'Satisfaction confirmed'); }
 
     function customersSatisfactionReject() { customersEdit({ op: 'satisfaction_reject' }); }
+
+    // customersProfileSave saves the details that changed, one edit each.
+    async function customersProfileSave() {
+      if (!_customersOpen) return;
+      let saved = 0;
+      for (const f of CUSTOMERS_PROFILE_FIELDS) {
+        if (!_customersOpen) return;
+        const next = customersFieldValue('profile-' + f.key);
+        if (next === customersProfileValue(_customersOpen, f.key)) continue;
+        if (!(await customersEdit({ op: 'profile', field: f.key, value: next }))) return;
+        saved++;
+      }
+      if (saved) showToast('Details saved', 'success');
+    }
+
+    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
 
     function customersNotesSave() { customersEdit({ op: 'notes', notes: (customersField('notes') || {}).value || '' }, 'Notes saved'); }
 
