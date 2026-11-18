@@ -3610,7 +3610,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	if sup := wireMeetings(b.ctx, b.cfg, b.logger); sup != nil {
 		b.meetingsQuorum = sup
 		b.cleanup.push(sup.Stop)
-		if mgr, store := wireMeetingsManager(b.cfg, sup, b.logger); mgr != nil {
+		if mgr, store := wireMeetingsManager(b.cfg, sup, b.dashSrv.AuditLog, b.logger); mgr != nil {
 			b.meetingsMgr = mgr
 			b.cleanup.push(mgr.Close)
 			// Research intents go to the research agent pool (#18294).
