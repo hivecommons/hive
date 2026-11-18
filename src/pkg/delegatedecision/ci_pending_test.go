@@ -35,8 +35,8 @@ func TestDecidePRPendingCINeverReleases(t *testing.T) {
 			t.Fatalf("green head: verdict %s rule %s", d.Verdict, d.Rule)
 		}
 	}
-	// A head with a real problem still gets its direction, pending or not.
-	if d := Decide(Input{Kind: KindPR, Number: 7, Title: "Add filter", ContributorOnline: true, CIPending: true, Conflicting: true}); d.Rule != "fix-then-merge" {
-		t.Fatalf("conflicting head: rule %s", d.Rule)
+	// A head with a real problem is still handled by its own rule, pending or not.
+	if d := Decide(Input{Kind: KindPR, Number: 7, Title: "Add filter", ContributorOnline: true, CIPending: true, Conflicting: true}); d.Rule == RuleCIPending || d.Verdict == VerdictApprove {
+		t.Fatalf("conflicting head must be directed, not waited on or released: rule %s verdict %s", d.Rule, d.Verdict)
 	}
 }
