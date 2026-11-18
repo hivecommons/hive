@@ -393,6 +393,9 @@ type Engine struct {
 	workflowApprovalScans          map[string]time.Time
 	workflowApprovalUntrusted      map[string]bool
 	workflowApprovalWorkflowChecks map[string]okToTestWorkflowCheck
+	// prowRefusals is the repository-level memory that Prow refuses the
+	// App's /ok-to-test (automerge_prow_refusal_memory.go).
+	prowRefusals map[string]prowRefusalMemo
 	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
 	// terminal held/never-started hold so later ticks only count them.
 	terminalHoldsLogged map[string]bool

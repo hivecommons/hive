@@ -22,6 +22,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/oktotest"
 	"github.com/hivecommons/hive/pkg/review"
 	hreview "github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -117,6 +118,12 @@ type contributorLaneFixture struct {
 	// headStatuses is what GET commits/sha7/statuses (every commit status,
 	// with its creator) serves; nil serves an empty list.
 	headStatuses []map[string]any
+	// repoComments is what GET issues/comments (the repository-wide comment
+	// listing the Prow refusal memory reads) serves; repoCommentLists counts
+	// those reads. workflowInstalled serves the hive-ok-to-test workflow file.
+	repoComments      []map[string]any
+	repoCommentLists  int
+	workflowInstalled bool
 	// baseRef, when set, gives the PR base a branch name and serves the
 	// branch, protection and compare routes the current-base gate
 	// (automerge_current_base.go) and release hold need; empty leaves the
@@ -336,6 +343,19 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			json.NewEncoder(w).Encode(fx.issueComments)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments":
 			json.NewEncoder(w).Encode(fx.prComments)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/comments":
+			fx.repoCommentLists++
+			repoComments := fx.repoComments
+			if repoComments == nil {
+				repoComments = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(repoComments)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/contents/"+oktotest.WorkflowPath:
+			if !fx.workflowInstalled {
+				http.NotFound(w, r)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"type": "file", "name": "hive-ok-to-test.yml", "path": oktotest.WorkflowPath})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/files":
 			if fx.filesStatus != 0 {
 				http.Error(w, "files error", fx.filesStatus)
