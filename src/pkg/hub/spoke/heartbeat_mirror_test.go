@@ -381,6 +381,12 @@ func TestMirrorHeartbeat_SendsReducedCopyWithMirrorKey(t *testing.T) {
 		t.Errorf("mirror copy differs from the primary beat beyond the drop list and hive_id:\nprimary: %v\nmirror:  %v", p.body, m.body)
 	}
 
+	// The fake hub counts a hit before the spoke records the mirror result, so
+	// wait for the status to reflect the completed beat rather than racing it.
+	testutil.Eventually(t, mirrorTestWait, func() bool {
+		st, ok := MirrorHubStatusSnapshot()
+		return ok && st.LastOK != ""
+	}, "mirror success never recorded")
 	st, ok := MirrorHubStatusSnapshot()
 	if !ok {
 		t.Fatal("mirror status should be present when configured")
