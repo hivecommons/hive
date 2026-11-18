@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -149,6 +150,10 @@ type Client struct {
 	// needsSHALabelName is the configured SHA-hold label, recorded by each
 	// EnforceSHAHold sweep (guarded by issueFilterMu). Empty means the default.
 	needsSHALabelName string
+	// shaWaivers records who waived the SHA requirement per repo#number
+	// (hivecommons/hive#18866); guarded by shaWaiversMu.
+	shaWaiversMu sync.Mutex
+	shaWaivers   map[string]string
 	// reporterConfirmationEnabled restores the legacy close gate for all
 	// human-filed bug-family issues when configured. Nil/false means only
 	// per-issue opt-in markers activate the gate.
@@ -4764,6 +4769,11 @@ const NeedsSHALabelDescription = "Waiting on the reporter for the commit SHA; hi
 // name, or the default name), or "" when none. An issue wearing it is parked
 // on the reporter and kept out of agent work lanes.
 func (c *Client) needsSHALabelOn(labels []string) string {
+	// A maintainer's waiver (hivecommons/hive#18866) outranks a lingering
+	// needs-sha until the sweep removes it.
+	if labelPresent(labels, SHAWaivedLabel) {
+		return ""
+	}
 	c.issueFilterMu.RLock()
 	configured := c.needsSHALabelName
 	c.issueFilterMu.RUnlock()
@@ -4835,14 +4845,53 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 		}
 
 		author := safeGetLogin(issue.GetUser())
-		if author == cfg.AIAuthor || isInternalAuthor(author, cfg.InternalAuthors) {
-			result.Skipped++
-			continue
-		}
-
 		labels := extractLabels(issue.Labels)
 		held := c.isHeld(labels)
-		hasSHA := shaPattern.MatchString(issue.GetBody())
+
+		// Not every reporter owes a SHA (hivecommons/hive#18866): the hive's
+		// own accounts, the project's owners and maintainers, issues whose
+		// body already names concrete repo paths, and issues a maintainer
+		// waived are exempt. An exempt issue goes through the same lift path
+		// as one that gained a SHA, so a needs-sha applied before the
+		// exemption existed (or before the waiver) is released on this sweep.
+		exempt := author == cfg.AIAuthor || isInternalAuthor(author, cfg.InternalAuthors)
+		reason := shaExemptInternal
+		if !exempt {
+			reason = cfg.shaHoldExempt(issue.GetAuthorAssociation(), issue.GetBody(), labels)
+			exempt = reason != ""
+		}
+		if labelPresent(labels, SHAWaivedLabel) {
+			// Read the comments once per waiver, not on every sweep.
+			if !c.shaWaiverKnown(owner+"/"+repo, issue.GetNumber()) {
+				c.refreshSHAWaiver(ctx, owner, repo, issue.GetNumber())
+			}
+		} else {
+			c.RecordSHAWaiver(owner+"/"+repo, issue.GetNumber(), "")
+		}
+		hasSHA := exempt || shaPattern.MatchString(issue.GetBody())
+		if exempt && reason != shaExemptInternal {
+			c.logger.Debug("SHA-HOLD exempt", "repo", repo, "issue", issue.GetNumber(), "reason", reason)
+		}
+
+		if exempt {
+			// Lift the soft label whatever else is on the issue (a person's
+			// `hold` included), so a needs-sha applied before the exemption
+			// or the waiver existed is released on this sweep.
+			soft := cfg.shaHoldLabel()
+			softHeld := labelPresent(labels, soft)
+			if softHeld {
+				c.enforceSoftSHAHold(ctx, owner, repo, issue.GetNumber(), author, soft, labels, false, true, result)
+				labels = slices.DeleteFunc(slices.Clone(labels), func(l string) bool { return strings.EqualFold(strings.TrimSpace(l), strings.TrimSpace(soft)) })
+			}
+			// A `hold` the sweep itself applied before #18468 is still
+			// lifted by the path below; a person's hold is left alone there.
+			if !held {
+				if !softHeld {
+					result.Skipped++
+				}
+				continue
+			}
+		}
 
 		if !hasSHA {
 			hasSHA = c.checkCommentsForSHA(ctx, owner, repo, issue.GetNumber(), author)
