@@ -144,6 +144,7 @@ func TestHubV1Discovery(t *testing.T) {
 				"create":     "POST /api/hub/v1/registrations",
 				"list":       "GET /api/hub/v1/registrations",
 				"get":        "GET /api/hub/v1/registrations/{id}",
+				"update":     "PATCH /api/hub/v1/registrations/{id}",
 				"rotate_key": "POST /api/hub/v1/registrations/{id}/keys",
 				"delete":     "DELETE /api/hub/v1/registrations/{id}",
 			}
@@ -156,8 +157,11 @@ func TestHubV1Discovery(t *testing.T) {
 					t.Errorf("operation %s = %+v, want %s", name, op, route)
 				}
 			}
-			if len(d.PatchFields) != 0 {
-				t.Fatalf("patch_fields = %v, want none until update exists", d.PatchFields)
+			if !reflect.DeepEqual(d.PatchFields, []string{"repos", "dashboard_url"}) {
+				t.Fatalf("patch_fields = %v, want repos and dashboard_url (org is not editable)", d.PatchFields)
+			}
+			if got["update"].IfMatch != "required" {
+				t.Fatalf("update if_match = %q, want required", got["update"].IfMatch)
 			}
 			if got := rec.Header().Get("Content-Type"); got != "application/json" {
 				t.Fatalf("Content-Type = %q", got)
@@ -510,6 +514,7 @@ func TestHubV1FlagOffHidesEveryRoute(t *testing.T) {
 		{"create", http.MethodPost, path, env.s.handleHubV1Create},
 		{"list", http.MethodGet, path, env.s.handleHubV1List},
 		{"get", http.MethodGet, path + "/" + id, env.s.handleHubV1Get},
+		{"update", http.MethodPatch, path + "/" + id, env.s.handleHubV1Patch},
 		{"rotate", http.MethodPost, path + "/" + id + "/keys", env.s.handleHubV1RotateKey},
 		{"delete", http.MethodDelete, path + "/" + id, env.s.handleHubV1Delete},
 	}
@@ -539,6 +544,7 @@ func TestHubV1RoutesRequireSession(t *testing.T) {
 		{"create", http.MethodPost, path, env.s.handleHubV1Create},
 		{"list", http.MethodGet, path, env.s.handleHubV1List},
 		{"get", http.MethodGet, path + "/" + id, env.s.handleHubV1Get},
+		{"update", http.MethodPatch, path + "/" + id, env.s.handleHubV1Patch},
 		{"rotate", http.MethodPost, path + "/" + id + "/keys", env.s.handleHubV1RotateKey},
 		{"delete", http.MethodDelete, path + "/" + id, env.s.handleHubV1Delete},
 	}
