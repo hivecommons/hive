@@ -197,6 +197,28 @@
         customersMorePill(ids.slice(CUSTOMERS_SOURCE_PILLS_SHOWN).map(label));
     }
 
+    // The optional descriptive fields of a profile, in display order.
+    const CUSTOMERS_PROFILE_FIELDS = [
+      { key: 'real_name', label: 'Real name', max: 120 },
+      { key: 'organization', label: 'Organization', max: 120 },
+      { key: 'location', label: 'Location or country', max: 120 }
+    ];
+
+    function customersProfileValue(p, key) {
+      const f = (p && p.profile && p.profile[key]) || {};
+      return typeof f.value === 'string' ? f.value : '';
+    }
+
+    // customersOrgPill: the organization as one small pill, with where it came
+    // from in its tooltip. Nothing is shown when there is none.
+    function customersOrgPill(p) {
+      const v = customersProfileValue(p, 'organization');
+      if (!v) return '';
+      const f = p.profile.organization;
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : 'From the public GitHub profile';
+      return '<span class="kc-pill customers-pill customers-org" data-source="' + (f.source === 'manual' ? 'manual' : 'auto') + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
+    }
+
     // customersOriginPill: where the person came from, in one short word.
     function customersOriginPill(p, updated) {
       const origin = p && p.origin;
@@ -275,7 +297,7 @@
         rowChevronHtml('customersToggle', isMe ? 'me' : p.id, open, 'profile of ' + name, pid) +
         customersAvatarHtml(name, customersGithubLogin(p), '', '') +
         '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') +
-        customersSourcePills(p) + customersOriginPill(p, updated) + customersTagPills(p) + extra.join('') + pill + '</div>' +
+        customersSourcePills(p) + customersOriginPill(p, updated) + customersOrgPill(p) + customersTagPills(p) + extra.join('') + pill + '</div>' +
         (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') + '</div>' +
         (open ? '<div class="customers-profile" id="' + pid + '" role="region" aria-label="Profile of ' + escapeHtml(name) + '">' + customersProfileHtml(_customersOpen) + '</div>' : '') + '</div>';
     }
@@ -470,6 +492,24 @@
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersSatisfactionReject">Reject</button></div>' : '') + '</div>';
     }
 
+    // customersDetailsHtml: real name, organization and location, compact.
+    // Each says whether GitHub or a person set it; a field set by hand has a
+    // button that hands it back to the automatic source. Everyone who can
+    // open the profile may edit these, a read-only user on their own.
+    function customersDetailsHtml(p) {
+      const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
+        const cur = (p.profile && p.profile[f.key]) || {};
+        const manual = cur.source === 'manual';
+        const mark = cur.value ? (manual ? 'set by hand' : 'from GitHub') : (manual ? 'cleared by hand' : 'not known');
+        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
+          '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
+      }).join('');
+      return '<div class="customers-block"><div class="section-label m-0">Details</div>' +
+        '<div class="customers-inline">' + rows + '</div>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>';
+    }
+
     function customersNotesHtml(p) {
       if (!customersIsFull()) return '';
       return '<div class="customers-block"><div class="section-label m-0">Notes</div>' +
@@ -601,7 +641,7 @@
     function customersProfileHtml(p) {
       return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
         '<div class="hive-dialog-error" role="alert" data-customers-field="profile-error"></div>' +
-        customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
+        customersDetailsHtml(p) + customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
         customersActivityHtml(p) + customersGraphHtml(p) + customersMergeHtml(p) + customersNotesHtml(p) + customersForgetHtml(p);
     }
 
@@ -803,7 +843,8 @@
         customersShow();
         if (p.hinted) showToast('That identity already belongs to another customer. Nothing was linked; it is now a "Same person?" question on both profiles.', 'warning');
         else if (done) showToast(done, 'success');
-      } catch (e) { customersProfileError(e.message); }
+        return true;
+      } catch (e) { customersProfileError(e.message); return false; }
     }
 
     async function customersAdd() {
@@ -945,6 +986,22 @@
     function customersSatisfactionConfirm() { customersEdit({ op: 'satisfaction_confirm' }, 'Satisfaction confirmed'); }
 
     function customersSatisfactionReject() { customersEdit({ op: 'satisfaction_reject' }); }
+
+    // customersProfileSave saves the details that changed, one edit each.
+    async function customersProfileSave() {
+      if (!_customersOpen) return;
+      let saved = 0;
+      for (const f of CUSTOMERS_PROFILE_FIELDS) {
+        if (!_customersOpen) return;
+        const next = customersFieldValue('profile-' + f.key);
+        if (next === customersProfileValue(_customersOpen, f.key)) continue;
+        if (!(await customersEdit({ op: 'profile', field: f.key, value: next }))) return;
+        saved++;
+      }
+      if (saved) showToast('Details saved', 'success');
+    }
+
+    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
 
     function customersNotesSave() { customersEdit({ op: 'notes', notes: (customersField('notes') || {}).value || '' }, 'Notes saved'); }
 
