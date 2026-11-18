@@ -621,7 +621,12 @@ Phase 5 registers the fleet-level write operations under that contract:
   released; rejection discloses the re-gating and lease reset.
 - `governor.feature_settings` wraps `PUT /api/config/governor/features`, preserves the
   endpoint's pointer-field partial update contract, and calls out protective toggles such as
-  ioscan, claims, checkpoint gates, and autonomy automation before confirmation.
+  ioscan, claims, checkpoint gates, and autonomy automation before confirmation. It also takes
+  write-back containment's three unsolicited knobs (`writebackMinLevel`,
+  `writebackRequireLabels`, `writebackBackfill` for `writeback.unsolicited.*`), and discloses
+  turning backfill on and turning the opt-in label requirement off, since each lets the hive
+  write to more items it was not asked to touch, and any change to the level floor (which
+  raises per-kind floors, never lowers them; 0 restores the default).
 - `governor.general_settings` wraps `PUT /api/config/governor/general-advanced` (Settings →
   General: the eval interval, the loop pacing knobs, `governor.api_budget_pacing`, the default
   explain mode and the attribution trailer). It sends only the fields that differ from the

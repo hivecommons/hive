@@ -150,7 +150,7 @@ func (planRejectOp) Preview(_ context.Context, args map[string]any) (WritePrevie
 
 func (featureSettingsOp) Name() string { return WriteOpFeatureSettings }
 func (featureSettingsOp) Description() string {
-	return "Update governor feature settings through PUT /api/config/governor/features."
+	return "Update governor feature settings through PUT /api/config/governor/features. This includes write-back containment's unsolicited knobs (writeback.unsolicited: writebackMinLevel, writebackRequireLabels, writebackBackfill); the per-kind overrides have their own operation, writeback.kind_policy."
 }
 func (featureSettingsOp) InputSchema() map[string]any {
 	props := map[string]any{}
@@ -225,6 +225,18 @@ func featureDisclosure(args map[string]any) string {
 			warnings = append(warnings, key+" enables additional fleet behavior")
 		}
 	}
+	// Write-back containment (writeback.unsolicited, Settings → Features →
+	// Write-back containment): each of these lets the hive write to more
+	// PRs and issues it was not asked to touch.
+	if v, ok := args["writebackBackfill"].(bool); ok && v {
+		warnings = append(warnings, "writebackBackfill lets the hive write unsolicited to PRs and issues created before it first saw the repository")
+	}
+	if v, ok := args["writebackRequireLabels"].(bool); ok && !v {
+		warnings = append(warnings, "writebackRequireLabels off drops the review opt-in label requirement for unsolicited write-backs on other people's PRs")
+	}
+	if _, ok := args["writebackMinLevel"]; ok {
+		warnings = append(warnings, "writebackMinLevel changes the ACMM floor for unsolicited write-backs (it raises per-kind floors, never lowers them; 0 restores the default)")
+	}
 	if len(warnings) == 0 {
 		return "No obvious authority widening detected from the provided feature fields."
 	}
@@ -290,11 +302,11 @@ func featureFieldSet(schema map[string]any) map[string]bool {
 }
 
 func boolFeatureFields() []string {
-	return []string{"ioscanEnabled", "tracingEnabled", "otelEnabled", "retroEnabled", "mintEnabled", "planFromLabel", "formalEnabled", "personaLearningEnabled", "checkpointSpecEnabled", "checkpointPlanEnabled", "checkpointImplementEnabled", "planMatchEnabled", "spektacularEnabled", "spektacularHubExecutor", "runStages", "triageEnabled", "triageClarifyComment", "publicationEnabled", "extFlueEnabled", "extOmpEnabled", "wavefrontEnabled", "claimsEnabled", "autonomyAutoPromote", "autonomyAutoDemote", "rotationEnabled", "otelInsecure"}
+	return []string{"ioscanEnabled", "tracingEnabled", "otelEnabled", "retroEnabled", "mintEnabled", "planFromLabel", "formalEnabled", "personaLearningEnabled", "checkpointSpecEnabled", "checkpointPlanEnabled", "checkpointImplementEnabled", "planMatchEnabled", "spektacularEnabled", "spektacularHubExecutor", "runStages", "triageEnabled", "triageClarifyComment", "publicationEnabled", "extFlueEnabled", "extOmpEnabled", "wavefrontEnabled", "claimsEnabled", "autonomyAutoPromote", "autonomyAutoDemote", "rotationEnabled", "otelInsecure", "writebackRequireLabels", "writebackBackfill"}
 }
 
 func intFeatureFields() []string {
-	return []string{"runWaitTimeoutSeconds", "spektacularPollS", "spektacularHubExecutorTimeoutS", "spektacularHubExecutorMaxConcurrent", "maxStageRetries", "triageMinBodyChars", "claimsTtlS", "autonomyPromoteAfter", "autonomyMaxLevel", "autonomyCooldownDays", "rotationThresholdPct", "rotationHighVolumeCadenceS"}
+	return []string{"runWaitTimeoutSeconds", "spektacularPollS", "spektacularHubExecutorTimeoutS", "spektacularHubExecutorMaxConcurrent", "maxStageRetries", "triageMinBodyChars", "claimsTtlS", "autonomyPromoteAfter", "autonomyMaxLevel", "autonomyCooldownDays", "rotationThresholdPct", "rotationHighVolumeCadenceS", "writebackMinLevel"}
 }
 
 func stringFeatureFields() []string {
