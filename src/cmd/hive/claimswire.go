@@ -224,6 +224,12 @@ func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, clie
 			if req.Kind == claims.KindAgent {
 				return gh.IssueStartBlockReason(ctx, req.Repo, req.Issue, req.Holder)
 			}
+			// A contributor's fresh claim also waits out the owner grace on
+			// an issue an owner, maintainer or this hive filed moments ago
+			// (hivecommons/hive#18898).
+			if req.Kind == claims.KindContributor {
+				return gh.IssueContributorDispatchBlockReason(ctx, req.Repo, req.Issue)
+			}
 			return gh.IssueDispatchBlockReason(ctx, req.Repo, req.Issue)
 		}
 		return gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)

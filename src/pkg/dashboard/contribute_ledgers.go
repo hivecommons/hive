@@ -562,6 +562,20 @@ func issueUpdatedAtFromMap(issue map[string]any) time.Time {
 	return t
 }
 
+// issueCreatedAtFromMap reads the enumerated issue's creation time, zero when
+// absent or malformed.
+func issueCreatedAtFromMap(issue map[string]any) time.Time {
+	s, _ := issue["created_at"].(string)
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
 // failedTaskRecord is the on-disk shape of one failed-task entry (#2435). It
 // preserves the last-failure time and the running consecutive-failure count so a
 // hub restart does not reset a quarantine — otherwise a bounce would re-admit a
