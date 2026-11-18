@@ -31,6 +31,8 @@ type IssueEvent struct {
 	// verify-once gate (#10527) can tell the hive's own comments from a
 	// reporter or maintainer acting.
 	ActorIsBot bool
+	// Body is the comment text on a "commented" event.
+	Body string
 }
 
 // IssueTimelineSince returns the issue's timeline events that happened after
@@ -64,7 +66,7 @@ func issueEventFrom(t *gh.Timeline, since time.Time) (IssueEvent, bool) {
 	if t == nil || t.CreatedAt == nil || !t.CreatedAt.After(since) {
 		return IssueEvent{}, false
 	}
-	ev := IssueEvent{Event: t.GetEvent(), At: t.CreatedAt.Time, CommitID: t.GetCommitID()}
+	ev := IssueEvent{Event: t.GetEvent(), At: t.CreatedAt.Time, CommitID: t.GetCommitID(), Body: t.GetBody()}
 	if t.Label != nil {
 		ev.Label = t.Label.GetName()
 	}

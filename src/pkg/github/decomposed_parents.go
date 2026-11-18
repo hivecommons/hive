@@ -8,8 +8,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -351,6 +354,13 @@ func decomposedParentCloseComment(children []ChildRef, closers map[ChildRef]int)
 // gate refuses does not leave a "delivered" note every cycle.
 func (c *Client) closeDecomposedParent(ctx context.Context, in IssueStageInput, store *stagelabels.Store, key string, logger *slog.Logger) bool {
 	owner, name := c.splitRepo(in.Repo)
+	// Label/config exemptions cost no API call, so they run first.
+	if reason := parentAutoCloseExempt(c.parentAutoClosePolicy(in.Repo), in.Labels); reason != "" {
+		if logger != nil {
+			logger.Debug("issue stage labels: decomposed parent not auto-closed", "repo", in.Repo, "issue", in.Number, "reason", reason)
+		}
+		return false
+	}
 	children, open, ok, err := c.decomposedChildren(ctx, owner, name, in.Number)
 	if err != nil {
 		if logger != nil {
@@ -359,6 +369,14 @@ func (c *Client) closeDecomposedParent(ctx context.Context, in IssueStageInput, 
 		return false
 	}
 	if !ok || open > 0 {
+		return false
+	}
+	// Only now, with every child confirmed closed, spend a timeline read:
+	// a parent a person reopened after a hive auto-close stays open.
+	if by, kept := c.parentKeptOpenBy(ctx, owner, name, in.Number, logger); kept || by != "" {
+		if logger != nil {
+			logger.Info("issue stage labels: decomposed parent kept open, reopened by a person after a hive auto-close", "repo", in.Repo, "issue", in.Number, "reopened_by", by)
+		}
 		return false
 	}
 	closers := map[ChildRef]int{}
@@ -393,4 +411,95 @@ func (c *Client) closeDecomposedParent(ctx context.Context, in IssueStageInput, 
 		logger.Info("issue stage labels: decomposed parent closed, all children delivered", "repo", in.Repo, "issue", in.Number, "children", children, "closing_prs", closers)
 	}
 	return true
+}
+
+// parentAutoClosePolicy is the repo's configured parent auto-close policy.
+func (c *Client) parentAutoClosePolicy(repo string) string {
+	if p := c.issueStagePolicy(); p.ParentAutoClose != nil {
+		return p.ParentAutoClose(repo)
+	}
+	return config.ParentAutoCloseOn
+}
+
+// parentAutoCloseExempt returns why a parent must not be auto-closed from
+// its policy and labels alone, or "" when it may be (hivecommons/hive#18869).
+// "false" exempts every parent; unless the policy is "epics_too", an issue
+// labelled epic (any case) or hold is left for a person to close.
+func parentAutoCloseExempt(policy string, labels []string) string {
+	if policy == config.ParentAutoCloseOff {
+		return "repo parent_autoclose is false"
+	}
+	if policy == config.ParentAutoCloseEpicsToo {
+		return ""
+	}
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l), "epic") {
+			return "labelled epic"
+		}
+	}
+	if HasHoldLabel(labels) {
+		return "labelled hold"
+	}
+	return ""
+}
+
+// Reopen-verdict cache (hivecommons/hive#18869). A reopen by a person never
+// un-happens, so a "kept open" verdict is cached for the process lifetime
+// (a restart re-derives it from the timeline, which is the durable record);
+// a "no reopen" verdict is cached briefly so a parent whose close is refused
+// each cycle does not cost a timeline read per sweep.
+const parentReopenNegativeTTL = 30 * time.Minute
+
+type parentReopenVerdict struct {
+	by      string
+	checked time.Time
+}
+
+var (
+	parentReopenMu    sync.Mutex
+	parentReopenCache = map[string]parentReopenVerdict{}
+)
+
+// parentKeptOpenBy reports the login of a person who reopened the parent
+// after a hive auto-close. A timeline that cannot be read fails closed: the
+// returned login is "(unknown)" so the parent is not closed this cycle.
+func (c *Client) parentKeptOpenBy(ctx context.Context, owner, name string, number int, logger *slog.Logger) (string, bool) {
+	key := strings.ToLower(owner+"/"+name) + "#" + strconv.Itoa(number)
+	parentReopenMu.Lock()
+	v, ok := parentReopenCache[key]
+	parentReopenMu.Unlock()
+	if ok && (v.by != "" || time.Since(v.checked) < parentReopenNegativeTTL) {
+		return v.by, v.by != ""
+	}
+	events, err := c.IssueTimelineSince(ctx, owner+"/"+name, number, time.Time{})
+	if err != nil {
+		if logger != nil {
+			logger.Warn("issue stage labels: parent timeline unreadable, not closing", "repo", owner+"/"+name, "issue", number, "error", err)
+		}
+		return "(unknown)", true
+	}
+	by := reopenedByPersonAfterAutoClose(events)
+	parentReopenMu.Lock()
+	parentReopenCache[key] = parentReopenVerdict{by: by, checked: time.Now()}
+	parentReopenMu.Unlock()
+	return by, by != ""
+}
+
+// reopenedByPersonAfterAutoClose scans a timeline (oldest first) for a
+// `reopened` event by a non-bot actor that follows a hive auto-close: the
+// close comment carrying parentAutoCloseMarker, or a `closed` event by a
+// bot (the comment is best-effort and can be missing). Returns the reopener.
+func reopenedByPersonAfterAutoClose(events []IssueEvent) string {
+	autoClosed := false
+	for _, ev := range events {
+		switch {
+		case ev.Event == "commented" && ev.Body != "" && strings.Contains(ev.Body, parentAutoCloseMarker):
+			autoClosed = true
+		case ev.Event == "closed" && ev.ActorIsBot:
+			autoClosed = true
+		case ev.Event == "reopened" && autoClosed && !ev.ActorIsBot && ev.Actor != "":
+			return ev.Actor
+		}
+	}
+	return ""
 }
