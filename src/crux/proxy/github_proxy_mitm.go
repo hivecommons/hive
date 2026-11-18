@@ -201,8 +201,9 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			// loudly on writes: a write from an unknown caller means UID
 			// attribution failed, not that the agent lacks the mode.
 			if agentName == "" && writeMethods[req.Method] {
-				p.logger.Warn("proxy: agent could not be identified — defaulting to ADVISORY and blocking a write; UID attribution failed (check the uid map and /proc/net/tcp visibility), this is NOT an agent-mode misconfiguration",
-					"method", req.Method, "path", req.URL.Path)
+				reason, peerUID := p.unidentifiedReason(client.RemoteAddr().String())
+				p.logger.Warn("proxy: agent could not be identified — defaulting to ADVISORY and blocking a write; UID attribution failed (see reason), this is NOT an agent-mode misconfiguration",
+					"method", req.Method, "path", req.URL.Path, "reason", reason, "peer_uid", peerUID)
 			}
 			// A hard-deny rule (e.g. direct PR creation) carries an agent-facing
 			// directive explaining the sanctioned alternative — surface it so the

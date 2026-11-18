@@ -171,7 +171,7 @@ func TestSelfreportOpsClassesMatchFleetReport(t *testing.T) {
 		fleetreport.ClassGitHubAppTokenMintFailed, fleetreport.ClassGitHubAppNotInstalled, fleetreport.ClassGitHubAppRepoNotCovered,
 		fleetreport.ClassGitHubAppAlertsPermission, fleetreport.ClassGitHubAppStatusesPermission, fleetreport.ClassForgeUnreachable,
 		fleetreport.ClassProxyConnectDialFailed, fleetreport.ClassProxyPlainForwardFailed, fleetreport.ClassProxyTLSHandshakeFailed, fleetreport.ClassCruxRuntimeUnavailable,
-		fleetreport.ClassModelDiscoveryDegraded, fleetreport.ClassInferenceUpstreamError, fleetreport.ClassInferenceCallerUnknown,
+		fleetreport.ClassModelDiscoveryDegraded, fleetreport.ClassInferenceUpstreamError, fleetreport.ClassInferenceCallerUnknown, fleetreport.ClassProxyWriterUnidentified,
 		fleetreport.ClassLabelProvisioningFailed, fleetreport.ClassSharedCIRerunForbidden,
 	} {
 		known[c] = true

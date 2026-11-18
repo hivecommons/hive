@@ -87,6 +87,7 @@ const (
 	ClassInferenceUpstreamError      = "inference_upstream_error"
 	ClassInferenceCallerUnknown      = "inference_caller_unidentified"
 	ClassInferenceNoRoute            = "inference_no_route"
+	ClassProxyWriterUnidentified     = "proxy_writer_unidentified"
 	ClassInferenceBackendAuthFailure = "inference_backend_auth_failure"
 	ClassSHAPollCommitMsgUnavail     = "sha_poll_commit_message_unavailable"
 	ClassKickFreshnessWithheld       = "kick_freshness_withheld"
@@ -218,6 +219,7 @@ var Classes = map[string]ClassSpec{
 	ClassProxyPlainForwardFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward failed"}},
 	ClassProxyPlainForwardRefused:    {Component: "github-proxy", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward refused"}},
 	ClassInferenceCallerUnknown:      {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference request from unidentified caller refused"}},
+	ClassProxyWriterUnidentified:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: agent could not be identified"}},
 	ClassInferenceNoRoute:            {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference no route"}},
 	ClassInferenceBackendAuthFailure: {Component: "backend-auth", Severity: "high", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference backend auth failure"}},
 	ClassInferenceUpstreamError:      {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed", "inference translate request failed"}},
