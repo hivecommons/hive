@@ -2568,6 +2568,9 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		// (review.bot_author_full_review_paths); fetched only for a listed
 		// bot's PR that is about to be reviewed.
 		item.ChangedFiles, item.ChangedFilesKnown = reviewBotRouteFilesFor(ctx, cfg, ghr, botRoute, artifact, state, fullRepo, pr.Number, pr.Author, pr.HeadSHA, pr.BodyDigest)
+		// Repository rules and dependency preflight (hivecommons/hive#19069),
+		// gathered once per head for a PR about to be reviewed.
+		item.PreflightSection = reviewPreflightFor(ctx, cfg, ghr, artifact, state, fullRepo, pr, logger)
 		prs = append(prs, item)
 	}
 	// PRs a review webhook just fired for go first, so the early eval cycle
