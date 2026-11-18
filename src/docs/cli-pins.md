@@ -122,6 +122,19 @@ A pin change can leave Hive's model lists behind. Two layers cover it:
   the price refresh). Everything else is listed under "needs a check" in one
   PR on `bot/claude-model-freshness`, which carries `needs-human`.
 
+- agy and omp are not refreshed automatically (#19037, part of #19028). Their
+  runtime probes bound the list on a running hive, so neither needs an
+  allowlist, but their static floors (`agyStaticModels`, `ompStaticModels`
+  and the `AGY_CLI_MODELS` / `OMP_CLI_MODELS` mirrors) need a login to read
+  from the pinned binary. Checked on agy 1.5.0 and omp 18.22.0 with an empty
+  `HOME`: `agy models` exits 1 with "Please sign in to view available
+  models", and `omp models --json` prints `{"models":[]}`. A weekly job
+  therefore cannot capture either list, and guessing one is worse than a
+  stale floor. Both stay a manual capture: run the probe on a signed-in
+  hive, copy the CLI's own order into the Go list and the JS mirror, and
+  update the "Snapshot from agy X" comments to the pin. Re-check after each
+  pin bump in case a release starts answering without a login.
+
 The PR then runs the normal gates. The docker workflow builds both images for
 linux/amd64 and linux/arm64, where every hash-verified layer runs
 `sha256sum -c` / `sha512sum -c`; the [backend smoke](backend-smoke.md)'s
