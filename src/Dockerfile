@@ -349,9 +349,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     chmod +x /usr/local/bin/ttyd
 
 # --- Layer 2b: GitHub CLI (off-PATH — only snapshot publisher uses it) ---
-ARG GH_VERSION=2.104.0
-ARG GH_SHA256_AMD64=98cb101ad87dbbd3f6b2f2bfcbd43197ccd07643140121d8a9cfaa91eadbc24e
-ARG GH_SHA256_ARM64=cb34cefc6f4e77b90731374a2b737516bb8f3033c6ca46aa949e5344f68069e3
+ARG GH_VERSION=2.105.0
+ARG GH_SHA256_AMD64=79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f
+ARG GH_SHA256_ARM64=b1278c75107423d818f1937fd92cafc9e5e9b606631568f68d7fb816f5885a02
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GH_ARCH=amd64; GH_SHA256="$GH_SHA256_AMD64" ;; \
