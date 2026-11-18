@@ -78,6 +78,12 @@ func withEvidenceRoot(t *testing.T) string {
 
 func evidenceTestClient(t *testing.T, f *evidencePRFixture, settings *ReviewEvidenceSettings) *Client {
 	t.Helper()
+	// The shared REST 404 negative cache is keyed by host:port and PR, and
+	// lives for 30 minutes. A 404 for o/r#7 cached by an earlier test whose
+	// httptest server held the same port would answer this test's PR GET with
+	// a cached 404, so the bundle is never started. Give each client a private
+	// cache so the outcome does not depend on which ports earlier tests drew.
+	t.Cleanup(resetREST404NegativeCacheForTest(time.Now, defaultPullRequest404TTL, defaultPullRequest404TTL))
 	c := newTestClient(t, newEvidencePRServer(t, f), "o", []string{"o/r"})
 	if settings != nil {
 		s := *settings
