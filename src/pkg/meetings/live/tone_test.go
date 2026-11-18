@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/betty"
 )
@@ -34,14 +35,15 @@ func (t *tonerMeetings) count() int {
 
 func (t *tonerMeetings) eventually(tb testing.TB, want int) {
 	tb.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if t.count() == want {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+	testutil.Eventually(tb, 5*time.Second, func() bool { return t.count() == want }, "%d tone(s), have %d", want, t.count())
+}
+
+// refused asserts the tone is not allowed now, and why.
+func refused(t *testing.T, s *session, asker, why string) {
+	t.Helper()
+	if ok, got := s.toneAllowed(asker); ok || got != why {
+		t.Fatalf("toneAllowed(%q) = %v, %q; want refused: %q", asker, ok, got, why)
 	}
-	tb.Fatalf("tones %d, want %d", t.count(), want)
 }
 
 // toneSession is a voice-on session whose Meetings plays tones.
@@ -67,19 +69,25 @@ func TestToneReplyPlaysTone(t *testing.T) {
 }
 
 // With the meeting's voice off (chat-only fallback), or voice_on_address
-// off, nothing plays.
+// off, the tone is refused and nothing is played.
 func TestToneNotPlayedWhenVoiceOff(t *testing.T) {
 	tm, s, _ := toneSession(t)
 	m := tm.m[s.id]
 	m.VoiceEnabled = false
 	tm.m[s.id] = m
+	refused(t, s, "Bo", speakVoiceDisabled)
 	s.onPersonaReply(context.Background(), toneReply)
 
 	tm2, s2, _ := toneSession(t)
 	s2.r.opts.Policy.VoiceOnAddress = false
+	refused(t, s2, "Bo", speakPolicyOff)
 	s2.onPersonaReply(context.Background(), toneReply)
 
-	time.Sleep(100 * time.Millisecond)
+	// A tone that is allowed goes out; if either refused one had slipped
+	// through it would already have been counted by the time this lands.
+	tm3, s3, _ := toneSession(t)
+	s3.onPersonaReply(context.Background(), toneReply)
+	tm3.eventually(t, 1)
 	if tm.count() != 0 || tm2.count() != 0 {
 		t.Fatalf("no tone with voice off: %d, %d", tm.count(), tm2.count())
 	}
@@ -92,13 +100,13 @@ func TestToneNotOverSpeechOrCrosstalk(t *testing.T) {
 	ctx := context.Background()
 	s.queueVoice(betty.Reply{}, strings.Repeat("x", 60))
 	s.flushVoice(ctx)
+	refused(t, s, "Bo", "speech queued or playing")
 	s.onPersonaReply(ctx, toneReply)
 
 	clk.add(time.Minute) // the speech has played out
 	s.notePartial("Cy")
+	refused(t, s, "Bo", "someone else is speaking")
 	s.onPersonaReply(ctx, toneReply)
-
-	time.Sleep(100 * time.Millisecond)
 	if tm.count() != 0 {
 		t.Fatalf("no tone over speech or crosstalk, got %d", tm.count())
 	}
