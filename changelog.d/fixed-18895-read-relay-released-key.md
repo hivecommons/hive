@@ -1,0 +1,1 @@
+- The sandbox GitHub read relay now stops serving a connection once its per-kick key is released: an intercepted GitHub tunnel refuses the next request with a 403, and an opaque tunnel to any other host is closed, instead of both working until the client hung up or an idle timeout fired ([#18895](https://github.com/hivecommons/hive/issues/18895)).
