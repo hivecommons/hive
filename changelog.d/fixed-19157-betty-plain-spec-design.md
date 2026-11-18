@@ -1,0 +1,1 @@
+- Betty now treats plain requests such as "start a spec for this", "write a spec for X" and "draft a design for X" as a Spek session draft, the same as "Spek session" wording; the draft still waits for approval, and statements like "the spec says" or "the design review happened" are not requests ([#19157](https://github.com/hivecommons/hive/issues/19157)).
