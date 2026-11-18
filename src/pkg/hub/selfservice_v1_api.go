@@ -5,9 +5,10 @@ package hub
 // /api/hub/v1 is a versioned resource view of the self-service (byo-)
 // registry that selfservice_api.go already serves under /api/hub/selfservice.
 // It adds discovery (GET /api/hub/v1) and the registry as resources: create,
-// list, get, delete and key rotation, with an ETag on every record and an
-// optional If-Match on every write. In-place edits (PATCH) are a later PR of
-// the same rollout. The legacy routes keep their bodies and status codes.
+// list, get, update (PATCH, selfservice_v1_patch.go), delete and key rotation,
+// with an ETag on every record and an If-Match on every write (required on
+// PATCH, optional on delete and rotate). The legacy routes keep their bodies
+// and status codes.
 //
 // Invariants (in addition to selfservice_api.go's):
 //   - Nothing here writes to GitHub. The only GitHub call is the read-only
@@ -56,13 +57,15 @@ var hubV1Operations = []hubV1Operation{
 	{Name: "create", Method: http.MethodPost, Path: hubV1BasePath + "/registrations"},
 	{Name: "list", Method: http.MethodGet, Path: hubV1BasePath + "/registrations"},
 	{Name: "get", Method: http.MethodGet, Path: hubV1BasePath + "/registrations/{id}"},
+	{Name: "update", Method: http.MethodPatch, Path: hubV1BasePath + "/registrations/{id}", IfMatch: "required"},
 	{Name: "rotate_key", Method: http.MethodPost, Path: hubV1BasePath + "/registrations/{id}/keys", IfMatch: "optional"},
 	{Name: "delete", Method: http.MethodDelete, Path: hubV1BasePath + "/registrations/{id}", IfMatch: "optional"},
 }
 
-// hubV1PatchFields are the registration fields an update may change. Empty
-// until the update operation exists.
-var hubV1PatchFields = []string{}
+// hubV1PatchFields are the registration fields an update may change. org is
+// not one of them: changing it would mean re-proving every repo, so a client
+// deletes and registers again (#18642).
+var hubV1PatchFields = []string{"repos", "dashboard_url"}
 
 // registerHubV1Routes wires the v1 routes onto the hub mux. Discovery is
 // public (a spoke reads it before it has a session); every other route is
@@ -73,6 +76,7 @@ func (s *HubServer) registerHubV1Routes() {
 	s.mux.HandleFunc("POST "+hubV1BasePath+"/registrations", s.requireAuth(s.handleHubV1Create))
 	s.mux.HandleFunc("GET "+hubV1BasePath+"/registrations", s.requireAuth(s.handleHubV1List))
 	s.mux.HandleFunc("GET "+hubV1BasePath+"/registrations/{id}", s.requireAuth(s.handleHubV1Get))
+	s.mux.HandleFunc("PATCH "+hubV1BasePath+"/registrations/{id}", s.requireAuth(s.handleHubV1Patch))
 	s.mux.HandleFunc("DELETE "+hubV1BasePath+"/registrations/{id}", s.requireAuth(s.handleHubV1Delete))
 	s.mux.HandleFunc("POST "+hubV1BasePath+"/registrations/{id}/keys", s.requireAuth(s.handleHubV1RotateKey))
 }
@@ -111,7 +115,7 @@ func (s *HubServer) hubV1View(h SelfServiceHive) hubV1RegistrationView {
 	}
 }
 
-// writeHubV1RepoCapError is the v1 over-cap answer for create (and, later, PATCH): 413
+// writeHubV1RepoCapError is the v1 over-cap answer for create and PATCH: 413
 // naming the limit, so a client can read it without parsing the message.
 func writeHubV1RepoCapError(w http.ResponseWriter, err error, maxRepos int) {
 	writeHubV1JSON(w, http.StatusRequestEntityTooLarge, "", hubV1RepoCapBody(err, maxRepos))
