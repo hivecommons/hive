@@ -70,6 +70,7 @@ are enabled on a given hive.
 | `ioscan` scanning and canaries (default on) | prompt injection, secret leakage | `src/pkg/ioscan` | `ioscanEnabled`, `ioscanFailMode` in `GET /api/config/governor` |
 | Trajectory review (default on) | goal drift | `src/crux/trajectory` | `governor.trajectory.enabled` |
 | Policy proxy and repo allowlist | credential theft, out-of-scope writes | `src/crux/proxy/rules.go` | `403` with `X-Hive-Proxy-Blocked` |
+| Authorization decision seam, shadow mode (opt-in, enforces nothing) | undetected drift between a gate and its declared policy | `src/crux/authz`, `HIVE_AUTHZ_SHADOW` | `authz shadow` log lines; no behaviour change either way |
 | Forced egress through the proxy (iptables) | proxy bypass | `src/deploy/entrypoint.sh` | boot log; no `HIVE_PROXY_ADVISORY_OK` |
 | Tiered GitHub tokens per agent mode | blast radius of a leaked token | `src/crux/agentmode`, `src/crux/agent/manager_tokens.go` | token tier on the agent card |
 | Proxy-side credential injection (opt-in) | token theft | `HIVE_PROXY_INJECT_GH_AUTH` | `security.credentialInjection` in governor config |
@@ -385,6 +386,28 @@ the hub master secret and are compared in constant time. The payload is
 telemetry only: health, version, agent and governor summaries and 24-hour
 token counts. No credential leaves a spoke in a heartbeat. The hub delivers
 configuration, including App credentials for hosted spokes, in the response.
+
+**Authorization decision point (shadow mode).** Several gates decide whether
+a write may happen. They sit in different places, and the
+[design record](design/authorization-decision-point.md) proposes one shared
+point for them. The first slice is a measurement, and it is off by default.
+Set `HIVE_AUTHZ_SHADOW=true` to turn it on.
+
+With it on, a small checker re-derives one existing decision. That decision is
+the push broker's check for an empty push or a protected path. The checker
+runs after the broker has already decided. Hive compares the two answers and
+keeps one short event for each check. It logs any difference.
+
+The shadow enforces nothing. The broker stays the only authority, so a push
+goes through or is refused exactly as before. Nothing acts on the checker's
+answer. An event holds names, counts and codes. It never holds a request
+body, a diff, a file, a list of paths or a credential. Free text in an event is
+scrubbed and cut to a fixed length.
+
+The seam is meant to fail closed once it enforces, and that rule is already
+written down and tested. An error or crash in the checker counts as a deny. A
+request with a missing required field also counts as a deny. In this phase
+those are only log lines, not refusals.
 
 ## 6. Code admission
 

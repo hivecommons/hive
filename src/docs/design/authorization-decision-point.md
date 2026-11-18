@@ -1,9 +1,11 @@
 # One authorization point: decision seam, decision events and scoped credentials (#18988)
 
-Status: **Proposed (design only).** Spec for RFC
-[#18988](https://github.com/hivecommons/hive/issues/18988). No code or behaviour
-changes with this record. The RFC stays open until its acceptance criteria are
-met; this page is the concrete proposal to review against them. Related records:
+Status: **Partly shipped (shadow mode only).** Spec for RFC
+[#18988](https://github.com/hivecommons/hive/issues/18988). The first slice of
+the migration is in the tree, off by default and enforcing nothing: see
+[Phase status](#phase-status). Everything else on this page is still a
+proposal. The RFC stays open until the enforcement phases are decided; this
+page is the concrete proposal to review against its acceptance criteria. Related records:
 [crux-tool-policy.md](crux-tool-policy.md) (the proxy's own operation
 vocabulary, a narrower scope than this page), [tool-approval-desk.md](tool-approval-desk.md)
 (the one declarative rule layer that exists today), [crux.md](crux.md) (the
@@ -538,6 +540,44 @@ Flip order for phase 4, lowest risk first: broker checks (small, one caller,
 pure functions of the workspace), then proxy hard denies and write-surface,
 then proxy REST mode table, then relays, then GraphQL (decision parity with
 the REST path is verified first, see open questions).
+
+### Phase status
+
+| Phase | Status |
+|---|---|
+| 1. Types and schema | **Shipped for one gate.** `src/crux/authz` has `Request`, `Decision`, the `v1` event, and a rule id and reason code for the push broker's changed-files guard only. The registry for the other gates is not written |
+| 2. Decision events behind a flag | **Started, one gate.** With `HIVE_AUTHZ_SHADOW=true` the push broker's changed-files guard emits one event per call to a bounded in-memory stream (`HIVE_AUTHZ_SHADOW_BUFFER`, default 1000, evictions counted). The proxy, the relays, the rest of the broker and the volume probe are not done, and there is no persistent stream or sink wiring yet, so the volume question stays open |
+| 3. Seam in shadow | **Started, one gate.** `authz.Decide` re-derives the broker's changed-files decision after the guard has decided, and a difference is counted and logged as a divergence. Parity is covered by `TestParityPushBrokerChangedFiles` and `TestParityPushBrokerPathShapes` over the broker's existing cases. The proxy mode table, GraphQL, Linear, the relays and tool approval have no evaluator yet |
+| 4. Enforce through the seam | Not started. Nothing reads a `Decision` to allow or refuse an action |
+| 5. Operator rules and credentials | Not started |
+
+What this slice does and does not do, as built:
+
+- **Default off.** Unset, empty or unparseable `HIVE_AUTHZ_SHADOW` is off. Off
+  records nothing and allocates nothing: the broker holds a nil recorder.
+- **Enforces nothing.** The broker calls the shadow after the guard has
+  returned its verdict and never reads a result back. A recorder panic is
+  recovered and counted. A test pins that the broker's `Result`, error and git
+  commands are identical with the shadow on and off.
+- **Fail closed is written down, not applied.** `authz.Decide` already returns
+  a deny with `authz_error` for an evaluator panic, `missing_attribute` for a
+  missing repo or branch, and `unsupported_action` for an action with no rule,
+  and tests pin that. In this phase a shadow deny that the guard did not issue
+  is a divergence log line only.
+- **Independent mirror.** The evaluator's path matching is written separately
+  from `pushbroker.ProtectedPathViolations`, so drift between the two is
+  caught by the parity tests and by the live divergence counter rather than
+  hidden by a shared function.
+- **Attributes only.** An event carries the agent name, repo, branch, a count
+  of changed paths and a count of matched paths. Free-text attributes are
+  scrubbed for credential shapes, stripped of control characters and cut to 256
+  bytes. No path list, body, diff or credential is in the event type.
+- **Policy version.** The event's `policy_version` is the floor version plus a
+  short digest of the protected path list in force, so a per-call override of
+  the list is visible in the record.
+- **Not yet an audit trail.** The stream is in memory, bounded and lost on
+  restart. It exists to measure parity. The dedicated durable stream and its
+  integrity are phase 2 work and open question 6.
 
 Proposed task-sized issues (not filed; for the RFC's acceptance criteria):
 
