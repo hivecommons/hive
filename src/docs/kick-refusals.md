@@ -220,7 +220,7 @@ workflow hand-off), when it started and ended, and what it came to:
 | `pushed_commit` | the relay pushed a branch for the agent; the record keeps the branch and sha |
 | `commented` | the relay posted a comment for the agent |
 | `stood_down` | the agent ended its turn on a stand-down line; the record quotes that line |
-| `refused` | the hive refused to deliver the kick, or the agent's model declined it; the record keeps the reason code from this page and the quoted text |
+| `refused` | the hive refused to deliver the kick (including a governor kick withheld during `provider_backoff`, recorded without the provider's error line), or the agent's model declined it; the record keeps the reason code from this page and the quoted text |
 | `still_running` | the kick's turn has not ended and no signal has arrived yet |
 | `ended_no_visible_action` | the turn ended, or can no longer be told apart from one that ended, and no signal above speaks for it |
 

@@ -105,6 +105,18 @@ func kickOutcomeSender(s *kickoutcome.Store, send func(agent, message string) er
 	}
 }
 
+// kickOutcomeBackoffWithheld files a governor kick withheld during provider
+// backoff as a refusal (provider_backoff, kick-refusals.md). The reason is
+// built from the hive's own error class and retry time only: the provider
+// error line is agent output, so it is never quoted here.
+func kickOutcomeBackoffWithheld(s *kickoutcome.Store, agent, class string, retryIn time.Duration, at time.Time) {
+	if s == nil {
+		return
+	}
+	reason := "agent " + agent + " blocked: inference (" + class + "); next provider probe in " + retryIn.Round(time.Second).String()
+	s.Refused(agent, kickoutcome.Trigger{Kind: kickoutcome.TriggerGovernor, Actor: "governor"}, "provider_backoff", reason, at)
+}
+
 // isKickBusy reports a busy bounce (agent mid-turn).
 func isKickBusy(err error) bool { return errors.Is(err, crux.ErrAgentBusy) }
 
