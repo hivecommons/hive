@@ -2112,3 +2112,64 @@ func TestBlockedOnSeenKeepsIssueForm(t *testing.T) {
 		t.Fatalf("PR-form reason = %q", got)
 	}
 }
+
+// A pr= blocked-on marker that names an issue (projectbluefin/testsuite#1259
+// named issue #909 with pr=) used to 404 on every pass and never lift. The
+// sweep now reads such a blocker as the issue it is: a closed one lifts the
+// block, an open one holds it, and a number that is neither stays an error.
+func TestReconcileBlockedIssuesPRMarkerNamingAnIssue(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
+			_, _ = io.WriteString(w, `{"number":7,"state":"closed","closed_at":"2026-11-18T10:00:00Z"}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/8":
+			_, _ = io.WriteString(w, `{"number":8,"state":"open"}`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/timeline"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST":
+			_, _ = io.WriteString(w, `{"id":9}`)
+		default:
+			// /pulls/7, /pulls/8, /pulls/9 and /issues/9: not found.
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"message":"Not Found","path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	c.appBotLogin = testBot
+	result := &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{
+		"o/r": {Issues: []RepoWorkIssue{
+			// pr= names a closed issue: the block lifts.
+			{Repo: "o/r", Number: 60, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#7"},
+			// pr= names an open issue: still blocked, and not an error.
+			{Repo: "o/r", Number: 61, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#8"},
+			// pr= names nothing at all: today's error, block kept.
+			{Repo: "o/r", Number: 62, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#9"},
+		}},
+	}}
+	res := ReconcileBlockedIssues(context.Background(), c, result, nil)
+	if res.Items != 3 || res.Unblocked != 1 || res.Errors != 1 {
+		t.Fatalf("result = %+v", res)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{"GET /repos/o/r/pulls/7", "GET /repos/o/r/issues/7", "DELETE /repos/o/r/issues/60/labels/blocked", "GET /repos/o/r/issues/8"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing call %q in:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "DELETE /repos/o/r/issues/61/labels/blocked") || strings.Contains(joined, "DELETE /repos/o/r/issues/62/labels/blocked") {
+		t.Errorf("a block that still holds was lifted:\n%s", joined)
+	}
+}

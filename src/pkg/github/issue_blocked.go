@@ -658,6 +658,10 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 		}
 		settled, merged, err := c.pullRequestSettledDetails(ctx, prRepo, prNumber)
 		if err != nil {
+			if c.blockedPRMarkerNamesIssue(ctx, t, prRepo, prNumber, err, logger) {
+				reconcileBlockedOnIssue(ctx, c, t, prRepo, prNumber, scanned, &res, logger)
+				continue
+			}
 			res.Errors++
 			logger.Warn("blocked sweep: tracked PR lookup failed", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(prNumber), "error", err)
 			continue
@@ -1210,6 +1214,10 @@ func (c *Client) blockedOnRefState(ctx context.Context, t blockedIssueTarget, b 
 	}
 	settled, merged, err := c.pullRequestSettledDetails(ctx, b.repo, b.number)
 	if err != nil {
+		if c.blockedPRMarkerNamesIssue(ctx, t, b.repo, b.number, err, nil) {
+			b.issue = true
+			return c.blockedOnRefState(ctx, t, b)
+		}
 		return b, false, "", err
 	}
 	if !settled {
@@ -1460,6 +1468,36 @@ func (c *Client) blockedSweepComments(ctx context.Context, repo string, number i
 		}
 	}
 	return scan, nil
+}
+
+// blockedPRMarkerMisformed remembers the (blocked issue, blocker) pairs whose
+// pr= marker was found to name an issue, so the sweep says so once, not on
+// every pass.
+var blockedPRMarkerMisformed sync.Map
+
+// blockedPRMarkerNamesIssue reports whether repo#number, named by a pr=
+// blocked-on marker whose PR lookup answered 404, is an issue, so the sweep
+// reads the blocker as one. The marker is written by hand by people and
+// agents alike, and the PR form reads as right as the issue form:
+// projectbluefin/testsuite#1259 named issue #909 with pr=, every pass 404'd
+// ("tracked PR lookup failed"), and the block could never lift. Only a 404
+// on the PR read is checked, with one issue GET (GitHub's issues endpoint
+// also answers for PRs, so an issue without a pull_request link is one);
+// any other error keeps today's handling.
+func (c *Client) blockedPRMarkerNamesIssue(ctx context.Context, t blockedIssueTarget, repo string, number int, err error, logger *slog.Logger) bool {
+	if c == nil || c.client == nil || !githubStatusError(err, http.StatusNotFound) {
+		return false
+	}
+	owner, name := c.splitRepo(repo)
+	issue, _, ierr := c.client.Issues.Get(ctx, owner, name, number)
+	if ierr != nil || issue == nil || issue.IsPullRequest() {
+		return false
+	}
+	key := t.repo + "#" + strconv.Itoa(t.number) + ">" + repo + "#" + strconv.Itoa(number)
+	if _, seen := blockedPRMarkerMisformed.LoadOrStore(key, true); !seen && logger != nil {
+		logger.Info("blocked sweep: a pr= blocked-on marker names an issue; reading it as one (write issue= instead)", "repo", t.repo, "issue", t.number, "blocker", repo+"#"+strconv.Itoa(number))
+	}
+	return true
 }
 
 // pullRequestSettledDetails reports whether the PR is merged or closed, and

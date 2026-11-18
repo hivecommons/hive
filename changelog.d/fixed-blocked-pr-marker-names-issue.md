@@ -1,0 +1,1 @@
+- A `<!-- hive:blocked-on pr=owner/repo#N -->` marker that names an issue no longer fails the blocked sweep on every pass. When the PR lookup answers 404 and #N is an issue, the sweep reads the blocker as that issue, so the block lifts when the issue closes, and it logs the mismatch once.
