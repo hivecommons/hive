@@ -952,11 +952,11 @@ func ReadyComment(r Route, blockedBy string) string {
 		if len(r.Gates) > 0 {
 			held()
 		}
-		if r.NoProw {
-			b.WriteString("\n\n<sub>The hive never merges this lane's changes itself: click **Merge** to land it.</sub>")
-		} else {
-			b.WriteString("\n\n<sub>The hive never merges this lane's changes itself: click **Merge** (or `/lgtm` + `/approve` for tide) to land it.</sub>")
+		merge := "click **Merge**"
+		if !r.NoProw {
+			merge += " (or `/lgtm` + `/approve` for tide)"
 		}
+		b.WriteString("\n\n<sub>The hive never merges this lane's changes itself: " + merge + " to land it.</sub>")
 		return b.String()
 	}
 	if len(r.Gates) > 0 {
