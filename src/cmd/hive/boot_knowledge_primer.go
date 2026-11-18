@@ -2,10 +2,14 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/reviewrules"
 )
 
 // beadSynthVaultPath is where the bead synthesizer writes its facts.
@@ -52,10 +56,65 @@ func (b *boot) registerKnowledgeStores(p *knowledge.Primer) {
 			b.logger.Info("bead-synth vault registered with primer", "layer", layer)
 		}
 	}
+	b.registerReviewRuleVault(api, p)
 	if gs := api.GraphStore(); gs != nil {
 		p.SetGraphStore(gs)
 		api.WireContext7Suggester(p)
 	}
+}
+
+// registerReviewRuleVault connects the local channel the review-feedback sweep
+// writes reviewer-stated rules into (hivecommons/hive#19046) and registers it
+// with p as a pinned store: an approved rule whose scope admits a kick reaches
+// that kick whatever its keywords are. The channel shows in the dashboard's
+// knowledge list like any other, with each rule's source comment and reviewer.
+//
+// When the channel does not exist yet and cannot be created beside the hive's
+// other vaults (a host with no vaults directory), the sweep creates it on its
+// first capture. It is then registered by path (#19094): the primer opens it
+// on the first kick after it appears and connects it to the knowledge API, so
+// neither the kick nor the dashboard waits for a restart.
+func (b *boot) registerReviewRuleVault(api *knowledge.KnowledgeAPI, p *knowledge.Primer) {
+	if !reviewrules.Enabled() {
+		return
+	}
+	dir := reviewrules.VaultDir()
+	if store := api.GetVaultStore(dir); store != nil {
+		p.AddPinnedFileStore(reviewrules.VaultName, store, knowledge.LayerProject)
+		return
+	}
+	if _, err := os.Stat(dir); err == nil || parentExists(dir) {
+		if err := os.MkdirAll(dir, 0o755); err == nil {
+			if err := api.ConnectVault(dir, reviewrules.VaultName); err != nil {
+				b.logger.Warn("review-rule vault not connected; registering it by path", "dir", dir, "error", err)
+			} else if store := api.GetVaultStore(dir); store != nil {
+				p.AddPinnedFileStore(reviewrules.VaultName, store, knowledge.LayerProject)
+				return
+			}
+		}
+	}
+	p.AddPinnedDir(reviewrules.VaultName, dir, knowledge.LayerProject, func(*knowledge.FileStore) {
+		connectReviewRuleVault(api, dir, b.logger)
+	})
+}
+
+// parentExists reports whether dir's parent directory exists.
+func parentExists(dir string) bool {
+	info, err := os.Stat(filepath.Dir(dir))
+	return err == nil && info.IsDir()
+}
+
+// connectReviewRuleVault connects the review-rules channel to the knowledge API
+// once it exists, so people can browse and retract its rules.
+func connectReviewRuleVault(api *knowledge.KnowledgeAPI, dir string, logger *slog.Logger) {
+	if api.GetVaultStore(dir) != nil {
+		return
+	}
+	if err := api.ConnectVault(dir, reviewrules.VaultName); err != nil {
+		logger.Warn("review-rule vault not connected to the dashboard", "dir", dir, "error", err)
+		return
+	}
+	logger.Info("review-rule vault connected after its first capture", "dir", dir)
 }
 
 // knowledgeRestartReason names what a live-registered primer cannot apply

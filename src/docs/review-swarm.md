@@ -237,6 +237,9 @@ review:
   delta_rereview: true                      # optional; re-review a PR already judged at an earlier head by its diff since that head (default on)
   delta_trivial_lines: 20                   # optional; a delta under this many lines in files the prior verdict passed re-stamps it without a model call (default 20; negative disables)
   delta_max_age: 72h                        # optional; a changes_requested verdict with findings older than this anchors no delta, the PR is reviewed in full (default 72h)
+  preflight:                                 # optional; repo rule documents and dependency evidence for the reviewer, see "Review preflight" below
+    rule_docs: true                         # default on; point the reviewer at the repo's own rule documents (GitHub API only, no new egress)
+    dependencies: false                     # default OFF; vulnerability and release-age lookups for added or bumped dependencies (sends package names and versions to OSV and the registries)
   severity:
     block_at: P2                            # optional; P1 | P2 | P3, see "Blocking line" below
     comment_below: true                     # default true
@@ -653,6 +656,167 @@ A re-review is a review of a PR the hive already judged at an earlier head SHA. 
 - The **full** review stays for a first review (no prior verdict at another head), when the prior verdict was `reject` or `incomplete`, and when it was `changes_requested` with findings recorded more than `review.delta_max_age` ago (default `72h`): the flagged code has had time to move on and the record of it is stale. A verdict at the current head is never treated as a prior.
 
 Every delta aggregate records `delta.previous_head` (and `delta_previous_head` on each perspective report, stamped from the dispatch state like `review_model`), so the cost dashboard can split delta reviews, re-stamps and full reviews. The compare is fetched once per candidate head (no verdict, no pending entry, a prior at another head) with one 300-file page; a bigger or failed compare still gets the delta instruction, just without the file list and never the re-stamp.
+
+## Independent fact-check for analysis PRs (`review.analysis_factcheck`)
+
+The swarm's built-in perspectives are shaped around code diffs. On a PR that is an analysis or a report (a docs assessment, an audit write-up, a scored comparison) they judge the build, the layout and whether the diff matches the PR body, not whether the content is true. The fact-check pass is an opt-in second reviewer for that kind of PR: a different agent re-verifies what the author claimed, so a person reviews after an agent has already checked the work ([#19074](https://github.com/hivecommons/hive/issues/19074)). It is off by default and changes nothing for a hive that does not enable it.
+
+### Enable it
+
+```yaml
+review:
+  analysis_factcheck:
+    enabled: true
+    author_agents: [quality]     # agents whose PRs qualify; a PR also qualifies by label
+    labels: []                   # e.g. [analysis]; matched case-insensitively on PRs an agent opened
+    reviewer_agents: [reviewer]  # who may run the pass; default review.reviewer_agents, else role: reviewer
+    reviewer_model: ""           # optional: pin the review to a model (a sub-agent runs with it)
+    independence: model          # agent | model | family
+    max_rounds: 3                # author/reviewer rounds per PR (1-10)
+    ready_policy: human          # human | hive
+    revision_wait: 6h            # how long the author has to push a revision after findings
+    authoritative_files: []      # default: MAINTAINERS, MAINTAINERS.md, OWNERS, CODEOWNERS, .github/CODEOWNERS, .project/maintainers.yaml, GOVERNANCE.md
+    rubric: ""                   # extra guidance for the reviewer, e.g. where the scoring rubric lives
+```
+
+`enabled` with neither `author_agents` nor `labels` fails config load, because no PR would qualify. Nothing in the block names a project, a repository or a workflow: the qualifying agents and labels are the operator's choice. Candidates are the PRs your agents opened (owner from the audit trail's `agent_pr_created` entries), so it reaches repositories the hive does not manage; a PR a person opened is not enumerated. When the PR is also covered by the review swarm, the swarm is unchanged and the two run side by side.
+
+### What the reviewer does
+
+The sweep (every 5 minutes, off the eval cycle, no webhook needed) kicks one reviewer agent with a brief generalised from the prompt a maintainer used by hand to review a hive's analysis: check the work for quality and correctness against the sources and domains the request names, and give comments a person can verify, with file and line numbers. The reviewer:
+
+1. reads the PR body, the request issue it links and earlier work in the repository, to learn the sources, domains and scoring rules;
+2. re-verifies every factual claim, score, grade and attribution against the cited source or live evidence, and compares with any authoritative external score;
+3. checks each judgment for skew in both directions (a rating or a "standout" claim that is too positive, a gap or negative rating that is too negative);
+4. checks that the material the analysis rates was actually inspected, and that a capability installed is not counted as delivered;
+5. checks people, roles and approvals against the authoritative files, not against other prose;
+6. posts **one review** with `hive-review`: a summary and line-anchored comments, in one notification.
+
+The reviewer is read-only. It never pushes, approves, requests changes, merges, labels, or changes the draft state.
+
+### Output format
+
+The summary opens with `**Fact-check: PASS | FINDINGS | INCONCLUSIVE** (round N of M, head <sha>)`, then a short judgement, `Re-verified:` and `Not verified:` lists, and ends with a hidden marker the hive reads:
+
+```text
+<!-- hive:factcheck round=2 verdict=findings head=<full head sha> -->
+```
+
+Each inline comment is anchored on the line that makes the claim and has exactly this shape; a finding without all three parts is not posted:
+
+```text
+**<claim | score | attribution | skew-positive | skew-negative | not-inspected | authority | scope>** what is wrong, quoting the claim, and what the evidence shows
+Verify: <a link or an exact command a person can run>
+Confidence: high | medium | low
+```
+
+PASS means no finding of high or medium confidence remains. INCONCLUSIVE means a material part could not be checked, and goes to a person rather than into another round.
+
+### Independence
+
+The author never reviews its own PR, whatever `reviewer_agents` lists (a replica such as `quality-2` counts as the author `quality`). `independence` sets how different the reviewer must be:
+
+- `agent`: a different agent.
+- `model` (default): a different model id. The review's model is `reviewer_model` when set, else the reviewer agent's own model.
+- `family`: a different model family (`claude`, `gpt`, `gemini`, ...). Two Claude models are the same family.
+
+Independence that cannot be shown is refused: where the level needs a model and either model is unknown, the reviewer is not used. When no candidate qualifies, the hive posts one hand-off note instead of reviewing, so a misconfigured lane is visible rather than silent.
+
+### Draft state
+
+The pass is built around the draft as an end point. A workflow that opens its deliverable as a draft keeps it a draft while the pass runs. `ready_policy: human` (default) leaves the draft-to-ready call to a person, who finds a PR that already carries a fact-check review. `ready_policy: hive` marks the PR ready for review after a PASS on the current head. The hive never marks a PR ready on any other verdict, on a marker from anyone but its own identity, on an older head, or after a person has reviewed, and it never moves a ready PR back to draft.
+
+### The author/reviewer loop, and how it stays bounded
+
+The review-feedback sweep (#19027) ignores bot comments so two agents can never answer each other forever, which means it would not carry the reviewer's findings to the author. This pass has its own bounded path instead:
+
+- The reviewer's findings are marked by the hidden marker above. Only a marker on the hive's own review counts; a marker typed by anyone else is ignored.
+- On FINDINGS the author agent is kicked **once per head** with the review's text quoted as data to test, never instructions. It runs each `Verify:` link or command, fixes what is right in a signed revision on the same branch, and replies with evidence on what is wrong. It does not mark the PR ready.
+- A new head starts the next round. Rounds are capped by `max_rounds`, counted from the hive's own persisted record and from marked reviews, whichever is higher, so a silent reviewer or a missing marker cannot extend the loop.
+- The loop stops, with the PR left as it is, on a PASS; when `max_rounds` is reached; when the author does not push within `revision_wait`; on INCONCLUSIVE; when no independent reviewer exists; and as soon as a person has reviewed the PR (their review is the review; the feedback sweep routes what they say to the author). Every stop that needs a person posts exactly one note marked `<!-- hive:factcheck-needs-human -->`, and nothing more is done after it.
+- The per-head review cap (`max_reviews_per_head`, one review per head in quiet mode) exempts a review that carries a valid fact-check marker, because this pass is asked to post a review on a head the swarm may already have covered. The pass bounds its own rounds.
+
+State lives in `/data/factcheck/state.json` (`HIVE_FACTCHECK_DIR` overrides it). A hive that cannot write it keeps counting in memory, and the marked reviews on the PR still bound the loop.
+
+## Review preflight (`review.preflight`)
+
+The reviewer reads the diff and the tree. Review preflight adds facts the hive gathers before the review starts, so a finding can rest on a rule the repository published or on an advisory id instead of on a hunch (hivecommons/hive#19069). It is a general mechanism: it works for any repository and language, and every part can be turned off.
+
+Hive-wide defaults live under `review.preflight`; a repository overrides them under `repos.<repo>.review_preflight`. Precedence per field is repo, then hive-wide, then the default. Lists replace (the repo's list wins) except `rule_doc_paths`, `rules` and `ignore`, which add to the hive-wide entries (same `id`, or same `id` and `package`, is replaced by the repo's).
+
+```yaml
+review:
+  preflight:
+    rule_docs: true                  # default on
+    rule_doc_paths: ["handbook/**"]  # added to the default patterns below
+    rule_doc_exclude: ["CODEOWNERS"] # documents matching these are never listed
+    rule_doc_budget_bytes: 60000     # total bytes of rule documents one review reads (default 60000)
+    rules:                           # short named rules the reviewer enforces
+      - id: no-sleep-in-tests
+        severity: medium             # low | medium | high | critical (default medium)
+        text: Tests must not use fixed sleeps; wait on a condition.
+    dependencies: false              # default OFF, see "What leaves the hive"
+    vulnerabilities: true            # default on when dependencies is on; OSV lookup
+    release_age: true                # default on when dependencies is on; registry publish date
+    offline: false                   # true (or HIVE_REVIEW_PREFLIGHT_OFFLINE=true) makes every lookup say "could not check: offline"
+    osv_url: https://api.osv.dev     # point at an internal mirror if you run one
+    registry_urls: {npm: https://npm.mirror.example}   # per ecosystem id, see the table below
+    min_release_age_days: 14         # a version published more recently is a supply-chain note (default 14; negative disables)
+    severity_floor: low              # advisories below this are not listed (default low; unstated severity is always listed)
+    block_severity: high             # advisories at or above this are in-scope blockers, lower ones are notes (default high)
+    cache_ttl: 6h                    # reuse registry and advisory answers (default 6h)
+    request_timeout: 10s             # per outbound request (default 10s)
+    max_dependencies: 30             # lookups per PR; the rest are listed as not checked (default 30)
+    ignore:                          # accepted risks: a reason is required, expires is optional (YYYY-MM-DD)
+      - {id: GHSA-xxxx-xxxx-xxxx, package: example.com/lib, reason: "not reachable from our code", expires: "2027-03-01"}
+repos:
+  widgets:
+    review_preflight:
+      dependencies: true
+      rules:
+        - {id: widgets-api, text: "Public handlers must validate input before use.", severity: high}
+```
+
+### Repository rules
+
+With `rule_docs` on, the hive lists the repository at the PR's base commit and tells the reviewer which rule documents exist, how many bytes of each to read, and how to read them. The default patterns are matched case-insensitively (a pattern without a slash matches at the repository root; `dir/**` matches any text file below `dir`): `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING*`, `DESIGN*.md`, `ARCHITECTURE*.md`, `STYLE*.md`, `CODEOWNERS` (also under `.github/` and `docs/`), `.github/copilot-instructions.md`, `.cursor/rules/**`, `docs/design/**`, `docs/adr/**`, `docs/architecture/**`. Selection is deterministic: patterns in list order, then path order, each document capped at half the budget, documents past the budget listed as omitted. The reviewer must name the document and the rule it applied, and quote it; a finding that invokes a rule it did not read is a false positive.
+
+`rules` are the operator's own named rules, for conventions no document states. The reviewer enforces them at the stated severity and cites the id.
+
+### Dependency evidence
+
+With `dependencies` on, the hive reads the PR's changed manifests and, for each dependency version the diff adds or bumps, queries the vulnerability database and the package registry. The reviewer receives advisory ids with a normalized severity and publish dates, nothing else from those services (no free text), and is told to report only what is listed and to cite the id. A line that says `not checked` or `could not check` means no data, never a clean result.
+
+| Ecosystem id | Manifests | OSV ecosystem | Publish date from |
+|---|---|---|---|
+| `go` | `go.mod`, `go.sum` | Go | proxy.golang.org |
+| `npm` | `package.json`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml` | npm | registry.npmjs.org |
+| `pypi` | `requirements*.txt`, `pyproject.toml` (exact pins), `poetry.lock`, `uv.lock` | PyPI | pypi.org |
+| `crates` | `Cargo.lock` | crates.io | crates.io |
+| `maven` | `pom.xml`, `gradle.lockfile` | Maven | search.maven.org |
+| `rubygems` | `Gemfile.lock` | RubyGems | rubygems.org |
+| `packagist` | `composer.lock` | Packagist | repo.packagist.org |
+| `nuget` | `packages.lock.json` | NuGet | api.nuget.org |
+| `actions` | `.github/workflows/*.yml` (`uses:` with a full version tag) | GitHub Actions | not looked up |
+| `container` | `Dockerfile*`, compose files | none | not looked up |
+
+A changed manifest of a kind that has no entry yet (Pipfile.lock, mix.lock, pubspec.lock, Package.resolved, Podfile.lock, bun and deno lockfiles, Chart.lock, flake.lock, Terraform and Bazel lockfiles, Conan, sbt) is reported as `Not checked`, as is a manifest whose patch GitHub withheld, an action pinned by SHA or a floating tag, and every dependency past `max_dependencies`. Only versions written in the diff are checked; transitive dependencies of a manifest without a lockfile are not resolved.
+
+**Adding an ecosystem** is a table entry plus a test: append an `Ecosystem` to `Ecosystems` in `src/pkg/reviewpreflight/ecosystems.go` (manifest patterns, a parser over the patch lines, the OSV ecosystem id, and an `Age` lookup with its default registry URL), add a case to `TestEcosystemParsers`, and add a row to the table above.
+
+**Noise control.** A vulnerable-dependency finding needs an advisory id from the list; an age note needs the publish date and is never a blocker on its own. `block_severity` decides which advisories are in-scope blockers (`changes_requested`) and which are notes; `severity_floor` hides low-severity noise. An accepted risk goes in `ignore` with a reason (required) and an expiry; an expired entry stops suppressing and the evidence says so. The id `release-age` with a `package` silences the release-age note for that package.
+
+### What leaves the hive, and how to turn it off
+
+- **Rule documents** use the GitHub API the hive already calls (one repository tree listing per PR head). Nothing new leaves. Turn off with `rule_docs: false`.
+- **Dependency checks are off by default** because they contact third-party services about a repository that may be private. When on, per changed dependency the hive sends: to OSV (`osv_url`, default api.osv.dev) the package name, ecosystem and version; to the registry (see the table, overridable with `registry_urls`) a GET for that package or version. No token, credential, repository name, PR text or source code is sent, and requests carry no `Authorization` header. Requests follow the hive's upstream proxy settings (`network.upstream_proxy`, `HTTPS_PROXY`). The services see the hive's egress IP and the dependency names of the PRs it reviews.
+- **Offline or air-gapped:** set `offline: true` or `HIVE_REVIEW_PREFLIGHT_OFFLINE=true`; no request is made and the evidence says `could not check: offline`. An unreachable service, a timeout, a 429 or a 5xx degrades the same way, per check, with the reason. Answers are cached in memory for `cache_ttl`, and a PR head is looked up once.
+- **Internal mirrors:** set `osv_url` and `registry_urls` to your own endpoints.
+- **Disable entirely:** `dependencies: false` (the default), per repo with `repos.<repo>.review_preflight.dependencies: false`.
+
+### Two extra reviewer checks
+
+The correctness perspective (and a combined review that includes it) now also asks for two defect classes a diff-only read tends to miss: error, log and test-failure messages and comments that stopped describing behavior after the change, and sentinel values (zero, -1, an unset marker) flowing into min, max, sum or comparison aggregates. Each finding must cite the line and a concrete input.
 
 ## Revising a recorded verdict
 

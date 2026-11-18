@@ -11,6 +11,32 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.325.0)
+
+### Added
+
+- `auth_ok` now carries the hive's display name (`hive_name`), and the relay records it and prints `[hive: <name>]` on connect, so contributors can tell hives apart by their real name instead of a hostname minted before a rename. Additive: a hub that sends nothing keeps today's output ([#19059](https://github.com/hivecommons/hive/issues/19059)).
+
+### Fixed
+
+- Server-side fetches of user- or spoke-chosen URLs (dashboard agent import and workflow spec URLs, the hub's hive config proxy and webhook relay to a spoke's dashboard URL, knowledge document imports) now resolve each connection once, refuse it when any DNS answer is private, loopback, link-local or otherwise not globally routable, and dial the address that was checked. A name that rebinds between the SSRF check and the dial is refused instead of reached, and every redirect hop is checked at dial time ([#18992](https://github.com/hivecommons/hive/issues/18992), part of [#18986](https://github.com/hivecommons/hive/issues/18986)).
+- The hive now answers human review feedback on PRs its own agents opened, whatever the PR's state ([#19027](https://github.com/hivecommons/hive/issues/19027)). A person's inline review comment, `COMMENTED` or `CHANGES_REQUESTED` review, or a comment addressed to the hive used to reach no one when the PR was a draft, carried `ready-for-review`, or lived in a repo the hive does not manage (the session-resume router skips drafts and the held-PR path required `CHANGES_REQUESTED`). A new polling sweep reads each agent-opened PR (owner from the audit trail, GraphQL first with a REST fallback), finds comments the hive has not answered, and kicks the authoring agent with a brief to verify the claim against the evidence, push a signed revision or reply with evidence, and reply on the thread. Handled comment ids are persisted (and named in a hidden marker in the reply) so nothing is routed twice. A burst of comments is coalesced into one kick after a short debounce (`HIVE_REVIEW_FEEDBACK_DEBOUNCE`, default 3m); comments that arrive while the agent works are never dropped and get their own follow-up kick; each PR has a generous rolling cap (`HIVE_REVIEW_FEEDBACK_WINDOW_CAP` per `HIVE_REVIEW_FEEDBACK_WINDOW`, default 12 per 24h) that posts a visible needs-human note and resets when a person comments again. Review threads reach the agent whole and in order, so a reply that refines an earlier comment wins. The brief tells the agent to fix wrong attributions first, re-verify every cited source, keep the analysis honest in both directions, and record rules reviewers state in the hive's knowledge store. Paused agents stay paused, and a needs-human note is posted once when no agent can take the feedback. Existing unanswered feedback is picked up on the first pass after upgrade. Set `HIVE_REVIEW_FEEDBACK_RESPONSE=off` to disable.
+- The merge-request CI gate no longer turns a head red for a zero-job `startup_failure` run of event `pull_request_target` when the repository's required contexts are known and all green: GitHub blocks that event by default in public repositories from 2026-12-02, so repositories that never touch their workflows would otherwise stop merging. The run is logged instead. With the required set unknown, a required context missing or red, or any other zero-job failure, the verdict stays red (refs #19038).
+
+## 2026-11-18 (v5.324.0)
+
+### Added
+
+- The hive can now post the PR-contents merge gate as a commit status itself, for repositories whose required `verify PR contents` check comes from a `pull_request_target` workflow that GitHub blocks by default from 2026-12-02. New `auto_merge.pr_gate.mode` (`off` default, `shadow`, `enforce`) with an explicit `auto_merge.pr_gate.repos` scope. This release ships `shadow`: only `verify PR contents (hive)` is posted on the exact PR head, a Go port of the title verdicts replays the same golden corpus as the JS verifier, a hard allowlist limits the poster to four contexts, and a comparison with the workflow result is logged. Nothing changes while the mode is `off` (refs #19038).
+
+### Changed
+
+- The native-queue admission script now accepts `verify PR contents` from either the legacy `pr-verifier.yml` check run (events `pull_request`, `pull_request_target` or `workflow_dispatch`, which also fixes a verifier run dispatched after a github.token autofix push being rejected) or a commit status of that context created by the App bot named in the repository variable `HIVE_PR_GATE_CREATOR_LOGIN`; with the variable unset only the legacy evidence counts, and a status from any other creator is ignored. The `native-queue-policy` workflow's PR-side trigger moves from `pull_request_target` to `pull_request` (merge-group handling and the trusted base checkout are unchanged), ahead of GitHub blocking `pull_request_target` by default on public repositories. Nothing changes until the hive-posted status is enabled; the evidence it accepts is only widened.
+
+### Security
+
+- Security: the Inbox link validator now runs the shared host check from `pkg/netguard` before any DNS lookup, so a link to a loose IPv4 literal (`2130706433`, `0x7f.1`), a documentation or other special-purpose address, or a malformed all-numeric host such as `1.2.3.4.5` is refused at validation. Before, only a strict IP literal was checked there and the others were caught after resolution (#19020)
+
 ## 2026-11-18 (v5.323.3)
 
 ### Changed

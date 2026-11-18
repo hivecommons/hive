@@ -119,7 +119,7 @@ The labels the hive applies instead of `hold` ([#18468](https://github.com/hivec
 | `ready-for-review` | Hive's work is done; a maintainer reviews, then removes this label to let it merge. | The ACMM level gate (L3-L5, and cross-repo outreach at every level). |
 | `decision-needed` | Hive is blocked on a human decision; a maintainer decides (see hive's comment). | The #5117 self-authorization gate, the #9665 reporter-trust gate (with `needs-human`), the holdguard re-hold, and an owner-only delegated decision (with `needs-owner`). |
 
-Every gate posts its existing notice comment saying why. Agents cannot add or remove either label through the relay.
+Every gate posts its existing notice comment saying why. Agents cannot add or remove either label through the relay. Neither label stops the hive from answering review feedback: when a person leaves an inline comment, a review (`COMMENTED` or `CHANGES_REQUESTED`) or a comment addressed to the hive on a PR the hive's own agent opened, that agent is kicked to verify the claim and push a signed revision or reply with evidence, whether the PR is a draft, held, or in a repo the hive does not manage ([#19027](https://github.com/hivecommons/hive/issues/19027); `src/cmd/hive/review_feedback_wire.go`, `src/pkg/reviewfeedback/reviewfeedback.go`). A hold means do not merge, not do not respond. A burst of comments is coalesced into one kick after `HIVE_REVIEW_FEEDBACK_DEBOUNCE` (default 3m); comments that arrive while the agent works get their own follow-up kick; each PR is capped at `HIVE_REVIEW_FEEDBACK_WINDOW_CAP` kicks (default 12) per `HIVE_REVIEW_FEEDBACK_WINDOW` (default 24h), the cap posts a needs-human note, and a person's next comment resets it; `HIVE_REVIEW_FEEDBACK_MAX_ITEMS` (default 30) bounds one brief. Set `HIVE_REVIEW_FEEDBACK_RESPONSE=off` to disable the sweep. A comment that states a rule or a source of truth for future work is also captured into the hive's knowledge with its provenance, gated on the reviewer's association, and acknowledged on the PR ([#19046](https://github.com/hivecommons/hive/issues/19046); see [review-feedback-rules.md](../review-feedback-rules.md)).
 
 **Migration.** On boot, Hive creates both labels (with their descriptions) in each active repository and swaps a literal `hold` for the matching gate label only when the newest `hold` event is a `labeled` by the Hive App **and** an App-authored gate notice is on the thread (level-hold notice → `ready-for-review`; reporter-trust, #5117, holdguard or owner-only decision notice → `decision-needed`). It adds the gate label before removing `hold` and leaves one `<!-- hive:hold-relabel-18468 -->` comment. A `hold` a person applied (or re-applied) is never touched. Bounded to 50 items per repository per boot (`src/pkg/github/hive_gate_label_migration.go`).
 
@@ -542,6 +542,24 @@ Umbrella issue is never a unit of agent work: every automated claim producer (re
 **Release or override.** Remove label or set `never_claim_labels: []`
 
 **Configuration and implementation.** `src/pkg/github/issue_claim_gate.go`, `src/pkg/github/issue_stage_labels.go`, `src/pkg/claims/neverclaim.go`
+
+#### `umbrella` (also `tracker`, `epic`, `meta-tracker`), `<!-- hive:umbrella -->`, `human-only`
+
+**Applies to:** Issues. **Kind:** Hard for contributors; display-only for the hive.
+
+An umbrella, epic, tracker or decomposed parent is coordination work: its children carry the code. An owner-only issue waits on a person. Neither is ever handed to a contributor relay, listed as workable, or advertised with `help wanted` / `good first issue` ([#19078](https://github.com/hivecommons/hive/issues/19078)). Both stay actionable for the owner and the hive and keep their stage; the dashboard row reads **Umbrella · owner** or **Owner only**.
+
+An issue is an umbrella when ANY of these holds: a label from `hub.contribute_umbrella.labels` (default `umbrella`, `tracker`, `epic`, `meta-tracker`; case-insensitive, last segment so `kind/epic` counts), the body marker `<!-- hive:umbrella -->`, a title opening with one of `title_prefixes` (default `[Tracking]`, `[Epic]`, `[Umbrella]`, `[Tracker]`, after any emoji), a task list with at least `task_list_min` (default 2) issue or PR references (`- [ ] #123`), sub-issues, or the legacy tracker detector. It is owner-only when it carries `needs-human`, `human-only` or `human-only:*` (`human_only_labels`), or the body marker `<!-- hive:human-only -->`.
+
+**Who applies it:** Human or hive (a label or marker the owner writes; nothing is applied automatically).
+
+**Checked by:** Contributor selection, the ready-work queue, `GET /api/contribute/status` counts, the good-first-issue sweep and the dashboard tracker row. **When:** Contributor admission, sweep, render.
+
+**Not the `hive/tracking` marker.** `hive/tracking` issues are never auto-closed by any path. An umbrella is: the owner can close it, it is closable under the per-repo `parent_autoclose` policy (an `epic` label still needs `parent_autoclose: epics_too`, as before) and by the tracker-closing sweep, and closing it removes its stage labels like any other close.
+
+**Release or override.** Remove the label or marker; or `hub.contribute_umbrella.enabled: false` (hive-wide or under `per_repo.<owner/repo>`) to restore the previous tracker check only; `withdraw_advertisement: false` keeps `help wanted` on an umbrella.
+
+**Configuration and implementation.** `hub.contribute_umbrella` (`src/pkg/config/contribute_umbrella.go`), classifier `src/pkg/gfi/umbrella.go`, offer gate `src/pkg/dashboard/contribute_umbrella.go`, sweep `src/pkg/gfi/gfi.go`
 
 #### `hive-plan`, `hive-design`
 

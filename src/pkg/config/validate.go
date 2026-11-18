@@ -138,7 +138,13 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Review.ValidateDeltaMaxAge(); err != nil {
 		return err
 	}
+	if err := c.ValidateReviewPreflight(); err != nil {
+		return err
+	}
 	if err := c.Review.ValidatePendingFixTTL(); err != nil {
+		return err
+	}
+	if err := c.Review.AnalysisFactCheck.Validate(); err != nil {
 		return err
 	}
 	if err := c.validateReviewPerspectiveModels(); err != nil {

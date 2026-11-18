@@ -186,6 +186,9 @@ type Candidate struct {
 	ClaimedBy string
 	// HasLinkedPR says an open PR already references the issue.
 	HasLinkedPR bool
+	// Children is the number of sub-issues of a decomposed parent (0 when
+	// the issue has none or the count is unknown).
+	Children int
 }
 
 // Key is the owner/name#number identity.
@@ -214,6 +217,18 @@ type Policy struct {
 	ExcludeLabels []string
 	// HardSuppressLabels are the hive's escalation labels; always excluded.
 	HardSuppressLabels []string
+	// UmbrellaFor resolves the umbrella / owner-only policy for a repo
+	// (hive-wide with the repo's override laid over it). Nil means the
+	// defaults (hivecommons/hive#19078).
+	UmbrellaFor func(repo string) UmbrellaPolicy
+}
+
+// umbrellaPolicy is the resolved umbrella policy for repo.
+func (p Policy) umbrellaPolicy(repo string) UmbrellaPolicy {
+	if p.UmbrellaFor == nil {
+		return UmbrellaPolicy{}
+	}
+	return p.UmbrellaFor(repo)
 }
 
 // Normalized fills zero fields with the defaults.
@@ -261,6 +276,17 @@ type Decision struct {
 	Skip string
 	// AlreadyLabelled is true when the issue already carries Label.
 	AlreadyLabelled bool
+	// WithdrawAd is true when the skip is an umbrella or owner-only
+	// exclusion and the issue wears `help wanted` or `good first issue`
+	// while the policy withdraws the advertisement: the sweep takes both
+	// labels off (hivecommons/hive#19078).
+	WithdrawAd bool
+}
+
+// shouldWithdraw reports whether the sweep must take the advertisement back
+// from a skipped issue.
+func (d Decision) shouldWithdraw() bool {
+	return d.WithdrawAd || (d.AlreadyLabelled && Withdrawable(d.Skip))
 }
 
 // Score applies the qualification heuristic. It never calls out; everything
@@ -274,6 +300,14 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 		return skip(d, "pull-request")
 	case c.Number <= 0 || strings.TrimSpace(c.Repo) == "":
 		return skip(d, "no-identity")
+	}
+	// Umbrella and owner-only issues are never newcomer work, whoever has
+	// claimed them: checked before the claim gates so a hive-claimed
+	// umbrella still loses its public invitation (hivecommons/hive#19078).
+	if d, ok := scoreUmbrella(c, p, d); ok {
+		return d
+	}
+	switch {
 	case strings.TrimSpace(c.ClaimedBy) != "":
 		return skip(d, "claimed")
 	case len(c.Assignees) > 0:
@@ -685,7 +719,7 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 		if !d.Eligible {
 			res.Skipped[d.Skip]++
 			logger.Debug("gfi skip", "issue", c.Key(), "reason", d.Skip)
-			if d.AlreadyLabelled && Withdrawable(d.Skip) {
+			if d.shouldWithdraw() {
 				if _, released := s.releasedUntil(c.Key(), p.ReselectCooldown); !released {
 					if err := s.Withdraw(ctx, forge, c, d.Skip, opts); err != nil {
 						if archivedWrite(forge, c.Repo, err) {
@@ -804,7 +838,7 @@ func (s *Sweeper) staleSkip(ctx context.Context, forge Forge, c *Candidate, opts
 	live.Labels = fresh
 	verifyLabelSignals(ctx, forge, &live, p, now, opts.Logger)
 	if d := Score(live, p, now); !d.Eligible {
-		if d.AlreadyLabelled && Withdrawable(d.Skip) {
+		if d.shouldWithdraw() {
 			if _, released := s.releasedUntil(c.Key(), p.ReselectCooldown); !released {
 				_ = s.Withdraw(ctx, forge, live, d.Skip, opts)
 			}
@@ -828,6 +862,10 @@ func WithdrawnComment(c Candidate, reason string, l Links, at time.Time) string 
 	switch {
 	case strings.HasPrefix(reason, SkipTracking+":"):
 		why = "it is a persistent tracking/archive issue (" + TrackingReasonText(strings.TrimPrefix(reason, SkipTracking+":")) + "), not work"
+	case strings.HasPrefix(reason, SkipUmbrella+":"):
+		why = "it is an umbrella or tracker issue (" + UmbrellaReasonText(strings.TrimPrefix(reason, SkipUmbrella+":")) + "): the owner and the hive coordinate it, and its child issues carry the work"
+	case strings.HasPrefix(reason, SkipHumanOnly+":"):
+		why = "it needs a person, not a contributor (" + UmbrellaReasonText(strings.TrimPrefix(reason, SkipHumanOnly+":")) + ")"
 	case strings.HasPrefix(reason, SkipOpsTracking):
 		why = "it is a maintainer's operations checklist, not a code change"
 	case reason == SkipTimeGated:

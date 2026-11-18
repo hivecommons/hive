@@ -630,6 +630,12 @@
       box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
     .oc-agent-detail.active { display: block; }
+    .kick-outcomes { min-width: 0; margin-block: var(--sp-5); font-size: var(--fs-sm); }
+    .kick-outcomes h3 { font-size: var(--fs-sm); margin-bottom: var(--sp-3); }
+    .kick-outcome-list { list-style: none; padding: 0; margin: 0; max-height: 24rem; overflow-y: auto; }
+    .kick-outcome-list li { border-top: 1px solid var(--border); padding-block: var(--sp-3); overflow-wrap: anywhere; }
+    .kick-outcome-list blockquote { margin: var(--sp-2) 0; padding-inline-start: var(--sp-3); border-inline-start: 2px solid var(--line); white-space: pre-wrap; }
+    .kick-outcome-list code { white-space: normal; overflow-wrap: anywhere; }
     .oc-agent-detail.state-running, .oc-agent-detail[data-status="ok"] { border-color: var(--status-ok); }
     .oc-agent-detail.state-idle { border-color: var(--status-ok); }
     .oc-agent-detail.state-paused, .oc-agent-detail[data-status="warn"] { border-color: var(--status-warn); }
@@ -13094,6 +13100,52 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     })();
 
     const OC_TOPBAR_HEIGHT = 64;
+    // The API, not the browser's role hint, decides whether evidence is visible.
+    function kickOutcomesHtml(data) {
+      const labels = { opened_pr: 'Opened PR', pushed_commit: 'Pushed commit', commented: 'Commented', stood_down: 'Stood down', refused: 'Refused', still_running: 'Still running', ended_no_visible_action: 'Ended — no visible action' };
+      const detailed = data.detail === true;
+      const kicks = detailed ? (Array.isArray(data.kicks) ? data.kicks : []) : (data.latest ? [data.latest] : []);
+      if (!kicks.length) return '<p class="text-muted">No recorded kicks yet.</p>';
+      const time = value => {
+        const date = new Date(value);
+        return value && !isNaN(date.getTime()) ? esc(formatDashboardDateTime(date)) : 'Unknown time';
+      };
+      return '<ol class="kick-outcome-list">' + kicks.map(k => {
+        let evidence = '';
+        if (detailed) {
+          const trigger = [k.trigger_kind, k.trigger_actor].filter(Boolean).join(' · ');
+          evidence += '<div class="text-muted">Trigger: ' + esc(trigger || 'unknown') + '</div>';
+          evidence += '<div class="text-muted">Started: ' + time(k.started_at) + (k.ended_at ? ' · Ended: ' + time(k.ended_at) : '') + '</div>';
+          // Quotes and every other API string are untrusted. Restrict link protocols too.
+          let prURL = '';
+          try { const url = new URL(k.pr_url); if (url.protocol === 'https:' || url.protocol === 'http:') prURL = url.href; } catch (_) { /* no valid PR link */ }
+          if (prURL) evidence += '<a href="' + esc(prURL) + '" target="_blank" rel="noopener noreferrer">PR ' + esc(k.pr_number ? '#' + k.pr_number : k.pr_url) + '</a>';
+          if (k.branch) evidence += '<div>Branch: <code>' + esc(k.branch) + '</code></div>';
+          if (k.sha) evidence += '<div>Commit: <code>' + esc(k.sha) + '</code></div>';
+          if (k.refusal_code) evidence += '<div>Refusal: <code>' + esc(k.refusal_code) + '</code></div>';
+          if (k.quote) evidence += '<blockquote>' + esc(k.quote) + '</blockquote>';
+        }
+        return '<li><strong>' + esc(labels[k.kind] || 'Unknown outcome') + '</strong> <span class="text-muted">' + time(k.at) + '</span><div>' + esc(k.summary || '') + '</div>' + evidence + '</li>';
+      }).join('') + '</ol>';
+    }
+
+    async function refreshKickOutcomes(agent) {
+      const panel = document.querySelector('#oc-agent-detail .kick-outcomes');
+      if (!panel || panel.dataset.agent !== agent) return;
+      if (panel.dataset.pending === 'true' || Date.now() - Number(panel.dataset.fetchedAt || 0) < 10000) return;
+      panel.dataset.pending = 'true';
+      try {
+        const response = await fetch('/api/kick-outcomes?agent=' + encodeURIComponent(agent), { headers: _inceptionAuthHeaders() });
+        if (!response.ok) throw new Error('unavailable');
+        const data = await response.json();
+        if (panel.isConnected && panel.dataset.agent === agent) panel.querySelector('.kick-outcomes-body').innerHTML = kickOutcomesHtml(data);
+      } catch (_) {
+        if (panel.isConnected) panel.querySelector('.kick-outcomes-body').innerHTML = '<p class="text-muted">Kick outcomes unavailable. Retrying on the next refresh.</p>';
+      } finally {
+        panel.dataset.pending = 'false';
+        panel.dataset.fetchedAt = String(Date.now());
+      }
+    }
     function _ocAgentFromHash() {
       const h = location.hash.replace('#', '');
       if (!h || h === 'throughput' || h.startsWith('section-')) return null;
@@ -13771,6 +13823,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // The fingerprint guards the fields only the full template renders
       // (method/model/pins): without it a CLI or model switch stayed stale
       // in the focused panel until a hard refresh.
+      refreshKickOutcomes(a.name);
       const cfgSig = [a.cli || '', a.model || '', a.pinnedCli ? 1 : 0, a.pinnedModel ? 1 : 0, a.pinnedBoth ? 1 : 0, a.displayName || '', a.emoji || '', a.color || '', JSON.stringify(a.subAgentModels || []), agentToggleGateReason()].join('|');
       if (existingSummary && detail.dataset.agent === a.name && detail.dataset.cfgSig === cfgSig) {
         if (a.detailSummary) {
@@ -13968,6 +14021,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
         ${subAgentModelsHtml(a)}
         <div class="oc-detail-indicators">${agentIndicators(a.name)}</div>
+        <section class="kick-outcomes" data-agent="${esc(a.name)}" aria-label="Recent kick outcomes">
+          <h3>Recent kick outcomes</h3>
+          <div class="kick-outcomes-body"><p class="text-muted">Loading kick outcomes…</p></div>
+        </section>
         <div class="oc-detail-summary-wrap">
           <div class="oc-detail-summary" id="oc-summary-scroll">${(a.detailSummary || a.liveSummary) ? escBlock(a.detailSummary || a.liveSummary) : '<span class="text-muted">No activity summary</span>'}</div>
           <button class="oc-summary-follow-btn" id="oc-summary-follow" title="Follow new output" data-action="ocSummaryResumeTail">⬇</button>
@@ -13978,6 +14035,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         </div>
       `;
 
+      refreshKickOutcomes(a.name);
       const summaryEl = document.getElementById('oc-summary-scroll');
       const followBtn = document.getElementById('oc-summary-follow');
       if (summaryEl) {
@@ -22135,7 +22193,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             ${stageTrackerTitleHtml(title)}
             ${item.claim_reference ? `<span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}
             ${typeof stageTrackerLinkedElsewhereHtml === 'function' ? stageTrackerLinkedElsewhereHtml(item) : ''}
-            ${item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
+            ${item.umbrella ? `<span class="ham-badge" title="${esc('Umbrella (' + String(item.umbrella) + '): the owner and the hive coordinate it; it is not offered to contributors and can still be closed')}">Umbrella · owner${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
+            ${item.owner_only ? `<span class="ham-badge" title="${esc('Owner only (' + String(item.owner_only) + '): waits on a person; it is not offered to contributors')}">Owner only</span>` : ''}
           </div>`;
       } else {
         const li = stageTrackerPRIssueSlot(item);
@@ -54195,7 +54254,8 @@ function burnAreaChart() {
     const CUSTOMERS_PROFILE_FIELDS = [
       { key: 'real_name', label: 'Real name', max: 120 },
       { key: 'organization', label: 'Organization', max: 120 },
-      { key: 'location', label: 'Location or country', max: 120 }
+      { key: 'location', label: 'Location', max: 120 },
+      { key: 'country', label: 'Country (code or name)', max: 120 }
     ];
 
     function customersProfileValue(p, key) {
@@ -54211,6 +54271,44 @@ function burnAreaChart() {
       const f = p.profile.organization;
       const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : 'From the public GitHub profile';
       return '<span class="kc-pill customers-pill customers-org" data-source="' + (f.source === 'manual' ? 'manual' : 'auto') + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
+    }
+
+    // customersFlagEmoji: the flag for an ISO 3166 alpha-2 code, or '' when the
+    // code is not two letters. Some systems draw the flag as the two letters,
+    // so the code is always shown as text beside it.
+    function customersFlagEmoji(code) {
+      if (typeof code !== 'string' || !/^[A-Z]{2}$/.test(code)) return '';
+      return String.fromCodePoint(0x1F1E6 + code.charCodeAt(0) - 65, 0x1F1E6 + code.charCodeAt(1) - 65);
+    }
+
+    // customersCountryName: the country's name in the browser language, or the
+    // code itself when the browser cannot name it.
+    function customersCountryName(code) {
+      try {
+        const n = new Intl.DisplayNames(undefined, { type: 'region' }).of(code);
+        if (n) return n;
+      } catch (e) { /* no Intl.DisplayNames: fall back to the code */ }
+      return code;
+    }
+
+    // customersCountryPill: a compact flag and ISO code on the row. The name is
+    // the accessible label, so the meaning never depends on the emoji.
+    function customersCountryPill(p) {
+      const code = customersProfileValue(p, 'country');
+      if (!/^[A-Z]{2}$/.test(code)) return '';
+      const name = customersCountryName(code);
+      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name) + '">' +
+        '<span aria-hidden="true">' + customersFlagEmoji(code) + '</span> ' + escapeHtml(code) + '</span>';
+    }
+
+    // customersAffiliationHtml: the likely organization, with its evidence, as
+    // a suggestion to accept or dismiss. Nothing is saved until Accept.
+    function customersAffiliationHtml(p) {
+      const s = p && p.affiliation_suggestion;
+      if (!s || !s.value) return '';
+      return '<div class="customers-inline" data-customers-field="affiliation-suggestion"><span>Likely: <strong>' + escapeHtml(s.value) + '</strong> <span class="muted-xs">(' + escapeHtml(s.evidence || 'a guess') + ')</span></span>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationAccept" data-arg0="' + escapeHtml(s.value) + '">Accept</button>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationDismiss" data-arg0="' + escapeHtml(s.value) + '">Dismiss</button></div>';
     }
 
     // customersOriginPill: where the person came from, in one short word.
@@ -54291,7 +54389,7 @@ function burnAreaChart() {
         rowChevronHtml('customersToggle', isMe ? 'me' : p.id, open, 'profile of ' + name, pid) +
         customersAvatarHtml(name, customersGithubLogin(p), '', '') +
         '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') +
-        customersSourcePills(p) + customersOriginPill(p, updated) + customersOrgPill(p) + customersTagPills(p) + extra.join('') + pill + '</div>' +
+        customersSourcePills(p) + customersOriginPill(p, updated) + customersOrgPill(p) + customersCountryPill(p) + customersTagPills(p) + extra.join('') + pill + '</div>' +
         (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') + '</div>' +
         (open ? '<div class="customers-profile" id="' + pid + '" role="region" aria-label="Profile of ' + escapeHtml(name) + '">' + customersProfileHtml(_customersOpen) + '</div>' : '') + '</div>';
     }
@@ -54494,13 +54592,15 @@ function burnAreaChart() {
       const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
         const cur = (p.profile && p.profile[f.key]) || {};
         const manual = cur.source === 'manual';
-        const mark = cur.value ? (manual ? 'set by hand' : 'from GitHub') : (manual ? 'cleared by hand' : 'not known');
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.rule === 'location' ? 'from location' : 'from GitHub')) : (manual ? 'cleared by hand' : 'not known');
         return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
           (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
       }).join('');
-      return '<div class="customers-block"><div class="section-label m-0">Details</div>' +
-        '<div class="customers-inline">' + rows + '</div>' +
+      const cc = customersProfileValue(p, 'country');
+      const ccLine = /^[A-Z]{2}$/.test(cc) ? '<div class="muted-xs" data-customers-field="country-line"><span aria-hidden="true">' + customersFlagEmoji(cc) + '</span> ' + escapeHtml(cc) + ' ' + escapeHtml(customersCountryName(cc)) + '</div>' : '';
+      return '<div class="customers-block"><div class="section-label m-0">Details</div>' + ccLine +
+        '<div class="customers-inline">' + rows + '</div>' + customersAffiliationHtml(p) +
         '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>';
     }
 
@@ -54996,6 +55096,10 @@ function burnAreaChart() {
     }
 
     function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
+
+    function customersAffiliationAccept(value) { customersEdit({ op: 'profile', field: 'organization', value: value }, 'Organization set'); }
+
+    function customersAffiliationDismiss(value) { customersEdit({ op: 'affiliation_dismiss', value: value }, 'Suggestion dismissed'); }
 
     function customersNotesSave() { customersEdit({ op: 'notes', notes: (customersField('notes') || {}).value || '' }, 'Notes saved'); }
 
@@ -72143,6 +72247,8 @@ function burnAreaChart() {
       /* Reference repos (#18136): painted asynchronously from their own
          owner-only endpoint, like the Security tab's write allowlist. */
       loadReferenceRepos();
+      /* Parent auto-close (#19070): per-repo policy, same async pattern. */
+      loadParentAutoClose();
       const primary = _configState.data.primaryRepo || '';
       const selfAuthDefault = _configState.data.selfAuthorizationHold !== false;
       const selfAuthEnvLocked = !!_configState.data.selfAuthorizationHoldEnvLocked;
@@ -72291,6 +72397,8 @@ function burnAreaChart() {
         </div>
         <div class="settings-subsection-title mt-4">Reference repos ${yamlHint('project.reference_repos[]')} ${settingHelpMark('settings', 'repos', 'Reference repos', 'Repositories outside this project that agents may clone and read but do not manage: no queue, no kicks, no work items. Read-only by default; a write opt-in allows opening issues and/or PRs there with a credential the hive verifies on save. Post on other projects as (project.remote_write_identity) picks whether those posts appear as the hive bot or as you. A repo is either monitored above or a reference repo, never both.')}</div>
         <div id="cfg-reference-repos-host"><div class="fs-sm text-muted">Loading…</div></div>
+        <div class="settings-subsection-title mt-4">Parent auto-close ${yamlHint('repos.<key>.parent_autoclose')} ${settingHelpMark('settings', 'repos', 'Parent auto-close', 'Per repo: whether the hive closes a split-up parent issue once all of its children are closed. Close finished parents (default) skips parents labelled epic or hold; Also close epics and holds includes them; Never auto-close parents leaves every parent to a person. A parent a person reopened is never closed again, and issues marked as tracking issues are never auto-closed.')}</div>
+        <div id="cfg-parent-autoclose-host"><div class="fs-sm text-muted">Loading…</div></div>
         ${anyLabelDriven ? `<div class="ld-defaults" id="cfg-label-driven-defaults">
           <div class="config-toggle">
             <div class="config-toggle-switch ${ldApproval.trustOrgMembers !== false ? 'on' : ''} ${ldLocked ? 'disabled' : ''}" data-action="${ldLocked ? '' : 'toggleLabelDrivenTrustOrgMembers'}" data-arg-types="t" title="Prow's own rule: public members of the repo's org may apply the approval label. Off: only triage/write/maintain/admin collaborators and trusted bots."></div>
@@ -73387,6 +73495,141 @@ function burnAreaChart() {
           Restart backoff ladder: <code style="font-family:var(--font-mono)">${ladder}</code>
           <span style="opacity:0.8">— fixed progression; the last step is the cap.</span>
         </div>`;
+    }
+    /* Parent auto-close editor (#19070): repos.<repo>.parent_autoclose, one
+       choice per monitored repo, loaded from the owner-only
+       /api/config/repos/parent-autoclose endpoint and saved back to it.
+       Rendered with DOM nodes and textContent only, so a repo name or an
+       option string is never parsed as markup. The server validates the value
+       and applies it without a restart; its error message is shown as-is and
+       nothing is saved on an error. */
+    const PARENT_AUTOCLOSE_HOST_ID = 'cfg-parent-autoclose-host';
+
+    function parentAutoCloseNode(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    async function loadParentAutoClose() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/repos/parent-autoclose');
+        host = document.getElementById(PARENT_AUTOCLOSE_HOST_ID);
+        if (!host) return;
+        if (r.status === 403) {
+          host.textContent = '';
+          host.appendChild(parentAutoCloseNode('div', 'fs-sm text-muted', 'Only the hive owner can view and edit parent auto-close.'));
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderParentAutoClosePanel(host, await r.json());
+      } catch (e) {
+        host = host || document.getElementById(PARENT_AUTOCLOSE_HOST_ID);
+        if (!host) return;
+        host.textContent = '';
+        host.appendChild(parentAutoCloseNode('div', 'fs-sm text-danger', 'Failed to load parent auto-close: ' + e.message));
+      }
+    }
+
+    /* renderParentAutoClosePanel paints one row per monitored repo: a select
+       with the three options, the effective value, and the one-line
+       explanation of the chosen option. Save sends only the rows that
+       changed. */
+    function renderParentAutoClosePanel(host, data) {
+      if (!host) return;
+      data = data || {};
+      const options = Array.isArray(data.options) ? data.options : [];
+      const repos = (Array.isArray(data.repos) ? data.repos : []).map(r => ({
+        repo: r.repo || '', saved: r.value || data.default || 'true', value: r.value || data.default || 'true', explicit: !!r.explicit,
+      }));
+      const labelOf = v => { const o = options.find(x => x.value === v); return o ? o.label : v; };
+      const textOf = v => { const o = options.find(x => x.value === v); return o ? o.description : ''; };
+      host.textContent = '';
+      host.appendChild(parentAutoCloseNode('p', 'config-help',
+        'When every child of a split-up parent issue is closed, the hive can close the parent too. Choose, per repo, how far that goes. ' +
+        'A parent that a person reopened after the hive closed it is never closed again, whatever you choose. ' +
+        'Issues marked as tracking issues (the hive/tracking label, the hive:tracking marker or "Keep this issue open") are never auto-closed; only you closing them from the dashboard does that. ' +
+        'Saving applies the change without a restart.'));
+      const list = parentAutoCloseNode('div', 'config-list');
+      host.appendChild(list);
+      const statusEl = parentAutoCloseNode('div', 'fs-sm');
+      const setStatus = (msg, cls) => { statusEl.textContent = msg; statusEl.className = 'fs-sm ' + (cls || 'text-muted'); };
+      const saveBtn = parentAutoCloseNode('button', 'hv-btn btn-primary btn-sm', 'Save parent auto-close');
+
+      const dirty = () => repos.filter(r => r.value !== r.saved);
+      const syncSave = () => { saveBtn.disabled = dirty().length === 0; };
+
+      const paintRows = () => {
+        list.textContent = '';
+        if (!repos.length) list.appendChild(parentAutoCloseNode('div', 'fs-sm text-muted mb-3', 'No monitored repos configured'));
+        repos.forEach(entry => {
+          const row = parentAutoCloseNode('div', 'config-list-item config-repo-row');
+          row.appendChild(parentAutoCloseNode('span', 'config-repo-name', entry.repo));
+          const select = document.createElement('select');
+          select.title = 'Parent auto-close policy for ' + entry.repo;
+          options.forEach(o => {
+            const opt = document.createElement('option');
+            opt.value = o.value;
+            opt.textContent = o.label;
+            opt.selected = o.value === entry.value;
+            select.appendChild(opt);
+          });
+          const note = parentAutoCloseNode('span', 'text-muted fs-sm', textOf(entry.value));
+          select.addEventListener('change', () => {
+            entry.value = select.value;
+            note.textContent = textOf(entry.value);
+            setStatus('');
+            syncSave();
+          });
+          row.appendChild(select);
+          row.appendChild(parentAutoCloseNode('span', 'rt-inherit', 'now: ' + labelOf(entry.saved) + (entry.explicit ? '' : ' (inherited)')));
+          row.appendChild(note);
+          list.appendChild(row);
+        });
+      };
+
+      const hints = parentAutoCloseNode('div', 'config-help');
+      const hint = parentAutoCloseNode('span', 'settings-yaml-hint', 'YAML ');
+      hint.appendChild(parentAutoCloseNode('code', '', 'repos.<key>.parent_autoclose'));
+      hints.appendChild(hint);
+      host.appendChild(hints);
+
+      const actions = parentAutoCloseNode('div', 'config-list-add');
+      actions.appendChild(saveBtn);
+      actions.appendChild(statusEl);
+      host.appendChild(actions);
+      paintRows();
+      syncSave();
+
+      saveBtn.addEventListener('click', async () => {
+        const pending = dirty();
+        if (!pending.length) return;
+        saveBtn.disabled = true;
+        setStatus('Saving…');
+        try {
+          for (const entry of pending) {
+            const res = await fetch('/api/config/repos/parent-autoclose', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify({ repo: entry.repo, value: entry.value }),
+            });
+            if (!res.ok) throw new Error(entry.repo + ': ' + await saveErrorMessage(res));
+            const d = await res.json();
+            const fresh = (d.repos || []).find(x => x.repo === entry.repo);
+            entry.saved = entry.value;
+            entry.explicit = fresh ? !!fresh.explicit : entry.value !== (d.default || 'true');
+          }
+          paintRows();
+          setStatus('');
+          showToast('Parent auto-close saved', 'success');
+        } catch (e) {
+          paintRows();
+          setStatus(e.message, 'text-danger');
+        }
+        syncSave();
+      });
     }
     // Workflow-model bindings (hivecommons/hive#17620, RFC phase 2).
     //

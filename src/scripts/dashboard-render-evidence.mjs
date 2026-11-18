@@ -156,7 +156,17 @@ const collapseAllJS = `(() => {
   window.scrollTo(0, 0);
   return ids;
 })()`;
-const expandOneJS = (sid) => `(() => {
+const expandOneJS = (sid) => `(async () => {
+  if (${JSON.stringify(sid)} === 'kick-outcomes') {
+    // Isolated component evidence using the same API response and production renderer.
+    const data = await (await fetch('/api/kick-outcomes?agent=fixture-agent')).json();
+    const panel = document.getElementById('oc-agent-detail');
+    if (!panel || typeof kickOutcomesHtml !== 'function') return false;
+    panel.className = 'oc-agent-detail active';
+    panel.innerHTML = '<section class="kick-outcomes"><h3>Recent kick outcomes — fixture agent</h3><div class="kick-outcomes-body">' + kickOutcomesHtml(data) + '</div></section>';
+    panel.scrollIntoView();
+    return true;
+  }
   try { toggleSection(${JSON.stringify(sid)}, { collapsed: false, persist: false, animate: false }); } catch (_) { return false; }
   const el = document.getElementById(${JSON.stringify(sid)});
   if (!el) return false;

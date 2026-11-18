@@ -527,11 +527,17 @@ func (s *Store) SetNotes(id, notes string) (Person, error) {
 
 // SetProfileField sets one profile field by hand. An empty value clears it
 // and keeps the manual mark, so the automatic source does not refill what a
-// person removed.
+// person removed. A country is read as an ISO code or a country name. Setting
+// the location re-derives an automatic country from it.
 func (s *Store) SetProfileField(id, field, value, by string) (Person, error) {
 	value, err := cleanText(value, MaxProfileFieldLen, false)
 	if err != nil {
 		return Person{}, err
+	}
+	if field == FieldCountry && value != "" {
+		if value = CountryFromInput(value); value == "" {
+			return Person{}, fmt.Errorf("%w: not a country", ErrInvalid)
+		}
 	}
 	return s.changePerson(id, func(p *Person) error {
 		f := p.Profile.Field(field)
@@ -539,12 +545,16 @@ func (s *Store) SetProfileField(id, field, value, by string) (Person, error) {
 			return fmt.Errorf("%w: unknown profile field", ErrInvalid)
 		}
 		*f = ProfileField{Value: value, Source: SourceManual, At: s.now(), By: by}
+		if field == FieldLocation {
+			deriveAutoCountry(p, s.now())
+		}
 		return nil
 	})
 }
 
 // ResetProfileField hands a field back to the automatic source: it is
-// emptied and the next accept-time fetch may fill it.
+// emptied and the next accept-time fetch may fill it. A country is derived
+// again at once from the location the profile already holds.
 func (s *Store) ResetProfileField(id, field string) (Person, error) {
 	return s.changePerson(id, func(p *Person) error {
 		f := p.Profile.Field(field)
@@ -552,13 +562,60 @@ func (s *Store) ResetProfileField(id, field string) (Person, error) {
 			return fmt.Errorf("%w: unknown profile field", ErrInvalid)
 		}
 		*f = ProfileField{}
+		deriveAutoCountry(p, s.now())
+		return nil
+	})
+}
+
+// deriveAutoCountry keeps an automatic country in step with the location: it
+// fills or updates it from DeriveCountry, and drops one the location no longer
+// supports. A country a person set or cleared is never touched. It reports
+// whether anything changed.
+func deriveAutoCountry(p *Person, now time.Time) bool {
+	c := &p.Profile.Country
+	if c.Source == SourceManual {
+		return false
+	}
+	code := DeriveCountry(p.Profile.Location.Value)
+	if code == c.Value {
+		return false
+	}
+	if code == "" {
+		*c = ProfileField{}
+		return true
+	}
+	*c = ProfileField{Value: code, Source: SourceAuto, Rule: CountryRuleLocation, At: now}
+	return true
+}
+
+// DismissAffiliation remembers a refused affiliation suggestion so it is not
+// offered again. The list is bounded; the oldest refusal is forgotten first.
+func (s *Store) DismissAffiliation(id, value string) (Person, error) {
+	value, err := cleanText(value, MaxProfileFieldLen, false)
+	if err != nil {
+		return Person{}, err
+	}
+	key := strings.ToLower(value)
+	if key == "" {
+		return Person{}, fmt.Errorf("%w: empty affiliation", ErrInvalid)
+	}
+	return s.changePerson(id, func(p *Person) error {
+		if affiliationDismissed(p.Profile, key) {
+			return nil
+		}
+		d := append(p.Profile.DismissedAffiliations, key)
+		if len(d) > MaxDismissedAffiliations {
+			d = d[len(d)-MaxDismissedAffiliations:]
+		}
+		p.Profile.DismissedAffiliations = d
 		return nil
 	})
 }
 
 // ApplyAutoProfile fills profile fields from a public GitHub profile. It
 // only writes a field a person has not set (manual) and only with a
-// non-empty value, and it reports whether anything changed.
+// non-empty value, derives the country from the location, and reports
+// whether anything changed.
 func (s *Store) ApplyAutoProfile(id string, values map[string]string) (Person, bool, error) {
 	changed := false
 	p, err := s.changePerson(id, func(p *Person) error {
@@ -569,6 +626,9 @@ func (s *Store) ApplyAutoProfile(id string, values map[string]string) (Person, b
 				continue
 			}
 			*f = ProfileField{Value: v, Source: SourceAuto, Rule: ProfileSourceGitHub, At: s.now()}
+			changed = true
+		}
+		if deriveAutoCountry(p, s.now()) {
 			changed = true
 		}
 		return nil
