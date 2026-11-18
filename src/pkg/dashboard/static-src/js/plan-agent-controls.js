@@ -653,7 +653,7 @@
       const isInference = isInferenceBackendName(backend);
       const isCli = CLI_BACKENDS.includes(backend);
       if (isInference || isCli) {
-        // Disabling a focused <select> drops focus to <body>, and the option
+        // Disabling a focused <select> drops focus to the document body, and the option
         // swap resizes it; both are re-pinned so the page does not move (#18906).
         withAgentViewportPreserved(agent, () => modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">loading models…</option>';

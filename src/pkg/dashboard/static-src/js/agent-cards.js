@@ -1198,7 +1198,7 @@
     }
     function agentViewportCapture(agentName, fallbackFocus) {
       // fallbackFocus: the control focused when the switch began, used only when
-      // focus has since dropped to <body> (a disabled <select> blurs itself).
+      // focus has since dropped to the document body (a disabled <select> blurs itself).
       const snap = { scrollX: window.scrollX, scrollY: window.scrollY, key: '', top: 0, focus: agentFocusSnapshot(document.activeElement) || fallbackFocus || null };
       const grid = document.getElementById('agents');
       if (!grid) return snap;

@@ -32784,7 +32784,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function agentViewportCapture(agentName, fallbackFocus) {
       // fallbackFocus: the control focused when the switch began, used only when
-      // focus has since dropped to <body> (a disabled <select> blurs itself).
+      // focus has since dropped to the document body (a disabled <select> blurs itself).
       const snap = { scrollX: window.scrollX, scrollY: window.scrollY, key: '', top: 0, focus: agentFocusSnapshot(document.activeElement) || fallbackFocus || null };
       const grid = document.getElementById('agents');
       if (!grid) return snap;
@@ -60907,7 +60907,7 @@ function burnAreaChart() {
       const isInference = isInferenceBackendName(backend);
       const isCli = CLI_BACKENDS.includes(backend);
       if (isInference || isCli) {
-        // Disabling a focused <select> drops focus to <body>, and the option
+        // Disabling a focused <select> drops focus to the document body, and the option
         // swap resizes it; both are re-pinned so the page does not move (#18906).
         withAgentViewportPreserved(agent, () => modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">loading models…</option>';
