@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 )
@@ -29,6 +30,9 @@ type RepoSettings struct {
 	// hive auto-close is never re-closed under any value. YAML booleans
 	// true/false are accepted and read as the strings.
 	ParentAutoClose string `yaml:"parent_autoclose,omitempty" json:"parent_autoclose,omitempty"`
+	// ReviewPreflight overrides review.preflight for this repo
+	// (hivecommons/hive#19069). Unset fields inherit the hive-wide value.
+	ReviewPreflight ReviewPreflightConfig `yaml:"review_preflight,omitempty" json:"review_preflight,omitempty"`
 }
 
 // Parent auto-close policy values for RepoSettings.ParentAutoClose.
@@ -140,7 +144,9 @@ func (c *Config) SetParentAutoClose(repo, value string) error {
 	} else {
 		rs.ParentAutoClose = norm
 	}
-	if rs == (RepoSettings{}) {
+	// RepoSettings holds slices (review_preflight), so it is not comparable
+	// with ==; IsZero reports an entry with no knob set.
+	if reflect.ValueOf(rs).IsZero() {
 		delete(c.Repos, key)
 		return nil
 	}

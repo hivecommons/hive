@@ -67,6 +67,13 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	b.WriteString(deltaSection(pr, opts.Delta))
 	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins, opts.ReviewBotMinPriority))
 	b.WriteString(groundingSectionWithBudget(pr, combinedGroundingBudget(len(perspectives)), fmt.Sprintf("this whole review, across all %d perspectives", len(perspectives))))
+	b.WriteString(preflightSection(pr))
+	for _, p := range perspectives {
+		if p == PerspectiveCorrectness {
+			b.WriteString(subtleDefectGuidance)
+			break
+		}
+	}
 	writeReviewWritingGuide(&b, opts)
 	b.WriteString("\nReturn exactly one JSON ARRAY containing one object per perspective — all ")
 	fmt.Fprintf(&b, "%d of them, even the ones that found nothing.\n", len(perspectives))

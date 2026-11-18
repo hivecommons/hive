@@ -237,6 +237,9 @@ review:
   delta_rereview: true                      # optional; re-review a PR already judged at an earlier head by its diff since that head (default on)
   delta_trivial_lines: 20                   # optional; a delta under this many lines in files the prior verdict passed re-stamps it without a model call (default 20; negative disables)
   delta_max_age: 72h                        # optional; a changes_requested verdict with findings older than this anchors no delta, the PR is reviewed in full (default 72h)
+  preflight:                                 # optional; repo rule documents and dependency evidence for the reviewer, see "Review preflight" below
+    rule_docs: true                         # default on; point the reviewer at the repo's own rule documents (GitHub API only, no new egress)
+    dependencies: false                     # default OFF; vulnerability and release-age lookups for added or bumped dependencies (sends package names and versions to OSV and the registries)
   severity:
     block_at: P2                            # optional; P1 | P2 | P3, see "Blocking line" below
     comment_below: true                     # default true
@@ -734,6 +737,86 @@ The review-feedback sweep (#19027) ignores bot comments so two agents can never 
 - The per-head review cap (`max_reviews_per_head`, one review per head in quiet mode) exempts a review that carries a valid fact-check marker, because this pass is asked to post a review on a head the swarm may already have covered. The pass bounds its own rounds.
 
 State lives in `/data/factcheck/state.json` (`HIVE_FACTCHECK_DIR` overrides it). A hive that cannot write it keeps counting in memory, and the marked reviews on the PR still bound the loop.
+
+## Review preflight (`review.preflight`)
+
+The reviewer reads the diff and the tree. Review preflight adds facts the hive gathers before the review starts, so a finding can rest on a rule the repository published or on an advisory id instead of on a hunch (hivecommons/hive#19069). It is a general mechanism: it works for any repository and language, and every part can be turned off.
+
+Hive-wide defaults live under `review.preflight`; a repository overrides them under `repos.<repo>.review_preflight`. Precedence per field is repo, then hive-wide, then the default. Lists replace (the repo's list wins) except `rule_doc_paths`, `rules` and `ignore`, which add to the hive-wide entries (same `id`, or same `id` and `package`, is replaced by the repo's).
+
+```yaml
+review:
+  preflight:
+    rule_docs: true                  # default on
+    rule_doc_paths: ["handbook/**"]  # added to the default patterns below
+    rule_doc_exclude: ["CODEOWNERS"] # documents matching these are never listed
+    rule_doc_budget_bytes: 60000     # total bytes of rule documents one review reads (default 60000)
+    rules:                           # short named rules the reviewer enforces
+      - id: no-sleep-in-tests
+        severity: medium             # low | medium | high | critical (default medium)
+        text: Tests must not use fixed sleeps; wait on a condition.
+    dependencies: false              # default OFF, see "What leaves the hive"
+    vulnerabilities: true            # default on when dependencies is on; OSV lookup
+    release_age: true                # default on when dependencies is on; registry publish date
+    offline: false                   # true (or HIVE_REVIEW_PREFLIGHT_OFFLINE=true) makes every lookup say "could not check: offline"
+    osv_url: https://api.osv.dev     # point at an internal mirror if you run one
+    registry_urls: {npm: https://npm.mirror.example}   # per ecosystem id, see the table below
+    min_release_age_days: 14         # a version published more recently is a supply-chain note (default 14; negative disables)
+    severity_floor: low              # advisories below this are not listed (default low; unstated severity is always listed)
+    block_severity: high             # advisories at or above this are in-scope blockers, lower ones are notes (default high)
+    cache_ttl: 6h                    # reuse registry and advisory answers (default 6h)
+    request_timeout: 10s             # per outbound request (default 10s)
+    max_dependencies: 30             # lookups per PR; the rest are listed as not checked (default 30)
+    ignore:                          # accepted risks: a reason is required, expires is optional (YYYY-MM-DD)
+      - {id: GHSA-xxxx-xxxx-xxxx, package: example.com/lib, reason: "not reachable from our code", expires: "2027-03-01"}
+repos:
+  widgets:
+    review_preflight:
+      dependencies: true
+      rules:
+        - {id: widgets-api, text: "Public handlers must validate input before use.", severity: high}
+```
+
+### Repository rules
+
+With `rule_docs` on, the hive lists the repository at the PR's base commit and tells the reviewer which rule documents exist, how many bytes of each to read, and how to read them. The default patterns are matched case-insensitively (a pattern without a slash matches at the repository root; `dir/**` matches any text file below `dir`): `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING*`, `DESIGN*.md`, `ARCHITECTURE*.md`, `STYLE*.md`, `CODEOWNERS` (also under `.github/` and `docs/`), `.github/copilot-instructions.md`, `.cursor/rules/**`, `docs/design/**`, `docs/adr/**`, `docs/architecture/**`. Selection is deterministic: patterns in list order, then path order, each document capped at half the budget, documents past the budget listed as omitted. The reviewer must name the document and the rule it applied, and quote it; a finding that invokes a rule it did not read is a false positive.
+
+`rules` are the operator's own named rules, for conventions no document states. The reviewer enforces them at the stated severity and cites the id.
+
+### Dependency evidence
+
+With `dependencies` on, the hive reads the PR's changed manifests and, for each dependency version the diff adds or bumps, queries the vulnerability database and the package registry. The reviewer receives advisory ids with a normalized severity and publish dates, nothing else from those services (no free text), and is told to report only what is listed and to cite the id. A line that says `not checked` or `could not check` means no data, never a clean result.
+
+| Ecosystem id | Manifests | OSV ecosystem | Publish date from |
+|---|---|---|---|
+| `go` | `go.mod`, `go.sum` | Go | proxy.golang.org |
+| `npm` | `package.json`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml` | npm | registry.npmjs.org |
+| `pypi` | `requirements*.txt`, `pyproject.toml` (exact pins), `poetry.lock`, `uv.lock` | PyPI | pypi.org |
+| `crates` | `Cargo.lock` | crates.io | crates.io |
+| `maven` | `pom.xml`, `gradle.lockfile` | Maven | search.maven.org |
+| `rubygems` | `Gemfile.lock` | RubyGems | rubygems.org |
+| `packagist` | `composer.lock` | Packagist | repo.packagist.org |
+| `nuget` | `packages.lock.json` | NuGet | api.nuget.org |
+| `actions` | `.github/workflows/*.yml` (`uses:` with a full version tag) | GitHub Actions | not looked up |
+| `container` | `Dockerfile*`, compose files | none | not looked up |
+
+A changed manifest of a kind that has no entry yet (Pipfile.lock, mix.lock, pubspec.lock, Package.resolved, Podfile.lock, bun and deno lockfiles, Chart.lock, flake.lock, Terraform and Bazel lockfiles, Conan, sbt) is reported as `Not checked`, as is a manifest whose patch GitHub withheld, an action pinned by SHA or a floating tag, and every dependency past `max_dependencies`. Only versions written in the diff are checked; transitive dependencies of a manifest without a lockfile are not resolved.
+
+**Adding an ecosystem** is a table entry plus a test: append an `Ecosystem` to `Ecosystems` in `src/pkg/reviewpreflight/ecosystems.go` (manifest patterns, a parser over the patch lines, the OSV ecosystem id, and an `Age` lookup with its default registry URL), add a case to `TestEcosystemParsers`, and add a row to the table above.
+
+**Noise control.** A vulnerable-dependency finding needs an advisory id from the list; an age note needs the publish date and is never a blocker on its own. `block_severity` decides which advisories are in-scope blockers (`changes_requested`) and which are notes; `severity_floor` hides low-severity noise. An accepted risk goes in `ignore` with a reason (required) and an expiry; an expired entry stops suppressing and the evidence says so. The id `release-age` with a `package` silences the release-age note for that package.
+
+### What leaves the hive, and how to turn it off
+
+- **Rule documents** use the GitHub API the hive already calls (one repository tree listing per PR head). Nothing new leaves. Turn off with `rule_docs: false`.
+- **Dependency checks are off by default** because they contact third-party services about a repository that may be private. When on, per changed dependency the hive sends: to OSV (`osv_url`, default api.osv.dev) the package name, ecosystem and version; to the registry (see the table, overridable with `registry_urls`) a GET for that package or version. No token, credential, repository name, PR text or source code is sent, and requests carry no `Authorization` header. Requests follow the hive's upstream proxy settings (`network.upstream_proxy`, `HTTPS_PROXY`). The services see the hive's egress IP and the dependency names of the PRs it reviews.
+- **Offline or air-gapped:** set `offline: true` or `HIVE_REVIEW_PREFLIGHT_OFFLINE=true`; no request is made and the evidence says `could not check: offline`. An unreachable service, a timeout, a 429 or a 5xx degrades the same way, per check, with the reason. Answers are cached in memory for `cache_ttl`, and a PR head is looked up once.
+- **Internal mirrors:** set `osv_url` and `registry_urls` to your own endpoints.
+- **Disable entirely:** `dependencies: false` (the default), per repo with `repos.<repo>.review_preflight.dependencies: false`.
+
+### Two extra reviewer checks
+
+The correctness perspective (and a combined review that includes it) now also asks for two defect classes a diff-only read tends to miss: error, log and test-failure messages and comments that stopped describing behavior after the change, and sentinel values (zero, -1, an unset marker) flowing into min, max, sum or comparison aggregates. Each finding must cite the line and a concrete input.
 
 ## Revising a recorded verdict
 

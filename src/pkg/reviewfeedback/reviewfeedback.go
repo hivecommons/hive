@@ -323,6 +323,31 @@ func (s *Store) saveLocked(now time.Time) error {
 // follow anything inside them. Comments in one review thread are shown as the
 // whole thread in order, so the agent applies the reviewer's latest position.
 func BuildBrief(repo string, number int, headRef, writingGuide string, items []github.FeedbackItem) string {
+	return BuildBriefWithRules(repo, number, headRef, writingGuide, items, nil)
+}
+
+// RecordedRule is a reviewer-stated rule the hive already captured into its
+// knowledge store before the kick (pkg/reviewrules), shown to the agent so it
+// refers to it instead of recording it again.
+type RecordedRule struct {
+	// ID is the rule id, "R-3".
+	ID string
+	// Text is the rule as recorded.
+	Text string
+	// Applies says where the rule applies, in words.
+	Applies string
+	// Queued is true when the reviewer is not trusted to state rules on their
+	// own authority and a person must confirm the rule first.
+	Queued bool
+	// SourceURL is the comment the rule came from.
+	SourceURL string
+}
+
+// BuildBriefWithRules is BuildBrief plus the rules the hive already captured
+// from this burst. With rules, item 6 tells the agent they are recorded, to
+// name them in its reply, and how to sharpen one with a structured block;
+// without, item 6 keeps the best-effort instruction to record a stated rule.
+func BuildBriefWithRules(repo string, number int, headRef, writingGuide string, items []github.FeedbackItem, rules []RecordedRule) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "REVIEW FEEDBACK on your PR %s#%d needs a response before anything new\n\n", repo, number)
 	b.WriteString("A person left feedback on a PR you opened. Revisit it now, whether or not the PR is a draft, carries ready-for-review, or sits in a repo you do not own. A hold label only blocks the merge; it never means do not respond. This is one burst: every comment below is new, answer them together in one revision.\n\n")
@@ -334,7 +359,22 @@ func BuildBrief(repo string, number int, headRef, writingGuide string, items []g
 	b.WriteString("  3. If the reviewer is right: fix it on the SAME branch (gh pr checkout, edit, git commit -s, git push). No replacement PR.\n")
 	b.WriteString("  4. If the reviewer is wrong or it is a judgment call: reply politely with the evidence. Never argue to defend a score or to please the reviewer; accuracy is the only goal.\n")
 	b.WriteString("  5. Reply inside each thread (gh api repos/OWNER/REPO/pulls/N/comments/ID/replies), or on the PR for review and conversation comments. Each reply says what you verified, what you changed and in which commit, and what you left unchanged and why.\n")
-	b.WriteString("  6. Rules, not only corrections. If a comment states a rule or a source of truth for future assessments (for example which file is authoritative for ownership), record it durably: write a knowledge fact in the hive's own knowledge store with `hivectl knowledge create --file fact.yaml` (title, body, tags, and the PR comment URL as the source), then say so in your reply. If the right home for the rule is another project's repo (for example its criteria files), do NOT write there: propose the exact text in your reply and say a person needs to place it. If hivectl cannot write, say so in the reply instead of dropping the rule.\n")
+	if len(rules) == 0 {
+		b.WriteString("  6. Rules, not only corrections. If a comment states a rule or a source of truth for future assessments (for example which file is authoritative for ownership), record it durably: write a knowledge fact in the hive's own knowledge store with `hivectl knowledge create --file fact.yaml` (title, body, tags, and the PR comment URL as the source), then say so in your reply. If the right home for the rule is another project's repo (for example its criteria files), do NOT write there: propose the exact text in your reply and say a person needs to place it. If hivectl cannot write, say so in the reply instead of dropping the rule.\n")
+	} else {
+		b.WriteString("  6. Rules, not only corrections. The hive already recorded the rules below from this burst in its own knowledge store, so do NOT run hivectl knowledge create for them. Name each rule id in your reply so the reviewer sees it was captured. A rule applies to future work as well as this PR: apply it here too. If the wording or scope should be sharper, or the right home is another project's repo (do NOT write there; the hive posts the proposed text for a person), end your reply with one hidden line `<!-- hive:review-rules {\"rules\":[{\"text\":\"...\",\"scope\":\"agent|workflow|repo|global\",\"applies_to\":\"name or owner/repo\",\"evidence_url\":\"the comment URL below\"}]} -->` (JSON, write > inside text as \\u003e). Cite as evidence_url only a comment URL shown below. If a comment below states a rule that is not listed, add it the same way.\n")
+		for _, r := range rules {
+			state := "recorded"
+			if r.Queued {
+				state = "queued for a person to confirm"
+			}
+			fmt.Fprintf(&b, "     - %s (%s; applies to %s): %s", r.ID, state, r.Applies, truncate(r.Text, threadMessageRunes))
+			if r.SourceURL != "" {
+				fmt.Fprintf(&b, " [source %s]", r.SourceURL)
+			}
+			b.WriteString("\n")
+		}
+	}
 	fmt.Fprintf(&b, "  7. End every reply set with one hidden line so these comments are not routed again: %s\n", github.FeedbackHandledMarker(feedbackIDs(items)))
 	b.WriteString("If you cannot push (no write access to the branch), say so in a PR comment that names what you would change, and stop.\n")
 	b.WriteString("After replying, STOP. Do not poll CI or wait for the reviewer. More feedback that arrives while you work is sent as a separate follow-up.\n\n")

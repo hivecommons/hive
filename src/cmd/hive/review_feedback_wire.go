@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/reviewfeedback"
+	"github.com/hivecommons/hive/pkg/reviewrules"
 )
 
 // Review-feedback response sweep (hivecommons/hive#19027). A person's review
@@ -36,6 +37,7 @@ var (
 	reviewFeedbackLastRun time.Time
 	reviewFeedbackCursor  int
 	reviewFeedbackStore   *reviewfeedback.Store
+	reviewRuleStore       *reviewrules.Store
 )
 
 // reviewFeedbackSource is the GitHub surface the sweep needs.
@@ -66,11 +68,20 @@ type reviewFeedbackSweep struct {
 	Cursor       int
 	Now          time.Time
 	Logger       *slog.Logger
+	// Rules captures reviewer-stated rules into the hive's knowledge
+	// (hivecommons/hive#19046). Nil turns capture off; the sweep is
+	// otherwise unchanged.
+	Rules *reviewrules.Store
+	// Lane maps the authoring agent to the base lane its rules apply to.
+	Lane func(owner string) string
+	// Managed says whether the hive manages a repo (owner/name).
+	Managed func(repo string) bool
 }
 
 // reviewFeedbackResult counts one pass, for tests and the summary line.
 type reviewFeedbackResult struct {
 	Checked, Kicked, Debounced, CapReached, NeedsHuman, Errors int
+	RulesCaptured, RulesQueued, RulesMerged                    int
 	NextCursor                                                 int
 }
 
@@ -108,6 +119,10 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 			s.Logger.Warn("review feedback: fetch failed, PR skipped this pass", "repo", repo, "pr", number, "error", err)
 			continue
 		}
+		if s.Rules != nil && fb.Open() {
+			s.applyRuleReplies(repo, number, fb.HiveReplies)
+			s.postRuleNotices(ctx, repo, number)
+		}
 		if !fb.Open() || len(fb.Items) == 0 {
 			continue
 		}
@@ -118,13 +133,15 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 			s.Logger.Debug("review feedback: burst still arriving, waiting to coalesce", "repo", repo, "pr", number, "comments", len(d.Items))
 		case reviewfeedback.VerdictCapReached:
 			res.CapReached++
+			s.captureRules(ctx, repo, number, redPRFixOwner(s.Owners[key]), d.Items, &res)
 			s.needsHuman(ctx, key, repo, number, "it has been routed to its agent "+strconv.Itoa(s.Limits.WindowCap)+" times in "+s.Limits.Window.String()+"; further feedback is waiting, and a new comment from a person resets this", d.Items, &res)
 		case reviewfeedback.VerdictKick:
+			recorded := s.captureRules(ctx, repo, number, redPRFixOwner(s.Owners[key]), d.Items, &res)
 			if route.Agent == "" {
 				s.needsHuman(ctx, key, repo, number, route.Reason, d.Items, &res)
 				continue
 			}
-			brief := reviewfeedback.BuildBrief(repo, number, fb.HeadRef, s.WritingGuide, d.Items)
+			brief := reviewfeedback.BuildBriefWithRules(repo, number, fb.HeadRef, s.WritingGuide, d.Items, recorded)
 			if err := s.Kicker.Kick(route.Agent, brief); err != nil {
 				level := slog.LevelWarn
 				if isSharedPoolBusyErr(err) {
@@ -159,6 +176,117 @@ func (s reviewFeedbackSweep) needsHuman(ctx context.Context, key, repo string, n
 		s.Logger.Warn("review feedback: could not persist needs-human flag", "repo", repo, "pr", number, "error", err)
 	}
 	res.NeedsHuman++
+}
+
+// captureRules is the deterministic half of rule capture (#19046): every
+// comment in the burst that states a rule is written to the hive's knowledge
+// store whether or not the agent later records it, idempotently per comment.
+// It runs for every verdict that carries comments, so a rule is not lost to the
+// cap or to an unavailable agent. It returns the rules for the agent's brief.
+func (s reviewFeedbackSweep) captureRules(ctx context.Context, repo string, number int, owner string, items []github.FeedbackItem, res *reviewFeedbackResult) []reviewfeedback.RecordedRule {
+	if s.Rules == nil {
+		return nil
+	}
+	lane := owner
+	if s.Lane != nil {
+		lane = s.Lane(owner)
+	}
+	managed := s.Managed != nil && s.Managed(repo)
+	var recorded []reviewfeedback.RecordedRule
+	for _, it := range items {
+		c := reviewrules.Comment{Repo: repo, PR: number, CommentID: it.ID, URL: it.URL, Reviewer: it.Author,
+			Association: it.AuthorAssociation, Body: it.Body, At: it.CreatedAt, Lane: lane, ManagedRepo: managed}
+		if err := s.Rules.Remember(c, s.Now); err != nil {
+			s.Logger.Warn("review feedback: could not remember the comment for rule evidence", "repo", repo, "pr", number, "comment", it.ID, "error", err)
+		}
+		r := s.Rules.CaptureComment(c, s.Now)
+		switch r.Outcome {
+		case reviewrules.OutcomeNotRule:
+			continue
+		case reviewrules.OutcomeRefused:
+			s.Logger.Warn("review feedback: rule not recorded", "repo", repo, "pr", number, "comment", it.ID, "reviewer", it.Author, "signals", r.Signals, "error", r.Err)
+			continue
+		case reviewrules.OutcomeCaptured:
+			res.RulesCaptured++
+		case reviewrules.OutcomeQueued:
+			res.RulesQueued++
+		case reviewrules.OutcomeMerged:
+			res.RulesMerged++
+		}
+		if r.Outcome != reviewrules.OutcomeDuplicate {
+			s.Logger.Info("review feedback: reviewer-stated rule recorded in the hive's knowledge", "repo", repo, "pr", number, "comment", it.ID,
+				"reviewer", it.Author, "association", it.AuthorAssociation, "outcome", string(r.Outcome), "rule", r.Rule.ID, "scope", string(r.Rule.Scope),
+				"applies_to", r.Rule.AppliesTo, "signals", r.Signals)
+		}
+		if r.Rule == nil || (r.Rule.Status != reviewrules.StatusActive && r.Rule.Status != reviewrules.StatusPending) {
+			continue
+		}
+		recorded = append(recorded, reviewfeedback.RecordedRule{ID: r.Rule.ID, Text: r.Rule.Text, Applies: r.Rule.Describe(),
+			Queued: r.Rule.Status == reviewrules.StatusPending, SourceURL: it.URL})
+	}
+	s.postRuleNotices(ctx, repo, number)
+	return recorded
+}
+
+// applyRuleReplies reads the structured block in the agent's own replies on the
+// PR. Each reply is applied once; an entry that does not validate, or does not
+// cite a comment the hive saw, is logged and dropped.
+func (s reviewFeedbackSweep) applyRuleReplies(repo string, number int, replies []github.FeedbackMessage) {
+	for _, rp := range replies {
+		applied := s.Rules.ApplyReply(reviewfeedback.Key(repo, number)+":"+rp.ID, rp.Body, s.Managed, s.Now)
+		for _, a := range applied {
+			if a.Outcome == reviewrules.OutcomeRejected {
+				s.Logger.Warn("review feedback: agent rule entry rejected", "repo", repo, "pr", number, "reply", rp.ID, "reason", a.Reason)
+				continue
+			}
+			s.Logger.Info("review feedback: agent rule block applied", "repo", repo, "pr", number, "reply", rp.ID, "outcome", string(a.Outcome), "rule", a.Rule.ID)
+		}
+	}
+}
+
+// postRuleNotices tells reviewers what was captured and posts the one
+// needs-human proposal for a rule whose home is another project's repo.
+func (s reviewFeedbackSweep) postRuleNotices(ctx context.Context, repo string, number int) {
+	if acks := s.Rules.UnackedFor(repo, number); len(acks) > 0 {
+		if s.acknowledgeRules(ctx, repo, number, reviewrules.AckComment(acks)) {
+			ids := make([]string, 0, len(acks))
+			for _, a := range acks {
+				ids = append(ids, a.CommentID)
+			}
+			if err := s.Rules.MarkAcked(repo, number, ids); err != nil {
+				s.Logger.Warn("review feedback: could not persist rule acknowledgement", "repo", repo, "pr", number, "error", err)
+			}
+		}
+	}
+	for _, r := range s.Rules.HomeProposals() {
+		if len(r.Provenance) == 0 || r.Provenance[0].Repo != repo || r.Provenance[0].PR != number {
+			continue
+		}
+		if s.proposeRuleHome(ctx, repo, number, reviewrules.HomeProposalNote(r)) {
+			if err := s.Rules.MarkHomeNoted(r.ID); err != nil {
+				s.Logger.Warn("review feedback: could not persist rule proposal flag", "rule", r.ID, "error", err)
+			}
+		}
+	}
+}
+
+// acknowledgeRules posts the reply that says which rules were recorded.
+func (s reviewFeedbackSweep) acknowledgeRules(ctx context.Context, repo string, number int, body string) bool {
+	if err := s.Source.CreateIssueComment(ctx, repo, number, body); err != nil { // writeback:solicited a person's review feedback on this hive-authored PR
+		s.Logger.Warn("review feedback: rule acknowledgement not posted, retrying next pass", "repo", repo, "pr", number, "error", err)
+		return false
+	}
+	return true
+}
+
+// proposeRuleHome posts the one needs-human note carrying the proposed text of
+// a rule that belongs in a repo the hive does not manage.
+func (s reviewFeedbackSweep) proposeRuleHome(ctx context.Context, repo string, number int, body string) bool {
+	if err := s.Source.CreateIssueComment(ctx, repo, number, body); err != nil { // writeback:solicited a person's review feedback on this hive-authored PR
+		s.Logger.Warn("review feedback: rule proposal note not posted, retrying next pass", "repo", repo, "pr", number, "error", err)
+		return false
+	}
+	return true
 }
 
 // parseReviewFeedbackKey splits "owner/repo#n".
@@ -197,6 +325,18 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		}
 		reviewFeedbackStore = st
 	}
+	if reviewRuleStore == nil && reviewrules.Enabled() {
+		rs, err := reviewrules.Open(reviewrules.Dir(), reviewrules.VaultDir(), reviewrules.ConfigFromEnv())
+		if err != nil {
+			logger.Warn("review feedback: rule index unreadable or not writable; rules kept in memory only", "dir", reviewrules.Dir(), "error", err)
+		}
+		reviewRuleStore = rs
+	}
+	if reviewRuleStore != nil {
+		for _, line := range reviewRuleStore.Reconcile(now) {
+			logger.Info("review feedback: rule changed by an operator", "change", line)
+		}
+	}
 	available := agentAvailability(cfg, agentMgr)
 	sweep := reviewFeedbackSweep{
 		Source:       client,
@@ -209,6 +349,9 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		Cursor:       reviewFeedbackCursor,
 		Now:          now,
 		Logger:       logger,
+		Rules:        reviewRuleStore,
+		Lane:         cfg.BaseAgentName,
+		Managed:      cfg.IsManagedRepo,
 		Route: func(owner string) reviewFeedbackRoute {
 			if ac, ok := cfg.Agents[owner]; (agentMgr != nil && agentMgr.IsPaused(owner)) || (ok && ac.Paused) {
 				return reviewFeedbackRoute{Paused: true}
@@ -229,6 +372,7 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 	reviewFeedbackCursor = res.NextCursor
 	if res.Kicked+res.NeedsHuman+res.Debounced+res.CapReached+res.Errors > 0 {
 		logger.Info("review feedback pass", "checked", res.Checked, "kicked", res.Kicked, "debounced", res.Debounced,
-			"cap_reached", res.CapReached, "needs_human", res.NeedsHuman, "errors", res.Errors)
+			"cap_reached", res.CapReached, "needs_human", res.NeedsHuman, "errors", res.Errors,
+			"rules_captured", res.RulesCaptured, "rules_queued", res.RulesQueued, "rules_merged", res.RulesMerged)
 	}
 }
