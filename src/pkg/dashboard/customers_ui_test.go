@@ -97,7 +97,7 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersFocusSuggestion", "customersAfterSuggestion", "customersAccept", "customersDismiss", "customersShowMore",
 		"customersPickerOpen", "customersProfilePickerOpen", "customersPickerClose", "customersAttach", "customersHintAnswer",
 		"customersAvatarsOn", "customersGithubLogin", "customersAvatarHtml", "customersMorePill", "customersSourcePills",
-		"customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget",
+		"rowChevronHtml", "customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget",
 		"graphcanvasRound", "graphcanvasLabel", "graphcanvasLayout", "graphcanvasSvg",
 	} {
 		fns = append(fns, jsFunc(t, html, name))
@@ -378,7 +378,7 @@ must(pillRow.indexOf('customers-source') < pillRow.indexOf('customers-origin') &
 must(!/class="customers-row-title"/.test(pillRow) && (pillRow.match(/<div/g) || []).length === 3, 'a list row is more than its wrapper, the card and its main line: ' + pillRow);
 // Inline profile: the chevron is a real button left of the avatar, the row
 // carries the toggle, and the profile opens under the row while it is open.
-must(/<button type="button" class="customers-chevron"[^>]*aria-expanded="false"/.test(pillRow) && pillRow.indexOf('customers-chevron') < pillRow.indexOf('class="customers-avatar"') && !pillRow.includes('customers-profile"') && pillRow.includes('data-action="customersToggle" data-arg0="p_pl"'), 'a closed row lacks its chevron button: ' + pillRow);
+must(/<button type="button" class="row-chevron"[^>]*aria-expanded="false"/.test(pillRow) && pillRow.indexOf('row-chevron') < pillRow.indexOf('class="customers-avatar"') && !pillRow.includes('customers-profile"') && pillRow.includes('data-action="customersToggle" data-arg0="p_pl"'), 'a closed row lacks its chevron button: ' + pillRow);
 _customersOpen = pillPerson;
 const openRow = customersRowHtml(pillPerson, false);
 must(openRow.includes('aria-expanded="true"') && openRow.includes('aria-controls="customers-profile-p_pl"') && openRow.includes('<div class="customers-profile" id="customers-profile-p_pl"') && openRow.indexOf('customers-card') < openRow.indexOf('customers-profile'), 'an open row does not show its profile under it');

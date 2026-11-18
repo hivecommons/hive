@@ -294,7 +294,7 @@
       const pid = 'customers-profile-' + String(isMe ? 'me' : p.id).replace(/[^A-Za-z0-9_-]/g, '_');
       return '<div class="customers-item" data-customer-item="' + rid + '">' +
         '<div class="customers-card" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '" data-open="' + open + '" data-action="customersToggle" data-arg0="' + rid + '">' +
-        '<button type="button" class="customers-chevron" data-action="customersToggle" data-arg0="' + rid + '" aria-expanded="' + open + '"' + (open ? ' aria-controls="' + pid + '"' : '') + ' aria-label="' + (open ? 'Collapse' : 'Expand') + ' profile of ' + escapeHtml(name) + '"><span aria-hidden="true">\u25B8</span></button>' +
+        rowChevronHtml('customersToggle', isMe ? 'me' : p.id, open, 'profile of ' + name, pid) +
         customersAvatarHtml(name, customersGithubLogin(p), '', '') +
         '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') +
         customersSourcePills(p) + customersOriginPill(p, updated) + customersOrgPill(p) + customersTagPills(p) + extra.join('') + pill + '</div>' +
@@ -670,7 +670,7 @@
       if (_customersUi.focusRow) {
         const want = _customersUi.focusRow;
         _customersUi.focusRow = '';
-        const chev = Array.prototype.find.call(host.querySelectorAll('.customers-chevron'), c => c.getAttribute('data-arg0') === want);
+        const chev = Array.prototype.find.call(host.querySelectorAll('.row-chevron'), c => c.getAttribute('data-arg0') === want);
         if (chev) chev.focus();
       }
     }
@@ -1019,7 +1019,7 @@
         await fetchCustomers();
         // The focus moves on to the next question, else back to the profile.
         const host = document.getElementById('customers-panel');
-        const target = host && ((nextHint && host.querySelector('[data-hint="' + nextHint + '"] button')) || host.querySelector('.customers-chevron[aria-expanded="true"]'));
+        const target = host && ((nextHint && host.querySelector('[data-hint="' + nextHint + '"] button')) || host.querySelector('.row-chevron[aria-expanded="true"]'));
         if (target) target.focus();
       } catch (e) { customersProfileError(e.message); }
     }
