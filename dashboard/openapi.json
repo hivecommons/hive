@@ -19980,6 +19980,223 @@
         }
       }
     },
+    "/api/knowledge/advisor/summary": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Knowledge advisor rank-versus-holdout summary",
+        "description": "Read-only comparison for the knowledge advisor (read role or higher). Counts and means only: never slugs, refs, agents or content. `arms` carries the `Lane.AdvisorArmSummary()` rows for shadow, deliver and holdout; `mixed` and `none` are listed separately. `since` narrows the decision counts and cost means, not the per-arm bead means.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "RFC 3339 lower bound for the decision counts and cost means"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Advisor summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "window": {
+                      "type": "object",
+                      "properties": {
+                        "since": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "first_decision": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "last_decision": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "rank_mode_start": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "decisions": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "settings": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "mode": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "holdout_percent": {
+                          "type": "integer"
+                        },
+                        "max_calls_per_day": {
+                          "type": "integer"
+                        },
+                        "max_calls_per_agent_hour": {
+                          "type": "integer"
+                        },
+                        "candidates": {
+                          "type": "integer"
+                        },
+                        "on_error": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "by_mode": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "by_arm": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "by_outcome": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "arms": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "arm": {
+                            "type": "string"
+                          },
+                          "beads": {
+                            "type": "integer"
+                          },
+                          "mean_fix_attempts": {
+                            "type": "number"
+                          },
+                          "mean_ci_failure_count": {
+                            "type": "number"
+                          },
+                          "mean_kicks_received": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    },
+                    "mixed": {
+                      "type": "object",
+                      "properties": {
+                        "arm": {
+                          "type": "string"
+                        },
+                        "beads": {
+                          "type": "integer"
+                        },
+                        "mean_fix_attempts": {
+                          "type": "number"
+                        },
+                        "mean_ci_failure_count": {
+                          "type": "number"
+                        },
+                        "mean_kicks_received": {
+                          "type": "number"
+                        }
+                      },
+                      "nullable": true
+                    },
+                    "none": {
+                      "type": "object",
+                      "properties": {
+                        "arm": {
+                          "type": "string"
+                        },
+                        "beads": {
+                          "type": "integer"
+                        },
+                        "mean_fix_attempts": {
+                          "type": "number"
+                        },
+                        "mean_ci_failure_count": {
+                          "type": "number"
+                        },
+                        "mean_kicks_received": {
+                          "type": "number"
+                        }
+                      },
+                      "nullable": true
+                    },
+                    "arms_scope": {
+                      "type": "string"
+                    },
+                    "cost": {
+                      "type": "object",
+                      "properties": {
+                        "latency_samples": {
+                          "type": "integer"
+                        },
+                        "mean_latency_ms": {
+                          "type": "number"
+                        },
+                        "token_samples": {
+                          "type": "integer"
+                        },
+                        "mean_prompt_tokens": {
+                          "type": "number"
+                        },
+                        "mean_completion_tokens": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "small_n": {
+                      "type": "boolean"
+                    },
+                    "small_n_beads": {
+                      "type": "integer"
+                    },
+                    "caveat": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "since is not an RFC 3339 timestamp"
+          },
+          "403": {
+            "description": "Read access required"
+          }
+        }
+      }
+    },
     "/api/knowledge/toc": {
       "get": {
         "tags": [
