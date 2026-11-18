@@ -22,7 +22,7 @@ type Context7Suggester func(ctx context.Context, keyword string) string
 type Primer struct {
 	layers          []layerClient
 	fileStores      []localStore
-	pinned          []localStore
+	pinned          []*pinnedSource
 	graphStore      *GraphStore
 	config          PrimerConfig
 	logger          *slog.Logger

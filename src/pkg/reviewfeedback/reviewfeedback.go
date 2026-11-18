@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -135,6 +136,112 @@ type PRState struct {
 	CapHitAt time.Time `json:"cap_hit_at,omitempty"`
 	// NeedsHumanNoted is set once the needs-human note was posted.
 	NeedsHumanNoted bool `json:"needs_human_noted,omitempty"`
+	// Pending is the reply check owed for the last kick that carried
+	// captured rules (hivecommons/hive#19048).
+	Pending *PendingReply `json:"pending,omitempty"`
+}
+
+// PendingReply is the rules a kick promised to be named in the agent's reply.
+type PendingReply struct {
+	RuleIDs  []string  `json:"rule_ids"`
+	KickedAt time.Time `json:"kicked_at"`
+}
+
+// ReplyGrace is how long the agent has to reply after a kick before a missing
+// reply counts as a failure to name the rules.
+const ReplyGrace = 6 * time.Hour
+
+// Reply check verdicts.
+const (
+	ReplyWaiting = "waiting"
+	ReplyOK      = "ok"
+	ReplyMissing = "missing"
+)
+
+// CheckReply judges the agent's replies against a pending check. Only replies
+// posted after the kick count. Every rule id must be named in them; with no
+// reply yet the check waits until ReplyGrace has passed. Missing returns the
+// ids not named.
+func CheckReply(p PendingReply, replies []github.FeedbackMessage, now time.Time) (string, []string) {
+	var text strings.Builder
+	replied := false
+	for _, r := range replies {
+		if r.CreatedAt.After(p.KickedAt) {
+			replied = true
+			text.WriteString(r.Body + "\n")
+		}
+	}
+	if !replied {
+		if now.Sub(p.KickedAt) < ReplyGrace {
+			return ReplyWaiting, nil
+		}
+		return ReplyMissing, p.RuleIDs
+	}
+	var missing []string
+	for _, id := range p.RuleIDs {
+		if !regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(id) + `\b`).MatchString(text.String()) {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) > 0 {
+		return ReplyMissing, missing
+	}
+	return ReplyOK, nil
+}
+
+// RecordPendingReply notes that the kick at now carried the rule ids, so the
+// reply is checked on later passes. Ids of an unanswered earlier kick stay.
+func (s *Store) RecordPendingReply(key string, ids []string, now time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.get(key)
+	merged := append([]string(nil), ids...)
+	if st.Pending != nil {
+		for _, id := range st.Pending.RuleIDs {
+			dup := false
+			for _, m := range merged {
+				dup = dup || m == id
+			}
+			if !dup {
+				merged = append(merged, id)
+			}
+		}
+	}
+	sort.Strings(merged)
+	st.Pending = &PendingReply{RuleIDs: merged, KickedAt: now}
+	return s.saveLocked(now)
+}
+
+// PendingReplyFor returns the pending reply check for key, if any.
+func (s *Store) PendingReplyFor(key string) (PendingReply, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st := s.PRs[key]; st != nil && st.Pending != nil {
+		return *st.Pending, true
+	}
+	return PendingReply{}, false
+}
+
+// ClearPendingReply drops the pending check once it was resolved or raised.
+func (s *Store) ClearPendingReply(key string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.PRs[key]
+	if st == nil || st.Pending == nil {
+		return nil
+	}
+	st.Pending = nil
+	return s.saveLocked(now)
+}
+
+// ReplyCheckNote is the needs-human note posted when the agent's reply did not
+// name the rules the hive captured.
+func ReplyCheckNote(missing []string) string {
+	return github.FeedbackNeedsHumanMarker + "\nThe hive recorded reviewer-stated rules (" + strings.Join(missing, ", ") +
+		") in its knowledge, but the agent's reply on this PR does not name them. A person needs to check that the reviewer's rule was acknowledged.\n"
 }
 
 // Store persists PRState per "owner/repo#number".

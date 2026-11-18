@@ -1723,6 +1723,8 @@
        rides last; past dashboard.stage_tracker.waiting_push_stale_h it takes
        the muted warning tone. "@zoe pushed abc1234 · 2m" links to the commit. */
     .ham-push-stale { color: color-mix(in srgb, var(--status-warn) 70%, var(--text-faint)); }
+    .ham-badge-sha-hold { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); }
+    .ham-badge-sha-hold.ham-sha-waived { color: var(--text-muted); border-color: color-mix(in srgb, var(--text-muted) 45%, transparent); }
     .ham-badge-push { text-decoration: none; }
     .ham-badge-push:hover { color: var(--text-muted); }
     /* Presence indicator on a waiting-on pill (hive PR 15051): who the row
@@ -6517,6 +6519,13 @@
     .customers-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); min-width: 0; max-width: 100%; }
     .customers-row[data-me="true"] { border-color: var(--accent); }
     .customers-row .customers-row-title { overflow-wrap: anywhere; }
+    /* Identities table: one aligned grid; it scrolls inside its own wrapper at phone width, never the page. */
+    .customers-table-wrap { max-width: 100%; overflow-x: auto; }
+    .customers-ident-table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); }
+    .customers-ident-table th, .customers-ident-table td { text-align: left; vertical-align: middle; padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
+    .customers-ident-table thead th { color: var(--muted); font-weight: 600; }
+    .customers-ident-table .customers-ident-value { font-weight: var(--fw-semibold); overflow-wrap: anywhere; }
+    .customers-ident-table .customers-ident-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-2); border-bottom: 0; }
     .customers-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); min-width: 0; }
     /* The tag toggle in a profile is the row's tag pill as a button: one pill recipe in both places. Off is dimmed and neutral; the auto marker is small. */
     button.kc-pill.customers-tag-toggle { position: relative; font-family: inherit; cursor: pointer; }
@@ -20454,7 +20463,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // word, "Waiting on shared CI · #17463" (hivecommons/hive#17500).
         const incident = sg.detour && sg.number === 30 && remediation === 'deferred' && item.deferral && Number(item.deferral.incident) > 0 && item.deferral.incident_url ? '#' + Number(item.deferral.incident) : '';
         const detourText = incident && sg.detour.text.indexOf(incident) >= 0 ? esc(sg.detour.text).replace(esc(incident), `<a class="ham-incident-link" href="${esc(item.deferral.incident_url)}" target="_blank" rel="noopener" title="${esc('Shared-CI incident ' + incident)}">${esc(incident)}</a>`) : (sg.detour ? esc(sg.detour.text) : '');
-        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${detourText}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${progressHolderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${progressHolderHtml}${reasonHtml}</span>`);
+        // A held / waived SHA requirement rides the lit chevron as a note (#18866).
+        const shaHoldNote = active && !sg.cap && !sg.detour && !gateWord && typeof stageTrackerSHAHoldNoteHtml === 'function' ? stageTrackerSHAHoldNoteHtml(item) : '';
+        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${detourText}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${progressHolderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${progressHolderHtml}${reasonHtml}${shaHoldNote}</span>`);
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.
@@ -20464,9 +20475,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // the column is the row's history and wears the history mark.
         if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
         else if (active) {
+          const shaHold = typeof stageTrackerSHAHoldOf === 'function' ? stageTrackerSHAHoldOf(item) : null;
+          const shaHoldTip = shaHold ? shaHold.pill + ' — ' + shaHold.tip : '';
           const fullTip = [tip, gateCaption || (sg.detour ? sg.detour.text : sg.short + (progressActor ? ' · ' + progressActor.who : '')), item.caption, item.reason,
             item.head ? 'head ' + item.head : '',
-            item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : ''].filter(Boolean).join(' · ');
+            item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : '',
+            shaHoldTip].filter(Boolean).join(' · ');
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           const caption = gateWord || word;
           const text = decision ? stageTrackerDecisionTriggerHtml(decision, caption, fullTip) : caption;
@@ -20771,6 +20785,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const who = h.by === 'hive' ? 'hive' : '@' + h.by;
       return 'Held by ' + who + (h.reason ? ' · ' + h.reason : '');
     }
+    // Pure: the row's SHA-hold state (hivecommons/hive#18866) — `needs-sha`
+    // held, or `sha-waived` by a maintainer — as the server sends it in
+    // `sha_hold` ({state, pill, tip, note, by}); null for a PR or no state.
+    function stageTrackerSHAHoldOf(item) {
+      const h = item && item.kind === 'issue' ? item.sha_hold : null;
+      return h && (h.state === 'held' || h.state === 'waived') && h.pill ? h : null;
+    }
+    // The visible pill: "Held: needs commit SHA" / "SHA waived by <login>",
+    // its hover saying how to lift (post a SHA, or waive) or restore.
+    function stageTrackerSHAHoldChipHtml(item) {
+      const h = stageTrackerSHAHoldOf(item);
+      if (!h) return '';
+      const label = String(h.pill) + (h.tip ? ' — ' + h.tip : '');
+      return `<span class="ham-badge ham-badge-sha-hold ham-sha-${esc(h.state)}" title="${esc(h.tip || '')}" aria-label="${esc(label)}">${esc(h.pill)}</span>`;
+    }
+    // The note on the lit Open chevron, beside the stage word.
+    function stageTrackerSHAHoldNoteHtml(item) {
+      const h = stageTrackerSHAHoldOf(item);
+      return h && h.note ? `<span class="ham-human-reason ham-sha-hold-note"> · ${esc(h.note)}</span>` : '';
+    }
     // Pure: the hold pill's hover text — who, why, since when.
     function stageTrackerHoldTip(item, nowMs) {
       const h = item && item.hold;
@@ -20804,7 +20838,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // sentinel / hold / needs-human reasons itself — those chips step aside.
       const gated = !!(opts && opts.gate);
       // The informational notice is not a gate reason, so its chip stays.
-      const sentinel = (gated && !item.sentinel_notice ? '' : stageTrackerSentinelChipHtml(item)) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
+      const sentinel = (gated && !item.sentinel_notice ? '' : stageTrackerSentinelChipHtml(item)) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '') + (typeof stageTrackerSHAHoldChipHtml === 'function' ? stageTrackerSHAHoldChipHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .filter(m => !gated || STAGE_TRACKER_GATE_MODS.indexOf(m) < 0)
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
@@ -25285,7 +25319,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // is not generic: a row offers it either from the nudge (`adoption`)
     // or as a server decision option (a contributor PR's DCO / fixer
     // exhaustion, where it replaced "re-author"), never both.
-    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:close-issue'];
+    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'sha-waive', 'sha-restore', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:close-issue'];
     const _stageTrackerCloseIssueBusy = new Set();
     // Accept triage shows on an issue the chevron calls "Triage needed":
     // stage 015, or the needs-triage pill on a pre-claim stage (010 / 017 /
@@ -25733,6 +25767,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       out.push(has('hold')
         ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target }
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target });
+      // A SHA-held issue (needs-sha) offers the override next to the hold
+      // actions: Waive SHA requirement, then Restore once it is waived
+      // (hivecommons/hive#18866). Same roles as releasing a hold.
+      const shaHold = typeof stageTrackerSHAHoldOf === 'function' ? stageTrackerSHAHoldOf(item) : null;
+      if (shaHold) out.push(shaHold.state === 'waived'
+        ? { id: 'sha-restore', label: 'Restore SHA requirement', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE }
+        : { id: 'sha-waive', label: 'Waive SHA requirement', hint: 'hive works it without a SHA', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
       out.push({ id: 'retry', label: 'Re-evaluate now', hint: 'rescan', enabled: true, why: '' });
       // A model-bound row whose state the model hands to an agent profile
       // (cncf/techdocs#395): the owner can send it now.
@@ -26585,6 +26626,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       switch (id) {
         case 'hold': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: true, type } };
         case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type } };
+        case 'sha-waive': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/sha-waiver', body: { waived: true } };
+        case 'sha-restore': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/sha-waiver', body: { waived: false } };
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
         case 'wf-dispatch': return { url: '/api/workflows/dispatch', body: { repo: item.repo, number: n } };
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
@@ -27540,7 +27583,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMergeBannerMs() { return stageTrackerToastMs('info') * STAGE_TRACKER_MERGE_BANNER_FACTOR; }
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
-      'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'wf-dispatch': 'Sending to the agent…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
+      'hold': 'Holding…', 'release': 'Releasing hold…', 'sha-waive': 'Waiving SHA requirement…', 'sha-restore': 'Restoring SHA requirement…', 'retry': 'Re-evaluating…', 'wf-dispatch': 'Sending to the agent…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
       'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-deferred': 'Closing…', 'decide:close-issue': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…',
@@ -27550,7 +27593,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTION_WORDS = {
       adopted: 'adopted', approved: 'approved', dispatched: 'sent to its agent', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
       merged: 'merged', 'queued-for-merge': 'queued for merge — hive merges it on its next pass once CI is green', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
-      held: 'held', released: 'hold released', 'sentinel-confirmed': 'sentinel confirmed safe', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
+      held: 'held', released: 'hold released', 'sha-waived': 'SHA requirement waived', 'sha-restored': 'SHA requirement restored', 'sentinel-confirmed': 'sentinel confirmed safe', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
     };
     // Once the server has answered, a terminal action's caption says so
@@ -39801,21 +39844,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // using Codex with a ChatGPT account"), so codex must NOT fall through to
     // the copilot list. The server discovers the live catalog via
     // `codex app-server` model/list (per-CLI-version, baked into the binary);
-    // this is only the pre-discovery fallback. Snapshot of codex 0.166.0 and
-    // 0.167.0 (live model/list captures, 2026-11-07; the 0.159.0 capture was #9804):
-    // visible ids in picker order (GPT-6.1 Sol is the default; GPT-6.1 Terra
-    // arrived in 0.165.0; GPT-6 Sol and Luna arrived in 0.156.1, #8417), then
+    // this is only the pre-discovery fallback. Snapshot of codex 0.170.0
+    // (live model/list capture, 2026-11-18; the 0.159.0 capture was #9804):
+    // visible ids in picker order (GPT-6.2 Sol is the default; GPT-6.2 Astra
+    // arrived after 0.167.0; GPT-6.1 Terra arrived in 0.165.0; GPT-6 Sol and Luna arrived in 0.156.1, #8417), then
     // hidden ids — hidden entries are still valid --model values. gpt-5.2 and
     // gpt-5.4-mini were retired in 0.155.0; gpt-5.4 was retired between
     // 0.156.1 and 0.159.0.
     // Keep in sync with codexStaticModels in cli_models.go.
     const CODEX_CLI_MODELS = [
+      { value: 'gpt-6.2-sol', label: 'GPT-6.2 Sol' },
+      { value: 'gpt-6.2-astra', label: 'GPT-6.2 Astra' },
+      { value: 'gpt-6.1-terra', label: 'GPT-6.1 Terra' },
       { value: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
       { value: 'gpt-6-astra', label: 'GPT-6 Astra' },
       { value: 'gpt-6-sol', label: 'GPT-6 Sol' },
       { value: 'gpt-6-luna', label: 'GPT-6 Luna' },
       { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
-      { value: 'gpt-6.1-terra', label: 'GPT-6.1 Terra' },
       { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
       { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
       { value: 'gpt-5.5', label: 'GPT-5.5' },
@@ -54499,16 +54544,17 @@ function burnAreaChart() {
       if (!fixed) {
         buttons += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityRemove" data-arg0="' + escapeHtml(key) + '">Remove</button>';
       }
-      return '<div class="customers-row" data-claimed="' + (i.claimed ? 'true' : 'false') + '"><span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + '</span>' +
-        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(i.value) + '</div>' +
-        (meta.length ? '<div class="muted-xs">' + escapeHtml(meta.join(' · ')) + '</div>' : '') + '</div>' + buttons + '</div>';
+      return '<tr data-claimed="' + (i.claimed ? 'true' : 'false') + '"><td><span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + '</span></td>' +
+        '<th scope="row" class="customers-ident-value">' + escapeHtml(i.value) + '</th>' +
+        '<td class="muted-xs">' + escapeHtml(meta.join(' · ')) + '</td>' +
+        '<td class="customers-ident-actions">' + buttons + '</td></tr>';
     }
 
     function customersIdentitiesHtml(p) {
       const ids = p.identities || [];
       const note = customersIsFull() ? '' : '<p class="muted-xs">What you add here is shown as unconfirmed until the hive owner or a read-write user confirms it.</p>';
       return '<div class="customers-block"><div class="section-label m-0">Identities</div>' + note +
-        '<div class="customers-list">' + (ids.length ? ids.map(i => customersIdentityRowHtml(p, i)).join('') : '<p class="empty-dashed">No identities.</p>') + '</div>' +
+        (ids.length ? '<div class="customers-table-wrap"><table class="customers-ident-table"><thead><tr><th scope="col">Type</th><th scope="col">Identity</th><th scope="col">Source</th><th scope="col" aria-label="Actions"></th></tr></thead><tbody>' + ids.map(i => customersIdentityRowHtml(p, i)).join('') + '</tbody></table></div>' : '<p class="empty-dashed">No identities.</p>') +
         '<div class="customers-inline"><label>Known by<select class="kb-search-box" data-customers-field="identity-kind">' + customersKindOptions() + '</select></label>' +
         '<label>Login, address or id<input class="kb-search-box" type="text" maxlength="254" data-customers-field="identity-value" autocomplete="off"></label>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityAdd">Add identity</button></div></div>';
@@ -72247,6 +72293,8 @@ function burnAreaChart() {
       /* Reference repos (#18136): painted asynchronously from their own
          owner-only endpoint, like the Security tab's write allowlist. */
       loadReferenceRepos();
+      /* Parent auto-close (#19070): per-repo policy, same async pattern. */
+      loadParentAutoClose();
       const primary = _configState.data.primaryRepo || '';
       const selfAuthDefault = _configState.data.selfAuthorizationHold !== false;
       const selfAuthEnvLocked = !!_configState.data.selfAuthorizationHoldEnvLocked;
@@ -72395,6 +72443,8 @@ function burnAreaChart() {
         </div>
         <div class="settings-subsection-title mt-4">Reference repos ${yamlHint('project.reference_repos[]')} ${settingHelpMark('settings', 'repos', 'Reference repos', 'Repositories outside this project that agents may clone and read but do not manage: no queue, no kicks, no work items. Read-only by default; a write opt-in allows opening issues and/or PRs there with a credential the hive verifies on save. Post on other projects as (project.remote_write_identity) picks whether those posts appear as the hive bot or as you. A repo is either monitored above or a reference repo, never both.')}</div>
         <div id="cfg-reference-repos-host"><div class="fs-sm text-muted">Loading…</div></div>
+        <div class="settings-subsection-title mt-4">Parent auto-close ${yamlHint('repos.<key>.parent_autoclose')} ${settingHelpMark('settings', 'repos', 'Parent auto-close', 'Per repo: whether the hive closes a split-up parent issue once all of its children are closed. Close finished parents (default) skips parents labelled epic or hold; Also close epics and holds includes them; Never auto-close parents leaves every parent to a person. A parent a person reopened is never closed again, and issues marked as tracking issues are never auto-closed.')}</div>
+        <div id="cfg-parent-autoclose-host"><div class="fs-sm text-muted">Loading…</div></div>
         ${anyLabelDriven ? `<div class="ld-defaults" id="cfg-label-driven-defaults">
           <div class="config-toggle">
             <div class="config-toggle-switch ${ldApproval.trustOrgMembers !== false ? 'on' : ''} ${ldLocked ? 'disabled' : ''}" data-action="${ldLocked ? '' : 'toggleLabelDrivenTrustOrgMembers'}" data-arg-types="t" title="Prow's own rule: public members of the repo's org may apply the approval label. Off: only triage/write/maintain/admin collaborators and trusted bots."></div>
@@ -73491,6 +73541,141 @@ function burnAreaChart() {
           Restart backoff ladder: <code style="font-family:var(--font-mono)">${ladder}</code>
           <span style="opacity:0.8">— fixed progression; the last step is the cap.</span>
         </div>`;
+    }
+    /* Parent auto-close editor (#19070): repos.<repo>.parent_autoclose, one
+       choice per monitored repo, loaded from the owner-only
+       /api/config/repos/parent-autoclose endpoint and saved back to it.
+       Rendered with DOM nodes and textContent only, so a repo name or an
+       option string is never parsed as markup. The server validates the value
+       and applies it without a restart; its error message is shown as-is and
+       nothing is saved on an error. */
+    const PARENT_AUTOCLOSE_HOST_ID = 'cfg-parent-autoclose-host';
+
+    function parentAutoCloseNode(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    async function loadParentAutoClose() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/repos/parent-autoclose');
+        host = document.getElementById(PARENT_AUTOCLOSE_HOST_ID);
+        if (!host) return;
+        if (r.status === 403) {
+          host.textContent = '';
+          host.appendChild(parentAutoCloseNode('div', 'fs-sm text-muted', 'Only the hive owner can view and edit parent auto-close.'));
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderParentAutoClosePanel(host, await r.json());
+      } catch (e) {
+        host = host || document.getElementById(PARENT_AUTOCLOSE_HOST_ID);
+        if (!host) return;
+        host.textContent = '';
+        host.appendChild(parentAutoCloseNode('div', 'fs-sm text-danger', 'Failed to load parent auto-close: ' + e.message));
+      }
+    }
+
+    /* renderParentAutoClosePanel paints one row per monitored repo: a select
+       with the three options, the effective value, and the one-line
+       explanation of the chosen option. Save sends only the rows that
+       changed. */
+    function renderParentAutoClosePanel(host, data) {
+      if (!host) return;
+      data = data || {};
+      const options = Array.isArray(data.options) ? data.options : [];
+      const repos = (Array.isArray(data.repos) ? data.repos : []).map(r => ({
+        repo: r.repo || '', saved: r.value || data.default || 'true', value: r.value || data.default || 'true', explicit: !!r.explicit,
+      }));
+      const labelOf = v => { const o = options.find(x => x.value === v); return o ? o.label : v; };
+      const textOf = v => { const o = options.find(x => x.value === v); return o ? o.description : ''; };
+      host.textContent = '';
+      host.appendChild(parentAutoCloseNode('p', 'config-help',
+        'When every child of a split-up parent issue is closed, the hive can close the parent too. Choose, per repo, how far that goes. ' +
+        'A parent that a person reopened after the hive closed it is never closed again, whatever you choose. ' +
+        'Issues marked as tracking issues (the hive/tracking label, the hive:tracking marker or "Keep this issue open") are never auto-closed; only you closing them from the dashboard does that. ' +
+        'Saving applies the change without a restart.'));
+      const list = parentAutoCloseNode('div', 'config-list');
+      host.appendChild(list);
+      const statusEl = parentAutoCloseNode('div', 'fs-sm');
+      const setStatus = (msg, cls) => { statusEl.textContent = msg; statusEl.className = 'fs-sm ' + (cls || 'text-muted'); };
+      const saveBtn = parentAutoCloseNode('button', 'hv-btn btn-primary btn-sm', 'Save parent auto-close');
+
+      const dirty = () => repos.filter(r => r.value !== r.saved);
+      const syncSave = () => { saveBtn.disabled = dirty().length === 0; };
+
+      const paintRows = () => {
+        list.textContent = '';
+        if (!repos.length) list.appendChild(parentAutoCloseNode('div', 'fs-sm text-muted mb-3', 'No monitored repos configured'));
+        repos.forEach(entry => {
+          const row = parentAutoCloseNode('div', 'config-list-item config-repo-row');
+          row.appendChild(parentAutoCloseNode('span', 'config-repo-name', entry.repo));
+          const select = document.createElement('select');
+          select.title = 'Parent auto-close policy for ' + entry.repo;
+          options.forEach(o => {
+            const opt = document.createElement('option');
+            opt.value = o.value;
+            opt.textContent = o.label;
+            opt.selected = o.value === entry.value;
+            select.appendChild(opt);
+          });
+          const note = parentAutoCloseNode('span', 'text-muted fs-sm', textOf(entry.value));
+          select.addEventListener('change', () => {
+            entry.value = select.value;
+            note.textContent = textOf(entry.value);
+            setStatus('');
+            syncSave();
+          });
+          row.appendChild(select);
+          row.appendChild(parentAutoCloseNode('span', 'rt-inherit', 'now: ' + labelOf(entry.saved) + (entry.explicit ? '' : ' (inherited)')));
+          row.appendChild(note);
+          list.appendChild(row);
+        });
+      };
+
+      const hints = parentAutoCloseNode('div', 'config-help');
+      const hint = parentAutoCloseNode('span', 'settings-yaml-hint', 'YAML ');
+      hint.appendChild(parentAutoCloseNode('code', '', 'repos.<key>.parent_autoclose'));
+      hints.appendChild(hint);
+      host.appendChild(hints);
+
+      const actions = parentAutoCloseNode('div', 'config-list-add');
+      actions.appendChild(saveBtn);
+      actions.appendChild(statusEl);
+      host.appendChild(actions);
+      paintRows();
+      syncSave();
+
+      saveBtn.addEventListener('click', async () => {
+        const pending = dirty();
+        if (!pending.length) return;
+        saveBtn.disabled = true;
+        setStatus('Saving…');
+        try {
+          for (const entry of pending) {
+            const res = await fetch('/api/config/repos/parent-autoclose', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify({ repo: entry.repo, value: entry.value }),
+            });
+            if (!res.ok) throw new Error(entry.repo + ': ' + await saveErrorMessage(res));
+            const d = await res.json();
+            const fresh = (d.repos || []).find(x => x.repo === entry.repo);
+            entry.saved = entry.value;
+            entry.explicit = fresh ? !!fresh.explicit : entry.value !== (d.default || 'true');
+          }
+          paintRows();
+          setStatus('');
+          showToast('Parent auto-close saved', 'success');
+        } catch (e) {
+          paintRows();
+          setStatus(e.message, 'text-danger');
+        }
+        syncSave();
+      });
     }
     // Workflow-model bindings (hivecommons/hive#17620, RFC phase 2).
     //

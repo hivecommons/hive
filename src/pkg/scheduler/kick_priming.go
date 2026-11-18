@@ -363,17 +363,24 @@ func (s *Scheduler) primeKnowledgeStatsForWorkflow(agentName string, issues []gi
 		limit = len(issues)
 	}
 	s.recordKickSummary(agentName, issues[:limit])
-	if len(issues) == 0 {
-		return knowledgeInjection{}
+	// Without issues or keywords there is nothing to rank, but pinned entries
+	// (reviewer-stated rules, #19094) load on scope alone, so the primer still
+	// runs when it has any; PrimeForKick then returns only those.
+	var keywords []string
+	if len(issues) > 0 {
+		keywords = extractKeywords(issues[:limit])
 	}
-
-	keywords := extractKeywords(issues[:limit])
 	if len(keywords) == 0 {
-		s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
-		return knowledgeInjection{}
+		if !primer.HasPinned() {
+			if len(issues) > 0 {
+				s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
+			}
+			return knowledgeInjection{}
+		}
+		s.logger.Debug("knowledge primer: no keywords, priming pinned entries only", "issue_count", len(issues))
+	} else {
+		s.logger.Info("knowledge primer: searching", "keywords", len(keywords), "sample", keywordSample(keywords))
 	}
-
-	s.logger.Info("knowledge primer: searching", "keywords", len(keywords), "sample", keywordSample(keywords))
 	var scope *knowledge.TOCScope
 	if sc, ok := cfg.KnowledgeAgentScope(agentName); ok {
 		agentScope := knowledge.AgentScope(sc.Layers, sc.Repos, sc.Types, sc.Tags, sc.IncludeStates)

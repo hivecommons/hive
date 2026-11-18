@@ -106,17 +106,40 @@ func TestBuildDependencyEvidenceAcrossEcosystems(t *testing.T) {
 		"DEPENDENCY EVIDENCE",
 		"go github.com/a/b v1.1.0 (go.mod):",
 		"GHSA-aaaa-bbbb-cccc (high, at or above block_severity)",
-		"published 2026-11-16 (2 days ago), inside the 14 day release-age window",
+		"published 2026-11-16 (2 days ago)",
 		"npm left-pad 1.3.0 (web/package.json): no known advisories; published 2020-01-01",
+		"Publish dates are facts, not verdicts: this hive declares no release-age policy",
+		"If the repository's own documents state a release-age policy, apply it and quote it",
 		"means no data, not a clean result",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
+	for _, banned := range []string{"younger than", "release-age window", "minimum release age of"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("with no declared policy a publish date carries no verdict, found %q in:\n%s", banned, out)
+		}
+	}
+}
+
+func TestBuildReleaseAgePolicyHonoredWhenDeclared(t *testing.T) {
+	f := newFakeServices(t)
+	out := Build(context.Background(), f.client(), f.settings(config.ReviewPreflightConfig{MinReleaseAgeDays: 14}), depInput())
+	for _, want := range []string{
+		"published 2026-11-16 (2 days ago), younger than the 14 day minimum release age declared in this hive's config",
+		"declares a minimum release age of 14 days for this repository",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Publish dates are facts, not verdicts") {
+		t.Errorf("a declared policy replaces the no-policy wording:\n%s", out)
+	}
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "left-pad") && strings.Contains(line, "release-age window") {
-			t.Errorf("an old release must not be flagged as inside the window: %s", line)
+		if strings.Contains(line, "left-pad") && strings.Contains(line, "younger than") {
+			t.Errorf("an old release must not be reported against the policy: %s", line)
 		}
 	}
 }
@@ -177,7 +200,7 @@ func TestBuildVulnerabilitySourceDownIsNotACleanResult(t *testing.T) {
 
 func TestBuildIgnoreListWithExpiry(t *testing.T) {
 	f := newFakeServices(t)
-	live := f.settings(config.ReviewPreflightConfig{Ignore: []config.ReviewPreflightIgnore{
+	live := f.settings(config.ReviewPreflightConfig{MinReleaseAgeDays: 14, Ignore: []config.ReviewPreflightIgnore{
 		{ID: "CVE-2024-0001", Package: "github.com/a/b", Reason: "not reachable from our code", Expires: "2027-01-01"},
 		{ID: "release-age", Package: "github.com/a/b", Reason: "we vendored it ourselves"},
 	}})
@@ -185,7 +208,7 @@ func TestBuildIgnoreListWithExpiry(t *testing.T) {
 	if !strings.Contains(out, "GHSA-aaaa-bbbb-cccc accepted by this hive (not reachable from our code)") {
 		t.Fatalf("ignore by alias not applied:\n%s", out)
 	}
-	if strings.Contains(out, "(high, at or above block_severity)") || strings.Contains(out, "inside the 14 day") {
+	if strings.Contains(out, "(high, at or above block_severity)") || strings.Contains(out, "younger than the 14 day") {
 		t.Fatalf("ignored findings still shown:\n%s", out)
 	}
 	expired := f.settings(config.ReviewPreflightConfig{Ignore: []config.ReviewPreflightIgnore{

@@ -1,1 +1,0 @@
-- Preserve a hosted hive's stored vanity URL when any non-placeholder ingress rule still serves it, preventing aliases and rule ordering from reverting the advertised host ([#19064](https://github.com/hivecommons/hive/issues/19064)).

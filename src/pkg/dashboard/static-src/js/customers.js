@@ -446,16 +446,17 @@
       if (!fixed) {
         buttons += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityRemove" data-arg0="' + escapeHtml(key) + '">Remove</button>';
       }
-      return '<div class="customers-row" data-claimed="' + (i.claimed ? 'true' : 'false') + '"><span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + '</span>' +
-        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(i.value) + '</div>' +
-        (meta.length ? '<div class="muted-xs">' + escapeHtml(meta.join(' · ')) + '</div>' : '') + '</div>' + buttons + '</div>';
+      return '<tr data-claimed="' + (i.claimed ? 'true' : 'false') + '"><td><span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + '</span></td>' +
+        '<th scope="row" class="customers-ident-value">' + escapeHtml(i.value) + '</th>' +
+        '<td class="muted-xs">' + escapeHtml(meta.join(' · ')) + '</td>' +
+        '<td class="customers-ident-actions">' + buttons + '</td></tr>';
     }
 
     function customersIdentitiesHtml(p) {
       const ids = p.identities || [];
       const note = customersIsFull() ? '' : '<p class="muted-xs">What you add here is shown as unconfirmed until the hive owner or a read-write user confirms it.</p>';
       return '<div class="customers-block"><div class="section-label m-0">Identities</div>' + note +
-        '<div class="customers-list">' + (ids.length ? ids.map(i => customersIdentityRowHtml(p, i)).join('') : '<p class="empty-dashed">No identities.</p>') + '</div>' +
+        (ids.length ? '<div class="customers-table-wrap"><table class="customers-ident-table"><thead><tr><th scope="col">Type</th><th scope="col">Identity</th><th scope="col">Source</th><th scope="col" aria-label="Actions"></th></tr></thead><tbody>' + ids.map(i => customersIdentityRowHtml(p, i)).join('') + '</tbody></table></div>' : '<p class="empty-dashed">No identities.</p>') +
         '<div class="customers-inline"><label>Known by<select class="kb-search-box" data-customers-field="identity-kind">' + customersKindOptions() + '</select></label>' +
         '<label>Login, address or id<input class="kb-search-box" type="text" maxlength="254" data-customers-field="identity-value" autocomplete="off"></label>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityAdd">Add identity</button></div></div>';

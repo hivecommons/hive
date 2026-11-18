@@ -585,12 +585,12 @@ func TestSessionLogin_ConcurrentChecksConvergeOnOneLogin(t *testing.T) {
 	}
 }
 
-// Other vendors' logins are still plain copies, but a resume no longer
-// replaces a file the session's CLI rewrote after the shared one was written
-// (a token refresh inside the session) with the older shared file.
+// Logins that do not rotate (Copilot, Gemini) are still plain copies, but a
+// resume no longer replaces a file the session's CLI rewrote after the shared
+// one was written with the older shared file.
 func TestUserSessionLoginCopy_KeepsASessionFileNewerThanTheSharedOne(t *testing.T) {
 	f := newSessionLoginFixture(t)
-	const rel = ".codex/auth.json"
+	const rel = ".copilot/config.json"
 	src := filepath.Join(sharedAgentHome, rel)
 	now := time.Now()
 	writeLoginAt(t, src, []byte("fleet-login-1"), now.Add(-time.Hour))

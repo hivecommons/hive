@@ -14,14 +14,30 @@ func TestResolveReviewPreflightDefaults(t *testing.T) {
 	if !r.RuleDocs || r.Dependencies || !r.Vulnerabilities || !r.ReleaseAge || r.Offline {
 		t.Fatalf("unexpected default switches: %+v", r)
 	}
-	if r.OSVURL != DefaultReviewPreflightOSVURL || r.MinReleaseAgeDays != DefaultReviewPreflightMinAgeDays ||
+	if r.OSVURL != DefaultReviewPreflightOSVURL || r.MinReleaseAgeDays != 0 ||
 		r.RuleDocBudgetBytes != DefaultReviewPreflightRuleDocBudgetBytes || r.CacheTTL != DefaultReviewPreflightCacheTTL ||
 		r.RequestTimeout != DefaultReviewPreflightRequestTimeout || r.MaxDependencies != DefaultReviewPreflightMaxDependencies ||
 		r.SeverityFloor != "low" || r.BlockSeverity != "high" {
 		t.Fatalf("unexpected defaults: %+v", r)
 	}
-	if len(r.RuleDocPatterns) != len(DefaultReviewPreflightRuleDocPatterns) {
-		t.Fatalf("default patterns not applied: %v", r.RuleDocPatterns)
+	if len(r.RuleDocOverride) != 0 {
+		t.Fatalf("no explicit list by default: discovery follows the repo's own references, got %v", r.RuleDocOverride)
+	}
+}
+
+func TestResolveReviewPreflightReleaseAgePolicyIsDeclaredNotDefaulted(t *testing.T) {
+	if r := ResolveReviewPreflight(ReviewPreflightConfig{}, ReviewPreflightConfig{}); r.MinReleaseAgeDays != 0 {
+		t.Fatalf("no release-age policy may be implied by default, got %d", r.MinReleaseAgeDays)
+	}
+	if r := ResolveReviewPreflight(ReviewPreflightConfig{}, ReviewPreflightConfig{MinReleaseAgeDays: 7}); r.MinReleaseAgeDays != 7 {
+		t.Fatalf("a repo-declared policy must be honored, got %d", r.MinReleaseAgeDays)
+	}
+	if r := ResolveReviewPreflight(ReviewPreflightConfig{MinReleaseAgeDays: 3}, ReviewPreflightConfig{}); r.MinReleaseAgeDays != 3 {
+		t.Fatalf("a hive-declared policy must be honored, got %d", r.MinReleaseAgeDays)
+	}
+	only := ResolveReviewPreflight(ReviewPreflightConfig{RuleDocPaths: []string{" docs/rules/** ", ""}}, ReviewPreflightConfig{})
+	if strings.Join(only.RuleDocOverride, ",") != "docs/rules/**" {
+		t.Fatalf("hive-wide list must apply when the repo sets none: %v", only.RuleDocOverride)
 	}
 }
 
@@ -55,7 +71,7 @@ func TestResolveReviewPreflightRepoOverridesHive(t *testing.T) {
 		t.Errorf("repo without osv_url must inherit hive's, got %q", r.OSVURL)
 	}
 	if r.MinReleaseAgeDays != 0 {
-		t.Errorf("negative repo min age disables the note, got %d", r.MinReleaseAgeDays)
+		t.Errorf("a negative repo min age clears the hive-wide policy, got %d", r.MinReleaseAgeDays)
 	}
 	if r.CacheTTL != 30*time.Minute {
 		t.Errorf("cache ttl = %v", r.CacheTTL)
@@ -63,9 +79,8 @@ func TestResolveReviewPreflightRepoOverridesHive(t *testing.T) {
 	if got := strings.Join(r.RuleDocExclude, ","); got != "STYLE*.md" {
 		t.Errorf("repo exclude must replace hive's, got %q", got)
 	}
-	patterns := strings.Join(r.RuleDocPatterns, ",")
-	if !strings.Contains(patterns, "docs/rules/**") || !strings.Contains(patterns, "handbook/**") || !strings.Contains(patterns, "AGENTS.md") {
-		t.Errorf("rule_doc_paths must add to defaults and to each other: %s", patterns)
+	if patterns := strings.Join(r.RuleDocOverride, ","); patterns != "handbook/**" {
+		t.Errorf("a repo's rule_doc_paths must replace the hive-wide list: %s", patterns)
 	}
 	if r.RegistryURLs["npm"] != "https://npm.repo.example" || r.RegistryURLs["go"] != "https://goproxy.example" {
 		t.Errorf("registry urls must merge per key: %v", r.RegistryURLs)

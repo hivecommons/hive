@@ -440,6 +440,40 @@ dispatch, a hive owner starts the draft by hand:
    the reviewer runs or skips the verifier (`/verify`, the `verified` label), marks the PR
    ready (`/ready`), stakeholders `/confirm`, and an independent approver merges.
 
+## Independent fact-check before a person reviews (optional)
+
+The first review of a drafted deliverable can be done by a second agent instead of the
+reviewer's own pass over the draft. The hive's opt-in fact-check pass
+(`review.analysis_factcheck`, [Independent fact-check for analysis PRs](../review-swarm.md#independent-fact-check-for-analysis-prs-reviewanalysis_factcheck))
+runs a different agent over a draft `Docs analysis` pull request after the drafter opens it
+and before anyone marks it ready. It re-verifies each claim, score and attribution against
+the cited source, checks the judgments for skew in both directions, checks that the material
+rated was actually inspected, and checks people and roles against the project's maintainers
+file. Its findings go back to the drafter, which revises the same branch, for a bounded
+number of rounds.
+
+It is off by default and the model does not turn it on: the qualifying agents and labels are
+the operator's choice in `hive.yaml`. For a hive bound to `cncf/techdocs`, for example:
+
+```yaml
+review:
+  analysis_factcheck:
+    enabled: true
+    author_agents: [quality]     # the agent that fills the techdocs-drafter profile
+    labels: [Docs analysis]      # the deliverable label this model uses
+    reviewer_agents: [reviewer]  # must be a different agent or model from the drafter
+```
+
+How it fits the lifecycle above:
+
+- The PR stays in `drafting` while the pass runs. The pass never applies `verified`, never
+  marks the PR ready on the default `ready_policy: human`, and never merges; `/verify`,
+  `/ready`, `/confirm` and `/approve` stay human gates.
+- It is separate from the `techdocs-verifier` profile and the `verified` label. The pass
+  gives the reviewer a PR that already carries an independent review.
+- It stops as soon as a person reviews the PR, so a reviewer's own comments reach the
+  drafter through the review-feedback sweep instead.
+
 ## Not representable today
 
 These parts of the spec are documented in the model's annotations but not enforced by

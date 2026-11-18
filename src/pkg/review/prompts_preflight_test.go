@@ -21,18 +21,25 @@ func TestPromptsCarryEvidenceOnlyWhenAttached(t *testing.T) {
 	}
 }
 
-func TestSubtleDefectGuidanceBelongsToCorrectness(t *testing.T) {
+func TestUnderstandingGuidanceBelongsToCorrectness(t *testing.T) {
 	pr := PullRequest{Repo: "o/r", Number: 7}
-	if p := BuildPerspectivePrompt(PerspectiveCorrectness, pr); !strings.Contains(p, "Messages that stopped being true") || !strings.Contains(p, "Sentinels in aggregates") {
-		t.Fatal("correctness prompt lacks the subtle-defect checks")
+	const marker = "UNDERSTAND THE CHANGE BEFORE JUDGING IT"
+	p := BuildPerspectivePrompt(PerspectiveCorrectness, pr)
+	if !strings.Contains(p, marker) || !strings.Contains(p, "invariants and contracts") || !strings.Contains(p, "concrete evidence from the code") {
+		t.Fatal("correctness prompt lacks the understanding method")
 	}
-	if p := BuildPerspectivePrompt(PerspectiveStyle, pr); strings.Contains(p, "Sentinels in aggregates") {
-		t.Fatal("only correctness carries the subtle-defect checks")
+	for _, gone := range []string{"Sentinels in aggregates", "Messages that stopped being true", "TWO CHECKS DIFFS HIDE"} {
+		if strings.Contains(p, gone) {
+			t.Fatalf("the failure-mode checklist must be gone, found %q", gone)
+		}
 	}
-	if c := BuildCombinedPrompt(pr, []Perspective{PerspectiveCorrectness, PerspectiveStyle}, PromptOptions{}); !strings.Contains(c, "Sentinels in aggregates") {
-		t.Fatal("combined prompt with correctness lacks the checks")
+	if p := BuildPerspectivePrompt(PerspectiveStyle, pr); strings.Contains(p, marker) {
+		t.Fatal("only correctness carries the understanding method")
 	}
-	if c := BuildCombinedPrompt(pr, []Perspective{PerspectiveStyle}, PromptOptions{}); strings.Contains(c, "Sentinels in aggregates") {
-		t.Fatal("combined prompt without correctness must not carry them")
+	if c := BuildCombinedPrompt(pr, []Perspective{PerspectiveCorrectness, PerspectiveStyle}, PromptOptions{}); strings.Count(c, marker) != 1 {
+		t.Fatal("combined prompt with correctness carries the method exactly once")
+	}
+	if c := BuildCombinedPrompt(pr, []Perspective{PerspectiveStyle}, PromptOptions{}); strings.Contains(c, marker) {
+		t.Fatal("combined prompt without correctness must not carry it")
 	}
 }

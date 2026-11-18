@@ -22,9 +22,6 @@ const (
 	// DefaultReviewPreflightOSVURL is the vulnerability database queried when
 	// review.preflight.vulnerabilities is on.
 	DefaultReviewPreflightOSVURL = "https://api.osv.dev"
-	// DefaultReviewPreflightMinAgeDays is the release age below which a new
-	// dependency version is called out as inside the supply-chain risk window.
-	DefaultReviewPreflightMinAgeDays = 14
 	// DefaultReviewPreflightRuleDocBudgetBytes bounds how many bytes of rule
 	// documents one review is told to read in total.
 	DefaultReviewPreflightRuleDocBudgetBytes = 60000
@@ -57,28 +54,6 @@ const (
 // ReviewPreflightSeverities lists the accepted severities, lowest first.
 var ReviewPreflightSeverities = []string{"low", "medium", "high", "critical"}
 
-// DefaultReviewPreflightRuleDocPatterns are the rule documents looked for in a
-// repository when review.preflight.rule_docs is on. Matching is case
-// insensitive; a pattern without a slash matches at the repository root only;
-// "dir/**" matches any text file below dir.
-var DefaultReviewPreflightRuleDocPatterns = []string{
-	"AGENTS.md",
-	"CLAUDE.md",
-	"CONTRIBUTING*",
-	"DESIGN*.md",
-	"ARCHITECTURE*.md",
-	"STYLE*.md",
-	"CODEOWNERS",
-	".github/CODEOWNERS",
-	".github/copilot-instructions.md",
-	".github/CONTRIBUTING*",
-	".cursor/rules/**",
-	"docs/design/**",
-	"docs/adr/**",
-	"docs/architecture/**",
-	"docs/CODEOWNERS",
-}
-
 // ReviewPreflightRule is a short operator-defined rule the reviewer enforces.
 type ReviewPreflightRule struct {
 	ID       string `yaml:"id,omitempty" json:"id,omitempty"`
@@ -101,8 +76,11 @@ type ReviewPreflightIgnore struct {
 type ReviewPreflightConfig struct {
 	// RuleDocs turns rule-document discovery on or off. Unset means on: it
 	// uses the GitHub API the hive already talks to and sends nothing new.
+	// Discovery starts from the repository's standard entry files and follows
+	// the documents they link to or mention.
 	RuleDocs *bool `yaml:"rule_docs,omitempty" json:"rule_docs,omitempty"`
-	// RuleDocPaths adds patterns to DefaultReviewPreflightRuleDocPatterns.
+	// RuleDocPaths, when set, names the rule documents explicitly (patterns)
+	// and replaces discovery. A repo's list replaces the hive-wide one.
 	RuleDocPaths []string `yaml:"rule_doc_paths,omitempty" json:"rule_doc_paths,omitempty"`
 	// RuleDocExclude removes any document matching one of these patterns.
 	RuleDocExclude []string `yaml:"rule_doc_exclude,omitempty" json:"rule_doc_exclude,omitempty"`
@@ -118,8 +96,8 @@ type ReviewPreflightConfig struct {
 	// Vulnerabilities queries OSV for each changed dependency. Unset means on
 	// when Dependencies is on.
 	Vulnerabilities *bool `yaml:"vulnerabilities,omitempty" json:"vulnerabilities,omitempty"`
-	// ReleaseAge looks up each changed dependency's publish date. Unset means
-	// on when Dependencies is on.
+	// ReleaseAge looks up each changed dependency's publish date and reports
+	// it as a fact. Unset means on when Dependencies is on.
 	ReleaseAge *bool `yaml:"release_age,omitempty" json:"release_age,omitempty"`
 	// Offline reports every network lookup as "could not check: offline".
 	Offline *bool `yaml:"offline,omitempty" json:"offline,omitempty"`
@@ -128,8 +106,10 @@ type ReviewPreflightConfig struct {
 	// RegistryURLs overrides a registry base URL by ecosystem id (go, npm,
 	// pypi, crates, maven, rubygems, packagist, nuget).
 	RegistryURLs map[string]string `yaml:"registry_urls,omitempty" json:"registry_urls,omitempty"`
-	// MinReleaseAgeDays is the supply-chain window. 0 means the default (14),
-	// a negative value disables the age note.
+	// MinReleaseAgeDays declares a release-age policy: a version published
+	// fewer days ago is reported against it. 0 (the default) declares no
+	// policy, so publish dates are reported without a verdict; a negative
+	// value in a repo clears a hive-wide policy for that repo.
 	MinReleaseAgeDays int `yaml:"min_release_age_days,omitempty" json:"min_release_age_days,omitempty"`
 	// SeverityFloor is the lowest advisory severity mentioned (low, medium,
 	// high, critical). Advisories with no stated severity are always listed.
@@ -151,7 +131,7 @@ type ReviewPreflightConfig struct {
 // ReviewPreflightResolved is the effective evidence policy for one repository.
 type ReviewPreflightResolved struct {
 	RuleDocs           bool
-	RuleDocPatterns    []string
+	RuleDocOverride    []string // explicit list; empty means discovery
 	RuleDocExclude     []string
 	RuleDocBudgetBytes int
 	Rules              []ReviewPreflightRule
@@ -162,7 +142,7 @@ type ReviewPreflightResolved struct {
 	Offline           bool
 	OSVURL            string
 	RegistryURLs      map[string]string
-	MinReleaseAgeDays int // 0 disables the age note
+	MinReleaseAgeDays int // 0 means no declared release-age policy
 	SeverityFloor     string
 	BlockSeverity     string
 	CacheTTL          time.Duration
@@ -227,8 +207,8 @@ func pfSeverityOr(over, base, def string) string {
 
 // ResolveReviewPreflight merges the hive-wide block with a repo override.
 // Precedence per field: repo, then hive-wide, then the default. Lists replace
-// (the repo's list wins when set) except rule_doc_paths, rules and ignore,
-// which add to the hive-wide entries. A list set to an empty value in the repo
+// (the repo's list wins when set, including rule_doc_paths) except rules and
+// ignore, which add to the hive-wide entries. A list set to an empty value in the repo
 // still inherits; use rule_doc_exclude to remove documents.
 func ResolveReviewPreflight(hive, repo ReviewPreflightConfig) ReviewPreflightResolved {
 	out := ReviewPreflightResolved{
@@ -251,12 +231,13 @@ func ResolveReviewPreflight(hive, repo ReviewPreflightConfig) ReviewPreflightRes
 	if out.MaxDependencies < 0 {
 		out.MaxDependencies = DefaultReviewPreflightMaxDependencies
 	}
-	switch days := pfIntOr(repo.MinReleaseAgeDays, hive.MinReleaseAgeDays, DefaultReviewPreflightMinAgeDays); {
-	case days > 0:
+	if days := pfIntOr(repo.MinReleaseAgeDays, hive.MinReleaseAgeDays, 0); days > 0 {
 		out.MinReleaseAgeDays = days
 	}
-	out.RuleDocPatterns = append(append([]string(nil), DefaultReviewPreflightRuleDocPatterns...), hive.RuleDocPaths...)
-	out.RuleDocPatterns = append(out.RuleDocPatterns, repo.RuleDocPaths...)
+	out.RuleDocOverride = cleanPatterns(hive.RuleDocPaths)
+	if repoList := cleanPatterns(repo.RuleDocPaths); len(repoList) > 0 {
+		out.RuleDocOverride = repoList
+	}
 	out.RuleDocExclude = hive.RuleDocExclude
 	if len(repo.RuleDocExclude) > 0 {
 		out.RuleDocExclude = repo.RuleDocExclude
@@ -271,6 +252,16 @@ func ResolveReviewPreflight(hive, repo ReviewPreflightConfig) ReviewPreflightRes
 	}
 	out.Rules = mergeEvidenceRules(hive.Rules, repo.Rules)
 	out.Ignore = mergeEvidenceIgnores(hive.Ignore, repo.Ignore)
+	return out
+}
+
+func cleanPatterns(in []string) []string {
+	var out []string
+	for _, p := range in {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
 	return out
 }
 

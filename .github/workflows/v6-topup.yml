@@ -354,6 +354,10 @@ jobs:
               gh api -X PATCH "repos/${GITHUB_REPOSITORY}/pulls/${number}" \
                 -f title="🌱 Forward-merge v5 into v6 (${BEHIND} commits)" \
                 -F body=@"$RUNNER_TEMP/v6-topup-body.md" >/dev/null
+              # Tide squashes by default; this label makes it merge-commit so
+              # v6 keeps v5's ancestry (#19140). Idempotent on a refresh.
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${number}/labels" \
+                -f 'labels[]=tide/merge-method-merge' >/dev/null
               echo "PR #${number} already open for this top-up; the force-push refreshed it and its carried-head marker."
             else
               echo "::warning::PR #${number} on sync/v5-to-v6 was not opened by this workflow; its body was left alone, so no carried-head marker is recorded."
@@ -361,6 +365,7 @@ jobs:
             exit 0
           fi
           gh pr create --repo "$GITHUB_REPOSITORY" --base v6 --head sync/v5-to-v6 \
+            --label tide/merge-method-merge \
             --title "🌱 Forward-merge v5 into v6 (${BEHIND} commits)" \
             --body-file "$RUNNER_TEMP/v6-topup-body.md"
 

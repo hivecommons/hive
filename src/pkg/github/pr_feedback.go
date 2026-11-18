@@ -100,6 +100,13 @@ type PRFeedback struct {
 	// block (the structured statement of the rules a reviewer stated). They
 	// are read even when no human comment is unanswered.
 	HiveReplies []FeedbackMessage
+	// AgentReplies are the hive's comments that carry the handled-ids
+	// marker: the kicked agent's replies to feedback.
+	AgentReplies []FeedbackMessage
+	// RuleCandidates are every human comment on the PR, whatever its handled,
+	// resolved or addressed state, oldest first. Rule capture reads these
+	// (hivecommons/hive#19136); kick routing reads Items.
+	RuleCandidates []FeedbackItem
 }
 
 // Open reports whether the PR can still take a revision.
@@ -169,15 +176,19 @@ func (c *Client) FetchPRFeedback(ctx context.Context, repo string, number int) (
 		state = "closed"
 	}
 	return PRFeedback{
-		State:   state,
-		Draft:   raw.IsDraft,
-		HeadRef: raw.HeadRefName,
-		Items:   UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
-		Source:  source,
-		HiveReplies: HiveRuleReplies(raw.rawPRConversation, func(a *rawPRCommentAuthor) bool {
-			return a != nil && c.isHiveLogin(strings.TrimSpace(a.Login))
-		}),
+		State:          state,
+		Draft:          raw.IsDraft,
+		HeadRef:        raw.HeadRefName,
+		Items:          UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
+		Source:         source,
+		HiveReplies:    HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
+		AgentReplies:   HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
+		RuleCandidates: RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
 	}, nil
+}
+
+func (c *Client) isHiveAuthor(a *rawPRCommentAuthor) bool {
+	return a != nil && c.isHiveLogin(strings.TrimSpace(a.Login))
 }
 
 // addressesHive reports whether a conversation comment is aimed at the hive:
@@ -246,15 +257,7 @@ func UnansweredFeedback(raw rawPRConversation, isHuman func(*rawPRCommentAuthor)
 			}
 		}
 	}
-	human := func(rc rawPRComment) bool {
-		if rc.Author == nil || strings.TrimSpace(rc.Body) == "" || HasAttributionTrailer(rc.Body) {
-			return false
-		}
-		if !feedbackTrustedAssociations[strings.ToUpper(rc.AuthorAssociation)] {
-			return false
-		}
-		return isHuman != nil && isHuman(rc.Author)
-	}
+	human := func(rc rawPRComment) bool { return humanFeedback(rc, isHuman) }
 	var out []FeedbackItem
 	add := func(kind PRCommentKind, rc rawPRComment, thread, path string, line int, ctxThread []FeedbackMessage) {
 		id := string(kind) + ":" + strconv.FormatInt(rc.DatabaseID, 10)
@@ -304,6 +307,61 @@ func UnansweredFeedback(raw rawPRConversation, isHuman func(*rawPRCommentAuthor)
 				continue
 			}
 			add(PRCommentInline, rc, th.ID, th.Path, line, whole)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// humanFeedback reports whether a comment is a person's: non-empty, from a
+// human (isHuman) with a trusted association, and without a hive attribution
+// trailer.
+func humanFeedback(rc rawPRComment, isHuman func(*rawPRCommentAuthor) bool) bool {
+	if rc.Author == nil || strings.TrimSpace(rc.Body) == "" || HasAttributionTrailer(rc.Body) {
+		return false
+	}
+	if !feedbackTrustedAssociations[strings.ToUpper(rc.AuthorAssociation)] {
+		return false
+	}
+	return isHuman != nil && isHuman(rc.Author)
+}
+
+// RuleCandidates returns every human comment on a PR for rule capture
+// (hivecommons/hive#19136): inline comments, non-empty review bodies of any
+// state, and conversation comments, with the same author checks as
+// UnansweredFeedback but none of its routing gates. A comment named in a
+// handled marker, older than the hive's reply in its thread, in a resolved
+// thread, or a conversation comment not addressed to the hive is still a
+// candidate, because a reviewer can state a rule in any of them. Which
+// candidates were already classified is the rule index's concern.
+func RuleCandidates(raw rawPRConversation, isHuman func(*rawPRCommentAuthor) bool) []FeedbackItem {
+	var out []FeedbackItem
+	add := func(kind PRCommentKind, rc rawPRComment, thread, path string, line int) {
+		if !humanFeedback(rc, isHuman) {
+			return
+		}
+		out = append(out, FeedbackItem{ID: string(kind) + ":" + strconv.FormatInt(rc.DatabaseID, 10), ThreadID: thread, Kind: kind,
+			Author: rc.Author.Login, Body: truncateCommentBody(rc.Body), Path: path, Line: line, URL: rc.URL, CreatedAt: rc.CreatedAt,
+			AuthorAssociation: strings.ToUpper(rc.AuthorAssociation)})
+	}
+	for _, rc := range raw.Comments.Nodes {
+		add(PRCommentConversation, rc, "", "", 0)
+	}
+	for _, rc := range raw.Reviews.Nodes {
+		add(PRCommentReview, rc, "", "", 0)
+	}
+	for _, th := range raw.ReviewThreads.Nodes {
+		line := 0
+		if th.Line != nil {
+			line = *th.Line
+		}
+		for _, rc := range th.Comments.Nodes {
+			add(PRCommentInline, rc, th.ID, th.Path, line)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {

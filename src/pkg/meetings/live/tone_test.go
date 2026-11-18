@@ -93,6 +93,24 @@ func TestToneNotPlayedWhenVoiceOff(t *testing.T) {
 	}
 }
 
+// A companion meeting has no voice in the call, yet its chime plays: the
+// desktop companion plays it on the host's computer. voice_on_address off
+// still refuses it.
+func TestToneOnCompanionIgnoresMeetingVoice(t *testing.T) {
+	tm, s, _ := toneSession(t)
+	m := tm.m[s.id]
+	m.Platform, m.VoiceEnabled = meetings.PlatformCompanion, false
+	tm.m[s.id] = m
+	if ok, why := s.toneAllowed("Bo"); !ok {
+		t.Fatalf("companion tone refused: %q", why)
+	}
+	s.onPersonaReply(context.Background(), toneReply)
+	tm.eventually(t, 1)
+
+	s.r.opts.Policy.VoiceOnAddress = false
+	refused(t, s, "Bo", speakPolicyOff)
+}
+
 // She does not chime over her own speech or into someone else's sentence;
 // the asker's own partial does not stop it.
 func TestToneNotOverSpeechOrCrosstalk(t *testing.T) {
