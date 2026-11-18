@@ -141,3 +141,31 @@ func TestWireMeetingsInbox(t *testing.T) {
 		t.Fatalf("sources %+v", srcs)
 	}
 }
+
+// A question dropped for the meeting budget is listed in the meeting's
+// inbox record, with or without other notes, so nothing asked is lost.
+func TestMeetingsInboxListsQuestionsNotAnsweredForBudget(t *testing.T) {
+	store, err := meetings.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 15, 10, 0, 0, 0, time.UTC)
+	m := meetings.Meeting{ID: "mtg-budget", State: meetings.StateEnded, CreatedAt: now, EndedAt: &now}
+	if err := store.Save(m); err != nil {
+		t.Fatal(err)
+	}
+	skipped := []live.SkippedQuestion{{Who: "Ana", Text: "when does the release ship?"}}
+	if err := store.SaveDoc(m.ID, live.StateDoc, live.State{SkippedCount: 2, Skipped: skipped}); err != nil {
+		t.Fatal(err)
+	}
+	mi := &meetingsInbox{store: store}
+	got, err := mi.build(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## Not answered: budget", "Ana: when does the release ship?", "and 1 more not listed"} {
+		if !strings.Contains(got.Notes, want) {
+			t.Errorf("inbox notes lack %q:\n%s", want, got.Notes)
+		}
+	}
+}

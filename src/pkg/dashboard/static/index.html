@@ -6319,6 +6319,11 @@
     .meetings-row-error { font-size: var(--fs-xs); color: var(--red); overflow-wrap: anywhere; }
     .meetings-row-raw { margin-top: var(--sp-1); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
     .meetings-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .meetings-budget { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .meetings-meter { flex: 0 0 8em; height: var(--sp-2); }
+    .meetings-budget[data-level="warning"] .muted-xs, .meetings-budget[data-level="degraded"] .muted-xs { color: var(--yellow); }
+    .meetings-budget[data-level="exhausted"] .muted-xs { color: var(--red); }
+    .meetings-skipped { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-sm); overflow-wrap: anywhere; }
     .meetings-live { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--sp-4); }
     .meetings-transcript { max-height: 28em; overflow: auto; font-size: var(--fs-sm); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
     .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }
@@ -51739,6 +51744,11 @@ function burnAreaChart() {
     const MEETINGS_LIVE_STATES = { requested: 1, joining: 1, lobby: 1, live: 1 };
     let _meetingsList = null;
     let _meetingsError = '';
+    // Budget meters by meeting id and the hive-wide ceilings, from GET /api/meetings/budget.
+    let _meetingsBudget = {};
+    let _meetingsLedger = null;
+    // Levels the meter badges (the server's budget steps).
+    const MEETINGS_BUDGET_BADGES = { warning: 'budget 80%', degraded: 'budget 90%: shorter answers', exhausted: 'budget exhausted' };
     let _meetingsOpen = null; // { id, ws, meeting, lines, partial, intents, live }
     // Ended meetings are inbox items too (source "meeting").
     if (typeof INBOX_SOURCE_ICONS === 'object' && !INBOX_SOURCE_ICONS.meeting) INBOX_SOURCE_ICONS.meeting = '🎙';
@@ -51789,7 +51799,54 @@ function burnAreaChart() {
         if (_meetingsList === null) _meetingsList = [];
         _meetingsError = 'Meetings are unreachable right now; retrying.';
       }
+      await fetchMeetingsBudget();
       renderMeetings();
+    }
+
+    // The meter is numbers only; a failure leaves the last one.
+    async function fetchMeetingsBudget() {
+      try {
+        const r = await fetch('/api/meetings/budget');
+        if (!r.ok) return;
+        const data = await r.json();
+        const byId = {};
+        (data.meetings || []).forEach(b => { byId[b.meeting_id] = b; });
+        _meetingsBudget = byId;
+        _meetingsLedger = data.ledger || null;
+      } catch (e) { /* transient */ }
+    }
+
+    // meetingsBudgetText is the meter's text alternative.
+    function meetingsBudgetText(b) {
+      return (b.percent || 0) + '% of the meeting budget used';
+    }
+
+    function meetingsBudgetHtml(b) {
+      if (!b || !b.token_budget) return '';
+      const text = meetingsBudgetText(b);
+      const badge = MEETINGS_BUDGET_BADGES[b.level];
+      const detail = (b.tokens_used || 0) + ' of ' + b.token_budget + ' tokens · ' + (b.intents_answered || 0) + ' answered' +
+        (b.skipped ? ' · ' + b.skipped + ' question' + (b.skipped === 1 ? '' : 's') + ' not answered' : '');
+      return '<div class="meetings-budget" data-level="' + escapeHtml(b.level || 'ok') + '">' +
+        '<meter class="meetings-meter" min="0" max="100" low="79" high="89" optimum="0" value="' + Number(b.percent || 0) + '" aria-label="' + escapeHtml(text) + '" title="' + escapeHtml(text) + '">' + escapeHtml(text) + '</meter>' +
+        '<span class="muted-xs">' + escapeHtml(text) + ' · ' + escapeHtml(detail) + '</span>' +
+        (badge ? '<span class="kc-pill" data-status="' + (b.level === 'warning' ? 'syncing' : 'error') + '">' + escapeHtml(badge) + '</span>' : '') +
+        '</div>';
+    }
+
+    // The ceilings hive-wide, for the live view.
+    function meetingsLedgerText(l) {
+      if (!l) return '';
+      const part = (name, used, ceil) => ceil ? name + ' ' + used + ' of ' + ceil + ' tokens' : '';
+      return [part('hour', l.hourly_used || 0, l.hourly_ceiling), part('day', l.daily_used || 0, l.daily_ceiling)].filter(Boolean).join(' · ');
+    }
+
+    // The questions skipped for budget, with their text (owner view only).
+    function meetingsSkippedHtml(live) {
+      const list = (live && live.skipped) || [];
+      if (!list.length) return '';
+      return '<div><div class="section-label m-0">Not answered: budget</div><ul class="meetings-skipped">' +
+        list.map(q => '<li>' + escapeHtml((q.who ? q.who + ': ' : '') + (q.text || '')) + '</li>').join('') + '</ul></div>';
     }
     dashboardScheduleWork('meetings', fetchMeetings).catch(console.error);
     dashboardSetInterval('meetings', fetchMeetings, MEETINGS_POLL_MS);
@@ -51868,6 +51925,7 @@ function burnAreaChart() {
         '<span class="meetings-row-title" title="' + escapeHtml(m.url || '') + '">' + escapeHtml(meetingsLabel(m)) + '</span>' +
         '<span class="kc-pill" data-status="' + escapeHtml(MEETINGS_PILL_STATUS[state] || '') + '">' + escapeHtml(state) + '</span></div>' +
         (meta ? '<div class="muted-xs">' + escapeHtml(meta) + '</div>' : '') +
+        meetingsBudgetHtml(_meetingsBudget[m.id]) +
         meetingsReasonHtml(m) +
         (active && m.consent_error && !m.consent_posted_at ? '<div class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</div>' : '') +
         (m.consent_via === 'voice' ? '<div class="muted-xs">consent notice spoken: the meeting chat could not deliver it</div>' : '') +
@@ -52102,6 +52160,8 @@ function burnAreaChart() {
           break;
         }
         case 'notes': meetingsRefreshLive(o.id); break;
+        case 'budget': meetingsRefreshLive(o.id); break;
+        case 'dropped': meetingsRefreshLive(o.id); break;
         case 'reach': meetingsRefreshLive(o.id); break;
         case 'spek': meetingsRefreshLive(o.id); break;
         default: break;
@@ -52114,7 +52174,11 @@ function burnAreaChart() {
         const r = await fetch('/api/meetings/' + encodeURIComponent(id));
         if (!r.ok) return;
         const data = await r.json();
-        if (_meetingsOpen && _meetingsOpen.id === id) { _meetingsOpen.live = data.live || null; renderMeetingsLive(); }
+        if (_meetingsOpen && _meetingsOpen.id === id) {
+          _meetingsOpen.live = data.live || null;
+          if (data.budget) _meetingsBudget[id] = data.budget;
+          renderMeetingsLive();
+        }
       } catch (e) { /* transient */ }
     }
 
@@ -52145,9 +52209,11 @@ function burnAreaChart() {
       const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
       const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
         (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
-      host.innerHTML = spek + meetingsReachHtml(live) + '<div class="meetings-live">' +
+      const ledger = meetingsLedgerText(_meetingsLedger);
+      host.innerHTML = spek + meetingsBudgetHtml(_meetingsBudget[o.id]) + (ledger ? '<p class="muted-xs">Hive-wide: ' + escapeHtml(ledger) + '</p>' : '') + meetingsReachHtml(live) + '<div class="meetings-live">' +
         '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
         '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
+        meetingsSkippedHtml(live) +
         '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +
         '<div><div class="section-label m-0">Spek intents</div><div class="meetings-intents">' + (intents || '<p class="muted-xs">None yet.</p>') + '</div></div></div></div>';
       const tr = host.querySelector('.meetings-transcript');

@@ -137,6 +137,7 @@ func (s *Server) registerMeetingsRoutes() {
 	s.mux.HandleFunc("POST /api/meetings/{id}/approve", s.handleMeetingsRequestApprove)
 	s.mux.HandleFunc("POST /api/meetings/{id}/decline", s.handleMeetingsRequestDecline)
 	s.mux.HandleFunc("GET /api/meetings/{id}/ws", s.handleMeetingsWS)
+	s.mux.HandleFunc("GET /api/meetings/budget", s.handleMeetingsBudget)
 	s.registerMeetingsDeleteRoutes()
 }
 

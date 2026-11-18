@@ -224,7 +224,7 @@ func (e *Engine) addressed(l Line, trig Trigger, now time.Time) {
 		thoughts = true
 	}
 	if e.exhausted.Load() {
-		e.drop("budget")
+		e.budgetSkip(l, true)
 		return
 	}
 	if q := trig.Clarify; q != "" {
@@ -375,7 +375,7 @@ func (e *Engine) question(l Line, topic []string, now time.Time) {
 		e.drop("no_topic")
 		return
 	case e.exhausted.Load():
-		e.drop("budget")
+		e.budgetSkip(l, false)
 		return
 	case e.d.LLM == nil:
 		e.drop("no_model")
@@ -504,7 +504,8 @@ func (e *Engine) proceed(p *pending) {
 		}
 	}
 	if e.exhausted.Load() {
-		e.finish(p, "budget")
+		delete(e.pending, p.id)
+		e.budgetSkip(p.line, p.addressed)
 		return
 	}
 	if e.d.LLM == nil {
@@ -525,7 +526,7 @@ func (e *Engine) proceed(p *pending) {
 		mode, timeout, recent = modeAddressed, e.s.AddressedTimeout, e.recentLines()
 	}
 	system := SystemPrompt(e.s.Persona)
-	prompt := answerPrompt(mode, p.line.Who, p.line.Text, p.snips, recent, p.addressed && p.trig.VoiceWanted)
+	prompt := answerPrompt(mode, p.line.Who, p.line.Text, p.snips, recent, p.addressed && p.trig.VoiceWanted) + e.degradedNote()
 	id := p.id
 	p.stages.modelStart = now
 	go func() {
@@ -545,7 +546,7 @@ func (e *Engine) proceed(p *pending) {
 
 func (e *Engine) onAnswer(p *pending, a answered) {
 	now := e.d.Now()
-	text := ClipChat(a.ans.Answer)
+	text := e.clipper(false)(a.ans.Answer)
 	if p.addressed {
 		e.onAddressedAnswer(p, a)
 		return
@@ -603,10 +604,7 @@ func (e *Engine) onOffer(text string) {
 // meeting has a research path: she says she will dig in, the session
 // dispatches the research, and FollowUp reports back once.
 func (e *Engine) onAddressedAnswer(p *pending, a answered) {
-	clipFn := ClipChat
-	if p.trig.VoiceWanted {
-		clipFn = ClipVoice
-	}
+	clipFn := e.clipper(p.trig.VoiceWanted)
 	text := clipFn(a.ans.Answer)
 	if a.err != nil || text == "" {
 		e.log.Info("[meetings] persona answer unavailable; replying unsure", "error", a.err)
@@ -621,7 +619,7 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 	// A question about the hive itself never goes to the research agents
 	// (public web only, and slow): it is answered from the live state, or
 	// she says she does not have the number.
-	if a.err == nil && weak && !live && e.d.CanResearch && !p.thoughts && e.isQuestion(p) && !IsHiveStatusQuestion(p.trig.Rest) &&
+	if a.err == nil && weak && !live && e.d.CanResearch && !e.degraded.Load() && !p.thoughts && e.isQuestion(p) && !IsHiveStatusQuestion(p.trig.Rest) &&
 		!AnsweredLocally(p.snips) {
 		dig := phrasesFor(e.s.Persona.Language).digIn
 		rep.Text = dig
@@ -711,4 +709,35 @@ func splitQuestions(text string) []string {
 		}
 	}
 	return parts
+}
+
+// Degraded answers: one short sentence, and a prompt note saying so, once
+// the meeting has used BudgetDegradePercent of its budget.
+const (
+	DegradedMaxSentences = 1
+	DegradedMaxChars     = 160
+	degradedPromptNote   = "\n\nThe meeting's budget is nearly used: answer in one short sentence."
+)
+
+// clipper is the answer clip: the normal chat or voice clip, tightened
+// when the meeting's budget is nearly used.
+func (e *Engine) clipper(voice bool) func(string) string {
+	base := ClipChat
+	if voice {
+		base = ClipVoice
+	}
+	if !e.degraded.Load() {
+		return base
+	}
+	return func(text string) string {
+		return clipSentences(speakable(base(text)), DegradedMaxSentences, DegradedMaxChars)
+	}
+}
+
+// degradedNote is added to the answer prompt in degraded mode.
+func (e *Engine) degradedNote() string {
+	if e.degraded.Load() {
+		return degradedPromptNote
+	}
+	return ""
 }

@@ -1149,6 +1149,51 @@
         }
       }
     },
+    "/api/meetings/budget": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Meetings budget meter",
+        "description": "Any authenticated role, read-only included. The per-meeting token and intent budgets, the hive-wide hourly and daily token ceilings with what is used in the rolling hour and day, and one meter per meeting: tokens used, budget, percent, intents answered, level (ok, warning at 80 percent, degraded at 90 percent, exhausted), and the number of questions skipped because the budget ran out. Numbers only: no question or transcript text (the skipped questions' text is on the owner-only GET /api/meetings/{id}).",
+        "responses": {
+          "200": {
+            "description": "Budget overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token_budget": {
+                      "type": "integer",
+                      "description": "meetings.budget.max_tokens_per_meeting in effect"
+                    },
+                    "intent_budget": {
+                      "type": "integer",
+                      "description": "meetings.budget.max_intents_per_meeting in effect"
+                    },
+                    "ledger": {
+                      "type": "object",
+                      "description": "Hive-wide spend: hourly_used, hourly_ceiling, daily_used, daily_ceiling (a zero ceiling means none)"
+                    },
+                    "meetings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "meeting_id, tokens_used, token_budget, percent, intents_answered, intent_budget, level, warned, degraded, exhausted, exhausted_by, skipped, dropped"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
     "/api/meetings/{id}": {
       "delete": {
         "tags": [
@@ -1243,7 +1288,12 @@
                       }
                     },
                     "live": {
-                      "type": "object"
+                      "type": "object",
+                      "description": "Live-loop state. Includes skipped (the questions dropped because the budget ran out, with their text, first 200) and skipped_count."
+                    },
+                    "budget": {
+                      "type": "object",
+                      "description": "The meeting's budget meter, as in GET /api/meetings/budget."
                     }
                   }
                 }
