@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.323.2)
+
+### Fixed
+
+- A `blocked` verdict whose blocker is a person's action no longer gets lifted by the blocked sweep as a marker-less hive block. The contributor relay now posts a `hive:blocked-on kind=owner-action` marker with the reason before it labels, the sweep keeps such a block (it only strips `help wanted`), and the activity monitor row reads Needs human with "needs an owner action: ..." instead of Actionable. A hive-applied block with no marker is still lifted. See `src/docs/labels-and-control-signals/reference.md`
+
 ## 2026-11-18 (v5.323.1)
 
 ### Changed
