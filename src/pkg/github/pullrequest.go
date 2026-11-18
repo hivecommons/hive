@@ -499,8 +499,13 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 		c.NoteMergeCredit(owner+"/"+repo, number, credit)
 	}
 	// A squash carries the branch's Signed-off-by trailers into the landing
-	// commit, or does not happen (hivecommons/hive#18203).
-	commitMessage, err = c.MergeCreditor().SquashSignoff(ctx, owner, repo, number, mergeMethod, commitMessage)
+	// commit, or, in a repo that requires DCO, does not happen
+	// (hivecommons/hive#18203).
+	squashHead := expectSHA
+	if squashHead == "" {
+		squashHead = fetched.GetHead().GetSHA()
+	}
+	commitMessage, err = c.MergeCreditor().SquashSignoff(ctx, owner, repo, number, fetched.GetBase().GetRef(), squashHead, mergeMethod, commitMessage)
 	if err != nil {
 		return MergePRResult{}, fmt.Errorf("merging PR %s/%s#%d (%s): %w", owner, repo, number, mergeMethod, err)
 	}

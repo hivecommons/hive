@@ -169,6 +169,12 @@ type StageLabelPolicy struct {
 	// reason `base-branch-red:<checks>` and never nudged: the red is the
 	// base branch's, not the author's. nil = unknown (no deferral).
 	BaseBranchRed func(repo string, number int, head string) []string
+	// BaseRedRemembered returns the checks the CI enumeration last saw red
+	// on repo's ("owner/name") base branch baseRef and has not seen green
+	// since (hgithub.Client.BaseRedSnapshot). A head BaseBranchRed has no
+	// answer for yet is base red when every check red on it is one of these
+	// and it touches no CI-owning path (foldBaseRed). Nil means none.
+	BaseRedRemembered func(repo, baseRef string) []string
 	// ForkGuard returns the failing checks on a fork PR head (repo
 	// "owner/name", number, head SHA) that refuse it only because it is from
 	// a fork, when EVERY failing check does —
@@ -291,6 +297,14 @@ type StageTracker struct {
 	// (automerge_human_merge_path_fence.go); created on first use. Unlike
 	// obs it survives drain: it is per head, not per pass.
 	humanMergePathFence map[string]humanMergePathFenceEntry
+	// baseRedPaths remembers, per key, whether the head touches a CI-owning
+	// path (foldBaseRed); created on first use. Per head, like
+	// humanMergePathFence.
+	baseRedPaths map[string]baseRedPathsEntry
+	// approvals remembers, per key, the trusted approval the human route
+	// read for a head no lane noted one on (headTrustedApproval); created
+	// on first use. Like humanMergePathFence it survives drain.
+	approvals map[string]humanApprovalEntry
 }
 
 // stageOwner is the lane that set a PR's current stage, for which head, and
@@ -1070,6 +1084,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		c.foldHumanReturnLabel(ctx, store, list)
 		c.foldRecordedDecision(ctx, list)
 		c.foldForkGuard(ctx, tracker, store, list, now)
+		c.foldBaseRed(ctx, tracker, list, now)
 		verdict, role, obs := resolveStage(list)
 		key := stageKey(obs.Owner, obs.Repo, obs.Number)
 		if verdict.Rank == stageRankNone {
@@ -1190,6 +1205,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			var evidence stagelabels.Evidence
 			route, evidence = c.routeHuman(ctx, tracker, key, obs, verdict.Stage, now)
 			pass.Route = &evidence
+			if approver := evidence.HumanApprover; approver != "" && obs.HeadSHA != "" && obs.Detail.HumanApprovalHead != obs.HeadSHA {
+				// The route read the approval no lane noted this pass
+				// (headTrustedApproval): the steps below see it too.
+				obs.Detail.HumanApprover, obs.Detail.HumanApprovalHead = approver, obs.HeadSHA
+			}
 			verdict.Stage = route.Stage
 			if route.LaneReason != "" {
 				obs.Reason = route.LaneReason
@@ -1458,7 +1478,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// Only re-park when the post-steps would leave 085: an adoption
 			// that cleared it, or a fresher 085 reason, must stand.
 			if verdict.Stage != stagelabels.NeedsDecision && !pass.AdoptionLive {
-				if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok {
+				if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok && !c.sameHeadApproved(ctx, tracker, key, &obs, now) {
 					verdict = replacement
 					obs.Reason = replacement.Reason
 					route := sameHeadDecisionRoute(obs)

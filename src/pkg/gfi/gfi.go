@@ -78,6 +78,13 @@ const (
 	// ReasonClaimedByHive is the release reason when a hive agent started on
 	// the issue.
 	ReasonClaimedByHive = "claimed-by-hive"
+
+	// SkipLinkedPR is the Decision.Skip reason for an issue a pull request
+	// already covers (Candidate.HasLinkedPR).
+	SkipLinkedPR = "linked-pr"
+	// SkipRelaySkip prefixes the Decision.Skip reason for an issue wearing a
+	// label the contributor relay refuses (Policy.RelaySkip).
+	SkipRelaySkip = "relay-skip"
 )
 
 // AlwaysExcludeLabels disqualify an issue whatever Policy.ExcludeLabels or
@@ -214,6 +221,10 @@ type Policy struct {
 	ExcludeLabels []string
 	// HardSuppressLabels are the hive's escalation labels; always excluded.
 	HardSuppressLabels []string
+	// RelaySkip, when set, reports the first label the contributor relay
+	// refuses to hand out (hub.contribute_skip_labels). Such an issue is
+	// never advertised: its welcome comment's claim link would lead nowhere.
+	RelaySkip func(labels []string) (string, bool)
 }
 
 // Normalized fills zero fields with the defaults.
@@ -279,7 +290,7 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 	case len(c.Assignees) > 0:
 		return skip(d, "assigned")
 	case c.HasLinkedPR:
-		return skip(d, "linked-pr")
+		return skip(d, SkipLinkedPR)
 	}
 	for _, l := range AlwaysExcludeLabels {
 		if labels[l] {
@@ -309,6 +320,13 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 	}
 	if _, ok := ParseRecheckAfter(c.Body); ok {
 		return skip(d, SkipTimeGated)
+	}
+	// After every withdrawable gate: the relay's default skip set also lists
+	// `blocked` and `tracking`, and those must still withdraw.
+	if p.RelaySkip != nil {
+		if l, ok := p.RelaySkip(c.Labels); ok {
+			return skip(d, SkipRelaySkip+":"+l)
+		}
 	}
 	title := NormalizeTitle(c.Title)
 	for _, prefix := range epicTitlePrefixes {
@@ -607,6 +625,10 @@ type SweepOptions struct {
 	// AgentsMD, when set, returns the URL of the repository's AGENTS.md (or
 	// "" when it has none); the template points agents at it.
 	AgentsMD func(ctx context.Context, repo string) string
+	// RepoAutoMerge, when set, reports whether the hive auto-merges the
+	// repository's contributor PRs; the welcome comment promises an
+	// automatic merge only where it does. Unset keeps that promise.
+	RepoAutoMerge func(repo string) bool
 	// Audit, when set, receives one event per label applied or released.
 	Audit func(Event)
 }
@@ -758,8 +780,12 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 			if opts.AgentsMD != nil {
 				agentsMD = opts.AgentsMD(ctx, repo)
 			}
+			autoMerge := true
+			if opts.RepoAutoMerge != nil {
+				autoMerge = opts.RepoAutoMerge(repo)
+			}
 			body, err := RenderComment(tmpl, Vars{
-				Candidate: sc.c, Links: opts.Links, Reasons: sc.d.Reasons, AgentsMDURL: agentsMD,
+				Candidate: sc.c, Links: opts.Links, Reasons: sc.d.Reasons, AgentsMDURL: agentsMD, AutoMerge: autoMerge,
 			})
 			if err != nil {
 				logger.Warn("gfi: rendering comment failed", "issue", sc.c.Key(), "error", err)
@@ -838,6 +864,19 @@ func WithdrawnComment(c Candidate, reason string, l Links, at time.Time) string 
 	hive := strings.TrimSpace(l.HiveID)
 	if hive == "" {
 		hive = "this hive"
+	}
+	if coveredByPR(reason) {
+		// It was newcomer work; someone took it. No "not newcomer work"
+		// correction and no apology.
+		var b strings.Builder
+		b.WriteString(SupersededMarker + "\n")
+		fmt.Fprintf(&b, "~~Good first issue~~ — **withdrawn** by %s: a pull request now covers this issue, so it is no longer open to new contributors. The `%s` and `%s` labels have been removed (%s).",
+			hive, Label, HelpWantedLabel, at.UTC().Format(time.RFC3339))
+		if origin := strings.TrimRight(strings.TrimSpace(l.Origin), "/"); origin != "" {
+			fmt.Fprintf(&b, " Other issues open to new contributors are listed on the relay page: %s/contribute", origin)
+		}
+		b.WriteString("\n")
+		return b.String()
 	}
 	var why string
 	switch {

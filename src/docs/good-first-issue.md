@@ -53,7 +53,11 @@ the pitch, end to end:
    maintainer.
 4. **Hive merges it.** CI runs, the hive review runs, and a green PR from a
    claimed contributor whose tier is sufficient (`require_tiers` or
-   `registry_tiers_sufficient`) merges on its own.
+   `registry_tiers_sufficient`) merges on its own. That needs the
+   repository's auto-merge on (`acmm_level` 6 and no
+   `project.repo_policies[].auto_merge: false`); where it is off the hive
+   still reviews, a maintainer merges, and the comment says so instead of
+   promising an automatic merge.
 
 The comment also says that hive may pick the issue up itself if nobody claims
 it, and that claiming first prevents that. Note the interplay with the
@@ -78,12 +82,13 @@ Gates, in order; the first failure is the `gfi skip reason=…` logged:
 |---|---|
 | Pull request wearing the issue shape | `pull-request` |
 | Live claimant (`hive:claim`, assignee) | `claimed`, `assigned` |
-| An open PR already references the issue | `linked-pr` |
+| An open PR already references the issue, or the enumeration set it aside because a pull request covers it (a `claimed_by_pr` row that still wears the label) | `linked-pr` |
 | Hard-suppress label (`needs-human`, `stage/045-needs-decision`, a pre-045 `stage/085-needs-decision`, `needs-spec`, or the retired `needs-direction` / `needs-decision`) — always excluded, whatever `exclude_labels` says; `needs-human` next to `approved-direction` still excludes ([#12680](https://github.com/hivecommons/hive/issues/12680)) | `hard-suppress:<label>` |
 | Any `hive/claimed-by-*` label (always excluded) | `excluded-label:<label>` |
 | Excluded label (`kind/epic`, `epic`, `meta`, `meta-tracker`, `tracker`, `roadmap`, `security`, `blocked`, `hold`, `wontfix`, `duplicate`, `hive/in-progress`, `hive/claimed-by-*`, the hive's own `hive/advisory` / `hive/selfreport` / `hive/sentinel` / `hive/fleet` reports, …) | `excluded-label:<label>` |
 | Operations tracking issue — the body carries `<!-- hive:ops-tracking -->` (the promote-stable workflow stamps its emergency follow-up issue with it), or the title/body uses soak-checklist phrasing ("24h after promotion", "post-hoc soak", "promote-stable") — a maintainer's checklist, not a code change ([#13267](https://github.com/hivecommons/hive/issues/13267)) | `ops-tracking:marker`, `ops-tracking:soak-checklist` |
 | Time-gated — the body carries `<!-- hive:recheck-after <RFC3339> -->`, so nothing on it can be completed before the deadline | `time-gated` |
+| A label the contributor relay refuses to hand out, matched by `hub.contribute_skip_labels` (`needs-triage`, `epic`, `tracking`, `discussion`, `question` and the needs-decision labels by default; glob patterns allowed). Checked after the gates above, so `blocked` and `tracking` (also in the default set) still withdraw. The welcome comment's claim link would lead nowhere | `relay-skip:<label>` |
 | Title starts with `Epic`, `Tracking`, `RFC`, `Proposal`, `Umbrella`, `Hive Advisory Report`, … after leading emoji, `[tags]` and punctuation are stripped, or contains the word `epic`, `rfc`, `umbrella` or `meta` | `title:<word>` |
 | Title mentions security work (`security`, `vulnerability`, `CVE-…`, `exploit`, `XSS`, `CSRF`, `RCE`, `injection`) even without a security label | `title:security` |
 | Younger than `min_age` (default 1h) | `too-fresh` |
@@ -160,10 +165,19 @@ Fix #<n> in github.com/<owner>/<repo> (<issue url>). First open <claim url> and 
 If nobody claims it, hive may pick it up itself — claiming first prevents that. Docs: [contributor relay](<docs>/contributor-relay.md) · [contributor lane auto-merge](<docs>/hive-merge.md#contributor-lane-auto-merge) · [trust tiers](<docs>/contributor-trust-and-roles.md) · [AGENTS.md](<AGENTS.md url>).
 ````
 
+With the repository's auto-merge off, the heading reads **How to land it:**,
+step 4 reads "Hive runs CI and reviews the PR; **a maintainer of this
+repository merges it**.", the footer link is labelled *contributor lane*, and
+the agent prompt ends "so the hive's contributor lane links it to your claim;
+the hive reviews it and a maintainer merges it." The next selecting pass edits
+an invite already posted, so turning a repository's auto-merge off or on
+corrects its open invites after the next restart.
+
 Template variables: `.Repo`, `.Number`, `.Title`, `.IssueURL`, `.ClaimURL`,
 `.RelayURL`, `.Docs`, `.Hive`, `.Reasons` / `.TopReasons` (first two),
-`.AgentsMDURL` (empty when the repository has no `AGENTS.md`), `.AgentPrompt`
-and `.Marker`. An override set in `good_first_issue.comment_template` must
+`.AgentsMDURL` (empty when the repository has no `AGENTS.md`), `.AutoMerge`
+(whether the hive merges this repository's contributor PRs itself; use
+`{{ if .AutoMerge }}` to word an override), `.AgentPrompt` and `.Marker`. An override set in `good_first_issue.comment_template` must
 contain `{{ .Marker }}` (or the literal marker); otherwise the config is
 rejected, because without the marker the sweep could not find its own
 comment.
@@ -201,10 +215,30 @@ arrived without one, a single correction is posted):
 ```
 
 Softer rejections (too fresh, low score, an epic a maintainer labelled by
-hand) leave a hand-applied label alone. Issues the enumeration filtered out
+hand) leave a hand-applied label alone. So does `relay-skip:<label>`: triage
+adds and removes `needs-triage` all the time, and a withdrawal is permanent,
+so an advertised issue that later gains a relay-skip label keeps its
+invite. Issues the enumeration filtered out
 (blocked, held, parked) that still wear the label are included in the pass
 for this purpose only. The event logs as `gfi withdraw issue=… reason=…`
 and audits as `gfi-withdraw`.
+
+### Withdraw when a pull request covers the issue
+
+A labelled issue that a pull request now covers (`linked-pr`, or the
+`stage/040-covered-by-pr` label) is withdrawn the same way, whoever opened
+the PR. The enumeration sets such an issue aside as a `claimed_by_pr` row,
+and the sweep is handed those rows while they still wear the label. The
+welcome comment is edited to:
+
+```markdown
+<!-- hive:gfi superseded=true -->
+~~Good first issue~~ — **withdrawn** by <hive>: a pull request now covers this issue, so it is no longer open to new contributors. The `good first issue` and `help wanted` labels have been removed (<RFC3339>). Other issues open to new contributors are listed on the relay page: <public_url>/contribute
+```
+
+The exception is the outcome the label exists for: when a relay contributor
+or a person claimed the issue and opened the PR, the label stays until the
+issue closes and the claim counts as a conversion.
 
 ## Metrics
 

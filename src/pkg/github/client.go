@@ -54,6 +54,9 @@ type Client struct {
 	// (kubestellar/hive#5733). Per-client because the artifact it corrects is a
 	// property of THIS client's token minting. Zero value is ready to use.
 	rateLimits rateLimitTracker
+	// baseRed remembers each base branch's red checks across passes
+	// (base_branch_red_memory.go). Zero value is ready to use.
+	baseRed baseRedMemory
 	// lastGoodEnum keeps each repo's newest successful enumeration so a
 	// transiently refused fetch does not publish the repo as empty
 	// (enumerate_lastgood.go). Zero value is ready to use.
@@ -247,9 +250,12 @@ type Client struct {
 	// (merge_credit.go, hivecommons/hive#14581); creditIssueAuthors is the
 	// live auto_merge.credit_issue_authors switch and mergeCredits holds the
 	// credit decided for a PR until its pr_merged audit consumes it.
+	// dcoRequired is the live governor.labels.stage.dco.required override
+	// the squash sign-off refusal consults (merge_signoff.go).
 	mergeCreditMu      sync.Mutex
 	mergeCredit        *MergeCreditor
 	creditIssueAuthors func(repo string) bool
+	dcoRequired        func(repo string) (required, ok bool)
 	mergeCredits       map[string]MergeCredit
 	// issueClaims reports whether issue claims are recognised at enumeration
 	// time and the TTL an assignee-inferred claim runs for (#8380). Nil or
@@ -645,6 +651,11 @@ type Client struct {
 	// baseRefresh is the decision carry's memo (pr_decision_base_refresh.go).
 	baseRefreshOnce sync.Once
 	baseRefresh     *BaseRefreshChecker
+	// hiveStage memoises who applied each held PR's stage labels
+	// (stage_label_hive_applied.go), so a PR the backfill guard holds costs
+	// one timeline read per label change, not one per stage sync.
+	hiveStageMu sync.Mutex
+	hiveStage   map[string]hiveStageFact
 }
 
 func (c *Client) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {
@@ -5377,6 +5388,10 @@ type RepoWorkIssue struct {
 	// (liftBlockedMarkerless).
 	ReviewBacklog bool `json:"review_backlog,omitempty"`
 	OpenBlockedBy int  `json:"open_blocked_by,omitempty"`
+	// BlockedOn lists every blocker the body's blocked-on markers name
+	// ("owner/repo#N", or "issue owner/repo#N"), set only when there are
+	// several, so ReconcileBlockedIssues keeps the block until all settle.
+	BlockedOn []string `json:"blocked_on,omitempty"`
 	// OpenBlockers are the keys ("repo#N") of a decision park's open
 	// blocked-by issues, read only for such a park; the dashboard checks
 	// whether one is itself a decision park (Issue.OpenBlockers).

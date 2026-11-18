@@ -137,6 +137,97 @@ func ParseBlockedOnMarker(text string) (repo string, pr int, ok bool) {
 	return m[1], n, true
 }
 
+// blockedOnRef is one blocker a blocked-on marker names: a PR, or an issue
+// when issue is set (the `issue=` form).
+type blockedOnRef struct {
+	repo   string
+	number int
+	issue  bool
+}
+
+func (r blockedOnRef) ref() string { return r.repo + "#" + strconv.Itoa(r.number) }
+
+func (r blockedOnRef) key() string {
+	kind := "pr "
+	if r.issue {
+		kind = "issue "
+	}
+	return kind + strings.ToLower(r.ref())
+}
+
+// marker renders the blocked-on marker that names r.
+func (r blockedOnRef) marker() string {
+	if r.issue {
+		return blockedOnIssueMarker(r.repo, r.number)
+	}
+	return BlockedOnMarker(r.repo, r.number)
+}
+
+// reasonRef is r as the filtered reason writes it after "blocked on ":
+// "owner/repo#N", or "issue owner/repo#N" for the issue form.
+func (r blockedOnRef) reasonRef() string {
+	if r.issue {
+		return blockedOnIssueReasonWord + r.ref()
+	}
+	return r.ref()
+}
+
+// parseBlockedOnRefs returns every distinct blocked-on marker in text, both
+// forms, in the order they appear. ParseBlockedOnMarker and
+// parseBlockedOnIssueMarker read only the first; one comment (or body) may
+// name several blockers (projectbluefin/testsuite#1023 named two issues), and
+// the block lasts until every one of them is settled, as blockedPRMarkedTargets
+// does for a PR's markers.
+func parseBlockedOnRefs(text string) []blockedOnRef {
+	type hit struct {
+		at  int
+		ref blockedOnRef
+	}
+	var hits []hit
+	for _, form := range []struct {
+		re    *regexp.Regexp
+		issue bool
+	}{{blockedOnMarkerRE, false}, {blockedOnIssueMarkerRE, true}} {
+		for _, m := range form.re.FindAllStringSubmatchIndex(text, -1) {
+			n, err := strconv.Atoi(text[m[4]:m[5]])
+			if err != nil || n <= 0 {
+				continue
+			}
+			hits = append(hits, hit{at: m[0], ref: blockedOnRef{repo: text[m[2]:m[3]], number: n, issue: form.issue}})
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].at < hits[j].at })
+	seen := map[string]bool{}
+	var out []blockedOnRef
+	for _, h := range hits {
+		if !seen[h.ref.key()] {
+			seen[h.ref.key()] = true
+			out = append(out, h.ref)
+		}
+	}
+	return out
+}
+
+// blockedOnRefsIfSeveral is parseBlockedOnRefs(text) when it names more than
+// one blocker, else nil: a single blocker keeps the one-target path.
+func blockedOnRefsIfSeveral(text string) []blockedOnRef {
+	if refs := parseBlockedOnRefs(text); len(refs) > 1 {
+		return refs
+	}
+	return nil
+}
+
+// blockedOnRefsFromReasons reads RepoWorkIssue.BlockedOn back into refs.
+func blockedOnRefsFromReasons(reasons []string) []blockedOnRef {
+	var out []blockedOnRef
+	for _, s := range reasons {
+		if repo, n, issue, ok := parseBlockedOnReason(blockedFilterReasonPrefix + " on " + s); ok {
+			out = append(out, blockedOnRef{repo: repo, number: n, issue: issue})
+		}
+	}
+	return out
+}
+
 // ParseBlockedOnReason returns the PR a blockedFilterReason names ("blocked
 // on owner/repo#N"); false for every other reason.
 func ParseBlockedOnReason(reason string) (repo string, pr int, ok bool) {
@@ -235,6 +326,10 @@ func setBlockedRowFacts(row *RepoWorkIssue, body string, openBlockedBy int) {
 	row.RecheckDone = blockedRecheckDone(body)
 	row.ReviewBacklog = blockedReviewBacklogFiling(body)
 	row.OpenBlockedBy = openBlockedBy
+	row.BlockedOn = nil
+	for _, r := range blockedOnRefsIfSeveral(body) {
+		row.BlockedOn = append(row.BlockedOn, r.reasonRef())
+	}
 }
 
 // blockedStageReason is the IssueStageFor reason for an issue wearing the
@@ -383,6 +478,9 @@ type blockedIssueTarget struct {
 	// GitHub's open "blocked by" count. Both gate liftBlockedMarkerless.
 	reviewBacklog bool
 	openBlockedBy int
+	// blockers: every blocker the body's markers name, when there are
+	// several (blockedOnRefsIfSeveral); nil otherwise.
+	blockers []blockedOnRef
 }
 
 // ReconcileBlockedIssues walks the cycle's blocked issues (filtered rows
@@ -420,7 +518,7 @@ func ReconcileBlockedIssues(ctx context.Context, client *Client, result *Actiona
 			if row.Number <= 0 || row.Bucket != workBucketFiltered || !IsBlockedIssueReason(row.Reason) || !hasBlockedLabel(row.Labels) {
 				continue
 			}
-			targets = append(targets, blockedIssueTarget{repo: row.Repo, number: row.Number, labels: row.Labels, reason: row.Reason, recheckAfter: row.RecheckAfter, opsTracking: row.OpsTracking, recheckDone: row.RecheckDone, reviewBacklog: row.ReviewBacklog, openBlockedBy: row.OpenBlockedBy})
+			targets = append(targets, blockedIssueTarget{repo: row.Repo, number: row.Number, labels: row.Labels, reason: row.Reason, recheckAfter: row.RecheckAfter, opsTracking: row.OpsTracking, recheckDone: row.RecheckDone, reviewBacklog: row.ReviewBacklog, openBlockedBy: row.OpenBlockedBy, blockers: blockedOnRefsFromReasons(row.BlockedOn)})
 		}
 	}
 	return client.reconcileBlockedTargets(ctx, targets, logger)
@@ -470,6 +568,7 @@ func (c *Client) SweepBlockedIssues(ctx context.Context, opts BlockedSweepOption
 				recheckDone:   blockedRecheckDone(body),
 				reviewBacklog: blockedReviewBacklogFiling(body),
 				openBlockedBy: blockedBy[issue.GetNumber()],
+				blockers:      blockedOnRefsIfSeveral(body),
 			})
 		}
 	}
@@ -497,6 +596,11 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 		// scanned: the comments were read without error and hold no marker,
 		// so a marker-less lift may trust that nothing names a blocker.
 		scanned := false
+		// blockers: every blocker the newest marker-bearing comment names
+		// when it names several; fromComment: a comment carried the marker,
+		// so the body's markers no longer count.
+		var blockers []blockedOnRef
+		fromComment := false
 		if lookups < blockedSweepCommentLookups {
 			lookups++
 			scan, err := c.blockedSweepComments(ctx, t.repo, t.number, t.recheckAfter)
@@ -504,6 +608,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 			if scan.ok {
 				prRepo, prNumber, onIssue, ok = scan.prRepo, scan.pr, scan.issue, scan.ok
 				noteBlockedOnSeen(t.repo, t.number, scan.prRepo, scan.pr)
+				blockers, fromComment = scan.refs, true
 			}
 			if !ok && !t.recheckAfter.IsZero() && !now.Before(t.recheckAfter) {
 				if t.opsTracking && isRecheckSoakRepo(t.repo) {
@@ -537,6 +642,16 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 		}
 		// A block that names what it waits on is not one the repair converts.
 		forgetBlockedRepairHeld(c, t)
+		// The body's markers stand when no comment carried one, provided the
+		// blocker this pass resolved is among them (a reason the enumeration
+		// took from a comment the budget left unread this pass is not).
+		if !fromComment && blockedOnRefsInclude(t.blockers, blockedOnRef{repo: prRepo, number: prNumber, issue: onIssue}) {
+			blockers = t.blockers
+		}
+		if len(blockers) > 1 {
+			reconcileBlockedOnAll(ctx, c, t, blockers, scanned, &res, logger)
+			continue
+		}
 		if onIssue {
 			reconcileBlockedOnIssue(ctx, c, t, prRepo, prNumber, scanned, &res, logger)
 			continue
@@ -996,6 +1111,213 @@ func reconcileBlockedOnIssue(ctx context.Context, c *Client, t blockedIssueTarge
 	logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "blocker", ref)
 }
 
+// reconcileBlockedOnAll settles a block whose markers name several blockers,
+// PRs and issues alike. projectbluefin/testsuite#1023 named two issues in one
+// comment; the sweep read only the first and lifted `blocked` ("actionable
+// again") the moment it closed, while the second was still open. The block
+// now lifts, with one note naming every blocker, only once all of them are
+// settled: a PR merged or closed, an issue closed. A closed blocker replaced
+// by one still open (a superseding PR, an issue's duplicate or successor)
+// holds as that replacement, and the pass that finds it posts one comment
+// carrying the marker of every blocker still open, so the newest
+// marker-bearing comment keeps naming all of them. While any blocker is open
+// only `help wanted` comes off. A lookup error is counted and keeps the block
+// for the pass. scanned says t's comments were read this pass (see
+// retargetBlockedOnAll).
+func reconcileBlockedOnAll(ctx context.Context, c *Client, t blockedIssueTarget, blockers []blockedOnRef, scanned bool, res *BlockedIssueResult, logger *slog.Logger) {
+	var open, settled []blockedOnRef
+	var moves []string
+	for _, b := range blockers {
+		cur, holds, move, err := c.blockedOnRefState(ctx, t, b)
+		if err != nil {
+			res.Errors++
+			logger.Warn("blocked sweep: blocker lookup failed; block kept", "repo", t.repo, "issue", t.number, "blocker", b.ref(), "error", err)
+			return
+		}
+		if !holds {
+			settled = append(settled, b)
+			continue
+		}
+		if !blockedOnRefsInclude(open, cur) {
+			open = append(open, cur)
+		}
+		if move != "" {
+			moves = append(moves, move)
+		}
+	}
+	if len(open) == 0 {
+		if err := c.unblockIssue(ctx, t.repo, t.number); err != nil {
+			res.Errors++
+			logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
+			return
+		}
+		c.postUnblockedNote(ctx, t.repo, t.number, blockedAllSettledNote(settled, c.unblockAdmission(t.labels)), logger)
+		res.Unblocked++
+		logger.Info("blocked sweep: issue unblocked; every blocker settled", "repo", t.repo, "issue", t.number, "blockers", blockedOnRefList(settled))
+		return
+	}
+	noteBlockedOnSeen(t.repo, t.number, open[0].repo, open[0].number)
+	if len(moves) > 0 {
+		retargetBlockedOnAll(ctx, c, t, open, moves, scanned, res, logger)
+	}
+	stripBlockedHelpWanted(ctx, c, t, res, logger)
+}
+
+// blockedOnRefState reads one of several blockers: whether it still holds
+// the issue, and as what. A closed-unmerged PR superseded by one still open,
+// or a closed issue replaced by one still open (blockedIssueSuccessorOf),
+// holds as that replacement, and move says so for the re-target note. A
+// merged PR, or a closed one or a closed issue with no open replacement, is
+// settled. A successor read that keeps failing past
+// blockedSuccessorLookupGrace releases the issue blocker, as the
+// single-blocker path does.
+func (c *Client) blockedOnRefState(ctx context.Context, t blockedIssueTarget, b blockedOnRef) (cur blockedOnRef, holds bool, move string, err error) {
+	if b.issue {
+		owner, name := c.splitRepo(b.repo)
+		_, closed, err := c.IssueClosedAt(ctx, owner, name, b.number)
+		if err != nil {
+			return b, false, "", err
+		}
+		if !closed {
+			return b, true, "", nil
+		}
+		key := blockedSuccessorLookupKey(t.repo, t.number, b.ref())
+		succ, ok, err := c.blockedIssueSuccessorOf(ctx, t, b.repo, b.number)
+		if err != nil {
+			if giveUp, _ := blockedSuccessorLookupFailed(key); !giveUp {
+				return b, false, "", err
+			}
+			return b, false, "", nil
+		}
+		blockedSuccessorLookupSettled(key)
+		if !ok {
+			return b, false, "", nil
+		}
+		how := "was replaced by"
+		if succ.duplicate {
+			how = "is a duplicate of"
+		}
+		return blockedOnRef{repo: succ.repo, number: succ.number, issue: true}, true, fmt.Sprintf("blocker %s %s %s", b.ref(), how, succ.ref()), nil
+	}
+	settled, merged, err := c.pullRequestSettledDetails(ctx, b.repo, b.number)
+	if err != nil {
+		return b, false, "", err
+	}
+	if !settled {
+		return b, true, "", nil
+	}
+	if merged {
+		return b, false, "", nil
+	}
+	sup, ok := c.pullRequestSupersededBy(ctx, b.repo, b.number)
+	if !ok || sup <= 0 || sup == b.number {
+		return b, false, "", nil
+	}
+	supSettled, _, err := c.pullRequestSettledDetails(ctx, b.repo, sup)
+	if err != nil {
+		return b, false, "", err
+	}
+	if supSettled {
+		return b, false, "", nil
+	}
+	return blockedOnRef{repo: b.repo, number: sup}, true, fmt.Sprintf("blocker %s was superseded by #%d", b.ref(), sup), nil
+}
+
+// retargetBlockedOnAll posts blockedOnAllRetargetNote through the write-back
+// gate, as the issue successor re-target does. A held or failed note leaves
+// the block as it is: the next pass follows the closed blocker to its open
+// replacement again and asks once more. When the comments were not read this
+// pass (the per-pass budget ran out) the blockers came from the body, which
+// an earlier re-target comment may already have moved off, so the comments
+// are read first and a marker there means nothing is posted.
+func retargetBlockedOnAll(ctx context.Context, c *Client, t blockedIssueTarget, open []blockedOnRef, moves []string, scanned bool, res *BlockedIssueResult, logger *slog.Logger) {
+	if !scanned {
+		scan, err := c.blockedSweepComments(ctx, t.repo, t.number, t.recheckAfter)
+		if err != nil {
+			res.Errors++
+			logger.Warn("blocked sweep: comment lookup before re-target failed; block kept", "repo", t.repo, "issue", t.number, "error", err)
+			return
+		}
+		if scan.ok {
+			return
+		}
+	}
+	note := blockedOnAllRetargetNote(open, moves)
+	item, err := c.WritebackItemForNumber(ctx, t.repo, t.number)
+	if err != nil {
+		res.Errors++
+		logger.Warn("blocked sweep: item lookup before re-target failed; block kept", "repo", t.repo, "issue", t.number, "error", err)
+		return
+	}
+	gateRepo := c.blockedRepairRepo(t.repo)
+	if d := c.WritebackAllowed(gateRepo, item, writeback.KindGateComment, note); !d.Allowed {
+		level := slog.LevelDebug
+		if c.WritebackGate().NoteHeld(gateRepo, t.number, writeback.KindGateComment, d.Reason) {
+			level = slog.LevelInfo
+		}
+		logger.Log(ctx, level, "blocked sweep: re-target of one of several blockers held by writeback gate; block kept", "repo", t.repo, "issue", t.number, "reason", d.Reason, "detail", d.Detail)
+		return
+	}
+	c.WritebackGate().ForgetHeld(gateRepo, t.number, writeback.KindGateComment)
+	if err := c.CreateIssueCommentBudgeted(ctx, t.repo, t.number, note); err != nil { // writeback:gated
+		logger.Warn("blocked sweep: re-target note not posted; block kept", "repo", t.repo, "issue", t.number, "error", err)
+		return
+	}
+	res.Retargeted++
+	logger.Info("blocked sweep: one of several blockers re-targeted", "repo", t.repo, "issue", t.number, "blockers", blockedOnRefList(open))
+}
+
+// blockedOnAllRetargetNote is the standalone comment that moves one or more
+// of several blockers to their open replacements. It carries the marker of
+// every blocker still open, the untouched ones included, so the newest
+// marker-bearing comment the sweep reads still names all of them.
+func blockedOnAllRetargetNote(open []blockedOnRef, moves []string) string {
+	var b strings.Builder
+	for _, r := range open {
+		b.WriteString(r.marker())
+		b.WriteString("\n")
+	}
+	b.WriteString("Re-targeted: " + strings.Join(moves, "; ") + ". Still blocked on " + blockedOnRefList(open) + ".")
+	return b.String()
+}
+
+// blockedAllSettledNote is the note posted when every one of several
+// blockers is settled. It names the first right after "Unblocked: " so
+// unblockAlreadyNoted recognises a repeat.
+func blockedAllSettledNote(settled []blockedOnRef, admission string) string {
+	lead := blockedUnblockedMarker + "\nUnblocked: " + blockedOnRefList(settled) + " are no longer open."
+	if admission != "" {
+		return lead + " Unblocked — waiting for a maintainer to admit it: " + admission
+	}
+	return lead + " This issue is actionable again."
+}
+
+// blockedOnRefList names refs as prose: "a", "a and b", "a, b and c".
+func blockedOnRefList(refs []blockedOnRef) string {
+	names := make([]string, 0, len(refs))
+	for _, r := range refs {
+		names = append(names, r.ref())
+	}
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// blockedOnRefsInclude reports whether refs names r (same form, repository
+// compared case-insensitively).
+func blockedOnRefsInclude(refs []blockedOnRef, r blockedOnRef) bool {
+	for _, x := range refs {
+		if x.key() == r.key() {
+			return true
+		}
+	}
+	return false
+}
+
 // liftBlockedDeadline lifts `blocked` from an issue with no tracked PR whose
 // recheck-after deadline has passed and posts the unblocked note, so the next
 // enumeration re-triages it — 010, or no stage while project.issue_filter
@@ -1089,6 +1411,9 @@ type blockedSweepScan struct {
 	ok            bool
 	deadlineNoted bool
 	evidenceNoted bool
+	// refs: every blocker that newest marker-bearing comment names, when
+	// there are several (blockedOnRefsIfSeveral); nil otherwise.
+	refs []blockedOnRef
 }
 
 // blockedSweepComments reads the issue's comments once: the newest
@@ -1113,6 +1438,9 @@ func (c *Client) blockedSweepComments(ctx context.Context, repo string, number i
 			if !scan.ok {
 				scan.prRepo, scan.pr, scan.ok = parseBlockedOnIssueMarker(body)
 				scan.issue = scan.ok
+			}
+			if scan.ok {
+				scan.refs = blockedOnRefsIfSeveral(body)
 			}
 		}
 		if passed != "" && strings.Contains(body, blockedUnblockedMarker) && strings.Contains(body, passed) {

@@ -2108,6 +2108,10 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	// hivecommons/hive#14581: issue-author credit on every merge path, read
 	// live so a reload of auto_merge.credit_issue_authors applies.
 	client.SetCreditIssueAuthors(func(string) bool { return cfg.AutoMerge.CreditIssueAuthorsEnabled() })
+	// hivecommons/hive#18203: a squash with no branch sign-off is refused
+	// only where the repo requires DCO; the per-repo override is the same
+	// governor.labels.stage.dco.required the stage router reads.
+	client.SetDCORequired(func(repo string) (bool, bool) { return cfg.Governor.Labels.Stage.DCO.RequiredFor(repo) })
 	// hivecommons/hive#13241: an issue a person reopens after its closing PR
 	// merged is a change failure on that PR's evidence record, from both the
 	// issues.reopened webhook and the enumeration reopen check.

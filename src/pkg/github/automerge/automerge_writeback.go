@@ -1,6 +1,8 @@
 package automerge
 
 import (
+	"context"
+
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -39,4 +41,28 @@ func (c *Engine) writebackAllowed(repo string, item writeback.Item, kind writeba
 // did not author (adoption only ever targets a contributor's PR).
 func writebackItemForObservation(obs stageObservation) writeback.Item {
 	return writeback.Item{Number: obs.Number, IsPR: true, Author: obs.Author, Labels: obs.Labels, CreatedAt: obs.OpenedAt}
+}
+
+// hiveAppliedStageTransport is the optional transport hook that says whether
+// a PR's stage labels are the hive's own (hgithub.Client.HiveAppliedStageLabels).
+type hiveAppliedStageTransport interface {
+	HiveAppliedStageLabels(ctx context.Context, repo string, number int, labels []string) bool
+}
+
+// stageWriteItem is the gate's view of obs for a stage-label write, with
+// Item.HiveAppliedStage stated as the stage labeler states it: only for a
+// PR the backfill guard would hold, so a note that describes the label move
+// answers as the labeler's own write will.
+func (c *Engine) stageWriteItem(ctx context.Context, obs stageObservation) writeback.Item {
+	item := writebackItemForObservation(obs)
+	t, ok := c.transport.(hiveAppliedStageTransport)
+	if !ok {
+		return item
+	}
+	repo := obs.Owner + "/" + obs.Repo
+	if !c.writebackGate().BackfillHolds(repo, item) {
+		return item
+	}
+	item.HiveAppliedStage = t.HiveAppliedStageLabels(ctx, repo, obs.Number, obs.Labels)
+	return item
 }

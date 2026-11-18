@@ -44,6 +44,30 @@ func TestGFIPublicOrigin(t *testing.T) {
 	}
 }
 
+// gfiSweepOptions hands the sweep the config's per-repo auto-merge switch,
+// so the welcome comment promises an automatic merge only where the
+// contributor lane merges (projectbluefin/common#1688).
+func TestGFISweepOptionsWireRepoAutoMerge(t *testing.T) {
+	cfg := gfiTestConfig()
+	level, off := 6, false
+	cfg.ACMMLevel = &level
+	cfg.Project.RepoPolicies = []config.RepoPolicy{{Repo: "acme/common", AutoMerge: &off}}
+	opts := gfiSweepOptions(cfg, nil, slog.New(slog.DiscardHandler))
+	if opts.RepoAutoMerge == nil {
+		t.Fatal("RepoAutoMerge not wired")
+	}
+	if opts.RepoAutoMerge("acme/common") {
+		t.Error("acme/common has auto_merge: false; the invite must not promise an automatic merge")
+	}
+	if !opts.RepoAutoMerge("acme/widgets") {
+		t.Error("acme/widgets has no override at L6; the contributor lane merges there")
+	}
+	level = 5
+	if gfiSweepOptions(cfg, nil, slog.New(slog.DiscardHandler)).RepoAutoMerge("acme/widgets") {
+		t.Error("below L6 no repository auto-merges")
+	}
+}
+
 func TestGFICandidatesProjection(t *testing.T) {
 	now := time.Now()
 	res := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
@@ -99,6 +123,63 @@ func TestGFICandidatesIncludeLabelledFilteredRows(t *testing.T) {
 	only, _ := gfiCandidates("acme", res, func(repo string) bool { return repo == "acme/other" })
 	if len(only) != 1 || only[0].Number != 2 {
 		t.Fatalf("filter %+v", only)
+	}
+}
+
+// Rows set aside because a pull request covers them (claimed_by_pr) that
+// still wear the label reach the sweep marked HasLinkedPR, so it withdraws
+// them (projectbluefin/website#1031); a relay contributor's or person's
+// claim rides along so the label stays (gfi.Sweeper.Convert). Unlabelled
+// covered rows are not candidates.
+func TestGFICandidatesHandCoveredRowsToSweep(t *testing.T) {
+	res := &github.ActionableResult{
+		WorkDetailsByRepo: map[string]github.RepoWorkDetails{
+			"widgets": {Issues: []github.RepoWorkIssue{
+				{Repo: "widgets", Number: 1031, Labels: []string{"good first issue", "help wanted", "stage/040-covered-by-pr"}, Bucket: "claimed_by_pr", Reason: "Open external PR #1040 covers this issue"},
+				{Repo: "widgets", Number: 5, Labels: []string{"stage/040-covered-by-pr"}, Bucket: "claimed_by_pr"},
+				{Repo: "widgets", Number: 6, Labels: []string{"good first issue"}, Bucket: "claimed_by_pr", ClaimKind: string(claims.KindContributor), ClaimedBy: "newcomer"},
+				{Repo: "widgets", Number: 7, Labels: []string{"good first issue"}, Bucket: "claimed_by_pr", ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner"},
+			}},
+		},
+	}
+	cands, labelled := gfiCandidates("acme", res, nil)
+	if len(cands) != 3 || labelled["acme/widgets#5"] {
+		t.Fatalf("cands %+v labelled %v", cands, labelled)
+	}
+	byNum := map[int]gfi.Candidate{}
+	for _, c := range cands {
+		byNum[c.Number] = c
+	}
+	if c := byNum[1031]; !c.HasLinkedPR || c.ClaimedBy != "" || len(c.Labels) != 3 {
+		t.Fatalf("covered row %+v", c)
+	}
+	if c := byNum[6]; !c.HasLinkedPR || c.ClaimedBy != "newcomer" {
+		t.Fatalf("contributor-claimed covered row %+v", c)
+	}
+	if c := byNum[7]; !c.HasLinkedPR || c.ClaimedBy != "" {
+		t.Fatalf("agent-claimed covered row %+v", c)
+	}
+	d := gfi.Score(byNum[1031], gfi.Policy{}, time.Now())
+	if d.Skip != gfi.SkipLinkedPR || !gfi.Withdrawable(d.Skip) {
+		t.Fatalf("covered row decision %+v", d)
+	}
+	if d := gfi.Score(byNum[6], gfi.Policy{}, time.Now()); d.Skip != "claimed" || gfi.Withdrawable(d.Skip) {
+		t.Fatalf("claimed covered row decision %+v", d)
+	}
+}
+
+// The sweep never advertises what the relay refuses: the policy carries
+// hub.contribute_skip_labels (`needs-triage` by default).
+func TestGFISweepOptionsCarryRelaySkip(t *testing.T) {
+	opts := gfiSweepOptions(&config.Config{}, nil, slog.New(slog.DiscardHandler))
+	if opts.Policy.RelaySkip == nil {
+		t.Fatal("RelaySkip not wired")
+	}
+	if l, ok := opts.Policy.RelaySkip([]string{"kind/bug", "needs-triage"}); !ok || l != "needs-triage" {
+		t.Fatalf("needs-triage not matched: %q %v", l, ok)
+	}
+	if _, ok := opts.Policy.RelaySkip([]string{"kind/bug", "size/S"}); ok {
+		t.Fatal("plain labels matched")
 	}
 }
 

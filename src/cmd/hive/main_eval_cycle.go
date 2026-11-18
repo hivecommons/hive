@@ -742,6 +742,7 @@ func runEvalCycle(
 		}
 	}
 	publishStageSharedCIIncidents(actionable)
+	publishStageBaseRedMemory(ghClient.BaseRedSnapshot())
 
 	// Record enumerated issues into the lifecycle timeline so the dashboard's
 	// lifecycle view has real data. Cheap and fully guarded: a nil dashboard or

@@ -220,7 +220,7 @@ func (c *Client) SweepRedMain(ctx context.Context, now time.Time) (RedMainSweepR
 }
 
 // redCheckRunsForRef returns the latest red check run per name on ref
-// (meta checks excluded) — redCheckNamesForRef with the runs kept — and the
+// (meta checks excluded) — baseCheckStatesForRef's red runs, kept — and the
 // names whose latest runs have all completed (red or not). A name missing
 // from settled has a run still queued or in progress.
 func (c *Client) redCheckRunsForRef(ctx context.Context, owner, repo, ref string) (map[string]*gh.CheckRun, map[string]bool, error) {
