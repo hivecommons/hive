@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -65,4 +66,81 @@ func TestParentAutoCloseFor(t *testing.T) {
 			t.Errorf("%s = %q, want %q", repo, got, want)
 		}
 	}
+}
+
+func TestSetParentAutoClose(t *testing.T) {
+	newCfg := func() *Config {
+		return &Config{Project: ProjectConfig{Org: "acme", Repos: []string{"widgets", "acme/gadgets"}}}
+	}
+	t.Run("sets and reads back live", func(t *testing.T) {
+		c := newCfg()
+		if err := c.SetParentAutoClose("acme/Widgets", " Epics_Too "); err != nil {
+			t.Fatal(err)
+		}
+		if got := c.ParentAutoCloseFor("widgets"); got != ParentAutoCloseEpicsToo {
+			t.Errorf("effective = %q, want epics_too", got)
+		}
+		if !c.ParentAutoCloseExplicit("widgets") {
+			t.Error("explicit = false after a set")
+		}
+		if _, ok := c.Repos["widgets"]; !ok {
+			t.Errorf("entry must be keyed as project.repos writes it, got %v", c.Repos)
+		}
+	})
+	t.Run("default clears the override and drops an empty entry", func(t *testing.T) {
+		c := newCfg()
+		if err := c.SetParentAutoClose("gadgets", ParentAutoCloseOff); err != nil {
+			t.Fatal(err)
+		}
+		if got := c.ParentAutoCloseFor("gadgets"); got != ParentAutoCloseOff {
+			t.Errorf("effective = %q, want false", got)
+		}
+		if err := c.SetParentAutoClose("gadgets", ParentAutoCloseOn); err != nil {
+			t.Fatal(err)
+		}
+		if c.ParentAutoCloseExplicit("gadgets") || len(c.Repos) != 0 {
+			t.Errorf("default must leave no entry, got %v", c.Repos)
+		}
+	})
+	t.Run("keeps other knobs when clearing", func(t *testing.T) {
+		c := newCfg()
+		c.Repos = map[string]RepoSettings{"widgets": {AgentsMdMaxBytes: 4096, ParentAutoClose: ParentAutoCloseOff}}
+		if err := c.SetParentAutoClose("widgets", ParentAutoCloseOn); err != nil {
+			t.Fatal(err)
+		}
+		if rs := c.Repos["widgets"]; rs.AgentsMdMaxBytes != 4096 || rs.ParentAutoClose != "" {
+			t.Errorf("entry = %+v", rs)
+		}
+	})
+	t.Run("reuses an existing differently written key", func(t *testing.T) {
+		c := newCfg()
+		c.Repos = map[string]RepoSettings{"Acme/Widgets": {ParentAutoClose: ParentAutoCloseOff}}
+		if err := c.SetParentAutoClose("widgets", ParentAutoCloseEpicsToo); err != nil {
+			t.Fatal(err)
+		}
+		if len(c.Repos) != 1 || c.Repos["Acme/Widgets"].ParentAutoClose != ParentAutoCloseEpicsToo {
+			t.Errorf("repos = %v", c.Repos)
+		}
+	})
+	t.Run("rejects bad value and unmonitored repo", func(t *testing.T) {
+		c := newCfg()
+		if err := c.SetParentAutoClose("widgets", "maybe"); err == nil {
+			t.Error("bad value accepted")
+		}
+		if err := c.SetParentAutoClose("widgets", ""); err == nil {
+			t.Error("empty value accepted")
+		}
+		if err := c.SetParentAutoClose("other/thing", ParentAutoCloseOff); !errors.Is(err, ErrRepoNotMonitored) {
+			t.Errorf("unmonitored repo err = %v", err)
+		}
+		if len(c.Repos) != 0 {
+			t.Errorf("a refused set stored %v", c.Repos)
+		}
+	})
+	t.Run("nil config", func(t *testing.T) {
+		var c *Config
+		if err := c.SetParentAutoClose("widgets", ParentAutoCloseOff); err == nil {
+			t.Error("nil config accepted a set")
+		}
+	})
 }

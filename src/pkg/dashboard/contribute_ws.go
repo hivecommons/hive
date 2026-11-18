@@ -502,6 +502,7 @@ type WSMessage struct {
 	TrustTier                    string                      `json:"trust_tier,omitempty"`
 	Permissions                  []string                    `json:"permissions,omitempty"`
 	Reason                       string                      `json:"reason,omitempty"`
+	Filtered                     map[string]int              `json:"filtered,omitempty"`
 	State                        string                      `json:"state,omitempty"`
 	ContributeNeedsDecisionLabel *string                     `json:"contribute_needs_decision_label,omitempty"`
 	OperatorMessage              *ContributorOperatorMessage `json:"operator_message,omitempty"`

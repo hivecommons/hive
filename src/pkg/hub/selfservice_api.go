@@ -102,6 +102,7 @@ const (
 	selfServiceRefusedDuplicateID    = "duplicate_id"
 	selfServiceRefusedInvalidRepos   = "invalid_repos"
 	selfServiceRefusedInvalidURL     = "invalid_dashboard_url"
+	selfServiceRefusedInvalidUpdate  = "invalid_update"
 	selfServiceRefusedCap            = "per_user_cap"
 	selfServiceRefusedNoToken        = "no_github_token"
 	selfServiceRefusedNotAdmin       = "not_repo_admin"

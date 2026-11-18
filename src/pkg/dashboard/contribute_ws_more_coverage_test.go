@@ -259,6 +259,9 @@ func TestCovK2_SelectTask(t *testing.T) {
 	// The sole candidate is now in cooldown → empty candidate set → no_matching_work (#2546).
 	if msg := hub.selectTask(conn); msg == nil || msg.Reason != taskUnavailableNoMatchingWork {
 		t.Fatalf("expected task_unavailable/%s (cooldown) but got %+v", taskUnavailableNoMatchingWork, msg)
+	} else if msg.Filtered["cooldown"] != 1 {
+		// #19052: work existed but was dropped, so the wire names the filter.
+		t.Fatalf("expected filtered cooldown=1, got %v", msg.Filtered)
 	}
 }
 
