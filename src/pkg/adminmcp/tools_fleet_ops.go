@@ -235,7 +235,7 @@ func featureDisclosure(args map[string]any) string {
 		warnings = append(warnings, "writebackRequireLabels off drops the review opt-in label requirement for unsolicited write-backs on other people's PRs")
 	}
 	if _, ok := args["writebackMinLevel"]; ok {
-		warnings = append(warnings, "writebackMinLevel changes the ACMM level every unsolicited write-back needs (a lower level, or 0 to clear it, lets the hive write at lower autonomy)")
+		warnings = append(warnings, "writebackMinLevel changes the ACMM floor for unsolicited write-backs (it raises per-kind floors, never lowers them; 0 restores the default)")
 	}
 	if len(warnings) == 0 {
 		return "No obvious authority widening detected from the provided feature fields."

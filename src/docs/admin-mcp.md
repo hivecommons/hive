@@ -1114,7 +1114,7 @@ refuses any other role.
   resets it to the pack default. The preview says so.
 - `governor.feature_settings` also takes write-back containment's unsolicited
   knobs, the toggles above the per-kind table on Settings → Features:
-  `writebackMinLevel` (`writeback.unsolicited.min_level`, 0 clears it),
+  `writebackMinLevel` (`writeback.unsolicited.min_level`, 0 restores the default),
   `writebackRequireLabels` (`writeback.unsolicited.require_labels`) and
   `writebackBackfill` (`writeback.unsolicited.backfill`). Its preview names
   each one that lets the hive write to more items: backfill on, the opt-in

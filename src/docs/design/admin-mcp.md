@@ -624,8 +624,9 @@ Phase 5 registers the fleet-level write operations under that contract:
   ioscan, claims, checkpoint gates, and autonomy automation before confirmation. It also takes
   write-back containment's three unsolicited knobs (`writebackMinLevel`,
   `writebackRequireLabels`, `writebackBackfill` for `writeback.unsolicited.*`), and discloses
-  turning backfill on, turning the opt-in label requirement off, and any change to the level
-  floor, since each lets the hive write to more items it was not asked to touch.
+  turning backfill on and turning the opt-in label requirement off, since each lets the hive
+  write to more items it was not asked to touch, and any change to the level floor (which
+  raises per-kind floors, never lowers them; 0 restores the default).
 - `governor.general_settings` wraps `PUT /api/config/governor/general-advanced` (Settings →
   General: the eval interval, the loop pacing knobs, `governor.api_budget_pacing`, the default
   explain mode and the attribution trailer). It sends only the fields that differ from the
