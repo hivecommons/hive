@@ -350,7 +350,11 @@ func TestContributorLeaseReleasedByOutOfLedgerHumanClaim(t *testing.T) {
 		case "/repos/o/r/issues/9/timeline":
 			fmt.Fprint(w, `[{"event":"assigned","assignee":{"login":"andy"},"actor":{"login":"andy"}}]`)
 		case "/repos/o/r/issues/9/comments":
-			fmt.Fprint(w, `[{"user":{"login":"andy"},"author_association":"MEMBER","body":"Claimed; fix in progress."}]`)
+			if assigned.Load() {
+				fmt.Fprint(w, `[{"user":{"login":"andy"},"author_association":"MEMBER","body":"Claimed; fix in progress."}]`)
+				return
+			}
+			fmt.Fprint(w, `[]`)
 		case "/repos/o/r/collaborators/andy/permission":
 			fmt.Fprint(w, `{"permission":"admin","role_name":"admin","user":{"login":"andy"}}`)
 		default:

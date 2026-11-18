@@ -104,7 +104,7 @@ func TestClaims_RenewalMeetingAHumanClaimReleasesTheContributor(t *testing.T) {
 		if c, ok := l.Lookup("myorg/repo1", 1); ok && c.Kind == claims.KindHuman && c.Holder == "andy" {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		<-time.After(10 * time.Millisecond)
 	}
 	c, ok := l.Lookup("myorg/repo1", 1)
 	t.Fatalf("renewal did not hand the issue to the person: claim %+v (live %v)", c, ok)
