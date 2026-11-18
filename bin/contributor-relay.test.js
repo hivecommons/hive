@@ -16037,13 +16037,20 @@ test('#19049 claude exited at the consent prompt: bounded relaunch, then a visib
 test('#19049 no-work wording selection (table)', () => {
   const relay = loadRelay({ backend: 'claude' });
   try {
-    const target = 'bluefin.example.org';
+    const target = 'bluefin-knuckle';
     const cases = [
-      { reason: 'no_matching_work', first: true, state: 'queue-empty',
-        has: [/The queue for bluefin\.example\.org is empty\./, /nothing for you to work on right now/, /ClankeR relay/, /30 seconds at first, then every 5 minutes/, /owner queues issues for contributors/], not: [/no_matching_work/] },
-      { reason: 'no_matching_work', first: false, state: 'queue-empty',
-        has: [/still empty; checking again in 5 minutes/], not: [/no_matching_work/] },
-      { reason: 'capability_mismatch', first: true, state: 'filtered:capability', has: [/Work is queued on bluefin\.example\.org/, /\(filter: capability\)/], not: [/is empty/] },
+      // no_matching_work must NEVER claim the queue is empty: the hive sends it
+      // for an empty queue and for work that was filtered out for this contributor.
+      { reason: 'no_matching_work', first: true, state: 'no-match',
+        has: [/No work was assigned to you on bluefin-knuckle right now\./, /may have nothing queued, or nothing that matches your setup \(CLI, trust tier, repo, quota\)/, /ClankeR relay/, /checking again in 5 minutes|checks again in 5 minutes/],
+        not: [/is empty/, /nothing for you to work on/, /no_matching_work/] },
+      { reason: 'no_matching_work', first: false, state: 'no-match',
+        has: [/Still no work assigned to you on bluefin-knuckle; checking again in 5 minutes/], not: [/is empty/, /no_matching_work/] },
+      // Only an explicit queue_empty says the queue is empty.
+      { reason: 'queue_empty', first: true, state: 'queue-empty',
+        has: [/The queue for bluefin-knuckle is empty\./, /nothing for you to work on right now/, /owner queues issues for contributors/], not: [/queue_empty/] },
+      { reason: 'queue_empty', first: false, state: 'queue-empty', has: [/still empty; checking again in 5 minutes/], not: [] },
+      { reason: 'capability_mismatch', first: true, state: 'filtered:capability', has: [/Work is queued on bluefin-knuckle/, /\(filter: capability\)/], not: [/is empty/] },
       { reason: 'no_selected_work', first: true, state: 'filtered:repo', has: [/\(filter: repo\)/], not: [/is empty/] },
       { reason: 'tier_disabled', first: true, state: 'filtered:level', has: [/\(filter: level\)/], not: [/is empty/] },
       { reason: 'daily_limit', first: true, state: 'filtered:quota', has: [/daily task limit/, /\(filter: quota\)/], not: [/is empty/] },
@@ -16060,6 +16067,23 @@ test('#19049 no-work wording selection (table)', () => {
   } finally { teardown(relay); }
 });
 
+test('#19049 hive counts decide what the relay can say about a no-match (table)', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const now = Date.now();
+    const mk = (items, ageMs, state = 'no-match') => ({ sourceURL: 'wss://hosted-alpha-hive-ab12.hive.example.org/api/contribute/ws',
+      noWorkState: state, lastActionableItems: items, lastStatusAt: items === undefined ? 0 : now - ageMs });
+    const six = relay.describeHubCounts(mk(6, 1000));
+    assert.match(six, /alpha-hive has 6 actionable items, but none was assigned to you/);
+    assert.doesNotMatch(six, /empty/);
+    assert.match(relay.describeHubCounts(mk(1, 1000)), /has 1 actionable item, but/);
+    assert.match(relay.describeHubCounts(mk(0, 1000)), /alpha-hive reports 0 actionable items, so nothing is queued there right now\./);
+    assert.strictEqual(relay.describeHubCounts(mk(undefined, 0)), null, 'unknown counts say nothing');
+    assert.strictEqual(relay.describeHubCounts(mk(6, 11 * 60 * 1000)), null, 'stale counts say nothing');
+    assert.strictEqual(relay.describeHubCounts(mk(6, 1000, 'queue-empty')), null, 'only a no-match needs the count');
+  } finally { teardown(relay); }
+});
+
 test('#19049 no-work is said once on a state change, then slowly; work arriving is announced', () => {
   const relay = loadRelay({ backend: 'claude', procAlive: true });
   const lines = []; const log = console.log; console.log = (...a) => lines.push(a.join(' '));
@@ -16069,14 +16093,15 @@ test('#19049 no-work is said once on a state change, then slowly; work arriving 
     const hub = relay.getHubs()[0];
     const empty = () => relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_matching_work' }), hub);
     empty();
-    assert.strictEqual(lines.filter(l => /is empty\./.test(l)).length, 1);
+    assert.strictEqual(lines.filter(l => /No work was assigned to you on .* right now\./.test(l)).length, 1);
+    assert.strictEqual(lines.filter(l => /is empty/.test(l)).length, 0, 'no_matching_work never claims an empty queue');
     lines.length = 0;
     empty(); empty(); empty();
-    assert.deepStrictEqual(lines.filter(l => /queue for/.test(l)), [], 'repeats inside the slow window are quiet');
-    assert.strictEqual(JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8')).queue_state, 'queue-empty');
+    assert.deepStrictEqual(lines.filter(l => /No work was assigned|Still no work/.test(l)), [], 'repeats inside the slow window are quiet');
+    assert.strictEqual(JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8')).queue_state, 'no-match');
     // After the slow interval a short "still empty" line is allowed.
     const later = Date.now() + relay.NO_WORK_STILL_LOG_INTERVAL_MS + 1;
-    assert.match(relay.noWorkLogLine(hub, 'no_matching_work', 300000, later).line, /still empty/);
+    assert.match(relay.noWorkLogLine(hub, 'no_matching_work', 300000, later).line, /Still no work assigned to you/);
     // A different answer is a state change and says so in full.
     relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'capability_mismatch' }), hub);
     assert.ok(lines.some(l => /\(filter: capability\)/.test(l)));
@@ -16108,34 +16133,49 @@ test('#19049 hiveShortName derives a short public name from the hostname (table)
   } finally { teardown(relay); }
 });
 
-test('#19049 multi-hive: one status row, per-hive states, one all-empty summary', () => {
+test('#19049 multi-hive: one status row, per-hive states, summaries only when they are true', () => {
   const relay = loadRelay({ backend: 'claude', procAlive: true, env: MULTI_HIVE_ENV });
   const lines = []; const log = console.log; console.log = (...a) => lines.push(a.join(' '));
   try {
     relay.setCliReady(true);
     const hubs = relay.getHubs();
     assert.strictEqual(hubs.length, 3);
-    // Each hive gets its own full sentence, naming itself, exactly once.
+    // no_matching_work: each hive gets its own sentence, naming itself, once, and
+    // none of them claims an empty queue.
     for (const hub of hubs) {
       const said = relay.noWorkLogLine(hub, 'no_matching_work', 30000);
-      assert.match(said.line, new RegExp(`The queue for ${relay.hiveShortName(hub)} is empty\\.`));
+      assert.match(said.line, new RegExp(`No work was assigned to you on ${relay.hiveShortName(hub)} right now\\.`));
       assert.ok(!/ab12|cd34|ef56/.test(said.line), 'the instance suffix is not part of the short name');
       assert.strictEqual(relay.noWorkLogLine(hub, 'no_matching_work', 30000).line, null, 'a repeat is quiet');
     }
-    assert.strictEqual(relay.queueStatusRow(), 'alpha-hive: empty | beta-console: empty | gamma-knuckle: empty');
+    assert.strictEqual(relay.queueStatusRow(), 'alpha-hive: idle: no match | beta-console: idle: no match | gamma-knuckle: idle: no match');
     relay.maybeAnnounceAllEmpty();
     relay.maybeAnnounceAllEmpty();
-    assert.deepStrictEqual(lines.filter(l => /^All \d+ queues are empty/.test(l)), ['All 3 queues are empty, nothing to do right now.']);
-    // One hive filtered, one empty, one not heard from: the row says each.
+    assert.deepStrictEqual(lines.filter(l => /^No work was assigned to you on any of/.test(l)),
+      ['No work was assigned to you on any of the 3 hives right now; checking again soon.']);
+    assert.deepStrictEqual(lines.filter(l => /queues are empty/.test(l)), [], 'no-match is not "empty"');
+    // The hive's own counts: alpha holds 6 actionable items, beta holds 0.
+    const now = Date.now();
+    Object.assign(hubs[0], { lastActionableItems: 6, lastStatusAt: now });
+    Object.assign(hubs[1], { lastActionableItems: 0, lastStatusAt: now });
+    assert.strictEqual(relay.queueStatusRow(), 'alpha-hive: idle: no match | beta-console: empty | gamma-knuckle: idle: no match');
+    // Every hive reporting zero items (or an explicit queue_empty) makes the summary true.
+    Object.assign(hubs[0], { lastActionableItems: 0, lastStatusAt: now });
+    hubs[2].noWorkState = 'queue-empty';
+    lines.length = 0;
+    relay.maybeAnnounceAllEmpty();
+    assert.deepStrictEqual(lines, ['All 3 queues are empty, nothing to do right now.']);
+    // One hive filtered, one not heard from: no summary, and the row says each.
     hubs[1].noWorkState = 'filtered:capability';
     hubs[2].noWorkState = null;
     assert.strictEqual(relay.queueStatusRow(), 'alpha-hive: empty | beta-console: filtered (capability) | gamma-knuckle: asking');
     lines.length = 0;
     relay.maybeAnnounceAllEmpty();
-    assert.deepStrictEqual(lines, [], 'no summary unless every queue is empty');
+    assert.deepStrictEqual(lines, []);
     const status = () => JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8'));
     relay.writeRelayStatus();
-    assert.deepStrictEqual(status().subscriptions.map(x => x.queue_state), ['queue-empty', 'filtered:capability', null]);
+    assert.deepStrictEqual(status().subscriptions.map(x => x.queue_state), ['no-match', 'filtered:capability', null]);
+    assert.deepStrictEqual(status().subscriptions.map(x => x.actionable_items), [0, 0, null]);
   } finally { console.log = log; teardown(relay); }
 });
 

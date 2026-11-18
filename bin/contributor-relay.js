@@ -544,6 +544,7 @@ const TASK_UNAVAILABLE_RETRY_MS = 30000;
 // slow cadence, announces when work appears, and checks less often while the
 // answer stays the same.
 const NO_MATCHING_WORK_REASON = 'no_matching_work';
+const QUEUE_EMPTY_REASON = 'queue_empty';
 const NO_WORK_BACKOFF_MAX_MS = 5 * 60 * 1000;
 const NO_WORK_BACKOFF_FACTOR = 2;
 const NO_WORK_STILL_LOG_INTERVAL_MS = 10 * 60 * 1000;
@@ -551,6 +552,7 @@ const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
 // queue_state values written to the relay status file and the tmux status line.
 const QUEUE_STATE_EMPTY = 'queue-empty';
+const QUEUE_STATE_NO_MATCH = 'no-match';
 const QUEUE_STATE_FILTERED = 'filtered';
 const QUEUE_STATE_WORKING = 'working';
 const QUEUE_STATE_WAITING_ON_CLI = 'waiting-on-cli';
@@ -558,7 +560,12 @@ const QUEUE_STATE_WAITING_ON_CLI = 'waiting-on-cli';
 // reason -> the filter it names and the sentence tail. `filter` is null for the
 // empty-queue answer.
 const NO_WORK_REASONS = {
-  [NO_MATCHING_WORK_REASON]: { filter: null },
+  // no_matching_work is NOT "the queue is empty": the hive sends it both for an
+  // empty queue and for a queue whose every item was dropped for this contributor
+  // (#19052 asks the server to tell them apart). Only an explicit queue_empty
+  // may say the queue is empty.
+  [NO_MATCHING_WORK_REASON]: { filter: null, noMatch: true },
+  [QUEUE_EMPTY_REASON]: { filter: null },
   capability_mismatch: { filter: 'capability', why: 'but none of it fits what this relay declares it can do' },
   no_selected_work: { filter: 'repo', why: 'but none of it is in the repositories you selected' },
   tier_disabled: { filter: 'level', why: 'but your contributor level is switched off on this hive' },
@@ -606,21 +613,63 @@ function describeNoWork(reason, target, delayMs, first) {
   const entry = NO_WORK_REASONS[reason];
   if (!entry) return null;
   const every = formatRetryInterval(delayMs);
+  if (entry.noMatch) {
+    return {
+      state: QUEUE_STATE_NO_MATCH,
+      line: first
+        ? `No work was assigned to you on ${target} right now. The hive may have nothing queued, or nothing that matches your setup (CLI, trust tier, repo, quota). Your ClankeR relay stays connected and checks again in ${every}.`
+        : `Still no work assigned to you on ${target}; checking again in ${every}.`,
+    };
+  }
   if (!entry.filter) {
     return {
       state: QUEUE_STATE_EMPTY,
       line: first
-        ? `The queue for ${target} is empty. There is nothing for you to work on right now. Your ClankeR relay stays connected and checks again on its own, every ${formatRetryInterval(TASK_UNAVAILABLE_RETRY_MS)} at first, then every ${formatRetryInterval(NO_WORK_BACKOFF_MAX_MS)}; work arrives when the owner queues issues for contributors. ` +
-          'Issues that are queued but already claimed by an open or recently merged PR, or cooling down after an attempt, are not offered either; the hive does not say which applies.'
+        ? `The queue for ${target} is empty. There is nothing for you to work on right now. Your ClankeR relay stays connected and checks again in ${every}; work arrives when the owner queues issues for contributors.`
         : `The queue for ${target} is still empty; checking again in ${every}.`,
     };
   }
   return {
     state: `${QUEUE_STATE_FILTERED}:${entry.filter}`,
     line: first
-      ? `Work is queued on ${target}, ${entry.why} (filter: ${entry.filter}). Your ClankeR relay stays connected and checks again every ${every}.`
+      ? `Work is queued on ${target}, ${entry.why} (filter: ${entry.filter}). Your ClankeR relay stays connected and checks again in ${every}.`
       : `Still nothing open to you on ${target} (filter: ${entry.filter}); checking again in ${every}.`,
   };
+}
+
+// The hive publishes how much work it holds on GET /api/contribute/status
+// (actionable_items, the offerable total). With that count the relay can say
+// what no_matching_work cannot: whether anything was queued at all. Counts older
+// than this are not trusted.
+const HUB_COUNTS_MAX_AGE_MS = 10 * 60 * 1000;
+
+function hubActionableItems(hub, now = Date.now()) {
+  if (!hub || !Number.isFinite(hub.lastActionableItems)) return null;
+  if (!hub.lastStatusAt || now - hub.lastStatusAt > HUB_COUNTS_MAX_AGE_MS) return null;
+  return hub.lastActionableItems;
+}
+
+// describeHubCounts is the follow-up line once the count is known, or null when
+// it is not (or the hive has not answered no-match, where it adds nothing).
+function describeHubCounts(hub, now = Date.now()) {
+  if (hub.noWorkState !== QUEUE_STATE_NO_MATCH) return null;
+  const items = hubActionableItems(hub, now);
+  if (items === null) return null;
+  const target = hiveShortName(hub);
+  if (items === 0) return `${target} reports 0 actionable items, so nothing is queued there right now.`;
+  return `${target} has ${items} actionable item${items === 1 ? '' : 's'}, but none was assigned to you: they may be claimed by a PR, cooling down, or not match your CLI, trust tier, repo or quota. If this lasts, ask the hive owner.`;
+}
+
+// announceHubCounts prints the count line once per no-match episode, when the
+// status fetch lands.
+function announceHubCounts(hub) {
+  const line = describeHubCounts(hub);
+  if (line && !hub.noWorkCountsSaid) {
+    hub.noWorkCountsSaid = true;
+    console.log(line);
+  }
+  writeRelayStatus();
+  maybeAnnounceAllEmpty();
 }
 
 // noWorkLogLine decides what to print for this answer, keeping per-hive state:
@@ -634,6 +683,8 @@ function noWorkLogLine(hub, reason, delayMs, now = Date.now()) {
   if (changed) {
     hub.noWorkState = probe.state;
     hub.noWorkLoggedAt = now;
+    hub.noWorkCountsSaid = false;
+    if (probe.state === QUEUE_STATE_NO_MATCH) refreshHubStatus(hub, { force: true, onDone: announceHubCounts });
     return probe;
   }
   if (now - (hub.noWorkLoggedAt || 0) >= NO_WORK_STILL_LOG_INTERVAL_MS) {
@@ -659,13 +710,18 @@ function hubQueueState(hub) {
   return hub.noWorkState || null;
 }
 
+function hubReportsZeroItems(hub) {
+  return hub.noWorkState === QUEUE_STATE_NO_MATCH && hubActionableItems(hub) === 0;
+}
+
 // queueRowLabel is the compact word for one hive in the status row.
 function queueRowLabel(hub) {
   const state = hubQueueState(hub);
   if (state === QUEUE_STATE_WORKING) {
     return currentTask && Number.isSafeInteger(currentTask.number) ? `working #${currentTask.number}` : 'working';
   }
-  if (state === QUEUE_STATE_EMPTY) return 'empty';
+  if (state === QUEUE_STATE_EMPTY || hubReportsZeroItems(hub)) return 'empty';
+  if (state === QUEUE_STATE_NO_MATCH) return 'idle: no match';
   if (state && state.startsWith(QUEUE_STATE_FILTERED)) return `filtered (${state.split(':')[1]})`;
   return 'asking';
 }
@@ -703,14 +759,19 @@ function setQueueState(state) {
 // allQueuesEmptySummary is the one line for "every enabled hive said empty".
 // It is announced once per such episode, and only with more than one hive (a
 // single hive already got its own sentence).
-let allEmptyAnnounced = false;
+let allEmptyAnnounced = null;
 function maybeAnnounceAllEmpty() {
   const active = hubs.filter(hub => !hub.disabled);
-  const allEmpty = active.length > 1 && active.every(hub => hub.noWorkState === QUEUE_STATE_EMPTY);
-  if (!allEmpty) { allEmptyAnnounced = false; return; }
-  if (allEmptyAnnounced) return;
-  allEmptyAnnounced = true;
-  console.log(`All ${active.length} queues are empty, nothing to do right now.`);
+  if (active.length < 2) { allEmptyAnnounced = null; return; }
+  const empty = hub => hub.noWorkState === QUEUE_STATE_EMPTY || hubReportsZeroItems(hub);
+  const idle = hub => empty(hub) || hub.noWorkState === QUEUE_STATE_NO_MATCH;
+  let summary = null;
+  if (active.every(empty)) summary = `All ${active.length} queues are empty, nothing to do right now.`;
+  else if (active.every(idle)) summary = `No work was assigned to you on any of the ${active.length} hives right now; checking again soon.`;
+  if (!summary) { allEmptyAnnounced = null; return; }
+  if (allEmptyAnnounced === summary) return;
+  allEmptyAnnounced = summary;
+  console.log(summary);
 }
 
 // ── Contributor quota guard (hivecommons/hive#6833) ────────────────────────
@@ -1972,6 +2033,7 @@ function writeRelayStatus() {
           acknowledged_scope_version: hub.scopeAckVersion,
           observed_at: hub.statusObservedAt,
           queue_state: hubQueueState(hub),
+          actionable_items: hubActionableItems(hub),
         };
       }),
       current_task: currentTask && !currentTask.synthetic ? {
@@ -2784,8 +2846,11 @@ function contributeStatusURL(hub) {
   }
 }
 
-function refreshHubStatus(hub) {
-  if (!hub || commonsStrategy !== COMMONS_STRATEGY_NEEDIEST) return;
+function refreshHubStatus(hub, opts = {}) {
+  if (!hub) return;
+  if (!opts.force && commonsStrategy !== COMMONS_STRATEGY_NEEDIEST) return;
+  // Tests must never open a socket.
+  if (process.env.HIVE_RELAY_TEST_MODE === '1') return;
   const url = contributeStatusURL(hub);
   if (!url) return;
   const client = url.protocol === 'http:' ? http : https;
@@ -2809,6 +2874,7 @@ function refreshHubStatus(hub) {
           hub.lastStatusAt = Date.now();
         }
       } catch (_) {}
+      if (opts.onDone) opts.onDone(hub);
     });
   });
   req.on('timeout', () => req.destroy());
@@ -9421,7 +9487,8 @@ function handleMessage(data, hub) {
         console.log(`Work available on ${hiveShortName(hub)}, claiming ${msg.repo || 'a task'}${msg.number ? `#${msg.number}` : ''}.`);
       }
       hub.noWorkState = null;
-      allEmptyAnnounced = false;
+      allEmptyAnnounced = null;
+      hub.noWorkCountsSaid = false;
       setQueueState(null);
       // #7732: an assignment answers the `ready` it was sent for, whatever
       // this relay does with it below.
@@ -10026,6 +10093,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     hiveShortName,
     queueStatusRow,
     maybeAnnounceAllEmpty,
+    describeHubCounts,
+    announceHubCounts,
     noWorkLogLine,
     relayQueueState,
     formatRetryInterval,
