@@ -37370,6 +37370,185 @@
         }
       }
     },
+    "/api/kick-outcomes": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "What each kick of an agent came to",
+        "description": "Any authenticated role. Without `agent`, lists every agent's latest kick as a one-line summary (`agents`). With `agent`, lists that agent's last ten kicks, newest first (`kicks`). Owner and read-write sessions also receive the detail of each kick: trigger_kind (dashboard, governor, workflow_dispatch, other), trigger_actor (the dashboard user's login), started_at, ended_at, pr_url, pr_number, branch, sha, refusal_code (a reason code from the kick-refusals page) and `quote`, the agent's own stand-down line or the text behind a refusal. A read-only session receives only the latest kick's one-line summary. The outcome is derived from real signals only (hivecommons/hive#18916): a kick no signal speaks for is ended_no_visible_action, never a guess. `quote` is untrusted agent text: tokens are redacted and it is length-capped, and a client must escape it. Not reachable by agents.",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Agent name; omit for every agent's latest kick."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Kick outcomes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "detail": {
+                      "type": "boolean",
+                      "description": "True when this session may see kick detail."
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "agents": {
+                      "type": "object",
+                      "description": "Latest kick per agent, keyed by agent name.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "agent": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "opened_pr",
+                              "pushed_commit",
+                              "commented",
+                              "stood_down",
+                              "refused",
+                              "still_running",
+                              "ended_no_visible_action"
+                            ]
+                          },
+                          "summary": {
+                            "type": "string",
+                            "description": "One line, e.g. \"opened PR #12\". The age is rendered from `at`."
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "latest": {
+                      "type": "object",
+                      "description": "Read-only sessions: the agent's latest kick summary.",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "agent": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "opened_pr",
+                            "pushed_commit",
+                            "commented",
+                            "stood_down",
+                            "refused",
+                            "still_running",
+                            "ended_no_visible_action"
+                          ]
+                        },
+                        "summary": {
+                          "type": "string",
+                          "description": "One line, e.g. \"opened PR #12\". The age is rendered from `at`."
+                        },
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "kicks": {
+                      "type": "array",
+                      "description": "Owner and read-write sessions: the agent's last kicks.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "agent": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "opened_pr",
+                              "pushed_commit",
+                              "commented",
+                              "stood_down",
+                              "refused",
+                              "still_running",
+                              "ended_no_visible_action"
+                            ]
+                          },
+                          "summary": {
+                            "type": "string",
+                            "description": "One line, e.g. \"opened PR #12\". The age is rendered from `at`."
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "trigger_kind": {
+                            "type": "string"
+                          },
+                          "trigger_actor": {
+                            "type": "string"
+                          },
+                          "started_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "ended_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "pr_url": {
+                            "type": "string"
+                          },
+                          "pr_number": {
+                            "type": "integer"
+                          },
+                          "branch": {
+                            "type": "string"
+                          },
+                          "sha": {
+                            "type": "string"
+                          },
+                          "refusal_code": {
+                            "type": "string"
+                          },
+                          "quote": {
+                            "type": "string",
+                            "description": "Untrusted agent text, redacted and capped."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Kick outcomes are not available on this hive"
+          }
+        }
+      }
+    },
     "/api/hive-advice": {
       "get": {
         "tags": [

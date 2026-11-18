@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/kickoutcome"
 )
 
 // POST /api/workflows/dispatch: the owner's "Send to <profile>" on a
@@ -77,7 +78,9 @@ func (s *Server) handleWorkflowDispatch(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), workflowDispatchStatus(err))
 		return
 	}
+	s.kickIntend(plan.Agent, kickoutcome.TriggerWorkflowDispatch, by)
 	if err := s.deps.AgentMgr.SendKick(plan.Agent, plan.Message); err != nil {
+		s.kickRefusedOnError(plan.Agent, kickoutcome.TriggerWorkflowDispatch, by, err)
 		status := http.StatusBadGateway
 		if errors.Is(err, crux.ErrAgentBusy) {
 			status = http.StatusConflict
