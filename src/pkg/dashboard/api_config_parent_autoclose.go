@@ -33,7 +33,7 @@ type parentAutoCloseOption struct {
 // parentAutoCloseRepo is one monitored repo and its policy.
 type parentAutoCloseRepo struct {
 	Repo string `json:"repo"`
-	// Value is the effective policy: "true", "false" or "epics_too".
+	// Value is the effective policy: "true", "false", "epics_too" or "trackers_too".
 	Value string `json:"value"`
 	// Explicit is true when the repo carries its own value, false when it
 	// inherits the default.
@@ -56,6 +56,8 @@ var parentAutoCloseOptions = []parentAutoCloseOption{
 		"Close a split-up parent issue once all of its children are closed, except parents labelled epic or hold."},
 	{config.ParentAutoCloseEpicsToo, "Also close epics and holds",
 		"As above, and also close parents labelled epic or hold when all of their children are closed."},
+	{config.ParentAutoCloseTrackersToo, "Also close trackers whose work is done",
+		"As above, and also close tracker or umbrella issues with no sub-issues once every PR and issue they reference is finished, after a short settle delay and with an evidence comment. Issues marked as tracking issues are never closed."},
 	{config.ParentAutoCloseOff, "Never auto-close parents",
 		"The hive never closes a parent issue itself; a person closes it."},
 }
@@ -93,7 +95,7 @@ func (s *Server) handleParentAutoCloseGet(w http.ResponseWriter, r *http.Request
 }
 
 // handleParentAutoClosePut sets one monitored repo's policy. Body:
-// {"repo": "owner/name", "value": "true" | "epics_too" | "false"}. Choosing
+// {"repo": "owner/name", "value": "true" | "epics_too" | "trackers_too" | "false"}. Choosing
 // "true" (the default) clears the repo's override.
 func (s *Server) handleParentAutoClosePut(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
@@ -120,7 +122,7 @@ func (s *Server) handleParentAutoClosePut(w http.ResponseWriter, r *http.Request
 
 	// --- validate before mutating anything ---
 	if _, ok := config.NormalizeParentAutoClose(body.Value); !ok {
-		jsonError(w, `value must be "true", "epics_too" or "false"`, http.StatusBadRequest)
+		jsonError(w, `value must be "true", "epics_too", "trackers_too" or "false"`, http.StatusBadRequest)
 		return
 	}
 	previous := cfg.ParentAutoCloseFor(body.Repo)

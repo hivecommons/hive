@@ -43,7 +43,7 @@ func TestParentAutoClose_GetListsMonitoredReposAndOptions(t *testing.T) {
 		t.Fatalf("GET: %d %s", rec.Code, rec.Body.String())
 	}
 	got := decodeParentAutoClose(t, rec.Body.Bytes())
-	if got.Default != config.ParentAutoCloseOn || len(got.Options) != 3 {
+	if got.Default != config.ParentAutoCloseOn || len(got.Options) != 4 {
 		t.Fatalf("default=%q options=%v", got.Default, got.Options)
 	}
 	want := []parentAutoCloseRepo{

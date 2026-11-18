@@ -8356,7 +8356,7 @@
           "System"
         ],
         "summary": "Set a repo's parent auto-close policy",
-        "description": "Sets repos.<repo>.parent_autoclose for one monitored repo: true (close finished parents, the default and clears the override), epics_too (also close epic and hold parents) or false (never auto-close parents). Applies without a restart. Parents a person reopened and tracking issues are never auto-closed under any value. Audited as config_repo_parent_autoclose. Owner only.",
+        "description": "Sets repos.<repo>.parent_autoclose for one monitored repo: true (close finished parents, the default and clears the override), epics_too (also close epic and hold parents), trackers_too (as epics_too, and also close tracker or umbrella issues with no sub-issues once every PR and issue they reference is finished) or false (never auto-close parents). Applies without a restart. Parents a person reopened and tracking issues are never auto-closed under any value. Audited as config_repo_parent_autoclose. Owner only.",
         "requestBody": {
           "required": true,
           "content": {
@@ -8376,6 +8376,7 @@
                     "enum": [
                       "true",
                       "epics_too",
+                      "trackers_too",
                       "false"
                     ]
                   }
