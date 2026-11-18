@@ -1,0 +1,1 @@
+- Merge requests that run out of retries while CI is still pending are still quarantined, but the watcher now logs the CI timeout without opening a generic fleet self-report ([#19174](https://github.com/hivecommons/hive/issues/19174)).
