@@ -8,7 +8,6 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/pauseprov"
 )
 
 func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
@@ -587,7 +586,9 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The runtime's resume event carries no acting user: say who is resuming.
-	pauseprov.Default().IntendResume(name, requestUser(r))
+	if src := currentPauseSource(); src != nil {
+		src.IntendResume(name, requestUser(r))
+	}
 	if err := s.deps.AgentMgr.Resume(s.deps.Ctx, name, "dashboard-api", "manual resume"); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
