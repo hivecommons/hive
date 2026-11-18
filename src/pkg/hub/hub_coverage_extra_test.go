@@ -945,7 +945,7 @@ func TestHandleContributeWSProxyNoHive(t *testing.T) {
 func TestHandleContributeWSProxyInvalidHiveURL(t *testing.T) {
 	origResolver := privateURLResolver
 	privateURLResolver = func(ctx context.Context, host string) ([]string, error) {
-		return []string{"203.0.113.10"}, nil
+		return []string{"93.184.216.34"}, nil
 	}
 	t.Cleanup(func() { privateURLResolver = origResolver })
 
@@ -968,7 +968,7 @@ func TestHandleContributeWSProxyInvalidHiveURL(t *testing.T) {
 func TestHandleContributeWSProxyForwardsToSelectedHive(t *testing.T) {
 	origResolver := privateURLResolver
 	privateURLResolver = func(ctx context.Context, host string) ([]string, error) {
-		return []string{"203.0.113.10"}, nil
+		return []string{"93.184.216.34"}, nil
 	}
 	t.Cleanup(func() { privateURLResolver = origResolver })
 
