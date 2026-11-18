@@ -1,1 +1,0 @@
-- The workflow-fence approval comment on a repo where hive auto-merge does not run now says so in words that are true for every reason (switched off, below L6, an invalid merge strategy), not only "auto-merge is off". The 090 manual-merge closing line builds its Prow and no-Prow variants from one sentence so they cannot drift (follow-up to #18843's review).

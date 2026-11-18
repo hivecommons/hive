@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v6.44.10)
+
+### Fixed
+
+- The `!inception` chat command no longer calls the retired `/api/inception/*` routes (410 Gone since #18419), which made every subcommand fail. It is now a stub that answers any subcommand with "Start an Inception session from the dashboard Sessions section", keeps the owner gate on the former state-changing subcommands, and refuses multi-line input as a whole; the chat interview state machine, its poll-loop question posting and plain-reply answer capture were removed (#18565).
+- The 090 "Ready for a human merge" comment no longer names the author's trust role when something else is why a person merges. On a repository whose hive auto-merge is off it said "Blocked only by `role/trusted`"; it now says "Auto-merge is off for this repo, so a person merges." in the same words the dashboard's gate cell uses (the other non-trust reasons — refused merge method, branch protection, missing App permission, reviewer deferred — likewise). Its closing line asks for `/lgtm` `/approve` only when the PR wears Prow's plugin labels; elsewhere it asks the person to approve and merge on GitHub, since nothing there answers `/lgtm`. The workflow-path fence's owner-approval audit comment on an auto-merge-off repository now says a person merges the PR instead of "the hive merges this PR itself" (projectbluefin/website#1036, projectbluefin/actions#757, projectbluefin/actions#752).
+- The workflow-fence approval comment on a repo where hive auto-merge does not run now says so in words that are true for every reason (switched off, below L6, an invalid merge strategy), not only "auto-merge is off". The 090 manual-merge closing line builds its Prow and no-Prow variants from one sentence so they cannot drift (follow-up to #18843's review).
+
 ## 2026-11-18 (v6.44.9)
 
 ### Fixed
