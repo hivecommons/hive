@@ -16126,7 +16126,7 @@ test('#19049 hiveShortName derives a short public name from the hostname (table)
       ['wss://hosted-alpha-hive-ab12.hive.example.org/api/contribute/ws', 'alpha-hive'],
       ['wss://hosted-gamma-knuckle-ef56.hive.example.org/api/contribute/ws', 'gamma-knuckle'],
       ['wss://hive.example.org/api/contribute/ws', 'hive.example.org'],
-      ['wss://hosted-x.hive.example.org/api/contribute/ws', 'hosted-x.hive.example.org'],
+      ['wss://hosted-x.hive.example.org/api/contribute/ws', 'x'],
       ['not a url', 'this hive'],
     ];
     for (const [url, want] of cases) assert.strictEqual(relay.hiveShortName({ sourceURL: url }), want, url);
