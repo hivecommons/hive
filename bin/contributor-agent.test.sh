@@ -727,7 +727,9 @@ run_container_link() {
     "$@" \
     bash "${ROOT_DIR}/bin/contributor-agent.sh" >/dev/null
 }
-for backend in codex pi omp opencode kilo goose claude; do
+# opencode is not here: it runs headless whatever CONTRIBUTOR_MODE says
+# (HEADLESS_ONLY_BACKENDS), so its links stay in $HOME; see below.
+for backend in codex pi omp kilo goose claude; do
   rm -rf "$CONTAINER_AGENT_CWD"
   # The old layout: an earlier start of this container linked into $HOME.
   ln -sfn "$CONTAINER_AGENT_MD" "${HOME_DIR}/AGENTS.md"
@@ -795,6 +797,21 @@ if [[ -e "${CONTAINER_AGENT_CWD}/CLAUDE.md" ]]; then
   exit 1
 fi
 rm -f "${HOME_DIR}/CLAUDE.md"
+
+# opencode is headless-only (the relay has no pane classifier for it), so the
+# entrypoint selects headless for it with no CONTRIBUTOR_MODE set, and its
+# AGENTS.md link stays in $HOME like any headless backend's.
+rm -rf "$CONTAINER_AGENT_CWD"
+run_container_link opencode
+if [[ "$(readlink "${HOME_DIR}/AGENTS.md")" != "$CONTAINER_AGENT_MD" ]]; then
+  echo "container mode (opencode): expected the AGENTS.md link to stay in \$HOME (opencode runs headless)" >&2
+  exit 1
+fi
+if [[ -e "${CONTAINER_AGENT_CWD}/AGENTS.md" ]]; then
+  echo "container mode (opencode): expected no links in the interactive agent cwd (opencode runs headless)" >&2
+  exit 1
+fi
+rm -f "${HOME_DIR}/AGENTS.md"
 
 # The entrypoint itself must link into the same HIVE_AGENT_CWD it launches
 # the CLI from, and must export it before linking.

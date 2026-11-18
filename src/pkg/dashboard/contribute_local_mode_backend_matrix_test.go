@@ -597,3 +597,60 @@ func TestOmnigentLaunchWordsPinRunSubcommandAndLocalServer(t *testing.T) {
 		t.Fatalf("unconfined_local_perm_flag_shell omnigent = %q, want %q", got, "run --server local")
 	}
 }
+
+// TestOpencodeLocalModeRunsHeadlessWithTheDenyList pins the local launch of
+// opencode: the relay has no pane classifier for it, so an interactive tmux
+// launch never read as ready and no task was sent. Local mode selects
+// headless for it, and exports the deny-list into the relay's environment,
+// which each `opencode run` it starts inherits.
+func TestOpencodeLocalModeRunsHeadlessWithTheDenyList(t *testing.T) {
+	src := justfileSource(t)
+	start := strings.Index(src, "PERM_ENV=$(opencode_local_perm_env_shell)")
+	if start < 0 {
+		t.Fatal("local mode no longer takes opencode's deny-list from opencode_local_perm_env_shell")
+	}
+	branch := src[start:]
+	if end := strings.Index(branch, ";;"); end > 0 {
+		branch = branch[:end]
+	}
+	for _, want := range []string{"export CONTRIBUTOR_MODE=headless", `eval "export $PERM_ENV"`} {
+		if !strings.Contains(branch, want) {
+			t.Errorf("the local opencode branch does not contain %q:\n%s", want, branch)
+		}
+	}
+	// Container mode too (#19009 review): the host side exports headless for
+	// opencode next to cline, or it offers a tmux attach to a container with
+	// no session and takes the interactive krun branch.
+	if !strings.Contains(src, "if [[ \"$BACKEND\" == \"opencode\" ]]; then\n      export CONTRIBUTOR_MODE=headless\n    fi") {
+		t.Error("contribute-hive must export CONTRIBUTOR_MODE=headless for opencode in every mode, as it does for cline")
+	}
+	if !strings.Contains(src, `if [[ "$BACKEND" != "cline" && "${CONTRIBUTOR_MODE:-}" != "headless" ]]; then`) {
+		t.Error("local mode must not start a tmux pane for a headless backend: the relay never reads it")
+	}
+
+	// The eval restores the raw JSON the shell-quoted assignment carries.
+	script := filepath.Join(t.TempDir(), "export.sh")
+	body := "source ../../../config/backends.conf\nPERM_ENV=$(opencode_local_perm_env_shell)\neval \"export $PERM_ENV\"\nprintf '%s' \"$OPENCODE_PERMISSION\"\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", script)
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "HIVE_OPENCODE_DANGEROUSLY_") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	raw, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("exporting the opencode deny-list failed: %v\n%s", err, raw)
+	}
+	var perm struct {
+		Bash map[string]string `json:"bash"`
+	}
+	if err := json.Unmarshal(raw, &perm); err != nil {
+		t.Fatalf("exported OPENCODE_PERMISSION is not the deny-list JSON: %v\n%q", err, raw)
+	}
+	if perm.Bash["sudo *"] != "deny" || perm.Bash["*"] != "allow" {
+		t.Fatalf("exported deny-list = %v", perm.Bash)
+	}
+}
