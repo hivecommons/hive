@@ -57,6 +57,8 @@ func buildSandboxRun(runtime string, started, ended time.Time, res SandboxKickRe
 		CommitCount: res.CommitCount,
 		Branch:      res.Branch,
 		Usage:       parseSandboxUsage(res.Sandbox.Stdout),
+		FailReason:  res.Sandbox.FailReason,
+		Node:        res.Sandbox.Node,
 	}
 	if runErr != nil {
 		run.Error = truncateRunes(runErr.Error(), sandboxRunSummaryMax)

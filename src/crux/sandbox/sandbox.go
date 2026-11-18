@@ -54,6 +54,13 @@ type Result struct {
 	Stdout   string
 	Stderr   string
 	ExitCode int
+	// Node is the node the run's pod was scheduled on, when the launcher can
+	// tell (the Job runtime); empty otherwise.
+	Node string
+	// FailReason is set when the run failed for a reason that is the
+	// infrastructure's, not the agent's: FailReasonNodeUnhealthy or
+	// FailReasonWaitingForNode. Empty for every other outcome.
+	FailReason string
 }
 
 type Launcher interface {

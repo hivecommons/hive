@@ -4,6 +4,7 @@
     .agent-blockers .ab-sep { opacity: 0.35; }
     .agent-blockers .ab-ok { color: var(--green); }
     .agent-blockers .ab-bad { color: var(--red); font-weight: 600; }
+    .agent-blockers .ab-warn { color: var(--yellow); font-weight: 600; }
     .oc-detail-blockers { margin-top: var(--sp-3); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
     .never-scheduled-chip { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--yellow); background: none; border: 1px solid var(--yellow); border-radius: 3px; padding: 1px 5px; margin-left: var(--sp-3); cursor: pointer; vertical-align: middle; white-space: nowrap; }
     .never-scheduled-chip:hover { background: color-mix(in srgb, var(--yellow) 18%, transparent); }

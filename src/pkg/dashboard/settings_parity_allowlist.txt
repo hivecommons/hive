@@ -40,6 +40,11 @@ agent_sandbox.openshell.workspace_claim # TODO #17645 (OpenShell runtime; Settin
 agent_sandbox.openshell.workspace_claim_mount # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
 agent_sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
+agent_sandbox.preflight.commands[] # TODO #18811 (policy-file knob; Settings control pending)
+agent_sandbox.preflight.retry_delay_s # TODO #18811 (policy-file knob; Settings control pending)
+agent_sandbox.preflight.timeout_s # TODO #18811 (policy-file knob; Settings control pending)
+agent_sandbox.preflight.total_timeout_s # TODO #18811 (policy-file knob; Settings control pending)
+agent_sandbox.job.schedule_timeout_s # TODO #18811 (policy-file knob; Settings control pending)
 agents.<key>.acmm_levels[] # TODO #11854
 agents.<key>.agent_spec # TODO #11854
 agents.<key>.aliases[] # TODO #11854
@@ -171,6 +176,11 @@ agents.<key>.sandbox.runtime # TODO #11854
 agents.<key>.sandbox.timeout_s # TODO #11854
 agents.<key>.sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
 agents.<key>.sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
+agents.<key>.sandbox.preflight.commands[] # TODO #18811 (policy-file knob; Settings control pending)
+agents.<key>.sandbox.preflight.retry_delay_s # TODO #18811 (policy-file knob; Settings control pending)
+agents.<key>.sandbox.preflight.timeout_s # TODO #18811 (policy-file knob; Settings control pending)
+agents.<key>.sandbox.preflight.total_timeout_s # TODO #18811 (policy-file knob; Settings control pending)
+agents.<key>.sandbox.job.schedule_timeout_s # TODO #18811 (policy-file knob; Settings control pending)
 agents.<key>.cli_memory.auto_memory # TODO #11854
 agents.<key>.cli_memory.clear_on_kick # TODO #11854
 agents.<key>.cli_memory.drain_on_write # TODO #11854
