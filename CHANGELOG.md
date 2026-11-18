@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.323.1)
+
+### Changed
+
+- Docs: a new design record, [One authorization point](src/docs/design/authorization-decision-point.md), turns RFC #18988 into a reviewable proposal: an inventory of today's write-side authorization decisions with code citations, a single evaluation seam, operator narrowing rules in CEL, one decision event per decision, fail-closed semantics per effect and a shadow-first migration with named parity tests. Design only; no behaviour changes (#18988).
+
+### Fixed
+
+- fix(meetings): say a long answer in brief, full text in chat (#18962)
+- Security: the SSRF guard on dashboard and hub outbound fetches now classifies addresses with one netip-based classifier, refusing CGNAT, IPv6 unique-local and link-local, bare ::1, mapped/NAT64/6to4 embeddings of private IPv4, multicast, and decimal/hex/octal/short IPv4 literal spellings (#18991)
+
 ## 2026-11-18 (v5.323.0)
 
 ### Added
