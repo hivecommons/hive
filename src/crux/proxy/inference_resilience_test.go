@@ -136,7 +136,7 @@ func TestInferenceResilience_DefaultsUnchanged(t *testing.T) {
 	// A 429 is passed straight through with one upstream call, and a slow
 	// upstream is not cut, with no extra log line.
 	slow := newScriptedUpstream(t, func(n int, w http.ResponseWriter, r *http.Request) {
-		time.Sleep(300 * time.Millisecond)
+		waitOrDone(r, 300*time.Millisecond)
 		writeOK(w)
 	})
 	var logs bytes.Buffer
@@ -221,7 +221,7 @@ func sseUpstream(chunks int, gap time.Duration, stallAfter int) func(int, http.R
 				waitOrDone(r, resilienceStallCeiling)
 				return
 			}
-			time.Sleep(gap)
+			waitOrDone(r, gap)
 		}
 		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 		fl.Flush()
