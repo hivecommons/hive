@@ -1,0 +1,1 @@
+- Give the proxy's `agent could not be identified` blocked-write WARN its own `proxy_writer_unidentified` operator-action class (no longer a generic `unclassified_error_repeated` fleet bug) and log why attribution failed (`reason`: `no_uid_map`, `shared_uid_mode`, `no_peer_port`, `port_not_in_socket_table`, `uid_not_in_map`); unidentified writers are still blocked as ADVISORY.

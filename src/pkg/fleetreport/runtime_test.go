@@ -465,6 +465,8 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassProxyPlainForwardRefused, message: "proxy: plain HTTP forward refused — destination is not globally routable"},
 		{class: ClassInferenceCallerUnknown, message: "inference request from unidentified caller refused"},
 		{class: ClassInferenceNoRoute, message: "inference no route"},
+		{class: ClassProxyUpstreamDegraded, message: "proxy upstream dial failed"},
+		{class: ClassProxyWriterUnidentified, message: "proxy: agent could not be identified — defaulting to ADVISORY and blocking a write; UID attribution failed (see reason)"},
 		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
 		{class: ClassSHAPollCommitMsgUnavail, message: "SHA poll: commit message fetch non-200"},
 		{class: ClassKickFreshnessWithheld, message: "kick withheld: every ref failed the freshness check"},
@@ -1302,8 +1304,9 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"proxy: CONNECT dial failed":                                                                     ClassProxyConnectDialFailed,
 		"proxy: plain HTTP forward failed":                                                               ClassProxyPlainForwardFailed,
 		"copilot sniff: upstream dial failed":                                                            ClassProxyConnectDialFailed,
-		"proxy upstream dial failed":                                                                     ClassProxyConnectDialFailed,
-		"transparent proxy upstream dial failed":                                                         ClassProxyConnectDialFailed,
+		"proxy upstream dial failed":                                                                     ClassProxyUpstreamDegraded,
+		"transparent proxy upstream dial failed":                                                         ClassProxyUpstreamDegraded,
+		"proxy: agent could not be identified — defaulting to ADVISORY and blocking a write":             ClassProxyWriterUnidentified,
 		"inference no route":                                                                             ClassInferenceNoRoute,
 		"inference upstream error":                                                                       ClassInferenceUpstreamError,
 		"copilot transcript activity scan outlived its interval; agent liveness reads may lag":           ClassTranscriptScanSlow,
@@ -1463,4 +1466,57 @@ func TestSeenLogStaysUnderCommentSizeLimit(t *testing.T) {
 	if n := strings.Count(body, SelfReportSeenMarkerPrefix); n < 2 || n >= seenLogMaxHives {
 		t.Fatalf("sections = %d, want some oldest trimmed", n)
 	}
+}
+
+// hivecommons/hive#18867: a burst of upstream dial failures to a GitHub host
+// is a flaky egress path, not a fleet bug. It is reportable only once it has
+// persisted past proxyUpstreamSustained without a quiet gap.
+func TestProxyUpstreamDegradedReportsOnlyWhenSustained(t *testing.T) {
+	const msg = "proxy upstream dial failed"
+	start := time.Date(2026, 11, 18, 3, 0, 0, 0, time.UTC)
+
+	t.Run("a burst is not reported", func(t *testing.T) {
+		now, advance := fakeClock(start)
+		tr := NewRuntimeTracker(now)
+		for i := 0; i < 50; i++ { // far above the repeat count, inside minutes
+			tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+			advance(10 * time.Second)
+		}
+		if ev := tr.Evidence(); len(ev) != 0 {
+			t.Fatalf("a short burst produced evidence: %#v", ev)
+		}
+	})
+
+	t.Run("repeated bursts separated by quiet gaps never add up", func(t *testing.T) {
+		now, advance := fakeClock(start)
+		tr := NewRuntimeTracker(now)
+		for burst := 0; burst < 4; burst++ {
+			for i := 0; i < 10; i++ {
+				tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+				advance(10 * time.Second)
+			}
+			advance(proxyUpstreamIdleClear + time.Minute)
+			if ev := tr.Evidence(); len(ev) != 0 {
+				t.Fatalf("burst %d reported after a quiet gap: %#v", burst, ev)
+			}
+		}
+	})
+
+	t.Run("a failure that persists past the sustained bar is reported", func(t *testing.T) {
+		now, advance := fakeClock(start)
+		tr := NewRuntimeTracker(now)
+		for elapsed := time.Duration(0); elapsed < proxyUpstreamSustained-10*time.Minute; elapsed += 5 * time.Minute {
+			tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+			advance(5 * time.Minute)
+		}
+		if ev := tr.Evidence(); len(ev) != 0 {
+			t.Fatalf("reported before the sustained bar: %#v", ev)
+		}
+		advance(11 * time.Minute)
+		tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+		ev := tr.Evidence()
+		if len(ev) != 1 || ev[0].Class != ClassProxyUpstreamDegraded {
+			t.Fatalf("a sustained outage must still be reported, got %#v", ev)
+		}
+	})
 }
