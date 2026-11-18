@@ -3523,19 +3523,6 @@ type ContributorNudgeConfig struct {
 	// comment instead of counting as a fresh nudge
 	// (hivecommons/hive#17328). Default DefaultContributorNudgeCIFailureCooldown (6h).
 	CIFailureCooldown string `yaml:"ci_failure_cooldown,omitempty"`
-	// WithholdWhenAdopting withholds the "back in your court" comment for a
-	// head the hive is going to adopt anyway (author relay offline or
-	// unregistered, adoption enabled and unblocked): the nudge is still
-	// recorded and the adoption note is the one notification
-	// (hivecommons/hive#18872). nil = true; false restores a nudge for every
-	// head.
-	WithholdWhenAdopting *bool `yaml:"withhold_when_adopting,omitempty"`
-}
-
-// IsWithholdWhenAdopting reports whether the nudge comment is withheld for
-// a head the hive adopts anyway (default on).
-func (c ContributorNudgeConfig) IsWithholdWhenAdopting() bool {
-	return c.WithholdWhenAdopting == nil || *c.WithholdWhenAdopting
 }
 
 // DefaultContributorNudgeCIFailureCooldown is

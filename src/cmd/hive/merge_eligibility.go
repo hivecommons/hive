@@ -116,7 +116,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			Dwell:                     stage.DwellOverrides(),
 			StalledRequireQuiet:       stage.Stalled.IsRequireQuiet(),
 			ContributorNudge:          stage.ContributorNudge.IsEnabled(),
-			NudgeWithholdWhenAdopting: stage.ContributorNudge.IsWithholdWhenAdopting(),
+			NudgeWithholdWhenAdopting: true,
 			RenudgeInterval:           nudgeRepeatAfter(cfg),
 			CIFailureCooldown:         stage.ContributorNudge.EffectiveCIFailureCooldown(),
 			Adoption:                  stage.Adoption.IsEnabled(),

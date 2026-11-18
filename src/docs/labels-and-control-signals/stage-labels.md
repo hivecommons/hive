@@ -815,8 +815,6 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    (`contributor-offline`, supersede now) only fires for an author who is not
    reachable, the same condition. This follows the documented rule that a
    contributor who has gone quiet is superseded now (#13975).
-   `governor.labels.stage.contributor_nudge.withhold_when_adopting: false`
-   restores a nudge for every head.
 2. Relay contributors (the author has a contributor profile and a live relay
    connection) also receive the diagnosis in their relay session as a
    `fix-pr` task with `priority: interrupt`. Presence = a relay heartbeat

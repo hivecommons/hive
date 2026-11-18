@@ -105,8 +105,9 @@ type StageLabelPolicy struct {
 	// exactly the one the stage store records as adopted/pushed by the hive.
 	AdoptionAutoMerge bool
 	// NudgeWithholdWhenAdopting withholds the nudge comment for a head the
-	// hive adopts anyway (governor.labels.stage.contributor_nudge.
-	// withhold_when_adopting, default on in the config; hivecommons/hive#18872).
+	// hive adopts anyway (always on in production, see stageLabelPolicyFunc;
+	// off in the zero policy so older tests keep their nudge;
+	// hivecommons/hive#18872).
 	NudgeWithholdWhenAdopting bool
 	// AdoptionMaintainerPolicy is governor.labels.stage.adoption.maintainer_policy
 	// (config.AdoptionMaintainerPolicy*): what adoption does when the PR
