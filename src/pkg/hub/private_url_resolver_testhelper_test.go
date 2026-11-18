@@ -47,7 +47,7 @@ func stubPrivateURLResolver(t *testing.T, publicHosts ...string) {
 
 // publicTestResolvedAddr is the address stubPrivateURLResolver returns for
 // hosts a test declares public. It must be globally routable: the shared
-// classifier (pkg/netguard) refuses documentation ranges such as TEST-NET-3
+// classifier (pkg/inbox/netguard) refuses documentation ranges such as TEST-NET-3
 // as well as every private prefix, so a documentation address would be
 // classified private. 93.184.216.34 is a public address no private rule
 // matches; no connection is ever made to it.

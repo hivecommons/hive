@@ -952,7 +952,7 @@ func TestHandleContributeWSProxyInvalidHiveURL(t *testing.T) {
 	srv := newHubServerForTest(t)
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
-		{ID: "bad-url", Online: true, IsPublic: true, DashboardURL: "http://[::1", Owner: "user1"},
+		{ID: "bad-url", Online: true, IsPublic: true, DashboardURL: "http://[2606:4700:4700::1111", Owner: "user1"},
 	}
 	srv.mu.Unlock()
 

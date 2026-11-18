@@ -19,7 +19,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/netguard"
+	"github.com/hivecommons/hive/pkg/inbox/netguard"
 )
 
 const (
@@ -1676,7 +1676,7 @@ func isPrivateURL(ctx context.Context, rawURL string) bool {
 			return false
 		}
 	}
-	// One shared, netip-based classifier (pkg/netguard) judges the host, so
+	// One shared, netip-based classifier (pkg/inbox/netguard) judges the host, so
 	// the string-prefix blind spots (CGNAT, fc00::/7, fe80::/10, bare ::1,
 	// userinfo before an internal host, integer IP literals) cannot reopen.
 	return netguard.HostBlocked(ctx, rawURL, netguard.Resolver(privateURLResolver))

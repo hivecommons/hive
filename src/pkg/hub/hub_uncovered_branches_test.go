@@ -138,8 +138,8 @@ func stubPublicResolver(t *testing.T) {
 }
 
 // A hive that passes the public-URL admission check but whose DashboardURL does
-// not parse must be a 500, not a proxy attempt. "http://[::1" survives
-// isPrivateURL's prefix scan (the host slice stops at the first ':') yet fails
+// not parse must be a 500, not a proxy attempt. "http://[2606:4700:4700::1111" survives
+// isPrivateURL (an unclosed bracket reads as a public IPv6 host) yet fails
 // url.Parse — exactly the shape that reaches this branch.
 func TestHandleContributeProxyUnparseableDashboardURLIs500(t *testing.T) {
 	stubPublicResolver(t)
@@ -147,7 +147,7 @@ func TestHandleContributeProxyUnparseableDashboardURLIs500(t *testing.T) {
 	srv := newHubServerForTest(t)
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
-		{ID: "bad-url", Online: true, IsPublic: true, DashboardURL: "http://[::1", Owner: "user1"},
+		{ID: "bad-url", Online: true, IsPublic: true, DashboardURL: "http://[2606:4700:4700::1111", Owner: "user1"},
 	}
 	srv.mu.Unlock()
 

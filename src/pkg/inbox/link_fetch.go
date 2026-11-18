@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/upstreamproxy"
-	"github.com/hivecommons/hive/pkg/netguard"
+	"github.com/hivecommons/hive/pkg/inbox/netguard"
 )
 
 // Link fetch limits. A link dropped onto the Inbox is fetched by the hive
@@ -56,7 +56,7 @@ var linkBlockedHosts = map[string]bool{
 }
 
 // LinkAddrAllowed reports whether a link may connect to addr. The ranges are
-// the shared classifier's (pkg/netguard): loopback, private, link-local,
+// the shared classifier's (pkg/inbox/netguard): loopback, private, link-local,
 // CGNAT, multicast, reserved and documentation ranges, IPv6 ULA and
 // link-local, and the cloud metadata addresses; IPv4-mapped, NAT64 and 6to4
 // addresses are judged by the IPv4 address they carry.
