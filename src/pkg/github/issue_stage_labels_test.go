@@ -349,6 +349,10 @@ func syncSeeded(t *testing.T, fake *issueStageServer, c *Client, result *Actiona
 	// tests so a close is not deferred by another test's rate-limit replay.
 	ResetRateLimitPacingForTest()
 	resetRESTAccountingForTest(t, now)
+	// The parent-reopen verdict cache is process-global and a "kept open"
+	// verdict never expires; a sibling test that cached one for acme/widgets#7
+	// would veto this test's parent close depending on test order.
+	resetParentReopenCacheForTest(t)
 	return SyncIssueStageLabels(context.Background(), c, result, store, now, testLogger())
 }
 
