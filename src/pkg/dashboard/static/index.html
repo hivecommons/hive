@@ -613,6 +613,22 @@
       #welcome-topbar-btn .nav-chip__label { display: none; }
     }
 
+    /* The same icon-only chips when the BAR is narrow, whatever the viewport.
+       The bar is the viewport minus the sidebar, so a wide sidebar on a
+       mid-size screen (a 1180px iPad in landscape: an ~860px bar) left the
+       full-width right cluster ~755px and squeezed the title and ACMM badge
+       into ~44px, where WebKit drew them over the chips. */
+    .oc-topbar { container: oc-topbar / inline-size; }
+    @container oc-topbar (max-width: 1000px) {
+      .oc-health-badge .nav-chip__label,
+      #oc-settings-btn .nav-chip__label,
+      #oc-subscription-gauge .nav-chip__label,
+      #welcome-topbar-btn .nav-chip__label { display: none; }
+    }
+    @container oc-topbar (max-width: 760px) {
+      #acmm-badge { display: none; }
+    }
+
     /* Light main content area */
     body.light-mode {
       box-sizing: border-box;
