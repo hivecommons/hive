@@ -1,1 +1,0 @@
-- Support Kubernetes node affinity for sandbox Jobs, allowing operators to select eligible nodes and exclude unhealthy hosts.

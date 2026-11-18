@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.316.0)
+
+### Added
+
+- Support Kubernetes node affinity for sandbox Jobs, allowing operators to select eligible nodes and exclude unhealthy hosts.
+
 ## 2026-11-18 (v5.315.0)
 
 ### Added
