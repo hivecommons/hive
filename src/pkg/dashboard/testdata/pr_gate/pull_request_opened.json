@@ -1,0 +1,13 @@
+{
+  "action": "opened",
+  "number": 4242,
+  "pull_request": {
+    "number": 4242,
+    "title": "✨ feat: add thing",
+    "state": "open",
+    "draft": false,
+    "head": {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "ref": "feature"},
+    "base": {"ref": "v5"}
+  },
+  "repository": {"full_name": "Example-Org/Example-Repo"}
+}

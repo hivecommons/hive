@@ -72,6 +72,13 @@ project:
 #   issue_filter:
 #     agent_proposal: {}
 
+# PR-contents merge gate posted by the hive as commit statuses (default off;
+# see docs/github-app-setup.md). shadow posts only "verify PR contents (hive)".
+# auto_merge:
+#   pr_gate:
+#     mode: shadow
+#     repos: [your-org/your-repo]
+
 # Optional merge-request safety exceptions. Hive now merges into any protected
 # or unprotected base branch the App can write, while still refusing a PR with
 # zero statuses + zero check runs + zero workflow runs. `allow_unprotected_base`

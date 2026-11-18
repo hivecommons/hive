@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.323.3)
+
+### Changed
+
+- A `blocked` issue waiting on a person's action (the owner-action blocked-on marker) now carries `needs_human_why` with source `blocked-on-owner` and the reason "needs an owner action: ...", so the row, the Needs human filter and the waiting-on-you list agree with the caption. See `src/docs/dashboard-sections/activity-monitor.md`
+
+### Fixed
+
+- A hub restart (502/503/504) during the feedback issue refresh is now logged at INFO and retried by the existing backoff instead of filing a `feedback_issue_refresh_failed` self-report ([#19008](https://github.com/hivecommons/hive/issues/19008)).
+
+### Security
+
+- Security: the shared address classifier behind the dashboard and hub URL guards and the Inbox link fetcher now refuses every IANA special-purpose range, not only the private ones. Added IPv4 `192.0.0.0/24`, `192.0.2.0/24`, `192.88.99.0/24`, `198.18.0.0/15`, `198.51.100.0/24` and `203.0.113.0/24`, and IPv6 `100::/64`, `2001::/32` (Teredo), `2001:db8::/32` and `fec0::/10`, including their IPv4-mapped, NAT64 and 6to4 forms. A host written as dot-separated numbers that is not a valid IPv4 literal (such as `1.2.3.4.5`) is refused instead of being sent to DNS. The Inbox link fetcher now uses the same classifier instead of its own range list, and the range set is listed in `src/docs/security-model.md` and `src/docs/security-threat-model.md`. Public addresses and ranges already refused are unaffected; no `100.64.0.0/10` opt-in was added because no registered hive or hub URL needs one (#19020)
+
 ## 2026-11-18 (v5.323.2)
 
 ### Fixed

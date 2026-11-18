@@ -99,8 +99,11 @@ func checkLinkURL(u *url.URL) error {
 	if linkBlockedHosts[host] || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".local") {
 		return linkRefused("%s is a local or internal host name", host)
 	}
-	if addr, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil && !LinkAddrAllowed(addr) {
-		return linkRefused("%s is a private, loopback, link-local or metadata address", host)
+	// The shared classifier judges every literal spelling (decimal, octal,
+	// hex, short forms, bracketed IPv6) and refuses an all-numeric host that is
+	// not a valid IPv4 literal before any lookup.
+	if reason, _ := netguard.HostDenyReason(host); reason != "" {
+		return linkRefused("%s is a refused address or host name (%s)", host, reason)
 	}
 	return nil
 }
