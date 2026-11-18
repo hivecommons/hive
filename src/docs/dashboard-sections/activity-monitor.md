@@ -190,6 +190,19 @@ Neither mode changes any saved preference. Kiosk mode (`?kiosk=1`, [Streaming th
 
 The label row under the toolbar starts with two synthetic chips, then one chip per label the listed items carry. **🙋 Needs human** means a person's decision or action is the *only* thing that advances the row: an issue at `015` triage-needed, `045` or `085` needs-decision, a PR at `090` ready-for-human-merge, a PR at `071`/`072` whose author is a human, or any row wearing a `needs human` / `needs human decision` / `unauthorized` pill.
 
+**One state, one phrase.** *Needs human* is the only wording for "blocked on a person, not on an agent", in the row badge, tooltips, the filter chip, these docs and the API. Besides the stages and pills above, the server (not a label anyone applies) marks these rows from data the hive already holds, each with the reason in one short line (`needs_human_why: {source, reason}`, and `needs_human: true`):
+
+| `source` | Row | Example reason |
+|---|---|---|
+| `filed-for-help` | An open, unclaimed issue whose body carries the `<!-- hive:filed-for-help <agent> -->` marker; the filing agent is never handed it back, so it waits on a person | filed for help by outreach: needs a person outside the hive |
+| `decision-pending` | A decision was requested and not answered (045 / 085, `needs-decision`, the `decision-needed` gate label) | the decision's own question |
+| `level-gate` | A PR held for a maintainer by the ACMM level gate (the `ready-for-review` gate label) | held for a maintainer by the level gate; review it, then remove the label |
+| `hive-hold` | A hold the hive placed itself (a hold a person set is their own pause and stays *On hold*) | the hold's own pill text |
+| `needs-approval` | The hive bot lacks a permission, or a human must merge (`unauthorized`, 090) | needs approval: a maintainer merges it |
+| `triage`, `author`, `needs-human` | Triage needed (015), a PR waiting on its human author, the `needs-human` marker | waiting for a maintainer's triage |
+
+An Open issue in this state reads **Needs human** in the Open column (never *Open · since 4h*), its later stages are drawn as not applicable instead of a stalled strip, and the reason is the row's visible *Needs human: …* line. A PR keeps its real stage chevron; the reason line and the **🙋 Needs human** filter cover it. Every such row is also on the waiting-on-you list.
+
 It is **not** `hold`, `stalled`, `blocked`, a handled regression, a `040` issue an open PR covers, or a PR the hive will merge itself — those are the hive's (or nobody's) to move. **⏸ On hold** is the separate chip for rows a maintainer paused on purpose with a hold label; a held row never counts as Needs human. The chip label, its count, the filter it toggles and the payload's `needs_human` / `on_hold` totals (and per-item flags) all come from one predicate (`stageTrackerNeedsHuman` in Go, `stageTrackerItemNeedsHuman` in the page), so what the chip counts is exactly what the filter shows ([#15008](https://github.com/hivecommons/hive/issues/15008)).
 
 Hover a chip for a one-line explanation. Label chips AND with the synthetic chips.
