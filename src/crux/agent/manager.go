@@ -812,6 +812,10 @@ type Manager struct {
 	sandboxPRClient      PRCreator
 	sandboxMutation      effects.Boundary
 	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]
+	// sandboxReadRelay and sandboxReadRelayNoProxy route Job-runtime kicks'
+	// GitHub reads through the hive read relay (#18865); nil is off.
+	sandboxReadRelay        atomic.Pointer[SandboxGitHubReadRelay]
+	sandboxReadRelayNoProxy atomic.Pointer[[]string]
 
 	// terminal is the nil-safe pane/tmux boundary. Nil means use the real tmux
 	// implementation, preserving zero-value Manager behavior in tests.

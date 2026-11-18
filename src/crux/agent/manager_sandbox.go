@@ -57,6 +57,20 @@ func (m *Manager) SetSandboxConfig(cfg config.AgentSandboxConfig) {
 	}
 }
 
+// SetSandboxGitHubReadRelay installs (or, with nil, removes) the relay that
+// carries sandbox Job GitHub reads (#18865). noProxy adds hosts Jobs reach
+// directly.
+func (m *Manager) SetSandboxGitHubReadRelay(relay SandboxGitHubReadRelay, noProxy []string) {
+	if relay == nil {
+		m.sandboxReadRelay.Store(nil)
+		m.sandboxReadRelayNoProxy.Store(nil)
+		return
+	}
+	np := append([]string(nil), noProxy...)
+	m.sandboxReadRelayNoProxy.Store(&np)
+	m.sandboxReadRelay.Store(&relay)
+}
+
 func (m *Manager) SetSandboxLauncher(l sandbox.Launcher) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -308,6 +322,12 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 		PRTargetReader: targetReader,
 		Mutation:       mutationBoundary,
 		Logger:         m.logger,
+	}
+	if relay := m.sandboxReadRelay.Load(); relay != nil {
+		exec.GitHubReadRelay = *relay
+		if np := m.sandboxReadRelayNoProxy.Load(); np != nil {
+			exec.GitHubReadRelayNoProxy = *np
+		}
 	}
 	res, err := exec.Run(ctx, spec)
 	ended := time.Now()
