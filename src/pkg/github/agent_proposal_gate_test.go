@@ -124,7 +124,7 @@ func TestClassifyWebhookIssue_AgentProposalGate(t *testing.T) {
 			if tc.assignee != "" {
 				issue.Assignees = []*gh.User{{Login: gh.Ptr(tc.assignee)}}
 			}
-			patch := c.classifyWebhookIssue(repo, issue, tc.labels, time.Now())
+			patch := c.classifyWebhookIssue(repo, issue, 0, tc.labels, time.Now())
 			if patch.Bucket != tc.want {
 				t.Errorf("bucket = %q, want %q", patch.Bucket, tc.want)
 			}

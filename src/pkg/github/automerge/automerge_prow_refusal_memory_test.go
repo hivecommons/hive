@@ -99,7 +99,7 @@ func TestProwRefusalMemorySurvivesRestart(t *testing.T) {
 // The hive's own needs-human note from another PR is evidence too.
 func TestProwRefusalMemoryFromHiveNote(t *testing.T) {
 	fx := prowOkToTestFixture()
-	fx.repoComments = []map[string]any{appComment(91, workflowApprovalUntrustedNote(testHiveAppBotLogin, true))}
+	fx.repoComments = []map[string]any{appComment(91, workflowApprovalUntrustedNote(testHiveAppBotLogin, prowOkToTestRejection))}
 	runProwRefusalEngines(t, &fx, 1)
 	if got := countCommand(&fx); got != 0 {
 		t.Fatalf("ok-to-test posts = %d, want none", got)

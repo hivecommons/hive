@@ -127,7 +127,7 @@ func TestOptionalSearchStandDown(t *testing.T) {
 	// Other tests in the package leave core readings in the shared REST
 	// accounting; start this one from an empty store.
 	prev := sharedRESTAccountingPtr.Load()
-	sharedRESTAccountingPtr.Store(&restAccountingStore{now: time.Now, coreRemaining: -1})
+	sharedRESTAccountingPtr.Store(&restAccountingStore{now: time.Now})
 	t.Cleanup(func() { sharedRESTAccountingPtr.Store(prev) })
 	var nilClient *Client
 	if got := nilClient.OptionalSearchStandDown(); got == "" {
