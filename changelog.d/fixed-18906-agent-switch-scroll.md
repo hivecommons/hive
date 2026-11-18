@@ -1,0 +1,1 @@
+- Keep the dashboard at the same agent and retain dropdown focus when an agent's method, model, or reasoning effort changes.

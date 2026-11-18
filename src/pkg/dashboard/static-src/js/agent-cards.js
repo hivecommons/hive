@@ -1137,6 +1137,9 @@
         // the viewport grew or shrank with new log lines and pushed the rows
         // the reader was looking at — the whole page appeared to jump on
         // every SSE tick, worst in Safari which has no scroll anchoring.
+        // Direct renders after a setting change do not pass through render()'s
+        // scroll anchor. Preserve the reader's position for those renders too.
+        const scrollAnchor = typeof captureScrollAnchor === 'function' ? captureScrollAnchor() : null;
         const tailFollow = agentTailFollowState(el);
         morphAgentGrid(el, html);
         for (const [id, val] of Object.entries(savedInputs)) {
@@ -1156,8 +1159,10 @@
           if (!(key in tailFollow) || tailFollow[key]) d.scrollTop = d.scrollHeight;
         });
         el.querySelectorAll('[data-agent-resize-y][data-agent-height]').forEach(d => { d.style.height = `${d.dataset.agentHeight}px`; });
+        if (scrollAnchor) restoreScrollAnchor(scrollAnchor);
       }
     }
+
 
     // Per-agent "was the terminal tail scrolled to the bottom?" snapshot taken
     // before a re-render, so the post-render auto-follow respects a reader who
@@ -1216,7 +1221,11 @@
       // that attribute patching can't reconcile — swap them only when their
       // markup actually changed.
       if (from.tagName === 'SELECT' || from.tagName === 'INPUT' || from.tagName === 'TEXTAREA') {
-        if (from.outerHTML !== to.outerHTML) from.replaceWith(to);
+        if (from.outerHTML !== to.outerHTML) {
+          const focused = document.activeElement === from;
+          from.replaceWith(to);
+          if (focused && !to.disabled) to.focus({ preventScroll: true });
+        }
         return;
       }
       morphDomAttributes(from, to);

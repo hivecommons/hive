@@ -83,6 +83,7 @@ func TestMorphDomNodeKeepsNodesAndState(t *testing.T) {
 		jsFunc(t, html, "morphDomNode"),
 		jsFunc(t, html, "morphDomAttributes"),
 	}, "\n") + `
+const document = { activeElement: null };
 class N {
   constructor(tag, attrs, kids) { this.nodeType = 1; this.tagName = tag; this._attrs = Object.assign({}, attrs || {}); this.childNodes = kids || []; this.childNodes.forEach(k => k.parentNode = this); this.parentNode = null; this.scrollTop = 0; }
   get attributes() { return Object.keys(this._attrs).map(name => ({ name, value: this._attrs[name] })); }

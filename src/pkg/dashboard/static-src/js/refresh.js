@@ -448,6 +448,13 @@
           if (rect.bottom > 0 && rect.height > 0) { anchor.cardKey = cards[i].getAttribute('data-agent'); anchor.cardTop = rect.top; break; }
         }
       }
+      // A focused card control is the reader's anchor, even when another
+      // card in the same row is also visible.
+      const focusedCard = document.activeElement?.closest('.agent-card[data-agent]');
+      if (focusedCard && anchor.el && anchor.el.contains(focusedCard)) {
+        anchor.cardKey = focusedCard.getAttribute('data-agent');
+        anchor.cardTop = focusedCard.getBoundingClientRect().top;
+      }
       return anchor;
     }
 
