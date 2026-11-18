@@ -2,10 +2,12 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -237,6 +239,15 @@ func roundTrip(t *testing.T, tc *tls.Conn, method, host, path string, headers ma
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Drain the body so a keep-alive tunnel is positioned at the next
+	// response; callers that reuse the connection would otherwise parse the
+	// leftover body bytes as a status line.
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return resp
 }
 
