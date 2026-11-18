@@ -429,7 +429,7 @@ func TestStorePendingReplyPersistsAndMerges(t *testing.T) {
 
 func TestBuildBrief_RepliesEndpointAndNoProbeComments(t *testing.T) {
 	brief := BuildBrief("o/r", 1, "", "", []github.FeedbackItem{item("inline:1")})
-	for _, want := range []string{"pulls/comments/ID/replies", "Never post a test, probe or placeholder comment", "If a reply or any other write is refused", "STOP"} {
+	for _, want := range []string{"comments/ID/replies", "Never post a test, probe or placeholder comment", "If a reply or any other write is refused", "STOP"} {
 		if !strings.Contains(brief, want) {
 			t.Errorf("brief missing %q", want)
 		}

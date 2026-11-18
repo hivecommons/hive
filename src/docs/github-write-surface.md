@@ -285,7 +285,7 @@ agent to answer. The proxy lets it answer in place, and nothing wider
 
 | Route | Allowed when |
 | --- | --- |
-| `POST /repos/{o}/{r}/pulls/comments/{id}/replies` | the comment's PR was opened by the hive's own agent (audit trail `agent_pr_created`, the sweep's ownership source) and the caller is the agent that opened it |
+| `POST /repos/{o}/{r}/pulls/{n}/comments/{id}/replies` (also without `{n}`) | the comment's PR was opened by the hive's own agent (audit trail `agent_pr_created`, the sweep's ownership source) and the caller is the agent that opened it |
 | `POST /repos/{o}/{r}/pulls/{n}/comments` | the same: hive-opened PR, opening agent only |
 | `DELETE /repos/{o}/{r}/issues/comments/{id}`, `DELETE /repos/{o}/{r}/pulls/comments/{id}` | GitHub reports the comment was written by the hive's own identity (the App bot, or a reference repo's write login) and it is younger than `OwnCommentDeleteWindow` (15 minutes) |
 

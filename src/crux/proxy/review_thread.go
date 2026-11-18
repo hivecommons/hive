@@ -22,7 +22,7 @@ import (
 // needs two REST routes the rule table never had, so both fell through to
 // deny-by-default while the issue-comment route passed:
 //
-//   - POST /repos/{o}/{r}/pulls/comments/{id}/replies  (reply in a thread)
+//   - POST /repos/{o}/{r}/pulls/[{n}/]comments/{id}/replies  (reply in a thread)
 //   - POST /repos/{o}/{r}/pulls/{n}/comments           (PR review comment)
 //
 // They are allowed here, and only here, when the PR is one the hive's own
@@ -62,7 +62,7 @@ const (
 )
 
 var (
-	reviewReplyPathRe      = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/pulls/comments/(\d+)/replies$`)
+	reviewReplyPathRe      = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/pulls/(?:\d+/)?comments/(\d+)/replies$`)
 	reviewPRCommentPathRe  = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/pulls/(\d+)/comments$`)
 	ownCommentDeletePathRe = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/(issues|pulls)/comments/(\d+)$`)
 )
@@ -76,7 +76,7 @@ var (
 // order intact; they live here so rules.go stays inside its size ratchet.
 func init() {
 	rules = append(rules,
-		ProxyRule{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/comments/\d+/replies$`), Method: http.MethodPost, MinMode: agent.ModeIssuesAndPRs, Capability: agent.AgentCapabilities.CanConverse},
+		ProxyRule{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/(?:\d+/)?comments/\d+/replies$`), Method: http.MethodPost, MinMode: agent.ModeIssuesAndPRs, Capability: agent.AgentCapabilities.CanConverse},
 		ProxyRule{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/comments$`), Method: http.MethodPost, MinMode: agent.ModeIssuesAndPRs, Capability: agent.AgentCapabilities.CanConverse},
 		ProxyRule{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/(?:issues|pulls)/comments/\d+$`), Method: http.MethodDelete, MinMode: agent.ModeIssuesOnly},
 	)

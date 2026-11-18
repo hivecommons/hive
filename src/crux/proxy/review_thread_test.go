@@ -114,6 +114,8 @@ func TestReviewThreadRefusal_Matrix(t *testing.T) {
 		// Replies and PR review comments: the hive's PR, the agent that opened it.
 		{"reply on hive PR by owning agent", rtOwner, "POST", replyPath, false, ""},
 		{"reply owner match is case-insensitive", "Quality", "POST", replyPath, false, ""},
+		{"reply via the numbered documented path", rtOwner, "POST", "/repos/cncf/techdocs/pulls/424/comments/" + rtReplyID + "/replies", false, ""},
+		{"numbered path resolves the PR from the comment, not the path", rtOwner, "POST", "/repos/cncf/techdocs/pulls/424/comments/777/replies", true, "was not opened by the hive's own agent"},
 		{"PR review comment by owning agent", rtOwner, "POST", "/repos/cncf/techdocs/pulls/424/comments", false, ""},
 		{"reply by another agent", "scanner", "POST", replyPath, true, "opened by agent quality, not by scanner"},
 		{"PR review comment by another agent", "scanner", "POST", "/repos/cncf/techdocs/pulls/424/comments", true, "not by scanner"},
@@ -304,6 +306,7 @@ func TestReviewThreadRules_ModeTable(t *testing.T) {
 		{"reply at issues+prs", agent.ModeIssuesAndPRs, agent.AgentCapabilities{}, "POST", "/repos/o/r/pulls/comments/1/replies", true},
 		{"reply at issues-only", agent.ModeIssuesOnly, agent.AgentCapabilities{}, "POST", "/repos/o/r/pulls/comments/1/replies", false},
 		{"reply with converse", agent.ModeAdvisory, converse, "POST", "/repos/o/r/pulls/comments/1/replies", true},
+		{"numbered reply at issues+prs", agent.ModeIssuesAndPRs, agent.AgentCapabilities{}, "POST", "/repos/o/r/pulls/7/comments/1/replies", true},
 		{"pr comment at issues+prs", agent.ModeIssuesAndPRs, agent.AgentCapabilities{}, "POST", "/repos/o/r/pulls/7/comments", true},
 		{"pr comment at advisory", agent.ModeAdvisory, agent.AgentCapabilities{}, "POST", "/repos/o/r/pulls/7/comments", false},
 		{"delete comment at issues-only", agent.ModeIssuesOnly, agent.AgentCapabilities{}, "DELETE", "/repos/o/r/issues/comments/1", true},
@@ -329,6 +332,7 @@ func TestReferenceRepoDecision_ReviewThreadRoutes(t *testing.T) {
 		want   referenceDecision
 	}{
 		{"reply defers to the review-thread gate", both, "POST", "/repos/hivecommons/docs/pulls/comments/5/replies", referenceAllow},
+		{"numbered reply defers to the gate", both, "POST", "/repos/hivecommons/docs/pulls/9/comments/5/replies", referenceAllow},
 		{"delete issue comment defers to the gate", both, "DELETE", "/repos/hivecommons/docs/issues/comments/5", referenceAllow},
 		{"delete review comment defers to the gate", both, "DELETE", "/repos/hivecommons/docs/pulls/comments/5", referenceAllow},
 		{"pr review comment keeps the own-item check", both, "POST", "/repos/hivecommons/docs/pulls/9/comments", referenceOwnItem},
