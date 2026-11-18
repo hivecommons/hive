@@ -139,7 +139,7 @@ func TestParityHostVersusSetterTable(t *testing.T) {
 			t.Errorf("api.HostSetters[%q] has unknown kind %q", name, row.Kind)
 		}
 	}
-	for _, name := range []string{"SetSpanStarter", "SetKnowledgeAdviser"} {
+	for _, name := range []string{"SetSpanStarter", "SetKnowledgeAdviser", "SetSandboxGitHubReadRelay"} {
 		if api.HostSetters[name].Kind != api.HostSetterInProcessOnly {
 			t.Errorf("%s is an in-process-only setter", name)
 		}
