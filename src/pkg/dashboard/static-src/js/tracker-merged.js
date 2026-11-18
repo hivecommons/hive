@@ -907,7 +907,7 @@
       if (chip) chip.setAttribute('aria-expanded', want ? 'true' : 'false');
       if (want) stageTrackerMergedPopDraw(null, Date.now());
       // A filtered list is re-read on open, so it shows merges since.
-      if (want && stageTrackerMergedFilterQuery(_stageTrackerMergedFilter)) stageTrackerMergedFilterFetch();
+      if (want && typeof stageTrackerMergedFilterQuery === 'function' && stageTrackerMergedFilterQuery(_stageTrackerMergedFilter)) stageTrackerMergedFilterFetch();
       return want;
     }
     function hamMergedOpen() {
