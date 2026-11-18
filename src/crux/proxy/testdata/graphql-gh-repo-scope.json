@@ -1,0 +1,273 @@
+[
+  {
+    "command": "gh issue create",
+    "lookup": {
+      "query": "query RepositoryInfo($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}}",
+      "variables": {
+        "owner": "acme",
+        "name": "widgets"
+      }
+    },
+    "response": {
+      "data": {
+        "repository": {
+          "id": "R_widgets"
+        }
+      }
+    },
+    "write": {
+      "query": "mutation IssueCreate($input:CreateIssueInput!){createIssue(input:$input){issue{id url}}}",
+      "variables": {
+        "input": {
+          "repositoryId": "R_widgets",
+          "title": "A real title",
+          "body": "A useful description"
+        }
+      }
+    }
+  },
+  {
+    "command": "gh issue comment",
+    "lookup": {
+      "query": "query IssueByNumber($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){id title url}}}",
+      "variables": {
+        "owner": "acme",
+        "name": "widgets",
+        "number": 42
+      }
+    },
+    "response": {
+      "data": {
+        "repository": {
+          "issue": {
+            "id": "I_widgets",
+            "title": "A real title",
+            "url": "https://github.com/acme/widgets/issues/42"
+          }
+        }
+      }
+    },
+    "write": {
+      "query": "mutation CommentAdd($input:AddCommentInput!){addComment(input:$input){commentEdge{node{url}}}}",
+      "variables": {
+        "input": {
+          "subjectId": "I_widgets",
+          "body": "A useful comment"
+        }
+      }
+    }
+  },
+  {
+    "command": "gh issue edit",
+    "lookup": {
+      "query": "query IssueByNumber($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){id title url}}}",
+      "variables": {
+        "owner": "acme",
+        "name": "widgets",
+        "number": 42
+      }
+    },
+    "response": {
+      "data": {
+        "repository": {
+          "issue": {
+            "id": "I_widgets",
+            "title": "A real title",
+            "url": "https://github.com/acme/widgets/issues/42"
+          }
+        }
+      }
+    },
+    "write": {
+      "query": "mutation IssueUpdate($input:UpdateIssueInput!){updateIssue(input:$input){issue{id}}}",
+      "variables": {
+        "input": {
+          "id": "I_widgets",
+          "title": "An updated title"
+        }
+      }
+    }
+  },
+  {
+    "command": "gh issue close",
+    "lookup": {
+      "query": "query IssueByNumber($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){id state}}}",
+      "variables": {
+        "owner": "acme",
+        "name": "widgets",
+        "number": 42
+      }
+    },
+    "response": {
+      "data": {
+        "repository": {
+          "issue": {
+            "id": "I_widgets",
+            "state": "OPEN"
+          }
+        }
+      }
+    },
+    "write": {
+      "query": "mutation IssueClose($input:CloseIssueInput!){closeIssue(input:$input){issue{id}}}",
+      "variables": {
+        "input": {
+          "issueId": "I_widgets",
+          "stateReason": "COMPLETED"
+        }
+      }
+    }
+  },
+  {
+    "command": "gh pr merge",
+    "lookup": {
+      "query": "query PullRequestByNumber($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state headRefOid}}}",
+      "variables": {
+        "owner": "acme",
+        "name": "widgets",
+        "number": 43
+      }
+    },
+    "response": {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "id": "PR_widgets",
+            "state": "OPEN",
+            "headRefOid": "abc123"
+          }
+        }
+      }
+    },
+    "write": {
+      "query": "mutation PullRequestMerge($input:MergePullRequestInput!){mergePullRequest(input:$input){pullRequest{id}}}",
+      "variables": {
+        "input": {
+          "pullRequestId": "PR_widgets",
+          "mergeMethod": "SQUASH"
+        }
+      }
+    }
+  },
+  {
+    "command": "gh pr create",
+    "lookup": {
+      "query": "query RepositoryInfo($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}}",
+      "variables": {
+        "owner": "acme",
+        "name": "widgets"
+      }
+    },
+    "response": {
+      "data": {
+        "repository": {
+          "id": "R_widgets"
+        }
+      }
+    },
+    "write": {
+      "query": "mutation PullRequestCreate($input:CreatePullRequestInput!){createPullRequest(input:$input){pullRequest{id url}}}",
+      "variables": {
+        "input": {
+          "repositoryId": "R_widgets",
+          "title": "A real title",
+          "body": "A useful description",
+          "baseRefName": "main",
+          "headRefName": "feature"
+        }
+      }
+    }
+  },
+  {
+    "command": "gh pr comment",
+    "lookup": {
+      "query": "query PullRequestByNumber($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state headRefOid}}}",
+      "variables": {
+        "owner": "acme",
+        "name": "widgets",
+        "number": 43
+      }
+    },
+    "response": {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "id": "PR_widgets",
+            "state": "OPEN",
+            "headRefOid": "abc123"
+          }
+        }
+      }
+    },
+    "write": {
+      "query": "mutation CommentAdd($input:AddCommentInput!){addComment(input:$input){commentEdge{node{url}}}}",
+      "variables": {
+        "input": {
+          "subjectId": "PR_widgets",
+          "body": "A useful comment"
+        }
+      }
+    }
+  },
+  {
+    "command": "gh pr edit",
+    "lookup": {
+      "query": "query PullRequestByNumber($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state headRefOid}}}",
+      "variables": {
+        "owner": "acme",
+        "name": "widgets",
+        "number": 43
+      }
+    },
+    "response": {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "id": "PR_widgets",
+            "state": "OPEN",
+            "headRefOid": "abc123"
+          }
+        }
+      }
+    },
+    "write": {
+      "query": "mutation PullRequestUpdate($input:UpdatePullRequestInput!){updatePullRequest(input:$input){pullRequest{id}}}",
+      "variables": {
+        "input": {
+          "pullRequestId": "PR_widgets",
+          "title": "An updated title"
+        }
+      }
+    }
+  },
+  {
+    "command": "gh pr close",
+    "lookup": {
+      "query": "query PullRequestByNumber($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state headRefOid}}}",
+      "variables": {
+        "owner": "acme",
+        "name": "widgets",
+        "number": 43
+      }
+    },
+    "response": {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "id": "PR_widgets",
+            "state": "OPEN",
+            "headRefOid": "abc123"
+          }
+        }
+      }
+    },
+    "write": {
+      "query": "mutation PullRequestClose($input:ClosePullRequestInput!){closePullRequest(input:$input){pullRequest{id}}}",
+      "variables": {
+        "input": {
+          "pullRequestId": "PR_widgets"
+        }
+      }
+    }
+  }
+]

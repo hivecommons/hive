@@ -73,6 +73,7 @@ var (
 // GitHubProxy is an HTTP CONNECT proxy that performs MITM TLS
 // inspection on GitHub API traffic and enforces ACMM mode rules.
 type GitHubProxy struct {
+	graphQLRepos graphQLRepoCache
 	// localInferencePaths records CLI telemetry paths already logged once by
 	// localInferenceResponse, so per-path DEBUG lines do not repeat.
 	localInferencePaths sync.Map

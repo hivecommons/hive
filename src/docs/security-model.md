@@ -94,6 +94,44 @@ are enabled on a given hive.
 | Supply-chain guards | supply chain | `.github/workflows/*.yml`, `src/Dockerfile` | PR checks |
 | DCO on every commit | unattributed code | `src/scripts/check-dco-trailers.sh` | DCO check on PR |
 
+### GraphQL repository scope
+
+The GitHub MITM proxy applies the **same per-agent repository scope predicate**
+to attributable GraphQL mutations as to REST writes, independently of autonomy
+mode. GraphQL queries are not scope-restricted: duplicate detection, linking,
+search and cross-repository lookups continue to work. The selected operation
+(`operationName`, when present), its arguments and variable defaults determine
+which mutation inputs are inspected; comment bodies and unused variables are
+not repository evidence.
+
+Mutation targets can name a repository directly (including
+`repositoryNameWithOwner` or `repository(owner:, name:)` arguments), or use a
+repository/issue/PR/comment node ID. The proxy learns ID-to-repository mappings
+from successful GitHub GraphQL responses (identity or gzip), following repository
+selections and their arguments, aliases and fragments. The bounded in-memory
+cache is isolated by agent, shared across that agent's connections and lost
+on proxy restart; it holds at most 8,192 entries and resets when full. Responses
+larger than 4 MiB on the wire or after decompression, and unsupported encodings,
+are relayed normally but do not seed the cache. Requests alone
+cannot seed it. Scope changes take effect on the next write, without invalidating
+the ID cache. Every resolved target is checked, including batched mutations.
+An out-of-scope target returns REST's `403`, `X-Hive-Proxy-Blocked: true`,
+`X-Hive-Proxy-Reason: agent_repo_scope` and standard denial body/violation audit.
+The internal control-plane caller retains its exemption.
+
+**Unresolved mutation targets remain fail-open for repository scope only.**
+This preserves ID-only `gh api graphql` calls, cold-cache/restarted sessions,
+and document/response shapes the proxy cannot attribute. Normal `gh` lookup →
+create/comment/edit/close/merge sequences are covered by document fixtures and
+proxy integration tests; the preceding reads populate the cache even when the
+repository is outside the agent's scope. Fail-closed is intentionally not chosen:
+there is no guarantee every legitimate ID-only write has a preceding observable
+lookup. Existing mode, write-surface and auto-merge gates still apply to unresolved
+writes. Consequently this best-effort attribution is **not a complete security
+boundary against an agent deliberately using previously unseen IDs**; token
+repository permissions remain necessary to bound that case. This change does
+not extend repository pause or the hive-wide REST allowlist to GraphQL.
+
 ## 3. Agent runtime isolation
 
 **Bounded runs.** Work arrives as discrete tasks from the governor. By default
