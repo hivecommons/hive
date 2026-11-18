@@ -6536,6 +6536,85 @@
         }
       }
     },
+    "/api/version/contains": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Does the running build contain a PR or commit",
+        "description": "Answers from git ancestry, computed from the commit this hive reports running (the same value as `hash` on `/api/version`) and the repository history. `contains` is `yes` when the PR's merge commit (or the commit itself) is the running commit or one of its ancestors, `no` when ancestry was resolved and it is not (including a PR that was never merged), and `unknown` when it cannot be established: the commit is not resolvable in the repository history, the lookup failed, or this hive has no GitHub access. `unknown` is never a guess. Reads the public repository through the hive's existing GitHub client; sends only commit SHAs and a PR number.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "description": "A PR number (`123`, `#123`, `PR 123`; up to six digits) or a commit SHA (7 to 40 hex characters)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Containment answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "query": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "pr",
+                            "commit"
+                          ]
+                        },
+                        "pr": {
+                          "type": "integer"
+                        },
+                        "commit": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "commit": {
+                      "type": "string",
+                      "description": "The commit whose presence was tested: the PR's merge commit, or the SHA asked about"
+                    },
+                    "running": {
+                      "type": "string",
+                      "description": "The commit this hive reports running"
+                    },
+                    "channel": {
+                      "type": "string",
+                      "description": "The release channel the hive's image follows, when known"
+                    },
+                    "contains": {
+                      "type": "string",
+                      "enum": [
+                        "yes",
+                        "no",
+                        "unknown"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "description": "Why the answer is unknown, or why a PR is not contained"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The query is neither a PR number nor a commit SHA"
+          }
+        }
+      }
+    },
     "/api/version/release-notes": {
       "get": {
         "tags": [

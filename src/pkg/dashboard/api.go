@@ -569,6 +569,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Agents discovered in managed repos' .hive/agents/ (#18491,
 	// api_repo_agents.go): list, approve, reject, rescan.
 	s.registerRepoAgentRoutes()
+	s.registerVersionContainsRoute()
 }
 
 var (
