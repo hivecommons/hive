@@ -1,1 +1,0 @@
-- Codex model dropdown fallback now matches the pinned Codex 0.170.0 catalog, so hosted hives without the binary offer GPT-6.2 Sol (the new default) and GPT-6.2 Astra ([#19036](https://github.com/hivecommons/hive/issues/19036)).
