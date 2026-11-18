@@ -4291,6 +4291,17 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// unconditionally: with HIVE_PROXY_INJECT_GH_AUTH unset (the default)
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
+		// Review-thread replies on the hive's own PRs (#19096): the proxy lets
+		// the agent that opened a PR (audit trail agent_pr_created) reply in
+		// its review threads, lets the hive retract its own comment for a
+		// short window, and keeps any refused reply for the review-feedback
+		// sweep's needs-human note. The closures read b.cfg and the live client per
+		// call because both are replaced on reload and key rotation.
+		b.githubProxy.SetReviewThreadGuard(newReviewThreadGuard(
+			func() string { return b.cfg.Project.Org },
+			func() string { return b.currentGitHubClient().AppBotLogin() },
+			b.logger,
+		))
 		// project.reference_repos (#18015): study-only repos outside the
 		// project, with a rare per-entry issues/prs opt-in served by a
 		// credential verified here (boot refuses otherwise).

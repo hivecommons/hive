@@ -170,6 +170,16 @@ var rules = []ProxyRule{
 	// additional way in.
 	{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/reviews`), Method: "POST", MinMode: agent.ModeIssuesAndPRs, Capability: agent.AgentCapabilities.CanConverse},
 	{PathPattern: regexp.MustCompile(`^(?:/api/v1)?/repos/[^/]+/[^/]+/pulls/\d+/reviews`), Method: "POST", MinMode: agent.ModeIssuesAndPRs, Capability: agent.AgentCapabilities.CanConverse},
+	// Answering review feedback in place (#19096): a reply inside a review
+	// thread and a PR review comment. Same tier as a review. These rules only
+	// say WHICH modes may; the review-thread gate (review_thread.go) runs first
+	// and refuses both unless the PR is one the hive's own agent opened and the
+	// caller is that agent.
+	{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/comments/\d+/replies$`), Method: "POST", MinMode: agent.ModeIssuesAndPRs, Capability: agent.AgentCapabilities.CanConverse},
+	{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/comments$`), Method: "POST", MinMode: agent.ModeIssuesAndPRs, Capability: agent.AgentCapabilities.CanConverse},
+	// Retracting the hive's own comment (#19096). The review-thread gate refuses
+	// anyone else's comment and any comment older than OwnCommentDeleteWindow.
+	{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/(?:issues|pulls)/comments/\d+$`), Method: "DELETE", MinMode: agent.ModeIssuesOnly},
 	{PathPattern: regexp.MustCompile(`^(?:/api/v4)?/projects/.+?/merge_requests/\d+/notes`), Method: "POST", MinMode: agent.ModeIssuesAndPRs, Capability: agent.AgentCapabilities.CanConverse},
 	{PathPattern: regexp.MustCompile(`^(?:/api/v4)?/projects/.+?/merge_requests/\d+/discussions`), Method: "POST", MinMode: agent.ModeIssuesAndPRs, Capability: agent.AgentCapabilities.CanConverse},
 
