@@ -1477,7 +1477,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					obs.Route = &route
 				}
 			}
-			if step := c.sharedCIRecoveryUnauthorized(ctx, obs); step != "" && verdict.Stage != stagelabels.None {
+			// The refusal's label and comment are written either way; it
+			// takes the stage only when CI is what holds the PR, never over a
+			// review gate or another 085 (stageengine.RecoveryUnauthorizedOwnsStage).
+			if step := c.sharedCIRecoveryUnauthorized(ctx, obs); step != "" && stageengine.RecoveryUnauthorizedOwnsStage(verdict, obs.Reason, obs.Detail) {
 				pass.RecoveryUnauthorized = step
 				verdict.Stage = stagelabels.NeedsDecision
 				verdict.Rank = stageRankOwned

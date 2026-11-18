@@ -339,7 +339,7 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 		verdict.Rank = stageRankOwned
 		obs.Reason = stagelabels.FixerExhaustedReason(pass.FixerExhausted)
 	}
-	if !verdict.Terminal && verdict.Stage != stagelabels.None && pass.RecoveryUnauthorized != "" {
+	if pass.RecoveryUnauthorized != "" && RecoveryUnauthorizedOwnsStage(verdict, obs.Reason, obs.Detail) {
 		verdict.Stage = stagelabels.NeedsDecision
 		verdict.Rank = stageRankOwned
 		obs.Reason = prstage.StageReasonUnauthorizedPrefix + pass.RecoveryUnauthorized
