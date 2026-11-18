@@ -1,0 +1,1 @@
+- Customers: a profile shows its identities as a compact table (Type, Identity, Source, with the row actions in the last column) instead of one bordered box per identity. At phone width the table scrolls inside its own frame, not the page. Same data, actions and empty state.

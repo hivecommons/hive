@@ -67,3 +67,67 @@ func TestPrimeKnowledge_CapturedReviewerRuleReachesTheQualityAgent(t *testing.T)
 		t.Errorf("a rule scoped to the quality agent reached the developer agent:\n%s", got)
 	}
 }
+
+// A kick with no extractable keywords (no issues, or issues whose titles and
+// labels yield nothing) still receives the pinned rules its scope admits
+// (#19094). Ranked knowledge is unchanged: nothing else is primed, and a
+// primer without pinned entries stays silent as before.
+func TestPrimeKnowledge_KeywordlessKickStillGetsPinnedRules(t *testing.T) {
+	dir, vault := t.TempDir(), filepath.Join(t.TempDir(), "review-rules")
+	store, err := reviewrules.Open(dir, vault, reviewrules.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const stated = ".project/maintainers.yaml is the source of truth for ownership and maintainership"
+	if res := store.CaptureComment(reviewrules.Comment{
+		Repo: "cncf/techdocs", PR: 424, CommentID: "inline:1001", URL: "https://github.com/cncf/techdocs/pull/424#discussion_r1001",
+		Reviewer: "nate-double-u", Association: "OWNER", Lane: "quality", Body: stated, At: time.Now(),
+	}, time.Now()); res.Outcome != reviewrules.OutcomeCaptured {
+		t.Fatalf("capture = %+v", res)
+	}
+	ranked := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ranked, "ranked.md"), []byte("---\ntitle: Ranked quality fact\ntype: gotcha\n---\nA ranked fact about quality.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	rankedStore, err := knowledge.NewFileStore(ranked, "ranked", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newSched := func(pinned bool) *Scheduler {
+		primer := knowledge.NewPrimer(nil, knowledge.PrimerConfig{MaxFacts: 25}, logger)
+		primer.AddFileStore("ranked", rankedStore, knowledge.LayerProject)
+		if pinned {
+			vs, err := knowledge.NewFileStore(vault, reviewrules.VaultName, logger)
+			if err != nil {
+				t.Fatal(err)
+			}
+			primer.AddPinnedFileStore(reviewrules.VaultName, vs, knowledge.LayerProject)
+		}
+		s := newScheduler()
+		s.SetPrimer(primer)
+		return s
+	}
+	keywordless := [][]github.Issue{nil, {makeIssue("cncf/example", 7, "", "", 5, nil, false)}}
+
+	s := newSched(true)
+	for _, issues := range keywordless {
+		got := s.primeKnowledge("quality", issues)
+		if !strings.Contains(got, stated) {
+			t.Errorf("issues=%d: keyword-less quality kick missing its pinned rule:\n%s", len(issues), got)
+		}
+		if strings.Contains(got, "Ranked quality fact") {
+			t.Errorf("issues=%d: ranked knowledge must still need keywords:\n%s", len(issues), got)
+		}
+		if got := s.primeKnowledge("developer", issues); got != "" {
+			t.Errorf("issues=%d: a rule scoped to quality reached developer:\n%s", len(issues), got)
+		}
+	}
+	plain := newSched(false)
+	for _, issues := range keywordless {
+		if got := plain.primeKnowledge("quality", issues); got != "" {
+			t.Errorf("issues=%d: without pinned entries a keyword-less kick primes nothing, got:\n%s", len(issues), got)
+		}
+	}
+}

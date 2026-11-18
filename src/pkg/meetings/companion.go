@@ -86,10 +86,21 @@ type CompanionLine struct {
 
 // CompanionReplies is what the companion window polls: Betty's lines after
 // a cursor and the meeting's state (so the window notices a "betty leave").
+// Tone asks the window to play the listening chime now (say.tone; Quorum
+// sets it once per tone and only while the window is polling).
 type CompanionReplies struct {
 	Lines   []CompanionLine `json:"lines"`
 	NextSeq int64           `json:"next_seq"`
 	State   State           `json:"state"`
+	Tone    bool            `json:"tone"`
+}
+
+// CompanionPage is Quorum's /companion/outbox answer: the lines after a
+// cursor, the next cursor, and whether a listening tone is waiting.
+type CompanionPage struct {
+	Lines   []CompanionLine `json:"lines"`
+	NextSeq int64           `json:"next_seq"`
+	Tone    bool            `json:"tone"`
 }
 
 // ChunkGapError is an out-of-order chunk; Expected is the seq to send next.
@@ -115,7 +126,7 @@ var (
 // Quorum fakes of other tests stay as they are.
 type CompanionQuorum interface {
 	CompanionAudio(ctx context.Context, nativeID, channel string, seq int, pcm []byte) (CompanionChunk, error)
-	CompanionOutbox(ctx context.Context, nativeID string, after int64) ([]CompanionLine, int64, error)
+	CompanionOutbox(ctx context.Context, nativeID string, after int64) (CompanionPage, error)
 }
 
 // IsCompanionChannel reports whether ch is a companion audio channel.
@@ -220,14 +231,14 @@ func (m *Manager) CompanionReplies(ctx context.Context, id, user string, asOwner
 	if err != nil {
 		return CompanionReplies{}, err
 	}
-	lines, next, err := cq.CompanionOutbox(ctx, mt.NativeID, after)
+	page, err := cq.CompanionOutbox(ctx, mt.NativeID, after)
 	if err != nil {
 		return CompanionReplies{}, err
 	}
-	if lines != nil {
-		out.Lines = lines
+	if page.Lines != nil {
+		out.Lines = page.Lines
 	}
-	out.NextSeq = next
+	out.NextSeq, out.Tone = page.NextSeq, page.Tone
 	return out, nil
 }
 
@@ -305,25 +316,23 @@ func (c *Client) CompanionAudio(ctx context.Context, nativeID, channel string, s
 	return out, nil
 }
 
-// CompanionOutbox reads Quorum's /companion/outbox after a cursor.
-func (c *Client) CompanionOutbox(ctx context.Context, nativeID string, after int64) ([]CompanionLine, int64, error) {
+// CompanionOutbox reads Quorum's /companion/outbox after a cursor. An
+// older Quorum without the tone answers no "tone", which reads as false.
+func (c *Client) CompanionOutbox(ctx context.Context, nativeID string, after int64) (CompanionPage, error) {
 	q := url.Values{"meeting_id": {nativeID}, "after": {strconv.FormatInt(max(after, 0), 10)}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/companion/outbox?"+q.Encode(), nil)
 	if err != nil {
-		return nil, 0, err
+		return CompanionPage{}, err
 	}
 	body, err := c.companionDo(req, "companion/outbox")
 	if err != nil {
-		return nil, 0, err
+		return CompanionPage{}, err
 	}
-	var out struct {
-		Lines   []CompanionLine `json:"lines"`
-		NextSeq int64           `json:"next_seq"`
-	}
+	var out CompanionPage
 	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, 0, fmt.Errorf("quorum companion/outbox: %w", err)
+		return CompanionPage{}, fmt.Errorf("quorum companion/outbox: %w", err)
 	}
-	return out.Lines, out.NextSeq, nil
+	return out, nil
 }
 
 var _ CompanionQuorum = (*Client)(nil)

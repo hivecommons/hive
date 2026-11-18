@@ -58,6 +58,13 @@
     .customers-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); min-width: 0; max-width: 100%; }
     .customers-row[data-me="true"] { border-color: var(--accent); }
     .customers-row .customers-row-title { overflow-wrap: anywhere; }
+    /* Identities table: one aligned grid; it scrolls inside its own wrapper at phone width, never the page. */
+    .customers-table-wrap { max-width: 100%; overflow-x: auto; }
+    .customers-ident-table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); }
+    .customers-ident-table th, .customers-ident-table td { text-align: left; vertical-align: middle; padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
+    .customers-ident-table thead th { color: var(--muted); font-weight: 600; }
+    .customers-ident-table .customers-ident-value { font-weight: var(--fw-semibold); overflow-wrap: anywhere; }
+    .customers-ident-table .customers-ident-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-2); border-bottom: 0; }
     .customers-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); min-width: 0; }
     /* The tag toggle in a profile is the row's tag pill as a button: one pill recipe in both places. Off is dimmed and neutral; the auto marker is small. */
     button.kc-pill.customers-tag-toggle { position: relative; font-family: inherit; cursor: pointer; }

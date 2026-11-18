@@ -941,12 +941,13 @@ governor:
 #   preflight:           # facts gathered for the reviewer before it starts (#19069); per-repo
 #                       # overrides under repos.<repo>.review_preflight. src/docs/review-swarm.md,
 #                       # "Review preflight", lists every key and exactly what leaves the hive.
-#     rule_docs: true   # default on: point the reviewer at the repo's own rule documents
+#     rule_docs: true   # default on: start from README/CONTRIBUTING/agent files and follow
+#                       # the documents they link to; rule_doc_paths: [...] overrides discovery
 #     rules: []         # named operator rules: [{id, text, severity}]
 #     dependencies: false # default OFF: advisory and release-age lookups send package names
 #                       # and versions to OSV and the package registries
 #     offline: false    # or HIVE_REVIEW_PREFLIGHT_OFFLINE=true: no lookups, "could not check: offline"
-#     min_release_age_days: 14
+#     min_release_age_days: 0 # 0 = no policy: publish dates are reported as facts, no verdict
 #     block_severity: high
 #     ignore: []        # accepted risks: [{id, package, reason, expires}]
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
