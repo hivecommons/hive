@@ -1,1 +1,0 @@
-- Customers tag chips now render as pills; they were bare unstyled text because the class they used had no CSS (#18882).
