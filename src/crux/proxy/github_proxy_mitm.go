@@ -114,7 +114,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
 			} else if !isLinear {
-				if reason, kind, refused := WriteSurfaceEnforceRefusal(p.writeSurfaceEnforcedFunc(), agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
+				if reason, kind, refused := p.writeSurfaceEnforceRefusal(agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
 					blocked = true
 					blockReason = reason
 					blockCode = DenyReasonWriteSurfaceEnforced
@@ -161,7 +161,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
 			} else if agentName != internalCallerName {
-				if reason, refused := WriteSurfaceGraphQLRefusal(p.writeSurfaceEnforcedFunc(), agentName, body); refused {
+				if reason, refused := p.writeSurfaceGraphQLRefusal(agentName, body); refused {
 					blocked = true
 					blockReason = reason
 					blockCode = DenyReasonWriteSurfaceEnforced
