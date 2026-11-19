@@ -81,6 +81,7 @@ var withheldReasonLabels = map[string]string{
 	contributorAdmissionReasonDependencyBlocked: "A dependency is still open",
 	contributorAdmissionReasonDependencyUnknown: "A dependency could not be resolved",
 	contributorAdmissionReasonOwnerGrace:        "Filed by an owner or maintainer moments ago; they claim first",
+	contributorAdmissionReasonCoveringPRStalled: "The open pull request covering this issue has stalled — close it or take it over; the owner decides",
 	withheldReasonDisabledRepo:                  "Repository is disabled for contribution",
 	withheldReasonRepoUnmintable:                "Repository excluded after a GitHub App token mint failure",
 	withheldReasonTracker:                       "Tracker / umbrella issue",
@@ -117,6 +118,7 @@ func isConvergenceWithheldReason(reason string) bool {
 		contributorAdmissionReasonMergedClaimStale,
 		contributorAdmissionReasonIssueChurn,
 		contributorAdmissionReasonOwnerGrace,
+		contributorAdmissionReasonCoveringPRStalled,
 		withheldReasonDisabledRepo,
 		withheldReasonRepoUnmintable,
 		withheldReasonTracker,
@@ -348,6 +350,16 @@ func withheldFromAdmissionDecision(c withheldCandidate, d contributorAdmissionDe
 		item.ClaimURL = d.claim.PRURL
 		item.ClaimAuthor = d.claim.PRAuthor
 		item.Detail = mergedClaimStaleDetail(d.claim, time.Now())
+		return item
+	case contributorAdmissionReasonCoveringPRStalled:
+		// The covering PR came from the ledger (claim) or the live link
+		// guard (openPR); either way the row links it.
+		item := newWithheldItem(c, d.reason)
+		item.ClaimURL, item.ClaimAuthor = d.claim.PRURL, d.claim.PRAuthor
+		if d.openPR.PRNumber > 0 {
+			item.ClaimURL, item.ClaimAuthor = d.openPR.PRURL, d.openPR.PRAuthor
+		}
+		item.Detail = d.detail
 		return item
 	case contributorAdmissionReasonIssueClaim:
 		// #8380: the evidence is the claimant and the expiry — the two facts

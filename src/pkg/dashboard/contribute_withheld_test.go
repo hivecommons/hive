@@ -271,6 +271,44 @@ func withheldCases() []withheldCase {
 			},
 		},
 		{
+			// governor.labels.stage.abandon_after: the ledger's covering PR
+			// is flagged abandoned. The issue stays locked (a, b); only the
+			// reason and its detail change (c).
+			name:   "covering PR stalled (ledger claim)",
+			reason: contributorAdmissionReasonCoveringPRStalled,
+			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
+				hub.stageStore = abandonedCoveringStore(t, coveringStalledRepo, 4242, true)
+				s.deps.IssueClaimed = coveringClaim(601, coveringStalledRepo, 4242, false)
+			},
+			evidence: func(t *testing.T, item AdmissionWithheldItem) {
+				if item.ClaimURL != coveringStalledURL(4242) {
+					t.Errorf("claim_url = %q, want the stalled PR's URL", item.ClaimURL)
+				}
+				for _, want := range []string{"Open PR #4242 stalled 9d", "close it or take it over", "the owner decides", "check-failing:unit"} {
+					if !strings.Contains(item.Detail, want) {
+						t.Errorf("detail = %q, want it to contain %q", item.Detail, want)
+					}
+				}
+			},
+		},
+		{
+			name:   "covering PR stalled (live link)",
+			reason: contributorAdmissionReasonCoveringPRStalled,
+			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
+				hub.stageStore = abandonedCoveringStore(t, coveringStalledRepo, 4243, true)
+				s.deps.IssueClaimed = func(string, int) (ghpkg.IssueClaim, bool) { return ghpkg.IssueClaim{}, false }
+				s.deps.OpenPRLinkingIssue = coveringLink(601, coveringStalledRepo, 4243)
+			},
+			evidence: func(t *testing.T, item AdmissionWithheldItem) {
+				if item.ClaimURL != coveringStalledURL(4243) || item.ClaimAuthor != "contributor" {
+					t.Errorf("claim = %q by %q, want the stalled PR", item.ClaimURL, item.ClaimAuthor)
+				}
+				if !strings.Contains(item.Detail, "Open PR #4243 stalled") {
+					t.Errorf("detail = %q, want the stalled PR named", item.Detail)
+				}
+			},
+		},
+		{
 			name:   "issue churn needs maintainer triage",
 			reason: contributorAdmissionReasonIssueChurn,
 			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
@@ -570,6 +608,7 @@ func TestWithheld_EveryReasonHasALabel(t *testing.T) {
 		contributorAdmissionReasonMergedClaimStale,
 		contributorAdmissionReasonIssueClaim,
 		contributorAdmissionReasonOwnerGrace,
+		contributorAdmissionReasonCoveringPRStalled,
 	}
 	for _, reason := range reasons {
 		if label, ok := withheldReasonLabels[reason]; !ok || label == "" {

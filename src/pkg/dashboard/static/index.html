@@ -25819,6 +25819,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // fails when they drift). Rule slugs are never shown bare: use
     // stageTrackerPlainWords(slug). hivecommons/hive#14822.
     const STAGE_TRACKER_DECISION_GLOSSARY = {
+      "abandoned-stale": {"kind": "rule", "plain": "the PR went quiet past the abandon threshold; close it as stale or take it over", "detail": "A contributor PR parked waiting on its author (071) or on an adoption the hive could not push (085) has had no push, comment or review from anyone but the hive for longer than governor.labels.stage.abandon_after. Nothing the hive can do moves it. The hive recommends closing it as stale, with a note on how to reopen, or a person taking it over; it never closes or takes it over on its own."},
       "accept-proposal": {"kind": "action", "plain": "accepted the proposal as written", "detail": "The proposal is accepted as written with its stated defaults."},
       "accept-ratchet": {"kind": "action", "plain": "accepted as a ratchet", "detail": "Accepted as a ratchet: baseline recorded now, failures only on increases."},
       "adopt": {"kind": "action", "plain": "hive takes over finishing this PR", "detail": "Adopt means the hive takes over finishing this PR: it rebases, fixes CI and merges it, keeping the author's commits and sign-off."},
