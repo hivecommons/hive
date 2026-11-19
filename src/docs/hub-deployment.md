@@ -217,6 +217,14 @@ The registry entry becomes a `self-hosted` hive in Active Hives and the fleet vi
 
 The route is part of the v1 registration protocol and follows the same switch as the rest of it, `HIVE_HUB_SELFSERVICE_REGISTRATION`; discovery (`GET /api/hub/v1`) lists it under `operations` with `if_match: "required"` and its fields under `patch_fields`, so a hub that does not offer it does not advertise it. The v6 `/api/hub/selfservice/*` routes are unchanged.
 
+#### Heartbeat feature negotiation
+
+A spoke may send `protocol: {"version": 1, "features": [...]}` in its heartbeat ([#19237](https://github.com/hivecommons/hive/issues/19237)). With `HIVE_HUB_HEARTBEAT_PROTOCOL` on (`1/true/yes/on`, default off, read per request), the hub answers with `protocol: {"version", "accepted", "ignored"}`: the version it speaks for this beat, the requested features it honours, and the requested features it does not. The features a v1 hub accepts are `activity_digest`, `activity_events` and `host_aliases`, all of which it already serves to every spoke; negotiation changes nothing else in the response.
+
+- **No offer, or the flag off:** the response is exactly what it was before, with no `protocol` field.
+- **Unknown version** (below `1`): the beat is still accepted, every requested feature is listed under `ignored`, and `unsupported_version` echoes what the spoke sent. A version above the hub's is answered with the hub's version, so a newer spoke can fall back to it.
+- **Bounds:** at most 32 features are evaluated per beat. Names must be lowercase letters, digits, `_`, `-` or `.`, start with a letter and be at most 64 bytes; anything else is not echoed back.
+
 #### Rotation
 
 The owner can rotate from the **Self-hosted hives** list or with `POST /api/hub/selfservice/hives/{id}/rotate`. The hub mints a new key and keeps the previous hash live for a 10 minute overlap so a running spoke can pick up the new value without a gap. After the overlap only the new key is accepted. Only the owner can rotate; a hub admin who does not own the hive gets `404`, the same answer as for a missing hive.
