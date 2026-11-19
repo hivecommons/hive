@@ -40050,6 +40050,40 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (optTail === curTail) return true;
       return _modelsEqual(optTail, curTail);
     }
+    // Backends whose CLI accepts exactly one spelling of a model id. Claude
+    // and Copilot serve the SAME Anthropic models under different naming
+    // conventions: the Claude CLI takes claude-sonnet-5-5 and rejects
+    // claude-sonnet-5.5, the Copilot CLI takes claude-sonnet-5.5 and rejects
+    // claude-sonnet-5-5. For these the dropdown must NOT treat the two as the
+    // same model: the tolerant match preselected the valid option for a
+    // stored wrong-convention id, and the agent failed every kick while its
+    // dropdown looked correct. The server rewrites such ids to the backend's
+    // spelling (config.CanonicalizeModelForBackend); the dropdown shows what
+    // is stored and flags it.
+    const STRICT_MODEL_ID_BACKENDS = ['claude', 'copilot'];
+    // _modelIdMatchesForBackend is _modelIdMatches, minus the dotted/dashed
+    // version folding on STRICT_MODEL_ID_BACKENDS.
+    function _modelIdMatchesForBackend(backend, optionValue, current) {
+      if (!STRICT_MODEL_ID_BACKENDS.includes(backend)) return _modelIdMatches(optionValue, current);
+      if (!current) return false;
+      return optionValue === current || optionValue.split('/').pop() === current.split('/').pop();
+    }
+    // modelIdMatchesStored is the Settings dialog's "is this option the stored
+    // model" test: strict on STRICT_MODEL_ID_BACKENDS, the separator-tolerant
+    // _modelsEqual elsewhere.
+    function modelIdMatchesStored(backend, optionValue, current) {
+      if (STRICT_MODEL_ID_BACKENDS.includes(backend)) return _modelIdMatchesForBackend(backend, optionValue, current);
+      return _modelsEqual(current, optionValue);
+    }
+    // invalidModelSpellingFor returns the valid option a stored model is only
+    // a different spelling of on a strict backend ('' when there is none), so
+    // the dropdown can flag the stored value instead of hiding it.
+    function invalidModelSpellingFor(backend, models, current) {
+      if (!current || !STRICT_MODEL_ID_BACKENDS.includes(backend)) return '';
+      if (models.some(m => _modelIdMatchesForBackend(backend, m.value, current))) return '';
+      const hit = models.find(m => _modelIdMatches(m.value, current));
+      return hit ? hit.value : '';
+    }
     // modelOptionsHtml builds the <option> list for a model dropdown:
     // discovered/known models first (already discovered-first from the API),
     // the current model preselected (prefix-insensitive), and — if the
@@ -40070,7 +40104,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const cur = soleOption || currentModel || '';
       let matched = false;
       const opts = models.map(m => {
-        const sel = !matched && _modelIdMatches(m.value, cur);
+        const sel = !matched && _modelIdMatchesForBackend(backend, m.value, cur);
         if (sel) matched = true;
         // The selected option's label doubles as the button's visible text
         // (native <select> renders it in place of the placeholder), so it
@@ -40087,7 +40121,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         body = modelOptgroupsHtml(Object.keys(byValue), v => byValue[v]);
       }
       if (cur && !matched) {
-        body = `<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current) ▾</option>` + body;
+        // The stored id is shown as it is stored. When it is only another
+        // spelling of a valid option (claude-sonnet-5.5 on claude), say so
+        // and name the id to pick, rather than presenting it as fine.
+        const validSpelling = invalidModelSpellingFor(backend, models, cur);
+        const note = validSpelling
+          ? ` (⚠ not valid for ${backend}; pick ${validSpelling.split('/').pop()})`
+          : ' (current)';
+        body = `<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())}${esc(note)} ▾</option>` + body;
       }
       return body;
     }
@@ -61522,6 +61563,10 @@ function burnAreaChart() {
         return;
       }
       dismissToast(toast, data.applied === false && data.message ? `${agent} ${label} → ${backend}: ${data.message}` : `${agent} ${label} → ${backend} (session restarted)`, 'success');
+      // The server rewrote a model id the new backend's CLI would reject
+      // (claude-sonnet-5.5 carried onto claude, claude-sonnet-5-5 onto
+      // copilot): say so.
+      if (data.warning) showToast(data.warning, 'warning');
       // The selection is saved; if its backing config is missing, land the
       // user on the Settings tab that fixes it (never blocks).
       maybeOpenMethodConfig(backend);
@@ -61603,7 +61648,12 @@ function burnAreaChart() {
       if (!data.ok) { dismissToast(toast, `Model switch failed: ${data.error || 'unknown'}`, 'error'); return; }
       // A change saved for an agent that is not running restarts nothing: show
       // the server's "saved; applies when <agent> starts" instead (#18905).
+      // The server may store a different spelling than was picked (a Claude
+      // id in the other CLI's convention is saved in this backend's); show
+      // what was saved.
+      if (data.model) model = data.model;
       dismissToast(toast, data.applied === false && data.message ? `${agent} model → ${model}: ${data.message}` : `${agent} model → ${model} (session restarted)`, 'success');
+      if (data.warning) showToast(data.warning, 'warning');
       // #18906: hold scroll position, focus and list order across the re-render.
       withAgentViewportPreserved(agent, () => {
         if (window._lastAgents) {
@@ -82719,7 +82769,7 @@ function burnAreaChart() {
     function modelSelectOptionsHtml(backend, current, opts) {
       const models = opts || modelsForBackend(backend) || [];
       let html = `<option value="">${esc(modelDefaultOptionLabel(backend))}</option>`;
-      const renderOpt = m => `<option value="${esc(m.value)}"${_modelsEqual(current, m.value) ? ' selected' : ''}>${esc(fullModelLabel(m))}${esc(modelOptionPriceSuffix(backend, m.value))}</option>`;
+      const renderOpt = m => `<option value="${esc(m.value)}"${modelIdMatchesStored(backend, m.value, current) ? ' selected' : ''}>${esc(fullModelLabel(m))}${esc(modelOptionPriceSuffix(backend, m.value))}</option>`;
       // Large gateway catalogs (OpenRouter) are grouped by provider prefix.
       if (typeof shouldGroupModelOptions === 'function' && shouldGroupModelOptions(models.map(m => m.value))) {
         const byValue = {};
@@ -82728,8 +82778,12 @@ function burnAreaChart() {
       } else {
         html += models.map(renderOpt).join('');
       }
-      if (current && !models.some(m => _modelsEqual(current, m.value))) {
-        const note = modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
+      if (current && !models.some(m => modelIdMatchesStored(backend, m.value, current))) {
+        // A Claude id stored in the other CLI's naming convention is shown as
+        // stored and flagged with the id to pick, never silently matched.
+        const validSpelling = invalidModelSpellingFor(backend, models, current);
+        const note = validSpelling ? ` (current, ⚠ not valid for ${backend}; pick ${validSpelling})`
+          : modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
         html += `<option value="${esc(current)}" selected>${esc(current)}${note}</option>`;
       }
       return html;

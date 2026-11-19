@@ -11,6 +11,25 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.330.0)
+
+### Added
+
+- New opt-in `repos.<repo>.parent_autoclose: trackers_too` (also a fourth choice, "Also close trackers whose work is done", in Settings, Repos tab) closes tracker and umbrella issues that have no sub-issue children once everything they reference is finished. "Done" is computed from the state of the issues and PRs the tracker lists in its task list or `close_when` checklist, plus the PRs that reference it with `Refs`, never from close keywords, since v5 merges do not auto-close. Only issues that announce themselves as trackers are read, `hive/tracking` and `hold` issues never close, a person's reopen is final, and the close waits for the same finished evidence on two reads 15 minutes apart and leaves an evidence comment listing every reference and its state. Default behaviour is unchanged ([#19071](https://github.com/hivecommons/hive/issues/19071)).
+- New opt-in `session_taint` recorder, the observe-only first slice of session taint ([#18987](https://github.com/hivecommons/hive/issues/18987)). A pattern scan checks each outgoing message alone, so it cannot see that an agent earlier read something it should not repeat in a wider audience; this adds the memory half of the answer, as a measurement only. With `session_taint.enabled: true` the hive keeps a bounded in-memory record of the coarse labels each agent session has accrued (a canary hit sets `secret`) and, when that session later asks the issue, comment, PR or review relay to write, logs and audits which rule would have held the write (`session_taint_label` and `session_taint_would_act` audit entries, plus per-rule counters). It never blocks, holds, restricts or changes any request or action, stores labels, counts and ids only (no credential or content), takes effect at restart, starts every session clean after a restart, and does nothing at all when the key is absent. `max_sessions`, `max_labels_per_session` and `max_decisions` bound the store. Enforcement is a later, separately decided phase; see `docs/design/session-taint.md` and `docs/security-model.md`.
+
+### Fixed
+
+- Betty now treats plain requests such as "start a spec for this", "write a spec for X" and "draft a design for X" as a Spek session draft, the same as "Spek session" wording; the draft still waits for approval, and statements like "the spec says" or "the design review happened" are not requests ([#19157](https://github.com/hivecommons/hive/issues/19157)).
+
+## 2026-11-18 (v5.329.1)
+
+### Fixed
+
+- The SHA-hold gate no longer holds issues it was not meant for, and a hold is now visible and overrideable (#18866). The sweep skips issues filed by the hive's own accounts or by owners and maintainers (`project.issue_filter.reporter_trust.trusted_associations`) and issues whose body names a concrete repo file path such as `src/pkg/github/client.go` (self-attested: the path is never checked to exist, so a reporter can write one to skip the gate), and lifts a `needs-sha` already on an issue that qualifies, so an owner-filed, detailed bug like #18740 is released on the next sweep; outside reporters with no SHA and no path are still held. A maintainer can waive the requirement per issue with the persistent `sha-waived` label (row menu *Waive SHA requirement* / *Restore SHA requirement*, gated like releasing a `hold`); the sweep never re-adds `needs-sha` while it is on. Held issues show the pill *Held: needs commit SHA* and a note on the Open chevron saying how to lift it, and the waived state reads *SHA waived by <login>*; `GET /api/stage-tracker` rows carry the new `sha_hold` field. Recording the default-branch head at filing time was left out: it would be a guess about the reporter's build, not evidence of it.
+- Reviewer-stated rule capture now reads every human comment on the hive's open PRs (inline, review body and plain conversation comments), including ones already handled, in resolved threads or not addressed to the hive, and the rule index tracks which comments it has evaluated so the first pass after upgrade backfills once and later passes classify only new comments ([#19136](https://github.com/hivecommons/hive/issues/19136)).
+- The review-rule classifier now ignores quoted lines, fenced code and questions, falls back to the whole comment when the rule sentence is too short to stand alone, and also recognises "for the future", "moving forward" and "for future reviews" as going-forward phrases ([#19137](https://github.com/hivecommons/hive/issues/19137)).
+
 ## 2026-11-18 (v5.329.0)
 
 ### Added
