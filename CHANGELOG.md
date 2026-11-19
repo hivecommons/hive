@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v6.52.3)
+
+### Fixed
+
+- Adoption no longer closes and re-opens a contributor PR whose branch lives in the base repository just because the base changed a file under `.github/workflows/`. The rule came from #12865, written when the App had no Workflows grant (#6985). That premise has changed: an installation can grant `workflows: write` (#14664). Under the old rule the hive superseded such PRs, which dropped their approvals and number (projectbluefin/common#1689 became #1708). Now the hive keeps the PR on its own branch when the fixer that rebases adopted heads (`scanner`) can push workflow files itself: its tier is trusted or merger and the App installation grants `workflows: write`. The same check lets a DCO-red adopted head on such a branch be repaired in place instead of re-homed. Fork PRs are unchanged, because GitHub refuses any App workflow-file push to a fork whatever the base installation grants. A refused `update-branch` during adopted-PR recovery now logs `fork-workflow-update` or `workflow-permission` instead of the catch-all `update-branch-failed`.
+- After a restart, a PR red only on its base branch's own check is no longer sent back to its author, or adopted and superseded, before the first CI enumeration finishes. The base-red memory and index live in the process and stay empty until the first CI enumeration finishes (3 to 27 minutes on knuckle on 2026-11-18), so every base read as not red: projectbluefin/common#1689, at 072 past its grace, was adopted at once for main's red E2E check, losing a maintainer's approval, and its copy stayed red for the same reason ([projectbluefin/common#1689](https://github.com/projectbluefin/common/pull/1689)). Until the memory is published, the stage pass reads the base tip's checks itself, at most once per base every 10 minutes, and automatic adoption waits; an operator's Adopt now or adopt-supersede request does not.
+- A head that GitHub's merge queue removed with `failed_checks` while it was behind its base is no longer queued again every 30 minutes. The hive now reads "behind" from a compare with the base, so it also updates a head that GitHub reports as `blocked` because the base does not require up-to-date branches. If GitHub refuses the update (for example `workflow-permission`), the PR says so and waits for a new head instead of buying another failing merge-group run. Other removal reasons, and a head that is up to date, keep the 30-minute recheck. Before, projectbluefin/utah-packages#1217 was re-queued at the same head about every 35 minutes for 12 hours.
+
 ## 2026-11-19 (v6.52.2)
 
 ### Fixed
