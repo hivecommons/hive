@@ -1484,7 +1484,7 @@ These existing labels qualify a stage and may coexist with any stage label;
 the reconciler never touches them: `hold` / `hold/*`, `needs-human`,
 `blocked`, `needs-rebase`, `hive:unauthorized` (the App lacks a permission
 for the next step; see the reference table),
-`hive/likely-done`, `hive/partially-addressed`, `hive/verified-open`,
+`hive/likely-done`, `hive/partially-addressed`, `hive/verified-open`, `hive/verify-close` (a 045 park, see below),
 `hive/claimed-by-<who>` (the grey "who" modifier a stage cannot carry),
 `lgtm`, `role/*`, `author/*`, `dco` / `no-dco`, and the agent provenance
 labels.
@@ -1500,6 +1500,17 @@ implement the remainder (`src/pkg/scheduler/kickmessage.go`,
 `src/pkg/github/prclaims.go`, `src/pkg/github/task_list_sweep.go`,
 `src/cmd/hive/verifyonce.go`). They are not a second stage and are not
 retired.
+
+A partially-addressed issue the scanner verified complete leaves that
+loop: its verify-once note ends with
+`<!-- hive:verification verdict=complete prs=N -->`, and the issue stage
+sweep closes it as completed (evidence comment citing the merged PRs) or,
+when a guard is not met, parks it at `stage/045-needs-decision` with
+`hive/verify-close`, the verify-close lane the activity monitor shows with
+a one-click **Close as completed** (`src/pkg/github/verified_close.go`).
+The lane is a park label rather than a numbered stage: issue stages run
+010 to 045 and PR stages 050 to 100, so a `stage/050-…` issue stage would
+cross the kinds the stage table keeps disjoint.
 
 #### `hive/claimed-by-<who>`: one rule for the suffix
 

@@ -66,6 +66,9 @@ func TestMain(m *testing.M) {
 	}
 	http.DefaultTransport = guarded
 	http.DefaultClient.Transport = guarded
+	// validateGitHubToken dials through its own pinned transport (#19221);
+	// route its final connect through the same guard.
+	githubTokenDial = guarded.DialContext
 
 	// Filesystem counterpart of the network guard above: newAuditLog wires a
 	// lumberjack writer at the package-level auditLogPath (/data/audit.jsonl)

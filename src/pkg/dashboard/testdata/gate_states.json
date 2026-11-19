@@ -8,7 +8,7 @@
         "review_activity": { "head": "ac459c3c3", "state": "human_decision", "caption": "Review findings · needs owner sign-off", "blocker": "Should a maintainer sign off on the DCO change?", "source": "verified-review-bundle" },
         "ci_activity": { "head": "ac459c3c3", "state": "running", "caption": "CI running · 15 checks pending", "source": "checks", "checks_passed": 54, "checks_total": 69,
           "checks_pending": ["PR Type", "PR Issue", "build", "lint"], "checks_stuck": ["PR Type", "PR Issue"], "stuck_since": "2026-11-17T09:00:00Z" } },
-      "want": { "reasons": [], "actions": [], "answered": true, "answered_by": "clubanderson", "wait": "checks-stuck" }
+      "want": { "reasons": [], "actions": [], "answered": true, "answered_by": "clubanderson", "answered_via": "review", "wait": "checks-stuck" }
     },
     {
       "name": "parked at 085 on the reviewer's sign-off question",

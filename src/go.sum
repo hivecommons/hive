@@ -79,6 +79,8 @@ github.com/graph-gophers/graphql-go v1.11.1 h1:PgW3mnUYcdZV0tw9Z/tvoffTpD+8wQ88P
 github.com/graph-gophers/graphql-go v1.11.1/go.mod h1:j14c6XnomYqrHWyBbDNoqWnl4NZ4deiZ9TGZ3fuvJx8=
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 h1:/Tnpcb2E0Pz/tN9s3bfEY2Q8ePCEX9iuS+cneUwncnw=
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0/go.mod h1:zOBXOsUaBSjKgmH4OGzV1esUpR3oUSCPYVd2cUBjKYY=
+github.com/hivecommons/colony v0.2.0 h1:uvNz7sKfkfQN4ZH0CSCFBRnnAeRIHMBB0oRKWMmaOM0=
+github.com/hivecommons/colony v0.2.0/go.mod h1:1qD1mhyuzNGvvHQuHK3uyYnoz5E/FF+8GkUgoZpSP7M=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/klauspost/compress v1.20.4 h1:dD0v/bvxtjCBqQu6sx1TNWkalEY5lNTIe+HY9w8TeNI=

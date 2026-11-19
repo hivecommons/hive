@@ -659,6 +659,9 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	in.Author = author
 	in.HiveAuthored = client.IsHiveAuthorLogin(author)
 	in.TrustedAuthor = in.HiveAuthored
+	if !issue.IsPullRequest() && itemType != "pr" {
+		in.HumanOnly = issueHumanOnlyAsk(s.deps.Config, repoFull, in.Labels, in.Body)
+	}
 	if issue.IsPullRequest() || itemType == "pr" {
 		in.Kind = delegatedecision.KindPR
 		pr, _, err := api.PullRequests.Get(ctx, owner, repoName, number)
@@ -889,6 +892,7 @@ func (s *Server) gatherDelegatedRecordedPark(repoFull string, number int, head s
 	}
 	in.ReviewerFinding = strings.TrimSpace(agg.DecisionFinding)
 	in.SecurityFinding = delegatedSecurityFinding(agg)
+	in.SecurityRequiresPerson = agg.SecurityRequiresPerson()
 }
 
 // delegatedSecurityFinding: the reviewer's finding is the security

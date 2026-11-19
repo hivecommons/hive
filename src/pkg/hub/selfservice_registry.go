@@ -335,7 +335,9 @@ func (st *selfServiceStore) registerCapped(h SelfServiceHive, maxPerOwner int) (
 }
 
 // rotate mints a new key for id and returns it ONCE. The previous key keeps
-// authenticating until selfServiceKeyRotationOverlap has passed.
+// authenticating until selfServiceKeyRotationOverlap has passed. The HTTP
+// routes use rotateWithPolicy (selfservice_key_grace.go) so the grace flag
+// applies; rotate and rotateIfMatch keep the fixed overlap.
 func (st *selfServiceStore) rotate(id string) (string, error) {
 	return st.rotateIfMatch(id, "")
 }
@@ -343,32 +345,8 @@ func (st *selfServiceStore) rotate(id string) (string, error) {
 // rotateIfMatch is rotate guarded by an ETag precondition (see update for
 // the ifMatch rules); a mismatch returns errSelfServiceStale.
 func (st *selfServiceStore) rotateIfMatch(id, ifMatch string) (string, error) {
-	if st == nil {
-		return "", errSelfServiceNilStore
-	}
-	raw, hash, err := mintSelfServiceKey()
-	if err != nil {
-		return "", err
-	}
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	h, ok := st.hives[id]
-	if !ok {
-		return "", errSelfServiceNotFound
-	}
-	if !selfServiceETagMatches(*h, ifMatch) {
-		return "", errSelfServiceStale
-	}
-	before := *h
-	h.PrevKeyHash = h.KeyHash
-	h.PrevKeyExpiresAt = st.clock().UTC().Add(selfServiceKeyRotationOverlap)
-	h.KeyHash = hash
-	h.Revision++
-	if err := st.saveLocked(); err != nil {
-		*h = before
-		return "", err
-	}
-	return raw, nil
+	raw, _, err := st.rotateWithPolicy(id, ifMatch, selfServiceKeyRotationPolicy{window: selfServiceKeyRotationOverlap})
+	return raw, err
 }
 
 // update applies mutate to the record for id when ifMatch is empty, "*", or

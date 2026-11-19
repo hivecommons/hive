@@ -20,6 +20,21 @@ import (
 const (
 	basePreparationPrefix = "base-refresh:"
 	basePreparationReady  = basePreparationPrefix + "preparing"
+	// basePreparationCoalescing is the wait reason when the owner's next
+	// refresh is deferred because CI on its previous bot refresh is still
+	// running (see preparationRefreshCoalesces).
+	basePreparationCoalescing = basePreparationPrefix + "coalescing"
+	// preparationRefreshCoalesceMaxWait bounds both coalescing waits: how
+	// long after its last bot refresh an owner's next refresh may be
+	// deferred while that refresh's CI runs, and how long after it a current
+	// successor may be held behind an owner that is green and reviewed on
+	// that refresh. Past it the previous behavior returns, so neither wait
+	// can stall a destination forever.
+	preparationRefreshCoalesceMaxWait = 30 * time.Minute
+	// preparationCompareFilesCap is the most files GitHub returns in one
+	// compare response; a list this long may be truncated and never proves
+	// that a base delta misses the PR's files.
+	preparationCompareFilesCap = 300
 )
 
 var sharedBasePreparation = NewBasePreparationStore(filepath.Join(stagelabels.DefaultStateDir, "base-preparation"))
@@ -241,6 +256,7 @@ func (c *Engine) claimBasePreparationUpdate(ctx context.Context, owner, repo str
 	if head == "" || pr.GetHead().GetSHA() != head || base == "" || baseSHA == "" {
 		return &preparationWait{basePreparationPrefix + "snapshot-changed"}
 	}
+	coalescedAttempt, coalesce := c.preparationRefreshCoalesces(ctx, owner, repo, base, baseSHA, pr)
 	var wait string
 	err = c.preparationStore().change(preparationKey(owner, repo, base), func(st *basePreparation) error {
 		if st.Owner.Number != number {
@@ -259,6 +275,10 @@ func (c *Engine) claimBasePreparationUpdate(ctx context.Context, owner, repo str
 			wait = basePreparationReady
 			return nil
 		}
+		if coalesce && prior == coalescedAttempt {
+			wait = basePreparationCoalescing
+			return nil
+		}
 		st.Attempts[number] = preparationAttempt{Head: head, Base: baseSHA, At: c.now(), AuthoritativeBase: true}
 		c.info("automerge base preparation refresh claimed", "repo", owner+"/"+repo, "base", base, "pr", number, "head", head, "base_sha", baseSHA)
 		return nil
@@ -271,6 +291,103 @@ func (c *Engine) claimBasePreparationUpdate(ctx context.Context, owner, repo str
 		return &preparationWait{wait}
 	}
 	return nil
+}
+
+// preparationRefreshCoalesces reports whether the owner's next refresh
+// should wait for CI on its previous bot refresh instead of starting again:
+// a refresh that lands while the last one's CI runs cancels that CI and
+// pays for it twice. It holds only when pr is the owner, its live head is the
+// result of the recorded refresh (preparationCompleted), that refresh is
+// younger than preparationRefreshCoalesceMaxWait, required CI on the head is
+// still in flight (pending or not reported yet, never red), and the base
+// delta since the refresh provably misses every file the PR changes. Any
+// unknown or failed read refreshes as before. The returned attempt is the
+// one judged, so the caller applies the wait only if it is still current.
+func (c *Engine) preparationRefreshCoalesces(ctx context.Context, owner, repo, base, baseSHA string, pr *gh.PullRequest) (preparationAttempt, bool) {
+	snapshot, err := c.preparationStore().ownerSnapshot(preparationKey(owner, repo, base))
+	if err != nil || snapshot.Owner.Number == 0 || snapshot.Owner.Number != pr.GetNumber() || snapshot.Owner.Repair {
+		return preparationAttempt{}, false
+	}
+	prior := snapshot.Attempt
+	head := pr.GetHead().GetSHA()
+	if prior.Head == "" || prior.Head == head || prior.Base == "" || prior.Base == baseSHA ||
+		c.now().Sub(prior.At) >= preparationRefreshCoalesceMaxWait {
+		return preparationAttempt{}, false
+	}
+	if !c.preparationCompleted(ctx, owner, repo, pr, prior) || !c.preparationRefreshCIInFlight(ctx, owner, repo, pr) ||
+		c.preparationBaseDeltaOverlaps(ctx, owner, repo, prior.Base, baseSHA, pr) {
+		return preparationAttempt{}, false
+	}
+	c.info("automerge base preparation refresh coalesced", "repo", owner+"/"+repo, "base", base, "pr", pr.GetNumber(), "head", head,
+		"last_refresh_at", prior.At, "base_sha", baseSHA, "max_wait", preparationRefreshCoalesceMaxWait)
+	return prior, true
+}
+
+// preparationRefreshCIInFlight reports whether required CI on pr's head is
+// known to be still running or not yet reported. A red head, a green head
+// and unreadable evidence all return false.
+func (c *Engine) preparationRefreshCIInFlight(ctx context.Context, owner, repo string, pr *gh.PullRequest) bool {
+	st, requirementsKnown, err := c.commitCIForPRSkipping(ctx, owner, repo, pr.GetBase().GetRef(), pr.GetHead().GetSHA(), pr.GetNumber(), time.Time{}, newExpectedCheckCache(), nil)
+	if err != nil || !requirementsKnown || st.Green {
+		return false
+	}
+	return stageengine.ClassifyCIReason(st.Reason) == stageengine.CIReasonPending || strings.HasPrefix(st.Reason, "required-check-missing:")
+}
+
+// preparationBaseDeltaOverlaps reports whether the base commits between
+// fromBase and toBase touch any file pr changes, or whether that cannot be
+// proven otherwise (API error, a compare that is not "ahead", an empty or
+// possibly truncated file list, unreadable PR files). An overlap means the
+// coalescing wait does not apply: the refresh must test the new combination.
+func (c *Engine) preparationBaseDeltaOverlaps(ctx context.Context, owner, repo, fromBase, toBase string, pr *gh.PullRequest) bool {
+	cmp, _, err := c.gh.Repositories.CompareCommits(hgithub.WithRESTCaller(ctx, "hive:base_preparation_coalesce"), owner, repo, fromBase, toBase, nil)
+	if err != nil || cmp == nil || cmp.GetStatus() != "ahead" || len(cmp.Files) == 0 || len(cmp.Files) >= preparationCompareFilesCap {
+		return true
+	}
+	ours, err := c.preparationFiles(ctx, owner, repo, pr)
+	if err != nil {
+		return true
+	}
+	for _, f := range cmp.Files {
+		if f.GetFilename() == "" || slices.Contains(ours, f.GetFilename()) ||
+			(f.GetPreviousFilename() != "" && slices.Contains(ours, f.GetPreviousFilename())) {
+			return true
+		}
+	}
+	return false
+}
+
+// preparationOwnerHoldsSuccessor returns a queued-behind reason when another
+// PR owns preparation of this destination and is already green and reviewed
+// on its completed bot refresh. A successor merging first would move the
+// base under that owner and send it back for another refresh, CI run and
+// review, which can keep the front behind indefinitely. The hold lasts at
+// most preparationRefreshCoalesceMaxWait after the owner's refresh; a repair
+// owner, an unrefreshed or invalid owner, missing readiness evidence or any
+// failed read holds nothing.
+func (c *Engine) preparationOwnerHoldsSuccessor(ctx context.Context, owner, repo, base string, number int) string {
+	if !c.requireCurrentBaseFor(owner+"/"+repo) || c.gh == nil {
+		return ""
+	}
+	snapshot, err := c.preparationStore().ownerSnapshot(preparationKey(owner, repo, base))
+	if err != nil || snapshot.Owner.Number == 0 || snapshot.Owner.Number == number || snapshot.Owner.Repair {
+		return ""
+	}
+	attempt := snapshot.Attempt
+	if attempt.Head == "" || c.now().Sub(attempt.At) >= preparationRefreshCoalesceMaxWait {
+		return ""
+	}
+	front, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:base_preparation"), owner, repo, snapshot.Owner.Number)
+	if err != nil || c.preparationInvalidPR(front, base, false) != "" || !c.preparationCompleted(ctx, owner, repo, front, attempt) {
+		return ""
+	}
+	if ready, known := c.preparationReadiness(ctx, owner, repo, front, snapshot.Owner.Lane); !ready || !known {
+		return ""
+	}
+	reason := preparationQueued(snapshot.Owner.Number)
+	c.info("automerge base preparation successor held", "repo", owner+"/"+repo, "base", base, "pr", number, "front", snapshot.Owner.Number,
+		"front_head", front.GetHead().GetSHA(), "reason", reason, "max_wait", preparationRefreshCoalesceMaxWait)
+	return reason
 }
 
 func (c *Engine) forgetRejectedPreparationUpdate(owner, repo string, number int, head string) {

@@ -148,6 +148,10 @@ type IssueStageResult struct {
 	// issue and PR they reference is finished (trackers_too,
 	// hivecommons/hive#19071).
 	TrackersClosed int
+	// VerifiedClosed counts issues closed because the scanner's
+	// verification marker said complete and every guard held
+	// (closeVerifiedComplete).
+	VerifiedClosed int
 }
 
 // issueStageRESTCaller tags the writes for /api/gh-rate-limits.
@@ -604,6 +608,12 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			res.ParentsAwaitingChildren++
 		} else if in.Children == nil && client.closeDoneTracker(ctx, in, store, key, now, logger) {
 			res.TrackersClosed++
+			res.Writes++
+			res.Comments++
+			continue
+		}
+		if !awaitingChildren && client.closeVerifiedComplete(ctx, in, store, key, now, logger) {
+			res.VerifiedClosed++
 			res.Writes++
 			res.Comments++
 			continue

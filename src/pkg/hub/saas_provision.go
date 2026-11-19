@@ -2669,6 +2669,8 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// injected it no longer does. Minted and verified on the same spoke, so
 		// symmetric; per-hive so an invite link cannot travel between tenants.
 		"InviteKey": provisionInviteKey(h.ID),
+		// Per-hive customers hub import match key (HIVE_CUSTOMER_MATCH_KEY).
+		"CustomerMatchKey": provisionCustomerMatchKey(h.ID),
 		// Cluster-aware fields.
 		"HubPublicURL":       hubPublicURL(),
 		"ClusterID":          cluster.ID,
@@ -3682,6 +3684,10 @@ spec:
         # in-flight invite links. Nothing else is affected.
         - name: HIVE_INVITE_KEY
           value: "{{.InviteKey}}"
+        # The per-hive customers hub import match key. Spokes never hold the
+        # master, so the hub hands them this derived key instead.
+        - name: HIVE_CUSTOMER_MATCH_KEY
+          value: "{{.CustomerMatchKey}}"
 {{- if .IsNginxIngress}}
         # HIVE_INGRESS_AUTHZ tells the Node proxy that an nginx ingress
         # auth-proxy sits IN FRONT of this pod and per-hive-authorizes every

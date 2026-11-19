@@ -64,6 +64,9 @@ func (m customersHubMatcher) Match(ctx context.Context, hashes []string) (custom
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+bearer)
+	// Ask for labeled public fields (#19306): country and organization of
+	// this hive's grant holders, each with where it came from.
+	req.Header.Set(customers.HubMatchLabelsHeader, customers.HubMatchLabelsV1)
 	client := m.client
 	if client == nil {
 		client = customersHubClient()

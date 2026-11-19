@@ -14,7 +14,10 @@ import (
 // PRGate is the PR-contents gate (pkg/prgate) bound to this package's GitHub
 // client. The dashboard talks to the gate only through it, so pkg/dashboard
 // does not grow a dependency of its own.
-type PRGate struct{ gate *prgate.Gate }
+type PRGate struct {
+	gate   *prgate.Gate
+	canary *prGateCanary
+}
 
 // prGateAPI adapts the Client to prgate.API.
 type prGateAPI struct{ c *Client }
@@ -38,7 +41,8 @@ func (a prGateAPI) PostStatus(ctx context.Context, repo string, number int, sha,
 // NewPRGate builds the gate over c. modeOf returns the configured mode string
 // of a repository ("off", "shadow" or "enforce"; anything else reads as off).
 func NewPRGate(c *Client, modeOf func(repo string) string, log *slog.Logger) *PRGate {
-	g := prgate.New(prGateAPI{c: c}, func(repo string) prgate.Mode {
+	canary := newPRGateCanary(log)
+	g := prgate.New(prGateCanaryAPI{inner: prGateAPI{c: c}, c: c, canary: canary}, func(repo string) prgate.Mode {
 		m, _ := prgate.ParseMode(modeOf(repo))
 		return m
 	}, log)
@@ -46,7 +50,7 @@ func NewPRGate(c *Client, modeOf func(repo string) string, log *slog.Logger) *PR
 		grant, err := c.ReadPRGateGrant(ctx)
 		return prgate.GrantInfo{Applicable: grant.Applicable, Installation: grant.Installation, Level: grant.Level}, err
 	}
-	return &PRGate{gate: g}
+	return &PRGate{gate: g, canary: canary}
 }
 
 // Causes a gate cannot be posted, as the spoke reports them to the hub.
@@ -75,6 +79,10 @@ type PRGateHealth struct {
 	// Message says what is missing and where an owner accepts it; set only
 	// while Cause is.
 	Message string `json:"message,omitempty"`
+	// Canary is the latest gate write per head origin (same-repo, fork,
+	// dependabot) since the hive started: the evidence that fork and
+	// Dependabot heads get the status before a repository goes to enforce.
+	Canary map[string]PRGateCanaryResult `json:"canary,omitempty"`
 }
 
 // Health summarises the gate over the configured scope. dependsOnRequired is
@@ -92,6 +100,7 @@ func (p *PRGate) Health(repos []string, dependsOnRequired bool, now time.Time) *
 		Configured: string(h.Configured), Effective: string(h.Effective),
 		Installation: h.Installation, Granted: h.Granted, ForbiddenRepos: h.ForbiddenRepos,
 		DaysUntilCutoff: prgate.DaysUntilCutoff(now), Cutoff: prgate.Cutoff.Format(time.DateOnly),
+		Canary: p.canary.snapshot(),
 	}
 	switch {
 	case h.GrantMissing:

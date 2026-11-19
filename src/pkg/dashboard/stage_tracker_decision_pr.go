@@ -364,6 +364,41 @@ func decisionForIssue(it StageTrackerItem, held bool) *StageTrackerDecision {
 	return d
 }
 
+// issueOwnerOnlyAsk reports an issue row whose ask is a person's alone
+// (StageTrackerItem.OwnerOnly from the human-only marker, a human-only
+// label or a governor security follow-up). `needs-human` alone is the
+// ordinary park a delegated decision answers, so it does not count.
+func issueOwnerOnlyAsk(it StageTrackerItem) bool {
+	why := strings.TrimSpace(it.OwnerOnly)
+	return why != "" && !strings.EqualFold(why, "label:"+stageengine.NeedsHumanLabel)
+}
+
+// decisionForOwnerOnlyIssue is the popover of an issue parked for the owner
+// on an ask only a person can answer: it says so, offers the person's own
+// moves, and keeps "Let hive decide" off (hivecommons/hive#19229).
+func decisionForOwnerOnlyIssue(it StageTrackerItem, held bool) *StageTrackerDecision {
+	why := strings.TrimSpace(it.OwnerOnly)
+	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByHumanOnly, BlockerReason: "owner-only:" + why}
+	if why == humanOnlyWhySecurityFollowUp {
+		d.AskedBy = decisionAskedByReviewer
+		d.Question = "A security review handed this to a person. Read the source PR's change yourself, then record your decision or close this issue."
+	} else {
+		d.Question = "This issue is marked for a person only. Decide it yourself, then approve a direction or close it."
+	}
+	d.Blocker = "Needs the owner: no agent can act on this, so the hive keeps it parked and does not decide it for you."
+	if held {
+		d.Blocker += " " + decisionHeldBlocker(it.Hold)
+	}
+	d.Options = []StageTrackerDecisionOption{
+		decisionOption(decisionActionApprove, "Approve direction", true, ""),
+		decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, ""),
+		decisionOption(decisionActionCloseSuperseded, "Close as superseded", true, ""),
+		decisionOption(decisionActionDelegate, "Let hive decide", false, decisionWhyPersonOnly),
+		decisionHoldOption(held),
+	}
+	return d
+}
+
 func decisionForTriage(it StageTrackerItem, held bool) *StageTrackerDecision {
 	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByTriage, BlockerReason: strings.TrimSpace(it.Reason)}
 	d.Question = "Should the hive work on this issue? Accept triage so an agent can take it, hold it, or mark it needs-human."

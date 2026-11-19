@@ -177,6 +177,11 @@ func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo s
 	if baseBranch == "" || strings.TrimSpace(headSHA) == "" {
 		return AutoMergeSweepEvent{}, autoMergeReasonCurrentBaseCheck, true, nil
 	}
+	if reason := c.preparationOwnerHoldsSuccessor(ctx, owner, repo, baseBranch, number); reason != "" {
+		// A preparation owner already green and reviewed on its refresh
+		// merges first; overtaking it would make it stale again.
+		return AutoMergeSweepEvent{}, reason, true, nil
+	}
 	cmp, _, err := c.gh.Repositories.CompareCommits(hgithub.WithRESTCaller(ctx, "hive:automerge_current_base"), owner, repo, baseBranch, headSHA, &gh.ListOptions{PerPage: 1})
 	if err != nil {
 		return AutoMergeSweepEvent{}, autoMergeReasonCurrentBaseCheck, true, err
