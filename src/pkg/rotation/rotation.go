@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -110,7 +111,11 @@ type Headroom struct {
 	// did not say". nil must never be read as recovery (#6833), so consumers
 	// that need a definite answer treat it as unknown.
 	OrdinaryUsageAllowed *bool `json:"ordinary_usage_allowed,omitempty"`
-	ProbeErr             error `json:"-"` // non-nil = measurement failed (NOT treated as exhausted)
+	// ExtraUsage is Claude's "extra usage" (usage credits that keep the
+	// account working past its plan limits), read-only. nil means the
+	// provider did not report it.
+	ExtraUsage *ExtraUsage `json:"extra_usage,omitempty"`
+	ProbeErr   error       `json:"-"` // non-nil = measurement failed (NOT treated as exhausted)
 	// ProbeErrCause categorizes ProbeErr so a dead adapter — one that parses
 	// nothing a real payload contains and would report `unknown` forever on a
 	// correctly configured host (kubestellar/hive#6986) — stays DISTINGUISHABLE
@@ -257,7 +262,8 @@ func sanitizeProbeError(msg string) string {
 
 // MarshalJSON includes the probe error text alongside the exported fields.
 // PlanType is emitted only when a probe reported one, so readings without a
-// plan (Claude's today) serialize exactly as before.
+// plan (Claude's today) serialize exactly as before; ExtraUsage likewise only
+// when the provider reported it.
 func (h Headroom) MarshalJSON() ([]byte, error) {
 	type alias struct {
 		Provider      string        `json:"provider"`
@@ -271,6 +277,7 @@ func (h Headroom) MarshalJSON() ([]byte, error) {
 		Error         string        `json:"error,omitempty"`
 		ProbeErrCause string        `json:"probe_error_cause,omitempty"`
 		PlanType      string        `json:"plan_type,omitempty"`
+		ExtraUsage    *ExtraUsage   `json:"extra_usage,omitempty"`
 	}
 	return json.Marshal(alias{
 		Provider:      h.Provider,
@@ -284,6 +291,7 @@ func (h Headroom) MarshalJSON() ([]byte, error) {
 		Error:         h.ProbeError(),
 		ProbeErrCause: string(h.ProbeErrCause),
 		PlanType:      h.PlanType,
+		ExtraUsage:    h.ExtraUsage,
 	})
 }
 
@@ -388,6 +396,114 @@ type claudeUsageResponse struct {
 		ResetsAt *time.Time        `json:"resets_at"`
 		Scope    *claudeUsageScope `json:"scope"`
 	} `json:"limits"`
+	// Spend and ExtraUsage stay raw here and are decoded on their own
+	// (claudeExtraUsage), so an unexpected shape there can never fail the
+	// limits reading.
+	Spend      json.RawMessage `json:"spend"`
+	ExtraUsage json.RawMessage `json:"extra_usage"`
+}
+
+// ExtraUsage is what /api/oauth/usage says about Claude's extra usage: whether
+// it is on, and how much of its monthly cap is spent, in minor currency units
+// (UsedMinor / 10^Exponent is the amount). Every pointer is tri-state: nil
+// means the provider did not say and must never be shown as 0 or off. The
+// response carries no purchased credit balance (spend.balance is null) and no
+// banked limit resets, so neither is read here.
+type ExtraUsage struct {
+	Enabled           *bool  `json:"enabled,omitempty"`
+	UsedMinor         *int64 `json:"used_minor,omitempty"`
+	LimitMinor        *int64 `json:"limit_minor,omitempty"`
+	Exponent          int    `json:"exponent"`
+	Currency          string `json:"currency,omitempty"`
+	SpendLimitReached *bool  `json:"spend_limit_reached,omitempty"`
+}
+
+// claudeMoney is the endpoint's money shape: {"amount_minor": 35000,
+// "currency": "USD", "exponent": 2}.
+type claudeMoney struct {
+	AmountMinor *float64 `json:"amount_minor"`
+	Currency    string   `json:"currency"`
+	Exponent    *int     `json:"exponent"`
+}
+
+// claudeSpend is the response's `spend` object, as far as the gauge reads it.
+type claudeSpend struct {
+	Used    *claudeMoney `json:"used"`
+	Limit   *claudeMoney `json:"limit"`
+	Enabled *bool        `json:"enabled"`
+}
+
+// claudeExtra is the response's `extra_usage` object; its amounts are in
+// cents (decimal_places says so).
+type claudeExtra struct {
+	IsEnabled         *bool    `json:"is_enabled"`
+	MonthlyLimit      *float64 `json:"monthly_limit"`
+	UsedCredits       *float64 `json:"used_credits"`
+	Currency          string   `json:"currency"`
+	DecimalPlaces     *int     `json:"decimal_places"`
+	SpendLimitReached *bool    `json:"spend_limit_reached"`
+}
+
+// claudeExtraUsage reads the extra-usage state from the response's `spend`
+// object (minor units plus exponent), falling back to the `extra_usage`
+// object (amounts in cents, decimal_places) for what spend does not carry. A
+// missing, null or malformed object contributes nothing; nil when neither
+// says anything.
+func claudeExtraUsage(spendRaw, extraRaw json.RawMessage) *ExtraUsage {
+	var spend claudeSpend
+	if len(spendRaw) == 0 || json.Unmarshal(spendRaw, &spend) != nil {
+		spend = claudeSpend{}
+	}
+	var extra claudeExtra
+	if len(extraRaw) == 0 || json.Unmarshal(extraRaw, &extra) != nil {
+		extra = claudeExtra{}
+	}
+	minor := func(v *float64) *int64 {
+		if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0 {
+			return nil
+		}
+		n := int64(math.Round(*v))
+		return &n
+	}
+	validExp := func(e *int) bool { return e != nil && *e >= 0 && *e <= 6 }
+	eu := &ExtraUsage{Exponent: 2, Enabled: spend.Enabled, SpendLimitReached: extra.SpendLimitReached}
+	for _, m := range []*claudeMoney{spend.Limit, spend.Used} {
+		if m == nil {
+			continue
+		}
+		if validExp(m.Exponent) {
+			eu.Exponent = *m.Exponent
+		}
+		if eu.Currency == "" {
+			eu.Currency = strings.TrimSpace(m.Currency)
+		}
+	}
+	if spend.Used != nil {
+		eu.UsedMinor = minor(spend.Used.AmountMinor)
+	}
+	if spend.Limit != nil {
+		eu.LimitMinor = minor(spend.Limit.AmountMinor)
+	}
+	if eu.Enabled == nil {
+		eu.Enabled = extra.IsEnabled
+	}
+	// extra_usage's amounts are used only when spend gave neither, so the two
+	// are never mixed under different exponents.
+	if eu.UsedMinor == nil && eu.LimitMinor == nil && (extra.UsedCredits != nil || extra.MonthlyLimit != nil) {
+		eu.Exponent = 2
+		if validExp(extra.DecimalPlaces) {
+			eu.Exponent = *extra.DecimalPlaces
+		}
+		eu.UsedMinor = minor(extra.UsedCredits)
+		eu.LimitMinor = minor(extra.MonthlyLimit)
+	}
+	if eu.Currency == "" {
+		eu.Currency = strings.TrimSpace(extra.Currency)
+	}
+	if eu.Enabled == nil && eu.UsedMinor == nil && eu.LimitMinor == nil && eu.SpendLimitReached == nil {
+		return nil
+	}
+	return eu
 }
 
 // claudeUsageScope names the model a weekly_scoped window counts, e.g.
@@ -560,13 +676,22 @@ func claudeHeadroom(provider string, thresholdPct int, body []byte) (Headroom, e
 	if len(limits) == 0 {
 		return Headroom{}, withCause(ProbeCauseUnrecognizedSchema, errors.New("claude usage: no limit window carried a percent (unrecognized schema)"))
 	}
-	return Headroom{
+	extra := claudeExtraUsage(parsed.Spend, parsed.ExtraUsage)
+	h := Headroom{
 		Provider:     provider,
 		Available:    used < thresholdPct,
 		PctRemaining: fullPct - used,
 		ResetAt:      resetAt,
 		Limits:       limits,
-	}, nil
+		ExtraUsage:   extra,
+	}
+	if extra != nil && extra.Enabled != nil {
+		// Display only: whether usage credits would cover a plan limit.
+		// Nothing here turns them on or spends them.
+		enabled := *extra.Enabled
+		h.PaidCreditsAvailable = &enabled
+	}
+	return h, nil
 }
 
 func normalizeLimitKind(kind string) string {

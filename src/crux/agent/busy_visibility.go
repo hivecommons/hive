@@ -554,7 +554,13 @@ func busyNoActivityStall(agent *AgentProcess, pane string, now time.Time) string
 		return fmt.Sprintf("%s: %s after the previous busy-no-activity restart %s ago; %d kicks undeliverable",
 			busyNoActivityCondition, paneState, roundDurationForHumans(now.Sub(agent.busyNoActivityRestartAt)), agent.KicksUndeliverable)
 	}
-	if agent.KicksUndeliverable < busyNoActivityRecoveryKicks {
+	// After a restart already ran this episode, a Working pane that is still
+	// silent for the plain busy-no-activity threshold is not recovering
+	// either (#19271): the restart was spent and the fresh session wedged
+	// again, so the full first-restart bars (six kicks, twice the silence)
+	// only prolonged the outage. The cooldown above still spaces restarts.
+	repeat := !agent.busyNoActivityRestartAt.IsZero()
+	if !repeat && agent.KicksUndeliverable < busyNoActivityRecoveryKicks {
 		return ""
 	}
 	lastActivity := agent.LastTranscriptActivity
@@ -565,7 +571,11 @@ func busyNoActivityStall(agent *AgentProcess, pane string, now time.Time) string
 		return ""
 	}
 	silentFor := now.Sub(lastActivity)
-	if silentFor < busyNoActivityRecoveryFactor*agent.Config.EffectiveBusyNoActivityThreshold() {
+	bar := busyNoActivityRecoveryFactor * agent.Config.EffectiveBusyNoActivityThreshold()
+	if repeat {
+		bar = agent.Config.EffectiveBusyNoActivityThreshold()
+	}
+	if silentFor < bar {
 		return ""
 	}
 	return fmt.Sprintf("%s: %s with no transcript activity for %s; %d kicks undeliverable",

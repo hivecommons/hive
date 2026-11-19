@@ -552,6 +552,21 @@ write-ahead identity. Its conflict-repair allowance lasts only through the
 existing mutation-reconciliation TTL; a failed/conflicting result returns to
 the normal repair path, never a ready seat.
 
+**A changelog-only base move does not make a head stale.** When the head is
+behind, the current-base gate (`currentBaseGate` in
+`src/pkg/github/automerge/automerge_current_base.go`) also compares the PR's
+merge base with the base tip. If every file changed there is the root
+`CHANGELOG.md` or lies under the root `changelog.d/` (the
+`changelogOnlyFile` and `changelogOnlyFragmentDir` allowlist), and the PR
+changes none of those same files, the head counts as current: it is not
+refreshed and does not enter preparation, and the INFO line `automerge head
+treated as current` carries `reason="behind only by changelog-only commits"`.
+The release gate's CHANGELOG-only merges therefore no longer re-run every
+workflow on every green head. The rule fails closed: a missing merge base, an
+API error, a compare that is not `ahead`, an empty or possibly truncated file
+list (`compareFilesResponseCap`, GitHub's 300-file limit), or any other path
+leaves the head stale and refreshed exactly as before.
+
 **Ownership serializes refreshes, not ready merges.** A successor that is
 already current-base, CI-green and reviewed passes every normal merge gate
 without waiting for a preparing owner. A behind successor cannot skip testing.
@@ -630,6 +645,38 @@ then refresh and re-pass current-head gates if still behind. This scheduler
 cannot stop external writers and does not relax strict current-base checks.
 Deploying the changed hive binary activates the policy; no agent, memory,
 review, CI, hold or authorization setting needs changing.
+
+### Agents leave merely-behind PRs to the owner; ci-maintainer measures churn
+
+The preparation owner above is the only thing that refreshes a PR that is
+merely behind. Agent prompts say so: the ci-maintainer and quality lanes
+(item 4 of "CI Throughput and Merge Order" in every
+`src/pkg/policies/defaults/ci-maintainer*.md` and `quality*.md` variant) and
+the scanner's conflict section in `scanner-full.md` no longer call
+`update-branch` / `update_pull_request_branch` on a PR that is only behind,
+even when it touches the files of a change that just merged. A refresh by
+anyone else reruns every pull_request workflow and cancels the run in
+flight, which sends the owner back to the start. Agents touch a behind
+branch only to repair a real conflict (`CONFLICTING` / `DIRTY`, or
+`git merge-tree` exit 1), and the shared-baseline helper's `MERGE_BASE`
+repair of a red check still applies. When an agent cannot tell whether the
+gate applies to a repository it assumes it does; where the gate is off, the
+merge train already updates overlapping siblings. `TestPoliciesDoNotRefreshMerelyBehindPRs`
+in `src/pkg/policies/ci_throughput_test.go` keeps the old instructions out.
+
+`ci-maintainer-full.md` also carries a standing **Merge Churn** goal: once a
+week it measures the primary repository's last 7 days (at most the 100 most
+recently merged PRs), writes one `merge churn: week of <date>` bead, and
+keeps one open `[ci-maintainer] Merge churn over threshold in <owner/repo>`
+issue while any threshold is crossed (a comment per new week, closed after a
+full week back under every threshold).
+
+| Measure | Name | Over threshold when |
+| --- | --- | --- |
+| App base refreshes per merged PR | `refreshes_per_merged_pr` | mean above 1.5 |
+| pull_request runs cancelled on a head a refresh replaced | `refresh_cancelled_run_share` | above 20% of the week's pull_request runs |
+| Releases published per day | `release_merges_per_day` | above 6 |
+| Latest approving review to merge | `approval_to_merge_median` / `approval_to_merge_p90` | median above 4h or p90 above 24h |
 
 ### CI reporting reconciliation
 

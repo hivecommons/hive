@@ -335,6 +335,11 @@ func resolveRedPRFixer(cfg *config.Config, owner string, available func(string) 
 	return ""
 }
 
+// redPRFixOwnSignoffExec is the `git rebase --exec` step the no-dco repair
+// advice names (stagelabels.OwnSignoffRebaseExec): it signs off only the
+// agent's own commits, never a person's (hivecommons/hive#19102).
+const redPRFixOwnSignoffExec = stagelabels.OwnSignoffRebaseExec
+
 // redPRFixKick renders the targeted FIX-BEFORE-NEW kick a re-engagement
 // delivers. It names ONE PR — the stuck one — with its evidence, so the kick is
 // answerable on its own rather than relying on the owner's next cadence kick
@@ -347,10 +352,15 @@ func redPRFixKick(o escalation.Observation, rerouted bool) string {
 	}
 	b.WriteString("Repair it BEFORE claiming new issues or opening any new PR:\n")
 	if slices.Contains(o.Labels, stagelabels.NoDCOLabel) {
-		fmt.Fprintf(&b, "  FIRST (required): the PR is %s — it inherited unsigned commits. Re-sign them: gh pr checkout %d --repo %s → git rebase --signoff <base> (original authors preserved) → git push --force-with-lease\n", stagelabels.NoDCOLabel, o.Number, o.Repo)
+		fmt.Fprintf(&b, "  FIRST (required): the PR is %s, a commit is missing its Signed-off-by. Sign off ONLY the commits you authored: gh pr checkout %d --repo %s → git rebase <base> --exec %s → git push --force-with-lease\n", stagelabels.NoDCOLabel, o.Number, o.Repo, redPRFixOwnSignoffExec)
+		b.WriteString("  NEVER add your Signed-off-by to a commit someone else wrote (git rebase --signoff signs every commit in the range, theirs too): leave their commits as they are and comment on the PR asking the author to sign them off.\n")
 		b.WriteString("  THEN fix any failing CI the same way.\n")
 	}
 	fmt.Fprintf(&b, "  gh pr checkout %d --repo %s → fix → git commit -s → git push\n", o.Number, o.Repo)
+	// The merge-request re-engagement path reaches this kick for a person's
+	// PR too (hivecommons/hive#19110: a coverage fix pushed as the lane
+	// failed the squash sign-off check), and the hook knows no author.
+	b.WriteString("  If the PR's author is a person, not the hive App or a bot: " + stagelabels.PersonPRAgentCommitRule + "\n")
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR.\n")
 	b.WriteString("After the push, STOP: do not watch, poll, or sleep on CI (no gh run watch/view loops).\n")
 	b.WriteString("The automerge sweep merges the PR once it is green; if the failure is infrastructure\n")

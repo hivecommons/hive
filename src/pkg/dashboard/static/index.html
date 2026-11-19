@@ -253,16 +253,29 @@
     .oc-nav-label::after {
       content: ''; flex: 1; height: 1px; background: var(--border);
     }
+    /* Every sidebar entry reserves a leading gutter as wide as the reorder
+       grip plus the row gap. Reorderable entries (Dashboard group, agents)
+       draw their grip inside that gutter; entries without a grip (Collaborate,
+       Resources, Intelligence, Admin, Help, Filters) keep it empty, so all
+       groups line up at the same indent (#19282). */
+    :root {
+      --oc-nav-grip-w: 1.25rem;
+      --oc-nav-item-gap: var(--sp-3);
+      --oc-nav-item-pad-x: 12px;
+      --oc-nav-child-inset: calc(var(--oc-nav-grip-w) + var(--oc-nav-item-gap));
+    }
     .oc-nav-item {
-      display: flex; align-items: center; gap: var(--sp-3);
-      padding: 5px 12px; font-size: var(--fs-base); color: var(--muted);
+      display: flex; align-items: center; gap: var(--oc-nav-item-gap);
+      padding: 5px var(--oc-nav-item-pad-x) 5px calc(var(--oc-nav-item-pad-x) + var(--oc-nav-child-inset));
+      font-size: var(--fs-base); color: var(--muted);
       cursor: pointer; text-decoration: none; border-radius: var(--r);
       transition: background 0.15s, color 0.15s;
       margin: 1px 8px; position: relative;
       min-height: 28px; overflow: hidden;
     }
-    .oc-nav-drag-handle, .oc-nav-hide-toggle { width: 1.25rem; height: 1.25rem; min-width: 1.25rem; padding: var(--sp-0); margin: var(--sp-0); border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--muted); line-height: 1; cursor: grab; opacity: 0; display: inline-flex; align-items: center; justify-content: center; touch-action: none; }
+    .oc-nav-drag-handle, .oc-nav-hide-toggle { width: var(--oc-nav-grip-w); height: var(--oc-nav-grip-w); min-width: var(--oc-nav-grip-w); padding: var(--sp-0); margin: var(--sp-0); border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--muted); line-height: 1; cursor: grab; opacity: 0; display: inline-flex; align-items: center; justify-content: center; touch-action: none; }
     .oc-nav-hide-toggle { cursor: pointer; margin-left: auto; font-size: var(--fs-xs); }
+    .oc-nav-item > .oc-nav-drag-handle:first-child { margin-left: calc(-1 * var(--oc-nav-child-inset)); }
     .oc-nav-item:hover .oc-nav-drag-handle, .oc-nav-drag-handle:focus-visible, .oc-nav-drag-handle[aria-pressed="true"], .oc-nav-item:hover .oc-nav-hide-toggle, .oc-nav-hide-toggle:focus-visible, .oc-nav-hide-toggle[aria-pressed="true"] { opacity: 1; color: var(--text); border-color: var(--border); background: var(--surface-2); outline: none; }
     .oc-nav-drag-handle:active, .oc-nav-drag-handle[aria-pressed="true"] { cursor: grabbing; background: var(--surface); }
     .oc-nav-hide-toggle:hover { color: var(--amber); }
@@ -3850,6 +3863,8 @@
     .overview-pr-in-review { --slice-c: var(--band-in-review); }
     .overview-pr-open { --slice-c: var(--band-open); }
     .overview-pr-draft { --slice-c: var(--band-draft); }
+    /* Outside: open items not in any band; the Outside KPI card's neutral grey. */
+    .overview-issue-outside, .overview-pr-outside { --slice-c: var(--muted); }
 
     /* Plan usage gauge: Overview block, one row per provider, fuel dials. */
     .overview-usage-gauge { display: flex; flex-direction: column; gap: var(--sp-3); margin: var(--sp-0) var(--sp-0) var(--sp-4); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
@@ -3863,6 +3878,8 @@
     .overview-usage-gauge__provider { font-weight: var(--fw-semibold); }
     .overview-usage-gauge__users { font-size: var(--fs-sm); color: var(--text-muted); overflow-wrap: anywhere; }
     .overview-usage-gauge__spend { font-size: var(--fs-base); font-weight: 600; }
+    .overview-usage-gauge__credits { font-size: var(--fs-sm); color: var(--text-muted); }
+    .overview-usage-gauge__credits[data-status="warn"] { color: var(--status-warn); font-weight: 600; }
     .overview-usage-gauge__dials { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-4); }
     .overview-usage-gauge__dial { display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); text-align: center; }
     .overview-usage-gauge__label { font-weight: var(--fw-semibold); }
@@ -36851,7 +36868,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
         const format = ((state && state.exportFormat) || 'csv').toUpperCase();
-        const download = kind ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key))}" title="Export ${esc(s.label)} as ${format}" aria-label="Export ${esc(s.label)} as ${format}">⬇</button>` : '';
+        const download = kind && !s.outside ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key))}" title="Export ${esc(s.label)} as ${format}" aria-label="Export ${esc(s.label)} as ${format}">⬇</button>` : '';
         return `<div class="overview-chart-legend-row" data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(s.count, percentLabel, state))}</span>${download}</div>`;
       }).join('');
     }
@@ -37086,6 +37103,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return null;
       }
       return overviewRepoForgeTotals(repos);
+    }
+
+    // The bands draw only tracked items (actionable + held) while the "Total
+    // open" cards count every open item from the same forge totals, so the
+    // charts showed fewer items than the cards with nothing saying why. The
+    // Outside slice is the difference, so each chart adds up to its card for
+    // any repo selection; its rule carries the same breakdown the card does.
+    function overviewOutsideSlice(kind, slices, forgeTotals) {
+      const total = forgeTotals && forgeTotals[kind === 'pr' ? 'prs' : 'issues'];
+      const drawn = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      const count = total ? Math.max(0, Number(total.forge || 0) - drawn) : 0;
+      const labels = kind === 'pr' ? OVERVIEW_PR_BREAKDOWN_LABELS : OVERVIEW_ISSUE_BREAKDOWN_LABELS;
+      const parts = Object.entries(labels).filter(([key]) => key !== 'hold').map(([key, label]) => {
+        const n = Number(total?.breakdown?.[key] || 0);
+        return n > 0 ? `${n} ${label}` : '';
+      }).filter(Boolean);
+      const what = kind === 'pr' ? 'Open PRs' : 'Open issues';
+      const rule = `${what} not in any band, left out by this hive's scanner settings${parts.length ? ': ' + parts.join(' · ') : ''}`;
+      return { key: 'outside', label: 'Outside', rule, count, className: 'overview-' + kind + '-outside', items: [], outside: true };
+    }
+
+    // overviewChartSlices is what the charts draw: the band slices plus the
+    // Outside slice when it is non-empty. The KPI cards keep the band slices.
+    function overviewChartSlices(kind, slices, repos) {
+      // renderOverviewKPIs sets the same scope; the forge totals read it.
+      _overviewKPILocalScope = overviewKPIRepoScope(repos);
+      const outside = overviewOutsideSlice(kind, slices, overviewKPIForgeTotals(repos));
+      return outside.count > 0 ? (slices || []).concat([outside]) : (slices || []);
     }
 
     function overviewKPIBreakdownSubline(total, labels) {
@@ -37641,6 +37686,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function overviewNavigateBand(kind, band) {
+      if (band === 'outside') return overviewApplyKPIProjectFilter('outside');
       const key = kind === 'issue' ? (band === 'waiting' || band === 'done' ? 'blocked-needs-human' : 'actionable-now') : (band === 'waiting' || band === 'blocked' ? 'blocked-needs-human' : (band === 'draft' ? 'outside' : 'actionable-now'));
       overviewApplyKPIProjectFilter(key);
     }
@@ -37748,15 +37794,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const repoSuffix = overviewRepoSubtitleSuffix(_overviewLastRepos, selectedNames);
       const issueSlices = overviewIssueBandSlices(selectedRepos);
       const prSlices = overviewPRBandSlices(selectedRepos);
-      const animationSignature = overviewAnimationSignature(issueSlices, prSlices, selectedNames);
+      const issueChartSlices = overviewChartSlices('issue', issueSlices, selectedRepos);
+      const prChartSlices = overviewChartSlices('pr', prSlices, selectedRepos);
+      const animationSignature = overviewAnimationSignature(issueChartSlices, prChartSlices, selectedNames);
       const dataChanged = overviewShouldAnimateData(animationSignature);
-      const issueSampled = overviewSampleHistory('issue', issueSlices, state);
-      const prSampled = overviewSampleHistory('pr', prSlices, state);
+      const issueSampled = overviewSampleHistory('issue', issueChartSlices, state);
+      const prSampled = overviewSampleHistory('pr', prChartSlices, state);
       const sampled = issueSampled || prSampled;
-      const total = issueSlices.concat(prSlices).reduce((n, s) => n + s.count, 0);
+      const total = issueChartSlices.concat(prChartSlices).reduce((n, s) => n + s.count, 0);
       const kpis = renderOverviewKPIs(selectedRepos, issueSlices, prSlices, state);
       const html = total
-        ? `${kpis}<div class="overview-grid">${renderOverviewPanel('issue', 'Issues by band', 'Actionable and held issues ' + repoSuffix + ' · hover a band for its rule', issueSlices, state)}${renderOverviewPanel('pr', 'PRs by band', 'Open and held pull requests ' + repoSuffix + ' · hover a band for its rule', prSlices, state)}</div>`
+        ? `${kpis}<div class="overview-grid">${renderOverviewPanel('issue', 'Issues by band', 'Open issues ' + repoSuffix + ' · hover a band for its rule', issueChartSlices, state)}${renderOverviewPanel('pr', 'PRs by band', 'Open pull requests ' + repoSuffix + ' · hover a band for its rule', prChartSlices, state)}</div>`
         : `${kpis}<div class="overview-empty">Nothing actionable — the hive is caught up</div>`;
       if (sampled) saveOverviewChartsState(state);
       setIfChanged(el, html);
@@ -57747,6 +57795,31 @@ function burnAreaChart() {
       };
       // Paid credit pools and prepaid balances are not plan limits.
       const NOT_LIMITS = ['credits', 'balance'];
+      // Claude's extra usage (usage credits past the plan limits) as one
+      // line: on/off and spent of the monthly cap. null hides the line: the
+      // provider did not say, which is never shown as 0 or off. Display
+      // only; the dashboard never turns credits on or spends them.
+      const creditsFor = (x) => {
+        if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
+        const enabled = typeof x.enabled === 'boolean' ? x.enabled : null;
+        const reached = x.spend_limit_reached === true;
+        const exp = Number.isInteger(x.exponent) && x.exponent >= 0 && x.exponent <= 6 ? x.exponent : 2;
+        const amount = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v / Math.pow(10, exp) : null);
+        const used = amount(x.used_minor);
+        const cap = amount(x.limit_minor);
+        const currency = String(x.currency || '').toUpperCase();
+        const money = (n) => (currency === 'USD' || currency === '' ? '$' + n.toFixed(exp) : n.toFixed(exp) + ' ' + currency);
+        const parts = [];
+        if (reached) parts.push('limit reached');
+        else if (enabled !== null) parts.push(enabled ? 'on' : 'off');
+        if (enabled !== false) {
+          if (used !== null && cap !== null) parts.push(money(used) + ' of ' + money(cap) + ' used this month');
+          else if (cap !== null) parts.push(money(cap) + ' monthly cap');
+          else if (used !== null) parts.push(money(used) + ' used this month');
+        }
+        if (!parts.length) return null;
+        return { text: 'Usage credits: ' + parts.join(' · '), status: reached ? 'warn' : 'ok', enabled: enabled, limitReached: reached, used: used, cap: cap, currency: currency };
+      };
       // listed: the provider is in used_by, so agents spend it and a missing
       // or failed reading is worth saying. Unlisted (a server without
       // used_by) keeps the Claude-only rule: hidden when Claude is not used.
@@ -57819,6 +57892,7 @@ function burnAreaChart() {
           ageMs: ageMs,
           outOfDate: !!reading.stale || (ageMs !== null && ageMs > OUT_OF_DATE_MS),
           planName: String(reading.plan_type || ''),
+          credits: creditsFor(reading.extra_usage),
           accountNote: 'Reflects the ' + name + ' account this hive is signed in with.',
         });
       };
@@ -58031,6 +58105,11 @@ function burnAreaChart() {
             grid.appendChild(cell);
           });
           box.appendChild(grid);
+          if (row.credits) {
+            const credits = el('div', 'overview-usage-gauge__credits', row.credits.text);
+            credits.setAttribute('data-status', row.credits.status);
+            box.appendChild(credits);
+          }
         }
         parts.push(box);
       });

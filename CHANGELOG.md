@@ -11,6 +11,25 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.339.0)
+
+### Added
+
+- **Hub v1 registrations can prove repo ownership with a per-request GitHub token** (#19238). With `HIVE_HUB_PROOF_GITHUB_USER_TOKEN` on, `POST /api/hub/v1/registrations` and `PATCH /api/hub/v1/registrations/{id}` accept `X-Hive-Proof-Method: github-user-token` with a token in `X-Hive-Proof-Token`, so users in orgs that restrict OAuth apps can register repos they administer. The token must belong to the signed-in account, is used only for read-only GitHub calls and is never stored or logged. Discovery lists the method and the scopes it needs, and a failed proof names a reason such as `missing_scope` or `admin_role_not_visible` instead of a bare "not an admin". Off by default.
+- Documented how to add repositories and pause agents, what optional Ask AI help sends and how consent works, and what owners must verify before rolling out Kapa ([#19182](https://github.com/hivecommons/hive/issues/19182)).
+
+### Fixed
+
+- **Proxy: inspected relays refuse a request that names another host or carries a dot segment** ([#19223](https://github.com/hivecommons/hive/issues/19223)). Inside a MITM'd session, a Host header or absolute-form URL naming a host other than the CONNECT target is now refused with a 400 and the connection closed, as the sandbox read relay already did; the rule engine and credential were chosen for the CONNECT host. A `.` or `..` path segment, in any percent-encoded spelling, is refused on the inspected relay (400) and the sandbox read relay (403), since the gates match the literal path while an upstream that resolves dot segments acts on a different one. New table tests pin that CL+TE, duplicate or malformed Content-Length, unknown Transfer-Encoding, folded headers and bare LF never reach the upstream with ambiguous framing on `proxyHTTPHost`, `forwardPlainDirect` and the sandbox read relay.
+- A green PR whose base moved only by changelog bookkeeping (the root `CHANGELOG.md` or files under `changelog.d/`, such as the release gate's merges) is no longer treated as stale by `auto_merge.require_current_base`. Before, each of those merges sent the head back to base preparation, so it was refreshed and every workflow re-ran for a change CI never tests; about one base move in five was of this kind. The gate now compares the PR's merge base with the base tip, treats the head as current when every changed file is on the changelog allowlist and none of them is a file the PR also changes, and logs `reason="behind only by changelog-only commits"` (#19269). Any other change, an API error or a possibly truncated comparison still refreshes the head as before.
+- An agent whose pane still shows Working and stays silent after a busy-no-activity restart is now restarted again once the 30-minute stall cooldown has passed and it has been silent for the plain busy-no-activity threshold, instead of waiting out the first-restart bars (six failed kicks and twice the silence) again. Before, such a session kept refusing kicks and repeating its `kick_failed_repeatedly` self-report for the better part of an hour (#19271).
+
+## 2026-11-19 (v5.338.3)
+
+### Fixed
+
+- An agent whose CLI still never reaches its input prompt after a busy-no-activity restart is now restarted again after three more failed kicks, once the 30-minute stall cooldown has passed. Before, the fresh session had to wait out the full recovery bars again (six failed kicks and twice the silence threshold), so it refused kicks for about another hour after its `kick_failed_repeatedly` self-report had already been filed (#19257). A pane that shows Working still waits for the full bars, and the restart storm breaker still limits how often restarts repeat.
+
 ## 2026-11-19 (v5.338.2)
 
 ### Fixed

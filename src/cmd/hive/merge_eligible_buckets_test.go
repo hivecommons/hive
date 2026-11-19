@@ -56,6 +56,7 @@ type failingEntry struct {
 	RebaseAttemptsMax int      `json:"rebase_attempts_max"`
 	BaseRef           string   `json:"base_ref"`
 	TrustedAuthor     bool     `json:"trusted_author"`
+	PersonAuthored    bool     `json:"person_authored"`
 }
 
 type mergeEligibleInputs struct {
@@ -618,5 +619,27 @@ func TestWriteMergeEligible_EscalatedNonFailingPRsListedForReviewerLane(t *testi
 	}
 	if got.Mergeable != string(github.MergeableNo) || got.CIStatus != "success" {
 		t.Errorf("escalated row mergeable=%q ci_status=%q, want no/success", got.Mergeable, got.CIStatus)
+	}
+}
+
+// hivecommons/hive#19110: a person's red PR reaches ci-failing.json and its
+// kick sent the fixer to push a coverage fix of its own, which the squash
+// lands under the person with the lane's sign-off. Only a person's PR is
+// marked person_authored: not the App's, not a bot account's.
+func TestWriteMergeEligible_FailingRowMarksPersonAuthored(t *testing.T) {
+	prs := []github.PullRequest{
+		{Repo: "hive", Number: 19110, Author: "clubanderson", CIStatus: "failure", HeadSHA: "a", FailingChecks: []string{"coverage"}},
+		{Repo: "hive", Number: 19111, Author: "app/hivecommons-hive", CIStatus: "failure", HeadSHA: "b", FailingChecks: []string{"coverage"}, AppAuthored: true},
+		{Repo: "hive", Number: 19112, Author: "some-bot", CIStatus: "failure", HeadSHA: "c", FailingChecks: []string{"coverage"}, AuthorNonHuman: true},
+	}
+	_, failing := runWriteMergeEligible(t, prs, mergeEligibleInputs{org: "hivecommons"})
+	want := map[int]bool{19110: true, 19111: false, 19112: false}
+	if len(failing) != len(want) {
+		t.Fatalf("failing=%+v, want %d rows", failing, len(want))
+	}
+	for _, f := range failing {
+		if f.PersonAuthored != want[f.Number] {
+			t.Errorf("#%d person_authored = %v, want %v", f.Number, f.PersonAuthored, want[f.Number])
+		}
 	}
 }
