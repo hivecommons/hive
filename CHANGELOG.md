@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.336.1)
+
+### Fixed
+
+- Upstream inference HTTP 401 responses now produce only the credential-specific fleet self-report, not a second generic upstream-error report ([#19216](https://github.com/hivecommons/hive/issues/19216)).
+
 ## 2026-11-19 (v5.336.0)
 
 ### Added
