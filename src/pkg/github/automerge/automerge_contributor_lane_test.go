@@ -22,6 +22,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/oktotest"
 	"github.com/hivecommons/hive/pkg/review"
 	hreview "github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -60,6 +61,7 @@ type contributorLaneFixture struct {
 	omitAssociation bool
 	files           []map[string]any
 	filesStatus     int
+	changedFiles    int // changed_files on the PR payload; 0 omits it
 	listStatus      int
 	getStatus       int
 	recheckHeadSHA  string
@@ -113,6 +115,15 @@ type contributorLaneFixture struct {
 	// headStatus, when set, is the combined-status state and check-run
 	// conclusion reported for sha7; empty means "success".
 	headStatus string
+	// headStatuses is what GET commits/sha7/statuses (every commit status,
+	// with its creator) serves; nil serves an empty list.
+	headStatuses []map[string]any
+	// repoComments is what GET issues/comments (the repository-wide comment
+	// listing the Prow refusal memory reads) serves; repoCommentLists counts
+	// those reads. workflowInstalled serves the hive-ok-to-test workflow file.
+	repoComments      []map[string]any
+	repoCommentLists  int
+	workflowInstalled bool
 	// baseRef, when set, gives the PR base a branch name and serves the
 	// branch, protection and compare routes the current-base gate
 	// (automerge_current_base.go) and release hold need; empty leaves the
@@ -215,6 +226,9 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			}
 			if !fx.omitAssociation {
 				p["author_association"] = association
+			}
+			if fx.changedFiles != 0 {
+				p["changed_files"] = fx.changedFiles
 			}
 			if fx.headCommittedAt != "" {
 				p["updated_at"] = fx.headCommittedAt
@@ -329,6 +343,19 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			json.NewEncoder(w).Encode(fx.issueComments)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments":
 			json.NewEncoder(w).Encode(fx.prComments)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/comments":
+			fx.repoCommentLists++
+			repoComments := fx.repoComments
+			if repoComments == nil {
+				repoComments = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(repoComments)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/contents/"+oktotest.WorkflowPath:
+			if !fx.workflowInstalled {
+				http.NotFound(w, r)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"type": "file", "name": "hive-ok-to-test.yml", "path": oktotest.WorkflowPath})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/files":
 			if fx.filesStatus != 0 {
 				http.Error(w, "files error", fx.filesStatus)
@@ -347,6 +374,12 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				"total_count": 1,
 				"statuses":    []map[string]string{{"context": "ci/build", "state": headStatus}},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/statuses":
+			statuses := fx.headStatuses
+			if statuses == nil {
+				statuses = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(statuses)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
 			run := map[string]string{"name": "build", "status": "completed", "conclusion": headStatus}
 			if fx.checkCompletedAt != "" {
@@ -751,6 +784,9 @@ func TestTrySweepContributorLanePRSkipReasons(t *testing.T) {
 			wantMerges: 1,
 		},
 		{name: "files fetch error", mutate: func(fx *contributorLaneFixture) { fx.filesStatus = http.StatusInternalServerError }, wantReason: contributorLaneReasonFilesEvidence, wantErr: true},
+		// More changed files than the files API returns is a standing
+		// verdict, not a transient error re-WARNed every sweep (#18121).
+		{name: "incomplete files list", mutate: func(fx *contributorLaneFixture) { fx.changedFiles = 5204 }, wantReason: contributorLaneReasonFilesEvidence},
 		{name: "claim comments fetch error", mutate: func(fx *contributorLaneFixture) { fx.issueCommentsSt = http.StatusInternalServerError }, wantReason: "claim-comments-fetch", wantErr: true},
 		{
 			name: "reporter-trust hold",

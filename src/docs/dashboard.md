@@ -1,5 +1,12 @@
 # Spoke dashboard
 
+## Pausing an agent
+
+On the hive dashboard, open **Agents** in the sidebar and select the worker.
+As a hive owner, choose **⏸ pause** on its card. This pauses the individual
+agent, not the fleet, and is separate from disabling the agent or changing
+its per-mode cadences.
+
 ## Resuming a paused agent
 
 On the agent card, hover or focus the information icon beside **paused** to
@@ -81,6 +88,27 @@ Every dashboard section title has a small **?** mark. Hovering or focusing it sh
 
 Settings fields use the same **?** mark, rendered by `settingHelpMark(page, anchor, label, tip)`: hovering or focusing it shows the setting's tooltip, and clicking it opens the guide that explains the setting, or the tab's entry in [Dashboard settings explained](settings.md), through the same `dashboardDocsHref`. Clicking the mark never changes the setting.
 
+Use the [dashboard UI map](dashboard-ui-map.md) to match section headings to
+their sidebar locations and Settings tabs.
+
+## Optional Ask AI help
+
+Where an operator has enabled **Ask**, the panel answers dashboard navigation
+questions with links to the docs. Answers are AI-generated; check the cited
+page before acting. Use the `?` marks or the docs directly if Ask is off,
+unavailable, or has no cited answer.
+
+Ask is off by default. Before your first question, review and accept the
+disclosure in the panel. Consent is recorded server-side for your signed-in
+dashboard identity, not shared with other users, and can be withdrawn in the
+panel. Hive asks again if the disclosure changes. Withdrawal stops future
+requests; it does not erase questions already sent.
+
+When you submit a question, Hive sends what you typed and, if enabled, a
+fixed dashboard section label to Kapa.ai. Project administrators can read
+questions in Kapa analytics. Do not paste secrets or private details.
+See [Ask data and consent](telemetry.md#ask-ai-help) for the full payload.
+
 ## Design system
 
 Dashboard UI changes should follow the shared [dashboard design system](dashboard-design-system.md), [dashboard glossary and sidebar IA](dashboard-glossary.md), and [ADR-0018](adr/0018-dashboard-design-tokens.md). The token layer is the theme contract for future user theme/background work and the migration path away from static inline styles; `go test ./pkg/dashboard/... -run StyleRatchet -v` ratchets inline styles and raw CSS values so the debt only goes down.
@@ -125,13 +153,74 @@ honoured as a deprecated alias for one release: it enables the panel, logs a
 one-line deprecation at config load, and is folded into
 `dashboard.experiment_lab` so the next config save writes the documented key.
 
+### Usage gauge
+
+The owner sees a fuel gauge at the top of the **Overview** card with a row for
+each provider whose plan the hive's agents spend: Claude, Copilot, Codex,
+Gemini, Kiro or DeepSeek. An agent counts against the provider of its
+**backend**, not its model: a Claude model run through the Copilot backend
+spends Copilot premium requests, so it is listed under Copilot. Each row names
+the agents that use it and shows one dial for each limit the plan reports,
+with the percentage left and when it resets:
+
+- **Claude**: the weekly limit, plus a 5-hour or model-specific weekly limit
+  when the plan has one. A model-specific limit is named after its model the
+  way Claude Code's `/usage` names it, for example "Weekly (Fable)".
+  Under the dials, one line shows Claude's usage credits (extra usage, which
+  keeps the account working past a plan limit) when Claude reports them:
+  "Usage credits: on · $0.00 of $350.00 used this month", "off", or "limit
+  reached" in amber once the monthly cap is spent. The line is hidden when
+  Claude does not report them. It is display only: the hive never turns
+  credits on or spends them. Claude's usage endpoint does not report a
+  purchased credit balance or banked limit resets, so the gauge cannot show
+  those; claude.ai's Settings › Usage page does.
+- **Copilot**: the monthly premium-request quota ("Premium requests"), as
+  Copilot itself reports it, resetting at the start of each month.
+
+A dial turns amber at 25% left or less and red at 10% or less, and each row
+says how old its reading is and greys out when it is more than 15 minutes old.
+When a provider the agents use has no reading, its row says so and why (for
+example, the hive is not signed in to Copilot) instead of showing an empty
+dial. A hive whose agents all use one provider sees a single block titled
+after it, such as "Claude usage left".
+
+The gauge shows the measurements hive already makes on its regular 5-minute
+schedule, through provider rotation or the usage reading that runs by default
+without it. It never moves or pauses an agent. Each row reflects the account
+the hive itself is signed in with for that provider, and it is that plan's
+usage, not the hive's own token budget.
+
+The Copilot reading signs in only with the Copilot login the agents use
+(`COPILOT_GITHUB_TOKEN`, else the dashboard's Copilot login, else the shared
+Copilot CLI config), never with another GitHub token on the host. It is for
+display only: no relay or quota guard holds work on it. With provider rotation
+on, list `github` under `governor.rotation.providers` to measure Copilot.
+
+Only the owner sees it. To hide it, untick **Show usage gauge** in the
+Overview settings (remembered per browser). To also show it as a small chip in
+the header on every page, turn on **Also show the usage gauge in the header**
+(`dashboard.subscription_gauge_header`) under Settings → Dashboard. The chip's
+needle shows the limit closest to empty across every provider, and clicking it
+opens the gauge on the Overview.
+
 ## Governor card
 
 The dashboard **Governor** card summarizes queue depth, operating mode, budget
 posture, and cadence controls for the hive. Its collapsible **PRs by model** nested
 sub-section reads `GET /api/governor/pr-models` with the selected `7d`, `30d`,
 or `all` window. The nested header keeps the window/sort toggles visible and its
-collapsed summary shows the current top-ranked model plus model count.
+collapsed summary shows the current top-ranked model plus model count. Each
+model row has a **▸ PRs** button that opens that model's pull requests in the
+selected window (outcome, review rounds, fix attempts, first pass, author agent
+and backend, each linked to GitHub). The list is fetched on demand with
+`GET /api/governor/pr-models?window=…&model=<model>` and cached per window and
+model.
+Each model row's tooltip also shows **Hive review cost**: what the hive's own
+agents (reviewers, adjudicator, fixers) are estimated to have spent on that
+model's PRs, joined from the cached launch-cost snapshot (see
+[Launch attribution](token-tracking.md#launch-attribution)). A note under the
+header names the launch-cost window and the spend that could not be tied to any
+PR. "—" means no attributed usage, not $0.
 
 The Governor **actionable issues** and **actionable PRs** tiles use the shared
 server-side actionable partition described in [Repository card legend, issue
@@ -447,7 +536,8 @@ hive. The rows cover hard-suppress labels (`stage/045-needs-decision`,
 `needs-spec`; `needs-human` is counted under
 blocked/needs-human), exempt labels from `governor.labels.exempt` plus permanent
 exempt labels, reporter-trust triage from
-`project.issue_filter.reporter_trust`, require-label filtering from
+`project.issue_filter.reporter_trust`, agent proposal filtering from
+`project.issue_filter.agent_proposal`, require-label filtering from
 `project.issue_filter.require_labels`, standing hive advisory/meta issues,
 bot Dependency Dashboard issues, draft PRs, exempt PR labels, and
 hold-adjacent/other remainder rows. See [Outside buckets](#outside-buckets)
@@ -478,6 +568,7 @@ and exposes the editable rows.
 | Exempt labels | Issue or PR carries a deny-list label and is never agent work. | `governor.labels.exempt` plus permanent labels such as `do-not-merge`. | Settings → Labels → Exempt labels, or edit `hive.yaml`. |
 | Reporter triage | Reporter trust is enabled and the issue author is not trusted yet. | `project.issue_filter.reporter_trust` trusted associations/logins and untrusted required labels. | Settings → Labels → Reporter trust. |
 | Project issue filter | Issue lacks every required allow-list label. | `project.issue_filter.require_labels`. | Settings → Labels → Required labels. |
+| Agent proposal | A non-human strategist or outreach proposal lacks an approved-direction label, human assignee, or acknowledged split parent. The Activity Monitor reason is `Agent proposal awaiting approved-direction`. | `project.issue_filter.agent_proposal` (omitted for defaults; `agent_proposal: {}` disables the gate). | Edit `hive.yaml`; see [Agent-filed direction proposals](agent-configuration.md#agent-filed-direction-proposals). |
 | Standing meta/advisory | Hive's own advisory report or issue labelled `hive/advisory`; it is coordination state, not work. | Fixed scanner rule: advisory title/label. | Rename/close the advisory, or remove the advisory label if it should become work. |
 | Dependency dashboard | Bot dependency dashboard control panel, not a concrete task. | Fixed scanner rule: Renovate/Dependabot-style bot author plus Dependency/Renovate Dashboard title. | File concrete child issues or close/rename the dashboard issue. |
 | Draft PRs | Pull request is open but marked draft. | GitHub draft state. | Use GitHub's **Ready for review** action. |

@@ -285,3 +285,22 @@ The My Hives **GROUP BY** selector includes an `Upgrade state` dimension ([#3805
 `GET /api/version/release-notes?from=<sha>&to=<channel-or-sha>` answers "what changes if I upgrade from here to there?" ([#11065](https://github.com/hivecommons/hive/issues/11065)). The dashboard reads `CHANGELOG.md` at both revisions (through the configured GitHub credential, falling back to the public raw endpoint) and returns the `## <date> (vX.Y.Z)` sections that exist at `to` but not at `from`, newest first, grouped Added / Changed / Fixed / Security / Deprecated. The diff comes from repo content, never version arithmetic, so channel and nightly heads work. When `to` is not a release tag, `changelog.d/` fragments that are new at `to` are listed under an `Unreleased (in this build)` section, categorised by filename prefix. If the notes cannot be fetched the endpoint still returns 200 with `source: "unavailable"` and a reason, so an upgrade is never blocked on it. Responses are cached per (from, to) pair for an hour (the cache holds at most 64 pairs, evicting the oldest) and capped at 400 entries (`truncated: true` when cut). Because each uncached build can cost a few hundred GitHub content reads against the hive's own credential, uncached builds are admitted at most 2 at a time and 8 per 10 minutes process-wide; a request past that limit still returns 200 with `source: "unavailable"` and a retry hint, while already-cached pairs keep being served.
 
 When a hub-managed spoke is upgraded without the operator clicking anything, its dashboard shows a dismissible banner at the top of the overview for owners and mergers: "Upgraded <old> → <new>: N releases. What changed ▸" ([#11067](https://github.com/hivecommons/hive/issues/11067)). Expanding it opens these release notes in a read-only modal. It appears once per upgrade per browser and never on a first visit. See [Dashboard-triggered standalone upgrades](dashboard-standalone-upgrades.md#release-notes-before-and-after-an-upgrade).
+
+## Does this build contain PR #N?
+
+"Merged" is not "deployed". Image tags move, a build can be untagged, and a digest says nothing about history, so the only sound answer is git ancestry ([#18915](https://github.com/hivecommons/hive/issues/18915)). Two read endpoints answer it from the commit a hive already reports running:
+
+- `GET /api/saas/build-contains?q=<PR number or SHA>` on the hub, one answer per hive the caller can see in My Hives.
+- `GET /api/version/contains?q=<PR number or SHA>` on a hive, for that hive's own running build.
+
+`q` is a PR number (`123`, `#123`, `PR 123`; up to six digits) or a commit SHA (7 to 40 hex characters). A PR resolves to its merge commit. Each answer is one of:
+
+| `contains` | Meaning |
+|---|---|
+| `yes` | The merge commit (or the SHA) is the running commit or one of its ancestors. |
+| `no` | Ancestry was resolved and it is not in the running build's history. A PR that was never merged is `no` for every hive. |
+| `unknown` | Ancestry could not be established, and `reason` says why: the hive reports no usable commit, the commit is not in the repository history the hub can read (unpublished, force-pushed or from a fork), the PR does not exist, or the lookup failed. `unknown` is never a guess; try again or check the commit by hand. |
+
+The lookup reads the public repository through the hub's existing read-only GitHub identity (or the hive's own GitHub client for the hive endpoint) and sends only commit SHAs and a PR number. It adds no heartbeat field: the commit and image reference are what the hive already reports. One lookup compares at most 40 distinct running commits; hives past that answer `unknown`.
+
+A channel image can sit on an older commit than the newest merge (the "latest merged, not yet built" gap). The My Hives rows already carry both numbers separately: `behindTargetSHA` is the newest commit whose image is published for the hive's channel, and `branchTipSHA` is the newest merged commit on the hive's branch. A `no` for a PR merged after the channel's newest image therefore means "merged, not yet built", not "lost".

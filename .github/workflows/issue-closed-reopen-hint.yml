@@ -11,7 +11,11 @@ name: Issue Closed Hint
 # instead of depending on whoever closed the issue remembering to say so.
 #
 # Skipped when the reporter closed the issue themselves (nothing to tell them)
-# and for pull requests (the `issues` event never fires for those).
+# and for pull requests (the `issues` event never fires for those). Also
+# skipped when the reporter is a bot (the hive's own issues: nobody reads the
+# hint) or a maintainer (OWNER / MEMBER / COLLABORATOR, who can reopen the
+# issue themselves): those were most of the hint's comments and none of them
+# told anyone something they could not already do (#18607).
 
 on:
   issues:
@@ -26,7 +30,11 @@ jobs:
     name: Point the reporter at /reopen
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event.issue.user.login != github.event.sender.login
+    if: >-
+      github.event.issue.user.login != github.event.sender.login &&
+      github.event.issue.user.type != 'Bot' &&
+      !endsWith(github.event.issue.user.login, '[bot]') &&
+      !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     steps:
       - name: Comment
         env:

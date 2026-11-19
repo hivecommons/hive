@@ -297,3 +297,47 @@ func TestJobRuntimeKickRegistersReviewSpoolUnderWorkDir(t *testing.T) {
 		t.Errorf("manifests under %s during the job = %+v, want one for reviewer", manifestDir, *during)
 	}
 }
+
+// The manifest records the kick's repo and the branch hive opens its PR
+// from, so a topic claim without a PR number can bind to that PR
+// (hivecommons/hive#18572); the sandbox gets the generic spool env names
+// hive-open-issue and hive-topic read, carrying the same values.
+func TestSandboxExecutorManifestRecordsKickTargetAndGenericEnv(t *testing.T) {
+	manifestDir := filepath.Join(t.TempDir(), "sandbox-review-spools")
+	launcher, env, during := spoolProbe(manifestDir)
+	exec := &SandboxExecutor{Runner: &sandboxFakeRunner{}, Launcher: launcher}
+	if _, err := exec.Run(context.Background(), SandboxKickSpec{
+		Agent: "deps-bump", AgentConfig: configSnapshot{Backend: "claude"}, Message: "bump deps",
+		Org: "torch-spyre", Repo: "spyre-inference", Branch: "hive/deps-bump-1", WorkspaceDir: t.TempDir(), Image: "img",
+		ReviewSpoolDir: manifestDir,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(*during) != 1 {
+		t.Fatalf("manifests = %d, want 1", len(*during))
+	}
+	m := (*during)[0]
+	if m.Repo != "torch-spyre/spyre-inference" || m.Branch != "hive/deps-bump-1" {
+		t.Errorf("manifest target = %q %q, want the kick's repo and branch", m.Repo, m.Branch)
+	}
+	if (*env)[crux.SandboxSpoolEnv] != (*env)[crux.SandboxReviewSpoolEnv] || (*env)[crux.SandboxSpoolEnv] == "" {
+		t.Errorf("%s = %q, want the spool path %q", crux.SandboxSpoolEnv, (*env)[crux.SandboxSpoolEnv], (*env)[crux.SandboxReviewSpoolEnv])
+	}
+	if (*env)[crux.SandboxSpoolKeyEnv] != m.Key {
+		t.Errorf("%s does not carry the run key", crux.SandboxSpoolKeyEnv)
+	}
+	if sandbox.IsCredentialName(crux.SandboxSpoolKeyEnv) {
+		t.Errorf("%s would be stripped by the launchers' credential filter", crux.SandboxSpoolKeyEnv)
+	}
+}
+
+// A review-only kick opens no PR, so its manifest names no branch for a
+// pending topic claim to bind to.
+func TestSpoolTargetOfReviewOnlyKickHasNoBranch(t *testing.T) {
+	if got := spoolTargetOf(SandboxKickSpec{Org: "o", Repo: "r", Branch: "pr-7", ReviewPRs: []int{7}}); got.repo != "o/r" || got.branch != "" {
+		t.Errorf("review-only target = %+v", got)
+	}
+	if got := spoolTargetOf(SandboxKickSpec{Branch: "b"}); got.repo != "" || got.branch != "b" {
+		t.Errorf("target without org/repo = %+v", got)
+	}
+}

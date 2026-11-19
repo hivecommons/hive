@@ -128,3 +128,22 @@ func TestLatestTranscriptSkipsDirectoriesAndBreaksModTimeTies(t *testing.T) {
 		t.Fatalf("LatestTranscript = %q, %v; want %q", got, ok, paths[0])
 	}
 }
+
+func TestWorkBranchRoundTrip(t *testing.T) {
+	stamp := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC).Format(WorkBranchTimeLayout)
+	branch := WorkBranch("Dep Bump", stamp)
+	if branch != "hive/dep-bump/20261116120000" {
+		t.Fatalf("WorkBranch = %q", branch)
+	}
+	if slug, ok := WorkBranchAgentSlug(branch); !ok || slug != "dep-bump" {
+		t.Fatalf("WorkBranchAgentSlug(%q) = %q, %v", branch, slug, ok)
+	}
+	for _, other := range []string{
+		"", "scanner/fix-1", "hive/dep-bump", "hive//20261116120000", "hive/Dep/20261116120000",
+		"hive/dep-bump/2026111612000", "hive/dep-bump/2026111612000x", "hive/dep-bump/20261116120000/x",
+	} {
+		if slug, ok := WorkBranchAgentSlug(other); ok {
+			t.Errorf("WorkBranchAgentSlug(%q) = %q, want no match", other, slug)
+		}
+	}
+}

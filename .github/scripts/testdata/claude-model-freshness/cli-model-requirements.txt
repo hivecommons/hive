@@ -1,0 +1,2 @@
+# <cli> <model id> <first CLI version that accepts it>
+claude claude-sonnet-5-5 2.1.284

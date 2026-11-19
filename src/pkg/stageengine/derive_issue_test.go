@@ -102,6 +102,24 @@ func TestDeriveIssueTable(t *testing.T) {
 		// discussion, not idle agent work; a live claim stages it as usual.
 		{"proposal unclaimed", func(f *Facts) { f.Issue.DiscussionLabel = "proposal" }, stagelabels.OpenForDiscussion, false, "open for discussion: proposal"},
 		{"kind/design unclaimed", func(f *Facts) { f.Issue.DiscussionLabel = "kind/design" }, stagelabels.OpenForDiscussion, false, "open for discussion: kind/design"},
+		// hivecommons/hive#18141: `architecture discussion` and a title-only
+		// RFC signal ("rfc title") derive 018 the same way; a claim still wins.
+		{"architecture discussion unclaimed", func(f *Facts) { f.Issue.DiscussionLabel = "architecture discussion" }, stagelabels.OpenForDiscussion, false, "open for discussion: architecture discussion"},
+		{"rfc title unclaimed", func(f *Facts) { f.Issue.DiscussionLabel = "rfc title" }, stagelabels.OpenForDiscussion, false, "open for discussion: rfc title"},
+		{"rfc title untriaged", func(f *Facts) {
+			f.Issue.DiscussionLabel = "rfc title"
+			f.Issue.TriageAwaiting = "carries needs-triage"
+		}, stagelabels.OpenForDiscussion, false, "open for discussion: rfc title"},
+		{"rfc title claimed", func(f *Facts) {
+			f.Issue.DiscussionLabel = "rfc title"
+			f.Issue.Bucket = BucketClaimed
+			f.Issue.Claim = &ClaimFact{Holder: "alice", Kind: "human"}
+		}, stagelabels.Claimed, false, "live issue claim"},
+		{"architecture discussion claimed with a PR under way", func(f *Facts) {
+			f.Issue.DiscussionLabel = "architecture discussion"
+			f.Issue.Bucket = BucketClaimed
+			f.Issue.Claim = &ClaimFact{Kind: claims.KindAgent, PRStarted: true}
+		}, stagelabels.PRInProgress, false, "live claim with a PR under way"},
 		{"proposal outranks triage", func(f *Facts) {
 			f.Issue.DiscussionLabel = "proposal"
 			f.Issue.TriageAwaiting = "carries needs-triage"

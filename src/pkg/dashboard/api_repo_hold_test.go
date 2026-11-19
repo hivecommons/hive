@@ -290,3 +290,31 @@ func TestRepoHoldPermissionEndpointUsesCachedGitHubPermission(t *testing.T) {
 		t.Fatalf("permission response: code=%d body=%s", w.Code, w.Body.String())
 	}
 }
+
+// TestRepoHoldReleaseOnIssueNamesCoveringPRHold: a release on an issue that
+// removed nothing, while the covering PR the row draws carries the hold, is
+// a no-effect answer naming the PR — not a silent "no change"
+// (hivecommons/hive#17564).
+func TestRepoHoldReleaseOnIssueNamesCoveringPRHold(t *testing.T) {
+	issue := StageTrackerItem{Repo: "o/r", Kind: "issue", Number: 17558, LinkedPRs: []StageTrackerLinkedPR{
+		{Number: 17500, State: "closed", Modifiers: []string{modHold}},
+		{Number: 17559, DrawnUnder: 17000, Modifiers: []string{modHold}},
+		{Number: 17561, Modifiers: []string{modHold}},
+	}}
+	if got := repoHoldCoveringPR(issue); got != 17561 {
+		t.Fatalf("repoHoldCoveringPR = %d, want 17561 (open, drawn here, held)", got)
+	}
+	if got := repoHoldCoveringPR(StageTrackerItem{Number: 1, LinkedPRs: []StageTrackerLinkedPR{{Number: 2}}}); got != 0 {
+		t.Fatalf("repoHoldCoveringPR on an unheld PR = %d, want 0", got)
+	}
+	if got := repoHoldCoveringPR(StageTrackerItem{Number: 1, LinkedPRs: []StageTrackerLinkedPR{{Number: 3, Hold: &StageTrackerHold{}}}}); got != 3 {
+		t.Fatalf("repoHoldCoveringPR with a hold record = %d, want 3", got)
+	}
+	res := repoHoldElsewhereResult("o/r", 17558, 17561)
+	if res.Action != rowActionNoEffect || res.Target.Number != 17558 || res.Target.Kind != rowActionTargetIssue {
+		t.Fatalf("result = %+v, want no-effect on the issue", res)
+	}
+	if want := "Nothing to release on #17558 — the hold is on #17561."; res.Outcome != want {
+		t.Fatalf("outcome = %q, want %q", res.Outcome, want)
+	}
+}

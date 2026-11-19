@@ -31,6 +31,10 @@ type HoldProvenance struct {
 	Issue       int    `json:"issue,omitempty"`
 	Reporter    string `json:"reporter,omitempty"`
 	Association string `json:"association,omitempty"`
+	// Label is the hold-class label this provenance explains: `hold`, or
+	// the hive's decision-needed gate label (hivecommons/hive#18468).
+	// "" reads as `hold`.
+	Label string `json:"label,omitempty"`
 }
 
 // Hold sources.
@@ -77,11 +81,19 @@ func (h *HoldProvenance) Clause() string {
 	if h.SelfImposed() {
 		who = "the hive itself"
 	}
-	s := "the `hold` label was set by " + who
+	s := "the `" + h.LabelOrHold() + "` label was set by " + who
 	if reason := strings.TrimSpace(h.Reason); reason != "" {
 		s += ": " + reason
 	}
 	return s
+}
+
+// LabelOrHold is the label the provenance explains, `hold` when unset.
+func (h *HoldProvenance) LabelOrHold() string {
+	if h == nil || strings.TrimSpace(h.Label) == "" {
+		return "hold"
+	}
+	return strings.ToLower(strings.TrimSpace(h.Label))
 }
 
 // ReporterTrustReason renders the gate's finding the way the pill and the

@@ -101,13 +101,13 @@ func TestNavbarUpgradePillCannotCoverCenterAgents(t *testing.T) {
 		`.oc-topbar-right { position: relative; z-index: 2;`,
 		`flex-wrap: nowrap;`,
 		`.oc-navbar-upgrade { --oc-version-bee-lane: 56px; flex: 0 1 min(260px, 24vw); min-width: 0; max-width: min(260px, 24vw);`,
-		`.agent-navbar-upnext::after { content: attr(data-agent-summary);`,
+		`.agent-navbar-summary { flex: 0 0 auto; display: none;`,
 		`@container navbar-center (max-width: 560px)`,
 		`.agent-navbar-tile .agent-tile-next { display: none; }`,
 		`@container navbar-center (max-width: 340px)`,
 		`.agent-navbar-upnext .agent-navbar-tile { display: none; }`,
 		`@media (max-width: 900px) { .agent-navbar-upnext { display: none !important; } }`,
-		`wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';`,
+		`const summary = renderAgentNavbarSummary(wrap, scheduled.length);`,
 		`const detail = versionUpgradeProgressStatus(v || {}, progress);`,
 	} {
 		if !strings.Contains(html, want) {

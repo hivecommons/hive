@@ -19,7 +19,7 @@ things is true:
 
 - its **author is a hive login**: the App bot, or `project.ai_author` when
   configured. These are the PRs the PR-request watcher opens; or
-- its **body carries the `— hive:` attribution trailer**
+- its **body carries the `-- hive:` attribution trailer**
   (`github.HasAttributionTrailer`). These are the PRs a hive agent opened on a
   *person's* credentials — a contributor relay, or an operator running agents
   under their own GitHub auth. GitHub shows the person as the author, so the
@@ -44,7 +44,7 @@ hive-side agent name), and there is no App-bot audit entry for a PR the hive
 did not open itself, so it is listed with an empty `agent` and reaches the
 **scanner**, exactly as any other unattributed PR does.
 
-**On spoofing.** The trailer is a line of text; anyone can paste `— hive:`
+**On spoofing.** The trailer is a line of text; anyone can paste `-- hive:`
 into a hand-written PR and have the hive answer that PR's review-bot threads.
 This is accepted, as it was for the task-list sweep closing issues, because
 the consequence is bounded: the hive will only ever reply in and resolve
@@ -134,7 +134,7 @@ thread reconciler and the reviewer without a restart.
 The governor's eval tick (`writeReviewThreads`, throttled to once per five
 minutes) runs `Client.CollectReviewThreads` over the enumerated actionable
 PRs. It keeps only hive-mediated PRs (see [Which PRs qualify](#which-prs-qualify):
-a hive login as author, or the `— hive:` trailer in the body — the trailer
+a hive login as author, or the `-- hive:` trailer in the body — the trailer
 test is computed from the PR list payload at enumeration time, so it costs no
 extra call), skips drafts and anything carrying a hold / `do-not-merge` /
 exempt label (the same exclusions as every other kick input), and for each

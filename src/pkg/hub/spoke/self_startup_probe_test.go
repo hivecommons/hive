@@ -20,7 +20,19 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 			{"stale", `,"startupProbe":{"httpGet":{"path":"/api/health","port":3002},"failureThreshold":30,"periodSeconds":5}`, true},
 			{"current", `,"startupProbe":{"failureThreshold":118}`, false},
 			{"larger", `,"startupProbe":{"failureThreshold":200}`, false},
-			{"absent", ``, false},
+			// No probe at all: install the template's full probe. The port
+			// follows the existing readiness probe when one is present.
+			{"absent", ``, true},
+			{"absent-with-readiness", `,"readinessProbe":{"httpGet":{"path":"/api/health","port":4100}}`, true},
+			{"absent-with-liveness", `,"livenessProbe":{"httpGet":{"path":"/api/health","port":4200}}`, true},
+			// A named port (Kubernetes IntOrString) must decode and be kept
+			// as a name, so the new probe targets the same container port
+			// (#18479: "dashboard" used to abort the whole upgrade).
+			{"absent-with-named-port", `,"readinessProbe":{"httpGet":{"path":"/api/health","port":"dashboard"}},"livenessProbe":{"httpGet":{"path":"/api/health","port":"dashboard"}}`, true},
+			{"absent-with-null-port", `,"readinessProbe":{"httpGet":{"path":"/api/health","port":null}}`, true},
+			// A port that is neither a number nor a name skips the backfill,
+			// but the upgrade patch itself must still apply.
+			{"malformed-port", `,"readinessProbe":{"httpGet":{"path":"/api/health","port":{"bad":true}}}`, false},
 		} {
 			t.Run(operation+"/"+probe.name, func(t *testing.T) {
 				probeJSON := probe.json
@@ -105,8 +117,26 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 				for _, c := range patch.Spec.Template.Spec.Containers {
 					if c.Name == "hive" {
 						found = c.Probe != nil
-						if found && (len(c.Probe) != 1 || c.Probe["failureThreshold"] != float64(118)) {
+						if found && c.Probe["failureThreshold"] != float64(118) {
 							t.Errorf("unexpected probe patch: %v", c.Probe)
+						}
+						if found && strings.HasPrefix(probe.name, "absent") {
+							var wantPort any = float64(3002)
+							switch probe.name {
+							case "absent-with-readiness":
+								wantPort = float64(4100)
+							case "absent-with-liveness":
+								wantPort = float64(4200)
+							case "absent-with-named-port":
+								wantPort = "dashboard"
+							}
+							hg, _ := c.Probe["httpGet"].(map[string]any)
+							if hg == nil || hg["path"] != "/api/health" || hg["port"] != wantPort ||
+								c.Probe["periodSeconds"] != float64(5) || c.Probe["initialDelaySeconds"] != float64(10) {
+								t.Errorf("missing probe must be installed in full (port %v): %v", wantPort, c.Probe)
+							}
+						} else if found && len(c.Probe) != 1 {
+							t.Errorf("existing probe must only have its threshold raised: %v", c.Probe)
 						}
 						if operation == "image" && c.Image != "ghcr.io/hivecommons/hive:candidate" {
 							t.Error("lost image update")
@@ -137,26 +167,111 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 }
 
 func TestUpgradeProbeReadFailureDoesNotPatch(t *testing.T) {
-	for _, response := range []struct {
-		name, body string
-		status     int
-	}{
-		{"forbidden", "denied", http.StatusForbidden},
-		{"malformed", "{", http.StatusOK},
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected write after failed probe read: %s", r.Method)
+		}
+		w.WriteHeader(http.StatusForbidden)
+		io.WriteString(w, "denied")
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+	if err := RolloutRestartSelf(slog.Default()); err == nil {
+		t.Fatal("expected read error")
+	}
+}
+
+// A Deployment whose probes cannot be decoded must not abort the upgrade: the
+// backfill is skipped with a warning and the caller's patch still applies
+// unchanged (#18479).
+func TestUpgradeProbeDecodeFailureStillPatches(t *testing.T) {
+	for _, current := range []struct{ name, body string }{
+		{"malformed-document", "{"},
+		{"malformed-port", `{"spec":{"template":{"spec":{"containers":[{"name":"hive","livenessProbe":{"httpGet":{"port":true}}}]}}}}`},
+		{"fractional-port", `{"spec":{"template":{"spec":{"containers":[{"name":"hive","livenessProbe":{"httpGet":{"port":3002.5}}}]}}}}`},
 	} {
-		t.Run(response.name, func(t *testing.T) {
+		t.Run(current.name, func(t *testing.T) {
+			var patched []byte
+			patches := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet {
-					t.Errorf("unexpected write after failed probe read: %s", r.Method)
+				if r.Method == http.MethodPatch {
+					patches++
+					patched, _ = io.ReadAll(r.Body)
 				}
-				w.WriteHeader(response.status)
-				io.WriteString(w, response.body)
+				w.WriteHeader(http.StatusOK)
 			}))
 			defer srv.Close()
 			withFakeK8sAPI(t, srv)
-			if err := RolloutRestartSelf(slog.Default()); err == nil {
-				t.Fatal("expected read error")
+			body := []byte(`{"spec":{"template":{"metadata":{"annotations":{"hive.hivecommons.dev/restart-at":"now"}}}}}`)
+			if err := k8sUpgradePatchWithDeployment("/apis/apps/v1/namespaces/hive/deployments/hive", body, []byte(current.body)); err != nil {
+				t.Fatalf("decode failure aborted the upgrade: %v", err)
+			}
+			if patches != 1 || string(patched) != string(body) {
+				t.Fatalf("got %d patches %s; want the caller's patch unchanged", patches, patched)
+			}
+			// A probe-only backfill with nothing decodable has nothing to send.
+			patches = 0
+			if err := k8sUpgradePatchWithDeployment("/apis/apps/v1/namespaces/hive/deployments/hive", nil, []byte(current.body)); err != nil {
+				t.Fatalf("probe-only backfill returned %v", err)
+			}
+			if patches != 0 {
+				t.Fatalf("probe-only backfill patched %d times after a decode failure", patches)
 			}
 		})
+	}
+}
+
+func TestProbePortUnmarshal(t *testing.T) {
+	for _, tc := range []struct {
+		in      string
+		want    probePort
+		wantErr bool
+	}{
+		{`3002`, probePort{Num: 3002}, false},
+		{`"dashboard"`, probePort{Name: "dashboard"}, false},
+		{`null`, probePort{}, false},
+		{` 8080 `, probePort{Num: 8080}, false},
+		{`true`, probePort{}, true},
+		{`{}`, probePort{}, true},
+		{`[1]`, probePort{}, true},
+		{`1.5`, probePort{}, true},
+		{`"unterminated`, probePort{}, true},
+	} {
+		var p probePort
+		err := p.UnmarshalJSON([]byte(tc.in))
+		if (err != nil) != tc.wantErr {
+			t.Errorf("UnmarshalJSON(%s) err = %v, wantErr %v", tc.in, err, tc.wantErr)
+			continue
+		}
+		if !tc.wantErr && p != tc.want {
+			t.Errorf("UnmarshalJSON(%s) = %+v, want %+v", tc.in, p, tc.want)
+		}
+	}
+}
+
+func TestStartupProbePort(t *testing.T) {
+	handler := func(port probePort) *probeHandler {
+		h := &probeHandler{}
+		h.HTTPGet = &struct {
+			Port probePort `json:"port"`
+		}{Port: port}
+		return h
+	}
+	for _, tc := range []struct {
+		name   string
+		probes []*probeHandler
+		want   any
+	}{
+		{"none", nil, HostedDashboardPort},
+		{"nil-probes", []*probeHandler{nil, nil}, HostedDashboardPort},
+		{"no-httpget", []*probeHandler{{}}, HostedDashboardPort},
+		{"numeric", []*probeHandler{handler(probePort{Num: 4100})}, int64(4100)},
+		{"named", []*probeHandler{handler(probePort{Name: "dashboard"})}, "dashboard"},
+		{"zero-falls-through", []*probeHandler{handler(probePort{}), handler(probePort{Num: 4200})}, int64(4200)},
+		{"negative-default", []*probeHandler{handler(probePort{Num: -1})}, HostedDashboardPort},
+	} {
+		if got := startupProbePort(tc.probes...); got != tc.want {
+			t.Errorf("%s: startupProbePort = %v (%T), want %v (%T)", tc.name, got, got, tc.want, tc.want)
+		}
 	}
 }

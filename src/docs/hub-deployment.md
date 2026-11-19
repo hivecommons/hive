@@ -88,6 +88,186 @@ env:
 
 Without `HIVE_HUB_SECRET`, a protected hub returns `401 unauthorized`, the spoke logs `hub heartbeat rejected status=401`, and the hub shows the hive offline. This matches the gotcha in `manual-provisioning.md`.
 
+### Customer profile sharing
+
+`HIVE_HUB_CUSTOMERS_SHARE_ENABLED` is off by default. Set it to `1`, `true`,
+`yes`, or `on` in the hub environment to enable **Profile sharing** in Fleet
+and on hive cards where the signed-in person holds a grant. The hub dashboard's
+operator settings show the effective state. With the switch off, the page and
+its API return `404`; stored choices are not deleted.
+
+People can enter or clear their real name, organization, and country, then
+confirm or withdraw their own selections separately for each hive. Legacy,
+administrator-entered, and inferred values are not eligible for sharing. A
+material disclosure change requires reconfirmation. This phase records consent
+on the hub only and does not send any profile fields to hives.
+
+### Ask AI help
+
+Ask AI help is an optional docs-help backend for the hub dashboard (design:
+[Dashboard Ask AI help](design/dashboard-ask-ai-help.md)). It is off by
+default. With it off, or switched on but missing a value, the hub registers no
+Ask route, reads no key and sends nothing. The hub calls the Kapa.ai Chat API
+itself, server side; the browser only ever talks to the hub, and no
+third-party script or Content-Security-Policy change is involved.
+
+To wire it once a Kapa API key exists:
+
+1. In the Kapa project, create an HTTP API integration and an API key. Keep
+   both out of the repository.
+2. Store the key in a Kubernetes Secret and mount it under one of the allowed
+   secret dirs (`/secrets` or `/data/secrets`), for example:
+
+   ```sh
+   kubectl -n <hub-namespace> create secret generic hive-ask-kapa \
+     --from-file=api-key=<path-to-key-file>
+   ```
+
+   and add a volume plus `volumeMounts: [{name: hive-ask-kapa, mountPath: /secrets/kapa, readOnly: true}]`
+   to the hub Deployment.
+3. Set the hub environment:
+
+   ```yaml
+   env:
+     - name: HIVE_ASK_ENABLED
+       value: "true"
+     - name: HIVE_ASK_KAPA_PROJECT_ID
+       value: <project id>
+     - name: HIVE_ASK_KAPA_INTEGRATION_ID
+       value: <integration id>
+     - name: HIVE_ASK_KAPA_API_KEY_FILE
+       value: /secrets/kapa/api-key
+   ```
+
+   The project id and integration id may also come from the same Secret
+   through `valueFrom.secretKeyRef`. There is no env var that holds the key
+   itself.
+4. Restart the hub. It logs `ask: enabled` with the effective limits, or one
+   `ask: requested but staying off` line with the reason. Neither line, nor any
+   API response, carries the key, the project id or the integration id.
+
+What leaves the hub per question: the question text (refused, not sent, when
+it looks like a password, token or key), the label of the dashboard section
+from a closed list of ids in `pkg/askai/sections.go` (set
+`HIVE_ASK_SEND_SECTION_LABEL=false` to drop it), the integration id and, for a
+follow-up, the vendor's thread id. No login, email, page content, URL, hive or
+repo name is sent. Each person confirms a disclosure before their first
+question and can withdraw; the record lives under `/data/saas/ask-consents/`
+and is deleted with the user. Answers without an allowlisted source
+(`docs.hivecommons.dev` or the GitHub docs path under `hivecommons/hive`) are
+shown as "no cited answer" with a docs link.
+
+Limits (env overrides in [Environment variables](env-vars.md)): per person 3 a
+minute, 20 an hour and one in flight; hub-wide 4 a minute (a fifth of the
+vendor's 20 a minute per-team limit, and never more than half of it), 2 in
+flight and 500 a day. A vendor `429` backs every caller off for its
+`Retry-After`; three upstream failures in a row open a circuit breaker for five
+minutes. Audit lines (`audit: ask request`, `audit: ask consent grant`,
+`audit: ask consent withdraw`, `audit: ask breaker opened`, `audit: ask daily
+budget spent`) carry outcomes and counts, never text. Hub admins can read the
+counters at `GET /api/ask/stats`.
+
+### Reserved `byo-` hive IDs (credential fence)
+
+Hive IDs that start with `byo-` are reserved for hives that their owners run and register themselves ([#18060](https://github.com/hivecommons/hive/issues/18060)). A hub lists such a hive as directory metadata only, so its heartbeat response never carries hub-held credentials or management actions, whatever key the spoke authenticated with. The hub withholds these fields: the GitHub App config (including cluster, secondary and webhook relay keys), the pending gateway, the claimed project config, the cluster ID, the authorized-user list, visibility, upgrade and branch-switch instructions, the upgrade announcement and policy, spoke restarts, agent-restart resets, fleet-breaker instructions, and self-experiment flags. Display-only data such as admin banners still flows. When the fence withholds a field, the hub logs `heartbeat: credential fence withheld fields from self-service hive` with the field names, never the values. Do not give an operator-provisioned hive a `byo-` ID.
+
+### Self-service registration
+
+The fence above is always on. The registration flow that fills the `byo-` namespace is opt-in. With it enabled, a signed-in hub user lists a hive they run on their own infrastructure without an operator issuing anything. The owner-facing steps are in [Register a self-hosted hive on a hub](register-self-hosted-hive.md); this section is for the operator running the hub.
+
+#### Enable it
+
+| Variable | Default | What it controls |
+|---|---|---|
+| `HIVE_HUB_SELFSERVICE_REGISTRATION` | off | Turns on `/api/hub/selfservice/*` and the **Register your own hive** form on the dashboard. Accepts `1/true/yes/on`. Read per request, so no restart is needed. While off, every route except `GET /api/hub/selfservice/status` answers `404`, and the dashboard button sends users to the self-hosting guide instead of the form. |
+| `HIVE_HUB_SELFSERVICE_MAX_PER_USER` | `5` | How many `byo-` hives one GitHub login may hold at once. The next registration answers `429` until the user removes one. |
+| `HIVE_HUB_SELFSERVICE_MAX_REPOS` | `20` | How many repos one registration may list ([#18642](https://github.com/hivecommons/hive/issues/18642)). Each repo is one read-only GitHub ownership check, so values above `500` are clamped to `500`. `POST /api/hub/selfservice/hives` answers `400` over the cap; `POST /api/hub/v1/registrations` answers `413` with `limit: max_repos`. Advertised to clients by `GET /api/hub/v1` as `limits.max_repos`. Read per request. |
+| `HIVE_HUB_PROOF_GITHUB_USER_TOKEN` | off | Offers the `github-user-token` ownership proof on `POST /api/hub/v1/registrations` and `PATCH /api/hub/v1/registrations/{id}` ([#19238](https://github.com/hivecommons/hive/issues/19238)). See [Proving ownership with your own token](#proving-ownership-with-your-own-token). Accepts `1/true/yes/on`. Read per request. Only meaningful while `HIVE_HUB_SELFSERVICE_REGISTRATION` is on. |
+| `HIVE_HUB_SELFSERVICE_EXPIRY` | `24h` | How long a registered hive may go without an accepted heartbeat before the sweep removes it. Counted from the last accepted heartbeat, or from registration while there has been none. |
+| `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL` | `10m` | How often the expiry sweep runs. Read at startup; restart after changing. |
+
+All four are listed with the other hub variables in [env-vars.md](env-vars.md).
+
+#### What a registration does
+
+1. The user is signed in through the hub's GitHub OAuth, so the hub holds their encrypted GitHub token. Without a stored token or a GitHub login the request is refused.
+2. The user supplies a short name, an org, up to 20 `owner/name` repos and an `https` dashboard URL. The hub builds the ID as `byo-<github login>--<name>`; the double hyphen keeps IDs unambiguous, since logins may contain `-` but never `--`, and a name may not start with `-`. Nothing the user sends can produce an ID outside the `byo-` prefix, and a name that would borrow another namespace (such as `hosted-`) is refused.
+3. For every repo the hub calls GitHub with the user's own token and requires `permissions.admin`. `maintain` and `write` are not enough. One failing repo refuses the whole request with `403` naming that repo, and nothing is stored.
+4. The hub checks the per-user cap and that the ID is not already taken, in the registry or by a hub-provisioned hive.
+5. The hub mints a random heartbeat key, stores only its hash in `/data/hub-selfservice.json`, and returns the raw key in the `201` response together with Compose, Podman and Kubernetes snippets. The raw key appears nowhere else: not in the list route, not in a log line, not on disk.
+
+The registry entry becomes a `self-hosted` hive in Active Hives and the fleet views once a heartbeat is accepted. The type is assigned by the hub; the spoke cannot claim it.
+
+#### What a `byo-` key can and cannot do
+
+- It authenticates heartbeats for exactly one hive ID, the one it was minted for. Presenting it with any other ID fails.
+- A `byo-` ID is verified only against its stored hash. The master-derived paths are never tried for a `byo-` ID, so `HIVE_HUB_SECRET` and keys derived from it never authenticate a self-service hive, and a self-service key never authenticates a `hosted-` or operator-provisioned ID.
+- The owner never receives `HIVE_HUB_SECRET`. The hub never consults it in the self-service routes and never returns it.
+- Everything the fence withholds still applies: the hub sends the hive no GitHub App config, gateway, cluster ID, authorized users, upgrade or branch-switch instructions, restarts or fleet-breaker actions. Listing is directory metadata only.
+
+#### Editing a registration
+
+`PATCH /api/hub/v1/registrations/{id}` changes `repos` and `dashboard_url` in place, so adding a repo no longer means deleting the registration and registering again (which revoked the key and took the spoke offline). The heartbeat key is not touched: the spoke keeps heartbeating with the key it has.
+
+- **Who:** the owner, signed in to the hub. A registration key cannot edit its own record, and a hub admin who does not own the hive gets `404`.
+- **`If-Match` is required.** `GET /api/hub/v1/registrations/{id}` returns the `ETag`; send it back on the `PATCH`. A missing header is `428`, a stale one is `412` with the current `ETag`, so two operators editing at once cannot silently overwrite each other. Heartbeats do not change the `ETag`.
+- **`repos`:** a full list replaces the repos, or `{"add": [...], "remove": [...]}` changes them. Only the repos an edit adds are checked against GitHub (the same read-only `permissions.admin` check as registration, with the owner's own stored token); one failing repo refuses the whole edit and nothing is applied. Kept repos keep their proof time, and removed repos lose theirs. At least one repo must remain, and `HIVE_HUB_SELFSERVICE_MAX_REPOS` applies (`413 {limit: "max_repos"}`).
+- **`dashboard_url`:** an `https` URL to a public address, or `""` to clear it.
+- **Not editable:** `org`, the owner, the ID and the keys. To change the `org`, delete the registration and register it again.
+- **No GitHub writes.** The edit changes the hub's own registry only.
+
+The route is part of the v1 registration protocol and follows the same switch as the rest of it, `HIVE_HUB_SELFSERVICE_REGISTRATION`; discovery (`GET /api/hub/v1`) lists it under `operations` with `if_match: "required"` and its fields under `patch_fields`, so a hub that does not offer it does not advertise it. The v6 `/api/hub/selfservice/*` routes are unchanged.
+
+#### Proving ownership with your own token
+
+The hub signs users in with no GitHub scope, so when an org restricts OAuth apps GitHub hides the admin role from the stored token and registration says `not an admin` for repos the user does administer. With `HIVE_HUB_PROOF_GITHUB_USER_TOKEN` on, a v1 create or `PATCH` can prove ownership with a token sent on that request only:
+
+```
+X-Hive-Proof-Method: github-user-token
+X-Hive-Proof-Token: <a GitHub token>
+```
+
+- **Scopes:** none for public repos; the classic `repo` scope for private repos. A fine-grained token needs read access (Metadata) to every repo in the request. Discovery lists this under `proof_method_details`.
+- **Whose token:** the token must belong to the signed-in GitHub account (`GET /user`); a token made by another account is refused.
+- **Never kept:** the token is used for the read-only `GET /user` and `GET /repos/{owner}/{repo}` calls and then dropped. It is not stored, logged or echoed, and the stored sign-in token stays scopeless.
+- **Clear refusals:** a failed proof answers `403 {error, proof_method, reason, repo, required_scopes, granted_scopes}`, where `reason` is one of `token_rejected`, `token_user_mismatch`, `sso_not_authorized`, `missing_scope`, `repo_not_visible`, `admin_role_not_visible` (GitHub showed the repo but not the role) or `not_admin`. `granted_scopes` appears only when GitHub reported the token's scopes.
+- **Off means off:** while the flag is off, asking for the method is `400` listing the methods the hub offers; it never falls back to the stored token. Without `X-Hive-Proof-Method` the hub proves with the stored token as before (`hub-session-token`). The v6 `/api/hub/selfservice/*` routes ignore both headers.
+
+#### Heartbeat feature negotiation
+
+A spoke may send `protocol: {"version": 1, "features": [...]}` in its heartbeat ([#19237](https://github.com/hivecommons/hive/issues/19237)). With `HIVE_HUB_HEARTBEAT_PROTOCOL` on (`1/true/yes/on`, default off, read per request), the hub answers with `protocol: {"version", "accepted", "ignored"}`: the version it speaks for this beat, the requested features it honours, and the requested features it does not. The features a v1 hub accepts are `activity_digest`, `activity_events` and `host_aliases`, all of which it already serves to every spoke; negotiation changes nothing else in the response.
+
+- **No offer, or the flag off:** the response is exactly what it was before, with no `protocol` field.
+- **Unknown version** (below `1`): the beat is still accepted, every requested feature is listed under `ignored`, and `unsupported_version` echoes what the spoke sent. A version above the hub's is answered with the hub's version, so a newer spoke can fall back to it.
+- **Bounds:** at most 32 features are evaluated per beat. Names must be lowercase letters, digits, `_`, `-` or `.`, start with a letter and be at most 64 bytes; anything else is not echoed back.
+
+#### Rotation
+
+The owner can rotate from the **Self-hosted hives** list or with `POST /api/hub/selfservice/hives/{id}/rotate`. The hub mints a new key and keeps the previous hash live for a 10 minute overlap so a running spoke can pick up the new value without a gap. After the overlap only the new key is accepted. Only the owner can rotate; a hub admin who does not own the hive gets `404`, the same answer as for a missing hive.
+
+#### Expiry sweep
+
+A background sweep runs every `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL` and removes any `byo-` hive whose last accepted heartbeat is older than `HIVE_HUB_SELFSERVICE_EXPIRY`, or that never heartbeated within that window after registration. The key is revoked and the registry entry is removed in the same pass. The owner registers again when the hive is back; there is no grace list.
+
+#### Revoking as admin
+
+A hub admin removes any self-service hive with `DELETE /api/hub/selfservice/hives/{id}` or from the dashboard. The key stops authenticating immediately and the listing disappears. The owner's own **Remove** button does the same for their hives. The audit line records who did it and whether it was the owner or an admin. If you need to stop all registrations at once, unset `HIVE_HUB_SELFSERVICE_REGISTRATION`; existing entries keep heartbeating until they expire or are removed.
+
+#### Audit events
+
+Every decision writes one structured log line, documented in [audit-log.md](audit-log.md):
+
+| Event | When |
+|---|---|
+| `selfservice_hive_registered` | A registration passed every check and a key was minted. |
+| `selfservice_hive_refused` | A registration was turned away; `reason` is one of `invalid_name`, `reserved_prefix`, `duplicate_id`, `invalid_repos`, `invalid_dashboard_url`, `invalid_update` (a `PATCH` body that was refused), `per_user_cap`, `no_github_token`, `no_github_login`, `not_repo_admin`, `ownership_check_error`. |
+| `selfservice_hive_updated` | The owner edited the repos or dashboard URL with `PATCH`; the line counts repos added and removed and carries no key. |
+| `selfservice_hive_rotated` | The owner rotated the key; `overlap` is how long the old key keeps working. |
+| `selfservice_hive_revoked` | The owner or an admin removed the hive; `by_admin` tells which. |
+| `selfservice_hive_expired` | The sweep removed a hive; `last_heartbeat` is RFC 3339 or `never`. |
+
+No audit line ever carries a key or a hash.
+
 ## Hosted spoke provisioning model
 
 The hub's SaaS provisioner creates or records:
@@ -100,6 +280,8 @@ The hub's SaaS provisioner creates or records:
 For push-reported clusters where the hub cannot run `kubectl`, follow the manifest-level workflow in `manual-provisioning.md`; this guide intentionally keeps the hub setup consistent with that battle-tested path.
 
 ### Push-reported cluster entries
+
+`/data/saas/clusters.json` also accepts per-cluster network overrides for hives it provisions: `upstream_proxy` (`{url, hosts[], no_proxy[]}`, a CONNECT forward proxy, injected as `HIVE_UPSTREAM_PROXY_*` env) and `host_aliases` (`[{ip, hostnames[]}]`, rendered as Pod `hostAliases` for a GHE reachable only via a TLS reverse proxy on a fixed IP; existing hives are converged by a rate-limited reconcile sweep and, on every cluster including push-reported ones, by each spoke from its heartbeat response). See [network-requirements.md](network-requirements.md).
 
 `/data/saas/clusters.json` keeps the historical compatibility key `pull_only`. Set `pull_only: true` when the hub cannot reach that cluster's Kubernetes API and the spokes must dial out to the hub instead. Operator-facing surfaces call these clusters **push-reported** because their node stats, dashboard token proofs, and liveness arrive in spoke heartbeats pushed from the cluster.
 

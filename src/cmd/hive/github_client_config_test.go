@@ -67,6 +67,10 @@ var clientSetterAllowlist = map[string]string{
 		"startRequestRelays installs the per-repo forge router on whichever client the merge relay " +
 		"runs on, and every rebuilt client re-arms the relays (armRequestRelays), so the selector is " +
 		"reinstalled alongside the merge authorizer it routes (#14113)",
+	"SetSandboxSpoolRelays": "owned by the request-relay supervisor, like SetMergeRequestPolicyGate: " +
+		"startRequestRelays installs the sandbox spool's issue authorizer and topic handler on whichever " +
+		"client the review relay (which drains the spool) runs on, and every rebuilt client re-arms the " +
+		"relays (armRequestRelays), so they are reinstalled with the relays (#18572, #18573)",
 	"SetStageFactSink": "test seam: production uses the client's own default stage FactSink " +
 		"(enforce-mode reconciler over stagelabels.Shared()), which every rebuilt client " +
 		"constructs lazily on first use (ADR-0025, #13009)",
@@ -80,6 +84,7 @@ var clientResyncSetters = map[string]bool{
 	"SetRepos":                true,
 	"SetHoldLabels":           true,
 	"SetNeverClaimLabels":     true,
+	"SetContributorGrace":     true,
 	"SetSkipIssuesWithOpenPR": true,
 	"SetSentinelAlertLabel":   true,
 	"SetExemptLabels":         true,

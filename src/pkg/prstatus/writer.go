@@ -89,7 +89,24 @@ func WriteMentioning(ctx context.Context, f Forge, item, key, text string) (Writ
 	return write(ctx, f, item, key, text)
 }
 
+// WriteFunc is Write for a section whose new text depends on its current
+// text: render receives the section's body as it stands on the comment
+// being edited ("" when the section or the comment does not exist yet) and
+// returns the replacement. It runs again on every compare-and-retry read,
+// so a change a person made in between (a ticked checklist box) is merged
+// rather than overwritten. Mentions in the rendered text are neutralised as
+// in Write.
+func WriteFunc(ctx context.Context, f Forge, item, key string, render func(previous string) string) (WriteResult, error) {
+	return writeWith(ctx, f, item, key, func(previous string) string {
+		return advisory.NeutralizeMentions(render(previous))
+	})
+}
+
 func write(ctx context.Context, f Forge, item, key, text string) (WriteResult, error) {
+	return writeWith(ctx, f, item, key, func(string) string { return text })
+}
+
+func writeWith(ctx context.Context, f Forge, item, key string, textFor func(previous string) string) (WriteResult, error) {
 	unlock := lockItem(item)
 	defer unlock()
 	var res WriteResult
@@ -98,9 +115,6 @@ func write(ctx context.Context, f Forge, item, key, text string) (WriteResult, e
 		return res, err
 	}
 	if len(ownStatus(status)) == 0 {
-		if strings.TrimSpace(text) == "" {
-			return res, nil
-		}
 		// Foreign status comments are merged from but never edited, so a
 		// hive-owned comment is created to carry the merged sections. Their
 		// text becomes part of a body the hive owns and re-edits, so any
@@ -109,7 +123,13 @@ func write(ctx context.Context, f Forge, item, key, text string) (WriteResult, e
 		for _, c := range status {
 			bodies = append(bodies, foreignBody(c))
 		}
-		if err := f.CreateComment(ctx, Upsert(Merge(bodies...), key, text)); err != nil {
+		merged := Merge(bodies...)
+		previous, _ := Get(merged, key)
+		text := textFor(previous)
+		if strings.TrimSpace(text) == "" {
+			return res, nil
+		}
+		if err := f.CreateComment(ctx, Upsert(merged, key, text)); err != nil {
 			return res, err
 		}
 		res.Created = true
@@ -130,7 +150,8 @@ func write(ctx context.Context, f Forge, item, key, text string) (WriteResult, e
 	}
 	target := own[0]
 	edited, err := editCompareAndRetry(ctx, f, target.ID, target.Body, func(cur string) string {
-		return Upsert(cur, key, text)
+		previous, _ := Get(cur, key)
+		return Upsert(cur, key, textFor(previous))
 	})
 	res.Edited = res.Edited || edited
 	return res, err

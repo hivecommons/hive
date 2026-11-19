@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
@@ -29,7 +30,7 @@ func (s *Scheduler) addHeldPRCoordination(agentName string, actionable *github.A
 	if failClosed {
 		// Persists every tick while the held PR stays open; warn once per agent
 		// like the main fail-closed kick path, then demote repeats to Debug.
-		s.warnOnce("blocked-held-pr-kick:"+agentName, "ioscan fail-closed blocked held-PR coordination kick", "agent", agentName)
+		s.warnBlockedKick(agentName, true)
 		return ""
 	}
 
@@ -205,7 +206,7 @@ func (s *Scheduler) redPRFixSection(agentName string) string {
 	if err != nil {
 		data = nil
 	}
-	return formatRedPRFixDataWithSignals(data, base, github.CIFailureSignals().ForAgent(base))
+	return formatRedPRFixDataWithTopics(data, base, github.CIFailureSignals().ForAgent(base), s.busyBranchChecker(base), s.topicClaimsFor(agentName))
 }
 
 // CIFailureKickMessage is the targeted kick a webhook CI-failure signal
@@ -283,30 +284,48 @@ func ciFailureSignalEvidence(sig github.CIFailureSignal) string {
 // own row. A signal whose check the file reports red on the base branch is
 // dropped like any other base-red failure.
 func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.CIFailureSignal) string {
+	return formatRedPRFixDataGuarded(data, agent, signals, nil)
+}
+
+// formatRedPRFixDataGuarded is formatRedPRFixDataWithSignals with the
+// busy-branch guard (busy_branch.go, hivecommons/hive#18488): a row the guard
+// reports busy is not one of the agent's push targets; it is listed below the
+// gate as "suggest, do not push" and does not hold back new work.
+func formatRedPRFixDataGuarded(data []byte, agent string, signals []github.CIFailureSignal, busy busyBranchCheck) string {
+	return formatRedPRFixDataWithTopics(data, agent, signals, busy, nil)
+}
+
+// formatRedPRFixDataWithTopics is formatRedPRFixDataGuarded with each listed
+// PR tagged by the topic its owner claimed for it, if any
+// (hivecommons/hive#18493).
+func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CIFailureSignal, busy busyBranchCheck, topics []TopicClaim) string {
 	type ciFailingRow struct {
-		Number           int      `json:"number"`
-		Repo             string   `json:"repo"`
-		Title            string   `json:"title"`
-		Agent            string   `json:"agent"`
-		FailingChecks    []string `json:"failing_checks"`
-		Excerpt          string   `json:"excerpt"`
-		Escalated        bool     `json:"escalated"`
-		FromFork         bool     `json:"from_fork"`
-		ReachableAction  string   `json:"reachable_action"`
-		Adopted          bool     `json:"adopted"`
-		SentinelAlert    bool     `json:"sentinel_alert"`
-		HeadRepo         string   `json:"head_repo"`
-		Held             bool     `json:"held"`
-		MergeableState   string   `json:"mergeable_state"`
-		Conflict         bool     `json:"conflict"`
-		ReroutedFrom     string   `json:"rerouted_from"`
-		DeferredIncident int      `json:"deferred_incident"`
-		BaseRedChecks    []string `json:"base_red_checks"`
-		BaseRed          bool     `json:"base_red"`
-		RebaseAttempt    int      `json:"rebase_attempt"`
-		RebaseMax        int      `json:"rebase_attempts_max"`
-		BaseRef          string   `json:"base_ref"`
-		TrustedAuthor    bool     `json:"trusted_author"`
+		Number           int        `json:"number"`
+		Repo             string     `json:"repo"`
+		Title            string     `json:"title"`
+		Agent            string     `json:"agent"`
+		FailingChecks    []string   `json:"failing_checks"`
+		Excerpt          string     `json:"excerpt"`
+		Escalated        bool       `json:"escalated"`
+		FromFork         bool       `json:"from_fork"`
+		ReachableAction  string     `json:"reachable_action"`
+		Adopted          bool       `json:"adopted"`
+		SentinelAlert    bool       `json:"sentinel_alert"`
+		HeadRepo         string     `json:"head_repo"`
+		Held             bool       `json:"held"`
+		MergeableState   string     `json:"mergeable_state"`
+		Conflict         bool       `json:"conflict"`
+		ReroutedFrom     string     `json:"rerouted_from"`
+		DeferredIncident int        `json:"deferred_incident"`
+		BaseRedChecks    []string   `json:"base_red_checks"`
+		BaseRed          bool       `json:"base_red"`
+		RebaseAttempt    int        `json:"rebase_attempt"`
+		RebaseMax        int        `json:"rebase_attempts_max"`
+		BaseRef          string     `json:"base_ref"`
+		TrustedAuthor    bool       `json:"trusted_author"`
+		AppAuthored      bool       `json:"app_authored"`
+		HeadPushedAt     *time.Time `json:"head_pushed_at"`
+		Issues           []int      `json:"issues"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -353,6 +372,11 @@ func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.C
 		}
 	}
 	var mine, deferred, baseRed []ciFailingRow
+	type busyRow struct {
+		row ciFailingRow
+		why string
+	}
+	var busyRows []busyRow
 	forks := 0
 	for _, pr := range payload.Items {
 		if pr.Escalated {
@@ -391,13 +415,31 @@ func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.C
 			baseRed = append(baseRed, pr)
 			continue
 		}
+		if busy != nil {
+			if why := busy(busyBranchRow{Repo: pr.Repo, Number: pr.Number, Issues: pr.Issues, AppAuthored: pr.AppAuthored, Adopted: pr.Adopted, HeadPushedAt: pr.HeadPushedAt, Own: ownRepairRow(pr.Agent, agent, pr.TrustedAuthor, pr.ReroutedFrom)}); why != "" {
+				busyRows = append(busyRows, busyRow{row: pr, why: why})
+				continue
+			}
+		}
 		mine = append(mine, pr)
 	}
-	if len(mine) == 0 {
+	if len(mine) == 0 && len(busyRows) == 0 {
 		return ""
 	}
 
 	var b strings.Builder
+	// Busy rows go after the gate (or alone): they are not push targets
+	// and must not hold back new work.
+	writeBusy := func() {
+		writeBusyRedPRs(&b, len(busyRows), func(i int) busyRedPR {
+			r := busyRows[i]
+			return busyRedPR{Number: r.row.Number, Repo: r.row.Repo, Title: r.row.Title, FailingChecks: r.row.FailingChecks, Excerpt: r.row.Excerpt, Why: r.why}
+		})
+	}
+	if len(mine) == 0 {
+		writeBusy()
+		return b.String()
+	}
 	b.WriteString(fmt.Sprintf("\n## 🔴 FIX-BEFORE-NEW — your open PRs with failing CI or merge conflicts (%d)\n\n", len(mine)))
 	if forks > 0 {
 		b.WriteString(fmt.Sprintf("(%d red PR(s) from forks are NOT listed here: you cannot push to a fork — they appear under CI_FAILING as comment-only.)\n", forks))
@@ -428,7 +470,7 @@ func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.C
 			b.WriteString(fmt.Sprintf("  … and %d more (full list: %s)\n", len(mine)-i, ciFailingPath))
 			break
 		}
-		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
+		b.WriteString(fmt.Sprintf("  #%d %s%s — %s\n", pr.Number, pr.Repo, topicTag(topics, pr.Repo, pr.Number), pr.Title))
 		if pr.Adopted {
 			b.WriteString(fmt.Sprintf("    ADOPTED contributor PR (stage 074, head repo %s): the author is offline; `gh pr checkout` then push to the PR's own branch — maintainer_can_modify grants access.\n", pr.HeadRepo))
 			b.WriteString(adoptedPRStatusRule)
@@ -461,6 +503,7 @@ func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.C
 		}
 	}
 	b.WriteString("\n")
+	writeBusy()
 	return b.String()
 }
 
@@ -670,6 +713,7 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 	repoOrder := make([]string, 0, 8)
 	byRepo := make(map[string][]github.HoldItem)
 	heldPRs := make(map[string]github.PullRequest, len(actionable.PRs.Held))
+	topics := s.allTopicClaims()
 	for _, pr := range actionable.PRs.Held {
 		heldPRs[fmt.Sprintf("%s#%d", pr.Repo, pr.Number)] = pr
 	}
@@ -700,7 +744,7 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 			if reviewState != "" {
 				reviewState = " — " + reviewState
 			}
-			b.WriteString(fmt.Sprintf("  %s#%d %s%s\n", item.Repo, item.Number, title, reviewState))
+			b.WriteString(fmt.Sprintf("  %s#%d%s %s%s\n", item.Repo, item.Number, topicTag(topics, item.Repo, item.Number), title, reviewState))
 			shown++
 		}
 		if omitted := len(items) - limit; omitted > 0 {
@@ -770,7 +814,7 @@ func (s *Scheduler) addIndependentReviewSection(agentName, msg string) string {
 // reported"). Falls back to the built-in set when the configured one does not
 // validate, the same fallback the relay applies.
 func (s *Scheduler) reviewPerspectivesSection() string {
-	set, err := review.NewPerspectiveSet(s.cfg.Review.Perspectives, s.cfg.Review.PerspectivePrompts)
+	set, err := review.NewPerspectiveSet(s.cfg.Review.EffectivePerspectives())
 	if err != nil {
 		set = review.PerspectiveSet{}
 	}

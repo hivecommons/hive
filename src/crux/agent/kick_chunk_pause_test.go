@@ -11,8 +11,14 @@ package agent
 // in-flight requests.
 
 import (
+	"bytes"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 // The lock is genuinely released for the duration of the pause: a second
@@ -153,5 +159,25 @@ func TestKickDelivering_ClaimIsExclusive(t *testing.T) {
 	agent.kickDelivering.Store(false)
 	if !agent.kickDelivering.CompareAndSwap(false, true) {
 		t.Error("the pane was not reclaimable after delivery finished")
+	}
+}
+
+// A refused concurrent delivery is expected back-pressure (callers retry on
+// ErrAgentBusy), so it must not log at warn level and feed the selfreport.
+func TestDeliverKickLocked_BusyPaneIsNotWarning(t *testing.T) {
+	var logBuf bytes.Buffer
+	m := NewManager(nil, slog.New(slog.NewTextHandler(&logBuf, nil)), ProjectContext{})
+	agent := &AgentProcess{Name: "scanner"}
+	agent.kickDelivering.Store(true)
+
+	m.mu.Lock()
+	err := m.deliverKickLocked(agent, "hello", "test")
+	m.mu.Unlock()
+
+	if !errors.Is(err, crux.ErrAgentBusy) {
+		t.Fatalf("err = %v, want crux.ErrAgentBusy", err)
+	}
+	if strings.Contains(logBuf.String(), "level=WARN") {
+		t.Errorf("busy-pane skip logged at warn: %s", logBuf.String())
 	}
 }

@@ -67,6 +67,7 @@ The reachable fields, taken from the `cel:"..."` struct tags on
 | `event.base_branch` | string | Target branch for a PR. |
 | `event.head_branch` | string | Source branch for a PR. |
 | `event.assignees` | list of string | Currently-assigned logins. |
+| `event.added_labels` | list of string | Labels this event added (`pr.labeled` only); empty otherwise. |
 | `event.comment` | string | Body of the triggering comment (for `comment.created`). |
 
 Field access is type-checked at compile time against this registered native
@@ -93,6 +94,31 @@ comment.created
 once per issue/PR (keyed `repo#number`) per hive process, the first time the
 item is enumerated, not on every cycle while it stays actionable. The seen-set
 is in memory, so a hive restart re-emits currently actionable items once.
+
+`pr.labeled` is edge-triggered the same way
+([#18538](https://github.com/hivecommons/hive/issues/18538)): when a PR the
+eval cycle has already seen carries labels it did not carry at the previous
+eval, it is emitted once with those labels in `event.added_labels` and the
+full current set in `event.labels`. A label removed and added back fires
+again. The first sight of a PR, including the first eval after a restart, is
+`pr.opened`, never `pr.labeled`, so a restart does not replay old labels.
+
+### Review a PR when a maintainer adds the opt-in label
+
+With `review.require_labels: [hive-review]`, the reviewer only reviews PRs a
+maintainer labelled, but on its own it notices the label only at its next
+cadence kick. This rule kicks it on the next eval after the label lands:
+
+```yaml
+triggers:
+  - name: review-on-label
+    expr: event.kind == "pr.labeled" && "hive-review" in event.added_labels
+    agent: reviewer
+```
+
+Use the label your `review.require_labels` names. The kick is an ordinary
+governor kick: the reviewer's kick list is still filtered by the label gate,
+and pause, budget and on-demand gates still apply.
 
 ### Run the scanner for newly seen GitHub issues
 

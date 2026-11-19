@@ -861,6 +861,7 @@ func TestApplyConfigEnv_AllFields(t *testing.T) {
 	envDir := t.TempDir()
 	envPath := filepath.Join(envDir, "config.env")
 	envContent := `PROJECT_ORG=overridden-org
+PROJECT_NAME=Overridden Project
 PROJECT_REPOS=repo-x repo-y
 PROJECT_AI_AUTHOR=custom-bot
 PROJECT_PRIMARY_REPO=overridden-org/repo-x
@@ -876,6 +877,9 @@ AGENTS_ENABLED=worker
 	}
 	if cfg.Project.Org != "overridden-org" {
 		t.Errorf("org = %q", cfg.Project.Org)
+	}
+	if cfg.Project.Name != "Overridden Project" {
+		t.Errorf("name = %q", cfg.Project.Name)
 	}
 	if len(cfg.Project.Repos) != 2 {
 		t.Errorf("repos = %v", cfg.Project.Repos)

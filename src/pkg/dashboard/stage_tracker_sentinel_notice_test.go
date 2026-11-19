@@ -43,8 +43,11 @@ func TestStageTrackerSentinelNoticePreservesActualReviewerDecision(t *testing.T)
 		jsFunc(t, html, "stageTrackerSentinelTipWithPaths")+
 		jsFunc(t, html, "stageTrackerSentinelPreface")+
 		"\nconst notice = "+string(payload)+";\n"+`
-assert.strictEqual(stageTrackerSentinelInLane(notice), false);
-assert.strictEqual(stageTrackerSentinelAsSuffix({...notice, stage:71}), false);
+const noticeKeys = stageTrackerHumanGateReasons(notice).map(r => r.key);
+assert.ok(!noticeKeys.includes('sentinel'), 'an informational notice is not a human gate: ' + noticeKeys);
+assert.deepStrictEqual(noticeKeys, ['decision'], 'the reviewer question stays the only gate on the row');
+assert.ok(stageTrackerRowHtml(notice, stages, ctx).includes('data-ham-gate-reasons="decision"'), 'the gate pill names the reviewer question, not the notice');
+assert.ok(!stageTrackerRowHtml(notice, stages, ctx).includes('gate:confirm-sentinel'), 'nothing to confirm on an informational notice');
 assert.ok(stageTrackerSentinelTip(notice).includes('Informational security notice (not a merge gate)'));
 assert.ok(!stageTrackerSentinelTip({...notice, sentinel_reason:''}).includes('must review before merge'));
 const own = stageTrackerRowHtml(notice, stages, ctx);
@@ -64,8 +67,8 @@ const nested = stageTrackerRowHtml({repo:notice.repo, kind:'issue', number:500, 
 assert.ok(!text(nested).includes('Sentinel alert'), text(nested));
 assert.ok(!text(nested).includes('Needs @clubanderson'), text(nested));
 const blocking = {...notice, sentinel_notice:false};
-assert.strictEqual(stageTrackerSentinelInLane(blocking), true, 'actual blocking alert remains a sentinel gate');
-assert.strictEqual(stageTrackerSentinelAsSuffix({...blocking, stage:71}), true);
+assert.ok(stageTrackerHumanGateReasons(blocking).some(r => r.key === 'sentinel'), 'actual blocking alert remains a sentinel gate');
+assert.ok(stageTrackerHumanGateReasons({...blocking, stage:71}).some(r => r.key === 'sentinel'), 'the gate stands on a returned PR too');
 assert.ok(!stageTrackerSentinelTip(blocking).includes('Informational'));
 `)
 	it.SentinelNotice = false

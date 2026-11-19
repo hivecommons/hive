@@ -246,3 +246,28 @@ func TestAdvisoryPostRetryBackoff(t *testing.T) {
 		t.Errorf("garbage env falls back to default: got %v", got)
 	}
 }
+
+// TestAdvisoryPerRepoEnabled pins governor.advisory.per_repo resolution
+// (#18448): default off, an explicit value wins, and the env override only
+// applies while the key is absent.
+func TestAdvisoryPerRepoEnabled(t *testing.T) {
+	on, off := true, false
+	t.Setenv(AdvisoryPerRepoEnvVar, "")
+	if (AdvisoryConfig{}).PerRepoEnabled() {
+		t.Error("unset: per_repo must default to off")
+	}
+	if !(AdvisoryConfig{PerRepo: &on}).PerRepoEnabled() {
+		t.Error("explicit true: want on")
+	}
+	t.Setenv(AdvisoryPerRepoEnvVar, "true")
+	if !(AdvisoryConfig{}).PerRepoEnabled() {
+		t.Error("env true, key absent: want on")
+	}
+	if (AdvisoryConfig{PerRepo: &off}).PerRepoEnabled() {
+		t.Error("explicit false must beat the env")
+	}
+	t.Setenv(AdvisoryPerRepoEnvVar, "not-a-bool")
+	if (AdvisoryConfig{}).PerRepoEnabled() {
+		t.Error("unparseable env: want off")
+	}
+}

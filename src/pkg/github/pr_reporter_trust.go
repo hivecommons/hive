@@ -41,7 +41,8 @@ import (
 type ReporterTrust struct {
 	// OwnsNeedsHuman proves this gate, not an earlier escalation, added the label.
 	OwnsNeedsHuman bool
-	// Held is true when the PR must carry "hold" regardless of ACMM level.
+	// Held is true when the PR must carry the decision-needed gate label
+	// regardless of ACMM level (it carried `hold` before #18468).
 	Held bool
 	// Issue is the untrusted-reporter issue that decided it. Zero when Held is false.
 	Issue int
@@ -262,15 +263,24 @@ func (r ReporterTrust) NeedsHumanReason() string {
 	if !r.Held {
 		return ""
 	}
-	return fmt.Sprintf("reporter-trust hold — issue #%d filed by @%s", r.Issue, r.Reporter)
+	return fmt.Sprintf("reporter-trust hold - issue #%d filed by @%s", r.Issue, r.Reporter)
 }
 
 // reporterTrustHoldLabels is the label set a reporter-trust hold applies.
-// "hold" is the enforcement; needs-human is the signal that puts the PR in
-// front of a maintainer (hivecommons/hive#10773) — without it a green, held
-// PR sits silently because nothing tells anyone it is waiting on them.
+// The decision-needed gate label is the enforcement (it blocks merges like
+// `hold`, which the hive never applies itself: hivecommons/hive#18468);
+// needs-human is the signal that puts the PR in front of a maintainer
+// (hivecommons/hive#10773) — without it a green, held PR sits silently
+// because nothing tells anyone it is waiting on them.
 func reporterTrustHoldLabels() []string {
-	return []string{"hold", issueNeedsHumanLabel}
+	return []string{DecisionNeededLabelName(), issueNeedsHumanLabel}
+}
+
+// hasReporterTrustHoldLabel reports whether labels carry the label a
+// reporter-trust hold enforces with: the decision-needed gate label, or the
+// literal `hold` an older build applied (still read, never written).
+func hasReporterTrustHoldLabel(labels []string) bool {
+	return hasExactLabel(labels, DecisionNeededLabelName()) || hasExactLabel(labels, LegacyHiveHoldLabel)
 }
 
 // reporterTrustNotice is the comment left on a held PR. The person clearing
@@ -283,8 +293,8 @@ func reporterTrustNotice(finding ReporterTrust) string {
 >
 > The untrusted **reporter**, not this PR's author, is @%s. The PR's rationale traces to %s#%d, filed by @%s (GitHub association: %s). The hold concerns that issue reporter, not the PR author. This hive holds unaccepted work requested by untrusted issue reporters so that it never merges without a maintainer looking at it, whatever the hive's autonomy level (hivecommons/hive#9665).
 >
-> Nothing here is a review of the change. To release the hold, a maintainer removes the `+"`hold`"+` label; Hive will not remove it on its own. The `+"`%s`"+` label marks it as waiting on a person. To trust this reporter in future, add them under **Settings → Labels → Reporter trust**.`,
-		reporterTrustMarker(finding), finding.NeedsHumanReason(), finding.Reporter, finding.Repo, finding.Issue, finding.Reporter, associationOrUnknown(finding.Association), issueNeedsHumanLabel)
+> Nothing here is a review of the change. To release the hold, a maintainer removes the `+"`%s`"+` label; Hive will not remove it on its own. The `+"`%s`"+` label marks it as waiting on a person. To trust this reporter in future, add them under **Settings → Labels → Reporter trust**.`,
+		reporterTrustMarker(finding), finding.NeedsHumanReason(), finding.Reporter, finding.Repo, finding.Issue, finding.Reporter, associationOrUnknown(finding.Association), DecisionNeededLabelName(), issueNeedsHumanLabel)
 }
 
 // ReporterTrustNoticeBody renders the notice for a finding (exported for the
@@ -318,7 +328,7 @@ func reporterTrustFinding(body string) (ReporterTrust, bool) {
 var legacyReporterTrustFinding = regexp.MustCompile(`traces to ([^\s]+)#([0-9]+), filed by @([^\s]+) \(GitHub association: ([^)]+)\)`)
 
 func (f ReporterTrust) escalationReason() string {
-	return fmt.Sprintf("reporter-trust hold — issue #%d filed by @%s (%s)", f.Issue, f.Reporter, f.Repo)
+	return fmt.Sprintf("reporter-trust hold - issue #%d filed by @%s (%s)", f.Issue, f.Reporter, f.Repo)
 }
 
 // SetReporterTrustEscalation installs the durable policy-reason ledger. Its
@@ -345,7 +355,7 @@ func (c *Client) recordReporterTrustEscalation(repo string, number int, reason s
 // human-only reason, and releases only this gate's ledger entry. The existing
 // label-event release path removes needs-human after a human removes hold.
 func (c *Client) reconcileReporterTrustSignal(ctx context.Context, repo string, pr *gh.PullRequest, labels []string) ([]string, string) {
-	if !hasExactLabel(labels, "hold") && !hasExactLabel(labels, issueNeedsHumanLabel) {
+	if !hasReporterTrustHoldLabel(labels) && !hasExactLabel(labels, issueNeedsHumanLabel) {
 		c.recordReporterTrustEscalation(repo, pr.GetNumber(), "")
 		return labels, ""
 	}
@@ -366,7 +376,7 @@ func (c *Client) reconcileReporterTrustSignal(ctx context.Context, repo string, 
 		if !ok {
 			return labels, ""
 		}
-		if hasExactLabel(labels, "hold") {
+		if hasReporterTrustHoldLabel(labels) {
 			reason := finding.escalationReason()
 			c.recordReporterTrustEscalation(repo, pr.GetNumber(), reason)
 			if !hasExactLabel(labels, issueNeedsHumanLabel) {
@@ -464,7 +474,7 @@ func (r ReporterTrust) HoldProvenance(since time.Time) *stagelabels.HoldProvenan
 // Both notice generations carry the original finding. Read that evidence rather
 // than re-evaluating today's trust settings: a historical hold requires a human
 // even if the reporter has since become trusted or the gate has been disabled.
-var reporterTrustReasonPattern = regexp.MustCompile(`reporter-trust hold — issue #([0-9]+) filed by @([A-Za-z0-9-]+)`)
+var reporterTrustReasonPattern = regexp.MustCompile(`reporter-trust hold (?:\x{2014}|-) issue #([0-9]+) filed by @([A-Za-z0-9-]+)`)
 var legacyReporterTrustReasonPattern = regexp.MustCompile(`rationale traces to [^\s]+#([0-9]+), filed by @([A-Za-z0-9-]+)`)
 
 func reporterTrustReasonFromComments(comments []*gh.IssueComment, appBotLogin string) string {
@@ -484,7 +494,7 @@ func reporterTrustReasonFromComments(comments []*gh.IssueComment, appBotLogin st
 				}
 			}
 		}
-		return "reporter-trust hold — maintainer sign-off required"
+		return "reporter-trust hold - maintainer sign-off required"
 	}
 	return ""
 }
@@ -497,7 +507,7 @@ func (c *Client) reporterTrustHeldPRReason(ctx context.Context, owner, repo stri
 	// fetch; old notices without needs-human remain eligible for enrichment.
 	candidate := false
 	for _, label := range labels {
-		candidate = candidate || label == issueNeedsHumanLabel || label == "hold"
+		candidate = candidate || label == issueNeedsHumanLabel || label == LegacyHiveHoldLabel || strings.EqualFold(label, DecisionNeededLabelName())
 	}
 	if !candidate {
 		return ""

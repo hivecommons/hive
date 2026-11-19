@@ -48,6 +48,8 @@ Hive raises URL health alerts conservatively:
 Hub-side hysteresis requires consecutive failures, a minimum hive age, and repeated dashboard evaluations before a critical URL alert reaches the Attention panel. Cluster-wide outages are rolled up instead of paging every hive individually.
 
 
+The `kick_refusal` warning in the spoke deep-health report is explained in [Kick refusals](kick-refusals.md#kick_refusal).
+
 ## Spoke deep-health agent and token checks
 
 The spoke `HealthSummary` treats quiet-by-design agents as idle, not failed. A stopped agent whose config is `on_demand: true`, whose ACMM pack marks it on-demand, or whose current governor-mode cadence is paused/off-schedule is reported in the agents check as `idle (on-demand)` or `idle (off-schedule)` rather than `down`. Paused agents remain a separate non-failing bucket; only expected-active agents that are stopped or failed count as `down`.

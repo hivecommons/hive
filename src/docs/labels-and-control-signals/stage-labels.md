@@ -93,9 +93,9 @@ referenced it) a lone `stage/050-review-pending`
 | Label | Applies to | Meaning | Expected dwell (then `stage/stalled`) |
 |---|---|---|---|
 | `stage/010-actionable` | issue | triaged; eligible for the hive to pick up. A human-filed issue without `needs-triage` counts as triaged by its trusted reporter | 24h |
-| `stage/015-triage-needed` | issue | actionable, but no maintainer has looked at it yet. Derived instead of 010 only when the reporter-trust gate is holding the issue: it carries the awaiting label `needs-triage` (`reporter_trust.awaiting_label` default) or sits in the #9665 gate's `reporter_triage` bucket. Who filed it is never consulted — issues from hive agents and from trusted humans are triaged by construction and stay 010. A **display and tracking state, not a gate**: the scanner and relay claim a 015 issue exactly as a 010 one (the reporter-trust gate withholds `needs-triage` issues separately, and that is unchanged), and 015 lights the activity monitor's *Actionable* column as "Triage needed". `015 → 010` (a maintainer triages) is never a regression; `010 → 015` is a reclassification. Because 015 is not a gate, a claim settles triage: whenever the sweep (or an out-of-cycle claim fact) writes a stage of 020 or later — 020, 030, 040 or a PR-mirrored stage — it removes `needs-triage` in the same label write, and an open issue already at 020+ still wearing it is reconciled on the next sweep; the label survives at 010, 017, 018 and 045, which the table lets fall back to 015 (hivecommons/hive#14586). The Open column is untouched: an issue with no stage stays "Open" | 24h |
+| `stage/015-triage-needed` | issue | actionable, but no maintainer has looked at it yet. Derived instead of 010 only when the reporter-trust gate is holding the issue: it carries the awaiting label `needs-triage` (`reporter_trust.awaiting_label` default) or sits in the #9665 gate's `reporter_triage` bucket. Who filed it is never consulted — issues from hive agents and from trusted humans are triaged by construction and stay 010. A **display and tracking state, not a gate**: the scanner and relay claim a 015 issue exactly as a 010 one (the reporter-trust gate withholds `needs-triage` issues separately, and that is unchanged), and 015 lights the activity monitor's *Actionable* column as "Triage needed". `015 → 010` (a maintainer triages) is never a regression; `010 → 015` is a reclassification. Because 015 is not a gate, a claim settles triage: whenever the sweep (or an out-of-cycle claim fact) writes a stage of 020 or later — 020, 030, 040 or a PR-mirrored stage — it removes `needs-triage` in the same label write, and an open issue already at 020+ still wearing it is reconciled on the next sweep; the label survives at 010, 017, 018 and 045, which the table lets fall back to 015 (hivecommons/hive#14586). The hive removes it at most once per issue: if anything puts it back (a repository's own triage tooling such as Prow's `require-matching-label`, or a person), the hive leaves it on that issue from then on, logs that once, and remembers the yield across restarts (hivecommons/hive#18387). The Open column is untouched: an issue with no stage stays "Open" | 24h |
 | `stage/017-possible-existing` | issue | **Possibly exists · needs author.** The prior-art gate found something that looks like the request already (knowledge bead, setting, merged PR, closed issue, doc or code) and parked the issue with the findings; the author confirms the gap (`/hive decision proceed — <gap>`) or closes it (`/hive decision exists`, label `already-exists`). The label itself is the park signal and an issue-level hard suppress, so no agent claims it; clanker-filed parks auto-close after `runs.triage.prior_art.bot_close_ttl`; hive-filed issues never wear it ([#13575](https://github.com/hivecommons/hive/issues/13575)) | none |
-| `stage/018-open-for-discussion` | issue | **Open for discussion.** An open issue labelled `proposal` or `kind/design` with no live claim: what is left on it is a discussion, not agent work, so it is derived here instead of 010 / 015 and the activity monitor's *Actionable* column reads "Open for discussion", the caption naming the label. The stage reason is `open for discussion: <label>`. **Not a gate**: the claim gate does not refuse these labels, so a person's `/claim`, the contribute relay or an agent claim stages it 020 / 030 as on any issue; parks, holds, `blocked` and a covering PR outrank it as they do 010. Removing the label returns the issue to plain 010 derivation (never a regression), and a covering `Refs #N` PR that merges and leaves `hive/partially-addressed` lands it back here as progress ([#17150](https://github.com/hivecommons/hive/issues/17150)) | none |
+| `stage/018-open-for-discussion` | issue | **Open for discussion.** An open issue labelled `proposal`, `kind/design` or `architecture discussion` with no live claim, or an unlabelled one whose title opens with `[RFC]` or `RFC:` (case-insensitive, after any leading emoji): what is left on it is a discussion, not agent work, so it is derived here instead of 010 / 015 and the activity monitor's *Actionable* column reads "Open for discussion", the caption naming the label. The stage reason is `open for discussion: <label>`, or `open for discussion: rfc title` when only the title marks it ([#18141](https://github.com/hivecommons/hive/issues/18141)). **Not a gate**: the claim gate does not refuse these labels, so a person's `/claim`, the contribute relay or an agent claim stages it 020 / 030 as on any issue; parks, holds, `blocked` and a covering PR outrank it as they do 010. Removing the label returns the issue to plain 010 derivation (never a regression), and a covering `Refs #N` PR that merges and leaves `hive/partially-addressed` lands it back here as progress ([#17150](https://github.com/hivecommons/hive/issues/17150)) | none |
 | `stage/020-claimed` | issue | a live claim by anyone — a human, a relay contributor or a hive agent's `hive-open-issue claim` / start mark — with no PR evidence yet (replaces `claimed`, `hive/in-progress`) | 2h |
 | `stage/030-pr-in-progress` | issue | the claimant has a PR under way: its `hive-open-pr --issues` request named the issue or its start marker named a branch / PR (`pr_started=true` on the `hive:claim` marker). A claim or start mark without that evidence — the scanner's bare `hive-open-issue claim` included — stays at 020 ([#13069](https://github.com/hivecommons/hive/issues/13069)). If the in-progress evidence includes an open Hive-authored PR, the issue-stage lane applies the same PR-link safeguard described for 040: default-branch PRs that fully address the issue get a `Fixes #N` trailer when missing, while partial or non-default-branch PRs get an issue stage-entry comment linking the PR and explaining GitHub's icon limitation. If the claiming PR has already merged, the issue leaves 030: full-fix claims close it with one `<!-- hive:closed-by-merged-pr pr=N -->` comment (checked before posting, so a close that fails after the comment is retried without a duplicate), while `Refs` / `Part of` claims move back to 010 with a partial-landed note. | 90m |
 | `stage/040-covered-by-pr` | issue | an open PR covers it (replaces `🐝 covered by PR`), or — when the hive's PR only *references* the issue without a closing keyword (`Refs #N`) — "an open PR addresses part of it": the issue is still parked here but its stage reason and tracker caption say the remainder stays open when the PR merges ([#15008](https://github.com/hivecommons/hive/issues/15008)). Coverage is derived only from a closing reference in the PR body or commits, a hive claim-ledger entry, or an explicit hive marker — a bare cross-reference (an incident deferral comment, `see also`, a backlog link) never puts an issue here; the issue stays here while the PR is open — the PR's own stage is named in the issue's stage reason, never written as its label ([#12451](https://github.com/hivecommons/hive/issues/12451)). For Hive-authored PRs on the repository default branch, the stage and claim-label sweeps append `Fixes #N` to the PR body when the PR appears to fully address the issue but lacks a closing keyword, so GitHub can show the Development sidebar link and issue-list PR icon. They also retrofit older Hive-authored default-branch PRs whose only claim line is `Refs #N` by rewriting that one keyword to `Fixes #N` once and stamping `<!-- hive:issue-link-fixed -->`; human-authored PR bodies are never edited. `Part of` / leave-open partial work and non-default-branch PRs get one issue stage-entry comment with the PR link and GitHub limitation instead. Merged full-fix claims close the issue; merged reference claims remove stale 040/030 and return the issue to 010 with a partial-landed note. | n/a (the PR carries health) |
@@ -122,7 +122,7 @@ stateDiagram-v2
     direction LR
     [*] --> s010: issue triaged
     [*] --> s015: issue from an untrusted reporter (needs-triage / reporter_triage)
-    [*] --> s018: proposal / kind/design issue with no live claim
+    [*] --> s018: proposal / kind/design / architecture discussion issue, or an RFC-titled one, with no live claim
     s010: 010 actionable
     s015: 015 triage-needed
     s018: 018 open-for-discussion
@@ -145,12 +145,12 @@ stateDiagram-v2
     s010 --> s045: needs-human / park label (agent escalates)
     s010 --> s015: needs-triage added (reclassification)
     s015 --> s010: maintainer triages: triage/accepted, hive/verified-open or approved-direction added, or needs-triage removed (not a regression)
-    s015 --> s020: scanner / relay claim (015 is not a gate; needs-triage removed in the same write)
+    s015 --> s020: scanner / relay claim (015 is not a gate; needs-triage removed in the same write, once — left on if anything puts it back)
     s015 --> s045: needs-human / park label (agent escalates)
-    s010 --> s018: proposal / kind/design label added to an unclaimed issue (reclassification)
-    s018 --> s010: proposal / kind/design label removed (not a regression)
-    s015 --> s018: proposal / kind/design label added to an untriaged issue (reclassification)
-    s018 --> s015: proposal / kind/design label removed on an untriaged issue (not a regression)
+    s010 --> s018: discussion label added to an unclaimed issue, or it is retitled as an RFC (reclassification)
+    s018 --> s010: discussion label and RFC title removed (not a regression)
+    s015 --> s018: discussion label added to an untriaged issue (reclassification)
+    s018 --> s015: discussion label and RFC title removed on an untriaged issue (not a regression)
     s018 --> s020: a person, relay contributor or agent claims it (018 is not a gate)
     s018 --> s045: needs-human / park label
     s045 --> s018: /hive approve or /hive decision on a proposal
@@ -217,6 +217,8 @@ stateDiagram-v2
     s100 --> [*]: merged (labels removed)
 ```
 
+**Umbrella and owner-only issues have no stage of their own.** An umbrella or tracker issue (and an issue that waits on a person) keeps whatever stage the engine derives (`010`, `018`, `040`, `045`) and stays actionable for the owner and the hive; it is shown with a derived **Umbrella · owner** or **Owner only** pill and is never handed to a contributor relay (`hub.contribute_umbrella`, [reference](reference.md#umbrella-also-tracker-epic-meta-tracker----hiveumbrella----human-only)). A dedicated `stage/0NN-umbrella` label was considered and not added: a stage is keyed in the engine table, the transition table, the dashboard column and filter vocabulary and every stage-aware harness (the `018` change touched more than fifty files), and the umbrella property is orthogonal to pipeline progress (a decomposed parent is still `010` while it waits on children and `040` while a PR covers it). The pill reads the same rules the contributor gate uses, so nothing can disagree. Because an umbrella is not a tracking archive, it is closable and closing it removes its stage labels like any other close.
+
 #### The regressed marker: when it is set, when it clears
 
 The dashboard's `regressed` chip and the `<!-- hive:stage-regressed -->`
@@ -277,7 +279,7 @@ final, and maps each row ([#12436](https://github.com/hivecommons/hive/issues/12
 | covered by an open PR the sweep has staged (≥ 050) | still `040-covered-by-pr`; the reason reads `open PR #N covers it (PR at <stage>)`. `050`+ are PR-only stages and never land on an issue ([#12451](https://github.com/hivecommons/hive/issues/12451)) |
 | reporter triage (human-filed, held by the #9665 gate until the triage label lands) | `015-triage-needed` — the gate still withholds it from agents |
 | exempt / filtered / advisory / dependency dashboard | no stage |
-| **decomposed parent** — an issue with tracked child issues (GitHub sub-issues the relay linked with `parent: N`; see below) | keeps the stage the rows above give it while any child is open, **never `stage/stalled`**; once every child is closed the parent is **closed as completed** by the sweep ([#12857](https://github.com/hivecommons/hive/issues/12857)) |
+| **decomposed parent** — an issue with tracked child issues (GitHub sub-issues the relay linked with `parent: N`; see below) | keeps the stage the rows above give it while any child is open, **never `stage/stalled`**; once every child is closed the parent is **closed as completed** by the sweep unless it is an epic/hold, was reopened by a person, or the repo disables it ([#12857](https://github.com/hivecommons/hive/issues/12857)) |
 
 Labels come from the issue list payload the cycle already fetched — no
 per-issue GETs — and are written only when the planned set differs from the
@@ -490,6 +492,18 @@ is re-read and returns the PR to the normal path. A PR with no non-merge
 commits, or whose commits could not be read, is *unknown*: its existing DCO
 pills are left alone and no stage decision is made from DCO.
 
+When a hive agent repairs a red `no-dco` PR (the FIX-BEFORE-NEW kick,
+`redPRFixKick` in `cmd/hive/main_sweeps.go`), it signs off **only the commits
+it authored**: `git rebase <base> --exec` amends with `--signoff` only a commit
+whose author email is the agent's own lane identity. A commit someone else
+wrote keeps exactly the trailers its author gave it, and the agent asks that
+author on the PR to sign it off. A blanket `git rebase --signoff` appended a
+bot `Signed-off-by` under a person's own and failed the "Sign-off survives the
+squash" check ([#19102](https://github.com/hivecommons/hive/pull/19102)). The
+sandbox push broker enforces the same rule: it refuses to push a commit that
+carries the lane's `Signed-off-by` when another identity authored or committed
+it (see [Sandbox isolation](../sandbox-isolation.md)).
+
 The labels are written on every managed repo; the **072 routing is per
 repo**. It applies only where the repo actually enforces DCO — detected when
 a `dco` / `DCO` context is in the branch's required checks or reported on
@@ -533,7 +547,7 @@ revert-rate-by-author-kind drill-down (#12428) reads it.
 | Label | Meaning | Example |
 |---|---|---|
 | `author/human` | a person pushed the PR themselves | a maintainer's hand-written PR |
-| `author/clanker` | a **contributor's own agent** (relay) authored the PR under that contributor's GitHub login — "clanker" is the project's word for a contributor's agent (it is their clanker, not a hive) | mendezr's or Karibhou's relay-opened PRs: human login, `— hive:` trailer |
+| `author/clanker` | a **contributor's own agent** (relay) authored the PR under that contributor's GitHub login — "clanker" is the project's word for a contributor's agent (it is their clanker, not a hive) | mendezr's or Karibhou's relay-opened PRs: human login, `-- hive:` trailer |
 | `author/hive` | **this repository's own hive** — the App or one of its agent lanes — authored the PR | `app/hivecommons-hive` PRs, anything stamped `agent/<lane>` |
 
 Detection rules, first match wins (`authorkind.Explain` returns the rule
@@ -544,13 +558,22 @@ name, logged at debug as `stage labels: author kind`):
    same pass strips as strays from a non-App PR, #12545, are ignored first)
 3. `<!-- hive:origin hive=<id> -->` in the body: `<id>` is this hive's
    `hive_id` → `author/hive`; another hive → `author/clanker`
-4. the visible `— hive:` attribution trailer (what the hub's
+4. the visible `-- hive:` attribution trailer (what the hub's
    `ReconcilePRAttribution` stamps on every relay-reported PR) → `author/clanker`
 5. the `🐝 **Hive Agent**` identity footer from `gh-wrapper.sh` → `author/clanker`
-6. the login has a contributor profile on this hive (runs a relay that
+6. a `Generated by …` provenance line whose run link is under
+   `<server>/<owner>/<repo>/actions/runs/<id>` and names a run in the PR's own
+   repository on the PR's own server (a lookalike host does not count) →
+   `author/clanker`: one of the
+   repo's workflows opened it, even when a user PAT (used so the branch gets
+   ordinary `pull_request` CI) made a person its GitHub author. Nobody pushes
+   to such a branch by hand, so it takes the 072 / adoption path instead of
+   parking at 071 on the PAT's owner, and the owner rule does not refuse its
+   adoption (#17450)
+7. the login has a contributor profile on this hive (runs a relay that
    targets it) → `author/clanker` (weakest signal; only reached with no marker)
-7. a non-App `[bot]` login (dependabot, …) → no `author/*` label
-8. otherwise → `author/human`
+8. a non-App `[bot]` login (dependabot, …) → no `author/*` label
+9. otherwise → `author/human`
 
 Names are configurable so a repo can spell them its own way; each must keep
 the `author/` prefix (so the reconciler still owns it) and the three must
@@ -685,9 +708,77 @@ the open-issue snapshot instead — and then:
   "delivered" comment is posted until the close succeeds.
 - **No children** → nothing changes.
 
-Reopen the parent if something it asked for is still missing; the sweep does
-not close it again until a child is reopened and closed once more (the
-sub-issue summary is read fresh each cycle).
+Reopen the parent if something it asked for is still missing. A parent a
+person reopens after a hive auto-close is **never auto-closed again**
+([#18869](https://github.com/hivecommons/hive/issues/18869)): once every
+child is confirmed closed the sweep reads the parent's timeline (one read,
+only at that point, cached per parent) and keeps it open when a non-bot
+`reopened` event follows the `<!-- hive:parent-autoclose -->` comment (or a
+bot's close). The timeline is the record, so the rule survives restarts;
+an unreadable timeline means no close that cycle. This holds under every
+config value below.
+
+**Epics and holds are never auto-closed.** An issue labelled `epic` (any
+case) or `hold` stays open for a person to close, with all children closed.
+Per repo, `repos.<repo>.parent_autoclose` chooses the policy:
+
+| value | behaviour |
+|---|---|
+| `true` (default) | close a decomposed parent when all children are closed, except `epic`/`hold`-labelled issues |
+| `epics_too` | also close `epic`/`hold`-labelled parents |
+| `trackers_too` | `epics_too`, and also close tracker/umbrella issues that have no sub-issue children once everything they reference is finished (below) |
+| `false` | never auto-close a parent in this repo |
+
+```yaml
+repos:
+  torch-spyre/spyre-inference:
+    parent_autoclose: false
+```
+
+You can also set it without editing YAML: Settings, Repos tab, "Parent auto-close"
+(owner only). Each monitored repo has a choice of "Close finished parents
+(default)", "Also close epics and holds", "Also close trackers whose work is done" and "Never auto-close parents"; saving
+applies it without a restart and is recorded in the audit log. Issues marked as
+tracking issues (`hive/tracking`, the `<!-- hive:tracking -->` marker, or "Keep
+this issue open") are never auto-closed under any value.
+
+The dashboard does not yet show a "kept open: reopened by <login>" pill; the
+kept-open decision is logged (`decomposed parent kept open`).
+
+**Trackers and umbrellas with no sub-issues (`trackers_too`).** Many umbrella and
+audit trackers are not decomposed parents: they have no sub-issue children and
+are referenced by `Refs`-only PRs. Under v5 a merge never closes an issue, so
+with `repos.<repo>.parent_autoclose: trackers_too` the sweep computes "done"
+from the state of what the tracker references, never from close keywords. It is
+off unless you choose it, and nothing changes for any other value.
+
+- *Which issues are read.* Only an issue that announces itself as a tracker: one
+  the shared umbrella classifier recognises (`umbrella`, `tracker`, `epic` or
+  `meta-tracker` label, the `<!-- hive:umbrella -->` marker, a `[Tracker]`-style
+  title prefix, or a task list of two or more issue references; see
+  `hub.contribute_umbrella`), an `audit` or `roadmap` label, or a `close_when`
+  checklist. A design or feature issue that merely has `Refs` PRs is never
+  closed this way, because a `Refs` PR is partial work by definition.
+- *The reference set.* With a `close_when` heading (or `close_when:` line) in the
+  body, the checklist under it is the whole set: the tracker is done when every
+  item is ticked or, for an item naming an issue or PR, closed. Otherwise the set
+  is every task-list item that names an issue or PR plus every PR that
+  references the tracker with `Refs`, a closing keyword or `Part of`. The tracker
+  is done when that set is non-empty, every PR in it is merged or closed and
+  every issue in it is closed.
+- *Safety.* `hive/tracking` issues (label, `<!-- hive:tracking -->` marker, "Keep
+  this issue open") and `hold`-labelled issues are never closed, even though
+  `trackers_too` implies `epics_too`. A tracker a person reopened after a hive
+  auto-close is never closed again. An unreadable reference or timeline, or more
+  than 50 references, means no close. Reads are cached per tracker, and the close
+  needs the same finished evidence on two fresh reads 15 minutes apart, so a
+  tracker is not closed between two PRs landing.
+- *Audit.* Before closing, the hive posts one comment (carrying
+  `<!-- hive:parent-autoclose -->`) listing every referenced issue and PR with
+  its state, then closes the tracker as completed. Reopening it is final.
+
+Closing done-but-open issues that sit in `stage/040-covered-by-pr` when the
+covering PR merges is not part of this rule.
 
 ### `stage/stalled` — "nobody is working this"
 
@@ -791,6 +882,40 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    (default 6h) is folded into the comment too; after the cooldown it
    counts as a fresh nudge. The ledger lives in the stage-label store, so
    a restart does not re-nudge.
+   One outcome per head (hivecommons/hive#18872): a head the hive adopts
+   anyway gets **no** "back in your court" comment. When the author's relay
+   is offline or not registered here (live presence is known), adoption is
+   enabled and nothing blocks it (no hold label, no fork guard, no workflow
+   path, `maintainer_policy: adopt`), the `AutoAdoption` clock will adopt the
+   head regardless of what the author does next, so the nudge is only
+   *recorded* (the clock starts on it, the relay still receives its
+   `fix-pr` task) and the adoption note is the author's one notification.
+   An author whose relay is online keeps the nudge and the full online grace
+   (`contributor_grace_online`); a withheld nudge is posted as soon as the
+   adoption stops being certain (the relay reconnects, the adoption is held
+   or blocked). The operator's "Let hive decide" ladder agrees: rung 5
+   (`contributor-offline`, supersede now) only fires for an author who is not
+   reachable, the same condition. This follows the documented rule that a
+   contributor who has gone quiet is superseded now (#13975).
+   **A contributor PR another open PR already covers is never adopted**
+   ([#18900](https://github.com/hivecommons/hive/issues/18900), child of
+   #18890: the hive adopted #18870 as #18879 while the owner's #18873 for the
+   same issue was open). Before it adopts, the automatic path (`adoptContributorPR`,
+   the executor behind the `AutoAdoption` clock) and the ladder (rung 5a,
+   `covered-by-other-pr`, just before rung 5) look for another open PR, on the
+   same base branch, that closes an issue this PR closes and is a person's (an
+   owner or `author/human`, or an owner/member/collaborator not driving a
+   clanker) or the hive's. If there is one the contributor PR is closed as a
+   duplicate of it with one thank-you note that credits the contributor, and the
+   head records the block `covered-by-open-pr` (tracker row: "another open PR
+   already covers the issue"); a write-back gate refusal or a failed close
+   leaves the PR open with adoption still off. The hive's own copy of this PR
+   (`Supersedes #N`), a PR on another release line, another contributor's PR and
+   a duplicate the merge queue holds behind this one do not count: "green first,
+   then earlier-opened" only breaks ties between PRs of equal trust. With no
+   competing PR but a live claim by a person or a hive agent on the issue, the
+   ladder recommends leaving the PR open and names the holder, and the engine
+   refuses adoption (`human-claim`, see [maintainer commands](../maintainer-commands.md#claiming-an-issue)).
 2. Relay contributors (the author has a contributor profile and a live relay
    connection) also receive the diagnosis in their relay session as a
    `fix-pr` task with `priority: interrupt`. Presence = a relay heartbeat
@@ -1247,7 +1372,8 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    in-place adoption their push makes the hive yield (above).
    The contribute page's "PRs awaiting rework" list for a relay shows
    `adopting (contributor offline)` on a nudged PR whose relay connection is
-   stale, and `adopted by hive` once the PR is in 074.
+   stale; once the PR is in 074 it is the hive's and leaves that relay's
+   list.
 5. Backpressure — the per-contributor fix budget. Capacity = the relay's
    advertised `max_parallel_fixes` (fix sub-sessions beside the primary),
    clamped by `contribute.max_parallel_fixes` (default 2); an unadvertised
@@ -1374,6 +1500,20 @@ comment and the dashboard claim detail (`@login` next to the claim).
 | A person — dashboard, `/claim`, hivectl, or a Copilot CLI / Claude Code / Codex session acting on their behalf | `kind=human who=<login>` | `hive/claimed-by-human` |
 | A relay contributor or external bot | `kind=contributor` / `kind=external`, `who=<login>` | `hive/claimed-by-human` |
 | A hive agent with no human principal | `kind=agent who=<agent>` | `hive/claimed-by-<agent>` (e.g. `hive/claimed-by-scanner`) |
+
+**A person outranks a contributor, ledger entry or not.** The ledger ranks
+`kind=human` over `kind=contributor`, but an owner's claim made outside it
+(the assignee set by an owner or maintainer, a `/claim` comment, or
+`hive/claimed-by-human` applied by hand rather than by the hive) used to leave
+a live contributor lease untouched (#18866: the owner claimed at 03:21Z and the
+contributor still opened a PR at 03:32Z). Since
+[#18899](https://github.com/hivecommons/hive/issues/18899) the contributor
+claim's admission check reads those signals, so the next renewal or the
+five-minute release tick releases the lease (reason `human claim: ...`), yanks
+the relay task and records the person as the claim holder; see
+[Maintainer commands](../maintainer-commands.md#claiming-an-issue). The hive's
+own `hive/claimed-by-human` label (applied for a person's or a contributor's
+ledger claim) is never read as a person's claim; only a hand-applied one is.
 
 A backend or model name (`copilot`, `claude`, `codex`, `gemini`, `pi`) is
 **never** a suffix: it names the tool, not who answers for the work. A

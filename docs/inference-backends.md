@@ -4,6 +4,8 @@ Hive can route agents through OpenAI-compatible model gateways instead of a subs
 
 See [Gateway-path tier](../src/docs/backend-support-tiers.md#gateway-path-tier) for which dashboard/agent features (terminal access, model discovery, token metering, login) are guaranteed, best-effort, or not applicable on this path, and what a gateway smoke check must prove.
 
+Operators who already run a generic AI gateway can read the [evaluation and spike plan](../src/docs/ai-gateway-evaluation.md) for how to place one in front of the model backend with today's configuration. It is an evaluation, not a commitment: the bundled LiteLLM proxy and every default are unchanged.
+
 ## Apple MLX: local contributor inference, not a hosted gateway
 
 ClankeR offers **Apple MLX** on `/contribute`, using the actual Pi coding
@@ -113,7 +115,7 @@ Endpoint environment overrides used by v2 include:
 - `HIVE_VLLM_ENDPOINT` for `vllm`
 - `HIVE_LLMD_ENDPOINT` for `llm-d`
 - `HIVE_LITELLM_ENDPOINT` for LiteLLM
-- `HIVE_LITELLM_API_KEY` or `api_key_file` for LiteLLM bearer auth
+- `HIVE_LITELLM_API_KEY` or `api_key_file` for LiteLLM bearer auth. `api_key_file` must be under `/secrets` or `/data/secrets`; any other path is refused at save, warned about at boot and at runtime, and never read. Mount the Secret under one of those dirs. A rotated key file is picked up without a restart. See [Where a gateway key file may live](../src/docs/agent-configuration.md#where-a-gateway-key-file-may-live).
 - `HIVE_LITELLM_MODELS` as a comma-separated fallback model list when discovery fails
 
 Never put the key value itself in YAML.
@@ -134,7 +136,7 @@ OpenRouter is both a Model Gateway kind (`kind: openrouter`) and a guided fundin
 1. Open **Governor Config → Model Gateways**.
 2. Add a gateway named `openrouter` with kind `openrouter`. The UI preset fills the endpoint as `https://openrouter.ai/api/v1`.
 3. Store the key as a secret value in the UI, or point `api_key_env` / `api_key_file` at a key that already exists. Hive stores only the file path or env-var name in `hive.yaml`.
-4. Pick a `default_model` from discovery or enter an OpenRouter model id manually. The curated fallback default is `deepseek/deepseek-chat`.
+4. Pick a `default_model` from discovery or enter an OpenRouter model id manually. The curated fallback default is `deepseek/deepseek-v4.1-flash`. For OpenRouter the Default Model field is a searchable picker: type to filter the live catalog (about 470 models), browse by provider prefix (`z-ai/`, `deepseek/`, `anthropic/`, …), and read each model's price per 1M input/output tokens and context window. The curated suggestions (DeepSeek V4.1 Flash, GLM-5.3, GLM-5.3 Flash, Claude Sonnet 5.5, Gemini 3.8 Flash) sit on top, and any suggestion OpenRouter has retired is hidden. Typing an id the catalog does not list still works.
 5. Assign an agent with `backend: openrouter` (the gateway name) and either leave `model:` empty to use the default or set an explicit OpenRouter model id.
 
 Equivalent YAML looks like:
@@ -146,13 +148,13 @@ governor:
       kind: openrouter
       endpoint: https://openrouter.ai/api/v1
       api_key_file: /data/secrets/gateway_openrouter_api_key
-      default_model: deepseek/deepseek-chat
+      default_model: deepseek/deepseek-v4.1-flash
       key_name: openrouter-prod-key  # optional: audit label shown in the dashboard, not a secret
 
 agents:
   guide:
     backend: openrouter
-    model: deepseek/deepseek-chat
+    model: deepseek/deepseek-v4.1-flash
 ```
 
 ### Scan-to-fund flow
@@ -168,6 +170,35 @@ A spoke with an OpenRouter key proxies OpenRouter's `/api/v1/key` credit endpoin
 ## Model discovery
 
 Hive probes `/v1/models` on OpenAI-compatible gateways. LiteLLM discovery includes bearer auth when a key is configured. If discovery fails, the UI falls back to static or configured model lists and marks entries as unverified; fallback data should not be treated as proof that the endpoint is healthy.
+
+## Gateway spend and prices
+
+The cost card and the Overview usage gauge price gateway models from the gateway itself, in this order:
+
+1. A `prices:` block on the gateway in `hive.yaml` (USD per 1M tokens). It wins over everything else and is the only source for `vllm`, `llm-d`, `watsonx` and `custom` gateways, which publish no prices.
+2. For `openrouter`, the `pricing` block of the public `/models` catalog that model discovery already reads (input, output and cache-read prices per token).
+3. For `litellm`, the proxy's `/model/info` (`input_cost_per_token`, `output_cost_per_token`, `cache_read_input_token_cost`), read with the gateway key.
+4. The static list-price table, for gateway ids it knows.
+
+If a gateway model has none of these, it shows as **price unknown**. Its tokens are left out of the total (which is then a lower bound) and listed by name. It is never counted as $0 or as a tier guess. When the gateway reports cached prompt tokens (`usage.prompt_tokens_details.cached_tokens`), they are billed at the cache-read price. A cached-input price you leave unset defaults to the input price.
+
+```yaml
+governor:
+  gateways:
+    - name: local-vllm
+      kind: vllm
+      endpoint: http://vllm:8000
+      prices:              # USD per 1M tokens
+        input: 0.20
+        cached_input: 0.02
+        output: 0.60
+        models:            # optional per-model overrides
+          Qwen/Qwen3-235B:
+            input: 0.90
+            output: 2.70
+```
+
+The gauge shows gateways as dollar rows, not dials, because a gateway has no plan to measure. Each row covers the enabled agents whose backend names that gateway, over the same token window as the cost card.
 
 ## Guided example: Watsonx via gateway
 

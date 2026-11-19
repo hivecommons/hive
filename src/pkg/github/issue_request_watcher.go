@@ -17,10 +17,12 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/crux/sessiontaint"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/issueshape"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -123,6 +125,15 @@ type IssueRequest struct {
 	// progress bar instead of only a "Part of #N" line in the body
 	// (hivecommons/hive#9435). A failure to link does not fail the create.
 	Parent int `json:"parent,omitempty"` // issue only
+	// ParentRepo is the repo Parent lives in when it is not Repo
+	// (hivecommons/hive#18680): a tracker in one managed repo whose child's
+	// work lives in another. The child is filed in Repo — where its work
+	// lives — and linked back in full cross-repo form (`Part of
+	// owner/repo#N`, `<!-- hive:parent owner/repo#N -->`, and a native
+	// cross-repo sub-issue link). Both repos must be managed by this hive;
+	// when Repo is not, the child falls back to ParentRepo, so a child is
+	// never filed in an unmanaged repo. Empty means Repo.
+	ParentRepo string `json:"parent_repo,omitempty"` // issue only
 	// BlockedBy lists issue numbers in the same repo that must close before
 	// this one is ready. On an "issue" request the watcher records each as a
 	// GitHub "blocked by" dependency of the new issue after creating it
@@ -148,6 +159,14 @@ type IssueRequest struct {
 	// label and removes `help wanted`. The blocked sweep lifts the label when
 	// the PR merges or closes.
 	BlockedOnPR int `json:"blocked_on_pr,omitempty"` // comment only
+	// NotAgentWork is a scanner triage verdict that the issue is not agent
+	// work (hivecommons/hive#18675): "not-a-defect", "needs-human" or
+	// "needs-environment". On a "comment" request on an issue the watcher
+	// posts the note once with the not-agent-work marker and parks the issue
+	// on `needs-human`, so it leaves stage/010-actionable and the scanner's
+	// work list; the same verdict again with no human comment since is
+	// dropped (already_existed). A marker in the body is read the same way.
+	NotAgentWork string `json:"not_agent_work,omitempty"` // comment only
 	// Claim makes an "issue" request file AND claim the new issue for Agent
 	// in one request (hivecommons/hive#17299): right after the create the
 	// watcher performs the same claim a "claim" request does and takes
@@ -206,6 +225,10 @@ type IssueResponse struct {
 	// when a requested link did not succeed; the issue is still created OK.
 	ParentLinked    bool   `json:"parent_linked,omitempty"`
 	ParentLinkError string `json:"parent_link_error,omitempty"`
+	// RepoFallbackFrom names the repo a cross-repo child asked to be filed
+	// in when the hive does not manage it (hivecommons/hive#18680): the
+	// child was filed in the parent's repo instead, which Number/URL name.
+	RepoFallbackFrom string `json:"repo_fallback_from,omitempty"`
 	// BlockedByLinked lists the req.BlockedBy numbers that were recorded as
 	// GitHub "blocked by" dependencies of the created issue; BlockedByErrors
 	// names each one that could not be, with the reason (#9839).
@@ -409,6 +432,15 @@ func (c *Client) issueClearRetry(path string) {
 }
 
 func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn func() time.Time) {
+	c.handleOneIssueRequestFrom(ctx, path, reviewRequestSource{}, nowFn)
+}
+
+// handleOneIssueRequestFrom is handleOneIssueRequest for a request from src.
+// The zero source is the pod-local drop box. A sandbox spool's request
+// (hivecommons/hive#18573) is attributed to the manifest's agent, skips the
+// file-owner check its ingest already stood in for, and is authorized by the
+// source's authorizer; every other gate is the same code.
+func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src reviewRequestSource, nowFn func() time.Time) {
 	if !c.issueBackoffAllows(path, nowFn) {
 		return
 	}
@@ -436,6 +468,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		c.logger.Warn("issue-request watcher: bad request file quarantined",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return
+	}
+	// A sandbox spool's requests belong to the agent its manifest names,
+	// whatever the file says.
+	if src.agent != "" {
+		req.Agent = src.agent
 	}
 	kind := strings.TrimSpace(strings.ToLower(req.Kind))
 	if kind == "" {
@@ -493,6 +530,23 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			slog.String("path", path), slog.String("reason", shapeErr))
 		return
 	}
+	// Cross-repo decomposition (hivecommons/hive#18680): resolve which
+	// managed repo the child is filed in before the repository gate, so an
+	// unmanaged child repo falls back to the parent's instead of being
+	// refused, and an unmanaged parent repo is refused like any other.
+	var repoFallbackFrom string
+	if kind == "issue" && req.Parent > 0 && strings.TrimSpace(req.ParentRepo) != "" {
+		if err := c.validateIssueRequestRepo(req.ParentRepo); err != nil {
+			c.quarantineFailedIssueRequest(path, req, kind, "parent repository refused", IssueResponse{Error: err.Error()}, nowFn)
+			return
+		}
+		repoFallbackFrom = c.resolveChildIssueRepo(&req)
+		if repoFallbackFrom != "" {
+			c.logger.Info("issue-request watcher: child repo is not managed by this hive; filing in the parent's repo",
+				slog.String("requested_repo", repoFallbackFrom), slog.String("repo", req.Repo),
+				slog.Int("parent", req.Parent), slog.String("agent", req.Agent))
+		}
+	}
 	// The repository gate: an impossible, placeholder or out-of-scope repo
 	// can never be written to, so it is quarantined now rather than retried
 	// — still before authorization and before any GitHub call.
@@ -505,11 +559,19 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	// watcher. A nil authorizer fails closed. Denials quarantine (.denied) —
 	// retrying can never change policy.
 	fileUID := statUID(data, path)
-	if c.issueAuthz == nil {
+	authz := c.issueAuthz
+	if src.agent != "" {
+		// A staged spool file is owned by hive, so its UID proves nothing;
+		// the MAC check at ingest did the proving. 0 is the authorizer's "no
+		// owning UID" value.
+		fileUID = 0
+		authz = src.issueAuthz
+	}
+	if authz == nil {
 		c.denyIssueRequest(path, req, "no authorizer configured (fail closed)", nowFn)
 		return
 	}
-	if err := c.issueAuthz(req.Agent, fileUID, kind); err != nil {
+	if err := authz(req.Agent, fileUID, kind); err != nil {
 		c.denyIssueRequest(path, req, err.Error(), nowFn)
 		return
 	}
@@ -570,11 +632,17 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 
 	meta := c.attributionMeta(req.Agent)
 	body := c.relayBody(req.Agent, req.Body)
+	// The agent's title is agent-authored text like the body: no em-dashes.
+	req.Title = prosefilter.SanitizeTitle(req.Title)
 	if kind == "issue" && req.Parent > 0 {
 		// Machine-readable child → parent marker (hivecommons/hive#12857):
 		// the sub-issue link below is best-effort and the ledger is
-		// spoke-local, so the body carries the relation too.
-		body = withParentMarker(body, req.Parent)
+		// spoke-local, so the body carries the relation too. A cross-repo
+		// child names its parent in full owner/repo#N form, in the marker
+		// and in the "Part of" line (hivecommons/hive#18680).
+		parentRepo := c.crossRepoParent(req)
+		body = withCrossRepoParentReference(body, parentRepo, req.Parent)
+		body = withParentMarker(body, parentRepo, req.Parent)
 	}
 	if kind == "issue" {
 		// An empty dedupe checklist is not an issue (hivecommons/hive#15381):
@@ -618,7 +686,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		body = AppendTrailer(body, meta)
 	}
 
-	resp := IssueResponse{At: nowFn().UTC().Format(time.RFC3339)}
+	resp := IssueResponse{At: nowFn().UTC().Format(time.RFC3339), RepoFallbackFrom: repoFallbackFrom}
 	// #17298: a request that starts work on an issue (a claim, or a comment
 	// announcing a start — the kick path for epic-driven work) is checked
 	// against the same claim-target gate as hive-open-pr before any write,
@@ -686,7 +754,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				break
 			}
 		}
-		var parkBlocked bool
+		// parkLabel is the one label the relay adds after the note: `blocked`
+		// for --blocked-on-pr, `needs-human` for a not-agent-work verdict
+		// (hivecommons/hive#18675).
+		var parkLabel string
 		if req.BlockedOnPR > 0 {
 			settled, merged, pErr := c.pullRequestSettledDetails(ctx, req.Repo, req.BlockedOnPR)
 			if pErr != nil {
@@ -699,10 +770,24 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				body = blockedTargetSettledNote(req.Repo, req.BlockedOnPR, merged, body)
 			} else {
 				body = blockedNoteBody(req.Repo, req.BlockedOnPR, body)
-				parkBlocked = true
+				parkLabel = BlockedLabel
 			}
 		}
-		if key := relayStatusNoteKey(body); key != "" && (c.notificationsQuiet() || c.attentionPilot()) {
+		// A not-agent-work triage verdict changes the issue's state, not
+		// only its timeline, and is never repeated unchanged
+		// (hivecommons/hive#18675). On a PR it is an ordinary comment.
+		verdict, notAgentWork := notAgentWorkVerdictFor(req, body)
+		notAgentWork = notAgentWork && req.BlockedOnPR == 0 && err == nil
+		if notAgentWork {
+			var park bool
+			notAgentWork, park, err = c.relayNotAgentWorkNote(ctx, req, verdict, body, &resp)
+			if park {
+				parkLabel = issueNeedsHumanLabel
+			}
+		}
+		if notAgentWork {
+			// Posted (or suppressed) above.
+		} else if key := relayStatusNoteKey(body); key != "" && (c.notificationsQuiet() || c.attentionPilot()) {
 			// A one-line state note (awaiting-ci, parking, already fixed)
 			// is a section of the item's status comment in quiet mode or
 			// under the attention pilot.
@@ -711,6 +796,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			if err == nil && !created {
 				c.noteCommentSuppressed()
 			}
+		} else if handled, scanErr := c.relayScannerNote(ctx, req, body, &resp); handled || scanErr != nil {
+			// A scanner CI-triage or rebase note on a PR is the one
+			// scanner note per PR, silent when nothing changed
+			// (hivecommons/hive#18451).
+			err = scanErr
 		} else if note, ok := OriginFooterNote(body); ok && req.BlockedOnPR == 0 {
 			// Free text whose only marker is the identity footer is an
 			// agent note: one upserted comment per item, or a status
@@ -727,10 +817,14 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			c.denyIssueRequest(path, req, "comment refused: "+err.Error()+"; this issue already received its daily quota of hive comments, nothing more is needed on it today", nowFn)
 			return
 		}
-		if err == nil && parkBlocked {
-			err = c.AddLabels(ctx, req.Repo, req.Number, []string{BlockedLabel})
-			if err == nil {
+		if err == nil && parkLabel != "" {
+			err = c.AddLabels(ctx, req.Repo, req.Number, []string{parkLabel})
+			switch {
+			case err != nil:
+			case parkLabel == BlockedLabel:
 				err = stripHelpWanted(ctx, c, req.Repo, req.Number)
+			default:
+				err = c.parkNotAgentWorkStage(ctx, req.Repo, req.Number)
 			}
 		}
 		if err == nil {
@@ -885,7 +979,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			// error, …) is logged and surfaced in the result but never turns
 			// a successful create into a failure or a retry.
 			if req.Parent > 0 && !res.Consolidated && res.ID > 0 {
-				if linkErr := c.AddSubIssue(ctx, req.Repo, req.Parent, res.ID); linkErr != nil {
+				parentRepo := c.crossRepoParent(req)
+				linkRepo := req.Repo
+				if parentRepo != "" {
+					linkRepo = parentRepo
+				}
+				if linkErr := c.AddSubIssue(ctx, linkRepo, req.Parent, res.ID); linkErr != nil {
 					resp.ParentLinkError = linkErr.Error()
 					c.logger.Warn("issue-request watcher: sub-issue link failed, issue still created",
 						slog.String("repo", req.Repo), slog.Int("number", res.Number),
@@ -896,8 +995,8 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 					// child may inherit the parent's acknowledgement. Only
 					// relay-made links are recorded; a sub-issue link anyone
 					// adds later in the GitHub UI confers nothing.
-					linkOwner, linkRepo := c.splitRepo(req.Repo)
-					if recErr := RecordSplitParent("", linkOwner+"/"+linkRepo, res.Number, req.Parent, req.Agent); recErr != nil {
+					childOwner, childRepo := c.splitRepo(req.Repo)
+					if recErr := RecordSplitParentRef("", childOwner+"/"+childRepo, res.Number, parentRepo, req.Parent, req.Agent); recErr != nil {
 						c.logger.Warn("issue-request watcher: sub-issue linked but split-parent ledger write failed; child will not inherit acknowledgement",
 							slog.String("repo", req.Repo), slog.Int("number", res.Number),
 							slog.Int("parent", req.Parent), slog.String("error", recErr.Error()))
@@ -914,7 +1013,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				}
 			}
 			if req.Claim {
-				resp.Claimed, resp.ClaimError = c.claimCreatedIssue(ctx, req, fileUID, res, meta, nowFn)
+				resp.Claimed, resp.ClaimError = c.claimCreatedIssue(ctx, req, authz, fileUID, res, meta, nowFn)
 			}
 		}
 	}
@@ -928,6 +1027,20 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 
 	if startSignal != "" {
 		c.notifyAgentStart(req.Agent, req.Repo, req.Number, startSignal)
+	}
+
+	// Session taint (#18987), observe only. Recorded once per relay write
+	// that completed, after every refusal, retry and dedupe gate, so the
+	// would-act data never describes an action the hive then refused or
+	// retried. A reused issue or comment published nothing new and is
+	// skipped. The enforcement phases move this check before the write.
+	if !resp.AlreadyExisted {
+		switch kind {
+		case "issue":
+			c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayIssue, req.Repo)
+		case "comment":
+			c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayComment, req.Repo)
+		}
 	}
 
 	action := AuditActionAgentIssueCreated
@@ -980,6 +1093,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		// A deferral on a PR is a decision the activity monitor shows
 		// ("Deferred · waiting on #N"), not an absence of pickup (#17347).
 		c.recordPRDeferral(ctx, req, meta, resp.URL)
+		c.notifyAgentAction(AgentAction{Agent: req.Agent, Kind: AgentActionComment, Repo: req.Repo, Number: resp.Number, At: nowFn()})
 	}
 	c.logger.Info("issue-request watcher: request completed",
 		slog.String("repo", req.Repo), slog.String("kind", kind),
@@ -1012,7 +1126,7 @@ func (c *Client) claimIssueForAgent(ctx context.Context, repo string, number int
 // issue its filer is working is not open for outside help. The create has
 // already happened, so a failure never fails or retries the request; it is
 // returned as the result's claim_error.
-func (c *Client) claimCreatedIssue(ctx context.Context, req IssueRequest, fileUID int, res CreateIssueResult, meta InvocationMeta, nowFn func() time.Time) (bool, string) {
+func (c *Client) claimCreatedIssue(ctx context.Context, req IssueRequest, authz IssueRequestAuthorizer, fileUID int, res CreateIssueResult, meta InvocationMeta, nowFn func() time.Time) (bool, string) {
 	fail := func(why string) (bool, string) {
 		c.logger.Warn("issue-request watcher: issue created but not claimed",
 			slog.String("repo", req.Repo), slog.Int("number", res.Number),
@@ -1028,10 +1142,10 @@ func (c *Client) claimCreatedIssue(ctx context.Context, req IssueRequest, fileUI
 	if strings.TrimSpace(req.Agent) == "" {
 		return fail("the request names no agent")
 	}
-	if c.issueAuthz == nil {
+	if authz == nil {
 		return fail("no authorizer configured (fail closed)")
 	}
-	if err := c.issueAuthz(req.Agent, fileUID, "claim"); err != nil {
+	if err := authz(req.Agent, fileUID, "claim"); err != nil {
 		return fail(err.Error())
 	}
 	if reason, refused := c.refuseWrite(req.Agent, WriteOpClaim, req.Repo, res.Number); refused {
@@ -1782,6 +1896,8 @@ func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boun
 		if expErr != nil {
 			return effects.Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v; expiry failed: %v)", journalErr, lookupErr, expErr)
 		}
+		// The boundary may already have expired the entry while refusing.
+		expired = expired || errors.Is(journalErr, effects.ErrUnresolvedExpired)
 		if !expired {
 			return effects.Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v)", journalErr, lookupErr)
 		}

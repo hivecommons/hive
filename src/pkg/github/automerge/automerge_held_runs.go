@@ -17,8 +17,11 @@ package automerge
 //     (notice-autofix.yml with GITHUB_TOKEN) and the missing context comes
 //     from a `pull_request_target`-only workflow (`verify PR contents`). Such
 //     pushes never trigger that workflow, so the context is absent forever
-//     (#11923). Dependabot's own re-push restores normal triggers, so the
-//     sweep asks for one `@dependabot rebase` per head instead of polling.
+//     (#11923). Only Dependabot's own re-push restores normal triggers, and
+//     Dependabot refuses `@dependabot rebase` from the App and on a branch
+//     someone else pushed to (#18441), so the sweep posts nothing: it holds
+//     the head as never-ran, logged once per head, until the base moves and
+//     the lane's App update-branch push re-triggers the workflows.
 //  4. The PR itself was opened by `github-actions[bot]` with GITHUB_TOKEN, so
 //     no `pull_request` workflow ever runs for it. The bot cannot be asked to
 //     re-push, so the sweep re-authors the PR as the App once per head
@@ -49,6 +52,7 @@ import (
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/oktotest"
+	"github.com/hivecommons/hive/pkg/prgate"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
@@ -62,8 +66,8 @@ const (
 	// older than heldRunNeverStartedGrace; polling cannot make one appear.
 	requiredCheckNeverStartedPrefix = "required-check-never-started:"
 	// requiredCheckNeverRanPrefix: a trusted-bot head pushed by
-	// github-actions[bot] is missing a context no held run will produce; the
-	// sweep nudged the bot to rebase (#11923).
+	// github-actions[bot] is missing a context no held run will produce
+	// (#11923, #18441).
 	requiredCheckNeverRanPrefix = "required-check-never-ran:"
 	// requiredCheckSkippedByDesignPrefix logs a required context counted as
 	// satisfied because its workflow concluded `skipped` on a trusted bot's head.
@@ -71,10 +75,8 @@ const (
 	workflowRunConclusionSkipped       = "skipped"
 	// githubActionsBotLogin authors commits pushed with a workflow GITHUB_TOKEN.
 	githubActionsBotLogin = "github-actions[bot]"
-	// dependabotLogin is the only trusted bot that understands the rebase nudge.
+	// dependabotLogin authors Dependabot's PRs and commits.
 	dependabotLogin = "dependabot[bot]"
-	// dependabotRebaseComment asks Dependabot to re-push the branch itself.
-	dependabotRebaseComment = "@dependabot rebase"
 	// workflowRunConclusionActionRequired is GitHub's conclusion for a run
 	// waiting on a person's approval.
 	workflowRunConclusionActionRequired   = "action_required"
@@ -115,14 +117,39 @@ const (
 	// is still treated as "GitHub has not scheduled them yet".
 	heldRunNeverStartedGrace = 30 * time.Minute
 	workflowRunsPageSize     = 100
+	// workflowRunStatusQueued is the status of a run GitHub has not started.
+	workflowRunStatusQueued = "queued"
+	// prGateHoldWarnKey keys the once-per-head warning that a required
+	// PR-contents context cannot be posted by the hive.
+	prGateHoldWarnKey = "pr-gate-not-postable:"
+	// orphanedRunWarnKey keys the once-per-head orphaned-run warning in
+	// terminalHoldLogged.
+	orphanedRunWarnKey = "orphaned-queued-runs:"
 )
 
 // resolveMissingRequiredCheck refines a `required-check-missing:<ctx>` skip
 // for a trusted-lane PR. It returns the original reason when nothing is known,
 // a workflow-approval-required reason when GitHub is waiting for approval and
 // Hive has posted `/ok-to-test`, or a never-started/never-ran reason when
-// polling cannot progress. It never approves a run with the App token.
+// polling cannot progress. Runs GitHub orphaned in `queued` with zero jobs
+// count as never started (#17775). It never approves a run with the App token.
 func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA, reason string, headPushedAt time.Time) string {
+	if c != nil && strings.HasPrefix(reason, requiredCheckMissingPrefix) {
+		// A required context the hive itself posts (auto_merge.pr_gate in
+		// enforce mode) is missing because the hive cannot post it: the
+		// installation lacks the Commit statuses write grant, or GitHub refused
+		// the write. Say so instead of a bare required-check-missing
+		// (hivecommons/hive#19038). The hold is only ever named, never cleared
+		// by polling: the owner accepts the permission.
+		missing := strings.TrimPrefix(reason, requiredCheckMissingPrefix)
+		if held := prgate.DefaultHoldReason(owner+"/"+repo, missing); held != "" {
+			if c.markTerminalHoldLogged(owner, repo, number, headSHA, prGateHoldWarnKey+missing) {
+				c.warn("automerge required PR-contents context cannot be posted by the hive; naming the missing Commit statuses grant",
+					"repo", displayRepo, "pr", number, "sha", headSHA, "context", missing, "reason", held)
+			}
+			return held
+		}
+	}
 	if c == nil || c.gh == nil || !strings.HasPrefix(reason, requiredCheckMissingPrefix) {
 		return reason
 	}
@@ -141,17 +168,25 @@ func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, o
 	}
 	held := heldSameRepoWorkflowRuns(runs.WorkflowRuns, owner+"/"+repo)
 	if len(held) == 0 {
+		startedRuns := len(runs.WorkflowRuns)
+		if orphaned := c.orphanedQueuedWorkflowRuns(ctx, owner, repo, runs.WorkflowRuns); orphaned > 0 && orphaned == startedRuns {
+			startedRuns = 0
+			if c.markTerminalHoldLogged(owner, repo, number, headSHA, orphanedRunWarnKey+missing) {
+				c.warn("automerge workflow runs for head are orphaned in queued with no jobs; treating them as never started",
+					"repo", displayRepo, "pr", number, "sha", headSHA, "orphaned", orphaned, "context", missing)
+			}
+		}
 		if c.rebaseNudged(owner, repo, number, headSHA) || c.botTakeoverAttempted(owner, repo, number, headSHA) {
 			return requiredCheckNeverRanPrefix + missing
 		}
 		if headOlderThan(c.now, headPushedAt, heldRunNeverStartedGrace) && c.isAutofixPushedDependabotHead(ctx, displayRepo, owner, repo, pr, number, headSHA) {
-			c.nudgeDependabotRebase(ctx, displayRepo, owner, repo, number, headSHA, missing)
+			c.nudgeDependabotRebase(displayRepo, owner, repo, number, headSHA, missing)
 			return requiredCheckNeverRanPrefix + missing
 		}
-		if c.botTakeoverEligible(pr, len(runs.WorkflowRuns), headPushedAt) {
+		if c.botTakeoverEligible(pr, startedRuns, headPushedAt) {
 			return c.takeOverBotPR(ctx, displayRepo, owner, repo, pr, number, headSHA, missing)
 		}
-		if len(runs.WorkflowRuns) == 0 && headOlderThan(c.now, headPushedAt, heldRunNeverStartedGrace) {
+		if startedRuns == 0 && headOlderThan(c.now, headPushedAt, heldRunNeverStartedGrace) {
 			return requiredCheckNeverStartedPrefix + missing
 		}
 		return reason
@@ -210,6 +245,12 @@ func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, own
 	if c.workflowApprovalUntrustedKnown(owner, repo, number) {
 		return workflowApprovalUntrustedPrefix + contextName
 	}
+	if integrationEligibilityProbe(ctx) {
+		// The read-only eligibility probe cannot comment: its mutation
+		// boundary would refuse the post and WARN every tick. Skipping
+		// leaves the post to the live sweep.
+		return workflowApprovalRequiredPrefix + contextName
+	}
 	firstSeen, first := c.markWorkflowApprovalCommandSeen(owner, repo, number, headSHA)
 	state, scanned := c.workflowApprovalCommentState(ctx, displayRepo, owner, repo, number, headSHA, first)
 	if scanned && (state.rejected || state.prowManaged) && !c.okToTestWorkflowInstalled(ctx, displayRepo, owner, repo) {
@@ -217,8 +258,11 @@ func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, own
 		// users: every further post gets the same rejection, so stop and
 		// hand the command to a person once.
 		c.markWorkflowApprovalUntrusted(owner, repo, number)
+		if state.rejected {
+			c.rememberProwRefusal(owner, repo)
+		}
 		if !state.rejectionNoted {
-			c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, state.rejected)
+			c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, workflowApprovalUntrustedNote(strings.TrimSpace(c.transport.AppBotLogin()), state.rejected))
 		}
 		c.warn("automerge workflow approval cannot be requested by the App; merge bot trusts only its own users",
 			"repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "rejected", state.rejected, "prow", state.prowManaged)
@@ -459,12 +503,10 @@ func workflowApprovalUntrustedNote(appLogin string, rejected bool) string {
 	return b.String()
 }
 
-func (c *Engine) postWorkflowApprovalUntrustedNote(ctx context.Context, displayRepo, owner, repo string, number int, headSHA string, rejected bool) {
-	appLogin := ""
-	if c.transport != nil {
-		appLogin = strings.TrimSpace(c.transport.AppBotLogin())
-	}
-	body := workflowApprovalUntrustedNote(appLogin, rejected)
+// postWorkflowApprovalUntrustedNote posts body, a needs-human note opening
+// with workflowApprovalRejectedMarker, once per PR through the mutation
+// boundary.
+func (c *Engine) postWorkflowApprovalUntrustedNote(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, body string) {
 	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindIssueComment,
@@ -483,7 +525,7 @@ func (c *Engine) postWorkflowApprovalUntrustedNote(ctx context.Context, displayR
 		c.warn("automerge failed to post ok-to-test needs-human note", "repo", displayRepo, "pr", number, "sha", headSHA, "error", err)
 		return
 	}
-	c.info("automerge posted ok-to-test needs-human note", "repo", displayRepo, "pr", number, "sha", headSHA, "rejected", rejected)
+	c.info("automerge posted ok-to-test needs-human note", "repo", displayRepo, "pr", number, "sha", headSHA)
 }
 
 // detectTrustedRegistryClankerWorkflowApprovalRequired surfaces held runs for
@@ -578,6 +620,32 @@ func heldSameRepoWorkflowRuns(runs []*gh.WorkflowRun, fullName string) []*gh.Wor
 	return held
 }
 
+// orphanedQueuedWorkflowRuns counts same-repo runs GitHub created but left in
+// `queued` past heldRunNeverStartedGrace without materializing a single job.
+// Such runs never progress, so they are no evidence CI is coming (#17775).
+func (c *Engine) orphanedQueuedWorkflowRuns(ctx context.Context, owner, repo string, runs []*gh.WorkflowRun) int {
+	orphaned := 0
+	for _, run := range runs {
+		if run == nil || !strings.EqualFold(run.GetStatus(), workflowRunStatusQueued) {
+			continue
+		}
+		if run.GetHeadRepository() == nil || !strings.EqualFold(run.GetHeadRepository().GetFullName(), owner+"/"+repo) {
+			continue
+		}
+		if !headOlderThan(c.now, run.GetCreatedAt().Time, heldRunNeverStartedGrace) {
+			continue
+		}
+		jobs, _, err := c.gh.Actions.ListWorkflowJobs(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, run.GetID(), &gh.ListWorkflowJobsOptions{
+			ListOptions: gh.ListOptions{PerPage: 1},
+		})
+		if err != nil || jobs == nil || jobs.GetTotalCount() > 0 || len(jobs.Jobs) > 0 {
+			continue
+		}
+		orphaned++
+	}
+	return orphaned
+}
+
 func headOlderThan(now func() time.Time, headPushedAt time.Time, grace time.Duration) bool {
 	if headPushedAt.IsZero() {
 		return false
@@ -591,7 +659,7 @@ func headOlderThan(now func() time.Time, headPushedAt time.Time, grace time.Dura
 // isTerminalRequiredCheckHold reports whether reason is a hold polling cannot
 // cure (held for approval, runs never created, or never-ran after a nudge).
 func isTerminalRequiredCheckHold(reason string) bool {
-	return strings.HasPrefix(reason, workflowApprovalRequiredPrefix) || strings.HasPrefix(reason, requiredCheckNeverStartedPrefix) || strings.HasPrefix(reason, requiredCheckNeverRanPrefix)
+	return strings.HasPrefix(reason, workflowApprovalRequiredPrefix) || strings.HasPrefix(reason, requiredCheckNeverStartedPrefix) || strings.HasPrefix(reason, requiredCheckNeverRanPrefix) || strings.HasPrefix(reason, requiredCheckNeverReportedPrefix)
 }
 
 // isAutofixPushedDependabotHead reports whether pr is a trusted-lane
@@ -617,35 +685,21 @@ func (c *Engine) isAutofixPushedDependabotHead(ctx context.Context, displayRepo,
 	return strings.EqualFold(commit.GetCommit().GetAuthor().GetName(), githubActionsBotLogin)
 }
 
-// nudgeDependabotRebase logs one WARN naming the missing context and posts
-// `@dependabot rebase` once per PR head. A failed post is not retried for the
-// same head; the hold reason still surfaces in the sweep log.
-func (c *Engine) nudgeDependabotRebase(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, missing string) {
+// nudgeDependabotRebase logs one WARN per PR head naming the missing context.
+// It posts nothing: Dependabot refuses `@dependabot rebase` from the App and
+// on a branch github-actions[bot] pushed to, so a comment could only be
+// refused again every pass (#18441). The head holds as never-ran until the
+// base moves; the lane then update-branches it as the App, whose push fires
+// the pull_request and pull_request_target workflows.
+func (c *Engine) nudgeDependabotRebase(displayRepo, owner, repo string, number int, headSHA, missing string) {
 	if !c.markRebaseNudged(owner, repo, number, headSHA) {
 		return
 	}
-	c.warn("automerge required check never ran on autofix-pushed Dependabot head; asking Dependabot to rebase",
+	c.warn("automerge required check never ran on autofix-pushed Dependabot head; Dependabot ignores the App's commands, holding until the branch is updated",
 		"repo", displayRepo, "pr", number, "sha", headSHA, "context", missing)
-	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
-		Repo:   owner + "/" + repo,
-		Kind:   effects.KindIssueComment,
-		Target: strconv.Itoa(number),
-		Actor:  "automerge",
-		Inputs: map[string]string{"head_sha": headSHA, "body": effects.StableDigest(dependabotRebaseComment)},
-	}, func(ctx context.Context) (effects.Result, error) {
-		comment, _, apiErr := c.gh.Issues.CreateComment(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number, &gh.IssueComment{Body: gh.Ptr(dependabotRebaseComment)})
-		if apiErr != nil {
-			return effects.Result{}, effects.NotApplied(apiErr)
-		}
-		c.noteOwnStageComment(owner, repo, number)
-		return effects.Result{Provenance: comment.GetHTMLURL()}, nil
-	})
-	if err != nil {
-		c.warn("automerge failed to post Dependabot rebase nudge", "repo", displayRepo, "pr", number, "sha", headSHA, "error", err)
-	}
 }
 
-// rebaseNudged reports whether the nudge was already attempted for this PR
+// rebaseNudged reports whether the hold was already recorded for this PR
 // head, so later ticks skip the head-commit lookup.
 func (c *Engine) rebaseNudged(owner, repo string, number int, headSHA string) bool {
 	c.heldRunApprovalsMu.Lock()
@@ -657,8 +711,8 @@ func rebaseNudgeKey(prKey, headSHA string) string {
 	return "rebase-nudge:" + prKey + "@" + strings.ToLower(headSHA)
 }
 
-// markRebaseNudged records that the rebase nudge was attempted for this PR
-// head and reports whether this is the first attempt.
+// markRebaseNudged records the never-ran hold for this PR head and reports
+// whether this is the first time.
 func (c *Engine) markRebaseNudged(owner, repo string, number int, headSHA string) bool {
 	key := rebaseNudgeKey(c.evaluatedHeadKey(owner, repo, number), headSHA)
 	c.heldRunApprovalsMu.Lock()

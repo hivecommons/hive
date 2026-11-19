@@ -77,6 +77,7 @@ type Process struct {
 	ActionNudges              int
 	KickOutcome               KickOutcome
 	SandboxLastRun            *SandboxRun
+	SandboxPhase              *SandboxPhase
 	StartFailureClass         string
 	StartFailureReason        string
 	StartFailureCount         int
@@ -88,6 +89,15 @@ type Process struct {
 
 	paneCapture []string
 	paneFilter  func(lines []string, n int) []string
+}
+
+// TurnInFlight reports whether the agent is mid-task: its process is running
+// and it has a delivered kick whose turn has not been seen to end. An agent
+// that was never kicked has no turn to be in, so it is idle, not working
+// (#18458); KickOutcome.Settled alone reads false for it. The dashboard's
+// busy flag and the reviewer autoscaler both use this, so the two agree.
+func (p *Process) TurnInFlight() bool {
+	return p.State == StateRunning && p.LastKick != nil && !p.KickOutcome.Settled(p.LastKick)
 }
 
 // SetPaneCapture records the pane capture a snapshot was taken with and the

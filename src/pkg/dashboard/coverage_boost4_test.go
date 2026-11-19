@@ -18,34 +18,6 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
-// --- buildStructureKickMessage ---
-
-func TestBuildStructureKickMessage(t *testing.T) {
-	srv := newFullServer(t)
-	state := &knowledge.InceptionState{
-		IdeaText: "Build a task manager",
-		IdeaSlug: "task-manager",
-		Questions: []knowledge.Question{
-			{ID: "q1", Text: "What database?", Category: "storage"},
-			{ID: "q2", Text: "What framework?", Category: "language"},
-		},
-		Answers: map[string]string{
-			"q1": "PostgreSQL",
-			"q2": "React",
-		},
-	}
-	msg := srv.buildStructureKickMessage(state)
-	if !strings.Contains(msg, "Structure phase") {
-		t.Error("expected Structure phase mention")
-	}
-	if !strings.Contains(msg, "PostgreSQL") {
-		t.Error("expected answer in message")
-	}
-	if !strings.Contains(msg, "task-manager") {
-		t.Error("expected idea slug in message")
-	}
-}
-
 // --- buildAgentLeaderboardEntries ---
 
 func TestBuildAgentLeaderboardEntries(t *testing.T) {
@@ -136,16 +108,6 @@ func TestHandleAPIDocs_Boost(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("code = %d", w.Code)
 	}
-}
-
-// --- clearInceptionBeads ---
-
-func TestClearInceptionBeads(t *testing.T) {
-	srv := newFullServer(t)
-	dir := t.TempDir()
-	store, _ := beads.NewStore(dir)
-	srv.clearInceptionBeads(store)
-	// No open beads, should be a no-op
 }
 
 // --- LeaderboardForHub ---

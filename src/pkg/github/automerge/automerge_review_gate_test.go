@@ -338,6 +338,10 @@ func TestMergeReviewGateCoversEveryLane(t *testing.T) {
 				Mode:    func() string { return ReviewGateModeEnforce },
 				Verdict: func(string, int, string) ReviewGateVerdict { asked++; return reviewGateNoBundle },
 			}, &rec)
+			// The trusted-bot lane only holds on the swarm when the operator
+			// turned auto_merge.trusted_bot_skip_review off (default on:
+			// advisory, see automerge_trusted_bot_lane_test.go).
+			c.trustedBotSkipReview = func() bool { return false }
 			reason := c.mergeReviewGate(context.Background(), "acme/widget", "acme", "widget", tt.lane, 7, nil, "sha7", "", false)
 			if want := autoMergeReasonReviewGatePrefix + ReviewGateOutcomeNoBundle; reason != want || asked != 1 {
 				t.Fatalf("lane %s: reason = %q asked = %d; want %q held once", tt.lane, reason, asked, want)

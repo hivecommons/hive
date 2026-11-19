@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentsmd"
 	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/compliance"
@@ -33,6 +34,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/mailallow"
 	"github.com/hivecommons/hive/pkg/maintainernotes"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/review/autoscale"
@@ -63,6 +65,9 @@ func dashboardTimeZoneName() string {
 const agentSkipAfterFullBroadcastS = 5 * time.Second
 
 const maxSSEClients = 100
+
+// sseDropWarnInterval bounds how often dropped SSE events are logged at WARN.
+const sseDropWarnInterval = 5 * time.Minute
 
 const sessionCookieName = "hive_session"
 
@@ -97,14 +102,19 @@ func isOwnerRole(role string) bool {
 // A WRONG proof header is ALWAYS rejected regardless of this setting.
 var proxyProofRequired = true
 
-// staleDropStarvationThreshold is the number of consecutive stale-snapshot
-// drops (no publish between) at which the drop is logged at Warn.
+// staleDropStarvationThreshold bounds consecutive stale-snapshot drops (no
+// publish between): the build that would be the Nth consecutive drop is
+// published anyway, logged at Warn, so sustained mutation churn cannot
+// starve consumers. The counter resets on every publish.
 const staleDropStarvationThreshold = 5
 
 type Server struct {
 	nativeQueueTracker  nativeQueueTrackerRuntime
 	integration         integrationRuntime
-	webhookNoSecretOnce sync.Once // warn once per process about a missing webhook secret (#13666)
+	webhookNoSecretOnce sync.Once               // warn once per process about a missing webhook secret (#13666)
+	prGateOnce          sync.Once               // builds the PR gate on first use (#19038)
+	prGate              *github.PRGate          // nil until built, and when no GitHub client is configured
+	webhookRelaySeen    webhookRelayReplayCache // hub-relayed delivery IDs already accepted (#17911)
 
 	feedbackRefreshBackoff feedbackBackoff
 
@@ -128,6 +138,10 @@ type Server struct {
 	matrix      *matrixSource
 	matrixNudge stageTrackerNudger
 
+	// knowledgeConnectorsRTMu guards deps.KnowledgeConnectors, which a
+	// dashboard connector edit can swap at runtime (#18091).
+	knowledgeConnectorsRTMu sync.RWMutex
+
 	port         int
 	authToken    string
 	sweepMu      sync.RWMutex
@@ -136,9 +150,17 @@ type Server struct {
 	status       *StatusPayload
 	sseClients   map[chan []byte]struct{}
 	sseMu        sync.Mutex
+	sseDropped   int       // events dropped since the last summary warning; guarded by sseMu
+	sseDropWarn  time.Time // last summary warning; guarded by sseMu
 	logger       *slog.Logger
 	mux          *http.ServeMux
 	deps         *Dependencies
+
+	// benchmarksPub is the hourly hivecommons/benchmarks publisher state
+	// (api_benchmarks.go), built lazily by benchmarks().
+	benchmarksOnce sync.Once
+	benchmarksPub  *benchmarksPublisher
+
 	// stageStore is the stage-label memory /api/stage-tracker reads; nil
 	// means the process-wide stagelabels.Shared(). Tests inject one.
 	stageStore *stagelabels.Store
@@ -287,10 +309,6 @@ type Server struct {
 	// terminal (job_terminal.go); zero values take in-cluster defaults.
 	jobTerminal jobTerminalDeps
 
-	kickBrainstormSendKickFn func(name, msg string) error
-	kickBrainstormRestartFn  func(ctx context.Context, name, prompt string) error
-	kickBrainstormDoneFn     func()
-
 	// Sparkline histories, all backed by the generic timeSeries ring buffer
 	// (see timeseries.go). Lazily constructed via the tokenSeries()/factSeries()
 	// /costSeries() accessors so the zero-value Server needs no constructor
@@ -392,6 +410,13 @@ type Server struct {
 	// any anonymous poller could race the operator and steal the session).
 	deviceFlowID string
 
+	// ownerIdentityFlow is the in-progress consent for the hive owner's
+	// GitHub identity (hivecommons/hive#18197, api_github_owner_identity.go);
+	// separate from the login device flow above because it asks for a scope
+	// and persists a token, which login never does.
+	ownerIdentityFlowMu sync.Mutex
+	ownerIdentityFlow   *ownerIdentityFlow
+
 	// userSessions maps a random opaque session id (stored in the client's
 	// hive_session cookie on direct-route spokes) to the authenticated user.
 	// This replaces the previous single shared s.authToken cookie so two
@@ -402,8 +427,39 @@ type Server struct {
 	// (see EnableSessionPersistence). Guarded by sessionMu.
 	sessionStorePath string
 
-	terminalHandoffMu sync.Mutex
-	terminalHandoffs  map[string]terminalHandoff
+	// Sessions (api_sessions.go): lazily opened metadata store and the mutex
+	// serialising create/resume so the per-spoke and per-user caps hold.
+	sessionsOnce sync.Once
+	sessionStore *sessionStore
+	sessionsMu   sync.Mutex
+	// sessionsPreparing holds the ids whose background start is in flight in
+	// THIS process; a `preparing` record without one is left over from a
+	// restart and is marked failed on the next reconcile. Guarded by sessionsMu.
+	sessionsPreparing map[string]bool
+	// sessionSeeds holds Inbox seeds parked for sessions being created; the
+	// background start delivers each once its session is running
+	// (api_sessions_seed.go). Guarded by sessionsMu.
+	sessionSeeds map[string]*sessionSeed
+	// sessionAttaches are the live terminal websockets of user sessions
+	// (presence and the keyboard lease, api_sessions_keyboard.go); keyed by
+	// attach id, guarded by sessionAttachMu.
+	sessionAttachMu  sync.Mutex
+	sessionAttaches  map[string]*sessionAttach
+	sessionAttachSeq uint64
+	// sessionQueues holds the per-session Send queues and their workers
+	// (api_sessions_queue.go); guarded by sessionQueuesMu.
+	sessionQueuesMu sync.Mutex
+	sessionQueues   map[string]*sessionQueue
+	// sessionQueueTiming overrides the workers' pacing (tests); zero = defaults.
+	sessionQueueTiming sessionQueuePacing
+	// sessionStartups holds the startup auto-answer state of running sessions
+	// (api_sessions_autostart.go); guarded by sessionStartupMu, a leaf lock.
+	sessionStartupMu sync.Mutex
+	sessionStartups  map[string]*sessionStartup
+	// sessionAutostartTiming overrides the auto-answer's pacing (tests).
+	sessionAutostartTiming sessionAutostartPacing
+	terminalHandoffMu      sync.Mutex
+	terminalHandoffs       map[string]terminalHandoff
 
 	claudeOAuthFlow claudeOAuthFlow
 
@@ -420,6 +476,25 @@ type Server struct {
 	// session responder. See api_linear_agent.go.
 	linearAgentOnce sync.Once
 	linearAgentSvc  LinearAgentGateway
+
+	// meetingsActions is the queue of drafts people asked the meeting
+	// persona for (hivecommons/hive#18406); nil while meetings are off.
+	meetingsActions atomic.Pointer[meetingsActionsHolder]
+	// meetings is the meetings feature (hivecommons/hive#18292); nil
+	// holder or service while meetings are off.
+	meetings atomic.Pointer[meetingsHolder]
+	// meetingsSchedule is the meeting scheduler behind the Calendar
+	// section (hivecommons/hive#18394); nil while meetings are off.
+	meetingsSchedule atomic.Pointer[meetingsScheduleHolder]
+	// customers is the people store behind the Customers section
+	// (hivecommons/hive#18742); nil while customers are off.
+	customers atomic.Pointer[customersHolder]
+	// meetingsAttendee is Settings, Meeting attendee: the boot persona,
+	// the TTS service and the email-in data (hivecommons/hive#18396).
+	meetingsAttendee meetingsAttendeeState
+	// mailAllow is the email allowlist behind the hive-mx email-in endpoints
+	// (hivecommons/hive#18395, api_meetings_email.go); nil until wired.
+	mailAllow atomic.Pointer[mailallow.Store]
 
 	audit *AuditLog
 
@@ -539,6 +614,8 @@ type Server struct {
 	// is JSON-encoded as-is (cmd/hive passes gfi.Stats); typed as any so the
 	// dashboard does not import pkg/gfi (import ratchets).
 	goodFirstIssueStats atomic.Pointer[func() any]
+	// advisorSummary feeds GET /api/knowledge/advisor/summary (api_knowledge_advisor.go).
+	advisorSummary atomic.Pointer[knowledgeAdvisorSource]
 	// writebackGate is the unsolicited write-back gate (api_writeback.go);
 	// sentinelFindings is the ring behind /api/sentinel.
 	writebackMu      sync.RWMutex
@@ -643,11 +720,15 @@ type StatusPayload struct {
 	Governor         FrontendGovernor          `json:"governor"`
 	Tokens           FrontendTokens            `json:"tokens"`
 	Repos            []FrontendRepo            `json:"repos"`
-	Swarm            SwarmStatus               `json:"swarm"`
-	Beads            FrontendBeads             `json:"beads"`
-	Planning         FrontendPlanning          `json:"planning"`
-	Runs             RunsSummary               `json:"runs"`
-	Health           map[string]any            `json:"health"`
+	// ReferenceRepos are project.reference_repos (hivecommons/hive#18015):
+	// studied, not worked. Kept apart from Repos so no queue, ACMM or
+	// work-item consumer ever treats one as managed.
+	ReferenceRepos []FrontendReferenceRepo `json:"referenceRepos,omitempty"`
+	Swarm          SwarmStatus             `json:"swarm"`
+	Beads          FrontendBeads           `json:"beads"`
+	Planning       FrontendPlanning        `json:"planning"`
+	Runs           RunsSummary             `json:"runs"`
+	Health         map[string]any          `json:"health"`
 	// DeepHealth carries the spoke's own deep health checks (HealthSummary:
 	// ready, github_auth, agents, …) — the same checks the heartbeat reports
 	// to the hub. The dashboard's header Health pill renders from these, NOT
@@ -687,6 +768,9 @@ type StatusPayload struct {
 	Capabilities       *FrontendCapabilities `json:"capabilities,omitempty"`
 	GitHubAppPermIssue string                `json:"githubAppPermIssue,omitempty"`
 	GitHubAppState     string                `json:"githubAppState,omitempty"`
+	// PRGate is the PR-contents gate's state while auto_merge.pr_gate is
+	// configured for any repository (hivecommons/hive#19038); absent otherwise.
+	PRGate *github.PRGateHealth `json:"prGate,omitempty"`
 	// GitHubAppInstallMissing is CONFIG TRUTH, independent of any auth probe
 	// or classification: a real App is named (app_id set, not the placeholder)
 	// but installation_id is 0. That state alone means every token is a
@@ -753,6 +837,10 @@ type FrontendFeatures struct {
 	//
 	// Deprecated: read experiment_lab instead.
 	StrategyLab bool `json:"strategy_lab"`
+	// SubscriptionGaugeHeader adds the owner-only Claude subscription usage
+	// chip to the header (the Overview gauge needs no flag). Only the flag
+	// travels here; owners fetch readings from /api/providers/headroom.
+	SubscriptionGaugeHeader bool `json:"subscription_gauge_header"`
 }
 
 // FrontendSecurity summarizes the effective operator security posture for compact dashboard display.
@@ -947,12 +1035,16 @@ type FrontendAgent struct {
 	// SandboxRuntime is the effective sandbox.runtime for a sandboxed agent
 	// ("podman" or "job"); the SPA routes "▶ terminal" to the Job pod log
 	// viewer for "job" (hivecommons/hive#14798). Empty when not sandboxed.
-	SandboxRuntime  string `json:"sandboxRuntime,omitempty"`
-	LastError       string `json:"lastError,omitempty"`
-	StallNudges     int    `json:"stallNudges,omitempty"`
-	StallRecoveries int    `json:"stallRecoveries,omitempty"`
-	ActionNudges    int    `json:"actionNudges,omitempty"`
-	TransientNudges int    `json:"transientNudges,omitempty"`
+	SandboxRuntime string `json:"sandboxRuntime,omitempty"`
+	// SandboxWarnings are the boot/reload preflight findings for this agent's
+	// sandbox runtime (openshell or substrate), from the stored
+	// config.AgentSandboxGateReport; no preflight runs on the status path.
+	SandboxWarnings []string `json:"sandbox_warnings,omitempty"`
+	LastError       string   `json:"lastError,omitempty"`
+	StallNudges     int      `json:"stallNudges,omitempty"`
+	StallRecoveries int      `json:"stallRecoveries,omitempty"`
+	ActionNudges    int      `json:"actionNudges,omitempty"`
+	TransientNudges int      `json:"transientNudges,omitempty"`
 	// SessionRssMb is the resident memory of the agent's CLI process tree
 	// (MiB) and SessionAge how long the current CLI session has been up,
 	// both sampled on the health tick (#14842). SessionRecycles counts
@@ -991,6 +1083,11 @@ type FrontendAgent struct {
 	// token, false = a human must log in. Absent for backends with no
 	// verified refresh semantics.
 	BackendAuthRefreshable *bool `json:"backendAuthRefreshable,omitempty"`
+	// QuotaExhausted mirrors crux.Process.QuotaExhausted (#18111): the pane
+	// poll saw a provider quota refusal (e.g. Copilot "exceeded your monthly
+	// quota"). Unlike BackendAuthStatus "quota" it covers every backend, so
+	// the dashboard can paint the agent "out of quota" instead of green.
+	QuotaExhausted bool `json:"quotaExhausted,omitempty"`
 	// InferenceLastError is the full text of the most recent inference error
 	// hive's proxy returned to this agent (#11761), shown while Claude Code's
 	// own retry line is still clipped to one pane row. Empty when unknown,
@@ -1193,6 +1290,38 @@ type FrontendRestartRefresh struct {
 	ReposTotal   int `json:"reposTotal"`
 }
 
+// FrontendReferenceRepo is one project.reference_repos entry for the repos
+// card: the slug and its tier ("read-only", "issues", "prs", "issues+prs").
+// It deliberately carries no ACMM, work-item or pause fields (#18021).
+type FrontendReferenceRepo struct {
+	Full string `json:"full"`
+	Tier string `json:"tier"`
+	// ReferenceTier repeats Tier under the name API consumers key on to tell
+	// a reference entry from a managed repo row (hivecommons/hive#18021).
+	ReferenceTier string `json:"reference_tier"`
+	// DerivedFrom is the "owner/repo#N" request issue a derived entry came
+	// from (hivecommons/hive#18139); empty for a hand-written entry.
+	DerivedFrom string `json:"derived_from,omitempty"`
+	// DerivedFromURL is the web link to that request issue on the hive's
+	// GitHub host, so the dashboard links "from owner/repo#N" without
+	// re-deriving the host (hivecommons/hive#18161); empty when DerivedFrom
+	// is empty or not an "owner/repo#N" reference.
+	DerivedFromURL string `json:"derived_from_url,omitempty"`
+	// CredentialState is a derived entry's resolved credential:
+	// "write-tier", "read-only" or "unresolved" (hivecommons/hive#18158);
+	// CredentialReason says why when it is not write-tier.
+	CredentialState  string `json:"credential_state,omitempty"`
+	CredentialReason string `json:"credential_reason,omitempty"`
+	// CredentialLogin is the GitHub login the writes appear under
+	// (hivecommons/hive#18197): the hive owner's, or a write_token_file's.
+	CredentialLogin string `json:"credential_login,omitempty"`
+	// CredentialIdentity says which identity that login is ("bot", "owner"
+	// or "token_file") and CredentialNote why, per
+	// project.remote_write_identity (hivecommons/hive#18516).
+	CredentialIdentity string `json:"credential_identity,omitempty"`
+	CredentialNote     string `json:"credential_note,omitempty"`
+}
+
 type FrontendRepo struct {
 	Name             string `json:"name"`
 	Full             string `json:"full"`
@@ -1283,6 +1412,10 @@ type FrontendRepo struct {
 	// from /api/config.
 	Forge    string `json:"forge"`
 	ForgeURL string `json:"forgeUrl,omitempty"`
+	// AgentsMd is what the last kick did with this repo's AGENTS.md
+	// (hivecommons/hive#18495): file size, effective cap, injected size and
+	// any sections dropped by the cap. Nil until a kick has read the file.
+	AgentsMd *agentsmd.InjectionStatus `json:"agentsMd,omitempty"`
 }
 
 type FrontendBeads struct {
@@ -1748,7 +1881,7 @@ func (s *Server) Start() error {
 
 	// authenticate is outermost so the identity headers it injects from a
 	// per-user session are visible to roleEnforcement's read-only write-gate.
-	handler := s.withServerTiming(s.noIndex(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))))
+	handler := s.withServerTiming(s.withHostedGatewayPassthrough(s.noIndex(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux))))))
 
 	const dashboardReadTimeout = 30 * time.Second
 	const dashboardIdleTimeout = 120 * time.Second
@@ -1782,6 +1915,10 @@ func (s *Server) Start() error {
 	followCtx, cancelFollow := context.WithCancel(context.Background())
 	defer cancelFollow()
 	s.StartRebaseMergeFollowThrough(followCtx)
+	// Hourly anonymized benchmark push to the hub (hivecommons/hive#17694).
+	s.StartBenchmarksPublisher(followCtx)
+	// Sessions: reconcile after a restart, then close idle sessions.
+	s.StartSessionSweeper(followCtx)
 	return srv.Serve(ln)
 }
 
@@ -1851,6 +1988,21 @@ func (s *Server) withServerTiming(next http.Handler) http.Handler {
 	})
 }
 
+// isSessionTerminalRequest reports whether r is a /terminal request that names
+// a user session (?arg=hive-sess-<id>), the only terminal document the
+// dashboard embeds in an iframe.
+func isSessionTerminalRequest(r *http.Request) bool {
+	if !isTerminalPath(r.URL.Path) {
+		return false
+	}
+	for _, a := range r.URL.Query()["arg"] {
+		if strings.HasPrefix(a, sessionTmuxPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		frameAncestors := "'none'"
@@ -1862,7 +2014,19 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// X-Frame-Options cannot express an origin allowlist. When /snapshot has
 		// an explicit CSP frame-ancestors allowlist, omit XFO for that document
 		// only; every other route keeps DENY, and an empty allowlist fails closed.
-		if !snapshotAllowlist {
+		//
+		// A user-session terminal (/terminal?arg=hive-sess-<id>) is the one
+		// document the dashboard itself embeds: the Sessions section renders it
+		// in a same-origin iframe. With 'none'/DENY the browser fetches ttyd's
+		// page and then refuses to display it, so the pane stays blank and the
+		// terminal never opens its websocket. Framing is allowed for that
+		// document from this origin only; agent terminals and everything else
+		// keep 'none'/DENY. Authorisation is unchanged (guardTerminalSession).
+		switch {
+		case isSessionTerminalRequest(r):
+			frameAncestors = "'self'"
+			w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		case !snapshotAllowlist:
 			w.Header().Set("X-Frame-Options", "DENY")
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -1951,8 +2115,10 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 // auth-signin redirect, which is how #9785 looped. The page names the cause so
 // the hive's operator can act on it instead of seeing a browser error.
 func writeProxyProofRejected(w http.ResponseWriter, r *http.Request, reason string) {
-	slog.Warn("dashboard: rejected hub-proxied request with unverified proxy proof; hub and spoke dashboard tokens disagree or hub omitted the proof",
-		"reason", reason, "path", r.URL.Path, "user", r.Header.Get("X-Hive-User"))
+	if n, ok := proxyProofWarnGate.allow(reason+"|"+r.URL.Path, time.Now()); ok {
+		slog.Warn("dashboard: rejected hub-proxied request with unverified proxy proof; hub and spoke dashboard tokens disagree or hub omitted the proof",
+			"reason", reason, "path", r.URL.Path, "user", r.Header.Get("X-Hive-User"), "suppressed", n)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		jsonStatusResponse(w, http.StatusForbidden, map[string]string{"error": reason})
@@ -2167,8 +2333,14 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// first use. When the request is not otherwise trusted, a valid code also
 		// authenticates the initial ttyd document load and establishes the
 		// Path=/terminal assertion cookie for subsequent asset/websocket requests.
+		//
+		// A code bound to a user session was minted only after the caller was
+		// found able to see that session, and opens nothing but it; the read
+		// role is admitted on that path as a read-only viewer
+		// (guardTerminalSession decides the attach mode). Agent terminals
+		// keep requiring owner or read-write.
 		if isTerminalPath(r.URL.Path) {
-			if user, role, ok := s.redeemTerminalHandoff(r.URL.Query().Get(terminalHandoffCodeParam)); ok && terminalRoleAllowed(role) {
+			if user, role, bound, ok := s.redeemTerminalHandoffBound(r.URL.Query().Get(terminalHandoffCodeParam)); ok && (terminalRoleAllowed(role) || bound != "") && handoffBindingMatches(bound, r.URL.Query()["arg"]) {
 				if !trusted {
 					r.Header.Set("X-Hive-User", user)
 					r.Header.Set("X-Hive-Role", role)
@@ -2182,7 +2354,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 
 		if !trusted && isTerminalPath(r.URL.Path) {
-			if user, role, ok := s.terminalAssertionFromRequest(r); ok && terminalRoleAllowed(role) {
+			if user, role, ok := s.terminalAssertionFromRequest(r); ok && (terminalRoleAllowed(role) || requestNamesUserSession(r)) {
 				r.Header.Set("X-Hive-User", user)
 				r.Header.Set("X-Hive-Role", role)
 				if isOwnerRole(role) {
@@ -2251,6 +2423,13 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			widgetTokenIdentity(r)
 		}
 
+		// Desktop companion token (#18596): admits ONLY the companion meeting
+		// routes, as the minting user at their live role (read-write or
+		// owner). It never reaches the token page or any other route.
+		if !trusted && s.companionTokenAuthenticates(r) {
+			trusted = true
+		}
+
 		if !trusted && r.URL.Path == "/api/knowledge/export" {
 			profile, reason := authenticateContributorToken(registrationTokenFromAuthorization(r), s.contributorTokenPolicy())
 			if profile == nil && reason == contributorTokenExpired {
@@ -2287,7 +2466,9 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			}
 			return
 		}
-		if isTerminalPath(r.URL.Path) && !terminalRoleAllowed(r.Header.Get("X-Hive-Role")) {
+		// A user-session terminal is the exception: the read role watches it
+		// read-only, authorised per session by guardTerminalSession.
+		if isTerminalPath(r.URL.Path) && !terminalRoleAllowed(r.Header.Get("X-Hive-Role")) && !requestNamesUserSession(r) {
 			writeTerminalRoleForbidden(w, r)
 			return
 		}
@@ -2477,11 +2658,24 @@ func (s *Server) isPublicPath(path string) bool {
 		// browser comes back from linear.app with no hive session. The
 		// single-use state token is the credential, verified server-side.
 		return true
+	case path == meetingsInvitesPath || path == meetingsCalendarProofPath || path == inboxEmailPath ||
+		path == inboxEmailChunkPath || path == inboxEmailReportPath:
+		// hive-mx mail relayed by the hub (#18395): hive-mx and the hub hold
+		// no dashboard session. The chunk path carries every delivery over
+		// one relay piece (#18564): left out of this list, a mail with more
+		// than about 512 KiB of attachments was turned away here with a 401
+		// and retried by its sender until it expired (#18699).
+		// NOT actually open: each handler fails closed
+		// without this hive's relay key and verifies the hub's relay
+		// signature (X-Hive-Relay-Delivery, skew and replay checks) over the
+		// raw body before reading it.
+		return true
 	case path == githubWebhookPath:
 		// GitHub App webhooks (direct or relayed by the hub): GitHub cannot
 		// hold a dashboard session. NOT actually open — the handler fails
-		// closed without GITHUB_WEBHOOK_SECRET and verifies the HMAC
-		// X-Hub-Signature-256 over the raw body.
+		// closed without GITHUB_WEBHOOK_SECRET or a hub relay key and
+		// verifies the HMAC X-Hub-Signature-256 (or the hub's relay
+		// signature, with replay protection) over the raw body.
 		return true
 	case path == linearAgentWebhookPath:
 		// Linear AgentSessionEvent webhooks: Linear's servers cannot hold a
@@ -2636,7 +2830,7 @@ async function poll(interval,flowId){
 </script></body></html>`
 
 func (s *Server) Handler() http.Handler {
-	return s.noIndex(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux))))
+	return s.withHostedGatewayPassthrough(s.noIndex(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))))
 }
 
 func (s *Server) roleEnforcement(next http.Handler) http.Handler {
@@ -2656,7 +2850,7 @@ func (s *Server) roleEnforcement(next http.Handler) http.Handler {
 			// "/api/contributors/...", letting a "read" viewer promote/revoke/delete
 			// contributors past this gate.
 			isContributeFlow := r.URL.Path == "/api/contribute" || strings.HasPrefix(r.URL.Path, "/api/contribute/")
-			if !isContributeFlow && r.URL.Path != "/api/gh-user-auth/status" {
+			if !isContributeFlow && r.URL.Path != "/api/gh-user-auth/status" && !readOnlySelfService(r) {
 				http.Error(w, `{"error":"your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions."}`, http.StatusForbidden)
 				return
 			}
@@ -2723,6 +2917,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	status.GitHubAppPermIssue = s.githubAppPermIssue
 	status.GitHubAppState = s.githubAppState
 	s.githubAppMu.RUnlock()
+	status.PRGate = s.PRGateHealth()
 
 	// CONFIG-TRUTH OVERRIDE, applied last so no probe-derived field can veto
 	// it: a real App with installation_id 0 must light the install banner the
@@ -2789,24 +2984,30 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 
 	s.statusMu.Lock()
 	if buildEpoch < s.statusMutationEpoch {
-		// A mutation landed after this snapshot's build began: its data may
-		// predate the mutation. Drop it — the mutation's own refresh rebuild
-		// (which began after the epoch bump) publishes the fresh state.
 		curEpoch := s.statusMutationEpoch
-		s.statusStaleDrops++
-		drops := s.statusStaleDrops
-		s.statusConsecutiveStaleDrops++
-		consecutive := s.statusConsecutiveStaleDrops
-		s.statusMu.Unlock()
-		// A single drop is normal optimistic-concurrency self-healing; only a
-		// run of drops with no publish in between is an anomaly.
-		level := slog.LevelInfo
-		if consecutive >= staleDropStarvationThreshold {
-			level = slog.LevelWarn
+		if s.statusConsecutiveStaleDrops+1 >= staleDropStarvationThreshold {
+			// Bounded staleness: under sustained mutation churn every build
+			// loses the race, so publish this one rather than starve
+			// consumers. The counter resets below with the publish.
+			drops := s.statusStaleDrops
+			consecutive := s.statusConsecutiveStaleDrops
+			s.logger.Warn("publishing possibly-stale status snapshot after consecutive stale drops",
+				"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
+		} else {
+			// A mutation landed after this snapshot's build began: its data
+			// may predate the mutation. Drop it — the mutation's own refresh
+			// rebuild (which began after the epoch bump) publishes the fresh
+			// state.
+			s.statusStaleDrops++
+			drops := s.statusStaleDrops
+			s.statusConsecutiveStaleDrops++
+			consecutive := s.statusConsecutiveStaleDrops
+			s.statusMu.Unlock()
+			// A drop is a normal optimistic-concurrency race.
+			s.logger.Info("dropping stale status snapshot built before a mutation",
+				"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
+			return false
 		}
-		s.logger.Log(context.Background(), level, "dropping stale status snapshot built before a mutation",
-			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
-		return false
 	}
 
 	// Attach the advisory ACMM level-up recommendation (#5225) from the SAME
@@ -3149,6 +3350,16 @@ func (s *Server) UpdateGitHubClient(client *github.Client, auth *github.AppAuth)
 	}
 }
 
+// UpdateGitHubAppAuth swaps only the App credential the installation-discovery
+// loop polls with, leaving the client untouched. Used when a hub delivery names
+// a new App (or forge) whose installation is not known yet, so discovery asks
+// the right forge instead of the one the pod booted against.
+func (s *Server) UpdateGitHubAppAuth(auth *github.AppAuth) {
+	if s.deps != nil {
+		s.deps.GHAppAuth = auth
+	}
+}
+
 // SetGoodFirstIssueStats installs the provider of good-first-issue curation
 // counters; nil removes it.
 func (s *Server) SetGoodFirstIssueStats(fn func() any) {
@@ -3485,6 +3696,7 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 				if proc.KickRefused {
 					ac["status"] = "warn"
 					ac["detail"] = "refused kick: " + proc.KickRefusalReason
+					ac["docs_url"] = kickRefusalDocsURL(classifyKickRefusalFlag(proc.KickRefusalReason))
 				}
 			} else if agentDisabledInConfig(s.deps.Config, name, proc) {
 				// Switched off in config, so nothing ever starts it and it has
@@ -3623,6 +3835,13 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		if lastAttempt, ok := spoke.LastHeartbeatAttempt(); ok {
 			hbCheck["last_attempt"] = lastAttempt.UTC().Format(time.RFC3339)
 			hbCheck["last_attempt_age"] = time.Since(lastAttempt).Round(time.Second).String()
+		}
+		// Report-only mirror to a second hub (#18148): visibility only. A
+		// failing mirror never degrades this check, because the mirror has no
+		// role in liveness or in managing the hive; the owner reads it here to
+		// confirm the mirror is receiving beats (host only, never the key).
+		if mirror, ok := spoke.MirrorHubStatusSnapshot(); ok {
+			hbCheck["mirror"] = mirror
 		}
 		if hbCheck["status"] == "warn" && overall == "ok" {
 			overall = "degraded"
@@ -3763,6 +3982,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	payload.UpgradeProgress = s.upgradeProgress(status, now)
 	payload.Writeback = s.WritebackStatus()
 	payload.Hotspots = s.HotspotStatusBlock()
+	payload.Benchmarks = s.BenchmarksStatusBlock()
 	payload.Config = s.configHealthStatus()
 	if s.deps != nil {
 		payload.WorkflowApprovals = s.deps.GHClient.WorkflowApprovalsStatus()
@@ -3800,6 +4020,9 @@ type statusWithWebhooks struct {
 	// WorkflowApprovals counts the hive's approvals of GitHub-gated
 	// workflow runs (hivecommons/hive#16603).
 	WorkflowApprovals github.WorkflowApprovalsStatus `json:"workflow_approvals"`
+	// Benchmarks is this hive's leaderboard hash and last publish to
+	// hivecommons/benchmarks (hivecommons/hive#17694).
+	Benchmarks *BenchmarksStatus `json:"benchmarks,omitempty"`
 	*EvalLoopStatus
 	// MatrixEnabled reports whether the Matrix block is active (enabled with
 	// at least one repo, see config.MatrixConfig.Active) so the header shows
@@ -4023,9 +4246,23 @@ func (s *Server) broadcastFrame(frame string) {
 		select {
 		case ch <- raw:
 		default:
-			s.logger.Warn("SSE client too slow, dropping event")
+			s.sseDropped++
+			s.logger.Debug("SSE client too slow, dropping event")
 		}
 	}
+	s.warnSSEDropsLocked(time.Now())
+}
+
+// warnSSEDropsLocked emits one summary warning per sseDropWarnInterval instead
+// of one per dropped event, so a single stalled browser tab does not flood logs
+// or trip repeated-error fleet reporting. Caller holds sseMu.
+func (s *Server) warnSSEDropsLocked(now time.Time) {
+	if s.sseDropped == 0 || now.Sub(s.sseDropWarn) < sseDropWarnInterval {
+		return
+	}
+	s.logger.Warn("SSE clients too slow, dropped events", "dropped", s.sseDropped, "interval", sseDropWarnInterval.String())
+	s.sseDropped = 0
+	s.sseDropWarn = now
 }
 
 // initHistories lazily builds the three sparkline ring buffers. Called (once)
@@ -4764,6 +5001,8 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		Name   string `json:"name"`
 		Status string `json:"status"`
 		Detail string `json:"detail,omitempty"`
+		// DocsURL links a check to the docs page that explains it (kick_refusal).
+		DocsURL string `json:"docs_url,omitempty"`
 		// Onboarding/GuideStep mark setup problems the Getting Started guide
 		// has a step for (see OnboardingIssue); the SPA renders a guide tip.
 		Onboarding bool   `json:"onboarding,omitempty"`
@@ -4996,7 +5235,7 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 			}
 		}
 		if len(refused) > 0 {
-			checks = append(checks, check{Name: "kick_refusal", Status: "warn", Detail: fmt.Sprintf("%s refused kick", strings.Join(refused, ", "))})
+			checks = append(checks, check{Name: kickRefusalCheck, Status: "warn", Detail: fmt.Sprintf("%s refused kick", strings.Join(refused, ", ")), DocsURL: kickRefusalDocsURL(kickRefusalCheck)})
 			warns++
 		}
 	}

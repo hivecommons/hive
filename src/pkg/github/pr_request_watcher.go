@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/sessiontaint"
 )
 
 // PRRequestDir is where agents drop PR-open requests. An agent pushes its branch
@@ -164,7 +166,7 @@ type PRRequestAuthorizer func(agent string, fileUID int) error
 //
 // holdLabel (F6) decides server-side, from the authoring agent and authoritative
 // hive config (the ACMM level), whether a freshly-opened PR must carry the
-// "hold" label. It is applied AFTER the PR is created, on the path that
+// ready-for-review gate label (the literal "hold" before #18468). It is applied AFTER the PR is created, on the path that
 // actually runs — unlike the gh-wrapper.sh tail, which was dead code (it sat
 // after `exec hive-open-pr`), so hold-gated PRs were being opened unlabeled. A
 // nil holdLabel means "never hold".
@@ -435,6 +437,14 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
+	// A head that can never be a branch (the literal HEAD of a detached
+	// checkout, an empty or malformed name) is refused before any GitHub call:
+	// no retry can fix it and every later gate would judge the wrong ref.
+	if reason := invalidHeadReason(req.Head); reason != "" {
+		c.rejectInvalidHead(path, req, (&errInvalidHead{head: req.Head, reason: reason}).Error(), nowFn)
+		return
+	}
+
 	// Cheap local body checks first — before anything that spends API quota.
 	// An empty body, or a body missing the reference to its declared
 	// originating issue, is lost content (the observed failure: hive-open-pr
@@ -497,6 +507,11 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		// shrink the divergence — only re-cutting the branch can.
 		if reason, policy := prBaseDriftReason(err); policy {
 			c.rejectPRRequest(path, req, "base-drift", reason, nowFn)
+			return
+		}
+		// A base branch that does not exist can never be fixed by retrying.
+		if reason, policy := missingBaseReason(err); policy {
+			c.rejectPRRequest(path, req, "base", reason, nowFn)
 			return
 		}
 		c.failPRRequest(path, req, err, nowFn)
@@ -568,6 +583,12 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		c.failPRRequest(path, req, err, nowFn)
 		return
 	}
+	// Session taint (#18987), observe only. Recorded once per PR this request
+	// opened, after every gate; a reused or duplicate PR is not a new write.
+	// The enforcement phases move this check before the write.
+	if !res.AlreadyExisted && !res.IsDuplicate() {
+		c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayPR, req.Repo)
+	}
 	resp.OK = true
 	resp.Number = res.Number
 	resp.URL = res.URL
@@ -575,7 +596,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	resp.DuplicateTree = res.DuplicateTree
 	resp.DuplicateReason = res.DuplicateReason
 
-	// F6: apply the ACMM "hold" label server-side, from authoritative config, on
+	// F6: apply the ACMM gate label (ready-for-review; "hold" before #18468) server-side, from authoritative config, on
 	// the path that actually runs. At hold-gated levels (L3/L4/L5) every
 	// agent-opened PR must be human-approved before merge; the label is what the
 	// merge gate keys on. The old gh-wrapper.sh `args+=("--label" "hold")` was
@@ -633,10 +654,18 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		resp.ReporterTrustHeld = reporter.Held
 	}
 	if !res.IsDuplicate() && (holdByLevel || selfAuth.Held || reporter.Held) {
-		holdLabels := []string{"hold"}
+		// The hive never applies `hold` itself (hivecommons/hive#18468): a
+		// person's `hold` means hands-off, and the hive's own gates say who
+		// acts next. The level gate's PR is done and waits for review; the
+		// #5117 and #9665 gates wait for a human decision. Both labels block
+		// merges exactly like `hold`.
+		holdLabels := []string{ReadyForReviewLabelName()}
+		if selfAuth.Held {
+			holdLabels = []string{DecisionNeededLabelName()}
+		}
 		if reporter.Held {
 			// A reporter-trust hold is a human-only decision at every level, so
-			// it raises needs-human with the hold (hivecommons/hive#10773).
+			// it raises needs-human with the gate label (hivecommons/hive#10773).
 			holdLabels = reporterTrustHoldLabels()
 			reporter.OwnsNeedsHuman = !res.AlreadyExisted
 		}
@@ -783,6 +812,10 @@ func (c *Client) failPRRequest(path string, req PRRequest, err error, nowFn func
 	// fleet report fires only when distinct requests fail the same way. The
 	// message states what the watcher checked and what it saw — the ref, the
 	// repository, and the push relay's own record — not an inferred cause.
+	if reason, terminal := invalidHeadFailure(err, c.prRetries.attempts(path)+1); terminal {
+		c.rejectInvalidHead(path, req, reason, nowFn)
+		return
+	}
 	reason, missingHead := missingHeadReason(err)
 	if missingHead {
 		attempt := c.prRetries.attempts(path) + 1
@@ -830,6 +863,19 @@ func (c *Client) rejectPRRequest(path string, req PRRequest, gate, reason string
 	c.prRetries.clear(path)
 	c.logger.Warn("pr-request watcher: REJECTED (policy)",
 		slog.String("gate", gate),
+		slog.String("agent", req.Agent), slog.String("repo", req.Repo),
+		slog.String("head", req.Head), slog.String("reason", reason))
+}
+
+// rejectInvalidHead records a head that can never open a PR and quarantines the
+// request (.rejected). It is logged at ERROR, once, so the fleet feed and the
+// dashboard see it (fleetreport.ClassPRRequestHeadInvalid) instead of a WARN
+// that repeats on every backoff.
+func (c *Client) rejectInvalidHead(path string, req PRRequest, reason string, nowFn func() time.Time) {
+	c.writePRResult(path, PRResponse{OK: false, Error: "PR head rejected: " + reason, At: nowFn().UTC().Format(time.RFC3339)})
+	_ = os.Rename(path, path+".rejected")
+	c.prRetries.clear(path)
+	c.logger.Error("pr-request watcher: head is not a pushable branch, request rejected",
 		slog.String("agent", req.Agent), slog.String("repo", req.Repo),
 		slog.String("head", req.Head), slog.String("reason", reason))
 }

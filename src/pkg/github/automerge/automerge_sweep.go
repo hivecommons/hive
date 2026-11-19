@@ -152,6 +152,10 @@ type Options struct {
 	// PRs the self-authored sweep merges alongside the App's own (see
 	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
 	TrustedBotAuthors func() map[string]bool
+	// TrustedBotSkipReview returns the live auto_merge.trusted_bot_skip_review
+	// switch: the review swarm's verdict is advisory on the trusted-bot lane
+	// (config.AutoMergeConfig.TrustedBotSkipsReview). nil means true.
+	TrustedBotSkipReview func() bool
 	// BotTakeoverEnabled returns the live auto_merge.bot_takeover.enabled
 	// switch: re-author a trusted github-actions[bot] PR whose
 	// `pull_request` checks can never run (#12003). nil means off.
@@ -293,8 +297,12 @@ type Engine struct {
 	// contributorUnsearchable maps author|owner/repo to the time until which
 	// contributorMergedRepos leaves that pair out of its search, after
 	// GitHub refused to search it (see automerge_contributor_unsearchable.go).
-	contributorUnsearchableMu sync.Mutex
-	contributorUnsearchable   map[string]time.Time
+	// contributorUnsearchableWarned holds the "author:<login>" and
+	// "repo:<owner/repo>" keys a refusal has already warned for, so the
+	// author × repository product logs WARN at most once per side.
+	contributorUnsearchableMu     sync.Mutex
+	contributorUnsearchable       map[string]time.Time
+	contributorUnsearchableWarned map[string]bool
 
 	mergerAuthzMu sync.RWMutex
 	// humanReturnChecked remembers, per PR key, the head whose worn
@@ -348,6 +356,7 @@ type Engine struct {
 	repoAutoMergeEnabled              func(repo string) bool
 	repoOnGitHub                      func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
+	trustedBotSkipReview              func() bool
 	botTakeoverEnabledFn              func() bool
 	trustedAuthorPolicy               func() TrustedAuthorPolicy
 	trustedAuthorizer                 TrustedAuthorizer
@@ -365,6 +374,7 @@ type Engine struct {
 	evaluatedHeads                    map[string]string
 	requiredChecksFallbackWarnedMu    sync.Mutex
 	requiredChecksFallbackWarned      map[string]bool
+	requiredCheckNeverReportedWarned  map[string]time.Time
 	// heldRunApprovals is the shared per-PR-head one-shot map for rebase
 	// nudges and bot takeovers (historic name; workflow approvals no longer use it).
 	heldRunApprovalsMu sync.Mutex
@@ -383,6 +393,9 @@ type Engine struct {
 	workflowApprovalScans          map[string]time.Time
 	workflowApprovalUntrusted      map[string]bool
 	workflowApprovalWorkflowChecks map[string]okToTestWorkflowCheck
+	// prowRefusals is the repository-level memory that Prow refuses the
+	// App's /ok-to-test (automerge_prow_refusal_memory.go).
+	prowRefusals map[string]prowRefusalMemo
 	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
 	// terminal held/never-started hold so later ticks only count them.
 	terminalHoldsLogged map[string]bool
@@ -460,6 +473,7 @@ func New(transport Transport, opts Options) *Engine {
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
 		repoOnGitHub:                      opts.RepoOnGitHub,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
+		trustedBotSkipReview:              opts.TrustedBotSkipReview,
 		rateLimitCautious:                 opts.RateLimitCautious,
 		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,
 		trustedAuthorPolicy:               opts.TrustedAuthorPolicy,
@@ -494,6 +508,7 @@ func New(transport Transport, opts Options) *Engine {
 		integrationFilesObserved:          opts.IntegrationFilesObserved,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
+		requiredCheckNeverReportedWarned:  make(map[string]time.Time),
 	}
 	if e.now == nil {
 		e.now = time.Now

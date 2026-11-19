@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hubbackup"
+	"github.com/hivecommons/hive/pkg/keystore"
 )
 
 const (
@@ -214,13 +216,10 @@ func storeBackupKey(key string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), backupKeyDirMode); err != nil {
 		return "", fmt.Errorf("create secrets directory: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(key+"\n"), backupKeyFileMode); err != nil {
+	// Sealed through the keystore (hive#18214) and replaced atomically at
+	// backupKeyFileMode, pre-existing file included.
+	if err := keystore.WriteFileMode(context.Background(), path, []byte(key+"\n"), backupKeyFileMode); err != nil {
 		return "", fmt.Errorf("write key file: %w", err)
-	}
-	// A pre-existing file keeps its old mode through WriteFile, so tighten it
-	// explicitly rather than trusting the create path.
-	if err := os.Chmod(path, backupKeyFileMode); err != nil {
-		return "", fmt.Errorf("chmod key file: %w", err)
 	}
 	return path, nil
 }

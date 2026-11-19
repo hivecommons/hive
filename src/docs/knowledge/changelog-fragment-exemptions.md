@@ -24,4 +24,4 @@ Exempt automatically — no fragment and no label needed:
 
 Other test-adjacent changes (`testdata/` fixtures, non-`_test.go` test helpers) and non-user-visible `src/` code changes (refactors, dependency bumps) need the `no-changelog` label instead of a fragment.
 
-`changelog.d/` is at the repository root, not under `src/` — `src/changelog.d/` is never compiled and the guard rejects it.
+`changelog.d/` is at the repository root, not under `src/` — `src/changelog.d/` is never compiled, the guard rejects it, and the release compile fails while any fragment sits there (#18264). From inside `src/`, write `../changelog.d/`.

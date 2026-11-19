@@ -33,7 +33,10 @@ func freshenKickMessages(ctx context.Context, guard github.IrreversibleGuard, ac
 			continue
 		}
 		kept := make([]string, 0, len(msg.IssueRefs))
-		allDeferred := true
+		// Deferred, closed and stale-snapshot refusals are the guard working
+		// as designed; a kick withheld only by those is summarised below WARN
+		// too (#17518, #18470). Only an unexplained read error raises it.
+		allExpected := true
 		var stale, closed, deferredReads, readErrors int
 		for _, raw := range msg.IssueRefs {
 			ref, ok := worksource.ParseKey(raw)
@@ -45,8 +48,9 @@ func freshenKickMessages(ctx context.Context, guard github.IrreversibleGuard, ac
 			_, isPR := prRefs[key]
 			if err := guard(ctx, ref.Repo, ref.Number, isPR); err != nil {
 				deferred := errors.Is(err, github.ErrAPIBudgetCritical) || errors.Is(err, github.ErrRateLimitCaution)
-				if !deferred {
-					allDeferred = false
+				expected := deferred || errors.Is(err, github.ErrItemNotOpen) || errors.Is(err, github.ErrSnapshotStaleForDecision)
+				if !expected {
+					allExpected = false
 				}
 				if logger != nil {
 					reason := "re-read"
@@ -58,9 +62,25 @@ func freshenKickMessages(ctx context.Context, guard github.IrreversibleGuard, ac
 						level = slog.LevelInfo
 						deferredReads++
 					case errors.Is(err, github.ErrSnapshotStaleForDecision):
+						// The repo's share of the snapshot is last-good data:
+						// refusing it is the guard's purpose, and the stale
+						// repo is already logged at WARN once per pass where it
+						// is produced (forgestate cache stale, last-good
+						// enumeration). Repeating it here at WARN for every kick
+						// filed a kick_freshness_withheld self-report for what is
+						// only the stale repo's downstream symptom (#18470).
 						reason = "stale snapshot"
+						level = slog.LevelInfo
 						stale++
 					case errors.Is(err, github.ErrItemNotOpen):
+						// The re-read found the item closed or merged: the guard
+						// doing its job, not a fault. The snapshot keeps serving the
+						// stale copy until the cache catches up, so this repeats
+						// every cycle; at WARN the slog feed filed it as an
+						// unclassified repeated error (#17518). The withheld-kick
+						// summary below still counts it as closed.
+						reason = "closed"
+						level = slog.LevelInfo
 						closed++
 					default:
 						readErrors++
@@ -76,7 +96,7 @@ func freshenKickMessages(ctx context.Context, guard github.IrreversibleGuard, ac
 		if len(kept) == 0 {
 			if logger != nil {
 				level := slog.LevelWarn
-				if allDeferred {
+				if allExpected {
 					level = slog.LevelInfo
 				}
 				logger.Log(ctx, level, "kick withheld: every ref failed the freshness check",

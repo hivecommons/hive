@@ -346,6 +346,20 @@ func wilsonLowerBound(successes, n int) float64 {
 	if n <= 0 || successes <= 0 {
 		return 0
 	}
+	low, _, _ := wilsonInterval(successes, n)
+	return low
+}
+
+// wilsonInterval is the Wilson score interval for successes/n at
+// effectiveModelsWilsonZ. ok is false when n <= 0 (no denominator, so no
+// interval). successes is clamped into [0, n].
+func wilsonInterval(successes, n int) (low, high float64, ok bool) {
+	if n <= 0 {
+		return 0, 0, false
+	}
+	if successes < 0 {
+		successes = 0
+	}
 	if successes > n {
 		successes = n
 	}
@@ -355,7 +369,19 @@ func wilsonLowerBound(successes, n int) float64 {
 	denom := 1 + z*z/nf
 	centre := p + z*z/(2*nf)
 	margin := z * math.Sqrt(p*(1-p)/nf+z*z/(4*nf*nf))
-	return (centre - margin) / denom
+	low = math.Max(0, math.Min(p, (centre-margin)/denom))
+	high = math.Min(1, math.Max(p, (centre+margin)/denom))
+	return low, high, true
+}
+
+// wilsonCI returns [low, high] for the JSON *_ci fields, or nil (omitted)
+// when n <= 0.
+func wilsonCI(successes, n int) []float64 {
+	low, high, ok := wilsonInterval(successes, n)
+	if !ok {
+		return nil
+	}
+	return []float64{low, high}
 }
 
 // effectiveModelScore is the composite rank key: Wilson lower bound of

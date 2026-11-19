@@ -472,6 +472,8 @@ without a class. Review submissions and review requests are always counted as
 | `dashboard.(*Server).handleRepoItemAdoptNow` | `status` |  |
 | `dashboard.(*Server).handleRepoItemBlockerClosePartial` | `status` |  |
 | `dashboard.(*Server).handleRepoItemDecision` | `status` |  |
+| `dashboard.(*Server).handleRepoItemSentinelConfirm` | `status` |  |
+| `dashboard.(*Server).handleRepoItemSHAWaiver` | `status` |  |
 | `dashboard.(*Server).handleReviewQueueSupersededClose` | `status` |  |
 | `dashboard.(*Server).mirrorPlanWith` | `status` |  |
 | `github.(*Client).CloseIssueForConfiguredLinePR` | `status` |  |
@@ -486,11 +488,15 @@ without a class. Review submissions and review requests are always counted as
 | `automerge.(*engineStatusForge).CreateComment` | `status` | passthrough wrapper shared by normal-mode stage notes and the quiet-mode status-comment forge under `prstatus.Write`; attributed to its caller |
 | `github.(*clientStatusForge).CreateComment` | `status` | passthrough wrapper (status-comment forge under `prstatus.Write`); attributed to its caller |
 | `github.(*Client).PostIssueNote` | `status` | passthrough wrapper (issue status card, `attention_pilot`); attributed to its caller |
+| `github.(*Client).PostInformationalIssueNote` | `status` | passthrough wrapper (issue status card in quiet mode or under `attention_pilot`, for notes nobody acts on); attributed to its caller |
 | `github.(*Client).closeDecomposedParent` | `status` |  |
+| `github.(*Client).closeDoneTracker` | `status` |  |
 | `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
 | `github.(*Client).closeSupersededPRDecision` | `status` |  |
 | `github.(*Client).fileReviewBacklog` | `status` |  |
-| `github.(*Client).joinFleetReportIssue` | `status` |  |
+| `github.(*Client).foldReviewFollowUps` | `status` | review Follow-ups checklist folded into the PR status card (quiet mode) |
+| `github.(*Client).foldSentinelNotice` | `status` | informational sentinel notice folded into the PR status card (quiet mode); a blocking alert is never folded |
+| `github.(*Client).upsertFleetReportSeenLog` | `status` |  |
 | `github.(*Client).markInProgressStarted` | `status` |  |
 | `github.(*Client).postUnblockedNote` | `status` |  |
 | `github.(*Client).priorArtGateClose` | `status` |  |
@@ -504,6 +510,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.handleMergedPRIssueStage` | `status` |  |
 | `github.runRecheckSoak` | `status` |  |
 | `main.postReviewAcknowledgements` | `status` |  |
+| `main.reviewFeedbackSweep.acknowledgeRules` | `status` |  |
 | `main.rfcNotifySource.Comment` | `status` |  |
 | `main.unparkEscalatedPR` | `status` |  |
 | `dashboard.(*ContributeWSHub).parkWrongBase` | `attention` |  |
@@ -517,18 +524,25 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).bindProwLgtm` | `attention` |  |
 | `github.(*Client).commentOnHumanFiledTwin` | `attention` |  |
 | `github.(*Client).createIssue` | `attention` |  |
-| `github.(*Client).handleOneIssueRequest` | `attention` |  |
+| `github.(*Client).handleOneIssueRequestFrom` | `attention` |  |
 | `github.(*Client).parkClankerRequestedPR` | `attention` |  |
 | `github.(*Client).redirectToExistingPR` | `attention` |  |
+| `github.(*Client).relayNotAgentWorkNote` | `attention` | scanner not-agent-work verdict: posted once with its marker and parks the issue on `needs-human`; an identical repeat records a suppressed comment (#18675) |
+| `github.(*Client).relayScannerNote` | `attention` | scanner PR note: an unchanged or edited note records a suppressed comment (#18451) |
 | `github.(*Client).remindAttention` | `attention` | attention-pilot reminder: at most one per unresolved episode per `reminder_interval`; write-back gate consulted first |
 | `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |
+| `github.(*Client).upsertScannerNote` | `attention` | one scanner note per PR; a new comment only for the first note or when the author must act on a new head (#18451) |
 | `github.attentionDelivery.Post` | `attention` | condition-episode page; live write-back policy rechecked before the write |
 | `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.claimEscalationLookup` | `attention` |  |
+| `main.factCheckSweep.needsHuman` | `attention` | one note per PR when the analysis fact-check loop stops without a passing verdict (#19074) |
 | `main.liveTriageCommenter.CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.maintainHeldPRMergeability` | `attention` |  |
 | `main.rfcCoverageForge.CreateComment` | `attention` |  |
 | `main.runEscalationSweep` | `attention` |  |
+| `main.reviewFeedbackSweep.checkRuleReply` | `attention` |  |
+| `main.reviewFeedbackSweep.needsHuman` | `attention` |  |
+| `main.reviewFeedbackSweep.proposeRuleHome` | `attention` |  |
 | `prfollowup.postStaleHeadPushNotes` | `attention` |  |
 | `scheduler.(*Scheduler).judgePriorArt` | `attention` |  |
 | `scheduler.(*Scheduler).parkUnclearIssue` | `attention` |  |
@@ -571,7 +585,14 @@ github:
 ```
 
 Quiet mode (`github.notifications.mode: quiet`) folds the hive's PR
-bookkeeping into one edited `hive:status` comment but leaves issue notes as
+bookkeeping into one edited `hive:status` comment (including the auto-merge
+note, under the `auto-merge` section: in `normal` mode it stays its own
+comment, and a merge blocked on a person still gets its 085 / 090 entry
+comment, hivecommons/hive#18452; the review Follow-ups checklist, under
+`review-followups`, and a trust-only 090 entry, under `stage-ready`, while a
+held or manual-merge 090 and every 085 stay comments, hivecommons/hive#18606)
+but leaves issue notes (except the informational `issue-pr-link` stage note)
+as
 comments of their own, so one issue lifecycle (partial merge, remainder,
 close) could still email its watchers several times. With the pilot on, the
 issue gets the same card, written through the same single status writer
@@ -665,6 +686,35 @@ github:
     reminder_interval: 24h   # default 24h
 ```
 
+### Sentinel notices in the PR status card
+
+The sentinel (`pkg/github/sentinel_sweep.go`) has two kinds of result, and
+only one of them asks a person to do anything
+(hivecommons/hive#18453):
+
+- **Actionable: a hold.** The author is untrusted, or
+  `sentinel.trusted_authors_block` is `true`. The hive adds the
+  `sentinel-alert` label and posts its `<!-- hive-sentinel --> <head>`
+  "Sentinel alert - maintainer review required" comment. This happens in
+  **every** mode, quiet included, because only a new comment notifies.
+  A security hold is never folded into the card.
+- **Informational.** The author is trusted and the merge is not blocked. In
+  `github.notifications.mode: quiet` (the default) this is the `sentinel`
+  section of the PR's `hive:status` card, edited in place. A new head
+  rewrites that section, so the PR gets no notice comment at all. The card
+  is created only when the PR has none yet. The section is stamped
+  `<!-- hive-sentinel-notice <head> -->`. It never carries the
+  `<!-- hive-sentinel -->` marker, because the sweep reads that marker back
+  to tell which head it alerted on and whether a maintainer cleared it. When
+  the same PR is later put on hold, the hive posts the alert comment and
+  drops the stale informational section from the card. A PR that already
+  has a sentinel comment from before this change keeps it, rewritten in
+  place for the new head.
+
+In `normal` mode the informational notice is still its own comment, as
+before. Either way the finding is recorded for audit, the dashboard
+Security tab and `/api/sentinel`.
+
 ### Hive-maintained Actions workflows that defer to the card
 
 Some comments come from GitHub Actions workflows in this repository rather
@@ -685,7 +735,7 @@ third party's comment that happens to contain the marker:
 | Workflow / script | Comment it posts | Behaviour |
 | --- | --- | --- |
 | Refs sweep (`.github/workflows/refs-sweep.yml`, `src/scripts/comment-merged-refs.sh`) | "PR #N has merged and referenced this issue with a non-closing `Refs`" (`<!-- hive-post-merge-refs-sweep: issue=N -->`) | **Skips** when the card carries `issue-partial:<pr>` for that PR; otherwise unchanged (still once per issue). |
-| Issue Closed Hint (`.github/workflows/issue-closed-reopen-hint.yml`) | "@reporter this issue was closed by … comment `/reopen`" | **Pending** (tracked in #16363; the workflow edit must be landed by a maintainer). Once applied: **skips** when the card carries `issue-close`, which already says "Reply /reopen"; otherwise **edits** its earlier comment (`<!-- issue-closed-reopen-hint -->`) instead of adding one per closure. Until then it posts a new comment on every closure as before. |
+| Issue Closed Hint (`.github/workflows/issue-closed-reopen-hint.yml`) | "@reporter this issue was closed by … comment `/reopen`" | **Pending** (tracked in #16363; the workflow edit must be landed by a maintainer). Once applied: **skips** when the card carries `issue-close`, which already says "Reply /reopen"; otherwise **edits** its earlier comment (`<!-- issue-closed-reopen-hint -->`) instead of adding one per closure. Until then it posts a new comment on every closure as before. **Skips** when the reporter is a bot or a maintainer (`author_association` OWNER / MEMBER / COLLABORATOR), who can reopen the issue themselves (#18607). |
 
 Editing a comment notifies nobody, so a workflow comment that is edited in
 place stops re-mentioning the reporter on every close/reopen cycle. Both
@@ -702,7 +752,64 @@ and exits non-zero instead of posting a possible duplicate.
 `.github/scripts/test-hive-status-card.sh` and
 `src/scripts/test-comment-merged-refs.sh` pin this behaviour.
 
+### Scanner note: one comment per PR
+
+The scanner's CI-triage and rebase notes on a PR used to be a new comment on
+every pass: PR #18254 got 17 near-identical triage comments on the same head
+in nine hours ([#18450](https://github.com/hivecommons/hive/issues/18450)).
+The comment relay (`hive-open-issue comment`, which every `gh pr comment`
+from an agent goes through) now keeps one scanner note per PR, marked
+`<!-- hive:scanner-note head=<sha> checks=<fingerprint> told=<sha> -->`
+([#18451](https://github.com/hivecommons/hive/issues/18451)):
+
+| Situation | Write |
+| --- | --- |
+| First scanner note on the PR | **Posts** a new comment carrying the marker. |
+| Same head SHA and same failing-check set as the current note | **Nothing.** The request completes with `already_existed`, and the relay logs `scanner note: unchanged head and failing checks, not re-posting`. |
+| New head, or a different failing set, on a hive-authored PR | **Edits** the note in place. Edits do not notify. |
+| The PR author must act (a non-hive author, something red) and has not been told for this head | **Posts** a new comment. It becomes the current note, and the old note loses its marker. Later changes on that head are edits. |
+
+The failing set is the head's red gating checks (as in the `recommend/*`
+digest), plus `DCO` when the DCO context failed and `merge-conflict` when the
+PR's mergeable state is dirty, so a rebase note is keyed the same way. When
+the head's checks cannot be read, the note is never dropped; it is edited.
+A note on an issue rather than a PR, from another lane, or carrying a
+dedicated marker (a shared-CI incident reference `<!-- hive-shared-ci-<n> -->`,
+a verification marker, any other `<!-- hive:… -->` marker) keeps its
+usual path. In quiet mode or under the attention pilot, the relay's one-line
+state notes (awaiting CI, parking) still fold into the status card first.
+
+The rule lives in the relay, not only in the scanner policy, because a
+prompt-only rule drifts. Set `HIVE_SCANNER_NOTE_UPSERT=off` (or `0`,
+`false`, `no`) on the hive to turn it off. It is on by default.
+`src/pkg/github/scanner_note_test.go` pins this behaviour.
+
+### Per-PR workflow comments post only on a finding
+
+Three workflow comments used to land on every PR regardless of outcome, and
+after the runtime's own reducers they were ~70% of the comments on a merged
+PR ([#17863](https://github.com/hivecommons/hive/issues/17863)). Each now
+posts only when it has something to say; the full report, including the
+clean case, still goes to the job's step summary:
+
+| Workflow / script | Comment | Behaviour |
+| --- | --- | --- |
+| Open PR Overlap (`.github/workflows/pr-overlap.yml`, `.github/scripts/pr-overlap.sh`) | `<!-- hive-pr-overlap -->` table of conflicting / same-file open PRs | **Posts** only when at least one sibling PR conflicts or shares a file; **edits** the one marker comment in place on later pushes; when a later run finds nothing and a comment exists, **edits it** to a one-line "✅ Resolved" note; a PR that never had an overlap gets no comment. The `conflicts-with-open-pr` label is unchanged. |
+| Mutation (advisory) (`.github/workflows/mutation-advisory.yml`, `src/scripts/mutation-report.sh post`) | `<!-- hive-mutation -->` surviving / uncovered mutant report | **Posts** only for a finding verdict (`lived`, `uncovered`, `misrouted`); an `error` verdict (gremlins wrote no report, so nothing for the author to act on) goes to the job summary and the failing verdict step only and never creates a comment (#18607); **edits** the one marker comment on later pushes (an `error` run edits an earlier finding comment so it is not stale); a later `pass` **edits** the existing comment to a one-line "✅ Resolved" note; a PR whose every run passes or errors gets no comment. |
+| Feedback Wanted (`.github/workflows/feedback.yml` → `hivecommons/infra` `reusable-feedback.yml`, gated by `src/scripts/feedback-gate.sh`) | "Thank you for your contribution! Your PR has been merged." | **Posts** only for a person's first merged PR in the repo. Skipped for `[bot]` / App authors, hive-managed head branches (`scanner/*`, `hive/*`), PR bodies carrying a `<!-- hive:` marker (hive-agent PRs on any branch, e.g. `fix-*`), and any author with another merged PR. Knobs are the workflow's `env:` (`FEEDBACK_SKIP_BOTS`, `FEEDBACK_SKIP_BRANCHES`, `FEEDBACK_SKIP_HIVE_ORIGIN`, `FEEDBACK_SKIP_LOGINS`, `FEEDBACK_FIRST_TIME_ONLY`); a failed merged-PR lookup skips the comment rather than guessing. |
+
+`.github/scripts/test-pr-overlap.sh`, `src/scripts/test-mutation-report.sh`
+and `src/scripts/test-feedback-gate.sh` pin these rules.
+
 **Outside Hive's control.** Comments from external bots, such as Prow, tide
 and kubestellar-prow, are posted by their own services and cannot be edited,
 folded or skipped from this repository. Hive does not try to suppress them;
-configure those bots in the project that runs them.
+configure those bots in the project that runs them. For hivecommons repos
+that configuration is `prow/plugins.yaml` and `prow/config.yaml` in
+`kubestellar/infra` (org-wide `approve` with `require_self_approval: true`
+and `lgtm` with `review_acts_as_lgtm: true`; tide requires both `lgtm` and
+`approved`). What Hive does control is its own relay: a dashboard approval
+on a Prow-managed PR the hive account opened posts `/approve` only, because
+a `/lgtm` from the PR's own author draws Prow's "you cannot LGTM your own
+PR" every time (`PullRequestApprovalEvent.LGTMSkipped`, #17863); no hive
+lane reads the relayed `/lgtm`.

@@ -1,0 +1,10 @@
+name: Bug Report
+description: Report a bug encountered while operating Widgets
+labels: ["kind/bug", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+    validations:
+      required: true

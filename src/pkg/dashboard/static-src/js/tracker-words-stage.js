@@ -18,7 +18,6 @@
     // words come from the hive's sentinel (possible security override,
     // privilege escalation or codebase damage), so a maintainer reads the
     // security reason before the row's "needs human".
-    const STAGE_TRACKER_SENTINEL_WORD = 'Sentinel alert · needs human';
     const STAGE_TRACKER_SENTINEL_CHIP = 'sentinel';
     const STAGE_TRACKER_SENTINEL_TIP = 'Sentinel flagged security-relevant changes';
     const STAGE_TRACKER_SENTINEL_TIP_FALLBACK = 'possible security override, privilege escalation or codebase damage — a maintainer must review before merge';
@@ -62,7 +61,7 @@
     const STAGE_TRACKER_NEEDS_HUMAN_STAGES = [15, 45, 85, 90];
     const STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES = [71, 72];
     const STAGE_TRACKER_NEEDS_HUMAN_MODS = ['needs-human', 'needs-decision', 'unauthorized'];
-    const STAGE_TRACKER_NEEDS_HUMAN_TIP = 'Only a person can move these: triage needed, needs decision, human author must act, human merge, or a needs-human / hive-bot-lacks-permission pill';
+    const STAGE_TRACKER_NEEDS_HUMAN_TIP = 'Only a person can move these: triage needed, needs decision, human author must act, human merge, a needs-human / hive-bot-lacks-permission pill, an issue filed for outside help, or a PR held for a maintainer by a hive gate';
     const STAGE_TRACKER_ON_HOLD_TIP = 'Paused on purpose with a hold label — waiting on nobody; remove the hold to resume';
     // Label families a chip row is built from, in display order; other
     // labels follow when at least two items carry them.
@@ -119,6 +118,8 @@
       if (mods.indexOf('regressed') >= 0 && !stageTrackerRegressionHandled(item)) return 'Sent back';
       // Advisory (hivecommons/hive#15381): the chip is the headline.
       if (n === 0 && item.kind !== 'pr' && item.advisory && typeof item.advisory === 'object') return item.advisory.chip || 'Advisory · read & close';
+      // One state for a row a person must move (filed for help, gated by the hive).
+      if (typeof stageTrackerOpenNeedsHuman === 'function' && stageTrackerOpenNeedsHuman(item)) return STAGE_TRACKER_NEEDS_HUMAN_WORD + ' · ' + String(item.needs_human_why.reason || '').trim();
       if (n === 0 && mods.indexOf('hold') >= 0) return 'Open · on hold' + (holdLabels.length ? ' (' + holdLabels.join(', ') + ')' : '');
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';

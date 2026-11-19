@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -595,9 +596,30 @@ func TestSeedClaudeSession_NeverOverwritesSignedInTarget(t *testing.T) {
 	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
 	m.setupInteractiveHome(ap, "claude")
 
+	// The onboarding seed may ADD keys (seedClaudeOnboardingForAgent), so the
+	// guarantee asserted is the identity, not the bytes: the agent's own
+	// oauthAccount must survive, never replaced by the shared source's.
 	data, err := os.ReadFile(claudeSessionFile(interactiveHomePath("scanner")))
-	if err != nil || string(data) != own {
-		t.Errorf("signed-in per-agent session was overwritten: %q err=%v", data, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOwnClaudeIdentityKept(t, data, own)
+}
+
+// assertOwnClaudeIdentityKept fails unless data carries exactly own's
+// oauthAccount value.
+func assertOwnClaudeIdentityKept(t *testing.T, data []byte, own string) {
+	t.Helper()
+	var got, want map[string]json.RawMessage
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("per-agent session unparseable after setup: %v (%q)", err, data)
+	}
+	if err := json.Unmarshal([]byte(own), &want); err != nil {
+		t.Fatal(err)
+	}
+	if string(got[claudeOAuthAccountKey]) != string(want[claudeOAuthAccountKey]) {
+		t.Errorf("signed-in per-agent session identity was overwritten: got %s, want %s",
+			got[claudeOAuthAccountKey], want[claudeOAuthAccountKey])
 	}
 }
 

@@ -1,0 +1,11 @@
+/* Settings → Workflows → Marketplace (#17620 phase 7): catalogue table, tier badges, stale banner */
+    .wf-prov-local-published { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .wf-mkt-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); margin: var(--sp-4) 0; }
+    .wf-mkt-toolbar .wf-mkt-search { flex: 1 1 220px; min-width: 180px; font: inherit; font-size: var(--fs-sm); color: var(--text); background: var(--bg-soft); border: var(--line-width) solid var(--border); border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-3); }
+    .wf-mkt-toolbar .wf-mkt-tier { font: inherit; font-size: var(--fs-sm); color: var(--text); background: var(--bg-soft); border: var(--line-width) solid var(--border); border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-3); }
+    .wf-mkt-count { font-size: var(--fs-sm); white-space: nowrap; }
+    .wf-mkt-sub { font-size: var(--fs-xs); margin-top: var(--sp-1); }
+    .wf-mkt-banner { font-size: var(--fs-sm); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm); margin: var(--sp-3) 0; border: var(--line-width) solid var(--border); }
+    .wf-mkt-stale { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 40%, transparent); background: color-mix(in srgb, var(--status-warn) 10%, transparent); }
+    .wf-mkt-flag { display: inline-block; margin-top: var(--sp-1); font-size: var(--fs-xs); font-weight: 700; color: var(--status-warn); white-space: nowrap; }
+    .wf-mkt-table td { vertical-align: top; }

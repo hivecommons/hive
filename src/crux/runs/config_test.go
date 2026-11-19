@@ -102,6 +102,7 @@ func TestBackendFromConfig(t *testing.T) {
 	}
 
 	job := &config.SandboxJobConfig{WorkspaceClaim: "pvc", TTLSeconds: 60}
+	job.Affinity = &config.SandboxJobAffinity{}
 	job.Tolerations = []config.SandboxJobToleration{{Key: "k", Operator: "Exists", Effect: "NoSchedule"}}
 	job.Volumes = []config.SandboxJobVolume{{Name: "cache", Claim: "c", MountPath: "/cache", ReadOnly: true}}
 	kube, err := BackendFromConfig(Config{Backend: BackendJob, Image: "img", Job: job})
@@ -119,6 +120,9 @@ func TestBackendFromConfig(t *testing.T) {
 	if opts.WorkspaceClaim != "pvc" || opts.TTLSeconds != 60 || len(opts.Tolerations) != 1 || opts.Tolerations[0].Key != "k" ||
 		len(opts.ExtraVolumes) != 1 || opts.ExtraVolumes[0].MountPath != "/cache" || !opts.ExtraVolumes[0].ReadOnly || opts.Network != kubejob.NetworkNone {
 		t.Fatalf("job options = %+v", opts)
+	}
+	if opts.Affinity != job.Affinity {
+		t.Errorf("affinity not carried: %+v", opts.Affinity)
 	}
 	// On the cluster network only the operator's own policy can claim it.
 	open, _ := BackendFromConfig(Config{Backend: BackendJob, Image: "img", Job: job, JobNetwork: kubejob.NetworkDefault})

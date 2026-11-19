@@ -97,21 +97,38 @@ func TestUpdateStatusIfFresh_StaleDropCounterAccumulates(t *testing.T) {
 	}
 }
 
-func TestUpdateStatusIfFresh_StarvationWarnsAfterThreshold(t *testing.T) {
+func TestUpdateStatusIfFresh_StarvationPublishesAfterThreshold(t *testing.T) {
 	var logBuf bytes.Buffer
 	srv := NewServer(0, slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	for i := 0; i < staleDropStarvationThreshold-1; i++ {
 		epoch := srv.BeginStatusSnapshot()
 		srv.noteStatusMutation()
-		srv.UpdateStatusIfFresh(&StatusPayload{}, epoch)
+		if srv.UpdateStatusIfFresh(&StatusPayload{}, epoch) {
+			t.Fatalf("drop %d below the bound must not publish", i+1)
+		}
 	}
-	if staleDropLoggedAt(logBuf.String(), "WARN") {
-		t.Fatalf("below the threshold must not WARN, got:\n%s", logBuf.String())
+	if staleDropLoggedAt(logBuf.String(), "WARN") || strings.Contains(logBuf.String(), "level=WARN msg=\"publishing possibly-stale") {
+		t.Fatalf("below the bound must not WARN, got:\n%s", logBuf.String())
 	}
+	seq := srv.currentStatusSeq()
 	epoch := srv.BeginStatusSnapshot()
 	srv.noteStatusMutation()
-	srv.UpdateStatusIfFresh(&StatusPayload{}, epoch)
-	if !staleDropLoggedAt(logBuf.String(), "WARN") {
-		t.Fatalf("threshold-th consecutive drop must WARN, got:\n%s", logBuf.String())
+	if !srv.UpdateStatusIfFresh(&StatusPayload{}, epoch) {
+		t.Fatalf("the bound-th stale build must publish, got:\n%s", logBuf.String())
+	}
+	if got := srv.currentStatusSeq(); got != seq+1 {
+		t.Fatalf("statusSeq = %d, want %d", got, seq+1)
+	}
+	if n := strings.Count(logBuf.String(), "level=WARN msg=\"publishing possibly-stale"); n != 1 {
+		t.Fatalf("want exactly one bounded-staleness WARN, got %d:\n%s", n, logBuf.String())
+	}
+	if staleDropLoggedAt(logBuf.String(), "WARN") {
+		t.Fatalf("per-drop line must never be WARN, got:\n%s", logBuf.String())
+	}
+	srv.statusMu.RLock()
+	consecutive := srv.statusConsecutiveStaleDrops
+	srv.statusMu.RUnlock()
+	if consecutive != 0 {
+		t.Fatalf("counter must reset after the forced publish, got %d", consecutive)
 	}
 }

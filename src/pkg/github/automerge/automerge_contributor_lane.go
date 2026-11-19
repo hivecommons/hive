@@ -522,8 +522,13 @@ func (c *Engine) prefilterContributorLanePR(pr *gh.PullRequest, policy Contribut
 		return contributorLaneReasonNoAuthor
 	}
 	// The App's own PRs and allow-listed bots belong to the self-authored
-	// lane; a claim marker can never make them contributor work.
-	if _, ok := c.sweepLaneForAuthor(author); ok {
+	// lane; a claim marker can never make them contributor work. A trusted
+	// bot is handed off under its own reason so the log names the lane that
+	// owns it rather than calling the operator's bot "app-authored".
+	if lane, ok := c.sweepLaneForAuthor(author); ok {
+		if lane == laneTrustedBot {
+			return trustedBotLaneSkipReason
+		}
 		return contributorLaneReasonAppAuthored
 	}
 	// author_association is deliberately not checked here: a verified claim
@@ -1341,7 +1346,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	c.noteStagePR(owner, repo, number, pr)
 	if reason := c.sentinelBlockedUnlessHumanChangesRequested(caller, owner, repo, pr, c.prefilterContributorLanePR(pr, policy)); reason != "" {
-		if reason == contributorLaneReasonAppAuthored {
+		if reason == contributorLaneReasonAppAuthored || reason == trustedBotLaneSkipReason {
 			c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
 		} else {
 			c.noteRegistryRole(owner, repo, number, hgithub.SafeGetLogin(pr.GetUser()), policy)
@@ -1400,6 +1405,13 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", "contributor-lane:auto-promoted", "merged_prs", claim.AutoPromoted, "scope", contributorAutoPromotionScopeName(claim.AutoPromotedHiveWide), "repos", claim.AutoPromotedRepos)
 	}
 	files, err := ListChangedFiles(caller, c.gh, owner, repo, pr)
+	if errors.Is(err, hgithub.ErrIncompletePRFileList) {
+		// More changed files than GitHub's files API will ever return: the
+		// diff fences cannot be read on any tick, so this is a standing
+		// verdict (fail closed, nil error) like adoptionDiffRefusal's, not a
+		// transient fault re-WARNed every sweep (hivecommons/hive#18121).
+		return eval, contributorLaneReasonFilesEvidence, nil
+	}
 	if err != nil {
 		return eval, contributorLaneReasonFilesEvidence, err
 	}
@@ -1458,6 +1470,11 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return eval, reason, err
 	}
 	if !green {
+		if !relay {
+			// A non-member fork head on a Prow repo gets no presubmits until
+			// someone posts /ok-to-test (#17474); the relay stays read-only.
+			c.requestProwPresubmitsForFork(ctx, displayRepo, owner, repo, pr, number, headSHA)
+		}
 		if strings.HasPrefix(reason, requiredCheckMissingPrefix) {
 			_, reason = c.approveHeldRunsForRegistryTrusted(ctx, displayRepo, owner, repo, pr, number, headSHA, claim, policy, files, reason)
 		}
@@ -1554,7 +1571,10 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		return AutoMergeSweepEvent{}, refused, nil
 	}
 
-	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, eval.pr, headSHA, method)
+	mergeMessage, mergeOpts, refused := c.mergeOptions(ctx, owner, repo, eval.pr, headSHA, method)
+	if refused != "" {
+		return AutoMergeSweepEvent{}, refused, nil
+	}
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, headSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Profile sharing — Hive Hub</title>
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/components.css">
+  <link rel="stylesheet" href="/static/profile-share.css">
+  <script src="/static/profile-share.js" defer></script>
+</head>
+<body data-text-version="{{CONSENT_TEXT_VERSION}}">
+  <header class="site-header">
+    <a href="/" class="brand">🐝 Hive</a>
+    <nav aria-label="Hub navigation">
+      <a href="/dashboard">My Hives</a>
+      <a href="/fleet">Fleet</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Profile sharing</h1>
+    <p class="muted">Manage your own Hub details and choose what may be shared with each hive’s Customers area.</p>
+    <noscript><p>Enable JavaScript to manage your details and consent.</p></noscript>
+
+    <section aria-labelledby="details-heading">
+      <h2 id="details-heading">Your details</h2>
+      <p class="muted">Each field is saved separately. A value you didn’t enter yourself isn’t eligible for sharing unless you type and save it here. Clearing a value leaves that field empty; it does not change your selections for any hive.</p>
+      <p id="profile-status" class="status" role="status">Loading your details…</p>
+      <div id="profile-fields" class="profile-fields"></div>
+    </section>
+
+    <section aria-labelledby="hives-heading">
+      <h2 id="hives-heading">Hives</h2>
+      <div class="panel disclosure" id="sharing-disclosure">
+        <h3>What you’re agreeing to</h3>
+        <p><strong>No profile details are sent to any hive in this release.</strong> You can record your choices now for future syncs.</p>
+        <p>For each hive you choose, only the fields you select may be shared: your real name, organization, or country. Only non-empty values you entered about yourself are eligible. That hive’s owner and anyone with Customers access there can view and export the shared values. When a future sync matches you to a confirmed customer in that hive, the Hub learns about that customer relationship.</p>
+        <p>This feature never sends notes, Slack IDs, email, affiliation, provider-supplied profile details, or anything an administrator entered or the Hub inferred. Information already visible to hive owners through existing access lists is unaffected by these choices.</p>
+        <p>Withdrawal stops sharing immediately on the Hub. Once syncing is available, the hive removes the imported values at its next sync. Withdrawal cannot undo what someone already saw, copied, or exported.</p>
+        <p>Boxes always start unchecked; any previous selection is shown separately. Confirming replaces the entire selection for that hive. Leave nothing selected and use <strong>Withdraw consent</strong> to remove the entire selection.</p>
+      </div>
+      <p id="consents-status" class="status" role="status">Loading your hives…</p>
+      <div id="consent-hives" class="consent-hives"></div>
+    </section>
+  </main>
+  <footer class="muted">
+    &copy; Copyright Hive Commons Series of LF Projects, LLC<br>
+    For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">https://lfprojects.org/policies/</a>.
+  </footer>
+
+  <template id="profile-field-template">
+    <form class="panel detail" method="post" autocomplete="off">
+      <h3></h3>
+      <p class="current"></p>
+      <p class="muted source"></p>
+      <fieldset>
+        <label><span></span><input type="text" required></label>
+        <div class="actions">
+          <button class="hv-btn btn-primary" type="submit">Save</button>
+          <button class="hv-btn btn-outline clear" type="button">Clear saved value</button>
+        </div>
+      </fieldset>
+      <p class="status" role="status"></p>
+    </form>
+  </template>
+  <template id="consent-hive-template">
+    <form class="panel consent" method="post" autocomplete="off" aria-describedby="sharing-disclosure">
+      <h3 tabindex="-1"></h3>
+      <p class="muted saved-selection"></p>
+      <fieldset>
+        <legend>Choose fields for this hive</legend>
+        <div class="choices"></div>
+      </fieldset>
+      <div class="actions">
+        <button class="hv-btn btn-primary" type="submit">Confirm selection</button>
+        <button class="hv-btn btn-outline withdraw" type="button">Withdraw consent</button>
+      </div>
+      <p class="status" role="status"></p>
+    </form>
+  </template>
+</body>
+</html>

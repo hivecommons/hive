@@ -188,6 +188,27 @@ func TestIdleRuleRespectsKickCadence(t *testing.T) {
 	}
 }
 
+func TestIdleRuleSkipsOffCadenceAgents(t *testing.T) {
+	now := time.Now()
+	a := AgentSummary{
+		Name: "redteam", State: "running", Backend: "copilot",
+		Enabled: true, CanOpenIssue: true, CanOpenPR: true,
+		StartedAt: settled(now), LastActivityAt: activeAt(now, 6*time.Hour),
+	}
+
+	// Off-cadence in the governor's current mode (projectbluefin redteam in
+	// quiet mode): the governor never kicks it, so idleness is by design.
+	if got := classifyInactiveAgent(a, 19, now); got != agentInactiveNone {
+		t.Fatalf("off-cadence agent classified %v; want none", got.label())
+	}
+
+	// Same agent once the mode gives it a cadence is held to the idle rule.
+	a.ExpectedActive = true
+	if got := classifyInactiveAgent(a, 19, now); got != agentInactiveIdleWithWork {
+		t.Fatalf("expected-active idle agent classified %v; want idle-with-work", got.label())
+	}
+}
+
 func TestIdleRuleSkipsWriteIncapableAdvisoryAgents(t *testing.T) {
 	now := time.Now()
 	a := AgentSummary{

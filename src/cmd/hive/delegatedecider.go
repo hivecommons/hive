@@ -26,6 +26,23 @@ type delegateDeciderRunner struct {
 	// model returns the per-feature model override ("" keeps the reviewer
 	// model); nil means the "Let hive decide" override.
 	model func(*config.Config) string
+	// maxTokens caps the completion; zero means delegateDeciderMaxTokens.
+	maxTokens int
+}
+
+// workflowSpecMaxTokens fits a whole WorkflowModel JSON document.
+const workflowSpecMaxTokens = 8000
+
+// newWorkflowSpecRunner is the same reviewer-endpoint turn for the optional
+// LLM refinement of written-spec ingest (POST /api/workflows/ingest/spec,
+// RFC #17620 phase 6): the reviewer model, a larger completion budget.
+func newWorkflowSpecRunner(cfg func() *config.Config) delegatedecision.TurnRunner {
+	return &delegateDeciderRunner{
+		cfg:       cfg,
+		http:      &http.Client{Timeout: delegateDeciderTimeout},
+		model:     func(*config.Config) string { return "" },
+		maxTokens: workflowSpecMaxTokens,
+	}
 }
 
 const (
@@ -92,7 +109,7 @@ func (r *delegateDeciderRunner) RunDeciderTurn(ctx context.Context, profile, sys
 		Model:       model,
 		Messages:    []delegateDeciderMessage{{Role: "system", Content: system}, {Role: "user", Content: user}},
 		Temperature: 0,
-		MaxTokens:   delegateDeciderMaxTokens,
+		MaxTokens:   r.completionBudget(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("%s: marshal request: %w", profile, err)
@@ -127,4 +144,11 @@ func (r *delegateDeciderRunner) RunDeciderTurn(ctx context.Context, profile, sys
 		return "", fmt.Errorf("%s: no choices", profile)
 	}
 	return cr.Choices[0].Message.Content, nil
+}
+
+func (r *delegateDeciderRunner) completionBudget() int {
+	if r.maxTokens > 0 {
+		return r.maxTokens
+	}
+	return delegateDeciderMaxTokens
 }

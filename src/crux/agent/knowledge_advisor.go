@@ -356,7 +356,12 @@ func (ka *knowledgeAdvisor) dispatch(name string, st *knowledgeKickState, scroll
 // made (kickAt, from agent.LastKick) is no longer the current one.
 func (ka *knowledgeAdvisor) advise(name string, kickAt time.Time, scope crux.KnowledgeScope, done chan struct{}) {
 	defer close(done)
-	found := ka.adviser.Advise(name, scope)
+	var found []crux.KnowledgeAdvice
+	if bound, ok := ka.adviser.(crux.KickBoundKnowledgeAdviser); ok {
+		found = bound.AdviseForKick(name, kickAt, scope)
+	} else {
+		found = ka.adviser.Advise(name, scope)
+	}
 
 	ka.mu.Lock()
 	defer ka.mu.Unlock()

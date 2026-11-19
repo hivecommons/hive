@@ -147,9 +147,8 @@ func TestSeedClaudeSession_UnreadableSignedInTargetIsNotClobbered(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != own {
-		t.Errorf("adopt-only violated: agent's own signed-in session replaced by %q", data)
-	}
+	// The onboarding seed may add keys; adopt-only is about the identity.
+	assertOwnClaudeIdentityKept(t, data, own)
 }
 
 func TestSeedClaudeSession_SeedIsReadableByTheHiveProcess(t *testing.T) {

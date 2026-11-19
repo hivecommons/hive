@@ -50,6 +50,11 @@ func defaultBootLaunchDeps() bootLaunchDeps {
 			}
 		},
 		startAgent: func(ctx context.Context, mgr crux.Runtime, name string) error { return mgr.Start(ctx, name) },
-		serve:      (*dashboard.Server).Start,
+		// Gateway pricing is process-wide (tokens.SetGatewayPricer), so the
+		// production boot installs it, not Server.Start, which tests call.
+		serve: func(s *dashboard.Server) error {
+			s.InstallGatewayPricer()
+			return s.Start()
+		},
 	}
 }

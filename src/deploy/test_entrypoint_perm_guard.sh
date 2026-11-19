@@ -594,6 +594,90 @@ for repair in hive_fix_tree_recent hive_fix_tree; do
 done
 rm -f "$SETTINGS" "$SIBLING"
 
+# ── 14. The single-file repairs act only on a regular file in a regular dir ──
+# chmod and chown (without -h) act on whatever a path resolves to. The shared
+# dot-dirs are writable by every agent uid, so the file-level repairs must do
+# nothing at all when the path, or the directory it is in, is not what the
+# guard expects — and say so once, not once per 5-second poll.
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+PLANT_HOME="$WORK/plant-home"
+PLANT_OUT="$WORK/plant-outside"
+mkdir -p "$PLANT_HOME/.claude" "$PLANT_HOME/.copilot"
+sed "s#/data/home#${PLANT_HOME}#g" "$GUARDS" > "$WORK/guards.plant.sh"
+printf 'outside\n' > "$PLANT_OUT"
+chmod 0600 "$PLANT_OUT"
+
+# A link where the credential should be.
+ln -s "$PLANT_OUT" "$PLANT_HOME/.claude/.credentials.json"
+ln -s "$PLANT_OUT" "$PLANT_HOME/.copilot/config.json"
+PLANT_LOG="$WORK/plant.log"
+sh -c 'set -e; . "$1"; hive_fix_credentials_fast; hive_fix_credentials_fast; hive_fix_claude_instant' \
+  sh "$WORK/guards.plant.sh" >/dev/null 2>"$PLANT_LOG"
+if [ "$(mode_of "$PLANT_OUT")" = "600" ]; then
+  ok "a link planted at the credential path is not acted on (target stays 0600)"
+else
+  bad "a link planted at the credential path is not acted on" \
+      "target went to mode $(mode_of "$PLANT_OUT")"
+  chmod 0600 "$PLANT_OUT"
+fi
+if [ -L "$PLANT_HOME/.claude/.credentials.json" ] && [ -L "$PLANT_HOME/.copilot/config.json" ]; then
+  ok "the planted links themselves are left in place"
+else
+  bad "the planted links themselves are left in place"
+fi
+warn_count="$(grep -c 'WARN: perm guard' "$PLANT_LOG" || true)"
+if [ "$warn_count" = "2" ]; then
+  ok "a refused path is reported once per guard process (2 paths, 3 passes, 2 WARNs)"
+else
+  bad "a refused path is reported once per guard process" \
+      "expected 2 WARN lines, got $warn_count: $(cat "$PLANT_LOG")"
+fi
+rm -f "$PLANT_HOME/.claude/.credentials.json" "$PLANT_HOME/.copilot/config.json"
+
+# A link where the directory should be, with a real file behind it.
+rmdir "$PLANT_HOME/.copilot"
+mkdir -p "$WORK/plant-elsewhere"
+printf '{}\n' > "$WORK/plant-elsewhere/config.json"
+chmod 0600 "$WORK/plant-elsewhere/config.json"
+ln -s "$WORK/plant-elsewhere" "$PLANT_HOME/.copilot"
+sh -c 'set -e; . "$1"; hive_fix_copilot_config' sh "$WORK/guards.plant.sh" >/dev/null 2>&1
+if [ "$(mode_of "$WORK/plant-elsewhere/config.json")" = "600" ]; then
+  ok "a link planted at the directory is not acted through (file behind it stays 0600)"
+else
+  bad "a link planted at the directory is not acted through" \
+      "file behind the link went to mode $(mode_of "$WORK/plant-elsewhere/config.json")"
+fi
+rm -f "$PLANT_HOME/.copilot"
+mkdir -p "$PLANT_HOME/.copilot"
+
+# A regular file in a regular directory is still repaired, and an absent one
+# is silent.
+printf '{}\n' > "$PLANT_HOME/.copilot/config.json"
+chmod 0600 "$PLANT_HOME/.copilot/config.json"
+sh -c 'set -e; . "$1"; hive_fix_copilot_config' sh "$WORK/guards.plant.sh" >/dev/null 2>"$PLANT_LOG"
+if group_rw "$(mode_of "$PLANT_HOME/.copilot/config.json")"; then
+  ok "a regular config.json in a regular .copilot is still reopened (mode $(mode_of "$PLANT_HOME/.copilot/config.json"))"
+else
+  bad "a regular config.json in a regular .copilot is still reopened" \
+      "mode $(mode_of "$PLANT_HOME/.copilot/config.json")"
+fi
+rm -f "$PLANT_HOME/.copilot/config.json"
+sh -c 'set -e; . "$1"; hive_fix_credentials_fast' sh "$WORK/guards.plant.sh" >/dev/null 2>>"$PLANT_LOG"
+if [ -s "$PLANT_LOG" ]; then
+  bad "an absent shared file is silent" "$(cat "$PLANT_LOG")"
+else
+  ok "an absent shared file is silent"
+fi
+
+# The guard that survives a planted link also survives the next loop: the
+# refusal returns 0 under set -e.
+if sh -c 'set -e; . "$1"; ln -s "$2" "$3/.claude/.credentials.json"; hive_fix_shared_credential "$3/.claude/.credentials.json"; echo alive' \
+     sh "$WORK/guards.plant.sh" "$PLANT_OUT" "$PLANT_HOME" 2>/dev/null | grep -q alive; then
+  ok "a refusal does not end the guard under set -e"
+else
+  bad "a refusal does not end the guard under set -e"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -72,7 +72,7 @@ func TestReleaseLevelHoldsOnceSurfacesLabelRemovalError(t *testing.T) {
 				"number": 11,
 				"title":  "fix",
 				"body":   "safe change",
-				"labels": []map[string]string{{"name": "hold"}},
+				"labels": []map[string]string{{"name": DefaultReadyForReviewLabel}},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/comments":
 			_ = json.NewEncoder(w).Encode([]map[string]any{{
@@ -84,9 +84,9 @@ func TestReleaseLevelHoldsOnceSurfacesLabelRemovalError(t *testing.T) {
 				"event":      "labeled",
 				"created_at": "2026-09-15T12:00:00Z",
 				"actor":      map[string]string{"login": testHiveAppBotLogin},
-				"label":      map[string]string{"name": "hold"},
+				"label":      map[string]string{"name": DefaultReadyForReviewLabel},
 			}})
-		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/hold":
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/"+DefaultReadyForReviewLabel:
 			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
@@ -111,7 +111,7 @@ func TestReleaseLevelHoldsOnceSurfacesCommentError(t *testing.T) {
 				"number": 11,
 				"title":  "fix",
 				"body":   "safe change",
-				"labels": []map[string]string{{"name": "hold"}},
+				"labels": []map[string]string{{"name": DefaultReadyForReviewLabel}},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/comments":
 			_ = json.NewEncoder(w).Encode([]map[string]any{{
@@ -123,9 +123,9 @@ func TestReleaseLevelHoldsOnceSurfacesCommentError(t *testing.T) {
 				"event":      "labeled",
 				"created_at": "2026-09-15T12:00:00Z",
 				"actor":      map[string]string{"login": testHiveAppBotLogin},
-				"label":      map[string]string{"name": "hold"},
+				"label":      map[string]string{"name": DefaultReadyForReviewLabel},
 			}})
-		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/hold":
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/"+DefaultReadyForReviewLabel:
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/11/comments":
 			w.WriteHeader(http.StatusInternalServerError)
@@ -152,7 +152,7 @@ func TestPendingLevelHoldsSkipsWhenSelfAuthorizationNoticeAlreadyPosted(t *testi
 				"number": 11,
 				"title":  "fix",
 				"body":   "safe change",
-				"labels": []map[string]string{{"name": "hold"}},
+				"labels": []map[string]string{{"name": DefaultReadyForReviewLabel}},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/comments":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
@@ -192,7 +192,7 @@ func TestPendingLevelHoldsBlockedBySelfAuthorizationHoldActive(t *testing.T) {
 				"number": 11,
 				"title":  "fix",
 				"body":   "Closes #581",
-				"labels": []map[string]string{{"name": "hold"}},
+				"labels": []map[string]string{{"name": DefaultReadyForReviewLabel}},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/comments":
 			_ = json.NewEncoder(w).Encode([]map[string]any{{
@@ -240,7 +240,7 @@ func TestPendingLevelHoldsSurfacesSelfAuthorizationNoticeError(t *testing.T) {
 				"number": 11,
 				"title":  "fix",
 				"body":   "Closes #581",
-				"labels": []map[string]string{{"name": "hold"}},
+				"labels": []map[string]string{{"name": DefaultReadyForReviewLabel}},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/comments":
 			_ = json.NewEncoder(w).Encode([]map[string]any{{

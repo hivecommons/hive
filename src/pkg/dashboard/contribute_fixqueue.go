@@ -476,6 +476,12 @@ func (h *ContributeWSHub) selectFixTask(c *ContributorConnection) *WSMessage {
 	}
 	user := c.profile.GitHubUsername
 	sched := h.fixQueue()
+	// A `ready` says nothing is running on this relay. A fix dispatch the
+	// scheduler still books for this contributor that no live connection
+	// holds (its socket dropped before the relay reported on it) would
+	// otherwise occupy the only slot forever: nothing dispatched, new work
+	// refused with fix_pr_in_flight. Put it back at the head of the queue.
+	h.releaseOrphanedFixes(user, sched)
 	if !sched.Pending(user) {
 		return nil
 	}
@@ -496,13 +502,34 @@ func (h *ContributeWSHub) completeFixTask(c *ContributorConnection, taskID strin
 		delete(c.fixTasksAt, taskID)
 	}
 	c.mu.Unlock()
-	if !ok || c.profile == nil {
+	if c.profile == nil {
 		return ok
 	}
 	user := c.profile.GitHubUsername
 	sched := h.fixQueue()
+	var prs []WSFixPR
+	if ok {
+		prs = assign.FixPRs
+	} else {
+		// The relay finished a fix it was handed on an earlier socket (the
+		// 1006 flap): this connection never saw the task_assign, but the
+		// scheduler still books the dispatch under this contributor. Settle
+		// it there rather than leaving the slot occupied for good.
+		for _, d := range sched.InFlight(user) {
+			if d.ID != taskID {
+				continue
+			}
+			ok = true
+			for _, it := range d.Items {
+				prs = append(prs, WSFixPR{Repo: it.Repo, Number: it.Number})
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
 	if sched.CompleteDispatch(user, taskID) {
-		for _, pr := range assign.FixPRs {
+		for _, pr := range prs {
 			h.forgetFixOwner(user, fixqueue.Key(pr.Repo, pr.Number))
 		}
 		// Refill the freed slot with the next queued fix.
@@ -511,6 +538,42 @@ func (h *ContributeWSHub) completeFixTask(c *ContributorConnection, taskID strin
 		}
 	}
 	return true
+}
+
+// heldFixTaskIDs returns the fix-pr task IDs every live connection of user
+// currently holds.
+func (h *ContributeWSHub) heldFixTaskIDs(user string) map[string]bool {
+	held := map[string]bool{}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, c := range h.connections {
+		c.mu.Lock()
+		if c.profile != nil && strings.EqualFold(c.profile.GitHubUsername, user) {
+			for id := range c.fixTasks {
+				held[id] = true
+			}
+		}
+		c.mu.Unlock()
+	}
+	return held
+}
+
+// releaseOrphanedFixes returns to user's queue every dispatch the scheduler
+// books in flight that no live connection holds. Called at a task boundary,
+// when the relay has just said it is running nothing.
+func (h *ContributeWSHub) releaseOrphanedFixes(user string, sched *fixqueue.Scheduler) {
+	var held map[string]bool
+	for _, d := range sched.InFlight(user) {
+		if held == nil {
+			held = h.heldFixTaskIDs(user)
+		}
+		if held[d.ID] {
+			continue
+		}
+		if items := sched.Release(user, d.ID); len(items) > 0 {
+			h.logger.Warn("[contribute-ws] fix-pr dispatch orphaned by a dropped connection; requeued", "username", user, "task", d.ID, "prs", len(items))
+		}
+	}
 }
 
 // failFixTask settles a fix-pr task the relay reported failed: its PRs go

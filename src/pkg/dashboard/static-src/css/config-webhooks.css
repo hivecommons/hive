@@ -1,0 +1,27 @@
+    /* Settings → Forge App → GitHub webhooks (hivecommons/hive#18017) */
+    .wh-section-title { font-weight: 600; font-size: var(--fs-base); margin: var(--sp-5) 0 var(--sp-2); }
+    .wh-intro { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-3); }
+    .wh-muted { color: var(--muted); }
+    div.wh-muted { font-size: var(--fs-sm); }
+    .wh-small { font-size: var(--fs-sm); }
+    .wh-warn { color: var(--yellow); }
+    .wh-ok { color: var(--green); }
+    .wh-error { font-size: var(--fs-sm); color: var(--red); }
+    .wh-note { margin-top: var(--sp-2); }
+    .wh-card { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-5); background: var(--surface); }
+    .wh-card-head { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; margin-bottom: var(--sp-4); }
+    .wh-card-title { font-weight: 600; font-size: var(--fs-md); }
+    .wh-step { font-size: var(--fs-sm); font-weight: 600; margin: var(--sp-2) 0 var(--sp-1); }
+    .wh-step-gap { margin-top: var(--sp-4); }
+    .wh-code { font-size: var(--fs-xs); user-select: all; }
+    .wh-chip { font-size: var(--fs-xs); font-weight: 600; padding: var(--sp-1) var(--sp-4); border-radius: var(--r); border: 1px solid currentColor; }
+    .wh-chip-muted { color: var(--muted); }
+    .wh-chip-ok { color: var(--green); }
+    .wh-chip-warn { color: var(--yellow); }
+    .wh-actions { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; font-size: var(--fs-sm); }
+    .wh-actions .hv-btn { margin-left: var(--sp-2); }
+    .wh-secret-once { border: 1px solid var(--green); border-radius: var(--r); padding: var(--sp-3) var(--sp-4); margin: var(--sp-2) 0; font-size: var(--fs-sm); }
+    .wh-secret-once-title { font-weight: 600; color: var(--green); }
+    .wh-secret-value { margin: var(--sp-1) 0; word-break: break-all; }
+    .wh-create { border-top: 1px solid var(--border); margin-top: var(--sp-4); padding-top: var(--sp-4); }
+    .gov-stat.wh-clickable { cursor: pointer; }

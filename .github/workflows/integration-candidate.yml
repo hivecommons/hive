@@ -465,6 +465,9 @@ jobs:
     - name: hive-review helper tests
       working-directory: .
       run: bash bin/test_hive_review.sh
+    - name: hive-topic helper tests
+      working-directory: .
+      run: bash bin/test_hive_topic.sh
     - name: Shared CI baseline classifier tests
       working-directory: .
       run: bash bin/test_hive_baseline_check.sh
@@ -571,6 +574,15 @@ jobs:
     - name: ttyd finds the default tmux socket under an arbitrary container UID
       working-directory: .
       run: bash src/deploy/test_ttyd_default_socket_uid.sh
+    - name: ttyd refuses a user-session attach without its per-session token
+      working-directory: .
+      run: bash src/deploy/test_ttyd_session_attach_token.sh
+    - name: ttyd-tmux.sh ends its tmux client when ttyd hangs up
+      working-directory: .
+      run: bash src/deploy/test_ttyd_attach_hangup.sh
+    - name: ttyd attaches a user session read-only without its write token
+      working-directory: .
+      run: bash src/deploy/test_ttyd_session_readonly_attach.sh
     - name: hive-discord.service does not execute planted code (#5435)
       working-directory: .
       run: bash src/deploy/test_hive_discord_unit_contract.sh
@@ -609,6 +621,11 @@ jobs:
       env:
         HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
       run: bash src/deploy/test_contributor_container_resources.sh
+    - name: Contributor runtime selection and rootless Docker (#19076)
+      working-directory: .
+      env:
+        HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
+      run: bash src/deploy/test_contributor_runtime_selection.sh
     - name: Contributor containers stage only the Claude credential and settings (#7836)
       working-directory: .
       env:
@@ -702,6 +719,9 @@ jobs:
         - name: contributor
           file: src/Dockerfile.contributor
           smoke: 'false'
+        - name: mx
+          file: src/Dockerfile.mx
+          smoke: 'false'
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -734,13 +754,15 @@ jobs:
     - ci-required-context-scope
     if: ${{ always() && needs.subject.result == 'success' && (always() && (needs.ci-required-context-scope.result != 'success' || needs.ci-required-context-scope.outputs.run-ci == 'true')) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      with:
+        cleanup: false
     - name: Resolve runner ref name
       id: ref_name
       run: |
@@ -758,7 +780,9 @@ jobs:
         provenance: false
         sbom: false
         outputs: type=oci,oci-mediatypes=true,dest=/tmp/hive-oci.tar,tar=true
-        cache-from: type=gha,scope=tmux-linux-amd64
+        cache-from: |
+          type=gha,scope=tmux-linux-amd64
+          type=registry,ref=ghcr.io/${{ github.repository_owner }}/hive-buildcache:whisper-linux-amd64
         build-args: |
           BASE_REGISTRY=${{ env.BASE_REGISTRY }}
           GIT_HASH=${{ github.sha }}

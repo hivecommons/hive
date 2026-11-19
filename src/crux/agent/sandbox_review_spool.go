@@ -33,9 +33,28 @@ type reviewSpoolHandle struct {
 	entry    crux.SandboxReviewSpool
 }
 
+// spoolKickTarget is what the manifest records about the kick's PR: the
+// target repo and the branch hive opens the PR from. A review-only kick
+// opens none, so it records no branch and a topic claim cannot bind to one.
+type spoolKickTarget struct {
+	repo   string
+	branch string
+}
+
+func spoolTargetOf(spec SandboxKickSpec) spoolKickTarget {
+	t := spoolKickTarget{branch: spec.Branch}
+	if spec.Org != "" && spec.Repo != "" {
+		t.repo = spec.Org + "/" + spec.Repo
+	}
+	if spec.reviewOnly() {
+		t.branch = ""
+	}
+	return t
+}
+
 // openReviewSpool creates the workspace spool and registers it. A nil handle
 // with a nil error means spooling is not configured for this kick.
-func (e *SandboxExecutor) openReviewSpool(manifestDir, agentName, workspace string) (*reviewSpoolHandle, error) {
+func (e *SandboxExecutor) openReviewSpool(manifestDir, agentName, workspace string, target spoolKickTarget) (*reviewSpoolHandle, error) {
 	if strings.TrimSpace(manifestDir) == "" {
 		return nil, nil
 	}
@@ -61,7 +80,10 @@ func (e *SandboxExecutor) openReviewSpool(manifestDir, agentName, workspace stri
 	}
 	h := &reviewSpoolHandle{
 		manifest: filepath.Join(manifestDir, fmt.Sprintf("%s-%d.json", sanitizeBranchPart(agentName), time.Now().UnixNano())),
-		entry:    crux.SandboxReviewSpool{Agent: agentName, Spool: spool, Key: hex.EncodeToString(key), StartedAt: e.now().UTC()},
+		entry: crux.SandboxReviewSpool{
+			Agent: agentName, Repo: target.repo, Branch: target.branch,
+			Spool: spool, Key: hex.EncodeToString(key), StartedAt: e.now().UTC(),
+		},
 	}
 	if err := h.write(); err != nil {
 		return nil, err
@@ -71,14 +93,19 @@ func (e *SandboxExecutor) openReviewSpool(manifestDir, agentName, workspace stri
 
 // sandboxEnv is what the sandbox needs to use the spool: hive-review writes
 // to HIVE_REVIEW_REQUEST_DIR when it is set, and MACs each request with
-// HIVE_REVIEW_SPOOL_KEY.
+// HIVE_REVIEW_SPOOL_KEY. hive-open-issue and hive-topic read the generic
+// HIVE_SANDBOX_REQUEST_DIR and HIVE_SANDBOX_SPOOL_KEY (#18572, #18573),
+// which carry the same values.
 func (h *reviewSpoolHandle) sandboxEnv() map[string]string {
 	if h == nil {
 		return nil
 	}
+	dir := path.Join(sandbox.DefaultWorkspaceMount, crux.SandboxReviewSpoolRelPath)
 	return map[string]string{
-		crux.SandboxReviewSpoolEnv:    path.Join(sandbox.DefaultWorkspaceMount, crux.SandboxReviewSpoolRelPath),
+		crux.SandboxReviewSpoolEnv:    dir,
 		crux.SandboxReviewSpoolKeyEnv: h.entry.Key,
+		crux.SandboxSpoolEnv:          dir,
+		crux.SandboxSpoolKeyEnv:       h.entry.Key,
 	}
 }
 

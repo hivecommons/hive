@@ -452,6 +452,9 @@ func (m *Manager) RestartMissingSessionWithReason(ctx context.Context, name, rea
 	if !ok {
 		return false, fmt.Errorf("agent %s not found", name)
 	}
+	if m.agentSandboxEnabledLocked(agent) {
+		return false, errSandboxRestart(name)
+	}
 	m.clearStartFailureLocked(agent)
 	if err := m.applyAgentSpec(agent); err != nil {
 		return false, err
@@ -556,6 +559,9 @@ func (m *Manager) restartWithReason(ctx context.Context, name, reason string, ki
 	if !ok {
 		return fmt.Errorf("agent %s not found", name)
 	}
+	if m.agentSandboxEnabledLocked(agent) {
+		return errSandboxRestart(name)
+	}
 
 	// A restart is a deliberate retry — by an operator at the dashboard button,
 	// or by a recovery path that believes it has changed the conditions. The
@@ -611,7 +617,7 @@ func (m *Manager) restartWithReason(ctx context.Context, name, reason string, ki
 	}
 
 	agent.forceRelaunch = true
-	if output, err := m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).CombinedOutput(); err != nil {
+	if output, err := m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).CombinedOutput(); err != nil && !tmuxKillSessionNothingToKill(string(output)) {
 		m.logger.Warn("tmux kill-session before restart failed",
 			"name", name,
 			"session", agent.tmuxSession,
@@ -732,4 +738,19 @@ func (m *Manager) SeedRestartCount(name string, count int) {
 	if agent, ok := m.agents[name]; ok {
 		agent.RestartCount = count
 	}
+}
+
+// tmuxKillSessionNothingToKill reports whether kill-session stderr only says
+// there was nothing to kill (no server, no such session). That is the desired
+// end state before a restart, so it is not a failure worth a warning.
+func tmuxKillSessionNothingToKill(stderr string) bool {
+	return tmuxStderrMeansNoSession(stderr) || strings.Contains(stderr, "no sessions")
+}
+
+// errSandboxRestart refuses a restart of a sandboxed agent. A restart builds
+// an interactive tmux session on the hive pod, which would run the agent
+// outside its sandbox and block sandbox kicks (#18826); the next kick starts
+// a fresh Job instead.
+func errSandboxRestart(name string) error {
+	return fmt.Errorf("agent %s runs in sandbox; restart re-kicks its Job, not an interactive session", name)
 }

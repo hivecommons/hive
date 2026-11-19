@@ -71,6 +71,8 @@ During the Kubernetes **seed-plus-overlay fallback** only:
 | `acmm_level` | Overlay when present; seed is a fallback, not an unconditional platform override |
 | `hub.is_public` | Seed when set; the hosting hub can also reassert publication policy by heartbeat |
 | GitHub App credentials | Overlay, except a real installed App in the seed is protected against a placeholder overlay wiping it |
+| `review` and `agent_sandbox` blocks | Overlay when it carries the block (adopted whole, on boot and on every reload that starts from the seed); the seed is the fallback only when the overlay has none |
+| `variables.security` | Seed only. The overlay's `variables` block is never adopted |
 
 For example, changing `acmm_level` in the ConfigMap of a hive with a runtime file will not apply a new pack on restart. Use the dashboard's pack controls or the hosting hub's supported controls instead. Public-hosting policy remains the hosting administrator's responsibility, not an arbitrary agent setting.
 
@@ -157,6 +159,32 @@ The dashboard API can update this field through [`POST /api/effort/{agent}/{effo
 
 The dashboard shows a reasoning-effort dropdown next to the model picker for every method that has an effort control (`codex`, `agy`, `claude`, and `omp`). The value is validated at set time against the method's own set, so a `codex`-only level such as `minimal` is refused for a `claude` agent rather than stored and dropped at launch. For `omp`, the dropdown is per selected model: Hive reads `omp models --json` and uses that model's `thinking` levels, hiding the control for models that report no thinking support. Picking `default` clears the stored value; for `claude` and `omp` that means no effort flag at all and the CLI's own default. The dropdown persists through the same path as the model picker (`hive.yaml` plus the per-agent overlay under `agents_dir`), which is the durable path on a hosted spoke: a hand edit of the agent's file is reverted by the next sync, the dashboard write is not. Each dropdown change is recorded in the audit trail as `set_reasoning_effort` with the new value, like the other per-agent setting changes. The effort the agent was actually launched with is what the run rows and the `- hive:` PR trailer report, so a `claude` agent at `xhigh` shows `effort=xhigh` there and an agent with no stored effort shows none.
 
+#### Claude setup-token
+
+For `backend: claude`, an operator can use a long-lived token instead of the
+dashboard sign-in. Run `claude setup-token` interactively as the licensed
+operator and complete the prompts. The resulting token lasts about a year and
+is inference-only; it is not a general-purpose account credential. See
+[Claude Code authentication](https://code.claude.com/docs/en/authentication).
+
+Supply it to the Hive process as the secret `HIVE_CLAUDE_OAUTH_TOKEN`, or mount
+it in a secret file readable by Hive. Set `HIVE_CLAUDE_OAUTH_TOKEN_FILE` to
+that file's path, or use the default `/secrets/claude-oauth-token`. The
+non-empty environment variable wins over the file. Do not put the token in
+`hive.yaml`, shell history, logs, issues, or agent panes.
+
+Hive passes the token to Claude agents as `CLAUDE_CODE_OAUTH_TOKEN` at launch,
+even when a credentials file exists. It takes precedence over dashboard sign-in;
+signing in again on the dashboard does not replace it. Each agent retains its
+own Claude home and private state; sharing the token does not require sharing
+the whole home. Without an operator token, dashboard sign-in works as before.
+
+To replace an expired or revoked token, run `claude setup-token` again, update
+the configured secret source, then recreate or restart Hive to load the new
+token and restart the affected Claude agents so their new sessions receive
+the replacement. Verify an agent completes a turn. See the
+[backend auth recovery runbook](backend-auth-recovery-runbook.md).
+
 #### Oh My Pi (`omp`) hub agents
 
 `backend: omp` launches the OMP CLI as a first-class dashboard method. Hive gives each agent its own durable HOME under `/data/home/agents/<name>`, so `~/.omp/agent/agent.db` can hold several provider sign-ins for that one agent (for example `openai-codex` for the primary model and `anthropic` for an advisor) without sharing refresh-token writers across agents. Select models with their provider prefix (`provider/model`). The dashboard model probe runs `omp models --json` and uses each model's `thinking` list for the effort dropdown. At launch Hive passes `--approval-mode ${HIVE_OMP_APPROVAL_MODE:-yolo}`, `--model <id>`, and `--thinking <effort>` when set.
@@ -193,7 +221,8 @@ agents:
 
 `exclude_author_model` defaults to true. `exclude_author_family` compares the
 normalized vendor prefix before the first dash (`claude`, `gpt`, `gemini`,
-`grok`, ...). If no pool entry is eligible, `fallback` is `pinned` (use the
+`grok`, ...), after dropping a provider path and `:variant` suffix, so
+`anthropic/claude-opus-5-5` and `claude-sonnet-5` are the same family. If no pool entry is eligible, `fallback` is `pinned` (use the
 agent's configured `model`), `skip` (omit the PR from that kick), or
 `requires_human` (keep the PR visible with a human-review marker). Reviewers
 record the delegated sub-agent's model as `review_model` in the verdict artifact,
@@ -202,7 +231,7 @@ which feeds the author/reviewer model-pair metrics.
 The same pool drives the **review swarm** ([#13243](https://github.com/hivecommons/hive/issues/13243)).
 Each `[review-perspective:…]` kick (and the combined kick on non-fan-out hives)
 is planned against the PR's author model — taken from `pr.HiveModel`, i.e. the
-`— hive:` trailer / `agent_pr_created` audit record — and the perspective prompt
+`-- hive:` trailer / `agent_pr_created` audit record — and the perspective prompt
 carries the same `## Independent review — run this review with <backend>/<model>`
 section the queue kick's PR lines do. Pool selection, `exclude_author_model`,
 `exclude_author_family` and `fallback` behave exactly as above; in the swarm
@@ -288,7 +317,7 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
                                  #   hive-merge / hive-open-issue relays — not merely
                                  #   discouraged. See docs/per-repo-agents.md.
     on_demand: false             # true = never kicked by the governor timer;
-                                 #   only triggered explicitly (e.g. inception)
+                                 #   only triggered explicitly (e.g. by you)
     continuous: false            # legacy shorthand: continuous in every
                                  #   non-quiet governor mode; prefer per-mode
                                  #   cadence: surge: continuous
@@ -382,6 +411,10 @@ is refused at the tier the non-conversational half requires.
 For prompt file resolution and the complete built-in `${VAR}` reference, see
 [Policy and prompt templates](../policies/README.md).
 
+### Sandbox settings (`agents.<name>.sandbox`)
+
+An agent's `sandbox` block (image, runtime, Job fields) is editable from its General tab under "Sandbox settings: image, runtime and Job", and through `PUT /api/config/agent/<name>/general` with `sandboxImage`, `sandboxRuntime`, `sandboxJob` and `sandboxCopyFrom` (hivecommons/hive#18797). A blank value inherits the hive-wide `agent_sandbox` default, which is set under Settings, Security. "Copy sandbox settings from..." copies another agent's complete block, Secret names included and never values. Enabling a sandbox that resolves no image is refused with the field named. The full set of controls and keys is in [sandbox-isolation.md](sandbox-isolation.md#setting-up-a-sandbox-from-the-dashboard). `sandbox.job.image_pull_secrets` (Secret names only, at most 32; a per-agent block that sets none inherits `agent_sandbox.job`) adds registry pull secrets to the Job pod beside hive's own and the Job service account's; the API field is `sandboxJob.imagePullSecrets` ([#18819](https://github.com/hivecommons/hive/issues/18819), see [Private-registry images](sandbox-isolation.md#running-sandboxed-kicks-as-kubernetes-jobs)).
+
 ### Declarative extensions
 
 Three optional blocks replace hardcoded behavior with declarations:
@@ -429,6 +462,8 @@ Rounding out the schema — fields you will rarely touch:
 | `metrics_collector` | Named metrics source for the stats panel | none |
 | `stats_display` | Custom sidebar metrics (key, label, source, field, style, optional icon/target). The Diagnostics **Quality stats** card mirrors the `quality` agent's configured entries. A `pct`/`pct-bar` stat with no measurement renders `—`, not `0%`. | none (an agent starts with no stats unless it is a built-in with defaults) |
 | `hidden` (packs only) | Keep a pack agent out of the default roster view | false |
+
+If a kick to an agent fails or an agent is flagged `kick_refusal`, see [Kick refusals](kick-refusals.md).
 
 ## Explain mode (debugging agent behaviour)
 
@@ -633,6 +668,20 @@ Each per-UID agent runs with its own durable `HOME` under `/data/home/agents/<na
 
 Before [#17031](https://github.com/hivecommons/hive/issues/17031) `.claude`, `.gemini` and `.bob` were bridged whole, so every agent's CLI state sat in one tree that any agent could read and rewrite: the user-level `~/.claude/CLAUDE.md`, `history.jsonl` and `todos/` were a single shared copy, and each agent's cwd-keyed auto-memory (`projects/-data-agents-<name>/memory/MEMORY.md`, per-agent by path) was writable by every other agent and persisted on the PVC forever. Provisioning now retires those whole-directory bridges on the next launch, keeps only the login/settings entries above, and never deletes or moves anything under `/data/home`: a pre-existing shared memory store is left in place and logged once (`shared CLI home still holds a persistent memory store …`) so you can review or drain it ([#17033](https://github.com/hivecommons/hive/issues/17033)) before removing it by hand. The dashboard's token/cost scanners (`data.claude_sessions_dir`, `data.bob_sessions_dir`, `data.copilot_sessions_dir`) walk the shared path **and** every `/data/home/agents/*/…` sibling, attributing each per-agent tree to its owner, so cost accounting does not regress. `HIVE_SHARED_AGENT_HOME=1` restores the legacy single shared `HOME` for every agent (and with it the shared memory).
 
+#### How the Claude login stays shared when the CLI replaces the link
+
+Claude Code saves a refreshed OAuth token (about every 8 hours) by writing a temp file in `~/.claude` and renaming it over `.credentials.json`. A rename replaces a symlink rather than writing through it, so after the first refresh the agent is running on a private `0600` copy of the token, the refresh has rotated the grant the shared file still holds, and every other agent fails its own refresh. On per-UID hives this logged the whole fleet out about every 8 hours ([#17039](https://github.com/hivecommons/hive/pull/17039) follow-up).
+
+Hive now treats the login as the one piece of `.claude` state that *is* shared, and publishes it back: at every agent launch, every `HIVE_CLAUDE_CREDENTIAL_BRIDGE_INTERVAL` (default `5s`) from the credential watchdog, and right after a dashboard sign-in, it checks each claude agent's `~/.claude/.credentials.json`. When a regular file has replaced the link, hive reads it — directly, or as the agent's own uid through the same `su-exec` seam that adopts `.claude.json` sessions, so an agent-owned `0600` file is no obstacle — and:
+
+- keeps whichever credential is newer **and** usable in the shared `/data/home/.claude/.credentials.json`: the agent's copy wins only when it is complete (access token, refresh token, recorded `expiresAt`), usable, and expires later than the shared one, or the shared one is unusable. A failed refresh (empty tokens, `expiresAt` 0) never wins;
+- moves the private file aside to `.credentials.json.stale-<UTC time>` in the agent's `.claude` (owner and mode unchanged) and, when the agent's copy was promoted, preserves the old shared file beside the shared credential the same way. Nothing is deleted; remove the `.stale-*` files by hand once you no longer want them;
+- restores the symlink and records a `claude_credential_rebridged` audit entry (`kept=agent|shared`, never token material).
+
+When the file cannot be read either way (a deployment without `su-exec`), nothing is moved or relinked, the agent keeps the token it already had, and one `ERROR` per agent and file version names the path. The one exception is a dashboard sign-in: a fresh shared login is newer than anything an unreadable private copy could hold, so that trigger moves the unreadable file aside unread and relinks the agent. Memory, transcripts and todos stay per agent throughout; only the credential file is published.
+
+Every hive-side write to a shared login or CLI config (`.claude/.credentials.json`, `.copilot/config.json`, the durable Copilot token) goes through `crux/sharedfile`: a randomly named temporary beside the target, mode and owner set on the open descriptor, verified, then renamed into place, and only when the target is absent or a regular file inside a regular directory the server owns. Anything else at those paths is refused and logged once. The entrypoint's root permission guard applies the same rule to the files it repairs, and the shared dot-dirs carry the sticky bit so a dev-owned entry cannot be replaced by another uid.
+
 ### CLI auto-memory (`agents.cli_memory`)
 
 Subscription CLIs keep their own long-lived "memory" next to the transcripts: Claude Code's auto-memory (`~/.claude/projects/-data-agents-<name>/memory/MEMORY.md`), Codex memories (`$CODEX_HOME/memories/`), Copilot CLI's `memory` setting, and Gemini's `~/.gemini/GEMINI.md`. Hive agents already get their durable context from beads, the knowledge store, and the kick prompt, so a hidden per-CLI notebook mostly accumulates stale one-off inferences ([#17032](https://github.com/hivecommons/hive/issues/17032)). The `agents.cli_memory` block controls it fleet-wide, and each agent may override it with its own `cli_memory:` block:
@@ -657,6 +706,54 @@ agents:
 Set `auto_memory: true` on a single agent to let it keep a private notebook while the rest of the fleet stays stateless between kicks. The knobs are independent: `auto_memory: true` with `clear_on_kick: true` gives a memory that lives for exactly one kick, and adding `drain_to_knowledge: true` is the "memory → beads" flow: the CLI may take notes during a turn, every note becomes a reviewable draft at the next kick, and the private store is then emptied. The log line per drain is `cli-memory: drained N facts from <agent> into bead-synth-wiki (dupes K, spooled S)`.
 
 Every Model Gateway (and the bob backend) also accepts an optional `key_name` — a human-chosen LABEL for the configured key, e.g. `key_name: openrouter-prod-key`. It is safe-to-show metadata, not a secret: the dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set, so operators can tell keys apart without ever seeing the value. For gateway keys, the row and settings/status APIs also expose `keySHA256`, the lowercase SHA-256 of the exact effective key string Hive will inject through the inference proxy; this lets operators compare Hive with LiteLLM/OpenRouter key-hash displays without revealing the secret. Saving a replacement key refreshes live inference proxy routes for running agents, so the next kick uses the new key without an agent restart. See [`inference-backends.md`](../../docs/inference-backends.md) for a full YAML example.
+
+#### Where a gateway key file may live
+
+`api_key_file` for `governor.litellm` and for every entry under `governor.gateways` is only ever read from the allowed secret dirs: `/secrets` (the Kubernetes Secret projection) and `/data/secrets` (the PVC dir the dashboard writes UI-entered keys to). Any other path is never read, a security gate that stops a config value from turning into an arbitrary file read. To use a Secret, mount it under one of those dirs, for example a `volumeMount` at `/secrets/litellm_api_key`, and point `api_key_file` at the file there.
+
+- **Save.** The dashboard and the config API reject an `api_key_file` outside those dirs with a `400` that lists the allowed dirs and says where to mount the Secret ([#18533](https://github.com/hivecommons/hive/issues/18533)).
+- **Boot.** An existing `hive.yaml` with such a path still boots, because the path was already being ignored and the hive has been running on its fallback key. Boot logs a `WARNING:` line for each one naming the field, the path, the allowed dirs and the fix.
+- **Runtime.** When a configured path is skipped, the hive logs one `WARN` per path, `configured api_key_file is outside the allowed secret dirs and was skipped`, with `skipped_path` and `effective_key_source` (the source actually used: the Secret mount, the PVC copy, or an env var).
+- **Dashboard and API.** The LiteLLM section of `GET /api/config/governor` and each gateway row carry `keySource` (`file:<path>` or `env:<NAME>`), `keySourceDescription` (for example `key from /secrets/litellm_api_key (configured path /secrets-cb/litellm_api_key not allowed)`) and `apiKeyFileAllowed`; the LiteLLM section also lists `allowedKeyFileDirs`. None of them carries key material.
+
+#### Key rotation without a restart
+
+The agent inference proxy (`127.0.0.1:18444`) no longer keeps the key it resolved when an agent's route was set ([#18532](https://github.com/hivecommons/hive/issues/18532)). For `litellm` and named-gateway routes it re-checks the key file every few seconds, and re-reads it when the file's symlink target, mtime or size changed (a Kubernetes Secret update swaps the `..data` symlink). It also re-resolves fully every 30 seconds, so a newly created key file or a changed env var is noticed too. A rotated key therefore reaches the next request without a hive restart.
+
+When the gateway answers `401`, the proxy re-resolves the key once. If that yields a different key, it retries the request once with it, and counts an auth failure only when the retry is also rejected. An unchanged key is not retried. The `inference backend auth failure` WARN carries `key_source` (`file:<path>`, `env:<NAME>`, `static` for a route with a fixed credential such as a minted watsonx IAM token, or `none`) and `key_changed_since_start` (whether the key differs from the first key this process resolved for that backend). It never logs the key.
+
+#### Translator timeouts and bounded retry
+
+The inference translator that carries every agent's model calls to a gateway has no timeout and no retry for a rate limit or server error unless you opt in ([#19057](https://github.com/hivecommons/hive/issues/19057)). Everything below is **off by default**: with the block absent, or every value at its default, the translator behaves exactly as before. Settings are read once at start, so a change needs a restart.
+
+```yaml
+governor:
+  inference_resilience:
+    connect_timeout_s: 0           # TCP connect to the gateway; 0 = off
+    response_header_timeout_s: 0   # wait for the upstream to start answering; 0 = off
+    idle_stream_timeout_s: 0       # cut a response that sends no bytes for this long; 0 = off
+    retry_enabled: false           # bounded retry for 429 and 5xx
+    retry_max_retries: 2           # retries after the first attempt (at most 5)
+    retry_base_delay_ms: 500       # first backoff step; doubles each retry
+    retry_max_delay_s: 20          # cap on one wait and on an honored Retry-After
+```
+
+| Key | Environment variable | Default |
+| --- | --- | --- |
+| `connect_timeout_s` | `HIVE_INFERENCE_CONNECT_TIMEOUT_S` | `0` (off) |
+| `response_header_timeout_s` | `HIVE_INFERENCE_RESPONSE_HEADER_TIMEOUT_S` | `0` (off) |
+| `idle_stream_timeout_s` | `HIVE_INFERENCE_IDLE_STREAM_TIMEOUT_S` | `0` (off) |
+| `retry_enabled` | `HIVE_INFERENCE_RETRY_ENABLED` | `false` |
+| `retry_max_retries` | `HIVE_INFERENCE_RETRY_MAX_RETRIES` | `2` (maximum `5`) |
+| `retry_base_delay_ms` | `HIVE_INFERENCE_RETRY_BASE_DELAY_MS` | `500` |
+| `retry_max_delay_s` | `HIVE_INFERENCE_RETRY_MAX_DELAY_S` | `20` |
+
+A valid environment variable wins over the yaml key; an invalid one is ignored and named in a start-up warning. Values are whole numbers, and seconds are capped at 3600.
+
+- **Timeouts.** The connect and response-header timeouts apply to the request to the gateway. A non-streaming call only gets headers once the model has finished, so keep `response_header_timeout_s` above your longest healthy generation. The idle-stream timeout counts only time spent waiting for the upstream, from one byte to the next, so a stream that is slow but keeps producing bytes is never cut. A timeout is not retried: the agent gets the same `502` (before any byte) or the same stopped stream (after) that a dead upstream always gave.
+- **Retry.** With `retry_enabled`, a `429` or a `5xx` other than `501` is resent up to `retry_max_retries` times, with exponential backoff (`base * 2^(n-1)`, capped at `retry_max_delay_s`) and jitter in the upper half of each step. A `Retry-After` (seconds or an HTTP date) is honored, plus jitter of up to one base step; one longer than `retry_max_delay_s` is not waited for, and the response is passed to the agent instead. A retry happens only while no response byte has reached the agent, so a stream that has started is never replayed. The retry resends the translated request that is already held in memory with the same headers and the route's current key, so there is no buffer to size and no body-size cap. The existing single resend after a `401` is separate and unchanged, and key resolution is untouched.
+- **Mid-stream death.** A stream that dies after its first byte is logged (`inference SSE translation failed`) and stopped, as before.
+- **Observability.** Each retry logs `inference upstream retrying` and each timeout logs `inference upstream timeout`, with `backend`, `status` and `agent` (and `attempt`, `delay_ms` or `kind`), never a request or response body and never a header value. Counters `crux.proxy.inference.retries` (attributes `route`, `status`) and `crux.proxy.inference.timeouts` (attributes `route`, `kind` of `connect`, `response_header` or `idle`) are exported through the OpenTelemetry meter.
 
 ### Claude Managed Agents hosted execution
 
@@ -707,6 +804,13 @@ Kubernetes manifests for deploying inference backends (vllm Deployment, EPP RBAC
 Agents can inspect peer panes with `hive-panes [lines]` when the deployment includes `src/deploy/hive-panes.sh`. It reads pluk JSONL logs from `/var/run/pluk/logs`, skips the calling agent named by `HIVE_PROXY_AGENT`, strips terminal escapes, and prints the last N raw-output lines for every other agent. Use it for situational awareness; it is read-only and does not attach to another agent's tmux session. See [Agent peer-awareness logging](agent-logging.md) for the pluk log format, when it's available, and its retention behavior.
 
 Every discovery probe is best-effort: a failed or absent probe falls back to a current static list, so a model dropdown is never empty. Fallback entries are marked "unverified" in the UI.
+
+An agent whose backend is a model gateway (OpenRouter, LiteLLM, vLLM, llm-d, watsonx or a custom OpenAI-compatible endpoint) does not use a CLI's static list at all. It inherits the gateway's live `/v1/models` list: the model dropdown, the Default Model picker and auto-heal all read what the gateway currently serves. The same holds for any CLI you point at a gateway, because its model is then whatever id the gateway accepts. Only the CLI-native backends (claude, copilot, codex, gemini, goose, agy, omp, bob, pi) ever fall back to a static list.
+
+Static lists drift as vendors ship models, so two checks keep them honest:
+
+- `TestStaticModelListsShape` (in `src/pkg/dashboard`) fails a PR if any static list is empty or has duplicates, or if a first-paint copy in `static/index.html` disagrees with its Go list.
+- The weekly [Static model list freshness](../../.github/workflows/static-model-freshness.yml) workflow compares the lists with public, keyless sources. The OpenRouter catalog is used directly for the curated OpenRouter suggestions, and for Claude, Gemini and OpenAI ids mapped onto `anthropic/`, `google/` and `openai/`. npm release versions of the CLIs are included as context. The workflow keeps one tracking issue (label `static-model-freshness`) up to date. Catalogs that need auth (Claude OAuth `/v1/models`, the Copilot SDK, the Codex app server, Kiro, agy, omp, goose, bob) are not compared; the CLIs are probed live at runtime instead.
 
 ### Model pinning and auto-switching
 
@@ -767,6 +871,17 @@ Two consequences worth knowing:
 - **Model validation does not save you here.** `POST /api/model/...` checks the model against the agent's *current effective* backend, and deliberately fails **open** when that backend's model list cannot be enumerated (see `validateModelForAgent`). Codex is exactly such a backend, so `switch` to codex followed by `model` set to a Claude id is accepted. Reverse the order and the model is validated against the backend you are about to leave. Neither order gives you a checked pair.
 - **The atomic route does not restart the agent.** It persists the pair and syncs it into the live process config, so the running CLI keeps its current method until the agent next restarts. That is usually what you want for a scripted change — the two-call path pays for two restarts — but if you need the change to take effect now, restart the agent afterwards.
 
+### Switching the method or model of an agent that is not running
+
+`POST /api/switch/{agent}/{backend}` and `POST /api/model/{agent}/{model}` accept a change for any **configured** agent, not only a live one ([#18905](https://github.com/hivecommons/hive/issues/18905)). An agent can be configured but absent from the runtime (stopped, held back by the ACMM level gate) or present but paused:
+
+- **Not in the runtime (stopped or gated):** the choice is persisted to both config layers (`hive.yaml` and the per-agent overlay, see [config-layering](config-layering.md)), marked operator-owned, and nothing is restarted. The model is validated against the agent's saved backend and a backend against the supported list or a configured gateway name, exactly as for a running agent.
+- **Paused or stopped in the runtime:** the override is set and persisted as usual, but the agent is **not** restarted, so a model change does not wake a paused agent.
+
+In both cases the response is `{"ok": true, "applied": false, "message": "saved; applies when <agent> starts", ...}` and the dashboard shows that message instead of "session restarted". A live switch is unchanged and carries no `applied` field. A name that is neither running nor configured still fails with `400` and `agent <name> not found (valid agents: ...)`.
+
+On the dashboard, switching an agent's method, model or reasoning effort keeps the page where it was: the re-render re-pins the window to the same agent card, returns focus to the dropdown you used (including after the model list reloads), and never re-sorts the cards ([#18906](https://github.com/hivecommons/hive/issues/18906)).
+
 ### `launch_cmd` and `backend`
 
 `backend` is the operator-owned field; `launch_cmd` is derived from it. The two must agree: a `launch_cmd` whose executable is a different agentic CLI than `backend` names (say `backend: codex` next to `launch_cmd: /usr/bin/bob …`) is rejected by config validation, because the agent would be launched as one CLI and health-checked as another. Hive enforces this on every path that can move the two apart:
@@ -806,7 +921,7 @@ governor:
 - **Downtime catch-up.** If Hive was down at a scheduled time, restart/eval grants at most one catch-up kick when the missed occurrence is within the last 10 minutes. Older missed occurrences are skipped and the next future occurrence is used.
 - **Per-agent, per-mode intervals.** Anything Go's duration parser accepts works (`5m`, `2h`) for interval mode.
 - **Pausing.** The value `pause` (or `paused`) suspends an agent for that mode without disabling it.
-- **On-demand agents** (`on_demand: true`) are skipped by the governor timer entirely — they run only when explicitly triggered (the inception workflow drives `brainstorm` this way).
+- **On-demand agents** (`on_demand: true`) are skipped by the governor timer entirely — they run only when explicitly triggered (`brainstorm` works this way).
 - **Continuous agents** take another work prompt after their current turn finishes and a cooldown expires. Configure this per mode in the dashboard's **Cadences** form; see the settings and diagnostics below.
 - **Budget.** When the weekly token budget is exhausted, kicks are suppressed hive-wide (exempt agents excepted) until the period rolls over.
 
@@ -1020,7 +1135,7 @@ Two merge rules to know before you rely on this:
 
 ### The trust boundary: allowlisted repos are seed-only
 
-`definition_source` is gated by `Config.GitHubDefinitionAllowed(slug)` (`config.go:4731`), which simply delegates to `Config.GitHubPromptAllowed(slug)` (`config.go:4711`) — the **same** seed-only gate used by `prompt_source`. Fetching requires both:
+`definition_source` is gated by `Config.GitHubDefinitionAllowed(slug)` (`config.go:4731`), which simply delegates to `Config.GitHubPromptAllowed(slug)` (`config.go:4711`) — the **same** seed-only gate used by `prompt_source`. On the seed path, fetching requires both (the owner approval for managed repos is [below](#owner-approval-for-the-hives-own-managed-repos)):
 
 ```yaml
 variables:
@@ -1037,6 +1152,21 @@ This is the property operators most need to understand before enabling the featu
 - A compromised or malicious dashboard overlay can neither widen the set of readable repos nor repoint an agent's `definition_source` at an arbitrary repo — only a seed edit (ConfigMap in Kubernetes, bind-mounted file under Docker, Podman or LXC) can do either.
 
 An empty allowlist denies every repo even with `allow_github_prompt: true` — the allowlist is required, not merely advisory.
+
+### Owner approval for the hive's own managed repos
+
+The seed edit is still the only way to allow a repo outside the hive. For one of the hive's **own managed repos** (an entry of `project.repos`, qualified with `project.org`), the hive owner can approve it from the dashboard instead of editing the volume ([#18490](https://github.com/hivecommons/hive/issues/18490)):
+
+- **Settings → Security → Prompt sources** lists each managed repo and whether `prompt_source` / `definition_source` may read from it. **Approve…** opens a confirm that names the trust implication: anyone who can merge to that repo can change what the hive's agents are told to do and how they are defined. **Revoke** removes the approval.
+- The API is `GET /api/config/prompt-sources` and `PUT /api/config/prompt-sources/owner-repos` with `{"repo": "org/name", "allowed": true, "acknowledge_trust": true}` (`"allowed": false` revokes). Both are owner-only: read, read-write and merger sessions get 403. A repo outside `project.repos` is refused with a 400, and an approval without `acknowledge_trust: true` is refused.
+- Each approval covers that one repo only. It does not need `allow_github_prompt` and does not turn it on, so nothing on `github_prompt_allowlist` starts loading because of it.
+- Approvals are stored in the running config as `variables.security.owner_github_prompt_repos` (`repo`, `approved_by`, `approved_at`), written by the dashboard Save to the PVC runtime config, so they survive a restart. Every change is audit-logged as `config_prompt_source_repo`.
+- The dashboard overlay still cannot approve a repo: its `variables` block is never merged, so only the owner endpoint (or a seed edit) writes the list.
+- An approval counts only while its repo is still in `project.repos`. Removing the repo from the hive lapses the approval; the Prompt sources panel shows it as inert until it is revoked.
+
+`Config.GitHubPromptAllowed(slug)` (and `GitHubDefinitionAllowed`, which delegates to it) admits a repo when either the seed gate or an owner approval allows it, so every caller (prompt, definition and review-perspective resolvers) honors both paths without change.
+
+`review.perspectives_source` (the live-linked review perspective set; see [review-swarm.md](review-swarm.md#live-linked-perspectives-reviewperspectives_source)) uses the same seed-only gate: the resolver is allowed to read a repo only when `GitHubPromptAllowed` permits it, it resolves at the same resolve points (startup and every reload), and it follows the same fallback shape as `Resolve` above (last-known-good, then the inline config).
 
 ### Fetch failures never blank an agent
 
@@ -1059,9 +1189,39 @@ The per-agent `prompt_source` (a kick template fetched from GitHub by `pkg/promp
 
 The fetched file must be a valid portable `AgentDefinition`: `kind: AgentDefinition` and a non-empty `metadata.name` are required (`ParseDefinition`, `defsrc.go:138`); everything else is optional. For the full schema and a worked example, see [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md) and [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
 
+## Agents declared in a managed repo (`.hive/agents/`)
+
+A managed repo can declare agents itself: each `.hive/agents/<name>.yaml` on its default branch is a portable `AgentDefinition`, and the hive picks it up without a hive config edit ([#18491](https://github.com/hivecommons/hive/issues/18491)). Nothing a repo declares runs until an owner approves it.
+
+**Which repos are scanned.** Every repo in `project.repos` (a bare name is qualified with `project.org`) that passes the repo-sourced prompt allowlist, `Config.GitHubDefinitionAllowed`, the same gate as `definition_source` and `prompt_source`: the seed allowlist or an owner approval of the repo (see [Owner approval for the hive's own managed repos](#owner-approval-for-the-hives-own-managed-repos)). A repo off the allowlist is never read, and its existing entries are left as they were. Files are read through the hive's GitHub App client, the same path the live definition resolver uses; with no App client, discovery is off.
+
+**When.** Once at startup, then every 15 minutes (`HIVE_REPO_AGENTS_INTERVAL`, a Go duration, at least `1m`), and on a push webhook to a repo's default branch that touches `.hive/agents/` (a push that lists 20 or more commits always rescans, since GitHub truncates the list). A repo holds at most 50 definition files; extras are ignored with a warning.
+
+**What an owner sees.** **Agents → Import → Declared in your repos** in the config dialog lists each file with a status (`GET /api/agents/discovered`):
+
+| Status | Meaning |
+|---|---|
+| `pending` | Parsed cleanly and waits for an owner. |
+| `invalid` | Not a valid `AgentDefinition` (or unreadable); the error is shown. Fix the file and the next scan makes it `pending`. |
+| `approved` | Registered as an agent. |
+| `rejected` | An owner declined it. It stays declined until the file is removed. |
+| `orphaned` | Approved, but the file was removed. The agent is **paused, not deleted**. |
+
+**Approving** (`POST /api/agents/discovered/approve`, owner only) re-reads the file through the allowlist gate and creates the agent exactly like a keep-linked import, with:
+
+- `definition_source` pointing at the file, with `discovered: true`;
+- `prompt_source` pointing at a sibling `.hive/agents/<name>.md` when the repo has one (otherwise a `spec.promptTemplate` is saved as the kick template, as an import does);
+- **backend, model and mode from the owner**, never from the file. They come from the approval request (backend defaults to `copilot`; model and mode stay unset unless given) and can be changed later in the agent's settings. **Tools** start unset for the owner to grant.
+
+Because `discovered: true` is set, every later reload re-applies the file's other allow-listed fields (the table above) but keeps backend, model, mode and tools as the owner set them (`defsrc.KeepOwnerControlledFields`). A keep-linked import without that marker behaves as before.
+
+**Removing a file** marks an approved entry `orphaned` and pauses its agent, recorded with trigger `repo-agent-discovery`. The agent and its config are kept: if the file comes back, the entry is tracked again, but the agent stays paused until an owner resumes it. Removing a pending, invalid or rejected file simply drops the entry. A failed directory listing never orphans anything.
+
+Entries persist in `/data/repo-agents.json` (`HIVE_REPO_AGENTS_STATE` overrides the path). `POST /api/agents/discovered/refresh` rescans now; `POST /api/agents/discovered/reject` declines an entry.
+
 ## Kick templates: what an agent is told to do
 
-`kick_template` names a Markdown file resolved from the hive's policies checkout (`/data/policies/examples/kubestellar/agents/`, or the directory your `policies:` config points at), falling back to the defaults embedded in the binary (`src/pkg/policies/defaults/`). It is the agent's **periodic work prompt**: on every kick, the template is loaded, variables like `${ISSUE_LIST}`, `${PR_LIST}`, `${REVIEW_PERSPECTIVES}`, `${AGENT_NAME}`, `${PROJECT_ORG}`, and `${KNOWLEDGE}` are substituted, and the result is dispatched to the agent's session. The shared kick preamble always tells agents that the governor-supplied issue/PR lists are authoritative and that proxy-blocked `gh pr list`, `gh issue list`, and `gh search` discovery should not be used.
+`kick_template` names a Markdown file resolved from the hive's policies checkout (`/data/policies/examples/kubestellar/agents/`, or the directory your `policies:` config points at), falling back to the defaults embedded in the binary (`src/pkg/policies/defaults/`). It is the agent's **periodic work prompt**: on every kick, the template is loaded, variables like `${ISSUE_LIST}`, `${PR_LIST}`, `${REVIEW_PERSPECTIVES}`, `${AGENT_NAME}`, `${PROJECT_ORG}`, and `${KNOWLEDGE}` are substituted, and the result is dispatched to the agent's session. `${NEW_RELEASES}` renders the upstream releases the [release-feed watcher](release-feeds.md) found for the agent and has not yet delivered (empty otherwise). The shared kick preamble always tells agents that the governor-supplied issue/PR lists are authoritative and that proxy-blocked `gh pr list`, `gh issue list`, and `gh search` discovery should not be used.
 
 Resolution order: the agent's explicit `kick_template` wins; otherwise the ACMM pack's template for that agent at the current level; otherwise convention — `/data/agents/<name>/CLAUDE.md`, then `<name>.md` in the policies checkout, then the embedded default. Pack templates carry the level's policy in their names — `scanner-holdgated.md` is scanner-at-L5; the same scanner at L6 gets `scanner-automerge.md`.
 
@@ -1117,6 +1277,89 @@ project:
   agent_issue_decision_policy: resolve  # resolve (default) or escalate
 ```
 
+### Reference repos: what agents may study (`project.reference_repos`)
+
+Some hives produce a deliverable *about* another project — a CNCF TechDocs hive whose authorized repo is `cncf/techdocs` assesses `hivecommons/docs`, for example. Without configuration, the scanner reads such an item as out-of-scope or critical, and the proxy has no way to say "read this repo but do not work it". `project.reference_repos` names those repos ([#18015](https://github.com/hivecommons/hive/issues/18015)). A reference repo is never an authorized repo: it gets no queue, no ACMM evaluation and no work items, and it cannot also be in `project.repos`.
+
+Each entry is either a string (`owner/name`, read-only) or a mapping `{repo, write, write_token_file}`. Bare names are rejected because a reference repo lives outside the project org. How writes to these repos work, and how they differ from the repos the hive manages, is in [Writing to repos you do not manage](#writing-to-repos-you-do-not-manage-the-two-lanes) below.
+
+```yaml
+project:
+  repos: [techdocs]
+  reference_repos:
+    - hivecommons/docs                               # read-only (default)
+    - hivecommons/hivecommons.github.io
+    - repo: hivecommons/hive
+      write: [issues, prs]                           # opt-in tier
+      # write_token_file: /data/secrets/hive-ref-pat # optional: a maintainer token instead of the bot or the owner's account
+  remote_write_identity: bot                         # bot (default), bot_only or owner: whose name the writes carry
+```
+
+| Tier | Agents may | Proxy refuses |
+|---|---|---|
+| `read-only` (string form, or no `write`) | `git clone`/fetch over HTTPS, GitHub REST/GraphQL GETs. Every request goes out without auth because the hive's App token is removed, so a private reference repo is not readable. | Every non-GET, with a 403 that names `reference_repos`. |
+| `issues`, `prs` or `issues+prs` (`write:`) | The reads above, plus only: open an issue (`issues`), push a topic branch and open a PR from it (`prs`: as the owner, through the owner's fork; as the hive bot, to the repo itself), and comment on an issue or PR the hive itself opened. | Merges, pushes to the default branch (of the repo or of the fork), labels, assignees, reviews, closing other people's items, and anything on the fork other than a push. Each refusal is logged as `reference_repo` in the violations log, so retrying cannot succeed. |
+
+Writes on the opt-in tier use a credential valid for *that* repo, never the hive's own installation token. Which identity that is follows `project.remote_write_identity` ([Whose name the writes carry](#whose-name-the-writes-carry-projectremote_write_identity) below): the **hive's GitHub App bot**, only on a repo whose owner installed the App themselves, or the **hive owner's own GitHub account**, connected once on the dashboard (Settings → Repos → Reference repos → Connect GitHub account, [#18197](https://github.com/hivecommons/hive/issues/18197)), under which issues, PRs and comments appear exactly as if the owner had filed them. For a hand-written entry an operator may set `write_token_file` instead (a maintainer PAT on the hive host); a derived entry never reads it. A hand-written write-mode entry with neither refuses boot with exit code 22 and a message naming both cures. These are direct POSTs. The `hive-open-issue`/`hive-open-pr` relays only act on `project.repos`, so a lane under `write_surface.enforce` cannot write to a reference repo at all ([GitHub write surface](github-write-surface.md#reference-repos)).
+
+What agents see: every kick carries a `📚 REFERENCE REPOS` block listing each repo with its tier (`[reference · read-only]`, `[reference · issues+prs]`, …). It tells agents that an authorized-repo item whose deliverables name a reference repo is **in scope**. Findings belong in the deliverable inside the authorized repo, unless the tier allows an issue or PR. When a `prs`-tier entry has a credential, the block also names the login the writes appear under and the fork-and-PR commands ([#18198](https://github.com/hivecommons/hive/issues/18198)). On the dashboard, each reference repo is a minimal card with a `reference · <tier>` chip and, for a write entry, the account it writes as; no stats, ACMM level or work items. Reference repos come in a separate payload field, so no queue or ACMM consumer counts them. Field-by-field defaults are in the [operator reference](operator-reference/README.md#notable-fields).
+
+#### Reference repos derived from an accepted request
+
+Hand-writing `reference_repos` does not scale when the hive's work arrives as requests. A TechDocs hive receives one assessment request per project, and each request names the repositories it is about. The hive therefore derives write-tier entries from an accepted request issue ([#18139](https://github.com/hivecommons/hive/issues/18139)). Nothing in this flow needs the operator to edit the config.
+
+The flow:
+
+1. A request issue is opened in an authorized repo (`cncf/techdocs#395`, say) through an issue form. Its body carries the form headings and the repositories under them.
+2. The workflow model bound to that repo declares which headings matter: `spec.intake.referenceRepoFields` lists the headings whose repositories are in scope and `spec.intake.outOfScopeFields` the headings whose repositories are excluded. A model without `intake.referenceRepoFields` derives nothing. For TechDocs that is `cncf-techdocs-assessment@curated-2026.11.2`; `curated-2026.11.1` is unchanged, so a hive bound to it must rebind.
+3. A person with write access to the authorized repo applies `triage/accepted`. That label is the grant. The hive reads who applied it from the issue timeline and checks their repository permission. A label applied by a bot or App account grants nothing, so the hive can never grant itself access by moving the label. A label applied by someone without write access grants nothing either.
+4. Every repository under an in-scope heading, and not under an out-of-scope heading, becomes a `write: [issues, prs]` entry. The issue's own repo, any authorized repo and any repo in `project.repos` are skipped.
+5. The credential follows `project.remote_write_identity`, exactly as for a hand-written write-tier entry: the hive's App bot where the requesting project installed the App, otherwise (unless the setting is `bot_only`) the hive owner's connected GitHub account. When neither applies, the entry is served read-only instead, the hive keeps running, and the request issue gets exactly one comment marked `<!-- hive:reference-repos-read-only repos=... state=read-only -->` saying which repos the hive can read but not write and, unless the setting is `bot_only`, that the hive owner connects their account on the dashboard to change that; the policies flip without a restart. The comment never asks the project to install the App. The comment is posted once per request issue and repo set, never again on a plain reload. A derived entry never consults `write_token_file` and never fails boot.
+
+Lifecycle: the hive derives at boot, on every config reload and every `HIVE_REFERENCE_REPOS_DERIVE_INTERVAL` (default `10m`, Go duration, see [env-vars.md](env-vars.md)). Closing the request issue or removing `triage/accepted` drops the entry, its proxy policy and its kick line on the next pass. A hand-written entry for the same repo always wins over the derived one. Derived entries live in memory only: a saved overlay or runtime config never contains one, and a restart rebuilds them from the open issues. The same repo named by two accepted issues keeps the first and logs the second.
+
+#### Writing to repos you do not manage (the two lanes)
+
+The hive manages issues and PRs in two different ways depending on whether it is linked to the repository ([#18196](https://github.com/hivecommons/hive/issues/18196)):
+
+| | Linked repos (`project.repos`) | Remote repos (`project.reference_repos` at a write tier) |
+|---|---|---|
+| Identity | The hive's GitHub App installation | Per `project.remote_write_identity`: the hive's App bot where the project installed the App itself (`bot`, the default, and `bot_only`), else the hive owner's own GitHub account, connected once in Settings |
+| What the hive does | Full management: backlog scan, queue, kicks, stage engine, labels, reviews, merges | Participation only, whichever identity: open issues, open PRs (as the owner through the owner's fork, as the bot from a topic branch on the repo), comment on and push to its own items |
+| Follow-up | Webhooks and enumeration | A poll of the items the owner login opened that carry a hive marker; new comments and reviews go to the agent that opened the item |
+| Proxy | ACMM rules | The reference-repo gate: labels, reviews, assignees, closing others' items, merges and default-branch pushes are always refused |
+| The hub | Not involved | Not involved; the hub never holds the token and its login scope is unchanged |
+
+**Connecting the account.** Settings → Repos → Reference repos shows the identity in use. *Connect GitHub account* runs a GitHub device flow with the hive's own OAuth client asking for the `public_repo` scope: open the URL, enter the code, done. The token is stored on the spoke only, as an owner-only file under `/data/secrets` (`HIVE_GITHUB_OWNER_TOKEN_FILE` overrides), never in `hive.yaml` and never sent to the hub. It is re-checked every ten minutes; a revoked token drops every write-tier entry to read-only and Settings asks for a reconnect. *Disconnect* removes it from the hive; revoking it on GitHub is done under Settings → Applications on github.com. `public_repo` covers public repositories only: a private remote repo would need the `repo` scope and is not supported.
+
+##### Whose name the writes carry (`project.remote_write_identity`)
+
+An issue or PR posted under the owner's own account reads as if the owner did the work, when they only commissioned it. `project.remote_write_identity` lets each hive choose ([#18516](https://github.com/hivecommons/hive/issues/18516)). In Settings → Repos → Reference repos it is the owner-only control **Post on other projects as:**, with the choices *Hive bot, falling back to me*, *Hive bot only* and *Me*. Every change is audit-logged as `config_remote_write_identity`.
+
+| Value | On a granted repo whose owner installed the hive's GitHub App | Everywhere else |
+|---|---|---|
+| `bot` (default; a missing key is `bot`) | Posts as the App bot (`hivecommons-hive[bot]` on the public fleet) | Posts as the owner's connected account; read-only if none is connected |
+| `bot_only` | Posts as the App bot | Read-only. The owner's token is never used, even when it is connected |
+| `owner` | Posts as the owner's connected account | Posts as the owner's connected account (the behaviour before this setting) |
+
+How it works and what it never does:
+
+- **The grant stays the same.** The setting only picks the name on writes the grant already allows. A repo gets a credential only when it is a write-tier entry, either hand-written or derived from an accepted request. An App installation by itself is never a grant. The hivecommons org, for example, installs the App for every repository and every hive, but a hive without an entry for one of those repos has no policy for it, so no token is ever minted for it.
+- **Detection only.** The hive asks GitHub, with the App's JWT, whether an installation covers that exact repository (`GET /repos/{owner}/{repo}/installation`, cached for five minutes). Nothing in the hive asks a project to install the App: not Settings, not the kick, not the read-only notice.
+- **One repo, minimum permissions.** The bot token is minted on that installation, scoped to that one repository. It gets `metadata: read` always, `issues: write` for the `issues` tier, and `contents: write` plus `pull_requests: write` for the `prs` tier. It is cached until shortly before it expires and is only injected by the proxy's reference-repo path for that repository. It never comes from the hive's own installation and never carries linked-repo management.
+- **The same gate.** Labels, assignees, reviews, closing other people's items, merges, default-branch pushes, scanning and kicks stay refused for every identity. The App owns no fork, so as the bot a PR's topic branch is pushed to the reference repo itself, under the same default-branch guard. The kick gives agents the right flow for each repo.
+- **No silent switch.** If the App lookup fails transiently, the entry is read-only for that pass (`credential_state: unresolved`) and the hive retries on the next pass. It never falls back to the owner's name. `write_token_file` on a hand-written entry still wins over every value.
+- **Per-repo status.** Settings shows, on each write entry, which identity will actually post and why: `posts as hivecommons-hive[bot]: App installed on <org>`, `posts as <owner>: App not installed on <org>`, `read-only: connect your GitHub account`, or `read-only: bot only, App not installed on <org>`. A change that would leave a hand-written write entry without a credential is refused before it is saved, with the error boot would stop on.
+- **Upgrade.** Hives that never set the key read as `bot`. Where the App is not installed, nothing changes. A granted repo whose owner installed the App now gets posts as the bot instead of the owner. Choose *Me* to keep the previous behaviour everywhere.
+
+The own-item follow-up below follows the items opened under either identity, each repo read with its own credential.
+
+**Fork-and-PR.** The owner's account cannot push to a repository it does not own, so a PR against a remote repo goes through the owner's fork: `gh repo fork <owner>/<name> --clone=false`, push the topic branch to `https://<host>/<login>/<name>`, then `gh pr create --repo <owner>/<name> --head <login>:<branch>`. The proxy allows exactly that (fork creation, pushes to the fork with its default branch protected, the PR against the remote) and refuses everything else on the fork. The kick spells the commands out, so `git push` and `gh pr create` need no agent-side special casing.
+
+**Own-item follow-up.** Remote repos send no webhooks and are not enumerated, so the hive polls them: it lists the open issues and PRs created by the login each repo writes as (the owner's, or the App bot's on a repo that writes as the bot, [#18516](https://github.com/hivecommons/hive/issues/18516)), reading each repo under its own reference-repo credential, keeps the ones whose body carries a hive marker (the `-- hive:` attribution trailer or the `🐝 **Hive Agent**` footer), fetches new comments, review comments and reviews, and delivers them to the agent the marker names, into its live session or as a `🌐 REMOTE ITEM FOLLOW-UP` section on its next kick. State is in `/data/turn/remote-items.json` (`HIVE_REMOTE_ITEMS_FILE` overrides). Nothing else happens on the remote: no backlog scan, no queue, no stage engine ([#18199](https://github.com/hivecommons/hive/issues/18199)).
+
+What agents see: the `📚 REFERENCE REPOS` block appends `(from owner/repo#N)` to each derived line, `(from owner/repo#N; read-only: <reason>)` when the credential fell back, and `(read-only this pass: <reason>)` while an App lookup is unresolved. The proxy rules are the ones in the table above: a derived entry unlocks opening issues and PRs on that repo and nothing else, and the read-only fallback unlocks nothing. On the dashboard, Settings shows derived entries read-only with a link to the request issue and the credential state, and the API answers an edit of one with `409`.
+
 ## Label policy: which issues agents may work
 
 There is exactly **one** label-policy surface for the hive's own agents — the **Governor Configuration → Labels** tab — and it has two polarities:
@@ -1126,7 +1369,7 @@ There is exactly **one** label-policy surface for the hive's own agents — the 
 | **Exempt (deny-list)** | `governor.labels.exempt` (+ permanent `hold`/`on-hold`/`hold/review`, `do-not-merge`) | "**Never** touch issues labeled with these." Everything else is eligible. This has always existed. |
 | **Required (allow-list)** | `project.issue_filter.require_labels` | "**Only** touch issues labeled with these." Empty = every issue is eligible. **This is what "only work approved issues" means.** |
 
-By default a hive treats **every open issue** in its repos as candidate work. Projects that gate automation on a maintainer's explicit approval label want the require polarity: a maintainer reviews an issue, applies the approval/queue label, and only then may agents touch it. (A fleet running against a busy upstream repo hit exactly this — the hive opened a PR for an issue the owner had not yet labeled for agent work; an exempt list cannot express that policy, because it can only name what to avoid, not demand a label be present.)
+By default a hive treats open issues in its repos as candidate work, subject to the agent-proposal gate described below and other admission rules. Projects that gate automation on a maintainer's explicit approval label want the require polarity: a maintainer reviews an issue, applies the approval/queue label, and only then may agents touch it.
 
 ```yaml
 project:
@@ -1138,13 +1381,29 @@ project:
 
 Semantics:
 
-- **Absent/empty `require_labels` = no gate** — existing hives are unchanged; there is no default-on filtering.
+- **Absent/empty `require_labels` = no allow-list gate**; other admission rules still apply.
 - An issue must carry **at least one** required label to be eligible. Matching is case-insensitive and **exact** (a prefix like `approved-for-agents-maybe` does not satisfy `approved-for-agents` — prefix matching would over-admit through an approval gate).
 - **Exempt wins on conflict**: an issue carrying both an exempt label and a required label stays excluded. There is deliberately no separate `exclude_labels` field — the exempt list *is* the exclusion mechanism, applied first.
 - PRs and the Hold list are unaffected: open PRs are in-flight work, and held issues still appear under On Hold.
 - PRs have their own, separate allow-list for **reviews**: `review.require_labels` (Settings → Features → Review Gate → "Only review labelled PRs") keeps the hive from reviewing a PR until it carries an approval label; see [review-swarm.md](review-swarm.md#only-review-labelled-prs-reviewrequire_labels). Use a distinct label from the issue gate if the two approvals mean different things to your maintainers.
 
 Both polarities are enforced at **enumeration** — the point where GitHub issues become the hive's actionable set — not in the prompt. A filtered issue never enters the queue, never appears in a kick, never triggers plan-from-label, and cannot be re-selected by a confused (or prompt-injected) agent re-listing the repo. Kick prompts additionally state the active require policy so agents know the list is intentionally short. Both lists are edited on the Labels tab; an active require gate is also noted read-only under **Projects**, and hub-managed hives can receive `issue_filter` with their project config over the heartbeat.
+
+### Agent-filed direction proposals
+
+By default, an issue filed by the Hive app or another bot is held out of the actionable queue when it has an `agent/strategist` or `agent/outreach` label, or its title starts with `[strategist]` or `[outreach]`. Labels match exactly and title prefixes match from the start, both case-insensitively. Human-filed issues and agent-filed issues without these markers are unaffected. A proposal becomes eligible when it has `approved-direction`, a human assignee, or an acknowledged split parent, subject to the other admission rules. Filtered proposals show the reason **Agent proposal awaiting approved-direction**.
+
+Set `project.issue_filter.agent_proposal` to replace the default markers; architect is opt-in:
+
+```yaml
+project:
+  issue_filter:
+    agent_proposal:
+      labels: [agent/architect, agent/strategist, agent/outreach]
+      title_prefixes: ["[architect]", "[strategist]", "[outreach]"]
+```
+
+Both lists are independent and replace their defaults, so omitting one leaves it empty. To disable this gate entirely, set `agent_proposal: {}` under `project.issue_filter`. Omitting the block instead enables the defaults.
 
 ### Reporter trust: who filed it, not only what it is labelled
 
@@ -1202,6 +1461,14 @@ Issues managed by [GitHub Agentic Workflows](https://github.com/github/gh-aw) (`
 
 The `hive/tracking` label also satisfies the tracker-issue check used by `/contribute`, so a tracking issue is never handed to an external contributor either.
 
+### Umbrella and owner-only issues
+
+Umbrella, epic, tracker and decomposed-parent issues, and issues that wait on a person, are the opposite of a tracking archive: they stay actionable for the owner and the hive and **can be closed**. They are never handed to a contributor relay. Mark one with a label (`umbrella`, `tracker`, `epic`, `meta-tracker`), the body marker `<!-- hive:umbrella -->`, a `[Tracking]` / `[Epic]` / `[Umbrella]` / `[Tracker]` title prefix, a task list of two or more issue or PR references, or sub-issues; owner-only by `needs-human`, `human-only`, `human-only:*` or `<!-- hive:human-only -->`. The rules, defaults and per-repo overrides live under `hub.contribute_umbrella` (see the [label reference](labels-and-control-signals/reference.md) and [Contributor relay](contributor-relay.md#umbrella-and-owner-only-issues-are-never-handed-to-a-relay)).
+
+- **Not offered.** `/contribute` selection and the ready-work queue refuse them (withheld reasons `umbrella` and `human_only`); `/api/contribute/status` counts them as `umbrella_items` and `human_only_items` and leaves them out of `actionable_items` and `candidate_items`.
+- **Not advertised.** The good-first-issue sweep scores them `umbrella:<rule>` / `human-only:<rule>` and withdraws `help wanted` and `good first issue` on the next sweep (logged and audited as `gfi-withdraw`; `withdraw_advertisement: false` opts out).
+- **Still closable.** Unlike `hive/tracking`, none of these markers blocks `CloseIssue`, `parent_autoclose` or the tracker-closing rule.
+
 **Not the same thing as the contribute filters.** `hub.contribute_labels_mode` + its label list gate which issues are *handed out to external contributors* over `/contribute` — they have never gated the hive's **own** agents, so an operator who allow-listed a queue label there (a common setup for routing labeled issues to contributors) still had a hive whose own scanner could work every other open issue. `project.issue_filter.require_labels` is the agent-side gate; configure both if you want the same label to govern both lanes.
 
 ## Write-back containment (`writeback`)
@@ -1237,7 +1504,7 @@ is in [acmm-policy-matrix.md](acmm-policy-matrix.md#what-hive-will-say-on-github
 | `display_name`, `emoji`, `color` | the dashboard roster grows past a handful and you want it scannable |
 | a model pin 📌 | you need reproducible behavior and the governor keeps optimizing your model away |
 | `cli_pinned: true` | a CLI update broke an agent once and you never want that surprise again |
-| `on_demand: true` | the agent should run only when something (you, inception) explicitly fires it |
+| `on_demand: true` | the agent should run only when something (usually you) explicitly fires it |
 | cadence overrides | the pack's rhythm doesn't match your project — a hot repo may want `scanner: 15m`, a quiet one `4h` |
 | `pause` in a mode | an agent is noisy exactly when the queue is deep (e.g. pause `architect` during surge) |
 | `stale_timeout` | you changed cadences — keep it above the longest interval |

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/sandbox"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -22,6 +23,14 @@ const (
 	SandboxHealthRunning = "running"
 	// SandboxHealthFailed: the last run failed or timed out.
 	SandboxHealthFailed = "failed"
+	// SandboxHealthWaitingForNode: a kick is in flight but its Job's pod is
+	// Pending and Unschedulable (no node has taken it yet), distinct from
+	// running so a stuck placement is not mistaken for a working agent.
+	SandboxHealthWaitingForNode = "waiting_for_node"
+	// SandboxHealthNodeUnhealthy: the last kick never reached the agent
+	// because the node preflight failed (on the retry node too); the node is
+	// in FrontendSandboxRun.Node and the failing command in Error.
+	SandboxHealthNodeUnhealthy = "node_unhealthy"
 	// SandboxHealthOverdue: a scheduled kick is due and the grace has passed
 	// without a run starting — the cadence was missed.
 	SandboxHealthOverdue = "overdue"
@@ -70,6 +79,13 @@ type FrontendSandboxRun struct {
 	// DueAt is the scheduled occurrence that has been missed when Health is
 	// overdue; empty otherwise.
 	DueAt string `json:"dueAt,omitempty"`
+	// FailReason is node_unhealthy or waiting_for_node when the last run
+	// failed for the infrastructure's reason, not the agent's; Node is the
+	// node the pod ran on, when known (#18811).
+	FailReason string `json:"failReason,omitempty"`
+	Node       string `json:"node,omitempty"`
+	// WaitDetail is the scheduler's message while Health is waiting_for_node.
+	WaitDetail string `json:"waitDetail,omitempty"`
 }
 
 // sandboxOverdueGrace is how long after a due occurrence a missed cadence is
@@ -122,13 +138,22 @@ func sandboxRunHealth(proc *crux.Process, cadence config.Cadence, onDemand bool,
 		out.Summary = redactTokens(run.Summary)
 		out.Tokens = run.Usage.Total()
 		out.Model = run.Usage.Model
+		out.FailReason = run.FailReason
+		out.Node = run.Node
 	}
 	if proc.State == crux.StateRunning {
 		out.Health = SandboxHealthRunning
+		if ph := proc.SandboxPhase; ph != nil && ph.Phase == sandbox.FailReasonWaitingForNode {
+			out.Health = SandboxHealthWaitingForNode
+			out.WaitDetail = redactTokens(ph.Detail)
+		}
 		return out
 	}
 	if proc.SandboxLastRun != nil && !proc.SandboxLastRun.Succeeded {
 		out.Health = SandboxHealthFailed
+		if proc.SandboxLastRun.FailReason == sandbox.FailReasonNodeUnhealthy {
+			out.Health = SandboxHealthNodeUnhealthy
+		}
 		return out
 	}
 	if onDemand || proc.Paused || proc.State == crux.StatePaused || cadence == "" || cadence.IsPaused() || cadence.IsContinuous() {

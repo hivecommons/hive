@@ -11,6 +11,11 @@
     // browser as the one that asked.
     let ghFlowID = '';
     const GH_AUTH_CHECK_INTERVAL_MS = 300000;
+    // /api/role is retried on network errors and 5xx before the viewer is
+    // treated as read-only: 3 attempts, waiting 0.5 s then 1 s between them.
+    const HIVE_ROLE_FETCH_ATTEMPTS = 3;
+    const HIVE_ROLE_RETRY_BASE_MS = 500;
+    const HIVE_ROLE_SERVER_ERROR_STATUS = 500;
     const GH_AUTH_SUCCESS_DISMISS_MS = 1500;
 
     function copyDeviceCode() {
@@ -66,6 +71,7 @@
       const repaintTracker = hiveAuthResolved();
       if (username) window._hiveUser = username;
       if (role) window._hiveRole = role;
+      if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
       const banner = document.getElementById('gh-auth-banner');
       const topBtn = document.getElementById('oc-gh-login-btn');
       const avatarWrap = document.getElementById('oc-gh-avatar-wrap');
@@ -257,24 +263,78 @@
       showToast('Signed out of GitHub', 'info');
     }
 
+    /* One /api/role attempt. Network errors and 5xx are marked retryable; an
+       answer that is not (4xx, an HTML 404 from a static host) is final. */
+    async function hiveFetchRoleOnce() {
+      let resp;
+      try { resp = await fetch('/api/role'); } catch (e) { e.retryable = true; throw e; }
+      if (resp.status >= HIVE_ROLE_SERVER_ERROR_STATUS) {
+        const err = new Error('HTTP ' + resp.status);
+        err.retryable = true;
+        throw err;
+      }
+      return await resp.json();
+    }
+
+    /* The role is "settled" once /api/role answered or gave up. Sections that
+       gate on it (the Inbox) hold a neutral loading state until then and
+       subscribe via window._hiveRoleListeners; they are notified the first
+       time and whenever the role or the failed flag changes. This is separate
+       from _hiveAuthKnown so the tracker never waits on the retries below. */
+    function hiveRoleSettled(failed) {
+      const sig = String(window._hiveRole || '') + '|' + (failed ? 'failed' : 'ok');
+      const changed = !window._hiveRoleSettled || window._hiveRoleSig !== sig;
+      window._hiveRoleFailed = !!failed;
+      window._hiveRoleSettled = true;
+      window._hiveRoleSig = sig;
+      if (!changed) return;
+      (window._hiveRoleListeners || []).forEach(function(fn) { try { fn(); } catch (e) { console.error(e); } });
+    }
+
+    function hiveApplyRoleData(roleData) {
+      if (roleData.sentinel_label) window._hiveSentinelLabel = roleData.sentinel_label;
+      if (!roleData.user) return false;
+      if (roleData.automerge_label) window._hiveAutoMergeLabel = roleData.automerge_label;
+      /* OIDC identity keys ("ibmid:5500…") are not GitHub logins — don't
+         fabricate a github.com/<key>.png avatar for them; showGHAuthState
+         falls back to an initials avatar and the server-resolved
+         display_name. */
+      var ghAvatar = roleData.user.indexOf(':') === -1
+        ? 'https://github.com/' + roleData.user + '.png'
+        : '';
+      showGHAuthState(true, roleData.user, ghAvatar, roleData.role, roleData.display_name);
+      return true;
+    }
+
+    /* Background retries after a retryable first failure, with exponential
+       backoff. If they all fail the viewer stays read-only and the Inbox says
+       so. */
+    async function hiveRetryRole() {
+      if (window._hiveRoleRetrying) return;
+      window._hiveRoleRetrying = true;
+      try {
+        for (let attempt = 1; attempt < HIVE_ROLE_FETCH_ATTEMPTS; attempt++) {
+          await new Promise(function(resolve) { setTimeout(resolve, HIVE_ROLE_RETRY_BASE_MS * Math.pow(2, attempt - 1)); });
+          try {
+            const roleData = await hiveFetchRoleOnce();
+            hiveApplyRoleData(roleData);
+            hiveRoleSettled(false);
+            return;
+          } catch (e) { if (!e.retryable) break; }
+        }
+        hiveRoleSettled(true);
+      } finally { window._hiveRoleRetrying = false; }
+    }
+
     async function checkGHAuth() {
       try {
-        const roleResp = await fetch('/api/role');
-        const roleData = await roleResp.json();
-        if (roleData.sentinel_label) window._hiveSentinelLabel = roleData.sentinel_label;
-        if (roleData.user) {
-          if (roleData.automerge_label) window._hiveAutoMergeLabel = roleData.automerge_label;
-          /* OIDC identity keys ("ibmid:5500…") are not GitHub logins — don't
-             fabricate a github.com/<key>.png avatar for them; showGHAuthState
-             falls back to an initials avatar and the server-resolved
-             display_name. */
-          var ghAvatar = roleData.user.indexOf(':') === -1
-            ? 'https://github.com/' + roleData.user + '.png'
-            : '';
-          showGHAuthState(true, roleData.user, ghAvatar, roleData.role, roleData.display_name);
-          return;
-        }
-      } catch (e) {}
+        const roleData = await hiveFetchRoleOnce();
+        const applied = hiveApplyRoleData(roleData);
+        hiveRoleSettled(false);
+        if (applied) return;
+      } catch (e) {
+        if (e && e.retryable) hiveRetryRole(); else hiveRoleSettled(true);
+      }
       try {
         const resp = await fetch('/api/gh-user-auth/status');
         const data = await resp.json();

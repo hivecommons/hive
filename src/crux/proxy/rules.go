@@ -531,10 +531,10 @@ func repoAutoMergeOffReason(repo string) string {
 //   - Independent of ACMM mode. Scope is roster membership, not autonomy: a
 //     MERGE-mode agent is refused on a repo it does not serve exactly as firmly
 //     as an ADVISORY one, which is why this is not another row in the mode table.
-//   - Same repo extraction as RepoFilterAllowed, and the same blind spot: a path
-//     with no repo in it (notably POST /graphql, whose target repo is in the
-//     body) is not matched. GraphQL writes stay gated by mode; closing that seam
-//     is a separate change and is called out in the docs rather than half-done.
+//   - Path-based extraction, as in RepoFilterAllowed. The GraphQL request arm
+//     separately resolves mutation targets from arguments and cached node IDs,
+//     then calls this same check with a synthetic /repos/{owner}/{name} path.
+//     Queries and unresolved mutations do not reach this scope check.
 //
 // serves is a live predicate rather than a snapshot so a scope edited in the
 // dashboard is in force on the very next request, with nothing to re-wire. Nil,
@@ -576,8 +576,6 @@ type graphQLRequest struct {
 	OperationName string `json:"operationName"`
 	Variables     any    `json:"variables"`
 }
-
-var graphQLMutationRe = regexp.MustCompile(`(?m)^\s*mutation\b`)
 
 // graphQLMergeMutationRe matches mutations that merge a pull request. Merging is
 // the highest-privilege write and must require the same mode as the REST
@@ -804,7 +802,7 @@ func GraphQLAllowedCaps(mode agent.AgentMode, caps agent.AgentCapabilities, body
 	}
 
 	query := strings.TrimSpace(req.Query)
-	if !graphQLMutationRe.MatchString(query) {
+	if !isGitHubGraphQLMutation(query) {
 		return true, false // read-only query
 	}
 
@@ -843,7 +841,7 @@ func GraphQLAutoMergeRefusal(enabled func(repo string) bool, body []byte) (strin
 	if err := json.Unmarshal(body, &req); err != nil {
 		return "", false
 	}
-	if !graphQLMutationRe.MatchString(strings.TrimSpace(req.Query)) || !graphQLMergeMutationRe.MatchString(req.Query) {
+	if !isGitHubGraphQLMutation(req.Query) || !graphQLMergeMutationRe.MatchString(req.Query) {
 		return "", false
 	}
 	if repo := repoFromGraphQLValue(req.Variables); repo != "" && !enabled(repo) {

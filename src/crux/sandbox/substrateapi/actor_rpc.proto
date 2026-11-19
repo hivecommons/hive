@@ -1,0 +1,72 @@
+// Copyright 2026 The Agent Substrate Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Trimmed subset of api/ateapi/v1/ateapi.proto from
+// https://github.com/agent-substrate/substrate (tag v1.0.0). Package, service,
+// message names and field numbers match upstream so the generated client is
+// wire-compatible with ate-api-server; only the RPCs and fields hive's
+// Substrate sandbox launcher uses are kept, split across files so each
+// generated *.pb.go stays under the crux 800-line file ratchet. Importing
+// go.ate.dev/substrate directly would pull a go 1.27 toolchain requirement and
+// a vendored cloud-SDK tree into crux. Regenerate with ./generate.sh.
+
+syntax = "proto3";
+
+package substrate.ateapi.v1;
+
+import "actor.proto";
+import "common.proto";
+
+option go_package = "github.com/hivecommons/hive/crux/sandbox/substrateapi;substrateapi";
+
+message GetActorRequest {
+  ObjectRef actor = 1;
+}
+
+message CreateActorRequest {
+  Actor actor = 1;
+}
+
+message SuspendActorRequest {
+  ObjectRef actor = 1;
+  SuspendOptions options = 2;
+}
+
+message SuspendActorResponse {
+  Actor actor = 1;
+}
+
+message SuspendOptions {
+  DurabilityMode mode = 1;
+}
+
+enum DurabilityMode {
+  DURABILITY_MODE_UNSPECIFIED = 0;
+  DURABILITY_MODE_SYNCHRONOUS = 1;
+  DURABILITY_MODE_ASYNCHRONOUS = 2;
+}
+
+message ResumeActorRequest {
+  ObjectRef actor = 1;
+}
+
+message ResumeActorResponse {
+  Actor actor = 1;
+  bool resumed = 2;
+}
+
+message DeleteActorRequest {
+  ObjectRef actor = 1;
+  DeleteOptions options = 2;
+}

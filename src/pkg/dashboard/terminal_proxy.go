@@ -110,6 +110,19 @@ func (s *Server) registerTerminalProxy() {
 			q := pr.Out.URL.Query()
 			q.Del("token")
 			q.Del(terminalHandoffCodeParam)
+			// An authorised user-session request (see guardTerminalSession)
+			// carries the per-session attach token as ttyd's second arg;
+			// ttyd-tmux.sh verifies it. It is added here, after the guard, and
+			// only ever on the outbound request. The keyboard holder's request
+			// also carries the write token as the third arg; without it
+			// ttyd-tmux.sh attaches read-only (api_sessions_keyboard.go).
+			if args := q["arg"]; len(args) == 1 && strings.HasPrefix(args[0], sessionTmuxPrefix) {
+				out := []string{args[0], ttydAttachToken(args[0])}
+				if sessionAttachWritableFrom(pr.In) {
+					out = append(out, ttydAttachWriteToken(args[0]))
+				}
+				q["arg"] = out
+			}
 			pr.Out.URL.RawQuery = q.Encode()
 		},
 		ModifyResponse: modifyTerminalResponse,
@@ -120,8 +133,9 @@ func (s *Server) registerTerminalProxy() {
 			http.Error(w, "Terminal unavailable", http.StatusBadGateway)
 		},
 	}
-	s.mux.Handle("GET "+terminalPathPrefix, proxy)
-	s.mux.Handle("GET "+terminalPathPrefix+"/", proxy)
+	guarded := s.guardTerminalSession(proxy)
+	s.mux.Handle("GET "+terminalPathPrefix, guarded)
+	s.mux.Handle("GET "+terminalPathPrefix+"/", guarded)
 	// sandbox.runtime: job agents have no tmux session to proxy to; their
 	// terminal is the Job pod log viewer, served under the same prefix so the
 	// terminal handoff and assertion cookie apply unchanged (#14798).

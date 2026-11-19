@@ -30,12 +30,6 @@ func TestGovernorFeaturesRunsSettingsRoundTrip(t *testing.T) {
 		{"runsTriagePriorArtMaxParksPerCycle": -1},
 		{"runsTriagePriorArtBotCloseTtl": "-1h"},
 		{"runsTriagePriorArtBotCloseTtl": "soon"},
-		{"spektacularRecheckDefaultInterval": "weekly"},
-		{"spektacularRecheckMaxDeltaTasks": -1},
-		{"spektacularRecheckDiscoveryProxy": "http://user:pw@relay:18443"},
-		{"spektacularRecheckDiscoveryProxy": "socks5://relay:1080"},
-		{"spektacularDiscoveryTimeout": "-1s"},
-		{"spektacularDiscoveryMaxTotalItems": -1},
 		{"extFlueEndpoint": "ftp://flue.example"},
 		{"extFlueEndpoint": "http://user:secret@127.0.0.1:8585"},
 		{"extFlueWorkflowVersion": "has space"},
@@ -71,14 +65,6 @@ func TestGovernorFeaturesRunsSettingsRoundTrip(t *testing.T) {
 		"runsTriagePriorArtMaxParksPerCycle": 2,
 		"runsTriagePriorArtBotCloseTtl":      "48h",
 
-		"spektacularRecheckEnabled":         true,
-		"spektacularRecheckDefaultInterval": "72h",
-		"spektacularRecheckMaxDeltaTasks":   25,
-		"spektacularRecheckDiscoveryProxy":  "http://relay:18443",
-		"spektacularDiscoveryEnabled":       true,
-		"spektacularDiscoveryTimeout":       "45s",
-		"spektacularDiscoveryMaxTotalItems": 40,
-
 		"extFlueEndpoint":        "http://127.0.0.1:8585/",
 		"extFlueWorkflowVersion": "flue-fixture/1.0.0",
 		"extOmpWorkflowVersion":  "omp/2",
@@ -108,11 +94,6 @@ func TestGovernorFeaturesRunsSettingsRoundTrip(t *testing.T) {
 	if pa := r.Triage.PriorArt; !slices.Equal(pa.Kinds, []string{"rfc", "epic"}) || pa.MaxFindings != 3 || pa.MaxParksPerCycle != 2 || pa.BotCloseTTL != 48*time.Hour {
 		t.Fatalf("prior-art gate not applied: %+v", pa)
 	}
-	rc := r.Spektacular.Recheck
-	if !rc.Enabled || rc.DefaultInterval != 72*time.Hour || rc.MaxDeltaTasks != 25 || rc.DiscoveryProxy != "http://relay:18443" ||
-		!rc.Discovery.Enabled || rc.Discovery.Timeout != 45*time.Second || rc.Discovery.MaxTotalItems != 40 {
-		t.Fatalf("recheck not applied: %+v", rc)
-	}
 	if r.External.Flue.Endpoint != "http://127.0.0.1:8585" || r.External.Flue.WorkflowVersion != "flue-fixture/1.0.0" || r.External.OMP.WorkflowVersion != "omp/2" {
 		t.Fatalf("flue/omp not applied: %+v", r.External)
 	}
@@ -124,17 +105,14 @@ func TestGovernorFeaturesRunsSettingsRoundTrip(t *testing.T) {
 	// A partial PUT changes only what it carries; empty values reset to the
 	// default.
 	if rec := doPut(s, opsFeaturesPath, map[string]any{
-		"runsWaitSeverity":                  "",
-		"spektacularRecheckDefaultInterval": "",
-		"spektacularRecheckMaxDeltaTasks":   0,
-		"extFlueEndpoint":                   "",
-		"extVibeKanbanStateDir":             "",
+		"runsWaitSeverity":      "",
+		"extFlueEndpoint":       "",
+		"extVibeKanbanStateDir": "",
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("partial PUT: %d — %s", rec.Code, rec.Body.String())
 	}
 	r = s.deps.Config.Runs
-	if r.WaitSeverity != "" || r.WaitTimeoutSeconds != 7200 || r.Spektacular.Recheck.DefaultInterval != 0 ||
-		r.Spektacular.Recheck.MaxDeltaTasks != 0 || r.Spektacular.Recheck.Discovery.MaxTotalItems != 40 ||
+	if r.WaitSeverity != "" || r.WaitTimeoutSeconds != 7200 ||
 		r.External.Flue.Endpoint != "" || r.External.Flue.WorkflowVersion != "flue-fixture/1.0.0" ||
 		r.External.VibeKanban.StateDir != "" || r.External.VibeKanban.ProjectID != "proj-123" {
 		t.Fatalf("partial PUT changed unrelated keys or did not reset: %+v", r)
@@ -153,9 +131,6 @@ func TestGovernorFeaturesRunsSettingsRoundTrip(t *testing.T) {
 			TriageClarify       bool                   `json:"runsTriageClarifyComment"`
 			ClarityGateEnabled  bool                   `json:"runsTriageClarityGateEnabled"`
 			ClarityThreshold    int                    `json:"runsTriageClarityGateThreshold"`
-			RecheckInterval     string                 `json:"spektacularRecheckDefaultInterval"`
-			DiscoveryTimeout    string                 `json:"spektacularDiscoveryTimeout"`
-			DiscoveryProxy      string                 `json:"spektacularRecheckDiscoveryProxy"`
 			FlueWorkflowVersion string                 `json:"extFlueWorkflowVersion"`
 			VKEnabled           bool                   `json:"extVibeKanbanEnabled"`
 			VKMode              string                 `json:"extVibeKanbanMode"`
@@ -175,31 +150,20 @@ func TestGovernorFeaturesRunsSettingsRoundTrip(t *testing.T) {
 	if !f.ClarityGateEnabled || f.ClarityThreshold != 70 || f.Defaults["runsTriageClarityGateThreshold"] != float64(config.DefaultClarityGateThreshold) {
 		t.Fatalf("clarity gate payload = %+v", f)
 	}
-	if f.RecheckInterval != "" || f.DiscoveryTimeout != "45s" || f.DiscoveryProxy != "http://relay:18443" || f.FlueWorkflowVersion != "flue-fixture/1.0.0" {
-		t.Fatalf("recheck/flue payload = %+v", f)
+	if f.FlueWorkflowVersion != "flue-fixture/1.0.0" {
+		t.Fatalf("flue payload = %+v", f)
+	}
+	for _, retired := range []string{"spektacularRecheckEnabled", "spektacularRecheckDefaultInterval", "spektacularDiscoveryEnabled"} {
+		if strings.Contains(rec.Body.String(), `"`+retired+`"`) {
+			t.Fatalf("retired recheck key %q still in the governor payload", retired)
+		}
 	}
 	if !f.VKEnabled || f.VKMode != config.FlueBindingModeReportOnly || f.VKModeSetting != config.FlueBindingModeReportOnly ||
 		f.VKMcpCommand != "npx vibe-kanban --mcp" || f.VKLinked == nil {
 		t.Fatalf("vibe-kanban payload = %+v", f)
 	}
-	if f.Defaults["runsWaitSeverity"] != config.DefaultRunsWaitSeverity ||
-		f.Defaults["spektacularRecheckDefaultInterval"] != config.DefaultSpektacularRecheckInterval.String() {
+	if f.Defaults["runsWaitSeverity"] != config.DefaultRunsWaitSeverity {
 		t.Fatalf("runsDefaults = %v", f.Defaults)
-	}
-}
-
-// With exact recheck sources configured the discovery proxy is mandatory, so
-// the dialog cannot clear it.
-func TestGovernorFeaturesRunsDiscoveryProxyRequiredWithSources(t *testing.T) {
-	s := covApiServer(t)
-	s.deps.Config.Runs.Spektacular.Recheck.DiscoveryProxy = "http://relay:18443"
-	s.deps.Config.Runs.Spektacular.Recheck.EgressAllowlist = []string{"api.github.com"}
-	s.deps.Config.Runs.Spektacular.Recheck.Sources = []config.SpektacularDiscoverySource{{Name: "release", Kind: "release", URL: "https://api.github.com/repos/example/x/releases/latest"}}
-	if rec := doPut(s, opsFeaturesPath, map[string]any{"spektacularRecheckDiscoveryProxy": ""}); rec.Code != http.StatusBadRequest {
-		t.Fatalf("clearing the proxy with sources configured: expected 400, got %d", rec.Code)
-	}
-	if s.deps.Config.Runs.Spektacular.Recheck.DiscoveryProxy != "http://relay:18443" {
-		t.Fatal("rejected PUT cleared the proxy")
 	}
 }
 
@@ -223,13 +187,6 @@ func TestRunsSettingsRenderEveryKey(t *testing.T) {
 		{"runs.triage.prior_art.max_parks_per_cycle", `data-arg0="features" data-arg1="runsTriagePriorArtMaxParksPerCycle" data-arg-types="s,s,N"`},
 		{"runs.triage.prior_art.bot_close_ttl", `data-arg0="features" data-arg1="runsTriagePriorArtBotCloseTtl" data-arg-types="s,s,w"`},
 		{"runs.spektacular.binary", `data-arg0="features" data-arg1="spektacularBinary" data-arg-types="s,s,w"`},
-		{"runs.spektacular.recheck.enabled", `data-section="features" data-key="spektacularRecheckEnabled"`},
-		{"runs.spektacular.recheck.default_interval", `data-arg0="features" data-arg1="spektacularRecheckDefaultInterval" data-arg-types="s,s,w"`},
-		{"runs.spektacular.recheck.max_delta_tasks", `data-arg0="features" data-arg1="spektacularRecheckMaxDeltaTasks" data-arg-types="s,s,N"`},
-		{"runs.spektacular.recheck.discovery_proxy", `data-arg0="features" data-arg1="spektacularRecheckDiscoveryProxy" data-arg-types="s,s,w"`},
-		{"runs.spektacular.recheck.discovery.enabled", `data-section="features" data-key="spektacularDiscoveryEnabled"`},
-		{"runs.spektacular.recheck.discovery.timeout", `data-arg0="features" data-arg1="spektacularDiscoveryTimeout" data-arg-types="s,s,w"`},
-		{"runs.spektacular.recheck.discovery.max_total_items", `data-arg0="features" data-arg1="spektacularDiscoveryMaxTotalItems" data-arg-types="s,s,N"`},
 		{"runs.external.flue.mode", `data-arg0="features" data-arg1="extFlueMode" data-arg-types="s,s,v"`},
 		{"runs.external.flue.endpoint", `data-arg0="features" data-arg1="extFlueEndpoint" data-arg-types="s,s,w"`},
 		{"runs.external.flue.workflow_version", `data-arg0="features" data-arg1="extFlueWorkflowVersion" data-arg-types="s,s,w"`},

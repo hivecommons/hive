@@ -433,6 +433,100 @@ func TestSweepIssueUnparkCommandsDecisionRecordsText(t *testing.T) {
 	}
 }
 
+func TestSweepIssueUnparkCommandsProseDecisionUnparks(t *testing.T) {
+	for _, body := range []string{
+		"Decision: option 1. Ship the small fix.",
+		"Decision (owner): option 1. Ship the small fix.",
+	} {
+		issues := []unparkWireIssue{parkedIssue(8, humanComment(21, "maintainer", body))}
+		server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "maintain"})
+		c := newTestClient(t, server, "org", []string{"repo"})
+
+		result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+		if err != nil {
+			t.Fatalf("sweep %q: %v", body, err)
+		}
+		if len(result.Unparked) != 1 || result.Unparked[0].Decision != "option 1. Ship the small fix." {
+			t.Fatalf("%q: decision not recorded: %+v", body, result.Unparked)
+		}
+		if !strings.Contains(strings.Join(rec.posted[8], "\n"), "Decision: option 1. Ship the small fix.") {
+			t.Fatalf("%q: expected the decision in the reply, got %v", body, rec.posted[8])
+		}
+	}
+}
+
+func TestSweepIssueUnparkCommandsProseDecisionKeepsGates(t *testing.T) {
+	cases := []struct {
+		name    string
+		comment unparkWireComment
+		perms   map[string]string
+	}{
+		{"read only", humanComment(31, "drive-by", "Decision: option 1"), map[string]string{"drive-by": "read"}},
+		{"bot account", humanComment(32, "other[bot]", "Decision: option 1"), map[string]string{"other[bot]": "admin"}},
+		{"quoted", humanComment(33, "maintainer", "> Decision: option 1\n\nnot mine"), map[string]string{"maintainer": "admin"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issues := []unparkWireIssue{parkedIssue(9, tc.comment)}
+			server, rec := newUnparkServer(t, "org", "repo", issues, tc.perms)
+			c := newTestClient(t, server, "org", []string{"repo"})
+			result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+			if err != nil {
+				t.Fatalf("sweep: %v", err)
+			}
+			if len(result.Unparked) != 0 || len(rec.removed[9]) != 0 {
+				t.Fatalf("must not un-park: %+v removed=%v", result.Unparked, rec.removed[9])
+			}
+		})
+	}
+}
+
+func TestSweepIssueUnparkCommandsDecisionHintReplies(t *testing.T) {
+	for _, body := range []string{"Decision:", "option 1", "Option B", "B", "Decide: later"} {
+		issues := []unparkWireIssue{parkedIssue(12, humanComment(62, "maintainer", body))}
+		server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "admin"})
+		c := newTestClient(t, server, "org", []string{"repo"})
+
+		result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+		if err != nil {
+			t.Fatalf("sweep %q: %v", body, err)
+		}
+		if len(result.Unparked) != 0 || result.Replies != 1 {
+			t.Fatalf("%q: want one hint and no un-park, got %+v replies=%d", body, result.Unparked, result.Replies)
+		}
+		if !strings.Contains(strings.Join(rec.posted[12], "\n"), "/hive decision") {
+			t.Fatalf("%q: hint must name /hive decision, got %v", body, rec.posted[12])
+		}
+	}
+}
+
+func TestParseUnparkProseDecision(t *testing.T) {
+	cases := []struct {
+		body string
+		want string
+		ok   bool
+	}{
+		{"Decision: option 1", "option 1", true},
+		{"decision (owner): B\n\nfollow-up detail", "B", true},
+		{"DECISION:go with A", "go with A", true},
+		{"Decision:", "", false},
+		{"Decision (owner):   ", "", false},
+		{"Decision taken by hive: A", "", false},
+		{"> Decision: A", "", false},
+		{"thanks\nDecision: A", "", false},
+		{"/hive decision A", "", false},
+	}
+	for _, tc := range cases {
+		cmd, ok := parseUnparkProseDecision(tc.body)
+		if ok != tc.ok || cmd.Decision != tc.want || (ok && cmd.Kind != unparkCommandDecision) {
+			t.Errorf("parseUnparkProseDecision(%q) = %+v, %v; want %q/%v", tc.body, cmd, ok, tc.want, tc.ok)
+		}
+	}
+	if cmd, _ := parseUnparkProseDecision("Decision: A\n\nmore"); cmd.Text != "A\n\nmore" {
+		t.Errorf("Text = %q, want the trailing lines kept", cmd.Text)
+	}
+}
+
 func TestSweepIssueUnparkCommandsIgnoresIneligibleCommenters(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -796,9 +890,24 @@ func TestIsUnparkProseAssent(t *testing.T) {
 			t.Errorf("isUnparkProseAssent(%q) = false, want true", body)
 		}
 	}
-	for _, body := range []string{"/hive approve", "/fixed approved", "> approved", "what do you think?", ""} {
+	// The decision forms are the issue sweep's hint (isUnparkProseDecisionHint),
+	// not assent: the PR sweep must not treat a bare `B` as a candidate.
+	for _, body := range []string{"/hive approve", "/fixed approved", "> approved", "what do you think?", "", "Bravo team", "optional", "Decision:", "option 1", "B"} {
 		if isUnparkProseAssent(body) {
 			t.Errorf("isUnparkProseAssent(%q) = true, want false", body)
+		}
+	}
+}
+
+func TestIsUnparkProseDecisionHint(t *testing.T) {
+	for _, body := range []string{"Decision:", "decide later", "option 1", "Option B", "B"} {
+		if !isUnparkProseDecisionHint(body) {
+			t.Errorf("isUnparkProseDecisionHint(%q) = false, want true", body)
+		}
+	}
+	for _, body := range []string{"/hive decision B", "> option 1", "", "Bravo team", "optional", "approved"} {
+		if isUnparkProseDecisionHint(body) {
+			t.Errorf("isUnparkProseDecisionHint(%q) = true, want false", body)
 		}
 	}
 }

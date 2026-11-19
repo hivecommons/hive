@@ -132,6 +132,40 @@ func TestWarnOnStrayGitIdentity(t *testing.T) {
 	}
 }
 
+// TestWarnOnStrayGitIdentity_OncePerAgentAndContent: the check runs every
+// cycle, so an unchanged file must warn once, a changed file or another agent
+// must warn again (hivecommons/hive#17703).
+func TestWarnOnStrayGitIdentity_OncePerAgentAndContent(t *testing.T) {
+	const marker = "declares a user identity"
+	home := t.TempDir()
+	path := filepath.Join(home, ".gitconfig")
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("[user]\n\temail = a@example.com\n")
+
+	m, logBuf := gitConfigHomeManager(t)
+	m.warnOnStrayGitIdentity("scanner", home)
+	m.warnOnStrayGitIdentity("scanner", home)
+	if got := strings.Count(logBuf.String(), marker); got != 1 {
+		t.Fatalf("repeat with unchanged config warned %d times, want 1: %s", got, logBuf.String())
+	}
+
+	write("[user]\n\temail = b@example.com\n")
+	m.warnOnStrayGitIdentity("scanner", home)
+	if got := strings.Count(logBuf.String(), marker); got != 2 {
+		t.Fatalf("changed config warned %d times total, want 2", got)
+	}
+
+	m.warnOnStrayGitIdentity("reviewer", home)
+	if got := strings.Count(logBuf.String(), marker); got != 3 {
+		t.Fatalf("different agent warned %d times total, want 3", got)
+	}
+}
+
 func TestGitConfigDeclaresUserIdentity(t *testing.T) {
 	dir := t.TempDir()
 	cases := []struct {

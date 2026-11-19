@@ -271,6 +271,7 @@ func TestRepoHoldToggleOptimisticRollback(t *testing.T) {
 		jsFunc(t, html, "repoParts") + "\n" +
 		jsFunc(t, html, "updateRepoBreakdownForHold") + "\n" +
 		jsFunc(t, html, "moveRepoItemHold") + "\n" +
+		repoHoldShiftGuardJS(t, html) + "\n" +
 		jsFunc(t, html, "toggleRepoItemHold") + "\n" +
 		holdToggleRollbackAssertions
 	path := filepath.Join(t.TempDir(), "hold-toggle.js")
@@ -305,6 +306,7 @@ func TestRepoHoldToggleSuccessRaisesStatusFloor(t *testing.T) {
 		jsFunc(t, html, "repoParts") + "\n" +
 		jsFunc(t, html, "updateRepoBreakdownForHold") + "\n" +
 		jsFunc(t, html, "moveRepoItemHold") + "\n" +
+		repoHoldShiftGuardJS(t, html) + "\n" +
 		jsFunc(t, html, "toggleRepoItemHold") + "\n" +
 		holdToggleSuccessAssertions
 	path := filepath.Join(t.TempDir(), "hold-toggle-success.js")
@@ -375,7 +377,7 @@ check('renovate says on hold', heldReason(renovate).startsWith('On hold'));
 check('renovate names needs-human', heldReason(renovate).includes('needs-human: automated fix attempts exhausted'));
 check('renovate does not claim the level gate', !heldReason(renovate).includes('ACMM level gate'));
 
-const reporterHeld = { labels: ['hold', 'needs-human'], hive_attributed: true, reporter_trust_reason: 'reporter-trust hold — issue #42 filed by @outsider' };
+const reporterHeld = { labels: ['hold', 'needs-human'], hive_attributed: true, reporter_trust_reason: 'reporter-trust hold - issue #42 filed by @outsider' };
 check('reporter hold names the request reporter', heldReason(reporterHeld).includes(reporterHeld.reporter_trust_reason));
 check('reporter hold does not claim exhausted fixes', !heldReason(reporterHeld).includes('automated fix attempts exhausted'));
 check('reporter hold does not claim level gate', !heldReason(reporterHeld).includes('ACMM level gate'));

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -49,6 +50,11 @@ func (p *GitHubProxy) forgeCert(host string) (tls.Certificate, error) {
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     []string{host},
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		// An IP-literal name is only valid as an IP SAN.
+		template.DNSNames = nil
+		template.IPAddresses = []net.IP{ip}
 	}
 
 	caKey, ok := p.caCert.PrivateKey.(*ecdsa.PrivateKey)

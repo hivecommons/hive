@@ -44,6 +44,11 @@ type AdvisorDecisionRecord struct {
 	Arm       string   `json:"arm"`
 	Outcome   string   `json:"outcome"`
 	Slug      string   `json:"slug,omitempty"`
+	// Cost and latency of the model call, when one was made. Older records
+	// and decisions that never reached the model carry none (hivecommons/hive#18897).
+	LatencyMS        int64 `json:"latency_ms,omitempty"`
+	PromptTokens     int   `json:"prompt_tokens,omitempty"`
+	CompletionTokens int   `json:"completion_tokens,omitempty"`
 }
 
 // AdvisorDecisionArm is the arm a decision belongs to: holdout when the kick

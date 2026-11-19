@@ -3,14 +3,20 @@ package stageengine
 import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
 )
 
-// Decision is one derivation's output: exactly one stage (None = leave the
-// pipeline, remove every hive-owned label) and why.
+// Decision is one derivation's output: a built-in stage or None and why.
+// None clears the built-in stage, including for an unnumbered model state.
 type Decision struct {
 	Stage stagelabels.Stage
-	Role  stagelabels.Role
-	Kind  authorkind.Kind
+	// ModelState is the selected custom workflow state, including states
+	// that do not have a built-in stage number.
+	ModelState string
+	// ModelProfile is the immutable profile used for this decision.
+	ModelProfile *workflowmodel.Profile
+	Role         stagelabels.Role
+	Kind         authorkind.Kind
 	// KindLabels are the configured author/<kind> label names the writer
 	// plans against; zero means the authorkind defaults.
 	KindLabels authorkind.Names
@@ -18,7 +24,7 @@ type Decision struct {
 	// MergeCommit is the pass's merge-method verdict (`merge-method/merge`).
 	MergeCommit stagelabels.MergeCommitState
 	Stalled     bool
-	Terminal    bool // Stage == None because the item closed/merged/left
+	Terminal    bool // the selected state is terminal or the item closed/merged/left
 	// Covered is set on an issue whose stage is 040 because an open PR the
 	// lanes have staged at 040 or later covers it: the dwell clock then
 	// belongs to the PR and the sweep does not judge the issue stalled.
@@ -46,7 +52,9 @@ type Decision struct {
 // Desired renders the Decision as the full hive-owned label set the writer
 // should make the item carry.
 func (d Decision) Desired() stagelabels.Desired {
-	return stagelabels.Desired{Stage: d.Stage, Role: d.Role, Kind: d.Kind, KindLabels: d.KindLabels, Stalled: d.Stalled, DCO: d.DCO, MergeCommit: d.MergeCommit, Clear: d.Clear}
+	want := stagelabels.Desired{Stage: d.Stage, Role: d.Role, Kind: d.Kind, KindLabels: d.KindLabels, Stalled: d.Stalled, DCO: d.DCO, MergeCommit: d.MergeCommit, Clear: d.Clear}
+	modelDesired(&want, d.ModelProfile, d.ModelState)
+	return want
 }
 
 // abstain is the Decision for "no opinion" with a reason for the log.

@@ -1646,3 +1646,34 @@ func TestMarkStatusStaleRepublishesLastGoodWithMarker(t *testing.T) {
 		t.Fatal("same marker must not republish")
 	}
 }
+
+// TestBuildFeaturesSubscriptionGaugeHeader checks that the status frame's feature
+// flags carry dashboard.subscription_gauge_header and nothing derived from usage.
+func TestBuildFeaturesSubscriptionGaugeHeader(t *testing.T) {
+	if buildFeatures(nil).SubscriptionGaugeHeader {
+		t.Fatal("nil config reported subscription_gauge_header = true")
+	}
+	cfg := &config.Config{}
+	if buildFeatures(cfg).SubscriptionGaugeHeader {
+		t.Fatal("default config reported subscription_gauge_header = true")
+	}
+	cfg.Dashboard.SubscriptionGaugeHeader = true
+	f := buildFeatures(cfg)
+	if !f.SubscriptionGaugeHeader {
+		t.Fatal("subscription_gauge_header = false with dashboard.subscription_gauge_header enabled")
+	}
+	if f.ExperimentLab || f.StrategyLab {
+		t.Fatal("subscription_gauge_header leaked into experiment_lab/strategy_lab")
+	}
+	raw, err := json.Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["subscription_gauge_header"] != true {
+		t.Fatalf("features JSON = %s, want subscription_gauge_header:true", raw)
+	}
+}

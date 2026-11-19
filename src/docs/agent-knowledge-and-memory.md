@@ -97,7 +97,7 @@ missing dir, non-GitHub forge or absent client skips with a DEBUG line.
 | Block | Cap | Config |
 |---|---|---|
 | `# Relevant Knowledge` | 25 facts, 8192 bytes (floor 512) | `knowledge.primer.max_facts`, `knowledge.primer.max_bytes` |
-| Repo `AGENTS.md` | 8192 bytes (floor 2048), whole sections | `project.agents_md_max_bytes` (`agentsmd.DefaultMaxInjectionBytes`) |
+| Repo `AGENTS.md` | 32768 bytes (floor 2048, ceiling 262144), whole sections | `repos.<repo>.agents_md_max_bytes`, `project.agents_md_max_bytes`, env `HIVE_AGENTS_MD_MAX_BYTES` (`agentsmd.DefaultMaxInjectionBytes`) |
 | Declared skills | 8192 bytes, whole skills | `maxSkillsInjectionBytes` in `kick_priming.go` (fixed) |
 
 **Switches.** `knowledge.enabled` gates the primer only — the bead synthesizer
@@ -152,7 +152,8 @@ flowchart LR
   G -->|rank| R[model: one candidate slug or null]
   R -->|slug in candidates| D2[deliver that entry]
   R -->|null / invalid| X2[nothing]
-  R -->|timeout / error / over budget| E{on_error}
+  R -->|429| W[wait Retry-After, retry once] --> R
+  R -->|timeout / error / rate-limited / over budget| E{on_error}
   E -->|silence| X2
   E -->|matcher| D3[phase-1 top-1]
 ```
@@ -174,18 +175,37 @@ flowchart LR
   `hive-knowledge-advisor:<agent>` so proxy spend logs attribute cost per
   agent. The answer must be `{"slug": <candidate>|null, "reason": "..."}`;
   a slug that is not exactly a candidate, or a malformed answer, is `invalid`
-  and treated as `null`. There is no retry, and the `reason` is logged, never
-  typed.
+  and treated as `null`. A wrong answer is never retried (only a 429 is, once;
+  see Pacing), and the `reason` is logged, never typed.
 - **Modes.** `shadow` delivers phase 1's top entry and records what the model
   would have picked. `rank` delivers the model's pick; with
   `holdout_percent`, the kick identity is hashed into a delivery or holdout
   arm, and holdout kicks make the call and log the pick but type nothing.
   A valid `null` never falls back to the matcher; `on_error: matcher` only
-  covers timeouts, endpoint errors and exhausted budgets.
+  covers timeouts, endpoint errors, rate-limited calls and exhausted budgets.
 - **Budgets.** A rolling one-hour window per agent
   (`max_calls_per_agent_hour`, default and ceiling 6) and a per-UTC-day fleet
   counter (`max_calls_per_day`, default and ceiling 300). An exhausted budget
-  makes no request and is handled like an error.
+  makes no request and is handled like an error. A call the endpoint answered
+  with 429 is handed back to both budgets: a throttled hour must not also
+  become an over-budget hour.
+- **Pacing (429s).** The advisor usually shares its upstream quota with the
+  agents (on the Copilot API, the same user token every `copilot` agent
+  spends), and holdout kicks make the call too, so N agents entering scopes
+  in the same second used to fan out N calls against one quota and lose
+  (hivecommons/hive#18151). At most one advisor call is now in flight across
+  the whole hive, behind the runtime's one-per-agent guard; a decision that
+  cannot get the slot inside `timeout_s` records `timeout` without a request
+  and without spending budget. A 429 is retried exactly once after the
+  upstream's `Retry-After` (seconds or HTTP date), or after a 2 to 4 s
+  jittered backoff when it sent none, and only when that wait leaves at least
+  3 s of `timeout_s` for the retry; otherwise the decision is recorded
+  `rate-limited` straight away. A decision that is still throttled after the
+  retry is `rate-limited`, distinct from `error`. The first 429 in each
+  five-minute window logs `knowledge advisor: model endpoint rate limited
+  (429)` at WARN with `retry_after_s`, the `header_retry_after` and
+  `header_x_ratelimit_*` values and the response body; the rest of the window
+  logs at DEBUG.
 - **Decision log.** Every model decision writes one line:
 
   ```
@@ -195,17 +215,20 @@ flowchart LR
   ```
 
   `verdict` is what the model produced (`pick`, `null`, `invalid`,
-  `timeout`, `over-budget`, `error`); `outcome` is what happened to delivery
-  (`delivered`, `held-out`, `gated` when the kick moved during the call,
-  `fallback-matcher`, or the verdict when nothing was typed). Over-budget
-  lines also carry `budget=agent-hour|fleet-day`. Delivered lines still land
-  in the prompt history under trigger `knowledge-advisor`.
+  `timeout`, `over-budget`, `rate-limited`, `error`); `outcome` is what
+  happened to delivery (`delivered`, `held-out`, `gated` when the kick moved
+  during the call, `fallback-matcher`, or the verdict when nothing was typed).
+  Over-budget lines also carry `budget=agent-hour|fleet-day`; rate-limited
+  lines carry `retry_after_s` and `retried`. Delivered lines still land in
+  the prompt history under trigger `knowledge-advisor`.
 - **Decision store.** Each decision, held-out ones included, also appends one
   compact record (agent, kick id, the kick's primed issue/PR refs, mode, arm
   `shadow|deliver|holdout`, outcome, slug; never the reason or pane text) to
   `/data/knowledge-advisor-decisions.jsonl`, which the retro lane reads to
   assign each bead its advisor arm (see
-  [retro-lane.md](retro-lane.md#knowledge-advisor-arm)).
+  [retro-lane.md](retro-lane.md#knowledge-advisor-arm)). The record schema is
+  unchanged by `rate-limited`: it is one more `outcome` value, which the lane
+  counts but excludes from the deliver arm.
 
 **Rollout.** Start with `mode: shadow` for about a week: delivery is
 unchanged, and the decision lines show how often the model says `null`, how
@@ -214,6 +237,57 @@ latency. Then switch to `mode: rank` with `holdout_percent: 50` so half the
 kicks form a control group with the same selection, and compare the two arms'
 outcomes. Lower `holdout_percent` once the comparison is settled; `mode: off`
 returns to phase 1 at any time.
+
+### Sidecar runtimes (`knowledge.sidecar_advise`)
+
+A runtime in sidecar mode (`crux serve --hive-callback`) has no knowledge store
+and must never hold the inference credentials the ranking pass spends, so it
+gets the advisor over the hive's runtime-callback endpoint
+(`POST /v1/knowledge/advise`, hivecommons/hive#17157). **It is off by default**:
+with `knowledge.sidecar_advise: false` (or unset) the route answers `404
+not_configured`, the hive does not advertise the `knowledge_advise` capability
+or set `knowledge_advise` in its policy snapshot, the runtime installs no
+adviser, and a sidecar runtime behaves exactly as it did before the route
+existed. Turn it on in Settings, Knowledge (applies without a restart), or in
+`hive.yaml`; it also needs `knowledge.enabled` and `knowledge.advisor`.
+
+```yaml
+knowledge:
+  enabled: true
+  advisor: true
+  sidecar_advise: true   # default false
+```
+
+- **What crosses.** The runtime sends `{agent, kick_at, scope}`: the scope an
+  agent entered (kind, key, relative path, keywords, action) and, only when the
+  policy asks for a pane tail (`advisor_llm` on), the last `pane_lines` lines
+  of its scrollback. The pane tail is redacted with `logscrub.RedactPaneTokens`
+  in the runtime before it is sent and again on the hive. The hive answers the
+  advice lines (slug, title, summary, ref) and the delivery policy for the
+  agent (`enabled`, `max_per_kick`, `cooldown_ms`, `wants_pane_tail`,
+  `pane_lines`). No inference credential, endpoint or model setting is ever
+  sent to the runtime, and the model's `reason` never leaves the hive: the
+  runtime types only the advice fields, through phase 1's delivery primitive
+  and gates.
+- **Same chain.** The hive runs whichever adviser chain it runs in-process:
+  phase 1 alone, or phase 1 wrapped by the ranking pass with its budgets,
+  hive-wide pacer and holdout arm. The request cannot widen the scope or pick
+  an entry; candidates still come from the Primer under `knowledge.agent_scopes`.
+- **Authorization.** Served only on the runtime-callback server, behind the
+  same bearer token as the other `/v1/*` callbacks (an unauthenticated call
+  gets the same `401`). The hive checks that the named agent belongs to the
+  calling runtime and that `kick_at` is that agent's current kick; a mismatch is
+  `403` and no advice.
+- **Limits.** One call in flight per agent and at most two evaluations of a
+  scope per kick (a third is `429`), at most 128 scopes per kick. A pane tail
+  longer than `pane_lines` is `400`; a body over 64 KiB is `413`; an unknown
+  scope kind or action, an absolute path or one with `..`, and over-long keys
+  or keywords are `400`.
+- **Fail closed.** A transport error, a non-2xx answer, a malformed body or the
+  knob being off means no advice. The runtime logs one warning per kick, not
+  per poll tick. The runtime fetches each agent's policy in the background
+  (`policy_only` call, cached 30 s) and never waits on the hive on the poll
+  tick, so a hive that is away leaves the advisor off, not stalled.
 
 ## 3. AGENTS.md / CLAUDE.md: injected by Hive, not read natively
 

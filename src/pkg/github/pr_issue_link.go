@@ -21,7 +21,7 @@ type ClosingLinkResult struct {
 	// closingIssuesReferences, so nothing was sent.
 	AlreadyLinked bool
 	// Skipped names why no link was attempted ("pr-not-open",
-	// "issue-not-open", "cached"); empty when a mutation ran or the pair was
+	// "issue-not-open", "cached", "manual-reference-limit"); empty when a mutation ran or the pair was
 	// already linked.
 	Skipped string
 	// Base is the PR's base branch as observed by the lookup.
@@ -174,11 +174,25 @@ func (c *Client) EnsureClosingIssueLink(ctx context.Context, repo string, prNumb
 }`
 	mvars := map[string]any{"issue": out.Repository.Issue.ID, "prs": []string{pr.ID}}
 	if err := c.graphQL(WithRESTCaller(ctx, "hive:ensure_closing_link"), mutation, mvars, nil); err != nil {
+		if isManualReferenceLimitError(err) {
+			// GitHub caps manual closing references per PR and the cap never
+			// lifts, so retrying only repeats the WARN/selfreport
+			// (hivecommons/hive#18666). Memoise the pair and skip.
+			res.Skipped = "manual-reference-limit"
+			c.closingLinks.mark(key)
+			return res, nil
+		}
 		return res, fmt.Errorf("EnsureClosingIssueLink %s/%s#%d->#%d addCloseIssueReferences: %w", owner, name, issueNumber, prNumber, err)
 	}
 	res.Linked = true
 	c.closingLinks.mark(key)
 	return res, nil
+}
+
+// isManualReferenceLimitError reports whether err is GitHub's permanent
+// "Pull request exceeds manual reference limit" rejection.
+func isManualReferenceLimitError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "exceeds manual reference limit")
 }
 
 // linkClosingIssuesForPR runs EnsureClosingIssueLink for every same-repo
@@ -244,8 +258,11 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
 		prRepo = owner + "/" + name
 	}
 	prOwner, prName := c.splitRepo(prRepo)
-	if prOwner == "" || prName == "" || !strings.EqualFold(prOwner+"/"+prName, owner+"/"+name) {
+	if prOwner == "" || prName == "" {
 		return IssueStagePRLinkResult{Skipped: "cross-repo"}, nil
+	}
+	if !strings.EqualFold(prOwner+"/"+prName, owner+"/"+name) {
+		return c.crossRepoIssueStagePRLink(ctx, prOwner, prName, owner+"/"+name, issueNumber, claim)
 	}
 
 	var out struct {
@@ -380,6 +397,58 @@ func rewriteRefsIssueLinkToClosing(body, repo string, issue int) (string, bool) 
 	out := body[:loc[0]] + "Fixes" + body[loc[2]:]
 	out = strings.TrimRight(out, " \t\r\n") + "\n\n" + issueLinkFixedMarker
 	return out, true
+}
+
+// crossRepoIssueStagePRLink is EnsureIssueStagePRLink for a PR that lives in
+// another managed repo from the issue it references (hivecommons/hive#18676:
+// hivecommons/quorum-companion#3 with `Refs hivecommons/hive#18660`). The
+// PR body is never edited — GitHub draws no issue-list PR icon across repos
+// for a non-closing reference, and a closing keyword in another repo is the
+// author's call — so while the PR is open the result always asks the caller
+// for the stage-entry comment, which names the PR in full owner/repo#N form.
+func (c *Client) crossRepoIssueStagePRLink(ctx context.Context, prOwner, prName, issueRepo string, issueNumber int, claim *IssueClaimContext) (IssueStagePRLinkResult, error) {
+	var out struct {
+		Repository struct {
+			PullRequest struct {
+				State       string `json:"state"`
+				BaseRefName string `json:"baseRefName"`
+				URL         string `json:"url"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	}
+	query := `query($owner:String!, $name:String!, $pr:Int!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$pr) { state baseRefName url }
+  }
+}`
+	vars := map[string]any{"owner": prOwner, "name": prName, "pr": claim.PRNumber}
+	if err := c.graphQL(WithRESTCaller(ctx, "hive:issue_stage_pr_link"), query, vars, &out); err != nil {
+		return IssueStagePRLinkResult{}, fmt.Errorf("EnsureIssueStagePRLink %s#%d->%s/%s#%d lookup: %w", issueRepo, issueNumber, prOwner, prName, claim.PRNumber, err)
+	}
+	pr := out.Repository.PullRequest
+	res := IssueStagePRLinkResult{Base: strings.TrimSpace(pr.BaseRefName)}
+	if !strings.EqualFold(pr.State, "OPEN") {
+		res.Skipped = "pr-not-open"
+		return res, nil
+	}
+	prURL := strings.TrimSpace(pr.URL)
+	if prURL == "" {
+		prURL = strings.TrimSpace(claim.PRURL)
+	}
+	if prURL == "" {
+		prURL = fmt.Sprintf("https://github.com/%s/%s/pull/%d", prOwner, prName, claim.PRNumber)
+	}
+	res.Skipped = "cross-repo"
+	res.StageComment = crossRepoIssueStagePRLinkComment(prOwner+"/"+prName, prURL, claim.PRNumber)
+	return res, nil
+}
+
+// crossRepoIssueStagePRLinkComment is the stage-entry comment for a PR in
+// another repo. The marker carries repo= so a reader can tell
+// owner/repo#N from a same-repo PR of the same number.
+func crossRepoIssueStagePRLinkComment(prRepo, prURL string, prNumber int) string {
+	ref := fmt.Sprintf("%s#%d", prRepo, prNumber)
+	return fmt.Sprintf("<!-- hive:issue-stage-pr-link pr=%d repo=%s -->\nPR %s covers this issue: %s\n\nThe PR lives in another repo this hive manages, so GitHub shows no PR icon for it in this repo's issue list; this comment is the link. The issue follows the PR's stage on the board while it is open.", prNumber, prRepo, ref, prURL)
 }
 
 func issueStagePRLinkComment(prURL string, prNumber int, explanation string) string {

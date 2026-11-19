@@ -215,6 +215,8 @@
   /* Header summary + controls. */
   .summary { font-size: 13px; }
   .allclear { color: var(--status-ok); font-weight: 600; }
+  .profile-share-link { color: var(--brand); text-decoration: underline; }
+  .spoke .profile-share-link { margin-left: var(--sp-3); white-space: nowrap; font-size: var(--fs-sm); }
   .controls { margin-left: auto; display: flex; gap: 14px; font-size: var(--fs-sm); color: var(--text-muted); }
   .controls label { cursor: pointer; user-select: none; }
   @media (max-width: 900px) {
@@ -223,6 +225,9 @@
     .header-link { justify-self: start; }
     .header-right { justify-self: start; }
   }
+  /* LF Projects legal footer, required on every hub page. */
+  .lf-legal-footer { border-top: 1px solid var(--line); padding: var(--sp-6) clamp(1rem, 4vw, 4.5rem); text-align: center; font-size: var(--fs-sm); color: var(--muted); }
+  .lf-legal-footer a { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -242,6 +247,7 @@
     <a href="/fleet" id="nav-fleet" class="active" aria-current="page" title="Fleet health — agents the governor expects on but that can't work">Fleet</a>
     <a href="/api/docs">API</a>
     <a href="https://docs.hivecommons.dev" target="_blank" rel="noopener">Docs</a>
+    <a href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener" title="Real PR outcomes per model and agent across the fleet">Benchmarks</a>
     <span id="nav-user" class="nav-user"></span>
   </nav>
   <div class="header-right">
@@ -262,6 +268,7 @@
 </header>
 <header class="fleet-header">
   <h1>Fleet health</h1>
+  <a href="/profile-share" id="profile-share-link" class="profile-share-link" hidden>Profile sharing</a>
   <span class="sub">a hive is a <b>problem</b> when it has no recent output for its ACMM level (L2 advisory · L3–L5 authored writes: issues/PRs created, comments, reviews · L6 merged) with work still queued, or a precondition is broken (agents cannot work / GitHub App auth / budget exhausted / repo Issues tab disabled). Absence of output a level does not produce is never a fault. The <b>⎘ attach</b> chip copies the kubectl+tmux command to jump into the hive's spoke pod for root-causing.</span>
   <span id="summary" class="summary"></span>
   <span class="controls">
@@ -324,6 +331,10 @@
     </tbody>
   </table>
 </div>
+<footer class="lf-legal-footer">
+  <p class="lf-legal">&copy; Copyright Hive Commons Series of LF Projects, LLC<br>
+  For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">lfprojects.org/policies/</a>.</p>
+</footer>
 <script>
 "use strict";
 // Inert shell: no data is baked in. Everything comes from the authenticated
@@ -923,17 +934,21 @@ function renderHives(hives) {
 
     var tr = document.createElement("tr");
     tr.className = "spoke health-" + health + (open ? " open" : "");
+    var profileLink = personalProfileLinksAllowed && profileShareHiveIDs.has(h.id)
+      ? '<a href="/profile-share?hive=' + encodeURIComponent(h.id) + '" class="profile-share-link" aria-label="Profile sharing for ' + esc(h.name || h.id) + '">Profile sharing</a>'
+      : "";
     tr.innerHTML =
       '<td><span class="chev">▶</span></td>' +
-      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + hiveAccessAvatars(h) + (health === "parked" ? '<span class="parked-chip" title="every agent is paused or off-schedule — hive not in use">parked</span>' : "") + whyChipHTML(h, health) + rosterMismatchChipHTML(h) + attachChipHTML(h) + remediationHTML(h, health) + '</td>' +
+      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + hiveAccessAvatars(h) + (health === "parked" ? '<span class="parked-chip" title="every agent is paused or off-schedule — hive not in use">parked</span>' : "") + whyChipHTML(h, health) + rosterMismatchChipHTML(h) + attachChipHTML(h) + remediationHTML(h, health) + profileLink + '</td>' +
       '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
       '<td>' + modeBadge(h.governorMode) + '</td>' +
       '<td>' + versionHTML(h) + '</td>' +
       '<td>' + rollupHTML(h.fleetRollup) + '</td>' +
       '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '<br>' + githubAppHealthHTML(h.githubAppHealth, h) + '</td>';
     tb.appendChild(tr);
-    var link = tr.querySelector(".hive-link");
-    if (link) link.addEventListener("click", function (e) { e.stopPropagation(); });
+    tr.querySelectorAll(".hive-link, .profile-share-link").forEach(function (link) {
+      link.addEventListener("click", function (e) { e.stopPropagation(); });
+    });
     // The remediation "open" link must navigate, not toggle the row expand.
     var remLink = tr.querySelector(".rem-link");
     if (remLink) remLink.addEventListener("click", function (e) { e.stopPropagation(); });
@@ -1037,6 +1052,12 @@ function wireControls() {
 }
 
 var lastHives = [];
+var personalProfileLinksAllowed = false;
+var profileShareEnabled = false;
+var profileShareHiveIDs = new Set();
+function updateProfileShareLink() {
+  document.getElementById("profile-share-link").hidden = !personalProfileLinksAllowed || !profileShareEnabled;
+}
 function load() {
   fetch("/api/saas/my-hives", { credentials: "same-origin", headers: { "Accept": "application/json" } })
     .then(function (r) {
@@ -1047,7 +1068,13 @@ function load() {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     })
-    .then(function (d) { lastHives = d.hives || []; renderHives(lastHives); })
+    .then(function (d) {
+      lastHives = d.hives || [];
+      profileShareEnabled = d.customersShareEnabled === true;
+      profileShareHiveIDs = new Set(profileShareEnabled ? (d.profileShareHiveIDs || []) : []);
+      updateProfileShareLink();
+      renderHives(lastHives);
+    })
     .catch(function (e) {
       if (e && e.message === "redirecting to login") return;
       var c = document.getElementById("statusCell");
@@ -1099,6 +1126,9 @@ setInterval(load, 30000);
     .then(function (r) { return r.json(); })
     .then(function (d) {
       if (!d || !d.authenticated) return;
+      personalProfileLinksAllowed = !d.impersonating;
+      updateProfileShareLink();
+      if (personalProfileLinksAllowed && profileShareHiveIDs.size) renderHives(lastHives);
       var wrap = document.getElementById("nav-avatar-wrap");
       var img = document.getElementById("nav-avatar");
       if (!wrap || !img) return;

@@ -526,6 +526,69 @@
       markDirty('security', key, n);
     }
 
+    const SUBSTRATE_SANDBOX_FIELDS = [
+      { key: 'endpoint', label: 'Endpoint', kind: 'text', global: 'agent_sandbox.substrate.endpoint', agent: 'agents.<key>.sandbox.substrate.endpoint', help: `Substrate Control API address (host:port or an http(s):// URL). Empty uses api.ate-system.svc:443.` },
+      { key: 'atespace', label: 'Atespace', kind: 'text', global: 'agent_sandbox.substrate.atespace', agent: 'agents.<key>.sandbox.substrate.atespace', help: `Substrate atespace (its tenant namespace, not a Kubernetes namespace) actors are created in. Empty uses hive.` },
+      { key: 'token_env', label: 'Token env', kind: 'text', global: 'agent_sandbox.substrate.token_env', agent: 'agents.<key>.sandbox.substrate.token_env', help: `Environment variable holding a Control API bearer token. Empty reads the token file instead.` },
+      { key: 'token_file', label: 'Token file', kind: 'text', global: 'agent_sandbox.substrate.token_file', agent: 'agents.<key>.sandbox.substrate.token_file', help: `Projected ServiceAccount token file hive authenticates with. Empty uses /var/run/secrets/ate/token.` },
+      { key: 'ca_file', label: 'CA file', kind: 'text', global: 'agent_sandbox.substrate.ca_file', agent: 'agents.<key>.sandbox.substrate.ca_file', help: `PEM bundle the Control API serving certificate chains to. Empty uses the projected CA when present, else the system roots.` },
+      { key: 'insecure_tls', label: 'Insecure TLS', kind: 'bool', global: 'agent_sandbox.substrate.insecure_tls', agent: 'agents.<key>.sandbox.substrate.insecure_tls', help: `Skip Control API and router certificate verification. Dev only.` },
+      { key: 'timeout_s', label: 'Timeout (seconds)', kind: 'int', global: 'agent_sandbox.substrate.timeout_s', agent: 'agents.<key>.sandbox.substrate.timeout_s', help: `Bounds one actor from create to delete. 0 uses the sandbox timeout.` },
+      { key: 'router_url', label: 'Router URL', kind: 'text', global: 'agent_sandbox.substrate.router_url', agent: 'agents.<key>.sandbox.substrate.router_url', help: `atenet-router CONNECT listener hive reaches the actor bridge through. Empty uses the in-cluster default.` },
+      { key: 'router_client_bundle', label: 'Router client bundle', kind: 'text', global: 'agent_sandbox.substrate.router_client_bundle', agent: 'agents.<key>.sandbox.substrate.router_client_bundle', help: `podCertificate bundle the router authenticates hive with. Empty uses the default path.` },
+      { key: 'router_ca_file', label: 'Router CA file', kind: 'text', global: 'agent_sandbox.substrate.router_ca_file', agent: 'agents.<key>.sandbox.substrate.router_ca_file', help: `CA the router serving certificate chains to. Empty uses the default path.` },
+      { key: 'bridge_port', label: 'Bridge port', kind: 'int', global: 'agent_sandbox.substrate.bridge_port', agent: 'agents.<key>.sandbox.substrate.bridge_port', help: `Port the in-actor bridge listens on. 0 uses 8477.` },
+      { key: 'image', label: 'Image', kind: 'text', global: 'agent_sandbox.substrate.image', agent: 'agents.<key>.sandbox.substrate.image', help: `Digest-pinned sandbox image (…@sha256:…) actors run. Substrate refuses tag-only references.` },
+      { key: 'bridge_command', label: 'Bridge command', kind: 'lines', global: 'agent_sandbox.substrate.bridge_command[]', agent: 'agents.<key>.sandbox.substrate.bridge_command[]', help: `Actor entrypoint that serves the bridge. One argument per line; empty uses the crux substrate-bridge subcommand.` },
+      { key: 'cpu_millicores', label: 'CPU (millicores)', kind: 'int', global: 'agent_sandbox.substrate.cpu_millicores', agent: 'agents.<key>.sandbox.substrate.cpu_millicores', help: `ActorTemplate CPU limit. 0 uses 2000.` },
+      { key: 'memory_bytes', label: 'Memory (bytes)', kind: 'int', global: 'agent_sandbox.substrate.memory_bytes', agent: 'agents.<key>.sandbox.substrate.memory_bytes', help: `ActorTemplate memory limit. 0 uses 4 GiB.` },
+      { key: 'worker_selector', label: 'Worker selector', kind: 'map', global: 'agent_sandbox.substrate.worker_selector.<key>', agent: 'agents.<key>.sandbox.substrate.worker_selector.<key>', help: `Pins actors to WorkerPools carrying these labels, one key=value per line. Empty means any pool.` },
+      { key: 'snapshot_on_idle', label: 'Snapshot on idle', kind: 'bool', global: 'agent_sandbox.substrate.snapshot_on_idle', agent: 'agents.<key>.sandbox.substrate.snapshot_on_idle', help: `Suspend the actor with a snapshot after the kick instead of deleting it. Only the latest snapshot per agent is kept while hive runs (the previous one is deleted on the next suspend); each costs object storage.` },
+      { key: 'allow_hosts', label: 'Allow hosts', kind: 'lines', global: 'agent_sandbox.substrate.allow_hosts[]', agent: 'agents.<key>.sandbox.substrate.allow_hosts[]', help: `Additional egress hosts (host or host:port, leading *. wildcard allowed), one per line, on top of the GitHub hosts.` },
+      { key: 'policy_profile', label: 'Policy profile', kind: 'text', global: 'agent_sandbox.substrate.policy_profile', agent: 'agents.<key>.sandbox.substrate.policy_profile', help: `Operator-side policy profile recorded on the template.` },
+    ];
+
+    /* substrateSandboxFields renders the Substrate runtime block for either the
+       global agent_sandbox.substrate (section 'security') or one agent's
+       sandbox.substrate override (section 'general'). */
+    function substrateSandboxFields(section, sub) {
+      const dirtyKey = section === 'security' ? 'agentSandboxSubstrate' : 'sandboxSubstrate';
+      sub = sub || {};
+      return SUBSTRATE_SANDBOX_FIELDS.map(f => {
+        const yaml = section === 'security' ? f.global : f.agent;
+        const label = 'Substrate ' + f.label.toLowerCase();
+        const head = '<div class="config-field"><label>' + esc(label) + ' ' + yamlHint(yaml) + ' ' + settingHelpMark('settings', 'security-and-access', label, esc(f.help)) + '</label>';
+        const attrs = 'data-arg0="' + section + '" data-arg1="' + dirtyKey + '" data-arg2="' + f.key + '" data-arg3="' + f.kind + '"';
+        const v = sub[f.key];
+        if (f.kind === 'bool') {
+          return head + '<input type="checkbox"' + (v ? ' checked' : '') + ' data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,c"></div>';
+        }
+        if (f.kind === 'int') {
+          return head + '<input type="number" min="0" value="' + Number(v || 0) + '" data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,v"></div>';
+        }
+        if (f.kind === 'lines' || f.kind === 'map') {
+          const text = f.kind === 'map'
+            ? Object.keys(v || {}).sort().map(k => k + '=' + v[k]).join('\n')
+            : (v || []).join('\n');
+          return head + '<textarea rows="3" class="mono" data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,v">' + esc(text) + '</textarea></div>';
+        }
+        return head + '<input type="text" value="' + esc(v || '') + '" data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,v"></div>';
+      }).join('\n');
+    }
+
+    function markSubstrateSandbox(section, dirtyKey, field, kind, value) {
+      const pending = _configState.dirty[section] && _configState.dirty[section][dirtyKey];
+      const base = pending || ((_configState.data && _configState.data[section]) || {})[dirtyKey] || {};
+      const next = Object.assign({}, base);
+      if (kind === 'bool') next[field] = !!value;
+      else if (kind === 'int') next[field] = Math.max(0, Math.floor(Number(value) || 0));
+      else if (kind === 'lines') next[field] = String(value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      else if (kind === 'map') next[field] = parseSettingsMap(value);
+      else next[field] = String(value || '').trim();
+      if (_configState.data && _configState.data[section]) _configState.data[section][dirtyKey] = next;
+      markDirty(section, dirtyKey, next);
+    }
+
     function parseSecurityList(value) {
       return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
     }
@@ -915,7 +978,7 @@
         </div>
         <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Per-agent opt-in lives on each agent's General tab. Current effective posture: ${Number(sec.sandboxedAgents || 0)}/${Number(sec.totalAgents || 0)} agents sandboxed.</p>
         ${isolationWarning}
-        <details class="settings-subsection-details"><summary class="settings-subsection-summary">Advanced sandbox</summary>
+        <details class="settings-subsection-details" id="gov-sandbox-defaults"${sec.agentSandboxEnabled && !sec.agentSandboxImage ? ' open' : ''}><summary class="settings-subsection-summary">Advanced sandbox: default image and Job settings</summary>
         <div class="config-field"><label>Sandbox image ${yamlHint('agent_sandbox.image')} ${settingHelpMark('settings', 'security-and-access', 'Sandbox image', `Default container image for sandboxed kicks. Agents can override it.`)}</label><input type="text" value="${esc(sec.agentSandboxImage || '')}" placeholder="container image" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxImage" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Sandbox runtime ${yamlHint('agent_sandbox.runtime')} ${settingHelpMark('settings', 'security-and-access', 'Sandbox runtime', `podman runs a rootless container on the hive node; job runs a Kubernetes Job.`)}</label><input type="text" value="${esc(sec.agentSandboxRuntime || '')}" placeholder="podman (default) or job" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxRuntime" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Network mode ${yamlHint('agent_sandbox.network_mode')} ${settingHelpMark('settings', 'security-and-access', 'Network mode', `Network access for sandboxed kicks.`)}</label><input type="text" value="${esc(sec.agentSandboxNetworkMode || '')}" placeholder="none (default) or restricted" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxNetworkMode" data-arg-types="s,s,v"></div>
@@ -925,8 +988,12 @@
         <div class="config-field"><label>Job service account ${yamlHint('agent_sandbox.job.service_account')} ${settingHelpMark('settings', 'security-and-access', 'Job service account', `Kubernetes service account for sandbox Jobs.`)}</label><input type="text" value="${esc(sec.agentSandboxJobServiceAccount || '')}" placeholder="service account name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobServiceAccount" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job scheduler name ${yamlHint('agent_sandbox.job.scheduler_name')} ${settingHelpMark('settings', 'security-and-access', 'Job scheduler name', `Kubernetes schedulerName for sandbox Job pods. Leave empty for the cluster default; set when an admission webhook requires a custom scheduler for device-requesting pods (e.g. spyre-scheduler).`)}</label><input type="text" value="${esc(sec.agentSandboxJobSchedulerName || '')}" placeholder="cluster default" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobSchedulerName" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job TTL (seconds) ${yamlHint('agent_sandbox.job.ttl_seconds')} ${settingHelpMark('settings', 'security-and-access', 'Job TTL (seconds)', `Seconds a finished sandbox Job is kept. 0 uses the default.`)}</label><input type="number" min="0" value="${Number(sec.agentSandboxJobTtlSeconds || 0)}" data-change-action="markSecurityNumber" data-arg0="agentSandboxJobTtlSeconds" data-arg-types="s,v"></div>
+        <div class="config-field"><label>Job secrets (names) ${yamlHint('agent_sandbox.job.env_from_secrets[]')} ${settingHelpMark('settings', 'security-and-access', 'Job secrets', `Names of Kubernetes Secrets whose keys become environment variables in the sandbox Job. One name per line. Names only: never paste a secret value here.`)}</label><textarea rows="2" class="mono" placeholder="one Secret name per line" data-change-action="markSecurityLines" data-arg0="agentSandboxJobEnvFromSecrets" data-arg-types="s,v">${esc((sec.agentSandboxJobEnvFromSecrets || []).join('\n'))}</textarea></div>
         <div class="config-field"><label>Job workspace claim ${yamlHint('agent_sandbox.job.workspace_claim')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim', `PVC holding the workspace for the job runtime. Required for runtime job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaim || '')}" placeholder="PersistentVolumeClaim name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaim" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job workspace claim mount ${yamlHint('agent_sandbox.job.workspace_claim_mount')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim mount', `Where the workspace claim is mounted in the Job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaimMount || '')}" placeholder="mount path" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaimMount" data-arg-types="s,s,v"></div>
+        <details class="settings-subsection-details"><summary class="settings-subsection-summary">Substrate sandbox</summary>
+        ${substrateSandboxFields('security', sec.agentSandboxSubstrate)}
+        </details>
         </details>`;
 
       /* Backup encryption key: painted asynchronously from presence-only
@@ -940,6 +1007,13 @@
       loadWriteSurfaceAllowlist();
       const writeSurface = `
         <div id="gov-write-surface-host"><div style="color:var(--muted);font-size:var(--fs-base)">Loading…</div></div>`;
+
+      /* Prompt sources (#18490): owner approval of the hive's own managed
+         repos for prompt_source / definition_source, from its own
+         owner-only endpoint. */
+      loadPromptSourcesPanel();
+      const promptSources = `
+        <div id="gov-prompt-sources-host"><div style="color:var(--muted);font-size:var(--fs-base)">Loading…</div></div>`;
 
       /* Suspicious Activity (sentinel): flags PRs that look like security
          overrides, privilege escalation or codebase damage. Untrusted authors
@@ -994,6 +1068,7 @@
         ${renderSecuritySection('Suspicious Activity', suspicious + suspiciousFindings)}
         ${renderSecuritySection('Isolation', isolation)}
         ${renderSecuritySection('Write Surface', writeSurface)}
+        ${renderSecuritySection('Prompt sources', promptSources)}
         ${renderSecuritySection('GitHub App permissions', securityCapabilitiesHtml((window._lastStatus || {}).capabilities, (window._lastStatus || {}).githubAppInstallURL))}
         ${renderSecuritySection('Backup', backupKey)}`;
     }
@@ -1119,6 +1194,96 @@
           setStatus(e.message, 'var(--red)');
         }
       });
+    }
+
+    /* Prompt sources (#18490): lists the hive's managed repos and whether an
+       agent's prompt_source / definition_source may read from each. The owner
+       approves one repo at a time behind a confirm that names the trust
+       implication; the server refuses repos outside project.repos, audits
+       the change and persists it to the running config. Rendered with DOM
+       nodes and textContent only. */
+    async function loadPromptSourcesPanel() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/prompt-sources');
+        host = document.getElementById('gov-prompt-sources-host');
+        if (!host) return;
+        if (r.status === 403) {
+          host.textContent = '';
+          host.appendChild(writeSurfaceNode('div', 'color:var(--muted);font-size:0.8rem',
+            'Only the hive owner can approve repos as prompt and definition sources.'));
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderPromptSourcesPanel(host, await r.json());
+      } catch (e) {
+        host = host || document.getElementById('gov-prompt-sources-host');
+        if (!host) return;
+        host.textContent = '';
+        host.appendChild(writeSurfaceNode('div', 'color:var(--red);font-size:0.8rem',
+          'Failed to load prompt sources: ' + e.message));
+      }
+    }
+
+    async function setPromptSourceRepo(host, repo, allowed, notice) {
+      if (allowed) {
+        const ok = await hiveConfirm({
+          title: 'Trust ' + repo + ' as a prompt source?',
+          message: notice + '\n\nAgents whose prompt_source or definition_source points at ' + repo + ' will load it on their next kick or reload. This is audit-logged.',
+          confirmLabel: 'Approve ' + repo,
+          danger: true
+        });
+        if (!ok) return;
+      }
+      try {
+        const res = await fetch('/api/config/prompt-sources/owner-repos', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ repo, allowed, acknowledge_trust: !!allowed })
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        renderPromptSourcesPanel(host, await res.json());
+        showToast(allowed ? repo + ' approved as a prompt source' : repo + ' approval revoked', 'success');
+      } catch (e) {
+        showToast('Prompt source change failed: ' + e.message, 'error');
+      }
+    }
+
+    function renderPromptSourcesPanel(host, d) {
+      if (!host) return;
+      d = d || {};
+      host.textContent = '';
+      const card = writeSurfaceNode('div', 'border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--surface);max-width:640px');
+      card.appendChild(writeSurfaceNode('div', 'font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-4)', 'Repo-sourced prompts and definitions'));
+      card.appendChild(writeSurfaceNode('div', 'font-size:0.74rem;color:var(--muted);line-height:1.5;margin-bottom:var(--sp-4)',
+        'An agent can load its kick prompt from a GitHub repo with prompt_source, or its whole definition with definition_source. ' +
+        (d.trust_notice || '') + ' ' + (d.seed_only_note || '')));
+      const repos = d.repos || [];
+      if (!repos.length) {
+        card.appendChild(writeSurfaceNode('div', 'font-size:0.8rem;color:var(--muted)', 'This hive has no managed repos.'));
+      }
+      repos.forEach(row => {
+        const line = writeSurfaceNode('div', 'display:flex;align-items:center;gap:10px;padding:var(--sp-2) var(--sp-0);border-top:1px solid var(--border);font-size:0.8rem');
+        line.appendChild(writeSurfaceNode('code', 'flex:1', row.repo));
+        let state = 'Not allowed';
+        if (row.seed_allowed) state = 'Allowed by the config volume';
+        else if (row.owner_approved && row.managed) state = 'Owner-approved' + (row.approved_by ? ' by ' + row.approved_by : '') + (row.approved_at ? ' on ' + row.approved_at.slice(0, 10) : '');
+        else if (row.owner_approved) state = 'Approval inert: no longer a managed repo';
+        line.appendChild(writeSurfaceNode('span', 'color:' + (row.allowed ? 'var(--green)' : 'var(--muted)'), state));
+        if (row.owner_approved) {
+          const btn = writeSurfaceNode('button', '', 'Revoke');
+          btn.className = 'hv-btn btn-secondary btn-sm';
+          btn.addEventListener('click', () => setPromptSourceRepo(host, row.repo, false, d.trust_notice || ''));
+          line.appendChild(btn);
+        } else if (row.managed && !row.seed_allowed) {
+          const btn = writeSurfaceNode('button', '', 'Approve…');
+          btn.className = 'hv-btn btn-primary btn-sm';
+          btn.addEventListener('click', () => setPromptSourceRepo(host, row.repo, true, d.trust_notice || ''));
+          line.appendChild(btn);
+        }
+        card.appendChild(line);
+      });
+      host.appendChild(card);
     }
 
     /* loadBackupKeyStatus fetches presence-only backup-key status and paints

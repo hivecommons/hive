@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/gfi"
 )
 
@@ -26,6 +27,27 @@ func TestHardSuppressIssueLabelsIsCopyWithoutGFI(t *testing.T) {
 	got[0] = "mutated"
 	if hardSuppressIssueLabels[0] == "mutated" {
 		t.Fatal("returned slice aliases the package list")
+	}
+}
+
+func TestGFIArchivedWriteRecognizesOnlyArchived403(t *testing.T) {
+	c := NewClientForTest("http://example.com", "acme", []string{"widgets"}, testLogger())
+	for _, tc := range []struct {
+		status  int
+		message string
+		want    bool
+	}{
+		{http.StatusForbidden, "Resource not accessible by integration", false},
+		{http.StatusInternalServerError, "Repository was archived", false},
+		{http.StatusForbidden, "Repository was archived so is read-only.", true},
+	} {
+		err := &gh.ErrorResponse{Response: &http.Response{StatusCode: tc.status}, Message: tc.message}
+		if got := c.ArchivedWrite("widgets", err); got != tc.want {
+			t.Fatalf("status=%d message=%q: got %v", tc.status, tc.message, got)
+		}
+	}
+	if !c.ArchivedWrite("ACME/Widgets", nil) || c.ArchivedWrite("acme/other", nil) {
+		t.Fatal("archive cache must be case-insensitive and repository-scoped")
 	}
 }
 

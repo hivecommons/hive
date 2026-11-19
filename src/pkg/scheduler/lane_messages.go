@@ -105,7 +105,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 
 	b.WriteString("\nWORKFLOW:\n")
 	b.WriteString("  1. Check beads (`bd list --status open`) for context from previous cycles\n")
-	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge PRs whose required checks are GREEN using a squash merge via your App token (MCP `merge_pull_request` with `merge_method: \"squash\"`, or `gh pr merge --squash`). Do NOT use `--admin` — never force-merge past pending or failing CI; wait for the required checks to pass. Ensure the PR body cites the issue it addresses: ask does merging this PR leave anything for that issue to track? If nothing, write `Closes #<issue>` — the default, auto-closes on merge. Use `Refs #<issue>` or `Part of #<issue>` (non-closing) only for an epic/multi-phase tracker or a deliberately partial fix, and say on the same line what remains and why; if the remainder needs a human, write `Refs #<issue> (needs-human: <reason>)`. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). `@dependabot rebase` stale ones. Move on after 10 min.\n")
+	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge PRs whose required checks are GREEN using a squash merge via your App token (MCP `merge_pull_request` with `merge_method: \"squash\"`, or `gh pr merge --squash`). Do NOT use `--admin` — never force-merge past pending or failing CI; wait for the required checks to pass. Ensure the PR body cites the issue it addresses: ask does merging this PR leave anything for that issue to track? If nothing, write `Closes #<issue>` — the default, auto-closes on merge. Use `Refs #<issue>` or `Part of #<issue>` (non-closing) only for an epic/multi-phase tracker or a deliberately partial fix, and say on the same line what remains and why; if the remainder needs a human, write `Refs #<issue> (needs-human: <reason>)`. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). Stale Dependabot PRs: never comment `@dependabot rebase`/`recreate` (Dependabot refuses commands from the App, and refuses rebase once anyone else pushed to the branch); if the PR is only behind, update it with `gh api -X PUT repos/{owner}/{repo}/pulls/{n}/update-branch`; if it conflicts and has a commit not authored by Dependabot, close it so Dependabot opens a fresh one; otherwise leave the rebase to Dependabot. Move on after 10 min.\n")
 	b.WriteString("  3. Fix blockers — find the ONE fix that unblocks the most PRs/issues. Clone, fix, push, merge.\n")
 	b.WriteString("  4. Crank quick fixes — launch background agents using the Agent tool (run_in_background: true) to fix remaining issues in parallel. One PR per issue, move fast.\n")
 
@@ -517,28 +517,41 @@ func formatMergeEligibleDataFor(data []byte, keep func(repo string) bool, limit 
 }
 
 func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
+	return s.buildCIFailingListForAgent("", keep)
+}
+
+// buildCIFailingListForAgent is buildCIFailingListFor for one kicked agent:
+// its own claims do not make a branch busy (busy_branch.go,
+// hivecommons/hive#18488). An empty agent counts every claim.
+func (s *Scheduler) buildCIFailingListForAgent(agent string, keep func(repo string) bool) string {
 	data, err := os.ReadFile(ciFailingPath)
 	if err != nil {
 		return "(none)\n"
 	}
 	type ciFailingRow struct {
-		Number           int      `json:"number"`
-		Repo             string   `json:"repo"`
-		Title            string   `json:"title"`
-		Author           string   `json:"author"`
-		HeadSHA          string   `json:"head_sha"`
-		HeadRef          string   `json:"head_ref"`
-		HeadRepo         string   `json:"head_repo"`
-		FromFork         bool     `json:"from_fork"`
-		ReachableAction  string   `json:"reachable_action"`
-		Adopted          bool     `json:"adopted"`
-		SentinelAlert    bool     `json:"sentinel_alert"`
-		Held             bool     `json:"held"`
-		FailingChecks    []string `json:"failing_checks"`
-		Excerpt          string   `json:"excerpt"`
-		DeferredIncident int      `json:"deferred_incident"`
-		BaseRedChecks    []string `json:"base_red_checks"`
-		BaseRed          bool     `json:"base_red"`
+		Number           int        `json:"number"`
+		Repo             string     `json:"repo"`
+		Title            string     `json:"title"`
+		Author           string     `json:"author"`
+		HeadSHA          string     `json:"head_sha"`
+		HeadRef          string     `json:"head_ref"`
+		HeadRepo         string     `json:"head_repo"`
+		FromFork         bool       `json:"from_fork"`
+		ReachableAction  string     `json:"reachable_action"`
+		Adopted          bool       `json:"adopted"`
+		SentinelAlert    bool       `json:"sentinel_alert"`
+		Held             bool       `json:"held"`
+		FailingChecks    []string   `json:"failing_checks"`
+		Excerpt          string     `json:"excerpt"`
+		DeferredIncident int        `json:"deferred_incident"`
+		BaseRedChecks    []string   `json:"base_red_checks"`
+		BaseRed          bool       `json:"base_red"`
+		AppAuthored      bool       `json:"app_authored"`
+		HeadPushedAt     *time.Time `json:"head_pushed_at"`
+		Issues           []int      `json:"issues"`
+		Agent            string     `json:"agent"`
+		TrustedAuthor    bool       `json:"trusted_author"`
+		ReroutedFrom     string     `json:"rerouted_from"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -605,11 +618,17 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 	// instruction, and the CI-Repair step 4 "push a fixup commit to the PR
 	// branch" is never aimed at a branch that only exists in someone's fork.
 	var pushable, forks []ciFailingRow
+	var busy []busyRedPR
+	busyCheck := s.busyBranchChecker(agent)
 	for _, pr := range payload.Items {
 		if pr.FromFork && (!pr.Adopted || pr.ReachableAction != "push") {
 			forks = append(forks, pr)
 		} else if pr.ReachableAction == "comment-only" {
 			forks = append(forks, pr)
+		} else if why := busyCheck(busyBranchRow{Repo: pr.Repo, Number: pr.Number, Issues: pr.Issues, AppAuthored: pr.AppAuthored, Adopted: pr.Adopted, HeadPushedAt: pr.HeadPushedAt, Own: ownRepairRow(pr.Agent, agent, pr.TrustedAuthor, pr.ReroutedFrom)}); why != "" {
+			// hivecommons/hive#18488: pushable, but someone else is on
+			// the branch right now.
+			busy = append(busy, busyRedPR{Number: pr.Number, Repo: pr.Repo, Title: pr.Title, FailingChecks: pr.FailingChecks, Why: why})
 		} else {
 			pushable = append(pushable, pr)
 		}
@@ -644,6 +663,21 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		}
 		if pr.SentinelAlert {
 			b.WriteString("    " + adoptedSentinelNote + "\n")
+		}
+	}
+	if len(busy) > 0 {
+		b.WriteString(fmt.Sprintf("BUSY BRANCHES (%d — another worker is on these branches; suggest the fix, do not push):\n", len(busy)))
+		b.WriteString("  " + busyBranchInstruction + "\n")
+		for i, pr := range busy {
+			if i >= limit {
+				b.WriteString(prListOverflowLine(len(busy)-i, limit))
+				break
+			}
+			checks := ""
+			if len(pr.FailingChecks) > 0 {
+				checks = " — failing: " + strings.Join(pr.FailingChecks, ", ")
+			}
+			b.WriteString(fmt.Sprintf("  #%d %s [busy: %s — suggest, do not push] — %s%s\n", pr.Number, pr.Repo, pr.Why, pr.Title, checks))
 		}
 	}
 	if len(deferred) > 0 {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentsmd"
 	"github.com/hivecommons/hive/crux/paneclass"
 	"github.com/hivecommons/hive/crux/skillreg"
 	"github.com/hivecommons/hive/crux/watchdog"
@@ -404,6 +405,7 @@ func BuildFrontendStatus(
 		Governor:              buildGovernor(govState, cfg, apiBudgetFromRateLimits(ghRateLimits)),
 		Tokens:                buildTokens(tokenCollector),
 		Repos:                 repos,
+		ReferenceRepos:        buildReferenceRepos(cfg),
 		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable) || overviewStaleSince(repos) != "",
 		StaleSince:            earliestRFC3339(staleSinceRFC3339(actionable), overviewStaleSince(repos)),
 		RestartRefresh:        restartRefreshInfo(actionable, repos),
@@ -575,8 +577,9 @@ func buildFeatures(cfg *config.Config) FrontendFeatures {
 	// without going through the loader.
 	enabled := cfg.Dashboard.ExperimentLab || cfg.Dashboard.StrategyLab
 	return FrontendFeatures{
-		ExperimentLab: enabled,
-		StrategyLab:   enabled,
+		ExperimentLab:           enabled,
+		StrategyLab:             enabled,
+		SubscriptionGaugeHeader: cfg.Dashboard.SubscriptionGaugeHeader,
 	}
 }
 
@@ -627,7 +630,17 @@ func agentDisabledInConfig(cfg *config.Config, name string, proc *crux.Process) 
 // wins during config/reconcile races; otherwise enabled and unpaused is the
 // active configuration. Pack-paused or disabled entries remain suppressible as
 // the inactive higher-level "ghost" agents the dashboard filter targets.
+//
+// An agent whose pause/run state the operator owns is never such a ghost: an
+// agent created by hand is operator-owned from birth (handleAgentCreate) and is
+// never in any pack's roster, so without this a hand-created agent vanished
+// from every dashboard view the moment it was paused, while its name stayed
+// taken in the config (#18730). The pack sweep never touches such an agent, so
+// the only one who can bring it back is the operator, through its card.
 func activeOutsidePack(cfg *config.Config, name string, proc *crux.Process) bool {
+	if operatorOwnsPauseState(cfg, name) {
+		return true
+	}
 	if proc == nil {
 		return false
 	}
@@ -636,6 +649,16 @@ func activeOutsidePack(cfg *config.Config, name string, proc *crux.Process) bool
 	}
 	return !agentDisabledInConfig(cfg, name, proc) &&
 		!proc.Paused && proc.State != crux.StatePaused
+}
+
+// operatorOwnsPauseState reports whether the live config records the
+// operator as the owner of name's pause/run state (#5706).
+func operatorOwnsPauseState(cfg *config.Config, name string) bool {
+	if cfg == nil {
+		return false
+	}
+	ac, ok := cfg.Agents[name]
+	return ok && ac.PauseIsOperatorOwned()
 }
 
 func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
@@ -959,7 +982,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 				seen[name] = true
 				continue
 			}
-			if packAllowed != nil && !packAllowed[name] && agentCfg.Paused {
+			if packAllowed != nil && !packAllowed[name] && agentCfg.Paused && !agentCfg.PauseIsOperatorOwned() {
 				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonPackInactive})
 				slog.Debug("agent card omitted: config-only agent outside ACMM pack and paused", "agent", name, "acmm_level", acmmLevel)
 				seen[name] = true
@@ -1011,9 +1034,9 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		// running" — an agent parked at its idle prompt after a fruitless kick
 		// read exactly like one mid-task (#7421). A kicked turn the manager has
 		// seen END is idle, whatever the process state says; liveness is not
-		// evidence of work.
+		// evidence of work. An agent never kicked is idle too (#18458).
 		busy := "idle"
-		if proc.State == crux.StateRunning && !proc.KickOutcome.Settled(proc.LastKick) {
+		if proc.TurnInFlight() {
 			busy = "working"
 		}
 		// awaitingCI (#9673 item 3): the manager's CI-poll guard already
@@ -1156,6 +1179,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
 			SandboxRun:      sandboxRun,
 			SandboxRuntime:  effectiveSandboxRuntime(agentCfg, cfg),
+			SandboxWarnings: config.SandboxPreflightWarningsFor(effectiveSandboxRuntime(agentCfg, cfg)),
 			Session:         name,
 			State:           string(proc.State),
 			Starting:        proc.Starting && proc.State != crux.StateRunning,
@@ -1267,6 +1291,9 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 				a.BackendAuthLastError = preferFullInferenceError(a.BackendAuthLastError, inferenceLastErr)
 			}
 		}
+		// #18111: the pane-poll quota flag covers every backend (Copilot's
+		// "exceeded your monthly quota" never reaches BackendAuthStatus).
+		a.QuotaExhausted = proc.QuotaExhausted
 		if refreshableFn := getAgentRefreshableFn(); refreshableFn != nil {
 			if refreshable, known := refreshableFn(name); known {
 				a.BackendAuthRefreshable = &refreshable
@@ -2371,6 +2398,45 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 	return buildReposWithForge(cfg, actionable, govState, nil)
 }
 
+// buildReferenceRepos lists project.reference_repos with their tier for the
+// dashboard's minimal reference cards (hivecommons/hive#18015).
+func buildReferenceRepos(cfg *config.Config) []FrontendReferenceRepo {
+	if cfg == nil || len(cfg.Project.ReferenceRepos) == 0 {
+		return nil
+	}
+	out := make([]FrontendReferenceRepo, 0, len(cfg.Project.ReferenceRepos))
+	for _, rr := range cfg.Project.ReferenceRepos {
+		tier := rr.WriteLabel()
+		out = append(out, FrontendReferenceRepo{
+			Full: rr.Repo, Tier: tier, ReferenceTier: tier,
+			DerivedFrom: rr.DerivedFrom, DerivedFromURL: referenceRepoSourceURL(rr.DerivedFrom, cfg.GitHub.ResolvedBaseURL()),
+			CredentialState: rr.CredentialState, CredentialReason: rr.CredentialReason, CredentialLogin: rr.CredentialLogin,
+			CredentialIdentity: rr.CredentialIdentity, CredentialNote: rr.CredentialNote,
+		})
+	}
+	return out
+}
+
+// referenceRepoSourceURL turns a derived entry's "owner/repo#N" provenance
+// into the request issue's web URL on base (hivecommons/hive#18161). Anything
+// that is not exactly owner/repo#N with a positive N yields "" so the
+// dashboard shows the bare reference rather than a guessed link.
+func referenceRepoSourceURL(derivedFrom, base string) string {
+	repo, num, ok := strings.Cut(strings.TrimSpace(derivedFrom), "#")
+	if !ok {
+		return ""
+	}
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return ""
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n <= 0 {
+		return ""
+	}
+	return overviewItemURL("", repo, n, "issue", base)
+}
+
 func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult, govState governor.State, forge forgeOpenCounter) []FrontendRepo {
 	repos := make([]FrontendRepo, 0, len(cfg.Project.Repos))
 	repoRows := make(map[string]string, len(cfg.Project.Repos)*2)
@@ -2511,6 +2577,9 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 					r.UpstreamLastCheck = sum.LastRunAt.UTC().Format(time.RFC3339)
 				}
 			}
+		}
+		if st, ok := agentsmd.StatusFor(full); ok {
+			r.AgentsMd = &st
 		}
 		if actionable != nil && !r.Paused && !countsPresent {
 			r.CountsIncomplete = true

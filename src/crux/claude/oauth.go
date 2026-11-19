@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/sharedfile"
 )
 
 const (
@@ -151,6 +154,30 @@ func ExchangeCode(code, codeVerifier, redirectURI string) (*OAuthTokens, error) 
 		"code_verifier": {codeVerifier},
 	}
 
+	tok, err := postTokenRequest(data)
+	if err != nil {
+		return nil, err
+	}
+
+	scopes := strings.Fields(tok.Scope)
+	if len(scopes) == 0 {
+		scopes = strings.Fields(DefaultScopes)
+	}
+
+	return &OAuthTokens{
+		AccessToken:  tok.AccessToken,
+		RefreshToken: tok.RefreshToken,
+		ExpiresAt:    time.Now().UnixMilli() + int64(tok.ExpiresIn)*1000,
+		Scopes:       scopes,
+	}, nil
+}
+
+// postTokenRequest sends one request to the token endpoint and returns its
+// decoded, error-checked response. Shared by the authorization-code exchange
+// and the refresh grant. The error never carries the request body or any
+// token the response held: an OAuth error payload is reported by its error
+// code and description only.
+func postTokenRequest(data url.Values) (*tokenResponse, error) {
 	client := &http.Client{Timeout: TokenExchangeTimeout}
 	resp, err := client.PostForm(tokenEndpoint(), data)
 	if err != nil {
@@ -168,27 +195,108 @@ func ExchangeCode(code, codeVerifier, redirectURI string) (*OAuthTokens, error) 
 		return nil, fmt.Errorf("parse token response: %w", err)
 	}
 	if errStr := tok.ErrorString(); errStr != "" {
+		if errStr == oauthErrorInvalidGrant {
+			return nil, fmt.Errorf("%w: %s — %s", ErrRefreshGrantRejected, errStr, tok.ErrorDesc)
+		}
 		return nil, fmt.Errorf("token error: %s — %s", errStr, tok.ErrorDesc)
 	}
 	if tok.AccessToken == "" {
 		return nil, fmt.Errorf("empty access token in response")
 	}
+	return &tok, nil
+}
+
+// oauthErrorInvalidGrant is the RFC 6749 error code the token endpoint
+// returns for a refresh token it no longer honours: rotated away by an
+// earlier refresh, revoked after a reuse was detected, or signed out.
+const oauthErrorInvalidGrant = "invalid_grant"
+
+// ErrRefreshGrantRejected is returned by RefreshTokens when the authorization
+// server refuses the refresh token itself (invalid_grant). Nothing on disk can
+// mint a token from that grant again; the recovery is an operator sign-in.
+// Callers use it to stop retrying rather than present the dead token again.
+var ErrRefreshGrantRejected = errors.New("claude refresh grant rejected by the authorization server")
+
+// ErrNoRefreshToken is returned by RefreshTokens for a token set with no
+// refresh token to redeem.
+var ErrNoRefreshToken = errors.New("claude credential has no refresh token")
+
+// RefreshTokens redeems prev's refresh token for a new access token: the
+// refresh_token grant against the same token endpoint and public client id
+// Claude Code itself uses (its credentials file carries no client secret, so
+// the grant is exactly what the CLI sends). Anthropic rotates the refresh
+// token on use; the returned set carries the new one, or prev's when the
+// server did not rotate it.
+//
+// Fields the token endpoint does not return are carried over from prev:
+// scopes (when the response names none), subscriptionType, rateLimitTier and
+// refreshTokenExpiresAt, so a credential the hive refreshed reads back
+// exactly as one Claude Code refreshed. Hive calls this ONCE per hive for the
+// shared login (crux/agent, hivecommons/hive#18731): N CLIs refreshing one
+// grant within seconds of each other trip the server's reuse detection and
+// the whole grant is revoked.
+func RefreshTokens(prev *OAuthTokens) (*OAuthTokens, error) {
+	if prev == nil || prev.RefreshToken == "" {
+		return nil, ErrNoRefreshToken
+	}
+	data := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {prev.RefreshToken},
+		"client_id":     {ClientID},
+	}
+	if len(prev.Scopes) > 0 {
+		data.Set("scope", strings.Join(prev.Scopes, " "))
+	}
+	tok, err := postTokenRequest(data)
+	if err != nil {
+		return nil, err
+	}
+	if tok.ExpiresIn <= 0 {
+		// A token with no lifetime would be written already expired and
+		// refreshed again on the next tick, rotating the grant on every pass.
+		return nil, fmt.Errorf("token response carries no positive expires_in")
+	}
 
 	scopes := strings.Fields(tok.Scope)
 	if len(scopes) == 0 {
-		scopes = strings.Fields(DefaultScopes)
+		scopes = append([]string(nil), prev.Scopes...)
 	}
-
+	refresh := tok.RefreshToken
+	if refresh == "" {
+		refresh = prev.RefreshToken
+	}
 	return &OAuthTokens{
-		AccessToken:  tok.AccessToken,
-		RefreshToken: tok.RefreshToken,
-		ExpiresAt:    time.Now().UnixMilli() + int64(tok.ExpiresIn)*1000,
-		Scopes:       scopes,
+		AccessToken:           tok.AccessToken,
+		RefreshToken:          refresh,
+		ExpiresAt:             time.Now().UnixMilli() + int64(tok.ExpiresIn)*1000,
+		RefreshTokenExpiresAt: prev.RefreshTokenExpiresAt,
+		Scopes:                scopes,
+		SubscriptionType:      prev.SubscriptionType,
+		RateLimitTier:         prev.RateLimitTier,
 	}, nil
 }
 
-// WriteCredentials atomically writes tokens to the credentials file.
+// ErrNoAccessToken is returned by WriteCredentials for a token set with no
+// access token. Writing one would replace whatever login is on file with a
+// signed-out credential.
+var ErrNoAccessToken = errors.New("refusing to write a Claude credential with no access token")
+
+// CredentialsFileMode is the mode of the shared credentials file: owner and
+// group read/write, so every agent uid reaches it through the shared group.
+const CredentialsFileMode = 0o660
+
+// WriteCredentials atomically writes tokens to the credentials file. It
+// refuses a nil token set or one with an empty access token
+// (ErrNoAccessToken), so no hive caller can replace the shared login with a
+// signed-out credential. The write is sharedfile.Replace: the credentials
+// directory is shared with every agent uid, so the temporary name is random,
+// metadata is set by descriptor, and a non-regular file at the destination or
+// a directory that is not this process's own is refused rather than written
+// through.
 func WriteCredentials(tokens *OAuthTokens, path string) error {
+	if tokens == nil || tokens.AccessToken == "" {
+		return ErrNoAccessToken
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o2775); err != nil {
 		return fmt.Errorf("create credentials dir: %w", err)
@@ -199,13 +307,8 @@ func WriteCredentials(tokens *OAuthTokens, path string) error {
 	if err != nil {
 		return fmt.Errorf("marshal credentials: %w", err)
 	}
-
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o660); err != nil {
-		return fmt.Errorf("write temp credentials: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename credentials: %w", err)
+	if err := sharedfile.Replace(path, data, CredentialsFileMode, sharedfile.Options{PreserveOwner: true}); err != nil {
+		return fmt.Errorf("write credentials: %w", err)
 	}
 	return nil
 }
@@ -214,10 +317,29 @@ func WriteCredentials(tokens *OAuthTokens, path string) error {
 // nil when the file is absent, malformed, or carries no token block. It never
 // applies an expiry rule — callers decide what a stale token means to them.
 func LoadTokens(path string) *OAuthTokens {
-	data, err := os.ReadFile(path)
+	tokens, err := ReadTokens(path)
 	if err != nil {
 		return nil
 	}
+	return tokens
+}
+
+// ReadTokens is LoadTokens with the read error kept, for callers that must
+// tell "this process cannot read the file" (fs.ErrNotExist, or
+// fs.ErrPermission on another uid's 0600 credential) apart from "the file
+// holds no usable token". A file that was read but is malformed, or carries
+// no token block, returns (nil, nil). The error never carries file content.
+func ReadTokens(path string) (*OAuthTokens, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTokens(data), nil
+}
+
+// ParseTokens decodes a credentials file already in memory. Nil for malformed
+// bytes or a file with no token block, like LoadTokens.
+func ParseTokens(data []byte) *OAuthTokens {
 	var creds Credentials
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return nil
@@ -281,11 +403,16 @@ func HasValidToken(path string) bool {
 // Positive evidence only: an unreadable or absent file returns false, leaving
 // callers exactly where they were before they asked.
 func HasUsableToken(path string) bool {
-	tokens := LoadTokens(path)
+	return TokensUsable(LoadTokens(path), time.Now())
+}
+
+// TokensUsable is the HasUsableToken rule applied to an already-loaded token
+// set at a given instant: a live access token, or a refresh grant that has not
+// expired. A nil token set is never usable.
+func TokensUsable(tokens *OAuthTokens, now time.Time) bool {
 	if tokens == nil {
 		return false
 	}
-	now := time.Now()
 	if tokens.AccessToken != "" && !expired(tokens.ExpiresAt, now) {
 		return true
 	}

@@ -616,6 +616,20 @@ func (s *Scheduler) buildAgentMessageFor(agentName, repo string, includeRepos bo
 
 const governorWorkSourceRule = "The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n>` only on supplied GitHub issue numbers. For merged PR history only, `gh pr list --state merged` (no `--search` or `-S`) may be used only when the wrapper permits it for your tier; this does not authorize open-work discovery. If refused, do not retry or bypass the restriction. Prefer the compact form `hive-gh pr view <n>` / `hive-gh issue view <n>` / `hive-gh pr checks <n>` (fixed --json projection that keeps labels, author, head SHA, merge state, review decision and check conclusions); add `--full` only when you need the complete record."
 
+// plainDashRule is the one-sentence house rule every agent kick carries: the
+// owner does not accept em-dashes in anything hive or its agents write. The
+// outbound relays also rewrite them (pkg/prosefilter), but telling the agent
+// keeps them out of files, commits and local notes the relays never see.
+const plainDashRule = "Never use em-dashes (or en-dashes as dashes) in anything you write; use a hyphen or rewrite the sentence."
+
+// addPlainDashRule splices plainDashRule in under the kick header once.
+func addPlainDashRule(message string) string {
+	if message == "" || strings.Contains(message, plainDashRule) {
+		return message
+	}
+	return insertAfterKickHeader(message, plainDashRule)
+}
+
 func addGovernorWorkSourceRule(message string) string {
 	if message == "" || strings.Contains(message, governorWorkSourceRule) {
 		return message
@@ -714,6 +728,7 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 	shown := fairShareByRepo(prs, limit, func(pr github.PullRequest) string { return pr.Repo })
 	verdicts := s.loadReviewVerdicts()
 	links := loadReviewLinks()
+	busyCheck := s.busyBranchChecker(s.cfg.BaseAgentName(agentName))
 	for _, pr := range shown {
 		// The PR title and author login are untrusted external text about to be
 		// injected into an agent kick (F11). PR titles in particular drive
@@ -733,7 +748,7 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 		if skip {
 			continue
 		}
-		annotationText = prKickAnnotation(pr, agentName) + reviewedAnnotation(verdicts, links, pr, s.cfg.Project.Org) + annotationText
+		annotationText = prKickAnnotation(pr, agentName) + reviewedAnnotation(verdicts, links, pr, s.cfg.Project.Org) + annotationText + busyBranchAnnotation(pr, s.cfg.BaseAgentName(agentName), busyCheck)
 		annotation, annotationVerdict := s.enforceTextFrom(annotationText, src)
 		failClosed = failClosed || (s.ioscanFailClosed() && annotationVerdict.HasCriticalInjection())
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, author, forkAnnotation(pr), annotation, title))
@@ -846,6 +861,19 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 		b.WriteString(fmt.Sprintf("⏸️ PAUSED BY THE OPERATOR (watched, but OUT OF SCOPE this session): %s\n", strings.Join(pausedFull, ", ")))
 		b.WriteString("   The hive is deliberately quiet on those repos — a release freeze, an incident, a repo declared but not yet onboarded. Writes to them are refused deterministically by the proxy and by the hive-open-pr/hive-merge relays, so retrying cannot succeed. This is an operator decision, NOT an outage and NOT scope loss: do not work them, do not route around it, and do not file an issue about it.\n")
 	}
+	// project.reference_repos (hivecommons/hive#18015): repos outside the
+	// project an agent may STUDY — e.g. a docs-assessment hive reading the
+	// repos it assesses. Without this block the scanner reads any item whose
+	// deliverables name them as out-of-scope/critical, and agents either
+	// refuse the work or try to write to them.
+	if refs := s.cfg.Project.ReferenceRepos; len(refs) > 0 {
+		b.WriteString("📚 REFERENCE REPOS (outside this project — study them, do not work them):\n")
+		for _, rr := range refs {
+			b.WriteString(fmt.Sprintf("  %s/%s  [reference · %s]%s\n", strings.TrimRight(host, "/"), rr.Repo, rr.WriteLabel(), referenceRepoProvenance(rr)))
+		}
+		b.WriteString("   You MAY clone them (public, unauthenticated), read their files, and GET their issues/PRs/API. An authorized-repo item whose deliverables name a reference repo is IN SCOPE, not a scope violation: do NOT classify it out-of-scope, critical, or a security concern. Findings about a reference repo belong in the deliverable inside the AUTHORIZED repo (the assessment document, the report), never as issues or PRs on the reference repo itself — unless its tier above says issues/prs, in which case you may ONLY open an issue, open a PR from your own branch, or comment on an issue/PR you opened; the proxy refuses merges, default-branch pushes, labels, assignments, reviews and closing others' items deterministically, so retrying cannot succeed.\n")
+		b.WriteString(referenceRepoForkInstruction(refs, host))
+	}
 	b.WriteString("⛔ NEVER access, search, list, file issues in, or open PRs on repos not listed above.\n")
 	b.WriteString(fmt.Sprintf("⛔ Every repo above is on %s. This hive is single-host — never touch a repo on a different GitHub host.\n", host))
 	// SCOPE vs PROVISIONING (#4464). This list is what `include_repos: true`
@@ -897,4 +925,97 @@ Your workdir is, at most, a checkout of the primary repo — never of the others
 `, len(active), config.QualifyRepo(org, primary), strings.TrimRight(host, "/")))
 	}
 	return b.String()
+}
+
+// derivedReadOnlyNoReason is the kick's fallback when a read-only derived
+// reference repo carries no CredentialReason.
+const derivedReadOnlyNoReason = "no write credential for this repository"
+
+// referenceRepoProvenance is the suffix the REFERENCE REPOS block appends
+// for an entry derived from an accepted request issue
+// (hivecommons/hive#18159): where the grant came from, and for one served
+// read-only, why. Empty for a hand-written entry.
+func referenceRepoProvenance(rr config.ReferenceRepo) string {
+	if rr.CredentialState == config.ReferenceCredentialUnresolved {
+		// hivecommons/hive#18516: the identity could not be resolved this
+		// pass, so the proxy refuses the writes the tier above names.
+		why := strings.TrimSpace(rr.CredentialReason)
+		if why == "" {
+			why = derivedReadOnlyNoReason
+		}
+		if rr.Derived() {
+			return " (from " + rr.DerivedFrom + "; read-only this pass: " + why + ")"
+		}
+		return " (read-only this pass: " + why + ")"
+	}
+	if !rr.Derived() {
+		return ""
+	}
+	if !rr.DerivedReadOnly() {
+		return " (from " + rr.DerivedFrom + ")"
+	}
+	reason := strings.TrimSpace(rr.CredentialReason)
+	if reason == "" {
+		reason = derivedReadOnlyNoReason
+	}
+	return " (from " + rr.DerivedFrom + "; read-only: " + reason + ")"
+}
+
+// referenceRepoForkInstruction is the kick's fork-and-PR paragraph for the
+// prs-tier reference repos (hivecommons/hive#18198). Writes to a reference
+// repo appear under the hive owner's GitHub account, and that account cannot
+// push to a repo it does not own, so a PR goes through the owner's fork: the
+// paragraph names the login and the exact three commands. Empty when no entry
+// has both the prs tier and a resolved credential login.
+//
+// An entry that writes as the hive's GitHub App bot
+// (project.remote_write_identity) is different: the App cannot own a fork,
+// and its token is minted on the repo owner's own installation, so the topic
+// branch is pushed to the reference repo itself; referenceRepoBotInstruction
+// renders that paragraph.
+func referenceRepoForkInstruction(refs []config.ReferenceRepo, host string) string {
+	login := ""
+	for _, rr := range refs {
+		if rr.WritesPRs() && rr.CredentialLogin != "" && rr.CredentialIdentity != config.ReferenceIdentityBot {
+			login = rr.CredentialLogin
+			break
+		}
+	}
+	bot := referenceRepoBotInstruction(refs)
+	if login == "" {
+		return bot
+	}
+	host = strings.TrimRight(host, "/")
+	subject, itself := "a reference repo", "a reference repo itself"
+	if bot != "" {
+		subject, itself = "any other write-tier reference repo", "those repos themselves"
+	}
+	return bot + fmt.Sprintf("   ✍️ Writes to %s appear under the GitHub account %s (the hive owner), not under the hive. You CANNOT push to %s. For a PR: fork it into that account (gh repo fork <owner>/<name> --clone=false; already-forked is fine), push your topic branch to %s/%s/<name> (git remote add fork %s/%s/<name>.git && git push fork <branch>), then open the PR against the reference repo: gh pr create --repo <owner>/<name> --head %s:<branch>. Never push to the fork's default branch; do nothing else on the fork.\n", subject, login, itself, host, login, host, login, login)
+}
+
+// referenceRepoBotInstruction is the kick's paragraph for the write-tier
+// reference repos that write as the hive's GitHub App bot. Empty when there
+// are none.
+func referenceRepoBotInstruction(refs []config.ReferenceRepo) string {
+	var repos []string
+	login := ""
+	prs := false
+	for _, rr := range refs {
+		if rr.ReadOnly() || rr.CredentialIdentity != config.ReferenceIdentityBot || rr.CredentialLogin == "" {
+			continue
+		}
+		repos = append(repos, rr.Repo)
+		if login == "" {
+			login = rr.CredentialLogin
+		}
+		prs = prs || rr.WritesPRs()
+	}
+	if len(repos) == 0 {
+		return ""
+	}
+	line := fmt.Sprintf("   🤖 Writes to %s appear under the hive's GitHub App, %s (the project installed it), not under a person.", strings.Join(repos, ", "), login)
+	if prs {
+		line += " For a PR there, do NOT fork: push your topic branch to the reference repo itself (never its default branch) and open the PR with gh pr create --repo <owner>/<name> --head <branch>."
+	}
+	return line + "\n"
 }

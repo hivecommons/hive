@@ -1410,7 +1410,7 @@ func TestApplyStageLabelsRequiresHumanBeatsAdmissionReason(t *testing.T) {
 		pr := stagePR(336, labels...)
 		// A clanker PR: a person's requires_human routes to 071 instead
 		// (hivecommons/hive#15202).
-		pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+		pr.Body = gh.Ptr("Fixes the widget.\n\n-- hive: backend=pi model=gpt-6\n")
 		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, "untrusted-author-role", false, nil)
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonAuthorAssociation, false, nil)
 		e.noteStageRole("acme", "widget", 336, stagelabels.RoleContributor)
@@ -1999,7 +1999,7 @@ func TestApplyStageLabels_StripsStrayOwnershipLabelsFromContributorPR(t *testing
 // `dco`. One commits GET per head, none while the head is unchanged.
 // clankerBody is the hive provenance marker that classifies a PR as
 // author/clanker, the only kind the 072 nudge interrupts.
-const clankerBody = "Adds x.\n\n— hive: backend=pi model=gpt-6\n"
+const clankerBody = "Adds x.\n\n-- hive: backend=pi model=gpt-6\n"
 
 func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 	api := &stageAPI{labels: map[string]string{}, commits: map[int][]string{
@@ -2465,6 +2465,42 @@ func TestDCOCommitStatsForHiveSquashUnsafeCountsHiveIdentities(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#17789: a hive rebase + force-push makes the App bot the
+// committer of the PR author's own commit. A sign-off with the commit
+// author's own email, on a commit GitHub links to the PR author, certifies
+// the PR author (the squash attribution gate agrees), so it is never
+// squash-unsafe; a foreign sign-off under the same committer still is.
+func TestDCOCommitStatsForHiveAuthorSignedAfterHiveRebase(t *testing.T) {
+	rebased := func(authorLogin, authorEmail, signoff string) *gh.RepositoryCommit {
+		return &gh.RepositoryCommit{
+			Author:    &gh.User{Login: gh.Ptr(authorLogin)},
+			Committer: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)},
+			Commit: &gh.Commit{
+				Author:  &gh.CommitAuthor{Email: gh.Ptr(authorEmail)},
+				Message: gh.Ptr("fix: openshell sandbox names\n\nSigned-off-by: " + signoff),
+			},
+			Parents: []*gh.Commit{{}},
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		commit *gh.RepositoryCommit
+		want   int
+	}{
+		{"author's real email", rebased("clubanderson", "andy@clubanderson.com", "Andrew Anderson <andy@clubanderson.com>"), 0},
+		{"author email case differs", rebased("ClubAnderson", "Andy@ClubAnderson.com", "Andrew Anderson <andy@clubanderson.com>"), 0},
+		{"author's noreply", rebased("clubanderson", "andy@clubanderson.com", "A <123+clubanderson@users.noreply.github.com>"), 0},
+		{"someone else's sign-off", rebased("clubanderson", "andy@clubanderson.com", "Other <other@example.com>"), 1},
+		{"commit authored by someone else", rebased("collaborator", "andy@clubanderson.com", "Andrew Anderson <andy@clubanderson.com>"), 1},
+		{"author login unlinked", rebased("", "andy@clubanderson.com", "Andrew Anderson <andy@clubanderson.com>"), 1},
+	} {
+		stats := dcoCommitStatsForHive([]*gh.RepositoryCommit{tc.commit}, testHiveAppBotLogin, "clubanderson", false, nil)
+		if stats.unsigned != 0 || stats.squashUnsafeHive != tc.want {
+			t.Errorf("%s: %+v, want squashUnsafeHive=%d", tc.name, stats, tc.want)
+		}
+	}
+}
+
 // hivecommons/hive#16701: a split cached before hive identities counted filed
 // a project.ai_author commit as "other"; stageDCO reads that head's commits
 // once more so the hive's own commit can be re-signed, then trusts the
@@ -2586,11 +2622,11 @@ func TestApplyStageLabelsAuthorKind(t *testing.T) {
 	}
 	removed := func() []string { out := append([]string(nil), api.removed...); sort.Strings(out); return out }
 
-	run(31, "mendezr", "Adds x.\n\n— hive: backend=pi model=gpt-6\n", "author/trusted")
+	run(31, "mendezr", "Adds x.\n\n-- hive: backend=pi model=gpt-6\n", "author/trusted")
 	if !reflect.DeepEqual(added(), []string{"author/clanker", "role/trusted", "stage/050-review-pending"}) || !reflect.DeepEqual(removed(), []string{"author/trusted"}) {
 		t.Fatalf("clanker: added=%v removed=%v", api.added, api.removed)
 	}
-	run(32, testHiveAppBotLogin, "Adds y.\n\n— hive: agent=scanner backend=copilot\n")
+	run(32, testHiveAppBotLogin, "Adds y.\n\n-- hive: agent=scanner backend=copilot\n")
 	if !reflect.DeepEqual(added(), []string{"author/hive", "role/trusted", "stage/050-review-pending"}) {
 		t.Fatalf("hive: added=%v", api.added)
 	}
@@ -2607,7 +2643,7 @@ func TestApplyStageLabelsAuthorKind(t *testing.T) {
 		t.Fatalf("local origin marker: added=%v", api.added)
 	}
 	// Steady state under the labels just written: nothing to do.
-	run(31, "mendezr", "Adds x.\n\n— hive: backend=pi model=gpt-6\n", "author/clanker", "role/trusted", "stage/050-review-pending")
+	run(31, "mendezr", "Adds x.\n\n-- hive: backend=pi model=gpt-6\n", "author/clanker", "role/trusted", "stage/050-review-pending")
 	if api.writes() != 0 {
 		t.Fatalf("steady state wrote added=%v removed=%v", api.added, api.removed)
 	}
@@ -2626,7 +2662,7 @@ func TestApplyStageLabelsConfiguredKindNames(t *testing.T) {
 	e.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, AuthorKindLabels: names} }
 	pr := stagePR(41, "author/clanker")
 	pr.User = &gh.User{Login: gh.Ptr("mendezr")}
-	pr.Body = gh.Ptr("— hive: backend=pi\n")
+	pr.Body = gh.Ptr("-- hive: backend=pi\n")
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageRole("acme", "widget", 41, stagelabels.RoleContributor)
 	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
@@ -3001,7 +3037,7 @@ func TestApplyStageLabelsNeedsDecisionStableAcrossPendingChecks(t *testing.T) {
 	pr := stagePR(number)
 	pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
 	pr.Head = &gh.PullRequestBranch{SHA: gh.Ptr(head)}
-	pr.Body = gh.Ptr("Closes #16265\nSupersedes #16456\n\n— hive: agent=scanner backend=copilot\n")
+	pr.Body = gh.Ptr("Closes #16265\nSupersedes #16456\n\n-- hive: agent=scanner backend=copilot\n")
 
 	feedObservation := func(labels []string) {
 		pr.Labels = make([]*gh.Label, 0, len(labels))

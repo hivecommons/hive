@@ -187,6 +187,7 @@ func (s *HubServer) handleGetScaleSettings(w http.ResponseWriter, r *http.Reques
 			// Reported in seconds to match the input's unit, so the card shows
 			// the same number the operator typed. 0 = debouncing disabled.
 			"upgrade_debounce_seconds": int(autoUpgradeDebounceInterval() / time.Second),
+			"customers_share_enabled":  customersShareEnabled(),
 		},
 		Clusters: rows,
 		Defaults: map[string]int{

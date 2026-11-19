@@ -112,7 +112,22 @@ func stageTrackerReworkOwedBy(it StageTrackerItem) string {
 	if strings.Contains(strings.ToLower(it.Reason), "conflict") && it.Rebase == nil {
 		return reworkOwedByAuthor
 	}
+	// A DCO ask parks the head on the author's sign-off; no re-review is
+	// queued for it (hivecommons/hive#17789).
+	if stageTrackerAuthorDCOReason(it.Reason) {
+		return reworkOwedByAuthor
+	}
 	return reworkOwedByHiveReviewer
+}
+
+// stageTrackerAuthorDCOReason reports a lane reason that asks the author to
+// fix their commits' sign-off.
+func stageTrackerAuthorDCOReason(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case stagelabels.LaneReasonDCOMissing, stagelabels.LaneReasonHiveSignoffAttribution:
+		return true
+	}
+	return false
 }
 
 // StageTrackerFixWork is the hub's fix-queue standing for one PR and one

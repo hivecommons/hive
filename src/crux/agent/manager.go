@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
+	"github.com/hivecommons/hive/crux/keystore"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/crux/sandbox"
 	"github.com/hivecommons/hive/crux/watchdog"
@@ -257,16 +258,22 @@ type AgentProcess struct {
 	LastKickMessage   string
 	KickRefused       bool
 	KickRefusalReason string
-	LaunchedMode      AgentMode
-	HasLaunched       bool
-	poolLeaseID       string
-	poolLeaseCancel   context.CancelFunc
-	baseConfig        config.AgentConfig
-	agentSpecPrompt   string
-	tmuxSession       string
-	tmuxSocket        string
-	cancel            context.CancelFunc
-	forceRelaunch     bool
+	// lastKickInput is the last kick as handed to delivery, before the
+	// backend suffixes, so a refused canary kick can be re-delivered plain
+	// without doubling the suffixes. canaryRetryDone is set when the current
+	// kick IS that re-delivery, so it is never retried again.
+	lastKickInput   string
+	canaryRetryDone bool
+	LaunchedMode    AgentMode
+	HasLaunched     bool
+	poolLeaseID     string
+	poolLeaseCancel context.CancelFunc
+	baseConfig      config.AgentConfig
+	agentSpecPrompt string
+	tmuxSession     string
+	tmuxSocket      string
+	cancel          context.CancelFunc
+	forceRelaunch   bool
 	// launching is set true under m.mu while Start runs this agent's launch
 	// with m.mu RELEASED (so a slow /data NFS write or a hung MITM-proxy token
 	// mint during launch cannot block AllStatuses()/the heartbeat collect() and
@@ -476,6 +483,11 @@ type AgentProcess struct {
 	// The completion handler then turns the expected cancellation into Idle
 	// instead of Failed.
 	sandboxResumeAfterCancel bool
+	// sandboxKickActive is true while a sandbox kick's goroutine is in
+	// flight. StateRunning alone cannot tell that apart from a live
+	// interactive tmux session, and the kick refusal must name which one is
+	// blocking it (hivecommons/hive#18525). Guarded by m.mu.
+	sandboxKickActive bool
 
 	// awaitingBobKey marks an agent that launchInTmux parked in StateFailed
 	// for the single, fully-recoverable reason "bob backend with no API key".
@@ -552,7 +564,9 @@ type Manager struct {
 	// own mutex: the pane pollers that consult it must not take m.mu.
 	rateLimitRelaunchMu   sync.Mutex
 	lastRateLimitRelaunch time.Time
-	cliMemory             cliMemoryState // shared-store warning and drain hook, see cli_memory_drain.go
+	cliMemory             cliMemoryState         // shared-store warning and drain hook, see cli_memory_drain.go
+	strayGitIdentity      strayGitIdentityWarned // warn-once state, see git_identity_warn_dedupe.go
+	firstRunNoticeLogged  sync.Map               // agents whose first-run notice was logged; never under m.mu (claude_first_run.go)
 
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
 	// the output-capture goroutines, and taking m.mu there risks startup
@@ -572,6 +586,7 @@ type Manager struct {
 	project                       ProjectContext
 	copilotAuthToken              string
 	copilotAuthTokenAuthoritative bool
+	claudeLogin                   claudeLoginState // #18732; see claude_login_revoked.go
 	// copilotAuthTokenSource names where copilotAuthToken came from — one of
 	// the CopilotTokenSource* constants, "" when no token is held. Never a
 	// secret: it is the ONE thing a "not licensed" verdict cannot be triaged
@@ -591,14 +606,18 @@ type Manager struct {
 	// setCopilotToken installs a value that differs from the current one, so
 	// a successful recovery (or dashboard re-login) rearms authoritative
 	// precedence for whatever fresh token the operator supplied.
-	copilotAuthTokenRejected bool
-	claudeAuthToken          string
-	uidMap                   *UIDMap
-	sharedPool               SharedSessionPool
-	uidMapPath               string
-	appAuth                  AppTokenMinter
-	appNotInstalledWarned    sync.Map        // agent name -> struct{}: not-installed mint failure already logged
-	agentMint                AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
+	copilotAuthTokenRejected  bool
+	claudeAuthToken           string
+	claudeOperatorToken       string                   // HIVE_CLAUDE_OAUTH_TOKEN, read once at construction; a dashboard sign-in never replaces it
+	claudeOperatorModeLogOnce sync.Once                // one-time "re-bridge and watchdog suspended" log for operator-token mode (claude_operator_token_mode.go)
+	claudeSharedRefresh       claudeSharedRefreshState // hive's own refresh of the shared Claude login (claude_shared_refresh.go)
+	sessionLogins             sessionLoginCache        // user-session login copies already judged (usersession_login.go)
+	uidMap                    *UIDMap
+	sharedPool                SharedSessionPool
+	uidMapPath                string
+	appAuth                   AppTokenMinter
+	appNotInstalledWarned     sync.Map        // agent name -> struct{}: not-installed mint failure already logged
+	agentMint                 AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
 
 	// sharedPoolRenewInterval overrides the lease watcher tick (zero means
 	// defaultSharedPoolRenewInterval). Set before any watcher starts; it is
@@ -669,9 +688,19 @@ type Manager struct {
 	// m.mu, so the pointer must be readable from a locked context, and the
 	// observer is always invoked on its own goroutine. See kick_observer.go.
 	kickObserver atomic.Pointer[func(agentName, event, detail string)]
+	// kickObservers is the fan-out observer registry (#18286): every
+	// registered observer receives every kick event, with its kick ID, in
+	// order on its own goroutine. See kick_observer.go.
+	kickObservers kickObserverSet
+	// outputSignalSeen dedupes output-signal events per agent and kick
+	// (#18287); a pane redraw must not deliver a finding twice.
+	outputSignalSeen outputSignalDedupe
 	// kickOutcomeObserver receives the verdict on how each kicked turn ended
 	// (#7421); the governor consumes it. Same discipline as kickObserver.
 	kickOutcomeObserver atomic.Pointer[func(agentName string, outcome KickOutcome)]
+	// canaryRetryDeliver, when set, replaces the goroutine+sendKick path a
+	// refused canary kick is re-delivered through (tests inject a recorder).
+	canaryRetryDeliver func(name, message string)
 
 	// kickDispatches tracks asynchronous kick dispatches (#5325): the in-flight
 	// guard that makes delivery exactly-once, and the latest outcome per agent
@@ -680,6 +709,13 @@ type Manager struct {
 	// delivery goroutine settles a dispatch from a context that holds no
 	// manager lock and must not contend with the launch path. See kick_async.go.
 	kickDispatches kickDispatchRegistry
+
+	// kickQueue: per-agent FIFOs of ID-addressed kicks (#18285), own mutex.
+	kickQueue kickQueue
+	// Queue pump test overrides; nil / zero use the real paths (kick_queue.go).
+	kickQueueDeliverFn    func(name, message string) error
+	kickQueueIdleFn       func(name string) bool
+	kickQueuePollInterval time.Duration
 
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
@@ -763,13 +799,20 @@ type Manager struct {
 	// agent on sandbox.runtime: job (#6311). Nil means the real in-cluster
 	// launcher; tests inject a fake through setSandboxJobLauncherFactoryForTest.
 	sandboxJobLauncherFactory func(config.SandboxJobConfig) sandbox.Launcher
-	sandboxRunner             sandboxCommandRunner
+	// sandboxOpenShellLauncherFactory is the same seam for
+	// sandbox.runtime: openshell (ADR-0026).
+	sandboxOpenShellLauncherFactory func(config.SandboxOpenShellConfig) sandbox.Launcher
+	// sandboxSubstrateLauncherFactory is the same seam for
+	// sandbox.runtime: substrate (ADR-0026 phase 2).
+	sandboxSubstrateLauncherFactory func(config.SandboxSubstrateConfig) sandbox.Launcher
+	sandboxRunner                   sandboxCommandRunner
 	// sandboxRunPersister overrides persistSandboxRun in tests.
 	sandboxRunPersister  func(workDir string, entry SandboxRunHistoryEntry) error
 	sandboxPushMinter    pushbroker.TokenMinter
 	sandboxPRClient      PRCreator
 	sandboxMutation      effects.Boundary
 	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]
+	sandboxReadRelay     sandboxReadRelayState
 
 	// terminal is the nil-safe pane/tmux boundary. Nil means use the real tmux
 	// implementation, preserving zero-value Manager behavior in tests.
@@ -792,21 +835,6 @@ type Manager struct {
 	kickLogSourceResolver atomic.Pointer[func() string]
 	// buildInfo supplies hive_version/hive_commit for kick log headers.
 	buildInfo func() (version, commit string)
-}
-
-// SetACMMLevel updates the cached ACMM level used by agentMode() when
-// launching agents. Call this whenever the ACMM level changes.
-func (m *Manager) SetACMMLevel(level int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.project.ACMMLevel = level
-	m.removeAgentsBelowACMMGateLocked(level)
-}
-
-func (m *Manager) GetACMMLevel() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.project.ACMMLevel
 }
 
 func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, project ProjectContext) *Manager {
@@ -838,7 +866,10 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 	if copilotToken == "" {
 		// Fall back to the token persisted by the dashboard's device-flow login.
 		copilotTokenSource = CopilotTokenSourceDurableFile
-		if data, err := os.ReadFile(copilotUserTokenLoadPath); err == nil {
+		// Through the keystore (hive#18214): the durable token is sealed at
+		// rest once a provider is active, and a legacy plaintext file is
+		// re-sealed on this read.
+		if data, err := keystore.ReadFile(context.Background(), copilotUserTokenLoadPath); err == nil {
 			copilotToken = strings.TrimSpace(string(data))
 		}
 	}
@@ -879,6 +910,7 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 		copilotAuthTokenAuthoritative: copilotTokenAuthoritative,
 		copilotAuthTokenSource:        copilotTokenSource,
 		claudeAuthToken:               claudeToken,
+		claudeOperatorToken:           claude.OperatorToken(),
 		uidMap:                        uidMap,
 		sharedPool:                    opts.sharedPool,
 		uidMapPath:                    selectedUIDMapPath,
@@ -1230,6 +1262,9 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 	defer ticker.Stop()
 	menuEscapes := 0
 	dialogAnswers := 0
+	var blocking kickBlockingScreen
+	// lastWorking records whether the most recent poll saw the agent mid-turn.
+	lastWorking := false
 	// Inference-routed agents run Claude Code too, so a permission dialog in
 	// their pane is answered on the same terms as a plain claude agent's.
 	dialogBackend := backend
@@ -1243,6 +1278,18 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 		}
 		select {
 		case <-deadline:
+			// An agent still mid-turn at the deadline is busy, not stuck: the
+			// kick paths already report it as busy and leave a genuinely stalled
+			// turn to the busy-no-activity watchdog (#12268). Dumping the pane at
+			// WARN here fed the agent_pane_timeout self-report every time a
+			// re-kick outwaited a long turn (#17993).
+			if lastWorking {
+				m.logger.Info("prompt wait ended: agent still mid-turn",
+					"agent", agent.Name,
+					"session", agent.tmuxSession,
+					"waited", inputPromptTimeout)
+				return false, kickPromptNotReadyReason
+			}
 			m.logger.Warn("prompt timeout — dumping pane",
 				"agent", agent.Name,
 				"session", agent.tmuxSession)
@@ -1269,6 +1316,7 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 			// Check the visible pane only: a dismissed consent screen
 			// lingers in the scrollback that captureTmuxPaneForAgent sees.
 			visible := m.captureVisiblePaneForAgent(agent)
+			lastWorking = false
 			if paneShowsCopilotQuestionForm(visible) {
 				m.dismissCopilotQuestionFormForKick(agent)
 				continue
@@ -1292,6 +1340,13 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 				m.dismissTUIMenuForKick(agent, footer, menuEscapes)
 				continue
 			}
+			// A known blocking screen is answered, or named in a fast failure (claude_first_run.go).
+			if handled, reason := m.handleBlockingScreenForKick(agent, dialogBackend, visible, &blocking); handled {
+				if reason != "" {
+					return false, reason
+				}
+				continue
+			}
 			if paneShowsConsentScreen(visible) {
 				continue
 			}
@@ -1301,6 +1356,7 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 			// Use the visible pane only for the same reason as above: a
 			// finished task's working marker lingers in scrollback.
 			if paneShowsAgentWorking(visible) {
+				lastWorking = true
 				continue
 			}
 			if paneShowsInputPrompt(visible) {
@@ -1409,24 +1465,6 @@ func (m *Manager) removeAgentsBelowACMMGateLocked(level int) {
 	}
 }
 
-// UpdateConfig updates the stored config for a running agent process so that
-// status builders (which read from AgentProcess.Config) reflect changes made
-// via the config dialog (which writes to the global Config.Agents map).
-func (m *Manager) UpdateConfig(name string, cfg config.AgentConfig) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	agent, ok := m.agents[name]
-	if !ok {
-		return fmt.Errorf("agent %s not found", name)
-	}
-
-	agent.clearAgentSpecPromptIfSpecRemoved(cfg)
-	agent.Config = cfg
-	agent.baseConfig = cfg
-	return nil
-}
-
 // ReconcileAgents makes the manager's name-keyed process table match the
 // enabled config set. New agents are added, existing agents get fresh config,
 // and removed agents have only their own hive-<name> tmux session retired.
@@ -1443,9 +1481,13 @@ func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []strin
 		allowedConfigs[name] = cfg
 		if existing, ok := m.agents[name]; ok {
 			delete(m.idToName, existing.ID)
+			wasSandboxed := m.agentSandboxEnabledLocked(existing)
 			existing.clearAgentSpecPromptIfSpecRemoved(cfg)
 			existing.Config = cfg
 			existing.baseConfig = cfg
+			if !wasSandboxed && m.agentSandboxEnabledLocked(existing) {
+				m.enterSandboxModeLocked(existing)
+			}
 			if cfg.ID != "" {
 				existing.ID = cfg.ID
 			} else {

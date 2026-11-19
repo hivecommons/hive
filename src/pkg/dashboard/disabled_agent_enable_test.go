@@ -81,7 +81,11 @@ var _sidebarLayout = null;
 		jsFunc(t, html, "_sidebarBuildGroups") + "\n" +
 		jsFunc(t, html, "_sortAgentsBySidebar") + "\n" +
 		jsFunc(t, html, "_sidebarAgents") + "\n" +
+		jsFunc(t, html, "agentCollapsedAuthInfo") + "\n" +
+		jsFunc(t, html, "agentsNeedingAttention") + "\n" +
 		jsFunc(t, html, "agentsSectionSummary") + `
+function _agentNeedsLogin() { return false; }
+function agentOutOfQuotaShown() { return false; }
 const fixture = [
   { name: 'scanner', displayName: 'Scanner', enabled: true, sortOrder: 10, state: 'running', busy: 'idle', cli: 'copilot', model: 'gpt-5' },
   { name: 'outreach', displayName: 'Outreach', enabled: false, sortOrder: 20, state: 'stopped', busy: 'idle' }

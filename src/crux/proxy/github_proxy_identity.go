@@ -16,7 +16,7 @@ import (
 // including native binaries that don't send Proxy-Authorization); see
 // fallbackAgentName for what happens when that fails.
 func (p *GitHubProxy) identifyAgentFromReq(r *http.Request) string {
-	if p.uidMap != nil {
+	if p.loadedUIDMap() != nil {
 		if name := p.identifyAgentByUID(r.RemoteAddr); name != "" {
 			return name
 		}
@@ -33,7 +33,7 @@ func (p *GitHubProxy) identifyAgentFromReq(r *http.Request) string {
 // functional" mode worth that trade — an unidentified caller is refused.
 // Returns "" when no UID map was loaded or the connection's UID is unmapped.
 func (p *GitHubProxy) IdentifyAgentByUID(r *http.Request) string {
-	if p.uidMap == nil || r == nil {
+	if p.loadedUIDMap() == nil || r == nil {
 		return ""
 	}
 	return p.identifyAgentByUID(r.RemoteAddr)
@@ -47,7 +47,7 @@ func (p *GitHubProxy) IdentifyAgentByUID(r *http.Request) string {
 // falls back to ADVISORY — downgrading every write-capable agent to read-only.
 // Taking the peer address from the connection itself removes that trap.
 func (p *GitHubProxy) identifyAgentFromConn(conn net.Conn, r *http.Request) string {
-	if p.uidMap != nil && conn != nil {
+	if p.loadedUIDMap() != nil && conn != nil {
 		if name := p.identifyAgentByUID(conn.RemoteAddr().String()); name != "" {
 			return name
 		}
@@ -101,7 +101,7 @@ func (p *GitHubProxy) identifyAgentByUID(remoteAddr string) string {
 	if err != nil {
 		return ""
 	}
-	return p.uidMap.LookupByUID(uid)
+	return p.lookupAgentByUID(uid)
 }
 
 // uidForRemoteAddr resolves the UID of the process that owns the local socket
@@ -178,4 +178,51 @@ func readAgentMode(agentName string) agent.AgentMode {
 		return agent.ModeAdvisory
 	}
 	return mode
+}
+
+// Reasons an agent could not be identified, carried as the "reason" log field
+// on the unidentified-writer WARN (#18798) so the operator can tell a
+// deployment shape (shared UID, no map) from a transient miss without reading
+// the code.
+const (
+	// unidentifiedNoUIDMap: no uid-map.json was loaded at construction (no
+	// entrypoint root phase: local dev, native install, boot-order failure).
+	unidentifiedNoUIDMap = "no_uid_map"
+	// unidentifiedSharedUID: a map loaded but allocates no per-agent UID and
+	// forced egress is off — the OpenShift restricted-v2 shape, where every
+	// process shares one UID and attribution is structurally impossible.
+	unidentifiedSharedUID = "shared_uid_mode"
+	// unidentifiedNoPeerPort: the peer address carries no usable TCP port.
+	unidentifiedNoPeerPort = "no_peer_port"
+	// unidentifiedPortNotInTable: the peer port is in neither /proc/net/tcp
+	// nor /proc/net/tcp6 (not visible from this process, or already closed).
+	unidentifiedPortNotInTable = "port_not_in_socket_table"
+	// unidentifiedUIDNotInMap: the socket owner's UID belongs to no agent in
+	// the loaded map.
+	unidentifiedUIDNotInMap = "uid_not_in_map"
+)
+
+// unidentifiedReason explains why UID attribution of remoteAddr produced no
+// agent, and the socket owner's UID when it was resolved (-1 otherwise). It is
+// diagnostic only and is called on the already-blocked write path, never on the
+// identification decision itself: it cannot make an unidentified caller
+// identified. The ordering puts deployment-shape causes ahead of per-request
+// ones so a shared-UID hive reports shared_uid_mode every time.
+func (p *GitHubProxy) unidentifiedReason(remoteAddr string) (reason string, uid int) {
+	uid = -1
+	m := p.loadedUIDMap()
+	if m == nil {
+		return unidentifiedNoUIDMap, uid
+	}
+	if !m.HasAgents() && !m.IptablesActive {
+		return unidentifiedSharedUID, uid
+	}
+	if _, _, err := net.SplitHostPort(remoteAddr); err != nil {
+		return unidentifiedNoPeerPort, uid
+	}
+	resolved, err := uidForRemoteAddr(remoteAddr)
+	if err != nil {
+		return unidentifiedPortNotInTable, uid
+	}
+	return unidentifiedUIDNotInMap, resolved
 }

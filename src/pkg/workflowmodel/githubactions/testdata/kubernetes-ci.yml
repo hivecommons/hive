@@ -1,0 +1,71 @@
+# Hand-written fixture modelled on a typical multi-job Go project CI.
+name: CI
+
+on:
+  pull_request:
+    branches: [main, "release-*"]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.23"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: golangci/golangci-lint-action@v6
+
+  build:
+    name: Build
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make build
+
+  unit:
+    name: Unit tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test
+
+  integration:
+    name: Integration (${{ matrix.os }}, go ${{ matrix.go }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.22", "1.23"]
+        os: [ubuntu-latest, macos-latest]
+        exclude:
+          - go: "1.22"
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make integration
+
+  e2e:
+    name: E2E
+    needs: [unit, integration]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - run: make e2e

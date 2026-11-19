@@ -82,7 +82,10 @@ type requestRelays struct {
 	// that forge's merger. nil keeps every repo on the GitHub path.
 	forgeMerge github.ForgeMergeSelector
 	pushBranch github.PushBranchRequestAuthorizer
-	logger     *slog.Logger
+	// topic applies a sandboxed kick's spooled topic request to its agent's
+	// bead store (hivecommons/hive#18572). nil refuses topic requests.
+	topic  github.SandboxTopicHandler
+	logger *slog.Logger
 }
 
 func defaultBootAgentsDeps() bootAgentsDeps {
@@ -105,6 +108,10 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 			if r.forgeMerge != nil {
 				c.SetForgeMergeSelector(r.forgeMerge)
 			}
+			// The sandbox spool's issue and topic kinds (#18572, #18573):
+			// the same issue gate the issue relay uses, installed before
+			// any watcher reads it.
+			c.SetSandboxSpoolRelays(r.issueOpen, r.topic)
 			return joinDone(
 				startRequestWatchers(ctx, requestwatch.New(c, r.prOpen, r.issueOpen, r.holdLabel, nil), r.logger),
 				c.StartReviewRequestWatcher(ctx, r.review, nil),

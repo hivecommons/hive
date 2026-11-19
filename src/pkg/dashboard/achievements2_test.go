@@ -30,20 +30,6 @@ func TestBuildAchievements2LocalPaidHybridMastery(t *testing.T) {
 			completedActivity("alice", "openai", "gpt-5.6-terra", "2026-09-22T14:00:00Z"),
 			completedActivity("mallory", "ollama", "llama3", "2026-09-22T15:00:00Z"),
 		},
-		JamStates: []CampaignJamState{{
-			CampaignID: "run-1",
-			Revisions:  []CampaignRevision{{Author: CampaignJamActor{Name: "alice"}}},
-			Polls: []CampaignPoll{{
-				CreatedBy: CampaignJamActor{Name: "bob"},
-				Votes:     []CampaignPollVote{{Voter: CampaignJamActor{Name: "alice"}}},
-				Decision:  &CampaignDecision{DecidedBy: CampaignJamActor{Name: "carol"}},
-			}},
-			Suggestions: []CampaignSuggestion{{
-				Status:     jamSuggestionAccepted,
-				Author:     CampaignJamActor{Name: "dave"},
-				ResolvedBy: &CampaignJamActor{Name: "carol"},
-			}},
-		}},
 		Runs: []Run{{
 			Key: "run-1", Stage: StageImplement, Assignee: "dave",
 			Stages: []RunStage{

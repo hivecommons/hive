@@ -105,6 +105,17 @@
         } catch (err) { hamNotesLoad(); }
       });
 
+      // A meeting hive is in changed state: refresh the Meetings list.
+      // The same frame drives the top-bar "in a meeting" indicator and the
+      // Calendar badge (calendar.js).
+      source.addEventListener('meeting', (e) => {
+        noteSSEFrame();
+        if (typeof fetchMeetings === 'function') fetchMeetings();
+        if (typeof calendarOnMeetingFrame === 'function') {
+          try { calendarOnMeetingFrame(JSON.parse(e.data || '{}')); } catch (err) { /* malformed frame */ }
+        }
+      });
+
       source.addEventListener('agent-status', (e) => {
         noteSSEFrame();
         try {

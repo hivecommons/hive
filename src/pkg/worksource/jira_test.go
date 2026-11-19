@@ -62,6 +62,12 @@ func jiraIssueJSON(it jiraTestIssue) map[string]any {
 func newJiraServer(t *testing.T, issues []jiraTestIssue, onReq func(*http.Request)) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// An empty search makes the adapter confirm its credentials.
+		if r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/myself" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"accountId":"test"}`))
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/rest/api/3/search/jql" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -260,6 +266,103 @@ func TestJiraAuthHeader(t *testing.T) {
 	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("bot@myorg.com:secret-token"))
 	if gotAuth != want {
 		t.Errorf("Authorization = %q, want %q", gotAuth, want)
+	}
+}
+
+// Jira Cloud answers a bad or missing token with HTTP 200 and no issues; the
+// adapter must surface that as an error, not as an empty backlog.
+func TestJiraCloudEmptySearchWithRejectedCredentialsErrors(t *testing.T) {
+	var myselfCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/search/jql":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"issues":[],"isLast":true}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/myself":
+			myselfCalls++
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`Client must be authenticated to access this resource.`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	src := NewJiraSource(JiraConfig{
+		BaseURL: srv.URL, Email: "bot@myorg.com", APIToken: "revoked",
+		ProjectKeys: []string{"ENG"}, Repo: "o/r",
+	})
+	got, err := src.ListIssues(context.Background())
+	if err == nil {
+		t.Fatalf("ListIssues = %+v, nil error; want credentials error", got)
+	}
+	if !strings.Contains(err.Error(), "credentials rejected") || !strings.Contains(err.Error(), "401") {
+		t.Errorf("error = %q, want credentials rejected with 401", err)
+	}
+	if myselfCalls != 1 {
+		t.Errorf("GET /myself calls = %d, want 1", myselfCalls)
+	}
+}
+
+// cloudSearchServer serves a single Jira Cloud search page holding issueKeys
+// and a /myself endpoint answering myselfStatus, counting /myself calls.
+func cloudSearchServer(t *testing.T, issueKeys []string, myselfStatus int, myselfCalls *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/search/jql":
+			var page []map[string]any
+			for _, k := range issueKeys {
+				page = append(page, jiraIssueJSON(jiraTestIssue{Key: k, Summary: k}))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"issues": page, "isLast": true})
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/myself":
+			*myselfCalls++
+			w.WriteHeader(myselfStatus)
+			_, _ = w.Write([]byte(`{"accountId":"test"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func TestJiraCloudEmptySearchWithValidCredentialsIsEmpty(t *testing.T) {
+	var myselfCalls int
+	srv := cloudSearchServer(t, nil, http.StatusOK, &myselfCalls)
+	defer srv.Close()
+
+	src := NewJiraSource(JiraConfig{BaseURL: srv.URL, ProjectKeys: []string{"ENG"}, Repo: "o/r"})
+	got, err := src.ListIssues(context.Background())
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d issues, want 0", len(got))
+	}
+	if myselfCalls != 1 {
+		t.Errorf("GET /myself calls = %d, want 1", myselfCalls)
+	}
+}
+
+// A non-empty search proves the credentials work: no extra /myself round trip.
+func TestJiraCloudNonEmptySearchSkipsCredentialCheck(t *testing.T) {
+	var myselfCalls int
+	srv := cloudSearchServer(t, []string{"ENG-1"}, http.StatusUnauthorized, &myselfCalls)
+	defer srv.Close()
+
+	src := NewJiraSource(JiraConfig{BaseURL: srv.URL, ProjectKeys: []string{"ENG"}, Repo: "o/r"})
+	got, err := src.ListIssues(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("got %d issues, want 1", len(got))
+	}
+	if myselfCalls != 0 {
+		t.Errorf("GET /myself calls = %d, want 0", myselfCalls)
 	}
 }
 

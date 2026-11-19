@@ -102,7 +102,7 @@ The kick path records a `LaunchRecord` (`pkg/tokens/launch.go`) each time the go
 - USD is `null` when nothing was attributed — never `$0.00`.
 - `?ref=owner/repo#N` narrows `by_ref` and `by_launch` to one work item; totals stay whole-window.
 
-The dashboard Cost panel renders the top rows as "cost by work item". Manual `send-kick` and startup prompts do not record launches, so their spend stays unattributed. This is visibility only: nothing here gates or budgets a kick, and the governor window budget remains the single enforced budget.
+The dashboard Cost panel renders the top rows as "cost by work item". The Governor **PRs by model** card (`GET /api/governor/pr-models`) sums the PR refs' `share_usd` per authoring model as `hive_cost` (#18717): refs with `kind: "pr"` only, joined on the canonical `owner/repo#N` (a short configured repo name joins on the repo name), never `launch_usd`, and `null` when no matched ref carried usage. `hive_cost_coverage` copies the snapshot's `window_hours`, `unattributed` and `backend_unsupported` USD and the disclaimer; on backends without a usage timeline most models show `null`. Manual `send-kick` and startup prompts do not record launches, so their spend stays unattributed. This is visibility only: nothing here gates or budgets a kick, and the governor window budget remains the single enforced budget.
 
 ## Metering diagnostics and zero-token health
 

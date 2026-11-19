@@ -229,7 +229,9 @@
         "Human": "",
         "Clanker": "",
         "Hive": ""
-      }
+      },
+      "ReadyForReview": "",
+      "DecisionNeeded": ""
     },
     "Sensing": {
       "GHRatePatterns": [
@@ -440,8 +442,8 @@
     "BaseURL": "",
     "AppAuthoredPRs": null,
     "AppSignedCommits": null,
-    "attention": {},
     "notifications": {},
+    "attention": {},
     "OAuthBaseURLOverride": "",
     "OAuthAPIURLOverride": ""
   },
@@ -463,6 +465,7 @@
     "Port": 8080,
     "AuthToken": "",
     "AgentPollIntervalS": 10,
+    "matrix": {},
     "AuthorizedUsers": null,
     "AuthorizedUserNames": null,
     "HubProxied": false,
@@ -473,8 +476,8 @@
       }
     },
     "issue_bands": {},
-    "matrix": {},
-    "stage_tracker": {}
+    "stage_tracker": {},
+    "sessions": {}
   },
   "Data": {
     "MetricsDir": "/data/metrics",
@@ -483,6 +486,7 @@
     "CopilotSessionsDir": "/data/home/.copilot/session-state",
     "BobSessionsDir": "/data/home/.bob",
     "AgentsDir": "/data/agent-configs",
+    "WorkflowsDir": "",
     "SessionRetentionDays": null
   },
   "deployment": {},
@@ -567,7 +571,12 @@
       "BudgetOverride": false,
       "HoldoutPercent": 0,
       "OnError": ""
-    }
+    },
+    "SidecarAdvise": false
+  },
+  "inbox": {
+    "spek": {},
+    "dibs": {}
   },
   "Hub": {
     "Enabled": false,
@@ -631,6 +640,7 @@
     "ContributeQueueHoldReasons": null,
     "ContributeRequireExplicitAccept": null,
     "ContributeDelegatableRoles": null,
+    "contribute_umbrella": {},
     "contribute_announcement": {},
     "DisabledRepos": null,
     "DisabledTiers": null,
@@ -668,6 +678,10 @@
   },
   "dedupe": {},
   "contribute": {},
+  "workflow": {
+    "enabled": false,
+    "marketplace": {}
+  },
   "HiveID": "",
   "acmm_level": null,
   "Variables": {
@@ -678,13 +692,17 @@
       "ExecTimeoutS": 0,
       "HTTPTimeoutS": 0,
       "AllowGitHubPrompt": false,
-      "GitHubPromptAllowlist": null
+      "GitHubPromptAllowlist": null,
+      "OwnerGitHubPromptRepos": null
     },
     "Defs": null
   },
   "otel": {},
   "Tracing": {},
   "debug": {},
+  "network": {
+    "upstream_proxy": {}
+  },
   "Mint": {
     "Enabled": false,
     "KeyPath": "",
@@ -699,10 +717,12 @@
   "quality": {},
   "intent": {},
   "sentinel": {},
+  "session_taint": {},
   "security": {},
   "evidence": {
     "complexity": {}
   },
+  "benchmarks": {},
   "compliance": {
     "posture_checks": {}
   },
@@ -715,11 +735,7 @@
       "clarity_gate": {},
       "prior_art": {}
     },
-    "spektacular": {
-      "recheck": {
-        "discovery": {}
-      }
-    },
+    "spektacular": {},
     "external": {
       "flue": {
         "enabled": false
@@ -735,14 +751,23 @@
       }
     }
   },
+  "meetings": {
+    "quorum": {},
+    "vexa": {},
+    "discord": {},
+    "budget": {},
+    "llm": {}
+  },
   "swarm": {},
   "autonomy": {},
   "review": {
+    "analysis_factcheck": {},
     "contributor_prs": {},
     "recommendations": {},
     "plan_match": {},
     "severity": {},
-    "backlog": {}
+    "backlog": {},
+    "preflight": {}
   },
   "auto_merge": {
     "bot_takeover": {},
@@ -751,7 +776,8 @@
     "contributor_tier": {},
     "merge_train": {},
     "native_merge_queue": {},
-    "hive_superseding": {}
+    "hive_superseding": {},
+    "pr_gate": {}
   },
   "decisions": {
     "delegate": {}
@@ -761,6 +787,12 @@
   },
   "chat": {
     "grounded_answers": {}
+  },
+  "customers": {
+    "inference": {},
+    "avatars": {},
+    "hub_import": {},
+    "mention_search": {}
   },
   "duplicate_sweep": {},
   "good_first_issue": {},

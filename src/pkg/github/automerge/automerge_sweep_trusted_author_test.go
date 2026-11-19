@@ -7,6 +7,7 @@ package automerge
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,12 +41,21 @@ type trustedSweepFixture struct {
 	updateStatus    int
 	labels          []string
 	title           string
+	// issueComments is the PR's comment thread, as GET .../comments serves
+	// it; a POST appends to it. listCommentsStatus fails that GET.
+	issueComments      []map[string]any
+	listCommentsStatus int
+	edits              int
+	lastEdit           string
 }
 
 func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server {
 	t.Helper()
 	fetches := 0
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		if serveUnprotectedSweepBase(w, r) {
 			return
 		}
@@ -137,6 +147,30 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 				w.WriteHeader(fx.updateStatus)
 			}
 			json.NewEncoder(w).Encode(map[string]any{"message": "Updating pull request branch."})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			if fx.listCommentsStatus != 0 {
+				http.Error(w, "list comments error", fx.listCommentsStatus)
+				return
+			}
+			out := fx.issueComments
+			if out == nil {
+				out = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/comments/"):
+			fx.edits++
+			var comment struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&comment)
+			fx.lastEdit = comment.Body
+			id := strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/issues/comments/")
+			for _, c := range fx.issueComments {
+				if fmt.Sprint(c["id"]) == id {
+					c["body"] = comment.Body
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"id": id, "body": comment.Body})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
 			fx.comments++
 			var comment struct {
@@ -148,7 +182,9 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 				http.Error(w, "comment error", fx.commentStatus)
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{"id": 1})
+			id := 1000 + len(fx.issueComments)
+			fx.issueComments = append(fx.issueComments, map[string]any{"id": id, "body": comment.Body, "user": map[string]string{"login": testHiveAppBotLogin}})
+			json.NewEncoder(w).Encode(map[string]any{"id": id})
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
@@ -416,6 +452,9 @@ func TestPrefilterTrustedAuthorPRIgnoresSentinelExcludedLabel(t *testing.T) {
 func TestTrustedAuthorGitHubSignalErrorsAndEdges(t *testing.T) {
 	page := 0
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.URL.Path == "/repos/acme/widget/collaborators/ghost/permission":
 			http.Error(w, "boom", http.StatusInternalServerError)

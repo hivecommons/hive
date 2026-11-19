@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/claude"
@@ -265,15 +266,22 @@ func setCopilotSDKHelperPathForTest(t interface {
 // file) or fails. Live discovery via api.anthropic.com/v1/models is strongly
 // preferred; this is only a floor so the dropdown is never empty. Refreshed
 // 2026-08-03 from a live /v1/models response (11 ids, in API order);
-// claude-sonnet-5-5 added per the Claude Code 2.1.284 changelog (#9804). Keep
-// it in sync with CLAUDE_CLI_MODELS in static/index.html. Both the canonical
-// ids AND the bare aliases the CLI accepts are included.
+// claude-sonnet-5-5 added per the Claude Code 2.1.284 changelog (#9804).
+// Refreshed 2026-11-17 (#18753) from Anthropic's models overview and the
+// Claude Code changelog: claude-fable-5-2 (2.1.321), claude-fable-5-1
+// (2.1.257), claude-haiku-5-5 (2.1.293) and the bare `fable` alias, all
+// accepted by the pinned 2.1.326. Keep it in sync with CLAUDE_CLI_MODELS in
+// static/index.html. Both the canonical ids AND the bare aliases the CLI
+// accepts are included.
 var claudeStaticModels = []string{
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-sonnet-5-5",
 	"claude-sonnet-5",
+	"claude-fable-5-2",
+	"claude-fable-5-1",
 	"claude-fable-5",
+	"claude-haiku-5-5",
 	"claude-opus-4-8",
 	"claude-opus-4-7",
 	"claude-sonnet-4-6",
@@ -286,6 +294,7 @@ var claudeStaticModels = []string{
 	"opus",
 	"sonnet",
 	"haiku",
+	"fable",
 }
 
 // copilotStaticModels is the fallback offered when the Copilot models probe
@@ -392,6 +401,7 @@ var claudeAlwaysIncludeModels = []string{
 	"opus",
 	"sonnet",
 	"haiku",
+	"fable",
 }
 
 // bobStaticModels is bob's complete model list: exactly one entry, the auto
@@ -406,27 +416,29 @@ var bobStaticModels = []string{bobAutoModel}
 // models — Claude ids are rejected with a ChatGPT account ("model is not
 // supported when using Codex with a ChatGPT account"), so codex must never
 // fall through to the copilot list. The catalog is baked into the CLI binary
-// (per-CLI-version, not per-account); this snapshot matches codex 0.166.0
-// and 0.167.0 (captured 2026-11-07 from live `codex app-server` model/list
-// exchanges; the 0.159.0 capture was #9804): visible ids in
-// picker order (GPT-6.1 Sol is the default and has been since at least
-// 0.160.0; GPT-6.1 Terra arrived in 0.165.0; GPT-6 Sol and Luna arrived in
+// (per-CLI-version, not per-account); this snapshot matches codex 0.170.0
+// (captured 2026-11-18 from a live `codex app-server` model/list exchange with
+// no login; the 0.159.0 capture was #9804): visible ids in
+// picker order (GPT-6.2 Sol is the default; GPT-6.2 Astra arrived after
+// 0.167.0; GPT-6.1 Terra arrived in 0.165.0; GPT-6 Sol and Luna arrived in
 // 0.156.1, #8417), then the hidden ids — hidden entries are still valid
 // --model values (see orderCodexServedModels). gpt-5.2 and gpt-5.4-mini were
 // retired from the catalog in 0.155.0; gpt-5.4 was retired between 0.156.1
 // and 0.159.0.
 // Keep in sync with CODEX_CLI_MODELS in static/index.html.
 var codexStaticModels = []string{
+	"gpt-6.2-sol",
+	"gpt-6.2-astra",
+	"gpt-6.1-terra",
 	"gpt-6.1-sol",
 	"gpt-6-astra",
 	"gpt-6-sol",
 	"gpt-6-luna",
 	"gpt-5.6-sol",
-	"gpt-6.1-terra",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-5.5",
-	// Hidden in the 0.166.0 and 0.167.0 pickers but still valid --model values.
+	// Hidden in the 0.170.0 picker but still valid --model values.
 	"gpt-daybreak-blue-latest",
 	"gpt-daybreak-red-latest",
 	"codex-auto-review",
@@ -442,16 +454,21 @@ var geminiStaticModels = []string{
 }
 
 // claudePinnedCLIModels is the closed model set accepted by the Claude Code
-// version pinned in src/Dockerfile. The Anthropic account catalog can list
-// models that the installed CLI refuses with "version X or newer is required";
-// intersecting live and fallback lists with this set keeps the dashboard from
-// offering a value this image cannot launch (#8418).
+// version pinned in src/Dockerfile (2.1.326 as of #18753). The Anthropic
+// account catalog can list models that the installed CLI refuses with
+// "version X or newer is required"; intersecting live and fallback lists with
+// this set keeps the dashboard from offering a value this image cannot launch
+// (#8418). Each id's first accepting CLI version is recorded in
+// src/scripts/cli-model-requirements.txt.
 var claudePinnedCLIModels = []string{
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-sonnet-5-5",
 	"claude-sonnet-5",
+	"claude-fable-5-2",
+	"claude-fable-5-1",
 	"claude-fable-5",
+	"claude-haiku-5-5",
 	"claude-opus-4-8",
 	"claude-opus-4-7",
 	"claude-sonnet-4-6",
@@ -463,6 +480,7 @@ var claudePinnedCLIModels = []string{
 	"opus",
 	"sonnet",
 	"haiku",
+	"fable",
 }
 
 // geminiPinnedCLIModels is the conservative Gemini CLI allowlist used to bound
@@ -991,10 +1009,10 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 	// paths: a live sample that omits a rollout-gated id and the static
 	// fallback list (see copilotAlwaysIncludeModels / claudeAlwaysIncludeModels).
 	if backend == "copilot" {
-		r.models = dedupeModels(append(r.models, copilotAlwaysIncludeModels...))
+		r.models = canonicalModelList(backend, append(r.models, copilotAlwaysIncludeModels...))
 	}
 	if backend == "claude" {
-		r.models = dedupeModels(append(r.models, claudeAlwaysIncludeModels...))
+		r.models = canonicalModelList(backend, append(r.models, claudeAlwaysIncludeModels...))
 	}
 	if s.cliModels != nil {
 		s.cliModels.set(backend, r)
@@ -1042,10 +1060,10 @@ func (s *Server) staticCLIModelResult(backend string) cliModelResult {
 	default:
 		models := filterPinnedCLIModels(backend, dedupeModels(cliStaticFallback(backend)))
 		if backend == "copilot" {
-			models = dedupeModels(append(models, copilotAlwaysIncludeModels...))
+			models = canonicalModelList(backend, append(models, copilotAlwaysIncludeModels...))
 		}
 		if backend == "claude" {
-			models = dedupeModels(append(models, claudeAlwaysIncludeModels...))
+			models = canonicalModelList(backend, append(models, claudeAlwaysIncludeModels...))
 		}
 		return cliModelResult{models: models, fallback: true, discoveryErr: "discovery refresh running in background"}
 	}
@@ -1613,10 +1631,28 @@ func copilotSDKHelperExecErr(ctx context.Context, err error, stderr string) erro
 			errCopilotSDKHelperTimeout, copilotSDKProbeTimeout, filepath.Base(copilotSDKHelperPath))
 	}
 	msg := strings.TrimSpace(stderr)
+	if isBinaryStderr(msg) {
+		return fmt.Errorf("sdk helper: %w (stderr was binary: the kernel refused to exec the Copilot CLI ELF and sh tried to run it as a script — ENOEXEC, see the copilot exec shim; not a model-catalog fault)", err)
+	}
 	if len(msg) > copilotSDKStderrLogLimit {
 		msg = msg[:copilotSDKStderrLogLimit]
 	}
 	return fmt.Errorf("sdk helper: %w (stderr: %s)", err, msg)
+}
+
+// isBinaryStderr reports stderr that is not text: invalid UTF-8 or control
+// bytes other than whitespace and ESC (ANSI colour), as when sh dumps an ELF
+// it could not exec.
+func isBinaryStderr(s string) bool {
+	if !utf8.ValidString(s) {
+		return true
+	}
+	for _, r := range s {
+		if r < 0x20 && r != '\n' && r != '\r' && r != '\t' && r != 0x1b {
+			return true
+		}
+	}
+	return false
 }
 
 // copilotSDKModel mirrors one entry of the helper's stdout JSON. The helper

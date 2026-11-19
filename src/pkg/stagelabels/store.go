@@ -92,6 +92,12 @@ type Record struct {
 	NudgeReason      string    `json:"nudge_reason,omitempty"`
 	NudgeReasonCount int       `json:"nudge_reason_count,omitempty"`
 	NudgeReasonAt    time.Time `json:"nudge_reason_at,omitempty"`
+	// NudgeWithheldHead is the head whose nudge comment was withheld
+	// because the hive is going to adopt it anyway (hivecommons/hive#18872):
+	// the nudge is recorded (the adoption clock runs) but the author hears
+	// only the adoption note. When adoption turns out blocked or the author
+	// reappears the withheld nudge is posted.
+	NudgeWithheldHead string `json:"nudge_withheld_head,omitempty"`
 	// NudgeCIChecks, NudgeCIHead, NudgeCIAt, NudgeCIAttempts and NudgeMode
 	// are the CI-failure nudge ledger (hivecommons/hive#17328): the sorted
 	// failing check names the one nudge comment currently lists, the head
@@ -251,6 +257,19 @@ type Record struct {
 	// An out-of-cycle fact (a claim, its release, a start mark) consults it
 	// so a PR that still covers the issue is not forgotten between sweeps.
 	CoveringPR string `json:"covering_pr,omitempty"`
+	// TriageClearedAt is when the hive's stage write last took the
+	// reporter-trust awaiting label (`needs-triage`) off this issue once
+	// its stage settled triage (hivecommons/hive#14586). Zero when the hive
+	// never removed it.
+	TriageClearedAt time.Time `json:"triage_cleared_at,omitempty"`
+	// TriageClearYielded is set once the awaiting label was seen back on
+	// the issue after the hive removed it: another writer (a repository's
+	// own triage tooling, a person) owns it there, so the hive never
+	// removes it from this issue again (hivecommons/hive#18387). Sticky for
+	// the life of the record: the other writer re-adds within seconds, so
+	// a reset on a read that finds the label briefly absent would restart
+	// the remove / re-add loop.
+	TriageClearYielded bool `json:"triage_clear_yielded,omitempty"`
 	// AdoptedHeadAt is when AdoptedHead last moved under a live in-place
 	// adoption: the adoption itself, then each hive push. Zero only on
 	// records written before it existed (hivecommons/hive#13040); the
@@ -1406,6 +1425,38 @@ func (s *Store) MarkStallCommented(key string) {
 	s.dirty = true
 }
 
+// NoteTriageCleared records that the hive's stage write took the
+// reporter-trust awaiting label off key at now. A missing record is left
+// missing: the reconciler observes the stage before it writes.
+func (s *Store) NoteTriageCleared(key string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.TriageClearedAt.Equal(now) {
+		return
+	}
+	r.TriageClearedAt = now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkTriageClearYielded records that the awaiting label came back on key
+// after the hive removed it, so the hive leaves it there from now on. It
+// reports whether this call set the mark, so the caller logs the yield
+// once.
+func (s *Store) MarkTriageClearYielded(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.TriageClearYielded {
+		return false
+	}
+	r.TriageClearYielded = true
+	s.items[key] = r
+	s.dirty = true
+	return true
+}
+
 // MarkNudged records that nudge number n for head was posted at now. A new
 // head restarts the count and the adoption grace; online says whether the
 // author's relay was reachable (first nudge decides the grace kind).
@@ -1444,6 +1495,20 @@ func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) 
 		r.NudgeCount++
 	}
 	r.LastNudgeAt = now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// NoteNudgeWithheld records that the nudge comment for head was withheld
+// (head "" clears the mark).
+func (s *Store) NoteNudgeWithheld(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.NudgeWithheldHead == head {
+		return
+	}
+	r.NudgeWithheldHead = head
 	s.items[key] = r
 	s.dirty = true
 }
@@ -1779,6 +1844,21 @@ const AdoptBlockedAuthorMaintainer = "author-is-maintainer"
 // supersede of the hive App's own PR: there is no contributor branch to
 // re-home, so the request is consumed with one note instead of looping.
 const AdoptBlockedSelfAuthored = "self-authored"
+
+// AdoptBlockedHumanClaim is the AdoptBlockedBy reason for a due adoption
+// held because an owner or maintainer holds a claim on an issue the PR
+// closes (assignee, `/claim` comment, hand-applied hive/claimed-by-human;
+// hivecommons/hive#18899). The PR stays the contributor's until the person
+// releases the claim, so the hive never opens a copy beside the owner's
+// work.
+const AdoptBlockedHumanClaim = "human-claim"
+
+// AdoptBlockedCoveredByOpenPR is the AdoptBlockedBy reason for a contributor
+// PR the hive did not adopt because another open PR (a person's or the
+// hive's) already covers an issue it closes (hivecommons/hive#18900). The
+// hive closes it as a duplicate with a thank-you note; if the close is
+// suppressed or fails the block still keeps the adoption off.
+const AdoptBlockedCoveredByOpenPR = "covered-by-open-pr"
 
 // AdoptBlockedSupersedeConflict is the AdoptBlockedBy reason (and the 07x
 // lane reason) for a supersession whose head could not be replayed onto a

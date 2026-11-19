@@ -268,7 +268,7 @@
       document.querySelectorAll('[data-feature="experiment_lab"]').forEach(el => {
         if (experimentOn) {
           el.hidden = false;
-          if (el.id !== 'nous-section' && el.id !== 'nous-sidebar-config') el.style.display = '';
+          if (el.id !== 'nous-section') el.style.display = '';
         } else {
           el.hidden = true;
           el.style.display = 'none';
@@ -675,7 +675,8 @@
       // The fingerprint guards the fields only the full template renders
       // (method/model/pins): without it a CLI or model switch stayed stale
       // in the focused panel until a hard refresh.
-      const cfgSig = [a.cli || '', a.model || '', a.pinnedCli ? 1 : 0, a.pinnedModel ? 1 : 0, a.pinnedBoth ? 1 : 0, a.displayName || '', a.emoji || '', a.color || '', JSON.stringify(a.subAgentModels || [])].join('|');
+      refreshKickOutcomes(a.name);
+      const cfgSig = [a.cli || '', a.model || '', a.pinnedCli ? 1 : 0, a.pinnedModel ? 1 : 0, a.pinnedBoth ? 1 : 0, a.displayName || '', a.emoji || '', a.color || '', JSON.stringify(a.subAgentModels || []), agentToggleGateReason()].join('|');
       if (existingSummary && detail.dataset.agent === a.name && detail.dataset.cfgSig === cfgSig) {
         if (a.detailSummary) {
           const newText = escBlock(a.detailSummary);
@@ -695,7 +696,12 @@
         // button would otherwise persist until the user navigates away.
         const fastToggle = detail.querySelector('.oc-detail-actions .btn-toggle');
         if (fastToggle && !isOnDemand) {
-          if (isPaused) {
+          if (!isPaused && !isOff && agentToggleGateReason() !== '') {
+            // Below owner / role unknown: keep the disabled, explained control.
+            fastToggle.outerHTML = agentGatedToggleHtml(a, false, false);
+          } else if (isPaused && agentToggleGateReason() !== '') {
+            fastToggle.outerHTML = agentGatedToggleHtml(a, true, false);
+          } else if (isPaused) {
             // Paused gets the full combined-action rebuild — '▶ start &
             // resume' when the session is also down — so data-action tracks
             // the session state too, not just the label (#5594 follow-up).
@@ -836,8 +842,8 @@
             ? ''
             : isOnDemand
             ? '<button class="hv-btn btn-secondary btn-sm btn-toggle on-demand" title="On-demand agent — kicked manually, not by governor cadence">⚡ on demand</button>'
-            : !dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')
-            ? ''
+            : agentToggleGateReason() !== '' && !isOff
+            ? agentGatedToggleHtml(a, isPaused, false)
             : isPaused
             ? pausedAgentActionHtml(a)
             : isOff
@@ -867,6 +873,10 @@
         ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
         ${subAgentModelsHtml(a)}
         <div class="oc-detail-indicators">${agentIndicators(a.name)}</div>
+        <section class="kick-outcomes" data-agent="${esc(a.name)}" aria-label="Recent kick outcomes">
+          <h3>Recent kick outcomes</h3>
+          <div class="kick-outcomes-body"><p class="text-muted">Loading kick outcomes…</p></div>
+        </section>
         <div class="oc-detail-summary-wrap">
           <div class="oc-detail-summary" id="oc-summary-scroll">${(a.detailSummary || a.liveSummary) ? escBlock(a.detailSummary || a.liveSummary) : '<span class="text-muted">No activity summary</span>'}</div>
           <button class="oc-summary-follow-btn" id="oc-summary-follow" title="Follow new output" data-action="ocSummaryResumeTail">⬇</button>
@@ -877,6 +887,7 @@
         </div>
       `;
 
+      refreshKickOutcomes(a.name);
       const summaryEl = document.getElementById('oc-summary-scroll');
       const followBtn = document.getElementById('oc-summary-follow');
       if (summaryEl) {

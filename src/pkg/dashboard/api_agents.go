@@ -346,6 +346,7 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		client := &http.Client{
 			Timeout:       importHTTPTimeoutS * 1e9, // nanoseconds
 			CheckRedirect: noRedirectToPrivate,
+			Transport:     ssrfPinnedTransport,
 		}
 		resp, err := client.Get(body.URL)
 		if err != nil {
@@ -397,24 +398,8 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := strings.ToLower(strings.ReplaceAll(def.Metadata.Name, " ", "-"))
-	if strings.ContainsAny(name, " ./\\") || !kickTemplatePattern.MatchString(name+".md") {
-		jsonError(w, "agent name contains invalid characters", http.StatusBadRequest)
-		return
-	}
-	const maxAgentNameLen = 64
-	if len(name) > maxAgentNameLen {
-		jsonError(w, fmt.Sprintf("agent name must be at most %d characters", maxAgentNameLen), http.StatusBadRequest)
-		return
-	}
-
-	if _, exists := s.deps.Config.Agents[name]; exists {
-		jsonError(w, "agent already exists: "+name, http.StatusConflict)
-		return
-	}
-
-	agentsDir := s.deps.Config.Data.AgentsDir
-	if agentsDir == "" {
-		jsonError(w, "agents_dir not configured", http.StatusInternalServerError)
+	if status, err := s.checkNewAgentName(name); err != nil {
+		jsonError(w, err.Error(), status)
 		return
 	}
 
@@ -438,20 +423,56 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !s.deps.Config.GitHubDefinitionAllowed(defSrc.Slug()) {
-			jsonError(w, fmt.Sprintf("keep linked: repo %q is not on the GitHub definition allowlist (an operator must add it to the seed config's variables.security.github_prompt_allowlist and set allow_github_prompt)", defSrc.Slug()), http.StatusBadRequest)
+			jsonError(w, fmt.Sprintf("keep linked: repo %q is not on the GitHub definition allowlist (an operator must add it to the seed config's variables.security.github_prompt_allowlist and set allow_github_prompt; for one of this hive's managed repos the owner can approve it under Settings → Security → Prompt sources)", defSrc.Slug()), http.StatusBadRequest)
 			return
 		}
 		agentCfg.DefinitionSource = defSrc
 	}
 
-	if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
-		s.logger.Error("failed to save imported agent file", "agent", name, "error", err)
-		jsonError(w, "failed to save agent: "+err.Error(), http.StatusInternalServerError)
+	if status, err := s.registerDefinedAgent(name, agentCfg, def.Spec.PromptTemplate); err != nil {
+		jsonError(w, err.Error(), status)
 		return
 	}
 
+	s.logger.Info("agent imported via API", "name", name, "source", body.Source)
+	okResponse(w, map[string]string{"status": "imported", "name": name})
+}
+
+// maxAgentNameLen bounds an imported or discovered agent's key.
+const maxAgentNameLen = 64
+
+// checkNewAgentName validates the key a definition-created agent (import or
+// an approved repo discovery) will get, and that it can be saved. It returns
+// the HTTP status to answer with alongside the error.
+func (s *Server) checkNewAgentName(name string) (int, error) {
+	if name == "" || strings.ContainsAny(name, " ./\\") || !kickTemplatePattern.MatchString(name+".md") {
+		return http.StatusBadRequest, fmt.Errorf("agent name contains invalid characters")
+	}
+	if len(name) > maxAgentNameLen {
+		return http.StatusBadRequest, fmt.Errorf("agent name must be at most %d characters", maxAgentNameLen)
+	}
+	if _, exists := s.deps.Config.Agents[name]; exists {
+		return http.StatusConflict, fmt.Errorf("agent already exists: %s", name)
+	}
+	if s.deps.Config.Data.AgentsDir == "" {
+		return http.StatusInternalServerError, fmt.Errorf("agents_dir not configured")
+	}
+	return http.StatusOK, nil
+}
+
+// registerDefinedAgent saves a definition-created agent's overlay (and its
+// prompt template, when the definition carries one), adds it to the live
+// config and starts it. Shared by the import handler and the approval of a
+// repo-discovered agent so both create agents identically.
+func (s *Server) registerDefinedAgent(name string, agentCfg config.AgentConfig, promptTemplate string) (int, error) {
+	agentsDir := s.deps.Config.Data.AgentsDir
+	if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
+		s.logger.Error("failed to save imported agent file", "agent", name, "error", err)
+		return http.StatusInternalServerError, fmt.Errorf("failed to save agent: %w", err)
+	}
+
 	// Save prompt template if provided
-	if def.Spec.PromptTemplate != "" {
+	if promptTemplate != "" {
 		templateFileName := name + ".md"
 		agentCfg.KickTemplate = templateFileName
 
@@ -459,7 +480,7 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("failed to create policies dir for import", "error", err)
 		} else {
 			savePath := filepath.Join(promptTemplateSaveDir, templateFileName)
-			if err := os.WriteFile(savePath, []byte(def.Spec.PromptTemplate), 0o644); err != nil {
+			if err := os.WriteFile(savePath, []byte(promptTemplate), 0o644); err != nil {
 				s.logger.Error("failed to save imported prompt template", "agent", name, "error", err)
 			}
 		}
@@ -479,8 +500,7 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 	s.deps.Config.ApplyAgentDefaults(name)
 
 	if err := s.deps.Config.ExpandAgentReplicas(); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, err
 	}
 	addedAgents := s.deps.AgentMgr.ReconcileAgents(s.deps.Config.EnabledAgents())
 	for _, added := range addedAgents {
@@ -496,9 +516,7 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 
 	s.reInitSubsystems()
 	s.refreshAndPersist()
-
-	s.logger.Info("agent imported via API", "name", name, "source", body.Source)
-	okResponse(w, map[string]string{"status": "imported", "name": name})
+	return http.StatusOK, nil
 }
 
 // promptSourceFetcher returns the GitHub client as a promptsrc.Fetcher, or nil
@@ -524,7 +542,7 @@ func (s *Server) bakePromptSource(ctx context.Context, name string, agent *confi
 	slug := agent.PromptSource.Slug()
 	allow := func(sl string) bool { return s.deps.Config.GitHubPromptAllowed(sl) }
 	if !allow(slug) {
-		return fmt.Errorf("repo %q is not on the GitHub prompt allowlist (an operator must add it to the seed config's variables.security.github_prompt_allowlist and set allow_github_prompt)", slug)
+		return fmt.Errorf("repo %q is not on the GitHub prompt allowlist (an operator must add it to the seed config's variables.security.github_prompt_allowlist and set allow_github_prompt; for one of this hive's managed repos the owner can approve it under Settings → Security → Prompt sources)", slug)
 	}
 	src := promptsrc.Source{
 		Owner: agent.PromptSource.Owner,

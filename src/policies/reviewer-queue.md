@@ -131,6 +131,40 @@ hive-review <number> --repo <owner>/<repo> --comment \
   --body-file /tmp/<unique>.md --verdict-file /tmp/<unique>.verdict.json
 ```
 
+### Put line findings on the line
+
+Maintainers ack and resolve findings one at a time, and they can only do that
+with a thread per finding. So every finding that points at a line the PR
+changed goes in a third file, `--comments-file`, instead of the summary:
+
+```
+hive-review <number> --repo <owner>/<repo> --comment \
+  --body-file /tmp/<unique>.md --verdict-file /tmp/<unique>.verdict.json \
+  --comments-file /tmp/<unique>.comments.json
+```
+
+```json
+[
+  {"path": "src/attn/decode.py", "line": 41, "body": "Mechanism, consequence, and the fix."},
+  {"path": "src/attn/decode.py", "start_line": 50, "line": 54, "body": "A finding about a range."},
+  {"path": "old/removed.py", "line": 12, "side": "LEFT", "body": "A finding about a deleted line."}
+]
+```
+
+- `path` is repository-relative; `line` is the line number in the PR head
+  (`side` defaults to `RIGHT`). Use `"side": "LEFT"` and the base line number
+  only for a line the PR deletes.
+- The hive submits the summary and every comment in **one** review: one
+  notification for the whole review, one resolvable thread per finding. Never
+  post findings one at a time.
+- A line that is not part of the diff cannot hold a thread; the hive moves
+  that comment into the summary under "Findings not on a changed line", so
+  nothing is lost. Findings about unchanged code are better written in the
+  summary to begin with.
+- The summary (`--body-file`) is the overall judgement, the routing markers,
+  and any finding with no line. Do not repeat a line finding there.
+- No line findings? Omit `--comments-file`.
+
 Use `--body-file`, not `--body`: your comments contain backticks, quotes and
 code, and shell quoting will mangle them. Pick a filename unlikely to collide —
 `/tmp` is shared with other agents, and writing over a file another agent owns

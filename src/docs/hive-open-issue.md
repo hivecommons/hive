@@ -42,8 +42,8 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 `issue`):
 
 ```sh
-hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>] [--claim]
-hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--blocked-on-pr <n>]
+hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n|owner/repo#n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>] [--claim]
+hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--blocked-on-pr <n>] [--not-agent-work <verdict>]
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
 hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
@@ -59,12 +59,13 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--remove-label` | — | label | repeatable; labels to take off the item |
 | `--reviewer` | `--add-reviewer` | request-review | repeatable; comma-separated GitHub logins to ask for a review |
 | `--team-reviewer` | — | request-review | repeatable; team slugs (an `org/` prefix is accepted) to ask for a review |
-| `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue. Declaring it also exempts the request from the file-set, component and canonical-subject folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)), so `--no-consolidate` is not needed for a decomposition child |
+| `--parent` | — | issue | issue number in the same repo (or `owner/repo#n` for a parent in another managed repo) to link the new issue to as a GitHub sub-issue. Declaring it also exempts the request from the file-set, component and canonical-subject folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)), so `--no-consolidate` is not needed for a decomposition child |
 | `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated). Like `--parent`, declaring it exempts the request from the shared-path folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)) |
 | `--needs-decision` | — | issue | park the new issue on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)) |
 | `--claim` | — | issue | file the new issue **and** claim it for this agent in the same request (see [Filing your own next step](#filing-your-own-next-step)). The request carries `"claim": true`; the result reports `claimed`, or `claim_error` when the claim did not land |
 | `--no-consolidate` | — | issue | requires a non-empty reason; the watcher skips open-issue consolidation (same-subject, file-set and component folds) and files a new issue, echoing the reason as `consolidation_skipped_reason` in the result and logging it. Use it for unrelated work that only shares a file or component with an open issue ([#14360](https://github.com/hivecommons/hive/issues/14360)). The request carries `"no_consolidate_reason"`. A request that declares `--parent` or `--blocked-by` needs no reason: it is a distinct DAG node and never takes the file-set, component or canonical-subject folds, and a genuine create reports `consolidation_skipped_reason` as `parent` or `blocked_by` ([#16065](https://github.com/hivecommons/hive/issues/16065)) |
 | `--blocked-on-pr` | — | comment | park the issue on open PR `<n>` in the same repo: the watcher prefixes the note with `<!-- hive:blocked-on pr=owner/repo#n -->`, strips `@`-mentions from it, adds the `blocked` label and removes `help wanted` (see [Blocked on an unmerged PR](#blocked-on-an-unmerged-pr)) |
+| `--not-agent-work` | — | comment | record a triage verdict that the issue is not agent work (`not-a-defect`, `needs-human` or `needs-environment`, hivecommons/hive#18675): the watcher posts the note once with `<!-- hive:not-agent-work verdict=<v> -->` and adds `needs-human`, so the issue leaves the Actionable lane and the scanner's work list; the same verdict with no human comment since is dropped (`already_existed`), and a person's later comment re-queues the issue |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed. **This is how you test the tool.** A live call creates a real GitHub issue/comment/label change under the hive's App identity |
 
@@ -138,6 +139,19 @@ issue stage sweep closes `n` as completed, and while any child is open `n`
 is never marked `stage/stalled`
 ([#12857](https://github.com/hivecommons/hive/issues/12857); see
 [labels-and-control-signals.md](labels-and-control-signals/stage-labels.md#decomposed-parents--closed-by-their-children-never-stalled)).
+
+`--parent <owner/repo#n>` (or the parent's issue URL) names a parent in
+another managed repo, for a tracker whose child work lives elsewhere
+([#18680](https://github.com/hivecommons/hive/issues/18680)). File the child in
+the repo where its work lives (`--repo`); the request carries `"parent"` and
+`"parent_repo"`. The watcher links the child as a cross-repo sub-issue of
+`owner/repo#n`, rewrites bare `#n` mentions of the parent (including the
+"Part of" line, which it adds when missing) to `owner/repo#n`, and writes the
+marker as `<!-- hive:parent owner/repo#n -->`, because a bare `#n` resolves
+only inside the child's own repo. The parent's tracker progress counts such
+children too. A parent repo this hive does not manage is refused; a child
+repo it does not manage falls back to the parent's repo, and the result's
+`repo_fallback_from` names the repo that was asked for.
 
 `--blocked-by <n[,n]>` records that the new issue must wait for issue(s) `n`
 in the same repo, as GitHub "blocked by" dependencies

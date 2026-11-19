@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -61,6 +62,204 @@ func TestHandlerSkipsBenignAndExplicitClasses(t *testing.T) {
 	logger.Warn("")
 	if len(*seen) != 0 {
 		t.Fatalf("observed = %+v, want none", *seen)
+	}
+}
+
+func TestSignedCommitOwnershipSkipStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "signed-commit reconciler: skipped; the PR keeps an unsigned commit"
+	for range 6 {
+		logger.Warn(msg, "repo", "o/r", "pr", 1403, "reason", "commit is authored by another account")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected ownership skips produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), msg); n != 6 || !strings.Contains(out.String(), "another account") {
+		t.Fatalf("local logs lost the warning or its reason: %s", out.String())
+	}
+	logger.Warn("signed-commit reconciler: listing PR commits failed", "err", "unexpected failure")
+	logger.Error(msg, "reason", "unexpected failure")
+	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated || (*seen)[1].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
+// hivecommons/hive#18230: the proxy warns once per distinct (agent, method,
+// path) it refuses, so one agent probing several forbidden endpoints crossed
+// the repeat threshold. The refusals stay in local logs; proxy transport
+// failures remain reportable.
+func TestProxyRequestBlockedStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "proxy request blocked"
+	for i := range 6 {
+		logger.Warn(msg, "agent", "quality", "method", "PUT", "path", fmt.Sprintf("/repos/o/r/pulls/%d/update-branch", 700+i))
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("proxy policy refusals produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), msg); n != 6 || !strings.Contains(out.String(), "/repos/o/r/pulls/705/update-branch") {
+		t.Fatalf("local logs lost the warning or its path: %s", out.String())
+	}
+	logger.Warn("proxy client TLS handshake failed", "agent", "quality", "error", "unexpected failure")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassProxyTLSHandshakeFailed {
+		t.Fatalf("proxy transport failures must remain reportable: %+v", *seen)
+	}
+}
+
+// hivecommons/hive#18763: the MITM proxy's upstream dial to api.github.com
+// failed with EOF (9 in 10m) and, matching no class, filed as
+// unclassified_error_repeated. Both MITM dial sites file under the existing
+// proxy_connect_dial_failed network-path class instead: still reported and
+// still in local logs, but routed to the operator's network remedy.
+func TestProxyUpstreamDialFailedFilesAsConnectDialClass(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	logger.Error("proxy upstream dial failed", "host", "api.github.com:443", "error", "EOF")
+	logger.Error("transparent proxy upstream dial failed", "host", "api.github.com", "error", "read tcp 10.0.0.1:4242->140.82.112.6:443: read: connection reset by peer")
+	if len(*seen) != 2 {
+		t.Fatalf("observations = %+v, want both dial failures", *seen)
+	}
+	for _, o := range *seen {
+		if o.class != fleetreport.ClassProxyUpstreamDegraded {
+			t.Fatalf("class = %q for %q, want %q", o.class, o.message, fleetreport.ClassProxyUpstreamDegraded)
+		}
+	}
+	if !strings.Contains((*seen)[0].diagnostics, "error=EOF") || !strings.Contains((*seen)[0].diagnostics, "host=api.github.com:443") {
+		t.Fatalf("diagnostics lost the host or error: %q", (*seen)[0].diagnostics)
+	}
+	if n := strings.Count(out.String(), "upstream dial failed"); n != 2 {
+		t.Fatalf("local logs lost a dial failure: %s", out.String())
+	}
+}
+
+// hivecommons/hive#18239: the eval cycle warns every cycle while an agent is
+// held for provider quota, so a long hold crossed the repeat threshold
+// (21 in 10m). The notices stay in local logs; other failures stay reportable.
+func TestProviderKickWithholdStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "provider quota exhausted: withholding agent kicks"
+	for range 21 {
+		logger.Warn(msg, "withheld", []string{"reviewer-2"}, "probe", []string{}, "probe_interval", "30m0s")
+	}
+	for range 6 {
+		logger.Warn("provider spending limit: withholding agent kicks", "withheld", []string{"worker"}, "rebuffs", 3)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("kick withhold notices produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), msg); n != 21 || !strings.Contains(out.String(), "reviewer-2") {
+		t.Fatalf("local logs lost the warning or its agent: %s", out.String())
+	}
+	// Failures around the gate are not the complete notice, so the generic
+	// feed still reports them.
+	logger.Warn(msg+": status snapshot failed", "error", "unexpected failure")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("gate failures must remain reportable: %+v", *seen)
+	}
+	// Probe kick delivery failures are owned by kick_failed_repeatedly, so the
+	// generic feed skips them; they must not be swallowed as benign.
+	const probeFail = "provider quota probe kick failed"
+	if fleetreport.IsBenignMessage(probeFail) || !fleetreport.MatchesExplicitClass(probeFail) {
+		t.Fatalf("probe kick failures must stay on the kick_failed_repeatedly path")
+	}
+}
+
+func TestClaudeCredentialRebridgeStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for range 6 {
+		logger.Warn(claudeCredentialRebridgedMessage, "agent", "reviewer", "trigger", "watchdog", "kept", "shared")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("completed re-bridges produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "re-bridged"); n != 6 {
+		t.Fatalf("local logs lost the re-bridge warning: got %d, want 6: %s", n, out.String())
+	}
+	logger.Warn("claude credential bridge: repair failed", "agent", "reviewer", "error", "restore credential symlink: file exists")
+	logger.Error(claudeCredentialRebridgedMessage, "agent", "reviewer")
+	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated || (*seen)[1].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("failed repairs must remain reportable: %+v", *seen)
+	}
+}
+
+func TestUnauthorizedLoginRejectedStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "device-flow login rejected: user not authorized for this hive"
+	for range 6 {
+		logger.Warn(msg, "username", "mallory")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("unauthorized logins produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "not authorized"); n != 6 {
+		t.Fatalf("local logs lost the rejection: got %d, want 6: %s", n, out.String())
+	}
+	logger.Error(msg, "username", "mallory")
+	if len(*seen) != 1 {
+		t.Fatalf("error-level records must remain reportable: %+v", *seen)
+	}
+}
+
+func TestCanceledStageDigestStaysLocal(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "stage labels: check digest failed"
+	for range 6 {
+		logger.Warn(msg, "repo", "utah", "pr", 1194, "error", context.Canceled)
+	}
+	logger.Warn(msg, "error", errors.New("GET checks: context canceled"))
+	if len(*seen) != 0 {
+		t.Fatalf("canceled reads produced fleet observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 7 {
+		t.Fatalf("local log records = %d, want 7", n)
+	}
+	logger.Warn(msg, "error", errors.New("context deadline exceeded"))
+	logger.Warn(msg, "error", errors.New("permission denied"))
+	logger.Warn("another failure", "error", context.Canceled)
+	if len(*seen) != 2 {
+		t.Fatalf("unexpected errors must remain reportable: %+v", *seen)
+	}
+}
+
+func TestCanceledAdoptionReadStaysInLog(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "stage labels: could not read maintainer_can_modify; keeping in-place adoption this sweep"
+	for range 8 {
+		logger.Warn(msg, "repo", "server", "pr", 649, "error", &url.Error{Op: "GET", URL: "https://api.github.com", Err: context.Canceled})
+	}
+	logger.Warn(msg, "error", "context canceled")
+	if len(*seen) != 0 || strings.Count(out.String(), "\n") != 9 {
+		t.Fatalf("canceled reads: observations=%+v, log=%s", *seen, out.String())
+	}
+	logger.Warn(msg, "error", errors.New("permission denied"))
+	logger.Warn(msg, "error", context.DeadlineExceeded)
+	logger.Warn("another operation failed", "error", context.Canceled)
+	if len(*seen) != 2 {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
+func TestStructuredCancellationDoesNotCreateFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "stage labels reconcile failed"
+	for range 10 {
+		logger.Warn(msg, "error", context.Canceled, "items", 6, "writes", 0)
+	}
+	logger.With("error", context.Canceled).Warn(msg)
+	logger.Warn("stage labels: check digest failed", "error", fmt.Errorf("GET checks: %w", context.Canceled))
+	logger.Warn("stage labels: check digest failed", "error", "GET checks: context canceled")
+	logger.With("error", fmt.Errorf("listing PRs: %w", context.Canceled)).Warn(msg, "error", context.Canceled)
+	logger.Warn(msg, "error", &url.Error{Op: "GET", URL: "https://api.github.com", Err: context.Canceled})
+	if len(*seen) != 0 || strings.Count(out.String(), "\n") != 15 {
+		t.Fatalf("observed=%+v logs=%s", *seen, out.String())
+	}
+	logger.Warn(msg, "error", context.DeadlineExceeded)
+	logger.Warn(msg, "error", "permission denied")
+	logger.With("error", context.Canceled).Warn(msg, "error", "permission denied")
+	logger.With("error", fmt.Errorf("listing PRs: %w", context.Canceled)).Warn(msg, "error", "permission denied")
+	logger.Warn(msg, "error", "context canceled: permission denied")
+	logger.Warn(msg, "error", fmt.Errorf("request: %w", context.DeadlineExceeded))
+	if len(*seen) != 6 {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
 	}
 }
 
@@ -335,6 +534,26 @@ func TestRequiredChecksOverrideMismatchLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestMissingAlertsPermissionReportsOperatorCondition(t *testing.T) {
+	now := time.Date(2026, 11, 12, 15, 40, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "scoped token mint with vulnerability_alerts:read failed; retrying without it — the sec-check Dependabot alerts call will 403 until the App grants Dependabot alerts read-only and the installation re-accepts it; see docs/github-app-setup.md"
+	for range 5 {
+		logger.Warn(msg, "tier", "sec-check", "error", "permissions requested are not granted")
+		now = now.Add(time.Minute)
+	}
+	ev := tr.Evidence()
+	if len(ev) != 1 || ev[0].Class != fleetreport.ClassGitHubAppAlertsPermission || ev[0].Count != 5 {
+		t.Fatalf("missing permission evidence = %+v", ev)
+	}
+	now = now.Add(21 * time.Minute)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("quiet condition did not clear: %+v", ev)
+	}
+}
+
 func TestFeedLogFedPath(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -488,7 +707,7 @@ func TestPostRestartKickHoldLogsWithoutFleetReport(t *testing.T) {
 	}
 	// Other kick send failures must remain reportable.
 	logger.Warn("failed to send kick", "agent", "reviewer-2", "error", "tmux send-keys exit 1")
-	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassAgentLifecycleRepeated {
 		t.Fatalf("other kick failures must remain reportable: %+v", *seen)
 	}
 }
@@ -1012,8 +1231,33 @@ func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {
 	logger2, seen, _ := newFeed(t)
 	logger2.Warn("inference upstream failed")
 	logger2.Warn("inference no route", "agent", "scanner")
-	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassInferenceUpstreamError || (*seen)[1].class != fleetreport.ClassUnclassifiedRepeated {
+	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassInferenceUpstreamError || (*seen)[1].class != fleetreport.ClassInferenceNoRoute {
 		t.Fatalf("unrelated inference failures = %+v", *seen)
+	}
+}
+
+func TestInferenceBackendAuthFailureFeed(t *testing.T) {
+	now := time.Date(2026, 11, 16, 22, 4, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	for i := range 5 {
+		logger.Warn("inference backend auth failure", "agent", "scanner", "backend", "litellm", "status", 401)
+		if ev := tr.Evidence(); i < 4 && len(ev) != 0 {
+			t.Fatalf("premature report: %+v", ev)
+		}
+		now = now.Add(time.Minute)
+	}
+	ev := tr.Evidence()
+	if len(ev) != 1 || ev[0].Class != fleetreport.ClassInferenceBackendAuthFailure || ev[0].Count != 5 || ev[0].Severity != "high" || ev[0].Component != "backend-auth" {
+		t.Fatalf("auth failure evidence = %+v", ev)
+	}
+	now = now.Add(21 * time.Minute)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("idle auth failure still reported: %+v", ev)
+	}
+	if cleared := tr.TakeCleared(); len(cleared) != 1 || cleared[0].Class != fleetreport.ClassInferenceBackendAuthFailure {
+		t.Fatalf("cleared = %+v", cleared)
 	}
 }
 
@@ -1103,5 +1347,23 @@ func TestStageDampenerSuppressionLogsWithoutFleetReport(t *testing.T) {
 				t.Errorf("wrapped handler saw %d records, want 12", n)
 			}
 		})
+	}
+}
+
+func TestGHCRTokenTimeoutStaysInLog(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	timeout := `Get "https://ghcr.io/token?scope=repository:hivecommons/hive:pull": context deadline exceeded (Client.Timeout exceeded while awaiting headers)`
+	for i := 0; i < 10; i++ {
+		logger.Warn("channel resolve: GHCR token request failed", "repo", "hivecommons/hive", "error", timeout)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("GHCR token timeout was observed for fleet reporting (#18824): %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Fatalf("wrapped handler saw %d records, want 10", n)
+	}
+	logger.Warn("channel resolve: GHCR token request failed", "repo", "hivecommons/hive", "error", `Get "https://ghcr.io/token?scope=repository:hivecommons/hive:pull": dial tcp: lookup ghcr.io: no such host`)
+	if len(*seen) != 1 {
+		t.Fatalf("non-timeout GHCR failure must stay reportable, observed %+v", *seen)
 	}
 }

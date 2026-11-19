@@ -186,3 +186,46 @@ func TestKnowledgeConnectors_StatusAndSync(t *testing.T) {
 		t.Fatalf("running pill = %q", got)
 	}
 }
+
+// The status rows carry the live sync progress (phase, items, current item)
+// and the pill reads "syncing" from an active phase even before the running
+// flag flips, so the Integrations card can draw a progress bar mid-sync.
+func TestKnowledgeConnectors_StatusRowsCarryProgress(t *testing.T) {
+	s := covApiServer(t)
+	if rec := doPutRaw(s, "/api/config/knowledge/connectors", `{"connectors":[
+		{"name":"plaud","type":"document","enabled":true,"layer":"personal","scope":{"url":"https://example.org/a"}}]}`); rec.Code != http.StatusOK {
+		t.Fatalf("PUT = %d %q", rec.Code, rec.Body.String())
+	}
+	started := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+	s.deps.KnowledgeConnectors = &fakeConnectorRuntime{statuses: []connector.Status{{
+		Name: "plaud", Progress: connector.Progress{Phase: connector.ProgressFetching, ItemsTotal: 200, ItemsDone: 12, Current: "Drive home", StartedAt: started},
+	}}}
+	rec := doGetNoRole(s, "/api/config/knowledge/connectors/status")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var resp struct {
+		Connectors []knowledgeConnectorStatusRow `json:"connectors"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || len(resp.Connectors) != 1 {
+		t.Fatalf("decode: %v %s", err, rec.Body.String())
+	}
+	row := resp.Connectors[0]
+	if row.Status != "syncing" || row.Running {
+		t.Fatalf("row = %+v, want syncing from the progress phase", row)
+	}
+	if row.Progress == nil || row.Progress.Phase != connector.ProgressFetching || row.Progress.ItemsTotal != 200 || row.Progress.ItemsDone != 12 || row.Progress.Current != "Drive home" || !row.Progress.StartedAt.Equal(started) {
+		t.Fatalf("progress = %+v", row.Progress)
+	}
+	for _, want := range []string{`"progress":{`, `"phase":"fetching"`, `"items_total":200`, `"items_done":12`, `"current":"Drive home"`, `"running":false`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("status JSON missing %s: %s", want, rec.Body.String())
+		}
+	}
+	if knowledgeConnectorPill(true, &connector.Status{Progress: connector.Progress{Phase: connector.ProgressDone}, LastSync: started}) != "ok" {
+		t.Fatal("a done phase must not read as syncing")
+	}
+	if knowledgeConnectorPill(true, &connector.Status{Progress: connector.Progress{Phase: connector.ProgressFailed}, LastError: "x"}) != "error" {
+		t.Fatal("a failed phase reads as error")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hubactivity"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -109,4 +110,57 @@ func TestOnStageTrackerPublishFiresOnInvalidation(t *testing.T) {
 	}
 	var nilServer *Server
 	nilServer.OnStageTrackerPublish(func() {})
+}
+
+// TestHubActivityItemsServesStaleBodyWithoutBuilding pins
+// hivecommons/hive#17776: once the tracker has a body, an invalidated cache
+// must not make the digest read wait on a rebuild.
+func TestHubActivityItemsServesStaleBodyWithoutBuilding(t *testing.T) {
+	t.Setenv("HIVE_PUBLIC_REPOS", "")
+	now := time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC)
+	s := newTestServer()
+	s.stageStore = stagelabels.NewStore("", func() time.Time { return now })
+	s.statusMu.Lock()
+	s.status = minimalPayload()
+	s.statusMu.Unlock()
+
+	release := make(chan struct{})
+	started := make(chan struct{}, 2)
+	s.stageTrackerBuildFn = func(_ *StatusPayload, _ *stagelabels.Store, at time.Time) StageTrackerResponse {
+		started <- struct{}{}
+		<-release
+		return StageTrackerResponse{GeneratedAt: at, Items: []StageTrackerItem{{Repo: "acme/widget", Number: 7, Kind: "pr", Modifiers: []string{}}}}
+	}
+	close(release)
+	if _, ok := s.HubActivitySnapshot(context.Background()); !ok {
+		t.Fatal("first read must build a body when none exists")
+	}
+	<-started
+
+	release = make(chan struct{})
+	s.invalidateStageTrackerCache()
+	type result struct {
+		snap hubactivity.Snapshot
+		ok   bool
+	}
+	done := make(chan result, 1)
+	go func() {
+		snap, ok := s.HubActivitySnapshot(context.Background())
+		done <- result{snap, ok}
+	}()
+	select {
+	case r := <-done:
+		if !r.ok || len(r.snap.Items) != 1 {
+			t.Fatalf("stale read = %+v, %v; want the previous body", r.snap, r.ok)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("digest read blocked on the rebuild instead of serving the stale body")
+	}
+	<-started
+	close(release)
+	testutil.Eventually(t, 2*time.Second, func() bool {
+		s.stageTrackerCacheMu.Lock()
+		defer s.stageTrackerCacheMu.Unlock()
+		return s.stageTrackerBuild == nil
+	}, "background rebuild never finished")
 }

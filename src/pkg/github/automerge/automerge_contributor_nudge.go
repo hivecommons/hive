@@ -11,6 +11,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/advisory"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -377,9 +378,36 @@ func ciNudgeDue(rec stagelabels.Record, head string, checks []string, repeatAfte
 	return 1, true
 }
 
+// adoptionBound reports whether the hive is going to adopt this head
+// whatever the author does next, so one notification (the adoption note)
+// replaces the nudge (hivecommons/hive#18872). It is the nudge-side twin of
+// delegatedecision.AdoptsImmediately: an author whose relay is online (or
+// who has picked the rework up) is given the real grace and is nudged; an
+// author with no reachable relay (registered but offline, or not registered
+// here) is adopted on the AutoAdoption clock, which only needs the nudge to
+// be recorded, not posted. Anything that could keep the adoption from
+// happening (no presence source, a hold label, a fork guard, a workflow
+// path, a person's PR, a maintainer policy other than adopt, a recorded
+// block) keeps the nudge, so no author is left with no word at all.
+func adoptionBound(rec stagelabels.Record, obs stageObservation, policy StageLabelPolicy, presence ContributorPresence, hasPresence bool) bool {
+	if !policy.NudgeWithholdWhenAdopting || !policy.Adoption || !hasPresence || (presence.Registered && presence.Online) {
+		return false
+	}
+	if obs.HeadSHA == "" || rec.AdoptionBlocked(obs.HeadSHA) != "" || adoptionBlocked(obs.Labels) != "" || adoptionForkGuardOnly(obs) {
+		return false
+	}
+	if policy.maintainerPolicy() != config.AdoptionMaintainerPolicyAdopt || personAuthored(obs, policy) {
+		return false
+	}
+	return !strings.Contains(nonEmpty(obs.Reason, obs.LaneReason), contributorLaneReasonWorkflowPath)
+}
+
 // nudgeContributor runs the stage-072 nudge for one observation. It returns
-// the number of GitHub comments posted.
-func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) (int, error) {
+// the number of GitHub comments posted. When the hive is going to adopt the
+// head anyway (adoptionBound) the nudge is recorded, so the adoption clock
+// runs, and dispatched to the relay, but the GitHub comment is withheld
+// (hivecommons/hive#18872); it is posted later if adoption does not happen.
+func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, presence ContributorPresence, hasPresence bool, now time.Time) (int, error) {
 	rec, ok := store.Get(key)
 	if !ok || obs.Author == "" {
 		return 0, nil
@@ -410,8 +438,14 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 	} else {
 		ordinal, due = nudgeDue(rec, obs.HeadSHA, obs.Reason, policy.RenudgeInterval, now)
 	}
+	bound := adoptionBound(rec, obs, policy, presence, hasPresence)
 	if !due {
-		return 0, nil
+		// A withheld nudge is owed to the author as soon as the adoption
+		// that was to speak for this head is no longer certain.
+		if bound || rec.NudgeWithheldHead == "" || rec.NudgeWithheldHead != obs.HeadSHA {
+			return 0, nil
+		}
+		ordinal = 0
 	}
 	// A head-only rewrite (ordinal 0) keeps the class's recorded count in
 	// the marker; the author pushed, so it is not the stall reminder.
@@ -447,13 +481,18 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 	// is the interrupt.
 	posted := 0
 	if existing := c.findOwnEntryComment(ctx, obs, ContributorNudgeMarkerPrefix); existing != nil {
+		store.NoteNudgeWithheld(key, "")
 		if existing.GetBody() != body {
 			if _, _, err := c.gh.Issues.EditComment(ctx, obs.Owner, obs.Repo, existing.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
 				c.warn("stage labels: contributor nudge edit failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 				return 0, err
 			}
 		}
+	} else if bound {
+		store.NoteNudgeWithheld(key, obs.HeadSHA)
+		c.info("stage labels: contributor nudge withheld, the hive adopts this head anyway; the adoption note is the one notification", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", obs.Reason, "registered", presence.Registered)
 	} else {
+		store.NoteNudgeWithheld(key, "")
 		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 			c.warn("stage labels: contributor nudge failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 			return 0, err
@@ -468,7 +507,7 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 	if ciFailure {
 		store.MarkNudgedCIFailure(key, checks, obs.HeadSHA, nonEmpty(out.Mode, "comment"), attempt, ordinal == 1, now)
 	}
-	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "posted", posted == 1, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "relay_failed", out.RelayFailed, "reason", obs.Reason)
+	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "posted", posted == 1, "withheld", bound && posted == 0, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "relay_failed", out.RelayFailed, "reason", obs.Reason)
 	return posted, nil
 }
 

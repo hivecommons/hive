@@ -56,6 +56,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		cfg = s.deps.Config
 	}
 	resp.NeedsHumanLabels = needsHumanPresetLabels(cfg, status.HiveID)
+	resp.Workflows = stageTrackerWorkflows(cfg, s.workflowProfileLookup(), qualifyRepo)
+	attachWorkflowHandoffsToTracker(resp.Workflows, s.workflowDispatchHandoffs())
 	expectedPerspectives := stageTrackerExpectedPerspectives(cfg)
 	verifier, verifierErr := s.reviewEvidenceVerifier()
 	var evidenceVerifier *github.ReviewEvidenceVerifier
@@ -296,6 +298,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Labels: append([]string(nil), issue.Labels...), CreatedAt: timePtr(issue.CreatedAt), UpdatedAt: timePtr(issue.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL)}
+		it.SHAHold = s.stageTrackerSHAHold(repoName, issue.Number, issue.Labels)
 		it.Children = issue.Children
 		if it.Children == nil {
 			it.Children = progress
@@ -304,6 +307,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Children = github.TrackerTaskProgress(issue.Body)
 		}
 		it.IsTracker = github.RendersAsTracker(issue.IsTracker, issue.Labels, it.Children)
+		it.Umbrella, it.OwnerOnly = stageTrackerOwnerFlags(cfg, repoName, issue)
 		it.ClaimReference = issue.ClaimContext != nil && !issue.ClaimContext.MergedPR && issue.ClaimContext.Reference && issue.ClaimContext.Decision != github.ClaimDecisionReleasedRedStalePR
 		if issue.AuthorIsHuman {
 			it.AuthorKind, it.AuthorKindSource = authorKindHuman, authorKindSrcInfer
@@ -335,6 +339,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			stage, rec, ok = stagelabels.None, stagelabels.Record{}, false
 		}
 		finish(&it, issue.Labels, stage, rec, ok, false)
+		it.FiledForHelp = github.ParseFiledForHelpMarker(issue.Body)
 		stageTrackerBlockedBy(&it, issue.OpenBlockers())
 		stageTrackerBlockedOnPR(&it, issue.Body, bucketReason, status.GitHubBaseURL, prState)
 		stageTrackerSinceUnblock(&it, rec, ok)
@@ -467,6 +472,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// a head the cycle never listed counts from the deliveries alone
 		// (hivecommons/hive#16521).
 		activityPR.CIActivity = github.HeadCIActivity(activityPR.Repo, pr.HeadSHA, pr.CIActivity)
+		s.stageTrackerRelistStaleCI(activityPR, now)
 		it.CIActivity = stageTrackerCIActivity(activityPR, now)
 		var bundle *evidence.Bundle
 		if evidenceVerifier != nil && pr.HeadSHA != "" {
@@ -596,6 +602,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
 	stageTrackerResolveHumanAttention(resp.Items)
+	stageTrackerResolveHumanGates(resp.Items, now)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
 }
@@ -646,6 +653,9 @@ func stageTrackerNeedsHuman(it StageTrackerItem) bool {
 	if stageTrackerOnHold(it) || it.Advisory != nil {
 		return false
 	}
+	if it.BlockedOwnerReason != "" {
+		return true
+	}
 	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerNeedsHumanMods, m) }) {
 		return true
 	}
@@ -666,7 +676,8 @@ func stageTrackerOnHold(it StageTrackerItem) bool {
 // returns the two totals for the payload header.
 func stageTrackerHumanCounts(items []StageTrackerItem) (needsHuman, onHold int) {
 	for i := range items {
-		items[i].NeedsHuman = stageTrackerNeedsHuman(items[i])
+		items[i].NeedsHumanWhy = stageTrackerNeedsHumanWhyFor(items[i])
+		items[i].NeedsHuman = stageTrackerNeedsHuman(items[i]) || items[i].NeedsHumanWhy != nil
 		items[i].OnHold = stageTrackerOnHold(items[i])
 		if items[i].NeedsHuman {
 			needsHuman++
@@ -885,13 +896,16 @@ func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body
 // came from (stageTrackerSource*Name; "" with a nil body when the build
 // failed or ctx ended while waiting on an in-flight build).
 func (s *Server) stageTrackerPayloadSource(ctx context.Context, status *StatusPayload, now time.Time) (body []byte, etag string, generatedAt time.Time, source string) {
-	return s.stageTrackerPayloadFrom(ctx, status, now, true)
+	return s.stageTrackerPayloadFrom(ctx, status, now, true, false)
 }
 
 // stageTrackerPayloadFrom is stageTrackerPayloadSource; markServed false
 // reads the tracker without counting as a client that asked for it, so an
-// in-process reader (the hub activity digest) adds no SSE nudges.
-func (s *Server) stageTrackerPayloadFrom(ctx context.Context, status *StatusPayload, now time.Time, markServed bool) (body []byte, etag string, generatedAt time.Time, source string) {
+// in-process reader (the hub activity digest) adds no SSE nudges. preferStale
+// serves a stale body at once when no build is in flight and rebuilds in the
+// background, so a latency-bound reader is never the synchronous builder
+// (hivecommons/hive#17776); with no body at all it still builds in place.
+func (s *Server) stageTrackerPayloadFrom(ctx context.Context, status *StatusPayload, now time.Time, markServed, preferStale bool) (body []byte, etag string, generatedAt time.Time, source string) {
 	ttl := s.stageTrackerCacheTTL()
 	s.stageTrackerCacheMu.Lock()
 	if markServed {
@@ -925,6 +939,20 @@ func (s *Server) stageTrackerPayloadFrom(ctx context.Context, status *StatusPayl
 	gen := s.stageTrackerGen
 	s.stageTrackerCacheMu.Unlock()
 
+	if preferStale && len(c.body) > 0 {
+		go s.finishStageTrackerBuild(inflight, status, now, ttl, gen)
+		return c.body, c.etag, c.generatedAt, stageTrackerSourceStaleName
+	}
+	built, ok := s.finishStageTrackerBuild(inflight, status, now, ttl, gen)
+	if !ok {
+		return nil, "", now, ""
+	}
+	return built.body, built.etag, built.generatedAt, stageTrackerSourceFreshName
+}
+
+// finishStageTrackerBuild runs the claimed in-flight build, stores the
+// result and releases waiters.
+func (s *Server) finishStageTrackerBuild(inflight *stageTrackerBuild, status *StatusPayload, now time.Time, ttl time.Duration, gen uint64) (stageTrackerCache, bool) {
 	built, ok := s.encodeStageTracker(status, now, ttl)
 
 	s.stageTrackerCacheMu.Lock()
@@ -937,10 +965,7 @@ func (s *Server) stageTrackerPayloadFrom(ctx context.Context, status *StatusPayl
 	s.stageTrackerBuild = nil
 	close(inflight.done)
 	s.stageTrackerCacheMu.Unlock()
-	if !ok {
-		return nil, "", now, ""
-	}
-	return built.body, built.etag, built.generatedAt, stageTrackerSourceFreshName
+	return built, ok
 }
 
 // encodeStageTracker builds and encodes the tracker for status. It holds no
@@ -1078,4 +1103,24 @@ func stageTrackerSinceUnblock(it *StageTrackerItem, rec stagelabels.Record, hasR
 	}
 	t := rec.UnblockedAt
 	it.StageSince = &t
+}
+
+// stageTrackerRelistStaleCI asks for one fresh check-run listing of a head
+// whose CI snapshot still claims a check running or queued after
+// dashboard.stage_tracker.ci_activity_stale_m (default 10). The cycle's
+// listing can outlive the checks it describes — the GraphQL batch skips a
+// clean repository, an ETag replays — and nothing else re-reads a head
+// whose PR has not changed; promptargs#467 rendered `CI 2/3 · running` for
+// eight hours after every check had passed (hivecommons/hive#17508). The
+// listing is coalesced and budget-aware; it lands in the webhook CI
+// evidence store for the next build.
+func (s *Server) stageTrackerRelistStaleCI(pr github.PullRequest, now time.Time) bool {
+	if s == nil || s.deps == nil || s.deps.GHClient == nil || pr.HeadSHA == "" {
+		return false
+	}
+	maxAge := s.deps.Config.StageTrackerCIActivityStale()
+	if !github.CIActivityStale(pr.CIActivity, now, maxAge) {
+		return false
+	}
+	return s.deps.GHClient.RequestHeadCIRelist(pr.Repo, pr.Number, pr.HeadSHA, pr.BaseRef, maxAge)
 }

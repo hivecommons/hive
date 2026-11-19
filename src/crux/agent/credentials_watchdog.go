@@ -25,6 +25,19 @@ const (
 	// only for overrides) — disabling is intentionally not offered so the
 	// safety net cannot be silently turned off.
 	CredentialWatchdogIntervalEnv = "HIVE_CREDENTIAL_WATCHDOG_INTERVAL"
+
+	// defaultClaudeBridgeInterval is how often the watchdog checks each
+	// per-agent Claude credential link for a token refresh that replaced it
+	// (claude_credential_bridge.go). Short on purpose: every agent holds the
+	// SAME access token, so they all reach expiry together and refresh within
+	// a minute or two of each other; the first refresh rotates the grant, and
+	// each agent that tries before that refresh is published fails and signs
+	// itself out. The check is one Lstat per claude agent, so 5s costs
+	// nothing; the su-exec read happens only when a link has been replaced.
+	defaultClaudeBridgeInterval = 5 * time.Second
+	// ClaudeBridgeIntervalEnv overrides the bridge poll interval with a Go
+	// duration string.
+	ClaudeBridgeIntervalEnv = "HIVE_CLAUDE_CREDENTIAL_BRIDGE_INTERVAL"
 )
 
 // credentialWatchdogInterval resolves the watchdog interval from
@@ -36,6 +49,17 @@ func credentialWatchdogInterval() time.Duration {
 		}
 	}
 	return defaultCredentialWatchdogInterval
+}
+
+// claudeBridgeInterval resolves the bridge poll interval from
+// ClaudeBridgeIntervalEnv, falling back to the default.
+func claudeBridgeInterval() time.Duration {
+	if v := os.Getenv(ClaudeBridgeIntervalEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultClaudeBridgeInterval
 }
 
 // credentialWatch describes one CLI backend whose usable credential lives in a
@@ -181,9 +205,12 @@ func credentialWatches() []credentialWatch {
 // StartCredentialWatchdog periodically verifies that each in-use CLI backend's
 // durable credential file (Copilot device-flow token, Claude OAuth credentials)
 // is present and usable, and emits an audit event + logs a warning when it is
-// not. It is a SAFETY NET, not a fixer: it never reads, writes, or otherwise
-// touches token material (recovery is an operator dashboard device-flow login,
-// per the manual-login rule). It exists because the loudest failure mode we
+// not. The presence check is a SAFETY NET, not a fixer: it never reads, writes,
+// or otherwise touches token material (recovery is an operator dashboard
+// device-flow login, per the manual-login rule). The same loop also drives the
+// two Claude shared-login keepers that DO write the shared credential, each
+// on its own ticker: the per-agent credential re-bridge and the hive's
+// central refresh of the shared grant (claude_shared_refresh.go, #18731). It exists because the loudest failure mode we
 // see is silent: a fresh agent pod after an upgrade roll finds no durable
 // credential, every agent CLI hangs at its login prompt, and — absent this —
 // the only signal is agents quietly ceasing work for hours. Turning that into
@@ -196,18 +223,59 @@ func credentialWatches() []credentialWatch {
 // Safe to start unconditionally at boot: like StartAgentTokenRefresh it tracks
 // live state each tick rather than a boot-time snapshot, so a hive that gains
 // or loses a backend via config reload is evaluated correctly.
+//
+// Operator-token mode (HIVE_CLAUDE_OAUTH_TOKEN set): the Claude agents do not
+// use the shared credentials file, so the Claude re-bridge and the Claude
+// probe are suspended and said so once at start; Copilot is watched as
+// before. See claude_operator_token_mode.go.
 func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
+	m.logClaudeOperatorTokenModeOnce()
 	ticker := time.NewTicker(credentialWatchdogInterval())
 	defer ticker.Stop()
+	bridgeTicker := time.NewTicker(claudeBridgeInterval())
+	defer bridgeTicker.Stop()
+	// The hive's own refresh of the shared Claude login, ahead of expiry, so
+	// the CLIs sharing that grant never refresh it concurrently
+	// (claude_shared_refresh.go, #18731). Gated like the bridge.
+	refreshTicker := time.NewTicker(claudeSharedRefreshInterval())
+	defer refreshTicker.Stop()
 	// Per-backend transition tracker so we log/audit on TRANSITIONS (usable ->
 	// unusable and back) rather than every tick — a standing condition would
 	// otherwise flood the Audit Log at the tick rate.
 	lastUnusable := make(map[string]bool)
+	// Recovery at boot: a hive whose only valid Claude login sits in a user
+	// session's HOME (a session refreshed a copy of the login and rotated the
+	// grant under the fleet) gets it back into the shared file before the
+	// first probe, without a sign-in (usersession_login.go). The same check
+	// then runs on every bridge poll. It is not gated on an agent using
+	// Claude: sessions use the shared login either way.
+	m.syncUserSessionClaudeLogins(sessionLoginTriggerBoot)
+	// A refreshed grant an earlier run saved but never got into the shared
+	// file is adopted now, before anything can present the dead token
+	// (claude_shared_grant.go).
+	if !m.claudeOperatorTokenMode() {
+		m.settlePendingSharedClaudeGrant(claudeSharedRefreshNow())
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-bridgeTicker.C:
+			if m.backendInUse("claude") {
+				m.RepairClaudeCredentialBridges(claudeBridgeTriggerWatchdog)
+			}
+			m.syncUserSessionClaudeLogins(sessionLoginTriggerWatchdog)
+		case <-refreshTicker.C:
+			if m.backendInUse("claude") {
+				m.refreshSharedClaudeCredential()
+			}
 		case <-ticker.C:
+			// Re-bridge before probing, so a just-published refresh is what
+			// the shared-credential probe sees.
+			if m.backendInUse("claude") {
+				m.RepairClaudeCredentialBridges(claudeBridgeTriggerWatchdog)
+			}
+			m.syncUserSessionClaudeLogins(sessionLoginTriggerWatchdog)
 			for _, w := range credentialWatches() {
 				m.evalCredentialWatch(w, lastUnusable)
 			}
@@ -219,8 +287,9 @@ func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 // use) and emits a transition-edge log + audit event. lastUnusable carries the
 // previous observation per backend across ticks.
 func (m *Manager) evalCredentialWatch(w credentialWatch, lastUnusable map[string]bool) {
-	if !m.backendInUse(w.backend) {
-		// Not in use: nothing to watch. Reset the tracker so a later config
+	if !m.backendInUse(w.backend) || (w.backend == "claude" && m.claudeOperatorTokenMode()) {
+		// Not in use (or, for Claude, the operator token is in use instead of
+		// the file): nothing to watch. Reset the tracker so a later config
 		// change that adds this backend with a bad credential alerts on its
 		// first miss rather than being masked as "no transition".
 		delete(lastUnusable, w.backend)

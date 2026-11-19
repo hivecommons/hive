@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/keystore"
 )
 
 const (
@@ -106,7 +107,7 @@ func (s *Server) handleCopilotAuthStatus(w http.ResponseWriter, r *http.Request)
 	s.copilotAuthFlow.mu.Unlock()
 
 	loggedIn := false
-	if data, err := os.ReadFile(copilotUserTokenPath); err == nil && strings.TrimSpace(string(data)) != "" {
+	if tok, err := keystore.ReadString(context.Background(), copilotUserTokenPath); err == nil && tok != "" {
 		loggedIn = true
 	} else if os.Getenv("COPILOT_GITHUB_TOKEN") != "" {
 		loggedIn = true
@@ -340,11 +341,10 @@ func (s *Server) pollCopilotToken(ctx context.Context, deviceCode string, interv
 // identity. Updating both stores here prevents the periodic reconciler from
 // reversing a fresh dashboard login with an older CLI account.
 func (s *Server) saveCopilotToken(token string) error {
-	tmpPath := copilotUserTokenPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(token), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, copilotUserTokenPath); err != nil {
+	// The same sealed, atomic write the agent manager's promote path uses
+	// (copilottoken.WriteDurableToken, hive#18214), so both writers of the
+	// durable file agree on its shape.
+	if err := keystore.WriteFile(context.Background(), copilotUserTokenPath, []byte(token)); err != nil {
 		return err
 	}
 	if s.deps != nil && s.deps.AgentMgr != nil {

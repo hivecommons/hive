@@ -140,6 +140,16 @@ func (u *UIDMap) IsInternalUID(uid int) bool {
 	return true
 }
 
+// HasAgents reports whether any agent holds a per-agent UID. A loaded map with
+// none (and IptablesActive false) is the shared-UID deployment shape: every
+// process runs under the one UID the platform assigned, so there is nothing to
+// attribute a socket to.
+func (u *UIDMap) HasAgents() bool {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	return len(u.Agents) > 0
+}
+
 // LookupByName returns the UID for a given agent name, or 0 if not found.
 func (u *UIDMap) LookupByName(name string) int {
 	u.mu.RLock()

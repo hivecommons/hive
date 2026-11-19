@@ -204,19 +204,7 @@ func terminalDocumentPath(p string) bool {
 // the closing </body> when there is one. An already-injected document is
 // returned unchanged.
 func injectTerminalClipboardScript(doc []byte) []byte {
-	if bytes.Contains(doc, []byte(terminalClipboardMarker)) {
-		return doc
-	}
-	script := []byte(terminalClipboardScript)
-	idx := bytes.LastIndex(doc, []byte("</body>"))
-	if idx < 0 {
-		return append(append([]byte{}, doc...), script...)
-	}
-	out := make([]byte, 0, len(doc)+len(script))
-	out = append(out, doc[:idx]...)
-	out = append(out, script...)
-	out = append(out, doc[idx:]...)
-	return out
+	return injectTerminalScript(doc, terminalClipboardMarker, terminalClipboardScript)
 }
 
 // bodyReadCloser pairs a replacement reader with the response body's original
@@ -228,9 +216,10 @@ type bodyReadCloser struct {
 }
 
 // modifyTerminalResponse injects the clipboard script into ttyd's HTML
-// document. Every other response — assets, the websocket upgrade, errors, and
-// anything that arrived compressed — is passed through byte for byte: a
-// terminal that fails open is a terminal that still works.
+// document, and for a user-session terminal (the Sessions iframe) the theme
+// script too (terminal_theme.go). Every other response — assets, the websocket
+// upgrade, errors, and anything that arrived compressed — is passed through
+// byte for byte: a terminal that fails open is a terminal that still works.
 func modifyTerminalResponse(resp *http.Response) error {
 	if resp.StatusCode != http.StatusOK {
 		return nil
@@ -252,6 +241,9 @@ func modifyTerminalResponse(resp *http.Response) error {
 	}
 	_ = orig.Close()
 	out := injectTerminalClipboardScript(body)
+	if terminalSessionRequest(resp.Request) {
+		out = injectTerminalThemeScript(out)
+	}
 	resp.Body = io.NopCloser(bytes.NewReader(out))
 	resp.ContentLength = int64(len(out))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(out)))

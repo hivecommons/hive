@@ -1,0 +1,8 @@
+[
+  {
+    "name": "CNCF TechDocs",
+    "category": "non-landscape",
+    "repos": ["cncf/techdocs"],
+    "why": "CNCF TechDocs team repository; home of the AI-assisted documentation assessment workflow (curated model cncf-techdocs-assessment). Not a landscape project, so the survey never listed it."
+  }
+]

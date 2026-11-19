@@ -19,18 +19,21 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/evidence/benchmarks"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/perspsrc"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/worksource"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -332,6 +335,14 @@ func resolveRedPRFixer(cfg *config.Config, owner string, available func(string) 
 	return ""
 }
 
+// redPRFixOwnSignoffExec is the `git rebase --exec` step the no-dco repair
+// advice names: it amends with --signoff only a commit whose author email is
+// the agent's own (git var GIT_AUTHOR_IDENT honours the lane's pinned
+// GIT_AUTHOR_* env), so a person's commit on the PR keeps exactly the
+// trailers its author wrote. A blanket `git rebase --signoff` appended the
+// agent's bot sign-off to a human's commit on hivecommons/hive#19102.
+const redPRFixOwnSignoffExec = `'case "$(git var GIT_AUTHOR_IDENT)" in *"<$(git log -1 --format=%ae)>"*) git commit --amend --no-edit --signoff;; esac'`
+
 // redPRFixKick renders the targeted FIX-BEFORE-NEW kick a re-engagement
 // delivers. It names ONE PR — the stuck one — with its evidence, so the kick is
 // answerable on its own rather than relying on the owner's next cadence kick
@@ -344,7 +355,8 @@ func redPRFixKick(o escalation.Observation, rerouted bool) string {
 	}
 	b.WriteString("Repair it BEFORE claiming new issues or opening any new PR:\n")
 	if slices.Contains(o.Labels, stagelabels.NoDCOLabel) {
-		fmt.Fprintf(&b, "  FIRST (required): the PR is %s — it inherited unsigned commits. Re-sign them: gh pr checkout %d --repo %s → git rebase --signoff <base> (original authors preserved) → git push --force-with-lease\n", stagelabels.NoDCOLabel, o.Number, o.Repo)
+		fmt.Fprintf(&b, "  FIRST (required): the PR is %s, a commit is missing its Signed-off-by. Sign off ONLY the commits you authored: gh pr checkout %d --repo %s → git rebase <base> --exec %s → git push --force-with-lease\n", stagelabels.NoDCOLabel, o.Number, o.Repo, redPRFixOwnSignoffExec)
+		b.WriteString("  NEVER add your Signed-off-by to a commit someone else wrote (git rebase --signoff signs every commit in the range, theirs too): leave their commits as they are and comment on the PR asking the author to sign them off.\n")
 		b.WriteString("  THEN fix any failing CI the same way.\n")
 	}
 	fmt.Fprintf(&b, "  gh pr checkout %d --repo %s → fix → git commit -s → git push\n", o.Number, o.Repo)
@@ -895,6 +907,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 			return automerge.MergeTrainPolicy{Enabled: cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
 		}
 		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
+		opts.TrustedBotSkipReview = func() bool { return cfg.AutoMerge.TrustedBotSkipsReview() }
 		opts.NativeMergeQueue = func() automerge.NativeMergeQueuePolicy {
 			q := cfg.AutoMerge.NativeMergeQueue
 			return automerge.NativeMergeQueuePolicy{Enabled: q.Enabled, Repos: q.RepoSet(), Bases: q.BaseSet(), SkipCurrentBaseGate: q.SkipCurrentBaseGate, ProbeTTL: q.EffectiveProbeTTL()}
@@ -1487,11 +1500,19 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 		approveOpts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(cfg, repo) }
 		approveOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
 		approveOpts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
+		approveOpts.TrustedBotSkipReview = func() bool { return cfg.AutoMerge.TrustedBotSkipsReview() }
 	}
 	approveEngine := automerge.New(ghClient, approveOpts)
+	// A bound workflow model's replies are accepted as `/hive <verb>`
+	// (hivecommons/hive#17620); unbound repositories see no change.
+	var workflowFor func(owner, repo string) *workflowmodel.Profile
+	if cfg != nil {
+		workflowFor = stageEngineOptions(cfg, logger).WorkflowFor
+	}
 	result, err := ghClient.SweepIssueUnparkCommands(ctx, github.IssueUnparkSweepOptions{
 		PRApproveReply: approveEngine.PRApproveReply,
 		MaxActions:     github.DefaultIssueUnparkSweepMaxActions,
+		WorkflowFor:    workflowFor,
 		// cfg is nil only in tests; nil leaves every repo on the default path.
 		LabelDriven:   func(repo string) bool { return cfg.RepoLabelDriven(repo) },
 		LabelApproval: labelApprovalPolicyResolver(cfg),
@@ -1977,6 +1998,15 @@ func reviewAuthorBase(cfg *config.Config, agent string) string {
 	return agent
 }
 
+// applyReviewPerspectivesSource re-resolves review.perspectives_source and
+// reinstalls the relay settings, so the relay validates verdicts against the
+// set the link now names rather than the one it booted with. With no source
+// set it fetches nothing and the inline set stands.
+func applyReviewPerspectivesSource(ctx context.Context, cfg *config.Config, resolver *perspsrc.Resolver, client *github.Client, logger *slog.Logger) {
+	perspsrc.ApplyToConfig(ctx, cfg, resolver, logger)
+	installReviewRelaySettings(client, cfg, logger)
+}
+
 // installReviewRelaySettings gives a (possibly rebuilt) GitHub client the
 // review-relay knobs that live in cfg.Review: which repos may be revised in
 // place, which perspectives a verdict may name, and whether comments carry a
@@ -2005,6 +2035,11 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
 		return reviewEvidenceSettings(cfg, repo)
 	})
+	// hivecommons/hive#17694: stamp the sandbox runtime and benchmark task
+	// kind on agent-authored bundles so the exporter need not guess.
+	github.EvidenceAgentContext = func(agent string) (string, string) {
+		return cfg.BenchmarkSandboxRuntime(agent), benchmarks.TaskKindFor(agent)
+	}
 	// hivecommons/hive#14581: issue-author credit on every merge path, read
 	// live so a reload of auto_merge.credit_issue_authors applies.
 	client.SetCreditIssueAuthors(func(string) bool { return cfg.AutoMerge.CreditIssueAuthorsEnabled() })
@@ -2029,7 +2064,7 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 		for name := range cfg.Agents {
 			agents = append(agents, name)
 		}
-		return github.IssueStagePolicy{Enabled: p.Enabled, Dwell: p.Dwell, AgentNames: agents}
+		return github.IssueStagePolicy{Enabled: p.Enabled, Dwell: p.Dwell, AgentNames: agents, ParentAutoClose: func(repo string) string { return cfg.ParentAutoCloseFor(repo) }}
 	})
 	client.SetReviewCadenceLimits(
 		func() bool { return cfg.Review.CombinedPerspectives },
@@ -2247,7 +2282,9 @@ func applyHumanDecisionLabels(ctx context.Context, cfg *config.Config, ghClient 
 // silently becomes the current time would re-open every verdict in the
 // artifact at once — the opposite of the narrow, deliberate correction this
 // setting exists for.
-// reviewPerspectiveSet resolves the hive's configured review perspectives.
+// reviewPerspectiveSet resolves the hive's configured review perspectives: the
+// set linked from review.perspectives_source when one has resolved, otherwise
+// the inline review.perspectives (ReviewConfig.EffectivePerspectives).
 //
 // A bad configuration falls back to the built-in set and says so, rather than
 // disabling review. Silently reviewing nothing would look identical to a healthy
@@ -2257,7 +2294,7 @@ func reviewPerspectiveSet(cfg *config.Config, logger *slog.Logger) review.Perspe
 	if cfg == nil {
 		return review.PerspectiveSet{}
 	}
-	set, err := review.NewPerspectiveSet(cfg.Review.Perspectives, cfg.Review.PerspectivePrompts)
+	set, err := review.NewPerspectiveSet(cfg.Review.EffectivePerspectives())
 	if err != nil {
 		if logger != nil {
 			logger.Warn("review.perspectives is invalid; reviewing with the built-in set until it is fixed",
@@ -2540,6 +2577,9 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		// (review.bot_author_full_review_paths); fetched only for a listed
 		// bot's PR that is about to be reviewed.
 		item.ChangedFiles, item.ChangedFilesKnown = reviewBotRouteFilesFor(ctx, cfg, ghr, botRoute, artifact, state, fullRepo, pr.Number, pr.Author, pr.HeadSHA, pr.BodyDigest)
+		// Repository rules and dependency preflight (hivecommons/hive#19069),
+		// gathered once per head for a PR about to be reviewed.
+		item.PreflightSection = reviewPreflightFor(ctx, cfg, ghr, artifact, state, fullRepo, pr, logger)
 		prs = append(prs, item)
 	}
 	// PRs a review webhook just fired for go first, so the early eval cycle

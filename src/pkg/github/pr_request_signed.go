@@ -15,6 +15,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // signedCommitResult reports what reauthorBranchSigned did.
@@ -93,6 +94,9 @@ func (c *Client) SetSignedCommits(fn func() bool) {
 func (c *Client) reauthorBranchSigned(ctx context.Context, req PRRequest) signedCommitResult {
 	if c == nil || c.client == nil {
 		return signedCommitResult{Skipped: "no GitHub client"}
+	}
+	if reason := invalidHeadReason(req.Head); reason != "" {
+		return signedCommitResult{Skipped: "head is not a branch: " + reason}
 	}
 	owner, repo := c.splitRepo(strings.TrimSpace(req.Repo))
 	head := strings.TrimSpace(req.Head)
@@ -421,6 +425,7 @@ func (c *Client) createCommitOnBranch(ctx context.Context, nameWithOwner, branch
 	const mutation = `mutation($input: CreateCommitOnBranchInput!) {
   createCommitOnBranch(input: $input) { commit { oid } }
 }`
+	headline, body = prosefilter.SanitizeTitle(headline), prosefilter.Sanitize(body)
 	message := map[string]string{"headline": headline}
 	if body != "" {
 		message["body"] = body

@@ -121,8 +121,13 @@
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.sandboxEnabled ? 'on' : ''}" id="cfg-agent-sandbox" data-action="toggleConfigSwitch" data-section="general" data-key="sandboxEnabled"></div>
-          <span class="config-toggle-label">Run in sandbox ${settingHelpMark('sandbox-isolation', '', 'Run in sandbox', `Opt this agent into the credential-free sandbox runner. Requires the hive-wide sandbox gate in Governor → Security to be enabled.`)}${g.sandboxEffective ? ' ' + statusBadgeHTML('ready', 'sandboxed', '', 'done') : ''}</span>
+          <span class="config-toggle-label">Run in sandbox ${settingHelpMark('sandbox-isolation', '', 'Run in sandbox', `Opt this agent into the credential-free sandbox runner. Requires the hive-wide sandbox gate in Governor → Security to be enabled. Turning it on writes a complete sandbox block: the agent_sandbox defaults, or a copy of another sandboxed agent's block (its publish.verify commands excluded).`)}${g.sandboxEffective ? ' ' + statusBadgeHTML('ready', 'sandboxed', '', 'done') : ''}</span>
         </div>
+        ${sandboxSourcePickerHTML(g)}
+        ${agentSandboxSettingsHtml(g)}
+        <details class="settings-subsection-details"><summary class="settings-subsection-summary">Substrate sandbox overrides</summary>
+        ${substrateSandboxFields('general', g.sandboxSubstrate)}
+        </details>
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.clearOnKick !== false ? 'on' : ''}" id="cfg-clear-on-kick" data-action="toggleConfigSwitch" data-section="general" data-key="clearOnKick"></div>
           <span class="config-toggle-label">Clear on Kick ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Clear on Kick', `Send /clear before each governor kick to reset conversation context. Prevents stale context buildup across runs. On by default for all agents.`)}</span>
@@ -1448,4 +1453,38 @@
       else if (source) note = 'Inherited from the ' + source.replace(/^env:/, '') + ' deployment environment variable — set a value above to override it.';
       else note = 'No hive default set, so agents that leave Explain Mode unset do not explain.';
       return 'In force now: <strong class="text-default">' + esc(effective) + '</strong>. ' + esc(note) + ' Applies from the next kick &mdash; no restart needed.';
+    }
+
+
+    // Run-in-sandbox source picker (hivecommons/hive#18525). Shown while the
+    // toggle is being turned on: the server refuses a toggle that would leave
+    // the agent with no sandbox image or runtime, so the operator picks where
+    // the block comes from — the agent_sandbox defaults when they are
+    // complete, or another agent that already has a complete block.
+    function sandboxSourcePickerHTML(g) {
+      const sources = Array.isArray(g.sandboxCopySources) ? g.sandboxCopySources : [];
+      const defaultsOk = !g.sandboxDefaultsProblem;
+      const hidden = g.sandboxEnabled ? ' style="display:none"' : '';
+      let inner;
+      if (!defaultsOk && sources.length === 0) {
+        inner = '<div class="config-field-hint" id="cfg-agent-sandbox-source-error" role="alert" style="color:var(--red)">'
+          + esc(g.sandboxDefaultsProblem) + '. No agent has a complete sandbox block to copy either: set the default image in Settings, Security first, or set the image under Sandbox settings below.</div>';
+      } else {
+        const opts = (defaultsOk ? '<option value="">agent_sandbox defaults</option>' : '')
+          + sources.map(n => '<option value="' + esc(n) + '">Copy from ' + esc(n) + '</option>').join('');
+        inner = '<label style="font-size:0.7rem">Sandbox settings from</label>'
+          + '<select id="cfg-agent-sandbox-source" data-change-action="markDirty" data-arg0="general" data-arg1="sandboxCopyFrom" data-arg-types="s,s,v">' + opts + '</select>'
+          + (defaultsOk ? '' : '<div class="config-field-hint" style="color:var(--muted)">' + esc(g.sandboxDefaultsProblem) + ', so a block must be copied from another agent.</div>');
+      }
+      return '<div class="config-field" id="cfg-agent-sandbox-source-wrap"' + hidden + '>' + inner + '</div>';
+    }
+
+    // Called by toggleConfigSwitch when the Run-in-sandbox toggle flips.
+    function onSandboxToggle(isOn) {
+      const wrap = document.getElementById('cfg-agent-sandbox-source-wrap');
+      if (!wrap) return;
+      wrap.style.display = isOn ? '' : 'none';
+      const sel = document.getElementById('cfg-agent-sandbox-source');
+      if (isOn && sel && sel.value) markDirty('general', 'sandboxCopyFrom', sel.value);
+      if (!isOn && _configState.dirty.general) delete _configState.dirty.general.sandboxCopyFrom;
     }

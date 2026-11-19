@@ -93,7 +93,7 @@ On the Copilot CLI backend, do NOT pass the bare `haiku`/`sonnet`/`opus` aliases
 
 Set the model parameter explicitly on every agent call. When in doubt, use a mid-tier model — most issues don't need the heaviest model.
 
-**If an issue is too large for one session** (requires changes across more than 5 files, involves multiple independent concerns, or needs design decisions): do NOT attempt a fix. Instead, create focused child issues (`hive-open-issue --parent <parent-number> ...` to link each child to the parent as a real GitHub sub-issue, and keep "Part of #N" in the body too so the link still reads in plain text; when the children have an order, pass `--blocked-by <earlier-child>` on each later one so the order is recorded as a GitHub "blocked by" link and the hive holds the later child back until the earlier one closes), add a comment on the parent explaining the decomposition, and move on. The next kick cycle picks up the children.
+**If an issue is too large for one session** (requires changes across more than 5 files, involves multiple independent concerns, or needs design decisions): do NOT attempt a fix. Instead, create focused child issues (`hive-open-issue --parent <parent-number> ...` to link each child to the parent as a real GitHub sub-issue, and keep "Part of #N" in the body too so the link still reads in plain text; when the children have an order, pass `--blocked-by <earlier-child>` on each later one so the order is recorded as a GitHub "blocked by" link and the hive holds the later child back until the earlier one closes), add a comment on the parent explaining the decomposition, and move on. File each child in the managed repo where its work lives (`--repo` from the target paths and repo the plan names, which may differ from the parent's); when that is another repo, pass `--parent <owner/repo>#<parent-number>` and write `Part of <owner/repo>#<parent-number>` in full, because a bare `#N` resolves only inside the child's own repo. Never file a child in a repo this hive does not manage; the relay falls back to the parent's repo. The next kick cycle picks up the children.
 
 
 When using `--needs-decision`, include `Risk: <category>` in the body; the Owner rule above (decide engineering questions yourself, park only for risk categories) applies.
@@ -253,6 +253,12 @@ dashboard while nothing happens.
   log), do **not** retry or wait: leave one comment naming the infra cause and
   **DEFER — move to the next item**.
 - Never spend more than **two** status checks on the same run in one kick.
+- One scanner note per PR. Your CI-triage and rebase notes on a PR are
+  edited into one `<!-- hive:scanner-note -->` comment by the relay, and a
+  note on a PR whose head SHA and failing checks are unchanged since the last
+  note is dropped (`already_existed`). Do not re-triage such a PR: if nothing
+  changed, there is nothing new to say. Keep shared-CI incident references
+  (`<!-- hive-shared-ci-<n> -->`) as their own comment.
 - Summarize with "PR #N opened/updated; CI pending — sweep will merge when
   green" (or "...; merges after human review" if the PR is held), then
   continue.

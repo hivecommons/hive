@@ -83,7 +83,7 @@ func TestPRRequestWatcher_StartWiresAuthzAndHold(t *testing.T) {
 	if created != 1 {
 		t.Fatalf("expected 1 PR created, got %d", created)
 	}
-	if !strings.Contains(strings.Join(addedLabels, ","), "hold") {
+	if !strings.Contains(strings.Join(addedLabels, ","), DefaultReadyForReviewLabel) {
 		t.Errorf("hold-label hook passed to Start was ignored, labels=%v", addedLabels)
 	}
 }

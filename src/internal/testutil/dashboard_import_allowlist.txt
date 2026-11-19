@@ -7,9 +7,14 @@
 # hivecommons/hive#13536) from pkg/dashboard must route through an existing
 # seam or be added here with PR justification; removed imports must be
 # deleted so the ratchet tightens. Entries are sorted.
+# workflowmodel: /api/workflows handlers compile lifecycle models (Compile, Profile diagnostics) and the tracker emits per-repo workflow columns; the store and bindings already route through Dependencies (hivecommons/hive#17620 P2).
+# egressmark: deployment_upgrade.go dials the in-cluster Kubernetes API for the hive's own rollout; the dial must carry the forced-egress SO_MARK or nodes without xt_owner redirect it into the MITM proxy (hivecommons/hive#17817).
+# agentsmd: the /api/status repo entries carry each repo's last AGENTS.md injection status (size, effective cap, dropped sections) from agentsmd.StatusFor, the read side of the registry the scheduler records into (hivecommons/hive#18495).
+# buildcontains: GET /api/version/contains answers "does the running build contain PR #N" through the same dependency-free ancestry resolver the hub uses (yes/no/unknown, never a guess); a leaf package importing only the standard library (hivecommons/hive#18915).
 github.com/hivecommons/hive/crux
-github.com/hivecommons/hive/crux/agentparse
+github.com/hivecommons/hive/crux/agentsmd
 github.com/hivecommons/hive/crux/claude
+github.com/hivecommons/hive/crux/egressmark
 github.com/hivecommons/hive/crux/kubejob
 github.com/hivecommons/hive/crux/logscrub
 github.com/hivecommons/hive/crux/paneclass
@@ -22,6 +27,7 @@ github.com/hivecommons/hive/pkg/advisory
 github.com/hivecommons/hive/pkg/agentaudit
 github.com/hivecommons/hive/pkg/beads
 github.com/hivecommons/hive/pkg/blocker
+github.com/hivecommons/hive/pkg/buildcontains
 github.com/hivecommons/hive/pkg/celtrigger
 github.com/hivecommons/hive/pkg/claims
 github.com/hivecommons/hive/pkg/classify
@@ -37,6 +43,7 @@ github.com/hivecommons/hive/pkg/feedbackbundle
 github.com/hivecommons/hive/pkg/fixqueue
 github.com/hivecommons/hive/pkg/fleetreport
 github.com/hivecommons/hive/pkg/forgestate
+github.com/hivecommons/hive/pkg/gfi
 github.com/hivecommons/hive/pkg/github
 github.com/hivecommons/hive/pkg/governor
 github.com/hivecommons/hive/pkg/hiveadvisor
@@ -46,11 +53,26 @@ github.com/hivecommons/hive/pkg/housestyle
 github.com/hivecommons/hive/pkg/hub
 github.com/hivecommons/hive/pkg/hubactivity
 github.com/hivecommons/hive/pkg/hubbackup
+# pkg/inbox: Inbox triage API (hivecommons/hive#17876) — dashboard routes
+# /api/inbox* wrap the inbox service; no existing seam covers it.
+github.com/hivecommons/hive/pkg/inbox
 github.com/hivecommons/hive/pkg/inferencehealth
 github.com/hivecommons/hive/pkg/ioscan
+# pkg/keystore: every secret VALUE the dashboard writes to the data volume
+# (LiteLLM, Bob, gateway and backup keys, the Copilot login, the NPS relay
+# identity) is sealed at rest through the keystore's WriteFile/ReadFile
+# (hivecommons/hive#18214); no existing seam carries a secret-file write.
+github.com/hivecommons/hive/pkg/keystore
 github.com/hivecommons/hive/pkg/knowledge
+# mailallow, mailin (only its stdlib-only wire subpackage): the email-in
+# endpoints (/api/meetings/invites, calendar-emails, /api/inbox/email) read
+# hive-mx deliveries and the calendar email allowlist (#18395).
+github.com/hivecommons/hive/pkg/mailallow
+github.com/hivecommons/hive/pkg/mailin
 github.com/hivecommons/hive/pkg/maintainernotes
 github.com/hivecommons/hive/pkg/modelfamily
+# pkg/netguard: isPrivateURL delegates to the one shared address classifier for server-side fetchers, a stdlib-only leaf package also used by pkg/hub (hivecommons/hive#18991).
+github.com/hivecommons/hive/pkg/netguard
 github.com/hivecommons/hive/pkg/notify
 github.com/hivecommons/hive/pkg/nous
 github.com/hivecommons/hive/pkg/planning
@@ -58,6 +80,8 @@ github.com/hivecommons/hive/pkg/policies
 github.com/hivecommons/hive/pkg/promptsrc
 github.com/hivecommons/hive/pkg/rebasemerge
 github.com/hivecommons/hive/pkg/releasenotes
+# repoagents: /api/agents/discovered* handlers list and approve the .hive/agents/ discoverer's entries; the discoverer itself routes through Dependencies.RepoAgents (hivecommons/hive#18491).
+github.com/hivecommons/hive/pkg/repoagents
 github.com/hivecommons/hive/pkg/resolve
 github.com/hivecommons/hive/pkg/retro
 github.com/hivecommons/hive/pkg/review
@@ -73,5 +97,6 @@ github.com/hivecommons/hive/pkg/tokens
 github.com/hivecommons/hive/pkg/turn
 github.com/hivecommons/hive/pkg/upstreamwatch
 github.com/hivecommons/hive/pkg/webassets
+github.com/hivecommons/hive/pkg/workflowmodel
 github.com/hivecommons/hive/pkg/worksource
 github.com/hivecommons/hive/pkg/writeback

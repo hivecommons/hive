@@ -555,45 +555,92 @@
       const m = String(header || '').match(/filename="?([^";]+)"?/i);
       return (m && m[1]) ? m[1] : (fallback || 'hive-export.txt');
     }
+    // Selects the whole content of a read-only text element so a click (or
+    // the Copy fallback) hands the user the exact string without dragging.
+    function hiveSelectAllText(el) {
+      if (!el || !window.getSelection || !document.createRange) return;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    // In-app viewer for text the dashboard hands to the user: a single link
+    // (OAuth authorization URLs, terminal URLs, external links) or a text
+    // export (JSON, YAML, CSV). No textarea: a link is one full-width,
+    // read-only, selectable line in the dialog's own type and colour tokens;
+    // a multi-line export is a read-only <pre> that scrolls with the body.
+    // Open (when a new tab can load the URL) is primary, Copy secondary and
+    // Close a ghost button, so the one action the user came for leads.
     function hiveExportViewer(opts) {
       const cfg = opts || {};
       const title = cfg.title || cfg.filename || 'Export';
       const text = String(cfg.text == null ? '' : cfg.text);
+      const sourceURL = cfg.sourceURL || '';
+      const token = localStorage.getItem('hive-token') || '';
+      const canOpen = !!(sourceURL && (cfg.allowOpen || !token));
+      const isLink = !!sourceURL && text.trim().indexOf('\n') < 0;
       const overlay = document.createElement('div');
       overlay.className = 'hive-dialog-overlay';
       hiveRememberModalOpen(overlay);
       overlay.innerHTML = `<div class="hive-dialog hive-export-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-export-title">
         <div id="hive-export-title" class="hive-dialog-title"></div>
         <div class="hive-dialog-body long modal-scroll hive-export-body">
-          <div class="cmp-note hive-export-note"></div>
-          <textarea class="hive-export-text" readonly spellcheck="false"></textarea>
+          <p class="hive-export-note"></p>
+          ${isLink
+            ? '<code class="hive-export-link" tabindex="0" aria-readonly="true"></code>'
+            : '<pre class="hive-export-text" tabindex="0" aria-readonly="true"></pre>'}
         </div>
         <div class="hive-dialog-buttons">
-          <a class="hv-btn btn-secondary hive-export-open" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>
+          <button type="button" class="hv-btn btn-ghost hive-dialog-btn hive-export-close">Close</button>
           <button type="button" class="hv-btn btn-secondary hive-export-copy">Copy to clipboard</button>
-          <button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Close</button>
+          <a class="hv-btn btn-primary hive-export-open" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>
         </div></div>`;
       overlay.querySelector('#hive-export-title').textContent = title;
       const note = overlay.querySelector('.hive-export-note');
-      const textarea = overlay.querySelector('.hive-export-text');
-      textarea.value = text;
-      const sourceURL = cfg.sourceURL || '';
-      const token = localStorage.getItem('hive-token') || '';
-      const canOpen = !!(sourceURL && (cfg.allowOpen || !token));
-      if (note) note.textContent = sourceURL && token && !cfg.allowOpen ? 'Rendered in-app because this dashboard uses a bearer token that a new tab would not receive.' : 'Rendered in-app so the browser does not prompt for downloads.';
+      const textEl = overlay.querySelector(isLink ? '.hive-export-link' : '.hive-export-text');
+      textEl.textContent = text;
+      textEl.setAttribute('aria-label', title);
+      textEl.addEventListener('click', function() { hiveSelectAllText(textEl); });
+      textEl.addEventListener('focus', function() { hiveSelectAllText(textEl); });
+      let noteText = cfg.note;
+      if (noteText == null) {
+        if (sourceURL && token && !cfg.allowOpen) noteText = 'Shown here because this dashboard signs in with a token that a new tab would not carry. Copy what you need from it.';
+        else if (isLink) noteText = canOpen ? 'Open this link to continue, then come back here when you are done.' : 'Copy this link and open it in a browser, then come back here when you are done.';
+        else noteText = 'Copy the text below to save it.';
+      }
+      if (noteText) note.textContent = noteText; else note.remove();
       const open = overlay.querySelector('.hive-export-open');
-      if (open && canOpen) { open.href = sourceURL; open.hidden = false; }
-      overlay.querySelector('.hive-export-copy').addEventListener('click', function(e) {
+      const copy = overlay.querySelector('.hive-export-copy');
+      copy.setAttribute('aria-label', 'Copy ' + title + ' to clipboard');
+      if (canOpen) {
+        open.href = sourceURL;
+        open.hidden = false;
+        open.setAttribute('aria-label', 'Open ' + title + ' in a new tab');
+        open.setAttribute('data-initial-focus', '');
+      } else {
+        open.remove();
+        copy.classList.remove('btn-secondary');
+        copy.classList.add('btn-primary');
+        copy.setAttribute('data-initial-focus', '');
+      }
+      copy.addEventListener('click', function(e) {
         e.preventDefault();
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(function(){ showToast('Copied ' + title + ' to clipboard', 'success'); }, function(){ textarea.focus(); textarea.select(); showToast('Clipboard blocked — selected text for manual copy', 'error'); });
+          navigator.clipboard.writeText(text).then(function(){ showToast('Copied ' + title + ' to clipboard', 'success'); }, function(){ textEl.focus(); hiveSelectAllText(textEl); showToast('Clipboard blocked — selected text for manual copy', 'error'); });
         } else {
-          textarea.focus(); textarea.select();
+          textEl.focus(); hiveSelectAllText(textEl);
           showToast('Selected text for manual copy', 'info');
         }
       });
       document.body.appendChild(overlay);
-      hiveWireDialog(overlay, function(){}, undefined, '.primary', null, close => close());
+      // Enter activates the focused action (Open leads with initial focus);
+      // anywhere else it closes, as the other dialogs do.
+      hiveWireDialog(overlay, function(){}, undefined, '.hive-export-close', null, function(close) {
+        const active = document.activeElement;
+        if (active && (active === copy || active === open) && active.isConnected) { active.click(); return; }
+        close();
+      });
     }
     function hiveBinaryExportNotice(name, detail) {
       hiveAlert((detail || 'This export is binary and cannot be rendered safely in the dashboard.') + '\n\nBrowser downloads are disabled by policy to avoid native permission prompts. Use the API or CLI from a trusted shell if you need to save this file.', name || 'Binary export');
@@ -1008,6 +1055,23 @@
     const KICK_POLL_INTERVAL_MS = 2000;
     const KICK_POLL_TIMEOUT_MS = 150000;
 
+    // kickFailureToast reports a failed kick. When the server named a docs page
+    // for the refusal (docs_url), the error toast carries a "What does this
+    // mean?" button that opens it; only https links are opened.
+    const KICK_REFUSAL_DOCS_LABEL = 'What does this mean?';
+    function kickFailureToast(toast, error, docsUrl) {
+      const msg = 'Kick failed: ' + error;
+      if (typeof docsUrl !== 'string' || !/^https:\/\//.test(docsUrl)) {
+        dismissToast(toast, msg, 'error');
+        return toast;
+      }
+      dismissToast(toast, null, null, true);
+      return showToast(msg, 'error', {
+        actionLabel: KICK_REFUSAL_DOCS_LABEL,
+        onAction: () => window.open(docsUrl, '_blank', 'noopener,noreferrer'),
+      });
+    }
+
     async function pollKickOutcome(agent) {
       const deadline = Date.now() + KICK_POLL_TIMEOUT_MS;
       while (Date.now() < deadline) {
@@ -1018,7 +1082,7 @@
           if (!contentType.includes('application/json')) continue;
           const data = await res.json();
           if (data.status === 'delivered') return { settled: true, ok: true };
-          if (data.status === 'failed') return { settled: true, ok: false, error: data.error || 'unknown' };
+          if (data.status === 'failed') return { settled: true, ok: false, error: data.error || 'unknown', docsUrl: data.docs_url };
         } catch (e) {
           // A transient poll failure says nothing about the kick. Keep polling.
         }
@@ -1035,7 +1099,7 @@
         return;
       }
       if (outcome.ok) { dismissToast(toast, `Kicked ${agent}`, 'success'); return; }
-      dismissToast(toast, 'Kick failed: ' + outcome.error, 'error');
+      kickFailureToast(toast, outcome.error, outcome.docsUrl);
     }
 
     async function kick(agent) {
@@ -1050,7 +1114,7 @@
       const toast = showToast(`Kicking ${agent}...`, 'info', true);
       try {
         const data = await postJSON(`/api/kick/${agent}`, opts);
-        if (!data.ok) { dismissToast(toast, 'Kick failed: ' + (data.error || 'unknown'), 'error'); return; }
+        if (!data.ok) { kickFailureToast(toast, data.error || 'unknown', data.docs_url); return; }
         if (input) input.value = '';
         if (data.status === 'in-flight') {
           dismissToast(toast, `A kick is already being delivered to ${agent}`, 'info');

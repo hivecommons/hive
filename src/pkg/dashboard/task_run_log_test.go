@@ -736,3 +736,64 @@ func TestTaskRunLog_RecordedOnHandback(t *testing.T) {
 		t.Fatalf("run-stats wrong: %+v", stats.Backends)
 	}
 }
+
+// #18721: the models array of /api/contribute/run-stats carries the same
+// per-model split as /api/contribute/run-stats/models, with the scenario keys
+// the backends array uses.
+func TestHandleContributeRunStats_ModelsCarryScenarioSplit(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC().Format(time.RFC3339)
+	var lines []string
+	for _, r := range []TaskRunRecord{
+		{TS: now, Backend: "claude", Model: "m1", Outcome: outcomeFailed, FailureKind: TaskFailureKindEnvironment,
+			Scenario: deriveScenario(outcomeFailed, "", TaskFailureKindEnvironment, "")},
+		{TS: now, Backend: "claude", Model: "m1", Outcome: outcomeAbandoned, AbandonCause: abandonCauseHandback,
+			Scenario: deriveScenario(outcomeAbandoned, "", "", abandonCauseHandback)},
+		{TS: now, Backend: "claude", Model: "m1", Outcome: outcomeCompleted, CompletionSignal: completionSignalVerdict,
+			Scenario: deriveScenario(outcomeCompleted, completionSignalVerdict, "", "")},
+	} {
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, string(b))
+	}
+	if err := os.WriteFile(filepath.Join(dir, taskRunLogFileName), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(0, nil)
+	s.SetContributorsDir(dir)
+	w := httptest.NewRecorder()
+	s.handleContributeRunStats(w, httptest.NewRequest(http.MethodGet, "/api/contribute/run-stats?days=1", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var resp struct {
+		Backends []taskRunBackendStats `json:"backends"`
+		Models   []map[string]any      `json:"models"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response: %v", err)
+	}
+	if len(resp.Models) != 1 || len(resp.Backends) != 1 {
+		t.Fatalf("models %+v backends %+v", resp.Models, resp.Backends)
+	}
+	m := resp.Models[0]
+	for _, key := range []string{"model", "runs", "verified_pr_share", "failure_rate", "abandoned", "scenarios", "failure_kinds"} {
+		if _, ok := m[key]; !ok {
+			t.Errorf("models[0] missing %q: %#v", key, m)
+		}
+	}
+	sc, _ := m["scenarios"].(map[string]any)
+	if len(sc) != len(resp.Backends[0].Scenarios) {
+		t.Fatalf("model scenarios %#v, backend scenarios %#v", sc, resp.Backends[0].Scenarios)
+	}
+	for k, v := range resp.Backends[0].Scenarios {
+		if sc[k] != float64(v) {
+			t.Errorf("scenarios[%q] = %#v on the model, %d on the backend", k, sc[k], v)
+		}
+	}
+	if m["abandoned"] != 1.0 || m["failure_rate"] != 1.0/3.0 {
+		t.Errorf("abandoned/failure_rate = %#v/%#v, want 1 and 1/3", m["abandoned"], m["failure_rate"])
+	}
+}

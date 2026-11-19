@@ -61,3 +61,27 @@ func TestDelegateDeciderRunner(t *testing.T) {
 		t.Fatalf("nil config: %v", err)
 	}
 }
+
+func TestWorkflowSpecRunnerUsesLargerBudget(t *testing.T) {
+	t.Setenv(config.LiteLLMEndpointEnv, "")
+	var got delegateDeciderRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{}"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{}
+	cfg.Governor.Trajectory.Endpoint = srv.URL
+	cfg.Governor.Trajectory.Model = "reviewer-model"
+	runner := newWorkflowSpecRunner(func() *config.Config { return cfg })
+	if _, err := runner.RunDeciderTurn(context.Background(), delegatedecision.DeciderProfile, "sys", "usr"); err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != "reviewer-model" || got.MaxTokens != workflowSpecMaxTokens {
+		t.Fatalf("request = %+v", got)
+	}
+	if b := newDelegateDeciderRunner(func() *config.Config { return cfg }).(*delegateDeciderRunner).completionBudget(); b != delegateDeciderMaxTokens {
+		t.Fatalf("default budget = %d", b)
+	}
+}

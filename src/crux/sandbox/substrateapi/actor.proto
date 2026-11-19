@@ -1,0 +1,79 @@
+// Copyright 2026 The Agent Substrate Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Trimmed subset of api/ateapi/v1/ateapi.proto from
+// https://github.com/agent-substrate/substrate (tag v1.0.0). Package, service,
+// message names and field numbers match upstream so the generated client is
+// wire-compatible with ate-api-server; only the RPCs and fields hive's
+// Substrate sandbox launcher uses are kept, split across files so each
+// generated *.pb.go stays under the crux 800-line file ratchet. Importing
+// go.ate.dev/substrate directly would pull a go 1.27 toolchain requirement and
+// a vendored cloud-SDK tree into crux. Regenerate with ./generate.sh.
+
+syntax = "proto3";
+
+package substrate.ateapi.v1;
+
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/hivecommons/hive/crux/sandbox/substrateapi;substrateapi";
+
+message Actor {
+  ResourceMetadata metadata = 1;
+  ObjectRef actor_template = 2;
+  Selector worker_selector = 3;
+  ObjectRef source_tag = 4;
+  ActorStatus status = 5;
+}
+
+enum ActorState {
+  ACTOR_STATE_UNSPECIFIED = 0;
+  ACTOR_STATE_RESUMING = 1;
+  ACTOR_STATE_RUNNING = 2;
+  ACTOR_STATE_SUSPENDING = 3;
+  ACTOR_STATE_SUSPENDED = 4;
+  ACTOR_STATE_CRASHED = 5;
+  ACTOR_STATE_DELETING = 6;
+  ACTOR_STATE_REVERTING = 7;
+}
+
+message ActorStatus {
+  ActorState state = 1;
+  WorkerAssignment worker_assignment = 2;
+  ActorCrash crash = 4;
+  string assigned_node = 5;
+}
+
+message ActorCrash {
+  string message = 1;
+  google.protobuf.Timestamp crash_time = 2;
+}
+
+message WorkerAssignment {
+  ObjectRef worker = 6;
+  string worker_namespace = 1;
+  string worker_pool = 2;
+  string worker_pod = 3;
+  string worker_pod_uid = 4;
+  repeated string worker_pod_ips = 5;
+  string node_name = 7;
+  int64 worker_epoch = 8;
+  ActorSandboxRuntime sandbox_runtime = 9;
+  string worker_spiffe_id = 10;
+}
+
+message ActorSandboxRuntime {
+  string sandbox_class = 1;
+}

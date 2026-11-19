@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/hivecommons/hive/pkg/celtrigger"
@@ -130,8 +131,9 @@ func issueToEvent(iss github.Issue) celtrigger.NormalizedEvent {
 // transition, so Kind is KindPROpened. is_draft/base/head come from the PR when
 // available.
 //
-// TODO(celtrigger transitions): finer PR kinds (pr.labeled, pr.ready_for_review,
-// pr.merged) need a webhook event source; map them once that path exists.
+// pr.labeled is derived from label changes between evals (prLabeledEvent).
+// TODO(celtrigger transitions): pr.ready_for_review and pr.merged need a
+// webhook event source; map them once that path exists.
 func prToEvent(pr github.PullRequest) celtrigger.NormalizedEvent {
 	return celtrigger.NormalizedEvent{
 		Kind:    celtrigger.KindPROpened,
@@ -145,12 +147,60 @@ func prToEvent(pr github.PullRequest) celtrigger.NormalizedEvent {
 	}
 }
 
+// prLabeledEvent is the pr.labeled edge for an already-seen PR that gained
+// added since the previous eval. Labels carries the full current set.
+func prLabeledEvent(pr github.PullRequest, added []string) celtrigger.NormalizedEvent {
+	ev := prToEvent(pr)
+	ev.Kind = celtrigger.KindPRLabeled
+	ev.AddedLabels = added
+	return ev
+}
+
 // celSeenSet remembers which repo#number items have already been surfaced as
 // "opened", so issue.opened / pr.opened are edge-triggered per hive process
 // instead of re-matching every eval cycle while the item stays actionable.
+// For PRs it also keeps the label set last seen, so a label added between
+// evals surfaces once as pr.labeled (hivecommons/hive#18538).
 type celSeenSet struct {
-	mu   sync.Mutex
-	seen map[string]struct{}
+	mu     sync.Mutex
+	seen   map[string]struct{}
+	labels map[string][]string
+}
+
+// observeLabels records labels for key and reports whether key is new and,
+// when it is not, which labels it gained since the last call. A label that
+// was removed and added back counts as added again.
+func (s *celSeenSet) observeLabels(key string, labels []string) (first bool, added []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seen == nil {
+		s.seen = make(map[string]struct{})
+	}
+	if s.labels == nil {
+		s.labels = make(map[string][]string)
+	}
+	prev, known := s.labels[key]
+	_, seenBefore := s.seen[key]
+	s.seen[key] = struct{}{}
+	s.labels[key] = append([]string(nil), labels...)
+	if !seenBefore {
+		return true, nil
+	}
+	if !known {
+		// Seen through firstSight before labels were tracked: take this
+		// snapshot as the baseline rather than reporting every label.
+		return false, nil
+	}
+	had := make(map[string]struct{}, len(prev))
+	for _, l := range prev {
+		had[strings.ToLower(strings.TrimSpace(l))] = struct{}{}
+	}
+	for _, l := range labels {
+		if _, ok := had[strings.ToLower(strings.TrimSpace(l))]; !ok {
+			added = append(added, l)
+		}
+	}
+	return false, added
 }
 
 // firstSight reports whether key is new, recording it as seen.
@@ -235,10 +285,18 @@ func celMatchedAgentsOnce(
 		consider(issueToEvent(iss), celSourceIssue)
 	}
 	for _, pr := range actionable.PRs.Items {
-		if seen != nil && !seen.firstSight(fmt.Sprintf("pr:%s#%d", pr.Repo, pr.Number)) {
+		if seen == nil {
+			consider(prToEvent(pr), celSourcePR)
 			continue
 		}
-		consider(prToEvent(pr), celSourcePR)
+		first, added := seen.observeLabels(fmt.Sprintf("pr:%s#%d", pr.Repo, pr.Number), pr.Labels)
+		if first {
+			consider(prToEvent(pr), celSourcePR)
+			continue
+		}
+		if len(added) > 0 {
+			consider(prLabeledEvent(pr, added), celSourcePR)
+		}
 	}
 
 	if len(candidates) == 0 {

@@ -502,6 +502,7 @@ type WSMessage struct {
 	TrustTier                    string                      `json:"trust_tier,omitempty"`
 	Permissions                  []string                    `json:"permissions,omitempty"`
 	Reason                       string                      `json:"reason,omitempty"`
+	Filtered                     map[string]int              `json:"filtered,omitempty"`
 	State                        string                      `json:"state,omitempty"`
 	ContributeNeedsDecisionLabel *string                     `json:"contribute_needs_decision_label,omitempty"`
 	OperatorMessage              *ContributorOperatorMessage `json:"operator_message,omitempty"`
@@ -639,8 +640,14 @@ type WSMessage struct {
 	// with it. Additive; a relay that ignores it keeps whatever default it ships.
 	MaxMessageBytes int                            `json:"max_message_bytes,omitempty"`
 	Announcement    *config.ContributeAnnouncement `json:"announcement,omitempty"`
-	HelpLinks       []config.ContributeHelpLink    `json:"help_links,omitempty"`
-	Role            string                         `json:"role,omitempty"`
+	// HiveName is the hive's display name, stated on auth_ok so a relay can
+	// name the hive to its contributor without parsing the hostname, which is
+	// minted once at claim time and never follows a rename. Additive and
+	// omitted when the hive has no name; a relay that ignores it keeps its
+	// hostname-derived short name.
+	HiveName  string                      `json:"hive_name,omitempty"`
+	HelpLinks []config.ContributeHelpLink `json:"help_links,omitempty"`
+	Role      string                      `json:"role,omitempty"`
 	// WorkbenchVersion and Incarnation are optional on auth_response for an
 	// external-execution workbench peer; ext_* frames below are routed to the
 	// attached peer after auth_ok.
@@ -872,6 +879,16 @@ type ActivityEntry struct {
 	AdvisorModel  string `json:"advisor_model,omitempty"`
 	AdvisorEffort string `json:"advisor_effort,omitempty"`
 	Task          string `json:"task,omitempty"`
+	// Reason is the bounded, scrubbed failure reason carried ONLY by "failed"
+	// entries, so the feed says why a run failed instead of just that it did.
+	Reason string `json:"reason,omitempty"`
+}
+
+// activityFailureReason scrubs (emails, links, tokens, repo refs) and bounds
+// (scrubBattleLogText caps at 120 runes) a relay-reported failure reason for
+// the public activity feed.
+func activityFailureReason(reason string) string {
+	return scrubBattleLogText(reason)
 }
 
 // advisorInfo is the optional trailing argument to addActivity: the advisor
@@ -903,6 +920,9 @@ type ContributeWSHub struct {
 	fixSched      *fixqueue.Scheduler
 	fixOwners     map[string]map[string]bool
 	fixDispatched func(*ContributorConnection, WSMessage)
+	// prOpenFn overrides the forge-cache lookup the fleet snapshot uses to
+	// drop merged/closed PRs from a contributor's rework; a test hook.
+	prOpenFn func(repo string, number int) (open, known bool)
 	// fixFailedSig is closed (and replaced) whenever a relay reports a
 	// fix-pr task failed, waking a Nudge that is waiting to learn whether its
 	// dispatch was refused (hivecommons/hive#14668). fixAckGrace overrides
@@ -1086,6 +1106,9 @@ type ContributeWSHub struct {
 	// stays bounded. Guarded by rateMu.
 	assignmentTimes map[string][]time.Time
 	rateMu          sync.Mutex
+	// roleRejectLogged dedupes the "agent role claim rejected" log per
+	// (user, role) so a client retrying a forbidden role does not flood it.
+	roleRejectLogged sync.Map // map[string]time.Time
 	// contributorFailureStreaks tracks, per identity, CONSECUTIVE hub-measured
 	// sub-minute task failures (kubestellar/hive#6450, contribute_failure_streak.go).
 	// Once a streak reaches contributorFailureStreakThreshold, selectTask pauses
@@ -1339,6 +1362,12 @@ func taskDescOf(task *WSTaskAssign) string {
 }
 
 func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort, task string, advisor ...advisorInfo) {
+	h.addActivityWithReason("", username, action, role, cli, model, effort, task, advisor...)
+}
+
+// addActivityWithReason is addActivity plus the failure reason shown on a
+// "failed" feed entry.
+func (h *ContributeWSHub) addActivityWithReason(reason, username, action, role, cli, model, effort, task string, advisor ...advisorInfo) {
 	adv := advisorInfo{}
 	if len(advisor) > 0 {
 		adv = advisor[0]
@@ -1389,6 +1418,7 @@ func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort
 		AdvisorModel:  adv.Model,
 		AdvisorEffort: adv.Effort,
 		Task:          task,
+		Reason:        activityFailureReason(reason),
 	}
 	h.activity = append(h.activity, entry)
 	if len(h.activity) > maxActivityEntries {
@@ -2840,9 +2870,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	if requestedRole != "" {
 		if ok, reason := h.roleClaimAllowed(probeContributor, requestedRole); !ok {
 			_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: reason, Role: requestedRole})
-			h.logger.Warn("[contribute-ws] agent role claim rejected",
-				"username", profile.GitHubUsername, "tier", profile.TrustTier,
-				"role", requestedRole, "reason", reason)
+			h.logRoleClaimRejected(profile.GitHubUsername, profile.TrustTier, requestedRole, reason)
 			h.auditRelayAs(profile.GitHubUsername, "", agentaudit.AuditRelayRejected, nil, "reason", "role_claim_rejected")
 			closeWithReason(s.conn, websocket.ClosePolicyViolation, "agent role claim rejected")
 			return true
@@ -3005,6 +3033,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		Announcement:                 announcement,
 		ContributeNeedsDecisionLabel: &needsDecisionLabel,
 		HelpLinks:                    h.server.contributeHelpLinks(),
+		HiveName:                     h.server.contributeHiveName(),
 		AuditShareRequested:          h.server.contributeAuditShareRequest(),
 	}); err != nil {
 		h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
@@ -3577,6 +3606,12 @@ func repoScopeGateReason(c *ContributorConnection) string {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return repoScopeGateReasonLocked(c)
+}
+
+// repoScopeGateReasonLocked is repoScopeGateReason for a caller that already
+// holds c.mu (the fleet snapshot explains an undispatched fix with it).
+func repoScopeGateReasonLocked(c *ContributorConnection) string {
 	if c.repoScopeInvalid {
 		return taskUnavailableRepoScopeInvalid
 	}
@@ -4354,7 +4389,7 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			if s.contributor.cliBackend == "pi" {
 				provider, _, _ = strings.Cut(s.contributor.model, "/")
 			}
-			h.addActivity(s.contributor.profile.GitHubUsername, "failed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, failedDesc, s.contributor.advisor())
+			h.addActivityWithReason(msg.Reason, s.contributor.profile.GitHubUsername, "failed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, failedDesc, s.contributor.advisor())
 			h.logger.Info("[contribute-ws] task failed",
 				"username", s.contributor.profile.GitHubUsername,
 				"task", msg.TaskID,
@@ -5186,4 +5221,24 @@ func contributorUsername(c *ContributorConnection) string {
 		return ""
 	}
 	return c.profile.GitHubUsername
+}
+
+// roleRejectLogWindow is how long a repeated identical role-claim rejection is
+// suppressed from the log.
+const roleRejectLogWindow = 10 * time.Minute
+
+// logRoleClaimRejected logs an expected trust-tier role rejection at Info (it is
+// a policy decision, not a hub error) and at most once per (user, role) per
+// roleRejectLogWindow. The authorization decision is unchanged.
+func (h *ContributeWSHub) logRoleClaimRejected(username, tier, role, reason string) {
+	key := username + "\x00" + role
+	now := time.Now()
+	if last, ok := h.roleRejectLogged.Load(key); ok {
+		if t, _ := last.(time.Time); now.Sub(t) < roleRejectLogWindow {
+			return
+		}
+	}
+	h.roleRejectLogged.Store(key, now)
+	h.logger.Info("[contribute-ws] agent role claim rejected",
+		"username", username, "tier", tier, "role", role, "reason", reason)
 }

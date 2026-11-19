@@ -16,6 +16,7 @@ infrastructure reasons only).
 | [hive](https://github.com/hivecommons/hive) | The Hive orchestrator: governor, agent manager, dashboard, hub, contributor relay. Publishes the `hive`, `hive-hub`, and `hive-contributor` container images. | Active | Yes, this is the release |
 | [crux](https://github.com/hivecommons/crux) | The governed AI agent runtime from Hive, published for reuse outside Hive: runs, observes and controls agent CLIs. A synced copy of this repository's `src/crux` module ([publishing model](../src/docs/crux-publish.md)); issues and code changes go to this repository. | Active | No, standalone release (Hive builds its in-tree `src/crux`) |
 | [pluk](https://github.com/hivecommons/pluk) | Lightweight pub-sub event streaming for tmux sessions running AI coding agents. Used by the agent manager to observe agent sessions. | Active | Yes, installed in the `hive` image |
+| [quorum](https://github.com/hivecommons/quorum) | Meeting MCP server that lets agents join Microsoft Teams, Google Meet, Zoom and Discord as a participant. Runs as a child process of hive for [meetings](../src/docs/meetings.md). | Active | Yes, installed in the `hive` image |
 | [hotshot](https://github.com/hivecommons/hotshot) | Screenshot capture that lands directly in an AI coding assistant's terminal. Developer tooling used by contributors and agents. | Active | No, standalone tool |
 | [promptargs](https://github.com/hivecommons/promptargs) | Template expansion and variable substitution for AI prompts across Claude Code, Copilot, Goose, Bob and others. | Active | No, standalone tool |
 | [rationguard](https://github.com/hivecommons/rationguard) | Detects and rebuts rationalization patterns in AI agent output. Standalone tool for reviewing agent transcripts. | Active | No, standalone tool |
@@ -24,6 +25,7 @@ infrastructure reasons only).
 | [hive-demo](https://github.com/hivecommons/hive-demo) | GitHub template repository for trying Hive on a sample service and walking it up the ACMM levels. Work in progress. | Early development | No |
 | [homebrew-hive](https://github.com/hivecommons/homebrew-hive) | Homebrew tap for one-command install of the Hive contribute app, hotshot and Crux. | Supporting | No, packaging only |
 | [homebrew-repo](https://github.com/hivecommons/homebrew-repo) | Homebrew tap for Spektacular (`brew install hivecommons/homebrew-repo/spektacular`); the formula is updated by Spektacular's release automation. | Supporting | No, packaging only |
+| [vexa](https://github.com/hivecommons/vexa) | Fork of [Vexa-ai/vexa](https://github.com/Vexa-ai/vexa), the meeting-bot and transcription service quorum drives for Teams, Meet and Zoom. Carries only patches upstream has not released yet and publishes the `vexa-bot` images for the shared meeting service. | Supporting | No, separate service |
 | [docs](https://github.com/hivecommons/docs) | Source for [docs.hivecommons.dev](https://docs.hivecommons.dev). Hive, Crux, hotshot, pluk, rationguard, promptargs, dibs and Spektacular docs are single-sourced from their repositories at build time. | Supporting | No |
 | [spektacular-website](https://github.com/hivecommons/spektacular-website) | Source for [spektacular.dev](https://spektacular.dev). | Early development | No |
 | [infra](https://github.com/hivecommons/infra) | Shared CI workflows, Prow configuration and org automation. | Supporting | No |
@@ -41,6 +43,8 @@ security policy from the `.github` repository. Repositories marked Active
 follow the same review and merge rules as Hive: changes land through pull
 requests gated by CI. Repositories marked Supporting or Placeholder carry no
 release of their own and are changed only in service of an Active repository.
+vexa is a fork and keeps upstream's own `SECURITY.md` and `CONTRIBUTING.md`;
+changes meant for upstream follow Vexa-ai/vexa's contribution process.
 
 When a repository is added to or removed from the organization, update this
 page in the same pull request.

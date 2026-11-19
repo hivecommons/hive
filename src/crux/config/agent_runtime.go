@@ -59,17 +59,17 @@ func (p *PromptSourceConfig) IsSet() bool {
 // user-writable dashboard overlay can neither widen the allowlist nor point an
 // agent at an arbitrary repo the App happens to be installed on.
 type DefinitionSourceConfig struct {
-	// Type selects the source kind. Only "github" is currently supported; an
-	// empty type defaults to "github" when a repo is set.
+	// Type selects the source kind; only "github" (the default) is supported.
 	Type  string `yaml:"type,omitempty" json:"type,omitempty"`
 	Owner string `yaml:"owner,omitempty" json:"owner,omitempty"`
 	Repo  string `yaml:"repo,omitempty" json:"repo,omitempty"`
 	Path  string `yaml:"path,omitempty" json:"path,omitempty"`
 	Ref   string `yaml:"ref,omitempty" json:"ref,omitempty"`
-	// URL is the human-facing source URL the operator pasted in the import UI
-	// (e.g. the github.com blob URL). Informational only — Owner/Repo/Path/Ref
-	// are authoritative for fetching. Kept so the UI can round-trip it.
+	// URL is the import UI's pasted source URL, kept only so the UI can
+	// round-trip it; Owner/Repo/Path/Ref are authoritative for fetching.
 	URL string `yaml:"url,omitempty" json:"url,omitempty"`
+	// Discovered: owner-approved from a repo's .hive/agents/ (#18491); owner keeps backend/model/mode/tools.
+	Discovered bool `yaml:"discovered,omitempty" json:"discovered,omitempty"`
 }
 
 // Slug returns the "owner/repo" identifier used for allowlist matching, or ""
@@ -777,27 +777,6 @@ func APIKeySHA256(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (gw GatewayConfig) ResolveAPIKey() string {
-	if gw.APIKeyEnv != "" {
-		if v := os.Getenv(gw.APIKeyEnv); v != "" {
-			return v
-		}
-	}
-	if gw.APIKeyFile != "" {
-		// SECURITY (audit N8): confine the read to the managed secrets dirs. This
-		// gate lives HERE, not only in the HTTP handler, so every caller is
-		// covered — including a path that reached hive.yaml some other way (a
-		// hand-edited config, an older build, a restored backup).
-		if !SecretFilePathAllowed(gw.APIKeyFile) {
-			return ""
-		}
-		if b, err := os.ReadFile(gw.APIKeyFile); err == nil {
-			return strings.TrimSpace(string(b))
-		}
-	}
-	return ""
-}
-
 // IsEnabled reports whether the trajectory-review lane is on. Default is ON:
 // a nil Enabled (key omitted) counts as enabled, only an explicit false
 // disables it. The lane itself no-ops when no reviewer endpoint resolves, so
@@ -814,7 +793,7 @@ func (c *InferenceAuthConfig) ResolveAPIKey(defaultEnv string) string {
 	// SECURITY (audit N8): same confinement as GatewayConfig.ResolveAPIKey — an
 	// api_key_file is only ever read from the managed secrets dirs.
 	if c.APIKeyFile != "" && SecretFilePathAllowed(c.APIKeyFile) {
-		if data, err := os.ReadFile(c.APIKeyFile); err == nil {
+		if data, err := readSecretFile(c.APIKeyFile); err == nil {
 			if key := strings.TrimSpace(string(data)); key != "" {
 				return key
 			}
@@ -1023,62 +1002,6 @@ const (
 	// /data/agents/<name>/.bob/.bob-errors/errors-YYYY-MM-DD.log.
 	BobStateDirName = ".bob"
 )
-
-// ResolveAPIKey returns the LiteLLM API key. Key FILES are consulted in
-// priority order — the configured api_key_file, then the k8s Secret mount
-// (DefaultLiteLLMAPIKeyFile), then the dashboard-written PVC file
-// (WritableLiteLLMAPIKeyFile) — followed by the env var named by
-// api_key_env and finally DefaultLiteLLMAPIKeyEnv. Returns "" when no key
-// is configured. The key value itself is never stored in hive.yaml.
-//
-// Consulting all three file locations means a key saved via the dashboard
-// keeps working even if hive.yaml is reset (e.g. re-seeded from a
-// ConfigMap) and the api_key_file pointer is lost, and an admin-managed
-// Secret key keeps working if the PVC copy is wiped.
-func (c *LiteLLMConfig) ResolveAPIKey() string {
-	key, _ := c.resolveAPIKeyWithSource()
-	return key
-}
-
-// ResolveAPIKeySource reports where ResolveAPIKey found the key without
-// exposing the value: "file:<path>", "env:<NAME>", or "" when no key is
-// configured. Safe to return from APIs (the dashboard shows it as the
-// "Key detected" store).
-func (c *LiteLLMConfig) ResolveAPIKeySource() string {
-	_, source := c.resolveAPIKeyWithSource()
-	return source
-}
-
-func (c *LiteLLMConfig) resolveAPIKeyWithSource() (string, string) {
-	files := []string{c.APIKeyFile, DefaultLiteLLMAPIKeyFile, WritableLiteLLMAPIKeyFile}
-	seen := map[string]bool{"": true}
-	for _, f := range files {
-		if seen[f] {
-			continue
-		}
-		seen[f] = true
-		// SECURITY (audit N8): only the managed secrets dirs. The two defaults
-		// appended above already satisfy this; the gate is for c.APIKeyFile,
-		// which is operator/API-supplied.
-		if !SecretFilePathAllowed(f) {
-			continue
-		}
-		if data, err := os.ReadFile(f); err == nil {
-			if key := strings.TrimSpace(string(data)); key != "" {
-				return key, "file:" + f
-			}
-		}
-	}
-	if c.APIKeyEnv != "" {
-		if key := os.Getenv(c.APIKeyEnv); key != "" {
-			return key, "env:" + c.APIKeyEnv
-		}
-	}
-	if key := os.Getenv(DefaultLiteLLMAPIKeyEnv); key != "" {
-		return key, "env:" + DefaultLiteLLMAPIKeyEnv
-	}
-	return "", ""
-}
 
 // ResolveEndpoint returns the effective LiteLLM base URL: the
 // HIVE_LITELLM_ENDPOINT env var when set, otherwise the YAML endpoint.

@@ -338,3 +338,36 @@ func TestWriteKeyFileAtomicReplacesUnwritableFile(t *testing.T) {
 		t.Fatal("rejected writes must leave the key untouched")
 	}
 }
+
+func TestHeldFingerprintsDoesNotRereadUnchangedKeys(t *testing.T) {
+	r := newTestResolver(t)
+	if err := os.MkdirAll(r.DataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(r.DataDir, "gh-app-key-42.pem")
+	writeTestAppKey(t, path)
+
+	reads := 0
+	orig := fingerprintFromFile
+	fingerprintFromFile = func(p string) (string, error) {
+		reads++
+		return orig(p)
+	}
+	t.Cleanup(func() { fingerprintFromFile = orig })
+
+	first := r.HeldFingerprints()
+	second := r.HeldFingerprints()
+	if first["42"] == "" || second["42"] != first["42"] {
+		t.Fatalf("fingerprints = %v then %v", first, second)
+	}
+	if reads != 1 {
+		t.Fatalf("key file read %d times across two scans, want 1", reads)
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.HeldFingerprints(); got != nil {
+		t.Fatalf("removed key still reported: %v", got)
+	}
+}

@@ -77,6 +77,10 @@ type StageTrackerResponse struct {
 	// Engine is the ADR-0025 central stage engine's mode and counters for
 	// the tracker's status strip; absent when the hive has no engine.
 	Engine *stageengine.Status `json:"engine,omitempty"`
+	// Workflows names the workflow model each bound repository follows and
+	// its column layout (hivecommons/hive#17620); absent when no repository
+	// is bound.
+	Workflows *StageTrackerWorkflows `json:"workflows,omitempty"`
 	// RecentlyMerged lists the pull requests GitHub reports merged within
 	// stageTrackerMergedWindow, whoever merged them: the audit log's
 	// pr_merged entries (the hive's own sweep, queue, relay and forge
@@ -349,11 +353,18 @@ type StageTrackerItem struct {
 	Author        string                        `json:"author,omitempty"`
 	// Head is the PR head SHA the lane last evaluated ("" for issues), so
 	// a "waiting for a verdict" caption can name the revision it waits on.
-	Head           string                `json:"head,omitempty"`
-	BaseRef        string                `json:"base_ref,omitempty"`
-	ClaimReference bool                  `json:"claim_reference,omitempty"`
-	IsTracker      bool                  `json:"is_tracker,omitempty"`
-	Children       *github.IssueChildren `json:"children,omitempty"`
+	Head           string `json:"head,omitempty"`
+	BaseRef        string `json:"base_ref,omitempty"`
+	ClaimReference bool   `json:"claim_reference,omitempty"`
+	IsTracker      bool   `json:"is_tracker,omitempty"`
+	// Umbrella is the rule that marks an open issue an umbrella (label:epic,
+	// marker, title-prefix:[epic], task-list, sub-issues, tracker-detector),
+	// and OwnerOnly the rule that marks it owner-only (hivecommons/hive#19078).
+	// Display only: the issue keeps its stage and stays actionable for the
+	// owner and the hive; the contributor relay is never offered it.
+	Umbrella  string                `json:"umbrella,omitempty"`
+	OwnerOnly string                `json:"owner_only,omitempty"`
+	Children  *github.IssueChildren `json:"children,omitempty"`
 	// OpenChildren is how many sub-issues of a decomposed parent are still
 	// open (the stage engine's "waiting on N open child issue(s)" suffix on
 	// a 010 reason). Non-zero means the parent is tracking its children,
@@ -434,6 +445,13 @@ type StageTrackerItem struct {
 	// HumanAttention is the current item's actionable human requirement,
 	// separate from an actor/claimant icon or optional delegation action.
 	HumanAttention *StageTrackerHumanAttention `json:"human_attention,omitempty"`
+	// NeedsHumanWhy names the kind of wait and its one-line reason on every
+	// row a person must move (filed-for-help, decision-pending, level-gate,
+	// hive-hold, needs-approval, triage, author, needs-human); NeedsHuman is
+	// true whenever it is set. FiledForHelp is the agent named by the
+	// issue body's filed-for-help marker.
+	NeedsHumanWhy *StageTrackerNeedsHumanWhy `json:"needs_human_why,omitempty"`
+	FiledForHelp  string                     `json:"filed_for_help,omitempty"`
 	// OnHold is true when the item wears a hold pill: paused on purpose,
 	// waiting on nobody.
 	OnHold bool `json:"on_hold,omitempty"`
@@ -448,6 +466,10 @@ type StageTrackerItem struct {
 	// "Held by hive · reporter trust (issue #N by @X, contributor)" or
 	// "Held by @login" instead of a bare "hold".
 	Hold *StageTrackerHold `json:"hold,omitempty"`
+	// SHAHold says an issue is held by the SHA-hold gate (`needs-sha`) or
+	// that a maintainer waived it (`sha-waived`), with the ready-made pill,
+	// hover text and chevron note (hivecommons/hive#18866). Absent otherwise.
+	SHAHold *StageTrackerSHAHold `json:"sha_hold,omitempty"`
 	// RegressedFrom / RegressedTo / RegressedAt / RegressedReason narrate
 	// the unresolved regression behind the `regressed` modifier: the
 	// high-water stage the item fell from, the stage that fall landed on
@@ -467,6 +489,15 @@ type StageTrackerItem struct {
 	// 095 / 100): state, what holds it, whether hive's merge sweep is on
 	// it now, the next pass and the soak countdown (hivecommons/hive#15073).
 	MergeGate *StageTrackerMergeGate `json:"merge_gate,omitempty"`
+	// HumanGate is the row's live human-gate state: the reasons a person is
+	// owed something now, the verbs that would act, and what the item
+	// waits on when nothing is owed (stage_tracker_gate.go).
+	HumanGate *StageTrackerHumanGate `json:"human_gate,omitempty"`
+	// MidFlight is what a PR's CURRENT head still waits on (CI running,
+	// review queued or in progress, or activity on file for an earlier
+	// head): while set, no decision is offered on the row and the server's
+	// delegated decision answers no-effect (stage_tracker_midflight.go).
+	MidFlight *StageTrackerMidFlight `json:"mid_flight,omitempty"`
 	// Soak is the soak clock while the lane holds this head for the soak
 	// window, at 060/080/095: when it started, when it ends, the window
 	// and the head it was measured on. The SPA counts it down in place.
@@ -598,9 +629,14 @@ type StageTrackerItem struct {
 	// the block. State comes from the hive's caches only, never a fresh
 	// GitHub call (hivecommons/hive#14952; #14863 wore a bare grey `blocked`).
 	BlockedOnPR *StageTrackerBlockedOnPR `json:"blocked_on_pr,omitempty"`
-	NudgeCount  int                      `json:"nudge_count,omitempty"`
-	LastNudgeAt *time.Time               `json:"last_nudge_at,omitempty"`
-	AdoptedBy   int                      `json:"adopted_by,omitempty"`
+	// BlockedOwnerReason is set on a `blocked` issue whose blocker is a
+	// person's action (`<!-- hive:blocked-on kind=owner-action reason="..." -->`):
+	// the reason line ("needs an owner action: ..."). The row is Needs human
+	// with that line (stage_tracker_blocked_owner.go).
+	BlockedOwnerReason string     `json:"blocked_owner_reason,omitempty"`
+	NudgeCount         int        `json:"nudge_count,omitempty"`
+	LastNudgeAt        *time.Time `json:"last_nudge_at,omitempty"`
+	AdoptedBy          int        `json:"adopted_by,omitempty"`
 	// AdoptedByState qualifies AdoptedBy when the hive's copy is not simply
 	// open (hivecommons/hive#15052): "closed" — the copy was closed without
 	// merging and the hive is re-adopting; "closed-twice" — two copies were
@@ -809,6 +845,10 @@ type StageTrackerLinkedPR struct {
 	SoakRemainingSeconds int64                   `json:"soak_remaining_seconds,omitempty"`
 	MergeGate            *StageTrackerMergeGate  `json:"merge_gate,omitempty"`
 	MergeTrain           *StageTrackerMergeTrain `json:"merge_train,omitempty"`
+	// HumanGate mirrors the nested PR's own row gate (stage_tracker_gate.go).
+	HumanGate *StageTrackerHumanGate `json:"human_gate,omitempty"`
+	// MidFlight mirrors the nested PR's own row field (stage_tracker_midflight.go).
+	MidFlight *StageTrackerMidFlight `json:"mid_flight,omitempty"`
 	// LeftTrain mirrors the nested PR's own row field so the sub-row's
 	// hover can say it left its train while under repair.
 	LeftTrain *StageTrackerLeftTrain `json:"left_train,omitempty"`
@@ -995,8 +1035,8 @@ const (
 )
 
 // stageTrackerRegistryAuthorKind overlays the contributor-hub registry on
-// an inferred author kind, mirroring pkg/authorkind rule 6 (RelayKnown →
-// Clanker) so the tracker row and its claimant agree with the stage
+// an inferred author kind, mirroring pkg/authorkind's registry rule
+// (RelayKnown → Clanker) so the tracker row and its claimant agree with the stage
 // engine's own classification (hivecommons/hive#16015). An author/<kind>
 // label and a hive (App-authored) verdict are stronger and stand; a
 // registered contributor's login otherwise reads clanker, source registry.

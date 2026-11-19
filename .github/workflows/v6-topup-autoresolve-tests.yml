@@ -1,0 +1,43 @@
+name: v6 top-up auto-resolve tests
+
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/v6-topup-autoresolve.sh'
+      - '.github/scripts/test-v6-topup-autoresolve.sh'
+      - '.github/scripts/v6-topup-ancestry.sh'
+      - '.github/scripts/test-v6-topup-ancestry.sh'
+      - '.github/workflows/v6-topup.yml'
+      - '.github/workflows/v6-topup-autoresolve-tests.yml'
+  push:
+    branches: [v5]
+    paths:
+      - '.github/scripts/v6-topup-autoresolve.sh'
+      - '.github/scripts/test-v6-topup-autoresolve.sh'
+      - '.github/scripts/v6-topup-ancestry.sh'
+      - '.github/scripts/test-v6-topup-ancestry.sh'
+      - '.github/workflows/v6-topup.yml'
+      - '.github/workflows/v6-topup-autoresolve-tests.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  autoresolve:
+    name: Known-conflict resolver
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Builds throwaway repos reproducing each known v5 -> v6 conflict
+      # pattern and checks the resolver finishes them, and refuses others.
+      - name: Test v6-topup-autoresolve.sh
+        run: bash .github/scripts/test-v6-topup-autoresolve.sh
+      # Throwaway repos for the squash-merged-top-up case (#18931): the carried
+      # v5 head is detected as lost, the ours-merge heal restores a conflict-free
+      # forward-merge, and a forged PR-body marker is refused.
+      - name: Test v6-topup-ancestry.sh
+        run: bash .github/scripts/test-v6-topup-ancestry.sh

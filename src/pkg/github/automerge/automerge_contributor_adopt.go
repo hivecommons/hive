@@ -696,6 +696,20 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.info("stage labels: operator forced adoption; maintainer policy, admission and presence bypassed", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "by", forcedBy, "online", presence.Online, "policy", policy.maintainerPolicy())
 	} else if c.adoptionRefusedByAdmission(ctx, store, key, obs, requested, now) {
 		return 0, nil
+	} else if cover, covered := c.adoptionCoveringPR(ctx, obs, policy); covered {
+		// Another open PR, a person's or the hive's, covers the issue
+		// (hivecommons/hive#18900): close this one as a duplicate with credit
+		// instead of opening a copy beside it.
+		return c.closeCoveredContributorPR(ctx, store, key, obs, policy, cover, now)
+	} else if claim := c.adoptionHumanClaim(ctx, obs); claim != "" {
+		// An owner or maintainer claimed an issue this PR closes
+		// (hivecommons/hive#18899): the person's claim outranks the
+		// contributor lane, so the hive does not open a copy beside it.
+		// Recorded so the tracker row says why; it lifts the moment the
+		// claim does.
+		store.NoteAdoptionBlocked(key, obs.HeadSHA, stagelabels.AdoptBlockedHumanClaim, now)
+		c.info("stage labels: adoption due but a person holds a claim on the issue; not adopting", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "claim", claim, "requested", requested)
+		return 0, nil
 	} else if held, deferred := c.maintainerHoldsAdoption(ctx, obs, policy, requested, now); held || deferred {
 		if held && !deferred {
 			// Recorded so the activity monitor says why (hivecommons/hive#14524):
@@ -1607,10 +1621,14 @@ func (c *Engine) authorMaintainsRepo(ctx context.Context, obs stageObservation, 
 // this hive's owners — rather than by a clanker or a registered contributor
 // relay. Such a PR is never adopted on the hive's own initiative
 // (hivecommons/hive#15202); only an operator's explicit Adopt now takes it
-// over.
+// over. A PR one of the repository's own workflows opened under an owner's
+// PAT is not the owner's: nobody pushes to it by hand (hivecommons/hive#17450).
 func personAuthored(obs stageObservation, policy StageLabelPolicy) bool {
 	if obs.AuthorKind == authorkind.Human {
 		return true
+	}
+	if authorkind.WorkflowRun(obs.Body, obs.URL) {
+		return false
 	}
 	return policy.OwnerAuthor != nil && obs.Author != "" && policy.OwnerAuthor(obs.Author)
 }

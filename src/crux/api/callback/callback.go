@@ -36,6 +36,7 @@
 //	POST /v1/effects/{id}/end       report how it ended
 //	POST /v1/tokens/mint            issue an agent's short-lived mint credential (stage 4)
 //	GET  /v1/bob/credential         the Bob API key and where it came from (stage 4)
+//	POST /v1/knowledge/advise       mid-task knowledge advice for a scope an agent entered (hivecommons/hive#17157)
 package callback
 
 import (
@@ -70,6 +71,8 @@ const (
 	PathEffects          = "/" + Version + "/effects"
 	PathAgentMint        = "/" + Version + "/tokens/mint"
 	PathBobCredential    = "/" + Version + "/bob/credential"
+	// PathKnowledgeAdvise is the mid-task knowledge adviser route.
+	PathKnowledgeAdvise = "/" + Version + "/knowledge/advise"
 )
 
 // InferenceRoutePath is the route for one agent's inference route.
@@ -132,6 +135,15 @@ const (
 	// CodeEffectUnknown is an end for an id hive is not holding: it was
 	// never begun, or already ended, or hive restarted in between.
 	CodeEffectUnknown = "effect_unknown"
+	// CodeForbidden is a request hive understood and refused on identity
+	// grounds: POST /v1/knowledge/advise for an agent this runtime does not
+	// own, or for a kick the agent is no longer in.
+	CodeForbidden = "forbidden"
+	// CodeRateLimited is a request hive refused because the runtime is
+	// asking more often than the contract allows (POST /v1/knowledge/advise:
+	// a second call in flight for one agent, or a third evaluation of one
+	// scope in one kick).
+	CodeRateLimited = "rate_limited"
 )
 
 // ConditionClassUnavailable is the runtime condition class reserved for
@@ -158,6 +170,16 @@ var (
 	ErrEffectDenied = errors.New("hive mutation boundary denied the effect")
 	// ErrEffectUnknown wraps a 404 CodeEffectUnknown.
 	ErrEffectUnknown = errors.New("hive is not holding that effect")
+	// ErrForbidden wraps a 403 CodeForbidden. A capability returns it for an
+	// identity mismatch; the server answers 403 for it.
+	ErrForbidden = errors.New("hive refused the request for this agent or kick")
+	// ErrRateLimited wraps a 429 CodeRateLimited. A capability returns it to
+	// refuse an over-frequent call; the server answers 429 for it.
+	ErrRateLimited = errors.New("hive refused the request: too many calls")
+	// ErrInvalidRequest is returned by a capability for a request body that
+	// parsed but breaks the contract (an over-long pane tail, an unknown
+	// scope kind); the server answers 400 for it.
+	ErrInvalidRequest = errors.New("invalid request")
 )
 
 // DefaultSocket is the socket path hive and the runtime agree on when
@@ -213,6 +235,10 @@ const (
 	// CapabilityBob covers GET /v1/bob/credential; served only by a
 	// Capabilities that also implements BobCredentials.
 	CapabilityBob = "bob"
+	// CapabilityKnowledgeAdvise covers POST /v1/knowledge/advise; served only
+	// by a Capabilities that also implements KnowledgeAdvisers, and only
+	// while the hive's knowledge.sidecar_advise is on (default off).
+	CapabilityKnowledgeAdvise = "knowledge_advise"
 )
 
 // MintTokenRequest is the body of POST /v1/tokens. Tier is the permission
@@ -268,11 +294,14 @@ type RateLimitSnapshot struct {
 	OK        bool      `json:"ok"`
 }
 
-// Usage kinds, the three UsageSink record paths.
+// Usage kinds, the UsageSink record paths.
 const (
 	UsageKindGateway      = "gateway"
 	UsageKindCopilot      = "copilot"
 	UsageKindCopilotCache = "copilot_cache"
+	// UsageKindGatewayCache is a gateway response whose prompt was partly
+	// served from cache: InputTokens excludes CacheRead.
+	UsageKindGatewayCache = "gateway_cache"
 )
 
 // UsageRecord is the body of POST /v1/usage.
@@ -478,6 +507,11 @@ type Policy struct {
 	// as JSON. It stays raw so this package keeps importing only the
 	// standard library and crux/api.
 	Sandbox json.RawMessage `json:"sandbox,omitempty"`
+	// KnowledgeAdvise says hive serves POST /v1/knowledge/advise
+	// (knowledge.sidecar_advise on, default off). Absent means the runtime
+	// installs no knowledge adviser and behaves as it did before the route
+	// existed (hivecommons/hive#17157).
+	KnowledgeAdvise bool `json:"knowledge_advise,omitempty"`
 }
 
 // BuildInfo is the hive version and commit recorded in kick log headers.
@@ -622,4 +656,72 @@ func (c BobCredential) GoString() string { return c.String() }
 // PolicySource.
 type BobCredentials interface {
 	BobCredential(ctx context.Context) (BobCredential, error)
+}
+
+// KnowledgeScope is crux.KnowledgeScope on the wire: one unit of work
+// context the runtime observed an agent enter. PaneTail is the last
+// pane_lines lines of the agent's scrollback with tokens redacted, present
+// only when the policy asked for it.
+type KnowledgeScope struct {
+	Kind     string   `json:"kind"`
+	Key      string   `json:"key"`
+	Path     string   `json:"path,omitempty"`
+	Keywords []string `json:"keywords,omitempty"`
+	Action   string   `json:"action,omitempty"`
+	PaneTail string   `json:"pane_tail,omitempty"`
+}
+
+// KnowledgeAdvice is crux.KnowledgeAdvice on the wire: one knowledge entry
+// the adviser matched, rendered by the runtime as a single typed line. It is
+// data: the runtime types these four fields and nothing else, never a
+// ranking model's reason.
+type KnowledgeAdvice struct {
+	Slug    string `json:"slug"`
+	Title   string `json:"title"`
+	Summary string `json:"summary,omitempty"`
+	Ref     string `json:"ref,omitempty"`
+}
+
+// KnowledgeAdvisorPolicy is crux.KnowledgeAdvisorPolicy on the wire: how the
+// hive wants advice for one agent delivered. Enabled false means the runtime
+// neither parses the agent's pane nor types anything. CooldownMS is the
+// minimum gap between two deliveries, in milliseconds; zero or negative means
+// the runtime's default.
+type KnowledgeAdvisorPolicy struct {
+	Enabled       bool `json:"enabled"`
+	MaxPerKick    int  `json:"max_per_kick,omitempty"`
+	CooldownMS    int  `json:"cooldown_ms,omitempty"`
+	WantsPaneTail bool `json:"wants_pane_tail,omitempty"`
+	PaneLines     int  `json:"pane_lines,omitempty"`
+}
+
+// KnowledgeAdviseRequest is the body of POST /v1/knowledge/advise. Agent is
+// the runtime's agent name and KickAt its current kick identity (the agent's
+// LastKick); hive refuses with 403 an agent the runtime does not own or a
+// KickAt that is not that agent's current kick. PolicyOnly asks for the
+// agent's policy without an evaluation: Scope and KickAt are ignored and no
+// candidates are searched, no model is called. Candidates always come from
+// the hive's knowledge store under its knowledge.agent_scopes restriction;
+// nothing in the request widens that or picks an entry.
+type KnowledgeAdviseRequest struct {
+	Agent      string         `json:"agent"`
+	KickAt     time.Time      `json:"kick_at,omitzero"`
+	PolicyOnly bool           `json:"policy_only,omitempty"`
+	Scope      KnowledgeScope `json:"scope"`
+}
+
+// KnowledgeAdviseResponse is the body of a successful POST
+// /v1/knowledge/advise: the advice, best first (empty when nothing applies),
+// and the policy in force for the agent.
+type KnowledgeAdviseResponse struct {
+	Advice []KnowledgeAdvice      `json:"advice"`
+	Policy KnowledgeAdvisorPolicy `json:"policy"`
+}
+
+// KnowledgeAdvisers is the mid-task knowledge adviser half of the contract,
+// optional like PolicySource: the server answers POST /v1/knowledge/advise
+// only when its Caps implements it and reports the capability configured;
+// *Client always does. It fails closed: an error means no advice.
+type KnowledgeAdvisers interface {
+	AdviseKnowledge(ctx context.Context, req KnowledgeAdviseRequest) (KnowledgeAdviseResponse, error)
 }

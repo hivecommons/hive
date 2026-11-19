@@ -11,6 +11,2052 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.339.0)
+
+### Added
+
+- **Hub v1 registrations can prove repo ownership with a per-request GitHub token** (#19238). With `HIVE_HUB_PROOF_GITHUB_USER_TOKEN` on, `POST /api/hub/v1/registrations` and `PATCH /api/hub/v1/registrations/{id}` accept `X-Hive-Proof-Method: github-user-token` with a token in `X-Hive-Proof-Token`, so users in orgs that restrict OAuth apps can register repos they administer. The token must belong to the signed-in account, is used only for read-only GitHub calls and is never stored or logged. Discovery lists the method and the scopes it needs, and a failed proof names a reason such as `missing_scope` or `admin_role_not_visible` instead of a bare "not an admin". Off by default.
+- Documented how to add repositories and pause agents, what optional Ask AI help sends and how consent works, and what owners must verify before rolling out Kapa ([#19182](https://github.com/hivecommons/hive/issues/19182)).
+
+### Fixed
+
+- **Proxy: inspected relays refuse a request that names another host or carries a dot segment** ([#19223](https://github.com/hivecommons/hive/issues/19223)). Inside a MITM'd session, a Host header or absolute-form URL naming a host other than the CONNECT target is now refused with a 400 and the connection closed, as the sandbox read relay already did; the rule engine and credential were chosen for the CONNECT host. A `.` or `..` path segment, in any percent-encoded spelling, is refused on the inspected relay (400) and the sandbox read relay (403), since the gates match the literal path while an upstream that resolves dot segments acts on a different one. New table tests pin that CL+TE, duplicate or malformed Content-Length, unknown Transfer-Encoding, folded headers and bare LF never reach the upstream with ambiguous framing on `proxyHTTPHost`, `forwardPlainDirect` and the sandbox read relay.
+- A green PR whose base moved only by changelog bookkeeping (the root `CHANGELOG.md` or files under `changelog.d/`, such as the release gate's merges) is no longer treated as stale by `auto_merge.require_current_base`. Before, each of those merges sent the head back to base preparation, so it was refreshed and every workflow re-ran for a change CI never tests; about one base move in five was of this kind. The gate now compares the PR's merge base with the base tip, treats the head as current when every changed file is on the changelog allowlist and none of them is a file the PR also changes, and logs `reason="behind only by changelog-only commits"` (#19269). Any other change, an API error or a possibly truncated comparison still refreshes the head as before.
+- An agent whose pane still shows Working and stays silent after a busy-no-activity restart is now restarted again once the 30-minute stall cooldown has passed and it has been silent for the plain busy-no-activity threshold, instead of waiting out the first-restart bars (six failed kicks and twice the silence) again. Before, such a session kept refusing kicks and repeating its `kick_failed_repeatedly` self-report for the better part of an hour (#19271).
+
+## 2026-11-19 (v5.338.3)
+
+### Fixed
+
+- An agent whose CLI still never reaches its input prompt after a busy-no-activity restart is now restarted again after three more failed kicks, once the 30-minute stall cooldown has passed. Before, the fresh session had to wait out the full recovery bars again (six failed kicks and twice the silence threshold), so it refused kicks for about another hour after its `kick_failed_repeatedly` self-report had already been filed (#19257). A pane that shows Working still waits for the full bars, and the restart storm breaker still limits how often restarts repeat.
+
+## 2026-11-19 (v5.338.2)
+
+### Fixed
+
+- **More proxy checks fail closed when they cannot run.** If the review-thread ownership check, the GitHub lookup behind the reference-repo and review-thread gates, or the canary scan panics or hangs, the proxy now refuses that one request with a 403 instead of crashing the whole proxy or holding the request open. A canary scan that cannot finish refuses the write even in advisory canary mode. The results of the egress audit's error-path review, and the accepted risks, are recorded in the security model ([#19224](https://github.com/hivecommons/hive/issues/19224)).
+
+## 2026-11-19 (v5.338.1)
+
+### Fixed
+
+- A hive with a Jira or Linear work source no longer treats those items as GitHub issues. The issue stage sweep skipped no item without a GitHub number, so every Jira item became one `repo#0` row whose label write failed with `404 Not Found` each cycle. The PR claim branch heuristic read the number in a branch named after a configured Jira/Linear key (`ceh-12725-mcp-client`, from `jira.project_keys` or `linear.teams[].key`) as GitHub issue #12725, so the supersession sweep failed with `404` on a PR that claims nothing. Other branch words (`hotfix-428`, `bug-428`) still claim the issue.
+
+## 2026-11-19 (v5.338.0)
+
+### Added
+
+- Customers can import the real name, organization and country a confirmed customer entered on the hub and consented to share with this hive, shown "from the hub" and never over a value set by hand; a withdrawal or three days without confirmation clears it. Off by default: `customers.hub_import.enabled`, `HIVE_CUSTOMERS_HUB_IMPORT_ENABLED`, or Settings, Features ([#19163](https://github.com/hivecommons/hive/issues/19163)).
+
+## 2026-11-19 (v5.337.1)
+
+### Fixed
+
+- **Hub: the contribute proxies and the lite enrollment repo-access check connect only to the address they checked** ([#19221](https://github.com/hivecommons/hive/issues/19221), part of [#18986](https://github.com/hivecommons/hive/issues/18986)). The `/api/contribute/register` and `/api/contribute/ws` proxies and the GitHub repo-access check behind lite enrollment and self-service registration validated a self-reported `DashboardURL` or caller-supplied `github_host` and then let the HTTP client resolve the name again, so a name that rebinds between the two lookups was checked as public and reached as private. They now use the hub's pinned transport: each dial resolves once, every answer is checked with the shared classifier, a lookup failure refuses the dial, and every redirect hop goes through the same check.
+
+## 2026-11-19 (v5.337.0)
+
+### Added
+
+- Hub heartbeat feature negotiation (rollout step 5 of [#19056](https://github.com/hivecommons/hive/issues/19056)): a spoke may send `protocol: {version, features}` in its heartbeat, and with `HIVE_HUB_HEARTBEAT_PROTOCOL` on (default off) the hub answers with `protocol: {version, accepted, ignored}`, so a spoke learns which optional features this hub honours instead of guessing from its version. A version below `1` is still accepted, with every feature ignored and `unsupported_version` echoed; a heartbeat without `protocol`, or any heartbeat while the flag is off, is answered exactly as before ([#19237](https://github.com/hivecommons/hive/issues/19237)).
+
+## 2026-11-19 (v5.336.2)
+
+### Fixed
+
+- **The `proxy_writer_unidentified` operator remedy now covers `reason=no_uid_map`** (#19232). The remedy used to name only the NET_ADMIN SCC, which fits only `shared_uid_mode`. It now tells the spoke owner to check the startup log for `no UID map found`. The container entrypoint writes `uid-map.json` only when `hive.yaml` names agents at boot, and the proxy reads the map once at startup, so the fix is to restart once agents are configured. A native install has no map at all and needs `HIVE_PROXY_ADVISORY_OK=true`. `docs/troubleshooting.md` documents both causes.
+
+## 2026-11-19 (v5.336.1)
+
+### Fixed
+
+- Upstream inference HTTP 401 responses now produce only the credential-specific fleet self-report, not a second generic upstream-error report ([#19216](https://github.com/hivecommons/hive/issues/19216)).
+
+## 2026-11-19 (v5.336.0)
+
+### Added
+
+- **Hub: per-hive customer match endpoint, consent only** ([#19162](https://github.com/hivecommons/hive/issues/19162)). `POST /api/customers/match` lets a hive, under its own per-hive heartbeat bearer, post salted hashes of its confirmed customers' GitHub logins and get back real name, organization and country only for people who consented to that hive, only for values they entered themselves, checked at answer time. Unknown and unconsented people get the same empty answer; a `cleared` entry is sent only after an earlier delivery. Batch, body, response and rate limits are named constants, deliveries are stamped on the consent record, and the route does not exist while `HIVE_HUB_CUSTOMERS_SHARE_ENABLED` is off. No spoke calls it yet.
+
+## 2026-11-19 (v5.335.2)
+
+### Fixed
+
+- The PR-request watcher now rejects a request whose base branch does not exist on the remote with a clear result, instead of retrying it forever with an unclassified warning (#19211).
+
+## 2026-11-19 (v5.335.1)
+
+### Fixed
+
+- The watchdog now logs an unchanged agent credential failure at ERROR once an hour instead of on every relaunch. A copilot or codex agent with no credential file reads "missing" while its CLI is stopped and "no opinion" while it runs, so each relaunch re-entered `Authenticated=False` and logged `watchdog: agent credential failure` again. One misconfigured agent tripped the fleet self-report as 8 failures in 10 minutes. Repeats inside the window are logged at Info, the dashboard re-authentication alert is unchanged, and a new reason or a failure after recovery is still logged at ERROR straight away (#19205).
+
+## 2026-11-19 (v5.335.0)
+
+### Added
+
+- Hub operators can enable an optional Ask AI help backend that answers docs questions server side through the Kapa.ai Chat API: per-person consent, credential-shaped questions refused, only allowlisted cited sources, per-person and hub-wide limits, a circuit breaker and content-free audit lines. Off by default and inert until a key file, project id and integration id are configured; no panel yet ([#19180](https://github.com/hivecommons/hive/issues/19180)).
+
+### Fixed
+
+- Let the agent that opened a PR reply inside its review threads (`pulls/comments/{id}/replies`, `pulls/{n}/comments`) and retract a hive comment within 15 minutes on a PR that agent opened; every other PR, agent and comment stays refused, the review-feedback brief forbids probe comments, and a refused reply is posted in the sweep's needs-human note for a person (#19096).
+- **Reviewer-stated rules: quotes and questions no longer count, more future-looking phrasings do, and the preferences have a Settings card ([#19135](https://github.com/hivecommons/hive/issues/19135)).** Block quotes, fenced code and questions are no longer read as the reviewer's rule, so a reply that quotes the hive and asks "can the hive add this to the knowledge base?" is not recorded under the reviewer's name. A short rule sentence that refers back ("we should consider this in future") keeps the rest of the comment, and `going-forward` now matches "future assessments", "moving forward" and "for the future". Whether capture runs, which associations are recorded at once, extra phrases that count and built-in signals to switch off are `review_feedback.rules.*` keys with an owner-only card under Settings, Features, Review (env vars still work; a saved value wins), audited and applied on the next sweep pass without a restart.
+
+## 2026-11-19 (v5.334.0)
+
+### Added
+
+- **Hub: the sender behind the confirmation reply for mail sent to a hive, off by default ([#18746](https://github.com/hivecommons/hive/issues/18746)).** When the DKIM key file, `From`, selector and the new `HIVE_HUB_MAIL_REPLY_HELO` name are all set, the hub now delivers the "received" and "waiting for approval" replies itself: one plain-text message signed with the key (RSA of at least 2048 bits or Ed25519), a null envelope sender (`MAIL FROM:<>`), one connection to the best-preference MX host of the sender's domain with required STARTTLS, timeouts on every step and no retry (any failure is final and the ledger keeps the claim). The ledger limits are applied before anything is sent; a key that cannot be loaded sends nothing and uses up nothing; a header or address with a control character, a non-ASCII address or a MX host in a private range is refused before any connection; the log holds only ids, a reason class and a server's numeric code. A hub without the key file builds no sender and opens no connection. Optionally the hub hands the signed message to a fixed-IP relay (smarthost) instead of the recipient's MX with `HIVE_HUB_MAIL_REPLY_RELAY` (`host` or `host:port`, default port 587; unset keeps direct delivery) and, if the relay needs SMTP AUTH, `HIVE_HUB_MAIL_REPLY_RELAY_AUTH_FILE` (user name and password read from a mounted file, sent only after STARTTLS, never logged): STARTTLS stays required with no fallback to direct delivery, the envelope sender stays null and the relay must not re-sign. The owner still has to publish the DKIM and SPF records, confirm outbound TCP 25 and run the two-provider `dmarc=pass` test before turning it on. See [Replies to the sender](src/docs/meetings.md#replies-to-the-sender-off-by-default).
+- Dashboard help now opens docs.hivecommons.dev: on the v5 line, a section or setting "?" mark that points at a page the docs site publishes opens it there instead of the Markdown on GitHub, so the site search and its Ask AI widget can cite the same page; other pages and other release lines still open GitHub. A new [Dashboard UI map](src/docs/dashboard-ui-map.md) page lists the sidebar entries, the Settings tabs and the per-agent tabs with their on-screen labels, how to sign in to the hosted hub, a hosted hive and a self-hosted hive, and where common actions live; its tables are generated from the dashboard source by `src/pkg/dashboard/uimap/render-dashboard-ui-map.py` and CI fails when they go stale. Dashboard settings explained now has an entry for every Settings tab ([#19182](https://github.com/hivecommons/hive/issues/19182)).
+- The hive-posted PR-contents gate (`auto_merge.pr_gate`) now fails visibly instead of silently: the hive reads the Commit statuses permission its App installation was actually granted at startup and every 15 minutes, forces the gate off when the write grant is missing (it never promotes itself to `enforce`), and records a 403 on a status write per repository without retrying for 15 minutes. The spoke dashboard shows a banner naming the installation, what is missing, where an owner accepts it and the days left before 2026-12-02. The hub health verdict carries the cause with a remediation hint, red when a required check depends on the gate and amber otherwise. In `enforce`, a PR whose required gate context cannot be posted shows `unauthorized:post-pr-gate-status` rather than a bare `required-check-missing`. Nothing changes while the mode is `off` (refs #19038).
+
+### Fixed
+
+- Em-dashes no longer reach GitHub or any other outbound channel through paths the first filter missed ([#19103](https://github.com/hivecommons/hive/issues/19103)). The shared dash filter moved into the `crux` module so the GitHub egress proxy now applies it to agent writes it relays (`gh api` comments, review replies, PR and issue titles and bodies, contents-API commit messages, and the text inputs of comment, review, PR and issue GraphQL mutations, plus Linear mutation variables), touching only JSON text fields and never git traffic or non-JSON bodies. The push broker rewrites the agent's HEAD commit message, and notifications (ntfy, Slack, Discord), Discord bot messages, meeting chat and spoken text, hub-filed issues and comments, Linear, Jira and DIBS writes, and squash commit messages hive writes all pass through the same filter. A new CI inventory test fails when an outbound HTTP send is added without the filter or a stated reason. Set `HIVE_AGENT_PROSE_FILTER=false` to stop rewriting agent-authored text.
+- Shared-CI baseline triage no longer files an incident from siblings whose reds are their own: a sibling whose failure annotation calls it a per-PR provider verdict is not counted, and a check with no result on the default branch needs THRESHOLD up-to-date red siblings before it is called shared; otherwise the branch is told to merge base first ([#19191](https://github.com/hivecommons/hive/issues/19191)).
+- A user who is not on a hive's allowlist and tries to sign in no longer causes the hive to file a fleet error report; the denial stays in local logs and the audit log ([#19195](https://github.com/hivecommons/hive/issues/19195)).
+
+## 2026-11-19 (v5.333.0)
+
+### Added
+
+- Hub operators can enable a profile-sharing page where people enter their own profile details and grant or withdraw consent per hive and field. Scale Controls shows the effective setting. Off by default; no profile data is sent to hives in this phase ([#19160](https://github.com/hivecommons/hive/issues/19160)).
+
+### Fixed
+
+- Merge requests that run out of retries while CI is still pending are still quarantined, but the watcher now logs the CI timeout without opening a generic fleet self-report ([#19174](https://github.com/hivecommons/hive/issues/19174)).
+- The sentinel label description default is now 97 bytes (was 124, over GitHub's 100-character cap, which made Prow label_sync abort, #19193) with no em-dash; the hive rewrites the old default on repos that already carry it. The unauthorized label description is shortened to fit the cap too.
+
+## 2026-11-19 (v5.332.0)
+
+### Added
+
+- New opt-in `knowledge.sidecar_advise` (default `false`, also a switch at the top of Settings, Knowledge, applies without a restart) gives a sidecar-mode runtime the mid-task knowledge advisor through a new `POST /v1/knowledge/advise` route on the runtime-callback endpoint, which until now ran with no adviser at all. The route is served only behind the same bearer token as the other `/v1/*` callbacks and only while the knob, `knowledge.enabled` and `knowledge.advisor` are on; off, it answers `404 not_configured`, the hive does not advertise the `knowledge_advise` capability, and a sidecar runtime behaves exactly as before. The hive runs the adviser chain it runs in-process (phase 1, with the `advisor_llm` ranking pass, its budgets and the hive-wide pacer when configured), so no inference credential or model setting reaches the runtime and the model's reason is never typed. The runtime sends the scope and a pane tail redacted with `RedactPaneTokens` (the hive redacts again); the hive refuses with 403 an agent the calling runtime does not own or a kick that is not the agent's current one, with 429 a second call in flight for an agent or a third evaluation of one scope in a kick, with 400 a pane tail over `pane_lines`, and with 413 a body over 64 KiB. Any failure is no advice, with one warning per kick ([#17157](https://github.com/hivecommons/hive/issues/17157), part of [#17054](https://github.com/hivecommons/hive/issues/17054)).
+
+## 2026-11-19 (v5.331.1)
+
+### Fixed
+
+- The issue un-park sweep now treats a maintainer's first line of `Decision: <text>` (or `Decision (owner): <text>`) on a parked issue as `/hive decision <text>`, and replies with the `/hive decision` hint to `option N`, `decide` and bare option-letter comments instead of ignoring them ([#19155](https://github.com/hivecommons/hive/issues/19155)).
+- Claude and Copilot agents can no longer end up on the other CLI's spelling of the same Claude model (`claude-sonnet-5.5` on claude, `claude-sonnet-5-5` on copilot), which each CLI rejects: switching backends, setting a model, and loading config now store the backend's own spelling through one shared mapping with a dashboard warning, and the model dropdowns show a wrong-convention id as stored and flag it instead of silently preselecting the valid option. Non-Claude ids are unchanged ([#19169](https://github.com/hivecommons/hive/issues/19169)).
+
+## 2026-11-19 (v5.331.0)
+
+### Added
+
+- The inference translator can now cut a stalled upstream and retry a rate limit or server error, both opt-in and off by default. New `governor.inference_resilience` (or `HIVE_INFERENCE_*` environment variables) sets a connect timeout, a response-header timeout and an idle-stream timeout (no bytes for N seconds, so a slow but active stream is never cut), and a bounded retry with exponential backoff, jitter and `Retry-After` for `429` and `5xx` that only runs while no response byte has reached the agent, with a small attempt cap. Each retry and timeout logs the route and status (never content or headers) and increments `crux.proxy.inference.retries` or `crux.proxy.inference.timeouts`. A stream that dies mid-response is still logged and stopped, and key resolution and the single `401` retry are unchanged. Nothing changes while the settings are at their defaults ([#19057](https://github.com/hivecommons/hive/issues/19057)).
+
+## 2026-11-18 (v5.330.0)
+
+### Added
+
+- New opt-in `repos.<repo>.parent_autoclose: trackers_too` (also a fourth choice, "Also close trackers whose work is done", in Settings, Repos tab) closes tracker and umbrella issues that have no sub-issue children once everything they reference is finished. "Done" is computed from the state of the issues and PRs the tracker lists in its task list or `close_when` checklist, plus the PRs that reference it with `Refs`, never from close keywords, since v5 merges do not auto-close. Only issues that announce themselves as trackers are read, `hive/tracking` and `hold` issues never close, a person's reopen is final, and the close waits for the same finished evidence on two reads 15 minutes apart and leaves an evidence comment listing every reference and its state. Default behaviour is unchanged ([#19071](https://github.com/hivecommons/hive/issues/19071)).
+- New opt-in `session_taint` recorder, the observe-only first slice of session taint ([#18987](https://github.com/hivecommons/hive/issues/18987)). A pattern scan checks each outgoing message alone, so it cannot see that an agent earlier read something it should not repeat in a wider audience; this adds the memory half of the answer, as a measurement only. With `session_taint.enabled: true` the hive keeps a bounded in-memory record of the coarse labels each agent session has accrued (a canary hit sets `secret`) and, when that session later asks the issue, comment, PR or review relay to write, logs and audits which rule would have held the write (`session_taint_label` and `session_taint_would_act` audit entries, plus per-rule counters). It never blocks, holds, restricts or changes any request or action, stores labels, counts and ids only (no credential or content), takes effect at restart, starts every session clean after a restart, and does nothing at all when the key is absent. `max_sessions`, `max_labels_per_session` and `max_decisions` bound the store. Enforcement is a later, separately decided phase; see `docs/design/session-taint.md` and `docs/security-model.md`.
+
+### Fixed
+
+- Betty now treats plain requests such as "start a spec for this", "write a spec for X" and "draft a design for X" as a Spek session draft, the same as "Spek session" wording; the draft still waits for approval, and statements like "the spec says" or "the design review happened" are not requests ([#19157](https://github.com/hivecommons/hive/issues/19157)).
+
+## 2026-11-18 (v5.329.1)
+
+### Fixed
+
+- The SHA-hold gate no longer holds issues it was not meant for, and a hold is now visible and overrideable (#18866). The sweep skips issues filed by the hive's own accounts or by owners and maintainers (`project.issue_filter.reporter_trust.trusted_associations`) and issues whose body names a concrete repo file path such as `src/pkg/github/client.go` (self-attested: the path is never checked to exist, so a reporter can write one to skip the gate), and lifts a `needs-sha` already on an issue that qualifies, so an owner-filed, detailed bug like #18740 is released on the next sweep; outside reporters with no SHA and no path are still held. A maintainer can waive the requirement per issue with the persistent `sha-waived` label (row menu *Waive SHA requirement* / *Restore SHA requirement*, gated like releasing a `hold`); the sweep never re-adds `needs-sha` while it is on. Held issues show the pill *Held: needs commit SHA* and a note on the Open chevron saying how to lift it, and the waived state reads *SHA waived by <login>*; `GET /api/stage-tracker` rows carry the new `sha_hold` field. Recording the default-branch head at filing time was left out: it would be a guess about the reporter's build, not evidence of it.
+- Reviewer-stated rule capture now reads every human comment on the hive's open PRs (inline, review body and plain conversation comments), including ones already handled, in resolved threads or not addressed to the hive, and the rule index tracks which comments it has evaluated so the first pass after upgrade backfills once and later passes classify only new comments ([#19136](https://github.com/hivecommons/hive/issues/19136)).
+- The review-rule classifier now ignores quoted lines, fenced code and questions, falls back to the whole comment when the rule sentence is too short to stand alone, and also recognises "for the future", "moving forward" and "for future reviews" as going-forward phrases ([#19137](https://github.com/hivecommons/hive/issues/19137)).
+
+## 2026-11-18 (v5.329.0)
+
+### Added
+
+- Authorization decision seam, phase 0/1 (shadow mode, off by default, [#18988](https://github.com/hivecommons/hive/issues/18988)): a new `authz` package in the Crux module adds an in-process `authz.Decide(Request) Decision` evaluator that mirrors one existing decision, the push broker's changed-files guard (empty push, then protected paths). With `HIVE_AUTHZ_SHADOW=true` (stream size `HIVE_AUTHZ_SHADOW_BUFFER`, default 1000), each time the guard decides the evaluator is run too, one versioned decision event (attributes only, never payloads, paths or credentials) is kept on its own bounded in-memory stream, and a difference from the guard is logged as a divergence. It enforces nothing and changes no behaviour, on or off; with the variable unset nothing is recorded. Parity tests replay the push broker's existing cases through the seam. The design record's phase status and the security model are updated.
+
+### Fixed
+
+- After a review-feedback kick that carried captured reviewer rules, the sweep now checks the agent's reply names each rule id and, when it does not (or no reply arrives within 6 hours), logs it and posts one needs-human note on the PR ([#19048](https://github.com/hivecommons/hive/issues/19048)).
+- Top-ups: the automated v5 to v6 top-up PR now carries the `tide/merge-method-merge` label, so Tide lands it as a merge commit and v6 keeps v5's history instead of a squash dropping it; the sync policy documents the label, the `-s ours` repair, and the post-merge ancestry check ([#19140](https://github.com/hivecommons/hive/issues/19140)).
+
+## 2026-11-18 (v5.328.1)
+
+### Changed
+
+- Meetings: the bundled Quorum is now v0.6.0, which adds the listening chime on Discord and hands it to the desktop companion ([quorum#51](https://github.com/hivecommons/quorum/pull/51), [quorum#52](https://github.com/hivecommons/quorum/pull/52), [#19116](https://github.com/hivecommons/hive/pull/19116)).
+
+### Security
+
+- Security: the command-safety scanner now flags `dd` writing to a raw block device from any source (`dd if=image.iso of=/dev/sda`), and credential reads that use quoting, `$HOME`/`${HOME}`/`/root`, or readers such as `less`, `head` and `base64` (#19089)
+
+## 2026-11-18 (v5.328.0)
+
+### Added
+
+- Hub registration protocol v1: a registration can now be edited in place with `PATCH /api/hub/v1/registrations/{id}`, so adding a repo or moving the dashboard URL no longer means deleting the registration (which revoked its key and took the spoke offline) and registering again. The heartbeat key is never touched. The body changes `repos` (a full list, or `{add, remove}`) and/or `dashboard_url`; `If-Match` with the record's `ETag` is required (`428` when missing, `412` when stale), only the repos an edit adds are checked against GitHub with the owner's own stored token (read only), and a repo list over `HIVE_HUB_SELFSERVICE_MAX_REPOS` answers `413` naming the limit. `org`, the owner and the keys are not editable. It is owner-only by hub session, writes nothing to GitHub, is gated by `HIVE_HUB_SELFSERVICE_REGISTRATION` like the rest of v1, and is listed in `GET /api/hub/v1` discovery (`operations` and `patch_fields`); the v6 `/api/hub/selfservice/*` routes are unchanged. Each edit writes a `selfservice_hive_updated` audit line with counts and no key ([#19056](https://github.com/hivecommons/hive/issues/19056)).
+- Betty's listening chime now plays in companion meetings: the companion replies route carries `tone` (true once, from Quorum's `say.tone` outbox signal), and the live session no longer refuses the tone because a companion meeting has no voice in the call, since the desktop companion plays it on the host's own computer ([quorum-companion#12](https://github.com/hivecommons/quorum-companion/issues/12)). `meetings.listening_tone` and `meetings.voice_on_address` still apply.
+
+### Changed
+
+- Reviewer preflight rework (refs #19106, follow-up to #19069). (1) **Rule documents are found by following the repository's own references** instead of guessing names like DESIGN*.md: discovery starts from the standard entry files the repo has (AGENTS.md, CLAUDE.md, copilot instructions, CONTRIBUTING, README, docs index pages, CODEOWNERS for context), follows the repository-relative links and file mentions in them breadth first to depth 2 within the byte budget, and tells the reviewer how each document was found ("linked from CONTRIBUTING.md"). `rule_doc_paths` is now an explicit override that replaces discovery (a repo's list replaces the hive-wide one). (2) **Release age is reported as a fact with no verdict** unless a policy is declared: `min_release_age_days` no longer defaults to 14; unset means no policy, and the reviewer applies a release-age policy only when the hive config or the repository's own documents state one. (3) **The correctness guidance asks for understanding instead of naming failure modes**: the outdated-message and sentinel-aggregate checks are replaced by a short method (state the intended change, trace paths and callers, check invariants and contracts, check that descriptions still match, report only evidence-backed findings). Thanks to Mike Spreitzer for the critique.
+- Customers: a profile shows its identities as a compact table (Type, Identity, Source, with the row actions in the last column) instead of one bordered box per identity. At phone width the table scrolls inside its own frame, not the page. Same data, actions and empty state.
+
+### Fixed
+
+- Codex model dropdown fallback now matches the pinned Codex 0.170.0 catalog, so hosted hives without the binary offer GPT-6.2 Sol (the new default) and GPT-6.2 Astra ([#19036](https://github.com/hivecommons/hive/issues/19036)).
+
+### Security
+
+- **Sessions: Codex and OpenCode logins are copied without a refresh token.** A session's copy of `.codex/auth.json` and `opencode/auth.json` now keeps the refresh key (both CLIs require it) but empties its value, like the Claude login since #18724, so the CLI in a session can no longer rotate the fleet's Codex or OpenCode login and race an agent's refresh into two diverged logins. The shared file the agents link to is the only refreshable holder; the hive replaces each session's copy when that file changes, adopts a complete newer login found in a session (a copy from an earlier release, or a sign-in inside the session) and then puts the session back on a refresh-less copy. A session now depends on an agent or a sign-in refreshing that login before its access token expires ([#18740](https://github.com/hivecommons/hive/issues/18740)).
+- Apply per-agent repository scope to attributable GitHub GraphQL mutations, including node-ID writes resolved from earlier GitHub responses, with the same denial as REST. Queries stay unrestricted; unresolved mutations retain existing gates for compatibility with normal `gh` flows ([#19058](https://github.com/hivecommons/hive/issues/19058)).
+
+## 2026-11-18 (v5.327.0)
+
+### Added
+
+- Rules and sources of truth that people state in review feedback on the hive's own agent PRs are now captured deterministically into the hive's knowledge, so they hold for future work and not only for the PR they were written on ([#19046](https://github.com/hivecommons/hive/issues/19046)). The review-feedback sweep classifies each comment in a burst from explicit phrase signals (for example "source of truth", "going forward", "capture this", "assessment criteria"), writes a rule to a local `review-rules` knowledge channel with its provenance (PR, comment, reviewer, association, time), deduplicates by comment id and by near-identical text, and replies on the PR "recorded as rule R-n in the hive's knowledge, applies to ..." so the reviewer can object. Only `OWNER`, `MEMBER` and `COLLABORATOR` reviewers are captured at once (`HIVE_REVIEW_FEEDBACK_RULE_TRUSTED_ASSOCIATIONS`); other reviewers' rules are queued as drafts for a person to approve. The kick primer now carries pinned entries whose scope admits the kick whatever its keywords are, so the quality agent receives its rules on its next run. The kicked agent may end its reply with a validated `hive:review-rules` block to sharpen a rule, and a rule whose proper home is another project's repo gets exactly one needs-human note with the proposed text instead of a write there. Retract with `hivectl knowledge state rule-r-1 deprecated`. Set `HIVE_REVIEW_FEEDBACK_RULES=off` to stop capture.
+- The PR reviewer now gets evidence the hive gathers before the review starts (refs #19069). New `review.preflight` block, overridable per repo at `repos.<repo>.review_preflight`: (1) **repository rules**, on by default, lists the repo's own rule documents (AGENTS.md, CLAUDE.md, CONTRIBUTING, DESIGN*/ARCHITECTURE* docs, ADRs, copilot and cursor rules, CODEOWNERS; patterns configurable, deterministic byte budget) and operator-defined named rules, and the reviewer must cite the rule it applied; (2) **dependency evidence**, off by default because it sends package names and versions to OSV and the package registries, checks added or bumped dependencies for advisories and release age across Go, npm/yarn/pnpm, Python, Rust, Java, Ruby, PHP, .NET and GitHub Actions, reports unsupported manifests as "not checked", degrades to an explicit "could not check: offline" (`offline: true` or `HIVE_REVIEW_PREFLIGHT_OFFLINE=true`), caches answers, and honors severity thresholds and an ignore list with reasons and expiry; (3) correctness-review guidance for outdated error and log messages and for sentinel values flowing into min, max and sum aggregates. See "Review preflight" in `src/docs/review-swarm.md`. Credit to Mike Spreitzer for the review-tool comparison that motivated this.
+- Settings, Repos tab now has a "Parent auto-close" card, so an owner can choose per repo how far the hive closes finished parent issues without editing YAML ([#19070](https://github.com/hivecommons/hive/issues/19070)). The three choices are "Close finished parents (default)", "Also close epics and holds" and "Never auto-close parents" (`repos.<repo>.parent_autoclose`: `true`, `epics_too`, `false`). The card shows each monitored repo's effective value, saves through the new owner-only `GET`/`PUT /api/config/repos/parent-autoclose` routes, applies without a restart and is audited as `config_repo_parent_autoclose`. A parent a person reopened is still never re-closed, and issues marked as tracking issues are still never auto-closed. The settings parity allowlist entry for the field is removed.
+- Customers: a profile now has a country, shown as a small flag with its ISO code on the row and by name under Details. It is worked out from the location text with a bundled table, offline, and marked as derived; a country you set or clear by hand is never changed, and "Auto" hands it back. A likely organization is offered as a suggestion with its evidence (the GitHub company text, or the domain of an email you confirmed by hand); Accept sets it by hand, Dismiss is remembered. Notes keep their rules: owner and read-write only, in the export, deleted on Forget. No new requests are made and nothing is read from the hub.
+- The dashboard agent detail panel now shows recent kick outcomes, with trigger, timing, PR, commit and refusal evidence for read-write users and owners, and only the latest one-line summary for read-only users ([#19032](https://github.com/hivecommons/hive/issues/19032)).
+
+### Fixed
+
+- Send `queue_empty` instead of `no_matching_work` when the contribute queue has no actionable work, and add a `filtered` per-filter count to `no_matching_work` when work existed but every item was dropped (#19052).
+- Preserve a hosted hive's stored vanity URL when any non-placeholder ingress rule still serves it, preventing aliases and rule ordering from reverting the advertised host ([#19064](https://github.com/hivecommons/hive/issues/19064)).
+- Pinned reviewer rules now reach every kick their scope admits ([#19094](https://github.com/hivecommons/hive/issues/19094)). A kick with no issues or no extractable keywords used to return before the knowledge primer ran, so it got no pinned rules; it now gets them, and ranked knowledge still needs keywords. On a host without a vaults directory, the `review-rules` channel the review-feedback sweep creates on its first capture used to wait for a restart before its rules were primed or listed; the primer now registers the channel by path at boot, opens it on the first kick after it appears and connects it to the knowledge API then.
+- **Proxy write gates fail closed when a policy check fails.** If the repo pause, agent repo scope, auto-merge or write_surface.enforce check panics or hangs, the proxy now refuses that one request with a 403 naming the failed check, instead of crashing the whole proxy or holding the request open.
+- Workflow-dispatch kicks now receive scoped knowledge, including source-linked TechDocs reviewer rules for evidence-based assessment scores and authoritative project ownership, without applying assessment-only rules to unrelated quality work ([#19050](https://github.com/hivecommons/hive/issues/19050)).
+
+## 2026-11-18 (v5.326.0)
+
+### Added
+
+- New opt-in `review.analysis_factcheck` pass: an independent reviewer agent fact-checks the analysis and report PRs the configured agents (or labels) qualify, so a person reviews after an agent has already checked the work ([#19074](https://github.com/hivecommons/hive/issues/19074)). The review swarm's perspectives are shaped around code diffs and do not test whether an analysis is true; this pass re-verifies each claim, score, grade and attribution against its source, checks every judgment for skew in both directions, checks that the material rated was inspected, checks people and roles against the maintainers files, and posts one review with line-anchored comments that each carry a `Verify:` link or command and a confidence. The author never reviews itself, and `independence` (`agent`, `model` default, `family`) is enforced: a reviewer whose independence cannot be shown is not used. The PR stays a draft; `ready_policy: hive` marks it ready after a passing round, `human` (default) leaves that to a person. Findings reach the author through a marked, bounded path that does not depend on the review-feedback sweep: only the hive's own hidden `hive:factcheck` marker counts, rounds are capped by `max_rounds` (default 3), and the loop stops on a pass, the cap, an author that does not push within `revision_wait`, or a person reviewing, with at most one hand-off note. A fact-check review is exempt from the per-head review cap. Off by default; see `docs/review-swarm.md`.
+- Umbrella, epic, tracker and owner-only issues are never handed to a contributor relay, and are counted separately. A shared classifier (`hub.contribute_umbrella`, with per-repo overrides) recognises an umbrella by label (default `umbrella`, `tracker`, `epic`, `meta-tracker`), the `<!-- hive:umbrella -->` body marker, a `[Tracking]` / `[Epic]` / `[Umbrella]` / `[Tracker]` title prefix, a checklist of two or more issue or PR references, or sub-issues, and an owner-only issue by `needs-human`, `human-only`, `human-only:*` or `<!-- hive:human-only -->`. `/contribute` selection and the ready-work queue refuse them; `/api/contribute/status` gains `umbrella_items`, `human_only_items` and `candidate_items_raw`, and `actionable_items` / `candidate_items` count only contributor-workable work; the contributor page shows "N workable" and how many umbrella and owner-only items are not offered. The good-first-issue sweep withdraws `help wanted` and `good first issue` from an umbrella on the next sweep (switchable, logged), and the dashboard row shows an "Umbrella · owner" pill. They stay actionable for the owner and the hive and, unlike `hive/tracking`, stay closable under `parent_autoclose` and the tracker-closing rule ([#19078](https://github.com/hivecommons/hive/issues/19078)).
+
+### Fixed
+
+- Record a governor kick withheld during provider backoff as a `refused` (`provider_backoff`) outcome in `GET /api/kick-outcomes`, without quoting the provider error line (#19033).
+- `just contribute-hive claude` no longer stalls at Claude Code's "Bypass Permissions mode" consent, and the relay now says plainly when the hive has no work for it. The contributor container seeded `~/.claude.json` but never the `skipDangerousModePermissionPrompt` user setting, and its startup auto-dismiss pressed a bare Enter on any screen that says "Enter to confirm", which on this dialog (default selection "No, exit") makes Claude exit to the shell, leaving the relay at "CLI is not ready yet" forever. The entrypoint now merges `skipDangerousModePermissionPrompt: true` into the staged `~/.claude/settings.json` (only for a bypass-mode launch, other keys kept), the dismiss loop and the relay select "Yes, I accept" with Down, a pause and a cursor check before Enter and never press Enter on "No, exit", and a Claude that exits at that prompt is relaunched up to three times with `Claude exited at the permissions prompt` in the log and as `cli_reason` in the relay status. Separately, a hive answering `no_matching_work` (which it sends both for an empty queue and for work filtered out for you) is now reported as one plain sentence naming the hive, `No work was assigned to you on <hive> right now. The hive may have nothing queued, or nothing that matches your setup`, followed once by the hive's own `actionable_items` count, instead of a raw reason line every 30s; the "queue is empty" wording is reserved for an explicit `queue_empty` from the hive. Retries back off from 30s to 5 minutes, `Work available ... claiming` prints when work appears, filters the hive does name (capability, repo, level, quota) are worded as such, the relay status gains `queue_state` (and per hive with `actionable_items`), a relay holding several hives gets one compact status row and one summary line, internal retry bookkeeping lines move behind `HIVE_RELAY_DEBUG=1`, and the quota-guard notice is one line that says it can be ignored ([#19049](https://github.com/hivecommons/hive/issues/19049)).
+- The contributor relay no longer launches `opencode run` with `--auto` when the installed opencode rejects that flag, classes unrecognized-flag CLI errors as environment failures, prints the CLI output tail in its local log on task failure, and the activity feed now shows a scrubbed reason on failed runs ([#19060](https://github.com/hivecommons/hive/issues/19060)).
+- `just contribute-hive` under rootless Docker no longer fails with `contributor.env: Permission denied`: the config is staged and chowned through the user namespace with file modes unchanged (the token file stays 0600), and an auto-detected docker that fails on a permission error falls back to podman with a one-line reason ([#19076](https://github.com/hivecommons/hive/issues/19076)).
+
+## 2026-11-18 (v5.325.0)
+
+### Added
+
+- `auth_ok` now carries the hive's display name (`hive_name`), and the relay records it and prints `[hive: <name>]` on connect, so contributors can tell hives apart by their real name instead of a hostname minted before a rename. Additive: a hub that sends nothing keeps today's output ([#19059](https://github.com/hivecommons/hive/issues/19059)).
+
+### Fixed
+
+- Server-side fetches of user- or spoke-chosen URLs (dashboard agent import and workflow spec URLs, the hub's hive config proxy and webhook relay to a spoke's dashboard URL, knowledge document imports) now resolve each connection once, refuse it when any DNS answer is private, loopback, link-local or otherwise not globally routable, and dial the address that was checked. A name that rebinds between the SSRF check and the dial is refused instead of reached, and every redirect hop is checked at dial time ([#18992](https://github.com/hivecommons/hive/issues/18992), part of [#18986](https://github.com/hivecommons/hive/issues/18986)).
+- The hive now answers human review feedback on PRs its own agents opened, whatever the PR's state ([#19027](https://github.com/hivecommons/hive/issues/19027)). A person's inline review comment, `COMMENTED` or `CHANGES_REQUESTED` review, or a comment addressed to the hive used to reach no one when the PR was a draft, carried `ready-for-review`, or lived in a repo the hive does not manage (the session-resume router skips drafts and the held-PR path required `CHANGES_REQUESTED`). A new polling sweep reads each agent-opened PR (owner from the audit trail, GraphQL first with a REST fallback), finds comments the hive has not answered, and kicks the authoring agent with a brief to verify the claim against the evidence, push a signed revision or reply with evidence, and reply on the thread. Handled comment ids are persisted (and named in a hidden marker in the reply) so nothing is routed twice. A burst of comments is coalesced into one kick after a short debounce (`HIVE_REVIEW_FEEDBACK_DEBOUNCE`, default 3m); comments that arrive while the agent works are never dropped and get their own follow-up kick; each PR has a generous rolling cap (`HIVE_REVIEW_FEEDBACK_WINDOW_CAP` per `HIVE_REVIEW_FEEDBACK_WINDOW`, default 12 per 24h) that posts a visible needs-human note and resets when a person comments again. Review threads reach the agent whole and in order, so a reply that refines an earlier comment wins. The brief tells the agent to fix wrong attributions first, re-verify every cited source, keep the analysis honest in both directions, and record rules reviewers state in the hive's knowledge store. Paused agents stay paused, and a needs-human note is posted once when no agent can take the feedback. Existing unanswered feedback is picked up on the first pass after upgrade. Set `HIVE_REVIEW_FEEDBACK_RESPONSE=off` to disable.
+- The merge-request CI gate no longer turns a head red for a zero-job `startup_failure` run of event `pull_request_target` when the repository's required contexts are known and all green: GitHub blocks that event by default in public repositories from 2026-12-02, so repositories that never touch their workflows would otherwise stop merging. The run is logged instead. With the required set unknown, a required context missing or red, or any other zero-job failure, the verdict stays red (refs #19038).
+
+## 2026-11-18 (v5.324.0)
+
+### Added
+
+- The hive can now post the PR-contents merge gate as a commit status itself, for repositories whose required `verify PR contents` check comes from a `pull_request_target` workflow that GitHub blocks by default from 2026-12-02. New `auto_merge.pr_gate.mode` (`off` default, `shadow`, `enforce`) with an explicit `auto_merge.pr_gate.repos` scope. This release ships `shadow`: only `verify PR contents (hive)` is posted on the exact PR head, a Go port of the title verdicts replays the same golden corpus as the JS verifier, a hard allowlist limits the poster to four contexts, and a comparison with the workflow result is logged. Nothing changes while the mode is `off` (refs #19038).
+
+### Changed
+
+- The native-queue admission script now accepts `verify PR contents` from either the legacy `pr-verifier.yml` check run (events `pull_request`, `pull_request_target` or `workflow_dispatch`, which also fixes a verifier run dispatched after a github.token autofix push being rejected) or a commit status of that context created by the App bot named in the repository variable `HIVE_PR_GATE_CREATOR_LOGIN`; with the variable unset only the legacy evidence counts, and a status from any other creator is ignored. The `native-queue-policy` workflow's PR-side trigger moves from `pull_request_target` to `pull_request` (merge-group handling and the trusted base checkout are unchanged), ahead of GitHub blocking `pull_request_target` by default on public repositories. Nothing changes until the hive-posted status is enabled; the evidence it accepts is only widened.
+
+### Security
+
+- Security: the Inbox link validator now runs the shared host check from `pkg/netguard` before any DNS lookup, so a link to a loose IPv4 literal (`2130706433`, `0x7f.1`), a documentation or other special-purpose address, or a malformed all-numeric host such as `1.2.3.4.5` is refused at validation. Before, only a strict IP literal was checked there and the others were caught after resolution (#19020)
+
+## 2026-11-18 (v5.323.3)
+
+### Changed
+
+- A `blocked` issue waiting on a person's action (the owner-action blocked-on marker) now carries `needs_human_why` with source `blocked-on-owner` and the reason "needs an owner action: ...", so the row, the Needs human filter and the waiting-on-you list agree with the caption. See `src/docs/dashboard-sections/activity-monitor.md`
+
+### Fixed
+
+- A hub restart (502/503/504) during the feedback issue refresh is now logged at INFO and retried by the existing backoff instead of filing a `feedback_issue_refresh_failed` self-report ([#19008](https://github.com/hivecommons/hive/issues/19008)).
+
+### Security
+
+- Security: the shared address classifier behind the dashboard and hub URL guards and the Inbox link fetcher now refuses every IANA special-purpose range, not only the private ones. Added IPv4 `192.0.0.0/24`, `192.0.2.0/24`, `192.88.99.0/24`, `198.18.0.0/15`, `198.51.100.0/24` and `203.0.113.0/24`, and IPv6 `100::/64`, `2001::/32` (Teredo), `2001:db8::/32` and `fec0::/10`, including their IPv4-mapped, NAT64 and 6to4 forms. A host written as dot-separated numbers that is not a valid IPv4 literal (such as `1.2.3.4.5`) is refused instead of being sent to DNS. The Inbox link fetcher now uses the same classifier instead of its own range list, and the range set is listed in `src/docs/security-model.md` and `src/docs/security-threat-model.md`. Public addresses and ranges already refused are unaffected; no `100.64.0.0/10` opt-in was added because no registered hive or hub URL needs one (#19020)
+
+## 2026-11-18 (v5.323.2)
+
+### Fixed
+
+- A `blocked` verdict whose blocker is a person's action no longer gets lifted by the blocked sweep as a marker-less hive block. The contributor relay now posts a `hive:blocked-on kind=owner-action` marker with the reason before it labels, the sweep keeps such a block (it only strips `help wanted`), and the activity monitor row reads Needs human with "needs an owner action: ..." instead of Actionable. A hive-applied block with no marker is still lifted. See `src/docs/labels-and-control-signals/reference.md`
+
+## 2026-11-18 (v5.323.1)
+
+### Changed
+
+- Docs: a new design record, [One authorization point](src/docs/design/authorization-decision-point.md), turns RFC #18988 into a reviewable proposal: an inventory of today's write-side authorization decisions with code citations, a single evaluation seam, operator narrowing rules in CEL, one decision event per decision, fail-closed semantics per effect and a shadow-first migration with named parity tests. Design only; no behaviour changes (#18988).
+
+### Fixed
+
+- fix(meetings): say a long answer in brief, full text in chat (#18962)
+- Security: the SSRF guard on dashboard and hub outbound fetches now classifies addresses with one netip-based classifier, refusing CGNAT, IPv6 unique-local and link-local, bare ::1, mapped/NAT64/6to4 embeddings of private IPv4, multicast, and decimal/hex/octal/short IPv4 literal spellings (#18991)
+
+## 2026-11-18 (v5.323.0)
+
+### Added
+
+- `hivectl benchmarks export` converts a local evidence tree into the same anonymized benchmark records as `GET /api/benchmarks/export`, offline, so an owner can publish to hivecommons.dev/benchmarks by hand. Name the hive with `--hive-id` or `--hive-hash`, repositories are named only when listed with `--public-repo`, and `--by-month` writes the `data/fleet/<hash>/<YYYY-MM>.json` layout. See `src/docs/hivectl.md` (#18990)
+- Customers: a profile can now carry a real name, an organization and a location or country, each marked as filled from the person's public GitHub profile or set by hand. The organization shows as a small pill on the row; the other two are in the expanded profile under Details. The owner and read-write users edit anyone, a read-only user edits their own; "Auto" hands a field back to GitHub, and a field set by hand is never overwritten. GitHub fills them with one profile request when a suggested login is accepted, under the same off-by-default switch and hourly budget as the accept-time search. Nothing is taken from the hub. Forget removes the fields and export includes them.
+- The activity monitor shows one **Needs human** state for any row that waits on a person instead of an agent. An issue an agent filed for outside help (the filed-for-help marker) no longer reads as a stalled "Open · since 4h" row: its Open column says Needs human with the reason in one line, its later stages show as not applicable, and it joins the Needs human filter and the waiting-on-you list. Pending decisions, PRs held for a maintainer by the level gate, holds the hive placed and approval waits use the same state and the same wording, derived on the server from data the hive already has (payload field `needs_human_why`).
+- README now shows live badges for tests, coverage, maturity level, security scan, supply-chain scorecard and the review follow-up rate. A new `Quality report` workflow builds a small generated report from real runs and the published outcomes file every six hours, after each coverage run and on demand, and publishes it to the `quality-badges` branch. A value that cannot be computed shows `unknown` and an old one shows `stale`. The maturity badge needs the optional `QUALITY_ACMM_URL` repository variable. See `src/docs/quality-report.md` (#18979)
+
+### Changed
+
+- Docs: a new [RFC and proposal process](src/docs/rfc-process.md) page explains when a change needs an RFC, how to file a `📝 RFC:` issue with the `proposal` label (and what the older `[v5 RFC]` tags mean), who decides under `GOVERNANCE.md`, what accepted and held mean, how accepted RFCs are tracked and closed, and links live searches for open RFCs. An RFC issue template under `.github/ISSUE_TEMPLATE/` gives filers a consistent structure, and `CONTRIBUTING.md`, `GOVERNANCE.md` and the documentation map link to the page (#18980).
+- Docs: a new [AI gateway evaluation](src/docs/ai-gateway-evaluation.md) page, linked from the inference backends guide and the documentation map, traces how model traffic flows through the inference translator today, gives a vendor-neutral recipe for placing a generic OpenAI-compatible gateway in front of the model backend using existing `governor.gateways` configuration, lists what that configuration cannot express (agent identity upstream, custom gateway headers, translator timeouts and retries), and defines a spike with named pass/fail thresholds for latency, failure behavior, metering, per-agent quotas, credentials and operations cost. It is an evaluation, not a commitment: the bundled LiteLLM proxy and all defaults are unchanged (#18989).
+
+### Fixed
+
+- **Claim ledger saves no longer fail under concurrency.** Concurrent saves of the PR claim ledger now serialize and use a unique temp file, so one save can no longer rename away another's temp file and log "renaming claim ledger: no such file or directory".
+
+## 2026-11-18 (v5.322.1)
+
+### Changed
+
+- Docs now state plainly that Hive is the work-governance plane for AI coding agents (claims, stage labels, ACMM levels, DCO and the merge path) and not a model gateway or inference server, in the README, `what-is-hive.md` and `architecture.md` ([#18978](https://github.com/hivecommons/hive/issues/18978)).
+- Customers: the list row no longer has an Open button. A chevron button left of the avatar (aria-expanded, keyboard operable) and the row itself open the profile inline under the row and fold it again; the open row stays open across refreshes and across accept, dismiss and add-suggestion. The profile's Tags toggles now use the same pill as the row's tags. Dashboard-wide, the page body now has a base text size (the small step, the size of a card title): text that no rule sized used to fall back to the 16px browser default and render larger than the small section headings above it. Customers content is held at the heading size, and three empty-state lines (governor models, review queue, review pipeline) were brought down from the base step to the card-title size.
+- Meetings: a meeting's details (the Spektacular notice, the budget meter, the hive-wide line, Transcript, Notes, Research and Spek intents) now open in place under the meeting's row instead of in a separate block below the list. A chevron button left of the row (the shared `row-chevron` control, now also used by Customers) and the row title open and fold it; the Open button is gone. The open meeting stays open across list refreshes. The details have room between their parts, small uppercase headings above content set at the same small step, two columns only on wide screens, a slim meter with the token numbers aligned right, and the Spektacular status shown as one calm notice with a link to the issue.
+
+### Fixed
+
+- Inbox: no player or error toasts for live meetings (audio is never kept) (#18966)
+- Sentinel's `remote_code_execution` rule no longer flags local `bash -c` test runners, `sha256sum -c` or plain `chmod 755 /path` ([#18957](https://github.com/hivecommons/hive/issues/18957)). The `subprocess ... -c` alternative is narrowed to a literal shell, then `-c`, then a fetch or decode marker (curl, wget, base64, b64decode) on the same line and `chmod` now matches only setuid/setgid modes, so PRs with these ordinary lines stop parking behind `sentinel-alert` until a maintainer clears them.
+
+## 2026-11-18 (v5.322.0)
+
+### Added
+
+- **Hub: the decision, ledger and templates for a confirmation reply to mail sent to a hive, off by default ([#18746](https://github.com/hivecommons/hive/issues/18746)).** `hive-mx` now passes the header facts a reply decision needs (`wire.Delivery.Facts`: `Auto-Submitted`, `Precedence`, `List-*`, `X-Auto-Response-Suppress`, a null return path, a delivery status report and the sender's local parts), and the hub, after the spoke has stored a mail-in files delivery, decides whether the sender may be told it arrived: only a DMARC-aligned sender, never automatic, bulk, list or bounce mail, at most one reply per `Message-ID` and hive (a durable ledger of salted hashes, no addresses, subjects or bodies), with per-sender, per-domain and per-hive limits, and two plain-text templates ("received" and "waiting for approval") that echo only a sanitized subject and the message id. Nothing is sent: it is off unless `HIVE_HUB_MAIL_REPLY_DKIM_KEY_FILE` names an existing key, and this release has no outbound sender. See [Replies to the sender](src/docs/meetings.md#replies-to-the-sender-off-by-default) for the DNS records and network the foundation must provide first.
+- **Betty plays a soft listening chime.** When she hears her name in a spoken request and is about to answer, she plays a short two-note chime (generated by the meeting bot, no sample files) so the room knows she heard it. It plays only with voice on, never over speech or someone mid-sentence, never delays the answer, and is dropped silently if the audio path is busy. One setting, `meetings.listening_tone` (`HIVE_MEETINGS_LISTENING_TONE`), default on. Needs a Quorum with `say.tone`.
+- `config.env` now accepts `PROJECT_NAME`, which sets `project.name`. On a Kubernetes hive no dashboard API writes `project.name`, and the persisted `/data/hive.yaml.runtime` outranks the ConfigMap seed. So a hive booted with an empty name (`project.name is empty — outreach PR counts will be zero` at every boot) had no way to fix it short of editing the data volume. `/etc/hive/config.env` is applied on top of the runtime file, so `PROJECT_NAME=<name>` there now pins it, like `PROJECT_ORG` and the other `PROJECT_*` keys. `config-layering.md` now lists every key `config.env` reads.
+- A Discord `/hive join` request from a person the owner chose to "Always approve" now joins at once. On a pending join request the Meetings panel offers "Always approve this person": it approves that request and remembers the requester's Discord user id (never their display name, which anyone can copy). Their later requests are approved automatically, each one audited as `meeting_request_auto_approve`; everyone else still waits in the dashboard. The trusted list is shown in the Meetings panel with a Remove button.
+
+### Changed
+
+- **Hive no longer writes em-dashes into anything it sends.** Agent-authored text that leaves the hive for a forge (PR titles and bodies, issue titles and bodies, issue comments, review bodies and thread replies, and the commit message of a re-authored signed commit) now passes through one shared filter, `pkg/prosefilter`, that turns an em-dash, and an en-dash used as a dash, into a plain hyphen. Fenced code blocks, inline code and quoted lines are left untouched. The attribution trailer hive appends to PRs and issues now starts `-- hive:` instead of with an em-dash; readers still recognise the old spelling on existing PRs. The level-hold notice, the reporter-trust hold reason, the contributor-relay footer and the contributor prompt's trailer instruction are reworded the same way, every agent kick carries a one-sentence "no em-dashes" rule, a plain spaced hyphen now counts as a title qualifier when deduplicating issues (so a reworded title that used to carry an em-dash still folds into its twin), and a ratchet test (`TestNoNewDashesInEmittedText`) fails when a new em-dash appears in the strings hive emits.
+
+### Fixed
+
+- Betty's hive status brief no longer says "counted in 0 of N repos so far" beside real figures: when no repo has been re-read since a restart the counts are worded as last known figures not yet confirmed in any of the N repos, and the "counted in K of N repos so far" wording returns, filling in, as repos are re-read.
+- Betty's answers from a live test are honest about sources and fast to fail. Weather for "city state-name" places ("carmel new york") now geocodes by splitting off the US state and choosing the match in that state, reads the nearest National Weather Service station for US places (a measured reading, no older than 90 minutes) and labels the Open-Meteo model value as an estimate when no reading is available; weather is never answered from cached search pages. A research follow-up that states a figure without naming a source now says she is not sure, a failed deep dive is one short sentence (first sentence, no links), "any issues that need my attention" is answered from the hive's own state instead of web search and a research kick, and a spoken answer is followed by one chat line with the links of the sources it used and the hive items it named (URLs are never spoken).
+- A Jira Cloud work source with a revoked, mistyped or missing API token now fails loudly instead of looking like an empty backlog. Jira Cloud's enhanced search (`POST /rest/api/3/search/jql`) answers an unauthenticated request with HTTP 200 and no issues, so the adapter returned zero issues and no error, the eval cycle never logged `work_source enumeration failed`, and the hive sat idle with nothing pointing at the credentials. When a Cloud search matches nothing, the adapter now confirms the credentials with `GET /rest/api/3/myself` and, on a non-200 answer, returns `worksource/jira: credentials rejected by Jira`, which the existing fail-closed path logs. A search that returns any issue skips the extra call; Data Center is unchanged.
+
+## 2026-11-18 (v5.321.0)
+
+### Added
+
+- Per-kick outcome record: the hive now keeps a durable, bounded record of what each kick of an agent came to (opened a PR, pushed a commit, commented, stood down, was refused, still running, or ended with no visible action), who or what triggered it, and when, derived only from signals it already has, and exposes it on `GET /api/kick-outcomes` (owner and read-write see detail; read-only sees a one-line summary) (#18916).
+
+## 2026-11-18 (v5.320.4)
+
+### Fixed
+
+- Startup no longer reports "failed to start agent" (and a self-report issue) when an agent is already running or launching by the time its startup launch runs ([#18936](https://github.com/hivecommons/hive/issues/18936)).
+
+## 2026-11-18 (v5.320.3)
+
+### Fixed
+
+- Switching the model or method of a configured agent that is stopped, paused or not in the runtime no longer fails with "Model switch failed: agent <name> not found": the choice is saved to both config layers without restarting the agent and the dashboard says "saved; applies when <agent> starts", while a genuinely unknown agent still fails and lists the valid names; and switching an agent's method, model or reasoning effort no longer scrolls the dashboard away from that agent, drops focus from the dropdown used, or re-sorts the cards. (#18905, #18906).
+
+## 2026-11-18 (v5.320.2)
+
+### Fixed
+
+- The sandbox GitHub read relay now stops serving a connection once its per-kick key is released: an intercepted GitHub tunnel refuses the next request with a 403, and an opaque tunnel to any other host is closed, instead of both working until the client hung up or an idle timeout fired ([#18895](https://github.com/hivecommons/hive/issues/18895)).
+- **The hive no longer adopts a contributor PR when a person's or the hive's own open PR already covers the issue.** On #18866 the hive adopted contributor PR #18870 as #18879 while the owner's #18873 for the same issue was open, and the dashboard then offered "Let hive decide" over two mid-CI PRs. Before adopting, the engine (the `AutoAdoption` executor) and the "Let hive decide" ladder (new rung `covered-by-other-pr`, just before the adopt rung) now look for another open PR on the same base branch that closes the same issue and is an owner's, an `author/human`'s, a collaborator's (not driving a clanker) or the hive's. If there is one the contributor PR is closed as a duplicate of it with a thank-you note that credits the contributor, the head records `covered-by-open-pr`, and the tracker row says why; a write-back gate refusal or failed close leaves it open with adoption still off. The hive's own copy of the PR, another contributor's PR, a PR on another release line and a duplicate the merge queue holds behind this one do not count, so "green first, then earlier-opened" only breaks ties between equal-trust PRs. With only a person's or hive agent's live claim on the issue (no PR yet) the ladder recommends leaving the PR open and names the holder. ([#18900](https://github.com/hivecommons/hive/issues/18900), part of [#18890](https://github.com/hivecommons/hive/issues/18890)).
+
+## 2026-11-18 (v5.320.1)
+
+### Changed
+
+- UI pull requests now carry render evidence ([#18915](https://github.com/hivecommons/hive/issues/18915)): when dashboard sources or assets change, a non-blocking job screenshots the affected pages with synthetic fixture data at desktop and phone width in light and dark themes, uploads them as a workflow artifact and keeps one sticky PR comment indexing them. Capture problems report as partial or neutral, never as a failed check. See `src/docs/ui-render-evidence.md`; the renders are fixtures, not live data.
+
+### Fixed
+
+- Stop offering Decide…, Approve as-is and Let hive decide on a PR whose CI is running or whose review is incomplete on its current head (#18889): the verbs stay on the row, disabled, with the reason (`mid_flight`: *CI running 2/5*, *review queued on abc1234*), and a park from an earlier head no longer counts after a push; `Let hive decide — all N PRs` skips the PRs still in flight; the server answers `no-effect` before any decider runs and the policy's `default-release` / `small-low-risk` now require CI that is not pending; and the row says why a PR with no linked issue is parked (`contributor-lane:no-linked-issue`) instead of a bare *decision*.
+- **An owner's claim now releases a live contributor lease and stops the contributor lane.** The ledger always ranked a person over a contributor, but a claim made outside it (the assignee an owner or maintainer sets, a `/claim` comment, `hive/claimed-by-human` applied by hand) never displaced one: on #18866 the owner claimed at 03:21Z and the contributor still opened #18870 at 03:32Z. The contributor claim's admission check now reads those signals (the operator dispatcher's `gh issue edit --add-assignee` plus a plain "Claimed; fix in progress." comment counts); a renewal that meets one releases the claim at once and the five-minute release tick catches the rest, with release reason `human claim: assigned by <login>`. The relay task is yanked (a disconnected relay's lease is revoked), the lane is handed other work, the person is recorded as the ledger holder, a fresh contributor claim is refused while the claim stands, and the hive no longer adopts a contributor PR for an issue a person holds (tracker row: "an owner or maintainer has claimed the issue"; stage record `human-claim`). `/claim` and `/unclaim` are documented in the maintainer commands. ([#18899](https://github.com/hivecommons/hive/issues/18899), part of [#18890](https://github.com/hivecommons/hive/issues/18890)).
+
+## 2026-11-18 (v5.320.0)
+
+### Added
+
+- Added `GET /api/knowledge/advisor/summary` and a Knowledge-section Advisor card: the read-only rank-versus-holdout comparison ([#18897](https://github.com/hivecommons/hive/issues/18897), from [#17054](https://github.com/hivecommons/hive/issues/17054)) with decision counts by mode, arm and outcome, the `Lane.AdvisorArmSummary()` per-arm bead means (`mixed` and `none` listed separately), mean model latency and tokens, the advisor settings and a small-sample caveat; counts and means only, never slugs, refs or content. Advisor decision records now also store the call's latency and token counts.
+- **The contributor lane waits 15 minutes before claiming an issue an owner, maintainer or the hive itself just filed.** `governor.claims.contributor_grace_s` (default `900`; negative turns it off) withholds an issue whose author is an owner/maintainer (author association `OWNER`, `MEMBER`, `COLLABORATOR`) or this hive's own App from `selectTask` and the Ready queue (Withheld reason `owner_grace`) and refuses a contributor's fresh ledger claim with `owner grace: filed by <login> 3m ago; ...`, so the owner or the owner's dispatcher can claim first; #18866 and #18880 each grew a duplicate contributor PR because the lane claimed within seconds of filing. A person adding `help wanted` after filing waives the grace. Live leases, hive agents and outside reporters are unaffected. ([#18898](https://github.com/hivecommons/hive/issues/18898), part of [#18890](https://github.com/hivecommons/hive/issues/18890)).
+- Betty: a visible meeting-budget meter (tokens used, percent, intents answered, hive hourly and daily ceilings) on the meeting row and live view and at `GET /api/meetings/budget`, one 80 percent warning per meeting, shorter answers and no new research at 90 percent, a notice that says what to do at 100 percent, and questions dropped for budget are counted, shown and listed as "not answered: budget" in the inbox record (#18914)
+- Added "does this build contain PR #N" lookups ([#18915](https://github.com/hivecommons/hive/issues/18915)): `GET /api/saas/build-contains?q=<PR number or SHA>` on the hub answers `yes`, `no` or `unknown` for each hive you can see, and `GET /api/version/contains?q=` answers for a hive's own running build. The answer comes from git ancestry of the commit the hive already reports; a commit that cannot be resolved is always `unknown`, and a PR outside the build's history is `no`. No new heartbeat field; see `src/docs/telemetry.md` for the on-demand GitHub request.
+- The hub hive list and each hive's version menu can now answer "does this build contain PR #N" ([#18915](https://github.com/hivecommons/hive/issues/18915)): type a PR number or commit SHA to see yes, no or unknown per hive, with the reason for every unknown and each hive's behind-by count. The version menu also shows the newest image commit and the newest merged commit as separate rows, so "merged, not yet built" is visible.
+
+### Fixed
+
+- Fix sandbox agents' PR requests carrying the literal head `HEAD` from a detached checkout, which retried a GitHub 422 every 15 minutes for a day and never opened the PR: `hive-open-pr` now resolves the one local branch at the commit or refuses with the remedy, and the watcher rejects a non-branch head once, before any GitHub call (result file, `.rejected` quarantine, fleet-report class `pr_request_head_invalid`), while a branch that draws `422 head invalid` is retried 3 times and then rejected the same way (#18907).
+- Workflow dispatch: a reason replayed from the hand-off ledger now carries its age and the hand-off session that decided it (`reason_at`, `reason_age`, `reason_session`) in the "item not handed off" log line and the Settings "not started" display, and is marked stale once a newer hand-off of the same item exists, so an old decline is no longer read as a new refusal (#18916).
+
+## 2026-11-18 (v5.319.0)
+
+### Added
+
+- Added the hub registration protocol v1 registration resources (rollout step 1 of [#18642](https://github.com/hivecommons/hive/issues/18642)): `POST/GET /api/hub/v1/registrations`, `GET/DELETE /api/hub/v1/registrations/{id}` and `POST .../{id}/keys` over the existing self-service registry, with a strong `ETag` on every record (from a revision counter that heartbeats do not bump), optional `If-Match` on delete and rotate, per-repo ownership proof times (`repo_proofs`), a `413` with `limit: max_repos` for a repo list over the cap and `201` on rotate. The legacy `/api/hub/selfservice/*` responses are unchanged and everything stays behind `HIVE_HUB_SELFSERVICE_REGISTRATION`.
+- Add `sandbox.preflight`, a configurable node health check (for example a one-line device smoke test) that runs in a Job-runtime sandbox kick before the agent starts and, when it fails, ends the kick in seconds as `node_unhealthy` with the node recorded and retries once on a different node via a hostname `NotIn` affinity, without counting as an agent failure; and add `job.schedule_timeout_s` (default 10 minutes), which fails a kick whose Job pod stays Unschedulable as `waiting_for_node` with the scheduler's message, deletes the Job and releases the agent instead of waiting out the 45 minute timeout; the dashboard shows "waiting for a node" and "node unhealthy" as their own states. Preflight is off unless configured (#18811).
+- Sandbox Jobs can now make authenticated GitHub reads through a hive-hosted read relay instead of hitting GitHub's 60-requests-per-hour anonymous cap (so `uv lock --upgrade` resolves git dependencies without falling back to full clones). Opt in with `agent_sandbox.job.github_read_proxy` (`enabled`, `listen_addr` and `endpoint`, optional `no_proxy`); default off, with no default bind: `listen_addr` is required when enabled, and `endpoint` must be `https://` because the listener serves TLS only, with a certificate from hive's proxy CA for the endpoint host. Pair it with a NetworkPolicy (example in the docs). The relay attaches a read-only, repo-scoped App token (the existing `shared-uid-read` tier) to `GET`/`HEAD` for `api.github.com`, `codeload.github.com` and `raw.githubusercontent.com` and to git fetch on `github.com`, refuses every write, GraphQL and push discovery with a 403, tunnels every other host untouched, and never puts a GitHub credential in the Job: the Job holds only a per-kick relay key that is revoked when the kick ends. See [Sandbox isolation](src/docs/sandbox-isolation.md) ([#18865](https://github.com/hivecommons/hive/issues/18865)).
+- Customers: when an owner accepts a suggested GitHub login, the hive can now make one budgeted GitHub search for mentions and comments so the new profile starts with history (off by default; `customers.mention_search.enabled`, at most two requests per accept and a per-hour budget, shed when the API budget is low, never run by the discovery sweep, ids and counts only in the log) (#18884).
+- The Customers list is one line per person: a GitHub picture where the person has a confirmed GitHub login (initial otherwise; never looked up by email), identities, origin and tags as pills with a tone per default tag and a mark for tags set by hand, "+N" when there are more, and the date muted on the right. Suggested rows and the profile header use the same density. The picture is requested by the viewer's browser from github.com with no referrer; `customers.avatars.enabled` (env `HIVE_CUSTOMERS_AVATARS_ENABLED`, Settings, Features) turns it off, default on (#18885).
+
+### Changed
+
+- Sessions: document why a session keeps a refreshable Codex or OpenCode login copy (the CLIs require the refresh token), pin by test that adoption never writes the session copy or displaces a newer agent refresh, and add the live-install check as a manual checklist (Refs #18740).
+
+### Fixed
+
+- Fix the workflow-dispatch ledger keying one item two ways: a manual "Send to <profile>" wrote `org/repo#N|...` while the governor pass wrote `repo#N|...`, so the governor never saw the hand-off and resurfaced a stale not-started record. Every path now uses the qualified key, and records under the short form are migrated once on load (newest wins; a handed-off record is never displaced by a not-started one).
+- Betty: a warm model session's cache reads now count at a tenth toward the meeting's token budget, so a long meeting no longer exhausts the default 200000 tokens after about fifteen answers and goes silent.
+
+## 2026-11-18 (v5.318.0)
+
+### Added
+
+- Added `GET /api/hub/v1`, the discovery document of the hub registration protocol v1 (rollout step 1 of [#18642](https://github.com/hivecommons/hive/issues/18642)): it lists the operations, limits (`max_repos`, `max_per_user`, `expiry`, `key_rotation_overlap`) and the ownership proof method (`hub-session-token`), and answers `404` while `HIVE_HUB_SELFSERVICE_REGISTRATION` is off. The per-registration repo cap is now configurable with `HIVE_HUB_SELFSERVICE_MAX_REPOS` (default `20`, clamped to `500`); the legacy `/api/hub/selfservice/*` responses are unchanged.
+
+### Fixed
+
+- Remember per repository that Prow refuses the App's `/ok-to-test`, so a new fork PR there gets the needs-human note instead of a first command Prow rejects; the memory is re-derived from the repository's comments after a restart and clears when the `hive-ok-to-test` workflow is installed (#18608).
+- Give the proxy's `agent could not be identified` blocked-write WARN its own `proxy_writer_unidentified` operator-action class (no longer a generic `unclassified_error_repeated` fleet bug) and log why attribution failed (`reason`: `no_uid_map`, `shared_uid_mode`, `no_peer_port`, `port_not_in_socket_table`, `uid_not_in_map`); unidentified writers are still blocked as ADVISORY.
+- Report transient proxy upstream dial failures to GitHub hosts only when they persist over an hour, under the operator-action class `proxy_upstream_degraded`, and log an `error_class` (`timeout`, `refused`, `dns`, `unreachable`, `reset`, `tls`) with the failing host.
+- A contributor PR the hive is going to adopt anyway (author relay offline or unregistered, adoption enabled and unblocked) no longer gets a "back in your court" nudge followed by an adoption note 16-39 minutes later: the nudge is recorded (the adoption clock still runs, the relay still gets its task) but its GitHub comment is withheld, so the author gets one notification, and it is posted if the adoption stops being certain; an online author keeps the nudge and the full grace, and the ladder's immediate-supersede rung fires only for an unreachable author, the same condition. (#18872).
+- Publish benchmark records in byte-bounded batches (about 384 KB) with a watermark advanced per accepted batch, halve and retry a batch the hub answers with 413 (skipping a single record that still gets 413 once another batch has landed), and include the truncated hub response body in `benchmarks.last_error` so a proxy 413 is distinguishable from the hub handler.
+- Customers tag chips now render as pills; they were bare unstyled text because the class they used had no CSS (#18882).
+
+## 2026-11-18 (v5.317.1)
+
+### Fixed
+
+- The CLI pin-bump workflow now signs its commit off for every email GitHub may attribute the squash to (the `TOPUP_PUSH_TOKEN` owner's public and primary addresses, not only the noreply one), so the DCO app no longer flags image-bump commits and blocks v5 -> v6 top-ups (#18697).
+- Never auto-close a decomposed parent that a person reopened after a hive auto-close or that is labelled epic/hold, and add the per-repo `repos.<repo>.parent_autoclose` (`true`/`epics_too`/`false`) switch (#18869).
+
+## 2026-11-18 (v5.317.0)
+
+### Added
+
+- Hold unacknowledged agent strategist and outreach proposals before admission, with configurable lanes and an explicit opt-out.
+
+## 2026-11-18 (v5.316.0)
+
+### Added
+
+- Support Kubernetes node affinity for sandbox Jobs, allowing operators to select eligible nodes and exclude unhealthy hosts.
+
+## 2026-11-18 (v5.315.0)
+
+### Added
+
+- **Governor PRs by model: what each model's PRs cost the hive to review (#18717).** Each model bucket in `GET /api/governor/pr-models` now carries `hive_cost` (`usd`, `launches`, `prs_with_cost`, `usd_per_merged_pr`): the hive's own estimated spend on reviewing, adjudicating and fixing that model's PRs, summed from the PR refs' `share_usd` in the cached launch-cost snapshot (#12128). `usd` is `null`, not `0`, when none of the model's PRs had attributed usage, and `hive_cost` is omitted while the snapshot is not ready. A top-level `hive_cost_coverage` reports the launch-cost window, the unattributed and backend-unsupported spend, and the estimate disclaimer. The card shows the figure in each row's tooltip with a coverage note under the header. It reads only the cached snapshot: no new token scanning or GitHub calls, and existing fields are unchanged.
+
+## 2026-11-18 (v5.314.0)
+
+### Added
+
+- **Governor PRs by model says why unmerged PRs were closed (#18719).** Each `/api/governor/pr-models` bucket gains `closed_unmerged_reasons` (`superseded`, `duplicate`, `other`), which always sum to `closed_unmerged`. A PR counts as superseded when it carries `hive/superseded` or another PR in the same repository says `Supersedes #N` for it; duplicate when it has a `duplicate` label; anything else is other. Hover a row to see the split after the closed-unmerged count. Closed attributed PR records now keep their `Supersedes #N` number too, read from the body the scan already fetches, so no new GitHub calls. Existing fields, the bar, merge rate and rank are unchanged.
+- A weekly workflow (`claude-model-freshness.yml`) now opens one `needs-human` PR adding new Claude models to the dashboard's model lists, `cli-model-requirements.txt` and the price table, once the Claude Code version pinned in the image accepts them; models the pinned CLI does not recognise are listed for a manual check instead of added, and price rows come only through the price refresh's plausibility rules (`pricetable --add`) (#18754).
+
+### Fixed
+
+- Kubernetes: a reload that starts from the ConfigMap seed (a first boot or reprovision on a read-only ConfigMap mount, `hive config-check`, a watcher reload of the seed path) dropped the dashboard-saved `review` block (`combined_perspectives`, `require_labels`, `perspectives_source`) and `agent_sandbox` block (`image`, `job.*`), the same shape as the cadence and work-source losses. The dashboard overlay now wins for both blocks when it carries them, and a silent overlay leaves the seed's untouched. `variables.security` stays seed-only (#18804).
+- Kubernetes: a `paused: true` or `sandbox:` block an operator put in `/data/agent-configs/<name>.yaml` was replaced by the dashboard overlay's older copy of the same agent on every load that applies the overlay, so it never took effect. Those two fields are now carried forward from the agent file (#18804).
+
+## 2026-11-18 (v5.313.0)
+
+### Added
+
+- The Activity monitor's merge banner now shows the date and time it merged ("11/17 4:12 PM EST") on its head line, in the Display timezone. The time used to sit at the end of the title line, where a long title's ellipsis hid it, and it was the moment the tab noticed the merge rather than the ledger's `merged_at`. Settings → Appearance gains a **Time format** choice (browser locale, 12-hour or 24-hour) that applies to every dashboard time.
+
+### Fixed
+
+- **Sessions: a Codex or OpenCode login refreshed inside a session is adopted back into the shared login, so the agents are no longer left on a dead one** ([#18740](https://github.com/hivecommons/hive/issues/18740)). A session gets a full copy of `.codex/auth.json` and `.local/share/opencode/auth.json`. Codex's ChatGPT login and an OpenCode OAuth provider entry rotate their refresh token on refresh, so a session that refreshed its copy held the only valid login: the agents, which link to the shared file, failed their next refresh and fell to a login prompt, and deleting the session deleted the login. The hive now adopts a strictly newer login from a session HOME into the shared file, the same safety net #18728 added for Claude: at boot, on every credential-bridge poll, at a session's start or resume, and before a session is deleted (a newer login that cannot be adopted keeps the session). Newer means the session's file was written after the shared one and, for Codex, records a later `last_refresh` with a different refresh token; for OpenCode, per provider entry, a later `expires` with a different refresh token. Only the refreshed OpenCode entries are replaced; other entries, API-key logins and providers the shared file does not hold are left alone. The replaced file is kept as `auth.json.stale-<UTC time>`, and `user_session_login_adopted` records the session, trigger, vendor and file, never token material. A session still holds a copy that can refresh (whether each CLI accepts a login without its refresh token is unverified), so a session and an agent refreshing in the same few seconds converge on the newer login at the next poll rather than being prevented.
+
+## 2026-11-17 (v5.312.0)
+
+### Added
+
+- **Evidence: change failures per model (#18720).** `GET /api/evidence/summary` adds `outcomes_by_author_model`, the same outcome and change-failure counts as `outcomes_by_author_kind` keyed by the PR author's canonical model (the ids the PRs-by-model card uses; `human` for a person's PR, `unknown` for an agent PR with no recorded model). The Evidence card's **Outcome by author kind** panel shows it as a table: model, `n`, merged, reverted and re-opened within 14 days, and the change-failure rate, so a model whose merged work keeps getting undone stands out from one in the same family whose work sticks. It reuses the existing revert and re-open detection; existing fields are unchanged.
+
+### Fixed
+
+- Dashboard Restart on a sandboxed (`runtime: job`) agent no longer launches an interactive tmux session on the hive pod; it refuses and the next kick starts a Job (#18826).
+
+## 2026-11-17 (v5.311.0)
+
+### Added
+
+- Spend by model and contributor run stats by model now carry `canonical_model`, the same folded model id the Governor's PRs-by-model card uses, so `claude-opus-5-5`, `anthropic/claude-opus-5-5` and `claude-opus-5.5` can be lined up across all three views. `/api/cost` `estimated.by_model[]` and every `/api/contribute/run-stats` and `/api/contribute/run-stats/models` row gain the field; spend stays one row per raw model, since prices are per raw model. Both run-stats endpoints accept an optional `group=canonical` that merges spellings into one row (runs summed, rates recomputed from the summed counts) with `raw_models[]` keeping each spelling's run count; without it the rows are unchanged. The Cost card's by-model list and the contributor wall's model evidence show the canonical id, with the reported spelling in a tooltip (#18718).
+
+## 2026-11-17 (v5.310.0)
+
+### Added
+
+- Governor PRs by model now shows, in each model's tooltip, a per-repository breakdown and a weekly trend (30d and all-time views), so a model's rework can be traced to one hard repository and its improvement over time is visible without diffing windows. `GET /api/governor/pr-models` adds `repos[]` and `weeks[]` to each bucket; existing fields are unchanged (#18716).
+- Governor **PRs by model** can list one model's pull requests: a **▸ PRs** button on each model row opens that model's PRs in the window (outcome, review rounds, fix attempts, first pass, author agent and backend, each linking to GitHub), loaded on demand from the new optional `model=` parameter on `GET /api/governor/pr-models`. The parameter accepts any raw spelling of the model, returns up to 200 PRs most reworked first with `prs_truncated` past that, and leaves the response unchanged when omitted (#18722).
+
+### Fixed
+
+- **The required `PR Type` and `PR Issue` checks always conclude, and the PR Verifier goes red when it cannot record them** (#18764). The pinned verifier image created each check `in_progress` and then updated it with the verdict; when GitHub answered that update with 404 (#18667), the required checks stayed `in_progress` for ever, Tide reported "Jobs PR Issue, PR Type have not succeeded", and the `verify PR contents` job still went green because the image step was `continue-on-error`. The workflow now computes both verdicts in-repo (`.github/scripts/pr-verifier.cjs`, reusing the existing port of the upstream v0.4.3 title rules, with the same check names, output titles and summaries) and records each check with one create call that is already completed — nothing is ever left in progress. A title the rules reject is still a failed `PR Type`/`PR Issue` check with a green wrapper job; a result that cannot be recorded now fails `verify PR contents` with the reason, after posting a completed `failure` check that says so. No image is pulled any more, so the job runs on the ordinary runner pool instead of a native ARM64 runner. To recover a PR whose checks are already stuck, add or remove any label on it, or for a same-repo PR dispatch `pr-verifier.yml` on its branch with its `pr_number`, so a fresh completed pair lands on its head (re-running an old run re-runs the old workflow).
+- A slow GHCR token endpoint (request timeout) no longer files a fleet self-report issue; the "GHCR token request failed" WARN stays in local logs and resolvers keep serving their previous answer. Other GHCR failures (DNS, auth, bad responses) remain reportable (#18824).
+
+## 2026-11-17 (v5.309.0)
+
+### Added
+
+- Governor PRs by model now shows rework per backend and a per-effort split in each row's tooltip: every raw `sources[]` entry gains open/closed-unmerged counts, first-pass merged and rate, and average review rounds and fix attempts, each bucket gains an `efforts[]` breakdown read from the attribution trailer's `effort=` value, and the PR snapshot records it as `hive_effort` (#18715).
+
+### Fixed
+
+- Fleet-report "also seen" sightings no longer add a new comment to the issue on every join. Each poster (the hub relay, or a spoke filing directly) now keeps one `<!-- hive:selfreport-seen-log -->` comment per issue, with one section per hive, newest first, and edits it in place. Edits do not notify watchers, and the issue body's Affected hives block still counts every sighting. Part of the spam reduction work in #18450 (#18608).
+- **The claude model dropdown now offers Fable 5.2, Fable 5.1, Haiku 5.5 and the `fable` alias, and their spend is priced exactly** ([#18753](https://github.com/hivecommons/hive/issues/18753)). The pinned Claude Code 2.1.326 accepts all four, but the dashboard's allowlist, its static fallback and the browser's first-paint list stopped at Fable 5 and Haiku 4.5, so a live Anthropic catalog that listed the newer models was cut back to the old ones. The price table gains Fable 5.2 ($8 in / $40 out, $0.20 cache read, $10 cache write) and Haiku 5.5 ($0.10 / $0.50, $0.01, $0.125) from Anthropic's pricing page, so their spend is no longer a tier guess. Haiku 5.5 is priced at its base rate for prompts up to 100,000 tokens; longer prompts bill higher and are undercounted.
+- The Customers section is laid out like the Inbox and Calendar: each person is a card with an initial or source icon, the name as the title, a muted line, tags as chips and grouped actions that wrap under the content on narrow screens, with no sideways scrolling and long keys cut with a tooltip. "me" is a badge, "0 goals" is no longer printed on every row, and the evidence behind a suggestion sits under "Why is this suggested?" as readable links (at most five). Suggested people are grouped by source with "Show N more", and accepting, dismissing or answering a "Same person?" question keeps the group open, its expansion and the scroll position, and moves the focus to the next suggestion. A suggestion can now be added to an existing customer ("Add to existing..." on a suggestion, "Add a suggested person here" on a profile); it reuses the merge, so Undo merge takes it back (#18816).
+- Customers discovery no longer suggests people who are already customers or who are not people. A hive user whose access-list name is a bare GitHub login (what a device-flow sign-in produces) is now linked to that GitHub login, so they are not suggested again, and a suggestion that points at an identity a customer owns expires. Calendar group and room addresses, mailing-list addresses, no-reply and service mailboxes and the hive's own `hive@<host>` address are never suggested, and those already stored expire on the next sweep (#18816).
+
+## 2026-11-17 (v5.308.0)
+
+### Added
+
+- **Contributor run stats by model now say why runs failed.** Each model row of `GET /api/contribute/run-stats/models` (and the `models` array of `GET /api/contribute/run-stats`) gains `abandoned`, `scenarios` (the same scenario counts run-stats already gives per backend, summing to `runs`) and `failure_kinds` (`environment`, `task`, `unspecified`, summing to the failed runs). A high failure rate can now be read as "mostly the contributors' environments" or "mostly the work". `failure_rate` and the other existing fields are unchanged. On the contributor wall, hovering a post's "failed" model-evidence figure shows the split, with the labels the run history uses. (#18721)
+
+## 2026-11-17 (v5.307.1)
+
+### Fixed
+
+- A paused agent no longer shows an empty slot where its resume button belongs: the focused agent panel kept the toggle it first rendered (its fast path never added one, and the panel ignored the role), so a panel opened before the viewer's role settled stayed without resume until reload. Agent cards, the detail panel and the cadence table now repaint when the role settles, and a viewer below owner (or one still being checked) sees the pause/resume control disabled with "Needs the owner role" or "Checking your access..." instead of nothing. A paused sandboxed agent offers plain resume rather than "start & resume" (it has no session to start), and the cadence table shows one `paused` chip with its reason on hover instead of repeating it in every mode column (#18813).
+- Sandbox Jobs no longer lose their service account's `imagePullSecrets`: the Job pod now carries the deduplicated union of hive's own pod secrets, the Job service account's secrets (read through the API when the launcher's Role grants `get serviceaccounts`, skipped with a warning otherwise) and the new `sandbox.job.image_pull_secrets` list of Secret names, so private-registry project images pull instead of failing ImagePullBackOff. A boot and reload warning fires when `service_account` is set without `image_pull_secrets` (#18819).
+
+## 2026-11-17 (v5.307.0)
+
+### Added
+
+- **Dashboard and API: link review perspectives to a repo file and set up an agent sandbox without editing config files (#18797).** Review Gate has owner, repo, path and ref fields with the resolver status and an Unlink button; `PUT /api/config/review` accepts `perspectives_source` (set, and `null` to clear), gated like `definition_source` by `GitHubPromptAllowed` with an error that points to Settings, Security, Prompt sources, and re-resolves the set in the same request, so no restart is needed. The 409 for inline perspective edits now names Unlink. An agent's General tab gains editable sandbox image, runtime and Job fields and a "Copy sandbox settings from..." action (Secret names only, never values); `PUT /api/config/agent/<name>/general` takes `sandboxImage`, `sandboxRuntime`, `sandboxJob` and `sandboxCopyFrom`; Settings, Security gains `agent_sandbox.job.env_from_secrets`. Saving an enabled sandbox with no image anywhere is refused with `sandbox.image` named, and the "no sandbox image" warning links to the controls that fix it.
+
+### Fixed
+
+- Fleet self-reports: the GitHub proxy's upstream TLS dial failing (`proxy upstream dial failed` / `transparent proxy upstream dial failed`, for example `error=EOF` from `api.github.com:443`) now files under the network-path class `proxy_connect_dial_failed`, with its operator remedy, instead of as an `unclassified_error_repeated` code defect ([#18763](https://github.com/hivecommons/hive/issues/18763)).
+- A workflow hand-off to a Copilot session no longer ends in a false "no hive-open-pr tool" stand-down: the prompt now says `git` and `hive-open-pr` are shell commands (with the push and PR-request commands for the repo and issue) and that a stand-down is for a refused command, so the TechDocs drafter can open its draft PR (#18777).
+- The Calendar section now has the Inbox's layout and spacing: each meeting is a row with status and platform chips, the title on its own line, a time line that leads with the next occurrence of a series (with "repeats weekly" after it, the first date in a tooltip, and the time zone shown once), a meta line, and grouped actions that wrap on narrow screens; a row awaiting approval is tinted and says in plain words why it waits; forwarded "FW:" and "Fwd:" prefixes are hidden in the title (display only); headings, the Add meeting disclosure and the empty states share one rhythm with the Inbox (#18807).
+- Model family: a model id with a provider or gateway path (`anthropic/claude-opus-5-5`, `openai-codex/gpt-6.1-terra:high`) now reads as its vendor family (`claude`, `gpt`) instead of `anthropic/claude` or `openai`. The evidence summary's by-family counts and the reviewer-accuracy card's author families stop filing those authors under `other`, and `review_models.exclude_author_family` and the same/cross-family split now treat a prefixed and a bare spelling of the same vendor as the same family, so a "cross-family" review can no longer be same-vendor. Verdicts already stamped `same_family` keep their stored value.
+
+## 2026-11-17 (v5.306.0)
+
+### Added
+
+- **Customers: agents and the meeting persona are told who the work is for (#18742).** When a kick is about an issue whose human author, assignee or claimer is a customer, the prompt gains a `# Customer context` block: their GitHub login, the tags that are on, up to three goals a person confirmed, and a count. It is capped at 1,024 bytes and never holds an email address, an id, notes or the satisfaction assessment; goals the hive inferred and nobody confirmed stay out. Goals are text people typed, so each is scanned by `ioscan` and dropped whole if it holds an address, an id or a recognised attack, and the rest sit in a fenced `untrusted-customer-data` block with a fresh nonce, marked as data. The meeting persona gets a people retriever: when a question names a customer, it can describe them from a name, tags and confirmed goals, and never says notes or the satisfaction assessment aloud. Agents still cannot query the customers store; they only receive this slice. `src/docs/security-model.md` describes the boundary.
+- **Customers: goal and satisfaction suggestions (#18742).** When the owner turns on **Settings, Features, Customers, Suggest goals and satisfaction** (`customers.inference.enabled`, default off, env `HIVE_CUSTOMERS_INFERENCE_ENABLED`), the hive reads what a customer has written (the issues they opened, the pull requests they authored and mail from them that was approved) and asks the model configured for meetings to suggest what they are trying to get done and how it is going for them, with the evidence behind each. They appear on the profile for a person to confirm, edit or reject; a confirmed or manual value is never overwritten, a rejected suggestion is not offered again, and there is no numeric score. The text is cleaned, scanned and fenced as untrusted data before it is sent, the reply is bounded (at most three short goals and one level, each citing only the evidence it was given), at most three customers are read per pass, a person is not read again for 24 hours or while their evidence is unchanged, and the model has its own budget of about 40,000 tokens a day. It is off by default because it sends text about people, some of whom never signed up, to that model. Each pass is audited as `customer_inference` with the person id and counts, never text.
+- **Customers: graph view, merge and split, export (#18742).** A profile now has a **Graph**: a drawing of the person, the things they touched and the other people on those things, read from the customer graph; clicking another person opens their profile, and a read-only user's graph holds only themselves. The owner and read-write users can **merge** a customer into another when they are the same person (identities, tags, goals and activity move across, and two dashboard users are never merged), **undo** a merge exactly (only what the merge brought goes back), and **split off** an identity, which moves it and the activity it produced to a new customer. The owner can **export** everything held about a person in an in-app viewer (the profile, merge history, hints and up to 10,000 activity references). Four new routes under `/api/customers/{id}`, audited as `customer_merge`, `customer_unmerge`, `customer_split` and `customer_export`; a read-only user can use none of them, including on their own profile.
+
+### Fixed
+
+- The hive's own refresh of the shared Claude login can no longer lose the rotated grant when the write fails: the new grant is saved to a private `.credentials.pending` file before the shared file is written, held and retried with backoff without calling the token endpoint again, adopted at boot after a crash, and a dashboard banner and log line say so when it cannot be saved; an `invalid_grant` is no longer final while a newer grant from an agent or session home exists, and the refresher, the agents' bridge and the session adopt-back now write the shared login through one "only if strictly newer" function (#18775).
+
+### Security
+
+- **Betty: round-2 security review fixes.** A spoken consent notice that reports no audio (nothing could be synthesised) is no longer taken as delivered, so the bot leaves instead of staying unannounced. Speech that began before the consent notice but is finalised just after it is not stored, and an unreadable Quorum transcript cursor now fails closed for 30 seconds instead of open (the cursor read is retried once). Persona retrieval never searches the `meetings` vault or quotes `meeting-notes` facts, so one meeting's notes and Betty's replies cannot be quoted in another. A question nobody addressed to her is no longer sent to the public web (an addressed question or an explicit "search the web" still is). A line equal to one she said or posted in the last minute is treated as her own echo and can no longer trigger "betty leave". Rendered transcripts collapse line breaks and defuse participant names that imitate her `(assistant, ...)` label.
+
+## 2026-11-17 (v5.305.0)
+
+### Added
+
+- **Customers: a read-only GraphQL endpoint over the customer graph (#18742).** `POST /api/graph` answers GraphQL queries over people, the artefacts they touched and the edges between them: `me`, `person(id)`, `people(tag, first, after)` and `artefact(ref)`, with `Person.edges` paged newest first and `Artefact.people` for the walk back. There are no mutations and no subscriptions, so any signed-in, named user may call it, and every field that returns a person checks the viewer: the owner and read-write users reach every customer, a read-only user reaches only their own profile by any path (by id, through the list, through a shared artefact, through aliases or fragments; tested), suggested people are never returned, and an edge is shown only to a viewer who could open its artefact where it lives. Limits per query: depth 8, 8 KB of query text, pages of at most 100, 5,000 nodes and 5 seconds; introspection is off and the schema is in `src/docs/api-reference/customers.md`. Each query is audited as `customer_graph_query` with the operation name, node count and error count, never the query text. A profile's **Activity** in the Customers section is now a timeline read from this endpoint, grouped by what each entry points at, with **Show more** for the next page. New dependency: `github.com/graph-gophers/graphql-go` v1.11.1 (BSD-2-Clause), imported only by `pkg/customers/gql`; it brought no other new module into the build.
+- **Customers: audit activity and "Same person?" hints (#18742).** The discovery sweep now reads the dashboard audit log: a customer gets one `acted` edge per day they did something and a `logged_in` edge on days they signed in. Only the user, the day and the kind of action are read, never an audit line's detail, and an edge goes when its day leaves the 90-day audit retention. Hive also raises "Same person?" questions when a suggested address starts like a customer's login (or a suggested login like one of their addresses); names are never compared, short and role addresses are skipped, and nothing is linked until the owner or a read-write user answers on the profile: yes makes the suggested identity theirs, no pins the pair so it is not asked again (`POST /api/customers/hints/{hid}/answer`, audited as `customer_hint_answer`). `src/docs/security-model.md` now describes the customers store, the position on people who never signed up, and the one trust assumption in identity linking: a `github:<login>` access-list entry is taken as proof of that GitHub login. The budgeted GitHub search on accept is not part of this change.
+
+### Fixed
+
+- Meetings: the bundled Quorum is v0.5.1, which keeps "leave" right after the persona's name in the transcription hints; with v0.5.0's order the spoken "Betty leave" was transcribed as "Betty Lee" (#18745).
+- **Deleting a session now runs in the background, shows its progress, and can no longer leave a session listed whose files are gone** ([#18767](https://github.com/hivecommons/hive/issues/18767)). Deleting an ended session looked like it did nothing: the request stayed open for about a minute with no indicator, then the dashboard said "could not remove the session's files" although the files had been removed, and the session stayed in the list. Three things caused it. The sandbox was deleted under the 10-second timeout meant for tmux calls, which a HOME with a CLI's caches outlasts. The cancel that the timeout triggered ran `su-exec root kill`, and the image has no `kill` binary, so the cancel itself failed. The hive then reported that cancel error over a removal that had finished, and kept the record. Now `DELETE /api/sessions/{id}` on an ended or failed session answers 202 at once and the session is `deleting`: the tab shows "Deleting…" with a spinner and no controls, and disappears by itself when the hive is done. One job per session removes the files under its own 15-minute ceiling and removes the record last; what is on disk decides the outcome, so an error from a command that left nothing behind is a success. A real failure puts the session back as it was with the reason on the tab and a **Retry delete** button. The login safety from #18728 is unchanged in what it protects: a session holding a strictly newer, usable Claude login that cannot be adopted is not deleted, and now says so ("this session holds the hive's current sign-in; adopting it failed: ..."); having nothing to adopt never blocks or slows a delete. The cancel of a privileged child now uses the shell's builtin `kill`, so a real timeout ends the child instead of waiting for it. Sessions already left half-deleted are repaired without a manual step: at the next sweep (boot, and every list) an `ended` record whose sandbox and worktree are both gone is dropped, and a delete click on one completes at once. Every delete outcome writes one log line with its duration and a `session_closed` audit entry, failures included. `DELETE ...?remove=true` on a running session closes and deletes it in one call.
+- Activity monitor: a row no longer offers **Approve**, **Request changes…** or **Let hive decide** when no decision is pending. The gate pill and its verbs now read one rule (the payload's new `human_gate`), so a PR whose reviewer sign-off a person already approved shows *Approved by @login · waiting on …* naming the real blocker instead of *Needs human · review*; triage and author-owned rows keep their own lead instead of a decision pill; a hold or sentinel pill on an unparked row keeps only its own answer. Required checks queued or in progress past `HIVE_TRACKER_CHECK_STUCK_AFTER` (default `2h`) read **stuck** and are named, not shown as running, and a verb clicked from a stale view says what the item is waiting on and refreshes the row ([#18769](https://github.com/hivecommons/hive/issues/18769)).
+
+## 2026-11-17 (v5.304.0)
+
+### Added
+
+- **Customers: the dashboard section (#18742).** A new **Customers** section in the Collaborate group shows one profile per person. Everyone who signs in sees their own profile first, as **Me**; the owner and read-write users also see every customer, can add one by hand, and can accept or dismiss the people hive suggests. A profile shows the person's goals (add, confirm, edit or reject, with the references behind each suggestion), a satisfaction level with its evidence and no score (owner and read-write only), tags with an auto or manual marker and **Reset to automatic**, identities (one a read-only user adds to their own profile stays unconfirmed until someone with full access confirms it), activity counts, notes, and **Forget** for the owner. A read-only user sees and edits only their own profile. The section hides itself when the feature is off, and **Settings › Features › Customers** is the one switch (`customers.enabled`, default on; a change applies on restart; `HIVE_CUSTOMERS_ENABLED` overrides it). Nothing in the section leaves the hive.
+- **Customers: discovery (#18742).** A `customers` sweep now fills the Customers section from what the hive already holds, every ten minutes and without a single GitHub call (a test runs it against a client that counts requests). Everyone on the access list becomes a customer; a `github:<login>` entry, the owner's connected GitHub account and proven calendar emails are linked to their dashboard user. Issue authors, assignees and mentioned logins, pull-request authors and requested reviewers (all from the governor's last enumeration), claim holders, mail senders, Calendar organisers and attendees, and whoever added an upload or sent hive into a meeting become activity on a customer's profile, or, for anyone who is not a customer, a suggestion that holds only a key, counts and at most five references until someone accepts it. Bots, the hive's own author account, mail awaiting approval, purged meetings and display names produce nothing. Tags are assigned automatically from role, association and history (`maintainer`, `contributor`, `end-user`, `stakeholder`) and a tag a person set is never changed. Each pass also prunes: when a meeting is purged or deleted, a Calendar event removed, an upload deleted or a mail item removed, the activity that pointed at it, the suggestions that rested on it and the evidence that cited it go with it, so a profile cannot keep what retention deleted. A forgotten or dismissed person is not rediscovered, and an identity a person removed is not linked again. Dashboard user names are now matched with or without the `github:` prefix, as the access list matches them.
+
+### Fixed
+
+- A hand-created agent that is paused keeps its card in the dashboard instead of disappearing from every view while its name stays taken ("agent already exists"), so it can be resumed, edited or deleted again (#18730).
+- A Claude agent at `Please run /login` whose credential file still looks valid is no longer restarted on the file's say-so: the hive verifies the credential against the provider first, and an HTTP 401 (revoked grant) marks the agent `revoked`, raises the dashboard banner and hub verdict "Claude login revoked: sign in again", pages the operator once, and holds the 3-per-24h token-restart budget instead of burning it on the same dead login. After a dashboard Claude sign-in, agents still at the prompt are restarted once even when that window is exhausted (#18732).
+- Betty (meetings) round 2 (#18745): every line she delivers is now in the meeting transcript, the Inbox item and the notes, marked as hers, with channel, source and timing, and undelivered lines are shown as such; replies fall back to the other channel when chat or voice fails, a meeting she cannot reach is flagged and left after ten minutes, and calls into the meeting no longer block the meeting loop. "Leaving now." is out before she leaves and reaches the companion window after the meeting ends. Acknowledgements no longer delay answers or use the speaker's name, the spoken intro is short with the full text in chat, and fixed lines are pre-rendered when a voice meeting goes live. Hive status answers use the dashboard's counts with a stated scope, partial counts and age, name the working agents, and give fuller PR and issue lookups. Web answers use cleaned queries, never send hive questions to the web, and add Wikipedia, Open-Meteo and GitHub release lookups; product questions are answered from a brief built from the docs and from git knowledge sources. Misheard product words in lines addressed to her are corrected or queried, busy research is queued with its failure reason kept, and research notes create their knowledge channel on first use.
+
+## 2026-11-17 (v5.303.0)
+
+### Added
+
+- **Customers: the REST API, "me" and forget (#18742).** The people store is now wired into the hive and served under `/api/customers` (seven routes, in `dashboard/openapi.json` and `src/docs/api-reference/customers.md`). Every signed-in user has their own profile, `me`, created on first read. The verified owner and read-write users see every customer and every suggested person and can add, edit, accept and dismiss; only the owner can forget a person, which deletes them and their edges and leaves salted-hash tombstones. A read-only user sees only their own profile and can change only its name, identities, tags and goals, through `POST /api/customers/me/edit` (the one write the dashboard lets a read-only user make): any other id answers 404 exactly as a missing one does, the rule is enforced by the handlers and again by the store's service, and an identity a read-only user adds is an unconfirmed claim that resolves nobody and attracts no activity until someone with the full view confirms it. Profile opens, adds, edits, accepts, dismissals and forgets are audited with the person id and the kind of change, never the value. `customers.enabled: false` (or `HIVE_CUSTOMERS_ENABLED=false`) opens no store and turns the routes off. There is no section in the dashboard yet; that is the next PR.
+- **Inbox: Quick note, larger hit targets and an honest list of input methods.** **＋ Add** now has a **Quick note** box: type or dictate text and it becomes an Inbox item, sent as a markdown file (`note-<date>-<time>.md`) through the existing upload route, so the size cap, retention, extraction, attribution and auto-routing are the same as for a dropped file. Text of several lines pasted onto the Inbox used to be dropped silently; it now lands in the note box for review. The item checkbox, the small buttons, the pills and the "+N / less" links answer over at least `--tap-target` (40px) without growing, which helps gaze, dwell, switch and other imprecise pointers. Under the source chips a quieter row lists input methods: **Works today** (tools that already enter text, such as dictation, gaze typing and switch access) and **Neural input (coming soon)** (brain-computer interfaces, none of which publishes an API or export hive could read). Those chips are not sources and connect nothing: they show a short explanation, which says that hive is not affiliated with the projects named. The list is one static catalogue returned as `input_methods` by `GET /api/inbox`; the full list is in `src/docs/inbox-input-methods.md`. (#18747)
+
+### Changed
+
+- Inbox items are tidier and faster to scan ([#18700](https://github.com/hivecommons/hive/issues/18700)): Play recording and Share are single icon buttons (each named by `aria-label` and a tooltip; the Share menu still opens on click), Transcript / Text is a compact chevron toggle of the same size, every item's Delete (#18694) is a trash icon set apart at the end of the row, a recording's trailing `(mtg-…)` id moves from the title into the meta line (the full title stays as the tooltip), the Knowledge state (`In knowledge`, `Pending text`) sits in the meta line instead of floating as a pill, and an uploaded document's Markdown preview is shown as plain text clamped to three lines with a Show more toggle. The header shows only configured sources as chips, with the unconfigured ones behind a "+N more" disclosure next to Connect sources, and the toolbar is one row: Record and Add on the left, Show processed (a toggle button, no longer a checkbox), Select all, the Hive menu and Auto-routing on the right.
+- **Dashboard: Agents section starts minimized at L6, and the left Agents menu is tidier.** When the hive runs at autonomy level L6 (the same level the header badge shows) and you have not opened or closed the Agents section yourself, it starts collapsed. Its summary still counts the workers and now shows how many need attention (signed out, expired, stopped). Your own choice always wins and is remembered; if the level drops below L6 with no choice made, the normal default returns. The last seen level is cached so a reload does not flash the section open first. In the left menu, the "observe" and "repo:IDLE" lines under Agents are removed (the Experiment Lab section still shows its mode and phase), and **+ Add agent** and **+ Group** now sit inside the Agents group, hiding when it is collapsed. No new setting.
+
+### Fixed
+
+- A PR in one managed repo that references an issue in another (`Refs owner/repo#N`, `Fixes owner/repo#N`) now covers that issue ([#18676](https://github.com/hivecommons/hive/issues/18676)). The claim was keyed `owner/repo#N` while enumeration keys issues by the configured (often bare) repo name, so the issue stayed Actionable with no PR. The claim is now keyed by the configured spelling, the issue is staged covered-by-PR and follows the PR's stage (for example needs-decision), it gets a `hive:issue-stage-pr-link` comment naming the PR as `owner/repo#N`, and the hive agent's claim on the issue is renewed while that PR is open and released once it merges or closes.
+- Scanner decomposition now files each child issue in the managed repo where its work lives, not always in the tracker's repo ([#18680](https://github.com/hivecommons/hive/issues/18680)). `hive-open-issue --parent owner/repo#N` (or the parent's issue URL) names a parent in another repo: the relay links the child as a cross-repo sub-issue, writes `Part of owner/repo#N` and a `<!-- hive:parent owner/repo#N -->` marker (a bare `#N` only resolves inside the child's own repo), and the split-parent ledger records the parent's repo. A tracker's progress and its auto-close count children in any managed repo. A parent repo the hive does not manage is refused, and a child repo it does not manage falls back to the parent's repo (`repo_fallback_from` in the result), so children are never filed in unmanaged repos.
+- On per-UID hives the N Claude agents sharing one OAuth grant through the `/data/home/.claude/.credentials.json` bridge no longer log the whole fleet out at token expiry. All N CLIs used to refresh the same grant within seconds of each other; the refresh token rotates on first use, the rest presented the dead one, and the authorization server revoked the whole grant as a reuse (`OAuth token revoked · Please run /login`, with nothing left for the bridge to promote). The hive now refreshes the shared grant itself, once, when the access token has a quarter of its lifetime left (`HIVE_CLAUDE_SHARED_REFRESH_LEAD` overrides the lead, `HIVE_CLAUDE_SHARED_REFRESH_INTERVAL` the check interval, `HIVE_CLAUDE_SHARED_REFRESH=off` disables it), using the same refresh grant and public client id Claude Code sends, and writes the result atomically to the shared file, so the CLIs always find a live token and never refresh it. A CLI that refreshes first is still promoted by the bridge; a rejected grant is reported once (`claude_credential_refreshed`, `outcome=failed`) with the dashboard sign-in as the recovery and is never presented again. Token contents are never logged (#18731).
+- **A workflow profile is handed only to an agent that may do its work, and a hand-off the agent declines is no longer recorded as done** ([#18749](https://github.com/hivecommons/hive/issues/18749)). After #18690 a profile such as `techdocs-drafter` fell back to the hive's issue worker whatever its mode. On a hive whose scanner runs `ADVISORY` the scanner was told to open a draft pull request it may not open, declined (correctly), and the hand-off was still written to `workflow-dispatch.json` as delivered: nothing retried and nothing in the dashboard said so. Four changes. (1) Every step of the resolver (pin, same name, role, fallback) now accepts only an enabled agent whose mode and capabilities allow what the profile needs in the bound repository: opening pull requests for a profile that produces one, comment rights for a reviewing profile. The fallback prefers the issue worker (or the reviewer) when it qualifies, else the first agent that does. A pin to an agent without the rights is shown as a problem and is never replaced by another agent. When no agent qualifies the profile is unfilled with the reason, for example `no agent on this hive may open pull requests in cncf/techdocs; agents are advisory-only`, on the Settings → Repos workflow row (whose picker lists agents that do not qualify as unpickable, with the reason), on the item's Activity Monitor row, in the **Send to *profile*** error and in the scheduler log. (2) A delivered kick is recorded as pending. Later passes mark the hand-off not started when the agent declined (the kick-refusal flag, or a turn that ended on a stand-down, a question or a nothing-produced report), when its turn ended and the deliverable did not appear within 15 minutes, or after 2 hours with no word on the turn. A hand-off that was not started releases the agent's claim, shows as a `not started: <profile>` badge on the row and a line on the workflow row, and is retried once with a different qualifying agent before it waits for the owner's **Send to *profile***. (3) The hand-off prompt no longer presents the model's tools and outputs as rights of the session: it states the mode the kicked agent's own session runs in and tells an agent that cannot do the work to stand down instead of working around the write gates. The model's grant describes a role; the hive never widens a session for a hand-off. (4) On upgrade, an item already recorded as handed off to an agent that could not act is re-evaluated on the next pass and handed to an agent that qualifies, with no owner action. Operators: a profile that used to resolve to an advisory agent now shows as unfilled until an agent's mode allows the work; raise the agent's `mode` or pin an agent that qualifies.
+- Governor PRs by model shows "—" instead of 0% for models with no recorded runs, adds a history-coverage note and Wilson 95% intervals on its rates, and the contributor relay now detects the running model for codex so its PRs are no longer attributed to "unknown" (#18713, #18714).
+
+## 2026-11-17 (v5.302.0)
+
+### Added
+
+- **Customers: the people store (first step of #18742).** A new `pkg/customers` package holds one profile per person: identities, tags, goals, a satisfaction level and notes, in `/data/customers/people.json` (0600, rewritten atomically), with a rebuildable edge index in `/data/graph/customers.db` that stores references to artefacts and never their content. Dashboard users and people added by hand are customers; anyone else the hive sees is only a suggestion (an identity key, counters and at most five evidence references) until a person accepts it. Automatic identity links happen only on exact keys, a display name never links or merges anyone, and every manual decision is pinned. Forgetting a person deletes them and leaves a salted-hash tombstone so discovery does not rebuild them. Goals and satisfaction are inferred as suggestions only: a confirmed or manual value is never overwritten, and a rejected suggestion is not offered again. One switch, `customers.enabled` (default on; env `HIVE_CUSTOMERS_ENABLED`). Nothing the store holds leaves the hive, and nothing reads it yet: the API, the section and the discovery sweep follow in later PRs. Design: `src/docs/design/customers.md`.
+- **A mail to `hive@<host>` that is refused or held now says how to try again and where to report a problem** ([#18744](https://github.com/hivecommons/hive/issues/18744)). The mail receiver's SMTP refusal, which the sender's own provider returns as a bounce, ends with three more lines: the fix for that reason, a link to the reason's entry in the new docs section "Mailing your hive: what the replies mean", and where to report a problem. In the Inbox, each refused or held mail under **✉️ Recent mail** has **How to try again**, **What this means** and **Report a problem** (a new issue prefilled with the reason code, the SMTP code, the day and the hive version, never the sender, a subject or a file name), and a mail that awaits approval has **✓ Approve** and **✕ Decline** for the owner right there. Hive still sends no mail: a confirmation reply to authenticated senders needs a sending domain and is designed in [#18746](https://github.com/hivecommons/hive/issues/18746).
+- Add `src/deploy/hive-oke/acme-dns/` manifests and runbook for a delegated RFC 2136 DNS-01 zone, groundwork for renewing the hub wildcard certificate without Cloudflare. Nothing is switched over yet.
+
+### Fixed
+
+- **A session can no longer take the hive's Claude login away from the agents** ([#18724](https://github.com/hivecommons/hive/issues/18724)). A session used to get a full copy of the shared Claude login. When the CLI in the session refreshed that copy, the refresh rotated the login, the shared file the agents read was left stale, and every agent on the hive fell to the login prompt until someone signed in again; deleting the session deleted the only valid login. A session now gets the Claude login without its refresh token, so it uses the fleet's access token and cannot rotate it, and the hive keeps that copy current whenever the shared login changes. As a safety net, a complete login that is in a session's HOME anyway and is strictly newer than the shared one (by expiry and file time only) is adopted into the shared login, audited as `user_session_login_adopted`, never with token contents: at boot, on every credential poll, after a dashboard sign-in, when a session starts, and before a session is deleted (the delete fails rather than lose it). A hive already locked out this way recovers at its next boot or poll without a sign-in, as long as the session holding the login still exists. For the other vendors, resuming a session no longer overwrites a login the session's CLI refreshed with the older shared file. One thing to know: a Claude session depends on an agent or a dashboard sign-in to refresh the fleet's login; if the access token has expired and no Claude agent has run since, sign in again from the dashboard.
+- **A session start no longer fails with "the hive restarted while this session was being prepared" when the hive did not restart** ([#18725](https://github.com/hivecommons/hive/issues/18725)). Listing sessions at the moment a start finished could read the session as still preparing, find no start in progress and mark the now-running session failed, which also made its Inbox seed fail with "session is not running". The check now looks at the session as it is at that moment, under the same lock the start uses, and fails it only when it is still preparing and nothing in this process is starting it.
+
+## 2026-11-17 (v5.301.1)
+
+### Fixed
+
+- The scanner's "not agent work" triage verdict now changes the issue's state instead of only leaving a comment: `hive-open-issue comment --not-agent-work <not-a-defect|needs-human|needs-environment>` (or the `<!-- hive:not-agent-work verdict=... -->` marker) posts the note once and parks the issue on `needs-human`, so it leaves stage/010-actionable on the board and the scanner's work list. An identical verdict with no human comment since is dropped as `already_existed` rather than posted again, and a person's later comment lifts the hive's own `needs-human` and re-queues the issue (#18675).
+- **A mail to `hive@<host>` with an office document attached now lands in the Inbox, and a mail that is refused says why** ([#18699](https://github.com/hivecommons/hive/issues/18699)). PDF, Word, PowerPoint and Excel attachments (`.pdf`, `.docx`, `.pptx`, `.xlsx`) were not on the mail-in list: a mail carrying only such a file was refused, and one that also had text lost the file silently. They are now accepted up to the 25 MB per-file limit, checked by content (a macro-enabled or damaged document is left out) and stored as the item's attachment. A mail with more than about 512 KiB of attachments was also turned away by the hive's own session gate, which did not let the hub's signed pieces through, so its sender retried until the mail expired; those pieces now reach the relay signature check. A refusal's SMTP reply, which the sender's provider returns in the bounce, names each attachment's extension and what was wrong with it. The mail receiver logs one INFO line per session with the outcome, the SMTP code, a reason category, the recipient host, the sender's domain, the size and the attachment counts, and reports each refused message to its hive. The Inbox shows owners and read-write users **✉️ Recent mail**: the last 50 messages received or refused with the reason, also at `GET /api/inbox/email/recent`. A mail that was received but awaits approval says why: the sender could not be authenticated (with the DMARC, SPF and DKIM results and the server that handed the mail over), or is authenticated but not on the allowlist. Neither the log nor the list holds a subject, a file name or a full sender address.
+- The **Claude authorization URL** dialog (and every other in-app link or export viewer: Linear authorization, terminal URLs, external links, JSON/YAML/CSV exports, the hub's access CSV) no longer shows its content in a small resizable text box that matched nothing else in the dialog. A link is now one full-width, read-only line in the dialog's own font and colours that wraps cleanly and selects whole on a click; a multi-line export is a read-only, scrollable block. **Open in new tab** leads as the primary action, **Copy to clipboard** is secondary and **Close** steps back; the "Rendered in-app so the browser does not prompt for downloads" note is replaced by a short line that says what to do next, and the bearer-token variant keeps its explanation. (#18729)
+
+## 2026-11-17 (v5.301.0)
+
+### Added
+
+- Inception (spek) sessions now get past the vendor CLI's startup screens by themselves, so a new session starts on what you asked it to do without anyone at the keyboard. When a session starts (create, resume or Start again) the hive seeds a Claude Code session HOME so its first-run screens do not appear, and for whatever still shows it answers the known **startup** screens with the detector agents already use: the first-run notice, trust for the session's own folder, the theme picker, onboarding, Codex's update menu (always "Skip until next version"). The session's queued request, such as Inbox items sent to spek, is delivered once the CLI reaches its input prompt; before this the queue could type it into one of those screens when its wait ran out. The pane header shows **Getting the CLI ready…** and then **Started**. The limits are deliberate: a tool or command permission prompt is never answered (sessions keep the CLI's permission prompts on), a login screen is never answered (the header says **Needs sign-in**), nothing is typed once a person has typed into the session, and answering stops at the input prompt or after 90 seconds (`HIVE_SESSIONS_AUTOSTART_WINDOW_SEC`); when it stops early the header names the screen and the terminal is yours. Each outcome is audited as `session_autostart`. Turn it off with Settings → Dashboard → **Answer the CLI startup screens** (`dashboard.sessions.autostart: false`) or `HIVE_SESSIONS_AUTOSTART=false`. (#18696)
+- **Hear a meeting persona before you pick it.** In Settings, Meeting attendee, clicking a persona preset card now selects it and plays that persona's introduction in its own voice and language; each card also has a speaker button that plays or stops the clip, a playing state, and works with Enter or Space. The clip is the preset's real introduction (without the pronoun note) spoken by the meetings TTS service the attendee uses in a meeting, through the new `GET /api/meetings/persona/preview?preset=<id>` (owner or read-write). Clips are cached in memory so a repeated click does not call the TTS again, and the route is bounded by a per-user rate limit, a text length cap and the TTS timeout. When the clip cannot be played the tab says "Voice preview is unavailable:" with the reason (meetings turned off, TTS not configured or not reachable) and never falls back to the browser's own speech synthesis. The hive now also gives the dashboard the meetings TTS service (`meetings.tts_url` and its token, sent as `X-API-Key` as the shared Kokoro service expects), so **Play sample** works on a hive with TTS configured instead of always reporting "TTS not configured". Fixes #18710.
+- **Inbox recordings are transcribed automatically, also after a restart.** Once `inbox.transcription` is enabled with consent, every recording whose audio the hive holds itself (dashboard recordings, dropped audio and video files, and mailed-in audio from a trusted sender or once the owner approves it) is queued for transcription the moment it lands, whatever `inbox.transcription.mode` says; no 🎧 Transcribe click is needed. Runs the hive restarted under are marked `failed` with an `interrupted: ...` reason at boot and queued again by the boot sweep (a run that had started counts toward the 3-attempt bound, so a recording that keeps crashing the hive stops), and other failures keep retrying after the 1h/2h backoff across restarts. The Inbox shows "Transcribing soon" until the run starts, then the existing queued/progress state, and keeps 🎧 Retry transcription for failed items. `HIVE_INBOX_TRANSCRIBE_CONCURRENCY` (default 1, max 8) sets how many transcriptions run at once.
+
+### Changed
+
+- The Activity monitor's forge-owned merge queues panel now reads like the rest of the dashboard: one head line (how many PRs are queued, on how many branches, when last checked, with every caveat stated once behind a help mark), one status line per branch that has something to say (what is at the front and its state, how long it has waited, whether a test group is running), calm branches folded into a count, and entries, test groups and receipts behind a click. A normal rotation delay shows as "checked 9m ago" rather than a STALE banner; warning styling is kept for a failed refresh, missing App authentication, evidence far older than the rotation explains, or failed candidate checks. Finished merge groups whose synthetic ref is gone are counted as history, not drawn as live validation candidates, and a branch protected only by rulesets no longer reports its required-check policy as unavailable. Fixes #18702.
+
+### Fixed
+
+- **Betty: fixes from the live Discord and Teams tests (#18677).** Discord-initiated joins (`/hive join`) now talk by default when the bot can speak, and the owner can still turn voice off. When she can't speak, the log says why: voice off, `voice_on_address` off, or the say call failed. A spoken request that opens with a sound-alike of her name ("Eddie, please introduce yourself", "ready, please ...") still reaches her. That match never applies when the word is the name of someone in the meeting, and the answer prompt names the people present so she never addresses a misheard name as a participant. A live meeting warms the research pool when it starts and keeps it warm. A kick to a just-started research agent waits for its CLI to boot, and a "CLI did not reach input prompt" failure is retried up to twice before the meeting hears "I couldn't look that up". The live hive status she answers from now includes board pressure (BP), actionable-now, test coverage and stale claims. Answers delivered together each say which question they answer. On the meeting card, the voice button now names the action it takes ("Turn voice off" / "Turn voice on") instead of the current state. When chat can't carry the consent notice, a voice-capable bot speaks it even with voice replies off, and leaves only if neither chat nor speech works. From the Meet test: a spoken request repeated by the same speaker within 60 s is dropped instead of answered twice, an intro still being said never gets the research ack, and a spoken "I'll dig into that" no longer follows a spoken ack (it goes to chat). Everything she says aloud goes through a text-for-speech pass: Markdown, links, `#123` (said as "number 123"), slashes and emoji. She never states pronouns: `{pronouns}` renders empty, the presets no longer carry it, a pronoun parenthetical in a custom intro is dropped, and the system prompt tells the model not to announce them. The live hive status also lists open items by stage, the agents working and the work queue. Spoken requests are acknowledged on a watchdog (`DefaultAckDelay`, 0.7 s): a quick answer comes with no filler, a slow one gets exactly one ack. A deep dive now gives up and says so after 45 s (a progress note at 20 s), down from 5 minutes.
+- **Meetings: the hive image ships quorum v0.4.1.** It brings the hive vocabulary (Betty, leave, pull request, board pressure, repo names) as STT prompt and hotwords, silence-trimmed and merged segments under backlog, a 500 ms end of turn, the bot name as the speech-to-text prompt, bounded retry with backoff on transcription 503s instead of dropping segments, strictly serial speech per meeting with the real clip duration, and speak failures such as a muted mic reported as errors, so hive falls back to chat.
+- **Betty answers hive questions from the hive's real counts (scored live test).**
+  - Her live status now reads the same derived open-items set that `/api/status` serves, instead of the raw snapshot. That raw read is why she said "0 open issues" while about 35 were open.
+  - Counts are given with their scope ("35 issues and 12 PRs across 13 repos", plus the busiest repos). A count that isn't in yet is never stated as zero.
+  - Questions about the hive never go to the research agents: board pressure, PR and issue counts, which agents are running, and a lookup of a specific issue or PR by number (answered by `HiveItemBrief`).
+  - Mishearings of the hive's vocabulary are fixed before matching: "full requests" and "pool request" read as pull requests, "bored pressure" as board pressure.
+  - A segment holding two questions gets two attributed answers.
+  - "Betty Lee." and other close mishearings of a leave command (the name plus a sound-alike of "leave") now remove her, and she posts "Leaving now." first.
+- **Claude agents added at runtime no longer stall on the CLI's first-run security notice.** A per-agent Claude home now gets `hasCompletedOnboarding` and workspace trust merged into its existing `.claude.json` before launch (a signed-in session adopted from a sibling could carry the identity without the onboarding flag), so the meetings research agents start at their input prompt. If the "Claude can make mistakes … Press Enter to continue" notice still appears, the launch watcher and the kick path press Enter. A kick whose pane stays on a known blocking screen now fails within 20 seconds with a reason naming the screen, instead of waiting two minutes for "CLI did not reach input prompt", and the notice's "prompt injection" wording no longer counts as the agent refusing the kick.
+
+## 2026-11-17 (v5.300.0)
+
+### Added
+
+- **The hive's email address is shown where you look for it: in the Inbox, the Calendar and Meetings** ([#18693](https://github.com/hivecommons/hive/issues/18693)). Every hive already has an email-in address, `hive@<dashboard host>` ([#18395](https://github.com/hivecommons/hive/issues/18395)), but it was only shown under Settings, Meeting attendee. Each of the three sections now has one row at the top: a label, the address as a link that opens a new mail, a **Copy** button and a one-line hint (**Send to this inbox** in the Inbox; **Invite by email** in the Calendar and in Meetings, above the form that takes a link). The address comes from each section's own state (`email_in` in `GET /api/inbox`, `GET /api/meetings/schedule` and `GET /api/meetings`) for owner and read-write users. On a hive mail cannot reach (no hub relay key), or with the matching `meetings.email.*` switch off, the row says so and links to the setup guide instead of showing an address that would bounce.
+- **Every Inbox item can be deleted, one at a time or in bulk** ([#18694](https://github.com/hivecommons/hive/issues/18694)). Only a dashboard recording had **🗑 Delete**; uploads, links, mailed-in files, meetings and everything a connector syncs had none. Each item now has **🗑 Delete**, and **Hive (n) ▾** on a selection has **Delete…** (`POST /api/inbox/delete`, owner or read-write, audited per item as `inbox_delete`). The in-page dialog says what goes: the file or recording this hive stores and its machine transcript record, or only the Inbox item for a meeting (its record stays in Meetings) and for a synced source (the recording stays in Plaud, Zoom and so on). **The Knowledge copy is kept unless you tick the box**, which is offered for recordings and uploads; a synced source's fact stays because its sync would write it again. A deleted item leaves a tombstone, so the next sync does not bring it back, and what was already shared from it is not touched. Behaviour change: deleting a dashboard recording used to remove its Knowledge fact every time; it now keeps the fact unless the box is ticked.
+
+### Changed
+
+- CI: the DCO app now honours an author's own DCO remediation commit (`.github/dco.yml`, `allowRemediationCommits.individual`), so a v5 -> v6 top-up that carries commits whose author email has no matching sign-off can be unblocked by the author without rewriting history (#18697).
+
+### Fixed
+
+- **A bound workflow now starts on a standard hive, and a profile nothing can fill is no longer silent** ([#18690](https://github.com/hivecommons/hive/issues/18690)). A workflow model hands some states to an agent profile (TechDocs: an Accepted request to `techdocs-drafter`, a draft to `techdocs-verifier`), but the hive only accepted a pinned agent, an agent named after the profile, or a `writer`, `docs` or `feature` agent. A default roster has none of those, so every pass logged `no agent fills the profile`, the item stayed withheld from every other lane, and nothing in the dashboard said why. The resolver now ends with a last resort: the hive's issue worker (the `scanner` role) for a profile that opens a pull request and the `reviewer` for one that reviews, in both cases only an agent allowed to work on the bound repository; a supervisor, guide or brainstorm agent is never picked on its own. When still nothing fills a profile, the repository's workflow row on Settings → Repos warns and offers an agent picker that saves `workflow.dispatch.profiles.<profile>.agent` (owner only, `PUT /api/workflows/dispatch/profiles`, no restart), the item's Activity Monitor row wears a `no agent for <profile>` badge with the reason, and **Send to *profile*** answers with the reason and where to fix it. Operators who relied on a profile staying unfilled should set `workflow.dispatch.profiles.<profile>.disabled: true`.
+- **The Inbox auto-routing dialog is readable** ([#18701](https://github.com/hivecommons/hive/issues/18701)). The form (the **⚙ Auto-routing** dialog and Settings, Inbox) is now two sections on one spacing rhythm: **Routing** (default RFC repository, dibs URL, rules) and **Transcription** (provider, consent, mode, options, limits). The provider list is one row per provider with the name, a one-line description, the ready or not ready pill in its own column and what is missing on its own line. Config keys moved out of the labels into a **Config keys** footnote per section. The consent notice is grouped with the consent and enable boxes. Selects and inputs share one recipe and height, labels sit above their control, and Cancel and Save stay in view while the dialog scrolls, so the last row is no longer cut off. Whisper, Gemini and Deepgram fields show only for the provider in use (with `auto`, for the providers it could pick), and **Auto-mode sources** only in auto mode; hidden fields keep their values, so saving sends the same settings as before.
+
+## 2026-11-17 (v5.299.0)
+
+### Added
+
+- Added a [Kick refusals](src/docs/kick-refusals.md) docs page that explains `kick_refusal` and every reason a kick is refused (the agent's model declining, startup deferral, paused, failed start, stopped, provider backoff, restart hold, cancelled by restart, delivery already in progress, no session, sandbox misconfiguration, unknown agent), what to do about each, and when it is normal. The dashboard's "Kick failed" toast now has a "What does this mean?" button, the navbar health hover names the page for `kick_refusal`, and `POST /api/kick/{agent}`, `GET /api/kick/{agent}/status` and the deep-health `kick_refusal` check return a `docs_url` field when the failure matches a documented reason. Fixes #18692.
+
+## 2026-11-17 (v5.298.2)
+
+### Fixed
+
+- **A dashboard Copilot re-login now reaches running Copilot agents without a restart** ([#18671](https://github.com/hivecommons/hive/issues/18671)). The Copilot CLI's own save, seconds after launch, replaced the freshly relinked `~/.copilot/config.json` symlink with a private copy again, so a later login written to the shared file only reached each agent after its next restart. The pane poller now checks the link on every tick and relinks it within one poll interval of a CLI save, first merging the fields the CLI wrote into the shared file so nothing it saved is lost; the shared login always wins over the token in the private copy, and a private copy holding the only login is still left in place.
+
+## 2026-11-17 (v5.298.1)
+
+### Fixed
+
+- Stop retrying the closing-issue link when GitHub rejects it with the permanent "exceeds manual reference limit" error, so the PR-claim sweep no longer repeats WARN logs and selfreports (#18666).
+
+## 2026-11-17 (v5.298.0)
+
+### Added
+
+- **Workflow models: simulating a merged PR reports its observed `pipeline.status`** (part of [#18356](https://github.com/hivecommons/hive/issues/18356)). When the workflow simulate fetches a merged PR by repo and number, it now asks the GitHub Actions post-merge observer about the PR's merge commit on the default branch and fills `pr.pipeline` (`green`, `red`, `running` or `unknown` with the reason), so a model's Main CI, Release and Deploy transitions can be checked against real runs. If the read fails, `pr.pipeline` stays `unknown`, a note says why, and the simulate still answers.
+- **Workflow models: GitHub Actions post-merge run observer feeds `pipeline.status`** ([#18645](https://github.com/hivecommons/hive/issues/18645), part of [#18356](https://github.com/hivecommons/hive/issues/18356)). Default-branch push runs (Main CI, deciding by the exact merge SHA when the range can't), release runs and deploy runs (per environment) of the workflows an ingested model binds are now attributed to merged PRs through the range-attribution core (`workflowmodel.AttributeRuns`), so the `pipeline.status` fact can report `green`, `red` or `running`. Nothing calls the observer yet, so the fact stays `unknown` in production until the follow-up wiring lands. Pull-request and merge-queue runs never count, a deploy run that does not report which environment it targeted credits none of them, and a run whose revision or range can't be determined leaves the status `unknown` with the reason recorded.
+
+## 2026-11-17 (v5.297.0)
+
+### Added
+
+- Workflow models gain a Tekton PipelineRun observer and `tektonRuns` config for post-merge runs; the stage engine does not call it yet, so no column changes until the follow-up wiring lands ([#18646](https://github.com/hivecommons/hive/issues/18646)). A Tekton pipeline's new `tektonRuns` block names the cluster (`context` or `inCluster`), `namespace` and `labelSelector` explicitly (nothing is auto-discovered); each run's revision is read from the `pipelinesascode.tekton.dev/sha` annotation, then the `revision` param (both renameable), and fed through range attribution. A run whose revision is not a full commit SHA leaves the column `unknown` with the reason recorded instead of guessing. Existing models are unchanged.
+
+## 2026-11-17 (v5.296.0)
+
+### Added
+
+- feat: range attribution core for post-merge runs (#18653)
+
+## 2026-11-17 (v5.295.0)
+
+### Added
+
+- Each Sessions pane now opens in its own git worktree of the hive's one shared clone (`<workspace>/.sessions/<id>/<org>/<repo>`, branch `hive-session/<id>`) instead of the shared checkout, so two people running different specs on one hive no longer see, block or discard each other's Spektacular workflow, and a branch switched in one session no longer moves the others. The shared clone's git config and hooks are now locked: root rewrites `.git/config` at every boot as read-only to sessions, empties `.git/hooks`, turns on `extensions.worktreeConfig` for personal settings (`git config --worktree`), and the hive's own git always runs with hooks and `core.fsmonitor` off. One session can no longer plant a config entry, hook, filter or alias that runs as another session's uid. Deleting a session auto-saves its uncommitted work as a commit on its branch before the worktree goes, and keeps the branch when the clone's `HEAD` lacks it. The periodic sweep removes worktrees of deleted sessions, but never while the sessions store has failed to load. Existing sessions move into their own worktree when resumed. Writes to the shared config (`git push -u`), deleting refs still in `packed-refs`, gc and submodules no longer work from a session ([#18588](https://github.com/hivecommons/hive/issues/18588)).
+- **Betty's answers are timed stage by stage.** The meeting's live state (`/api/meetings/{id}/live`) now lists each recent answer's retrieval, model, answer-ready and delivery times, its source and its budget (4 s for questions about the hive's live state, 8 s otherwise), with a median and slowest summary; slow answers are logged. Questions about the hive no longer wait for slower sources such as web search once the live state is in. ([#18590](https://github.com/hivecommons/hive/issues/18590))
+- **Betty says who and what each answer is for when several requests overlap.** With more than one request in flight, after other people spoke, or when an answer is late, every answer opens with the asker's name and a short topic ("Andy (re: open PRs): ..." in chat, "Andy, about open PRs: ..." spoken), without @mentions that ping. With two or more requests in hand she posts one short "I have N questions; answering each as it's ready." note (at most once a minute), and a spoken acknowledgement names its asker when others are waiting. ([#18590](https://github.com/hivecommons/hive/issues/18590))
+- **Betty says where her answers come from and when she is not sure.** Chat answers end with the sources they used (a web link, a work item id, the knowledge fact or "hive live status"), the model is told to give issue and PR numbers and never guess, and a low-confidence answer opens with "I'm not sure, but ..." instead of sounding certain. ([#18590](https://github.com/hivecommons/hive/issues/18590))
+- **Betty works on several requests at once.** One meeting may now run up to `meetings.llm.per_meeting_in_flight` (default 3, never above `meetings.llm.max_in_flight`) model calls in parallel, so a second question no longer waits for the first answer. On the Claude CLI backend the meeting keeps a small pool of warm CLIs that grows only when requests overlap, and every call in flight reserves budget so parallel answers cannot overspend the meeting's token budget. ([#18590](https://github.com/hivecommons/hive/issues/18590))
+- **Betty speaks several ready answers back to back, shortest first, and moves the rest to chat.** Spoken answers ready together no longer wait behind a long one; an answer that would wait behind more than 20 s of queued speech goes to chat with a spoken "I've put the rest in chat.", and a stale acknowledgement is skipped. Answers to addressed requests may take `meetings.chat_answer_burst` (default 3) extra chat posts a minute beyond `meetings.chat_posts_per_minute`, so parallel answers are not held for a minute. ([#18590](https://github.com/hivecommons/hive/issues/18590))
+- Meetings: per-user desktop companion tokens (`/companion/token`), admitted only on the companion meeting routes at the user's live role; hosted hubs pass `/api/companion/info` and `/api/companion/meetings/*` through to the hive (#18596).
+- Meetings: desktop companion meetings (`/api/companion/*`): the companion app streams a person's own meeting client audio and microphone, after a versioned consent confirmation, as a live meeting Betty takes part in; her replies go to the companion window (#18596).
+- Meetings: finished meetings (ended, failed, blocked, declined, left) and stale join requests get a 🗑 Delete action with an in-page confirm, plus **Clear finished** to delete all finished meetings at once. Delete removes the meeting record, its transcript and live state on the hive, erases it in Vexa with Quorum `meeting.delete` (best effort; a failure is reported and the record is still removed), and drops the Calendar entry that existed only for that meeting. Past Calendar entries get the same 🗑 Delete; scheduled ones keep Skip and Cancel. A meeting hive is still in answers 409 (leave it first). Knowledge facts and drafts made from a meeting are not touched. Owner only, audited as `meeting_delete` (`DELETE /api/meetings/{id}`, `POST /api/meetings/clear-finished`, `DELETE /api/meetings/schedule/{eid}`).
+
+### Changed
+
+- Meetings: the hive image ships quorum v0.3.0, which adds the desktop companion platform (#18596).
+
+### Fixed
+
+- Meetings no longer restart-loop the Spektacular live child when the installed spektacular has no `meeting` command (before hivecommons/spektacular#126): hive probes `spektacular meeting --help` once per installed binary, keeps live mode off without starting the child, stops forwarding transcript lines to it, and the Meetings panel still says notes and clarifying questions are off. A supported child that keeps exiting still restarts with capped exponential backoff, warns at most once per backoff window, and is self-reported as `spek_stream_unavailable` instead of `unclassified_error_repeated` ([#18630](https://github.com/hivecommons/hive/issues/18630)).
+- Hosted spokes on push-reported clusters (such as vllm-d and a-ks-wec2) now get the cluster's `host_aliases` from clusters.json: the hub sends them on every heartbeat and the spoke converges its own Deployment, idempotently and keeping unrelated aliases, and both sides log a WARN when the aliases cannot be applied (#18637).
+
+## 2026-11-17 (v5.294.0)
+
+### Added
+
+- Reference repos: the own-item follow-up now also routes comments and reviews on issues and PRs the hive opened as its GitHub App bot (`project.remote_write_identity`), listing each repo under the login its writes appear as and reading it with that repo's own credential (#18516).
+- The Activity Monitor offers owners **Send to *profile*** on a row of a model-bound repository whose state the model hands to an agent profile (Send to techdocs-drafter on an accepted TechDocs request, Send to techdocs-verifier on a draft PR), backed by the owner-only `POST /api/workflows/dispatch`, which claims the issue, kicks the agent and records the hand-off (audited `workflow_dispatch`).
+- A repository bound to a workflow model now hands each item to the agent its model names: the curated TechDocs model sends an accepted request (`triage/accepted`, no covering PR) to the `techdocs-drafter` agent once, claiming the issue for it first, and runs `techdocs-verifier` on each `/verify` on the draft PR; model-owned items are withheld from the scanner and other generic lanes, and hand-offs are recorded in `workflow-dispatch.json` so a restart never repeats one (cncf/techdocs#395).
+
+### Changed
+
+- Notifications: in `github.notifications.mode: quiet` (the default) three more notes stop posting comments of their own and become `hive:status` card sections, edited in place: the review Follow-ups checklist (`review-followups`, collapsible, ticked entries kept), the 090 ready-for-human-merge entry when the author's trust tier is the only objection (`stage-ready`), and the issue-side stage note naming the PR that covers the issue (`issue-pr-link`). Every 085 needs-decision entry and a held or manual-merge 090 still post a notifying comment; `mode: normal` is unchanged (hivecommons/hive#18606).
+- CI: the advisory mutation report no longer opens a PR comment for an `error` verdict (gremlins wrote no report, so there is nothing to act on); the report stays in the job summary and an earlier finding comment is edited instead. The closed-issue `/reopen` hint no longer comments when the reporter is a bot or a maintainer who can reopen it themselves (hivecommons/hive#18607).
+
+### Fixed
+
+- ioscan: a kick withheld under fail-closed because untrusted issue/PR text tripped the injection policy is no longer fleet-reported as `ioscan_classifier_unavailable`. That block is the defense working as designed, so it now logs `ioscan fail-closed withheld kick on an injection finding` (or the held-PR coordination variant) and stays in local logs and the audit trail; only a kick withheld while the classifier is failing keeps the `ioscan fail-closed blocked kick` wording, now with the classifier error and fix on the held-PR coordination path too ([#18459](https://github.com/hivecommons/hive/issues/18459)).
+- The open-PR guard now writes the `has-open-pr` label on its own time budget, remembers a failed write per issue instead of retrying it on every claim pass, logs refusals (no write access, issue gone or locked) at INFO, and reports repeated transient failures under a new `open_pr_guard_label_failed` fleet-report class instead of `unclassified_error_repeated` (#18589).
+- **Betty always closes the loop on a deep dive, and meeting research finds its agents again.** The research agents (`research-1..N`) live only in the runtime, so every config reload or reviewer autoscale step removed them and each later research request failed silently with "no research agent available"; they are now kept across reconciles, and a dispatch that finds none registers them again. When a deep dive cannot start, the agent reports an error, or it runs past 5 minutes, Betty says "I couldn't look that up: <reason>." in the channel she was asked in (spoken for a spoken question); one running past 30 seconds gets one "still looking" note, and a spoken question's answer is spoken. Settings, Meeting attendee shows the research agents, how many are available, and a "No research agent available" warning. ([#18590](https://github.com/hivecommons/hive/issues/18590))
+- Meetings keep nothing from before the consent notice is delivered: until Quorum confirms the notice in chat (or hive speaks it), every transcript segment, draft and chat line is discarded rather than stored or handed to Betty, Spektacular, research, knowledge facts or the Inbox, and lines that arrive later but belong before the notice are discarded too; only a `pre_consent_dropped` count is kept, a leave phrase still removes the bot, and a reconnect or restart while the notice is pending no longer replays Quorum's buffer ([#18590](https://github.com/hivecommons/hive/issues/18590)).
+- **A failed meetings call now names its error in the hive log.** Every meetings API failure (join, approve, decline, leave, schedule, actions) is logged with its method, path, status and error, and a Discord `/hive join` request whose approval fails keeps the reason on the request and stays approvable. Before, a Quorum refusal such as `blocked: the bot has no permission to connect to that voice channel` reached a hosted owner only as the ingress's generic "hive unavailable" page and left no line in the spoke log The Meetings panel also stops calling a blocked Discord join "The meeting refused a guest bot" (Discord has no lobby): it says the bot lacks View Channel, Connect or Speak on that voice channel, and a pending join request shows why its approval failed ([#18598](https://github.com/hivecommons/hive/issues/18598)).
+
+## 2026-11-17 (v5.293.0)
+
+### Added
+
+- New owner setting **Advisory report in every repo** (Settings, Governor Config, Advisory; `governor.advisory.per_repo`, default off, `HIVE_ADVISORY_PER_REPO` sets the default when the key is absent). Off keeps one Hive Advisory Report in the primary repo covering all repos. On, each monitored repo also gets exactly one report, found by title plus the `hive/advisory` label or a hive marker so a restart never files a second; a report a person closed is left closed and no longer posted to; repos with Issues disabled or no write access are skipped with one warning. Turning it off stops updating those reports without closing them ([#18448](https://github.com/hivecommons/hive/issues/18448)).
+- **Release-feed watcher: kick an agent when a tracked upstream dependency releases.** `governor.release_feeds.agents.<agent>.sources` lists GitHub releases or tags (`owner/repo`), PyPI packages, or a generic index URL. The governor polls them every `interval_s` (default `HIVE_RELEASE_FEED_INTERVAL`, else 15 minutes) with `If-None-Match` / `If-Modified-Since`, through the spoke's upstream-proxy rules, and keeps last-seen versions in `/data/release-feeds.json`. A new version queues a kick for the subscribed agent through the kick queue with a `${NEW_RELEASES}` block (package, old, new, URL) and records the reason on the governor kick-history entry; the first answer is a baseline and an unchanged feed kicks nothing. Kicks pass the same gates as the webhook CI-failure kick and are bounded by a per-agent cooldown (default `HIVE_RELEASE_FEED_COOLDOWN`, else 1 hour). Private indexes authenticate with `auth_var`, an existing per-agent or hive-level variable whose value is never logged. See `src/docs/release-feeds.md` ([#18494](https://github.com/hivecommons/hive/issues/18494)).
+- Settings → Repos → Reference repos: owner-only "Post on other projects as" control (Hive bot, falling back to me / Hive bot only / Me) for `project.remote_write_identity`, a per-repo line saying which identity posts there and why, `PUT /api/config/reference-repos/write-identity`, and the docs (#18516).
+- Mail-in to `hive@<host>` now accepts a plain-text or HTML body as a Markdown note (a body-only mail becomes a `message.md` Inbox item), accepts `.mp4`, `.mov` and `.mkv` video (MP4 and QuickTime audio is transcribed), and raises the SMTP SIZE limit to 35 MiB with 25 MB per file; hive-mx spools mail to disk, the hub relays large deliveries to the spoke in signed pieces under the 1 MiB ingress limit, and each hive gets a daily byte budget (#18564).
+- **Sandboxed agents can open issues and keep topic claims.** The sandbox request spool now carries `issue` and `topic` requests as well as reviews, signed with the same per-kick key and attributed to the kick's own agent. `hive-open-issue` and the new `hive-topic` relay ship on every sandbox's `PATH` and write to the spool when they run in a sandbox. Issue requests go through the issue relay with all its gates (ACMM mode, lane write allowlist, repo scope, dedupe by title, canary scan, audit); topic requests land in the agent's own bead store, and `hive-topic claim <key>` without `--pr` claims the PR hive opens from the kick. `hive-review` is unchanged. ([#18572](https://github.com/hivecommons/hive/issues/18572), [#18573](https://github.com/hivecommons/hive/issues/18573))
+- **Sandboxed fix kicks push to the agent's own existing PR, and sandbox-opened PRs are credited to their agent.** A sandboxed kick that names one of the agent's open PRs (an explicit `[hive:target-pr <repo>#<n>]` line, the red-PR or red-CI kick header, the first FIX-BEFORE-NEW row, or a single topic claim) checks out that PR's head branch and adds its commits there. Hive pushes only if the PR is open, same-repo, opened by this hive for this agent, still at the head the kick checked out (`--force-with-lease`), and the usual broker scans pass; otherwise the kick fails with the reason and nothing is pushed. A PR a sandboxed kick opens now gets the attribution trailer and `agent_pr_created` audit entry a relay-opened PR gets, so red CI on it kicks the agent that opened it instead of `scanner`. ([#18574](https://github.com/hivecommons/hive/issues/18574), [#18575](https://github.com/hivecommons/hive/issues/18575))
+- **A calendar email whose proof mail was refused now says why** under **Settings, Meeting attendee, My calendar emails**, instead of only "pending": the reason in plain words with what to do (not authenticated by the sender's mail server, sent from a different address, naming the From address hive-mx saw, or the code expired), when it arrived, and the SPF, DKIM and alignment results hive-mx saw (results and domains only, never the message), with a **Check again** button. The calendar-emails API carries the same summary as `last_failure`. A proof mail whose code matches no address shows, sender masked, under the owner's **Recent proof attempts** (`recent_proof_attempts`, owner only). ([#18579](https://github.com/hivecommons/hive/issues/18579))
+- **Betty answers questions about the hive from its live state.** "Betty, how many open issues are there?" or "what PRs are open in the hive repo?" is answered in seconds from the same in-memory status the Overview and the dashboard chat read (open, actionable, held and blocked counts, agents and what they are doing, recent completions, open PRs), and is no longer sent to the research agents. ([#18590](https://github.com/hivecommons/hive/issues/18590))
+- Workflow models resolve where each agent profile takes over an item (`spec.agents[].dispatch`, or by convention the grant's first state, on entry or on the gate reply for a reviewing profile), and `workflow.dispatch.profiles.<profile>.agent` maps a profile to a hive agent (default: an agent named after the profile, else a writer, docs or feature agent); the curated TechDocs model hands Accepted to `techdocs-drafter` and `/verify` to `techdocs-verifier`.
+
+### Changed
+
+- Notifications: in `github.notifications.mode: quiet` (the default) the auto-merge note ("merged by Hive trusted-author auto-merge …" / "merged by Hive on behalf of …") is now the `auto-merge` section of the PR's `hive:status` card, edited in place with its @-mentions neutralised, instead of a fresh comment on every merged PR (about 32 notifying comments a day on hivecommons/hive). `mode: normal` keeps the standalone comment, and a merge that waits on a person still gets its own 085 / 090 entry comment (hivecommons/hive#18452).
+- Betty speaks her acknowledgement as soon as a partial transcript names her with a request, instead of after the final transcript, so the room hears she is on it within a couple of seconds (hivecommons/hive#18590).
+
+### Fixed
+
+- The kick freshness guard now logs a ref it withheld because its repo's snapshot is stale (last-good data after a failed reconcile or a refused enumeration) at INFO, and a kick withheld only by stale, closed or deferred refs summarises at INFO, so a stale repo no longer files a `kick_freshness_withheld` self-report on every cycle; the stale repo itself is still logged at WARN where it is produced ([#18470](https://github.com/hivecommons/hive/issues/18470)).
+- **A Copilot agent's config being re-linked to the shared login is no longer reported as a fleet error.** The routine, successful repair logged at WARN, so a hive where the CLI kept saving over the link filed an `unclassified_error_repeated` self-report (16 in 10 minutes); it now logs at INFO, while failed repairs still warn ([#18497](https://github.com/hivecommons/hive/issues/18497)).
+- The dashboard's per-agent **Run in sandbox** toggle no longer wedges an agent ([#18525](https://github.com/hivecommons/hive/issues/18525)). Turning it on used to write `sandbox.enabled: true` alone, so with no `agent_sandbox` image every kick failed with "sandbox image is not configured". It now writes a complete block, prefilled from the `agent_sandbox` defaults or copied (`copy_from`) from another agent that has one, minus that agent's `publish.verify`, and refuses with a 400 that names what is missing when neither exists. The General tab shows a picker for the source when the toggle is turned on, with an inline error when there is none. Turning it off keeps the block and sets `enabled: false`. Switching an agent into sandbox mode now stops its tmux session, and a refused kick names the real state ("agent has a live interactive session; sandbox kicks are blocked until it stops") instead of "sandbox execution already running". Every sandbox Kubernetes Job now carries `activeDeadlineSeconds` (the kick timeout plus a 15-minute margin), and at boot hive reaps unfinished `app.kubernetes.io/managed-by=hive-kubejob` sandbox Jobs that no live kick owns, logging and auditing each one (`sandbox_job_reaped`). Before this, one Job sat Pending for 11 days.
+- Repeated inference backend 401 warnings now produce an operator-action self-report identifying the rejected credential instead of an unclassified error.
+- The "failed to send kick" log for a busy shared CLI session pool is now INFO instead of WARN, so routine pool contention is no longer fleet-reported as a repeated runtime error (#18544).
+- The hold guard no longer logs a WARN (which self-reported as a defect) when GitHub has not yet shown the new head right after keeping a held PR mergeable; it retries next tick.
+- CI: label flips no longer cancel the required `verify PR contents`, `Sign-off survives the squash` and `changelog-fragment-guard` checks. Their concurrency groups now carry the head SHA, and label, edit and reopen re-checks each run in their own group, so a burst of `lgtm`/`approved`/size labels can neither cancel the run in flight nor drop a queued run. Those cancelled runs used to leave PRs BLOCKED and jam Tide. A new guard, `.github/scripts/test-required-check-concurrency.py`, evaluates every required-check workflow's concurrency for a label burst and fails on any shared group (#18578).
+- **Betty answers a spoken "introduce yourself" by voice.** The intro reply did not carry the reply kind, so it went to the meeting chat even when the request was spoken and voice was on; typed intro requests still get a chat reply. ([#18590](https://github.com/hivecommons/hive/issues/18590))
+- Meetings: the consent notice now counts as posted only when Quorum confirms the line reached the meeting. In a live Teams test the bot could not open the meeting chat (`chat_send_failed reason=no_composer`, chat closed to guests) yet hive recorded `consent_posted_at` and kept listening (#18590, finding 11). Hive now posts the notice with `chat.post {confirm:true}` (quorum 0.2.2) and treats anything but `delivery: confirmed`, including an older Quorum that cannot say, as not posted. When chat cannot deliver it and the meeting has voice on, Betty speaks the notice instead (`consent_via: voice`, shown in the Meetings panel); when neither works she leaves at once with state reason `consent_undelivered`, and the panel says "Left: the consent notice could not be delivered (chat unavailable (...), voice off)". Transient failures (bot not admitted yet, rate limit, a dropped call) are retried up to three times before that. The image now ships quorum v0.2.2.
+- **The Meetings panel says plainly when notes and clarifying questions are off.** When Spektacular live mode is not running for a meeting the panel now leads with "Notes and clarifying questions are off" (or "paused" while hive cannot reach a restarting child, cleared when it writes again) instead of showing nothing until the child gives up. ([#18590](https://github.com/hivecommons/hive/issues/18590))
+- **A hosted hive's own error is no longer hidden behind "hive unavailable".** The hosted ingress replaces any 502 with its generic "this hive is restarting" page, so an error the spoke actually answered (a Discord join refused for a missing permission, a failed upstream call) read as an outage. On a request that came through the hosted ingress, a JSON 502 from a dashboard API handler is now sent as 424 with the original status in `X-Hive-Status`, which the ingress passes through with the spoke's message; the generic page still appears when the spoke cannot be reached ([#18598](https://github.com/hivecommons/hive/issues/18598)).
+- Dashboard: the Collaborate sidebar group (Inbox, Calendar, Meetings, Inception (spek)) no longer disappears into the Dashboard group when the section layout is applied, and now sits right after Dashboard, before Agents.
+- Stale Dependabot PRs no longer get stuck behind refused `@dependabot rebase` comments: the hive never posts Dependabot commands (Dependabot ignores them from the App), updates a merely-behind Dependabot PR with the update-branch API, leaves a conflicting one to Dependabot's own rebase, and closes a conflicting one whose branch someone else pushed to so Dependabot opens a fresh PR (#18441).
+- Avoid spurious runtime self-reports when automerge safely refuses a squash of unsigned commits; the refusal remains visible in logs.
+
+## 2026-11-17 (v5.292.0)
+
+### Added
+
+- **Agents declared in a managed repo's `.hive/agents/`** are discovered and held for owner approval, so a project adds an agent with a PR instead of a hive config edit. Every allowlisted managed repo (the same repo-sourced prompt allowlist as `definition_source`: the seed list or an owner-approved repo) is scanned at startup, every 15 minutes (`HIVE_REPO_AGENTS_INTERVAL`) and on a default-branch push touching `.hive/agents/`; each `<name>.yaml` shows up as pending under **Agents → Import → Declared in your repos** and nothing runs until an owner approves it. Approval registers the agent with `definition_source` (marked `discovered`) and, with a sibling `<name>.md`, `prompt_source`; backend, model, mode and tools stay owner-controlled on every later re-apply. Removing the file pauses the agent rather than deleting it. ([#18491](https://github.com/hivecommons/hive/issues/18491))
+
+### Fixed
+
+- **The hive no longer fights a repository's own triage tooling over `needs-triage`.** Once an issue was claimed or covered by a pull request (020, 030, 040) the issue stage sweep took `needs-triage` off on every pass, so in a repository whose own tooling owns that label — Prow's `require-matching-label` action re-adds it to every issue without a `triage/*` label — the two removed and re-added it without end: 312 removals on 16 `projectbluefin/utah` issues in one night, each also starting a GitHub Actions run there. The hive now removes the label at most once per issue; if anything puts it back (another tool or a person), it leaves it on that issue from then on, logs one INFO line naming the repo, issue and label, and remembers the yield in the stage store, so a restart does not restart the loop. Issues whose label never comes back — hive-filed self-reports included — lose a stale `needs-triage` once claimed exactly as before ([#18387](https://github.com/hivecommons/hive/issues/18387)).
+- Dashboard: an agent that is running but has never been kicked (for example the opt-in red team lane with every cadence at 0) now shows as idle instead of "running" forever, and the reviewer autoscaler no longer counts a never-tasked reviewer replica as busy. Both now use one shared check, `crux.Process.TurnInFlight` (#18458).
+- A multi-repo hive keeps exactly one `🐝 Hive Advisory Report`, in `project.primary_repo`. A candidate build had started opening an advisory report in every repo of `project.repos`, and posting the digest to each, so every monitored repo got its own report. The per-repo ensure and digest post are removed. The single report is still found by title and the `hive/advisory` label before anything is created, so a restart reuses it rather than filing a new one. Reports already opened in non-primary repos are not reopened by this build and can be closed ([#18568](https://github.com/hivecommons/hive/issues/18568)).
+- `needs-sha` now keeps the hive off an issue until the reporter adds a commit SHA, whatever the reporter-trust setting: an issue wearing it (the configured `issues.sha_hold_trusted_label`, default `needs-sha`) leaves every agent work lane, so nothing implements, decomposes or claims it. The SHA-hold sweep removes the label once a SHA appears, which releases the issue. This restores the safety the old `hold` gave after #18542 stopped the hive applying `hold`. The label is created with the description "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
+
+## 2026-11-17 (v5.291.0)
+
+### Added
+
+- Meetings agent-backend mode now answers through `copilot` and `omp` (one tool-less CLI per call with the agents' sign-in, usage charged to the meeting), through `vllm`, `llm-d` and every named model gateway on the OpenAI-compatible path, and on hives that sign Claude in only with `HIVE_CLAUDE_OAUTH_TOKEN`; `codex`, `gemini`, watsonx and the other CLIs are refused at validation and in the Settings picker with the specific reason.
+
+### Changed
+
+- Sentinel: in `github.notifications.mode: quiet` (the default) the informational notice on a trusted author's PR (no label, merge not blocked) is now a `sentinel` section of the PR's `hive:status` card, edited in place, instead of a new comment per PR. A sentinel hold (`sentinel-alert` label, maintainer review required), including one from `sentinel.trusted_authors_block`, still posts its own comment, and `normal` mode is unchanged (#18453).
+- The hive no longer applies `hold` itself: a PR its ACMM level gate holds for review now gets `ready-for-review`, and items blocked on a human decision (reporter trust, self-authorization, the hold guard's re-hold, owner-only decisions) get `decision-needed`; both block merging exactly like `hold`, carry a label description saying who acts next, and are renameable via `governor.labels.ready_for_review` / `governor.labels.decision_needed`. A `hold` a person adds still means hands-off. On boot the hive swaps the `hold` labels it can prove it applied (App label event plus its gate notice) for the new labels and leaves every other `hold` alone; the SHA-hold sweep now gives every reporter `needs-sha` instead of `hold`.
+
+## 2026-11-17 (v5.290.0)
+
+### Added
+
+- **Owners can approve their own managed repos as prompt and definition sources.** Settings → Security → Prompt sources and the owner-only `GET /api/config/prompt-sources` / `PUT /api/config/prompt-sources/owner-repos` let the hive owner allow one of the hive's `project.repos` for `agents.<n>.prompt_source` and `definition_source` without editing the config volume, behind a confirm naming the trust implication (whoever can merge there can steer the agents). Approvals cover that repo only, are audit-logged as `config_prompt_source_repo`, persist to `variables.security.owner_github_prompt_repos` in the PVC runtime config, and lapse if the repo leaves `project.repos`. Non-owners get 403, repos outside the hive are refused, and the seed `github_prompt_allowlist` path is unchanged ([#18490](https://github.com/hivecommons/hive/issues/18490)).
+- Long-lived agents can claim a topic for one pull request with `bd topic claim <key> --repo <owner/name> --pr <n>`: the claim is stored in the agent's bead store, a second open claim for the same topic is refused, the kick lists the agent's claims (also as `${TOPIC_CLAIMS}`) so it finds its PR by number after a branch rename, the FIX-BEFORE-NEW and held-PR blocks show the topic next to the PR, and hive releases the claim when the PR merges or closes.
+- Sandboxed agent kicks now get hive's own `hive-review` relay on `PATH`. The Job runtime copies it in from the running hive image by digest, through a restricted-SCC-safe init container. Podman bind-mounts it read-only. Project images no longer need to include hive's scripts, only bash and python3, and a kick on an image without them fails with a clear message (#18512).
+- Sandboxed reviewers now get the PR they review. Hive fetches `refs/pull/N/head` (fork PRs included) and the PR's base with its clone token and checks the head out on `pr-N`. It writes `.hive/pr/N.json`, marked untrusted, with the PR's metadata, changed files, capped diff and review comments, and names both in the kick prompt. Review kicks never push. ([#18513](https://github.com/hivecommons/hive/issues/18513))
+- Reference repos: new `project.remote_write_identity` (`bot` default, `bot_only`, `owner`) picks whether a hive's writes on a granted remote repo appear as its GitHub App bot (only where the repo's owner installed the App) or as the hive owner's connected account; without the App, `bot` falls back to the owner and `bot_only` stays read-only (#18516).
+- Meetings can answer through the hive's own agent backends: `meetings.llm.mode: agent-backend` (or `claude-cli`) runs Betty on a warm, tool-less Claude Code CLI per meeting with `claude-sonnet-5-5` by default and Spek through `hive meeting-llm`, using the agents' sign-in and charging the meeting budget; Settings, Meeting attendee, Model picks the mode, backend and model from the agents' catalog, and the panel shows the model name.
+- Hive reviewers can now post findings as inline, line-anchored comments: `hive-review --comments-file` sends the summary and every line comment in one GitHub review, so each finding is its own resolvable thread with a single notification, and a finding whose line is not in the diff is moved into the summary instead of failing the review.
+- CEL `triggers:` rules can now match `pr.labeled`: when an already-seen PR gains a label the eval cycle emits it once, with the new labels in `event.added_labels`, so a rule like `event.kind == "pr.labeled" && "hive-review" in event.added_labels` kicks the reviewer right after a maintainer opts a PR into review instead of waiting for its cadence (#18538).
+- The dashboard sidebar has a new Collaborate group holding Inbox, Calendar, Meetings and Inception (spek), moved out of Intelligence.
+- Inbox: hive recordings get a 🗑 Delete action. It removes the audio stored on the hive, the Inbox item and the recording's Knowledge fact with its transcript, after an in-page confirm that says shared copies (RFCs, issues, DIBS ideas, spek seeds) stay. Owners can delete any recording, read-write members only their own, read members none; each delete is audited as `inbox_recording_delete` (`DELETE /api/inbox/hive-recording/{id}`).
+
+### Fixed
+
+- In a hive with several repos, every repo now gets its own governor (advisory) issue and the digest is posted to each, including repos added later in Settings; a repo where the hive cannot create the issue shows a dashboard warning instead of failing silently.
+- The agent inference proxy now picks up a rotated LiteLLM or gateway key file without a restart, re-resolves the key and retries once on an upstream 401, and logs `key_source` and `key_changed_since_start` on auth failures; an `api_key_file` outside `/secrets` or `/data/secrets` is now rejected at dashboard/API save with the allowed dirs listed, warned about at boot and once at runtime with the source actually used, and the effective key source is shown in the governor config API and the LiteLLM tab (#18532, #18533).
+- Dashboard: the Meetings and Calendar panels wait for the viewer's role instead of telling the owner they are not allowed, say when the hive is unreachable instead of staying on "Loading meetings…", sit inside the dashboard like other sections (they had lost their card padding), and lay out the join form, meeting rows (status pill, platform, time, a plain-language error with the raw one under details) and empty states like the rest of the dashboard.
+- Inbox ● Record: the "Saved to the Inbox" panel now follows the recording's item, says "Transcribed. See the item below." (or why transcription failed or is off) and then closes itself with the toast countdown; the item preview shows the plain transcript text instead of the provenance line and untrusted-data envelope; hive recordings and dropped audio files get a plain "Transcript made by this hive with <provider>/<model> on <date>." line; and the player says how long the audio is kept on this hive instead of "the recording is not stored".
+- Agent restarts no longer log a warning when tmux has no server or session to kill before relaunching (#18486).
+
+## 2026-11-16 (v5.289.1)
+
+### Changed
+
+- The AGENTS.md injection cap defaults to 32 KiB (was 8 KiB), so a 13 KB AGENTS.md now reaches agents in full; set `repos.<repo>.agents_md_max_bytes` to override it per repo (hard ceiling 256 KiB) or `HIVE_AGENTS_MD_MAX_BYTES` for the default, the truncation warning is logged once per file change, and `/api/status` repos report each repo's AGENTS.md size and any dropped sections.
+
+### Fixed
+
+- Workflow-model repositories no longer flap `stage/020-claimed` every cycle: the in-progress sweep leaves a stage label the bound model derives for the issue (TechDocs "Accepted") in place and does not treat it as a claim, and out-of-cycle stage facts derive through the same bound model as the sweeps (#18434).
+- Meetings: hive ships Quorum v0.2.1, which sends Vexa the full join link (`meeting_url`) for Zoom meetings, so sending hive to a Zoom link no longer fails with "unsupported platform 'zoom' without a meeting_url".
+
+## 2026-11-16 (v5.289.0)
+
+### Added
+
+- Settings, Meeting attendee now shows Betty's email address with everyone's calendar emails and proof status, lets each user add, prove and remove their own calendar emails, lists mailed-in files waiting for approval, and lets the owner turn calendar invites and mail-in files on or off.
+- Mail Markdown, audio and image files to `hive@<your hive's host>` and they land in the Inbox as email items: from an allowlisted calendar email they are routable, shareable and transcribed like voice items; from anyone else they wait for the owner's Approve or Decline.
+- The hub sign-in, access-needed and link-preview pages now also show the LF Projects legal footer.
+- Every hub page (public pages, fleet views, hosted dashboard, contribute landing and error page) now shows the LF Projects legal footer linking to lfprojects.org/policies/.
+
+### Fixed
+
+- Dashboard: the "rejected hub-proxied request with unverified proxy proof" warning is now logged at most once a minute per reason and path (with a suppressed count) instead of once per request; the request is still rejected with 403 (#18377).
+- Hub heartbeat collect no longer times out when the PVC scan behind `app_keys_held` stalls: the scan is bounded to 2s and falls back to the last completed result (#18484).
+- The scanner (and every repair queue) no longer pushes onto a PR branch the hive App did not open while someone else is working on it ([#18488](https://github.com/hivecommons/hive/issues/18488)). A red or conflicted non-App PR whose head was pushed within `HIVE_SCANNER_BUSY_BRANCH_MINUTES` (default 60), or whose PR or linked issue another worker holds a live claim on, moves from FIX-BEFORE-NEW and the CI_FAILING push queue to a "BUSY BRANCHES — suggest, do not push" list, and the agent posts the fix as one suggestion comment for the worker to apply as its own signed commit. Idle branches, App-authored lane branches and in-place adoptions are listed exactly as before.
+
+## 2026-11-16 (v5.288.0)
+
+### Added
+
+- Gateway spend is priced from the gateway: OpenRouter's catalog prices, LiteLLM `/model/info`, or a new per-gateway `prices:` block (input, cached input, output per 1M tokens). Cached prompt tokens are billed at the cache-read rate. Gateway models with no price show as "price unknown" instead of $0 or a tier guess, and the usage gauge gets a spend row per gateway.
+- Inbox recordings are transcribed automatically when you stop, with the hive's transcription provider (auto: the built-in whisper first), with the usual progress bar and time-left estimate. The transcriber reads the recording from the hive's own disk (new `AudioOpener`; no HTTP call to itself). Nothing runs until `inbox.transcription` is enabled with consent; from then on every dashboard recording counts as opted in whatever the mode, and recordings made while it was off are picked up by the transcription sweep.
+- Inbox ● Record can record a meeting tab's audio together with the microphone in Chrome and Edge on a computer: you pick the tab and tick "Share tab audio", the video track is dropped, the two are mixed in the browser (Web Audio) and both get a level meter. The consent notice then says remote participants are recorded too and must have been told. Where the browser cannot share tab audio (Safari, Firefox, phones) the option is hidden with the reason, and a share without an audio track warns and records the microphone only. The dashboard document's Permissions-Policy gains `display-capture=(self)`; `/terminal/` and `/api/` keep it closed.
+- Drop audio and video onto the Inbox (mp3, m4a, aac, wav, ogg, opus, webm, mp4, mov, checked by container signature): the file streams straight to the hive's disk under the recording size cap (`inbox.recording.max_bytes`, 200 MiB), plays back from disk through the same-origin stream, and is transcribed as soon as it is added when transcription is enabled (otherwise 🎧 Transcribe shows why it is unavailable); the machine transcript lands in the item's Knowledge fact. Originals are deleted after the recordings retention (5 days, `inbox.uploads.media_retention_days` overrides) while the transcript and item stay; video keeps only its audio track. Uploads now get a 20-minute read window instead of the dashboard's 30-second read timeout.
+- A weekly workflow compares hive's static model fallbacks and curated OpenRouter suggestions against OpenRouter's public catalog, plus npm release metadata, and keeps one tracking issue listing any drift. A unit test now fails on empty or duplicate static lists and on Go/JS copies that disagree.
+
+### Fixed
+
+- Self-upgrade no longer aborts with `cannot unmarshal string "dashboard" into Go value of type json.Number` when the hive container's probes use a named port; named ports are kept in the backfilled startupProbe, and a probe decode problem now skips the backfill with a warning instead of blocking the image upgrade (#18479).
+
+## 2026-11-16 (v5.287.0)
+
+### Added
+
+- Invite Betty by adding `hive@<your hive's host>` to a calendar invite: invites from an organizer whose proven calendar email belongs to someone with access to the hive (and that pass DMARC) are scheduled at once with their join link, meeting id and passcode, everything else waits for approval; each user proves their calendar emails by mailing a code shown in Settings.
+
+### Changed
+
+- Scanner CI-triage and rebase notes on a PR are now one comment per PR, edited in place, instead of a new comment on every pass (PR #18254 had 17 on one head). The comment relay drops a scanner note when the PR's head SHA and failing-check set (red checks, failed DCO, merge conflict) match the current note, edits the note when either changes, and still posts a new comment when a non-hive PR author must act and has not been told for this head. Shared-CI incident references and other marked comments keep their own path. On by default; set `HIVE_SCANNER_NOTE_UPSERT=off` to restore the old behaviour. See "Scanner note: one comment per PR" in `src/docs/notifications.md` (#18451).
+- OpenRouter's suggested models and default are current again (default `deepseek/deepseek-v4.1-flash`), retired suggestions are hidden, OpenRouter gateways discover their live model list again (the probe asked for `/api/v1/v1/models`), and large gateway catalogs get a searchable, provider-grouped model picker that shows price per 1M tokens and context length.
+
+### Fixed
+
+- Usage gauge: the Copilot row no longer reports "not signed in" on hives with a keystore provider; the gauge now opens the sealed Copilot login instead of sending the encrypted envelope to GitHub as the token (#18444).
+
+## 2026-11-16 (v5.286.0)
+
+### Added
+
+- `ghcr.io/hivecommons/hive-mx`: a multi-arch (amd64, arm64) image for the hive-mx mail receiver, a static binary on distroless running as non-root, published with the other hive images.
+- The hub routes mail from hive-mx: `GET /api/mail/hosts` lists the hosts it accepts `hive@<host>` for, and `POST /api/mail/inbound` signs each delivery with the target hive's relay key and forwards it to that hive; spokes accept such relays through an `X-Hive-Relay-Delivery` header with the webhook relay's replay protection. Off until `HIVE_HUB_MAIL_TOKEN` is set.
+- **Settings, Meeting attendee.** A new Settings tab manages the hive's meeting persona: pick one of eleven presets built only from voices the self-hosted Kokoro TTS ships (Betty Bee by default, plus American and British English, Spanish, French, Italian, Brazilian Portuguese, Hindi, Japanese and Mandarin personas with intros in their own language) or edit the name, aliases, pronouns, voice type, language, accent, voice, humor and intro with a live preview and a Play sample button, set the unprompted-answer caps and voice-on-address, and see the attendee address `hive@<dashboard host>` with the people who may invite her. Owner or read-write, through `GET`/`PUT /api/meetings/persona` and `POST /api/meetings/persona/sample`; the email controls are shown disabled until email-in lands ([#18396](https://github.com/hivecommons/hive/issues/18396)).
+- Meetings: ask Betty, spoken or in the meeting chat, to open an issue, open an RFC, start a Spek session or save a knowledge note. She drafts it from the request and the recent discussion, confirms in the chat that it waits for approval, and asks one clarifying question when the request is unclear. Drafts land in **Drafts from meetings** in the Calendar section, where the owner or a read-write user edits, approves or rejects them; nothing is created before approval (only knowledge notes may be auto-approved), and the result link goes back to the meeting chat or its notes. Configure with `meetings.persona.actions` or `/api/meetings/actions/settings` (#18406).
+- Inbox: **● Record** in the Inbox header (and "● Record into Inbox" in Inception) records a meeting or note from the microphone straight into the Inbox. A consent notice is shown before every recording (recording laws vary; the recorder is responsible), a red ● Recording indicator stays on screen for the whole recording, the timer, level meter, Pause/Resume/Stop and the upload status ("All chunks saved" or "N waiting") are in the recorder panel, chunks are queued in IndexedDB until the hive stores them so a network drop or reload resumes the upload, and a Wake Lock plus a hidden-tab warning keep phones recording. Owner and read-write only; `inbox.recording.enabled` now defaults to true. See `src/docs/inbox-recording.md`.
+- Inbox items now show a pill for every share (RFC, spek, Knowledge, DIBS) recording what was shared, by whom, when and the status, linked to the RFC, dibs item, fact or spek session; the latest per destination shows and +N expands the history.
+
+### Changed
+
+- The inception API, its watcher and the brainstorm agent's inception mode are retired in favour of Inception (spek) sessions. For one release, all 14 `/api/inception/*` routes answer `410 Gone` with a JSON pointer to `/api/sessions` and the docs; nothing is read or changed. The inception engine and its scaffold generator, the brainstorm bead watcher, the inception-approval run admission path and the boot-time brainstorm resume are removed. The dashboard snapshot builder no longer fetches `/api/inception/state`. The `brainstorm` agent is ideation-only and stays on-demand and parked at boot. The `${INCEPTION_*}` template variables always render empty, so custom templates keep rendering. Knowledge facts from past inception runs are kept: nothing deletes them, and Hive still reconnects the `/data/inception-wiki` vault on boot. `/data/inception/` stays on disk.
+
+### Fixed
+
+- **A Copilot agent no longer stays logged out after its `~/.copilot/config.json` stops following the shared login** ([#18443](https://github.com/hivecommons/hive/issues/18443)). The Copilot CLI saves its config by renaming a temp file over the per-agent symlink, which left the agent on a private copy that never saw a new dashboard login, and restarts never repaired it. Every agent launch and restart now moves such a private copy aside to `config.json.bak-<timestamp>` (keeping only the newest backup) and relinks it to the shared file; the credential check behind the token-triggered restart now evaluates the file the agent actually reads, so a diverged copy is relinked instead of restarted until the hive gives up. Launch also sweeps leftover `config.json.tmp.*` files older than `HIVE_COPILOT_CONFIG_TMP_MAX_AGE` (default `1h`). A private copy that holds the only login is left in place.
+- The dashboard Inbox now waits for the viewer's role before its first render and re-renders as soon as the role resolves, so owners no longer lose Share → Hive actions, ▶ Play and the bulk Hive menu until the next 60-second refresh; a failed role lookup is retried with backoff and falls back to read-only.
+
+## 2026-11-16 (v5.285.0)
+
+### Added
+
+- Meetings: Betty answers from the web through a self-hosted SearXNG (`meetings.persona.searxng_url`), speaks when asked aloud (a quick acknowledgement, then a two-sentence answer), digs into questions she cannot answer and reports back once, answers on Anthropic-only hives through the Messages API, ignores everyday uses of "hive", rewords Spek's questions without stalling the meeting, and the Inbox notes header names her (#18393).
+- Meetings: hive ships Quorum v0.2.0 and passes it a text-to-speech service for Discord speech (`meetings.tts_url`, a write-only **TTS token** in Settings, Meetings, and the persona's voice as `QUORUM_TTS_VOICE` and `voice_id` on every join); hive never speaks in a Discord meeting whose voice is off (#18393).
+- hive-mx, a receive-only mail receiver for `hive@<hive host>`: it checks SPF, DKIM and DMARC alignment, keeps only calendar invites (with join link, platform, meeting id and passcode, Windows time zones mapped), Markdown, audio and image attachments, or a proof code, and posts them to the hub. It never sends mail.
+- Inbox recordings, backend: a hive can now store recordings made in its own dashboard (`POST /api/inbox/recordings`, ordered 512 KiB chunks with gap detection and idempotent re-send, finalize, abort, same-origin Range playback). Owner and read-write only; every recording stores the consent notice version and the user; the raw audio is deleted after `inbox.recording.retention_days` (default 5) while the transcript and the personal-layer Knowledge fact stay; per-recording (`max_seconds` 3h, `max_bytes` 200 MiB) and hive-wide (`quota_bytes` 2 GiB) caps; idle recordings finish after 2h. Off by default (`inbox.recording.enabled`) until the dashboard recorder ships. See `src/docs/inbox-recording.md`.
+- Inbox: **🔗 Share ▾ → Hive → spek…** sends one recording, or a selection, into a new or running Inception (spek) session. The hive writes each item to `.hive/inbox/<source>-<id>.md` in the session's workspace (as the session's user, mode 0640, inside the untrusted-data envelope with provenance outside it), queues a fixed Send that asks the CLI to start a spec from those files with the spek-new skill (it names only the files, never the recording's text), opens the session's tab and marks the item `routed: session/<id>`. An audio-only item is transcribed first and goes into the session when its transcript is ready. API: `POST /api/sessions/{id}/seed` and `seed_items` on `POST /api/sessions`, audited as `inbox_to_session`. An item that already has a machine transcript no longer also shows the source's "not transcribed yet" line.
+- Word documents (`.docx`) can be dropped onto the Inbox or linked: headings, paragraphs, bulleted and numbered lists and tables become markdown, and the document title names the item. The file is read in Go (`archive/zip`, `encoding/xml`) with zip-bomb caps (1000 entries, 200 MiB inflated, 50 MiB per part, 100:1 ratio) and an XML decoder that refuses DTDs and unknown entities, so XXE payloads are rejected; legacy `.doc` is still refused with "save it as .docx or PDF".
+- Add links to the Inbox: paste a URL onto the Inbox or type it into ＋ Add, and the hive fetches it once and reads it like a dropped file (a web page becomes readable markdown titled by its `<title>`; a linked JSON, CSV or Markdown file becomes that kind; `.html` files can be dropped too). The fetch is SSRF-guarded: http/https only, no credentials in the URL, the hive's own DNS lookup with the connection pinned to the checked address (private, loopback, link-local, CGNAT, multicast, IPv6 ULA and cloud metadata addresses refused), every redirect re-checked (at most 3), size and time caps, and `User-Agent: hive-inbox/<version>`; see `docs/inbox-uploads.md`.
+- PDFs can be dropped onto the Inbox or linked: each page with text becomes a `## Page N` section and the document title names the item, while a scanned PDF without a text layer is refused with "no text layer (scanned PDF); OCR not supported yet". PDFs are never parsed in the hive process: the new `hive-pdftext` sandbox (pure Go, `github.com/ledongthuc/pdf`, BSD-3-Clause, already a dependency) runs as the `hive-transcribe` uid through su-exec with an empty environment, under prlimit and nice, in an empty network namespace where available, from a private 0700 work dir, capped at 200 pages and 1 MiB of text and killed with its process group after 60 seconds (`HIVE_PDF_SANDBOX`, `HIVE_PDF_RUN_AS`, `HIVE_PDF_MEMORY_MB`).
+
+## 2026-11-16 (v5.284.0)
+
+### Added
+
+- **Hive attends meetings as Betty.** The meeting bot now joins as "Betty Bee from the hive" (`meetings.persona`, on by default), introduces herself on request, answers briefly when addressed by name, and answers room questions nobody else answered within 8 seconds, from the hive's knowledge vaults, beads and code maps, under strict caps (2 unprompted answers per 10 minutes, 90 seconds apart, 12 per meeting, one reply per question). Spek's spoken replies are dropped, its chat posts go through Betty so the meeting never gets two answers, and its clarifying questions are reworded in her voice. The consent notice names Betty and says "betty leave" or "hive leave" removes her; the persona's name, aliases, language, voice, pronouns, humor and caps are configurable, and `meetings.persona.enabled: false` restores the plain `hive (notes)` attendee ([#18392](https://github.com/hivecommons/hive/issues/18392)).
+- Meetings Calendar: schedule meetings for hive to join (it joins a minute before each starts, with daily, weekday, weekly or monthly repeats), approve or decline ones read-write users add, skip or cancel, in a new Calendar section after Inbox; the top bar shows when hive is in a meeting.
+- Sharing from the Inbox 🔗 Share → Hive menu is open to read-write users as well as owners (read users still only get Link), and RFC… / Knowledge on an audio-only item now transcribe it first and share when the transcript completes, with a "Transcribing, then → RFC" progress label; DIBS still sends straight away.
+- Drop files onto the Inbox (or use the new ＋ Add button, or paste with Ctrl/Cmd+V) to turn them into Inbox items: Markdown, plain text, JSON, JSON Lines, YAML, CSV and TSV are typed by their content (magic bytes plus a parse check, never the file name alone), shown as extracted markdown with a short summary, stored on the hive under `connector-state/uploads/` (0700/0600) and written as a Knowledge fact, so they work with the 🔗 Share ▾ menu like any recording. Each file gets its own upload row with progress and a clear per-file error (too large, unsupported type, failed parse); owner and read-write only, audited per user as `inbox_upload`. Limits and retention are configurable under `inbox.uploads.*` with `HIVE_INBOX_UPLOADS_*` overrides; see `docs/inbox-uploads.md`.
+
+### Changed
+
+- The Inbox item row now has only Play, Transcript and a 🔗 Share ▾ menu with a Hive group (RFC…, Knowledge, DIBS) and a Link group (Copy link, Share…); the "→ dibs…", "→ RFC…" and "Knowledge only" row buttons are gone and the selection bar gets a Hive menu. Auto-routing and config are unchanged.
+- Inception campaigns are retired in favour of Inception (spek) sessions. The `/api/campaigns` endpoints are removed, including resume, release, revise, delete, recheck and every `/jam` route. Campaign Jam (threads, suggestions, polls, spec revisions and GitHub Projects sync) and campaign recheck (continuous convergence and outward discovery) go with them. The Spek recheck block in Settings is removed too. Jam no longer feeds achievements, and since Jam was the only source of the review role, Full SDLC Fireteam now counts spec, plan and implement coverage by three distinct actors. Nothing is deleted. On the first start after the upgrade, if `/data/inception/campaigns/` or `campaign-jam.json` exists, Hive writes one read-only export to `/data/exports/campaigns-<date>.tar.gz` (mode 0600) and logs its path once. The original files stay in place for one release. `runs.spektacular.recheck` in `hive.yaml` is still accepted on load and never fails validation, but it has no effect and logs a one-line deprecation warning.
+- Inception (spek): the **Campaigns** tab is removed from the Inception (spek) section, which now lists only sessions. Nothing has created inception campaigns since the wizard was removed, **Continue** had no wizard to return to, and the Spektacular rows repeated what the Runs view already shows. Start a session for new inception work and use Runs for Spektacular runs. The `/api/campaigns` endpoints, campaign Jam and campaign recheck still answer API callers for now and are retired in a follow-up change. Archived campaign files under `/data/inception/campaigns/` are not touched.
+
+## 2026-11-16 (v5.283.1)
+
+### Fixed
+
+- **Inbox machine transcripts now become knowledge, and the "📚 Fact" button is gone.** A finished machine transcription (whisper, Gemini or Deepgram) is written into the item's Knowledge fact, fenced as untrusted data and marked `attr_<x>_content: machine` with `attr_transcript_provider`, so knowledge search, nous and agents see the words instead of a pending placeholder; later syncs keep it until the source produces its own text, which then replaces it. The action row no longer has a "📚 Fact" button: a status pill (*Pending text*, *In knowledge (machine text)*, *In knowledge*) shows what the fact holds, and an *open in Knowledge* link in the metadata line opens it.
+
+## 2026-11-16 (v5.283.0)
+
+### Added
+
+- **Binding a workflow model now proposes its checks to the repository.** When an owner binds a model that declares checks (Settings → Repos), hive opens — or updates in place — one pull request on the hive-owned `hive/workflow-checks` branch that adds `.hive/workflows/checks.yml`, rendered from the model's `checks` with their kind, required flag and source citation. The file only ever arrives as a GitHub-signed commit through that PR, never a push to the base branch; a model with no checks, or a file that already matches, emits nothing, and a failed emit is reported as a warning on the binding response and retried on the next bind ([#18355](https://github.com/hivecommons/hive/issues/18355)).
+
+## 2026-11-16 (v5.282.0)
+
+### Added
+
+- Workflow models: a bound model's `/hive <verb>` replies now follow the item's current model state, so they work on PRs and on issues that are not parked, not only on parked issues. Off the parked path a reply applies only the label the model maps to it and is answered in one comment; no park label is touched, and unbound repositories and `hive-default` behave as before (#18357).
+
+## 2026-11-16 (v5.281.0)
+
+### Added
+
+- Bound workflow models now reconcile their state labels on issues and pull requests, including initial intake and triage states.
+
+## 2026-11-16 (v5.280.0)
+
+### Added
+
+- Inbox: Gemini transcription with the hive's own Gemini credentials (`GEMINI_API_KEY`, `GOOGLE_API_KEY` or `GOOGLE_GENAI_API_KEY`, as Gemini model discovery already reads them; no new key). It is used with `inbox.transcription.provider: gemini`, or by `auto` when the built-in whisper is unavailable. The hive calls `generateContent` with the audio inline, or through the Files API for recordings over 14 MB, deleting the file after the run. It asks for a verbatim JSON transcript with `[mm:ss]` timestamps and speaker labels, with no invented speech in silence, then validates the reply and falls back to plain text. 429/5xx are retried with `Retry-After` honoured, and the key is never logged. The model is configurable (`inbox.transcription.gemini_model`, default `gemini-3.5-flash`). Timestamps are approximate and the transcript is labelled machine; the audio goes to Google under the hive's account.
+
+## 2026-11-16 (v5.279.0)
+
+### Added
+
+- Inbox: built-in Whisper transcription, so every hive can transcribe recordings with no third-party account and without the audio leaving the spoke. The hive image now bundles whisper.cpp v1.9.5 (MIT, all CPU variants for amd64 and arm64) and a minimal LGPL FFmpeg 8.1.3 decoder (about 12 MB together). Both run in the new `hive-whisper` sandbox as the `hive-transcribe` uid, with an empty environment, a private 0700 work dir, rlimits, `nice`, a wall-clock timeout and no network. The pinned `base.en` model (148 MB, SHA-256 checked) downloads on first use into `/data/models/whisper`, or can be pre-seeded on air-gapped hives (`HIVE_WHISPER_MODEL_DOWNLOAD=false`). `provider: auto` now picks whisper first. A 5-minute recording takes about 1 to 3 minutes on 2 to 4 vCPU with half the CPUs (`inbox.transcription.whisper_threads`), and the progress bar shows measured progress. `inbox.transcription.whisper_model` selects tiny, base or small.
+
+## 2026-11-16 (v5.278.0)
+
+### Added
+
+- **The Overview usage gauge shows a row for each provider the agents spend, including Copilot.** The gauge used to show only the Claude plan, so a hive whose agents run on the Copilot backend (even with Claude models) saw nothing useful, and a hive mixing backends saw only part of its quota. `/api/providers/headroom` now carries `used_by`, the enabled agents per provider grouped by backend (a Claude model run through Copilot counts against Copilot), and the gauge draws one row per provider in it, naming the agents, with its own dials, reading age and no-reading reason. The default usage reading now also measures Copilot's monthly premium-request quota as Copilot reports it, signed in only with the agents' own Copilot login; the reading is display-only and never published to a contributor pool, so no relay holds work on it. With provider rotation on, list `github` under `governor.rotation.providers` to measure Copilot. A hive whose agents use one provider sees the same single block as before; the header chip's needle follows the lowest limit across providers.
+
+### Changed
+
+- build(deps): Bump github.com/nats-io/nats-server/v2 from 2.15.2 to 2.15.3 in /src (#18368)
+
+### Fixed
+
+- **The Claude usage gauge names the model on the model-specific weekly dial.** Claude's usage reply names the model a model-specific weekly limit counts (`/usage` shows it as "Current week (Fable)"), but the hive's built-in usage reading dropped that name, so the dial could only say "Weekly (model-specific)". The reading now keeps the name in the limit's `scope.model`, and the dial reads "Weekly (Fable)", following whichever model Claude reports. Names from the optional ccleft source, which arrive lower-cased, are capitalized the same way.
+- **Inbox recordings play again, and items can be shared.** ▶ Play recording handed the browser the source's presigned cloud-storage link (Plaud: S3), which the dashboard CSP (`default-src 'self'`, no `media-src`) refused, so the player only said "Error". The player now streams from the hive's own origin through `GET /api/inbox/{source}/{id}/audio/stream`: the hive fetches the link itself, passes a single `Range` through so seeking works (falling back to the whole file when storage ignores it), caps one response at 2 GiB, replies `Cache-Control: no-store`, keeps the link in memory only for one playback's seeks, re-mints it once when storage refuses an expired link, and never writes audio to disk or logs the link. The CSP is unchanged. It works for every source with audio (Plaud, Zoom, Webex, Fireflies, Fathom, Otter, Discord). A new 🔗 Share button shares an Inbox deep link (`#section-inbox-section?item=<source/id>`, through the browser share sheet or the clipboard) that opens the Inbox and scrolls to the item, instead of exposing the media URL; the native cast/AirPlay control works once the same-origin stream plays. Safari cannot play some Ogg Opus recordings; the player now says so instead of showing a bare error.
+
+## 2026-11-16 (v5.277.0)
+
+### Added
+
+- The activity monitor's row menu (⋯ / right-click) offers **Accept triage** on an issue whose chevron reads *Triage needed* — stage 015, or the `needs-triage` chip on another stage; never on a PR. One click does what a maintainer accepting triage on GitHub does by hand, through the new `POST /api/repos/{owner}/{repo}/items/{number}/accept-triage`: adds the reporter-trust triage label (`triage/accepted`, or the first of `issue_filter.reporter_trust.untrusted_require_labels`), removes the awaiting label (`needs-triage` / `reporter_trust.awaiting_label`) and a Hive-written `stage/015-triage-needed`. The row re-reads *Actionable* with the 👤 gone at once; the reporter-trust gate admits the issue on its next poll and the stage engine records 015 → 010. Same permission as Hold (owner or write access), audited as `repo_item_accept_triage` under the dashboard user, a no-op when already accepted, errors toasted in-app.
+- Inbox: a queued or running transcription now shows a progress bar with the phase, percent, "about N min left" and elapsed time (queued items show how many are ahead), refreshed every 3 seconds from the new lightweight `GET /api/inbox/transcriptions`; the time left is measured where the provider reports progress and otherwise estimated from this hive's own measured speed per provider. `inbox.transcription.provider` now accepts `auto` (the new default), `whisper`, `gemini` or `deepgram`, with a provider selector and per-provider readiness in Inbox ⚙ → Transcription; `auto` picks whisper, then Gemini, then Deepgram by availability, and existing `provider: deepgram` configs are unchanged. Pending and consent text no longer assumes Deepgram.
+- Agent cards and the transcript pane header show a live per-run line while an agent is working — `$cost · tokens · elapsed · tests ✓/✗/– · N files` — built from the token collector's existing per-agent cumulative figures (delta since the kick was delivered, so a reload does not reset it) plus the last test-runner result and `N files changed` summary visible in the pane. `GET /api/status` carries it as `agents[].run` and the governor strip gains a fleet `running N · $X this hour` tile from the new top-level `fleetRun` ([#14576](https://github.com/hivecommons/hive/issues/14576)).
+- Meetings: Discord meetings now transcribe. A write-only **Transcription token** field in Settings, Meetings (or `HIVE_MEETINGS_TRANSCRIBE_TOKEN` / `HIVE_MEETINGS_TRANSCRIBE_TOKEN_FILE`, `meetings.transcribe_token_file`) stores the shared transcription service token keystore-sealed under `/data/secrets`, and hive hands it to Quorum as `QUORUM_TRANSCRIBE_TOKEN_FILE`; the panel lists what Discord needs (bot token, transcribe URL, transcription token).
+- Every hive-performed merge (self-authored, trusted-author, contributor-lane and queue sweeps, `hive-merge` relay) now credits the human authors of the issues the PR closes: `Co-authored-by: <login> <id+login@users.noreply.github.com>` trailers are appended to the squash (or merge) commit message, so a reporter whose issue an external clanker fixed shows on the contributor graph the way hive-opened PRs already did. Bots, the PR author and logins the branch already credits are skipped; branch commit bodies and `Signed-off-by` lines are preserved ahead of the trailers; the logins are recorded as `issue_authors=` on the merge audit entry and in review-evidence `merge.issue_authors`. One cached `GET /issues/{n}` per newly referenced issue. Switch: `auto_merge.credit_issue_authors` (default on) (#14581).
+- The activity monitor names a sentinel alert on the pull request itself: a PR wearing the `sentinel-alert` label, or whose current-head review evidence records sentinel findings, carries `sentinel_alert` (plus `sentinel_findings` / `sentinel_reason`) in `GET /api/stage-tracker`, flipped live by webhook label patches. In the **Needs human decision** lane the lit chevron reads **Sentinel alert · needs human** (same wording in `title` / `aria-label`); other lanes show a danger-tinted `sentinel` chip whose tooltip says "Sentinel flagged security-relevant changes at `<sha7>`: `<reason>`", and the *Decide…* dialogs preface a flagged PR with the sentinel reason. The sentinel alert label also joins the Needs human label set (`/api/stage-tracker.needs_human_labels`, `/api/status.labelPresets[needs-human]`), so the monitor's Needs human facet and the label preset include flagged PRs ([#13780](https://github.com/hivecommons/hive/issues/13780)).
+
+### Changed
+
+- `cmd/hive` now holds the agent runtime as `crux.Runtime` (plus `crux.Host` for the wiring it installs), constructs it through `crux/runtime.New` with the mode from `CRUX_MODE` (in-process by default; an unavailable mode fails boot with a clear error) and builds the fleet watchdog through `crux/runtime.NewWatchdogFleet`; `crux.Runtime` gains the `Authorizer` family and the remaining `Supervisor` reads it needed. No package in the root module imports `crux/agent` any more; the inbound ratchet baseline is empty. No behaviour change (#14138 stage 1).
+- Crux stage 1 of the sidecar plan (#14138): `crux.Runtime` grows the `Resumer`, `Supervisor`, `Restorer` and `Background` families `cmd/hive` calls, and `crux.Host` names the in-process wiring Hive installs (credential minters, resolvers, observers), kept off `Runtime` on purpose. The hive-provided capability types (`AppTokenMinter`, `AgentMintIssuer`, `LinearCredential`, `PRCreator`, `SpanStarter`), `ResumeHandle` and the `ErrResume*` sentinels now live in the `crux` root (aliased by `crux/agent`); `ResolveReasoningEffort` moved to `crux/config`. New `crux/config.Mode` (`inprocess` default, `sidecar` reserved; `CRUX_MODE`) and `crux/runtime.New(cfg, opts...)`, which returns the in-process runtime or a clear "not yet available" error for `sidecar`. `crux/cli.RuntimeVerbs` and its parity test tie every CLI verb to a `Runtime` method. No behaviour change.
+- The ACMM L3 and L4 packs now include the `reviewer` agent, so the reviewer ships at L2 and every level above (community vote 2026-10-22). At L3/L4 it works the `hold`-gated PR queue every 30 minutes with exactly the authority those levels already grant — repo-grounded review comments routed to a human; no lgtm, approve, or merge. Tests that pinned its absence at L3/L4 now pin presence at L2–L6 and absence at L1 only. L2 stays COMMENT-only; L5/L6 behaviour is unchanged (#13574).
+
+### Fixed
+
+- Watchdog no longer reports a lane "alive but not producing" during the idle part of its own cadence: the no-production window is widened to the agent's current-mode kick period plus a quarter (30h for a daily lane such as `dedupe`), and the condition names the cadence when it does (#13817).
+- CI gate: an `action_required` workflow run no longer blocks a merge when the same workflow already succeeded on the PR head under another event (e.g. `workflow_dispatch` twins dispatched for a `GITHUB_TOKEN`-opened PR); and the operator reason distinguishes fork PRs from same-repo bot-opened PRs instead of pointing at a fork-approval setting that is already at its minimum (#13818).
+- Release: 14 changelog entries from late-October PRs (#13280, #13486, #13609, #13758, #13760, #13805, #13807, #13821, #13822, #14208, #14220, #14322, #14580, #14585) were written to `src/changelog.d/`, which the release compiler never reads, so they shipped without release notes; they are moved to the repo-root `changelog.d/` and land in this release. The release compile now fails loudly while any fragment sits under `src/changelog.d/`, so a stray can no longer disappear silently ([#18264](https://github.com/hivecommons/hive/issues/18264)).
+- Adoption: a contributor PR the hive adopted in place (stage 074) is the hive's to finish — a merge conflict or red check on it reaches the fixer like a hive-authored PR's (the sentinel alert now blocks only the merge, not the repair, so an adopted PR no longer sits red for hours with nobody kicked), the fixer is told to leave the sentinel label for a maintainer, external review-bot threads on it are repaired rather than answered with suggestions, and the tracker caption says whether the hive is rebasing, fixing CI or addressing review findings
+- A relay contributor's disconnect release (after the #7838 grace window), a revoked lease and a lease that aged out unresumed now release the issue claim on GitHub as well as in the ledger — release marker posted, claim labels removed — and a 🔒 marker this hive wrote is believed only while its own ledger still holds the claim, so a flapping relay no longer keeps an issue claimed for the full lease and hive agents can take it on the next cycle. An issue dropped `governor.claims.contributor_flap_threshold` times (default 3) inside `contributor_flap_window_s` (2h) enters a contributor cool-off (`contributor_flap_cooloff_s`, 6h) that withholds it from contributors but not hive agents; contributor claims that have kept hive agents off an issue for `contributor_starvation_s` (4h) with no PR become advisory; and a claimed-by label write that hits a journaled operation left Planned/Unknown is reconciled from the item's current labels instead of failing the claim ([#13579](https://github.com/hivecommons/hive/issues/13579)).
+- Cost: the token collector now scans every per-agent Copilot session tree (`/data/home/agents/<agent>/.copilot/session-state`) instead of only the long-empty shared directory, so "usage by sandbox" again reflects the Claude/GPT models the agents actually run rather than just the proxy-sniffed `gpt-4o-mini` helper calls; live-capture deferral is now per model (shutdown totals are dropped only for models the MITM sink really recorded), Copilot's cache-inclusive `inputTokens` is split with `tokenDetails.input` so cached prompt tokens are no longer priced twice (#13480)
+- Inbox: pending recordings now show a disabled 🎧 Transcribe control with the reason (transcription off, missing Deepgram key, consent, or budget) and a link to Inbox ⚙ → Transcription, instead of hiding it; pending text for Plaud, Zoom, Teams, Discord, Meet, Webex, Fireflies, Fathom and Otter now says hive can transcribe with Deepgram.
+- Supersession sweep: escalation now goes through the stage engine (`needs-human` + `Parked` fact → `stage/085-needs-decision` in the same pass) instead of a bare `needs-human` beside an active lane stage, and a hive-authored PR at L6 whose claimed issue another merged PR closed but which touches files that PR did not is resolved by the hive itself — update-branch onto base, re-measure, rewrite `Closes #N` to `Refs #N (closed by #M; …)` and continue, or self-close when nothing meaningful remains — rather than handed to a person.
+- The hub no longer abandons a hub-managed upgrade that the spoke is deliberately holding while in-flight agent kicks drain. The spoke now reports the drain (target, kicks in flight, time waited and remaining) in its heartbeat; the orphan sweep keeps the attempt latched for as long as the spoke's own deadline (plus the usual grace) allows, the timeline and stuck-upgrade alert say the spoke is draining rather than guessing at an immutable tag, and when the retry budget is finally exhausted the failure names the kick that never settled instead of blaming a floating image tag. Before this, the 20-minute orphan window versus the 45-minute default drain made every daily-mode upgrade on a hive with a long turn in flight look like a floating-tag failure after three days.
+
+## 2026-11-16 (v5.276.3)
+
+### Changed
+
+- Removed an accidentally committed 4.4 MB compiled `workflow-survey` binary from the repository.
+
+## 2026-11-16 (v5.276.2)
+
+### Fixed
+
+- Report per-agent token cache filesystem failures as token delivery failures instead of incorrectly reporting GitHub as unreachable.
+
+## 2026-11-15 (v5.276.1)
+
+### Fixed
+
+- Per-issue bot comment budget suppression now warns once per issue per day (debug afterwards), so it no longer floods fleet self-reports as a repeated unclassified error (#18345).
+
+## 2026-11-15 (v5.276.0)
+
+### Added
+
+- Inbox: Otter.ai as a knowledge integration — an `otter` connector (an Otter.ai Public API key, Enterprise workspaces, named in `auth.env`) that pages `GET /conversations` and reads each with its transcript, outline and action items into one fact per conversation; ▶ Play and the Deepgram fallback use the conversation's MP3 download link; a default `inbox.sources` entry with a Connect / Check / Sync now card.
+
+### Security
+
+- Contributor relay: warns at start when your personal GitHub token is a classic token with the full `repo` scope (which the agent can read), and `contribute-setup` now recommends a fine-grained token limited to your forks.
+
+## 2026-11-15 (v5.275.0)
+
+### Added
+
+- Inbox: Granola as a knowledge integration — a `granola` connector (a Granola API key named in `auth.env`) that pages `GET /v1/notes` and reads each note with its transcript into one fact per meeting, with the AI notes (and your own notes) as summary and the speaker-labelled transcript as transcript; text only (Granola keeps no audio); a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Inbox: Limitless Pendant as a knowledge integration — a `limitless` connector (a Limitless API key named in `auth.env`) that pages the Developer API's `GET /v1/lifelogs` with contents into one fact per lifelog, with the topic headings as summary and the speaker-labelled lines as transcript; text only (Pendant audio stays behind the API key); a default `inbox.sources` entry with a Connect / Check / Sync now card.
+
+## 2026-11-15 (v5.274.0)
+
+### Added
+
+- Inbox: Fathom as a knowledge integration — a `fathom` connector (a Fathom API key named in `auth.env`) that pages `GET /meetings` with the transcript, AI summary and action items included into one fact per recording; ▶ Play and the Deepgram fallback use a Fathom recording download (audio at once, video polled), whose signed link lasts about 24 hours; a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Inbox: Fireflies.ai as a knowledge integration — a `fireflies` connector (a Fireflies API key named in `auth.env`) that reads meetings through the Fireflies GraphQL API (`transcripts`, 50 per page, with sentences and the AI summary in the same query) into one fact each, with the overview and action items as summary and the speaker-labelled sentences as transcript; ▶ Play and the Deepgram fallback use the meeting's 24-hour `audio_url` (Pro plan or higher); a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Meetings: research asked for in a meeting now runs on the read-only research agent pool (`research-1..N`, sized by `meetings.research_pool_size`) with findings routed back to the meeting by kick ID, and the hive image ships the pinned Quorum v0.1.0 bundle (SHA-256 verified) plus the Discord DAVE module (#18294).
+
+## 2026-11-15 (v5.273.0)
+
+### Added
+
+- Meetings: ended meetings appear in the Inbox as `meeting` items with the final transcript and notes, routable to a spek RFC or dibs; once handed off hive deletes the transcript upstream, and it purges its own copy after `meetings.retention_days` (30). New page `src/docs/meetings.md` covers consent, setup on hosted and self-hosted hives, and every setting (#18293).
+
+## 2026-11-15 (v5.272.0)
+
+### Added
+
+- Meetings dashboard: an owner-only `/api/meetings` API (send hive to a meeting, list, leave, voice toggle, research approval) with a live WebSocket panel showing the transcript, notes, research and Spek intents, `meeting` frames on `/api/events`, and Settings, Meetings for the enable toggle, the Vexa gateway URL and the write-only Vexa tenant key and Discord bot token (#18292).
+
+### Fixed
+
+- Inbox **File RFC** works again: it failed on every spoke because the hive ran `spektacular voice`, which the shipped spektacular 0.31.0 does not have (hivecommons/spektacular#123 was closed unmerged). The route now always hands the item to an agent (`inbox.spek.agent`, default the first enabled agent) with the enveloped title, summary and transcript plus provenance (source, item id, `plaud://recordings/<id>` reference, Inbox link); the agent drafts the spec with the spek-new workflow and files it with `spektacular publish`. The agent gets the content the Inbox shows, including a machine transcript (labelled, e.g. `Transcript (machine: deepgram/nova-3)`) when the source never transcribed the recording; a recording with no text yet fails with "no transcript yet" instead of filing an RFC from a placeholder. A failed hand-off now shows its error inline on the item with a Retry button, and a delegated one names the agent. The Dockerfile comments and docs now describe what 0.31.0 provides.
+
+## 2026-11-15 (v5.271.0)
+
+### Added
+
+- Inbox: Slack huddle notes as a knowledge integration — a `slack-huddles` connector (a Slack bot or user token named in `auth.env`) that reads ended huddles in the listed channels and turns the AI notes canvas Slack posts in the huddle thread into one fact each, with the notes as summary and the embedded transcript as transcript (text only: Slack never records huddle audio); a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Meetings: the meeting record and store under `/data/meetings`, an MCP client for Quorum's contract tools and its live event stream, and a manager that posts the consent notice as soon as hive is live in a meeting, leaves when someone types or says "hive leave", and gives up after the lobby timeout (#18290).
+- Meetings: hive runs `spektacular meeting` live for each meeting and applies its intents through a policy layer: rate-limited chat posts, clarifying questions matched to the next reply, notes kept as one knowledge fact per meeting in a `meetings` vault, research capped per meeting (more needs dashboard approval) with findings posted back once per item, voice only when the meeting enables it, and a per-meeting plus hive-wide LLM budget (#18291).
+
+## 2026-11-15 (v5.270.0)
+
+### Added
+
+- Agent output markers now reach kick observers: a line that starts with `[STATUS]`, `[FINDING]`, `[COMPLETE]` or `[ERROR]` (after any CLI glyph) is delivered as a `output-signal` kick event carrying the agent, the in-flight queued kick's ID, the signal kind and the text after the marker (bounded to 500 runes), deduplicated per kick so a pane redraw does not repeat a finding. The existing log line is unchanged ([#18287](https://github.com/hivecommons/hive/issues/18287), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- New `pkg/research` research agent pool for the meetings feature: `research-1..N` agents (`meetings.research_pool_size`, default 2, at most 8) defined as `ADVISORY` with no repo checkouts, so the proxy refuses every GitHub write whatever the prompt says. `Pool.Dispatch(ctx, query, meta)` queues the query on the least busy agent (starting it if stopped) and returns the kick ID; `Pool.Observe` reports `queued`, `running`, `finding`, `done` and `failed` per kick from the agent's `[FINDING]` / `[COMPLETE]` / `[ERROR]` output ([#18288](https://github.com/hivecommons/hive/issues/18288), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- **Inbox: automatic transcription sweep for opted-in sources.** With `inbox.transcription.mode: auto`, the hive now transcribes new pending recordings by itself after each connector sync, but only from the sources listed in `inbox.transcription.sources`. The sweep queues only what the day's item cap and the month's minutes budget leave room for (items that do not fit stay pending, no skip records), never queues an item twice, retries failed items after 1h then 2h up to 3 runs, and retries budget skips the next UTC day. Runs are audited as `inbox_transcribe` by `inbox-auto-transcribe`. The ⚙ settings panel shows this month's minutes used, today's runs and the required egress (`api.deepgram.com:443`, only while transcription is enabled), and the network requirements docs list it.
+- Inbox: Webex meetings as a knowledge integration — a `webex` connector (a Webex integration with the hosted paste flow) that syncs ended meetings with a recording or transcript into one fact each, with topic, host, participants, the AI Assistant summary and action items, and the VTT transcript as `[mm:ss] Speaker: text` lines; ▶ Play uses Webex's temporary direct download link minted per click; a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Meetings groundwork: a `meetings:` config block (off by default, every key overridable by a `HIVE_MEETINGS_*` env var, Vexa tenant key and Discord bot token kept in keystore-sealed secret files) and a supervisor that runs the Quorum meeting server as a loopback child process with a per-boot bearer token, health checks and restart backoff (#18289).
+
+### Changed
+
+- Sessions: the queued-Send fail-open deadline is now measured through an injectable clock (no behaviour change; it makes the deadline test deterministic instead of racing a one-second wall-clock wait under CI load).
+
+### Fixed
+
+- A kick refused because another kick is already being typed into the same pane is now logged at info instead of warn, so this expected back-pressure no longer floods the fleet self-report as an unclassified repeated error ([#18276](https://github.com/hivecommons/hive/issues/18276)).
+
+## 2026-11-15 (v5.269.0)
+
+### Added
+
+- Crux gains ID-addressed, queued kicks: `Manager.EnqueueKick(agent, kickID, message)` appends a kick to a bounded per-agent FIFO (`HIVE_KICK_QUEUE_SIZE`, default 8) and returns its kick ID (caller-supplied or generated), delivering each kick once the agent is idle. `Manager.KickStatus(kickID)` reports `queued`, `pending`, `delivered`, `completed` (with the turn's outcome) or `failed`; waits and turns are bounded by `HIVE_KICK_QUEUE_WAIT_TIMEOUT` (30m) and `HIVE_KICK_QUEUE_TURN_TIMEOUT` (60m). The optional `crux.KickQueuer` interface exposes it; `SendKick` and `SendKickAsync` are unchanged. Groundwork for meeting research kicks ([#18285](https://github.com/hivecommons/hive/issues/18285), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- Crux kick observers fan out: `Manager.AddKickObserver(func(crux.KickEvent)) (remove func())` registers any number of observers, each receiving every kick event in order on its own goroutine (a slow observer has events dropped rather than stalling the runtime). Events carry the kick ID of the queued kick they belong to, and the kick queue adds `kick-queued`, `kick-completed` and `kick-failed`. `SetKickObserver` keeps its single slot and its two events, so the Linear agent behaves exactly as before ([#18286](https://github.com/hivecommons/hive/issues/18286), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- Inbox: Google Meet meetings as a knowledge integration — a `google-meet` connector (user-level OAuth with the hosted paste flow, or a service account with domain-wide delegation) that syncs conference records with a recording, transcript or Gemini notes into one fact each, with the event title, participants, Gemini notes as the summary and the transcript entries as `[mm:ss] Speaker: text` lines; a default `inbox.sources` entry with a Connect / Check / Sync now card (Meet recordings are Drive files behind a bearer token, so Inbox playback links the Drive page).
+
+## 2026-11-15 (v5.268.0)
+
+### Added
+
+- **Inbox: Deepgram transcription for recordings without text (manual).** A pending Inbox item with audio (for example a Plaud recording never transcribed in the Plaud app) now has a **🎧 Transcribe** button for owners and read-write sessions. The hive downloads the audio itself and streams it to Deepgram's pre-recorded API (`nova-3`, diarized, `mip_opt_out=true` so the audio is not used for training) under the hive owner's own `DEEPGRAM_API_KEY`; presigned links are never forwarded or logged. Each hive owns its transcriptions: the transcript is stored only on that spoke (`connector-state/transcripts/<source>/<id>.json`, 0600), shown as *Transcript (machine: deepgram/nova-3)* in the shared `[mm:ss] Speaker N: text` shape, and replaced by the source's own transcript when one appears. New `inbox.transcription` config (off by default; enabling requires `consent_acknowledged: true`) with per-hive monthly minutes, daily item, duration and size limits checked before upload; every run is audited as `inbox_transcribe` with outcome and estimated cost. See `src/docs/inbox-transcription.md`.
+- Inception (spek): voice notes in the session input bar. Write roles get a Voice button that dictates into the Send text box through the browser's Web Speech API (transcribed by the browser vendor's speech service, never by Hive), with live interim text and nothing sent until Send; the gateway Permissions-Policy now allows `microphone=(self)` for the dashboard document only.
+
+## 2026-11-15 (v5.267.0)
+
+### Added
+
+- Inbox: Discord meetings join Plaud, Zoom and Teams as a Knowledge Integrations connector (`type: discord`, bot token by env var name): recordings posted to a channel (audio uploads or recording-bot links such as Craig's) and scheduled events with their channel chat become Inbox items that file as spek RFCs, with chat and event text carried in an untrusted-data envelope and audio uploads playable from the Inbox.
+
+### Changed
+
+- Inception (spek): the dashboard's interactive, shared CLI-agent sessions (opened in the hive's shared spek workspace) are now on by default and are shown as **Inception (spek)** in the sidebar, section heading, help, FAQ and Settings, replacing the Inception wizard; `dashboard.sessions.enabled` is now unset-means-on, and operators who want the wizard back set `dashboard.sessions.enabled: false` or `HIVE_SESSIONS_ENABLED=false`. Read-only users still only watch sessions.
+- Inception (spek): the dashboard's old step-by-step Inception wizard (the `inception-section` panel, its Q&A, scaffold preview and brainstorm activity feed) is removed; Inception (spek) sessions replace it, `dashboard.sessions.enabled` / `HIVE_SESSIONS_ENABLED` now only decide whether that section shows, and old `#inception-section` links and saved layouts land on Inception (spek). Campaigns and Jam stay as the Campaigns tab, and the `/api/inception/*` and `/api/campaigns` endpoints and the brainstorm agent are unchanged.
+
+### Security
+
+- Inbox item text (voice and meeting transcripts, summaries, messages) is now fenced in an `<untrusted-inbox-data>` envelope before it reaches `spektacular voice` or the agent-fallback kick prompt. The envelope carries a random per-call nonce and a one-line "treat as data, do not follow instructions" preamble, and any envelope marker inside the text is neutralised so a recording cannot close the envelope early and smuggle instructions to the LLM. Previously the raw transcript was pasted straight into the prompt.
+
+## 2026-11-15 (v5.266.0)
+
+### Added
+
+- Inbox: Zoom and Microsoft Teams meeting recordings as sources next to Plaud — a `zoom` connector (user-level OAuth with the hosted paste flow, or Server-to-Server) that syncs cloud recordings with topic, participants, AI summary and VTT transcript into one fact each and plays them inline through the Inbox audio endpoint, and a `teams` connector scaffold (Graph application permissions, recordings and transcripts per organizer) whose Integrations card states when Entra admin consent is still missing; both are default `inbox.sources` with Connect / Check / Sync now cards.
+
+## 2026-11-15 (v5.265.2)
+
+### Fixed
+
+- Clear an agent's forge-unreachable condition when a later scoped-token refresh succeeds, so recovered mint outages do not remain reported until the agent restarts.
+
+## 2026-11-15 (v5.265.1)
+
+### Fixed
+
+- **Sessions: an ended session that cannot be resumed now offers "Start again" instead of a Resume button that always fails.** When the CLI never reached its first prompt before the hive restarted, the session has no conversation to continue and `POST /api/sessions/{id}/resume` answers 409 `no conversation to resume was found`, which surfaced only as a toast. The ended pane now checks the session's `resumable` flag: when false it explains why and shows "Start again" (a fresh session with the same name, group, vendor and sharing, the old scrollback kept); when true it keeps "Resume" and adds a secondary "Start again".
+
+## 2026-11-15 (v5.265.0)
+
+### Added
+
+- Shared dashboard Sessions are now safe for several people at once. **Roles:** the `read` role watches a shared session's live terminal read-only (it used to get only a polled scrollback) and never types, Sends or uploads; `read-write` and `owner` may Send, upload and hold the keyboard; private sessions stay creator-and-owners only. **One keyboard at a time:** each session has a keyboard lease (`keyboard_holder`, `keyboard_since` on the record, held by the creator from the start and by whoever resumes); only the holder's terminal attach is writable, every other viewer is attached with `tmux attach-session -r`, decided server-side (the proxy appends a second per-session write token only for the holder and `ttyd-tmux.sh` attaches read-only without it, so nothing a browser sends can promote a viewer). `POST /api/sessions/{id}/keyboard {"action":"take"|"release"}`: owners and the creator always take it, another writer only once it is released or the holder has been idle for `HIVE_SESSIONS_KEYBOARD_GRACE_SEC` (default 60); a hand-over detaches the previous holder's tmux client, both browsers re-attach in their new mode, and it is audited as `session_keyboard` with from/to, which makes terminal typing attributable to the holder of record. **Queued Send:** `POST /api/sessions/{id}/input` now answers 202 and queues the text (32 per session); a per-session worker types the head only when the CLI prompt is idle (no run in progress, empty prompt line, per-vendor heuristics for Claude Code, Copilot and Codex), falling open after `HIVE_SESSIONS_SEND_WAIT_SEC` (default 45) so nothing is stuck; `GET /api/sessions` reports the `queue` (length, head, your position, items without text), `DELETE /api/sessions/{id}/input/{queue_id}` cancels your own item, and each delivery is audited as `session_input` for the user who queued it. **Presence:** `viewers` (user, attached since, keyboard) per session; the tab tooltip and the pane header read `keyboard: andy · watching: bob, carol` with a Take/Release keyboard button, and the Send button shows `queued behind N` with the queue listed under the input bar.
+
+## 2026-11-15 (v5.264.0)
+
+### Added
+
+- Inbox items from Plaud now carry real text and play their audio. The Plaud connector asks `get_file` which transcript blocks and notes a recording actually has before reading them (preferring the AI-cleaned transcript, then the raw one, then the outline, and following the MCP's `Available blocks:` hint when the inventory is unreadable), so the MCP's `Block "transaction" not available for this recording` reply is no longer stored as the fact body; a recording Plaud has not transcribed yet becomes a fact marked `attr_plaud_content: pending` with a plain note and its flagged highlights, and such facts are re-fetched on every sync (capped at 25 per sync) until text arrives. The Inbox item shows the summary (collapsible), a Transcript disclosure, highlights, duration and recording time, and a `▶ Play recording` control that mints a fresh 24h presigned link through `GET /api/inbox/{source}/{id}/audio` (owner or read-write; audited; never persisted) and plays it inline; `GET /api/inbox/{source}/{id}/content` returns the full text. The connector's `include_audio` option now only decides whether a sync also stores the link in the fact.
+
+### Fixed
+
+- Sessions: the attached count no longer climbs with every reload of a terminal ("26 attached" on a session one person was using), and a session's window is no longer sized to a stale client that nobody is looking at. A browser terminal is a tmux client that `ttyd-tmux.sh` attaches on a pty ttyd owns; when the browser closed, ttyd sent SIGHUP to the helper's process group, but the client runs as the session's own uid (su-exec) so ttyd's uid could not signal it, and the helper itself never acted on the signal: bash defers signals while a foreground command runs, and the entrypoint's ttyd respawn loop had `trap '' HUP`, an ignore that is inherited across exec by ttyd and by every helper it spawns and that a non-interactive bash can neither trap nor reset. Nothing exited, ttyd kept the pty open, and each reload leaked one attached client and one pty; agent terminals attach through the same path and were exposed the same way. The respawn loop now keeps itself alive with a handler (`trap ':' HUP`, reset to default on exec) instead of an ignore, and the helper runs the attach as a background job it waits on, so ttyd's SIGHUP (or a TERM) detaches the client through tmux by its tty and the helper exits cleanly, closing the pty. As defense in depth the runtime reaps on every sessions poll: clients whose process is gone or no longer descends from ttyd (a ttyd respawn, a killed helper, an attach from outside the dashboard) are detached, bounded and logged, and `attached` reports the live count that remains.
+
+## 2026-11-15 (v5.263.6)
+
+### Fixed
+
+- Starting a dashboard Session no longer blocks the request on the first-ever clone of the project workspace: `POST /api/sessions` (and `/resume`) answers 202 at once with the session in a new `preparing` status and a message such as "preparing workspace: cloning org/repo (first session on this hive)", the clone, hand-over, spek init and tmux start run in the background, and the record moves to `running` or `failed` with the error stored on it and shown in the tab (Retry and Delete inline). Two root causes behind the 504 and the "process exited with code 1" terminal are fixed as well: the root hand-over of the clone ran under the 10-second tmux command timeout, after which Go tried to kill a root child the hive's uid may not signal (`exec: killing Cmd: operation not permitted`) although the workspace had been moved into place; it now runs under its own 10-minute deadline, root children are cancelled through the setuid helper, and a failed hand-over removes its staging tree. And a session's tmux socket dir was left `0700` with the sessions-only group, so ttyd (the hive's uid) could never stat the socket and every attach died at its wait; the runtime now makes it `0710` with the hive's group (`HIVE_SESSIONS_ATTACH_GID`), as agent socket dirs are, and ttyd-tmux.sh names a socket dir it cannot traverse in its diagnostic. A `preparing` record left over by a restart is marked failed instead of spinning forever, preparing sessions count against the caps, and the outcome of every start is audited as `session_started`.
+
+## 2026-11-15 (v5.263.5)
+
+### Changed
+
+- agent: split group-mode repairs out of permissions_watcher.go (file-size ratchet) (#18246)
+
+## 2026-11-15 (v5.263.4)
+
+### Fixed
+
+- The signed-commit reconciler now logs transient GitHub read failures (timeouts, rate limits, 5xx) at INFO and retries on its next pass, so a slow GitHub minute no longer files an unclassified runtime-error self-report; permission and not-found failures still warn.
+
+## 2026-11-14 (v5.263.3)
+
+### Fixed
+
+- Provider quota and spending-limit kick-withholding notices no longer trigger unclassified runtime-error self-reports; the per-cycle WARN and the probe-kick schedule are unchanged.
+
+## 2026-11-14 (v5.263.2)
+
+### Fixed
+
+- The permissions watcher no longer tries to chown a top-level watched directory it can never chown at startup. The #18120 guard covered only the per-entry walk. `ensureWatchedDirs`, which runs at every agent-runtime start and again on any tick that finds a watched root missing, still called `chown` on each root without checking first. On a spoke where `/data/beads` is owned by another uid, the unprivileged `dev` watcher therefore logged `permissions watcher: failed to chown directory ... operation not permitted` again and again (10 in ten minutes on hive-tall-frog). The watcher now makes the same before-the-syscall check there (unprivileged and not the owner), skips at DEBUG with the operator hint, and still reports wrong ownership through the walk's per-tick summary. Directories the process owns are chowned exactly as before (#18234).
+
+## 2026-11-14 (v5.263.1)
+
+### Fixed
+
+- GitHub proxy policy refusals (`proxy request blocked`) no longer trigger unclassified runtime-error self-reports; the per-refusal WARN, violation counter and write-refusal audit are unchanged.
+
+## 2026-11-14 (v5.263.0)
+
+### Added
+
+- **OpenBao Transit keystore provider (opt-in)** ([#18216](https://github.com/hivecommons/hive/issues/18216), part of [#18214](https://github.com/hivecommons/hive/issues/18214)). `HIVE_KEYSTORE_PROVIDER=openbao` seals the spoke's secrets at rest through an [OpenBao](https://openbao.org/) (or Vault-API compatible) transit engine over plain `net/http`, so the data encryption key never exists on the spoke: `HIVE_OPENBAO_ADDR`, `HIVE_OPENBAO_TOKEN` / `HIVE_OPENBAO_TOKEN_FILE` or Kubernetes auth with `HIVE_OPENBAO_K8S_ROLE`, `HIVE_OPENBAO_TRANSIT_MOUNT` (`transit`), `HIVE_OPENBAO_KEY` (`hive-<hive id>`, created when missing and permitted), `HIVE_OPENBAO_NAMESPACE`, `HIVE_OPENBAO_CA_FILE`, `HIVE_OPENBAO_TIMEOUT`. Bounded timeouts, token renewal ahead of the lease with re-login for Kubernetes auth, server-side key rotation picked up as a stale generation, and a hard refusal to boot when the server is unreachable, sealed or rejects the credential; nothing sensitive is cached locally. Walkthrough in `src/docs/integrations/openbao.md`.
+
+## 2026-11-14 (v5.262.0)
+
+### Added
+
+- Knowledge → Integrations shows what a connector is doing while it syncs instead of nothing until the sync ends: each connector status carries a live `progress` block (phase `listing`/`fetching`/`writing`/`done`/`failed`, `items_done`/`items_total`, the current item title, `started_at`, bytes and facts written so far) that the syncer updates per page and the Plaud connector per recording right after `list_files`; the card draws a progress bar (determinate once the count is known), a `fetching 12 of 200 · <title>` line, the elapsed time and the error inline on failure, polling every 2.5 s only while a sync runs, and the Knowledge section header gains a compact `syncing: <name> 12/200` indicator. The Plaud connector's default MCP command is now pinned to `npx -y @plaud-ai/mcp@0.3.14` (`plaudMCPVersion`, bumped by hand) instead of a floating `@latest`; a `scope.command` set by the operator is left untouched.
+
+### Fixed
+
+- Sessions: the embedded terminal now follows the dashboard theme (the proxied ttyd document for a user session paints itself and xterm.js from the dashboard's `--terminal-bg` / `--terminal-fg` / `--accent` tokens, in light and dark mode and under theme presets, and the pane no longer shows a black frame while loading; agent terminals are unchanged), and Settings → Dashboard gains a real **Sessions** switch for `dashboard.sessions.enabled` with the `max_sessions`, `max_per_user` and `idle_ttl_hours` limits, noting when `HIVE_SESSIONS_ENABLED` overrides it.
+
+## 2026-11-14 (v5.261.0)
+
+### Added
+
+- **Secrets at rest are now encrypted on the spoke** ([#18214](https://github.com/hivecommons/hive/issues/18214), [#18215](https://github.com/hivecommons/hive/issues/18215)). Every secret value the dashboard collects (LiteLLM, Bob and per-gateway API keys, the backup key, the owner's GitHub token, the NPS relay identity, the Copilot device-flow login) and the `github.token` value in the persisted runtime config are stored through a new `keystore` provider interface as a versioned `hive-enc:v1:…` envelope instead of plaintext, so a copy of the data volume alone no longer yields them. The default `env` provider needs no new infrastructure: it derives an AES-256-GCM key with HKDF from `HIVE_SECRETS_KEY` (or `HIVE_SECRETS_KEY_FILE`), falling back to the hub-provisioned `HIVE_HEARTBEAT_KEY`, so hosted spokes encrypt on their next boot and legacy plaintext files are re-sealed on first read. A hive with no key material keeps today's behaviour and logs one `WARN` at boot; `HIVE_KEYSTORE_PROVIDER=none` makes that explicit, and `HIVE_SECRETS_KEY_PREVIOUS` lets a spoke absorb a key rotation. Agent-facing credential files and the read-only `/secrets` mount are unchanged.
+- The hub landing page gains an "Isolation and secrets" logo row (OpenShell, Agent Substrate, OpenBao, Podman, Kubernetes) in the existing chip style, and the integrations page now shows the OpenShell and Agent Substrate project logos instead of the NVIDIA and CNCF stand-ins plus a new "Secrets and keys" section for the built-in keystore and the opt-in OpenBao Transit provider, both in progress under [#18214](https://github.com/hivecommons/hive/issues/18214) ([#18217](https://github.com/hivecommons/hive/issues/18217)). Logo sources and licenses are recorded in `src/docs/assets/logos/SOURCES.md`.
+
+## 2026-11-14 (v5.260.0)
+
+### Added
+
+- ✨ Sessions now open in a persistent per-hive workspace: a clone of the hive's project repo (or `dashboard.sessions.workspace_repo`) under `/data/session-sandbox/workspace/<org>/<repo>` that every session shares, cloned once by the hive with a one-shot token that never reaches the clone, handed to a sessions-only group, and `spektacular init <vendor>`-ed once per CLI so the CLI finds spek's skills; the dashboard shows the workspace in the new-session dialog, tab tooltip and API (`workspace_repo`, `workspace`).
+
+### Fixed
+
+- Plaud voice notes: syncs no longer fail with `list_files returned non-JSON output: {`. @plaud-ai/mcp 0.3.14 wraps every reply in an `<untrusted-user-data-…>` envelope whose closing tag follows the JSON; the connector now reads the first JSON value in each reply (listing, account, note, transcript, audio URL) instead of requiring the whole text to be JSON. The Plaud card's server sign-in help now shows the exact command to copy a laptop token (`cat ~/.plaud/tokens-mcp.json | pbcopy`).
+
+## 2026-11-14 (v5.259.0)
+
+### Added
+
+- Settings → Repos → Reference repos now shows the identity the hive writes to remote repos as ([#18200](https://github.com/hivecommons/hive/issues/18200), closing out [#18196](https://github.com/hivecommons/hive/issues/18196)): a Remote-repo identity panel with the connected GitHub login, a *Connect GitHub account* control that runs the device flow in place (code, URL, polling, reload), *Disconnect*, and a reconnect prompt with the reason when the stored token stopped working; every write entry, hand-written or derived, shows `tier · state as <login>`, the repos card chip reads `🔑 as <login>` instead of `App installation`, and `/api/status` carries `credential_login`. The docs gain a "Writing to repos you do not manage (the two lanes)" section describing linked repos under the App versus remote repos as the owner, the fork-and-PR flow, own-item follow-up and the `public_repo` limit; the sentence about installing the App on the target org is gone from `agent-configuration.md` and `github-write-surface.md`, and `env-vars.md` documents `HIVE_GITHUB_OWNER_TOKEN_FILE` and `HIVE_REMOTE_ITEMS_FILE`.
+
+### Fixed
+
+- **The hive's squash merges keep the branch's `Signed-off-by` (#18203).** When the hive squash-merged with an empty commit message, GitHub wrote its own default body, and for #18079 that body held only `Co-authored-by` lines: `f33758f5a` landed on v5 with no sign-off, and every branch that later merged v5 forward failed DCO on it. Every hive squash (relay `MergePR` and all auto-merge sweep lanes) now rebuilds the body from the branch commits, adds any branch sign-off the body lacks, and refuses to squash (sweep reason `squash-unsigned`) when no branch commit carries one. It never signs off on anyone's behalf. The post-merge and push-delta DCO checks still skip the sign-off identity match for bot authors, but now report a bot-authored commit with no `Signed-off-by` as `missing-signoff`, so the next one shows up within the hour.
+- Sessions: the embedded terminal no longer renders blank. Both dashboard proxies sent `frame-ancestors 'none'` / `X-Frame-Options: DENY` on the `/terminal` document, so the browser fetched ttyd's page and then refused to display it inside the Sessions iframe; user-session terminals (`?arg=hive-sess-<id>`) now allow same-origin framing only, while agent terminals and every other route keep the deny policy.
+
+## 2026-11-14 (v5.258.0)
+
+### Added
+
+- Write-tier reference repos are now written as the hive owner's own GitHub account instead of an installation of the hive's GitHub App on the target org ([#18197](https://github.com/hivecommons/hive/issues/18197), part of [#18196](https://github.com/hivecommons/hive/issues/18196)). The owner connects their account once on the spoke dashboard through new owner-only routes (`GET`/`DELETE /api/github-owner-identity`, `POST /api/github-owner-identity/{start,poll}`): a GitHub device flow with the spoke's existing OAuth client asking for `public_repo`, kept separate from the scope-free dashboard login. The token is stored on the spoke only, as an owner-only file under `/data/secrets` (`HIVE_GITHUB_OWNER_TOKEN_FILE` overrides), never in `hive.yaml` and never on the hub; the proxy injects it only on the writes the reference-repo gate already allows, and the stored token is re-checked every ten minutes so a revoked one drops the entries to read-only. The App-installation mint is gone with no fallback: a derived entry is `write-tier` under the owner's login when the account is connected and `read-only` otherwise, every write entry now reports `credential_state` and a new `credential_login`, the request-issue read-only notice tells the owner to connect their account rather than to install the App, and a hand-written write entry without `write_token_file` still refuses boot (exit 22) with that same cure.
+- Agents can now open pull requests against a `prs`-tier reference repo through the hive owner's fork ([#18198](https://github.com/hivecommons/hive/issues/18198), part of [#18196](https://github.com/hivecommons/hive/issues/18196)). The owner's account cannot push to a repository it does not own, so the proxy's reference-repo gate now allows `POST /repos/{owner}/{repo}/forks` on the reference repo, recognises `{ownerlogin}/{name}` as the owner's fork of it (never when that slug is an authorized or reference repo in its own right) and allows git pushes to that fork with the default-branch guard applied to the fork, injecting the owner token on both; every other write on the fork, and everything management-like on the reference repo, stays refused with a reason that names the fork flow. The kick's REFERENCE REPOS block tells agents the login the writes appear under and the exact three commands (`gh repo fork --clone=false`, push the topic branch to the fork, `gh pr create --repo <remote> --head <login>:<branch>`), so `git push` and `gh pr create` work through the existing credential helper with no agent-side special casing.
+- Comments and reviews on the issues and pull requests the hive opens in a write-tier reference repo now reach the agent that opened them ([#18199](https://github.com/hivecommons/hive/issues/18199), part of [#18196](https://github.com/hivecommons/hive/issues/18196)). A remote repo has no webhooks (the hive's App is not installed there, by design) and is not enumerated, so that feedback was lost. Every reference-repo pass now also lists the open items in each write-tier reference repo created by the hive owner's login, keeps the ones whose body carries a hive marker (the `— hive:` attribution trailer or the `🐝 **Hive Agent**` footer), fetches new comments, review comments and reviews on them under the owner token, and delivers them to the agent the marker names: into its live session as a resume kick, or as a `🌐 REMOTE ITEM FOLLOW-UP` section on its next kick when it has no session. State lives in `/data/turn/remote-items.json` (`HIVE_REMOTE_ITEMS_FILE` overrides) and is pruned when an item closes. Nothing else happens on the remote: no backlog scan, no queue, no kicks driven by remote items, no stage engine.
+
+## 2026-11-14 (v5.257.1)
+
+### Security
+
+- 🔒 Sessions now run each session's tmux server and CLI as its own unprivileged uid from a reserved range with a private sandbox (no more access to the hive's secrets, `/data`, other sessions or agents), copy only minimal read-only vendor logins instead of symlinking shared config, gate terminal attach with a per-session token and a handoff code bound to the session, default to creator-and-owner-only with an explicit `shared` flag, reject flag-shaped resume ids, and delete session files on removal.
+
+## 2026-11-14 (v5.257.0)
+
+### Added
+
+- The agent image now ships `govulncheck` v1.1.4 and `gosec` v2.29.0, and the sec-check policy's scan step runs them on Go targets ([#18192](https://github.com/hivecommons/hive/issues/18192)). Previously the policy told the agent to use `trivy`, `semgrep` or `grype` "as available", and none of them, nor any Go scanner, was installed, so every sec-check session degraded to the Dependabot API plus a manual read of the tree. The two scanners are cross-compiled in a dedicated build stage (`GOVULNCHECK_VERSION`, `GOSEC_VERSION` build args, matching the pins in `.github/workflows/go-security-analysis.yml`) and only the static binaries are copied into the runtime stage. The policy now treats every reachable govulncheck vulnerability and every gosec HIGH-severity, HIGH-confidence issue as a finding, keeps lower gosec results as advisory context, forbids the agent from installing or downloading scanners itself, and marks trivy/semgrep/grype as not shipped.
+
+## 2026-11-14 (v5.256.1)
+
+### Fixed
+
+- Review verdicts discarded for lacking a head SHA and a dispatch are now logged at INFO instead of WARN, so they no longer trigger repeated-error self-reports.
+
+## 2026-11-14 (v5.256.0)
+
+### Added
+
+- Dashboard: Settings → Repos → Reference repos shows entries derived from an accepted request issue as read-only rows with a lock, a `from owner/repo#N` link to the issue, a credential-state chip (`write-tier`, `read-only`, `unresolved`) and the reason; `PUT /api/config/reference-repos` answers 409 to any attempt to edit, remove or replace a derived entry, naming the issue to change instead, while hand-written entries stay editable (#18161, part of #18139).
+
+### Security
+
+- The egress proxy now reloads `uid-map.json` when a UID or agent name is not in its copy, so an agent added at runtime is identified from its own socket and protected by the proxy-UID name-claim check ([#18133](https://github.com/hivecommons/hive/issues/18133)) without restarting the hive ([#18184](https://github.com/hivecommons/hive/issues/18184)).
+
+## 2026-11-14 (v5.255.0)
+
+### Added
+
+- The repos page's reference repo cards show an entry derived from an accepted request issue read-only: a lock, a `from owner/repo#N` link to the request issue and its credential chip (`🔑 App installation`, `read-only` with the reason, or `unresolved`), with no edit or remove control; `/api/status` `referenceRepos` entries now also carry `derived_from_url`, the request issue's link on the hive's GitHub host (#18139, #18161).
+- Dashboard: Settings → Repos has a Reference repos editor for `project.reference_repos`, so a hosted hive's owner can add, change and remove study-only repos without the config file; a save is refused with the loader's or boot's own message (including a write entry with no usable credential, or a `write_token_file` not already set in the file: that path stays operator-only) and otherwise applies to the GitHub proxy without a restart; derived entries are never written to the file (#18136).
+
+### Fixed
+
+- The self-host card on `/get-started`, `hub-deployment.md`, `register-self-hosted-hive.md` and the `HIVE_MIRROR_HUB_HIVE_ID` row in `env-vars.md` now show the self-service hive ID as `byo-<login>--<name>`, the double-hyphen form that [#18166](https://github.com/hivecommons/hive/issues/18166) shipped, instead of the earlier single-hyphen form ([#18147](https://github.com/hivecommons/hive/issues/18147)).
+
+## 2026-11-14 (v5.254.0)
+
+### Added
+
+- A hive now derives write-tier `project.reference_repos` entries from an accepted request issue instead of needing the operator to hand-write them ([#18139](https://github.com/hivecommons/hive/issues/18139)). When an authorized repo's bound workflow model declares `intake.referenceRepoFields` (first: `cncf-techdocs-assessment@curated-2026.11.2`; hives bound to 11.1 must rebind), every repository the request form names in scope becomes an `issues+prs` reference repo once a person with write access applies `triage/accepted`; a bot applying the label grants nothing. The credential is the App installation on the requesting org, with a read-only fallback and one marked comment on the request issue when there is none, so a derived entry never fails boot. Entries are rebuilt at boot, on every config reload and every `HIVE_REFERENCE_REPOS_DERIVE_INTERVAL` (default `10m`), vanish when the issue closes or loses the label, are never written to any saved config, yield to a hand-written entry on the same repo, carry `(from owner/repo#N)` in the kick, and appear read-only in Settings with their source and credential state. Docs: `agent-configuration.md`, `operator-reference/README.md`, `design/workflow-models.md`, `workflows/techdocs-assessment.md` (#18157, #18158, #18159, #18160, #18161, #18162).
+- Spoke: optional **report-only heartbeat mirror** to a second hub ([#18060](https://github.com/hivecommons/hive/issues/18060), [#18148](https://github.com/hivecommons/hive/issues/18148)). With `HIVE_MIRROR_HUB_URL` and `HIVE_MIRROR_HUB_HEARTBEAT_KEY` set (the key comes from registering the hive on that hub, for example through its **Register your own hive** form), every heartbeat the primary hub accepts is also POSTed, in its own goroutine with its own short timeout (`HIVE_MIRROR_HUB_TIMEOUT`, default 5s), to the mirror hub as a reduced copy: the dashboard token hash, the App and webhook key fingerprints, authentication error text, the signed-in user list and the activity digest are left out, and `HIVE_MIRROR_HUB_HIVE_ID` can override the reported `hive_id`. The mirror's response is never applied: upgrade, restart, branch switch, breaker, GitHub App config, funded gateway, project claim, access list, visibility and cluster id from the mirror are counted and ignored, and logged at most once per hour as `mirror_hub_response_ignored` (field names only). A mirror failure never affects the primary heartbeat, liveness or the hive. The primary key is never sent to the mirror; without a mirror key nothing is sent. `GET /api/health/deep` shows the mirror under `hub_heartbeat.mirror` (`url_host`, `last_ok`, `last_attempt`, `last_error`, `ignored_fields`, `last_ignored_fields`), host only, never the key.
+- `project.reference_repos` entries are now derived from accepted request issues at boot, on every config reload and every `HIVE_REFERENCE_REPOS_DERIVE_INTERVAL` (default `10m`), in memory only: for each authorized repo whose bound workflow model declares `intake.referenceRepoFields`, the hive lists open issues carrying `triage/accepted`, reads who applied the label from the timeline and their repository permission, runs the request-form parser and installs the result on the proxy at the `issues+prs` tier (hand-written entries win on the same repo, authorized repos are never derived, duplicates keep the first). Closing the request issue or removing the label drops the entry, its proxy policy and its kick line on the next pass; a saved overlay or runtime config never contains a derived entry; the kick's REFERENCE REPOS block appends `(from owner/repo#N)` and, for a read-only derived entry, the reason (#18139, #18159).
+
+### Changed
+
+- The hub's `/get-started#self-host` card now describes self-service registration (sign in, Register your own hive, copy the one-time key, paste the Compose, Podman or Kubernetes snippet) instead of telling self-hosters to open an issue and obtain `HIVE_HUB_SECRET` from the operator. `hub-deployment.md` gains a Self-service registration section for operators, `env-vars.md` notes that `byo-` hives hold only `HIVE_HEARTBEAT_KEY`, and a new `register-self-hosted-hive.md` walks owners through the flow ([#18147](https://github.com/hivecommons/hive/issues/18147), part of [#18060](https://github.com/hivecommons/hive/issues/18060)).
+
+## 2026-11-14 (v5.253.0)
+
+### Added
+
+- Hub dashboard: **Register your own hive** is now a form when the hub runs with `HIVE_HUB_SELFSERVICE_REGISTRATION` ([#18060](https://github.com/hivecommons/hive/issues/18060), [#18145](https://github.com/hivecommons/hive/issues/18145)). Both CTAs (header and the "No hives yet" empty state) ask `GET /api/hub/selfservice/status` on load; with the flag off they keep linking to the self-host guide, with it on they open a modal that takes a name (shown with the fixed `byo-<login>-` prefix), org, one `owner/name` repository per line and an optional https dashboard URL, and posts to `/api/hub/selfservice/hives`. On success the heartbeat key is shown once with a copy button and a "copy before closing" warning, beside the hub URL and Docker Compose, Podman and Kubernetes snippets in tabs; the key lives only in the open dialog and is wiped from the DOM on close. Validation, not-an-admin (naming the refused repo), duplicate, per-user cap and GitHub-unreachable answers appear inline. A new **Self-hosted hives** section lists the signed-in user's own registrations with an online badge and last accepted heartbeat, **Rotate key** (confirm, then the new key once with the overlap note) and **Remove** (confirm, then revoke).
+- A `project.reference_repos` entry derived from an accepted request issue resolves its credential from the GitHub App installation on the requesting org instead of refusing to boot: with an installation it keeps `write: [issues, prs]`, without one it is served read-only in memory and the request issue gets exactly one marked `hive:reference-repos-read-only` comment saying the hive can read but not open issues or PRs there (re-posted only when the read-only set changes, never on a plain reload). `write_token_file` is never consulted for a derived entry, a hand-written write-mode entry without a credential still exits 22, and `/api/status` `referenceRepos` entries now carry `derived_from`, `credential_state` (`write-tier`, `read-only`, `unresolved`) and `credential_reason` (#18139, #18158).
+- The hub marketplace seeds a second curated TechDocs model, `cncf-techdocs-assessment@curated-2026.11.2`, identical to `curated-2026.11.1` except for a `spec.intake` block naming the assessment-request form headings ("Website or documentation repository", "Other repositories or sites in scope", "Out of scope") that yield derived write-tier reference repos once a maintainer accepts the request; `curated-2026.11.1` stays in the catalogue unchanged, so a hive still bound to it derives nothing until it rebinds (#18139, #18160).
+
+### Security
+
+- **Self-service hive registration hardening** ([#18166](https://github.com/hivecommons/hive/issues/18166), part of [#18060](https://github.com/hivecommons/hive/issues/18060)): `HIVE_HUB_SELFSERVICE_MAX_PER_USER` is now enforced again under the self-service store lock, so concurrent `POST /api/hub/selfservice/hives` requests from one user can no longer all pass the pre-ownership count and exceed the cap (the late refusal answers `429` and logs `selfservice_hive_refused` with `reason=per_user_cap`). New self-service IDs use `byo-<login>--<name>` instead of `byo-<login>-<name>`, so logins that contain hyphens can no longer collide or squat each other's IDs (`a-b` + `c` and `a` + `b-c` both used to become `byo-a-b-c`); a login containing `--` or starting or ending with `-` is refused with `reason=invalid_login`, and a name may not start with `-`. Hives registered before this change keep their existing IDs and keys. Repo references `.` and `..` (for example `owner/..`) are now refused everywhere repo refs are validated, so they can no longer be resolved as path segments in the GitHub ownership-check URL.
+
+## 2026-11-14 (v5.252.0)
+
+### Added
+
+- Hub: self-service (`byo-`) hives now expire. A background sweep (every `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL`, default 10m) revokes the key and removes the registry entry of any registration that went longer than `HIVE_HUB_SELFSERVICE_EXPIRY` (default 24h) without an accepted heartbeat, writing `audit: selfservice_hive_expired`. The hub also assigns every `byo-` registry entry the hive type `self-hosted` from its ID prefix, ignoring any `hive_type` the heartbeat claims, so the dashboard and `/api/hub/*` listings can badge them (#18146, part of #18060).
+
+## 2026-11-14 (v5.251.0)
+
+### Added
+
+- Workflow models gain `spec.intake.referenceRepoFields` / `outOfScopeFields`, `config.ReferenceRepo` gains a never-serialized `DerivedFrom` provenance, and the new `pkg/refderive` parser derives write-tier reference repos from an accepted assessment request issue, refusing with a typed reason when the request is closed, not `triage/accepted`, or accepted by a bot or a user without write access (#18139, #18157).
+- Hub: signed-in users can register a hive they run themselves ([#18060](https://github.com/hivecommons/hive/issues/18060), [#18144](https://github.com/hivecommons/hive/issues/18144)). Behind `HIVE_HUB_SELFSERVICE_REGISTRATION` (default off), `POST /api/hub/selfservice/hives` builds the ID as `byo-<login>-<name>`, proves `permissions.admin` on every listed repo with the caller's own GitHub token (refusing the whole registration by repo name otherwise), enforces `HIVE_HUB_SELFSERVICE_MAX_PER_USER` (default 5), and returns the heartbeat key once with Docker Compose, Podman and Kubernetes snippets; the owner can list, rotate and revoke their entries, a hub admin can revoke any, and every decision writes an `audit:` line without key material. The dashboard form follows in a later PR.
+
+## 2026-11-14 (v5.250.0)
+
+### Added
+
+- Hub: self-service (`byo-`) hives now have their own heartbeat credential ([#18060](https://github.com/hivecommons/hive/issues/18060), [#18142](https://github.com/hivecommons/hive/issues/18142)). The hub mints a random key per registered hive, stores only its SHA-256 hash in `/data/hub-selfservice.json`, and verifies a `byo-` heartbeat against that hash and nothing else: a master-derived key never authenticates a `byo-` ID, and a self-service key authenticates no other hive. Keys rotate with a 10-minute overlap so a redeploy does not show the hive offline, and each accepted heartbeat stamps the record for the coming expiry sweep. The registration API and UI follow in later PRs; nothing changes for hosted or operator-provisioned hives.
+
+### Fixed
+
+- The permissions watcher no longer attempts, or logs per path, a chown it can never perform. After the entrypoint's privilege drop the hive process runs as `dev` (uid 1001) without `CAP_CHOWN`, so an entry another uid owns, such as a sandbox kick workspace under `/data/agents/sandbox/<slug>-<nonce>/.claude/skills/...` written by the Job pod's uid, always fails with `operation not permitted`; a surge of kicks minted ~4096 such paths between two ticks and the per-path deduper warned once for each of them (4087 `chown failed` WARN lines in ten minutes) before saturating. The watcher now decides ownership is unrepairable before the syscall, leaves the entry's mode alone as not ours, and reports all such entries as one summary line per tick: WARN with the count, a sample path and a hint when the condition appears or grows, DEBUG while it holds unchanged, nothing once it clears. Entries the process owns are still chowned and chmodded exactly as before (#18120).
+- The stage engine now treats `architecture discussion` as a discussion label beside `proposal` and `kind/design`, and reads an `[RFC]` / `RFC:` title opener (after any leading emoji) as a discussion signal when no discussion label is present, so an unclaimed RFC derives `stage/018-open-for-discussion` (reason `open for discussion: architecture discussion` or `open for discussion: rfc title`) instead of showing as idle agent work at 010. A live claim or covering PR still stages 020 / 030 / 040 as before (#18141).
+- The model-ranked knowledge advisor no longer burns its deliver arm on 429s from the model endpoint: a 429 is retried once after the upstream's `Retry-After` (a jittered 2 to 4 s backoff when absent) inside the existing `timeout_s`, a decision that still ends throttled is recorded as the new `rate-limited` outcome (distinct from `error`, excluded from the retro arm comparison) and is not charged against the per-agent-hour or per-day budgets, at most one advisor call is in flight across the whole hive on top of the per-agent guard, and the first 429 in each five-minute window logs at WARN with the `Retry-After`, `x-ratelimit-*` headers and response body while the rest log at DEBUG (#18151).
+
+## 2026-11-14 (v5.249.0)
+
+### Added
+
+- `config.ProjectConfig` gains a `ReferenceRepoTier(slug)` accessor (and `ReferenceRepo.Tier()`) returning a reference repo's write tier, so the proxy, kick renderer and dashboard share one source of truth (#18018).
+- Dashboard Sessions backend (off by default, `dashboard.sessions.enabled` / `HIVE_SESSIONS_ENABLED`): named, shared, interactive CLI terminals behind `/api/sessions` (create, rename, close, resume, scrollback, input and upload), with per-session HOME and a credential-free environment, no permission-bypass flags, per-spoke and per-user limits, an idle sweeper and `session_*` audit entries; `/api/terminal/handoff` accepts `{"session":"<id>"}`.
+- Dashboard: a new Sessions section (when sessions are enabled) with tabbed, named, grouped, shared CLI terminals, a send/attach input bar and a read-only scrollback view for the read role; it replaces the Inception wizard UI and keeps Campaigns and Jam on a tab.
+
+### Fixed
+
+- `native-queue-policy` now names the condition that made a PR ineligible for admission (`is a draft`, `is held by label needs-human`, `head moved to <sha>`, `base moved to v6`, `is closed`) instead of the single opaque `head/base moved, draft, closed, or held` line, and says it is PR state rather than a CI failure. Several held or draft PRs failing with the same generic text looked like a broken shared workflow and were filed as a shared-CI incident (#18128); the check's fail-closed verdict was correct on every one of them.
+- **A per-agent overlay for a derived replica no longer crash-loops the hive** (#18137). Dashboard saves on a replica such as `reviewer-2` used to write `reviewer-2.yaml` into `data.agents_dir` as if it were a base agent, and the next restart failed with `replicas:2 would create reviewer-2, but an agent with that name already exists` before the dashboard could bind. Replica edits are now written to the base agent's overlay, and a stray `<base>-N.yaml` already on disk is skipped at boot with an ERROR log naming the file, so the hive starts and the replica is re-derived from its base.
+
+## 2026-11-13 (v5.248.1)
+
+### Fixed
+
+- The inference translator no longer lets a caller at the shared proxy UID (`dev`, 1001 on v5 pods, where the hive process and every agent without a per-agent UID run) claim the `sk-hive-<name>` key of an agent that has its own UID: such an agent always connects from that UID, so the claim is refused with `reason=proxy_uid_claims_isolated_agent` and the victim's route and upstream credential are never used. Names with no per-agent UID are still accepted from the proxy UID, root stays trusted, and `HIVE_PROXY_ADVISORY_OK` still accepts self-asserted identity only where the socket proves nothing, not when it proves the claim false (#18115).
+
+## 2026-11-13 (v5.248.0)
+
+### Added
+
+- **`review.perspectives_source` is documented.** `src/docs/review-swarm.md` now describes linking the review perspective set to a `kind: ReviewPerspectives` file in a GitHub repo (names and focus text only; `combined_perspectives`, `plan_match` and `max_perspectives_per_pr` stay operator-owned), the source-wins/inline-fallback rule, the last-known-good fallback order with a warning on a malformed document, the shared seed-only `github_prompt_allowlist` trust gate, and the read-only Review Gate display. `hive.yaml.example` gains a commented `perspectives_source:` block ([#17975](https://github.com/hivecommons/hive/issues/17975), [#17990](https://github.com/hivecommons/hive/issues/17990)).
+- A voice connector (Plaud, WisprFlow) added, edited or removed from the Knowledge Integrations dashboard now shows up in, or leaves, the Inbox on the same save instead of after a restart, and the Inbox's direct Plaud read path is attached at boot too. When the saved connector list could not be applied to the running syncer, the save answers with `runtime_error` and the dashboard toasts `saved, but the running syncer did not reload: ...` instead of a plain success ([#18091](https://github.com/hivecommons/hive/issues/18091)).
+
+## 2026-11-13 (v5.247.2)
+
+### Fixed
+
+- Session prune now warns once per path when a session directory cannot be removed due to permission denied, instead of repeating the warning every tick.
+
+## 2026-11-13 (v5.247.1)
+
+### Fixed
+
+- Dashboard: an agent whose provider refused it for quota (for example Copilot's "You have exceeded your monthly quota") is now drawn red and labelled `out of quota` on the top-bar tile, the collapsed Agents tile and its agent card, instead of green "authenticated"; `/api/status` agent rows carry `quotaExhausted: true` from the existing per-agent quota flag. Login problems still show first, and disabled, paused and stopped agents keep their own look ([#18111](https://github.com/hivecommons/hive/issues/18111)).
+
+## 2026-11-13 (v5.247.0)
+
+### Added
+
+- Knowledge connectors added, edited, enabled, disabled or removed from the Knowledge Integrations dashboard now take effect without restarting the hive: a hive booted with no connectors builds and starts the syncer on the first save (Check, Sync and Connect stop answering `no knowledge connectors are configured`), and a running syncer is reconfigured in place so unchanged connectors keep syncing. The `knowledge.publish` mirror still needs a restart when its connector changes ([#18091](https://github.com/hivecommons/hive/issues/18091)).
+
+## 2026-11-13 (v5.246.1)
+
+### Fixed
+
+- Stop refusing inference requests from the hive's own UID (`dev`, 1001 on v5 pods) when private plain-HTTP forwarding is off, so agents without a per-agent UID reach their inference route again; the proxy UID is still refused when `HIVE_PROXY_ALLOW_PRIVATE_FORWARD=true` (#18061).
+- The contributor-lane automerge sweep now treats a PR with more changed files than GitHub's files API returns (3000) as a standing `files-evidence` skip instead of re-warning every sweep.
+
+## 2026-11-13 (v5.246.0)
+
+### Added
+
+- Dashboard: an owner-only fuel gauge on the Overview now shows how much of the hive's Claude plan usage is left in each limit (weekly, plus a 5-hour or model-specific limit when the plan has one) and when each resets, turning amber at 25% left and red at 10%. It is on by default whenever the hive uses Claude, can be hidden from the Overview settings, and can also be shown as a header chip on every page with `dashboard.subscription_gauge_header`. It displays the usage readings hive already makes, so it adds no calls to Claude and changes nothing about measurement or provider rotation; `/api/providers/headroom` readings now also carry `plan_type` when a provider reports one.
+
+### Fixed
+
+- Close-on-merge no longer re-warns every tick for merged PRs it cannot read (404/403); it logs once per recheck window.
+- **Agents out of provider quota are no longer kicked every cycle** ([#18112](https://github.com/hivecommons/hive/issues/18112)). The provider spending-limit gate only saw agents behind the hive's inference gateway, so an agent whose own provider refused it — GitHub Copilot's "You have exceeded your monthly quota" — kept being kicked and sent review work all night, each turn ending at once, until its review dispatches expired and pull requests were parked for a human. The governor now holds kicks per agent while that agent's `QuotaExhausted` flag is set, lets one probe kick through per `governor.provider_budget.probe_interval_s` (default 30 minutes) to notice when the quota resets, and resumes normal kicking as soon as the flag clears. Other agents are never held, and the "provider quota exhausted" alert now says the kicks are held and how often they are retried.
+
+## 2026-11-13 (v5.245.0)
+
+### Added
+
+- The hive image now ships the `spektacular` CLI (pinned 0.31.0, checksum-verified, amd64 and arm64), so the Inbox → RFC destination runs `spektacular voice --publish` in-pod without an agent fallback (#17888).
+
+### Fixed
+
+- Completed Claude credential re-bridges (a token refresh replacing an agent's shared-login symlink, repaired automatically) no longer file `unclassified_error_repeated` fleet self-reports; failed repairs still do.
+- Dashboard top bar: when the centre column is narrow, the agent run-order strip's summary pill is now a real button that opens the Agents section (click, Enter or Space), and it shows how many scheduled agents are in the run order ("9 agents", "1 agent") instead of a count capped at 3; the misleading "▾" caret is gone ([#18110](https://github.com/hivecommons/hive/issues/18110)).
+
+## 2026-11-13 (v5.244.1)
+
+### Fixed
+
+- Contributor-lane auto-promotion now warns once per refused author and once per refused repository when GitHub's search cannot see a repository, instead of once per author × repository pair, so one invisible repository or one unsearchable author no longer floods WARN and self-reports as a repeated unclassified error (#18059).
+- Knowledge Integrations: when the connector syncer is not running (`runtime: false`, hive booted with no `knowledge.connectors`), connector cards now show a `not loaded` badge with a restart hint and docs link instead of `pending`, and Connect / Check / Sync are disabled with the same hint rather than failing with 404 toasts; `pending` stays reserved for a loaded connector awaiting sign-in ([#18093](https://github.com/hivecommons/hive/issues/18093)).
+- The ioscan classifier now retries a single transient model-endpoint failure (HTTP 429/5xx or a dropped connection) before applying its fail mode, so one gateway blip no longer passes untrusted text on unclassified or withholds it ([#18105](https://github.com/hivecommons/hive/issues/18105)).
+
+## 2026-11-13 (v5.244.0)
+
+### Added
+
+- Hub header nav and My Hives now link to the fleet benchmarks page (hivecommons.dev/benchmarks), and the spoke dashboard FAQ points at it for model comparisons (#18034).
+
+### Fixed
+
+- Knowledge Integrations: the per-connector **Check** button now reports its result — a success/info toast with the sign-in state (and the card refreshed), or an error toast carrying the server's `error` string verbatim (for example `no knowledge connectors are configured`) instead of a "checking" toast followed by silence ([#18092](https://github.com/hivecommons/hive/issues/18092)).
+
+## 2026-11-13 (v5.243.0)
+
+### Added
+
+- `/api/status` `referenceRepos[]` entries now carry an additive `reference_tier` field (`read-only`, `issues`, `prs` or `issues+prs`) so API consumers can tell a `project.reference_repos` entry from a managed repo; the entries stay out of `repos[]` and carry no ACMM, work-item or pause fields, and the dashboard's `📚 reference · <tier>` chip reads it ([#18021](https://github.com/hivecommons/hive/issues/18021)).
+
+### Changed
+
+- Dashboard: "Create webhook for me" is idempotent — it returns the existing hook for this hive's payload URL instead of creating a duplicate, and answers 412 naming the missing `organization_hooks`/`repository_hooks` write permission (#18028)
+- **`review.perspectives_source` is now resolved at startup and on every config reload, and the review relay perspective set is reinstalled each time**, so a verdict naming a perspective the link removed is refused and one it added is accepted without a restart. A dashboard edit of the review config no longer drops the linked set, and a malformed or unreachable document keeps the last-known-good set with a warning. ([#17988](https://github.com/hivecommons/hive/issues/17988), part of [#17975](https://github.com/hivecommons/hive/issues/17975))
+
+### Fixed
+
+- dashboard: a Projects-card Release that lands while the rows are re-sorting after a Hold is no longer sent, so holding items down a list no longer releases a neighbouring item's hold (#18054)
+- Documents imported from the dashboard (PDF, HTML, DOCX, text) are now saved to `knowledge.documents` in `hive.yaml` like git sources, and boot re-imports any configured document whose on-disk record is missing, so an upgrade no longer drops a PDF knowledge source while keeping GitHub ones.
+
+### Security
+
+- The hub now withholds hub-held credentials and management actions (GitHub App config and keys, pending gateway, project config, cluster ID, access list, upgrade, restart and breaker instructions) from the heartbeat response of any hive whose ID is in the reserved `byo-` self-service namespace, through one guard driven by a classification of every response field ([#18060](https://github.com/hivecommons/hive/issues/18060)).
+
+## 2026-11-13 (v5.242.0)
+
+### Added
+
+- Activity monitor: a workflow-model chevron that is not the row's active stage now wears a glyph for what the stage means (inbox, bolt, hand, pencil, pull-request, flask, eye, people, thumbs-up, merge, check, …) picked by the column's name, dimmed to 60%, instead of its clipped label; the active chevron leads its word with the same glyph. Workflow columns take an optional `icon` (an allowlisted icon id or a single emoji, validated server- and client-side; never markup), and the workflow editor's column inspector previews the default and lets the operator replace it (#18033).
+
+### Changed
+
+- images: bump gh 2.103.3 -> 2.104.0 (#18063)
+- kicks: register  REFERENCE REPOS as layout section 10a and golden its wording (#18074)
+
+### Fixed
+
+- Benchmarks export now adds `model.canonical` and `model.effort` next to the reported id and derives `model.provider` from the model family, so `claude-sonnet-5-5` (Copilot CLI), `claude-sonnet-5.5` (Claude Code) and `openai-codex/gpt-6.1-sol` no longer appear as separate models on hivecommons.dev/benchmarks.
+- Repeated trust-tier agent role claim rejections over contribute-ws are now logged once per user and role at INFO instead of flooding WARN, so they no longer surface as unclassified self-reported errors (#18071).
+
+## 2026-11-13 (v5.241.1)
+
+### Changed
+
+- **Settings → Forge App → GitHub webhooks names the App permission to grant** (#18029): when the GitHub App installation cannot manage hooks, the card now says which permission to grant (Organization → Webhooks `organization_hooks`, or Repository → Webhooks `repository_hooks`, Read and write) so **Create webhook for me** appears, instead of silently omitting the option. Node-executed tests pin the card's copy for relay, none and env-secret modes, and a parity test checks every endpoint the card calls is routed and owner-only.
+- docs: project.reference_repos in agent-configuration and hive.yaml.example (#18073)
+
+## 2026-11-13 (v5.241.0)
+
+### Added
+
+- **Review Gate shows linked review perspectives read-only.** When `review.perspectives_source` links the perspective set to a repo file, Settings → Features → Review Gate → Perspectives now shows the linked set (not the inline fallback), a "Linked to owner/repo/path@ref" line pointing at the file on GitHub, and the resolver's status and any fetch or malformed-document warning. The checkboxes and focus text are read-only and "Add perspective" is hidden, and `PUT /api/config/review` answers 409 for `perspectives` / `perspective_prompts` edits that the next reload would silently replace; `combined_perspectives`, `plan_match` and `max_perspectives_per_pr` stay editable. Unlinked hives see no change ([#17989](https://github.com/hivecommons/hive/issues/17989)).
+
+## 2026-11-13 (v5.240.0)
+
+### Added
+
+- **`project.reference_repos`: study-only repos outside the project** ([#18015](https://github.com/hivecommons/hive/issues/18015)). A hive whose deliverable is *about* another project (a docs assessment of `hivecommons/*` landing in `cncf/techdocs`) can list `owner/name` repos it may clone unauthenticated and GET, with the proxy stripping the hive's token and refusing every write by default; the kick tells agents such items are in scope and that findings go in the deliverable in the authorized repo, so the scanner no longer flags them out-of-scope/critical. A rare per-entry `write: [issues, prs]` opt-in allows only opening issues, opening PRs/pushing topic branches and commenting on the hive's own items, using the App's installation on the target org or `write_token_file`; boot refuses write-mode without either (exit 22). Dashboard shows a minimal `reference · <tier>` card.
+- Owner-facing GitHub webhook setup: ⚙ Settings → Forge App gains a "GitHub webhooks" section showing the payload URL, events and live receiver status, with **Generate secret** (stored in `/data/github-webhook-secret.key`, shown once) and **Create webhook for me** when the App installation has hooks write permission; a webhooks tile on the Governor card deep-links to it; new owner guide in `docs/webhooks.md` (#18017).
+
+## 2026-11-12 (v5.239.0)
+
+### Added
+
+- **Resolver for `review.perspectives_source`** that fetches a `kind: ReviewPerspectives` document behind the same seed-only allowlist as `definition_source`, and keeps the last-known-good set with a visible warning when a later fetch fails or a document no longer validates, instead of silently falling back to the built-in perspectives. The review relay, dispatch, head aggregation and `${REVIEW_PERSPECTIVES}` now read the resolved set via `ReviewConfig.EffectivePerspectives()`; with no `perspectives_source` configured, behaviour is unchanged. ([#17987](https://github.com/hivecommons/hive/issues/17987), part of [#17975](https://github.com/hivecommons/hive/issues/17975))
+
+### Fixed
+
+- Activity monitor: the column header now follows the workflow model the rows wear — a repository bound to a custom model gets that model's column names over its chevrons (ungrouped pages are partitioned by model with a header per run), instead of hive-default's "PR in progress / Merge queue" names (#18002).
+- Kicks are no longer refused wholesale as "prompt injection" because of the ioscan exfiltration canary: the preamble is now a labelled `=== HIVE HARNESS HEADER` block that states it is the operator's own configuration and not a task (Claude Sonnet 5 via the Copilot CLI refused ~65% of one hosted supervisor's kicks on the old `SECURITY CANARY:` marker), and a kick that is still refused with a canary in front is re-delivered once without it instead of burning the cadence slot (#18012).
+- Stop contributor automerge passes cleanly when a client hand-over or shutdown cancels an in-flight sweep, without filing a spurious failure report.
+- Spoke self-upgrade now installs the hosted template's startupProbe (10-min budget) on a hive Deployment that has none, not only raises an undersized one — pre-#9692 spokes on pull-only clusters were liveness-killed 90s into a forge-blocked boot and crash-looped (grey dot) for the length of the GHE outage; the fleet status-dot hovers now carry a colour legend and the grey dot says "no heartbeat in 5 min".
+
+## 2026-11-12 (v5.238.1)
+
+### Fixed
+
+- Spoke: a placeholder claimed onto a different forge than its pool default (GHE slot → github.com repo) now moves GitHub App installation discovery to the delivered App and API URL even while installation_id is still 0, instead of polling the boot-time App/forge forever and reporting "App 5686 has no installation" until a pod restart.
+- Hub fleet view: a placeholder assigned with an explicit forge now shows that forge (e.g. github.com) in the Location pill while the claim is pending, instead of the cluster default the spoke still heartbeats from its pre-claim config (github.ibm.com on vllm-d).
+- Dashboard logs one summary warning per five minutes for dropped SSE events instead of one warning per event, so a stalled browser tab no longer triggers repeated-error fleet reports (#17995).
+
+## 2026-11-12 (v5.238.0)
+
+### Added
+
+- **`review.perspectives_source` config key and `kind: ReviewPerspectives` document format** for live-linking a hive's review perspective names and focus text to a file in a GitHub repo, so maintainers can change the set through ordinary PRs instead of hive config edits. This lands the config surface, a runtime-only resolved slot that is never written back to the overlay, and the validating document parser (`pkg/perspsrc`); fetching and wiring follow in later changes, so behaviour is unchanged until then and unchanged whenever the key is absent. Once resolved, the linked set wins over inline `review.perspectives` / `review.perspective_prompts`, which stay the fallback. ([#17986](https://github.com/hivecommons/hive/issues/17986), part of [#17975](https://github.com/hivecommons/hive/issues/17975))
+
+### Fixed
+
+- The signed-commit reconciler's intentional refusal to rewrite a foreign or merge commit no longer files repeated unclassified-error fleet reports; its warning and PR remediation remain visible ([#17924](https://github.com/hivecommons/hive/issues/17924)).
+
+## 2026-11-12 (v5.237.2)
+
+### Fixed
+
+- A kick that outwaits an agent's still-running turn no longer logs a WARN pane dump, so busy agents stop filing `agent_pane_timeout` self-reports; panes that never reach a prompt for other reasons still dump at WARN (#17993).
+
+## 2026-11-12 (v5.237.1)
+
+### Fixed
+
+- Canceled stage-label check digest reads remain in local logs without generating repeated unclassified fleet reports; other digest failures remain reportable (#17944).
+- Fleet report: a GitHub App that lacks the `statuses: write` permission (the `prow/lgtm` status 403) is now reported under its own `github_app_statuses_permission_missing` class with a remediation hint instead of the catch-all `unclassified_error_repeated` (#17973).
+
+## 2026-11-12 (v5.237.0)
+
+### Added
+
+- The crux inference translator now records an OTel `crux.proxy.inference.requests` counter and `crux.proxy.inference.duration` histogram with bounded `status_class` and `outcome` attributes, plus one server span per request, following the `crux serve` HTTP metrics pattern; nothing is exported unless `OTEL_*` is configured (hivecommons/crux#153).
+
+## 2026-11-12 (v5.236.5)
+
+### Fixed
+
+- Avoid false repeated-error self-reports for structured context cancellations, including wrapped cancellations, while retaining local warnings (#17935, #17944, #17949).
+
+## 2026-11-12 (v5.236.4)
+
+### Security
+
+- The per-agent pluk session log under `/var/run/pluk/logs` is now prepared without following symlinks: the open uses `O_NOFOLLOW`, the descriptor is checked to be a regular file, and the owner and shared mode are applied through that descriptor rather than by path. The logs directory is group-writable by every agent uid, so a path-based chmod/chown let one agent widen any `dev`-owned 0600 file (the MITM CA key, the installation-token cache) to the shared group by linking its own session log at it; a planted symlink or FIFO is now replaced by a regular log instead (#17966).
+
+## 2026-11-12 (v5.236.3)
+
+### Fixed
+
+- Avoid repeated fleet reports for canceled in-place adoption access reads while retaining other access errors.
+- Per-agent GitHub App token mints that fail at the transport layer (dial timeout, connection refused, context deadline) now raise a `forge_unreachable` condition instead of `github_app_token_mint_failed`, so an egress outage no longer tells operators to re-check their App permissions.
+
+## 2026-11-12 (v5.236.2)
+
+### Fixed
+
+- Classify repeated missing Dependabot alerts permission warnings as an operator-action self-report with GitHub App remediation, rather than an unclassified code defect.
+- Avoid reporting unsupported signed-commit rewrites as API errors and explain how to sign the unchanged branch safely.
+
+## 2026-11-12 (v5.236.1)
+
+### Changed
+
+- docs: ADR-0026  Substrate actors run credential-free; hive brokers pushes post-kick (#17934)
+
+## 2026-11-12 (v5.236.0)
+
+### Added
+
+- Claude agents can run on an operator-supplied long-lived token: set `HIVE_CLAUDE_OAUTH_TOKEN` (or mount it at `/secrets/claude-oauth-token`, or point `HIVE_CLAUDE_OAUTH_TOKEN_FILE` at it) to a `claude setup-token` token and every `claude`-backend agent is launched with it as `CLAUDE_CODE_OAUTH_TOKEN`, ahead of the 8-hour dashboard sign-in; unset, nothing changes.
+
+### Changed
+
+- Claude auth: while `HIVE_CLAUDE_OAUTH_TOKEN` (or its secret file) is set, Claude agents run on the operator's long-lived token and the shared `~/.claude/.credentials.json` is not what they authenticate with, so the per-agent credential re-bridge (launch, watchdog poll and post-sign-in) and the durable-credential watchdog's Claude probe are suspended: no credential files are moved, no `claude_token_missing` audit or "durable credential unusable" warning is raised for Claude. The suspension is logged once at startup; Copilot watching is unchanged, and with the token unset everything behaves exactly as before. (#17760)
+
+### Fixed
+
+- Docs: `releases.md` no longer claims candidate hives bypass the daily/weekly auto-upgrade cadence by default; since #11816 they follow their stored mode, and the page now explains how to switch a hive to `instant`.
+- Hosted hives accept GitHub webhooks relayed by the hub: the hub signs each relay with a per-hive relay key delivered over the heartbeat (never the App webhook secret), and the spoke verifies it with timestamp and delivery-ID replay protection, turning on event-driven review dispatch for hosted hives.
+- Inbox: the panel no longer sits on "Loading inbox…" forever on a hive with no voice connector configured — the Inbox service now always boots, `GET /api/inbox` returns `200` with an empty list, and a non-OK response renders a visible error instead of the loading placeholder.
+
+## 2026-11-12 (v5.235.1)
+
+### Fixed
+
+- `hive-baseline-check.sh` no longer always exits 2 under the gh wrapper ([#17835](https://github.com/hivecommons/hive/issues/17835)). Its sibling-PR lookup (`gh pr list --state open --json …statusCheckRollup`) was refused with `enumeration_disabled`, so the kick's mandatory baseline triage never produced a verdict. The helper now marks that one call with `HIVE_BASELINE_CHECK=1` and the wrapper lets only that narrow projection through (no `--search`; every other `gh pr list` stays blocked), and a wrapper policy block is now reported distinctly from a GitHub API failure.
+
+## 2026-11-12 (v5.235.0)
+
+### Added
+
+- Wispr Flow facts include recording timestamps and a transcript section for voice Inbox ingestion.
+
+## 2026-11-12 (v5.234.1)
+
+### Fixed
+
+- `check-action-pins.sh` no longer reports a SHA-pinned action as `MISSING-SHA` when the GitHub API merely failed to answer. Only a definite `HTTP 404`/`HTTP 422` is a missing pin; a rate limit, a 5xx or a dropped connection is retried three times and then reported as `UNRESOLVED <repo>@<sha> … re-run, this is not a missing pin`, so a transient API error on a docs-only commit can no longer read as a fabricated pin that needs bumping (it sent hivecommons/crux `main` red on a README change whose `actions/setup-go` pin was tagged `v7.0.0` upstream all along).
+
+## 2026-11-12 (v5.234.0)
+
+### Added
+
+- The Inbox now reads Plaud recordings directly from the connector (keyed by the Plaud file id) while it is signed in, merging them with the synced facts and refreshing the listing in the background so dashboard polls never wait on the Plaud process.
+
+## 2026-11-12 (v5.233.0)
+
+### Added
+
+- Settings → Inbox section to edit the default RFC repository, dibs URL and auto-routing rules from the dashboard Settings dialog.
+
+## 2026-11-12 (v5.232.0)
+
+### Added
+
+- Knowledge → Integrations: the Plaud card now links to the Inbox and voice sources quickstart (`inbox-voice-sources.md`) ([#17882](https://github.com/hivecommons/hive/issues/17882)).
+
+## 2026-11-12 (v5.231.1)
+
+### Changed
+
+- PR comment noise: the three per-PR workflow comments that survived the hive-App reducers now post only on a finding ([#17863](https://github.com/hivecommons/hive/issues/17863)). `.github/scripts/pr-overlap.sh` creates its `<!-- hive-pr-overlap -->` comment only when a sibling PR conflicts or shares a file and, when a later push clears that, edits the existing comment to a one-line "Resolved" note instead of re-posting "no overlaps found" on every PR; `src/scripts/mutation-report.sh post` does the same for `<!-- hive-mutation -->` on a `pass` verdict (the full report, clean case included, still goes to the step summary); the "Thank you for your contribution!" merge comment (`feedback.yml`) is gated by the new `src/scripts/feedback-gate.sh` to a person's first merged PR — bot/App authors, `scanner/*` and `hive/*` branches, hive-origin bodies and returning contributors are skipped, with `FEEDBACK_*` workflow `env` knobs. A dashboard approval on a Prow-managed PR the hive account opened now relays `/approve` only, since a self-`/lgtm` is rebuked by Prow every time (`PullRequestApprovalEvent.LGTMSkipped`). Expected effect: roughly half of the comments on a typical merged PR.
+
+### Fixed
+
+- Config saves now write `/etc/hive/hive.yaml` and `/data/hive.yaml.runtime` atomically (temp file + fsync + rename onto the symlink target), the entrypoint refreshes the legacy `/data/hive.yaml.bak` fallback from a validated runtime config on every clean boot, and falling back to it logs a loud WARN — a liveness kill mid-save no longer boots a months-old ACMM level and roster (#17862).
+
+## 2026-11-12 (v5.231.0)
+
+### Added
+
+- **Inbox: voice recorders as first-class input sources.** A new 📥 Inbox section (sidebar → Intelligence) lists recordings and dictations synced by voice knowledge connectors (Plaud today, Wispr Flow next) keyed by `(source, item_id)`, and lets the owner file each one as a spektacular RFC with child issues on a chosen repo (`spektacular voice --publish`, run inside the hive or handed to a spoke agent), send it to dibs as a draft idea, or keep it as a Knowledge fact only — single or bulk, with per-source auto-routing rules (`inbox.rules`) applied after every sync. The Plaud card in Knowledge → Integrations now only shows connection state plus a paste-to-finish sign-in for hosted hives (`POST /api/knowledge/connectors/{name}/auth/complete`), since Plaud's OAuth client only redirects to `localhost:8199`. New routes `GET /api/inbox`, `POST /api/inbox/route`, `POST /api/inbox/dismiss`, `GET|POST /api/inbox/settings`; docs in `inbox-voice-sources.md`.
+
+## 2026-11-12 (v5.230.0)
+
+### Added
+
+- Settings → Workflows → Library gains an owner-only **Derive stages from bound models** switch (`workflow.enabled`, [#17620](https://github.com/hivecommons/hive/issues/17620)) backed by the new `PUT /api/workflows/enabled {enabled}`, so a hosted hive with no `hive.yaml` access can turn model-based stage derivation on or off from the dashboard. Off: a binding only changes the Activity Monitor's columns; on: a bound repository's stages are derived by its model's rules and the model's labels are provisioned in the repository immediately. Persists `hive.yaml`, takes effect on the next derivation pass without a restart, audited as `workflow_enabled` / `workflow_disabled`; the Repos binding row now says *columns only — turn on derivation in Workflows* when a repository is bound while the flag is off.
+
+### Fixed
+
+- Classify repeated plain HTTP proxy forwarding failures separately, with diagnostics for the requested host and network path.
+
+## 2026-11-12 (v5.229.0)
+
+### Added
+
+- Knowledge: new `wisprflow` connector syncs Wispr Flow dictation history (text, time, source app) into the vault from the desktop app's local `flow.sqlite` or an export folder — read-only, no sign-in, one fact per dictation or per day, with a Knowledge → Integrations card; dictating straight into **+ New Fact** needs no connector at all.
+
+### Fixed
+
+- Agents whose pluk session log under `/var/run/pluk/logs` was left behind by another uid (for example the supervisor's `hive-supervisor.jsonl`) no longer fail log setup with `permission denied`; the stale file is replaced with a peer-readable one so `hive-panes` and the dashboard can read it ([#17871](https://github.com/hivecommons/hive/issues/17871)).
+
+## 2026-11-12 (v5.228.6)
+
+### Fixed
+
+- Detect missing GitHub App repository coverage at boot, during self-heal, and when connecting a repository, with a settings link to fix the installation selection (#17696).
+
+## 2026-11-12 (v5.228.5)
+
+### Fixed
+
+- Contribute "Your army" card: a remote agent's "PRs awaiting rework" now lists only its open, not-yet-dispatched PRs — merged, closed and hive-adopted PRs are dropped (and a queued fix for a PR that is gone leaves the fix queue instead of reaching the relay); the line says why a fix is not dispatched (offline, no fix-pr capability, scope, orphaned dispatch, backoff, focus window, waiting for `ready`) instead of "not yet dispatched"; a fix dispatched to a socket that dropped is released at the relay's next `ready` and a completion reported on a reconnected socket settles it; links collapse to three inline plus a "show N more" disclosure.
+
+## 2026-11-12 (v5.228.4)
+
+### Security
+
+- The Plaud knowledge connector's stdio MCP server (`npx -y @plaud-ai/mcp@latest` by default) now starts with an allowlisted environment (`PATH`, `HOME`, locale, proxy/CA variables, `NODE_*`, `npm_config_*`, `PLAUD_*`) instead of the full hive process environment, so hub-injected credentials such as `DASHBOARD_AUTH_TOKEN`, `HIVE_TERMINAL_KEY` and `HIVE_UPSTREAM_PROXY_URL` no longer reach third-party code fetched at run time ([#17843](https://github.com/hivecommons/hive/issues/17843)).
+
+## 2026-11-12 (v5.228.3)
+
+### Security
+
+- Bound the hub's GitHub bearer-token validation cache and reclaim expired entries before admitting new tokens, preventing unbounded cache growth from unauthenticated requests.
+
+## 2026-11-12 (v5.228.2)
+
+### Fixed
+
+- crux serve: requests refused with a 401 by authentication are now counted in the new `crux.serve.auth.rejections` metric, labelled only by a fixed `reason` (`missing_or_invalid_token`, `project_forbidden` or `no_token_configured`); they never reached `crux.serve.requests` before.
+- The hub now remembers a rejected or rate-limited `Bearer` token (60 s, or until its `X-RateLimit-Reset` capped at 15 min; [#17836](https://github.com/hivecommons/hive/issues/17836)) instead of re-probing `GET /user` with that token on every request, which charged the token owner's already-exhausted core quota and prolonged the outage; the probes are visible in `/api/gh-rate-limits` as caller `agent:hub-bearer-validate`, and hub release-notes contents reads now go through the shared ETag/accounting transport.
+
+## 2026-11-12 (v5.228.1)
+
+### Fixed
+
+- hub: a reconcile sweep now converges the template startupProbe and the current init-container image repository onto pre-existing hosted hive Deployments, so a slow boot no longer becomes a permanent liveness crash-loop (#17827)
+- Substrate `snapshot_on_idle` no longer accumulates suspended actors: the previous idle snapshot of an agent is deleted when the next one is taken (actors from before a hive restart are not reclaimed).
+
+## 2026-11-12 (v5.228.0)
+
+### Added
+
+- Knowledge: new `plaud` connector syncs Plaud Note voice recordings (Plaud summary + transcript) into the vault through the free official Plaud MCP server, with Connect/Disconnect sign-in on the Knowledge → Integrations card and no cost beyond the Plaud plan.
+
+### Fixed
+
+- The hive binary no longer delays the dashboard bind on the startup advisory-issue ensure: it is now capped at 15s, so a slow or unreachable GitHub Enterprise (~8s per App token mint) can no longer push `:3002` past the kubelet liveness budget and crash-loop the pod ([#17827](https://github.com/hivecommons/hive/issues/17827)).
+
+## 2026-11-12 (v5.227.1)
+
+### Fixed
+
+- A hive whose ID the hub refuses to auto-create (heartbeat 403 "hosted/saas hive IDs can only be created via provisioning") now backs off to one probe every 10 minutes and reports a dedicated `hub_heartbeat_rejected_unprovisioned` fleet-report class, instead of warning every tick and filing `unclassified_error_repeated` ([#17815](https://github.com/hivecommons/hive/issues/17815)).
+- Persisting hive state and reach state no longer fails with "rename ... no such file or directory" when two writers race: each write uses a unique temp file before the atomic rename (#17726, #17728).
+
+## 2026-11-12 (v5.227.0)
+
+### Added
+
+- The dashboard's read-only terminal pane now covers `sandbox.runtime: substrate` agents: it shows the kick's Substrate actor (name, state, worker SPIFFE id, suspend/resume transitions) and streams the kick's output live from the actor bridge's `/run`.
+
+### Fixed
+
+- Hub "idle with work queued" no longer flags agents the governor will never kick: agents with no (or a paused) cadence in the current governor mode are skipped, and spokes now report the slot-to-slot gap for times/cron cadences so a `09:00,12:00,15:00 weekdays` agent is not alerted every evening and all weekend.
+- Spoke self-upgrade no longer fails with `reading startup probe before upgrade … EOF` on nodes without the `xt_owner` netfilter module (IBM Cloud IKS/ROKS): the hive's in-cluster Kubernetes API clients now SO_MARK their sockets like the proxy's own upstream dials, so the forced-egress REDIRECT exempts them instead of routing them into the MITM proxy (shared `crux/egressmark`).
+
+### Security
+
+- Hub `POST /api/marketplace/refresh?repo=` from a spoke (heartbeat bearer) now refuses with 403 any repository the hub does not already track (the CNCF corpus plus `HIVE_HUB_MARKETPLACE_EXTRA_REPOS`); previously any registered spoke could make the hub fetch an arbitrary GitHub repository with the hub's own GitHub identity and publish it to the shared catalogue under the hub's name. Hub admins can still refresh any repository.
+- The Substrate sandbox runtime no longer follows symlinks when unpacking a workspace pulled from an actor, so a sandboxed kick cannot write outside the local workspace on the hive host.
+
+## 2026-11-12 (v5.226.0)
+
+### Added
+
+- Dashboard: agent cards now show the Substrate (and OpenShell) sandbox preflight warnings for the agent's runtime, exposed as `sandbox_warnings` in `/api/status` from the boot-time sandbox posture check (hivecommons/hive#17779).
+
+### Fixed
+
+- The hub heartbeat `app_keys_held` collector no longer re-reads and re-parses every per-app GitHub App key file on each beat (#17797): fingerprints are cached by file size and mtime, so a slow `/data` volume stops pushing it past the 10s collect budget and flooding the "hub heartbeat collect budget exceeded" WARN.
+- Repeated `review swarm kick not delivered` warnings for the same PR head and cause are now logged once (then at debug) instead of every cycle.
+
+## 2026-11-12 (v5.225.0)
+
+### Added
+
+- Hub `clusters.json` accepts per-cluster `host_aliases` (`[{ip, hostnames[]}]`, validated at load) rendered as Pod `hostAliases` on every hosted-hive Deployment, plus a rate-limited reconcile sweep that converges existing hives — for GitHub Enterprise hosts reachable only through a TLS reverse proxy on a fixed IP, where `upstream_proxy` cannot help (#17801).
+- Dashboard Settings: surface the `agent_sandbox.substrate.*` and per-agent `agents.<name>.sandbox.substrate.*` leaves (endpoint, atespace, token, TLS, router, bridge, resources, worker selector, egress hosts, policy profile) in the Settings dialog.
+
+### Fixed
+
+- Repeated agent-lifecycle log lines (failed kick send, bare-shell crash, missing tmux session, kill-session failure, watchdog observe-mode restart) now file under the `agent_lifecycle_repeated` class instead of `unclassified_error_repeated`.
+- Automerge no longer waits forever when GitHub leaves a head's workflow runs orphaned in `queued` with zero jobs: once every same-repo run is older than the never-started grace (30m) without a job, the sweep treats the head as never started so the existing rebase-nudge / bot-takeover recovery and terminal hold apply instead of the bare `required-check-missing` reason (#17775).
+- Claude auth on per-UID hives: a Claude Code token refresh writes a temp file and renames it over `~/.claude/.credentials.json`, which replaced the per-agent symlink to the shared login with a private 0600 file; the refreshed token (and the rotated refresh grant) never reached the shared credential and the fleet logged out about every eight hours. The hive now detects the replaced link at agent launch, every 5s from the credential watchdog (`HIVE_CLAUDE_CREDENTIAL_BRIDGE_INTERVAL`) and after a dashboard sign-in, reads the agent's private file as its owner through `su-exec` when the server cannot open it, publishes the newer usable token into the shared login (the previous shared file is kept as `.credentials.json.stale-<ts>`), moves the private copy aside and restores the link. Per-agent `~/.claude` memory stays isolated; only the login is shared, with no operator switch. Audited as `claude_credential_rebridged`. Also hardens the shared-home permission guard and credential promotion against non-regular files: shared logins and CLI configs are written through a randomly named temporary with fd-based mode/owner, the root guard only repairs regular files in regular directories, and the shared dot-dirs get the sticky bit.
+- DCO: a PR author's own signed commit is no longer filed as the hive's to re-sign after a hive rebase makes the App the committer (a sign-off with the commit author's own email on a commit GitHub links to the PR author now counts, matching the squash attribution gate), and the dashboard no longer shows a `Needs human · decision` pill or "waiting on 🐝 hive reviewer" on a row parked on `hive-signoff-attribution` or `dco-missing` — the waiting-on pill names the author instead.
+- The hub activity digest now reads the last stage-tracker body immediately when the cache is stale and rebuilds in the background, so heartbeats stop dropping the activity block when a rebuild takes longer than 5 s.
+- Log the issue-claims GitHub side-effect retry at INFO instead of WARN; only exhausted retries warn, so expected transient timeouts no longer trip the fleet-report repeated-error classifier (#17782).
+
+### Security
+
+- Workflow marketplace: a bundle's hash-covered `spec.meta.provenance` can no longer launder a vouched tier past the hub's admin-only policy. The hub refuses (403) a non-admin publish whose model claims `curated` or `built-in`, and a spoke importing a bundle (from the hub or by direct upload) stores a vouched provenance only when the envelope tier asserts the same tier; otherwise it falls back to the envelope tier, so the library badge "Reviewed and vouched for by a human" reflects a hub admin's vouching, not the publisher's claim.
+
+## 2026-11-12 (v5.224.0)
+
+### Added
+
+- Benchmark records exported by `GET /api/benchmarks/export` (and pushed to hivecommons/benchmarks) now carry an estimated cost (#17790, #17694): `cost.basis` is `tokens_x_pricing` with `cost.usd_est`, token share, `launches` and `price_table_date` when the launch-cost collector attributed a kick to the PR (the swarm's PR ref, or the governor's issue ref of an issue the PR closed), else `unknown`. Figures are list-price estimates from the spoke's own launch attribution, never billed amounts; no per-session usage leaves the spoke.
+- Hub marketplace seeds curated workflow models from `pkg/hub/marketplace/curated/*.yaml` on startup and every refresh, ships the first one — `cncf-techdocs-assessment` (CNCF TechDocs AI-assisted assessment) — and adds `cncf/techdocs` to the ingest corpus via the new operator-added `extra.json` list (hivecommons/hive#17620).
+
+### Fixed
+
+- Marketplace ingest streams each repository tarball and keeps only pipeline files (1 MiB per file, 32 MiB total) instead of extracting the whole source tree under a 256 MiB cap, so large monorepos (kubernetes/kubernetes, kserve, meshery, …) no longer fail with `archive exceeds size cap`; `GET /api/marketplace/status` now lists failing repos with their errors without `?verbose=1`; four renamed corpus repositories (composefs, OpenMetrics, ratify, kuberay) now point at their current GitHub names.
+
+### Security
+
+- The upstream forward-proxy loader no longer echoes the configured proxy URL's `user:password` userinfo in the error it returns for a malformed URL (unsupported scheme such as `socks5://`, missing host, or an unparseable value). Boot logs that error to the hive JSON log before falling back to direct egress, so a typo in `network.upstream_proxy.url` / `HIVE_UPSTREAM_PROXY_URL` used to write the corporate proxy's Basic credential to the log stream on every start; the password is now masked as `xxxxx` (#17730).
+
+## 2026-11-11 (v5.223.0)
+
+### Added
+
+- Extend the `sandbox.runtime: substrate` preflight into a cluster prover (#17698): when hive runs in-cluster it now also reports, read-only and cached per control plane, missing Substrate CRDs or operator Deployments/atelet, WorkerPools with no ready replica, a cluster without gVisor (no `gvisor` SandboxConfig or `runsc` RuntimeClass) or without KVM for a microVM pool, node kernels below gVisor's floor, the `PodCertificateRequest`/`ClusterTrustBundle` APIs not being served, and an atenet-router that is unreachable or rejects hive's client certificate; each is one actionable warning. `deploy/k8s/sandbox-substrate-preflight-rbac.yaml` grants the read access it needs Two fixes found by the first real kick on a Substrate v1.0.0 cluster (#17697) ride along: the per-actor egress policy now carries the actor's atespace (the Control API rejects it otherwise) and the in-actor bridge empties `/workspace` in place instead of unlinking the durableDir mount point.
+
+### Fixed
+
+- Marketplace: the CNCF catalogue now actually fills — tarball extraction recognises git's `pax_global_header`, so pipeline files are read for every repository (previously only tektoncd/pipeline survived); seeding resumes across hub restarts by ingesting only repositories that are due (no record, stale, old format, or an hour-old error); the last refresh summary is persisted so `/api/marketplace/status` survives a restart and reports `pendingRepos`/`lastRefreshErrors`, with `?verbose=1` listing failing repos and their errors; `POST /api/marketplace/refresh` accepts a spoke's heartbeat credential (rate-limited, `429` + `Retry-After`) so a hive owner's "Refresh catalogue" works, and the crawl backs off on `403`/`429` `Retry-After` and logs progress every 25 repositories.
+- OpenShell runtime: sandbox names now fit the gateway's 19-character limit (`hk-<agent>-<base36 unix>`), the shared claim mounts as `hive-workspace` instead of the reserved `workspace`, and the deploy doc covers the Agent Sandbox prerequisite, `allowed_pod_labels`/annotations, sandbox uid, workspace storage class and the measured #17643 latency (#17643)
+- The "contributor-lane ok-to-test not posted again" warning is logged once per PR rejection, not again after a restart once the PR already records it, so it no longer trips the repeated-error selfreport (#17738).
+- The status builder publishes a (possibly stale) snapshot after a bounded number of consecutive stale drops instead of livelocking and warning on every drop during mutation bursts (#17727).
+
+## 2026-11-11 (v5.222.1)
+
+### Fixed
+
+- The effect ledger no longer leaves an `issue_create` op stuck in Unknown forever after an ambiguous GitHub response: once a refused retry finds it unresolved past the kind's TTL (1h), the boundary expires it to NotApplied, clears the `effect_ledger_op_stuck` self-report and lets the caller's next attempt (which re-runs its own duplicate search first) create, without ever retrying the ambiguous write in the refused call (#17693).
+- Good-first-issue curation skips archived read-only repositories after GitHub refuses a write, instead of repeatedly reporting failures.
+- Fixed a startup panic in the stage engine when hive ran with no loaded config, which made the auto-merge sweep test flaky (#17736).
+- A read-only integration lane no longer retries removing the hive:unauthorized label every cycle and warning each time; the removal is skipped and left to a write-capable lane with a single debug line (#17720).
+
+## 2026-11-11 (v5.222.0)
+
+### Added
+
+- Add Agent Substrate (CNCF Sandbox) as a fourth, opt-in `sandbox.runtime: substrate` (ADR-0026 phase 2). Actors are created through Substrate's gRPC Control API with a hive-derived `atenet-egress` policy, a digest-pinned image, and workspace transfer through an in-actor bridge over the atenet-router mTLS tunnel; `sandbox.substrate.snapshot_on_idle` suspends instead of deleting the actor. Credential brokering is unchanged (agents still use the hive MITM proxy). No new Go modules: a trimmed wire-compatible proto subset is generated in-repo.
+
+### Changed
+
+- Document Agent Substrate as the opt-in fourth `sandbox.runtime` (ADR-0026 phase 2): ADR amendment with the contract mapping, deviations and when to choose it over OpenShell, a `sandbox-isolation.md` section, `deploy/substrate.md` install and verification notes with the hive cluster survey, and the integrations table entry.
+
+## 2026-11-11 (v5.221.1)
+
+### Fixed
+
+- Copilot agents no longer crash-loop on hosts whose kernel refuses the Copilot CLI binary with ENOEXEC (seen fleet-wide on OKE after the UEK8 / Linux 6.12 node upgrade: the Bun single-file ET_EXEC the `@github/copilot` platform package ships is rejected by the 6.12 ELF loader, the npm shim's `sh` fell back to "running" the ELF as a script, and every copilot agent sat in "copilot hung with no output" under the restart-storm breaker). The hive image now wraps the platform binary so it starts through glibc's `ld.so` (`bin/install-copilot-exec-shim.sh`, arch-aware, idempotent, `HIVE_COPILOT_DIRECT_EXEC=1` to bypass), the copilot hang diagnostic recognises `Exec format error` / the `ld-linux-…: not found` fallback signature and fails the agent loudly with the remedy instead of relaunching, and the in-process runtime execs every configured agent CLI once at boot and logs ERROR with the same remedy when the kernel refuses one (#17729, #17642).
+- The model-discovery self-report no longer carries raw binary when the Copilot CLI helper is refused with ENOEXEC; the error now names the cause (#17735).
+- The "agent git config declares a user identity outside the system gitconfig" warning is logged once per agent and config, not every cycle, so it no longer trips the repeated-error selfreport (#17703).
+
+## 2026-11-11 (v5.221.0)
+
+### Added
+
+- **workflow models:** RFC phase 7 — signed bundles (`pkg/workflowmodel/bundle`: model + compiled profile + sha256; import always re-verifies and recompiles locally), a hub marketplace catalogue (`/api/marketplace/*`: immutable `name@version` entries, ETag index, tiers built-in · curated · ingested-unreviewed · local-published, nightly/on-demand refresh of the embedded CNCF corpus publishing `ingested-YYYYMMDD.N`, curated versions only flagged `newerIngestAvailable`), spoke import/publish/proxy routes with `workflow.marketplace.{enabled,url,refresh_interval}`, and a Settings → Workflows → Marketplace view with Import, Publish and Refresh catalogue ([#17620](https://github.com/hivecommons/hive/issues/17620))
+
+## 2026-11-11 (v5.220.0)
+
+### Added
+
+- Benchmarks: every hive now contributes **anonymized** per-PR benchmark records to the public leaderboard at <https://hivecommons.dev/benchmarks/> (data repo `hivecommons/benchmarks`), built from the review evidence bundles it already seals. A record carries a salted hash of the hive id, the agent, harness, model, sandbox runtime, task kind, ACMM level, review verdicts and merge/CI/revert outcome — never the hive id, PR numbers, SHAs, prompts, diffs, logins or costs. Publication is **on by default**; `benchmarks.publish: false` opts a hive out, and `benchmarks.repo_consent` (default on) names repositories only when GitHub reports them public, so no new information is disclosed. Cadence is hub-driven and hourly: the spoke pushes new records to the hub's `POST /api/benchmarks/ingest` with its heartbeat bearer, and the hub commits month files to the data repo through its App identity; `GET /api/benchmarks/export?since=` and the `benchmarks` block in `/api/status` expose the same data and last-push state on the spoke, `GET /api/hub/benchmarks` on the hub, and Settings → Features → Benchmarks shows the toggles and the hive's hash. New bundles are stamped with the agent's sandbox runtime and task kind. See `docs/benchmarks.md` (#17694).
+- Workflow models, RFC phase 4 UI: Settings → Workflows grows an **Editor** — a visual design surface for lifecycle models rather than a form. Columns are vertical lanes (add, rename by double-click, reorder and resize by dragging the header, toggle terminal); states are chips you drag within and between lanes or drop from a templates palette (common states and columns, hive-default stages); transitions are drawn by dragging a chip's port onto another chip, with backward edges dashed and self-loops drawn as loops. The canvas pans, zooms, fits, shows a minimap, supports marquee and shift-click multi-select, keyboard nudging and Delete, undo/redo, and an Auto-layout that orders lanes by topological depth. An inspector edits the selected state, transition, column or the model itself; a bottom drawer hosts Problems (live compile diagnostics, badged on the canvas and clickable), YAML (two-way via the new `POST /api/workflows/yaml`), Diff (client-side structural diff against the last save, or the stored versions diff) and Simulate (facts → `POST /api/workflows/simulate` against the unsaved model, highlighting the decided state). Save assigns the next version through `POST /api/workflows` with an empty `meta.version`; Save as… and Revert are one click; inferred states carry a ✓ Confirm affordance with a toolbar "Confirm all inferred". Export offers self-contained SVG, PNG, model JSON and YAML. Library rows and detail gain Edit (owner) / Edit a copy (hive-default), and ingest results gain "Open in editor" ([#17620](https://github.com/hivecommons/hive/issues/17620))
+- **workflow models:** two more ways into a draft lifecycle model on Settings → Workflows → Ingest. *From a cluster* lists a kube context's Tekton Pipelines, Tasks, newest PipelineRuns and Triggers through `kubectl`, feeds them to the same Tekton ingester as a repository (citations at `cluster/<ns>/<kind>/<name>.yaml`) and records each pipeline's last run status as an *observed* annotation, never an inferred state; clear 4xx for missing CRDs, RBAC denials and unknown contexts, with namespace, run, object and byte caps. *From a written spec* turns pasted markdown, a repository file or a public URL into a draft: a deterministic pass reads step lists, if/when/after sentences and role nouns into states, guards and gates, and — only when a model gateway is configured and the operator opts in — the gateway refines that skeleton, its answer accepted solely if it parses strictly, passes `Mark` (every element forced to `confidence: inferred` with a `spec:<heading>#L<a>-L<b>` citation, provenance `ingested-unreviewed`) and compiles, with one diagnostic-quoting retry before falling back. The LLM is consulted nowhere else in the workflow-model stack. `POST /api/workflows/ingest/{cluster,spec}` and `GET /api/workflows/ingest/capabilities`, owner-only, audited as `workflow_ingest` ([#17620](https://github.com/hivecommons/hive/issues/17620))
+- Workflow models (RFC phase 4, backend): `GET /api/workflows/{name}/versions`, a deterministic structural diff between two versions (`GET …/{name}/diff?from&to`, optionally cross-model against hive-default), `POST …/{name}/{version}/confirm` to confirm an ingested model's inferred elements as a new local version (owner, audited `workflow_confirm`), `GET …/{name}/{version}/labels` to preview the labels and commands a model regenerates, and the stage-label provisioner now creates or recolours a bound model's own label vocabulary and re-provisions when the binding changes ([#17620](https://github.com/hivecommons/hive/issues/17620))
+
+## 2026-11-11 (v5.219.1)
+
+### Fixed
+
+- Weekly competitor report: the publication gate keys Discord table rows by project first word, holds table notes to their provenance links, and accepts "does not mean no licence"-style disclaimers (catch-up run 43070009570 failed on these).
+
+## 2026-11-11 (v5.219.0)
+
+### Added
+
+- **workflow models:** the stage engine now remembers which model labels it provisioned per repository and, on unbind or rebind to a model with a different label set, deletes the stale ones — only labels it created, outside the built-in stage family and worn by no open issue or PR; each deletion is audited `workflow_label_removed` and `workflow.label_gc: false` keeps everything. A bound model's `replies` are now offered by the Activity Monitor's human-gate pill and accepted as `/hive <verb>` on parked issues, applying the label the model maps to the reply's target state ([#17620](https://github.com/hivecommons/hive/issues/17620))
+
+### Fixed
+
+- Weekly competitor report: the publication gate accepts the "Who does what" project table as a fenced block on GitHub as well as a Markdown table (catch-up run 43065486702 failed on this).
+
+## 2026-11-11 (v5.218.0)
+
+### Added
+
+- **workflow models:** ingesting a repository now proposes its *intake half* alongside its pipelines: issue templates become `requested-<slug>` intake states and events, a triage label (from templates, `settings.yml`, `labels.yml`, `labeler.yml` or `CONTRIBUTING.md`) becomes a `triage` state and gate, PR-template checklist items become manual checks, `CODEOWNERS`/Prow `OWNERS` become `approver`/`reviewer` roles owning the review gate, a `MAINTAINERS` file's `@handles` become the `maintainer` role's members, `kind/*`/`priority/*`/`area/*` labels are carried as classification rows, and the default branch's protection or rulesets (fetched when ingesting by `repo`, or a probot `settings.yml`) become required CI checks, `review.minApprovals`, a `codeowner-review` gate and bookkeeping notes. Everything is `inferred` and cites `path:line` or the API endpoint; ingesting `cncf/techdocs` now proposes its triage state. Trees without these inputs produce the byte-identical model as before; `workflow-survey` counts the proposals per repository ([#17620](https://github.com/hivecommons/hive/issues/17620))
+- Workflow models, RFC phase 3c ([#17620](https://github.com/hivecommons/hive/issues/17620)): simulate an issue or PR against a model before binding it. New read-only `POST /api/workflows/{name}/{version}/simulate` takes `{kind, facts}` (a JSON mirror of the engine's `Facts`) or `{repo, number}` to best-effort fill the facts from the forge (the response lists what was fetched and what stayed unknown), runs the stored model's deriver through the new `stageengine.Explain`, and returns the decision (state, column, stage label, reason, covered/abstain) with a per-rule trace — every rule in order, the first match highlighted, each predicate's holds/known verdict — or a single built-in entry for `derivation: builtin` models. Settings → Workflows → model detail grows a **Simulate** panel: pick `owner/repo#123` and Fetch facts, or describe the item in a form, Run, and the matched state lights up in the diagram.
+
+### Fixed
+
+- Weekly competitor report: the publication gate no longer rejects the Discord post for the Discord formatting the prompt itself requires (bold headings, fenced project table, no sources details), which silently blocked the 2026-11-09 report.
+- The `hive-inference` vLLM Deployment's `model-download` init container now pulls `docker.io/curlimages/curl` by its fully-qualified name instead of the Docker Hub short name `curlimages/curl`. Oracle Linux 9 cri-o (OKE 1.34 node images) enforces short-name resolution (`short-name-mode = "enforcing"`), so on the upgraded hive-oke nodes the pod stuck in `Init:ImageInspectError` with "image name curlimages/curl:8.13.0 returns ambiguous list" and the model never downloaded; OL8 nodes silently resolved it to Docker Hub. Found during the hive-oke OL8→OL9 / Landlock node cycling (#17642).
+
+## 2026-11-11 (v5.217.1)
+
+### Changed
+
+- CI: the `pull_request` workflows `mutation-advisory`, `pr-overlap`, `stream-image`, `ci-runner-image` and `docs-index-reminder` now check out with `persist-credentials: false`. None of those jobs pushes or fetches with the job token; steps that call the API keep getting it through their step `env`, scoped by the job's `permissions:` block (#17636).
+
+### Security
+
+- **proxy:** the GitHub GraphQL mutation gate no longer fails open when `mutation` follows a same-line prefix (a leading fragment definition, comma or BOM). It now uses the same string- and comment-aware depth-zero token scan as the Linear path, so read-only lanes cannot slip a mutation past the capability tier, write-surface and auto-merge checks (#17676).
+
+## 2026-11-11 (v5.217.0)
+
+### Added
+
+- Workflow models (RFC phase 4, backend): `GET /api/workflows/{name}/versions`, a deterministic structural diff between two versions (`GET …/{name}/diff?from&to`, optionally cross-model against hive-default), `POST …/{name}/{version}/confirm` to confirm an ingested model's inferred elements as a new local version (owner, audited `workflow_confirm`), `GET …/{name}/{version}/labels` to preview the labels and commands a model regenerates, and the stage-label provisioner now creates or recolours a bound model's own label vocabulary and re-provisions when the binding changes ([#17620](https://github.com/hivecommons/hive/issues/17620))
+- Settings gains a **Workflows** tab (RFC phase 3b): a library of every workflow model the hive knows — built-in `hive-default`, locally saved models and drafts ingested from repository pipelines — with provenance and compile badges, bound-repository counts, View / Duplicate / Export / Delete, a read-only detail view that draws the compiled columns and states as an SVG diagram with transitions, diagnostics and citations, and an Ingest form that turns a repository's pipeline files into a draft model through `POST /api/workflows/ingest`. The Activity Monitor model badge deep-links into the library entry. Binding a repository stays on Settings → Repos; this tab never binds ([#17620](https://github.com/hivecommons/hive/issues/17620)).
+
+## 2026-11-11 (v5.216.0)
+
+### Added
+
+- Workflow models, RFC phase 1 ([#17620](https://github.com/hivecommons/hive/issues/17620)): the `workflow.hivecommons.dev/v1alpha1` schema gains the lifecycle half of the RFC — `columns`, `derivation`, `events`, `gates`, `roles`, `agents`, `checks`, `bookkeeping`, `labels`, `meta` and per-state `lifecycle` (column, stage number, item kinds, replies) — and `workflowmodel.Compile` turns a model into a `Profile` or refuses it with coded diagnostics (a non-terminal state with no exit, a gate with no releasing role, an agent-granted state with no human-released gate before a terminal outcome, two events bound to one fact, a state in no or two columns, duplicate stage numbers, an unknown fact or operator). `pkg/workflowmodel/hivedefault` generates the `hive-default` model from the live stage table and the engine's expected-edge table, so the monitor's seven columns and the stage numbers are now a compiled model rather than constants. `stageengine.DeriveFromModel` derives under a compiled profile: `hive-default` declares `derivation: builtin` and delegates to the existing derivers (the whole PR stage-golden corpus and the issue sweep derive identically), custom models declare `derivation: rules` (ordered first-match predicates over the fact vocabulary, uncovered items abstain `workflow: not covered`). New `workflow.enabled` config flag, default false; nothing changes for any hive until a repository is bound (phase 2).
+- Workflow models, RFC phase 3a ([#17620](https://github.com/hivecommons/hive/issues/17620)): an ingested repository now yields a model that compiles. `ingest.Lifecycle` composes the hive-default lifecycle (states, columns, builtin derivation, roles, gates, events) with the repository's pipelines — PR-verify pipelines bound to the CI / Review states with file citations, the post-merge chain (main CI, release, per-environment deploys, done) as new columns after Merged — every ingested element marked inferred and the model's provenance `ingested-unreviewed`. New fact `pipeline.status` names the post-merge run the chain waits on (the engine reports `unknown` until it observes post-merge runs, so nothing moves on it yet). New owner-gated `POST /api/workflows/ingest` takes `{repo}` (default branch fetched read-only through the hive's GitHub client, CI files selected by `ingest.ReadTree`) or pasted `{files}`, returns the model, compile result and diagnostics, and with `save: true` stores it at the next integer version. `cmd/workflow-survey` compiles every repository's lifecycle model and reports pass/refusal counts by code; over the 317-repository CNCF corpus 317/317 compile with 1,117 inferred-element warnings and no refusals.
+- Workflow models, phase 1 ([#17620](https://github.com/hivecommons/hive/issues/17620)): a new `pkg/workflowmodel` package ingests a repository's GitHub Actions workflows and Tekton / OpenShift Pipelines resources (`pkg/workflowmodel/githubactions`, `pkg/workflowmodel/tekton`, composed by `pkg/workflowmodel/ingest`) into one deterministic, content-hashed model of the repo's delivery process — pipelines with their trigger roles (PR verify, push verify, release, deploy, scheduled, manual), execution DAGs with topological levels, matrices, reusable workflows, environments and concurrency — bound onto the hive default lifecycle. `pkg/workflowmodel/render` turns a model into a Mermaid diagram and the Activity Monitor column set it implies (CI sub-stages under *CI / Review*, post-merge *Main CI*, *Release* and *Deploy: <env>* columns), and a model with no pipelines renders today's seven columns unchanged. Nothing is wired into the v5/v6 stage engine yet; `cmd/workflow-survey` is the proving harness that produced the CNCF-landscape survey posted on the issue (317 repositories, 4,389 pipelines, 317 valid models). Golden fixtures under `pkg/workflowmodel/testdata/corpus` pin real repositories' results.
+- Workflow models, RFC phase 2 ([#17620](https://github.com/hivecommons/hive/issues/17620)): models now have a home and a way to reach the engine. `pkg/workflowmodel/store` keeps versioned models under `<data>/workflows/<name>/<version>.json` (plus `index.json`); `hive-default` is virtual and read-only, drafts save but do not compile, every entry reserves `adoption`/`ratings`/`benchmarks` fields for the marketplace and carries them verbatim across saves. New owner-gated, audited `/api/workflows` routes list, save, read, delete and compile models; `project.workflow_bindings: [{repo, name, version}]` binds a repository to a compiling model (the binding is refused for a draft, and a bound model cannot be deleted). When `workflow.enabled` is on, the stage reconciler derives bound repositories through the bound model and everything else through the built-in derivers exactly as before. Settings → Repos gains a per-repo Workflow select, and the Activity Monitor response gains a `workflows` block (default columns plus per-repo columns and stage numbers) that the tracker uses to label the model column and to render a per-row column strip, with an amber "Not covered" chevron when a bound model abstains. Nothing changes for unbound repositories.
+
+## 2026-11-11 (v5.215.2)
+
+### Fixed
+
+- Hardened the automerge workflow-approval path against the read-only integration eligibility probe: the probe could reach the `/ok-to-test` post, where the mutation boundary refused the comment and the caller logged a WARN on every tick. The probe now skips the post and leaves it to the live sweep; live behaviour is unchanged.
+
+## 2026-11-11 (v5.215.1)
+
+### Security
+
+- Dashboard pane surfaces (`/api/agents/{name}/log`, `/api/status` summaries, Job log streams, archived kick/task logs) now mask JWTs, AWS access keys, Slack tokens and webhooks, `Authorization: Bearer`/`Basic` credentials and private-key blocks, not just GitHub and `sk-` tokens, because `logscrub.RedactPaneTokens` now also runs `ScrubString` ([#17665](https://github.com/hivecommons/hive/issues/17665)).
+
+## 2026-11-11 (v5.215.0)
+
+### Added
+
+- The dashboard's ▶ terminal pane now works for `sandbox.runtime: openshell` agents: it opens the read-only `/terminal/job/<agent>` viewer, follows the live OpenShell sandbox's gateway event log while a kick runs (scrubbed like the Job pod log; the pane says this is the sandbox's supervisor/policy log, not the kick's stdout, which an exec session does not expose) and shows the last persisted transcript — with the kick's own output and exit code — between kicks.
+
+## 2026-11-11 (v5.214.1)
+
+### Security
+
+- Agent tmux panes no longer inherit the hive container's dashboard shared token (`DASHBOARD_AUTH_TOKEN` / `HIVE_DASHBOARD_TOKEN`), the hub-injected per-hive signing keys (`HIVE_TERMINAL_KEY`, `HIVE_INVITE_KEY`, `HIVE_HEARTBEAT_KEY`, `HIVE_HUB_SECRET`), the ttyd credential or the corporate upstream-proxy settings; `applySessionEnv` removes them from the tmux global environment alongside the GitHub and Linear credentials it already stripped.
+
+## 2026-11-11 (v5.214.0)
+
+### Added
+
+- Added an OpenShell cluster preflight and an egress-policy prover: at boot and on reload, `AgentSandboxGateWarnings` now warns when an `openshell`-runtime gateway is unreachable, reports telemetry on, or has `allow_driver_config` off (read-only, cached, bounded to 30 s), and `allow_hosts` entries must be literal host names (userinfo, query, fragment and wildcards are rejected) with a test that fails if the rendered egress policy widens ([#17644](https://github.com/hivecommons/hive/issues/17644)).
+
+## 2026-11-11 (v5.213.0)
+
+### Added
+
+- **Upstream forward-proxy chaining for hosts behind a corporate proxy.** A hive whose enterprise GitHub is reachable only through a corporate HTTP forward proxy could not use it: the control-plane client honoured `HTTPS_PROXY`, but every agent `:443` flow is iptables-redirected into the in-process MITM proxy, which always dialled upstream directly — so agent `git`/`gh` traffic to the GHE host simply timed out. New `network.upstream_proxy` config (`url`, `hosts`, `no_proxy`; env `HIVE_UPSTREAM_PROXY_URL`/`HIVE_UPSTREAM_PROXY_HOSTS`/`HIVE_NO_PROXY`, falling back to standard `HTTPS_PROXY`/`NO_PROXY`) drives one selector used by the control-plane GitHub transport, in-process `git` runs (scoped `GIT_CONFIG_*` entries), and the MITM proxy, which now issues `CONNECT host:443` through the upstream proxy (Basic auth from URL userinfo) and runs TLS or splices bytes over the tunnel for matching hosts; non-matching hosts keep the exact direct path. Hosted hubs can set `upstream_proxy: {url, hosts, no_proxy}` per cluster in `clusters.json`, and the provisioner injects the env vars into new pool slots. See `docs/network-requirements.md` → "Egress through a corporate forward proxy".
+
+## 2026-11-11 (v5.212.0)
+
+### Added
+
+- Added `sandbox.runtime: openshell`, a third sandbox runtime behind the same `sandbox.Launcher` seam as `podman` and `job` (ADR-0026 phase 1, [#14092](https://github.com/hivecommons/hive/issues/14092)). A kick on it is created through an NVIDIA OpenShell gateway (`github.com/ai-openshell/sdk-go` v0.1.8) as a kernel-confined sandbox from the agent's image, runs the kick command with the same credential-filtered environment the other launchers pass, shares the workspace through the hive data PVC exactly as the Job runtime does, and is deleted on success, failure or kick timeout. Hive hands the gateway an egress policy derived from the hosts its own proxy brokers — `github.com` read-write for git, `api.github.com` read-only — plus `agent_sandbox.openshell.allow_hosts` for a model gateway or the hub; nothing else is reachable from the sandbox. Config lives under `agent_sandbox.openshell` (`gateway_url`, `namespace`, `token_env`, `workspace_claim`, `allow_hosts`, `timeout_s`, scheduling passthrough) with per-agent overrides; the runtime is inert unless selected, and a selected one with no `gateway_url` or `workspace_claim` is warned about at boot and refused at kick time before the agent is marked running.
+
+## 2026-11-11 (v5.211.30)
+
+### Changed
+
+- ADR-0026 (sandbox runtime selection) moves from Proposed to **Accepted (phase 1 implemented, runtime opt-in)** now that `sandbox.runtime: openshell` exists ([#17642](https://github.com/hivecommons/hive/issues/17642)), with an implementation-notes section recording where the real SDK differed from the record (module path moved to `github.com/ai-openshell/sdk-go`, workspace shared through the data PVC instead of copied, `policy_profile` advisory, egress derived from hive's proxy host set) and the kernel survey of hive's clusters. `sandbox-isolation.md` gains the operator section for the runtime (config, egress policy, credential boundary, lifecycle, verification, limitations), `integrations.md` lists OpenShell as in progress (opt-in) instead of planned, and `src/deploy/openshell.md` covers the cluster side — prerequisites, the upstream Helm install, `allow_driver_config`, the `openshell.ai/sandbox-attachable` PVC labels, `OPENSHELL_TELEMETRY_ENABLED=false`, digest pinning — without vendoring manifests.
+
+## 2026-11-11 (v5.211.29)
+
+### Security
+
+- Bumped the Go toolchain to 1.26.11 so the `govulncheck` gate stops flagging GO-2026-6859 (`net/http`), reachable from the dashboard, hub spoke heartbeat and GitHub client. The gate was red on the default branch toolchain itself, blocking every open PR.
+
+## 2026-11-11 (v5.211.28)
+
+### Fixed
+
+- **Unclaimed hives no longer file `github_app_not_installed` self-reports** — a hosted "available slot" hive that has not been onboarded yet legitimately has no GitHub App installation, so the runtime `github_app_not_installed` condition is now kept out of fleet self-reports for it. "Unclaimed" covers both an empty `project.org` and the synthetic `available-<id>` / legacy `placeholder` org the pool seeds into a slot (the hive behind the report carried `project.org=available-…`, not an empty org); that prefix list now lives in one place (`config.PlaceholderOrgPrefixes`) shared with the dashboard's `project_org` health check. The local warning log and the dashboard onboarding banner are unchanged, and a hive that *does* have a real org configured but no App installation still self-reports it as a real misconfiguration. A tracker already opened by a pre-fix release is closed out through the normal self-recovery path on the first evaluation after upgrade. ([#17593](https://github.com/hivecommons/hive/issues/17593), [#17600](https://github.com/hivecommons/hive/issues/17600))
+
+## 2026-11-11 (v5.211.27)
+
+### Fixed
+
+- The mutation advisory job now stops itself on a wall-clock budget and lists the packages it skipped, instead of being cancelled at the job timeout and losing its report.
+
+## 2026-11-11 (v5.211.26)
+
+### Fixed
+
+- Give the `inference no route` WARN its own `inference_no_route` fleet-report class and tag it with a `reason` (`cleared` or `never_set`), so it no longer lands in `unclassified_error_repeated`.
+
+## 2026-11-11 (v5.211.25)
+
+### Fixed
+
+- Knowledge Sources: **Clone & Index** now disables the button and shows "Cloning…" while the request runs, resolves a blank branch to the remote's default branch (`git ls-remote --symref`) and records it instead of guessing `main`, and keeps a failed connect visible as an error row with the reason and Retry/Dismiss (#17610).
+
+## 2026-11-11 (v5.211.24)
+
+### Security
+
+- The pane line a provider error is classified from is now credential-redacted before it is stored as an agent's `LastError` / `BackendAuth.LastError`. Those fields leave the spoke verbatim — crux `/v1` status, dashboard status JSON and the hub heartbeat — and were the one pane-derived path that skipped the token scrubbing every other export applies, so a GitHub token or `sk-` key printed beside a `401`/`403` could be shipped to the hub (#17611).
+
+## 2026-11-10 (v5.211.23)
+
+### Fixed
+
+- Knowledge panel: Add Git Source, Add Subscription, Import Document and Import now show required-field errors inline under the offending input (red border, focus, `role="alert"` message) instead of a transient info toast, and required inputs are marked; fixes Clone & Index appearing to do nothing with an empty name or URL (#17587, part of #17583).
+
+## 2026-11-10 (v5.211.22)
+
+### Fixed
+
+- Issue stage labels: a repository where the GitHub App is refused label writes (403 "Resource not accessible by integration", e.g. the App lacks Issues write access) is now skipped until restart after one clear warning, instead of retrying label provisioning for every issue on every sweep and flooding the log with "provisioning failed" (#17582).
+
+## 2026-11-10 (v5.211.21)
+
+### Fixed
+
+- Trusted-bot automerge lane: PRs from every login the operator enabled under `auto_merge.trusted_bot_authors` (Settings bot toggles or a custom login) are now honored by the trusted-bot lane end to end. The review swarm's verdict is advisory for them by default (`auto_merge.trusted_bot_skip_review`, default `true`), so a Dependabot bump a reviewer routed to `requires_human` no longer parks at "needs a person" while its checks are green; the contributor lane hands bot PRs off as `trusted-bot-lane` instead of `contributor-lane:app-authored`; every self-authored-sweep skip/hold line carries `tier`; and when `auto_merge.required_checks` names a check a repo never runs, the lane gates on the checks that do report (warning once per repo per hour) or holds with `required-check-never-reported:<check>`, which the Activity Monitor shows as the human-gate reason (#17577).
+
+## 2026-11-10 (v5.211.20)
+
+### Changed
+
+- CI mutation report (`src/scripts/mutation-report.sh`): the `<!-- hive-mutation -->` PR comment now also lists NOT COVERED mutants in changed files and tells a zero-mutant run apart from a broken one — a SKIPPED mutant on an added line gremlins honours (it only matches the first `lines added` lines of each default-context hunk; the rest are noted, not flagged) is flagged as a diff-matching fault, a gremlins failure or missing report is an `error` verdict rather than a silent pass, while added lines with nothing gremlins can mutate (a unary `!`, a bare `return`) are reported as such instead of "no surviving mutants". A new `verdict` phase exits non-zero on `error`/`lived`/`misrouted` or a missing verdict file and warns on `uncovered` unless the PR carries `mutation/acknowledged`, so a workflow can block on it (#17349, Phase 2).
+
+## 2026-11-10 (v5.211.19)
+
+### Fixed
+
+- Activity monitor: **Release hold** and **Confirm safe** on an issue row drawn through its covering PR now act on that PR, which carries the hold or sentinel, instead of silently no-oping on the issue; a release that finds no hold on an issue whose covering PR is held now says so and names the PR.
+
+## 2026-11-10 (v5.211.18)
+
+### Fixed
+
+- crux resumehandle: the claude layout now only captures UUID-named session transcripts, so a newer per-subagent transcript (SESSION/subagents/agent-*.jsonl) no longer yields a bogus "claude --resume agent-…" handle (hivecommons/crux#145)
+
+## 2026-11-10 (v5.211.17)
+
+### Fixed
+
+- crux: `crux serve` request metrics now record `1xx` and `3xx` status classes instead of lumping redirects and informational responses in with `2xx`, and a panicking handler is counted as a `5xx` sample with an error-status span (the span is ended while the panic unwinds, and the panic still propagates to net/http), so redirect-heavy routes no longer inflate the success ratio and crashing handlers no longer vanish from metrics ([hivecommons/crux#142](https://github.com/hivecommons/crux/issues/142)).
+
+## 2026-11-10 (v5.211.16)
+
+### Fixed
+
+- The kick freshness guard now logs a ref it withheld because the re-read found the item closed or merged at INFO with `reason=closed` instead of WARN with the generic `re-read`, so a closed item lingering in a stale snapshot no longer files an `unclassified_error_repeated` self-report every cycle ([#17518](https://github.com/hivecommons/hive/issues/17518)).
+
+## 2026-11-10 (v5.211.15)
+
+### Fixed
+
+- crux: the agent.send_kick span records agent.name only after the kick target resolves, so caller-supplied unknown names no longer become an unbounded span attribute (hivecommons/crux#141)
+
+## 2026-11-10 (v5.211.14)
+
+### Fixed
+
+- `check-docs-links.py` (the `relative links and anchors resolve` CI check) no longer treats Markdown link syntax quoted inside an inline code span as a real link, so a changelog entry such as the one for #17450 that shows a `Generated by [<workflow>](…/actions/runs/<id>)` template no longer turns the default branch's Docs Link Check red after a release.
+
+## 2026-11-10 (v5.211.13)
+
+### Fixed
+
+- The contributor lane now posts `/ok-to-test` once per head on a fork PR it admitted whose author is not an org member or collaborator, when the repository is Prow-managed, the PR has no `ok-to-test` label and Prow has reported no presubmit on the head ([#17474](https://github.com/hivecommons/hive/issues/17474)). Previously Prow's trigger plugin never ran its presubmits on such a PR, so Tide reported `Jobs … have not succeeded` on a head that was green on GitHub Actions until a person posted the command (#17359 sat about four hours). If Prow rejects the App (`Cannot trigger testing until a trusted user`), the lane logs `skipped=prow-rejects-bot-commands` once, leaves one needs-human note and stops posting on that PR.
+
+## 2026-11-10 (v5.211.12)
+
+### Fixed
+
+- Stage labels: a PR one of the repository's own workflows opened under a user PAT (its body names a `Generated by [<workflow>](…/actions/runs/<id>)` run of that repo on the PR's own server) is now `author/clanker` instead of `author/human`, so it takes the 072 / adoption path instead of parking at 071 waiting on a push from the PAT's owner (#17450).
+
+## 2026-11-10 (v5.211.11)
+
+### Fixed
+
+- dashboard: fold the human-gate verbs at render time;  keeps its 44px tap target (#17515)
+
+## 2026-11-10 (v5.211.10)
+
+### Changed
+
+- Activity Monitor: every row a person must settle now carries exactly one human-gate control — a segmented `👤 Needs human · <reasons>` pill whose verbs are fixed per reason (review: Approve · Request changes… · Let hive decide; decision: Decide… · Approve as-is · Let hive decide; sentinel: Confirm safe · Let hive decide; hold: Release hold · Let hive decide; stacked reasons union, ≤ 3 visible + `…`). "Needs human", "Held · sentinel" and "Sentinel alert · needs human" never ride a chevron any more — the lit chevron is the real stage with the amber outline — the scattered `sentinel` chip / `Approve ▸` / `Let hive decide ▸` are folded into the pill, secondary rows of a shared PR render no gate (their *decision pending on #N* chip links to the primary row), and a new `POST /api/repos/{owner}/{repo}/items/{number}/sentinel-confirm` endpoint gives a sentinel alert its own answer (hivecommons/hive#17470).
+
+## 2026-11-10 (v5.211.9)
+
+### Fixed
+
+- Dashboard: the Activity Monitor's CI chevron no longer stays lit as running after every check on the head has concluded. A required check that never produced a run is a settled word (*hasn't reported*), never inferred motion from a part-filled tally; at `060 reviewed` with all reported checks concluded, Review is the lit chevron and CI is its blocker only when red. A CI snapshot that still claims a check running or queued after `dashboard.stage_tracker.ci_activity_stale_m` (default 10 minutes) is re-listed from GitHub on the next tracker build regardless of the batch cache, ETag or stage. ([#17508](https://github.com/hivecommons/hive/issues/17508))
+
 ## 2026-11-10 (v5.211.8)
 
 ### Fixed

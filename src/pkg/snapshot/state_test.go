@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -237,5 +238,33 @@ func TestLoadState_ReadErrorNotMissing(t *testing.T) {
 	}
 	if state != nil {
 		t.Error("state should be nil on read error")
+	}
+}
+
+func TestSaveState_ConcurrentWritersDoNotRace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 64)
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- SaveState(path, &PersistedState{Agents: map[string]AgentState{}}, testLogger())
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent SaveState: %v", err)
+		}
+	}
+	if _, err := LoadState(path, testLogger()); err != nil {
+		t.Fatalf("LoadState after concurrent saves: %v", err)
+	}
+	leftovers, _ := filepath.Glob(path + "*.tmp")
+	if len(leftovers) != 0 {
+		t.Fatalf("leftover temp files: %v", leftovers)
 	}
 }

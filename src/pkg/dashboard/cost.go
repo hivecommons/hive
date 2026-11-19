@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/modelfamily"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
 
@@ -120,11 +121,15 @@ type costModelEntry struct {
 	Name        string  `json:"name"`
 	USD         float64 `json:"usd"`
 	Coins       float64 `json:"coins,omitempty"`
-	Source      string  `json:"source"` // "estimated" | "unpriced"
+	Source      string  `json:"source"` // "estimated" | "unpriced" | "unknown" (price unknown: not in USD)
 	Input       int64   `json:"input"`
 	Output      int64   `json:"output"`
 	CacheRead   int64   `json:"cache_read"`
 	CacheCreate int64   `json:"cache_create"`
+	// CanonicalModel is modelfamily.Canonical(Name) on by_model rows, the id
+	// PRs-by-model and run stats group by (#18718). Empty on by_agent rows.
+	// Spend is still one row per raw model: prices are per raw model.
+	CanonicalModel string `json:"canonical_model,omitempty"`
 }
 
 type costEstimated struct {
@@ -141,6 +146,9 @@ type costEstimated struct {
 	ByModel        []costModelEntry `json:"by_model"`
 	ByAgent        []costModelEntry `json:"by_agent"`
 	UnpricedModels []string         `json:"unpriced_models"`
+	// UnknownPriceModels are gateway models with no published or configured
+	// price: their tokens are not in TotalUSD, which is therefore a floor.
+	UnknownPriceModels []string `json:"unknown_price_models"`
 	// WindowStart / WindowEnd bracket the token sessions represented by the
 	// aggregate rows. They let the UI label "usage by sandbox" with the actual
 	// observed span instead of leaving readers to guess.
@@ -394,6 +402,9 @@ func (s *Server) estimatedCost() costEstimated {
 	if est.UnpricedModels == nil {
 		est.UnpricedModels = []string{}
 	}
+	if est.UnknownPriceModels == nil {
+		est.UnknownPriceModels = []string{}
+	}
 	if est.BySession == nil {
 		est.BySession = []costSessionEntry{}
 	}
@@ -488,13 +499,13 @@ func estimatedSessions(summary *tokens.AggregateSummary) []costSessionEntry {
 	sessions := summary.Sessions
 	out := make([]costSessionEntry, 0, len(sessions))
 	for _, sess := range sessions {
-		usd, exact := tokens.EstimateCostUSD(sess.Model, sess.InputTokens, sess.OutputTokens, sess.CacheRead, sess.CacheCreate)
+		usd, src := tokens.EstimateCostWithSource(sess.Model, sess.Backend == tokens.BackendInference, sess.InputTokens, sess.OutputTokens, sess.CacheRead, sess.CacheCreate)
 		out = append(out, costSessionEntry{
 			SessionID:  sess.SessionID,
 			Agent:      sess.Agent,
 			Model:      sess.Model,
 			USD:        usd,
-			Source:     sourceForPriced(exact),
+			Source:     sourceForPriceSource(src),
 			Input:      sess.InputTokens,
 			Output:     sess.OutputTokens,
 			CacheRead:  sess.CacheRead,
@@ -523,27 +534,29 @@ func estimatedSessions(summary *tokens.AggregateSummary) []costSessionEntry {
 // re-deriving "priced vs unpriced".
 func flattenEstimated(est tokens.EstimatedCost) costEstimated {
 	out := costEstimated{
-		TotalUSD:       est.TotalUSD,
-		ByModel:        make([]costModelEntry, 0, len(est.ByModel)),
-		ByAgent:        make([]costModelEntry, 0, len(est.ByAgent)),
-		UnpricedModels: est.UnpricedModels,
+		TotalUSD:           est.TotalUSD,
+		ByModel:            make([]costModelEntry, 0, len(est.ByModel)),
+		ByAgent:            make([]costModelEntry, 0, len(est.ByAgent)),
+		UnpricedModels:     est.UnpricedModels,
+		UnknownPriceModels: est.UnknownPriceModels,
 	}
 	for name, mc := range est.ByModel {
 		out.ByModel = append(out.ByModel, costModelEntry{
-			Name:        name,
-			USD:         mc.USD,
-			Source:      sourceForPriced(mc.Priced),
-			Input:       mc.Input,
-			Output:      mc.Output,
-			CacheRead:   mc.CacheRead,
-			CacheCreate: mc.CacheCreate,
+			Name:           name,
+			USD:            mc.USD,
+			Source:         sourceForCost(mc),
+			Input:          mc.Input,
+			Output:         mc.Output,
+			CacheRead:      mc.CacheRead,
+			CacheCreate:    mc.CacheCreate,
+			CanonicalModel: modelfamily.Canonical(name),
 		})
 	}
 	for name, ac := range est.ByAgent {
 		out.ByAgent = append(out.ByAgent, costModelEntry{
 			Name:        name,
 			USD:         ac.USD,
-			Source:      sourceForPriced(ac.Priced),
+			Source:      sourceForCost(ac),
 			Input:       ac.Input,
 			Output:      ac.Output,
 			CacheRead:   ac.CacheRead,
@@ -558,6 +571,29 @@ func sourceForPriced(priced bool) string {
 		return "estimated"
 	}
 	return "unpriced"
+}
+
+// costSourceUnknown tags a row whose price is unknown: a gateway model with no
+// published or configured price. Its USD excludes those tokens.
+const costSourceUnknown = "unknown"
+
+// sourceForPriceSource maps a tokens.PriceSource onto the row tag the cost UI
+// reads: exact (gateway or table) → estimated, tier → unpriced, unknown →
+// unknown.
+func sourceForPriceSource(src tokens.PriceSource) string {
+	if src == tokens.PriceSourceUnknown {
+		return costSourceUnknown
+	}
+	return sourceForPriced(src.Exact())
+}
+
+// sourceForCost tags a model/agent row. An agent with any unknown-priced
+// model is "unknown" so the UI never shows its partial USD as complete.
+func sourceForCost(mc tokens.ModelCost) string {
+	if mc.PriceSource == tokens.PriceSourceUnknown || len(mc.UnknownPriceModels) > 0 {
+		return costSourceUnknown
+	}
+	return sourceForPriced(mc.Priced)
 }
 
 // costHTTPClient builds an HTTP client that honors a gateway's optional private

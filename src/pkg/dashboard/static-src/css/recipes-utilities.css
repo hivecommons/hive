@@ -46,9 +46,9 @@
     /* ══ Terminal surface (Phase 3) ══
        Log/pane/audit/activity surfaces read as terminals in both modes:
        slightly-inset dark bg (--terminal-bg), mono type, subtle border.
-       Surface props were stripped from the #logs-output / #audit-panel /
-       #inception-activity inline styles so these rules can apply. */
-    #logs-output, #audit-panel, #inception-activity, .oc-detail-summary, .doing {
+       Surface props were stripped from the #logs-output / #audit-panel
+       inline styles so these rules can apply. */
+    #logs-output, #audit-panel, .oc-detail-summary, .doing {
       background: var(--surface-terminal);
       color: var(--terminal-fg);
       border: var(--line-width) solid var(--terminal-line);
@@ -57,7 +57,7 @@
       box-shadow: var(--shadow-card);
     }
     .doing { color: var(--terminal-cyan); padding: var(--sp-4) var(--sp-5); }
-    .oc-detail-summary, #inception-activity { color: var(--terminal-cyan); }
+    .oc-detail-summary { color: var(--terminal-cyan); }
     /* Children of the always-dark pane capture can't use mode-remapped
        colors — pin them to the terminal companions. */
     .oc-detail-summary .sum-text, .oc-detail-summary .sum-tool,

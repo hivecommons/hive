@@ -46,7 +46,7 @@ func (s *levelHoldServer) start(t *testing.T) *httptest.Server {
 				"number": 11,
 				"title":  "fix",
 				"body":   body,
-				"labels": []map[string]string{{"name": "hold"}},
+				"labels": []map[string]string{{"name": DefaultReadyForReviewLabel}},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/comments":
 			author := s.commentAuthor
@@ -93,14 +93,14 @@ func (s *levelHoldServer) start(t *testing.T) *httptest.Server {
 				"event":      "labeled",
 				"created_at": "2026-09-15T12:00:00Z",
 				"actor":      map[string]string{"login": author},
-				"label":      map[string]string{"name": "hold"},
+				"label":      map[string]string{"name": DefaultReadyForReviewLabel},
 			}})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/11/labels":
 			var labels []string
 			_ = json.NewDecoder(r.Body).Decode(&labels)
 			s.labelsAdded = append(s.labelsAdded, labels...)
 			_ = json.NewEncoder(w).Encode([]map[string]string{})
-		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/hold":
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/"+DefaultReadyForReviewLabel:
 			s.removes++
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -119,7 +119,7 @@ func newLevelHoldClient(t *testing.T, s *levelHoldServer) *Client {
 }
 
 func heldPRFixture() *gh.PullRequest {
-	return &gh.PullRequest{Number: gh.Ptr(11), Title: gh.Ptr("fix"), Body: gh.Ptr("safe change"), Labels: []*gh.Label{{Name: gh.Ptr("hold")}}}
+	return &gh.PullRequest{Number: gh.Ptr(11), Title: gh.Ptr("fix"), Body: gh.Ptr("safe change"), Labels: []*gh.Label{{Name: gh.Ptr(DefaultReadyForReviewLabel)}}}
 }
 
 func TestSweepDoesNotReleaseLevelHoldAfterPromotion(t *testing.T) {
@@ -228,7 +228,7 @@ func TestEnsureLevelHoldNoticePostsAgentAndDoesNotDuplicate(t *testing.T) {
 	if len(s.comments) != 1 {
 		t.Fatalf("posted %d comments, want one", len(s.comments))
 	}
-	for _, want := range []string{levelHoldNoticePrefix, `"agent":"quality"`, "quality", "human removes"} {
+	for _, want := range []string{levelHoldNoticePrefix, `"agent":"quality"`, "quality", "maintainer reviews the PR and removes it", "`" + DefaultReadyForReviewLabel + "`"} {
 		if !strings.Contains(s.comments[0], want) {
 			t.Fatalf("level hold notice missing %q:\n%s", want, s.comments[0])
 		}

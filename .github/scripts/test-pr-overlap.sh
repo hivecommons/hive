@@ -109,7 +109,7 @@ case "$*" in
   *'.head.repo.full_name'*) printf '%s\n' "$REPO_SLUG" ;;
   *'.head.sha'*) printf '%s\n' "${FALLBACK_SHA:-}" ;;
   *'.base.ref'*) printf 'v6\n' ;;
-  *'/comments?'*) : ;;
+  *'/comments?'*) if [[ -n "${EXISTING_COMMENT_ID:-}" ]]; then printf '%s\n' "$EXISTING_COMMENT_ID"; fi ;;
   *) echo "unexpected gh api call: $*" >&2; exit 2 ;;
 esac
 GH
@@ -134,6 +134,8 @@ run_pr() { # pr -> sets OUT and WRITES
 
 LABEL_ADD="-X POST repos/${REPO_SLUG}/issues/%s/labels -f labels[]=conflicts-with-open-pr"
 LABEL_DEL="-X DELETE repos/${REPO_SLUG}/issues/%s/labels/conflicts-with-open-pr"
+COMMENT_POST="-X POST repos/${REPO_SLUG}/issues/%s/comments -f body="
+COMMENT_PATCH="-X PATCH repos/${REPO_SLUG}/issues/comments/%s -f body="
 
 echo 'PR 2: real sibling conflict with PR 3, stale PR 1 is not blamed'
 run_pr 2
@@ -144,6 +146,16 @@ assert_not_contains "$OUT" '| #1 |' 'does not blame PR 1 for its conflict with t
 assert_not_contains "$OUT" '| #4 |' 'does not link the unrelated stale PR 4'
 # shellcheck disable=SC2059
 assert_contains "$WRITES" "$(printf -- "$LABEL_ADD" 2)" 'labels PR 2 conflicts-with-open-pr'
+# shellcheck disable=SC2059
+assert_contains "$WRITES" "$(printf -- "$COMMENT_POST" 2)" 'posts the overlap comment when there is a finding'
+
+echo 'PR 2: an existing marker comment is edited, not duplicated'
+EXISTING_COMMENT_ID=4242 run_pr 2
+assert_exit0
+# shellcheck disable=SC2059
+assert_contains "$WRITES" "$(printf -- "$COMMENT_PATCH" 4242)" 'edits the existing marker comment'
+# shellcheck disable=SC2059
+assert_not_contains "$WRITES" "$(printf -- "$COMMENT_POST" 2)" 'does not post a second comment'
 
 echo 'PR 5: add/add of the same new path with different content'
 run_pr 5
@@ -167,9 +179,20 @@ assert_contains "$WRITES" "$(printf -- "$LABEL_DEL" 1)" 'removes the sibling-con
 echo 'PR 4: stale but clean, no overlap'
 run_pr 4
 assert_exit0
-assert_contains "$OUT" 'No conflicting open PRs or same-file overlaps were found.' 'reports no overlap'
+assert_contains "$OUT" 'No conflicting open PRs or same-file overlaps were found.' 'reports no overlap in the summary'
 # shellcheck disable=SC2059
 assert_contains "$WRITES" "$(printf -- "$LABEL_DEL" 4)" 'removes the sibling-conflict label'
+assert_not_contains "$WRITES" '/comments' 'posts no comment when there is nothing to report (#17863)'
+assert_contains "$OUT" 'no overlap findings and no earlier comment; not posting' 'logs the skipped post'
+
+echo 'PR 4: a clean run edits an earlier finding comment to a one-line resolved note'
+EXISTING_COMMENT_ID=777 run_pr 4
+assert_exit0
+# shellcheck disable=SC2059
+assert_contains "$WRITES" "$(printf -- "$COMMENT_PATCH" 777)<!-- hive-pr-overlap -->" 'edits the existing comment, keeping the marker'
+assert_contains "$WRITES" 'Resolved: no conflicting open PRs or same-file overlaps remain against `v6`' 'collapses to the resolved line'
+# shellcheck disable=SC2059
+assert_not_contains "$WRITES" "$(printf -- "$COMMENT_POST" 4)" 'does not post a new comment'
 
 echo 'PR 3: missing pull ref falls back to the API head and replaces a stale local ref'
 export FALLBACK_SHA

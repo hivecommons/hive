@@ -90,6 +90,7 @@
     .cost-session-active { color: var(--green); font-weight: 600; }
     .cost-subtable-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: var(--sp-6) var(--sp-0) var(--sp-2); }
     .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+    .cost-price-unknown { color: var(--muted); font-style: italic; white-space: nowrap; }
     .cost-recording-notice { border: var(--line-width) solid var(--status-warn); border-radius: var(--r-lg); color: var(--status-warn); font-size: var(--fs-sm); font-weight: var(--fw-bold); line-height: 1.4; margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); }
     .cost-recording-notice a { color: inherit; text-decoration: underline; }
     .cost-recording-incomplete { color: var(--status-warn); font-weight: var(--fw-bold); }

@@ -1844,6 +1844,32 @@ func TestClearExpiredTokens_MissingFile(t *testing.T) {
 // fixSharedConfigPerms — with actual path
 // ---------------------------------------------------------------------------
 
+// A symlink at the shared config path is left alone: the file it points at
+// keeps its mode.
+func TestFixSharedConfigPerms_SymlinkIsNotFollowed(t *testing.T) {
+	cleanup := configTestHelper(t)
+	defer cleanup()
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, sharedCopilotConfigPath); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(map[string]config.AgentConfig{
+		"scanner": {Backend: "claude"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["scanner"]
+	m.mu.RUnlock()
+
+	m.fixSharedConfigPerms(agent)
+
+	if info, _ := os.Stat(victim); info.Mode().Perm() != 0o600 {
+		t.Fatalf("victim mode = %v, want 0600 untouched", info.Mode())
+	}
+}
+
 func TestFixSharedConfigPerms_FixesPerms(t *testing.T) {
 	cleanup := configTestHelper(t)
 	defer cleanup()

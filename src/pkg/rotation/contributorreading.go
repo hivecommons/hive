@@ -370,6 +370,9 @@ func NewContributorReadingPublisher(dir, account string) *Manager {
 		}
 	}
 	m := NewManager(config.RotationConfig{Providers: providers})
+	// A Copilot reading for the owner's usage gauge. "github" is not a guard
+	// provider, so it is stored and served but never published to a pool.
+	m.probers = append(m.probers, newCopilotDisplaySource(m.cfg.EffectiveThreshold()))
 	m.contributorPublishDir = dir
 	m.contributorPublishAccount = account
 	m.contributorPublishSkipNotInstalled = true

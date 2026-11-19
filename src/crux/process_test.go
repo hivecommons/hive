@@ -3,6 +3,7 @@ package crux
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestProcess_PaneLinesWithoutCapture(t *testing.T) {
@@ -37,5 +38,31 @@ func TestProcess_PaneLinesApplyRuntimeFilter(t *testing.T) {
 	}
 	if got := p.FilteredPaneLines(10); !reflect.DeepEqual(got, []string{"one", "two", "three"}) {
 		t.Fatalf("FilteredPaneLines(10) = %v, want the whole capture", got)
+	}
+}
+
+// TestProcess_TurnInFlight pins the predicate the dashboard busy flag and the
+// reviewer autoscaler share. #18458: a running agent never kicked read as
+// mid-task forever, and a never-tasked reviewer replica counted as busy.
+func TestProcess_TurnInFlight(t *testing.T) {
+	kickAt := time.Now().Add(-time.Minute)
+	settled := KickOutcome{Kind: KickOutcomeEnded, At: kickAt.Add(time.Second), KickAt: kickAt}
+	cases := []struct {
+		name    string
+		state   ProcessState
+		kick    *time.Time
+		outcome KickOutcome
+		want    bool
+	}{
+		{"never kicked", StateRunning, nil, KickOutcome{}, false},
+		{"kicked, turn open", StateRunning, &kickAt, KickOutcome{}, true},
+		{"kicked, turn settled", StateRunning, &kickAt, settled, false},
+		{"kicked, not running", StateStopped, &kickAt, KickOutcome{}, false},
+	}
+	for _, c := range cases {
+		p := Process{State: c.state, LastKick: c.kick, KickOutcome: c.outcome}
+		if got := p.TurnInFlight(); got != c.want {
+			t.Errorf("%s: TurnInFlight() = %v, want %v", c.name, got, c.want)
+		}
 	}
 }

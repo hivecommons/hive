@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/egressmark"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/hivestate"
@@ -879,7 +880,15 @@ type HeartbeatPayload struct {
 	// The hub uses it to avoid nudging — let alone threatening de-provisioning
 	// — a hive whose credentials the OPERATOR has not delivered. Empty from a
 	// spoke too old to report it, which must be read as "cannot tell".
-	GitHubAppState   string `json:"github_app_state,omitempty"`
+	GitHubAppState string `json:"github_app_state,omitempty"`
+	// PRGateCause says why the hive-posted PR-contents gate cannot be posted
+	// ("grant-missing": the installation has no Commit statuses write grant;
+	// "write-refused": GitHub refused a status write), "" when it can or the
+	// gate is not configured. PRGateDependsOn is true when a required context
+	// depends on the gate, which turns the cause from amber into red on the hub
+	// (hivecommons/hive#19038).
+	PRGateCause      string `json:"pr_gate_cause,omitempty"`
+	PRGateDependsOn  bool   `json:"pr_gate_depends_on,omitempty"`
 	AutoUpgrade      bool   `json:"auto_upgrade,omitempty"`
 	Upgrading        bool   `json:"upgrading,omitempty"`
 	UpgradeTargetSHA string `json:"upgrade_target_sha,omitempty"`
@@ -1055,6 +1064,13 @@ type HeartbeatPayload struct {
 	// its cluster. The hub honours it as an override: a deliberate per-hive
 	// credential is never overwritten by the cluster default.
 	GitHubAppKeyPerHive bool `json:"github_app_key_per_hive,omitempty"`
+	// WebhookRelayKeyFingerprint is the NON-SECRET "sha256:<hex>" of the hub
+	// webhook relay key this spoke holds (github.WebhookRelayKeyFingerprint).
+	// The hub delivers the key only while this does not match its record, so
+	// a missing or rotated-out key is repaired on the next beat. Empty means
+	// no key (or a spoke too old to report one); the key itself never travels
+	// spoke → hub.
+	WebhookRelayKeyFingerprint string `json:"webhook_relay_key_fingerprint,omitempty"`
 	// GitHubAppID is the App ID this spoke believes it is authenticating AS —
 	// cfg.GitHub.AppID, non-secret. It exists to make one specific distinction
 	// decidable on the hub: a per-hive key that is WRONG versus a per-hive key
@@ -1498,6 +1514,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		if resp.RestartSpoke && onRestartSpoke != nil {
 			onRestartSpoke()
 		}
+		// Converge the cluster's host aliases onto our own Deployment; the hub
+		// cannot on a push-reported cluster (#18637). Throttled, off-goroutine.
+		applyHubHostAliases(logger, resp.HostAliases)
 		// Descriptive only (#7262): the hub's upgrade posture for this spoke,
 		// rendered by the dashboard. nil means the hub does not manage us.
 		if resp.UpgradeAnnounce != nil && onUpgradeAnnounce != nil {
@@ -1527,9 +1546,36 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			logger.Info("hub heartbeat stopped")
 			return
 		case <-ticker.C:
+			if heartbeatUnprovisionedBackoffActive(time.Now()) {
+				// Keep the attempt clock advancing so /api/livez does not
+				// read the deliberate pause as a stalled loop.
+				recordHeartbeatAttempt()
+				continue
+			}
 			processHeartbeatResponse(sendHeartbeat(ctx, hubURL, collect, logger, freshCollect))
 		}
 	}
+}
+
+// heartbeatUnprovisionedBackoff is how long the loop pauses after the hub
+// answers 403 "hosted/saas hive IDs can only be created via provisioning".
+// The hub never auto-creates hosted IDs, so retrying every tick cannot
+// succeed until an operator provisions (or the hive is re-IDed); a slow probe
+// still notices when that happens. A var so tests can shorten it.
+var heartbeatUnprovisionedBackoff = 10 * time.Minute
+
+// heartbeatUnprovisionedUntil is the UnixNano deadline of that pause (0 = none).
+var heartbeatUnprovisionedUntil atomic.Int64
+
+func heartbeatUnprovisionedBackoffActive(now time.Time) bool {
+	until := heartbeatUnprovisionedUntil.Load()
+	return until != 0 && now.UnixNano() < until
+}
+
+// hubHeartbeatRejectsUnprovisioned reports whether the hub refused the beat
+// because it does not know this hosted/saas hive ID (a permanent condition).
+func hubHeartbeatRejectsUnprovisioned(status int, body string) bool {
+	return status == http.StatusForbidden && strings.Contains(body, "can only be created via provisioning")
 }
 
 // waitForReady's knobs are vars (not consts) for the same reason as
@@ -1842,6 +1888,12 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if hubHeartbeatRejectsUnprovisioned(resp.StatusCode, string(respBody)) {
+			heartbeatUnprovisionedUntil.Store(time.Now().Add(heartbeatUnprovisionedBackoff).UnixNano())
+			logger.Warn("hub heartbeat rejected: hive id is not provisioned on the hub — backing off",
+				"status", resp.StatusCode, "body", string(respBody), "retry_in", heartbeatUnprovisionedBackoff.String())
+			return nil
+		}
 		logger.Warn("hub heartbeat rejected", "status", resp.StatusCode, "body", string(respBody))
 		if hubHeartbeatStatusIsDefect(resp.StatusCode) {
 			fleetreport.Observe(fleetreport.ClassUnexpectedHub5xx, "heartbeat", fmt.Sprintf("hub heartbeat returned HTTP %d", resp.StatusCode), string(respBody))
@@ -1849,11 +1901,17 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 		return nil
 	}
 	fleetreport.Clear(fleetreport.ClassUnexpectedHub5xx, "heartbeat")
+	heartbeatUnprovisionedUntil.Store(0)
 
 	// The hub accepted the beat (status < 300) — this is what /api/livez
 	// treats as "the heartbeat goroutine is alive and doing its job", so
 	// record it even if the response body below fails to decode.
 	recordHeartbeatSuccess()
+
+	// Report-only mirror to a second hub (#18148): a reduced copy of this
+	// accepted beat goes out in its own goroutine with its own timeout. Its
+	// response is never applied, and nothing below depends on it.
+	mirrorHeartbeatAsync(ctx, hubURL, payload, logger)
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxPayloadBytes))
 	if err != nil {
@@ -2279,6 +2337,7 @@ func inClusterHTTPClient(cfg *inClusterConfig) (*http.Client, error) {
 		Timeout: routeExistenceProbeTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+			DialContext:     egressmark.Dialer(0).DialContext,
 		},
 	}, nil
 }
@@ -2716,6 +2775,15 @@ type HeartbeatGitHubAppConfig struct {
 	// nil for every hive without a SecondaryAppID, which is the entire fleet
 	// today, so the heartbeat payload is byte-identical for them.
 	SecondaryKey *HeartbeatAppKey `json:"secondary_key,omitempty"`
+	// WebhookRelayKey is this hive's OWN key for verifying the signature the
+	// hub adds to every GitHub webhook it relays here (hivecommons/hive#17911).
+	// It is per hive and is never the GitHub App webhook secret, so it cannot
+	// sign anything another spoke would accept. Secret — never logged; the
+	// spoke persists it 0600 (github.AdoptWebhookRelayKey).
+	//
+	// Empty means "leave the spoke's key unchanged" — never a way to blank a
+	// working key.
+	WebhookRelayKey string `json:"webhook_relay_key,omitempty"`
 }
 
 // HeartbeatAppKey is one (app_id, private key) pair the hub delivers alongside
@@ -2909,6 +2977,11 @@ type HeartbeatResponse struct {
 	// ActivityEventsAck is the highest activity event sequence number the
 	// hub acknowledged, decoded from hub.HeartbeatResponse.ActivityEventsAck.
 	ActivityEventsAck uint64 `json:"activity_events_ack,omitempty"`
+	// HostAliases are the pod hostAliases clusters.json declares for this
+	// hive's cluster (#18637). The spoke converges its own Deployment onto
+	// them (self_host_aliases.go), because on a push-reported cluster the hub
+	// cannot patch it. Empty means the cluster declares none: leave it alone.
+	HostAliases []HostAlias `json:"host_aliases,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

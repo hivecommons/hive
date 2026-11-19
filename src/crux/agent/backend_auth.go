@@ -18,6 +18,7 @@ const (
 	BackendAuthUnreachable  = crux.BackendAuthUnreachable
 	BackendAuthQuota        = crux.BackendAuthQuota
 	BackendAuthForbidden    = crux.BackendAuthForbidden
+	BackendAuthRevoked      = crux.BackendAuthRevoked
 )
 
 // credentialRejectionSignals are the substrings in an auth-class pane line that

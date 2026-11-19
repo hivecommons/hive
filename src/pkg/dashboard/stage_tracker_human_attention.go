@@ -20,7 +20,11 @@ type StageTrackerHumanAttention struct {
 }
 
 func stageTrackerHumanAttention(it StageTrackerItem) *StageTrackerHumanAttention {
-	if !stageTrackerNeedsHuman(it) || it.Stage >= stagelabels.MergeQueue.Number() ||
+	why := it.NeedsHumanWhy
+	if why == nil && !stageTrackerNeedsHuman(it) {
+		return nil
+	}
+	if it.Stage >= stagelabels.MergeQueue.Number() ||
 		slices.Contains(it.Modifiers, modDraft) || slices.Contains(it.Modifiers, "merged") {
 		return nil
 	}
@@ -33,6 +37,12 @@ func stageTrackerHumanAttention(it StageTrackerItem) *StageTrackerHumanAttention
 	if d := it.DecisionNeeded; d != nil {
 		a.Reason = strings.TrimSpace(nonEmpty(d.Question, d.Blocker))
 		a.AskedBy = strings.TrimSpace(d.AskedBy)
+	}
+	if why != nil {
+		switch why.Source {
+		case needsHumanSourceFiledForHelp, needsHumanSourceLevelGate, needsHumanSourceHiveHold, needsHumanSourceBlockedOnOwner:
+			a.Reason = why.Reason
+		}
 	}
 	if a.Reason == "" {
 		a.Reason = strings.TrimSpace(it.HumanMergeReasonText)

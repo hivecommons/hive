@@ -18,6 +18,18 @@
     .kc-pill[data-status="ok"] { background: var(--green); }
     .kc-pill[data-status="syncing"] { background: var(--blue); }
     .kc-pill[data-status="error"] { background: var(--red); }
+    .kc-pill[data-status="not loaded"] { background: var(--orange); }
+    /* Live connector sync progress: a <progress> bar under the connector's
+       meta line, determinate when the item count is known, plus the compact
+       "syncing: <name> n/m" indicator in the Knowledge header. Tokens only. */
+    .kc-progress { display: grid; gap: var(--sp-1); margin-top: var(--sp-2); max-width: 420px; }
+    .kc-progress-bar { display: block; width: 100%; height: 6px; accent-color: var(--blue); }
+    .kc-progress-copy { display: flex; justify-content: space-between; gap: var(--sp-3); min-width: 0; font-size: var(--fs-xs); color: var(--muted); }
+    .kc-progress-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kc-progress-elapsed { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+    .kc-table .kc-progress { margin-top: var(--sp-1); max-width: 180px; }
+    .kc-sync-badge { margin-left: var(--sp-3); font-size: var(--fs-xs); font-weight: 700; color: var(--blue); }
+    .kc-sync-badge[hidden] { display: none; }
     .kc-publish { margin-top: var(--sp-4); border-top: var(--line-width) solid var(--border); padding-top: var(--sp-3); }
     .kc-publish-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
     .kc-publish-head h4 { margin: 0; }
@@ -143,6 +155,9 @@
     .kb-effective-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5); }
     .kb-effective-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
     .kb-effective-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-3); border-radius: var(--r); background: var(--surface); }
+    .kb-advisor-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); margin-top: var(--sp-2); }
+    .kb-advisor-table th, .kb-advisor-table td { text-align: left; padding: var(--sp-2) var(--sp-3); border-bottom: var(--line-width) solid var(--border); }
+    .kb-advisor-table th { color: var(--muted); font-weight: 600; }
     .kb-effective-meta { color: var(--muted); font-size: var(--fs-xs); }
     .kb-effective-reason { border-radius: var(--r-pill); padding: 0 var(--sp-2); font-size: var(--fs-xs); font-weight: 700; color: var(--yellow); border: var(--line-width) solid var(--yellow); }
     .kb-notice { margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); background: var(--bg); border-radius: var(--r); font-size: var(--fs-sm); color: var(--muted); border-left: 3px solid var(--yellow); }
@@ -165,5 +180,7 @@
     .kb-vault-status-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-4); }
     .kb-vault-status-label { font-size: 0.72rem; color: var(--muted); }
     .kb-vault-status-value { font-size: 0.78rem; font-weight: 600; color: var(--fg); }
+    .field-invalid { border-color: var(--red) !important; }
+    .field-error { color: var(--red); font-size: var(--fs-xs); margin-top: var(--sp-1); }
     @media (max-width: 768px) { .kb-layout { grid-template-columns: 1fr; } }
 

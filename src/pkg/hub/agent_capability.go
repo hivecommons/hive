@@ -507,6 +507,12 @@ type agentFleetRollup struct {
 	// name the single actionable cause ("re-login needed") instead of the
 	// generic "N agent(s) blocked".
 	LoginStuck int `json:"loginStuck,omitempty"`
+	// LoginRevoked is how many agents the spoke reports with
+	// BackendAuthRevoked: the provider rejected the stored credential on a
+	// live check (#18732). Counted independently of Problems and of the
+	// login grace, because it is provider-verified rather than inferred from
+	// pane text, and the fix is one specific action (operator sign-in).
+	LoginRevoked int `json:"loginRevoked,omitempty"`
 	// IdleWithWork is how many of the Problems are running agents sitting idle
 	// past the threshold while the hive has queued work. Named separately so
 	// the verdict can say "idle with work queued" — the remedy (kick/schedule)
@@ -728,6 +734,9 @@ func rollupAgents(agents []AgentSummary, blockers hiveBlockers, queuedWork int, 
 		v := deriveAgentVerdict(a, blockers, queuedWork, now)
 		if v.CapabilityTier != tierGray {
 			r.Known++
+		}
+		if a.BackendAuthStatus == crux.BackendAuthRevoked {
+			r.LoginRevoked++
 		}
 		if a.ExpectedActive {
 			r.Expected++

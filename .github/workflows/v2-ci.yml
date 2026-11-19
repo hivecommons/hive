@@ -892,6 +892,10 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_review.sh
 
+      - name: hive-topic helper tests
+        working-directory: .
+        run: bash bin/test_hive_topic.sh
+
       - name: Shared CI baseline classifier tests
         working-directory: .
         run: bash bin/test_hive_baseline_check.sh
@@ -1091,6 +1095,22 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_ttyd_default_socket_uid.sh
 
+      - name: ttyd refuses a user-session attach without its per-session token
+        working-directory: .
+        run: bash src/deploy/test_ttyd_session_attach_token.sh
+
+      # The browser terminal's tmux client must end when the browser does:
+      # ttyd's SIGHUP has to reach the attach helper (not be inherited ignored
+      # from the entrypoint) and the helper has to detach its client, or every
+      # reload leaves one more client attached ("26 attached").
+      - name: ttyd-tmux.sh ends its tmux client when ttyd hangs up
+        working-directory: .
+        run: bash src/deploy/test_ttyd_attach_hangup.sh
+
+      - name: ttyd attaches a user session read-only without its write token
+        working-directory: .
+        run: bash src/deploy/test_ttyd_session_readonly_attach.sh
+
       # #5435: hive-discord.service ran `node bot.js` with
       # WorkingDirectory=/tmp/hive/discord, resolving the executed code out of a
       # world-writable parent that is cleared on every reboot — a local user who
@@ -1191,6 +1211,12 @@ jobs:
         env:
           HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
         run: bash src/deploy/test_contributor_container_resources.sh
+
+      - name: Contributor runtime selection and rootless Docker (#19076)
+        working-directory: .
+        env:
+          HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
+        run: bash src/deploy/test_contributor_runtime_selection.sh
 
       # #7836: container mode staged the contributor's ENTIRE ~/.claude — every
       # transcript on the machine, the prompt history, paste cache, memory and
@@ -1420,6 +1446,9 @@ jobs:
           - name: contributor
             file: src/Dockerfile.contributor
             smoke: "false"
+          - name: mx
+            file: src/Dockerfile.mx
+            smoke: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1484,7 +1513,21 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Sized for the COLD-cache path, not the warm one. Measured 2026-11-16/17
+    # on ubuntu-latest: with the whisper-builder layers served from the gha
+    # cache the job takes 6.5-8 min (buildx step 4.3-5.8 min). But the repo's
+    # Actions cache sits at 12-23 GB against a 10 GB cap, so GitHub evicts LRU
+    # entries continuously (oldest surviving entry ~2 days) and the
+    # whisper-linux-amd64 blobs are regularly gone — docker.yml's own v5 warm
+    # step recompiles whisper several times a day. On a miss this 4-vCPU
+    # runner compiles FFmpeg + whisper.cpp from source: a serial ~8.5 min
+    # chain (apt ~35s, FFmpeg 95-150s, whisper.cpp 210-335s), so the build
+    # step alone is ~10.5 min and the job ~13 min. Every overlayfs-exec-guard
+    # cancellation sampled (#18432 x3, #18446, #18500, #18527) was that path:
+    # the build step cancelled at 9.5 min with whisper still compiling, or
+    # finishing at 7.7 min and the containerd run cut off. 20 min covers the
+    # cold path with ~50% headroom; the warm path is unchanged.
+    timeout-minutes: 20
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1493,6 +1536,10 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # Ephemeral hosted runner: tearing the builder container down in the
+          # post step bought nothing and measured 16-36s on every run.
+          cleanup: false
 
       # Build a single-arch image the SAME way docker.yml builds the shipped
       # image — buildx (BuildKit), attestations OFF (provenance:false/sbom:false
@@ -1513,6 +1560,12 @@ jobs:
       # tmux-builder (~51s) at its third layer while its own apt layer takes
       # ~20s, so a hit removes ~30s from a ~3.5 min build; a whole-image
       # cache-to would instead ADD the 130-225s export docker.yml measured.
+      #
+      # whisper-builder layers come from docker.yml's GHCR registry cache
+      # (hive-buildcache:whisper-linux-amd64), which v5 pushes export and
+      # which is not subject to the Actions cache cap. Its inputs are pinned,
+      # checksummed tarballs, so the same stale-COPY argument holds. The read
+      # is anonymous; a miss or an unreadable ref just recompiles whisper.
       - name: Resolve runner ref name
         id: ref_name
         run: |
@@ -1532,7 +1585,9 @@ jobs:
           provenance: false
           sbom: false
           outputs: type=oci,oci-mediatypes=true,dest=/tmp/hive-oci.tar,tar=true
-          cache-from: type=gha,scope=tmux-linux-amd64
+          cache-from: |
+            type=gha,scope=tmux-linux-amd64
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/hive-buildcache:whisper-linux-amd64
           build-args: |
             BASE_REGISTRY=${{ env.BASE_REGISTRY }}
             GIT_HASH=${{ github.sha }}

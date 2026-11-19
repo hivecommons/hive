@@ -277,7 +277,10 @@ func pinOnlyTestCommit(sha, author, committer string, verified bool) map[string]
 		"sha":       sha,
 		"author":    map[string]any{"login": author},
 		"committer": map[string]any{"login": committer},
-		"commit":    map[string]any{"verification": map[string]any{"verified": verified}},
+		"commit": map[string]any{
+			"message":      "Bump upstream/action\n\nSigned-off-by: " + author + " <" + author + "@example.com>",
+			"verification": map[string]any{"verified": verified},
+		},
 	}
 }
 

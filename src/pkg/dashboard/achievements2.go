@@ -68,7 +68,6 @@ type ContributorAbuseAnnotation struct {
 type achievement2Inputs struct {
 	Activity     []ActivityEntry
 	Hives        []ContributorHiveRel
-	JamStates    []CampaignJamState
 	Runs         []Run
 	SwarmPlayers []SwarmPlayer
 	LocalHiveID  string
@@ -161,7 +160,7 @@ func buildAchievements2WithInputs(p *ContributorProfile, inputs achievement2Inpu
 		add("reciprocal-trust", achievementTierDual, achievementTrackTeamwork, "Reciprocal Trust", "Work with the same collaborator more than once.", stats.maxOccasions >= achievementReciprocalOccasionMinCount, "profile.collaborators.occasions"),
 		add("cross-hive-neighbor", achievementTierDual, achievementTrackTeamwork, "Cross-Hive Neighbor", "Contribute to another registered hive.", stats.crossHives >= 1, "federation.active_contributor_names"),
 		add("commons-regular", achievementTierFireteam, achievementTrackTeamwork, "Commons Regular", "Show up on two or more hives in the Commons registry.", stats.crossHives >= achievementCrossHiveRegularThreshold, "federation.active_contributor_names"),
-		add("full-sdlc-fireteam", achievementTierFireteam, achievementTrackTeamwork, "Full SDLC Fireteam", "Cover a real spec/plan/implement/review SDLC unit with at least three distinct actors.", stats.fireteamUnits >= 1, "spektacular/jam/run roles"),
+		add("full-sdlc-fireteam", achievementTierFireteam, achievementTrackTeamwork, "Full SDLC Fireteam", "Cover a real spec/plan/implement SDLC unit with at least three distinct actors.", stats.fireteamUnits >= 1, "spektacular/run roles"),
 		add("spec-sequence", achievementTierRaid, achievementTrackTeamwork, "Spec Sequence", "Participate in multiple spec-linked units or swarm speks.", stats.specSequenceUnits >= achievementSpecSequenceThreshold || stats.swarmSpeks >= achievementSpecSequenceThreshold, "spektacular/jam/swarm"),
 		add("six-person-swarm", achievementTierRaid, achievementTrackTeamwork, "Six-Person Swarm", "Work with five distinct collaborators or join a qualifying swarm.", stats.collaborators >= achievementRaidCollaborators || stats.raidUnits >= 1, "profile.collaborators/swarm.players"),
 		add("raid-clear", achievementTierRaid, achievementTrackTeamwork, "Raid Clear", "Clear a swarm or multi-spec sequence with SDLC evidence.", stats.raidUnits >= 1 || (stats.fireteamUnits >= 1 && stats.specSequenceUnits >= achievementSpecSequenceThreshold), "swarm/spektacular"),
@@ -292,7 +291,7 @@ func (u sdlcRoleUnit) includes(actor string) bool {
 }
 
 func (u sdlcRoleUnit) fullCoverage() bool {
-	if len(u.roles["spec"]) == 0 || len(u.roles["plan"]) == 0 || len(u.roles["implement"]) == 0 || len(u.roles["review"]) == 0 {
+	if len(u.roles["spec"]) == 0 || len(u.roles["plan"]) == 0 || len(u.roles["implement"]) == 0 {
 		return false
 	}
 	return len(u.actorNames()) >= 3
@@ -309,33 +308,6 @@ func sdlcRoleStatsForUser(username string, inputs achievement2Inputs) (fireteamU
 			units[key] = &sdlcRoleUnit{}
 		}
 		return units[key]
-	}
-	for _, jam := range inputs.JamStates {
-		u := unit(jam.CampaignID)
-		for _, rev := range jam.Revisions {
-			u.add("spec", rev.Author.Name)
-		}
-		for _, th := range jam.Threads {
-			u.add("spec", th.CreatedBy.Name)
-			for _, c := range th.Comments {
-				u.add("spec", c.Author.Name)
-			}
-		}
-		for _, sug := range jam.Suggestions {
-			u.add("spec", sug.Author.Name)
-			if sug.Status == jamSuggestionAccepted && sug.ResolvedBy != nil {
-				u.add("review", sug.ResolvedBy.Name)
-			}
-		}
-		for _, poll := range jam.Polls {
-			u.add("plan", poll.CreatedBy.Name)
-			for _, vote := range poll.Votes {
-				u.add("plan", vote.Voter.Name)
-			}
-			if poll.Decision != nil {
-				u.add("review", poll.Decision.DecidedBy.Name)
-			}
-		}
 	}
 	for _, run := range inputs.Runs {
 		u := unit(run.Key)
@@ -381,7 +353,6 @@ func (s *Server) achievement2BaseInputs() achievement2Inputs {
 		return inputs
 	}
 	inputs.LocalHiveID = s.localHiveIdentity()
-	inputs.JamStates = s.achievementJamStates()
 	if runs, err := s.activeRuns(true); err == nil {
 		inputs.Runs = runs
 	}
@@ -389,23 +360,4 @@ func (s *Server) achievement2BaseInputs() achievement2Inputs {
 		inputs.SwarmPlayers = players
 	}
 	return inputs
-}
-
-func (s *Server) achievementJamStates() []CampaignJamState {
-	if s == nil {
-		return nil
-	}
-	campaignJamStoreMu.Lock()
-	defer campaignJamStoreMu.Unlock()
-	disk, err := s.readCampaignJamDisk()
-	if err != nil || len(disk.Campaigns) == 0 {
-		return nil
-	}
-	out := make([]CampaignJamState, 0, len(disk.Campaigns))
-	for _, state := range disk.Campaigns {
-		if state != nil {
-			out = append(out, *state.clone())
-		}
-	}
-	return out
 }

@@ -93,14 +93,45 @@ Repository permissions used by the dashboard setup UI are:
 | Actions | Read and write (Read-only with `governor.ci.auto_approve_workflows: false`) | Inspect workflow runs; the default-on approval sweep approves gated `pull_request` runs for trusted bots, the App and dashboard-admitted heads with the App token ([#16603](https://github.com/hivecommons/hive/issues/16603)). If the sweep is off or refused and GitHub holds trusted Dependabot/App/clanker runs in `action_required`, Hive posts `/ok-to-test`; the repository-local `hive-ok-to-test` workflow uses its own `GITHUB_TOKEN` with Actions write to approve those runs. With Read and write, the contributor lane also approves held runs directly for a PR author the contributor registry admitted at a `require_tiers` tier (`auto_merge.contributor_lane.approve_held_runs_for_registry_trusted`). Optional: without it the hive marks such a PR `hive:unauthorized` and waits for a maintainer to click **Approve and run** ([#14589](https://github.com/hivecommons/hive/issues/14589)). |
 | Administration | Read-only | Read branch-protection rules before the merge-request watcher lands a PR; Hive refuses closed if it cannot verify the base branch is protected. |
 | Commit statuses | Read/write | Needed when `governor.labels.automerge` is the default `lgtm` on a repository running Prow's commit-bound `lgtm` (prow-github-actions v3): the queue action sets a `prow/lgtm` success status on the approved head so Prow does not strip the label. Without the write grant the label and approval still land, but every queue action takes the failure branch and posts a PR comment saying the status could not be set. Choose a distinct label such as `hive/auto-merge` if you would rather keep this at Read. |
-| Dependabot alerts | Read-only | Required for the sec-check agent's Dependabot scanning (`gh api repos/<org>/<repo>/dependabot/alerts`, [#17426](https://github.com/hivecommons/hive/issues/17426)). Least privilege: only the token minted for an agent with role `sec-check` at ISSUES_AND_PRS or ISSUES_PRS_MERGE ([#17496](https://github.com/hivecommons/hive/issues/17496)) requests `vulnerability_alerts: read`; every other agent's token is unchanged, even though the App itself must declare the permission. Existing installations must re-accept the updated permission once under Settings → Integrations → the app → Review request. Optional: without it the sec-check mint retries without the grant, the Dependabot call returns 403, and the hive still mints tokens. |
-
+| Dependabot alerts | Read-only | Required for the sec-check agent's Dependabot scanning (`gh api repos/<org>/<repo>/dependabot/alerts`, [#17426](https://github.com/hivecommons/hive/issues/17426)). Least privilege: only the token minted for an agent with role `sec-check` at ISSUES_AND_PRS or ISSUES_PRS_MERGE ([#17496](https://github.com/hivecommons/hive/issues/17496)) requests `vulnerability_alerts: read`; every other agent's token is unchanged. The App itself must still declare the permission, and that is a GitHub UI change only the App owner can make — see [Adding a permission to an existing App](#adding-a-permission-to-an-existing-app). Optional: until it is declared and re-accepted, the sec-check mint logs `scoped token mint with vulnerability_alerts:read failed; retrying without it`, mints without the grant, and the Dependabot call returns 403; the hive still mints tokens and every other agent is unaffected. |
 | Workflows | Read/write | Let trusted-tier agents push branches that modify `.github/workflows/`, and let the contributor lane merge an owner-approved PR that edits `.github/workflows/**` (`auto_merge.contributor_lane.owner_approval_releases_workflow_fence`, [#14664](https://github.com/hivecommons/hive/issues/14664)); without the grant such a merge is refused and the hive marks the PR `hive:unauthorized` (`merge-workflow-path`) and parks it at 090 for a maintainer's **Merge** click. Without it GitHub also rejects any GitHub App-token push touching those files server-side ("refusing to allow a GitHub App to create or update workflow … without workflows permission") no matter what the token requests. Maintainer user credentials are separate and can still push workflow-file changes when their account has the normal repository rights; the Hive App cannot until this grant is added **and re-accepted on each installation** (an existing install must approve the new permission under Settings → Integrations → the app → Review request). See [`hive-open-pr`](hive-open-pr.md#workflow-file-pushes-rejected-by-app-tokens) for the agent delivery procedure and [#6985](https://github.com/hivecommons/hive/issues/6985) for the outstanding permission change. |
+
 Organization permission:
 
 | Permission | Level | Why |
 | --- | --- | --- |
 | Members | Read-only | Identify contributors and owners where configured. |
+
+### Adding a permission to an existing App
+
+Hive does not ship an App manifest and never edits the App's permissions for
+you: GitHub exposes no API for changing a GitHub App's declared permissions, so
+when a Hive release starts requesting a grant the App does not yet declare
+(Workflows in [#6985](https://github.com/hivecommons/hive/issues/6985),
+Dependabot alerts in [#17426](https://github.com/hivecommons/hive/issues/17426)),
+the token mint is refused with `422 The permissions requested are not granted
+to this installation`, Hive logs a warning, retries without the grant, and the
+feature that needed it degrades (a 403 on that API call) until two people have
+clicked through the GitHub UI:
+
+1. **The App owner** (whoever owns the App under **Developer settings**, e.g.
+   the organization that created it) opens **Settings → Developer settings →
+   GitHub Apps → _your app_ → Permissions & events → Repository
+   permissions**, sets the new permission (for example **Dependabot alerts:
+   Read-only**), and clicks **Save changes** at the bottom of the page.
+   Nothing changes for any installation until this is saved.
+2. **Each installation owner** then sees **Permission updates requested** on
+   the installation page — **Settings → Integrations → Applications →
+   _your app_ → Configure** for a user account, or **Organization settings →
+   Third-party access → GitHub Apps → _your app_ → Configure** for an
+   organization — and must click **Review request → Accept new permissions**.
+   GitHub also emails the installation owner. Until an installation accepts,
+   that installation keeps minting without the grant; installations that have
+   accepted get it on their next mint without a hive restart.
+
+The hive confirms the grant landed when the `scoped token mint with
+vulnerability_alerts:read failed` (or `workflows:write failed`) warning stops
+appearing in the spoke log on the next mint for that tier.
 
 ### Optional shared-CI recovery
 
@@ -177,11 +208,35 @@ that has not approved a permission update is the one that still looks fine, and
 GitHub keeps an App on its old permissions until an org owner accepts, so a
 partly approved fleet is otherwise invisible.
 
-Verdicts are computed where a GitHub call has failed and on the dashboard's
-**Re-check** button, not on every eval cycle, so this adds no API calls to a
-healthy hive. To read a specific installation's grants on demand — for example
-to confirm the demo/canary install — press Re-check on that hive and read the
-line above from its logs.
+Permission verdicts are computed where a GitHub call has failed and on the
+dashboard's **Re-check** button, not on every eval cycle. Repository coverage
+is checked separately on the self-heal loop, including on a healthy hive, as
+described below. To read a specific installation's grants on demand — for
+example to confirm the demo/canary install — press Re-check on that hive and
+read the line above from its logs.
+
+## PR-contents gate posted by the hive
+
+From 2026-12-02 GitHub blocks `pull_request_target` workflows by default in public repositories. A repository whose required `verify PR contents` check comes from such a workflow would stop reporting it, and its PRs would park as `required-check-missing`. The hive can post that gate itself as a **commit status** on the exact PR head, so customers do not have to change anything in their repositories. It needs the Hive App's **Commit statuses: Read and write** grant (the same optional grant the `prow/lgtm` binding uses above).
+
+It is configured in `hive.yaml` only, ships **off**, and needs an explicit repository list:
+
+```yaml
+auto_merge:
+  pr_gate:
+    mode: shadow            # off (default) | shadow | enforce
+    repos: [your-org/your-repo]
+```
+
+- `off` posts nothing and changes nothing.
+- `shadow` posts only `verify PR contents (hive)` (a name no branch rule requires) on each PR head and compares the verdicts with the workflow's own `PR Type`, `PR Issue` and `verify PR contents` results. Nothing a branch rule reads can change.
+- `enforce` is accepted in the file but runs as `shadow` until the backstop sweep ships; it never posts the real names yet.
+
+The verdict logic is a Go port of the PR title verifier (`PR Type`, `PR Issue`); both implementations replay one shared golden corpus in CI, so they cannot drift. The poster can write exactly four contexts: `verify PR contents`, `PR Type`, `PR Issue` and `verify PR contents (hive)`. Any other context, `DCO` included, is refused in code before a request is made. Drafts and closed PRs are skipped, the head is re-read from GitHub before posting, and an identical status is never posted twice.
+
+**Grant check and visible failure.** The gate never fails silently. At startup and every 15 minutes the hive reads the Commit statuses permission the installation was actually granted (an owner must accept a permission change before an installation holds it). A missing grant forces the gate off, never promotes it to `enforce`, and logs `pr-gate: the installation has no Commit statuses write grant, the gate is forced off`. A 403 on a status write is recorded per repository, counted, and not retried for 15 minutes. While either holds, the dashboard shows a **PR-contents gate cannot be posted** banner that names the installation, says what is missing and where an owner accepts it (the App's pending permission request in the organization settings), and counts the days left before the cutoff. The hub's hive health shows the same cause with a remediation hint: red when a required check depends on the gate, amber otherwise (see [fleet health](fleet-health.md#pr-gate-cannot-be-posted)). In `enforce`, a PR whose required gate context is missing for this reason shows the held reason `unauthorized:post-pr-gate-status` ("the hive's GitHub App is not permitted to post pr gate status") instead of a bare `required-check-missing`.
+
+**Verify in shadow.** Open or edit a PR in a listed repository. Within seconds its **Checks** box shows a status named `verify PR contents (hive)` whose description reads `PR Type: success; PR Issue: success` (or `failure`). In the hive log, `pr-gate: status posted` names the repository, head and context, and `pr-gate: comparison with the workflow result agrees` (or `DISAGREES`, logged as a warning) appears when the workflow's check lands on the same head. A `pr-gate: status refused with 403` line means the installation has no Commit statuses write grant: accept the App's pending permission request in the organization settings (see [Adding a permission to an existing App](#adding-a-permission-to-an-existing-app)).
 
 ## Install and configure Hive
 
@@ -225,7 +280,9 @@ What it does not do, and falls back on (the PR still opens on the agent's own co
 
 **Follow-up commits.** An agent's later pushes to its open PR (a CI fix, review follow-ups, a rebase) are plain git and unsigned, and so is a PR that opened on a `signed_skipped` fallback. With `app_signed_commits` on, the PR-request watcher also runs a reconcile pass, at most once a minute (#9364). A PR needs signing when *any* of its commits is not **Verified**, not only its head: a person can sign their own commit on top of an agent's unsigned one, which leaves the head Verified while the PR is still blocked (#9531). For every open PR authored by the App bot, the pass finds the first unverified commit (oldest to newest) and re-authors everything from there through the head as one GitHub-signed commit on top of the commit right before it. The tree is the same, and the message carries the range's messages and DCO trailers, re-addressed as above. When the PR's first commit is the unverified one, it signs against the PR's base branch, as at open time. A fully Verified PR is left alone. The open path's guards all still apply. A head that moves mid-rewrite is retried on the next pass, and so is a head GitHub could not be reached for (a 5xx or network error). A head GitHub *refuses* to sign (a 4xx answer, such as the 422 on the scratch ref in #16193) is retried on three consecutive passes and then settled, with the `hive:signed-commits-blocked` comment quoting the error; there is no person's commit to squash in that case, so the remedy is to push a new head (which restarts signing) or fix the repository-side cause the error names. A PR whose head hasn't changed since the last pass costs no calls beyond the open-PR list.
 
-The pass re-signs only the hive's own work. Every commit in that range, Verified or not, must have an author and committer that are the App bot or an address in the pane identity domain (`HIVE_GIT_BOT_EMAIL_DOMAIN`, default `hive.kubestellar.io`). Verified App-bot commits in the range are folded in. A person's commit (even a Verified one on top), or a merge commit, leaves the branch as pushed. So does any change the mutation can't express. The PR then gets one comment (marked `<!-- hive:signed-commits-blocked -->`, posted once per PR) naming the unsigned commit and the commit that blocks the rewrite, so it can't merge under `required_signatures` until someone acts. The manual fix is to squash the unsigned commit into a commit the person signs, or to drop the person's commit so the hive can re-sign the range and then push it again, signed, on top.
+The pass re-signs only the hive's own work. Every commit in that range, Verified or not, must have an author and committer that are the App bot or an address in the pane identity domain (`HIVE_GIT_BOT_EMAIL_DOMAIN`, default `hive.kubestellar.io`). Verified App-bot commits in the range are folded in. A person's commit (even a Verified one on top), or a merge commit, leaves the branch as pushed. The PR gets one comment (marked `<!-- hive:signed-commits-blocked -->`, posted once per PR) naming the blocker. To unblock it, squash the unsigned commit into a commit the person signs, or drop the person's commit so the hive can re-sign the range and then push it again, signed, on top.
+
+Changes the signing mutation cannot safely express also leave the branch untouched and get a single comment with the reason. For example, it cannot preserve executable files, symlinks or submodule pointers. A contributor can re-author the unsigned commits with their own verified signature, preserving their contents and modes, and push the signed branch. These deliberate skips are logged at INFO rather than as API failures; a new head is examined again.
 
 **Agents after a push.** The rewrite replaces the agent's commits on the remote, so its local branch no longer matches, even though the tree is identical. Before committing again on a branch with an open PR, run `git fetch && git rebase origin/<branch>`. The rebase drops the now-empty local commits and keeps any new work. Never force-push over the signed commit: that puts the unsigned commits back, and the next pass has to sign them again.
 
@@ -280,6 +337,22 @@ resulting dead redirect is cosmetic. Adding a repository modifies the existing
 installation rather than creating a new one, so the `installation_id` in that
 redirect is one the hive already holds — the failed page does not mean App
 authentication is broken.
+
+An installation can authenticate successfully while excluding a private
+repository under **Only select repositories**. When adding a repo in the
+dashboard, use the reported installation settings link to add it to the
+selection, then re-check access. For repos already configured, the Forge App
+banner identifies missing repository coverage; update the installation and
+re-check it. A rejected advisory issue creation can then be retried without
+waiting for the next UTC day.
+
+Boot coverage checks have a time limit; a timeout is inconclusive. The
+background self-heal loop rechecks installation coverage every two minutes,
+including on a healthy hive, using the cached installation token. Each check
+walks up to 10 pages of `GET /installation/repositories`. If that bounded
+listing is incomplete, the dashboard checks the repository's App installation
+directly. Temporary GitHub errors still block adding the repository until a
+check succeeds.
 
 ## `/gh-setup` flow
 

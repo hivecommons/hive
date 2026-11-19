@@ -93,7 +93,7 @@ func retryClaimEffect(ctx context.Context, logger *slog.Logger, what, key string
 			return n
 		}
 		if logger != nil {
-			logger.Warn("issue-claims: retrying GitHub side effect", "what", what, "issue", key, "attempt", n, "retry_in", backoff.String(), "error", err)
+			logger.Info("issue-claims: retrying GitHub side effect", "what", what, "issue", key, "attempt", n, "retry_in", backoff.String(), "error", err)
 		}
 		if !wait(ctx, backoff) {
 			if logger != nil {
@@ -220,13 +220,35 @@ func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, clie
 		// claims do not — the holder's own PR is the open PR. A hive
 		// agent's own dispatch (Holder is the agent name) also refuses an
 		// issue that agent filed for outside help (hivecommons/hive#17299).
-		if _, held := ledger.Lookup(req.Repo, req.Issue); !held && !req.PRStarted {
-			if req.Kind == claims.KindAgent {
-				return gh.IssueStartBlockReason(ctx, req.Repo, req.Issue, req.Holder)
-			}
-			return gh.IssueDispatchBlockReason(ctx, req.Repo, req.Issue)
+		_, held := ledger.Lookup(req.Repo, req.Issue)
+		var reason string
+		var err error
+		switch {
+		case !held && !req.PRStarted && req.Kind == claims.KindAgent:
+			reason, err = gh.IssueStartBlockReason(ctx, req.Repo, req.Issue, req.Holder)
+		case !held && !req.PRStarted && req.Kind == claims.KindContributor:
+			// A contributor's fresh claim also waits out the owner grace on
+			// an issue an owner, maintainer or this hive filed moments ago
+			// (hivecommons/hive#18898).
+			reason, err = gh.IssueContributorDispatchBlockReason(ctx, req.Repo, req.Issue)
+		case !held && !req.PRStarted:
+			reason, err = gh.IssueDispatchBlockReason(ctx, req.Repo, req.Issue)
+		default:
+			reason, err = gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)
 		}
-		return gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)
+		if err != nil || reason != "" || req.Kind != claims.KindContributor {
+			return reason, err
+		}
+		// A person's claim outside the ledger (assignee, `/claim` comment,
+		// hand-applied hive/claimed-by-human) outranks a contributor: it
+		// refuses a fresh claim and a renewal, and the release tick then
+		// drops the live lease and yanks the task (hivecommons/hive#18899).
+		// A lookup failure keeps the claim held: unknown is not a verdict.
+		human, herr := gh.IssueHumanClaimReason(ctx, req.Repo, req.Issue, req.Holder)
+		if herr != nil {
+			return "", nil
+		}
+		return human, nil
 	})
 }
 
@@ -456,6 +478,37 @@ func claimsInflightLookup(ledger *claims.Ledger, org string) scheduler.InflightL
 			return fmt.Sprintf("listed in a live kick to %s until %s", li.Holder, li.ExpiresAt.UTC().Format(time.RFC3339)), true
 		}
 		return "", false
+	}
+}
+
+// claimsPRLeaseLookup adapts the worker-claim ledger to the scheduler's
+// busy-branch guard (hivecommons/hive#18488): a live claim on a PR or its
+// linked issue means a worker is on that branch. Only real claims count —
+// a kick listing is not a worker — and the holding agent is reported so the
+// guard can ignore the kicked agent's own claim.
+func claimsPRLeaseLookup(ledger *claims.Ledger, org string) scheduler.PRLeaseLookup {
+	if ledger == nil {
+		return nil
+	}
+	return func(repo string, number int) (string, string, bool) {
+		if number <= 0 {
+			return "", "", false
+		}
+		c, ok := ledger.Lookup(repo, number)
+		if !ok && org != "" && !strings.Contains(repo, "/") {
+			c, ok = ledger.Lookup(org+"/"+repo, number)
+		}
+		if !ok {
+			return "", "", false
+		}
+		holderAgent := ""
+		if c.Kind == claims.KindAgent {
+			holderAgent = c.HolderID
+			if holderAgent == "" {
+				holderAgent = c.Holder
+			}
+		}
+		return fmt.Sprintf("%s (%s) until %s", c.Holder, c.Kind, c.ExpiresAt.UTC().Format(time.RFC3339)), holderAgent, true
 	}
 }
 

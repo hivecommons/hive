@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/keystore"
 )
 
 // TestMain isolates the dashboard test suite from the real internet.
@@ -97,6 +99,16 @@ func TestMain(m *testing.M) {
 	// Likewise the uid_isolation check (#11713) reads ambient HIVE_* env and
 	// the serviceaccount mount; a CI runner inside a hive pod has both.
 	uidIsolationExpectedFn = func() bool { return false }
+	// And the at-rest keystore (hive#18214): keystore.Active() builds its
+	// provider ONCE per process from the ambient env, and HIVE_HEARTBEAT_KEY
+	// alone turns sealing on. Tests here t.Setenv that key (npsRelayServer),
+	// so whichever test touched a secret file first decided, for the rest of
+	// the run, whether every later secret file was written plaintext or as a
+	// hive-enc:v1 envelope; tests that read those files raw then failed
+	// depending on -shuffle order (hive#18227). Pin plaintext so the result
+	// never depends on order or on a runner's env; a test that needs sealing
+	// installs its own provider with keystore.SetActive and restores nil.
+	keystore.SetActive(nil)
 
 	code := m.Run()
 	os.RemoveAll(testDataDir)

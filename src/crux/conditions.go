@@ -37,9 +37,16 @@ const (
 	ClassDataDiskPressure         = "data_disk_pressure"
 	ClassGitHubAppTokenMintFailed = "github_app_token_mint_failed"
 	ClassGitHubAppNotInstalled    = "github_app_not_installed"
-	ClassAgentStall               = "agent_stall"
-	ClassAgentCrashLoop           = "agent_crash_loop"
-	ClassCIPollNudge              = "ci_poll_nudge"
+	// ClassForgeUnreachable: a per-agent token mint failed at the transport
+	// layer (dial timeout, connection refused, context deadline) — the GitHub
+	// host cannot be reached from the pod. The App key and installation are
+	// not implicated, so this is kept apart from
+	// ClassGitHubAppTokenMintFailed, which would otherwise send the operator
+	// off to re-check App permissions during a network outage.
+	ClassForgeUnreachable = "forge_unreachable"
+	ClassAgentStall       = "agent_stall"
+	ClassAgentCrashLoop   = "agent_crash_loop"
+	ClassCIPollNudge      = "ci_poll_nudge"
 	// ClassRuntimeUnavailable is raised by the HOST, not the runtime: a
 	// sidecar host whose runtime API stopped answering (hivecommons/hive#14138
 	// stage 4). The runtime cannot report its own absence.

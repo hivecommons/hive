@@ -25,6 +25,11 @@ By default agents still have their direct write paths (`gh`, the API through
 the proxy, `git push`). An operator removes them lane by lane; see
 [Enforcing the write surface](#enforcing-the-write-surface).
 
+Whichever path a write takes, its text gets the same outbound dash rule:
+relay bodies are filtered by the relay, and direct agent writes through the
+GitHub proxy have their JSON text fields filtered before they are forwarded.
+See [Outbound text: no em-dashes](outbound-prose.md).
+
 ## Relay operations
 
 Each relay authorizes a request in this order. It stops at the first refusal.
@@ -162,6 +167,7 @@ writes no entry.
 | Fleet report recovery | `fleet_report.go` | yes (`fleet_report_recovered`, with `closed`) | yes / issue number |
 | Legacy standalone `Fleet report:` close (hourly sweep in the hive watching the report repo, #13470) | `fleet_report_legacy_sweep.go` | yes (`fleet_report_recovered`, `reason=legacy_standalone`) | yes / issue number |
 | Reporter-trust wait notice/comment and owned label cleanup | `client.go` / `reporter_trust_wait.go` (`fetchIssues` reporter-trust reject/admit paths) | yes (`reporter_trust_wait_noticed`, `reporter_trust_wait_cleared`; label adds also record `hive_label_applied` with `reason=reporter_trust_wait`) | yes / issue number |
+| Derived reference repos read-only notice (one `hive:reference-repos-read-only` comment per request issue and repo set, #18158) | `reference_repo_request.go` (`CommentDerivedReadOnly`) | yes (`reference_repos_read_only_noticed`, with `repos`) | yes / issue number |
 
 The open-time signed rewrite in `pr_request_signed.go` is part of `open_pr`
 and is covered by that operation's `agent_pr_created` entry. Creating a
@@ -251,6 +257,58 @@ A refused request is handled like every other policy denial:
   `outcome=refused`.
 
 Refusals are not counted as output activity.
+
+## Reference repos
+
+`project.reference_repos` ([#18015](https://github.com/hivecommons/hive/issues/18015))
+names repos *outside* the project an agent may study. They are not part of
+the write surface at all by default: the proxy strips the hive's App token
+from every request to them and refuses every non-GET with a message naming
+`reference_repos`. A per-entry `write: [issues, prs]` opt-in unlocks exactly
+the direct writes an assessor needs on that repo — open an issue, fork it and
+push a topic branch to the owner's fork, open a PR from that fork, comment on
+the hive's own issue or PR — sent as the hive owner's own GitHub account
+(connected once in Settings, [#18197](https://github.com/hivecommons/hive/issues/18197))
+or, on a hand-written entry, a `write_token_file`; never as the hive's App.
+Replying in a review thread on the hive's own PR and retracting the hive's
+own recent comment are allowed under the
+[review-thread gate](#review-thread-replies-on-the-hives-own-prs).
+Merge, default-branch push, labels, assignees, reviews, closing others'
+items and anything on the fork other than a push stay refused. The relays
+never act on a reference repo, so a lane under `write_surface.enforce` cannot
+write to one. See the
+[operator reference](operator-reference/README.md#configuration-blocks) and
+[Writing to repos you do not manage](agent-configuration.md#writing-to-repos-you-do-not-manage-the-two-lanes).
+
+## Review-thread replies on the hive's own PRs
+
+When a person reviews a PR the hive's own agent opened, the review-feedback
+sweep ([#19027](https://github.com/hivecommons/hive/issues/19027)) kicks that
+agent to answer. The proxy lets it answer in place, and nothing wider
+([#19096](https://github.com/hivecommons/hive/issues/19096),
+`src/crux/proxy/review_thread.go`):
+
+| Route | Allowed when |
+| --- | --- |
+| `POST /repos/{o}/{r}/pulls/{n}/comments/{id}/replies` (also without `{n}`) | the comment's PR was opened by the hive's own agent (audit trail `agent_pr_created`, the sweep's ownership source) and the caller is the agent that opened it |
+| `POST /repos/{o}/{r}/pulls/{n}/comments` | the same: hive-opened PR, opening agent only |
+| `DELETE /repos/{o}/{r}/issues/comments/{id}`, `DELETE /repos/{o}/{r}/pulls/comments/{id}` | GitHub reports the comment was written by the hive's own identity (the App bot, or a reference repo's write login), it is younger than `OwnCommentDeleteWindow` (15 minutes), and it sits on a PR the calling agent opened (read from the comment's own `pull_request_url` or `issue_url`, never the request path, and checked against the audit trail as for replies) |
+
+Every agent posts as the same App bot, so the author check alone would let one
+agent delete another agent's or a reviewer's comment; the PR-owner check is
+what limits a delete to the caller's own PR (maintainer decision on
+[#19102](https://github.com/hivecommons/hive/pull/19102)).
+Any other PR, any other agent, anyone else's comment, an older comment, and
+any lookup that fails are refused with the `review_thread` reason, and the
+agent is told to stop rather than probe another route. The mode tier still
+applies on top (replies and PR review comments at `ISSUES_AND_PRS` or with
+`converse`, deletes at `ISSUES_ONLY`). On a reference repo the same gate runs
+after the reference-repo rules. When a reply on a hive-opened PR is refused by
+any gate, the proxy keeps the drafted text and the sweep posts it in its
+needs-human note, at most once per `HIVE_REVIEW_FEEDBACK_WINDOW`, so a person
+can place it. The GraphQL `addPullRequestReviewThreadReply` mutation carries
+only node ids and stays on the mode ladder (conversation bucket); this gate is
+REST-only.
 
 ## Enforcing the write surface
 

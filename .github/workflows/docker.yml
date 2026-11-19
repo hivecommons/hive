@@ -311,8 +311,15 @@ jobs:
         with:
           driver-opts: network=host
 
+      # Also logs in on same-repo PR builds so the whisper-builder warm step
+      # can READ the GHCR registry cache below. Fork PRs never reach this job
+      # (see `if:` above), and nothing in a PR build pushes: the image output
+      # has push=false and the registry cache-to is gated on push == 'true'.
       - name: Log in to GHCR
-        if: needs.gate.outputs.push == 'true'
+        if: >-
+          needs.gate.outputs.push == 'true' ||
+          (github.event_name == 'pull_request' &&
+           github.event.pull_request.head.repo.full_name == github.repository)
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
@@ -362,8 +369,53 @@ jobs:
             BASE_REGISTRY=${{ env.BASE_REGISTRY }}
           provenance: false
           sbom: false
+          # Materialize the stage into this builder (see the note on the
+          # whisper warm step below); without an output a cache hit stays a
+          # lazy remote reference and the main build recompiles tmux.
+          outputs: type=tar,dest=/dev/null
           cache-from: type=gha,scope=tmux-${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=tmux-${{ steps.slug.outputs.slug }},mode=max
+
+      # Same reasoning for the built-in Inbox transcription engine:
+      # whisper-builder's inputs are the pinned base image and two pinned,
+      # checksummed tarballs (whisper.cpp, FFmpeg), so its layers are safe to
+      # serve from cache and it is not in no-cache-filters. Compiling it cold
+      # costs several minutes per arch (far more for arm64 under QEMU).
+      #
+      # Its cache lives in a GHCR registry cache, NOT the Actions cache. The
+      # Actions cache sits over its 10 GB cap, so LRU eviction kept dropping
+      # the whisper blobs and every build recompiled whisper.cpp + FFmpeg.
+      # The registry cache is not subject to that cap. It is a dedicated
+      # package (hive-buildcache), never a release image tag, with one tag
+      # per arch so amd64 and arm64 never overwrite each other. Only
+      # push=true builds export it; same-repo PR builds read it only.
+      - name: Warm whisper-builder layer cache
+        continue-on-error: true
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: src/Dockerfile
+          platforms: ${{ matrix.platform }}
+          target: whisper-builder
+          build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
+          provenance: false
+          sbom: false
+          # MATERIALIZE the result. Measured 2026-11-17 on v5: with no output
+          # this step reported every whisper-builder layer CACHED in ~1s, and
+          # the main build below then recompiled FFmpeg + whisper.cpp anyway
+          # (and tmux, same pattern, on runs before that). A warm step that
+          # hits its remote cache without an output never loads the layers
+          # into the builder's local cache, and the main build cannot be
+          # served from a remote cache for these stages: they share their
+          # FROM image with `runtime`, which no-cache-filters marks
+          # ignore-cache. The only builds where the main step showed these
+          # stages CACHED were the ones where the warm step MISSED and
+          # compiled locally. Exporting the stage (to /dev/null, nothing is
+          # kept) forces the layers to be pulled and recorded locally.
+          outputs: type=tar,dest=/dev/null
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/hive-buildcache:whisper-${{ steps.slug.outputs.slug }}
+          cache-to: ${{ needs.gate.outputs.push == 'true' && format('type=registry,ref=ghcr.io/{0}/hive-buildcache:whisper-{1},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true', github.repository_owner, steps.slug.outputs.slug) || '' }}
 
       - name: Build and push by digest
         id: build
@@ -744,8 +796,11 @@ jobs:
           sbom: false
           # Owner-derived image name (dual-publish) — see the main build step.
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/hive-contributor,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
+          # Only push=true builds export: a PR-ref Actions cache entry is only
+          # visible to that same PR, yet it counts against the repo's 10 GB
+          # cap and evicts the long-lived branch entries every PR reads.
           cache-from: type=gha,scope=contributor-${{ steps.slug.outputs.slug }}
-          cache-to: type=gha,scope=contributor-${{ steps.slug.outputs.slug }},mode=max
+          cache-to: ${{ needs.gate.outputs.push == 'true' && format('type=gha,scope=contributor-{0},mode=max', steps.slug.outputs.slug) || '' }}
 
       - name: Export digest
         if: needs.gate.outputs.push == 'true'
@@ -967,8 +1022,11 @@ jobs:
           sbom: false
           # Owner-derived image name (dual-publish) — see the main build step.
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/hive-hub,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
-          cache-from: type=gha,scope=hub-${{ steps.slug.outputs.slug }}
-          cache-to: type=gha,scope=hub-${{ steps.slug.outputs.slug }},mode=max
+          # No layer cache. src/Dockerfile.hub has exactly two stages, builder
+          # and runtime, and no-cache-filters above forces both to re-execute,
+          # so a cache could never serve a layer here. The old gha mode=max
+          # export only filled the Actions cache (and evicted entries that are
+          # reused, like whisper's) for zero hits.
 
       - name: Export digest
         if: needs.gate.outputs.push == 'true'
@@ -1063,6 +1121,234 @@ jobs:
         env:
           NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive-hub
           CROSS_IMAGE: ghcr.io/${{ needs.gate.outputs.cross_org }}/hive-hub
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
+          GIT_SHA: ${{ needs.gate.outputs.sha }}
+          # Lockstep with the publish-image-tags.sh args above.
+          INCLUDE_LATEST: "true"
+          RELEASE_BRANCH: "v5"
+          CHANNELS: "candidate"
+        run: |
+          set -euo pipefail
+          branch_tag="${BRANCH//\//-}"
+          tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
+          if [ "$INCLUDE_LATEST" = "true" ]; then tags+=("latest"); fi
+          if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
+            IFS=, read -ra channel_tags <<<"$CHANNELS"
+            for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
+          fi
+          for tag in "${tags[@]}"; do
+            if ! digest=$(docker buildx imagetools inspect \
+                "${NATIVE_IMAGE}:${tag}" --format '{{.Manifest.Digest}}' 2>&1); then
+              if grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$' <<<"$digest"; then
+                echo "native tag ${NATIVE_IMAGE}:${tag} does not exist — nothing to mirror for it"
+                continue
+              fi
+              echo "::error::could not inspect ${NATIVE_IMAGE}:${tag}; refusing to silently skip a mirror on a transport/auth failure" >&2
+              echo "$digest" >&2
+              exit 1
+            fi
+            echo "Mirroring ${CROSS_IMAGE}:${tag} <- ${NATIVE_IMAGE}@${digest}"
+            docker buildx imagetools create -t "${CROSS_IMAGE}:${tag}" "${NATIVE_IMAGE}@${digest}"
+          done
+
+  # hive-mx, the receive-only mail receiver (src/Dockerfile.mx, #18395):
+  # the same per-arch build-by-digest + manifest-list publish as the hub
+  # image above, dual-published through publish-image-tags.sh. The comments
+  # copied from the hub jobs apply unchanged; the build-args the hub stamps
+  # are unused by Dockerfile.mx and kept only so the two jobs stay diffable.
+  build-mx:
+    needs: gate
+    # Only when gate says push=true, same as `build` above (#4965).
+    # `release-gate/*` is excluded for the same reason `merge*` already skips
+    # it (gate forces push=false there): these builds publish NOTHING for the
+    # scratch branch. They are not merely wasted — branch protection evaluates
+    # the whole check SUITE, so while any job in it runs the `gate` context is
+    # not treated as satisfied even though its check-run is already `success`.
+    # The release job's merge waits 120s and a multi-arch build takes ~10min,
+    # so the merge could never win that race (#5339, 8th recurrence).
+    # push=true already implies not release-gate/* (gate forces push=false
+    # there); the explicit clause is kept because test-release-push-retry.sh
+    # asserts it (#5339) and it makes the intent readable.
+    if: >-
+      (needs.gate.outputs.push == 'true' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository)) &&
+      !startsWith(github.ref, 'refs/heads/release-gate/')
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            self_hosted: true
+            qemu: false
+            timeout_minutes: 60
+          - platform: linux/arm64
+            self_hosted: true
+            qemu: true
+            timeout_minutes: 75
+    runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          # fetch-depth: 0 brings the full tag history into the .git this job
+          # copies into the image build, so src/Dockerfile.hub's
+          # `git describe --tags` can stamp a real semver (#7092).
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up QEMU for arm64 emulation
+        if: matrix.qemu && runner.arch != 'ARM64'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: network=host
+
+      - name: Log in to GHCR
+        if: needs.gate.outputs.push == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Platform slug
+        id: slug
+        run: echo "slug=${PLATFORM//\//-}" >> "$GITHUB_OUTPUT"
+        env:
+          PLATFORM: ${{ matrix.platform }}
+
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        uses: ./.github/actions/docker-base-registry
+
+      - name: Build and push hive-mx image by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: src/Dockerfile.mx
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
+            GIT_HASH=${{ needs.gate.outputs.sha }}
+            GIT_BRANCH=${{ needs.gate.outputs.ref_name }}
+            VERSION=${{ needs.gate.outputs.release_version }}
+          labels: |
+            io.kubestellar.hive.github-actions-run-number=${{ github.run_number }}
+            org.opencontainers.image.revision=${{ needs.gate.outputs.sha }}
+          # STALE-BINARY FIX (see the main build step). The hub image also does
+          # `COPY --from=builder /hive` into a `runtime` final stage, and its GHA
+          # cache scope (hub-<slug>) is likewise branch-persistent — so without
+          # busting `runtime` the hub could ship an old hive that self-upgrades
+          # against the wrong SHA. Bust both binary-bearing stages.
+          no-cache-filters: builder,runtime
+          # #3760: no default provenance/SBOM attestations → plain image
+          # manifests, not an OCI index. See the note on the main build above.
+          provenance: false
+          sbom: false
+          # Owner-derived image name (dual-publish) — see the main build step.
+          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/hive-mx,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
+          # No layer cache, for the same reason as the hub build: both stages
+          # of src/Dockerfile.mx (builder, runtime) are in no-cache-filters.
+
+      - name: Export digest
+        if: needs.gate.outputs.push == 'true'
+        run: |
+          mkdir -p /tmp/mx-digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/mx-digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: needs.gate.outputs.push == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mx-digests-${{ steps.slug.outputs.slug }}
+          path: /tmp/mx-digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-mx:
+    if: needs.gate.outputs.push == 'true'
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
+    needs: [gate, build-mx]
+    steps:
+      - name: Checkout tag publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Download digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: /tmp/mx-digests
+          pattern: mx-digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: network=host
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create hive-mx manifest list and push
+        env:
+          REF_NAME: ${{ needs.gate.outputs.ref_name }}
+          GATE_SHA: ${{ needs.gate.outputs.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          src/scripts/publish-image-tags.sh \
+            ghcr.io/${{ github.repository_owner }}/hive-mx /tmp/mx-digests \
+            "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
+            v5 true candidate
+
+      # Cross-org mirror — same mechanics, same missing-secret asymmetry, and
+      # same "one credential per registry host" ordering constraint as the
+      # fully commented block in the `merge` job above.
+      - name: Check cross-registry credential
+        id: crosspat
+        env:
+          CROSS_PAT: ${{ secrets[needs.gate.outputs.cross_secret] }}
+          CROSS_ORG: ${{ needs.gate.outputs.cross_org }}
+          CROSS_SECRET_NAME: ${{ needs.gate.outputs.cross_secret }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CROSS_PAT" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          if [ "$OWNER" = "hivecommons" ]; then
+            echo "::error::secret ${CROSS_SECRET_NAME} is not set, so this run cannot mirror to ghcr.io/${CROSS_ORG}. Post-transfer that is a silent one-sided publish (spokes pinned to the old org keep pulling stale tags), so this fails hard. Create a classic PAT with write:packages from a ${CROSS_ORG} member and store it as ${CROSS_SECRET_NAME}."
+            exit 1
+          fi
+          echo "::warning::secret ${CROSS_SECRET_NAME} is not set — skipping the ghcr.io/${CROSS_ORG} mirror. Pre-transfer this is expected until that PAT is created; nothing that exists today degrades."
+
+      - name: Log in to GHCR as the cross-org publisher
+        if: steps.crosspat.outputs.available == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets[needs.gate.outputs.cross_secret] }}
+
+      - name: Mirror published tags into the cross-org registry (by digest)
+        if: steps.crosspat.outputs.available == 'true'
+        env:
+          NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive-mx
+          CROSS_IMAGE: ghcr.io/${{ needs.gate.outputs.cross_org }}/hive-mx
           BRANCH: ${{ needs.gate.outputs.ref_name }}
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Lockstep with the publish-image-tags.sh args above.

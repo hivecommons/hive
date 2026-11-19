@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/kubejob"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
 
@@ -133,10 +134,12 @@ func TestUnknownSandboxRuntimeRefusesKick(t *testing.T) {
 }
 
 func TestJobOptionsFromConfig(t *testing.T) {
+	affinity := &config.SandboxJobAffinity{}
 	got := JobOptionsFromConfig(config.SandboxJobConfig{
 		WorkspaceClaim:      "hive-data",
 		WorkspaceClaimMount: "/data",
 		NodeSelector:        map[string]string{"accelerator": "spyre"},
+		Affinity:            affinity,
 		Tolerations:         []config.SandboxJobToleration{{Key: "spyre", Operator: "Exists", Effect: "NoSchedule"}},
 		Resources:           config.SandboxJobResources{Limits: map[string]string{"ibm.com/spyre_pf": "2"}, Requests: map[string]string{"cpu": "4"}},
 		ServiceAccount:      "hive",
@@ -150,6 +153,9 @@ func TestJobOptionsFromConfig(t *testing.T) {
 	}
 	if got.NodeSelector["accelerator"] != "spyre" {
 		t.Errorf("node selector not carried: %+v", got.NodeSelector)
+	}
+	if got.Affinity != affinity {
+		t.Errorf("affinity not carried: %+v", got.Affinity)
 	}
 	if len(got.Tolerations) != 1 || got.Tolerations[0].Key != "spyre" || got.Tolerations[0].Effect != "NoSchedule" {
 		t.Errorf("tolerations not carried: %+v", got.Tolerations)
@@ -170,11 +176,27 @@ func TestJobOptionsFromConfig(t *testing.T) {
 // the executor and silently run the kick on the hive node.
 func TestJobLauncherDefaultsToKubejob(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{}, quietTestLogger(), ProjectContext{})
-	l := m.jobLauncherLocked(config.SandboxJobConfig{WorkspaceClaim: "hive-data"})
+	l := m.jobLauncherLocked(config.SandboxJobConfig{WorkspaceClaim: "hive-data"}, 0)
 	if l == nil {
 		t.Fatal("jobLauncherLocked returned nil")
 	}
 	if _, isPodman := l.(sandbox.PodmanLauncher); isPodman {
 		t.Fatal("job runtime must not resolve to the Podman launcher")
+	}
+}
+
+// Every sandbox Job carries activeDeadlineSeconds derived from the kick
+// timeout, so a Job orphaned by a hive restart fails on its own
+// (hivecommons/hive#18525).
+func TestJobLauncherSetsDeadlineFromKickTimeout(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{}, quietTestLogger(), ProjectContext{})
+	const kickTimeout = 20 * time.Minute
+	l, ok := m.jobLauncherLocked(config.SandboxJobConfig{WorkspaceClaim: "hive-data"}, kickTimeout).(*kubejob.Launcher)
+	if !ok {
+		t.Fatal("jobLauncherLocked did not return a kubejob launcher")
+	}
+	want := int64((kickTimeout + kubejob.DeadlineMargin) / time.Second)
+	if l.Options.ActiveDeadlineSeconds != want {
+		t.Fatalf("ActiveDeadlineSeconds = %d, want %d", l.Options.ActiveDeadlineSeconds, want)
 	}
 }

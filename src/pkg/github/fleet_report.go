@@ -169,7 +169,7 @@ func (c *Client) joinFleetReportIssue(ctx context.Context, repo string, existing
 			ev = report.Evidence[0]
 		}
 		body := fleetreport.SeenComment(report.Fingerprint, hive, opts.Version, opts.Cluster, ev, opts.now())
-		if err := c.CreateIssueComment(ctx, repo, num, body); err != nil {
+		if err := c.upsertFleetReportSeenLog(ctx, repo, num, body); err != nil {
 			return out, fmt.Errorf("commenting on fleet report: %w", err)
 		}
 		out.Commented = true
@@ -200,6 +200,35 @@ func (c *Client) joinFleetReportIssue(ctx context.Context, repo string, existing
 		"outcome", auditOutcomeCommented, "reaction", strconv.FormatBool(out.ReactionSent),
 		"fingerprint", report.Fingerprint, "class", report.Class, "joined", "true")
 	return out, nil
+}
+
+// upsertFleetReportSeenLog folds one "also seen" sighting into the hive's
+// single seen-log comment on the issue (hivecommons/hive#18608): the first
+// join posts it, later joins edit it in place, so a fleet-report issue no
+// longer gains a notifying comment per sighting. Only a comment one of the
+// hive's own accounts wrote is edited.
+func (c *Client) upsertFleetReportSeenLog(ctx context.Context, repo string, number int, sighting string) error {
+	owner, name := c.splitRepo(repo)
+	comments, err := c.listIssueComments(ctx, owner, name, number)
+	if err != nil {
+		return err
+	}
+	for _, cm := range comments {
+		if cm == nil || !strings.Contains(cm.GetBody(), fleetreport.SeenLogMarker) || !c.markerAuthorTrusted(cm.GetUser()) {
+			continue
+		}
+		body := fleetreport.SeenLog(cm.GetBody(), sighting)
+		if body == cm.GetBody() {
+			return nil
+		}
+		// Rewrites the hive's own seen-log comment; an edit notifies nobody.
+		if _, _, err := c.client.Issues.EditComment(ctx, owner, name, cm.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
+			return fmt.Errorf("editing seen-log comment on %s/%s#%d: %w", owner, name, number, err)
+		}
+		c.noteCommentEdited()
+		return nil
+	}
+	return c.CreateIssueComment(ctx, owner+"/"+name, number, fleetreport.SeenLog("", sighting))
 }
 
 func ghIssueHasLabel(issue *gh.Issue, name string) bool {

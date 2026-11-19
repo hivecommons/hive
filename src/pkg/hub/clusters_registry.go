@@ -207,6 +207,16 @@ func validateClusterEntries(configs []ClusterConfig, logger *slog.Logger) map[st
 			logger.Warn("skipping cluster with no domain", "cluster", c.ID)
 			continue
 		}
+		// host_aliases is validated but NOT an admission rule: a typo there
+		// must not drop the cluster (and strand its hives); the aliases are
+		// dropped instead and the operator told why.
+		aliases, err := normalizeClusterHostAliases(c.HostAliases)
+		if err != nil {
+			logger.Warn("ignoring invalid host_aliases for cluster — hives will NOT get them",
+				"cluster", c.ID, "error", err)
+			aliases = nil
+		}
+		c.HostAliases = aliases
 		clusters[c.ID] = c
 	}
 	return clusters

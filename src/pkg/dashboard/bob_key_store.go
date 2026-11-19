@@ -1,12 +1,14 @@
 package dashboard
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/keystore"
 )
 
 const (
@@ -129,33 +131,11 @@ func writeBobKeyFile(key string) error {
 			_ = os.Chmod(dir, mode|bobKeyDirGroupExec)
 		}
 	}
-	tmp, err := os.CreateTemp(dir, ".bob_api_key.*")
-	if err != nil {
-		return actionableWriteError(dir, err)
-	}
-	tmpName := tmp.Name()
-	// Best-effort cleanup: a no-op once the rename below has succeeded.
-	defer func() { _ = os.Remove(tmpName) }()
-
-	// Chmod before writing so the secret is never briefly world-readable.
-	if err := tmp.Chmod(bobKeyFileMode); err != nil {
-		_ = tmp.Close() // Preserve the primary chmod error.
-		return actionableWriteError(tmpName, err)
-	}
-	if _, err := tmp.WriteString(key); err != nil {
-		_ = tmp.Close() // Preserve the primary write error.
-		return actionableWriteError(tmpName, err)
-	}
-	// Flush to disk before the rename so a crash cannot leave an empty file
-	// in place of a previously-valid key.
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close() // Preserve the primary sync error.
-		return actionableWriteError(tmpName, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return actionableWriteError(tmpName, err)
-	}
-	if err := os.Rename(tmpName, writableBobKeyFile); err != nil {
+	// Sealed through the keystore (hive#18214) and written to a temp file
+	// beside the destination at bobKeyFileMode, synced, then renamed over it:
+	// a concurrent agent launch sees the old key or the new one, never a
+	// partial write, and the value is never briefly world-readable.
+	if err := keystore.WriteFileMode(context.Background(), writableBobKeyFile, []byte(key), bobKeyFileMode); err != nil {
 		return actionableWriteError(writableBobKeyFile, err)
 	}
 	return nil

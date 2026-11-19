@@ -193,6 +193,9 @@
     const DASHBOARD_TIMEZONE_STORAGE_KEY = 'hive-dashboard-display-timezone';
     const DASHBOARD_TIMEZONE_BROWSER = 'browser';
     const DASHBOARD_TIMEZONE_SERVER = 'server';
+    // Clock format for every dashboard time: '' follows the browser locale
+    // (12-hour in en-US), '12' or '24' forces it.
+    const DASHBOARD_CLOCK_STORAGE_KEY = 'hive-dashboard-clock-format';
     let _navbarClockTimeZone = '';
     let _dashboardServerTimeZone = '';
     let _lastStatusPayloadAtMs = 0;
@@ -229,6 +232,12 @@
       try { return localStorage.getItem(DASHBOARD_TIMEZONE_STORAGE_KEY) || DASHBOARD_TIMEZONE_BROWSER; } catch (e) { return DASHBOARD_TIMEZONE_BROWSER; }
     }
 
+    function dashboardClockPreference() {
+      let v = '';
+      try { v = localStorage.getItem(DASHBOARD_CLOCK_STORAGE_KEY) || ''; } catch (e) {}
+      return v === '12' || v === '24' ? v : '';
+    }
+
     function selectedDashboardTimeZone() {
       const pref = dashboardTimeZonePreference();
       if (pref === DASHBOARD_TIMEZONE_SERVER) return validDashboardTimeZone(_dashboardServerTimeZone) || browserDashboardTimeZone() || 'UTC';
@@ -258,7 +267,11 @@
       const opts = Object.assign({}, options || {});
       const tz = selectedDashboardTimeZone();
       if (tz) opts.timeZone = tz;
-      const key = JSON.stringify(Object.keys(opts).sort().map(k => [k, opts[k]]));
+      // A chosen clock format overrides the caller's; h23 rather than
+      // hour12:false so midnight reads 00:00, never 24:00.
+      const clock = opts.hour ? dashboardClockPreference() : '';
+      if (clock) { delete opts.hour12; delete opts.hourCycle; if (clock === '24') opts.hourCycle = 'h23'; else opts.hour12 = true; }
+      const key =JSON.stringify(Object.keys(opts).sort().map(k => [k, opts[k]]));
       if (_dashboardDateFormatters.has(key)) return _dashboardDateFormatters.get(key);
       const formatter = new Intl.DateTimeFormat([], opts);
       // Bound memory even when callers supply arbitrary option combinations.
@@ -528,9 +541,11 @@
       // Update Light health badge with hover detail
       renderNavbarHealthBadge(document.getElementById('oc-health'), data);
       renderProviderStrip(document.getElementById('oc-providers'), data.providers);
+      if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
+      renderPRGateBanner(data);
       renderOnboardingGuideChip(data);
       renderIssuesDisabledBanner(data);
       refreshWelcomeAutoChecks(data);
@@ -562,15 +577,17 @@
       ocUpdateSidebarAgents();
       dashboardRenderSection('debug', ['debug-section'], () => renderDebugSection(), data);
       dashboardRenderSection('faq', ['faq-section'], () => renderFAQ(), data);
+      dashboardRenderSection('inbox', ['inbox-section'], () => renderInbox(), data);
       initializeDashboardSectionCards();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'advisory-digest-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
-        'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
-        'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
+        'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'sessions-section',
+        'knowledge-section', 'inbox-section', 'contributors-section', 'debug-section', 'logs-section',
         'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'
       ];
+      dashboardRememberAcmmLevel(data.acmmLevel || 0);
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);
       refreshDashboardSectionSummaries(data);
       // Update compact-all button text

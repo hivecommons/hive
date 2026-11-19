@@ -177,8 +177,72 @@ func TestInjectionMaxBytesDefaultsAndFloor(t *testing.T) {
 	if got := injectionMaxBytes(10); got != minInjectionBytes {
 		t.Errorf("tiny -> %d, want floor %d", got, minInjectionBytes)
 	}
-	if got := injectionMaxBytes(32768); got != 32768 {
+	if got := injectionMaxBytes(16384); got != 16384 {
 		t.Errorf("configured not honoured: %d", got)
+	}
+	if got := injectionMaxBytes(MaxInjectionBytesCeiling * 4); got != MaxInjectionBytesCeiling {
+		t.Errorf("huge -> %d, want ceiling %d", got, MaxInjectionBytesCeiling)
+	}
+	if got := EffectiveMaxBytes(0); got != DefaultMaxInjectionBytes {
+		t.Errorf("EffectiveMaxBytes(0) = %d, want %d", got, DefaultMaxInjectionBytes)
+	}
+}
+
+// #18495: the default is 32 KiB, so a 13 KB AGENTS.md (the real file that
+// lost sections under the old 8 KiB cap) is injected in full with no warning.
+func TestRender_ThirteenKBFileIsIncludedInFullByDefault(t *testing.T) {
+	t.Setenv(MaxBytesEnv, "")
+	if DefaultMaxInjectionBytes != 32*1024 {
+		t.Fatalf("default cap = %d, want 32 KiB", DefaultMaxInjectionBytes)
+	}
+	var body strings.Builder
+	for i := 0; body.Len() < 13*1000; i++ {
+		body.WriteString(section("Rule "+strconv.Itoa(i), 900))
+	}
+	out, omitted := cfg(body.String()).Render(nil, 0)
+	if omitted.Any() || strings.Contains(out, InjectionTruncatedMarker) {
+		t.Fatalf("13 KB file must not be truncated by default: %+v", omitted)
+	}
+	for _, sec := range splitBodySections(body.String()) {
+		if !strings.Contains(out, sec.text) {
+			t.Fatalf("section %q missing from the default render", sec.name)
+		}
+	}
+}
+
+func TestDefaultMaxBytesEnvOverride(t *testing.T) {
+	t.Setenv(MaxBytesEnv, "65536")
+	if got := DefaultMaxBytes(); got != 65536 {
+		t.Errorf("env default = %d, want 65536", got)
+	}
+	if got := EffectiveMaxBytes(0); got != 65536 {
+		t.Errorf("EffectiveMaxBytes(0) with env = %d, want 65536", got)
+	}
+	// A configured cap still wins over the env default.
+	if got := EffectiveMaxBytes(4096); got != 4096 {
+		t.Errorf("configured cap with env = %d, want 4096", got)
+	}
+	// The env value is still bounded by the ceiling.
+	t.Setenv(MaxBytesEnv, strconv.Itoa(MaxInjectionBytesCeiling*2))
+	if got := EffectiveMaxBytes(0); got != MaxInjectionBytesCeiling {
+		t.Errorf("env above ceiling = %d, want %d", got, MaxInjectionBytesCeiling)
+	}
+	for _, bad := range []string{"abc", "-5", "0", "  "} {
+		t.Setenv(MaxBytesEnv, bad)
+		if got := DefaultMaxBytes(); got != DefaultMaxInjectionBytes {
+			t.Errorf("env %q -> %d, want the built-in default", bad, got)
+		}
+	}
+}
+
+func TestRender_EnvDefaultCapsWhenNothingConfigured(t *testing.T) {
+	t.Setenv(MaxBytesEnv, "2048")
+	out, omitted := cfg(section("Small", 100)+section("Big", 3000)).Render(nil, 0)
+	if len(omitted.Sections) != 1 || omitted.Sections[0] != "Big" {
+		t.Fatalf("env cap should drop the big section: %+v", omitted)
+	}
+	if !strings.Contains(out, InjectionTruncatedMarker+" 2048 bytes") {
+		t.Errorf("warning should name the env cap:\n%s", out)
 	}
 }
 

@@ -4,6 +4,7 @@
     .agent-blockers .ab-sep { opacity: 0.35; }
     .agent-blockers .ab-ok { color: var(--green); }
     .agent-blockers .ab-bad { color: var(--red); font-weight: 600; }
+    .agent-blockers .ab-warn { color: var(--yellow); font-weight: 600; }
     .oc-detail-blockers { margin-top: var(--sp-3); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
     .never-scheduled-chip { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--yellow); background: none; border: 1px solid var(--yellow); border-radius: 3px; padding: 1px 5px; margin-left: var(--sp-3); cursor: pointer; vertical-align: middle; white-space: nowrap; }
     .never-scheduled-chip:hover { background: color-mix(in srgb, var(--yellow) 18%, transparent); }
@@ -21,6 +22,7 @@
        the current mode, so it will not be kicked (mirrors needs-login, green). */
     .dot.off-healthy { background: transparent; border: 2px solid var(--status-ok); box-sizing: border-box; }
     .dot.stopped { background: var(--status-error); }
+    .dot.out-of-quota { background: var(--status-error); }
     .dot.starting { background: var(--status-info); animation: oc-pulse 1.5s ease-in-out infinite; }
     .dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
     .agent-field { display: grid; grid-template-columns: minmax(5.5rem, max-content) minmax(0, 1fr); gap: var(--sp-4); align-items: baseline; font-size: 0.8rem; padding: var(--sp-1) var(--sp-0); }

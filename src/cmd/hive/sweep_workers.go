@@ -142,6 +142,23 @@ func (b *boot) sweepJobs() []sweepJob {
 		{"rfc_existing", baseInterval, sweepOptional, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
 			runRFCExistingCheck(ctx, newRFCCoverageForge(gh), cfg, b.dashSrv, coverage, b.lastActionable.Load(), b.logger)
 		}},
+		// Customers discovery (#18742) reads state the hive already holds and
+		// is never handed the client: a pass makes no GitHub call.
+		{"customers", fixed(customersSweepInterval), sweepOptional, func(ctx context.Context, _ *github.Client, cfg *config.Config) {
+			b.runCustomersSweep(ctx, cfg)
+		}},
+		// Customers goal and satisfaction inference (#18742): opt-in, on the
+		// meetings model route, suggestions only. Makes no GitHub call.
+		{"customers_inference", fixed(customersInferenceInterval), sweepOptional, func(ctx context.Context, _ *github.Client, cfg *config.Config) {
+			b.runCustomersInference(ctx, cfg)
+		}},
+		// Customers hub import (#19163): off unless
+		// customers.hub_import.enabled and a hub registration. Posts only
+		// salted hashes of confirmed customers' GitHub logins to the hub;
+		// makes no GitHub call. Staleness expiry runs every pass.
+		{"customers_hub_import", fixed(customersHubImportInterval), sweepOptional, func(ctx context.Context, _ *github.Client, cfg *config.Config) {
+			b.runCustomersHubImport(ctx, cfg, "")
+		}},
 		{"rfc_notify", fixed(rfcnotify.DefaultInterval + time.Second), sweepOptional, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
 			runRFCNotifySweep(ctx, newRFCNotifySource(gh, notify), len(cfg.Project.Repos), cfg, b.dashSrv, notify, b.logger)
 		}},

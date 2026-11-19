@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/agent/tmux"
+	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/internal/textutil"
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 )
 
 // paneCaptureSleep is a pacing var, not a const, for the same reason as the
@@ -49,13 +51,51 @@ var defaultTmuxSocket string
 // global value from every process forked afterwards; the sanctioned
 // per-agent pair set afterwards overrides the removal for the one variable
 // the agent is meant to have.
+//
+// HIVE_CLAUDE_OAUTH_TOKEN is the operator's long-lived Claude token. It is
+// delivered to claude-backend agents only, as CLAUDE_CODE_OAUTH_TOKEN via
+// agentEnvPairs; under its own name it must reach no pane at all, or every
+// copilot/codex/bob shell (and every tool shell they spawn) could read a
+// year-long credential it has no use for.
 var inheritedCredentialEnvVars = []string{
 	"HIVE_GITHUB_TOKEN",
+	claude.OperatorTokenEnvVar,
 	linearAPIKeyEnvVar,
 	linearAccessTokenEnvVar,
 	"LINEAR_CLIENT_ID",
 	"LINEAR_CLIENT_SECRET",
 	"LINEAR_WEBHOOK_SECRET",
+	// The dashboard's shared token: X-Hive-Internal / bearer with this value
+	// is a server-verified OWNER on the Go API, including GET
+	// /api/config/download (the raw hive.yaml). Hosted hives receive it as
+	// DASHBOARD_AUTH_TOKEN from the provisioning template; Compose and Podman
+	// stacks as HIVE_DASHBOARD_TOKEN.
+	"DASHBOARD_AUTH_TOKEN",
+	"HIVE_DASHBOARD_TOKEN",
+	// Per-hive signing keys the hub injects into the hive container, and the
+	// legacy master they were derived from. The terminal key alone forges a
+	// /terminal grant to a ttyd shell as the hive user.
+	"HIVE_TERMINAL_KEY",
+	"HIVE_INVITE_KEY",
+	"HIVE_HEARTBEAT_KEY",
+	"HIVE_HUB_SECRET",
+	"HIVE_TTYD_CREDENTIAL",
+	// The per-boot key behind the user-session ttyd attach tokens
+	// (terminal_session_gate.go): whoever holds it can attach any session.
+	"HIVE_TTYD_ATTACH_KEY",
+	// The corporate forward-proxy rules. The URL's userinfo is the proxy's
+	// Basic credential; agents reach the upstream only through the MITM
+	// proxy and are never handed the corporate proxy URL. The list vars
+	// carry no secret but are hive-process settings, not agent ones — agents
+	// get their own NO_PROXY from agentEnvPairs. The names come from
+	// crux/upstreamproxy so the strip list cannot drift from what the
+	// loader reads; HIVE_NO_PROXY is the name the hub's provisioning
+	// template injects (saas_provision.go), stripped alongside until the
+	// hub and loader agree on one.
+	upstreamproxy.URLEnv,
+	upstreamproxy.HostsEnv,
+	upstreamproxy.NoProxyEnv,
+	"HIVE_NO_PROXY",
 }
 
 // githubTokenEnvVars are the environment variables gh, git tooling and the

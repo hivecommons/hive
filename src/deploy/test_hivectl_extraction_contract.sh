@@ -89,7 +89,7 @@ esac
 # runtimes exactly as it did under execve.
 
 rewrite_block="$(grep -B3 -- 'cp --remove-destination' "$DOCKERFILE" || true)"
-if [ -n "$image_path" ] && printf '%s\n' "$rewrite_block" | grep -qF "$image_path"; then
+if [ -n "$image_path" ] && grep -qF -- "$image_path" <<<"$rewrite_block"; then
   ok "the #3760 fresh-rewrite loop names ${image_path}"
 else
   fail "the #3760 fresh-rewrite loop does not cover ${image_path:-<missing>}"

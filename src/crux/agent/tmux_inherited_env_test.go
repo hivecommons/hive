@@ -47,6 +47,22 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 		"LINEAR_WEBHOOK_SECRET=webhook_secret_leaked",
 		"HIVE_GITHUB_TOKEN=ghs_full_token_leaked",
 		"GITHUB_TOKEN=ghs_inherited_leaked",
+		// Hub-provisioned and Compose/Podman per-hive secrets: the dashboard
+		// shared token (owner-equivalent on the Go API), the terminal, invite
+		// and heartbeat signing keys, the legacy master, the ttyd credential
+		// and the corporate proxy URL whose userinfo is a Basic credential.
+		"DASHBOARD_AUTH_TOKEN=dash_auth_leaked",
+		"HIVE_DASHBOARD_TOKEN=hive_dash_leaked",
+		"HIVE_TERMINAL_KEY=terminal_key_leaked",
+		"HIVE_INVITE_KEY=invite_key_leaked",
+		"HIVE_HEARTBEAT_KEY=heartbeat_key_leaked",
+		"HIVE_HUB_SECRET=hub_secret_leaked",
+		"HIVE_TTYD_CREDENTIAL=hive:ttyd_leaked",
+		"HIVE_UPSTREAM_PROXY_URL=http://proxyuser:proxypass@proxy.corp.example:3128",
+		"HIVE_UPSTREAM_PROXY_HOSTS=ghe.corp.example",
+		"HIVE_UPSTREAM_PROXY_NO_PROXY=10.0.0.0/8",
+		"HIVE_NO_PROXY=10.0.0.0/8",
+		"HIVE_CLAUDE_OAUTH_TOKEN=sk-ant-oat01-operator_leaked",
 	)
 	if out, err := start.CombinedOutput(); err != nil {
 		t.Fatalf("starting tmux server: %v: %s", err, out)
@@ -86,6 +102,9 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 	if before["LINEAR_API_KEY"] != "lin_api_leaked" || before["LINEAR_CLIENT_SECRET"] != "client_secret_leaked" {
 		t.Fatalf("control: expected the planted credentials in a fresh pane, got LINEAR_API_KEY=%q LINEAR_CLIENT_SECRET=%q", before["LINEAR_API_KEY"], before["LINEAR_CLIENT_SECRET"])
 	}
+	if before["DASHBOARD_AUTH_TOKEN"] != "dash_auth_leaked" || before["HIVE_TERMINAL_KEY"] != "terminal_key_leaked" {
+		t.Fatalf("control: expected the planted hub secrets in a fresh pane, got DASHBOARD_AUTH_TOKEN=%q HIVE_TERMINAL_KEY=%q", before["DASHBOARD_AUTH_TOKEN"], before["HIVE_TERMINAL_KEY"])
+	}
 
 	// An ISSUES_ONLY agent on this socket whose sanctioned Linear credential
 	// is the OAuth token. It may hold LINEAR_ACCESS_TOKEN and nothing else
@@ -104,7 +123,12 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 	m.applySessionEnv(agent)
 
 	after := paneEnv("after")
-	for _, k := range []string{"LINEAR_API_KEY", "LINEAR_CLIENT_SECRET", "LINEAR_WEBHOOK_SECRET", "HIVE_GITHUB_TOKEN", "GITHUB_TOKEN"} {
+	for _, k := range []string{
+		"LINEAR_API_KEY", "LINEAR_CLIENT_SECRET", "LINEAR_WEBHOOK_SECRET", "HIVE_GITHUB_TOKEN", "GITHUB_TOKEN",
+		"DASHBOARD_AUTH_TOKEN", "HIVE_DASHBOARD_TOKEN", "HIVE_TERMINAL_KEY", "HIVE_INVITE_KEY", "HIVE_HEARTBEAT_KEY",
+		"HIVE_HUB_SECRET", "HIVE_TTYD_CREDENTIAL", "HIVE_UPSTREAM_PROXY_URL", "HIVE_UPSTREAM_PROXY_HOSTS",
+		"HIVE_UPSTREAM_PROXY_NO_PROXY", "HIVE_NO_PROXY", "HIVE_CLAUDE_OAUTH_TOKEN",
+	} {
 		if v, ok := after[k]; ok {
 			t.Errorf("%s=%q still reaches a pane after applySessionEnv — the inherited credential was not removed", k, v)
 		}

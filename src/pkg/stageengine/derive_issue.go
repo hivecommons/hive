@@ -43,8 +43,9 @@ func ReasonIsPartialCover(reason string) bool {
 	return strings.HasPrefix(strings.TrimSpace(reason), "open PR addresses part of it")
 }
 
-// ReasonDiscussionLabel reads the proposal / design label an 018
-// open-for-discussion reason names ("open for discussion: proposal"), or ""
+// ReasonDiscussionLabel reads the discussion signal an 018
+// open-for-discussion reason names ("open for discussion: proposal", or
+// "open for discussion: rfc title" for a title-only RFC), or ""
 // when the reason is not one, so presentation layers can name the label
 // without re-deriving the stage.
 func ReasonDiscussionLabel(reason string) string {
@@ -140,10 +141,13 @@ func issueParkClear(f Facts, stage stagelabels.Stage) []string {
 // `needs-triage` at filing) claimed, closed and still "needing triage"
 // (hivecommons/hive#14586). Nil at 010/015/017/045 and when the label is
 // absent, so an issue before the claim keeps the label and nothing else
-// churns.
+// churns. Nil too once the hive yielded the label on this issue
+// (TriageClearYielded): it came back after the one removal, so another
+// writer owns it and clearing it again only restarts a remove / re-add
+// loop (hivecommons/hive#18387).
 func issueTriageClear(f Facts, stage stagelabels.Stage) []string {
 	label := strings.TrimSpace(f.Issue.TriageAwaitingLabel)
-	if label == "" || !stage.SettlesTriage() {
+	if label == "" || f.Issue.TriageClearYielded || !stage.SettlesTriage() {
 		return nil
 	}
 	return []string{label}

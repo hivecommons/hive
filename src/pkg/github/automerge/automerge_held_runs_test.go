@@ -16,7 +16,6 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/oktotest"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -131,6 +130,61 @@ func TestTrySweepSelfAuthoredPRNamesNeverStartedRequiredCheck(t *testing.T) {
 	}
 }
 
+// TestTrySweepSelfAuthoredPRTreatsOrphanedQueuedRunsAsNeverStarted pins
+// #17775: GitHub can leave a head's runs `queued` with zero jobs forever, and
+// such runs must not keep the PR at a bare required-check-missing reason.
+func TestTrySweepSelfAuthoredPRTreatsOrphanedQueuedRunsAsNeverStarted(t *testing.T) {
+	now := time.Date(2026, 11, 11, 22, 10, 0, 0, time.UTC)
+	old := now.Add(-2 * heldRunNeverStartedGrace).Format(time.RFC3339)
+	fresh := now.Add(-time.Minute).Format(time.RFC3339)
+	queuedRun := func(id int, headRepo, createdAt string) map[string]any {
+		return map[string]any{
+			"id": id, "name": "v2 CI", "status": "queued", "created_at": createdAt,
+			"head_repository": map[string]any{"full_name": headRepo},
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		runs []map[string]any
+		jobs map[int]int
+		want string
+	}{
+		{name: "old queued runs with zero jobs", runs: []map[string]any{queuedRun(1, "acme/widget", old), queuedRun(2, "acme/widget", old)}, want: requiredCheckNeverStartedPrefix + "ci/build"},
+		{name: "queued run with jobs", runs: []map[string]any{queuedRun(1, "acme/widget", old)}, jobs: map[int]int{1: 1}, want: "required-check-missing:ci/build"},
+		{name: "freshly queued run", runs: []map[string]any{queuedRun(1, "acme/widget", fresh)}, want: "required-check-missing:ci/build"},
+		{name: "fork head queued run", runs: []map[string]any{queuedRun(1, "mallory/widget", old)}, want: "required-check-missing:ci/build"},
+		{
+			name: "orphaned run beside an in-progress run",
+			runs: []map[string]any{queuedRun(1, "acme/widget", old), {"id": 2, "name": "Tests", "status": "in_progress", "head_repository": map[string]any{"full_name": "acme/widget"}}},
+			want: "required-check-missing:ci/build",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := missingRequiredPR(func(p *selfAuthoredPR) {
+				p.workflowRuns = tc.runs
+				p.workflowRunJobs = tc.jobs
+				p.updatedAt = old
+			})
+			var merged []int
+			api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			c.now = func() time.Time { return now }
+
+			_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+			if err != nil {
+				t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+			}
+			if reason != tc.want {
+				t.Fatalf("reason = %q, want %q", reason, tc.want)
+			}
+			if len(merged) != 0 {
+				t.Fatalf("merged = %v, want no merge", merged)
+			}
+		})
+	}
+}
+
 func TestTerminalRequiredCheckHoldLoggedOncePerHeadAndReason(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -174,8 +228,9 @@ func TestTerminalRequiredCheckHoldLoggedOncePerHeadAndReason(t *testing.T) {
 
 // #11923: a Dependabot head autofix-pushed by github-actions[bot] can never
 // produce a pull_request_target-only required context. The sweep names it
-// required-check-never-ran and asks Dependabot to rebase exactly once per head.
-func TestTrySweepTrustedBotNudgesDependabotRebaseOncePerHead(t *testing.T) {
+// required-check-never-ran. #18441: it never posts `@dependabot rebase`,
+// which Dependabot refuses from the App and on an edited branch.
+func TestTrySweepTrustedBotHoldsAutofixDependabotHeadWithoutCommand(t *testing.T) {
 	now := time.Date(2026, 10, 14, 19, 0, 0, 0, time.UTC)
 	var comments []string
 	pr := missingRequiredPR(func(p *selfAuthoredPR) {
@@ -204,11 +259,14 @@ func TestTrySweepTrustedBotNudgesDependabotRebaseOncePerHead(t *testing.T) {
 			t.Fatalf("tick %d reason = %q, want %q", tick, reason, want)
 		}
 	}
-	if len(comments) != 1 || comments[0] != dependabotRebaseComment {
-		t.Fatalf("comments = %q, want exactly one %q", comments, dependabotRebaseComment)
+	if len(comments) != 0 {
+		t.Fatalf("comments = %q, want none (Dependabot refuses the App's commands)", comments)
 	}
-	if len(rec.claims) != 1 || rec.claims[0].Kind != effects.KindIssueComment || rec.claims[0].Target != "23" || rec.claims[0].Inputs["head_sha"] != "sha23" {
-		t.Fatalf("mutation claims = %#v, want one issue_comment claim for PR 23 head sha23", rec.claims)
+	if len(rec.claims) != 0 {
+		t.Fatalf("mutation claims = %#v, want none", rec.claims)
+	}
+	if !c.rebaseNudged("acme", "widget", 23, "sha23") {
+		t.Fatal("rebaseNudged = false; the hold must be recorded once per head")
 	}
 	if !isTerminalRequiredCheckHold(want) {
 		t.Fatalf("isTerminalRequiredCheckHold(%q) = false, want true so the hold logs once", want)
@@ -279,10 +337,10 @@ func TestDependabotRebaseNudgeDegradesOnAPIErrors(t *testing.T) {
 	if c.isAutofixPushedDependabotHead(context.Background(), "widget", "acme", "widget", pr, 23, "sha23") {
 		t.Fatal("head-commit lookup failure must not be treated as an autofix head")
 	}
-	c.nudgeDependabotRebase(context.Background(), "widget", "acme", "widget", 23, "sha23", "ci/build")
-	c.nudgeDependabotRebase(context.Background(), "widget", "acme", "widget", 23, "sha23", "ci/build")
-	if posts != 1 {
-		t.Fatalf("comment POSTs = %d, want 1 (a failed nudge is not retried for the same head)", posts)
+	c.nudgeDependabotRebase("widget", "acme", "widget", 23, "sha23", "ci/build")
+	c.nudgeDependabotRebase("widget", "acme", "widget", 23, "sha23", "ci/build")
+	if posts != 0 {
+		t.Fatalf("comment POSTs = %d, want 0 (never post a command Dependabot refuses)", posts)
 	}
 	if !c.rebaseNudged("acme", "widget", 23, "SHA23") {
 		t.Fatal("rebaseNudged = false after an attempted nudge")
@@ -715,5 +773,32 @@ func TestWorkflowApprovalUntrustedReasonParksAtNeedsDecision(t *testing.T) {
 	cause := decisionCause(reason)
 	if !strings.Contains(cause, "Prow") || !strings.Contains(cause, workflowApprovalCommand) || !strings.Contains(cause, oktotest.WorkflowPath) {
 		t.Fatalf("decisionCause(%q) = %q, want Prow, the command and the workflow path named", reason, cause)
+	}
+}
+
+func TestWorkflowApprovalAttentionSkipsCommandInReadOnlyEligibilityProbe(t *testing.T) {
+	var comments []string
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.workflowRuns = []map[string]any{heldRun(1, "acme/widget")}
+		p.commentBodies = &comments
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+
+	probeCtx := context.WithValue(context.Background(), integrationEligibilityContextKey{}, &integrationEligibilityCapture{})
+	want := workflowApprovalRequiredPrefix + "ci/build"
+	if got := c.workflowApprovalAttention(probeCtx, "widget", "acme", "widget", 23, "sha23", "ci/build", 1); got != want {
+		t.Fatalf("probe reason = %q, want %q", got, want)
+	}
+	if len(comments) != 0 {
+		t.Fatalf("probe posted comments %q, want none", comments)
+	}
+	if got := c.workflowApprovalAttention(context.Background(), "widget", "acme", "widget", 23, "sha23", "ci/build", 1); got != want {
+		t.Fatalf("live reason = %q, want %q", got, want)
+	}
+	if len(comments) != 1 || comments[0] != workflowApprovalCommandBody("sha23") {
+		t.Fatalf("live comments = %q, want one command after the probe", comments)
 	}
 }

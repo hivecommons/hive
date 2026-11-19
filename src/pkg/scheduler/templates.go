@@ -11,7 +11,6 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/resolve"
 )
@@ -263,32 +262,6 @@ func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *gi
 	return s.substituteTemplateWithVars(template, actionable, agentName, issues, nil)
 }
 
-// inceptionVars extracts template variable values from the inception engine.
-// Returns empty strings when no inception is active — templates render cleanly.
-func (s *Scheduler) inceptionVars() (idea, phase, mode, answers, slug, repoURL string) {
-	s.mu.RLock()
-	inception := s.inception
-	s.mu.RUnlock()
-	if inception == nil {
-		return
-	}
-	state := inception.GetState()
-	if state == nil {
-		return
-	}
-	phase = string(state.Phase)
-	mode = string(state.Mode)
-	slug = state.IdeaSlug
-	repoURL = state.RepoURL
-	answers = s.inception.FormatAnswersForPrompt()
-
-	idea = state.IdeaText
-	if idea == "" && state.Mode == knowledge.InceptionBrownfield {
-		idea = state.RepoURL
-	}
-	return
-}
-
 // substituteTemplateWithVars is substituteTemplateWithPolicy plus caller-supplied
 // ${VAR}s, for a template whose values only one call site can compute.
 //
@@ -336,7 +309,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	issueList, issueFailClosed := s.formatIssueListWithPolicy(agentIssuesForList)
 	prList, prFailClosed := s.formatPRListWithPolicyForAgent(actionable, baseName)
 	if issueFailClosed || prFailClosed {
-		s.warnBlockedKick(agentName)
+		s.warnBlockedKick(agentName, false)
 		return "", true
 	}
 
@@ -382,7 +355,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	// agentsmd.ParseNearest for closest-wins nested AGENTS.md. That still has no
 	// caller — nothing on the kick path knows which FILE an agent will touch —
 	// so it stays deferred, unlike the checkout root, which is now threaded.
-	agentsSection := s.primeAgentsMd(repoRoot)
+	agentsSection := s.primeAgentsMd(primaryRepo, repoRoot)
 	if agentsSection != "" {
 		knowledgeSection = agentsSection + "\n" + knowledgeSection
 	}
@@ -397,14 +370,12 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	}
 	s.logKnowledgeInjection(agentName, knowledgeInj, len(agentsSection), len(skillsSection))
 
-	inceptionIdea, inceptionPhase, inceptionMode, inceptionAnswers, inceptionSlug, inceptionRepoURL := s.inceptionVars()
-
 	// The merge-eligible and CI-failing lists are read from hive-wide metrics
 	// files, so they need the same narrowing: a scoped agent asked to fix red CI
 	// must not be handed a red PR on a repo it cannot push to (#6204).
 	repoInScope := func(repo string) bool { return s.cfg.AgentServesRepo(agentName, repo) }
 	mergeEligibleList := s.buildMergeEligibleListFor(repoInScope)
-	ciFailingList := s.buildCIFailingListFor(repoInScope)
+	ciFailingList := s.buildCIFailingListForAgent(baseName, repoInScope)
 
 	// The built-in per-kick variables. Each value is already computed above, so
 	// the thunks just return it — but wrapping them as resolve.RuntimeContext
@@ -430,6 +401,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		"GH_AUTH":               lit(s.ghAuthInstructions()),
 		"WORK_TRACKER":          lit(s.workTrackerSection()),
 		"IN_FLIGHT":             lit(inflightNote(heldInflight)),
+		"TOPIC_CLAIMS":          lit(topicClaimsSection(s.topicClaimsFor(agentName))),
 		"PROJECT_ORG":           lit(s.cfg.Project.Org),
 		"PROJECT_NAME":          lit(s.cfg.Project.Name),
 		"PROJECT_PRIMARY_REPO":  lit(fullPrimaryRepo),
@@ -444,14 +416,21 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		"AGENT_ROLES":           lit(agentRoles),
 		"ENABLED_AGENTS":        lit(agentList),
 		"KNOWLEDGE":             lit(knowledgeSection),
-		"INCEPTION_IDEA":        lit(inceptionIdea),
-		"INCEPTION_PHASE":       lit(inceptionPhase),
-		"INCEPTION_MODE":        lit(inceptionMode),
-		"INCEPTION_ANSWERS":     lit(inceptionAnswers),
-		"INCEPTION_SLUG":        lit(inceptionSlug),
-		"INCEPTION_REPO_URL":    lit(inceptionRepoURL),
-		"MERGE_ELIGIBLE":        lit(mergeEligibleList),
-		"CI_FAILING":            lit(ciFailingList),
+		// The ${INCEPTION_*} family belonged to the retired inception
+		// workflow. It always renders empty so an operator's custom template
+		// that still names it (the brainstorm "Normal Ideation Mode" branch
+		// keyed off an empty idea) keeps rendering cleanly for one release.
+		"INCEPTION_IDEA":     lit(""),
+		"INCEPTION_PHASE":    lit(""),
+		"INCEPTION_MODE":     lit(""),
+		"INCEPTION_ANSWERS":  lit(""),
+		"INCEPTION_SLUG":     lit(""),
+		"INCEPTION_REPO_URL": lit(""),
+		"MERGE_ELIGIBLE":     lit(mergeEligibleList),
+		"CI_FAILING":         lit(ciFailingList),
+		// Upstream releases the release-feed watcher found for this agent
+		// and has not yet delivered (hivecommons/hive#18494); "" when none.
+		"NEW_RELEASES": func() string { return s.newReleasesBlock(agentName) },
 	}}
 	// Caller-supplied vars lose a name clash: one already claimed by a built-in
 	// above is left alone, so no call site can redefine ${GH_AUTH}.

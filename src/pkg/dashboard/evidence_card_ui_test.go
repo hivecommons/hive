@@ -67,7 +67,9 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		".ev-svg .ev-bar.sr",
 		// Panel 1 (#12364): outcome by author kind.
 		"dto.outcomes_by_author_kind || {}",
-		"evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes) + evControlArmHtml(dto.control_arm),",
+		"evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes) + evOutcomesByModelHtml(dto.outcomes_by_author_model) + evControlArmHtml(dto.control_arm),",
+		// #18720: change failures per canonical author model, same panel.
+		"function evOutcomesByModelHtml(byModel) {",
 		// Issue reopen rate shares the panel chrome and compact table styling.
 		"return evPanel('issue-reopen', 'Issue reopen rate · rolling 30 days', closedN, body,",
 		`<div class="ev-table-wrap"><table class="ev-table">`,
@@ -254,7 +256,7 @@ func TestEvidenceMaintainabilityRendering(t *testing.T) {
 	source.WriteString(jsFunc(t, html, "formatNumber"))
 	source.WriteByte('\n')
 	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nlet evConfidenceSeries = 'self-reported';\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\nconst EV_OM_DRAIN_MAX = 1, EV_OM_SCOUT_MIN = 1, EV_OM_SCOUT_MAX = 2, EV_OM_PARITY_TOLERANCE = 0.25, EV_OM_ROLLING_DAYS = 30, EV_OM_SPARK_TRAIL_DAYS = 7, EV_OM_BAR_MAX_RATIO = 3, EV_OM_SPARK_MAX_RATIO = 3;\nconst EV_OM_STATUS = { in_band: 'in band', above: 'backlog growing', below: 'scouting below cadence', no_data: 'no data' };\n")
-	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evCalibrationSeries", "evCalibrationControls", "evSelectConfidence", "evOutcomesSvg", "evControlArmHtml", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "evIssueReopenRatesHtml", "evOmStatusLabel", "evOmRatioText", "evOmVerdict", "evOmSparkline", "evOpensMergesHtml", "renderEvidenceSummary"} {
+	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evCalibrationSeries", "evCalibrationControls", "evSelectConfidence", "evOutcomesSvg", "evOutcomesByModelHtml", "evControlArmHtml", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "evIssueReopenRatesHtml", "evOmStatusLabel", "evOmRatioText", "evOmVerdict", "evOmSparkline", "evOpensMergesHtml", "renderEvidenceSummary"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
@@ -421,6 +423,7 @@ func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
 		"evPanel",
 		"evRate",
 		"evOutcomesSvg",
+		"evOutcomesByModelHtml",
 		"evControlArmHtml",
 		"evCalibrationSvg",
 		"evAccuracySvg",

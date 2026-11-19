@@ -21,6 +21,7 @@ type Remediation struct {
 const (
 	causeAppBroken           = "app-broken"
 	causeLoginStuck          = "login-stuck"
+	causeLoginRevoked        = "login-revoked"
 	causeBudgetExhausted     = "budget-exhausted"
 	causeBudgetMisconfigured = "budget-misconfigured"
 	causeErrorStreak         = "error-streak"
@@ -28,6 +29,9 @@ const (
 	causeNoCadence           = "no-cadence"
 	causeHoldStale           = "hold-stale"
 	causeChannelLag          = "channel-lag"
+	// causePRGate: the hive-posted PR-contents gate cannot be posted
+	// (hivecommons/hive#19038).
+	causePRGate = "pr-gate"
 	// The three families the 2026-09-02 fleet sweep found carrying no hint at
 	// all (#5699). Each verdict already named its condition precisely; none
 	// named a fix, so eleven non-green spokes rendered a WHY chip with nothing
@@ -87,6 +91,44 @@ func applyDetectorStates(v HealthVerdict, e RegistryEntry) HealthVerdict {
 		v.Reason = fmt.Sprintf("agent(s) %s enabled but never kicked — set cadences", nameList(e.NoCadenceAgents))
 		return v
 	}
+	return v
+}
+
+// PR gate causes a spoke reports (github.PRGateCause*), mirrored here so the
+// hub does not import the spoke's GitHub client.
+const (
+	prGateCauseGrantMissing = "grant-missing"
+	prGateCauseWriteRefused = "write-refused"
+)
+
+// applyPRGate layers the hive-posted PR-contents gate onto the verdict. A gate
+// that cannot be posted turns RED when a required context depends on it (merges
+// would stall behind a check nobody can post) and AMBER otherwise. A harder
+// fault that already made the verdict red keeps its headline, and a hive the
+// hub cannot see (unknown) is never judged from a stale cause.
+func applyPRGate(v HealthVerdict, e RegistryEntry) HealthVerdict {
+	if !e.Online || v.State == HealthStateUnknown || v.State == HealthStateRed {
+		return v
+	}
+	var why string
+	switch e.PRGateCause {
+	case prGateCauseGrantMissing:
+		why = "the Hive App has no Commit statuses write grant"
+	case prGateCauseWriteRefused:
+		why = "GitHub refused the gate's commit status write"
+	default:
+		return v
+	}
+	if e.PRGateDependsOn {
+		v.State = HealthStateRed
+		v.Reason = "PR-contents gate cannot be posted: " + why + "; a required check will never report and merges stall"
+	} else if v.State == HealthStateGreen {
+		v.State = HealthStateAmber
+		v.Reason = "PR-contents gate cannot be posted: " + why
+	} else {
+		return v
+	}
+	v.cause = causePRGate
 	return v
 }
 
@@ -161,6 +203,14 @@ func attachRemediation(v *HealthVerdict, e RegistryEntry) {
 			Surface: "spoke dashboard /login",
 			Link:    link("/login"),
 		}
+	case causeLoginRevoked:
+		// Provider-verified (#18732): the stored Claude grant is dead and the
+		// spoke is holding its restarts for the sign-in. Nothing else helps.
+		v.Remediation = &Remediation{
+			Action:  "Sign in to Claude again on the spoke dashboard — the provider rejected the stored login; agents restart on their own after the sign-in",
+			Surface: "spoke dashboard",
+			Link:    link(""),
+		}
 	case causeBudgetExhausted, causeBudgetMisconfigured:
 		v.Remediation = &Remediation{
 			Action:  "Raise or reset the budget limit (Settings → Budget)",
@@ -178,6 +228,13 @@ func attachRemediation(v *HealthVerdict, e RegistryEntry) {
 			Action:  "Complete the Copilot consent flow on the live pod dashboard",
 			Surface: "spoke dashboard",
 			Link:    link(""),
+		}
+	case causePRGate:
+		// The owner step is in GitHub, not on the spoke: the App's pending
+		// permission request in the organization settings.
+		v.Remediation = &Remediation{
+			Action:  "Accept the Hive App's pending Commit statuses (read and write) permission request in the organization settings, then press Re-check",
+			Surface: "GitHub App settings (organization owner)",
 		}
 	case causeNoCadence:
 		v.Remediation = &Remediation{

@@ -284,7 +284,7 @@ func enforceHoldGuard(
 			}
 			store.MarkCommented(repo, pr.Number)
 		}
-		if err := writer.AddLabels(ctx, pr.Repo, pr.Number, []string{holdguard.ReHoldLabel}); err != nil { // writeback:gated
+		if err := writer.AddLabels(ctx, pr.Repo, pr.Number, []string{github.DecisionNeededLabelName()}); err != nil { // writeback:gated
 			// Commented but not re-held: the snapshot stays on the OLD head,
 			// so next tick re-detects the drift (comment deduped) and retries
 			// the label. Never re-arm before the label sticks.
@@ -412,10 +412,18 @@ func maintainHeldPRMergeability(
 		if len(commits) > 0 {
 			newHead = commits[len(commits)-1].SHA
 		}
-		if newHead == "" || newHead == pr.HeadSHA {
-			// UpdateBranch always moves the head; failing to confirm the new
-			// SHA means the commit list refresh failed — leave the baseline
-			// alone rather than advance it on stale information.
+		if newHead == pr.HeadSHA {
+			// update-branch answers 202 before the merge commit is visible, so
+			// the refetch can still show the old head. That is GitHub
+			// propagation lag, not an anomaly: leave the baseline alone and let
+			// the next tick re-read the head.
+			logger.Debug("hold guard: held PR head not yet advanced after update-branch; baseline left pinned",
+				"repo", repo, "pr", pr.Number, "head", pr.HeadSHA)
+			continue
+		}
+		if newHead == "" {
+			// The commit list refresh failed: leave the baseline alone rather
+			// than advance it on stale information.
 			logger.Warn("hold guard: could not confirm new head after keeping held PR mergeable",
 				"repo", repo, "pr", pr.Number)
 			continue

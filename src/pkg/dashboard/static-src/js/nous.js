@@ -670,22 +670,6 @@
       // section header (#12532); the header keeps the mode · N summary.
       if (typeof refreshDashboardSectionSummaries === 'function' && window._lastStatus) refreshDashboardSectionSummaries(window._lastStatus);
 
-      // Update sidebar config — only show at ACMM L4+
-      const NOUS_SIDEBAR_MIN_LEVEL = 4;
-      const modeColors = { observe: 'var(--blue)', suggest: 'var(--yellow)', evolve: 'var(--green)' };
-      const currentACMM = window._lastStatus ? (window._lastStatus.acmmLevel || 0) : 0;
-      const sbConfig = document.getElementById('nous-sidebar-config');
-      const sbMode = document.getElementById('nous-sb-mode');
-      const sbPhase = document.getElementById('nous-sb-phase');
-      if (sbConfig) {
-        sbConfig.style.display = currentACMM >= NOUS_SIDEBAR_MIN_LEVEL ? '' : 'none';
-        if (sbMode) { sbMode.textContent = mode; sbMode.style.color = modeColors[mode] || 'var(--muted)'; }
-        if (sbPhase) {
-          const rp = (phases.repo || {}).phase || 'IDLE';
-          sbPhase.textContent = 'repo:' + rp;
-        }
-      }
-
       let html = '';
 
       // Fresh lab (no baseline, no experiments, no principles yet):

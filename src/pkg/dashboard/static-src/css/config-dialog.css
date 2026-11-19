@@ -38,6 +38,18 @@
     .hive-dialog-check { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--muted); margin: calc(-1 * var(--sp-4)) 0 var(--sp-6); cursor: pointer; }
     .hive-dialog-check input { accent-color: var(--accent); margin: 0; }
     .hive-dialog-buttons { display: flex; gap: 10px; justify-content: flex-end; }
+    /* Export / link viewer (hiveExportViewer): the handed-over text sits in
+       the dialog's own type and colour tokens, full width, read-only and
+       selectable, so an OAuth URL reads as part of the dialog rather than a
+       stray form control. A link is one wrapped line; an export is a <pre>. */
+    .hive-export-dialog { width: 560px; }
+    .hive-export-dialog .hive-dialog-title { margin-bottom: var(--sp-3); }
+    .hive-export-dialog .hive-dialog-body { margin-bottom: var(--sp-6); white-space: normal; }
+    .hive-export-note { margin: 0 0 var(--sp-4); }
+    .hive-export-link, .hive-export-text { display: block; width: 100%; box-sizing: border-box; margin: 0; padding: var(--sp-4) var(--sp-5); font: inherit; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); border: 1px solid var(--border); border-radius: var(--r); cursor: text; user-select: all; -webkit-user-select: all; }
+    .hive-export-link { word-break: break-all; overflow-wrap: anywhere; white-space: normal; line-height: 1.5; }
+    .hive-export-text { font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.5; white-space: pre; overflow: auto; min-height: 8em; max-height: 50vh; }
+    .hive-export-link:focus-visible, .hive-export-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     .release-notes-dialog { width: 720px; }
     .release-notes-caveat { margin-bottom: var(--sp-4); }
     .release-notes-body { max-height: min(55vh, 520px); margin-bottom: var(--sp-7); } /* scroll via .modal-scroll */
@@ -263,6 +275,14 @@
     .rv-reviewer-help { margin: var(--sp-1) var(--sp-0) var(--sp-0); }
     .rv-reviewer-help-above { margin: var(--sp-0) var(--sp-0) var(--sp-2); }
     #rv-require-labels-field[hidden] { display: none; }
+    /* Linked review.perspectives_source banner in the Review Gate (#17989). */
+    .rv-perspectives-linked { margin: var(--sp-0) var(--sp-0) var(--sp-3); padding: var(--sp-4) var(--sp-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-sm); }
+    .rv-perspectives-linked-status, .rv-perspectives-linked-warning { margin-top: var(--sp-2); color: var(--muted); }
+    .rv-perspectives-linked-warning { color: var(--yellow); }
+    .rv-psrc-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--sp-3) var(--sp-5); }
+    .rv-psrc-actions { margin-top: var(--sp-3); }
+    .cfg-inline-row { display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap; }
+    .cfg-inline-row select { flex: 1 1 12rem; min-width: 0; }
     .am-trusted-authors-repos { min-height: 72px; }
     .am-bot-empty { color: var(--muted); margin: var(--sp-1) 0; }
     .am-bot-add { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); align-items: center; }
@@ -492,6 +512,20 @@
     .config-repo-row { flex-wrap: wrap; }
     .config-repo-name { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; }
     .config-repo-row .rt-check { white-space: normal; min-width: 0; }
+    /* Derived reference repo rows (#18161): read-only, source link and state chip. */
+    .cfg-reference-repo-derived { opacity: 0.92; }
+    .cfg-reference-repo-lock { font-size: var(--fs-xs); }
+    .cfg-reference-repo-source { font-size: var(--fs-xs); }
+    .cfg-reference-repo-state-write-tier { color: var(--success, var(--muted)); }
+    .cfg-reference-repo-state-read-only, .cfg-reference-repo-state-unresolved { color: var(--warning, var(--muted)); }
+    .cfg-reference-repo-reason { flex-basis: 100%; }
+    .cfg-owner-identity { flex-wrap: wrap; gap: var(--space-2, 0.5rem); }
+    .cfg-write-identity { flex-wrap: wrap; gap: var(--space-2, 0.5rem); }
+    .cfg-write-identity-choices { display: flex; flex-wrap: wrap; gap: var(--space-2, 0.5rem); }
+    .cfg-write-identity-status { flex-basis: 100%; }
+    .cfg-reference-repo-identity { flex-basis: 100%; }
+    .cfg-owner-identity-status { flex-basis: 100%; }
+    .cfg-owner-identity-code { font-size: var(--fs-md, 1rem); letter-spacing: 0.08em; }
     .config-list-item .remove-item {
       margin-left: auto; background: none; border: none;
       color: var(--red); cursor: pointer; font-size: 0.9rem;
@@ -587,3 +621,17 @@
       .config-body { --config-body-pad: 14px; padding: var(--sp-0) var(--config-body-pad) var(--config-body-pad); }
       .config-field-row, .config-field-row4 { grid-template-columns: 1fr; }
     }
+    /* Searchable, grouped gateway model picker (js/model-picker.js). Tokens only. */
+    .model-combo { position: relative; }
+    .model-combo-input { width: 100%; box-sizing: border-box; }
+    .model-combo-list { position: absolute; left: 0; right: 0; top: 100%; z-index: 30; margin: var(--sp-1) var(--sp-0) var(--sp-0); padding: var(--sp-2) var(--sp-0); list-style: none; max-height: 320px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); }
+    .model-combo-list[hidden] { display: none; }
+    .model-combo-group { padding: var(--sp-3) var(--sp-4) var(--sp-1); font-size: var(--fs-xs); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .model-combo-option { display: flex; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-2) var(--sp-4); font-size: var(--fs-sm); color: var(--fg); cursor: pointer; }
+    .model-combo-option:hover, .model-combo-option[aria-selected="true"] { background: var(--bg); outline: 1px solid var(--cyan); outline-offset: -1px; }
+    .model-combo-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .model-combo-detail, .model-combo-current { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+    .model-combo-current { margin-top: var(--sp-2); white-space: normal; }
+    .model-combo-current:empty { display: none; }
+    .model-combo-custom { color: var(--cyan); }
+    .model-combo-empty { padding: var(--sp-2) var(--sp-4); font-size: var(--fs-sm); color: var(--muted); }

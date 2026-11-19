@@ -228,6 +228,10 @@ func TestIssueRequestWatcher_RepoPause(t *testing.T) {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls":
 					// The claim gate lists open PRs for the open-PR guard (#14799).
 					_, _ = io.WriteString(w, `[]`)
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/42":
+					// A scanner comment asks whether the target is a PR
+					// (scanner note, #18451); #42 is an issue here.
+					w.WriteHeader(http.StatusNotFound)
 				case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
 					_, _ = io.WriteString(w, `{"name":"agent/security"}`)
 				case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/origin/"):

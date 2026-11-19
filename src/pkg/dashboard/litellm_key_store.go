@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/keystore"
 )
 
 const (
@@ -115,11 +116,9 @@ func writeLiteLLMKeyFile(key string) error {
 	if err := os.MkdirAll(dir, litellmKeyDirMode); err != nil {
 		return actionableWriteError(dir, err)
 	}
-	if err := os.WriteFile(writableLiteLLMKeyFile, []byte(key), litellmKeyFileMode); err != nil {
-		return actionableWriteError(writableLiteLLMKeyFile, err)
-	}
-	// WriteFile does not change the mode of a pre-existing file.
-	if err := os.Chmod(writableLiteLLMKeyFile, litellmKeyFileMode); err != nil {
+	// Sealed through the keystore (hive#18214) and replaced atomically at
+	// litellmKeyFileMode; a pre-existing file takes the new mode too.
+	if err := keystore.WriteFileMode(context.Background(), writableLiteLLMKeyFile, []byte(key), litellmKeyFileMode); err != nil {
 		return actionableWriteError(writableLiteLLMKeyFile, err)
 	}
 	return nil

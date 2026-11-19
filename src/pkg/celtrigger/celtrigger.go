@@ -83,6 +83,10 @@ type NormalizedEvent struct {
 	HeadBranch string `cel:"head_branch"`
 	// Assignees are the currently-assigned logins. Exposed as event.assignees.
 	Assignees []string `cel:"assignees"`
+	// AddedLabels are the labels this event added (pr.labeled): the labels an
+	// already-seen PR gained since the previous eval. Exposed as
+	// event.added_labels.
+	AddedLabels []string `cel:"added_labels"`
 	// Comment is the body of the triggering comment (comment.created). Exposed as event.comment.
 	Comment string `cel:"comment"`
 	// Run identifies a long-running hive run/lease. Exposed as event.run.

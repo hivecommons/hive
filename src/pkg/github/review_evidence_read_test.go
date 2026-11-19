@@ -288,7 +288,24 @@ func newEvidenceMergeServer(t *testing.T, f *evidenceMergeFixture) *httptest.Ser
 		}
 	}))
 	t.Cleanup(srv.Close)
+	// The process-wide REST 404 negative cache is keyed by host:port, and the
+	// kernel reuses ephemeral ports between httptest servers. A 404 for
+	// o/r#7 cached by an earlier test on the same port would answer this
+	// server's PR fetch without reaching it. Drop any entry for this host.
+	dropREST404NegativeEntriesForHost(srv.Listener.Addr().String())
+	t.Cleanup(func() { dropREST404NegativeEntriesForHost(srv.Listener.Addr().String()) })
 	return srv
+}
+
+func dropREST404NegativeEntriesForHost(host string) {
+	c := sharedREST404NegativeCache
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key := range c.entries {
+		if strings.Contains(key, ":"+strings.ToLower(host)+":") {
+			delete(c.entries, key)
+		}
+	}
 }
 
 func evidenceMergeClient(t *testing.T, f *evidenceMergeFixture, settings *ReviewEvidenceSettings) *Client {

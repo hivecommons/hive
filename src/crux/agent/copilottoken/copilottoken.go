@@ -6,11 +6,14 @@
 package copilottoken
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
 
 	"github.com/hivecommons/hive/crux/claude"
+	"github.com/hivecommons/hive/crux/keystore"
+	"github.com/hivecommons/hive/crux/sharedfile"
 )
 
 // ConfigHasTokens returns true if either the Copilot config or Claude
@@ -116,6 +119,13 @@ func ReadConfig(path string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ParseConfig(data)
+}
+
+// ParseConfig is ReadConfig over bytes the caller already read (for example
+// with sharedfile.ReadNoFollow): it strips the CLI's // comment lines and
+// unmarshals the remainder, returning an empty map for a JSON null.
+func ParseConfig(data []byte) (map[string]interface{}, error) {
 	var cleaned []byte
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "//") {
@@ -134,19 +144,18 @@ func ReadConfig(path string) (map[string]interface{}, error) {
 }
 
 // WriteConfig marshals cfg back to config.json with the CLI's // header
-// preserved and the CLI-expected mode. Written via a temp file + rename so a
-// concurrent CLI read never sees a half-written file.
+// preserved and the CLI-expected mode. Written through sharedfile.Replace (a
+// random temporary beside path, renamed into place) so a concurrent CLI read
+// never sees a half-written file, and so a non-regular file at path, or a
+// directory that is not this process's own, is refused rather than written
+// through: config.json lives in a directory every agent uid can write to.
 func WriteConfig(path string, cfg map[string]interface{}, mode os.FileMode) error {
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 	content := ConfigHeader + string(out)
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(content), mode); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return sharedfile.Replace(path, []byte(content), mode, sharedfile.Options{PreserveOwner: true})
 }
 
 // ClearExpiredTokens removes stored copilot tokens from config.json.
@@ -355,15 +364,20 @@ func TokenValueUsable(s string) bool {
 // rename, matching the dashboard login's saveCopilotToken write. The production
 // caller passes CopilotUserTokenPath — the file that survives upgrade rolls and
 // that the hive reads at boot into m.copilotAuthToken; the path is a parameter
-// so tests can target a temp file.
+// so tests can target a temp file. The token is sealed through the keystore
+// (hive#18214), so with a provider active the durable file holds an envelope,
+// never the plaintext.
 func WriteDurableToken(durablePath, token string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return nil
 	}
-	tmp := durablePath + ".tmp"
-	if err := os.WriteFile(tmp, []byte(token), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, durablePath)
+	return keystore.WriteFile(context.Background(), durablePath, []byte(token))
+}
+
+// ReadDurableToken reads the durable user token written by WriteDurableToken
+// (or by the dashboard login), opening a sealed file or passing a legacy
+// plaintext one through. Returns "" and the read error when there is none.
+func ReadDurableToken(durablePath string) (string, error) {
+	return keystore.ReadString(context.Background(), durablePath)
 }

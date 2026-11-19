@@ -404,3 +404,63 @@ func TestStubPublicGitSourceDNSFailsClosed(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveGitSourceDefaultBranch(t *testing.T) {
+	tests := []struct {
+		name    string
+		out     string
+		runErr  error
+		want    string
+		wantErr bool
+	}{
+		{name: "trunk", out: "ref: refs/heads/trunk\tHEAD\n0123abcd\tHEAD\n", want: "trunk"},
+		{name: "slashed", out: "ref: refs/heads/release/v2\tHEAD\n0123abcd\tHEAD\n", want: "release/v2"},
+		{name: "no symref falls back to main", out: "0123abcd\tHEAD\n", want: "main"},
+		{name: "ls-remote failure surfaces", out: "fatal: repository not found", runErr: fmt.Errorf("exit status 128"), wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			orig := gitSourceLsRemote
+			gitSourceLsRemote = func(context.Context, string) ([]byte, error) { return []byte(tc.out), tc.runErr }
+			t.Cleanup(func() { gitSourceLsRemote = orig })
+
+			got, err := resolveGitSourceDefaultBranch(context.Background(), "https://github.com/org/repo")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Errorf("branch = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestConnectGitSource_BlankBranchResolvesDefault(t *testing.T) {
+	stubPublicGitSourceDNS(t, "github.com")
+	origLs, origNew, origInit, origLoop := gitSourceLsRemote, newGitSourceForConnect, initGitSourceForConnect, startGitSourceSyncLoopForConnect
+	t.Cleanup(func() {
+		gitSourceLsRemote, newGitSourceForConnect, initGitSourceForConnect, startGitSourceSyncLoopForConnect = origLs, origNew, origInit, origLoop
+	})
+	gitSourceLsRemote = func(context.Context, string) ([]byte, error) {
+		return []byte("ref: refs/heads/trunk\tHEAD\n"), nil
+	}
+	var gotBranch string
+	newGitSourceForConnect = func(c GitSourceConfig, base string, l *slog.Logger) *GitSource {
+		gotBranch = c.Branch
+		return NewGitSource(c, base, l)
+	}
+	initGitSourceForConnect = func(*GitSource, context.Context) error { return nil }
+	startGitSourceSyncLoopForConnect = func(*GitSource, context.Context) {}
+
+	k := &KnowledgeAPI{logger: slog.Default()}
+	err := k.ConnectGitSource(context.Background(), GitSourceConfig{Name: "n", URL: "https://github.com/org/repo", Layer: LayerProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBranch != "trunk" {
+		t.Errorf("clone branch = %q, want trunk", gotBranch)
+	}
+	if infos := k.GitSources(); len(infos) != 1 || infos[0].Branch != "trunk" {
+		t.Errorf("recorded sources = %+v, want branch trunk", infos)
+	}
+}

@@ -30,6 +30,28 @@ else
   SESSION="supervisor"
   SESSION_FROM_ARG=0
 fi
+# User sessions (dashboard Sessions feature): hive-sess-<id> runs on its OWN
+# tmux server whose socket is named after the session. Reject any other
+# hive-sess-* shape so ?arg= cannot reach a glob or a path.
+USER_SESSION_RE='^hive-sess-[a-f0-9]{8,32}$'
+case "$SESSION" in
+  hive-sess-*)
+    if ! [[ "$SESSION" =~ $USER_SESSION_RE ]]; then
+      echo "error: invalid user session name" >&2
+      exit 1
+    fi
+    ;;
+esac
+case "$SESSION" in
+  hive-sess-*)
+    # User sessions run under their own reserved uid and are attached with a
+    # per-session token by the container's src/deploy/ttyd-tmux.sh. This
+    # single-uid copy has neither, so it refuses rather than attach a session
+    # that shares the hive's uid.
+    echo "error: user sessions can only be attached through the container ttyd-tmux.sh (per-session uids)" >&2
+    exit 1
+    ;;
+esac
 TTYD_WAIT_SEC="${HIVE_TTYD_WAIT_SEC:-900}"
 TTYD_POLL_SEC="${HIVE_TTYD_POLL_SEC:-2}"
 TTYD_HISTORY_LIMIT="${HIVE_TTYD_HISTORY_LIMIT:-50000}"
@@ -103,7 +125,37 @@ tmux bind-key -n WheelUpPane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}
 tmux set-option -s terminal-features ",${TERM:-xterm-256color}:clipboard" 2>/dev/null || true
 tmux set-option -s set-clipboard on 2>/dev/null || true
 EXIT_CODE=0
-tmux attach-session -t "$SESSION" || EXIT_CODE=$?
+# Same attach lifecycle as src/deploy/ttyd-tmux.sh: ttyd signals this script's
+# process group with SIGHUP when the browser closes, and a foreground attach
+# defers that until the client exits on its own, which it never does while
+# ttyd holds the pty open. Run the client as a background job (stdin kept) and
+# detach it from a trap so the pty really closes with the websocket.
+ATTACH_TTY=$(tty 2>/dev/null || true)
+DETACHED=0
+DETACH_TRIES=0
+TTYD_DETACH_RETRIES="${HIVE_TTYD_DETACH_RETRIES:-20}"
+TTYD_DETACH_RETRY_SEC="${HIVE_TTYD_DETACH_RETRY_SEC:-0.25}"
+detach_this_client() {
+  DETACHED=1
+  if [ -n "$ATTACH_TTY" ]; then
+    tmux detach-client -t "$ATTACH_TTY" 2>/dev/null || true
+  fi
+}
+trap detach_this_client HUP TERM INT
+tmux attach-session -t "$SESSION" <&0 &
+ATTACH_PID=$!
+wait "$ATTACH_PID" || EXIT_CODE=$?
+if [ "$DETACHED" -eq 1 ]; then
+  # A hang-up ends the attach on purpose; retry the detach while the client is
+  # still registering, then leave: the session leader's exit hangs up the rest.
+  while [ -n "$(jobs -rp)" ] && [ "$DETACH_TRIES" -lt "$TTYD_DETACH_RETRIES" ]; do
+    DETACH_TRIES=$((DETACH_TRIES + 1))
+    sleep "$TTYD_DETACH_RETRY_SEC"
+    detach_this_client
+  done
+  EXIT_CODE=0
+fi
+trap - HUP TERM INT
 tmux set-option -t "$SESSION" mouse "$PREV_MOUSE" 2>/dev/null || true
 if [ -n "$PREV_HISTORY" ]; then
   tmux set-option -t "$SESSION" history-limit "$PREV_HISTORY" 2>/dev/null || true

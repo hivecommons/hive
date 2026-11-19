@@ -50,6 +50,9 @@ the historical item dates below are not a fresh audit of every linked issue.
 | Memory and learning | Direction | Keep reusable knowledge durable, testable, and auditable. | [Knowledge design](design/knowledge-system.md) |
 | Kubernetes-native sandboxes | Direction | Isolate agent workloads with cluster policy where the complexity is justified. | [Security threat model](security-threat-model.md) |
 | v6 dashboard-optional operation | Development branch available; stable promotion gated | Let people act through GitHub threads, chat, and escalation surfaces with the same permission checks. | [#7563](https://github.com/hivecommons/hive/issues/7563) |
+| v7 Hive for teams | RFC held for discussion | Shared, persistent sessions across every surface; org, project, and repo policy; multi-forge solutions; budgets and audit for more than one human at once. | [#17091](https://github.com/hivecommons/hive/issues/17091) |
+| v7 containment guardrails | RFC held for discussion | Deterministic, auditable limits on what an agent may touch, spend, and reach, enforced outside the model. | [#12815](https://github.com/hivecommons/hive/issues/12815) |
+| Workflow models | RFC held for discussion | Ingest a GitHub Actions or Tekton pipeline, store and edit it as a model, and drive the stage engine and Activity Monitor columns from it; built-in v5/v6 lifecycle unchanged. | [#17620](https://github.com/hivecommons/hive/issues/17620) |
 
 ## Recently completed and available foundations
 

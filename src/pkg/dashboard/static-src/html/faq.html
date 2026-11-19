@@ -6,7 +6,7 @@
         <p class="faq-intro">Short answers to the questions people ask once a hive is running. Everything below describes what this hive
         actually does today — where behaviour is surprising, it is called out rather than smoothed over. Each answer links to the
         source doc, so this panel stays a map, not a second source of truth.</p>
-        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step. Want to see a hive at work? <a class="text-accent fw-semibold" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Watch the hive live on Twitch</a>.</p>
+        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step. Want to see a hive at work? <a class="text-accent fw-semibold" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Watch the hive live on Twitch</a>. Wondering which model to run? <a class="text-accent fw-semibold" href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener">Compare models on real fleet PR outcomes</a> (merge rate, CI first-try, estimated cost).</p>
 
         <div class="faq-filter-row">
           <label for="faq-filter" class="faq-filter-label">Filter</label>
@@ -19,7 +19,7 @@
 
         <details class="faq-q" id="faq-l1-l2">
           <summary>What are L1 and L2 for?</summary>
-          <p><strong>L1 is inception; L2 is calibration.</strong> At L1 the <strong>brainstorm</strong> agent can turn a raw idea or existing repo into structured facts and a scaffold through the Inception panel; it asks clarifying questions and stops when you approve. At L2 the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
+          <p><strong>L1 is inception; L2 is calibration.</strong> At L1 you work an idea interactively in the dashboard's <strong>Inception (spek)</strong> section, a shared CLI-agent session; the old <code>/api/inception</code> workflow was retired and now answers 410 Gone. The <strong>brainstorm</strong> agent proposes ideas as advisory beads. At L2 the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
           <p>The job at L2 is not to fix everything in the ledger. It is to decide whether you believe the hive's judgement: point your own local agent — <code>claude</code>, <code>bob</code>, or <code>copilot</code> — at the 🐝 Hive Advisory Report and ask whether the findings hold up before you give Hive more authority.</p>
         </details>
 
@@ -129,7 +129,12 @@
 
         <details class="faq-q" id="faq-spek-l1">
           <summary>How does Spek fit with L1?</summary>
-          <p>Inception is the L1 human-and-brainstorm workflow for turning an idea into facts and a scaffold. Spek is the optional runner for staged speks and plans once you are using long-running runs. Both keep authority in Hive: Spek status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spek</a>.</p>
+          <p>Inception (spek) is the dashboard's interactive way in: shared CLI-agent sessions opened in the hive's spek workspace. Spek is the optional runner for staged speks and plans once you are using long-running runs. Both keep authority in Hive: Spek status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spek</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-sessions">
+          <summary>What is Inception (spek), and where did the Inception wizard go?</summary>
+          <p>The step-by-step Inception wizard was removed; the dashboard's <strong>Inception (spek)</strong> section replaces it (on by default; an owner can turn it off in Settings, which hides the section): named terminal tabs where a command-line AI agent runs inside Hive, shared with everyone on the hive. People with the <code>read</code> role see a read-only scrollback. Typing in a terminal is shared and not attributed to individual people. The Campaigns tab that briefly carried the old campaigns and Jam view was retired as well; Spektacular runs are in Runs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections/workflow-and-agents.md#inception-spek" target="_blank" rel="noopener noreferrer">Inception (spek)</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-external-engines">
@@ -154,7 +159,7 @@
 
         <details class="faq-q" id="faq-multiple-experiments">
           <summary>Can I run more than one experiment at once?</summary>
-          <p>Yes. The Experiment Lab lists each running experiment as its own card — research question, scope pills, status and a baseline bar reading <em>N / 672 (≈ 7 days of observations, 4 per hour)</em> — and <strong>+ New experiment</strong> adds another beside them, the same way the Inception section lists its campaigns. The one rule is that two running experiments may not share a repo target (or both be hive-wide): concurrent interventions on the same scope would confound each other's outcomes, so the lab refuses the second one and offers to pause the first or narrow the scope. Archived experiments stay read-only under <em>Previous experiments</em>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">running several experiments at once</a>.</p>
+          <p>Yes. The Experiment Lab lists each running experiment as its own card — research question, scope pills, status and a baseline bar reading <em>N / 672 (≈ 7 days of observations, 4 per hour)</em> — and <strong>+ New experiment</strong> adds another beside them, one card per experiment. The one rule is that two running experiments may not share a repo target (or both be hive-wide): concurrent interventions on the same scope would confound each other's outcomes, so the lab refuses the second one and offers to pause the first or narrow the scope. Archived experiments stay read-only under <em>Previous experiments</em>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">running several experiments at once</a>.</p>
           <p>Each card also says where it is: <em>collecting baseline</em>, <em>ready — generate proposals</em> (one button; the lab switches to Suggest for you), <em>proposals awaiting your review</em>, <em>running</em> or <em>concluded</em>. Entering a question is what creates the card — you never have to find a mode switch first.</p>
         </details>
         </section>
@@ -191,7 +196,7 @@
 
         <details class="faq-q" id="faq-attribution">
           <summary>What does the attribution trailer do?</summary>
-          <p>Every PR the hive opens ends with a <code>— hive:</code> line naming the agent and, when known, its backend, model, effort, tool versions, session and who requested the work, so a reader can tell at a glance which agent and model produced it. The trailer is controlled by <code>governor.attribution_trailer</code> (default on); turning it off hides the visible line but the matching <code>agent_pr_created</code> audit entry is written regardless, so attribution is never lost. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md#the-opened-pr-carries-an-attribution-trailer" target="_blank" rel="noopener noreferrer">the attribution trailer</a>.</p>
+          <p>Every PR the hive opens ends with a <code>-- hive:</code> line naming the agent and, when known, its backend, model, effort, tool versions, session and who requested the work, so a reader can tell at a glance which agent and model produced it. The trailer is controlled by <code>governor.attribution_trailer</code> (default on); turning it off hides the visible line but the matching <code>agent_pr_created</code> audit entry is written regardless, so attribution is never lost. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md#the-opened-pr-carries-an-attribution-trailer" target="_blank" rel="noopener noreferrer">the attribution trailer</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-audit">

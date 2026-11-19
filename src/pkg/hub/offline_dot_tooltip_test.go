@@ -30,7 +30,8 @@ func TestOfflineStatusDotCarriesTooltip(t *testing.T) {
 	// cluster and last-seen lines, each skipped when its field is empty.
 	for _, part := range []string{
 		`var offlineDotTitle = (function() {`,
-		`var parts = ['Offline'];`,
+		`var parts = ['Offline \u2014 no heartbeat received in the last 5 min (grey dot)'];`,
+		`parts.push(STATUS_DOT_LEGEND);`,
 		`var ns = hiveNamespace(h);`,
 		`if (ns) parts.push('ns: ' + ns);`,
 		`var cluster = h.clusterName || h.clusterId || '';`,

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -1577,36 +1577,6 @@ func TestCheckModelAllowed_EmptyModelRejected(t *testing.T) {
 	ok, _ := hub.checkModelAllowed("")
 	if ok {
 		t.Error("empty model should be rejected when reject enabled")
-	}
-}
-
-// --- handleInceptionStart ---
-
-func TestHandleInceptionStart_NoInception(t *testing.T) {
-	srv := newFullServer(t)
-	srv.deps.Inception = nil
-	req := httptest.NewRequest("POST", "/api/inception/start", strings.NewReader(`{"idea":"test"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	markOwnerRequest(req)
-	srv.handleInceptionStart(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("code = %d, want 503", w.Code)
-	}
-}
-
-func TestHandleInceptionStart_BadBody(t *testing.T) {
-	srv := newFullServer(t)
-	srv.deps.Inception = nil
-	req := httptest.NewRequest("POST", "/api/inception/start", strings.NewReader("not json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	markOwnerRequest(req)
-	srv.handleInceptionStart(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("code = %d, want 503 (inception nil checked first)", w.Code)
 	}
 }
 

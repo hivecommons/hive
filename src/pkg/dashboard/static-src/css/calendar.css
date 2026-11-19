@@ -1,0 +1,27 @@
+    /* Calendar: scheduled meetings hive joins (#18394) */
+    .calendar-panel { display: flex; flex-direction: column; gap: var(--sp-5); }
+    .calendar-subsection { display: flex; flex-direction: column; gap: var(--sp-3); }
+    .calendar-hint { max-width: 80ch; line-height: 1.5; }
+    .calendar-panel .email-in { margin-bottom: var(--sp-0); }
+    #meeting-drafts-panel { margin-top: var(--sp-5); }
+    .calendar-add-summary { display: flex; align-items: center; min-height: var(--tap-target); cursor: pointer; font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); }
+    .calendar-add-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--sp-2); align-items: end; }
+    .calendar-add-grid label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .calendar-list { display: flex; flex-direction: column; gap: var(--sp-3); }
+    /* Row: chips (status, platform), title, time line, meta line, an optional
+       reason, then one actions group that wraps on narrow widths. */
+    .calendar-row { display: flex; flex-direction: column; align-items: stretch; gap: var(--sp-2); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
+    .calendar-row[data-status="awaiting_approval"] { border-color: var(--accent); border-left-width: 3px; background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+    .calendar-row[data-status="live"] { border-color: var(--green); }
+    .calendar-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .calendar-row-main { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+    .calendar-row-title { font-size: var(--fs-base); font-weight: var(--fw-semibold); overflow-wrap: anywhere; }
+    .calendar-row-when { font-size: var(--fs-sm); color: var(--text); }
+    .calendar-row-when[title] { cursor: help; }
+    .calendar-row-meta, .calendar-row-body { overflow-wrap: anywhere; line-height: 1.5; }
+    .calendar-why { padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--r); background: var(--bg); font-size: var(--fs-sm); line-height: 1.5; max-width: 80ch; }
+    .calendar-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-1); }
+    .oc-meeting-indicator { cursor: pointer; }
+    @media (max-width: 720px) {
+      .calendar-add-grid { grid-template-columns: 1fr; }
+    }

@@ -51,6 +51,11 @@ type SplitParent struct {
 	Parent int       `json:"parent"`
 	Agent  string    `json:"agent,omitempty"`
 	At     time.Time `json:"at"`
+	// ParentRepo is the parent's lowercased "owner/name" when it lives in a
+	// different repo from the child (hivecommons/hive#18680); empty means the
+	// child's own repo, which is every entry written before cross-repo
+	// decomposition existed.
+	ParentRepo string `json:"parent_repo,omitempty"`
 }
 
 type splitParentLedger struct {
@@ -94,10 +99,21 @@ func LoadSplitParents(path string) (map[string]SplitParent, error) {
 // (full "owner/repo"). Called only after AddSubIssue succeeded, so the ledger
 // never claims a link GitHub does not show.
 func RecordSplitParent(path, repo string, child, parent int, agent string) error {
+	return RecordSplitParentRef(path, repo, child, "", parent, agent)
+}
+
+// RecordSplitParentRef is RecordSplitParent for a parent that may live in
+// another repo (hivecommons/hive#18680): parentRepo is the parent's full
+// "owner/repo", or "" (or the child's own repo) for a same-repo parent.
+func RecordSplitParentRef(path, repo string, child int, parentRepo string, parent int, agent string) error {
 	if path == "" {
 		path = SplitParentsPath
 	}
-	if child <= 0 || parent <= 0 || child == parent {
+	parentRepo = strings.ToLower(strings.TrimSpace(parentRepo))
+	if parentRepo == strings.ToLower(strings.TrimSpace(repo)) {
+		parentRepo = ""
+	}
+	if child <= 0 || parent <= 0 || (child == parent && parentRepo == "") {
 		return nil
 	}
 	splitParentsMu.Lock()
@@ -109,7 +125,7 @@ func RecordSplitParent(path, repo string, child, parent int, agent string) error
 		// GitHub; start a fresh one.
 		children = map[string]SplitParent{}
 	}
-	children[splitParentKey(repo, child)] = SplitParent{Parent: parent, Agent: strings.TrimSpace(agent), At: time.Now().UTC()}
+	children[splitParentKey(repo, child)] = SplitParent{Parent: parent, ParentRepo: parentRepo, Agent: strings.TrimSpace(agent), At: time.Now().UTC()}
 	pruneSplitParents(children)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -147,11 +163,13 @@ func pruneSplitParents(children map[string]SplitParent) {
 }
 
 // splitParentOf returns the relay-recorded parent number of repo#number, or 0.
+// A parent in another repo (SplitParent.ParentRepo) is not reported: callers
+// resolve the number inside repo, where it would name a different issue.
 func splitParentOf(children map[string]SplitParent, repo string, number int) int {
 	if len(children) == 0 {
 		return 0
 	}
-	if sp, ok := children[splitParentKey(repo, number)]; ok && sp.Parent > 0 && sp.Parent != number {
+	if sp, ok := children[splitParentKey(repo, number)]; ok && sp.Parent > 0 && sp.Parent != number && (sp.ParentRepo == "" || strings.EqualFold(sp.ParentRepo, strings.TrimSpace(repo))) {
 		return sp.Parent
 	}
 	return 0

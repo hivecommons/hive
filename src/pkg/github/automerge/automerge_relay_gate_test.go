@@ -251,6 +251,15 @@ func TestRelayMergeRefusalFailsClosed(t *testing.T) {
 			t.Fatalf("err = %v, want lane evidence error", err)
 		}
 	})
+	t.Run("incomplete files list refuses", func(t *testing.T) {
+		fx := validContributorFixture()
+		fx.changedFiles = 5204
+		engine, _ := relayGateEngine(t, &fx, defaultContributorLanePolicy(), Options{})
+		refusal, err := engine.RelayMergeRefusal(context.Background(), "widget", 7, "sha7")
+		if err != nil || !strings.Contains(refusal, contributorLaneReasonFilesEvidence) {
+			t.Fatalf("refusal=%q err=%v, want standing files-evidence refusal", refusal, err)
+		}
+	})
 }
 
 func TestRelayMergeRefusalText(t *testing.T) {

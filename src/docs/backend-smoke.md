@@ -137,6 +137,22 @@ counts, the chrome-idle share, and duration p50/p95. The intended use is a
 ratchet: watch `idle_complete` share and `env_failure` counts per backend
 trend toward zero, and treat a jump as a regression to root-cause.
 
+The same response's `models` array (also served alone by
+`GET /api/contribute/run-stats/models`) gives the per-model view: `runs`,
+`verified_pr_share` and `failure_rate` (failed ÷ runs; abandonments are not
+failures), plus, since #18721, `abandoned`, `scenarios` (the keys above plus
+`abandoned_handback`, `abandoned_disconnect` and `abandoned_other`, summing to
+`runs`) and `failure_kinds` (`environment`, `task`, `unspecified`, summing to
+the failed runs). That is the split that tells "this model's contributors have
+broken environments" from "this model gets the work wrong". The contributor
+wall shows it as the tooltip on a post's "failed" model-evidence figure.
+
+Each `models` row also carries `canonical_model`, the id the Governor's
+PRs-by-model card uses. Add `group=canonical` to fold spellings such as
+`claude-opus-5-5` and `anthropic/claude-opus-5-5` into one row (counts and the
+#18721 splits summed, rates recomputed); `raw_models[]` keeps each spelling's
+run count (#18718).
+
 This is DECLARE-only telemetry, per the boundary
 `src/pkg/dashboard/contribute_protocol.go` documents: nothing routes,
 cooldowns, or gates on any of it, and a telemetry write failure never fails a

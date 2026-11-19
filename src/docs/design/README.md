@@ -20,11 +20,78 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
+- [Customers: a profile per person and a customer graph](customers.md) -
+  **design only / proposed; build in progress.** RFC
+  [#18742](https://github.com/hivecommons/hive/issues/18742): a Customers
+  section under Collaborate, one profile per person built from what the hive
+  already holds, a read-only GraphQL endpoint over people and artefacts, and
+  goals and a satisfaction signal that Hive infers with evidence and a person
+  confirms. Records the customer versus suggested line, identity resolution,
+  retention by reference, forget with tombstones, the role rules, the bounded
+  agent context block, and the position on personal data of people who never
+  signed up. Nothing leaves the hive.
+
+- [Customers: opt-in, consent-first import of hub-held person fields](customers-hub-consent.md) -
+  **design only / decided.** Issue
+  [#19088](https://github.com/hivecommons/hive/issues/19088): the person
+  consents, per hive, on a hub page, and a per-person, per-hive consent record
+  is built before any spoke code. Only values the person entered themselves
+  (user provenance) can reach a hive's Customers profile, never admin-entered or
+  inferred ones; hub notes, email, Slack id and affiliation are never imported;
+  email affiliation stays spoke-local in v1. Records the consent record, the
+  match-by-hash wire shape that cannot tell a hive who exists on the hub,
+  revocation with a clearing reply, the privacy and audit rules, and four
+  phases, hub consent page and record first.
+
+- [Dashboard Ask AI help: an optional, isolated "Ask" panel](dashboard-ask-ai-help.md) -
+  **design only / proposed.** Issue
+  [#19177](https://github.com/hivecommons/hive/issues/19177): compares a
+  server-side call to the vendor's Chat API, a sandboxed frame and the public
+  docs widget on the authenticated origin, and recommends the server-side call
+  (no third-party code on the page, no CSP change, key held in a Secret, the
+  hub as the relay for hosted hives). Records exactly what leaves the
+  deployment (the question text and a closed section label), per-person consent
+  with an owner or operator switch, the `ask:` config keys, the docs-link
+  fallback, rate and cost limits against the vendor's shared per-team limit,
+  audit lines without content, accessibility, which docs the vendor must ingest,
+  and five phases, hub first.
+
+- [Meeting recordings in the Inbox: Zoom and Microsoft Teams](meeting-recordings.md) -
+  **Zoom shipped; Teams scaffold shipped, live verification blocked on tenant
+  consent.** Zoom cloud recordings (user-level OAuth with the hosted paste
+  flow, or Server-to-Server) and Teams recordings/transcripts (Graph
+  application permissions) become one fact per recorded meeting and Inbox
+  items next to Plaud, sharing a VTT renderer and the audio endpoint; records
+  the auth model per platform, polling over webhooks, the fact shape, the
+  Teams playback gap and the privacy posture.
+
+- [Betty on Zoom without a Zoom app: dial-in, desktop companion, live stream](meetings-without-a-zoom-app.md) -
+  **design only.** #18596: Zoom now refuses web-client meeting bots and
+  reserves its Meeting SDK for human use, so this page compares the ways
+  Betty can still take part without a Zoom app, RTMS or any bot-detection
+  evasion: phone dial-in (paid host, about $1.10 per meeting-hour, spoken
+  consent only), a desktop companion that streams the user's own call audio
+  to their hive (free account, attestation as the consent gate, per-user
+  revocable token), and Zoom's RTMP live stream (paid, listen-only).
+  Recommends the companion, macOS first, and records its streaming contract,
+  distribution plan and prototype PR set.
+
+- [Email to Inbox: a per-hive inbound address](email-inbox.md) - **design only /
+  proposed.** Gives every hive a unique, unguessable inbound address
+  (`<uid>@inbox.<hub domain>`, plus-addressing as routing tags) whose mail lands
+  as an Inbox item and is triaged like Plaud recordings today. Recommends a
+  hub-owned inbound domain fed by a provider webhook and relayed to the spoke
+  over the existing signed webhook-relay channel, with a heartbeat pull for
+  push-reported spokes, and records the fail-closed guard set (provider
+  DKIM/DMARC verdicts, allowlist, caps, ioscan, audit). Nothing is built.
+
 - [Crux: the agent runtime boundary](crux.md) — **Stage 1 shipped (v5); Stage 2 blocked on `pkg/config`.** RFC [#13536](https://github.com/hivecommons/hive/issues/13536): names the agent runtime inside Hive (`pkg/agent` and its ring) as Crux, lists what stays in Hive, records the staged plan (in-repo boundary → nested module → `crux serve`) and the naming decision. Inbound and outbound ratchets in `src/internal/testutil/crux_*_ratchet_test.go`, the tmux funnel, `crux.Runtime`, Crux-owned value types, CI path filters and the `crux` CLI are live; the nested module waits on an agent-runtime config leaf (the doc lists the measured outbound edges and prerequisites).
 
 - [Draining CLI auto-memory into draft knowledge](cli-memory-drain.md) — **Partly shipped** (phase 1: manager-side drain, dedup tags, spool, draft create path; phase 3: review flow, draft exclusion, legacy drain; phase 2, the Claude Code `SessionEnd` hook, is open). #17033: turns each coding CLI's hidden memory store (Claude Code `projects/*/memory`, Codex `memories`, Gemini `GEMINI.md`) into `draft` knowledge facts tagged `cli-memory` and `agent:<name>`. Claude Code drains through a `SessionEnd` hook; the others drain on the manager side at kick time, before `clear_on_kick`. Decides content-hash dedup across agents, an ingest-only drain with the existing curator as the only promoter, and untrusted-content handling (never primed while draft). Implementation is split into three child issues.
 
 - [Crux: generic tool policy for the MITM proxy](crux-tool-policy.md) — **Design only (proposed).** #14228, child of #14138: a shared operation vocabulary with per-forge adapters, a `relay(<command>)` verdict, deny-by-default for unrecognised operations, and the proxy's evaluation pipeline written down once. It also covers migrating behind a parity test and treating #14211 as the first non-GitHub adapter.
+
+- [One authorization point: decision seam, decision events and scoped credentials](authorization-decision-point.md) - **Partly shipped** (phase 1 types and a shadow-mode evaluator for one gate, the push broker's changed-files guard, off by default and enforcing nothing; the rest is proposed). RFC #18988: inventories today's write-side authorization decisions (proxy mode table and deny rules, push broker checks, relay authorizers, tool-approval CEL rules, mint and installation tokens, audit) with file:line citations, shows where they disagree, and proposes one evaluation seam, CEL narrowing rules for operators, one decision event per decision, fail-closed semantics per effect, and a five-phase shadow-first migration with named parity tests.
 
 - [PR follow-up session resume](pr-follow-up-resume.md) - **shipped (v5, default off).** #9583: ties each agent-opened PR to the CLI session that authored it (a `pkg/turn` envelope per PR) and feeds CI failures, changes-requested reviews, new review-bot threads and comments from people with write access back into that session without `/clear` while it is still live. When the session is gone (a restart or the next regular kick), the follow-up takes the fix-before-new path and the agent's next kick carries a compact handoff note of the PR's original reasoning. Pointers are pruned on merge or close; a live-review soak is the remaining follow-up.
 
@@ -72,6 +139,8 @@ that status is the thing to check before treating a page as current behaviour:
   [#7585](https://github.com/hivecommons/hive/pull/7585), on the spine from
   [#7572](https://github.com/hivecommons/hive/pull/7572); the Events API
   accelerator remains future work.
+
+- [Session taint: remembering what an agent has read](session-taint.md) - **design only / proposed.** RFC [#18987](https://github.com/hivecommons/hive/issues/18987): a Hive-owned, session-level record of what an agent has observed (secret-shaped tool results, private-repository reads, the kick's own private target) and a small deterministic rule set that holds or denies later pushes, comments and PRs against it. Records the threat model, what exists today with file citations, source and sink coverage per path, fail-closed behaviour, the false-positive budget and observe-only exit criteria, an off-by-default phased rollout, what the design cannot catch, and the open questions.
 
 - [Gate-integrity invariants for agent lanes](gate-integrity-invariants.md) — **design only / proposed.** Names the write-gate invariants for agent lanes: no history rewrites on branches a lane did not create, no agent sign-off on other authors' commits, and ACMM demotion for gate manipulation.
 - [Capability-aware contributor task assignment: the hub/relay decision boundary](capability-aware-assignment-boundary.md) — **proposed** (awaiting sign-off on #6825). Grounds RFC #6825 in the `v5` contributor protocol: the hub owns selection while the relay owns launch and veto, capability matching fails closed the way the quota guard's `unknown ⇒ HOLD` does, mixed-version behaviour reuses the #6954 `relay_capabilities`/`DeclaresCapability` matrix, and the #6541 in-flight quota park is resolved toward a first-class capacity verdict rather than `task_failed`/`environment`. Self-declared capability stays input, never authority. Leaves the tier vocabulary, evidence source, and lease-accounting for the park path as open questions for maintainers.

@@ -40,7 +40,10 @@ type QueueCandidate struct {
 	CI          string        `json:"ci"`
 	Checks      []QueueCheck  `json:"checks"`
 	ChecksKnown bool          `json:"checks_known"`
-	Reason      string        `json:"reason,omitempty"`
+	// Expired: the synthetic ref no longer names this SHA. The group finished
+	// (merged, failed or rebuilt is unknown); it is not a live candidate.
+	Expired bool   `json:"expired,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 type QueueOutcome struct {

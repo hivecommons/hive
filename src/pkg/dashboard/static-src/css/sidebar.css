@@ -44,16 +44,29 @@
     .oc-nav-label::after {
       content: ''; flex: 1; height: 1px; background: var(--border);
     }
+    /* Every sidebar entry reserves a leading gutter as wide as the reorder
+       grip plus the row gap. Reorderable entries (Dashboard group, agents)
+       draw their grip inside that gutter; entries without a grip (Collaborate,
+       Resources, Intelligence, Admin, Help, Filters) keep it empty, so all
+       groups line up at the same indent (#19282). */
+    :root {
+      --oc-nav-grip-w: 1.25rem;
+      --oc-nav-item-gap: var(--sp-3);
+      --oc-nav-item-pad-x: 12px;
+      --oc-nav-child-inset: calc(var(--oc-nav-grip-w) + var(--oc-nav-item-gap));
+    }
     .oc-nav-item {
-      display: flex; align-items: center; gap: var(--sp-3);
-      padding: 5px 12px; font-size: var(--fs-base); color: var(--muted);
+      display: flex; align-items: center; gap: var(--oc-nav-item-gap);
+      padding: 5px var(--oc-nav-item-pad-x) 5px calc(var(--oc-nav-item-pad-x) + var(--oc-nav-child-inset));
+      font-size: var(--fs-base); color: var(--muted);
       cursor: pointer; text-decoration: none; border-radius: var(--r);
       transition: background 0.15s, color 0.15s;
       margin: 1px 8px; position: relative;
       min-height: 28px; overflow: hidden;
     }
-    .oc-nav-drag-handle, .oc-nav-hide-toggle { width: 1.25rem; height: 1.25rem; min-width: 1.25rem; padding: var(--sp-0); margin: var(--sp-0); border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--muted); line-height: 1; cursor: grab; opacity: 0; display: inline-flex; align-items: center; justify-content: center; touch-action: none; }
+    .oc-nav-drag-handle, .oc-nav-hide-toggle { width: var(--oc-nav-grip-w); height: var(--oc-nav-grip-w); min-width: var(--oc-nav-grip-w); padding: var(--sp-0); margin: var(--sp-0); border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--muted); line-height: 1; cursor: grab; opacity: 0; display: inline-flex; align-items: center; justify-content: center; touch-action: none; }
     .oc-nav-hide-toggle { cursor: pointer; margin-left: auto; font-size: var(--fs-xs); }
+    .oc-nav-item > .oc-nav-drag-handle:first-child { margin-left: calc(-1 * var(--oc-nav-child-inset)); }
     .oc-nav-item:hover .oc-nav-drag-handle, .oc-nav-drag-handle:focus-visible, .oc-nav-drag-handle[aria-pressed="true"], .oc-nav-item:hover .oc-nav-hide-toggle, .oc-nav-hide-toggle:focus-visible, .oc-nav-hide-toggle[aria-pressed="true"] { opacity: 1; color: var(--text); border-color: var(--border); background: var(--surface-2); outline: none; }
     .oc-nav-drag-handle:active, .oc-nav-drag-handle[aria-pressed="true"] { cursor: grabbing; background: var(--surface); }
     .oc-nav-hide-toggle:hover { color: var(--amber); }
@@ -106,10 +119,7 @@
     .oc-sidebar-footer .layout-toggle { width: 100%; text-align: center; padding: var(--sp-4); margin: var(--sp-0); }
     .oc-agent-actions {
       display: flex; gap: var(--sp-2); padding: var(--sp-4) var(--sp-5);
-      margin: var(--sp-3) var(--sp-0) var(--sp-0);
-      border-top: 1px solid var(--border);
-      background: var(--bg-soft);
-      position: sticky; bottom: var(--sp-0); z-index: var(--z-sticky);
+      margin: var(--sp-0);
     }
     .oc-agent-actions .oc-agent-add-btn { flex: 1 1 auto; }
     .oc-agent-actions .oc-agent-group-btn { flex: 0 0 auto; }

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 )
 
 const (
@@ -225,6 +227,43 @@ func (g *GitSource) ensureCloned(ctx context.Context) error {
 		"dir", g.cloneDir,
 	)
 	return nil
+}
+
+// gitSourceLsRemote runs `git ls-remote --symref <url> HEAD`; a var so tests
+// can fake the remote.
+var gitSourceLsRemote = func(ctx context.Context, url string) ([]byte, error) {
+	lsCtx, cancel := context.WithTimeout(ctx, gitSourceLookupTimeout*2)
+	defer cancel()
+	cmd := exec.CommandContext(lsCtx, "git", gitCmdArgs("ls-remote", "--symref", "--", url, "HEAD")...)
+	cmd.Env = gitSourceEnv()
+	return cmd.CombinedOutput()
+}
+
+// parseGitSymrefHead extracts <name> from the `ref: refs/heads/<name>\tHEAD`
+// line of `git ls-remote --symref` output.
+func parseGitSymrefHead(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		ref, rest, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok || strings.TrimSpace(rest) != "HEAD" || !strings.HasPrefix(ref, "ref: refs/heads/") {
+			continue
+		}
+		return strings.TrimPrefix(ref, "ref: refs/heads/")
+	}
+	return ""
+}
+
+// resolveGitSourceDefaultBranch returns the remote's default branch. It falls
+// back to "main" only when the remote answers without a HEAD symref; a failing
+// ls-remote (unreachable, auth, not found) is returned to the caller.
+func resolveGitSourceDefaultBranch(ctx context.Context, url string) (string, error) {
+	out, err := gitSourceLsRemote(ctx, url)
+	if err != nil {
+		return "", fmt.Errorf("git ls-remote: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	if branch := parseGitSymrefHead(string(out)); branch != "" {
+		return branch, nil
+	}
+	return "main", nil
 }
 
 // setupSparseCheckout configures sparse-checkout so only the subpath is
@@ -505,10 +544,14 @@ func gitSourceEnv() []string {
 	if allowPrivateGitSource() {
 		allowedProtocols += ":http"
 	}
-	return append(os.Environ(),
+	env := append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_ALLOW_PROTOCOL="+allowedProtocols,
 	)
+	// Chain knowledge-source clones through the configured upstream forward
+	// proxy for the hosts it names (enterprise GitHub behind a corporate
+	// proxy); nil selector appends nothing.
+	return append(env, upstreamproxy.Default().GitEnv()...)
 }
 
 // gitSourceSlug creates a filesystem-safe directory name from a git URL + subpath.

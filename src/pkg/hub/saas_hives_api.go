@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -340,6 +341,27 @@ type MyHiveEntry struct {
 	Quadrant *Quadrant `json:"quadrant,omitempty"`
 }
 
+// claimPendingGitHubHost returns the GitHub host the Location pill should show
+// for an assigned-but-unclaimed row, and whether that override applies.
+//
+// While a placeholder is "claim pending" the spoke still runs the pool's
+// default config, so its heartbeat reports the CLUSTER default (github.ibm.com
+// on vllm-d) even though the operator just picked github.com in the assign
+// dialog. For that window the hive record's github_host — the operator's
+// explicit choice, stamped by handleAssignHive — is the truth the row must
+// show; the spoke's value is simply the stale pre-claim config, not evidence
+// of where the assigned repos live. Once the claim is delivered the spoke
+// report resumes its authority (see resolveGitHubHost).
+func claimPendingGitHubHost(entry *MyHiveEntry, sh *SaaSHive) (string, bool) {
+	if entry == nil || sh == nil || !entry.AssignedUnclaimed {
+		return "", false
+	}
+	if strings.TrimSpace(sh.GitHubHost) == "" {
+		return "", false
+	}
+	return githubHostLabel(sh.GitHubHost), true
+}
+
 // myHivesRecentEventCount is how many timeline events ride the My Hives
 // payload for the status hover. The hover panel already carries a status word,
 // the per-check health lines, the relay line and the user list; three events
@@ -568,6 +590,18 @@ func serverTimingHeader(metrics ...serverTimingMetric) string {
 
 func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values) ([]byte, error) {
 	user := ensureSaaSUser(username)
+	shareEnabled := customersShareEnabled()
+	var shareHiveIDs []string
+	if shareEnabled {
+		// Capture actual grants before the fleet's owner normalization can
+		// add missing grants. Admin visibility alone is not a personal grant.
+		for id, role := range user.Hives {
+			if role != "" {
+				shareHiveIDs = append(shareHiveIDs, id)
+			}
+		}
+		sort.Strings(shareHiveIDs)
+	}
 
 	s.mu.Lock()
 	offlineEvents := s.markStaleHives()
@@ -722,6 +756,10 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 	// is left empty and rendered as "github.com" by the pill, so an old spoke
 	// shows a sane default rather than a wrong host.
 	resolveGitHubHost := func(entry *MyHiveEntry) {
+		if host, ok := claimPendingGitHubHost(entry, saasByID[entry.ID]); ok {
+			entry.GitHubHost = host
+			return
+		}
 		if entry.GitHubHost != "" {
 			return // spoke-reported — authoritative
 		}
@@ -751,6 +789,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 	}
 
 	isAdmin := isHubAdmin(username)
+	var ownerRepairs []string
 	for _, h := range allHives {
 		if role, ok := user.Hives[h.ID]; ok {
 			// A stale/demoted stored role must not hide owner-gated UI (the
@@ -760,7 +799,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 			// OWN hives (#4081).
 			if role != "owner" && canonicalEqual(h.Owner, username) {
 				role = "owner"
-				user.Hives[h.ID] = "owner" // heal the demoted stored role
+				ownerRepairs = append(ownerRepairs, h.ID)
 			}
 			if isAdmin && role != "owner" {
 				role = "owner"
@@ -774,7 +813,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 			entry := MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID], AutoUpgradeMode: autoUpgradeModeMap[h.ID]}
 			enrichFromSaaSMeta(&entry)
 			result = append(result, entry)
-			user.Hives[h.ID] = "owner"
+			ownerRepairs = append(ownerRepairs, h.ID)
 			continue
 		}
 		if isAdmin {
@@ -800,7 +839,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 				// role (#4081).
 				if role != "owner" && canonicalEqual(sh.Owner, username) {
 					role = "owner"
-					user.Hives[hiveID] = "owner"
+					ownerRepairs = append(ownerRepairs, hiveID)
 				}
 				entry := MyHiveEntry{
 					RegistryEntry: RegistryEntry{
@@ -826,7 +865,9 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 
 	for _, sh := range listSaaSHives() {
 		if (canonicalEqual(sh.Owner, username) || isAdmin) && !seen[sh.ID] {
-			user.Hives[sh.ID] = "owner"
+			if canonicalEqual(sh.Owner, username) {
+				ownerRepairs = append(ownerRepairs, sh.ID)
+			}
 			entry := MyHiveEntry{
 				RegistryEntry: RegistryEntry{
 					ID:          sh.ID,
@@ -848,10 +889,19 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		}
 	}
 
-	if len(user.Hives) > 0 {
-		if err := saveSaaSUser(user); err != nil {
-			s.logger.Warn("handleMyHives: save failed", "user", username, "error", err)
+	if len(ownerRepairs) > 0 {
+		// Fleet refreshes independently of profile edits. Persist only the
+		// repaired grants against a fresh record, not the old profile snapshot.
+		customerProfileMu.Lock()
+		if current := loadSaaSUser(username); current != nil {
+			for _, id := range ownerRepairs {
+				current.Hives[id] = roleOwner
+			}
+			if err := saveSaaSUser(current); err != nil {
+				s.logger.Warn("handleMyHives: owner repair failed", "user", username, "error", err)
+			}
 		}
+		customerProfileMu.Unlock()
 	}
 
 	// Read the user roster ONCE for the access hover rather than per row —
@@ -1260,6 +1310,12 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		// the existence of a hive they have no access to.
 		"alerts": s.fleetAlerts(result, alertFleet),
 	}
+	if shareEnabled {
+		resp["customersShareEnabled"] = true
+		if len(shareHiveIDs) > 0 {
+			resp["profileShareHiveIDs"] = shareHiveIDs
+		}
+	}
 
 	myReq := loadProvisionRequest(username)
 	if myReq != nil {
@@ -1552,8 +1608,9 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		IsPublic: req.IsPublic == nil || *req.IsPublic,
 		// Per-hive GitHub host override (empty = cluster default). Lets a
 		// public-GitHub org provision correctly on a GHE-defaulted cluster.
-		GitHubBaseURL: req.GitHubBaseURL,
-		GitHubAPIURL:  req.GitHubAPIURL,
+		GitHubBaseURL:   req.GitHubBaseURL,
+		GitHubAPIURL:    req.GitHubAPIURL,
+		WebhookRelayKey: newWebhookRelayKey(),
 	}
 
 	if err := saveSaaSHive(h); err != nil {
@@ -1627,8 +1684,12 @@ func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 		return
 	}
+	// The relay key authenticates webhooks to this hive's spoke; it is
+	// delivered only over the spoke's own heartbeat, never to a browser.
+	out := *h
+	out.WebhookRelayKey = ""
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(h)
+	_ = json.NewEncoder(w).Encode(&out)
 }
 
 // handleOpenHive is the SSO handoff entry point: a hub-authenticated user hits
@@ -2097,6 +2158,13 @@ func (s *HubServer) pushVisibilityToSpoke(id string, isPublic bool) {
 // loopback httptest server; production always uses isPrivateURL.
 var hiveConfigSSRFGuard = isPrivateURL
 
+// hiveConfigTransport dials only an address hiveConfigSSRFGuard passed, so a
+// DashboardURL whose name rebinds after the guard ran is refused at dial time
+// (#18992).
+var hiveConfigTransport = pinnedFetchTransport(func(ctx context.Context, rawURL string) bool {
+	return hiveConfigSSRFGuard(ctx, rawURL)
+})
+
 func (s *HubServer) handleProxyHiveConfig(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("hiveID")
 	caller := s.getAuthUser(r)
@@ -2143,6 +2211,7 @@ func (s *HubServer) handleProxyHiveConfig(w http.ResponseWriter, r *http.Request
 		// Do NOT follow redirects — a 30x could send us from a public
 		// DashboardURL to an internal host, re-opening the SSRF the guard closes.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Transport:     hiveConfigTransport,
 	}
 	resp, err := client.Get(strings.TrimRight(dashURL, "/") + "/api/config/download")
 	if err != nil {

@@ -20,6 +20,11 @@ func untrustedFence(text string) string {
 	return strings.Repeat("`", max(3, longest+1))
 }
 
+// inlineCommentsInstruction tells the reviewer to anchor findings to lines
+// (hivecommons/hive#18531): maintainers ack and resolve each thread on its
+// own, which one long comment never let them do.
+const inlineCommentsInstruction = "Put each finding that points at a changed line in <comments>: a JSON array of {\"path\":\"repo/relative/file\",\"line\":<line in the PR head>,\"body\":\"the finding\"} (add \"side\":\"LEFT\" for a deleted line, \"start_line\" for a range). The hive posts the comment as the summary and every entry as its own resolvable thread, all in ONE review with one notification. Keep the summary to the overall judgement and any finding that has no line in the diff; do not repeat the line findings there. Omit --comments-file when no finding has a line.\n"
+
 // buildPublishInstruction is the publish half of the kick: how to say what you
 // found, and — more importantly — when to say nothing.
 func buildPublishInstruction(pr PullRequest, acknowledgeNoFindings bool, revise bool) string {
@@ -35,7 +40,8 @@ func buildPublishInstruction(pr PullRequest, acknowledgeNoFindings bool, revise 
 		b.WriteString("Reaching the same conclusion is a perfectly good outcome — say so plainly and the revision is skipped as unchanged. Do not manufacture a finding to justify the second look.\n")
 	} else {
 		b.WriteString("Write the JSON to a file, then post the comment and hand over the verdict in the same call:\n")
-		fmt.Fprintf(&b, "  hive-review %d --repo %s --comment --body-file <comment> --verdict-file <verdict>\n", pr.Number, pr.Repo)
+		fmt.Fprintf(&b, "  hive-review %d --repo %s --comment --body-file <comment> --verdict-file <verdict> --comments-file <comments>\n", pr.Number, pr.Repo)
+		b.WriteString(inlineCommentsInstruction)
 	}
 	b.WriteString("Printing the JSON to your terminal does not deliver it, and you cannot write it into the metrics dir yourself — the relay is the only path. Omit --verdict-file and your judgement is lost: nothing is routed, nothing is escalated, and this PR is dispatched to you again from scratch.\n")
 	b.WriteString("Use hive-review, never `gh pr review` — it is submitted with the App token and recorded on the audit trail.\n")

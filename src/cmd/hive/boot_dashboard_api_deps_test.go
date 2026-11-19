@@ -30,23 +30,20 @@ type bootDashboardAPIFake struct {
 	forgeFn      func() dashboard.ForgeAppInventory
 	discoverTick func()
 	healTick     func()
-	inception    *dashboard.InceptionWatcher
-	inceptionRun int
 }
 
 func newBootDashboardAPIFake() *bootDashboardAPIFake {
 	f := &bootDashboardAPIFake{}
 	f.deps = bootDashboardAPIDeps{
+		classifyRepoCoverage: func(context.Context, *github.AppAuth, string, []string, *slog.Logger) (bool, string, github.AppAuthState) {
+			return false, "", github.AppStateUnknown
+		},
 		registerAPI: func(srv *dashboard.Server, d *dashboard.Dependencies) {
 			f.registeredOn, f.registered = srv, d
 		},
 		setForgeAppInventory:  func(_ *dashboard.Server, fn func() dashboard.ForgeAppInventory) { f.forgeFn = fn },
 		startInstallDiscovery: func(_ context.Context, tick func()) { f.discoverTick = tick },
 		startSelfHeal:         func(_ context.Context, tick func()) { f.healTick = tick },
-		startInceptionWatcher: func(_ context.Context, w *dashboard.InceptionWatcher) {
-			f.inception = w
-			f.inceptionRun++
-		},
 	}
 	return f
 }
@@ -221,6 +218,39 @@ func TestBootDashboardAPIWith_TickBodiesAreCheapWhenNothingToDo(t *testing.T) {
 	}
 }
 
+func TestSelfHealDetectsCoverageWithoutExistingBanner(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		raise bool
+		state github.AppAuthState
+	}{
+		{"missing", true, github.AppStateRepoNotCovered},
+		{"transient", false, github.AppStateUnknown},
+		{"covered", false, github.AppStateOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBootDashboardAPIFake()
+			cfg := bootDashboardAPIConfig()
+			cfg.Project.PrimaryRepo = "private"
+			b := newBootDashboardAPIBoot(t, f, cfg)
+			b.ghClient = fakeGitHubClient(t)
+			called := false
+			f.deps.classifyRepoCoverage = func(_ context.Context, _ *github.AppAuth, org string, repos []string, _ *slog.Logger) (bool, string, github.AppAuthState) {
+				called = true
+				if org != "acme" || len(repos) != 3 || repos[2] != "private" {
+					t.Fatalf("coverage inputs: %q %v", org, repos)
+				}
+				return tc.raise, "select private in the installation", tc.state
+			}
+			b.bootDashboardAPIWith(f.deps)
+			f.healTick()
+			if !called || b.dashSrv.IsGitHubAppRequired() != tc.raise {
+				t.Fatalf("called=%v required=%v", called, b.dashSrv.IsGitHubAppRequired())
+			}
+		})
+	}
+}
+
 func TestBootDashboardAPIWith_ForgeInventoryResolvesTheActiveKey(t *testing.T) {
 	f := newBootDashboardAPIFake()
 	cfg := bootDashboardAPIConfig()
@@ -238,17 +268,6 @@ func TestBootDashboardAPIWith_ForgeInventoryResolvesTheActiveKey(t *testing.T) {
 	}
 	if inv.HeldKeys == nil {
 		t.Fatal("HeldKeys must be an empty slice, not nil, so the tab renders an empty list rather than null")
-	}
-}
-
-func TestBootDashboardAPIWith_InceptionWatcherNeedsTheBrainstormStore(t *testing.T) {
-	f := newBootDashboardAPIFake()
-	b := newBootDashboardAPIBoot(t, f, bootDashboardAPIConfig())
-
-	b.bootDashboardAPIWith(f.deps)
-
-	if f.inceptionRun != 0 {
-		t.Fatal("inception watcher started without a brainstorm bead store to watch")
 	}
 }
 

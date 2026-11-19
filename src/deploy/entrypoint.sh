@@ -64,7 +64,9 @@ EXIT_NET_ADMIN_REQUIRED=77
 # file is the only copy of the live config, and mutating it at boot risks
 # losing owner customisations with no warning. The old name is picked up
 # read-only until the first save writes the new one, after which both
-# exist and the new one wins.
+# exist and the new one wins. Once the new name is the boot source, every
+# clean boot refreshes the old name from it (#17862) so the fallback is
+# never months stale; see hive_refresh_legacy_fallback.
 HIVE_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
 HIVE_CONFIG_RUNTIME="/data/hive.yaml.runtime"
 HIVE_CONFIG_RUNTIME_LEGACY="/data/hive.yaml.bak"
@@ -150,7 +152,9 @@ hive_run_uid_isolation_migration() {
     else
       echo "[entrypoint] UID isolation: repairing ${_agent_name} (uid ${_agent_uid}) in background"
       hive_reown_agent_paths_if_needed "$_agent_name" "$_agent_uid"
-      chmod g+rwX "$_agent_dir" 2>/dev/null || true
+      if [ -d "$_agent_dir" ] && ! [ -L "$_agent_dir" ]; then
+        chmod g+rwX "$_agent_dir" 2>/dev/null || true
+      fi
       hive_publish_uid_isolation_marker "$_agent_marker" "$_agent_expected" || true
       echo "[entrypoint] UID isolation: ${_agent_name} pass complete"
     fi
@@ -685,6 +689,9 @@ hive_sweep_root_phase_paths() {
   _sweep_failed=""
   for _p in $HIVE_DATA_ROOT_PHASE_PATHS; do
     [ -e "$_p" ] || continue
+    # Never through a link: chown without -h acts on what the link names, and
+    # /data/home is writable by every agent uid.
+    [ -L "$_p" ] && continue
     # Already owned by the runtime user — the steady state on almost every
     # boot. Skip the syscall entirely so the common path costs one stat.
     [ "$(stat -c '%u' "$_p" 2>/dev/null || echo)" = "1001" ] && continue
@@ -766,16 +773,87 @@ for _cfg in "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" /data/hive.yaml
 done
 unset _cfg
 
+# hive_file_mtime echoes a file's mtime as epoch seconds (0 when unreadable).
+# Both stat dialects are tried because the image is Debian but the helper
+# must also behave on the BusyBox/macOS shells the tests run under.
+hive_file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
+}
+
 # hive_runtime_config_read echoes the path to read the persisted runtime
 # config from: the new name when it is present and non-empty, else the
 # legacy name when that is, else empty. Read-only — it never creates,
 # renames or removes anything on the PVC.
+#
+# #17862: falling back to the legacy name is never routine any more. Every
+# clean boot refreshes it from the runtime config (hive_refresh_legacy_fallback),
+# so reaching it means the runtime config was lost or truncated since the
+# last boot. Say so LOUDLY on stderr with both files' ages: a hive that
+# silently booted a 3-month-old hive.yaml.bak (level 3 instead of 6) is the
+# incident this guards against. When the legacy copy is OLDER than the
+# runtime file it is replacing — i.e. the runtime file was written after
+# the last refresh and then damaged — the WARN says the fallback is stale
+# and names the overlay/audit paths an operator can reconstruct from.
 hive_runtime_config_read() {
   if [ -f "$HIVE_CONFIG_RUNTIME" ] && [ -s "$HIVE_CONFIG_RUNTIME" ]; then
     echo "$HIVE_CONFIG_RUNTIME"
   elif [ -f "$HIVE_CONFIG_RUNTIME_LEGACY" ] && [ -s "$HIVE_CONFIG_RUNTIME_LEGACY" ]; then
+    _rt_state="missing"
+    _rt_mtime=0
+    if [ -f "$HIVE_CONFIG_RUNTIME" ]; then
+      _rt_state="present but EMPTY (0 bytes — likely truncated by a kill mid-save)"
+      _rt_mtime="$(hive_file_mtime "$HIVE_CONFIG_RUNTIME")"
+    fi
+    _lg_mtime="$(hive_file_mtime "$HIVE_CONFIG_RUNTIME_LEGACY")"
+    _now="$(date +%s)"
+    _lg_age_h=$(( (_now - _lg_mtime) / 3600 ))
+    echo "[entrypoint] WARN: runtime config $HIVE_CONFIG_RUNTIME is $_rt_state; FALLING BACK to legacy $HIVE_CONFIG_RUNTIME_LEGACY (last refreshed ${_lg_age_h}h ago)." >&2
+    if [ "$_rt_mtime" -gt "$_lg_mtime" ] 2>/dev/null; then
+      echo "[entrypoint] WARN: the legacy fallback is OLDER than the damaged runtime config ($(( (_rt_mtime - _lg_mtime) / 3600 ))h behind). Settings saved since then (acmm_level, agent roster, pauses, models) are NOT in this file — check /data/hive.yaml.dashboard and /data/audit.jsonl before trusting the booted config. See hivecommons/hive#17862." >&2
+    fi
+    unset _rt_state _rt_mtime _lg_mtime _now _lg_age_h
     echo "$HIVE_CONFIG_RUNTIME_LEGACY"
   fi
+}
+
+# hive_refresh_legacy_fallback copies a GOOD runtime config over the legacy
+# fallback name so the fallback is at most one boot stale (#17862). Before
+# this, hive.yaml.bak was frozen at the rename (Aug 2026) on every hive, and
+# a truncated runtime file booted a months-old config.
+#
+# Only runs when THIS boot is reading from the new name (so the legacy file
+# is strictly older, never the only copy — the Docker/LXC worry behind the
+# original never-write rule) and the runtime file parses as YAML with a
+# project section (so a half-written file is never promoted to fallback).
+# Copies to a temp name and renames so the fallback is never itself
+# truncated by a kill. Best-effort: a failure here only means the fallback
+# stays at its previous age.
+hive_refresh_legacy_fallback() {
+  [ "$1" = "$HIVE_CONFIG_RUNTIME" ] || return 0
+  [ -s "$HIVE_CONFIG_RUNTIME" ] || return 0
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import sys, yaml
+with open(sys.argv[1]) as f:
+    d = yaml.safe_load(f)
+sys.exit(0 if isinstance(d, dict) and isinstance(d.get("project"), dict) else 1)
+' "$HIVE_CONFIG_RUNTIME" 2>/dev/null || {
+      echo "[entrypoint] WARN: $HIVE_CONFIG_RUNTIME does not parse as a hive config; legacy fallback $HIVE_CONFIG_RUNTIME_LEGACY left untouched" >&2
+      return 0
+    }
+  fi
+  if cmp -s "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" 2>/dev/null; then
+    return 0
+  fi
+  _lg_tmp="${HIVE_CONFIG_RUNTIME_LEGACY}.tmp.$$"
+  if cp "$HIVE_CONFIG_RUNTIME" "$_lg_tmp" 2>/dev/null && mv -f "$_lg_tmp" "$HIVE_CONFIG_RUNTIME_LEGACY" 2>/dev/null; then
+    hive_harden_runtime_config "$HIVE_CONFIG_RUNTIME_LEGACY"
+    echo "[entrypoint] Legacy fallback $HIVE_CONFIG_RUNTIME_LEGACY refreshed from $HIVE_CONFIG_RUNTIME"
+  else
+    rm -f "$_lg_tmp" 2>/dev/null
+    echo "[entrypoint] WARN: could not refresh legacy fallback $HIVE_CONFIG_RUNTIME_LEGACY from $HIVE_CONFIG_RUNTIME" >&2
+  fi
+  unset _lg_tmp
 }
 
 # hive_ghe_git_host echoes this hive's configured GitHub host when it is NOT
@@ -1013,6 +1091,7 @@ if [ "$IS_KUBERNETES" = "true" ]; then
   # result equal to its own input on every boot.
   HIVE_CONFIG_BOOT="$(hive_runtime_config_read)"
   if [ -n "$HIVE_CONFIG_BOOT" ]; then
+    hive_refresh_legacy_fallback "$HIVE_CONFIG_BOOT"
     # Steady state: boot from what this hive last had. The ConfigMap seed is
     # deliberately NOT merged — it is frozen at provision and every field it
     # could contribute is either already here or re-asserted by the hub on
@@ -1202,6 +1281,7 @@ else
   # first boot on new code seeds hive.yaml.runtime from the legacy content
   # without touching the legacy file itself.
   HIVE_CONFIG_SOURCE="$(hive_runtime_config_read)"
+  hive_refresh_legacy_fallback "$HIVE_CONFIG_SOURCE"
   if [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ -z "$HIVE_CONFIG_SOURCE" ]; then
     # First boot: config exists but no PVC runtime config yet — seed it
     cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME"
@@ -1421,6 +1501,9 @@ if [ "$(id -u)" = "0" ]; then
     fi
     for _seeded_dir in /data/agents/*/; do
       [ -d "$_seeded_dir" ] || continue
+      # The trailing-slash glob also matches a link to a directory; a
+      # recursive chown/chmod must never start from one.
+      [ -L "${_seeded_dir%/}" ] && continue
       if [ "$(stat -c '%u' "$_seeded_dir" 2>/dev/null || echo 0)" = "0" ]; then
         chown -R dev:node "$_seeded_dir" 2>/dev/null || true
         chmod -R g+rwX "$_seeded_dir" 2>/dev/null || true
@@ -1478,6 +1561,28 @@ if [ "$(id -u)" = "0" ]; then
   # is perfectly writable. 2775 = rwxrwxr-x + setgid (new entries inherit node).
   chmod 2775 /data/home 2>/dev/null || true
   chown dev:node /data/home 2>/dev/null || true
+  # User Sessions (dashboard feature) run each session's tmux server + CLI as
+  # its OWN uid from a reserved range (HIVE_SESSION_UID_BASE, default 20001+),
+  # in neither group node (every agent) nor hive-launch (su-exec). Two filesystem
+  # consequences, both re-asserted every boot:
+  #
+  #  1. Keep that uid OUT of the shared state. /data/home holds the fleet's
+  #     vendor logins and every agent's home; it is group-only (2770) because
+  #     agents and dev are all in group node and nothing else needs it. A
+  #     session uid is "other", so it cannot even traverse /data/home. The
+  #     /data/secrets (710 dev:node), /data/.hive (700) and /secrets/*.pem (600)
+  #     modes already exclude "other"; /data itself only gets o+x (traverse, no
+  #     listing) so the session can reach its own sandbox below.
+  #  2. Create the sandbox root: traverse-only (0711), dev-owned. Each session's
+  #     directory beneath it is created by the Go runtime through su-exec as
+  #     root:hive-launch 0751 with session-owned children (usersession_home.go).
+  chmod 2770 /data/home 2>/dev/null || true
+  chmod o+x /data 2>/dev/null || true
+  _sess_sandbox="${HIVE_SESSIONS_SANDBOX_DIR:-/data/session-sandbox}"
+  mkdir -p "$_sess_sandbox" 2>/dev/null || true
+  chown dev:node "$_sess_sandbox" 2>/dev/null || true
+  chmod 0711 "$_sess_sandbox" 2>/dev/null || true
+  unset _sess_sandbox
   # Per-agent interactive HOMEs live here (#4596): the manager provisions
   # /data/home/agents/<name> per agent at launch, bridged by symlinks back to
   # the shared dot-dirs below. 0755: every agent UID traverses it, none write
@@ -1489,6 +1594,27 @@ if [ "$(id -u)" = "0" ]; then
   chown dev:node /data/home/.copilot 2>/dev/null || true
   chmod 2775 /data/home/.claude /data/home/.claude/session-env 2>/dev/null || true
   chown dev:node /data/home/.claude /data/home/.claude/session-env 2>/dev/null || true
+  # hive_shared_dir_sticky DIR... — add the sticky bit to the shared CLI
+  # directories whose files the root-run perm guard and the in-process Go
+  # writers rename over: in a group-writable directory only the sticky bit
+  # keeps a dev-owned entry from being removed or replaced by another uid.
+  # Under the per-agent home layout every CLI rewrites its own copy inside
+  # /data/home/agents/<name>, so nothing legitimate renames over a dev-owned
+  # file here. The legacy whole-directory layout (HIVE_SHARED_AGENT_HOME=1)
+  # does — each agent uid refreshes the shared file in place — so the bit is
+  # left off there. Group bits are untouched; the existing 2770/2775 stays.
+  # Only directories that are real directories get it: a chmod through a
+  # symlink would land on whatever the link names.
+  hive_shared_dir_sticky() {
+    [ "${HIVE_SHARED_AGENT_HOME:-0}" = "1" ] && return 0
+    for _d; do
+      if [ -d "$_d" ] && ! [ -L "$_d" ]; then
+        chmod +t "$_d" 2>/dev/null || true
+      fi
+    done
+    return 0
+  }
+  hive_shared_dir_sticky /data/home /data/home/.claude /data/home/.copilot
   # Codex (newer method) writes a local sqlite state db under $HOME/.codex —
   # pre-create it group-writable + setgid so every agent UID (node group) can
   # init it, matching .claude/.copilot. Without this, switching an agent to the
@@ -1536,6 +1662,9 @@ if [ "$(id -u)" = "0" ]; then
   # process touches .bob first. 2770: no world access, these hold auth settings.
   chmod 2770 /data/home/.bob /data/home/.bob/settings 2>/dev/null || true
   chown dev:node /data/home/.bob /data/home/.bob/settings 2>/dev/null || true
+  # Not antigravity-cli/ or its cache/: those are bridged into each agent home
+  # as directories, so agy renames its token there under the agent's own uid.
+  hive_shared_dir_sticky /data/home/.gemini /data/home/.bob
   ln -sfn /data/config/github-copilot /home/dev/.config/github-copilot
   ln -sfn /data/config/github-copilot /data/home/.config/github-copilot
   ln -sfn /data/home/.copilot /home/dev/.copilot
@@ -1625,18 +1754,52 @@ if [ "$(id -u)" = "0" ]; then
   # this is an OAuth token. The chown restores dev ownership as well, because
   # that is the invariant the in-process Go permissions watcher depends on — it
   # runs as dev after the privilege drop and can only chmod what dev owns.
+  #
+  # Both single-file repairs go through hive_fix_shared_file, which acts only
+  # on a regular file inside a regular directory: chmod and chown (without -h)
+  # act on whatever a path resolves to, and these directories are writable by
+  # every agent uid. The invariant is that a root-run repair never changes the
+  # mode or owner of anything an agent uid could have pointed the path at.
   hive_fix_shared_credential() {
-    [ -f "$1" ] || return 0
-    chmod g+r "$1" 2>/dev/null || true
-    chown dev:node "$1" 2>/dev/null || true
+    hive_fix_shared_file "$1" g+r
     return 0
   }
 
   # hive_fix_copilot_config — copilot rewrites config.json 0600 on refresh.
   hive_fix_copilot_config() {
-    [ -f /data/home/.copilot/config.json ] || return 0
-    chmod 660 /data/home/.copilot/config.json 2>/dev/null || true
-    chown dev:node /data/home/.copilot/config.json 2>/dev/null || true
+    hive_fix_shared_file /data/home/.copilot/config.json 660
+    return 0
+  }
+
+  # hive_fix_shared_file PATH MODE — chmod MODE and chown dev:node the regular
+  # file at PATH. Nothing is done when PATH is absent. When PATH or its
+  # directory is anything other than a regular file in a regular directory,
+  # nothing is done either, and a WARN is logged once per path per guard
+  # process (HIVE_PERM_GUARD_REFUSED is that process's memory of it).
+  #
+  # The `[ -L ]` tests are the decision; the find runs the chmod and chown
+  # from the same enumeration (`-type f` never matches a link) and `chown -h`
+  # never follows, so the time between the check and each action is as short
+  # as the shell can make it. The sticky bit set on the shared dot-dirs at
+  # boot is what keeps a dev-owned entry from being swapped out from under it.
+  hive_fix_shared_file() {
+    _p="$1"; _m="$2"
+    _dir="${_p%/*}"; _base="${_p##*/}"
+    if [ -d "$_dir" ] && ! [ -L "$_dir" ] && [ -f "$_p" ] && ! [ -L "$_p" ]; then
+      find "$_dir" -maxdepth 1 -name "$_base" -type f ! -type l -exec chmod "$_m" {} + -exec chown -h dev:node {} + 2>/dev/null || true
+      return 0
+    fi
+    # Absent (and not a dangling link): nothing to repair, nothing to say.
+    if ! [ -e "$_p" ] && ! [ -L "$_p" ]; then
+      return 0
+    fi
+    case " ${HIVE_PERM_GUARD_REFUSED:-} " in
+      *" $_p "*) ;;
+      *)
+        HIVE_PERM_GUARD_REFUSED="${HIVE_PERM_GUARD_REFUSED:-} $_p"
+        echo "[entrypoint] WARN: perm guard: $_p is not a regular file in a regular directory; left untouched" >&2
+        ;;
+    esac
     return 0
   }
 
@@ -1747,7 +1910,9 @@ if [ "$(id -u)" = "0" ]; then
   # sweep still happens, on the 5-minute cycle.
   hive_fix_claude_instant() {
     hive_fix_shared_credential /data/home/.claude/.credentials.json
-    chmod g+rwx /data/home/.claude 2>/dev/null || true
+    if [ -d /data/home/.claude ] && ! [ -L /data/home/.claude ]; then
+      chmod g+rwx /data/home/.claude 2>/dev/null || true
+    fi
     return 0
   }
 
@@ -1765,7 +1930,11 @@ if [ "$(id -u)" = "0" ]; then
   hive_fix_gemini_instant() {
     hive_fix_shared_credential /data/home/.gemini/antigravity-cli/antigravity-oauth-token
     hive_fix_shared_credential /data/home/.gemini/antigravity-cli/cache/onboarding.json
-    chmod g+rwx /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache 2>/dev/null || true
+    for _d in /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache; do
+      if [ -d "$_d" ] && ! [ -L "$_d" ]; then
+        chmod g+rwx "$_d" 2>/dev/null || true
+      fi
+    done
     return 0
   }
 
@@ -1898,6 +2067,11 @@ if [ "$(id -u)" = "0" ]; then
   # launch. Falling back to the proxy CA alone if the combined bundle isn't there
   # yet keeps proxied HTTPS working; the combined bundle is strictly safer because
   # it also trusts real public roots for any non-proxied endpoint (advisory mode).
+  # Root writes this file into a directory every agent uid can write to, so
+  # it is only ever written when the path is absent or already a regular file.
+  if [ -L /data/home/.bashrc ]; then
+    echo "[entrypoint] WARN: /data/home/.bashrc is not a regular file; left untouched"
+  else
   cat > /data/home/.bashrc <<'BASHRC' 2>/dev/null || true
 # Hive agent shell environment
 if [ -f /data/proxy-ca-bundle.pem ]; then
@@ -1914,15 +2088,16 @@ BASHRC
   # Written by root via `cat >` above, so it is created root:root. Hand it to
   # dev at the point of creation (#5369): the recursive /data chown is guarded
   # off on every normal boot and cannot be relied on to fix it later.
-  chown dev:node /data/home/.bashrc 2>/dev/null || true
+  chown -h dev:node /data/home/.bashrc 2>/dev/null || true
+  fi
   # Login shells (tmux default-command) read ~/.profile, not ~/.bashrc — chain
   # them so both shell flavors get the same environment.
-  if [ ! -f /data/home/.profile ]; then
+  if [ ! -f /data/home/.profile ] && ! [ -L /data/home/.profile ]; then
     # shellcheck disable=SC2016
     printf '[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"\n' > /data/home/.profile 2>/dev/null || true
     chmod 644 /data/home/.profile 2>/dev/null || true
     # Same as .bashrc above — created by root, so hand it over here (#5369).
-    chown dev:node /data/home/.profile 2>/dev/null || true
+    chown -h dev:node /data/home/.profile 2>/dev/null || true
   fi
 
   # ── #5369: targeted post-phase ownership sweep ────────────────────────
@@ -2020,8 +2195,10 @@ BASHRC
       fi
       # Ensure agent dirs are group-writable so the dev user (same node group)
       # can clean up stale workspaces at runtime without root privileges.
-      chmod g+rwX "/data/agents/${agent_name}" 2>/dev/null || true
-      if [ -d "/data/beads/${agent_name}" ]; then
+      if [ -d "/data/agents/${agent_name}" ] && ! [ -L "/data/agents/${agent_name}" ]; then
+        chmod g+rwX "/data/agents/${agent_name}" 2>/dev/null || true
+      fi
+      if [ -d "/data/beads/${agent_name}" ] && ! [ -L "/data/beads/${agent_name}" ]; then
         BEAD_DIR_OWNER=$(stat -c '%u' "/data/beads/${agent_name}" 2>/dev/null || echo "0")
         if [ "$BEAD_DIR_OWNER" != "$AGENT_UID" ]; then
           chown -R "hive-${agent_name}:node" "/data/beads/${agent_name}" 2>/dev/null || true
@@ -2918,6 +3095,26 @@ hive_ensure_terminal_signing_key() {
 }
 hive_ensure_terminal_signing_key
 
+# Per-boot attach key for user-session terminals. ttyd listens on loopback and
+# its credential (when any) is on its command line, which a session uid can
+# read in /proc, so session attaches are gated instead by a per-session token
+# HMAC'd with this key: the dashboard proxy computes it (HIVE_TTYD_ATTACH_KEY in
+# the hive's env), ttyd-tmux.sh verifies it (same env, inherited by ttyd). The
+# key lives only in those two processes' environments, which other uids cannot
+# read, and is never passed to a session. Without it every session attach fails
+# closed. An operator-supplied value wins.
+hive_ensure_ttyd_attach_key() {
+  if [ -z "${HIVE_TTYD_ATTACH_KEY:-}" ]; then
+    HIVE_TTYD_ATTACH_KEY="$(head -c 32 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  fi
+  if [ -n "$HIVE_TTYD_ATTACH_KEY" ]; then
+    export HIVE_TTYD_ATTACH_KEY
+  else
+    echo "[entrypoint] WARN: could not generate HIVE_TTYD_ATTACH_KEY; user-session terminals will refuse to attach"
+  fi
+}
+hive_ensure_ttyd_attach_key
+
 echo "[entrypoint] Starting Go binary on :${HIVE_API_PORT} (uid=$(id -u))"
 hive "$@" &
 HIVE_PID=$!
@@ -3009,9 +3206,19 @@ fi
 echo "[entrypoint] Starting ttyd on ${TTYD_BIND}:${TTYD_PORT}"
 # Wrap ttyd in a respawn loop: ttyd exits on SIGHUP (its close signal),
 # and orphaned LISTEN sockets block rebind, so we wait before retrying.
+#
+# The loop must survive a HUP but must NOT ignore it: an ignored signal is
+# inherited across exec, so `trap '' HUP` here made ttyd AND every
+# ttyd-tmux.sh it spawned ignore SIGHUP (visible as SigIgn on their
+# /proc status). SIGHUP is exactly the signal ttyd sends its child when the
+# browser closes the terminal, and a non-interactive bash can neither trap nor
+# reset a signal it inherited ignored, so no attach ever ended and tmux clients
+# piled up on every session ("26 attached"). A handler that does nothing
+# (`trap ':' HUP`) keeps the loop alive the same way, but a caught signal
+# resets to its default disposition on exec, so ttyd's children see SIGHUP.
 TTYD_RESPAWN_DELAY_SECS=5
 (
-  trap '' HUP
+  trap ':' HUP
   while true; do
     # -a/--url-arg lets ttyd forward the ?arg=<session> that the dashboard puts in
     # every terminal link (src/pkg/dashboard/static/index.html) through to

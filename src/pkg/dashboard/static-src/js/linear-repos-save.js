@@ -212,6 +212,16 @@
       return `(backend default — chosen by the ${backend || 'CLI'} CLI)`;
     }
 
+    // modelOptionPriceSuffix is " — $0.14 in · $0.42 out /1M · 1M ctx" for a
+    // gateway model whose catalog publishes prices (OpenRouter), else ''.
+    function modelOptionPriceSuffix(backend, model) {
+      if (typeof modelPriceLabel !== 'function') return '';
+      const c = _inferenceModelCache[canonicalInferenceBackendName(backend)] || _inferenceModelCache[backend];
+      const info = c && c.modelInfo ? c.modelInfo[model] : null;
+      const label = info ? modelPriceLabel(info) : '';
+      return label ? ' — ' + label : '';
+    }
+
     // modelSelectOptionsHtml builds the agent config dialog's Model options:
     // the backend-default choice first, every offered model with its FULL id,
     // and — when the current model is not offered — a "(current)" option that
@@ -221,9 +231,21 @@
     function modelSelectOptionsHtml(backend, current, opts) {
       const models = opts || modelsForBackend(backend) || [];
       let html = `<option value="">${esc(modelDefaultOptionLabel(backend))}</option>`;
-      html += models.map(m => `<option value="${esc(m.value)}"${_modelsEqual(current, m.value) ? ' selected' : ''}>${esc(fullModelLabel(m))}</option>`).join('');
-      if (current && !models.some(m => _modelsEqual(current, m.value))) {
-        const note = modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
+      const renderOpt = m => `<option value="${esc(m.value)}"${modelIdMatchesStored(backend, m.value, current) ? ' selected' : ''}>${esc(fullModelLabel(m))}${esc(modelOptionPriceSuffix(backend, m.value))}</option>`;
+      // Large gateway catalogs (OpenRouter) are grouped by provider prefix.
+      if (typeof shouldGroupModelOptions === 'function' && shouldGroupModelOptions(models.map(m => m.value))) {
+        const byValue = {};
+        models.forEach(m => { if (!(m.value in byValue)) byValue[m.value] = m; });
+        html += modelOptgroupsHtml(Object.keys(byValue), v => renderOpt(byValue[v]));
+      } else {
+        html += models.map(renderOpt).join('');
+      }
+      if (current && !models.some(m => modelIdMatchesStored(backend, m.value, current))) {
+        // A Claude id stored in the other CLI's naming convention is shown as
+        // stored and flagged with the id to pick, never silently matched.
+        const validSpelling = invalidModelSpellingFor(backend, models, current);
+        const note = validSpelling ? ` (current, ⚠ not valid for ${backend}; pick ${validSpelling})`
+          : modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
         html += `<option value="${esc(current)}" selected>${esc(current)}${note}</option>`;
       }
       return html;
@@ -342,7 +364,7 @@
         return;
       }
 
-      // Requirement #3: verify the App can access the repo's org.
+      // Verify the App installation covers this repository.
       setStatus('Checking GitHub App access…', 'var(--muted)');
       try {
         const res = await fetch('/api/config/governor/repos/check-access', {
@@ -351,14 +373,11 @@
         });
         const d = await res.json().catch(() => ({}));
         if (res.status === 409 && d && d.needsInstall) {
-          // App not installed on the new org: surface the correct per-forge
-          // install URL wired to the existing pending-install/recheck plumbing.
-          // Clicking Install flags the heartbeat (handleGitHubAppInstallClicked)
-          // exactly like the App-required banner; Re-check re-probes and, on
-          // success, completes the add.
+          // Guide the operator to install the App or update repository access,
+          // then re-check before adding the repo.
           const installBtn = (d.installUrl)
-            ? '<a href="' + esc(d.installUrl) + '" target="_blank" rel="noopener" data-action="markGitHubAppInstallClicked" style="color:var(--accent);font-weight:600">Install/authorize the App for ' + esc(d.org || '') + ' ↗</a>'
-            : '<span class="text-brand">This hive\'s GitHub Enterprise App slug is not configured, so an install link cannot be built — ask your operator to install the Hive App for ' + esc(d.org || '') + '.</span>';
+            ? '<a href="' + esc(d.installUrl) + '" target="_blank" rel="noopener" data-action="markGitHubAppInstallClicked" style="color:var(--accent);font-weight:600">Manage App access for ' + esc(d.org || '') + ' ↗</a>'
+            : '<span class="text-brand">An installation link cannot be built — ask your operator to manage the Hive App access for ' + esc(d.org || '') + '.</span>';
           setStatus('⚠ ' + esc(d.error || ('The App needs access to ' + val)) + '<br>' + installBtn + ' &nbsp;·&nbsp; <a href="#" data-action="recheckRepoAccessThenAdd" data-arg-types="e" style="color:var(--accent);font-weight:600">Re-check &amp; add</a>', 'var(--amber)');
           return;
         }
@@ -367,11 +386,7 @@
           return;
         }
       } catch (e) {
-        // Network error probing access is non-fatal: the server re-validates the
-        // single-host rule and the default-repo rule on save, so let the add
-        // proceed rather than hard-block on a transient dashboard hiccup.
-        _appendRepoAccepted(val);
-        setStatus('Added (App-access check could not be reached; the server will re-validate on save).', 'var(--muted)');
+        setStatus('✕ Could not check GitHub App access. Please retry.', 'var(--red)');
         return;
       }
       _appendRepoAccepted(val);

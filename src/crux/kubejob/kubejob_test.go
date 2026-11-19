@@ -11,12 +11,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
 
@@ -43,6 +45,34 @@ type fakeAPI struct {
 	policyErr             int            // when >0, the NetworkPolicy POST fails with this status
 	policyDeleted         bool
 	order                 []string // "policy", "job" in creation order
+	selfPod               string   // JSON body of hive's own pod (testSelfPod), "" = 404
+	selfPodGets           int
+	serviceAccounts       map[string]string // SA name -> JSON body; absent = 404
+	saForbidden           bool              // SA reads answer 403
+
+	// Scripted per-call behavior for the node preflight and scheduling tests
+	// (#18811). Each slice is indexed by how many such calls came before and
+	// its last entry repeats; empty keeps the single-value fields above.
+	createdAll   []map[string]any // every Job manifest POSTed, in order
+	exitCodes    []int            // terminated exit code per pod GET
+	podNodes     []string         // spec.nodeName per pod GET ("" = none)
+	logs         []string         // pod log per log GET
+	podLists     []string         // body per pods-list GET (the schedule watch)
+	podGets      int
+	logGets      int
+	podListGets  int
+	jobCreations int
+}
+
+// pick returns the i-th entry of a script, repeating the last.
+func pick[T any](script []T, i int, def T) T {
+	if len(script) == 0 {
+		return def
+	}
+	if i >= len(script) {
+		i = len(script) - 1
+	}
+	return script[i]
 }
 
 func newFakeAPI() *fakeAPI {
@@ -89,6 +119,8 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 				t.Errorf("manifest is not JSON: %v", err)
 			}
 			f.created = m
+			f.createdAll = append(f.createdAll, m)
+			f.jobCreations++
 			f.order = append(f.order, "job")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write(body)
@@ -114,18 +146,57 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 				_, _ = w.Write([]byte(`{"items":[]}`))
 				return
 			}
+			if len(f.podLists) > 0 {
+				body := pick(f.podLists, f.podListGets, "")
+				f.podListGets++
+				_, _ = w.Write([]byte(body))
+				return
+			}
 			_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"` + f.podName + `"}}]}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/log"):
 			if f.jobCompleted && f.onPodLogAfterComplete != nil {
 				f.onPodLogAfterComplete()
 			}
-			_, _ = w.Write([]byte(f.logBody))
+			body := f.logBody
+			if len(f.logs) > 0 {
+				body = pick(f.logs, f.logGets, "")
+				f.logGets++
+			}
+			_, _ = w.Write([]byte(body))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/serviceaccounts/"):
+			if f.saForbidden {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"kind":"Status","message":"serviceaccounts is forbidden"}`))
+				return
+			}
+			body, ok := f.serviceAccounts[r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"kind":"Status","message":"not found"}`))
+				return
+			}
+			_, _ = w.Write([]byte(body))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pods/"+testSelfPod):
+			f.selfPodGets++
+			if f.selfPod == "" {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"kind":"Status","message":"pods \"` + testSelfPod + `\" not found"}`))
+				return
+			}
+			_, _ = w.Write([]byte(f.selfPod))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/pods/"):
-			state := `{"terminated":{"exitCode":` + itoa(f.exitCode) + `}}`
+			code := pick(f.exitCodes, f.podGets, f.exitCode)
+			node := pick(f.podNodes, f.podGets, "")
+			f.podGets++
+			state := `{"terminated":{"exitCode":` + itoa(code) + `}}`
 			if f.podStatus != "terminated" {
 				state = `{"running":{}}`
 			}
-			_, _ = w.Write([]byte(`{"status":{"containerStatuses":[{"name":"kick","state":` + state + `}]}}`))
+			spec := ""
+			if node != "" {
+				spec = `"spec":{"nodeName":"` + node + `"},`
+			}
+			_, _ = w.Write([]byte(`{` + spec + `"status":{"containerStatuses":[{"name":"kick","state":` + state + `}]}}`))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL)
 			w.WriteHeader(http.StatusNotFound)
@@ -155,6 +226,7 @@ func newLauncher(srv *httptest.Server, opts Options) *Launcher {
 		HTTPClient: srv.Client(),
 		TokenPath:  filepath.Join("/nonexistent", "token"),
 		Now:        func() time.Time { return time.Unix(1700000000, 0) },
+		PodName:    testSelfPod,
 	}
 }
 
@@ -410,6 +482,47 @@ func TestManifestShape(t *testing.T) {
 	}
 }
 
+func TestManifestAffinity(t *testing.T) {
+	const affinityJSON = `{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"accelerator","operator":"In","values":["spyre","gpu"]}]}]},"preferredDuringSchedulingIgnoredDuringExecution":[{"weight":50,"preference":{"matchExpressions":[{"key":"zone","operator":"In","values":["east"]}]}}]}}`
+	var affinity config.SandboxJobAffinity
+	if err := json.Unmarshal([]byte(affinityJSON), &affinity); err != nil {
+		t.Fatal(err)
+	}
+	var want any
+	if err := json.Unmarshal([]byte(affinityJSON), &want); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		selector map[string]string
+	}{
+		{name: "affinity alone"},
+		{name: "affinity and node selector", selector: map[string]string{"accelerator": "spyre"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newFakeAPI()
+			api.statuses = []string{statusComplete}
+			srv := httptest.NewServer(api.handler(t))
+			defer srv.Close()
+			l := newLauncher(srv, Options{WorkspaceClaim: "hive-data", Affinity: &affinity, NodeSelector: tc.selector})
+			if _, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123")); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			spec := api.created["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+			if !reflect.DeepEqual(spec["affinity"], want) {
+				t.Errorf("serialized affinity = %#v, want %#v", spec["affinity"], want)
+			}
+			if tc.selector == nil {
+				if _, ok := spec["nodeSelector"]; ok {
+					t.Errorf("unexpected nodeSelector: %#v", spec["nodeSelector"])
+				}
+			} else if !reflect.DeepEqual(spec["nodeSelector"], map[string]any{"accelerator": "spyre"}) {
+				t.Errorf("serialized nodeSelector = %#v", spec["nodeSelector"])
+			}
+		})
+	}
+}
+
 func TestManifestDefaultsAndCustomTTLAndMount(t *testing.T) {
 	l := &Launcher{Options: Options{WorkspaceClaim: "c", TTLSeconds: 60}}
 	m := l.manifest("ns", "job", "sub", sandbox.LaunchSpec{Image: "i", WorkspaceMount: "/w", WorkDir: "/w/sub"})
@@ -420,7 +533,7 @@ func TestManifestDefaultsAndCustomTTLAndMount(t *testing.T) {
 			t.Errorf("manifest missing %s\n%s", want, s)
 		}
 	}
-	for _, absent := range []string{"nodeSelector", "tolerations", "serviceAccountName", `"resources"`, `"command"`} {
+	for _, absent := range []string{"nodeSelector", `"affinity"`, "tolerations", "serviceAccountName", `"resources"`, `"command"`} {
 		if strings.Contains(s, absent) {
 			t.Errorf("manifest must omit %s when unset\n%s", absent, s)
 		}

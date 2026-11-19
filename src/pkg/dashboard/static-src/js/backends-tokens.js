@@ -49,13 +49,18 @@
     // pkg/dashboard/cli_models.go; keep the two lists in sync). Refreshed
     // 2026-08-03 from a live /v1/models response, in API order, plus the bare
     // aliases the claude CLI accepts as --model values; Sonnet 5.5 added per
-    // the Claude Code 2.1.284 changelog (#9804).
+    // the Claude Code 2.1.284 changelog (#9804). Refreshed 2026-11-17
+    // (#18753) from Anthropic's models overview and the Claude Code
+    // changelog: Fable 5.2, Fable 5.1, Haiku 5.5 and the `fable` alias.
     const CLAUDE_CLI_MODELS = [
       { value: 'claude-opus-5-5', label: 'Opus 5.5' },
       { value: 'claude-opus-5', label: 'Opus 5' },
       { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
       { value: 'claude-sonnet-5', label: 'Sonnet 5' },
+      { value: 'claude-fable-5-2', label: 'Fable 5.2' },
+      { value: 'claude-fable-5-1', label: 'Fable 5.1' },
       { value: 'claude-fable-5', label: 'Fable 5' },
+      { value: 'claude-haiku-5-5', label: 'Haiku 5.5' },
       { value: 'claude-opus-4-8', label: 'Opus 4.8' },
       { value: 'claude-opus-4-7', label: 'Opus 4.7' },
       { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
@@ -67,6 +72,7 @@
       { value: 'opus', label: 'Opus (alias)' },
       { value: 'sonnet', label: 'Sonnet (alias)' },
       { value: 'haiku', label: 'Haiku (alias)' },
+      { value: 'fable', label: 'Fable (alias)' },
     ];
     const COPILOT_CLI_MODELS = [
       // Auto sentinel: `copilot --model auto` lets the Copilot CLI pick/adjust
@@ -104,21 +110,23 @@
     // using Codex with a ChatGPT account"), so codex must NOT fall through to
     // the copilot list. The server discovers the live catalog via
     // `codex app-server` model/list (per-CLI-version, baked into the binary);
-    // this is only the pre-discovery fallback. Snapshot of codex 0.166.0 and
-    // 0.167.0 (live model/list captures, 2026-11-07; the 0.159.0 capture was #9804):
-    // visible ids in picker order (GPT-6.1 Sol is the default; GPT-6.1 Terra
-    // arrived in 0.165.0; GPT-6 Sol and Luna arrived in 0.156.1, #8417), then
+    // this is only the pre-discovery fallback. Snapshot of codex 0.170.0
+    // (live model/list capture, 2026-11-18; the 0.159.0 capture was #9804):
+    // visible ids in picker order (GPT-6.2 Sol is the default; GPT-6.2 Astra
+    // arrived after 0.167.0; GPT-6.1 Terra arrived in 0.165.0; GPT-6 Sol and Luna arrived in 0.156.1, #8417), then
     // hidden ids — hidden entries are still valid --model values. gpt-5.2 and
     // gpt-5.4-mini were retired in 0.155.0; gpt-5.4 was retired between
     // 0.156.1 and 0.159.0.
     // Keep in sync with codexStaticModels in cli_models.go.
     const CODEX_CLI_MODELS = [
+      { value: 'gpt-6.2-sol', label: 'GPT-6.2 Sol' },
+      { value: 'gpt-6.2-astra', label: 'GPT-6.2 Astra' },
+      { value: 'gpt-6.1-terra', label: 'GPT-6.1 Terra' },
       { value: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
       { value: 'gpt-6-astra', label: 'GPT-6 Astra' },
       { value: 'gpt-6-sol', label: 'GPT-6 Sol' },
       { value: 'gpt-6-luna', label: 'GPT-6 Luna' },
       { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
-      { value: 'gpt-6.1-terra', label: 'GPT-6.1 Terra' },
       { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
       { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
       { value: 'gpt-5.5', label: 'GPT-5.5' },
@@ -308,6 +316,40 @@
       if (optTail === curTail) return true;
       return _modelsEqual(optTail, curTail);
     }
+    // Backends whose CLI accepts exactly one spelling of a model id. Claude
+    // and Copilot serve the SAME Anthropic models under different naming
+    // conventions: the Claude CLI takes claude-sonnet-5-5 and rejects
+    // claude-sonnet-5.5, the Copilot CLI takes claude-sonnet-5.5 and rejects
+    // claude-sonnet-5-5. For these the dropdown must NOT treat the two as the
+    // same model: the tolerant match preselected the valid option for a
+    // stored wrong-convention id, and the agent failed every kick while its
+    // dropdown looked correct. The server rewrites such ids to the backend's
+    // spelling (config.CanonicalizeModelForBackend); the dropdown shows what
+    // is stored and flags it.
+    const STRICT_MODEL_ID_BACKENDS = ['claude', 'copilot'];
+    // _modelIdMatchesForBackend is _modelIdMatches, minus the dotted/dashed
+    // version folding on STRICT_MODEL_ID_BACKENDS.
+    function _modelIdMatchesForBackend(backend, optionValue, current) {
+      if (!STRICT_MODEL_ID_BACKENDS.includes(backend)) return _modelIdMatches(optionValue, current);
+      if (!current) return false;
+      return optionValue === current || optionValue.split('/').pop() === current.split('/').pop();
+    }
+    // modelIdMatchesStored is the Settings dialog's "is this option the stored
+    // model" test: strict on STRICT_MODEL_ID_BACKENDS, the separator-tolerant
+    // _modelsEqual elsewhere.
+    function modelIdMatchesStored(backend, optionValue, current) {
+      if (STRICT_MODEL_ID_BACKENDS.includes(backend)) return _modelIdMatchesForBackend(backend, optionValue, current);
+      return _modelsEqual(current, optionValue);
+    }
+    // invalidModelSpellingFor returns the valid option a stored model is only
+    // a different spelling of on a strict backend ('' when there is none), so
+    // the dropdown can flag the stored value instead of hiding it.
+    function invalidModelSpellingFor(backend, models, current) {
+      if (!current || !STRICT_MODEL_ID_BACKENDS.includes(backend)) return '';
+      if (models.some(m => _modelIdMatchesForBackend(backend, m.value, current))) return '';
+      const hit = models.find(m => _modelIdMatches(m.value, current));
+      return hit ? hit.value : '';
+    }
     // modelOptionsHtml builds the <option> list for a model dropdown:
     // discovered/known models first (already discovered-first from the API),
     // the current model preselected (prefix-insensitive), and — if the
@@ -328,7 +370,7 @@
       const cur = soleOption || currentModel || '';
       let matched = false;
       const opts = models.map(m => {
-        const sel = !matched && _modelIdMatches(m.value, cur);
+        const sel = !matched && _modelIdMatchesForBackend(backend, m.value, cur);
         if (sel) matched = true;
         // The selected option's label doubles as the button's visible text
         // (native <select> renders it in place of the placeholder), so it
@@ -336,10 +378,25 @@
         // consistent "<value> ▾" look across both dropdown buttons.
         return `<option value="${esc(m.value)}"${sel ? ' selected' : ''}>${esc(m.label)}${sel ? ' ▾' : ''}</option>`;
       });
-      if (cur && !matched) {
-        opts.unshift(`<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current) ▾</option>`);
+      // Large gateway catalogs (OpenRouter) group by provider so ~hundreds
+      // of ids stay scannable; the option values and selection are unchanged.
+      let body = opts.join('');
+      if (typeof shouldGroupModelOptions === 'function' && shouldGroupModelOptions(models.map(m => m.value))) {
+        const byValue = {};
+        models.forEach((m, i) => { if (!(m.value in byValue)) byValue[m.value] = opts[i]; });
+        body = modelOptgroupsHtml(Object.keys(byValue), v => byValue[v]);
       }
-      return opts.join('');
+      if (cur && !matched) {
+        // The stored id is shown as it is stored. When it is only another
+        // spelling of a valid option (claude-sonnet-5.5 on claude), say so
+        // and name the id to pick, rather than presenting it as fine.
+        const validSpelling = invalidModelSpellingFor(backend, models, cur);
+        const note = validSpelling
+          ? ` (⚠ not valid for ${backend}; pick ${validSpelling.split('/').pop()})`
+          : ' (current)';
+        body = `<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())}${esc(note)} ▾</option>` + body;
+      }
+      return body;
     }
     async function fetchInferenceModels(backend, force) {
       const now = Date.now();
@@ -376,6 +433,9 @@
           // none; entitledModels: the FULL set the gateway's team may use, so
           // a stored model outside it can be flagged (#9945).
           defaultModel: data.default_model || '',
+          // modelInfo: id → {name, context_length, pricing} for OpenRouter
+          // gateways (prices per token), so pickers can show $/1M.
+          modelInfo: (typeof modelInfoIndex === 'function') ? modelInfoIndex(data.model_info) : {},
           entitledModels: Array.isArray(data.entitled_models) ? data.entitled_models : null,
         };
         // A real (non-fallback) discovery may have changed the entitlement-

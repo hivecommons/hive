@@ -147,13 +147,21 @@ func (a *AgentProcess) decideTokenRestart(now time.Time) tokenRestartAction {
 	if now.Sub(a.lastTokenRestart).Seconds() < float64(tokenRestartCooldownSec) {
 		return tokenRestartWait
 	}
+	a.recordTokenRestart(now)
+	return tokenRestartFire
+}
+
+// recordTokenRestart books one token-triggered restart: the attempt counter,
+// the cooldown clock and the rolling 24h ledger all move together. Shared by
+// decideTokenRestart and the operator-sign-in restart (#18732), which fires
+// outside the cap but must still be counted against the fresh ledger.
+func (a *AgentProcess) recordTokenRestart(now time.Time) {
 	a.tokenRestartAttempts++
 	a.lastTokenRestart = now
 	a.tokenRestartFiredAt = append(a.tokenRestartFiredAt, now)
 	// A fresh attempt is a new theory: if this episode also fails, the
 	// give-up diagnosis must log again, once.
 	a.tokenRestartGaveUp = false
-	return tokenRestartFire
 }
 
 // rearmTokenRestartCap is the poller's per-boot re-arm: it zeroes the attempt

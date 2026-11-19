@@ -28,7 +28,7 @@ From the repository root, the same command is available as:
 just runs-e2e
 ```
 
-The test uses the same `HIVE_URL` / `HIVE_TOKEN` gating as the inception suite:
+The test uses the `HIVE_URL` / `HIVE_TOKEN` gating shared by the `src/test` integration suite:
 if `HIVE_URL` is unset, the whole `src/test` integration suite skips. The run
 target must be a pinned issue that triages to `run/spec`; use either
 `HIVE_RUNS_E2E_KEY` or `HIVE_RUNS_E2E_REPO` plus `HIVE_RUNS_E2E_ISSUE`.
@@ -145,7 +145,7 @@ subsequent reds.
 
 Long-running runs are the Hive workflow behind `spec` -> `plan` -> `implement`
 work. The workflow is default-off: with `runs.spektacular.enabled` unset or
-`false`, Hive does not create the first stage lease from inception and does not
+`false`, Hive does not create the first stage lease and does not
 start the Spek poll loop.
 
 ## How a run starts
@@ -156,25 +156,17 @@ Admission creates one unowned `spec` lease keyed as
 that lease to agents when `governor.work_source.run_stages` is enabled. Repeated
 admission of the same repo/issue is idempotent and leaves one run active.
 
-Today there are two admission paths:
-
-- **Run triage**: when `runs.triage.enabled` and `runs.spektacular.enabled` are
-  both true, incoming actionable issues classified as `spec` call `AdmitRun`
-  before the ordinary direct-fix dispatch path.
-- **Inception approval**: when an inception moves to `complete` and
-  `runs.spektacular.enabled` is true, `POST /api/inception/approve` may include
-  `issue_url` or `repo` plus `issue_number`. Hive uses that explicit issue as
-  the run key and calls `AdmitRun`.
-
-Inception does not currently create or link a GitHub issue by itself. If an
-approve request does not name an issue, Hive logs that no target was supplied
-and does not fabricate a run.
+Today the admission path is **run triage**: when `runs.triage.enabled` and
+`runs.spektacular.enabled` are both true, incoming actionable issues
+classified as `spec` call `AdmitRun` before the ordinary direct-fix dispatch
+path. (Inception approval, `POST /api/inception/approve` with an explicit
+issue, was the second path; it was retired with the inception API, which now
+answers `410 Gone`.)
 
 See [spektacular.md](spektacular.md) for runner configuration and stage
 advancement, and [work-sources.md](work-sources.md) for how pending run stages
 are listed as work items.
 
-Spek campaigns that opt into continuous convergence can mint linked recheck
-revisions after `implement` completes. See
-[spektacular.md#continuous-convergence](spektacular.md#continuous-convergence)
-for the cadence, generation, drift-evidence, and delta-import contract.
+Campaign recheck (continuous convergence) was retired with inception
+campaigns; see
+[spektacular.md#continuous-convergence-retired](spektacular.md#continuous-convergence-retired).

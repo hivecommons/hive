@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -159,6 +160,7 @@ func (c *Client) ReadNativeQueueObservation(ctx context.Context, repo, base stri
 		// Expired refs are not proof of failure, rebuild or merge.
 		ref, _, refErr := c.client.Git.GetRef(ctx, parts[0], parts[1], strings.TrimPrefix(candidate.Ref, "refs/"))
 		if refErr != nil || ref.GetObject().GetSHA() != candidate.SHA {
+			candidate.Expired = true
 			candidate.Reason = "Synthetic ref unavailable or changed; lifecycle outcome unknown."
 			out.Candidates = append(out.Candidates, candidate)
 			continue
@@ -203,11 +205,15 @@ func (c *Client) ReadNativeQueueObservation(ctx context.Context, repo, base stri
 }
 
 // Both classic protection and applicable rules must be readable. No configured
-// fallback is presented as GitHub's actual required-check policy.
+// fallback is presented as GitHub's actual required-check policy. A 404 from
+// classic protection is GitHub's answer for a branch protected only by
+// rulesets ("Branch not protected"): it means no classic requirements, not an
+// unreadable policy, so the rules read below is the whole policy. Any other
+// error (403 most of all) keeps the policy unknown.
 func (c *Client) nativeObservationRequired(ctx context.Context, owner, repo, base string) (map[string]int64, bool) {
 	required := map[string]int64{}
-	classic, _, err := c.client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, base)
-	known := err == nil
+	classic, classicResponse, err := c.client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, base)
+	known := err == nil || classicResponse != nil && classicResponse.StatusCode == http.StatusNotFound
 	if classic != nil {
 		if classic.Contexts != nil {
 			for _, name := range *classic.Contexts {

@@ -52,6 +52,27 @@ func (c *Client) PostIssueNote(ctx context.Context, repo string, number int, key
 	return created, err
 }
 
+// PostInformationalIssueNote is PostIssueNote for a note nobody has to act
+// on, such as the stage note naming the PR that covers the issue
+// (prstatus.KeyIssuePRLink, hivecommons/hive#18606): it becomes a section of
+// the issue's status card under the attention pilot or in
+// github.notifications.mode: quiet (the default), and runs legacy only in
+// mode normal with the pilot off. Reports whether a new comment was
+// created.
+func (c *Client) PostInformationalIssueNote(ctx context.Context, repo string, number int, key, body string, legacy func(context.Context) error) (bool, error) {
+	if c == nil {
+		return false, ErrNoGitHubClient
+	}
+	if !c.attentionPilot() && !c.notificationsQuiet() {
+		return true, legacy(ctx)
+	}
+	created, err := c.UpsertPRStatusSection(ctx, repo, number, key, body)
+	if err == nil && !created {
+		c.noteCommentSuppressed()
+	}
+	return created, err
+}
+
 // PostIssueAttention delivers a newly required action (cause names it, e.g.
 // the PR whose merge awaits confirmation). With the attention pilot off it
 // runs legacy. With it on the action is recorded on the status card and

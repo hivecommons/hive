@@ -311,8 +311,16 @@ func SweepInProgressIssues(ctx context.Context, client *Client, result *Actionab
 			kept = append(kept, issue)
 			continue
 		}
+		// The bound workflow model may derive this very stage label for the
+		// issue's state (TechDocs Accepted is number 20): then it is the
+		// model's, not a claim. Stripping it here only had the stage sync
+		// put it back two seconds later, every cycle (hivecommons/hive#18434).
+		// A live start mark still withholds the issue; the label stays.
+		modelOwned := client.modelOwnsInProgressTrigger(issue)
 		if issueHasPREvidence(issue) {
-			client.removeInProgressLabel(ctx, &issue, "pr evidence", logger)
+			if !modelOwned {
+				client.removeInProgressLabel(ctx, &issue, "pr evidence", logger)
+			}
 			kept = append(kept, issue)
 			continue
 		}
@@ -337,6 +345,10 @@ func SweepInProgressIssues(ctx context.Context, client *Client, result *Actionab
 					"repo", issue.Repo, "issue", issue.Number, "agent", claim.Identity,
 					"started_at", claim.StartedAt, "expires_at", claim.ExpiresAt)
 			}
+		case modelOwned:
+			// No live claim and the label is the model's state: the issue
+			// is not claimed, and the label is not ours to take off.
+			kept = append(kept, issue)
 		default:
 			client.removeInProgressLabel(ctx, &issue, "start mark lapsed", logger)
 			kept = append(kept, issue)
@@ -349,6 +361,24 @@ func SweepInProgressIssues(ctx context.Context, client *Client, result *Actionab
 	}
 	result.Issues = IssueResultFromItems(kept)
 	return withheld
+}
+
+// modelOwnsInProgressTrigger reports whether every trigger label the issue
+// carries is the stage label its bound workflow model derives (see
+// Client.modelOwnsStageLabel). A retired trigger (hive/in-progress) is never
+// the model's, so an issue still wearing one is swept as before.
+func (c *Client) modelOwnsInProgressTrigger(issue Issue) bool {
+	owned := false
+	for _, l := range inProgressTriggerLabels {
+		if !issueHasLabel(issue.Labels, l) {
+			continue
+		}
+		if !c.modelOwnsStageLabel(issue, l) {
+			return false
+		}
+		owned = true
+	}
+	return owned
 }
 
 func startedLabel(claim issueclaim.Claim) string {

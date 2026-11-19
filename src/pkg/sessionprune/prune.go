@@ -19,8 +19,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
+
+// deniedWarned remembers paths whose removal already failed with a permission
+// error. Prune runs every tick and a path that is not ours to delete stays
+// that way, so warning each pass floods the log (hivecommons/hive#18126).
+var deniedWarned sync.Map
 
 // DefaultRetentionDays is how long a session directory is kept after its last
 // write. Sessions feed token accounting and post-hoc debugging, both of which
@@ -91,6 +97,13 @@ func Prune(dir string, maxAge time.Duration, now time.Time, logger *slog.Logger)
 
 		if err := os.RemoveAll(path); err != nil {
 			res.Failed++
+			if errors.Is(err, fs.ErrPermission) {
+				// Warn once per path, then drop to debug.
+				if _, seen := deniedWarned.LoadOrStore(path, struct{}{}); seen {
+					logger.Debug("session prune: remove failed (permission denied, already reported)", "path", path, "err", err)
+					continue
+				}
+			}
 			logger.Warn("session prune: remove failed", "path", path, "err", err)
 			continue
 		}

@@ -24,6 +24,11 @@ const (
 	// maxBodyBytes bounds a request body. Scan bodies are the largest; the
 	// proxy already caps the GitHub write bodies it scans well under this.
 	maxBodyBytes = 4 << 20
+	// maxKnowledgeAdviseBodyBytes bounds a POST /v1/knowledge/advise body.
+	// The largest legitimate one is a scope plus a pane tail of the
+	// configured pane_lines lines; 64 KiB is several times that, and a body
+	// past it is refused without being read (hivecommons/hive#17157).
+	maxKnowledgeAdviseBodyBytes = 64 << 10
 	// shutdownGrace is how long Serve waits for in-flight requests.
 	shutdownGrace = 5 * time.Second
 	// networkUnix tags requests that arrived on the unix socket.
@@ -96,6 +101,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathEffects+"/{id}/end", s.capability(CapabilityEffects, s.handleEndEffect))
 	mux.HandleFunc("POST "+PathAgentMint, s.capability(CapabilityAgentMint, s.handleAgentMint))
 	mux.HandleFunc("GET "+PathBobCredential, s.capability(CapabilityBob, s.handleBobCredential))
+	mux.HandleFunc("POST "+PathKnowledgeAdvise, s.capability(CapabilityKnowledgeAdvise, s.handleKnowledgeAdvise))
 	return s.instrument(s.authenticate(mux))
 }
 
@@ -148,6 +154,14 @@ func (s *Server) configured(capability string) bool {
 		if _, ok := s.Caps.(BobCredentials); !ok {
 			return false
 		}
+	case CapabilityKnowledgeAdvise:
+		if _, ok := s.Caps.(KnowledgeAdvisers); !ok {
+			return false
+		}
+		// Unlike the other optional capabilities this one is off by default,
+		// so a Capabilities without a Configured answer must not serve it.
+		c, ok := s.Caps.(Configured)
+		return ok && c.Configured(capability)
 	}
 	if c, ok := s.Caps.(Configured); ok {
 		return c.Configured(capability)
@@ -173,7 +187,7 @@ var allCapabilities = []string{
 	CapabilityTokens, CapabilityGitHubREST, CapabilityUsage, CapabilityCanary,
 	CapabilityText, CapabilityConditions, CapabilityLinear, CapabilityPulls,
 	CapabilityPolicy, CapabilityInferenceRoutes, CapabilityEffects,
-	CapabilityAgentMint, CapabilityBob,
+	CapabilityAgentMint, CapabilityBob, CapabilityKnowledgeAdvise,
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -241,9 +255,9 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch rec.Kind {
-	case UsageKindGateway, UsageKindCopilot, UsageKindCopilotCache:
+	case UsageKindGateway, UsageKindGatewayCache, UsageKindCopilot, UsageKindCopilotCache:
 	default:
-		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "kind must be gateway, copilot or copilot_cache")
+		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "kind must be gateway, gateway_cache, copilot or copilot_cache")
 		return
 	}
 	if err := s.Caps.RecordUsage(r.Context(), rec); err != nil {
@@ -429,12 +443,23 @@ func (s *Server) handleEndEffect(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeCapabilityError maps a Capabilities error: ErrNotConfigured → 404,
+// ErrInvalidRequest → 400, ErrForbidden → 403, ErrRateLimited → 429,
 // anything else → 502 CodeUpstream with the message. The message is the
 // implementation's; hive-side code is responsible for keeping secrets out
 // of the errors it returns, as it already is for its logs.
 func (s *Server) writeCapabilityError(w http.ResponseWriter, r *http.Request, verb string, err error) {
-	if errors.Is(err, ErrNotConfigured) {
+	switch {
+	case errors.Is(err, ErrNotConfigured):
 		s.writeError(w, r, http.StatusNotFound, CodeNotConfigured, verb+": "+err.Error())
+		return
+	case errors.Is(err, ErrInvalidRequest):
+		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, verb+": "+err.Error())
+		return
+	case errors.Is(err, ErrForbidden):
+		s.writeError(w, r, http.StatusForbidden, CodeForbidden, verb+": "+err.Error())
+		return
+	case errors.Is(err, ErrRateLimited):
+		s.writeError(w, r, http.StatusTooManyRequests, CodeRateLimited, verb+": "+err.Error())
 		return
 	}
 	s.writeError(w, r, http.StatusBadGateway, CodeUpstream, verb+": "+err.Error())
@@ -663,4 +688,36 @@ func (s *Server) handleBobCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, r, http.StatusOK, cred)
+}
+
+// handleKnowledgeAdvise answers a runtime's mid-task knowledge request. The
+// body is read through a hard byte cap (413 past it, nothing buffered beyond
+// it); the identity, scope and pane-length checks, the per-agent and per-kick
+// rate limits and the evaluation itself are the Capabilities'. Every refusal
+// is a non-2xx, which the runtime reads as "no advice".
+func (s *Server) handleKnowledgeAdvise(w http.ResponseWriter, r *http.Request) {
+	var req KnowledgeAdviseRequest
+	body := http.MaxBytesReader(w, r.Body, maxKnowledgeAdviseBodyBytes)
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			s.writeError(w, r, http.StatusRequestEntityTooLarge, CodeBadRequest, "request body is too large")
+			return
+		}
+		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Agent == "" {
+		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "agent is required")
+		return
+	}
+	resp, err := s.Caps.(KnowledgeAdvisers).AdviseKnowledge(r.Context(), req)
+	if err != nil {
+		s.writeCapabilityError(w, r, "advising knowledge", err)
+		return
+	}
+	if resp.Advice == nil {
+		resp.Advice = []KnowledgeAdvice{}
+	}
+	s.writeJSON(w, r, http.StatusOK, resp)
 }

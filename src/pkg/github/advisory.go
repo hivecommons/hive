@@ -203,7 +203,21 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 		c.logger.Info("found existing advisory issue", slog.String("repo", repo), slog.Int("number", num))
 		return num, nil
 	}
+	return c.createAdvisoryIssue(ctx, owner, repo, primaryAdvisoryIssueBody)
+}
 
+// primaryAdvisoryIssueBody is the body of the primary repo's advisory report.
+const primaryAdvisoryIssueBody = "This issue collects advisory findings from Hive agents.\n\n" +
+	"At lower ACMM levels, some agents work in advisory mode — they analyze code and post findings " +
+	"here but do not create issues or PRs. At higher levels, designated agents (e.g. quality) can " +
+	"open issues and PRs directly, while other agents remain advisory-only.\n\n" +
+	"The governor posts periodic digest comments summarizing what advisory agents found.\n\n" +
+	"**Do not close this issue.** It is a living document."
+
+// createAdvisoryIssue files a new advisory report in owner/repo with body,
+// after checking the repo can hold issues at all. Callers have already
+// searched for an existing report and found none.
+func (c *Client) createAdvisoryIssue(ctx context.Context, owner, repo, body string) (int, error) {
 	// Before attempting to create, check whether the repo can hold issues at
 	// all. A fork (or any repo with the Issues feature off) has no Issues tab:
 	// the create below would fail with a 410 that reads like an auth problem,
@@ -230,13 +244,6 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 	if !labelExists {
 		c.logger.Warn("could not create advisory label, issue will be created without it", slog.String("error", labelErr.Error()))
 	}
-
-	body := "This issue collects advisory findings from Hive agents.\n\n" +
-		"At lower ACMM levels, some agents work in advisory mode — they analyze code and post findings " +
-		"here but do not create issues or PRs. At higher levels, designated agents (e.g. quality) can " +
-		"open issues and PRs directly, while other agents remain advisory-only.\n\n" +
-		"The governor posts periodic digest comments summarizing what advisory agents found.\n\n" +
-		"**Do not close this issue.** It is a living document."
 
 	// Invocation-attribution trail (attribution.go): this issue is created by
 	// the hive itself, so the "agent" is the governor flow — backend/model are
@@ -291,6 +298,9 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 			var apiErr error
 			issue, _, apiErr = c.client.Issues.Create(ctx, owner, repo, req)
 			if apiErr != nil {
+				if isDefiniteIssueRefusal(apiErr) {
+					return effects.Result{}, effects.NotApplied(apiErr)
+				}
 				return effects.Result{}, apiErr
 			}
 			return effects.Result{Provenance: issue.GetHTMLURL()}, nil

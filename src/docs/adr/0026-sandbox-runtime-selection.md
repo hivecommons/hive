@@ -1,6 +1,6 @@
 # ADR-0026: Sandbox runtime selection
 
-Status: Proposed
+Status: Accepted (phase 1 OpenShell implemented, runtime opt-in; measured on LKE in #17643: cold 1.67× / warm 2.4× the Job runtime, egress enforced — #17642, hivecommons/hive#17646; phase 2 Agent Substrate implemented, runtime opt-in — #17695, hivecommons/hive#17741)
 
 ## Context
 
@@ -25,7 +25,10 @@ own documentation on 2026-10-25:
 **Not done in this record:** the prototype run on a hive spoke (#14092 step 2).
 Startup latency, image and boot size, and proxy and attribution behaviour are
 **not measured** here. [Prototype protocol](#prototype-protocol) lists what to
-measure. This record stays `Proposed` until those numbers exist.
+measure; #17643 tracks running it. The runtime shipped as opt-in before those
+numbers existed (see [Implementation notes](#implementation-notes-phase-1)):
+nothing changes for an operator who does not select it, and the measurement
+needs the code to exist.
 
 ### The contract a runtime must satisfy
 
@@ -130,7 +133,7 @@ the agent.
 
 ## Decision
 
-**Proposed:** adopt **OpenShell** as a third `sandbox.runtime` value
+**Accepted:** adopt **OpenShell** as a third `sandbox.runtime` value
 (`openshell`), behind the existing `sandbox.Launcher` interface. Use the
 Kubernetes driver on hosted spokes and the Podman driver on standalone hosts.
 The existing `podman` and `job` runtimes stay as they are, and the default
@@ -190,6 +193,118 @@ moves to `Accepted`:
 | Attribution | The refused write appears in runtime logs with the sandbox and kick name |
 | Broker path intact | The kick's commits arrive as a PR through `pushbroker`, unchanged |
 
+## Implementation notes (phase 1)
+
+Phase 1 landed in hivecommons/hive#17646 (epic #17642) as
+`sandbox.runtime: openshell`, `src/crux/sandbox/openshell.go`, configured
+under `agent_sandbox.openshell` — see
+[sandbox-isolation.md](../sandbox-isolation.md#running-sandboxed-kicks-in-an-openshell-sandbox)
+for the operator view and [deploy/openshell.md](../../deploy/openshell.md) for
+the cluster side. Writing it against the real SDK moved four assumptions in
+this record:
+
+| This record assumed | What the SDK (v0.1.8) offers | What phase 1 does |
+|---|---|---|
+| Go SDK at `github.com/NVIDIA/OpenShell/sdk/go` | that path is deprecated upstream in favour of `github.com/ai-openshell/sdk-go` | pins `github.com/ai-openshell/sdk-go v0.1.8` (tagged). +3 modules per go.mod (`sdk-go`, `x/oauth2`, `x/sync`), grpc 1.83.2 → 1.85.0, no CGO, ~3.6 MB on the `hive` binary |
+| Workspace copied in and out through the SDK | `Files().Upload` is single-file and the default transport is optional on the gateway | the hive data PVC is mounted at a `sub_path` through the gateway's Kubernetes `driver_config`, exactly as the `job` runtime shares it. Needs `allow_driver_config = true` on the gateway and the claim labelled `openshell.ai/sandbox-attachable` |
+| `policy_profile` selects a gateway-side policy | no create-time policy-profile API; OpenShell "profiles" are credential-provider profiles | the policy is derived by hive (`OpenShellNetworkPolicy`); `policy_profile` is recorded on the sandbox as the annotation `hive.dev/policy-profile` for gateway admission to act on |
+| A static egress allowlist to translate | none exists: ADR-0002 redirects all `:443` to the proxy and decides per request | rules for `github.com` (read-write, git fetch-pack) and `api.github.com` (read-only), plus `agent_sandbox.openshell.allow_hosts`; attached to an overridable default binary set because OpenShell allows nothing for an unlisted binary |
+
+The preconditions above are still the operator's to verify; phase 1 refuses a
+kick when `gateway_url` or `workspace_claim` is missing and warns at boot, but
+cannot see the kernel, the CNI or the gateway settings from inside the hive
+pod (#17644 adds a gateway preflight). The kernel survey for the clusters hive
+runs on, read on 2026-11-10: LKE (`lke648397`, `hive-ci`) run 6.12 on Debian 13
+with Calico and qualify; OKE UEK7 (5.15), and the RHCOS 9.x OpenShift clusters
+(5.14) do not.
+
+## Implementation notes (phase 2: Agent Substrate)
+
+Phase 2 (#17695, hivecommons/hive#17741) adds a **fourth** runtime,
+`sandbox.runtime: substrate`, behind the same `sandbox.Launcher` seam. It is
+[Agent Substrate](https://github.com/agent-substrate/substrate) (CNCF Sandbox,
+donated by Google, Apache-2.0): a Kubernetes-hosted *actor* runtime where an
+`ActorTemplate` (image, command, env, limits, volumes) is instantiated as an
+`Actor` through a gRPC Control API (`ate.control.v1`), scheduled on a
+`WorkerPool` whose pods run the workload under gVisor (`runsc`, class
+`gvisor`) or in a KVM microVM (Kata on Cloud Hypervisor, class `microvm`). All
+egress leaves through `atenet-router` under an `EgressPolicy`, and every actor
+holds a SPIFFE identity issued through Kubernetes pod certificates. It was not
+in the 2026-10-25 comparison; the write-up that led here is the Substrate
+vs. crux research note, and the operator view is in
+[sandbox-isolation.md](../sandbox-isolation.md#running-sandboxed-kicks-in-a-substrate-actor)
+and [deploy/substrate.md](../../deploy/substrate.md). Like OpenShell it is
+opt-in and inert unless selected.
+
+### How it maps onto the contract
+
+| Contract item | Substrate | What phase 2 does |
+|---|---|---|
+| Kernel-enforced confinement | gVisor user-space kernel or a microVM; worker pods are `privileged: false` but keep `SYS_ADMIN`/`NET_ADMIN` | selects the class through `worker_selector`; no change to hive |
+| Default-deny egress | `atenet-egress` `EgressPolicy` per actor; rules are TLS-passthrough or terminate per host:port, no per-method read-only mode | `SubstrateEgressPolicy`: `github.com` and `api.github.com` on 443 plus `sandbox.substrate.allow_hosts`, TLS passthrough; everything else (and all UDP) denied |
+| Credentials never in the sandbox | zero-credential model: actors have a SPIFFE id, credentials are injected at the router | actors run credential-free: no `HTTPS_PROXY`/MITM broker inside the actor and no GitHub credential enters it; hive does every push and GitHub write after the kick; Substrate's injection is **not** used (see the amendment below) |
+| Workspace in, commits out | `durableDir` volumes and object-storage snapshots; no exec/attach API | an in-actor HTTP **bridge** (`crux substrate-bridge`) reached through the router's mTLS `CONNECT` tunnel: push tar → `POST /run` → pull tar; the hive-side workspace stays authoritative |
+| Cleanup and timeouts | `DeleteActor` / `SuspendActor` / `DeleteActorTemplate` | one template + actor per kick, both deleted on success, failure and timeout (fresh bounded context, `ExitCode -1`, 16 MiB cap, as `job`/`openshell`) |
+
+### Deviations from Substrate's reference model
+
+| Substrate assumes | Phase 2 does |
+|---|---|
+| long-lived actors and reusable templates | per-kick `ActorTemplate` + `Actor`, named `hive-kick-<agent>-<unix>` |
+| Go client `go.ate.dev/substrate` | **not imported**: it needs Go 1.27 (hive is on 1.26) and a very large module graph. A trimmed, wire-compatible proto subset is generated in-repo (`crux/sandbox/substrateapi`, field numbers pinned by tests); zero new Go modules, +578 KB on the `crux` binary |
+| image by tag or digest | digest-pinned `sandbox.substrate.image` only, enforced at boot (`AgentSandboxGateWarnings`) and at kick |
+| no `policy_profile` concept | passed to the actor as `HIVE_POLICY_PROFILE`; Substrate has no annotations |
+| snapshot/resume as the normal lifecycle | `snapshot_on_idle: true` suspends (snapshot to object storage) instead of deleting; only the latest suspended actor per agent per hive process is retained (the previous one is deleted on the next suspend; actors from before a restart are not reclaimed); resume-on-next-kick is not implemented (#17697) |
+| `api.github.com` read-only | TLS passthrough like `github.com`; the actor holds no token and hive does every write after the kick |
+
+### Amendment (2026-11-12, #17695): credential-free actors
+
+Decision by the hive owner on #17695, option A:
+
+- Substrate actors run **credential-free**. There is no `HTTPS_PROXY` or MITM
+  broker inside the actor and no GitHub credential enters it; the actor's
+  egress is governed only by Substrate's `EgressPolicy`.
+- Hive brokers pushes **post-kick**: it performs git pushes and GitHub writes
+  itself, from the workspace the bridge returns.
+- **Phase 3 (future)**: SVID-authenticated broker delegation over the atenet
+  mTLS channel, so hive can delegate scoped GitHub writes to the actor without
+  a credential entering it. It is gated on hosted clusters serving the podcert
+  feature gates (`PodCertificateRequest` / `ClusterTrustBundle`,
+  `certificates.k8s.io/v1beta1`) and is tracked as a child issue of #17695.
+
+This supersedes the earlier statement that hive's credential brokering is
+unchanged for Substrate. The podman, `job` and `openshell` runtimes keep
+their proxy model (ADR-0002).
+
+### Cluster prerequisites and which hive clusters qualify
+
+Substrate's real requirement is **not** a kernel floor: the gVisor class runs
+`runsc` inside the worker pod on any standard Linux node with cgroup v2; the
+microVM class needs `/dev/kvm` (nested virtualisation on cloud shapes). Both
+need the operator (`ate-setup deploy ate-system`: Control API, `atelet`
+DaemonSet, `atenet-router`, podcert controller, PostgreSQL, snapshot object
+storage) and Kubernetes with the `ClusterTrustBundle`,
+`ClusterTrustBundleProjection` and `PodCertificateRequest` feature gates — still
+off by default as of 1.36 — because actor identities are pod certificates.
+Survey on 2026-11-11:
+
+| cluster | kernel / Kubernetes | `gvisor` class | `microvm` class |
+|---|---|---|---|
+| hive-oke | OL9, UEK8 6.12, k8s 1.34.10 | yes once the feature gates are on (OKE control plane: needs a support request or a self-managed control plane) | needs KVM-capable (bare-metal or nested-virt) shapes |
+| lke648397, hive-ci | Debian 13, 6.12 | yes; LKE exposes no control-plane flags, so the podcert gates are the blocker — check with `kubectl get --raw /metrics \| grep kubernetes_feature_enabled` | KVM to confirm per plan |
+| vllm-d, a-ks-wec2 | RHCOS 9.x, 5.14 | possible: the kernel is fine, but the worker's `SYS_ADMIN`/`NET_ADMIN` needs an SCC and the gates a `FeatureGate` CR (TechPreviewNoUpgrade) | only on KVM-capable nodes |
+
+### When to choose it over OpenShell
+
+- Choose **OpenShell** when the cluster already runs a ≥ 6.2 kernel with an
+  enforcing CNI and you want per-binary, per-method egress policy and the
+  shared-PVC workspace with no image changes.
+- Choose **Substrate** when you want a stronger boundary than Landlock +
+  seccomp (gVisor or a VM), snapshot/suspend of idle agents, or SPIFFE
+  identities for the sandboxed workload, and you can run its operator,
+  PostgreSQL and object storage. Its egress policy is coarser (host:port, no
+  read-only API mode) and the workspace is copied, not shared.
+
 ## Consequences
 
 - Hive gains a sandbox boundary that is checked before the agent runs, without
@@ -205,8 +320,12 @@ moves to `Accepted`:
   hive's policy.
 - Telemetry must be disabled explicitly. A preflight check should refuse a
   gateway that reports it enabled.
+- Substrate (phase 2) adds a second operator-side stack (Control API,
+  atelet, atenet-router, PostgreSQL, object storage) and a copied workspace;
+  the hive-side credential model is untouched. Its preflight (#17698) and
+  prototype (#17697) follow the OpenShell ones.
 - If the prototype fails a gate, this record is rewritten to decide "no
   change" with the measured reason, and the Podman and Job runtimes remain the
   only ones.
 
-Refs #2804, #6311, #13806, #14092.
+Refs #2804, #6311, #13806, #14092, #17642, #17695.

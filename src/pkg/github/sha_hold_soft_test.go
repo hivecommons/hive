@@ -81,20 +81,21 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 		want         SHAHoldResult
 	}{
 		{
-			name:         "member without SHA gets needs-sha, not hold",
-			association:  "MEMBER",
-			labels:       []wireLabel{{Name: "kind/bug"}},
-			wantAdded:    []string{"needs-sha"},
-			wantComments: 1,
-			want:         SHAHoldResult{Held: 1},
+			// hivecommons/hive#18866: the gate is for outside reporters; a
+			// maintainer's issue is exempt and never gets the label.
+			name:        "member without SHA is exempt, not held",
+			association: "MEMBER",
+			labels:      []wireLabel{{Name: "kind/bug"}},
+			want:        SHAHoldResult{Skipped: 1},
 		},
 		{
-			name:        "untrusted reporter still gets the hard hold",
-			association: "NONE",
-			labels:      []wireLabel{{Name: "kind/bug"}},
-			wantAdded:   []string{"hold"},
-			want:        SHAHoldResult{Held: 1},
-			// hold() posts its notice too.
+			// hivecommons/hive#18468: the hive never applies `hold`
+			// itself, so an untrusted reporter gets needs-sha too.
+			name:         "untrusted reporter gets needs-sha, never hold",
+			association:  "NONE",
+			labels:       []wireLabel{{Name: "kind/bug"}},
+			wantAdded:    []string{"needs-sha"},
+			want:         SHAHoldResult{Held: 1},
 			wantComments: 1,
 		},
 		{
@@ -106,7 +107,9 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 			want:        SHAHoldResult{Unheld: 1},
 		},
 		{
-			name:        "sweep's legacy hard hold on a member issue is softened",
+			// Exempt since #18866, so the sweep's own legacy hold is lifted
+			// rather than swapped for needs-sha.
+			name:        "sweep's legacy hard hold on a member issue is lifted",
 			association: "OWNER",
 			labels:      []wireLabel{{Name: "kind/bug"}, {Name: "hold"}},
 			comments:    []wireComment{{User: wireUser{testHiveAppBotLogin}, Body: shaHoldComment, CreatedAt: "2026-09-15T12:00:01Z"}},
@@ -114,9 +117,8 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 				"event": "labeled", "created_at": "2026-09-15T12:00:00Z",
 				"actor": map[string]string{"login": testHiveAppBotLogin}, "label": map[string]string{"name": "hold"},
 			}},
-			wantAdded:   []string{"needs-sha"},
 			wantRemoved: []string{"hold"},
-			want:        SHAHoldResult{Softened: 1},
+			want:        SHAHoldResult{Unheld: 1},
 		},
 		{
 			name:        "human hold on a member issue is left alone",
@@ -162,18 +164,15 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 	}
 }
 
-func TestSHAHoldConfig_SoftLabelDisabledByHoldOrEmpty(t *testing.T) {
+func TestSHAHoldConfig_LabelIsNeverHold(t *testing.T) {
 	for _, label := range []string{"", "hold", " HOLD "} {
 		cfg := SHAHoldConfig{TrustedAssociations: []string{"MEMBER"}, TrustedLabel: label}
-		if got := cfg.shaHoldSoftLabel("MEMBER"); got != "" {
-			t.Errorf("TrustedLabel %q: soft label = %q, want hard hold", label, got)
+		if got := cfg.shaHoldLabel(); got != defaultSHAHoldLabel {
+			t.Errorf("TrustedLabel %q: label = %q, want %q (never hold)", label, got, defaultSHAHoldLabel)
 		}
 	}
-	cfg := SHAHoldConfig{TrustedAssociations: []string{"MEMBER"}, TrustedLabel: "needs-sha"}
-	if got := cfg.shaHoldSoftLabel("member"); got != "needs-sha" {
-		t.Errorf("member soft label = %q", got)
-	}
-	if got := cfg.shaHoldSoftLabel(""); got != "" {
-		t.Errorf("blank association soft label = %q", got)
+	cfg := SHAHoldConfig{TrustedLabel: "awaiting-sha"}
+	if got := cfg.shaHoldLabel(); got != "awaiting-sha" {
+		t.Errorf("configured label = %q, want awaiting-sha", got)
 	}
 }

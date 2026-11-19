@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	wfstore "github.com/hivecommons/hive/pkg/workflowmodel/store"
 	"log/slog"
 	"os"
 	"sync"
@@ -24,29 +25,90 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/nous"
+	"github.com/hivecommons/hive/pkg/repoagents"
 	"github.com/hivecommons/hive/pkg/review/autoscale"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
+	"github.com/hivecommons/hive/pkg/workflowmodel/checksfile"
+	"github.com/hivecommons/hive/pkg/workflowmodel/ingest/cluster"
 )
 
 type Dependencies struct {
 	Config *config.Config
+	// WorkflowStore serves the workflow-model library (hivecommons/hive#17620).
+	// Nil disables the /api/workflows endpoints.
+	WorkflowStore *wfstore.Store
+	// WorkflowRepoFiles fetches a repository's default-branch CI definition
+	// files (repo-relative slash path -> contents) and the ref read, for
+	// POST /api/workflows/ingest. Nil disables ingest from a repository.
+	WorkflowRepoFiles func(ctx context.Context, repo string) (files map[string][]byte, ref string, err error)
+	// WorkflowItemSnapshot reads one issue or PR head-level for
+	// POST /api/workflows/{name}/{version}/simulate (RFC #17620 phase 3c)
+	// so the operator can simulate a real item. Nil disables the fetch; the
+	// handler then answers 422 and the form still accepts hand-set facts.
+	WorkflowItemSnapshot func(ctx context.Context, repo string, number int) (ghpkg.WorkflowItemSnapshot, error)
+	// WorkflowPostMerge observes the post-merge runs (Main CI, Release,
+	// Deploy) of the model's bound pipelines for merged PRs of repo, so a
+	// simulated merged PR's pipeline.status is the observed one, not
+	// always unknown (hivecommons/hive#18356). Nil leaves pr.pipeline
+	// unknown.
+	WorkflowPostMerge func(ctx context.Context, repo string, m *workflowmodel.Model, defaultBranch string, prs []workflowmodel.MergedPR) (map[int]*stageengine.PostMergeFacts, error)
+	// WorkflowRepoFile fetches one default-branch file (a written process
+	// spec) for POST /api/workflows/ingest/spec {repo, path}. Nil disables
+	// repo-path spec ingest.
+	WorkflowRepoFile func(ctx context.Context, repo, path string) (string, error)
+	// WorkflowProvisionLabels creates (or recolours) one bound repository's
+	// stage and model labels now, for PUT /api/workflows/enabled turning
+	// derivation on. Nil leaves provisioning to the next sweep pass.
+	WorkflowProvisionLabels func(ctx context.Context, repo string) error
+	// WorkflowDispatchPrepare prepares the owner's "Send to <profile>" for
+	// POST /api/workflows/dispatch (cncf/techdocs#395): reads the item,
+	// resolves its model state, the agent and the agent claim, and renders
+	// the prompt. Nil answers 503.
+	WorkflowDispatchPrepare workflowDispatchPrepareFunc
+	// WorkflowDispatchHandoffs lists the hand-offs an agent declined or did
+	// not act on and whose item still waits in that state
+	// (hivecommons/hive#18749), for the workflow row on Settings → Repos
+	// and the item's Activity Monitor row. Nil lists none.
+	WorkflowDispatchHandoffs func() []WorkflowDispatchHandoff
+	// WorkflowEmitChecks proposes a newly bound model's declared checks to
+	// the repository as .hive/workflows/checks.yml through the checks PR
+	// (hivecommons/hive#18355), for PUT /api/workflows/bindings. Nil leaves
+	// the file unemitted.
+	WorkflowEmitChecks func(ctx context.Context, repo string, m *workflowmodel.Model) (checksfile.Result, error)
+	// WorkflowClusterRunner runs kubectl for POST /api/workflows/ingest/cluster
+	// (RFC #17620 phase 6). Nil means no kube access is configured on this
+	// spoke and the route answers 422.
+	WorkflowClusterRunner cluster.Runner
+	// WorkflowSpecLLM is the reviewer-gateway turn behind the optional LLM
+	// refinement of POST /api/workflows/ingest/spec. It is the only LLM use
+	// in the workflow-model stack; nil or an unconfigured gateway disables
+	// it and the route reports spec.llm=false in capabilities.
+	WorkflowSpecLLM delegatedecision.TurnRunner
 	// AgentMgr is the agent runtime (hivecommons/hive#13536). The dashboard
 	// programs against the crux.Runtime surface, not *agent.Manager; tests that
 	// need manager-only seams unwrap it with agentManager.
 	AgentMgr crux.Runtime
+	// Sessions is the interactive-session runtime behind /api/sessions
+	// (dashboard.sessions.enabled). Nil keeps the feature unavailable.
+	Sessions SessionRuntime
 	// CruxRuntimeHealth reports the agent runtime's reachability for
 	// /api/health (hivecommons/hive#14138 stage 4). nil (in-process, or a
 	// test without a runtime) leaves the field out of the body.
 	CruxRuntimeHealth func() CruxRuntimeHealth
 	Governor          *governor.Governor
-	GHClient          *ghpkg.Client
-	GHAppAuth         *ghpkg.AppAuth
+	// KickOutcomes is the durable per-kick outcome record behind
+	// GET /api/kick-outcomes (hivecommons/hive#18916). Nil answers 503.
+	KickOutcomes KickOutcomeSource
+	GHClient     *ghpkg.Client
+	GHAppAuth    *ghpkg.AppAuth
 	// GHTokenScopes is the boot-time PAT scope probe result (see
 	// ghpkg.CheckTokenScopes). It is set only on the token-auth path; the App
 	// path leaves it at ScopeStatusSkipped because Apps carry permissions, not
@@ -64,7 +126,6 @@ type Dependencies struct {
 	ReviewerAutoscaleStatus func() autoscale.Status
 	Tokens                  *tokens.Collector
 	Knowledge               *knowledge.KnowledgeAPI
-	Inception               *knowledge.InceptionEngine
 	Nous                    *NousState
 	Scheduler               SchedulerControl
 	MetricsCollector        *MetricsCollector
@@ -73,11 +134,22 @@ type Dependencies struct {
 	// (bare test deps) means the toggle can only persist the flag, so it
 	// answers restart_required.
 	KnowledgePrimer KnowledgePrimerControl
-	// KnowledgeConnectors is the running connector syncer; nil when none is wired.
+	// KnowledgeConnectors is the running connector syncer; nil when none is
+	// wired. Read it through Server.knowledgeConnectors: a dashboard edit
+	// can replace it at runtime (#18091).
 	KnowledgeConnectors KnowledgeConnectorRuntime
+	// ReloadKnowledgeConnectors applies a saved knowledge.connectors list to
+	// the running hive without a restart (#18091): it builds the syncer when
+	// none is running, else reconfigures it in place. It returns the runtime
+	// to serve, nil when none is needed. Nil (bare test deps) keeps the
+	// pre-#18091 behaviour where a new connector needs a restart.
+	ReloadKnowledgeConnectors func(entries []config.KnowledgeConnector) (KnowledgeConnectorRuntime, error)
 	// KnowledgePublish is the running knowledge.publish mirror; nil when
 	// publishing is not configured or failed to start.
 	KnowledgePublish KnowledgePublishRuntime
+	// Inbox is the voice-source triage service; nil when no voice
+	// connector is configured.
+	Inbox *inbox.Service
 	// RotationMgr is the provider-rotation headroom reporter (RFC #3958). Nil
 	// when rotation is disabled; the headroom endpoint then reports
 	// enabled=false.
@@ -157,6 +229,46 @@ type Dependencies struct {
 	// whose min_priority the same PUT edits) can push the new values into
 	// it. Nil means nothing caches.
 	ReviewConfigApplied func(config.ReviewConfig)
+	// ApplyReferenceRepos is called by PUT /api/config/reference-repos with
+	// the validated list BEFORE it is stored: it verifies each write-mode
+	// entry's credential the way boot does and installs the result on the
+	// GitHub proxy, so the allow-list changes without a restart. A non-nil
+	// error refuses the edit with that message and nothing changes. Nil (no
+	// proxy, most tests) skips the check, matching boot, which only verifies
+	// credentials when a proxy is wired (hivecommons/hive#18136).
+	ApplyReferenceRepos func(ctx context.Context, refs []config.ReferenceRepo) error
+	// RemergeDerivedReferenceRepos is called after PUT /api/config/reference-repos
+	// has persisted the hand-written list: it puts the derived entries of the
+	// last pass (hivecommons/hive#18139) back into Config.Project.ReferenceRepos
+	// in memory, as the config reload hook does, so the kick and /api/status
+	// keep showing them. Nil (no deriver, most tests) leaves the list as saved.
+	RemergeDerivedReferenceRepos func()
+	// OwnerIdentity is the store behind /api/github-owner-identity
+	// (hivecommons/hive#18197): the hive owner's GitHub account, consented
+	// once on this dashboard, that write-tier reference repos are written as.
+	// Nil (most tests, a hive without a secrets dir) answers 503 on those
+	// routes.
+	OwnerIdentity *ghpkg.OwnerIdentityStore
+	// OwnerIdentityChanged is called after the owner connects, reconnects or
+	// disconnects their account, so the reference-repo policies re-resolve
+	// without a restart. Nil skips.
+	OwnerIdentityChanged func()
+	// RepoAgents holds the agent definitions discovered under managed repos'
+	// .hive/agents/ that wait for an owner's approval (hivecommons/hive#18491).
+	// Nil (most tests, a hive without a GitHub client) reports the feature
+	// off on GET /api/agents/discovered and answers 503 on its mutations.
+	RepoAgents *repoagents.Discoverer
+	// CheckRemoteWriteIdentity is called by
+	// PUT /api/config/reference-repos/write-identity with the requested
+	// project.remote_write_identity BEFORE it is stored: it resolves the
+	// hand-written reference repos under that setting the way boot does, so a
+	// value that would stop the next boot with exit 22 is refused with that
+	// message (hivecommons/hive#18516). Nil (no proxy, most tests) skips.
+	CheckRemoteWriteIdentity func(ctx context.Context, setting string) error
+	// RemoteWriteIdentityChanged is called after that PUT has persisted the
+	// setting: it re-resolves the reference repos so the proxy, the kick and
+	// /api/status use the new identity at once. Nil skips.
+	RemoteWriteIdentityChanged func()
 	// RescanReposFunc re-enumerates every watched repository's open issues
 	// and pull requests against the forge, enriches PR CI status, applies the
 	// duplicate-PR claim guard and republishes the dashboard status snapshot
@@ -199,6 +311,15 @@ type Dependencies struct {
 	// so the label write is idempotent. Nil disables the live check; the
 	// client honours the scanner open-PR switch itself.
 	OpenPRLinkingIssue func(repo string, number int, labels []string) (ghpkg.OpenPRLink, bool)
+	// ContributorHold asks the forge whether the contributor lane must hold
+	// off an issue for a reason that lives on GitHub rather than in the
+	// enumerated envelope: today the owner grace window
+	// (governor.claims.contributor_grace_s, hivecommons/hive#18898), an issue
+	// an owner, maintainer or this hive filed moments ago. createdAt is the
+	// enumerated issue's creation time so the hook can answer "" for an old
+	// issue without a forge read. A non-empty return is the refusal reason.
+	// Nil disables the check.
+	ContributorHold func(repo string, number int, createdAt time.Time) string
 
 	// Watsonx / OpenRouter are the LLM-provider gateway views (#5565 slice 3):
 	// narrow consumer-defined interfaces over pkg/watsonx and pkg/openrouter,

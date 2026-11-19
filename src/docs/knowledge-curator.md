@@ -44,7 +44,7 @@ by the runtime type `GitSourceConfig`, `pkg/knowledge/gitsource.go:33-39`):
 |---|---|---|---|
 | `name` | Yes | — | Display name; also the key used to look up/remove the source via the API. |
 | `url` | Yes | — | Git remote URL. **`https://` only** — see Auth below. |
-| `branch` | No | `main` (`gitsource.go:66-68`) | Branch to shallow-clone (`--depth 1 --branch <branch>`). |
+| `branch` | No | `main` (`gitsource.go:66-68`) | Branch to shallow-clone (`--depth 1 --branch <branch>`). Connecting through the dashboard/API with a blank branch resolves the remote default (`git ls-remote --symref <url> HEAD`) and records it in the saved config. |
 | `subpath` | No | — (whole repo) | When set, only this subdirectory is checked out (git sparse-checkout, `gitsource.go:199-219,232-248`) and indexed. |
 | `layer` | No | `project` when set via the API (`api_knowledge.go:1032-1034`); **required, no code default, when set via `hive.yaml`** | One of `personal`, `project`, `org`, `community` — see Layer semantics below. |
 
@@ -738,9 +738,9 @@ knowledge:
   negative `candidates`, `pane_lines` or `timeout_s` are load errors.
 
 Without `knowledge.advisor_llm` (or with `mode: off`) the advisor is the
-pure phase-1 matcher with no model in the loop. The advisor is
-wired only when the agent runtime runs in-process; the `crux serve` sidecar
-has no adviser in this phase.
+pure phase-1 matcher with no model in the loop. A `crux serve` sidecar gets no
+adviser unless `knowledge.sidecar_advise` is on (default off); see
+[Sidecar runtimes](agent-knowledge-and-memory.md#sidecar-runtimes-knowledgesidecar_advise).
 
 ## Open questions
 

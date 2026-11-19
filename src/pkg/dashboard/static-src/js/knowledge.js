@@ -238,6 +238,9 @@
     async function fetchKnowledgeStats() {
       try {
         const [r, , , docsR] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents')]);
+        // Header "syncing: <name> n/m" indicator; the tick switches itself to
+        // a 2.5s poll while a connector sync runs and back off when it ends.
+        kbSyncProgressTick().catch(() => {});
         if (!r.ok) return;
         const prev = _kbCache;
         _kbCache = await r.json();
@@ -1177,8 +1180,11 @@
 
       html += '</div>'; // kb-layout
       html += '<div id="kb-effective-panel" class="kb-effective"></div>';
+      html += '<div id="kb-advisor-panel" class="kb-effective"></div>';
       panel.innerHTML = html;
       renderKbEffective();
+      renderKbAdvisor();
+      if (!_kbAdvisorData && !_kbAdvisorError && !_kbAdvisorLoading) kbAdvisorRefresh();
       if (_kbGraphView) {
         fetchKnowledgeGraph();
       } else {
@@ -1273,6 +1279,93 @@
     function kbEffectiveRefresh() {
       return kbEffectiveSelectAgent(_kbEffectiveAgent);
     }
+
+    // ── Advisor card (#18897) ──
+    // Read-only rank-versus-holdout comparison from GET /api/knowledge/advisor/summary:
+    // counts and means only, plus the advisor settings that produced them.
+    let _kbAdvisorData = null;
+    let _kbAdvisorError = '';
+    let _kbAdvisorLoading = false;
+
+    function kbAdvisorNum(v, digits) {
+      return (typeof v === 'number' && isFinite(v)) ? v.toFixed(digits) : '–';
+    }
+
+    function kbAdvisorCountsHTML(label, counts) {
+      const keys = Object.keys(counts || {}).sort();
+      if (!keys.length) return '<div><div class="section-label m-0">' + escapeHtml(label) + '</div><div class="kb-effective-meta">none recorded</div></div>';
+      return '<div><div class="section-label m-0">' + escapeHtml(label) + '</div><ul class="kb-effective-list">'
+        + keys.map(k => '<li class="kb-effective-item"><span>' + escapeHtml(k || 'unknown') + '</span><span class="kb-effective-meta">' + escapeHtml(String(counts[k])) + '</span></li>').join('')
+        + '</ul></div>';
+    }
+
+    function kbAdvisorArmRowHTML(a, note) {
+      return '<tr><td>' + escapeHtml(a.arm) + (note ? ' <span class="kb-effective-meta">' + escapeHtml(note) + '</span>' : '') + '</td><td>' + escapeHtml(String(a.beads)) + '</td><td>'
+        + kbAdvisorNum(a.mean_fix_attempts, 2) + '</td><td>' + kbAdvisorNum(a.mean_ci_failure_count, 2) + '</td><td>' + kbAdvisorNum(a.mean_kicks_received, 2) + '</td></tr>';
+    }
+
+    function kbAdvisorCardHTML(d, error, loading) {
+      let html = '<div class="kb-effective-head"><div class="section-label m-0">Advisor</div>'
+        + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbAdvisorRefresh" title="Reload the advisor rank-versus-holdout summary">Refresh</button></div>';
+      if (error) return html + '<div class="kb-notice">' + escapeHtml(error) + '</div>';
+      if (!d) return html + '<div class="dash-card-subtitle">' + (loading ? 'Loading…' : 'No advisor summary yet.') + '</div>';
+      const st = d.settings || {};
+      const w = d.window || {};
+      const cost = d.cost || {};
+      const counts = d.counts || {};
+      html += '<div class="kb-effective-scope">Settings (read-only): mode ' + escapeHtml(String(st.mode || 'off'))
+        + ' · holdout ' + escapeHtml(String(st.holdout_percent || 0)) + '%'
+        + ' · model ' + escapeHtml(String(st.model || 'not set'))
+        + ' · budget ' + escapeHtml(String(st.max_calls_per_day == null ? '–' : st.max_calls_per_day)) + '/day, '
+        + escapeHtml(String(st.max_calls_per_agent_hour == null ? '–' : st.max_calls_per_agent_hour)) + '/agent/hour'
+        + (st.enabled ? '' : ' · advisor is turned off') + '</div>';
+      html += '<div class="kb-effective-scope">' + escapeHtml(String(w.decisions || 0)) + ' decisions'
+        + (w.first_decision ? ' from ' + escapeHtml(w.first_decision) + ' to ' + escapeHtml(w.last_decision || '') : '')
+        + (w.rank_mode_start ? ' · rank mode since ' + escapeHtml(w.rank_mode_start) : '') + '</div>';
+      if (d.caveat) html += '<div class="kb-notice">' + escapeHtml(d.caveat) + '</div>';
+      html += '<div class="kb-effective-cols">'
+        + kbAdvisorCountsHTML('Decisions by mode', counts.by_mode)
+        + kbAdvisorCountsHTML('Decisions by arm', counts.by_arm)
+        + kbAdvisorCountsHTML('Decisions by outcome', counts.by_outcome) + '</div>';
+      const arms = d.arms || [];
+      html += '<div class="section-label m-0" style="margin-top:var(--sp-4)">Closed beads by arm</div>';
+      if (!arms.length && !d.mixed && !d.none) {
+        html += '<div class="kb-effective-meta">No closed beads with a closed PR yet.</div>';
+      } else {
+        html += '<table class="kb-advisor-table"><thead><tr><th>Arm</th><th>Beads</th><th>Mean fix attempts</th><th>Mean CI failures</th><th>Mean kicks</th></tr></thead><tbody>';
+        html += arms.map(a => kbAdvisorArmRowHTML(a, '')).join('');
+        if (d.mixed) html += kbAdvisorArmRowHTML(d.mixed, 'in more than one arm; not comparable');
+        if (d.none) html += kbAdvisorArmRowHTML(d.none, 'no advisor decision');
+        html += '</tbody></table>';
+        html += '<div class="kb-effective-meta">Bead means cover every closed bead with a closed PR; the since window does not narrow them.</div>';
+      }
+      html += '<div class="kb-effective-meta" style="margin-top:var(--sp-3)">Mean model latency ' + kbAdvisorNum(cost.mean_latency_ms, 0) + ' ms (' + escapeHtml(String(cost.latency_samples || 0)) + ' calls) · mean tokens '
+        + kbAdvisorNum(cost.mean_prompt_tokens, 0) + ' prompt / ' + kbAdvisorNum(cost.mean_completion_tokens, 0) + ' completion (' + escapeHtml(String(cost.token_samples || 0)) + ' calls)</div>';
+      return html;
+    }
+
+    function renderKbAdvisor() {
+      const el = document.getElementById('kb-advisor-panel');
+      if (!el) return;
+      el.innerHTML = kbAdvisorCardHTML(_kbAdvisorData, _kbAdvisorError, _kbAdvisorLoading);
+    }
+
+    async function kbAdvisorRefresh() {
+      _kbAdvisorLoading = true;
+      _kbAdvisorError = '';
+      renderKbAdvisor();
+      try {
+        const r = await fetch('/api/knowledge/advisor/summary');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbAdvisorData = data;
+      } catch (e) {
+        _kbAdvisorError = 'Could not load the advisor summary: ' + e.message;
+      }
+      _kbAdvisorLoading = false;
+      renderKbAdvisor();
+    }
+    // ── Advisor card end ──
 
     // Fact hygiene: synthesized/imported facts can carry raw markdown heading
     // markers in titles ("### Configure build...") or be nothing but a
@@ -1657,8 +1750,8 @@
               </select>
             </label>
           </div>
-          <label class="muted-note">Content
-            <textarea id="kb-import-content" rows="24" style="width:100%;margin-top:var(--sp-2);padding:var(--sp-4);border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg);font-size:0.78rem;font-family:var(--font-mono);resize:vertical;min-height:320px" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(',')..."></textarea>
+          <label class="muted-note">Content <span aria-hidden="true">*</span>
+            <textarea id="kb-import-content" required aria-required="true" rows="24" style="width:100%;margin-top:var(--sp-2);padding:var(--sp-4);border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg);font-size:0.78rem;font-family:var(--font-mono);resize:vertical;min-height:320px" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(',')..."></textarea>
           </label>
           <div style="display:flex;align-items:center;gap:10px;margin-top:var(--sp-2)">
             <label style="font-size:0.72rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:var(--sp-2)">
@@ -1692,9 +1785,9 @@
       const layer = document.getElementById('kb-import-layer')?.value;
       const format = document.getElementById('kb-import-format')?.value;
 
-      if (!content) { await hiveAlert('Content is required'); return; }
-      if (!layer) { await hiveAlert('Pick a channel to import into, or create one with "+ New channel".'); return; }
-      if (layer === RESERVED_KB_CHANNEL) { await hiveAlert(RESERVED_KB_CHANNEL + ' is reserved for automation. Choose or create another channel.'); return; }
+      if (!content) { kbFieldError(document.getElementById('kb-import-content'), 'Content is required'); return; }
+      if (!layer) { kbFieldError(document.getElementById('kb-import-layer'), 'Pick a channel to import into, or create one with "+ New channel".'); return; }
+      if (layer === RESERVED_KB_CHANNEL) { kbFieldError(document.getElementById('kb-import-layer'), RESERVED_KB_CHANNEL + ' is reserved for automation. Choose or create another channel.'); return; }
 
       try {
         const r = await fetch('/api/knowledge/import', {
@@ -1838,6 +1931,22 @@
         html += '</div>';
         html += '<div class="kb-sources-note">Clone a GitHub repo locally. Hive indexes the markdown with Fisher-Rao scored search and syncs every 5 minutes.</div>';
 
+        _kbFailedGitSources.forEach((fs, i) => {
+          html += '<div class="card-inset row-between mb-3" data-kb-gs-error="1">';
+          html += '<div class="kb-gs-error-main">';
+          html += '<div class="kb-gs-error-title">';
+          html += '<span class="status-dot" data-status="error"></span>';
+          html += `<span class="kb-gs-error-name">${escapeHtml(fs.name)}</span></div>`;
+          html += `<div class="kb-gs-error-meta">${escapeHtml(fs.url)}`;
+          if (fs.subpath) html += ` / ${escapeHtml(fs.subpath)}`;
+          html += ` &middot; ${escapeHtml(fs.branch || 'repo default')}</div>`;
+          html += `<div role="alert" class="kb-gs-error-reason">status: error &mdash; ${escapeHtml(fs.error)}</div>`;
+          html += '</div>';
+          html += `<button class="hv-btn nous-btn btn-sm" data-action="kbRetryGitSource" data-arg0="${i}">Retry</button>`;
+          html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="kbDismissGitSourceError" data-arg0="${i}">Dismiss</button>`;
+          html += '</div>';
+        });
+
         if (gitSources && gitSources.length > 0) {
           for (const gs of gitSources) {
             const gsStatus = statusMeta(gs.ready ? 'ready' : 'initializing');
@@ -1857,16 +1966,16 @@
             html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="gh18" data-arg0="${escapeHtml(gs.url)}" data-arg1="${escapeHtml(gs.subpath || '')}">Remove</button>`;
             html += '</div>';
           }
-        } else {
+        } else if (_kbFailedGitSources.length === 0) {
           html += '<div class="empty-dashed">No git sources yet.</div>';
         }
 
         html += '<details open class="kb-sources-add"><summary class="summary-label">Add Git Source</summary>';
         html += '<div class="stack kb-sources-form">';
-        html += '<input id="kb-gs-url" type="text" class="kb-search-box" placeholder="https://github.com/org/repo">';
-        html += '<input id="kb-gs-name" type="text" class="kb-search-box" placeholder="Display name">';
+        html += '<input id="kb-gs-url" type="text" class="kb-search-box" required aria-required="true" placeholder="Repository URL * (https://github.com/org/repo)">';
+        html += '<input id="kb-gs-name" type="text" class="kb-search-box" required aria-required="true" placeholder="Display name *">';
         html += '<input id="kb-gs-subpath" type="text" class="kb-search-box" placeholder="Subpath (e.g. docs/skills)">';
-        html += '<input id="kb-gs-branch" type="text" class="kb-search-box" placeholder="Branch (default: main)">';
+        html += '<input id="kb-gs-branch" type="text" class="kb-search-box" placeholder="Branch (blank = repo default)">';
         html += `<select id="kb-gs-layer" class="field-input">
           <option value="project">Project</option>
           <option value="org">Org</option>
@@ -1900,7 +2009,7 @@
 
         html += '<details open class="kb-sources-add"><summary class="summary-label">Add Subscription</summary>';
         html += '<div class="stack kb-sources-form">';
-        html += '<input id="kb-sub-url" type="text" class="kb-search-box" placeholder="https://wiki.example.com/mcp">';
+        html += '<input id="kb-sub-url" type="text" class="kb-search-box" required aria-required="true" placeholder="URL * (https://wiki.example.com/mcp)">';
         html += `<input id="kb-sub-name" type="text" class="kb-search-box" placeholder="Display name">`;
         html += `<select id="kb-sub-layer" class="field-input">
           <option value="project">Project</option>
@@ -1947,7 +2056,7 @@
 
         html += '<details open class="kb-sources-add"><summary class="summary-label">Import Document</summary>';
         html += '<div class="stack kb-sources-form">';
-        html += '<input id="kb-doc-url" type="text" class="kb-search-box" placeholder="https://arxiv.org/pdf/2309.06180">';
+        html += '<input id="kb-doc-url" type="text" class="kb-search-box" required aria-required="true" placeholder="URL * (https://arxiv.org/pdf/2309.06180)">';
         html += '<input id="kb-doc-name" type="text" class="kb-search-box" placeholder="Name (optional, derived from URL)">';
         html += `<select id="kb-doc-layer" class="field-input">
           <option value="project">Project</option>
@@ -1958,6 +2067,18 @@
         html += '<div class="row-end">';
         html += '<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbImportDocFromModal">Import</button>';
         html += '</div></div></details>';
+
+        html += '<details class="kb-sources-add"><summary class="summary-label">🎙️ Plaud voice notes</summary>';
+        html += '<div class="stack kb-sources-form">';
+        html += '<div class="muted-xs">Make your Plaud Note recordings (Plaud summary + transcript) searchable knowledge via the free official Plaud MCP server. $0 beyond your Plaud plan; sign-in is Plaud OAuth in your browser.</div>';
+        html += '<div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenPlaudIntegration">Configure in Integrations</button></div>';
+        html += '</div></details>';
+
+        html += '<details class="kb-sources-add"><summary class="summary-label">🗣️ Wispr Flow dictation</summary>';
+        html += '<div class="stack kb-sources-form">';
+        html += '<div class="muted-xs">Dictate straight into any field here — put the cursor in <strong>+ New Fact</strong> and hold the Flow key; no connector needed. To also pull your past dictations in, the Wispr Flow connector reads the app\'s local history (flow.sqlite or an export folder). $0 beyond your Wispr Flow plan.</div>';
+        html += '<div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenWisprFlowIntegration">Configure in Integrations</button></div>';
+        html += '</div></details>';
 
         html += '<details open class="kb-sources-add"><summary class="summary-label">📚 Import from Context7</summary>';
         html += '<div class="stack kb-sources-form">';
@@ -2007,7 +2128,7 @@
           <option value="markdown" selected>Markdown</option>
           <option value="json">JSON</option>
         </select>`;
-        html += '<textarea id="kb-import-content" rows="8" class="kb-sources-textarea" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(\',\')..."></textarea>';
+        html += '<textarea id="kb-import-content" rows="8" class="kb-sources-textarea" required aria-required="true" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(\',\')..."></textarea>';
         html += '<div class="row-between kb-sources-actions">';
         html += '<label class="kb-sources-file"><span>or load from file:</span><input type="file" accept=".md,.json,.txt" data-change-action="kbLoadFile" data-arg-types="t"></label>';
         html += '<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbSubmitImport">Import</button>';
@@ -2023,32 +2144,89 @@
       }
     }
 
+    function kbClearFieldError(el) {
+      if (!el) return;
+      el.classList.remove('field-invalid');
+      el.removeAttribute('aria-invalid');
+      const next = el.nextElementSibling;
+      if (next && next.classList.contains('field-error')) next.remove();
+    }
+
+    // Marks a required input invalid, shows msg directly under it and focuses it; clears on the next edit.
+    function kbFieldError(el, msg) {
+      if (!el) { showToast(msg, 'error'); return; }
+      kbClearFieldError(el);
+      el.classList.add('field-invalid');
+      el.setAttribute('aria-invalid', 'true');
+      const err = document.createElement('div');
+      err.className = 'field-error';
+      err.setAttribute('role', 'alert');
+      err.textContent = msg;
+      el.insertAdjacentElement('afterend', err);
+      el.addEventListener('input', () => kbClearFieldError(el), { once: true });
+      el.addEventListener('change', () => kbClearFieldError(el), { once: true });
+      el.focus();
+    }
+
+    // Connect attempts that failed, kept so the Sources panel shows them as
+    // error rows (with the reason) instead of only a transient alert.
+    var _kbFailedGitSources = [];
+
+    function _kbForgetFailedGitSource(url, subpath) {
+      _kbFailedGitSources = _kbFailedGitSources.filter(f => !(f.url === url && f.subpath === subpath));
+    }
+
     async function kbAddGitSource() {
       const url = document.getElementById('kb-gs-url')?.value?.trim();
       const name = document.getElementById('kb-gs-name')?.value?.trim();
-      const subpath = document.getElementById('kb-gs-subpath')?.value?.trim();
-      const branch = document.getElementById('kb-gs-branch')?.value?.trim();
+      const subpath = document.getElementById('kb-gs-subpath')?.value?.trim() || '';
+      const branch = document.getElementById('kb-gs-branch')?.value?.trim() || '';
       const layer = document.getElementById('kb-gs-layer')?.value;
 
-      if (!url) { await hiveAlert('Repository URL is required'); return; }
-      if (!name) { await hiveAlert('Display name is required'); return; }
+      if (!url) { kbFieldError(document.getElementById('kb-gs-url'), 'Repository URL is required'); return; }
+      if (!name) { kbFieldError(document.getElementById('kb-gs-name'), 'Display name is required'); return; }
 
-      const btn = document.querySelector('#kb-subs-content button[onclick="kbAddGitSource()"]');
-      if (btn) { btn.disabled = true; btn.textContent = 'Cloning...'; }
+      const btn = document.querySelector('#kb-subs-content [data-action="kbAddGitSource"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Cloning…'; }
 
+      let failure = '';
       try {
+        // A blank branch is resolved server-side to the remote's default branch.
         const r = await fetch('/api/knowledge/git-sources', {
           method: 'POST', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ url, name, subpath: subpath || '', branch: branch || 'main', layer }),
+          body: JSON.stringify({ url, name, subpath, branch, layer }),
         });
-        if (!r.ok) { const e = await r.json(); await hiveAlert(e.error || 'Failed to add git source'); return; }
-        kbLoadSubscriptions();
-        fetchKnowledgeStats();
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}));
+          failure = e.error || ('HTTP ' + r.status);
+        }
       } catch (e) {
-        await hiveAlert('Error: ' + e.message);
+        failure = e.message || String(e);
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Clone & Index'; }
       }
+      _kbForgetFailedGitSource(url, subpath);
+      if (failure) _kbFailedGitSources.push({ url, name, subpath, branch, layer, error: failure });
+      kbLoadSubscriptions();
+      if (failure) { await hiveAlert('Failed to add git source: ' + failure); return; }
+      fetchKnowledgeStats();
+    }
+
+    function kbRetryGitSource(idx) {
+      const f = _kbFailedGitSources[Number(idx)];
+      if (!f) return;
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+      set('kb-gs-url', f.url);
+      set('kb-gs-name', f.name);
+      set('kb-gs-subpath', f.subpath);
+      set('kb-gs-branch', f.branch);
+      set('kb-gs-layer', f.layer || 'project');
+      return kbAddGitSource();
+    }
+
+    function kbDismissGitSourceError(idx) {
+      _kbFailedGitSources.splice(Number(idx), 1);
+      kbLoadSubscriptions();
     }
 
     async function kbRemoveGitSource(url, subpath) {
@@ -2069,7 +2247,7 @@
       const name = document.getElementById('kb-sub-name')?.value?.trim();
       const layer = document.getElementById('kb-sub-layer')?.value;
 
-      if (!url) { await hiveAlert('URL is required'); return; }
+      if (!url) { kbFieldError(document.getElementById('kb-sub-url'), 'URL is required'); return; }
 
       try {
         const r = await fetch('/api/knowledge/subscriptions', {
@@ -2101,9 +2279,9 @@
       const name = document.getElementById('kb-doc-name')?.value?.trim();
       const layer = document.getElementById('kb-doc-layer')?.value;
 
-      if (!url) { await hiveAlert('Document URL is required'); return; }
+      if (!url) { kbFieldError(document.getElementById('kb-doc-url'), 'Document URL is required'); return; }
 
-      const btn = document.querySelector('#kb-subs-content button[onclick="kbImportDocFromModal()"]');
+      const btn = document.querySelector('#kb-subs-content [data-action="kbImportDocFromModal"]');
       if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
 
       try {
@@ -2282,11 +2460,18 @@
         const cfg = await cfgRes.json().catch(() => ({}));
         if (!cfgRes.ok) throw new Error(cfg.error || ('HTTP ' + cfgRes.status));
         const st = stRes.ok ? await stRes.json().catch(() => ({})) : {};
-        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], ctx7AutoImport: cfg.context7_auto_import || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: !!st.runtime, publish: st.publish || null });
+        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], ctx7AutoImport: cfg.context7_auto_import || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: st.runtime !== false, publish: st.publish || null });
       } catch (e) {
         _kcState = Object.assign(_kcState, { loaded: true, error: e.message });
       }
       kbRenderIntegrationsModal();
+      kbSyncProgressArm();
+    }
+    // After a status load: refresh the header indicator and, when a sync is
+    // already running (interval or another owner), start the fast poll.
+    function kbSyncProgressArm() {
+      kbSyncIndicatorRender();
+      if ((_kcState.rows || []).some(kcProgressActive) && !DASHBOARD_INTERVALS['kb-sync-progress']) dashboardSetInterval('kb-sync-progress', kbSyncProgressTick, KC_SYNC_POLL_MS);
     }
 
     function kbIntegrationTypes() {
@@ -2338,20 +2523,196 @@
       return body;
     }
 
+    // Badge shown when the hive's connector syncer is not running (status
+    // response `runtime: false`): the entry is saved but this process never
+    // constructed it, so sign-in, Check and Sync would all 404. Distinct from
+    // `pending`, which is a loaded connector awaiting sign-in or first sync.
+    // Only an explicit `runtime: false` counts: a failed or absent status
+    // response must not tell the owner to restart the hive
+    // (hivecommons/hive#18093).
+    const KC_STATUS_NOT_LOADED = 'not loaded';
+    const KC_NOT_LOADED_HINT = 'Connector runtime is not running on this hive — restart the hive after enabling knowledge connectors.';
+    function kbConnectorNotLoaded(c) { return !!c.enabled && !_kcState.runtime; }
+    function kbConnectorNotLoadedHtml() {
+      return '<div class="muted-xs" data-kb-not-loaded>' + escapeHtml(KC_NOT_LOADED_HINT) + ' <a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener">Docs ↗</a></div>';
+    }
+
+    // ── Connector sync progress (live) ──
+    // Pure helpers over one status row (`/api/config/knowledge/connectors/status`
+    // `connectors[]`, whose `progress` block the syncer updates as it goes).
+    // Rendered on the Integrations card and the Knowledge header while a sync
+    // runs; covered by knowledge_sync_ui.test.js.
+    const KC_SYNC_POLL_MS = 2500;
+    const KC_PROGRESS_ACTIVE_PHASES = ['listing', 'fetching', 'writing'];
+    const KC_PROGRESS_TITLE_MAX = 60;
+    function kcProgressActive(r) {
+      if (!r) return false;
+      const p = r.progress || {};
+      return !!r.running || KC_PROGRESS_ACTIVE_PHASES.includes(p.phase);
+    }
+    function kcProgressStartMs(p) {
+      const t = p && p.started_at ? Date.parse(p.started_at) : NaN;
+      return isNaN(t) || t <= 0 ? 0 : t;
+    }
+    function kcElapsedText(startMs, nowMs) {
+      if (!startMs) return '';
+      const s = Math.max(0, Math.round(((nowMs || Date.now()) - startMs) / 1000));
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + 'm ' + (s % 60) + 's';
+      return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+    }
+    function kcProgressCount(p) {
+      const done = (p && p.items_done) || 0;
+      const total = (p && p.items_total) || 0;
+      if (total > 0) return done + ' of ' + total;
+      return done > 0 ? String(done) : '';
+    }
+    function kcProgressLabel(p) {
+      p = p || {};
+      const phase = KC_PROGRESS_ACTIVE_PHASES.includes(p.phase) ? p.phase : 'listing';
+      const count = kcProgressCount(p);
+      let text = phase + (count ? ' ' + count : (phase === 'listing' ? ' items…' : '…'));
+      const title = (p.current || '').trim();
+      if (title) text += ' · ' + (title.length > KC_PROGRESS_TITLE_MAX ? title.slice(0, KC_PROGRESS_TITLE_MAX) + '…' : title);
+      return text;
+    }
+    function kcProgressHtml(r, nowMs) {
+      if (!kcProgressActive(r)) return '';
+      const p = (r && r.progress) || {};
+      const total = p.items_total || 0;
+      const done = Math.min(p.items_done || 0, total);
+      const bar = total > 0
+        ? '<progress class="kc-progress-bar" max="' + total + '" value="' + done + '"></progress>'
+        : '<progress class="kc-progress-bar"></progress>';
+      const elapsed = kcElapsedText(kcProgressStartMs(p), nowMs);
+      return '<div class="kc-progress" data-kc-progress data-phase="' + escapeHtml(p.phase || 'listing') + '">' + bar
+        + '<div class="kc-progress-copy"><span class="kc-progress-label">' + escapeHtml(kcProgressLabel(p)) + '</span>'
+        + (elapsed ? '<span class="kc-progress-elapsed" title="elapsed">' + escapeHtml(elapsed) + '</span>' : '') + '</div></div>';
+    }
+    // Error of the sync that just failed, shown inline under the bar's place
+    // until the next sync starts (the row's last_error line covers older ones).
+    function kcProgressFailedHtml(r) {
+      const p = (r && r.progress) || {};
+      if (p.phase !== 'failed' || !p.last_error || (r && r.last_error === p.last_error)) return '';
+      return '<div class="kc-error" data-kc-progress-error title="' + escapeHtml(p.last_error) + '">sync failed: ' + escapeHtml(p.last_error.length > 140 ? p.last_error.slice(0, 140) + '…' : p.last_error) + '</div>';
+    }
+    // Compact header text: "syncing: plaud 12/200" (+N when several run).
+    function kcSyncIndicatorText(rows) {
+      const active = (rows || []).filter(kcProgressActive);
+      if (!active.length) return '';
+      const r = active[0];
+      const p = r.progress || {};
+      let text = 'syncing: ' + (r.name || '?');
+      if (p.items_total > 0) text += ' ' + (p.items_done || 0) + '/' + p.items_total;
+      else if (p.items_done > 0) text += ' ' + p.items_done;
+      if (active.length > 1) text += ' +' + (active.length - 1);
+      return text;
+    }
+    // ── Connector sync progress end ──
+
+    function kbSyncIndicatorRender() {
+      const el = document.getElementById('kb-sync-badge');
+      if (!el) return;
+      const text = kcSyncIndicatorText(_kcState.rows);
+      el.hidden = !text;
+      el.textContent = text;
+      el.title = text ? 'A knowledge connector is syncing; open Integrations for the progress bar.' : '';
+    }
+    // Re-render only the live parts of a connector row (pill, meta line,
+    // progress bar, Sync now button) so an owner's half-typed form survives.
+    function kbSyncProgressPatchRows() {
+      const byName = {};
+      (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
+      document.querySelectorAll('[data-kb-connector-name]').forEach(el => {
+        const name = el.getAttribute('data-kb-connector-name');
+        const c = (_kcState.connectors || []).find(x => x.name === name);
+        if (!c) return;
+        const r = byName[name] || {};
+        const status = kbConnectorStatusOf(c, r);
+        const pill = el.querySelector('.kc-pill');
+        if (pill) { pill.textContent = status; pill.setAttribute('data-status', status); }
+        const meta = el.querySelector('[data-kc-meta]');
+        if (meta) meta.innerHTML = kbConnectorMetaHtml(c, r);
+        const slot = el.querySelector('[data-kc-progress-slot]');
+        if (slot) slot.innerHTML = kcProgressHtml(r) + kcProgressFailedHtml(r);
+        const btn = el.querySelector('[data-action="kbIntegrationSync"]');
+        if (btn && !kbConnectorNotLoaded(c)) btn.disabled = status === 'syncing';
+      });
+      document.querySelectorAll('tr[data-connector] [data-kc-progress-slot]').forEach(slot => {
+        const row = slot.closest('tr');
+        const name = row.getAttribute('data-connector');
+        const r = byName[name] || {};
+        slot.innerHTML = kcProgressHtml(r);
+        const pill = row.querySelector('.kc-pill');
+        if (pill && r.status) { pill.textContent = r.status; pill.setAttribute('data-status', r.status); }
+      });
+    }
+    // One poll of the connector status; keeps polling every KC_SYNC_POLL_MS
+    // while any connector is syncing and stops (with one full refresh of the
+    // open Integrations modal / Settings table) when the last one finishes.
+    async function kbSyncProgressTick() {
+      let st;
+      try {
+        const r = await fetch('/api/config/knowledge/connectors/status');
+        if (!r.ok) return;
+        st = await r.json().catch(() => null);
+      } catch (e) { return; }
+      if (!st || !Array.isArray(st.connectors)) return;
+      _kcState.rows = st.connectors;
+      if (st.publish) _kcState.publish = st.publish;
+      if (typeof st.runtime === 'boolean') _kcState.runtime = st.runtime;
+      kbSyncIndicatorRender();
+      kbSyncProgressPatchRows();
+      const active = _kcState.rows.some(kcProgressActive);
+      const polling = !!DASHBOARD_INTERVALS['kb-sync-progress'];
+      if (active && !polling) dashboardSetInterval('kb-sync-progress', kbSyncProgressTick, KC_SYNC_POLL_MS);
+      if (!active && polling) {
+        dashboardClearInterval('kb-sync-progress');
+        if (document.getElementById('kb-integrations-content')) kbLoadIntegrationsModal(_kbIntegrationSelected);
+        if (document.getElementById('kc-connectors-root') && typeof renderKnowledgeConnectorsInto === 'function') renderKnowledgeConnectorsInto();
+      }
+    }
+
+    function kbConnectorStatusOf(c, r) {
+      return kbConnectorNotLoaded(c) ? KC_STATUS_NOT_LOADED : (r.status || (c.enabled ? 'pending' : 'disabled'));
+    }
+    function kbConnectorMetaHtml(c, r) {
+      const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
+      return escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish);
+    }
+
     function kbConnectorRow(type, c, owner) {
       const byName = {};
       (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
       const r = byName[c.name] || {};
-      const status = r.status || (c.enabled ? 'pending' : 'disabled');
-      const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
+      const notLoaded = kbConnectorNotLoaded(c);
+      const status = kbConnectorStatusOf(c, r);
       let html = '<div class="card-inset row-between mb-3" data-kb-connector-name="' + escapeHtml(c.name) + '"><div class="kb-integration-row-main">';
       html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
-      html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
+      html += '<div class="muted-xs" data-kc-meta>' + kbConnectorMetaHtml(c, r) + '</div>';
+      html += '<div data-kc-progress-slot>' + kcProgressHtml(r) + kcProgressFailedHtml(r) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
+      if (notLoaded) html += kbConnectorNotLoadedHtml();
+      else if (type === 'plaud') html += kbPlaudAuthLine(c.name, type) + kbPlaudPasteHtml(c.name);
+      else if (type === 'zoom') html += kbPlaudAuthLine(c.name, type) + kbZoomPasteHtml(c.name, c);
+      else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);
+      else if (type === 'discord') html += kbPlaudAuthLine(c.name, type) + kbDiscordHelpHtml(c.name, c);
+      else if (type === 'google-meet') html += kbPlaudAuthLine(c.name, type) + kbGoogleMeetPasteHtml(c.name, c);
+      else if (type === 'webex') html += kbPlaudAuthLine(c.name, type) + kbWebexPasteHtml(c.name, c);
+      else if (type === 'slack-huddles') html += kbPlaudAuthLine(c.name, type) + kbSlackHuddlesHelpHtml(c.name, c);
+      else if (type === 'otter') html += kbPlaudAuthLine(c.name, type) + kbOtterHelpHtml(c.name, c);
+      else if (type === 'granola') html += kbPlaudAuthLine(c.name, type) + kbGranolaHelpHtml(c.name, c);
+      else if (type === 'limitless') html += kbPlaudAuthLine(c.name, type) + kbLimitlessHelpHtml(c.name, c);
+      else if (type === 'fathom') html += kbPlaudAuthLine(c.name, type) + kbFathomHelpHtml(c.name, c);
+      else if (type === 'fireflies') html += kbPlaudAuthLine(c.name, type) + kbFirefliesHelpHtml(c.name, c);
+      if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
+        const disabledAttr = ' disabled title="' + escapeHtml(KC_NOT_LOADED_HINT) + '"';
         html += '<div class="kb-integration-actions">';
-        html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
+        if (KB_AUTH_TYPES[type]) html += kbPlaudAuthButtons(c.name, notLoaded ? disabledAttr : '', type);
+        html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (notLoaded ? disabledAttr : status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationEdit" data-arg0="' + escapeHtml(c.name) + '">Edit</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationToggle" data-arg0="' + escapeHtml(c.name) + '">' + (c.enabled ? 'Disable' : 'Enable') + '</button>';
         html += '</div>';
@@ -2366,7 +2727,7 @@
       const connectors = (_kcState.connectors || []).filter(c => c.type === type);
       if (!_kbIntegrationEditName || !connectors.some(c => c.name === _kbIntegrationEditName)) _kbIntegrationEditName = connectors[0]?.name || '';
       const edited = connectors.find(c => c.name === _kbIntegrationEditName) || { name: '', type, enabled: true, layer: 'project', interval: '', scope: {}, auth: {} };
-      let html = '<div class="card-inset mb-5"><div class="row-between"><div><div class="title-sm kb-integration-title">' + kbIntegrationIcon(type) + escapeHtml(info.label) + '</div><p class="muted-note m-0">' + escapeHtml(info.description) + '</p></div><a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm">Docs ↗</a></div></div>';
+      let html = '<div class="card-inset mb-5"><div class="row-between"><div><div class="title-sm kb-integration-title">' + kbIntegrationIcon(type) + escapeHtml(info.label) + '</div><p class="muted-note m-0">' + escapeHtml(info.description) + '</p></div><span class="row">' + (KB_AUTH_TYPES[type] ? '<a href="/docs/inbox-voice-sources.md" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm">Inbox quickstart ↗</a>' : '') + '<a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm">Docs ↗</a></span></div></div>';
       html += '<div class="row-between mb-4"><div class="section-label m-0">Configured entries</div>' + (owner ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbIntegrationNew" data-arg0="' + escapeHtml(type) + '">Add ' + escapeHtml(info.label) + '</button>' : '') + '</div>';
       html += connectors.length ? connectors.map(c => kbConnectorRow(type, c, owner)).join('') : '<div class="empty-dashed mb-4">No ' + escapeHtml(info.label) + ' connector configured yet.</div>';
       html += owner ? kbConnectorFormHTML(type, edited, !!edited.name) : '<p class="muted-note">Only the hive owner can edit connector configuration.</p>';
@@ -2387,6 +2748,18 @@
       html += '<label class="muted-note">Credential reference<input class="kb-search-box mt-2" type="text" data-kb-kc-auth-value value="' + escapeHtml(authVal) + '" placeholder="TOKEN_ENV or /run/secrets/token" autocomplete="off"></label></div>';
       html += '<div class="kb-integration-scope-grid">' + kcScopeFieldsHTML(type, c.scope || {}) + '</div>';
       if (type === 'context7') html += kbContext7FormExtras(c);
+      if (type === 'wisprflow') html += '<p class="muted-xs" data-kb-wisprflow-note>Leave the credential source as None: the connector reads Wispr Flow\'s local history read-only with the sqlite3 CLI. Leave the path empty for the default app location on the hive host (macOS: ~/Library/Application Support/Wispr Flow/flow.sqlite; Windows: %APPDATA%\\Wispr Flow\\flow.sqlite), or point it at a copy of flow.sqlite or a folder of exported .json/.ndjson/.csv/.md files. New dictations need no connector at all — dictate into + New Fact directly.</p>';
+      if (type === 'plaud') html += '<p class="muted-xs" data-kb-plaud-note>Leave the credential source as None: Plaud signs in with its own OAuth flow (Connect on the entry above) and keeps the token in the MCP server\'s own store. Requires Node.js ≥ 20 on the hive host and costs nothing beyond your Plaud plan.</p>';
+      if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'google-meet') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'webex') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'slack-huddles') html += '<p class="muted-xs" data-kb-slack-huddles-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Slack token: a bot token (<code>xoxb-</code>) of an app installed in the workspace and invited to each channel, or a user token (<code>xoxp-</code>) for DMs. Scopes: <code>channels:history</code> and <code>groups:history</code> (plus <code>im:history</code> / <code>mpim:history</code> for DMs), <code>canvases:read</code> and <code>files:read</code> for the notes canvas, <code>users:read</code> for names and <code>channels:read</code> / <code>groups:read</code> for channel names. List the channel ids (C…, G…, D…) under Channels.</p>';
+      if (type === 'otter') html += '<p class="muted-xs" data-kb-otter-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding an Otter.ai API key: in Otter open <strong>Integrations → Developer</strong> and click Create key (Enterprise workspaces; the key is shown once, two per user); enter the NAME of the variable (for example <code>OTTER_API_KEY</code>), never the key itself.</p>';
+      if (type === 'granola') html += '<p class="muted-xs" data-kb-granola-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Granola API key (<code>grn_…</code>): create it in Granola\'s API settings (Business and Enterprise plans) and enter the NAME of the variable (for example <code>GRANOLA_API_KEY</code>), never the key itself.</p>';
+      if (type === 'limitless') html += '<p class="muted-xs" data-kb-limitless-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Limitless API key: in the Limitless desktop or web app open the <strong>Developer</strong> settings and create a key; enter the NAME of the variable (for example <code>LIMITLESS_API_KEY</code>), never the key itself. The Developer API is in beta and reads Pendant data only.</p>';
+      if (type === 'fathom') html += '<p class="muted-xs" data-kb-fathom-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Fathom API key: in Fathom open <strong>User Settings → API Access</strong> and generate a key; enter the NAME of the variable (for example <code>FATHOM_API_KEY</code>), never the key itself. The key sees the meetings its user recorded or that were shared with them or their team.</p>';
+      if (type === 'fireflies') html += '<p class="muted-xs" data-kb-fireflies-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Fireflies API key: in Fireflies open <strong>Integrations → Fireflies API</strong> and copy the key; enter the NAME of the variable (for example <code>FIREFLIES_API_KEY</code>), never the key itself. Audio playback and Deepgram fallback use the meeting audio link, which Fireflies serves on Pro plans and higher.</p>';
+      if (type === 'discord') html += '<p class="muted-xs" data-kb-discord-note>Set the credential source to <strong>Environment variable</strong> and enter the NAME of the variable that holds the bot token (for example <code>DISCORD_BOT_TOKEN</code>); the value never passes through the dashboard. List the server id for scheduled events and the ids of the channels where finished recordings are posted.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
       html += '<div class="row-end kb-integration-form-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationValidate">Validate</button><button type="button" class="hv-btn btn-primary btn-sm" data-action="kbIntegrationSave">Save</button></div></div>';
@@ -2420,7 +2793,55 @@
       box.querySelectorAll('[data-kc-scope]').forEach(el => { if (el.value.trim()) scope[el.dataset.kcScope] = el.value.trim(); });
       const authKind = val('[data-kb-kc-auth-kind]');
       const authVal = val('[data-kb-kc-auth-value]');
-      return { name: val('[data-kb-kc-name]'), type: box.dataset.kbType, enabled: !box.querySelector('[data-kb-kc-enabled]') || box.querySelector('[data-kb-kc-enabled]').checked, layer: val('[data-kb-kc-layer]'), interval: val('[data-kb-kc-interval]'), scope, auth: authKind === 'env' ? { env: authVal } : authKind === 'file' ? { file: authVal } : {} };
+      const auth = authKind === 'env' ? { env: authVal } : authKind === 'file' ? { file: authVal } : {};
+      // OAuth client registration references (zoom, teams): variable NAMES only.
+      box.querySelectorAll('[data-kb-kc-auth-field]').forEach(el => { const v = el.value.trim(); if (v) auth[el.dataset.kbKcAuthField] = v; });
+      return { name: val('[data-kb-kc-name]'), type: box.dataset.kbType, enabled: !box.querySelector('[data-kb-kc-enabled]') || box.querySelector('[data-kb-kc-enabled]').checked, layer: val('[data-kb-kc-layer]'), interval: val('[data-kb-kc-interval]'), scope, auth };
+    }
+
+    // Zoom / Teams app registration: which environment variables hold the
+    // client id, secret and account/tenant id. Values never pass through the
+    // dashboard; the hive reads the variables at sync time.
+    // Settings keys of the auth.*_env references, spelled out so the Settings
+    // parity guard sees each hive.yaml leaf referenced by the dashboard.
+    const KB_MEETING_AUTH_SETTING_KEYS = {
+      client_id_env: 'knowledge.connectors[].auth.client_id_env',
+      client_secret_env: 'knowledge.connectors[].auth.client_secret_env',
+      account_id_env: 'knowledge.connectors[].auth.account_id_env',
+      tenant_id_env: 'knowledge.connectors[].auth.tenant_id_env'
+    };
+    function kbMeetingAuthFormHTML(type, c) {
+      const a = (c && c.auth) || {};
+      const field = (key, label, placeholder) => '<label class="muted-note">' + escapeHtml(label) + '<input class="kb-search-box mt-2" type="text" data-kb-kc-auth-field="' + key + '" data-setting-key="' + KB_MEETING_AUTH_SETTING_KEYS[key] + '" value="' + escapeHtml(a[key] || '') + '" placeholder="' + escapeHtml(placeholder) + '" autocomplete="off"></label>';
+      let html = '<div class="kb-integration-form-grid-2" data-kb-meeting-auth="' + escapeHtml(type) + '">';
+      if (type === 'zoom') {
+        const mode = a.mode || 'user_oauth';
+        html += '<label class="muted-note">OAuth grant<select class="field-input field-input-block mt-2" data-kb-kc-auth-field="mode" data-setting-key="knowledge.connectors[].auth.mode"><option value="user_oauth"' + (mode === 'user_oauth' ? ' selected' : '') + '>User-level OAuth (my own recordings)</option><option value="server_to_server"' + (mode === 'server_to_server' ? ' selected' : '') + '>Server-to-Server (account; list users above)</option></select></label>';
+        html += field('client_id_env', 'Client ID env var', 'ZOOM_CLIENT_ID');
+        html += field('client_secret_env', 'Client secret env var', 'ZOOM_CLIENT_SECRET');
+        html += field('account_id_env', 'Account ID env var (Server-to-Server only)', 'ZOOM_ACCOUNT_ID');
+        html += '</div>';
+        html += '<p class="muted-xs" data-kb-zoom-note>Leave the credential source as None. Register an OAuth app on the Zoom App Marketplace (General app for user-level, Server-to-Server OAuth for the account) with the scopes <code>cloud_recording:read:list_user_recordings</code>, <code>cloud_recording:read:list_recording_files</code>, <code>user:read:user</code> (classic: <code>recording:read</code>, <code>user:read</code>), plus <code>meeting_summary:read</code> and <code>meeting:read:list_past_participants</code> for the AI summary and participants. For user-level add the redirect URL above to the app\'s OAuth allow list; put the client id/secret in the hive\'s environment under the variable names you enter here. Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.zoom/tokens.json</code> (0600).</p>';
+      } else if (type === 'google-meet') {
+        const mode = a.mode || 'user_oauth';
+        html += '<label class="muted-note">OAuth grant<select class="field-input field-input-block mt-2" data-kb-kc-auth-field="mode" data-setting-key="knowledge.connectors[].auth.mode"><option value="user_oauth"' + (mode === 'user_oauth' ? ' selected' : '') + '>User-level OAuth (my own meetings)</option><option value="server_to_server"' + (mode === 'server_to_server' ? ' selected' : '') + '>Service account with domain-wide delegation (list users above)</option></select></label>';
+        html += field('client_id_env', 'OAuth client ID env var (user-level only)', 'GOOGLE_MEET_CLIENT_ID');
+        html += field('client_secret_env', 'OAuth client secret env var (user-level only)', 'GOOGLE_MEET_CLIENT_SECRET');
+        html += '</div>';
+        html += '<p class="muted-xs" data-kb-google-meet-note>User-level OAuth: leave the credential source as None. In Google Cloud enable the <strong>Google Meet REST API</strong> and the <strong>Google Drive API</strong>, configure the OAuth consent screen with the scopes <code>meetings.space.readonly</code> and <code>drive.meet.readonly</code>, create an OAuth client (Web application) whose authorized redirect URI is the redirect URL above, and put its id and secret in the hive\'s environment under the variable names you enter here. Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.google-meet/tokens.json</code> (0600). Service account: leave the client id/secret fields empty, set the credential source to the environment variable or file holding the service-account key JSON, list the Workspace users to read under Users, and have a Workspace super admin authorize the service account\'s client id for <code>https://www.googleapis.com/auth/meetings.space.readonly</code> and <code>https://www.googleapis.com/auth/drive.meet.readonly</code> in Admin console → Security → API controls → Domain-wide delegation.</p>';
+      } else if (type === 'webex') {
+        html += field('client_id_env', 'Integration client ID env var', 'WEBEX_CLIENT_ID');
+        html += field('client_secret_env', 'Integration client secret env var', 'WEBEX_CLIENT_SECRET');
+        html += '</div>';
+        html += '<p class="muted-xs" data-kb-webex-note>Leave the credential source as None. On developer.webex.com create an <strong>Integration</strong> with the redirect URL above and the scopes <code>meeting:recordings_read</code>, <code>meeting:transcripts_read</code>, <code>meeting:summaries_read</code> (needs Webex AI Assistant), <code>meeting:participants_read</code> and <code>spark:people_read</code>, and put its client id and secret in the hive\'s environment under the variable names you enter here (narrow the request with the <code>oauth_scopes</code> scope key when the integration has fewer). Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.webex/tokens.json</code> (0600).</p>';
+      } else {
+        html += field('tenant_id_env', 'Tenant ID env var', 'TEAMS_TENANT_ID');
+        html += field('client_id_env', 'Client (application) ID env var', 'TEAMS_CLIENT_ID');
+        html += field('client_secret_env', 'Client secret env var', 'TEAMS_CLIENT_SECRET');
+        html += '</div>';
+        html += '<p class="muted-xs" data-kb-teams-note>Leave the credential source as None. Register an app in Microsoft Entra (app registrations), add a client secret, and grant the <strong>application</strong> permissions <code>OnlineMeetingRecording.Read.All</code> and <code>OnlineMeetingTranscript.Read.All</code> (optionally <code>OnlineMeetings.Read.All</code> for meeting subject and attendees, <code>User.Read.All</code> to list organizers by UPN). A tenant administrator must grant admin consent and create an application access policy for the organizers (<code>New-CsApplicationAccessPolicy</code> / <code>Grant-CsApplicationAccessPolicy</code>); Connect shows the consent link when it is missing. Graph endpoints used: <code>/users/{id}/onlineMeetings/getAllRecordings</code>, <code>/getAllTranscripts</code> and the transcript <code>/content</code> as VTT.</p>';
+      }
+      return html;
     }
 
     function kbSetIntegrationMsg(text, ok) {
@@ -2470,3 +2891,265 @@
       await kcSyncNow(name);
       setTimeout(() => kbLoadIntegrationsModal(_kbIntegrationSelected), 1500);
     }
+
+    // ── Interactive connector sign-in (Plaud OAuth through its MCP server;
+    // Zoom OAuth app; Teams Graph application permissions) ──
+    // Cached per connector name; loaded lazily when the card renders. The
+    // kbPlaud* functions serve every KB_AUTH_TYPES type; the label follows
+    // the connector type.
+    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', fireflies: 'Fireflies', fathom: 'Fathom', limitless: 'Limitless', granola: 'Granola', otter: 'Otter' };
+    const _kbPlaudAuth = {};
+    function kbAuthLabel(name, type) {
+      if (!type) { const c = (_kcState.connectors || []).find(x => x.name === name); type = c && c.type; }
+      return KB_AUTH_TYPES[type] || 'Plaud';
+    }
+    function kbPlaudAuthLine(name, type) {
+      const label = kbAuthLabel(name, type);
+      const a = _kbPlaudAuth[name];
+      if (!a) {
+        setTimeout(() => kbPlaudAuthLoad(name, false), 0);
+        return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '">' + label + ': checking sign-in…</div>';
+      }
+      const link = a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">open the ' + label + (type === 'teams' ? ' admin consent' : type === 'discord' ? ' bot invite' : ' authorization') + ' page ↗</a>' : '';
+      let text;
+      if (a.error) text = label + ': ' + escapeHtml(a.error);
+      else if (a.pending) text = label + ': waiting for authorization' + (link || ' (URL pending…)');
+      else if (a.connected) text = label + ': connected' + (a.account ? ' as <strong>' + escapeHtml(a.account) + '</strong>' : '');
+      else text = label + ': not connected' + (a.message ? ' — ' + escapeHtml(a.message) : '') + link;
+      return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '" data-connected="' + (a.connected ? '1' : '0') + '">' + text + '</div>';
+    }
+    // disabledAttr, when set, is appended to every button (connector not loaded, #18093).
+    function kbPlaudAuthButtons(name, disabledAttr, type) {
+      const label = kbAuthLabel(name, type);
+      const a = _kbPlaudAuth[name] || {};
+      const n = escapeHtml(name);
+      const off = disabledAttr || '';
+      let html = '';
+      if (a.connected) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudDisconnect" data-arg0="' + n + '"' + off + '>Disconnect</button>';
+      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (off || (a.pending ? ' disabled' : '')) + '>Connect ' + label + '</button>';
+      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '"' + (off || ' title="Re-check sign-in with ' + label + '"') + '>Check</button>';
+      return html;
+    }
+    // Zoom user-level OAuth on a hosted hive: the app's redirect URL is a
+    // localhost address the browser cannot reach, so the operator pastes the
+    // URL it landed on; the hive exchanges the code and keeps the refresh
+    // token in the connector's token store (same endpoint as Plaud).
+    function kbZoomPasteHtml(name, c) {
+      const n = escapeHtml(name);
+      const a = _kbPlaudAuth[name] || {};
+      const mode = (c && c.auth && c.auth.mode) || 'user_oauth';
+      const redirect = (c && c.scope && c.scope.redirect_uri) || 'http://localhost:8199/zoom/callback';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Recordings are triaged in the Inbox, not here.</span></div>';
+      if (mode === 'server_to_server') return '<p class="muted-xs" data-kb-zoom-s2s>Server-to-Server OAuth: Connect requests an account token with the client id, secret and account id from the environment variables named in the form; no browser step. Scopes to add on the Zoom app: <code>cloud_recording:read:list_user_recordings:admin</code>, <code>cloud_recording:read:list_recording_files:admin</code>, <code>user:read:user:admin</code>, optionally <code>meeting_summary:read:admin</code> and <code>meeting:read:list_past_participants:admin</code>.</p>';
+      return '<details class="kb-plaud-paste mt-2" data-kb-zoom-paste><summary class="muted-xs">Finish Zoom sign-in by pasting the redirect URL</summary>' +
+        '<p class="muted-xs">Registration: on the Zoom App Marketplace create a <strong>General</strong> (user-managed) OAuth app, add <code>' + escapeHtml(redirect) + '</code> to its OAuth Redirect URL and allow list, add the scopes <code>cloud_recording:read:list_user_recordings</code>, <code>cloud_recording:read:list_recording_files</code>, <code>user:read:user</code> (optionally <code>meeting_summary:read</code>, <code>meeting:read:list_past_participants</code>), and put the client id and secret in the hive environment under the variable names in the form. Then click <strong>Connect Zoom</strong>, approve in the browser, and paste the <code>' + escapeHtml(redirect) + '?code=…&amp;state=…</code> URL the browser lands on (a connection error page is expected) within 10 minutes.</p>' +
+        '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?code=…&amp;state=…"></textarea>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
+    }
+    // Teams: client credentials have no browser step; what can be missing
+    // is the tenant administrator's consent (and application access policy).
+    function kbTeamsConsentHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const users = (c && c.scope && (c.scope.users || c.scope.group)) || '';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Recordings are triaged in the Inbox, not here.</span></div>';
+      const consent = /admin consent/i.test(a.message || '') ? '<div class="kc-error" data-kb-teams-consent>Requires Entra admin consent for OnlineMeetingRecording.Read.All and OnlineMeetingTranscript.Read.All' + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">grant consent ↗</a>' : '') + '</div>' : '';
+      return consent + '<p class="muted-xs" data-kb-teams-help>Microsoft Graph application permissions: Connect fetches a client-credentials token with the tenant id, client id and secret from the environment variables named in the form and probes the recordings of ' + (users ? '<code>' + escapeHtml(users) + '</code>' : 'the configured organizers') + '. A tenant administrator must grant admin consent to <code>OnlineMeetingRecording.Read.All</code> and <code>OnlineMeetingTranscript.Read.All</code> and assign an application access policy covering those organizers; without it Graph answers 403 and the card shows the consent link. Playback of Teams recordings in the Inbox is not available yet (Graph serves them behind a bearer token); transcripts and metadata sync.</p>';
+    }
+    // Discord: a bot token has no browser step; what can be missing is the
+    // bot's membership in the server or its channel permissions (the card
+    // then offers the bot invite link), or the Message Content intent.
+    function kbDiscordHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const scope = (c && c.scope) || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Recordings and event notes are triaged in the Inbox, not here.</span></div>';
+      const where = [scope.guild ? 'server <code>' + escapeHtml(scope.guild) + '</code>' : '', scope.channels ? 'channels <code>' + escapeHtml(scope.channels) + '</code>' : ''].filter(Boolean).join(' and ') || 'the configured server and channels';
+      const access = /invite it/i.test(a.message || '') ? '<div class="kc-error" data-kb-discord-access>The bot cannot read ' + where + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">invite the bot ↗</a>' : '') + '</div>' : '';
+      return access + '<p class="muted-xs" data-kb-discord-help>Discord has no cloud recordings or transcripts, so the hive reads what a meeting leaves behind: finished recordings posted to the recording channels (an audio upload, or a recording bot\'s download link such as Craig\'s, forwarded there), and scheduled events with their channel chat. Create an application in the Discord Developer Portal, add a bot, enable the <strong>Message Content</strong> intent, put the bot token in the hive environment, and invite the bot with View Channel and Read Message History. Connect probes ' + where + ' with that token. Audio uploads play in the Inbox; items without a transcript stay marked as not transcribed.</p>';
+    }
+    // Google Meet user-level OAuth on a hosted hive: the OAuth client's
+    // redirect is a localhost address the browser cannot reach, so the
+    // operator pastes the URL it landed on (same endpoint as Plaud and Zoom).
+    // A service account has no browser step.
+    function kbGoogleMeetPasteHtml(name, c) {
+      const n = escapeHtml(name);
+      const a = _kbPlaudAuth[name] || {};
+      const mode = (c && c.auth && c.auth.mode) || 'user_oauth';
+      const redirect = (c && c.scope && c.scope.redirect_uri) || 'http://localhost:8199/google-meet/callback';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      const playback = '<span class="muted-xs" data-kb-google-meet-playback>Meet recordings are Drive files served behind a bearer token, so Inbox items link the Drive page instead of playing inline; transcripts and Gemini notes sync as text.</span>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + playback + '</div>';
+      if (mode === 'server_to_server') return '<p class="muted-xs" data-kb-google-meet-sa>Service account with domain-wide delegation: Connect signs a token request as the first listed user with the key named in the form; no browser step. A Workspace super admin must authorize the service account\'s client id for <code>meetings.space.readonly</code> and <code>drive.meet.readonly</code> (Admin console → Security → API controls → Domain-wide delegation).</p>';
+      return '<details class="kb-plaud-paste mt-2" data-kb-google-meet-paste><summary class="muted-xs">Finish Google sign-in by pasting the redirect URL</summary>' +
+        '<p class="muted-xs">Registration: in Google Cloud enable the Google Meet REST API and the Google Drive API, add the scopes <code>meetings.space.readonly</code> and <code>drive.meet.readonly</code> to the OAuth consent screen, create an OAuth client (Web application) with <code>' + escapeHtml(redirect) + '</code> as an authorized redirect URI, and put its id and secret in the hive environment under the variable names in the form. Then click <strong>Connect Google Meet</strong>, approve in the browser, and paste the <code>' + escapeHtml(redirect) + '?state=…&amp;code=…</code> URL the browser lands on (a connection error page is expected) within 10 minutes.</p>' +
+        '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?state=…&amp;code=…"></textarea>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
+    }
+    // Webex integration on a hosted hive: the registered redirect is a
+    // localhost address the browser cannot reach, so the operator pastes the
+    // URL it landed on (same endpoint as Plaud, Zoom and Google Meet).
+    function kbWebexPasteHtml(name, c) {
+      const n = escapeHtml(name);
+      const a = _kbPlaudAuth[name] || {};
+      const redirect = (c && c.scope && c.scope.redirect_uri) || 'http://localhost:8199/webex/callback';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-webex-playback>Recordings play in the Inbox through Webex\'s temporary direct download link (minted per click, valid 3 hours); transcripts and AI Assistant summaries sync as text.</span></div>';
+      return '<details class="kb-plaud-paste mt-2" data-kb-webex-paste><summary class="muted-xs">Finish Webex sign-in by pasting the redirect URL</summary>' +
+        '<p class="muted-xs">Registration: on developer.webex.com → My Webex Apps create an <strong>Integration</strong> with <code>' + escapeHtml(redirect) + '</code> as its redirect URI and the scopes <code>meeting:recordings_read</code>, <code>meeting:transcripts_read</code>, <code>meeting:summaries_read</code>, <code>meeting:participants_read</code>, <code>spark:people_read</code>, and put its client id and secret in the hive environment under the variable names in the form. Then click <strong>Connect Webex</strong>, approve in the browser, and paste the <code>' + escapeHtml(redirect) + '?code=…&amp;state=…</code> URL the browser lands on (a connection error page is expected) within 10 minutes.</p>' +
+        '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?code=…&amp;state=…"></textarea>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
+    }
+    // Slack huddles: a bot or user token has no browser step; the card says
+    // what Slack keeps for a huddle (the AI notes canvas, with its transcript
+    // when allowed; never audio) and what the token needs.
+    function kbSlackHuddlesHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const chans = (c && c.scope && c.scope.channels) || '';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Huddle notes are triaged in the Inbox, not here.</span></div>';
+      const scopeHint = /needs scope/i.test(a.message || '') ? '<div class="kc-error" data-kb-slack-huddles-scope>The Slack token is missing a scope: add it on the app (OAuth &amp; Permissions), reinstall the app and click Check.</div>' : '';
+      const channelHint = /\/invite/.test(a.message || '') ? '<div class="kc-error" data-kb-slack-huddles-invite>The app is not in ' + (chans ? '<code>' + escapeHtml(chans) + '</code>' : 'the channel') + ': run <code>/invite @your-app</code> there and click Check.</div>' : '';
+      return scopeHint + channelHint + '<p class="muted-xs" data-kb-slack-huddles-help>Slack never records huddle audio. What it keeps is the <strong>AI notes canvas</strong> Slack posts in the huddle thread when someone turns on AI notes (paid plans), with the transcript embedded when the workspace allows it. The hive reads the huddle messages of ' + (chans ? '<code>' + escapeHtml(chans) + '</code>' : 'the configured channels') + ' (<code>conversations.history</code>), finds the notes canvas in the thread and reads it with <code>canvases.getContent</code>; huddles without notes are skipped. Inbox items are text only, with no playback.</p>';
+    }
+    // Fireflies: an API key has no browser step; the card says where the key
+    // comes from and that playback needs a Pro plan (audio_url).
+    function kbFirefliesHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-fireflies-playback>Meetings are triaged in the Inbox. ▶ Play uses Fireflies\' 24-hour audio link (Pro plan or higher).</span></div>';
+      const paid = /paid_required|Pro plan/i.test(a.message || '') ? '<div class="kc-error" data-kb-fireflies-paid>Fireflies answered that this needs a paid plan (Pro or higher).</div>' : '';
+      const limited = /too_many_requests|rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-fireflies-ratelimit>Fireflies rate-limited the API key; the next sync retries (Free plan: 500 requests a day).</div>' : '';
+      return paid + limited + '<p class="muted-xs" data-kb-fireflies-help>Fireflies.ai keeps a transcript, speakers and an AI summary for every meeting its notetaker joined. The hive reads them with the <a href="https://docs.fireflies.ai/graphql-api/query/transcripts" target="_blank" rel="noopener">Fireflies GraphQL API</a> (<code>transcripts</code>, 50 per page) using the API key from <strong>Fireflies → Integrations → Fireflies API</strong>. ' + (c && c.scope && /^true$/i.test(c.scope.mine || '') ? 'Only meetings you organized are read.' : 'Every meeting the key\'s owner can see is read.') + ' Click Check to verify the key.</p>';
+    }
+    // Fathom: an API key has no browser step; the card says which meetings
+    // the key sees and how playback works (a recording download Fathom
+    // prepares on request).
+    function kbFathomHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-fathom-playback>Meetings are triaged in the Inbox. ▶ Play asks Fathom for a recording download; video can take a minute to prepare, so click again if it is not ready.</span></div>';
+      const limited = /rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-fathom-ratelimit>Fathom rate-limited the API key (60 calls a minute, 30 for transcripts and summaries); the next sync retries.</div>' : '';
+      const recorders = (c && c.scope && c.scope.recorded_by) || '';
+      return limited + '<p class="muted-xs" data-kb-fathom-help>Fathom keeps a transcript, an AI summary and action items for every call its notetaker recorded. The hive reads them with the <a href="https://developers.fathom.ai/api-reference/meetings/list-meetings" target="_blank" rel="noopener">Fathom API</a> (<code>GET /meetings</code>) using an API key from <strong>Fathom → User Settings → API Access</strong>. The key sees the meetings its user recorded and the ones shared with them or their team' + (recorders ? ', limited here to <code>' + escapeHtml(recorders) + '</code>' : '') + '. Click Check to verify the key.</p>';
+    }
+    // Limitless: an API key has no browser step; the card says the API reads
+    // Pendant lifelogs only and that audio stays behind the key (no playback).
+    function kbLimitlessHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Pendant conversations are triaged in the Inbox, not here.</span></div>';
+      const limited = /rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-limitless-ratelimit>Limitless rate-limited the API key (180 requests a minute); the next sync retries.</div>' : '';
+      const starred = c && c.scope && /^true$/i.test(c.scope.starred_only || '');
+      return limited + '<p class="muted-xs" data-kb-limitless-help>The Limitless Pendant records conversations and Limitless transcribes them into <strong>lifelogs</strong>. The hive reads them with the <a href="https://www.limitless.ai/developers" target="_blank" rel="noopener">Limitless Developer API</a> (<code>GET /v1/lifelogs</code>, Pendant data only) using an API key from the Limitless app\'s Developer settings' + (starred ? ', starred lifelogs only' : '') + '. Pendant audio is served only behind the key, so Inbox items are text only, with no playback. Click Check to verify the key.</p>';
+    }
+    // Granola: an API key has no browser step; the card says which notes the
+    // key can read and that Granola keeps no audio.
+    function kbGranolaHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Meeting notes are triaged in the Inbox, not here.</span></div>';
+      const limited = /rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-granola-ratelimit>Granola rate-limited the API key; the next sync retries.</div>' : '';
+      const where = (c && c.scope && (c.scope.folder || c.scope.space)) || '';
+      return limited + '<p class="muted-xs" data-kb-granola-help>Granola writes AI notes and a transcript for each meeting on your device and keeps no audio. The hive reads the notes with the <a href="https://docs.granola.ai/introduction" target="_blank" rel="noopener">Granola API</a> (<code>GET /v1/notes</code>) using an API key (<code>grn_…</code>, Business and Enterprise plans) from Granola\'s API settings' + (where ? ', limited here to <code>' + escapeHtml(where) + '</code>' : '') + '. A personal key reads your notes; a workspace key reads public notes and spaces with API access. Inbox items are text only, with no playback. Click Check to verify the key.</p>';
+    }
+    // Otter.ai: an API key has no browser step; the card says the Public API
+    // needs an Enterprise workspace and how playback works.
+    function kbOtterHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-otter-playback>Conversations are triaged in the Inbox. ▶ Play uses Otter\'s MP3 download link, minted per click.</span></div>';
+      const enterprise = /Public API/i.test(a.message || '') ? '<div class="kc-error" data-kb-otter-enterprise>Otter rejected the key. The Public API is available to Enterprise workspaces only; if Integrations → Developer is missing, ask your Otter account manager to turn it on.</div>' : '';
+      const scope = (c && c.scope && c.scope.channel) ? 'the channel <code>' + escapeHtml(c.scope.channel) + '</code>' : (c && c.scope && /^true$/i.test(c.scope.include_shared || '') ? 'your conversations and the ones shared with you' : 'your own conversations');
+      return enterprise + '<p class="muted-xs" data-kb-otter-help>Otter.ai keeps a transcript, an AI summary, an outline and action items for every conversation. The hive reads ' + scope + ' with the <a href="https://help.otter.ai/hc/en-us/articles/36130822688279-Otter-ai-Public-API" target="_blank" rel="noopener">Otter.ai Public API</a> (<code>GET /conversations</code>, Enterprise workspaces) using an API key from <strong>Integrations → Developer</strong>. Click Check to verify the key.</p>';
+    }
+    async function kbPlaudAuthLoad(name, refresh) {
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth' + (refresh ? '?refresh=1' : ''));
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+      } catch (e) {
+        _kbPlaudAuth[name] = { error: e.message };
+      }
+      if (document.querySelector('[data-kb-plaud-auth="' + CSS.escape(name) + '"]')) kbRenderIntegrationsModal();
+      return _kbPlaudAuth[name];
+    }
+    // One-line summary of a sign-in state for the Check toast (hivecommons/hive#18092).
+    function kbPlaudAuthSummary(a) {
+      if (a.connected) return 'connected' + (a.account ? ' as ' + a.account : '');
+      if (a.pending) return 'waiting for authorization' + (a.auth_url ? ' — open the link on the card' : '');
+      return 'not connected' + (a.message ? ' — ' + a.message : '');
+    }
+    // Check: re-query the sign-in state and always report the outcome, so a
+    // 404 "no knowledge connectors are configured" reads as an error toast
+    // with the server's message verbatim, not as silence (hivecommons/hive#18092).
+    async function kbPlaudRefreshAuth(name) {
+      const label = kbAuthLabel(name);
+      showToast('Checking ' + label + ' sign-in…', 'info');
+      const a = (await kbPlaudAuthLoad(name, true)) || {};
+      if (a.error) showToast('Check failed: ' + a.error, 'error');
+      else showToast(label + ' ' + name + ': ' + kbPlaudAuthSummary(a), a.connected ? 'success' : 'info');
+    }
+    async function kbPlaudConnect(name) {
+      const label = kbAuthLabel(name);
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/connect', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+        kbRenderIntegrationsModal();
+        if (data.connected) showToast(label + ' connected' + (data.account ? ' as ' + data.account : ''), 'success');
+        else if (data.pending && data.auth_url) { showToast('Open the ' + label + ' authorization link shown on the card, then ' + (label === 'Zoom' ? 'paste the redirect URL into the card.' : 'click Check.'), 'info'); kbPlaudPollAuth(name, 0); }
+        else if (data.auth_url) showToast(label + ': ' + (data.message || 'not connected') + ' — the consent link is on the card.', 'info');
+        else showToast(label + ' login started; the authorization URL will appear on the card shortly.', 'info');
+        if (!data.connected && !data.auth_url) kbPlaudPollAuth(name, 0);
+      } catch (e) {
+        showToast(label + ' connect failed: ' + e.message, 'error');
+      }
+    }
+    // Poll the cached state while a login is pending (URL arrival, completion).
+    function kbPlaudPollAuth(name, attempt) {
+      if (attempt > 60) return;
+      setTimeout(async () => {
+        await kbPlaudAuthLoad(name, false);
+        const a = _kbPlaudAuth[name] || {};
+        if (a.connected) { showToast(kbAuthLabel(name) + ' connected' + (a.account ? ' as ' + a.account : ''), 'success'); return; }
+        if (a.pending) kbPlaudPollAuth(name, attempt + 1);
+      }, 5000);
+    }
+    async function kbPlaudDisconnect(name) {
+      const label = kbAuthLabel(name);
+      if (!(await hiveConfirm('Sign out of ' + label + '? Synced recordings stay in the vault until you remove the connector.'))) return;
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/disconnect', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+        kbRenderIntegrationsModal();
+        showToast(label + ' disconnected', 'success');
+      } catch (e) {
+        showToast(label + ' disconnect failed: ' + e.message, 'error');
+      }
+    }
+    function kbOpenPlaudIntegration() { _kbIntegrationSelected = 'plaud'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenZoomIntegration() { _kbIntegrationSelected = 'zoom'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenTeamsIntegration() { _kbIntegrationSelected = 'teams'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenDiscordIntegration() { _kbIntegrationSelected = 'discord'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenGoogleMeetIntegration() { _kbIntegrationSelected = 'google-meet'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenWebexIntegration() { _kbIntegrationSelected = 'webex'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenSlackHuddlesIntegration() { _kbIntegrationSelected = 'slack-huddles'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenOtterIntegration() { _kbIntegrationSelected = 'otter'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenGranolaIntegration() { _kbIntegrationSelected = 'granola'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenLimitlessIntegration() { _kbIntegrationSelected = 'limitless'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenFathomIntegration() { _kbIntegrationSelected = 'fathom'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenFirefliesIntegration() { _kbIntegrationSelected = 'fireflies'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+
+    // ── Wispr Flow (local dictation history, no sign-in) ──
+    function kbWisprFlowSourceLine(c) {
+      const path = (c.scope && c.scope.path) || '';
+      const group = (c.scope && c.scope.group) === 'day' ? 'one fact per day' : 'one fact per dictation';
+      return '<div class="muted-xs" data-kb-wisprflow-source>Wispr Flow: ' + (path ? '<code>' + escapeHtml(path) + '</code>' : 'default app location on the hive host') + ' · ' + group + '</div>';
+    }
+    function kbOpenWisprFlowIntegration() { _kbIntegrationSelected = 'wisprflow'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }

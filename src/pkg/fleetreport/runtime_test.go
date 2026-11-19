@@ -256,6 +256,82 @@ func TestEvaluateRuntimeEvidenceReEmitsUntilPostedAndRecovers(t *testing.T) {
 	}
 }
 
+// An unclaimed hive has no GitHub App installation by design; that is the
+// onboarding banner's job, not a fleet issue (#17593). "Unclaimed" is either
+// no project.org at all or the synthetic "available-<id>" / legacy
+// "placeholder" org the pool seeds — the hive that filed #17593 carried
+// project.org=available-lke648397-260827-boq9, not an empty org.
+func TestEvaluateGitHubAppNotInstalledSkippedOnUnclaimedHive(t *testing.T) {
+	now := time.Date(2026, 11, 10, 18, 0, 0, 0, time.UTC)
+	appEv := Evidence{Class: ClassGitHubAppNotInstalled, Component: "github-client", Severity: "medium", Count: 1, Message: "github app installation id is unset: minting scoped token for guide: installation_id is 0", Attributable: true}
+	panicEv := Evidence{Class: ClassPanicRecovered, Component: "dashboard", Severity: "high", Count: 1, Message: "panic in handler: nil deref", Attributable: true}
+	cases := []struct {
+		name        string
+		org         string
+		evidence    []Evidence
+		wantClasses []string
+	}{
+		{name: "unclaimed hive skips app-not-installed", org: "", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "whitespace org counts as unclaimed", org: "  ", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "pool placeholder org (#17593 hive) counts as unclaimed", org: "available-lke648397-260827-boq9", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "placeholder org prefix is case-insensitive", org: " Available-OKE-07 ", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "legacy placeholder org counts as unclaimed", org: "placeholder-org", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "placeholder org still reports other classes", org: "available-lke648397-260827-boq9", evidence: []Evidence{appEv, panicEv}, wantClasses: []string{ClassPanicRecovered}},
+		{name: "unclaimed hive still reports other classes", org: "", evidence: []Evidence{appEv, panicEv}, wantClasses: []string{ClassPanicRecovered}},
+		{name: "org configured still reports app-not-installed", org: "acme", evidence: []Evidence{appEv}, wantClasses: []string{ClassGitHubAppNotInstalled}},
+		{name: "real org merely containing the prefix is still reported", org: "unavailable-corp", evidence: []Evidence{appEv}, wantClasses: []string{ClassGitHubAppNotInstalled}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			obs := Observation{EpochStart: now, HiveID: "hive-a", Version: "v6.12.5", HiveSlug: "hosted-available-x", ProjectOrg: tc.org, Evidence: tc.evidence, Now: now}
+			res := Evaluate(obs, State{}, false)
+			var got []string
+			for _, r := range res.Reports {
+				got = append(got, r.Class)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.wantClasses) {
+				t.Fatalf("report classes = %v, want %v", got, tc.wantClasses)
+			}
+		})
+	}
+}
+
+// A hive that already carries an open github_app_not_installed tracker from a
+// pre-fix release (the unclaimed slot that filed #17593) must, on its first
+// evaluation after upgrade, close that tracker out via the ordinary recovery
+// path even though the runtime condition itself persists — the same way a
+// class that stops being known is retired. The resulting "self-recovered"
+// comment on the issue is the suppression taking effect, not a real fix.
+func TestEvaluateGitHubAppNotInstalledOpenTrackerRetiresOnUnclaimedHive(t *testing.T) {
+	now := time.Date(2026, 11, 10, 18, 0, 0, 0, time.UTC)
+	appEv := Evidence{Class: ClassGitHubAppNotInstalled, Component: "github-client", Severity: "medium", Count: 1, Message: "github app installation id is unset: minting scoped token for guide: installation_id is 0", Attributable: true}
+	fp := RuntimeFingerprint(appEv.Class, appEv.Message)
+	prev := State{Open: map[string]OpenIssue{
+		fp: {Number: 17593, PostedAt: now.Add(-time.Hour), Trigger: TriggerRuntimeError, Class: ClassGitHubAppNotInstalled, Component: appEv.Component},
+	}}
+	obs := Observation{EpochStart: now, HiveID: "hive-a", Version: "v6.12.6", HiveSlug: "hosted-available-lke648397-260827-boq9", ProjectOrg: "available-lke648397-260827-boq9", Evidence: []Evidence{appEv}, Now: now}
+	res := Evaluate(obs, prev, false)
+	if len(res.Reports) != 0 {
+		t.Fatalf("suppressed class still reported: %#v", res.Reports)
+	}
+	if len(res.Recoveries) != 1 || res.Recoveries[0].Fingerprint != fp || res.Recoveries[0].Trigger != TriggerRuntimeError || res.Recoveries[0].Class != ClassGitHubAppNotInstalled || !res.Recoveries[0].Recovered {
+		t.Fatalf("recoveries = %#v, want one for the stale #17593 tracker", res.Recoveries)
+	}
+	if !strings.Contains(res.Recoveries[0].Body, "self-recovered: yes") {
+		t.Fatalf("recovery body = %q", res.Recoveries[0].Body)
+	}
+	// Once the publisher has marked the tracker recovered, later passes stay
+	// quiet: the suppressed class never re-opens it.
+	st := res.State
+	o := st.Open[fp]
+	o.Recovered = true
+	st.Open[fp] = o
+	again := Evaluate(obs, st, false)
+	if len(again.Reports) != 0 || len(again.Recoveries) != 0 {
+		t.Fatalf("second pass = reports %#v recoveries %#v", again.Reports, again.Recoveries)
+	}
+}
+
 func TestDefaultTrackerPackageHelpersAndEviction(t *testing.T) {
 	now, advance := fakeClock(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC))
 	tr := NewRuntimeTracker(now)
@@ -353,10 +429,12 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassPanicRecovered, message: "panic in kickBrainstorm: runtime error: invalid memory address"},
 		{class: ClassModelDiscoveryDegraded, message: "model discovery failed: 502 bad gateway"},
 		{class: ClassInferenceAuthFailed, message: "litellm returned HTTP 401 unauthorized"},
+		{class: ClassInferenceBackendAuthFailure, message: "inference backend auth failure"},
 		{class: ClassAdvisoryPostFailed, message: "advisory digest post failed: HTTP 422"},
 		{class: ClassUpgradeStalled, message: "standalone upgrade helper did not finish within 10m0s"},
 		{class: ClassDataDiskPressure, message: "data disk pressure: disk-full: /data is 97% used (threshold 95%)"},
 		{class: ClassGitHubAppTokenMintFailed, message: "github app token mint failed: POST /app/installations/123/access_tokens: 401"},
+		{class: ClassForgeUnreachable, message: "github host unreachable during token mint: creating installation token: context deadline exceeded"},
 		{class: ClassUnexpectedHub5xx, message: "hub heartbeat returned HTTP 503"},
 		{class: ClassUnclassifiedRepeated, message: "weird error from somewhere"},
 		{class: ClassAgentStall, message: "agent stalled after kick: 3 continue nudges sent without the pane moving"},
@@ -365,6 +443,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassIssueRequestStuck, message: "issue-request stuck: issue request failed 3 attempts over 7m"},
 		{class: ClassTmuxSessionCheckFailed, message: "tmux has-session failed"},
 		{class: ClassAgentPaneTimeout, message: "pane content at timeout"},
+		{class: ClassAgentLifecycleRepeated, message: "agent tmux session missing"},
 		{class: ClassStartupKickInterrupted, message: "startup kick dropped: agent restarted or stopped while waiting"},
 		{class: ClassProxyTLSHandshakeFailed, message: "proxy client TLS handshake failed"},
 		{class: ClassAgentDirSetupFailed, message: "failed to create per-agent XDG dir"},
@@ -373,19 +452,29 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassSharedCIRerunForbidden, message: "shared-ci rerun forbidden: the App installation lacks Actions write permission for rerun-failed-jobs"},
 		{class: ClassIssueClaimEffectFailed, message: "issue-claims: GitHub side effect failed"},
 		{class: ClassTranscriptScanSlow, message: "copilot transcript activity scan outlived its interval; agent liveness reads may lag"},
+		{class: ClassSpekStreamUnavailable, message: "[spektacular] stream child exited; restarting"},
 		{class: ClassBeadFactIngestFailed, message: "failed to ingest bead fact"},
 		{class: ClassSelfReportClearedFailed, message: "fleet report: cleared comment failed"},
 		{class: ClassGitHubAppRepoNotCovered, message: "github app recheck: installation does not cover every configured repo"},
+		{class: ClassGitHubAppAlertsPermission, message: "scoped token mint with vulnerability_alerts:read failed; retrying without it"},
+		{class: ClassGitHubAppStatusesPermission, message: "could not set the prow/lgtm commit status: the GitHub App lacks the statuses: write permission"},
+		{class: ClassHubHeartbeatUnprovisioned, message: "hub heartbeat rejected: hive id is not provisioned on the hub (403); backing off"},
 		{class: ClassGitHubAppNotInstalled, message: "github app installation id is unset — per-agent scoped token NOT delivered"},
 		{class: ClassProxyConnectDialFailed, message: "proxy: CONNECT dial failed"},
+		{class: ClassProxyPlainForwardFailed, message: "proxy: plain HTTP forward failed"},
 		{class: ClassProxyPlainForwardRefused, message: "proxy: plain HTTP forward refused — destination is not globally routable"},
 		{class: ClassInferenceCallerUnknown, message: "inference request from unidentified caller refused"},
+		{class: ClassInferenceNoRoute, message: "inference no route"},
+		{class: ClassProxyUpstreamDegraded, message: "proxy upstream dial failed"},
+		{class: ClassProxyWriterUnidentified, message: "proxy: agent could not be identified — defaulting to ADVISORY and blocking a write; UID attribution failed (see reason)"},
 		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
 		{class: ClassSHAPollCommitMsgUnavail, message: "SHA poll: commit message fetch non-200"},
 		{class: ClassKickFreshnessWithheld, message: "kick withheld: every ref failed the freshness check"},
+		{class: ClassOpenPRGuardLabelFailed, message: "open-PR guard: could not label issue"},
 		{class: ClassModelsEndpointEmpty, message: "no models found from any endpoint"},
 		{class: ClassAgentLoginRequired, message: "login required detected"},
 		{class: ClassPRRequestHeadUnpushed, message: "pr-request watcher: head branch is not on the remote"},
+		{class: ClassPRRequestHeadInvalid, message: "pr-request watcher: head is not a pushable branch, request rejected"},
 		{class: ClassIOScanClassifierUnavail, message: "ioscan classifier failed closed; text withheld"},
 		{class: ClassIOScanClassifierUnavail, message: "ioscan classifier failed open; text passes on unclassified"},
 		{class: ClassIOScanClassifierUnavail, message: "ioscan fail-closed blocked kick"},
@@ -897,6 +986,52 @@ func TestIsBenignMessagePolicySeedDivergence(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#18230: the GitHub proxy refusing a forbidden request is
+// sandbox policy working as designed; proxy transport failures and anything
+// that merely mentions a blocked request stay reportable.
+func TestIsBenignMessageProxyRequestBlocked(t *testing.T) {
+	for _, msg := range []string{"proxy request blocked", "  Proxy Request Blocked  "} {
+		if !IsBenignMessage(msg) {
+			t.Errorf("proxy policy refusal %q not benign", msg)
+		}
+	}
+	for _, msg := range []string{
+		"proxy upstream dial failed",
+		"proxy forge cert failed",
+		"proxy client TLS handshake failed",
+		"proxy request blocked: denial body write failed",
+	} {
+		if IsBenignMessage(msg) {
+			t.Errorf("failure %q wrongly benign", msg)
+		}
+	}
+}
+
+// hivecommons/hive#18239: withholding kicks for an exhausted provider quota or
+// a clipped spending limit is expected backpressure, logged every cycle while
+// the hold lasts; anything that merely mentions the hold stays reportable.
+func TestIsBenignMessageProviderKickWithhold(t *testing.T) {
+	for _, msg := range []string{
+		"provider quota exhausted: withholding agent kicks",
+		"  Provider Quota Exhausted: withholding agent kicks  ",
+		"provider spending limit: withholding agent kicks",
+		"provider spending limit: withholding all but the probe kick",
+	} {
+		if !IsBenignMessage(msg) {
+			t.Errorf("kick withhold notice %q not benign", msg)
+		}
+	}
+	for _, msg := range []string{
+		"provider quota exhausted: withholding agent kicks: status snapshot failed",
+		"provider quota probe kick failed",
+		"provider spending limit: probe kick delivery failed",
+	} {
+		if IsBenignMessage(msg) {
+			t.Errorf("failure %q wrongly benign", msg)
+		}
+	}
+}
+
 func TestIsBenignMessageForwardMergeGuard(t *testing.T) {
 	if !IsBenignMessage("forward-merge guard: refusing to squash, forcing merge commit") {
 		t.Error("forward-merge squash refusal not benign")
@@ -1118,50 +1253,67 @@ func TestUnclassifiedRepeatedHonoursWindowAndIdleClear(t *testing.T) {
 func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 	fed := map[string]string{
 		"startup kick dropped: agent restarted or stopped while waiting": ClassStartupKickInterrupted,
-		"tmux has-session failed":                                                              ClassTmuxSessionCheckFailed,
-		"pane content at timeout":                                                              ClassAgentPaneTimeout,
-		"prompt timeout — dumping pane":                                                        ClassAgentPaneTimeout,
-		"startup kick dropped: CLI never reached input prompt":                                 ClassAgentPaneTimeout,
-		"startup kick dropped: CLI never became ready":                                         ClassAgentPaneTimeout,
-		"channel commit date: fetch failed — the row will render without a timestamp":          ClassGitHubFetchTransient,
-		"issue stage labels: provisioning failed":                                              ClassLabelProvisioningFailed,
-		"agent CLI crashed or stuck on consent screen, restarting before kick":                 ClassAgentCLIRestartLoop,
-		"copilot hung with no CLI prompt, running diagnostic":                                  ClassCopilotCLIHung,
-		"diagnostic: timed out waiting for copilot error output, relaunching agent":            ClassCopilotCLIHung,
-		"shared-ci rerun forbidden: the App installation lacks Actions write permission":       ClassSharedCIRerunForbidden,
-		"issue-claims: GitHub side effect failed":                                              ClassIssueClaimEffectFailed,
-		"SHA poll: commit message fetch non-200":                                               ClassSHAPollCommitMsgUnavail,
-		"kick withheld: every ref failed the freshness check":                                  ClassKickFreshnessWithheld,
-		"no models found from any endpoint":                                                    ClassModelsEndpointEmpty,
-		"login required detected":                                                              ClassAgentLoginRequired,
-		"pr-request watcher: head branch is not on the remote":                                 ClassPRRequestHeadUnpushed,
-		"ioscan classifier failed closed; text withheld":                                       ClassIOScanClassifierUnavail,
-		"watchdog: agent credential failure":                                                   ClassAgentLoginRequired,
-		"ioscan classifier failed open; text passes on unclassified":                           ClassIOScanClassifierUnavail,
-		"ioscan fail-closed blocked kick":                                                      ClassIOScanClassifierUnavail,
-		"ioscan fail-closed blocked held-PR coordination kick":                                 ClassIOScanClassifierUnavail,
-		"proxy client TLS handshake failed":                                                    ClassProxyTLSHandshakeFailed,
-		"transparent proxy TLS handshake failed":                                               ClassProxyTLSHandshakeFailed,
-		"failed to restore per-agent dir mode":                                                 ClassAgentDirSetupFailed,
-		"failed to restore interactive home mode":                                              ClassAgentDirSetupFailed,
-		"failed to tighten per-agent dir mode":                                                 ClassAgentDirSetupFailed,
-		"failed to tighten interactive home mode":                                              ClassAgentDirSetupFailed,
-		"failed to create per-agent XDG dir":                                                   ClassAgentDirSetupFailed,
-		"review evidence: could not write bundle":                                              ClassReviewEvidenceWriteFail,
-		"feedback: issue refresh failed":                                                       ClassFeedbackIssueRefreshFailed,
-		"failed to restore inference home mode":                                                ClassAgentDirSetupFailed,
-		"failed to tighten inference home mode":                                                ClassAgentDirSetupFailed,
-		"failed to ingest bead fact":                                                           ClassBeadFactIngestFailed,
-		"fleet report: cleared comment failed":                                                 ClassSelfReportClearedFailed,
-		"copilot sniff: client TLS handshake failed":                                           ClassProxyTLSHandshakeFailed,
-		"github app recheck: installation does not cover every configured repo":                ClassGitHubAppRepoNotCovered,
-		"proxy: plain HTTP forward refused — destination is not globally routable":             ClassProxyPlainForwardRefused,
-		"proxy: CONNECT dial failed":                                                           ClassProxyConnectDialFailed,
-		"copilot sniff: upstream dial failed":                                                  ClassProxyConnectDialFailed,
-		"inference upstream error":                                                             ClassInferenceUpstreamError,
-		"copilot transcript activity scan outlived its interval; agent liveness reads may lag": ClassTranscriptScanSlow,
-		"inference upstream failed":                                                            ClassInferenceUpstreamError,
-		"inference translate request failed":                                                   ClassInferenceUpstreamError,
+		"tmux has-session failed":                                                                        ClassTmuxSessionCheckFailed,
+		"failed to send kick":                                                                            ClassAgentLifecycleRepeated,
+		"agent CLI crashed (bare shell detected)":                                                        ClassAgentLifecycleRepeated,
+		"tmux kill-session before restart failed":                                                        ClassAgentLifecycleRepeated,
+		"agent tmux session missing":                                                                     ClassAgentLifecycleRepeated,
+		"watchdog: would restart dead agent (observe mode; no action taken)":                             ClassAgentLifecycleRepeated,
+		"pane content at timeout":                                                                        ClassAgentPaneTimeout,
+		"prompt timeout — dumping pane":                                                                  ClassAgentPaneTimeout,
+		"startup kick dropped: CLI never reached input prompt":                                           ClassAgentPaneTimeout,
+		"startup kick dropped: CLI never became ready":                                                   ClassAgentPaneTimeout,
+		"channel commit date: fetch failed — the row will render without a timestamp":                    ClassGitHubFetchTransient,
+		"issue stage labels: provisioning failed":                                                        ClassLabelProvisioningFailed,
+		"agent CLI crashed or stuck on consent screen, restarting before kick":                           ClassAgentCLIRestartLoop,
+		"copilot hung with no CLI prompt, running diagnostic":                                            ClassCopilotCLIHung,
+		"diagnostic: timed out waiting for copilot error output, relaunching agent":                      ClassCopilotCLIHung,
+		"shared-ci rerun forbidden: the App installation lacks Actions write permission":                 ClassSharedCIRerunForbidden,
+		"issue-claims: GitHub side effect failed":                                                        ClassIssueClaimEffectFailed,
+		"SHA poll: commit message fetch non-200":                                                         ClassSHAPollCommitMsgUnavail,
+		"kick withheld: every ref failed the freshness check":                                            ClassKickFreshnessWithheld,
+		"open-PR guard: could not label issue":                                                           ClassOpenPRGuardLabelFailed,
+		"open-PR guard: could not ensure label":                                                          ClassOpenPRGuardLabelFailed,
+		"no models found from any endpoint":                                                              ClassModelsEndpointEmpty,
+		"login required detected":                                                                        ClassAgentLoginRequired,
+		"pr-request watcher: head branch is not on the remote":                                           ClassPRRequestHeadUnpushed,
+		"pr-request watcher: head is not a pushable branch, request rejected":                            ClassPRRequestHeadInvalid,
+		"ioscan classifier failed closed; text withheld":                                                 ClassIOScanClassifierUnavail,
+		"watchdog: agent credential failure":                                                             ClassAgentLoginRequired,
+		"ioscan classifier failed open; text passes on unclassified":                                     ClassIOScanClassifierUnavail,
+		"[spektacular] stream child exited; restarting":                                                  ClassSpekStreamUnavailable,
+		"[spektacular] stream child keeps exiting; giving up":                                            ClassSpekStreamUnavailable,
+		"ioscan fail-closed blocked kick":                                                                ClassIOScanClassifierUnavail,
+		"ioscan fail-closed blocked held-PR coordination kick":                                           ClassIOScanClassifierUnavail,
+		"proxy client TLS handshake failed":                                                              ClassProxyTLSHandshakeFailed,
+		"transparent proxy TLS handshake failed":                                                         ClassProxyTLSHandshakeFailed,
+		"failed to restore per-agent dir mode":                                                           ClassAgentDirSetupFailed,
+		"failed to restore interactive home mode":                                                        ClassAgentDirSetupFailed,
+		"failed to tighten per-agent dir mode":                                                           ClassAgentDirSetupFailed,
+		"failed to tighten interactive home mode":                                                        ClassAgentDirSetupFailed,
+		"failed to create per-agent XDG dir":                                                             ClassAgentDirSetupFailed,
+		"review evidence: could not write bundle":                                                        ClassReviewEvidenceWriteFail,
+		"feedback: issue refresh failed":                                                                 ClassFeedbackIssueRefreshFailed,
+		"failed to restore inference home mode":                                                          ClassAgentDirSetupFailed,
+		"failed to tighten inference home mode":                                                          ClassAgentDirSetupFailed,
+		"failed to ingest bead fact":                                                                     ClassBeadFactIngestFailed,
+		"fleet report: cleared comment failed":                                                           ClassSelfReportClearedFailed,
+		"copilot sniff: client TLS handshake failed":                                                     ClassProxyTLSHandshakeFailed,
+		"github app recheck: installation does not cover every configured repo":                          ClassGitHubAppRepoNotCovered,
+		"scoped token mint with vulnerability_alerts:read failed; retrying without it":                   ClassGitHubAppAlertsPermission,
+		"could not set the prow/lgtm commit status: the GitHub App lacks the statuses: write permission": ClassGitHubAppStatusesPermission,
+		"proxy: plain HTTP forward refused — destination is not globally routable":                       ClassProxyPlainForwardRefused,
+		"proxy: CONNECT dial failed":                                                                     ClassProxyConnectDialFailed,
+		"proxy: plain HTTP forward failed":                                                               ClassProxyPlainForwardFailed,
+		"copilot sniff: upstream dial failed":                                                            ClassProxyConnectDialFailed,
+		"proxy upstream dial failed":                                                                     ClassProxyUpstreamDegraded,
+		"transparent proxy upstream dial failed":                                                         ClassProxyUpstreamDegraded,
+		"proxy: agent could not be identified — defaulting to ADVISORY and blocking a write":             ClassProxyWriterUnidentified,
+		"inference no route":                                                                             ClassInferenceNoRoute,
+		"inference upstream error":                                                                       ClassInferenceUpstreamError,
+		"copilot transcript activity scan outlived its interval; agent liveness reads may lag":           ClassTranscriptScanSlow,
+		"inference upstream failed":                                                                      ClassInferenceUpstreamError,
+		"inference translate request failed":                                                             ClassInferenceUpstreamError,
 	}
 	for msg, want := range fed {
 		if got := LogFedClass(msg); got != want {
@@ -1170,6 +1322,11 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		if !MatchesExplicitClass(msg) {
 			t.Errorf("%q not matched by an explicit class", msg)
 		}
+	}
+	// The neutral prow/lgtm line (5xx, 422, transport) must not file as the
+	// operator-only permission class; only the 403 wording names it.
+	if got := LogFedClass("could not set the prow/lgtm commit status"); got == ClassGitHubAppStatusesPermission {
+		t.Errorf("neutral prow/lgtm status failure classified as %q", got)
 	}
 	for _, m := range []string{
 		"github REST 404 cached; suppressing repeated fetches",
@@ -1259,4 +1416,109 @@ func TestAllowClearedCommentPacesAndRespectsClose(t *testing.T) {
 	if !AllowClearedComment(posted, now.Add(limits.SeenGap), limits) {
 		t.Fatal("cleared comment refused after the gap")
 	}
+}
+
+// TestSeenLogKeepsOneSectionPerHive (#18608): sightings fold into one
+// comment body, newest first, with each hive's earlier section replaced.
+func TestSeenLogKeepsOneSectionPerHive(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	ev := Evidence{Class: ClassRestartStorm, Count: 2, Diagnostics: "line one\nline two"}
+	first := SeenLog("", SeenComment("fp1", "hive-a", "v5.1.0", "c1", ev, t0))
+	if !strings.HasPrefix(first, SeenLogMarker) || strings.Count(first, SelfReportSeenMarkerPrefix) != 1 {
+		t.Fatalf("first = %q", first)
+	}
+	second := SeenLog(first, SeenComment("fp1", "hive-b", "v5.1.0", "c2", ev, t0.Add(time.Hour)))
+	third := SeenLog(second, SeenComment("fp1", "hive-a", "v5.2.0", "c1", ev, t0.Add(2*time.Hour)))
+	if strings.Count(third, SeenLogMarker) != 1 || strings.Count(third, SelfReportSeenMarkerPrefix) != 2 {
+		t.Fatalf("third = %q, want one header and two hive sections", third)
+	}
+	a, b := strings.Index(third, "hive=hive-a "), strings.Index(third, "hive=hive-b ")
+	if a < 0 || b < 0 || a > b || !strings.Contains(third, "(v5.2.0, c1)") || strings.Contains(third, "(v5.1.0, c1)") {
+		t.Fatalf("third = %q, want hive-a's newer section first and its old one gone", third)
+	}
+	// A previous body without the seen-log header (a legacy per-sighting
+	// comment) is not folded in.
+	if got := SeenLog(SeenComment("fp1", "hive-c", "v5", "c", ev, t0), SeenComment("fp1", "hive-a", "v5", "c", ev, t0)); strings.Contains(got, "hive=hive-c ") {
+		t.Fatalf("legacy body folded in: %q", got)
+	}
+	// The section cap bounds the comment.
+	body := ""
+	for i := 0; i < seenLogMaxHives+5; i++ {
+		body = SeenLog(body, SeenComment("fp1", fmt.Sprintf("hive-%d", i), "v5", "c", Evidence{}, t0))
+	}
+	if n := strings.Count(body, SelfReportSeenMarkerPrefix); n != seenLogMaxHives {
+		t.Fatalf("sections = %d, want cap %d", n, seenLogMaxHives)
+	}
+}
+
+// Full-size diagnostics must not push the comment past GitHub's size limit.
+func TestSeenLogStaysUnderCommentSizeLimit(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	ev := Evidence{Class: ClassRestartStorm, Count: 2, Diagnostics: strings.Repeat("x", maxDiagnosticsBytes)}
+	body := ""
+	for i := 0; i < seenLogMaxHives; i++ {
+		body = SeenLog(body, SeenComment("fp1", fmt.Sprintf("hive-%d", i), "v5", "c", ev, t0))
+		if len(body) > seenLogMaxBytes {
+			t.Fatalf("after %d hives body = %d bytes, want <= %d", i+1, len(body), seenLogMaxBytes)
+		}
+	}
+	if !strings.Contains(body, fmt.Sprintf("hive=hive-%d ", seenLogMaxHives-1)) {
+		t.Fatalf("newest section dropped")
+	}
+	if n := strings.Count(body, SelfReportSeenMarkerPrefix); n < 2 || n >= seenLogMaxHives {
+		t.Fatalf("sections = %d, want some oldest trimmed", n)
+	}
+}
+
+// hivecommons/hive#18867: a burst of upstream dial failures to a GitHub host
+// is a flaky egress path, not a fleet bug. It is reportable only once it has
+// persisted past proxyUpstreamSustained without a quiet gap.
+func TestProxyUpstreamDegradedReportsOnlyWhenSustained(t *testing.T) {
+	const msg = "proxy upstream dial failed"
+	start := time.Date(2026, 11, 18, 3, 0, 0, 0, time.UTC)
+
+	t.Run("a burst is not reported", func(t *testing.T) {
+		now, advance := fakeClock(start)
+		tr := NewRuntimeTracker(now)
+		for i := 0; i < 50; i++ { // far above the repeat count, inside minutes
+			tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+			advance(10 * time.Second)
+		}
+		if ev := tr.Evidence(); len(ev) != 0 {
+			t.Fatalf("a short burst produced evidence: %#v", ev)
+		}
+	})
+
+	t.Run("repeated bursts separated by quiet gaps never add up", func(t *testing.T) {
+		now, advance := fakeClock(start)
+		tr := NewRuntimeTracker(now)
+		for burst := 0; burst < 4; burst++ {
+			for i := 0; i < 10; i++ {
+				tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+				advance(10 * time.Second)
+			}
+			advance(proxyUpstreamIdleClear + time.Minute)
+			if ev := tr.Evidence(); len(ev) != 0 {
+				t.Fatalf("burst %d reported after a quiet gap: %#v", burst, ev)
+			}
+		}
+	})
+
+	t.Run("a failure that persists past the sustained bar is reported", func(t *testing.T) {
+		now, advance := fakeClock(start)
+		tr := NewRuntimeTracker(now)
+		for elapsed := time.Duration(0); elapsed < proxyUpstreamSustained-10*time.Minute; elapsed += 5 * time.Minute {
+			tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+			advance(5 * time.Minute)
+		}
+		if ev := tr.Evidence(); len(ev) != 0 {
+			t.Fatalf("reported before the sustained bar: %#v", ev)
+		}
+		advance(11 * time.Minute)
+		tr.Observe(ClassProxyUpstreamDegraded, "api.github.com", msg, "")
+		ev := tr.Evidence()
+		if len(ev) != 1 || ev[0].Class != ClassProxyUpstreamDegraded {
+			t.Fatalf("a sustained outage must still be reported, got %#v", ev)
+		}
+	})
 }

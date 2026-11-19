@@ -213,9 +213,9 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	}
 	defer func() { _ = tlsClientConn.Close() }()
 
-	upstreamConn, err := tls.DialWithDialer(markDialer(upstreamDialTimeout), "tcp", host+":443", &tls.Config{ServerName: host})
+	upstreamConn, err := p.dialUpstreamTLS(host+":443", host, upstreamDialTimeout)
 	if err != nil {
-		p.logger.Error("transparent proxy upstream dial failed", "host", host, "error", err)
+		p.logger.Error("transparent proxy upstream dial failed", "host", host, "error_class", classifyDialError(err), "error", err)
 		return
 	}
 	defer func() { _ = upstreamConn.Close() }()
@@ -237,7 +237,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 // an allocated agent UID) is named internalCallerName so a hive-originated
 // write is attributed rather than mistaken for a UID-attribution failure.
 func (p *GitHubProxy) attributeTransparentConn(conn net.Conn) string {
-	if p.uidMap == nil {
+	if p.loadedUIDMap() == nil {
 		return ""
 	}
 	_, portStr, splitErr := net.SplitHostPort(conn.RemoteAddr().String())
@@ -257,7 +257,7 @@ func (p *GitHubProxy) attributeTransparentConn(conn net.Conn) string {
 	if lookupErr != nil {
 		return ""
 	}
-	if name := p.uidMap.LookupByUID(uid); name != "" {
+	if name := p.lookupAgentByUID(uid); name != "" {
 		return name
 	}
 	// The hive's own control plane is not an agent, so the lookup above
@@ -266,7 +266,7 @@ func (p *GitHubProxy) attributeTransparentConn(conn net.Conn) string {
 	// like an unattributable agent, which the mode gate blocks. Name it
 	// explicitly so it is attributed rather than mistaken for a
 	// UID-attribution failure.
-	if p.uidMap.IsInternalUID(uid) {
+	if p.loadedUIDMap().IsInternalUID(uid) {
 		return internalCallerName
 	}
 	return ""
@@ -282,7 +282,7 @@ func (p *GitHubProxy) dialTunnelUpstream(host string) (net.Conn, error) {
 	if p.tunnelDial != nil {
 		return p.tunnelDial(host)
 	}
-	return p.tunnelDialer(transparentProxyTimeout).Dial("tcp", host+":443")
+	return p.dialUpstreamRaw(host+":443", transparentProxyTimeout)
 }
 
 const tlsClientHelloMaxSize = 4096
@@ -534,11 +534,9 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	// curl sits in poll() waiting for "200 Connection established" that never
 	// comes). The deadline is lifted once established so the relay is not
 	// time-boxed.
-	upstreamConn, err := tls.DialWithDialer(markDialer(upstreamDialTimeout), "tcp", r.Host, &tls.Config{
-		ServerName: host,
-	})
+	upstreamConn, err := p.dialUpstreamTLS(r.Host, host, upstreamDialTimeout)
 	if err != nil {
-		p.logger.Error("proxy upstream dial failed", "host", r.Host, "error", err)
+		p.logger.Error("proxy upstream dial failed", "host", r.Host, "error_class", classifyDialError(err), "error", err)
 		return
 	}
 	defer func() { _ = upstreamConn.Close() }()
@@ -611,14 +609,14 @@ func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 	// is destination-guarded like the plain forward path: a CONNECT names an
 	// arbitrary host:port, and without the guard it was a raw TCP tunnel from
 	// the proxy's uid to the cloud metadata service or the cluster estate.
-	upstream, err := p.tunnelDialer(tunnelDialTimeout).Dial("tcp", r.Host)
+	upstream, err := p.dialUpstreamRaw(r.Host, tunnelDialTimeout)
 	if err != nil {
 		var denied *plainForwardDenied
 		if errors.As(err, &denied) {
 			p.refuseTunnel(conn, r, p.identifyAgentFromConn(conn, r), denied)
 			return
 		}
-		p.logger.Warn("proxy: CONNECT dial failed", "host", r.Host, "error", err)
+		p.logger.Warn("proxy: CONNECT dial failed", "host", r.Host, "error_class", classifyDialError(err), "error", err)
 		_, _ = fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\nconnection failed\n")
 		return
 	}
@@ -664,13 +662,7 @@ func (p *GitHubProxy) forwardPlainDirect(conn net.Conn, r *http.Request) {
 	// which is logged as such rather than guessed at.
 	agentName := p.identifyAgentFromConn(conn, r)
 
-	// Proxy-* hop headers address THIS proxy and must not travel further: the
-	// identity they assert is the one identifyAgentFromConn just decided
-	// whether to believe, and forwarding it would hand an agent's claimed name
-	// (and, in the Basic form, whatever it put in the password field) to every
-	// plain-HTTP host it can name.
-	r.Header.Del("Proxy-Authorization")
-	r.Header.Del("Proxy-Connection")
+	stripRelayRequestHeaders(r)
 
 	resp, err := p.plainForwardTransport().RoundTrip(r)
 	if err != nil {
@@ -688,6 +680,7 @@ func (p *GitHubProxy) forwardPlainDirect(conn net.Conn, r *http.Request) {
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+	stripRelayResponseHeaders(resp)
 	_ = resp.Write(conn)
 }
 

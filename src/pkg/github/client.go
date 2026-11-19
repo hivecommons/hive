@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/crux/sessiontaint"
 	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
@@ -45,6 +47,9 @@ var ErrNoGitHubClient = errors.New("no github client configured (hive is running
 type Client struct {
 	client      *gh.Client
 	linearTeams map[string][]string
+	// blockedOwnerReasons maps repo#N to the owner-action reason the blocked
+	// sweep read from a comment marker (blockedReasonFor). Zero value ready.
+	blockedOwnerReasons sync.Map
 	// foldedTrackers records issues that finding folds landed on (#11587).
 	foldedTrackers foldedTrackerSet
 	// commentBudget caps automated comments per issue per day (#12733).
@@ -57,6 +62,11 @@ type Client struct {
 	// transiently refused fetch does not publish the repo as empty
 	// (enumerate_lastgood.go). Zero value is ready to use.
 	lastGoodEnum lastGoodEnumeration
+	// openSnapshots keeps each repo's newest set of open issue numbers so a
+	// parent's tracker progress counts children filed in another managed
+	// repo (cross_repo_children.go, hivecommons/hive#18680). Zero value is
+	// ready to use.
+	openSnapshots openIssueSnapshots
 	// forge is the per-repo state cache EnumerateActionable reads listings
 	// from when attached (forgestate_reader.go, hivecommons/hive#13375).
 	// Nil lists GitHub directly.
@@ -111,6 +121,12 @@ type Client struct {
 	// the config (nil = package default; see SetNeverClaimLabels).
 	neverClaimMu     sync.RWMutex
 	neverClaimLabels []string
+	// contributorGraceNanos is governor.claims.contributor_grace_s as a
+	// duration in nanoseconds (0 = off; see SetContributorGrace).
+	contributorGraceNanos atomic.Int64
+	// humanClaims caches the out-of-ledger human-claim verdicts and the
+	// maintainer lookups behind them (IssueHumanClaimReason).
+	humanClaims humanClaimState
 	// openPRLinkState backs the pre-dispatch open-PR guard and the
 	// duplicate-fix resolver (open_pr_links.go); built lazily.
 	openPRLinkOnce  sync.Once
@@ -132,6 +148,13 @@ type Client struct {
 	issueFilter                IssueAdmitter
 	agentIssueDecisionPolicyMu sync.RWMutex
 	agentIssueDecisionPolicy   string
+	// needsSHALabelName is the configured SHA-hold label, recorded by each
+	// EnforceSHAHold sweep (guarded by issueFilterMu). Empty means the default.
+	needsSHALabelName string
+	// shaWaivers records who waived the SHA requirement per repo#number
+	// (hivecommons/hive#18866); guarded by shaWaiversMu.
+	shaWaiversMu sync.Mutex
+	shaWaivers   map[string]string
 	// reporterConfirmationEnabled restores the legacy close gate for all
 	// human-filed bug-family issues when configured. Nil/false means only
 	// per-issue opt-in markers activate the gate.
@@ -176,6 +199,8 @@ type Client struct {
 	canaryFailClosed          bool
 	canaryRegistry            *ioscan.CanaryRegistry
 	canaryLeakFunc            func(ioscan.CanaryLeak)
+	sessionTaint              *sessiontaint.Observer // nil unless session_taint.enabled; observe-only (#18987)
+	taintAudience             taintAudienceCache
 	appBotLogin               string // "<app-slug>[bot]" when the client authenticates as a GitHub App
 	appBotUserMu              sync.Mutex
 	appBotUserID              int64 // cached GitHub user id of appBotLogin; see AppBotUserID
@@ -308,7 +333,7 @@ type Client struct {
 	// StartPRRequestWatcher.
 	prAuthz PRRequestAuthorizer
 	// prHoldLabel decides, at PR-creation time, whether a freshly-opened PR must
-	// carry the "hold" label (F6). It receives the authoring agent and the PR's
+	// carry the ready-for-review gate label (F6; "hold" before #18468). It receives the authoring agent and the PR's
 	// target repo so role-specific safety rules (for example, mandatory human
 	// review of outreach content aimed at a repo the hive does not manage) can
 	// be enforced alongside the authoritative ACMM level. It is consulted
@@ -360,7 +385,10 @@ type Client struct {
 	prOpenedHook atomic.Pointer[PROpenedHook]
 	// prOpenedDetailHook is the richer sibling of prOpenedHook (body and
 	// handoff summary included), used by PR follow-up resume (#9583).
-	prOpenedDetailHook     atomic.Pointer[PROpenedDetailHook]
+	prOpenedDetailHook atomic.Pointer[PROpenedDetailHook]
+	// agentActionHook is told of each push and comment the relay made for an
+	// agent (agent_action_hook.go).
+	agentActionHook        atomic.Pointer[AgentActionHook]
 	prTerminalObservedHook atomic.Pointer[PRTerminalObservedHook]
 	// prReviewObservedHook and prTerminalReviews: other people's reviews on
 	// terminal PRs, read once per PR by the settle scan (#16116). See
@@ -394,6 +422,12 @@ type Client struct {
 	// the per-agent push-capability policy + forge-resistance. nil fails closed.
 	// Set by StartReviewRequestWatcher.
 	reviewAuthz ReviewRequestAuthorizer
+	// sandboxSpoolIssueAuthz and sandboxSpoolTopic serve the issue and topic
+	// kinds of the sandbox request spool (hivecommons/hive#18572, #18573).
+	// Set by SetSandboxSpoolRelays; nil refuses the kind.
+	sandboxSpoolMu         sync.Mutex
+	sandboxSpoolIssueAuthz IssueRequestAuthorizer
+	sandboxSpoolTopic      SandboxTopicHandler
 	// reviewBots is classification.review_bots (hivecommons/hive#7360): the
 	// external review-bot logins whose threads the hive may reply in and
 	// resolve. Zero value = feature off: the monitor reports nothing and the
@@ -451,6 +485,10 @@ type Client struct {
 	// stageArchived memoises repos GitHub refused label writes on because
 	// they are archived (hivecommons/hive#14026); the sweep skips them.
 	stageArchived coveredByPRLabelState
+	// stageLabelForbidden memoises repos where the GitHub App was refused
+	// label writes with 403 "Resource not accessible by integration"
+	// (hivecommons/hive#17582); the sweep skips them until restart.
+	stageLabelForbidden coveredByPRLabelState
 	// legacyDecisionLabels memoises repos whose retired needs-decision /
 	// needs-direction definitions were deleted (hivecommons/hive#12683), or
 	// whose definition cleanup was denied integration permission (#14372).
@@ -565,6 +603,9 @@ type Client struct {
 	stageEngineMu sync.Mutex
 	stageWriter   *stageWriter
 	stageEngines  map[*stagelabels.Store]stageengine.Reconciler
+	// stageWorkflow is the per-repository workflow model lookup the stage
+	// engine derives through (stage_model_owned.go, hivecommons/hive#18434).
+	stageWorkflow atomic.Pointer[stageWorkflowLookup]
 	// baseRefresh is the decision carry's memo (pr_decision_base_refresh.go).
 	baseRefreshOnce sync.Once
 	baseRefresh     *BaseRefreshChecker
@@ -988,6 +1029,9 @@ type PullRequest struct {
 	HiveAgent      string `json:"hive_agent,omitempty"`
 	HiveBackend    string `json:"hive_backend,omitempty"`
 	HiveModel      string `json:"hive_model,omitempty"`
+	// HiveEffort is the trailer's effort= value (reasoning effort requested
+	// at launch), "" when the trailer has none.
+	HiveEffort string `json:"hive_effort,omitempty"`
 	// HiveRun and HivePlan are the `Hive-Run:` / `Hive-Plan:` trailer values
 	// (ParseRunTrailers, hivecommons/hive#8310), read from the same list
 	// payload as the attribution trailer so the plan_match review perspective
@@ -1883,11 +1927,14 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		splitParents = nil
 	}
 	openByNumber := make(map[int]*gh.Issue, len(allIssues))
+	openNumbers := make(map[int]struct{}, len(allIssues))
 	for _, issue := range allIssues {
 		if !issue.IsPullRequest() {
 			openByNumber[issue.GetNumber()] = issue
+			openNumbers[issue.GetNumber()] = struct{}{}
 		}
 	}
+	c.openSnapshots.store(fullRepoName(owner, repoName), openNumbers)
 
 	for _, issue := range allIssues {
 		if issue.IsPullRequest() {
@@ -1956,7 +2003,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if hasBlockedLabel(labels) {
 			breakdown.Filtered++
 			breakdown.Blocked++
-			row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
+			row := c.workIssue(repo, issue, labels, "filtered", c.blockedReasonFor(repo, issue.GetNumber(), issue.GetBody()))
 			row.RecheckAfter, row.OpsTracking = blockedRecheck(issue.GetBody())
 			row.RecheckDone = blockedRecheckDone(issue.GetBody())
 			details = append(details, row)
@@ -1966,6 +2013,13 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			breakdown.Filtered++
 			breakdown.ReporterConfirmation++
 			details = append(details, c.workIssue(repo, issue, labels, "filtered", issueNeedsReporterConfirmationLabel))
+			continue
+		}
+		// needs-sha: waiting on the reporter for a commit SHA. Out of every
+		// agent lane whatever the reporter-trust setting (hivecommons/hive#18542).
+		if label := c.needsSHALabelOn(labels); label != "" {
+			breakdown.Filtered++
+			details = append(details, c.workIssue(repo, issue, labels, "filtered", label))
 			continue
 		}
 		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
@@ -2019,6 +2073,15 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 				ackSource = ackSourceForParent(parentNum)
 			}
 		}
+		// A known non-human author's proposal needs a human acknowledgement,
+		// including acknowledgement inherited from a relay-linked parent.
+		if !acknowledged && c.isKnownNonHumanAuthor(issue.GetUser()) {
+			if gate, ok := issueFilter.(AgentProposalGate); ok && gate.IsAgentProposal(labels, issue.GetTitle()) {
+				breakdown.Filtered++
+				details = append(details, c.workIssue(repo, issue, labels, "filtered", agentProposalFilterReason))
+				continue
+			}
+		}
 
 		// #9839: GitHub "blocked by" links become DependsOn edges. An
 		// unreadable blocker list fails OPEN with a warning: hiding work
@@ -2056,7 +2119,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		})
 	}
 	dropMutualBlocks(actionable, c.logger)
-	annotateIssueChildren(repo, subIssueSummaries, splitParents, openByNumber, actionable, details)
+	annotateIssueChildren(fullRepoName(owner, repoName), subIssueSummaries, splitParents, openByNumber, c.openSnapshots.isOpen, actionable, details)
 
 	// Keep an honest fallback if a future exclusion path is added without a
 	// dedicated category. This is the same enumeration snapshot, not a second
@@ -2263,6 +2326,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 					HiveAgent:           attrMeta.Agent,
 					HiveBackend:         attrMeta.Backend,
 					HiveModel:           attrMeta.Model,
+					HiveEffort:          attrMeta.Effort,
 					HiveRun:             runKey,
 					HivePlan:            planRef,
 					ScopeContract:       scopeContract,
@@ -2353,6 +2417,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 			HiveAgent:      attrMeta.Agent,
 			HiveBackend:    attrMeta.Backend,
 			HiveModel:      attrMeta.Model,
+			HiveEffort:     attrMeta.Effort,
 			HiveRun:        runKey,
 			HivePlan:       planRef,
 			ScopeContract:  scopeContract,
@@ -2544,6 +2609,11 @@ func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta Invocati
 		HiveAgent:      meta.Agent,
 		HiveBackend:    meta.Backend,
 		HiveModel:      meta.Model,
+		HiveEffort:     meta.Effort,
+		// Supersedes lets the PRs-by-model card count a closed PR that
+		// another PR replaced as superseded (#18719); the body is already
+		// in hand, so this costs no GitHub call.
+		Supersedes: prSupersedesNumberOrZero(pr.GetBody()),
 	}
 }
 
@@ -3363,7 +3433,43 @@ const (
 
 	prowLgtmWarningMarker = "<!-- hive-prow-lgtm-status-warning -->"
 	prowWarningTimeout    = 15 * time.Second
+
+	// prowLgtmStatusForbiddenMsg is the WARN logged when GitHub answers the
+	// prow/lgtm status write with 403. Its text is the keyword behind the
+	// github_app_statuses_permission_missing self-report class
+	// (pkg/fleetreport/runtime.go), so it is emitted only for that case.
+	prowLgtmStatusForbiddenMsg = "could not set the prow/lgtm commit status: the GitHub App lacks the statuses: write permission"
 )
+
+// isStatusesPermissionDenied reports whether err is GitHub refusing the
+// status write with 403 ("Resource not accessible by integration"), the
+// signature of an App installation without Commit statuses read & write.
+func isStatusesPermissionDenied(err error) bool {
+	var ghErr *gh.ErrorResponse
+	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusForbidden
+}
+
+// createCommitStatus is the one commit-status writer: it records state on
+// headSHA under statusContext through the external-effect boundary. The
+// prow/lgtm binding and the PR gate poster both go through it, so a 403 reads
+// the same everywhere (see isStatusesPermissionDenied). caller names the REST
+// caller for rate accounting; number is the PR the status belongs to.
+func (c *Client) createCommitStatus(ctx context.Context, owner, repoName string, number int, headSHA, statusContext, state, desc, caller string) error {
+	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repoName,
+		Kind:   effects.KindStatusCreate,
+		Target: strconv.Itoa(number),
+		Inputs: map[string]string{"context": statusContext, "state": state, "head_sha": headSHA, "description": effects.StableDigest(desc)},
+	}, func(ctx context.Context) (effects.Result, error) {
+		_, _, apiErr := c.client.Repositories.CreateStatus(WithRESTCaller(ctx, caller), owner, repoName, headSHA, &gh.RepoStatus{
+			Context:     gh.Ptr(statusContext),
+			State:       gh.Ptr(state),
+			Description: gh.Ptr(desc),
+		})
+		return effects.Result{Provenance: owner + "/" + repoName + "@" + headSHA}, apiErr
+	})
+	return err
+}
 
 // bindProwLgtm records the `prow/lgtm` success status on headSHA, the commit
 // the queue review approved. On failure it returns the error, logs it when a
@@ -3378,25 +3484,22 @@ func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, numbe
 	if len(desc) > prowStatusDescMaxLen {
 		desc = desc[:prowStatusDescMaxLen]
 	}
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
-		Repo:   owner + "/" + repoName,
-		Kind:   effects.KindStatusCreate,
-		Target: strconv.Itoa(number),
-		Inputs: map[string]string{"context": prowLgtmStatusContext, "state": "success", "head_sha": headSHA, "description": effects.StableDigest(desc)},
-	}, func(ctx context.Context) (effects.Result, error) {
-		_, _, apiErr := c.client.Repositories.CreateStatus(WithRESTCaller(ctx, "hive:queue_pr_automerge_status"), owner, repoName, headSHA, &gh.RepoStatus{
-			Context:     gh.Ptr(prowLgtmStatusContext),
-			State:       gh.Ptr("success"),
-			Description: gh.Ptr(desc),
-		})
-		return effects.Result{Provenance: owner + "/" + repoName + "@" + headSHA}, apiErr
-	})
+	err := c.createCommitStatus(ctx, owner, repoName, number, headSHA, prowLgtmStatusContext, "success", desc, "hive:queue_pr_automerge_status")
 	if err == nil {
 		return nil
 	}
 	if c.logger != nil {
-		c.logger.Warn("could not set the prow/lgtm commit status; the GitHub App likely lacks the statuses: write permission",
-			"repo", owner+"/"+repoName, "number", number, "error", err)
+		// Only a 403 names the permission gap: that line is the
+		// github_app_statuses_permission_missing self-report keyword. Any
+		// other failure (5xx, 422, transport, deadline) stays neutral so a
+		// transient outage is not filed as an installation-permission fault.
+		if isStatusesPermissionDenied(err) {
+			c.logger.Warn(prowLgtmStatusForbiddenMsg,
+				"repo", owner+"/"+repoName, "number", number, "error", err)
+		} else {
+			c.logger.Warn("could not set the prow/lgtm commit status",
+				"repo", owner+"/"+repoName, "number", number, "error", err)
+		}
 	}
 	note := "Hive queued this PR but could not set the `prow/lgtm` commit status, so Prow may strip the `lgtm` label and the auto-merge queue may not hold."
 	// A caller that withdrew has nothing left to warn about; a caller whose
@@ -3773,6 +3876,12 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 	}
 	for _, label := range labels {
 		lower := strings.ToLower(label)
+		// The hive's own gate labels (ready-for-review, decision-needed;
+		// hivecommons/hive#18468) block exactly like `hold`, matched exactly
+		// so a look-alike such as `not-ready-for-review` is not a hold.
+		if IsHiveGateLabel(label) {
+			return true
+		}
 		// Provenance labels (hive/<id>) are never hold labels, whatever the
 		// hive ID happens to contain. The substring rule below otherwise
 		// reads hive/hosted-...-placeHOLDer-r05x as "hold" and parks every
@@ -4430,6 +4539,39 @@ func (c *Client) GetFileContentRef(ctx context.Context, owner, repo, path, ref s
 	return content, nil
 }
 
+// ListDirectoryFiles returns the names of the regular files directly inside
+// the directory at path in owner/repo at an optional git ref (an empty ref uses
+// the default branch). Subdirectories, symlinks and submodules are skipped. A
+// 404 means the directory does not exist and is reported as (nil, nil), so a
+// caller can tell "no such directory" apart from a failed read. It backs the
+// repo agent discovery scan of .hive/agents/ (hivecommons/hive#18491).
+func (c *Client) ListDirectoryFiles(ctx context.Context, owner, repo, path, ref string) ([]string, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	var opts *gh.RepositoryContentGetOptions
+	if ref != "" {
+		opts = &gh.RepositoryContentGetOptions{Ref: ref}
+	}
+	fileContent, dirContent, resp, err := c.client.Repositories.GetContents(ctx, owner, repo, path, opts)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("listing %s/%s/%s: %w", owner, repo, path, err)
+	}
+	if fileContent != nil {
+		return nil, fmt.Errorf("%s/%s/%s is a file, not a directory", owner, repo, path)
+	}
+	names := make([]string, 0, len(dirContent))
+	for _, entry := range dirContent {
+		if entry.GetType() == "file" && entry.GetName() != "" {
+			names = append(names, entry.GetName())
+		}
+	}
+	return names, nil
+}
+
 // PathExistsAtRef reports whether path exists in owner/repo at the given git ref
 // (branch, tag, or commit SHA). It is used by the advisory digest to verify that
 // a finding's file reference still exists at the pinned analysis commit (#3704),
@@ -4593,19 +4735,20 @@ const shaHoldComment = shaHoldMarker + "\n" +
 	"You can find it by running:\n```\ngit rev-parse --short HEAD\n```\n\n" +
 	"Or check the bottom of the console UI for the version string.\n\n" +
 	shaHoldLegacyNoticeSentence + " " +
-	"Simply add a comment with the SHA and the hold will be automatically removed._"
+	"Simply add a comment with the SHA and the label will be automatically removed._"
 
 type SHAHoldConfig struct {
 	PrimaryRepo     string
 	AIAuthor        string
 	InternalAuthors []string
 	// TrustedAssociations are the GitHub author associations (OWNER, MEMBER,
-	// COLLABORATOR, ...) whose missing SHA gets TrustedLabel instead of the
-	// hard `hold` (hivecommons/hive#12002): the SHA request is a
-	// reproduction aid, not a maintainer park.
+	// COLLABORATOR, ...) that got TrustedLabel instead of the hard `hold`
+	// (hivecommons/hive#12002). Since #18468 every reporter gets TrustedLabel
+	// and the sweep no longer consults this; it is kept for callers.
 	TrustedAssociations []string
-	// TrustedLabel is the soft label for trusted reporters. Empty (or "hold")
-	// keeps the legacy hard hold for every reporter.
+	// TrustedLabel is the label the sweep applies while a SHA is missing.
+	// Empty (or "hold") uses defaultSHAHoldLabel: the sweep never applies
+	// `hold` (hivecommons/hive#18468), for any reporter.
 	TrustedLabel string
 }
 
@@ -4618,23 +4761,66 @@ type SHAHoldResult struct {
 	Softened int `json:"softened"`
 }
 
-// shaHoldSoftLabel returns the soft label to apply to this reporter's issue,
-// or "" when the hard `hold` applies.
-func (cfg SHAHoldConfig) shaHoldSoftLabel(association string) string {
-	label := strings.TrimSpace(cfg.TrustedLabel)
-	if label == "" || strings.EqualFold(label, "hold") {
+// defaultSHAHoldLabel is the label the SHA sweep applies when none is
+// configured (config.DefaultSHAHoldTrustedLabel).
+const defaultSHAHoldLabel = "needs-sha"
+
+// NeedsSHALabelDescription is the repo label description for the SHA-hold label.
+const NeedsSHALabelDescription = "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
+
+// needsSHALabelOn returns the SHA-hold label the labels carry (the configured
+// name, or the default name), or "" when none. An issue wearing it is parked
+// on the reporter and kept out of agent work lanes.
+func (c *Client) needsSHALabelOn(labels []string) string {
+	// A maintainer's waiver (hivecommons/hive#18866) outranks a lingering
+	// needs-sha until the sweep removes it.
+	if labelPresent(labels, SHAWaivedLabel) {
 		return ""
 	}
-	association = strings.TrimSpace(association)
-	if association == "" {
-		return ""
-	}
-	for _, trusted := range cfg.TrustedAssociations {
-		if strings.EqualFold(strings.TrimSpace(trusted), association) {
-			return label
+	c.issueFilterMu.RLock()
+	configured := c.needsSHALabelName
+	c.issueFilterMu.RUnlock()
+	for _, name := range []string{configured, defaultSHAHoldLabel} {
+		if name = strings.TrimSpace(name); name == "" {
+			continue
+		}
+		for _, l := range labels {
+			if strings.EqualFold(strings.TrimSpace(l), name) {
+				return name
+			}
 		}
 	}
 	return ""
+}
+
+func (c *Client) setNeedsSHALabel(name string) {
+	c.issueFilterMu.Lock()
+	c.needsSHALabelName = strings.TrimSpace(name)
+	c.issueFilterMu.Unlock()
+}
+
+// ensureNeedsSHALabel creates the SHA-hold label with its description when
+// the repo lacks it. Best effort: the label add that follows still works.
+func (c *Client) ensureNeedsSHALabel(ctx context.Context, owner, repo, name string) {
+	if err := c.EnsureIssueLabel(ctx, owner+"/"+repo, name, "fbca04", NeedsSHALabelDescription); err != nil {
+		c.logger.Warn("could not ensure SHA-hold label", "repo", repo, "label", name, "error", err)
+	}
+}
+
+// shaHoldLabel returns the label the sweep applies to an issue missing a SHA.
+// It is never `hold`: a `hold` means a person said hands-off, and the hive
+// no longer applies one itself (hivecommons/hive#18468). Before #18468 an
+// untrusted reporter's issue got the hard `hold`; the sweep now gives every
+// reporter this label and swaps any `hold` it applied itself for it. An
+// untrusted reporter's issue still stays out of automatic work through the
+// reporter-trust gate (issue_filter.reporter_trust) until a maintainer
+// admits it.
+func (cfg SHAHoldConfig) shaHoldLabel() string {
+	label := strings.TrimSpace(cfg.TrustedLabel)
+	if label == "" || strings.EqualFold(label, LegacyHiveHoldLabel) {
+		return defaultSHAHoldLabel
+	}
+	return label
 }
 
 func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHoldResult, error) {
@@ -4643,6 +4829,7 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 	}
 	result := &SHAHoldResult{}
 	owner, repo := c.splitRepo(cfg.PrimaryRepo)
+	c.setNeedsSHALabel(cfg.shaHoldLabel())
 
 	opts := &gh.IssueListByRepoOptions{
 		State:       "open",
@@ -4661,59 +4848,67 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 		}
 
 		author := safeGetLogin(issue.GetUser())
-		if author == cfg.AIAuthor || isInternalAuthor(author, cfg.InternalAuthors) {
-			result.Skipped++
-			continue
-		}
-
 		labels := extractLabels(issue.Labels)
 		held := c.isHeld(labels)
-		hasSHA := shaPattern.MatchString(issue.GetBody())
+
+		// Not every reporter owes a SHA (hivecommons/hive#18866): the hive's
+		// own accounts, the project's owners and maintainers, issues whose
+		// body already names concrete repo paths, and issues a maintainer
+		// waived are exempt. An exempt issue goes through the same lift path
+		// as one that gained a SHA, so a needs-sha applied before the
+		// exemption existed (or before the waiver) is released on this sweep.
+		exempt := author == cfg.AIAuthor || isInternalAuthor(author, cfg.InternalAuthors)
+		reason := shaExemptInternal
+		if !exempt {
+			reason = cfg.shaHoldExempt(issue.GetAuthorAssociation(), issue.GetBody(), labels)
+			exempt = reason != ""
+		}
+		if labelPresent(labels, SHAWaivedLabel) {
+			// Read the comments once per waiver, not on every sweep.
+			if !c.shaWaiverKnown(owner+"/"+repo, issue.GetNumber()) {
+				c.refreshSHAWaiver(ctx, owner, repo, issue.GetNumber())
+			}
+		} else {
+			c.RecordSHAWaiver(owner+"/"+repo, issue.GetNumber(), "")
+		}
+		hasSHA := exempt || shaPattern.MatchString(issue.GetBody())
+		if exempt && reason != shaExemptInternal {
+			c.logger.Debug("SHA-HOLD exempt", "repo", repo, "issue", issue.GetNumber(), "reason", reason)
+		}
+
+		if exempt {
+			// Lift the soft label whatever else is on the issue (a person's
+			// `hold` included), so a needs-sha applied before the exemption
+			// or the waiver existed is released on this sweep.
+			soft := cfg.shaHoldLabel()
+			softHeld := labelPresent(labels, soft)
+			if softHeld {
+				c.enforceSoftSHAHold(ctx, owner, repo, issue.GetNumber(), author, soft, labels, false, true, result)
+				labels = slices.DeleteFunc(slices.Clone(labels), func(l string) bool { return strings.EqualFold(strings.TrimSpace(l), strings.TrimSpace(soft)) })
+			}
+			// A `hold` the sweep itself applied before #18468 is still
+			// lifted by the path below; a person's hold is left alone there.
+			if !held {
+				if !softHeld {
+					result.Skipped++
+				}
+				continue
+			}
+		}
 
 		if !hasSHA {
 			hasSHA = c.checkCommentsForSHA(ctx, owner, repo, issue.GetNumber(), author)
 		}
 
-		if soft := cfg.shaHoldSoftLabel(issue.GetAuthorAssociation()); soft != "" {
-			c.enforceSoftSHAHold(ctx, owner, repo, issue.GetNumber(), author, soft, labels, held, hasSHA, result)
-			continue
-		}
-
-		switch {
-		case hasSHA && held:
-			// Only release a hold this sweep applied. A human's `hold`, a hold
-			// applied by another Hive subsystem through the same App (the
-			// dashboard hold on a hive with no id), or any non-literal hold
-			// spelling (`on-hold`, `hive-pause/<id>`) is left for its owner
-			// to lift (#8927).
-			ok, err := c.shaHoldIsOwn(ctx, owner, repo, issue.GetNumber())
-			if err != nil {
-				c.logger.Warn("SHA-UNHOLD skipped: could not verify hold provenance", "repo", repo, "issue", issue.GetNumber(), "error", err)
-				result.Skipped++
-				continue
-			}
-			if !ok {
-				c.logger.Info("SHA-UNHOLD skipped: current hold was not applied by the SHA-hold sweep", "repo", repo, "issue", issue.GetNumber(), "author", author)
-				result.Skipped++
-				continue
-			}
-			c.unhold(ctx, owner, repo, issue.GetNumber())
-			result.Unheld++
-			c.logger.Info("SHA-UNHOLD", "repo", repo, "issue", issue.GetNumber(), "author", author)
-		case !hasSHA && !held:
-			c.hold(ctx, owner, repo, issue.GetNumber())
-			result.Held++
-			c.logger.Info("SHA-HOLD", "repo", repo, "issue", issue.GetNumber(), "author", author)
-		default:
-			result.Skipped++
-		}
+		c.enforceSoftSHAHold(ctx, owner, repo, issue.GetNumber(), author, cfg.shaHoldLabel(), labels, held, hasSHA, result)
 	}
 
 	return result, nil
 }
 
-// enforceSoftSHAHold is the trusted-reporter branch of EnforceSHAHold
-// (hivecommons/hive#12002). It never applies the hard `hold`: a missing SHA
+// enforceSoftSHAHold is EnforceSHAHold's one branch (trusted reporters since
+// hivecommons/hive#12002, every reporter since #18468). It never applies the
+// hard `hold`: a missing SHA
 // gets the soft label plus the usual notice, a provided SHA lifts the soft
 // label, and a hard `hold` this sweep applied before the soft path existed is
 // swapped for the soft label. A `hold` from anyone else is left alone.
@@ -4731,6 +4926,7 @@ func (c *Client) enforceSoftSHAHold(ctx context.Context, owner, repo string, num
 			return
 		}
 		if !hasSHA && !softHeld {
+			c.ensureNeedsSHALabel(ctx, owner, repo, soft)
 			if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{soft}); err != nil {
 				c.logger.Warn("failed to add soft SHA label", "repo", repo, "issue", number, "label", soft, "error", err)
 				result.Skipped++
@@ -4757,6 +4953,7 @@ func (c *Client) enforceSoftSHAHold(ctx context.Context, owner, repo string, num
 		result.Unheld++
 		c.logger.Info("SHA-UNHOLD", "repo", repo, "issue", number, "author", author, "label", soft)
 	case !hasSHA && !softHeld:
+		c.ensureNeedsSHALabel(ctx, owner, repo, soft)
 		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{soft}); err != nil {
 			c.logger.Warn("failed to add soft SHA label", "repo", repo, "issue", number, "label", soft, "error", err)
 			result.Skipped++
@@ -4788,19 +4985,6 @@ func (c *Client) checkCommentsForSHA(ctx context.Context, owner, repo string, nu
 		}
 	}
 	return false
-}
-
-func (c *Client) hold(ctx context.Context, owner, repo string, number int) {
-	_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{"hold"})
-	if err != nil {
-		c.logger.Warn("failed to add hold label", "repo", repo, "issue", number, "error", err)
-	}
-
-	comment := &gh.IssueComment{Body: gh.Ptr(shaHoldComment)}
-	_, _, err = c.client.Issues.CreateComment(ctx, owner, repo, number, comment)
-	if err != nil {
-		c.logger.Warn("failed to post SHA hold comment", "repo", repo, "issue", number, "error", err)
-	}
 }
 
 func (c *Client) unhold(ctx context.Context, owner, repo string, number int) {
@@ -4934,6 +5118,18 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path 
 	// A merge resolves this PR's blockers and proven repository-level causes,
 	// not another PR's required checks or review/head-specific conditions.
 	c.clearMergeFailureAlertsAfterMerge(repo, number, method)
+}
+
+// RecordWorkflowLabelRemoved records the deletion of a workflow model's
+// stale label from repo (automerge's label garbage collection,
+// hivecommons/hive#17620). model is the binding that made it stale
+// (name@version) or "unbound".
+func (c *Client) RecordWorkflowLabelRemoved(repo, label, model string) {
+	if c == nil {
+		return
+	}
+	c.recordWriteAudit(AuditActionWorkflowLabelRemoved, InvocationMeta{Agent: AttributionAgentGovernor},
+		WriteTarget{Repo: repo}, "label", label, "workflow", model)
 }
 
 // RepoWorkBreakdown explains the raw open issue and PR totals for one
@@ -5424,4 +5620,26 @@ func hardSuppressIssueBucket(filter IssueAdmitter, labels []string) string {
 		return classifier.HardSuppressIssueBucket(labels)
 	}
 	return hardSuppressIssueLabel(labels)
+}
+
+// FindIssueByBody returns the URL of the oldest issue in repo (owner/repo)
+// whose body contains marker, or "" when none exists. The inbox uses it to
+// find the RFC a spek agent published, via the provenance reference the RFC
+// body carries.
+func (c *Client) FindIssueByBody(ctx context.Context, repo, marker string) (string, error) {
+	marker = strings.TrimSpace(marker)
+	if repo == "" || marker == "" {
+		return "", nil
+	}
+	q := fmt.Sprintf("repo:%s is:issue in:body %q", repo, marker)
+	result, _, err := c.client.Search.Issues(ctx, q, &gh.SearchOptions{
+		Sort: "created", Order: "asc", ListOptions: gh.ListOptions{PerPage: 1},
+	})
+	if err != nil {
+		return "", fmt.Errorf("searching issues in %s: %w", repo, err)
+	}
+	if len(result.Issues) == 0 {
+		return "", nil
+	}
+	return result.Issues[0].GetHTMLURL(), nil
 }

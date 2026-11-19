@@ -138,6 +138,7 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerNeedsHumanWord"),
 		jsFunc(t, html, "stageTrackerBlockedForDecisionPR"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
+		stageTrackerHumanGateJS(t, html),
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),
 		jsFunc(t, html, "stageTrackerSinceHtml"),
 		jsFunc(t, html, "stageTrackerSubRowHtml"),

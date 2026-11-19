@@ -28,7 +28,7 @@ func connectorConfigs(entries []config.KnowledgeConnector) []connector.Connector
 			Interval: interval,
 			Layer:    e.Layer,
 			Scope:    e.Scope,
-			Auth:     connector.Auth{Env: e.Auth.Env, File: e.Auth.File},
+			Auth:     dashboard.KnowledgeConnectorAuth(e.Auth),
 		})
 	}
 	return out
@@ -40,7 +40,7 @@ func connectorConfigs(entries []config.KnowledgeConnector) []connector.Connector
 // searchable like any other vault. Cursors and status persist under
 // <baseDir>/connector-state. A nil reg uses connector.DefaultRegistry().
 // Returns nil when no connectors are configured.
-func newKnowledgeConnectorSyncer(entries []config.KnowledgeConnector, reg *connector.Registry, api *knowledge.KnowledgeAPI, baseDir string, logger *slog.Logger) (*connector.Syncer, error) {
+func newKnowledgeConnectorSyncer(entries []config.KnowledgeConnector, reg *connector.Registry, api *knowledge.KnowledgeAPI, baseDir string, logger *slog.Logger, afterSync func(connector.Status)) (*connector.Syncer, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
@@ -79,6 +79,9 @@ func newKnowledgeConnectorSyncer(entries []config.KnowledgeConnector, reg *conne
 			if store := api.GetVaultStore(filepath.Join(baseDir, "connectors", st.Layer)); store != nil {
 				store.Reindex()
 			}
+			if afterSync != nil {
+				afterSync(st)
+			}
 		},
 	})
 }
@@ -86,7 +89,12 @@ func newKnowledgeConnectorSyncer(entries []config.KnowledgeConnector, reg *conne
 // bootKnowledgeConnectors builds and starts the connector syncer. A failure
 // is logged and leaves connectors off; it never blocks the rest of boot.
 func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
-	s, err := newKnowledgeConnectorSyncer(b.cfg.Knowledge.Connectors, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger)
+	// The Inbox always boots, even with no connectors, so GET /api/inbox
+	// answers 200 with an empty list and the panel renders its empty state
+	// (#17918) instead of waiting forever on a 404.
+	b.bootInbox(knowledge.BaseDir())
+	b.startConnectorSyncer = deps.startConnectorSyncer
+	s, err := newKnowledgeConnectorSyncer(b.cfg.Knowledge.Connectors, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger, b.inboxAfterSync)
 	if err != nil {
 		b.logger.Warn("knowledge connectors disabled", "error", err)
 		return
@@ -94,17 +102,62 @@ func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
 	if s == nil {
 		return
 	}
+	b.knowledgeConnectorsMu.Lock()
 	b.knowledgeConnectors = s
+	b.knowledgeConnectorsMu.Unlock()
+	// The Inbox booted before the syncer existed; give it the live
+	// connectors so Plaud can read recordings directly (#18091).
+	b.refreshInboxSources(b.cfg.Knowledge.Connectors, s)
 	if deps.startConnectorSyncer != nil {
 		deps.startConnectorSyncer(b.ctx, s)
 	}
 	b.logger.Info("knowledge connectors started", "count", len(b.cfg.Knowledge.Connectors))
 }
 
+// reloadKnowledgeConnectors applies a knowledge.connectors list saved from
+// the dashboard to the running hive (#18091). With no syncer yet (the hive
+// booted with zero connectors, or the boot build failed) it builds and
+// starts one from the same inputs as bootKnowledgeConnectors; otherwise it
+// reconfigures the running syncer in place, so unchanged connectors keep
+// syncing undisturbed. The knowledge.publish mirror is not rebuilt: a
+// changed publish connector still needs a restart. Once the runtime follows,
+// the Inbox sources are rebuilt from entries so a voice connector added from
+// the dashboard shows up in the Inbox at once.
+func (b *boot) reloadKnowledgeConnectors(entries []config.KnowledgeConnector) (dashboard.KnowledgeConnectorRuntime, error) {
+	b.knowledgeConnectorsMu.Lock()
+	defer b.knowledgeConnectorsMu.Unlock()
+	if b.knowledgeConnectors != nil {
+		if err := b.knowledgeConnectors.Reconfigure(connectorConfigs(entries)); err != nil {
+			return nil, err
+		}
+		b.logger.Info("knowledge connectors reloaded", "count", len(entries))
+		b.refreshInboxSources(entries, b.knowledgeConnectors)
+		return b.knowledgeConnectors, nil
+	}
+	s, err := newKnowledgeConnectorSyncer(entries, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger, b.inboxAfterSync)
+	if err != nil || s == nil {
+		// No runtime to follow: with no entries left the Inbox still lists
+		// no sources, and a build failure keeps the previous set.
+		if err == nil {
+			b.refreshInboxSources(entries, nil)
+		}
+		return nil, err
+	}
+	b.knowledgeConnectors = s
+	if b.startConnectorSyncer != nil {
+		b.startConnectorSyncer(b.ctx, s)
+	}
+	b.logger.Info("knowledge connectors started", "count", len(entries), "hot_loaded", true)
+	b.refreshInboxSources(entries, s)
+	return s, nil
+}
+
 // knowledgeConnectorRuntime exposes the syncer to the dashboard. A nil
 // *connector.Syncer must stay a nil interface so the dashboard reports
 // "no connectors configured" instead of calling methods on a nil pointer.
 func (b *boot) knowledgeConnectorRuntime() dashboard.KnowledgeConnectorRuntime {
+	b.knowledgeConnectorsMu.Lock()
+	defer b.knowledgeConnectorsMu.Unlock()
 	if b.knowledgeConnectors == nil {
 		return nil
 	}

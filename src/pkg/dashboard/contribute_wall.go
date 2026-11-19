@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/modelfamily"
 )
 
 const (
@@ -75,6 +76,61 @@ type WallModelStats struct {
 	Runs            int     `json:"runs"`
 	VerifiedPRShare float64 `json:"verified_pr_share"`
 	FailureRate     float64 `json:"failure_rate"`
+	// Abandoned, Scenarios and FailureKinds (#18721) say WHY a model's runs
+	// ended as they did, from data the run log already holds. Scenarios uses
+	// deriveScenario's closed vocabulary — the same keys as run-stats'
+	// backends[].scenarios — and sums to Runs. FailureKinds splits the runs
+	// behind FailureRate (outcome "failed" only) and sums to that count;
+	// abandonments stay out of it exactly as they stay out of FailureRate.
+	Abandoned    int                   `json:"abandoned"`
+	Scenarios    map[string]int        `json:"scenarios"`
+	FailureKinds WallModelFailureKinds `json:"failure_kinds"`
+	// CanonicalModel is modelfamily.Canonical(Model), the id the Governor's
+	// PRs-by-model card groups by, so run stats line up with it (#18718).
+	CanonicalModel string `json:"canonical_model"`
+	// RawModels lists the raw spellings folded into this row, each with its
+	// own run count. Set only when the caller asks for group=canonical.
+	RawModels []WallRawModelRuns `json:"raw_models,omitempty"`
+
+	// verifiedRuns and failedRuns are the counts behind the two rates, kept
+	// so group=canonical can recompute the rates exactly.
+	verifiedRuns, failedRuns int
+}
+
+// WallModelFailureKinds counts a model's failed runs by the failure kind the
+// relay reported: the contributor's runtime (environment), the work itself
+// (task), or no usable kind (unspecified, an older relay).
+type WallModelFailureKinds struct {
+	Environment int `json:"environment"`
+	Task        int `json:"task"`
+	Unspecified int `json:"unspecified"`
+}
+
+// addRunCause books one run's scenario (and, for a failed run, its failure
+// kind) onto the model's split (#18721). A record written before the scenario
+// field existed is classified the same way appendTaskRun would have.
+func (m *WallModelStats) addRunCause(rec TaskRunRecord) {
+	sc := rec.Scenario
+	if sc == "" {
+		sc = deriveScenario(rec.Outcome, rec.CompletionSignal, rec.FailureKind, rec.AbandonCause)
+	}
+	if m.Scenarios == nil {
+		m.Scenarios = map[string]int{}
+	}
+	m.Scenarios[sc]++
+	switch rec.Outcome {
+	case outcomeAbandoned:
+		m.Abandoned++
+	case outcomeFailed:
+		switch sc {
+		case scenarioEnvFailure:
+			m.FailureKinds.Environment++
+		case scenarioTaskFailure:
+			m.FailureKinds.Task++
+		default:
+			m.FailureKinds.Unspecified++
+		}
+	}
 }
 
 type wallContext struct {
@@ -620,6 +676,7 @@ func readTaskRunModelStats(path string, window time.Duration) (map[string]WallMo
 			by[key] = a
 		}
 		a.Runs++
+		a.addRunCause(rec)
 		if rec.PRVerified {
 			a.verified++
 		}
@@ -633,6 +690,8 @@ func readTaskRunModelStats(path string, window time.Duration) (map[string]WallMo
 			a.VerifiedPRShare = float64(a.verified) / float64(a.Runs)
 			a.FailureRate = float64(a.failed) / float64(a.Runs)
 		}
+		a.CanonicalModel = modelfamily.Canonical(a.Model)
+		a.verifiedRuns, a.failedRuns = a.verified, a.failed
 		out[k] = a.WallModelStats
 	}
 	return out, nil
@@ -659,5 +718,9 @@ func (s *Server) handleContributeRunStatsByModel(w http.ResponseWriter, r *http.
 		http.Error(w, "task-run log unreadable", http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, map[string]any{"window_days": days, "models": wallStatsList(stats)})
+	models := wallStatsList(stats)
+	if runStatsGroupCanonical(r) {
+		models = groupWallModelStatsByCanonical(models)
+	}
+	jsonResponse(w, map[string]any{"window_days": days, "models": models})
 }

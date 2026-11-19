@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 )
 
@@ -71,39 +72,118 @@ func repoScopePath(req *http.Request) string {
 }
 
 // repoPauseRefusal is RepoPauseRefusal against this proxy's current predicate.
+// A predicate that panics or times out counts as paused (see
+// policy_callback_guard.go).
 func (p *GitHubProxy) repoPauseRefusal(method, path string) (string, bool) {
 	p.pausedMu.RLock()
 	paused := p.repoPaused
 	p.pausedMu.RUnlock()
-	return RepoPauseRefusal(paused, method, path)
+	failed := false
+	reason, refused := RepoPauseRefusal(p.guardRepoPredicate("repo pause", paused, true, &failed), method, path)
+	if failed {
+		return policyCallbackFailedReason("repo pause"), true
+	}
+	return reason, refused
 }
 
+// autoMergeRefusal is RepoAutoMergeRefusal against the current predicate. A
+// predicate that panics or times out counts as auto-merge off.
 func (p *GitHubProxy) autoMergeRefusal(method, path string) (string, bool) {
 	p.autoMergeMu.RLock()
 	enabled := p.repoAutoMergeOn
 	p.autoMergeMu.RUnlock()
-	return RepoAutoMergeRefusal(enabled, method, path)
+	failed := false
+	reason, refused := RepoAutoMergeRefusal(p.guardRepoPredicate("repo auto-merge", enabled, false, &failed), method, path)
+	if failed {
+		return policyCallbackFailedReason("repo auto-merge"), true
+	}
+	return reason, refused
 }
 
 func (p *GitHubProxy) graphQLAutoMergeRefusal(body []byte) (string, bool) {
 	p.autoMergeMu.RLock()
 	enabled := p.repoAutoMergeOn
 	p.autoMergeMu.RUnlock()
-	return GraphQLAutoMergeRefusal(enabled, body)
+	failed := false
+	reason, refused := GraphQLAutoMergeRefusal(p.guardRepoPredicate("repo auto-merge", enabled, false, &failed), body)
+	if failed {
+		return policyCallbackFailedReason("repo auto-merge"), true
+	}
+	return reason, refused
 }
 
 // agentRepoScopeRefusal is AgentRepoScopeRefusal against the current predicate.
+// A predicate that panics or times out counts as not scoped.
 func (p *GitHubProxy) agentRepoScopeRefusal(agentName, method, path string) (string, bool) {
 	p.scopeMu.RLock()
 	serves := p.agentServesRepo
 	p.scopeMu.RUnlock()
-	return AgentRepoScopeRefusal(serves, agentName, method, path)
+	if serves == nil {
+		return AgentRepoScopeRefusal(nil, agentName, method, path)
+	}
+	failed := false
+	guarded := func(agent, repo string) bool {
+		v, ok := p.callPolicyPredicate("agent repo scope", func() bool { return serves(agent, repo) })
+		if !ok {
+			failed = true
+			return false
+		}
+		return v
+	}
+	reason, refused := AgentRepoScopeRefusal(guarded, agentName, method, path)
+	if failed {
+		return policyCallbackFailedReason("agent repo scope"), true
+	}
+	return reason, refused
 }
 
-func (p *GitHubProxy) writeSurfaceEnforcedFunc() func(agent string) bool {
+// writeSurfaceEnforcedFunc returns the live write_surface.enforce predicate
+// wrapped so a call that panics or times out reports the lane as enforced:
+// its direct writes are refused and its GitHub hosts are intercepted, the
+// deny direction for both callers. failed, when non-nil, is set on a failed
+// call so the caller can answer with policyCallbackFailedReason instead of
+// the normal write_surface.enforce directive.
+func (p *GitHubProxy) writeSurfaceEnforcedFunc(failed *bool) func(agent string) bool {
 	p.writeSurfaceMu.RLock()
-	defer p.writeSurfaceMu.RUnlock()
-	return p.writeSurfaceEnforced
+	enforced := p.writeSurfaceEnforced
+	p.writeSurfaceMu.RUnlock()
+	if enforced == nil {
+		return nil
+	}
+	return func(agent string) bool {
+		v, ok := p.callPolicyPredicate("write_surface.enforce", func() bool { return enforced(agent) })
+		if !ok {
+			if failed != nil {
+				*failed = true
+			}
+			return true
+		}
+		return v
+	}
+}
+
+// writeSurfaceEnforceRefusal is WriteSurfaceEnforceRefusal against the current
+// predicate. A failed predicate refuses with policyCallbackFailedReason, not
+// the write_surface.enforce directive, which would assert a lane setting the
+// proxy could not read.
+func (p *GitHubProxy) writeSurfaceEnforceRefusal(agent, method, path, rawQuery string) (reason, kind string, refused bool) {
+	failed := false
+	reason, kind, refused = WriteSurfaceEnforceRefusal(p.writeSurfaceEnforcedFunc(&failed), agent, method, path, rawQuery)
+	if failed {
+		return policyCallbackFailedReason("write_surface.enforce"), kind, true
+	}
+	return reason, kind, refused
+}
+
+// writeSurfaceGraphQLRefusal is WriteSurfaceGraphQLRefusal against the current
+// predicate, with the same failure reason as writeSurfaceEnforceRefusal.
+func (p *GitHubProxy) writeSurfaceGraphQLRefusal(agent string, body []byte) (string, bool) {
+	failed := false
+	reason, refused := WriteSurfaceGraphQLRefusal(p.writeSurfaceEnforcedFunc(&failed), agent, body)
+	if failed {
+		return policyCallbackFailedReason("write_surface.enforce"), true
+	}
+	return reason, refused
 }
 
 // laneWriteSurfaceEnforced reports whether agentName's lane is enforced.
@@ -111,7 +191,7 @@ func (p *GitHubProxy) laneWriteSurfaceEnforced(agentName string) bool {
 	if agentName == "" || agentName == internalCallerName {
 		return false
 	}
-	enforced := p.writeSurfaceEnforcedFunc()
+	enforced := p.writeSurfaceEnforcedFunc(nil)
 	return enforced != nil && enforced(agentName)
 }
 
@@ -180,6 +260,17 @@ const loginPathPrefix = "/login/"
 func (p *GitHubProxy) rewriteGitHubAuth(req *http.Request, agentName string) {
 	// NOTE: callers must gate on injectsGitHubAuthForHost first; this function
 	// does not know which host the request is bound for.
+	if agentName != internalCallerName {
+		if pol, isRef := p.referenceRepoFor(repoScopePath(req)); isRef {
+			// Reference repo (#18015): the agent's own credential belongs to
+			// the hive's installation and is never valid here, so it is
+			// stripped whatever the injection flag says. A read goes out
+			// unauthenticated, as the public internet would send it; an
+			// opt-in write carries the repo's own write credential.
+			p.rewriteReferenceRepoAuth(req, agentName, pol)
+			return
+		}
+	}
 	if !p.injectGHAuth {
 		// Flag off (the default): behavior byte-identical to before #1861 —
 		// no header is touched on any path.
@@ -280,7 +371,22 @@ func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (
 	}
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.ContentLength = int64(len(body))
-	if leak, ok := p.canaryRegistry.Scan(agentName, string(body), "github:"+req.Method+" "+req.URL.Path); ok {
+	type scanResult struct {
+		leak  crux.CanaryLeak
+		found bool
+	}
+	scanner, text, source := p.canaryRegistry, string(body), "github:"+req.Method+" "+req.URL.Path
+	res, scanned := callPolicySeam(p, "ioscan canary scan", canaryScanTimeout, func() scanResult {
+		leak, found := scanner.Scan(agentName, text, source)
+		return scanResult{leak, found}
+	})
+	if !scanned {
+		// Fail closed (#19224), whatever canaryFailClosed says: a scan that
+		// panicked or did not finish is a body we could not scan, the same
+		// answer as a body we could not read.
+		return "ioscan canary scan failed", true, true
+	}
+	if leak, ok := res.leak, res.found; ok {
 		if p.canaryLeakFunc != nil {
 			p.canaryLeakFunc(leak)
 		}
@@ -371,4 +477,29 @@ func isGitPath(path string) bool {
 	return strings.HasSuffix(path, "/git-receive-pack") ||
 		strings.HasSuffix(path, "/git-upload-pack") ||
 		strings.HasSuffix(path, "/info/refs")
+}
+
+func (p *GitHubProxy) rewriteReferenceRepoAuth(req *http.Request, agentName string, pol ReferenceRepoPolicy) {
+	req.Header.Del("Authorization")
+	if isGitPath(req.URL.Path) {
+		// Same reason as the managed-repo git branch above: each git request
+		// must re-enter this rewrite on its own connection.
+		req.Close = true
+	}
+	if !referenceWriteCredential(pol, req.Method, req.URL.Path, req.URL.RawQuery) {
+		p.logger.Debug("proxy auth: reference repo read forwarded without credentials", "agent", agentName, "repo", pol.Repo, "injected", false)
+		return
+	}
+	token := p.referenceToken(pol)
+	if token == "" {
+		p.logger.Warn("proxy auth: reference repo write has no credential — forwarding without one (connect the hive owner's GitHub account in Settings → Reference repos, or check the write_token_file)", "agent", agentName, "repo", pol.Repo, "injected", false)
+		return
+	}
+	if isGitPath(req.URL.Path) {
+		basic := base64.StdEncoding.EncodeToString([]byte(gitInjectBasicUser + ":" + token))
+		req.Header.Set("Authorization", "Basic "+basic)
+	} else {
+		req.Header.Set("Authorization", "token "+token)
+	}
+	p.logger.Debug("proxy auth: reference repo write credential attached", "agent", agentName, "repo", pol.Repo, "injected", true)
 }

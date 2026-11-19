@@ -8,7 +8,6 @@ import (
 
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 
-	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/beads"
@@ -99,9 +98,16 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	client.SetAuthorKindLabels(func() authorkind.Names { return b.cfg.Governor.Labels.Author.Names() })
 	client.SetLinearScopeTeams(b.cfg.Governor.WorkSource.Linear.Teams)
 	client.SetHoldLabels(b.githubHoldLabels())
+	// The gate labels the hive applies instead of `hold`
+	// (hivecommons/hive#18468): process-wide, like github.HoldLabels.
+	github.SetHiveGateLabelNames(b.cfg.Governor.Labels.ReadyForReviewLabelOrDefault(), b.cfg.Governor.Labels.DecisionNeededLabelOrDefault())
+	// Jira/Linear keys, so a branch named after a tracker item claims no
+	// GitHub issue by its number.
+	github.SetTrackerKeyPrefixes(b.trackerKeyPrefixes())
 	// Umbrella issues no automated claim may take and no claim stages
 	// (governor.claims.never_claim_labels, default `epic`).
 	client.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+	client.SetContributorGrace(b.cfg.Governor.Claims.EffectiveContributorGrace())
 	// Pre-dispatch open-PR guard (hivecommons/hive#14799,
 	// scanner.skip_issues_with_open_pr, default on).
 	client.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
@@ -170,6 +176,12 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// in-progress sweep: a ledger claim whose 🔒 comment was budget-suppressed
 	// must still read as a claim (claimswire.go, ledgerClaimLookup).
 	client.SetIssueClaimLedger(ledgerClaimLookup(func() *claims.Ledger { return b.issueClaims }))
+	// The bound workflow model lookup the stage engine derives through: the
+	// in-progress sweep and the out-of-cycle stage facts must agree with the
+	// sweeps on a model-bound repository (hivecommons/hive#18434,
+	// stage_model_owned.go). StageReconciler also installs it, but only once
+	// a sweep builds the reconciler for this client.
+	client.SetStageWorkflowFor(stageEngineOptions(b.cfg, b.logger).WorkflowFor)
 	// Duplicate-PR claim ledger fallback for the out-of-cycle stage facts:
 	// a claim release on an issue whose covering PR the ledger already holds
 	// re-derives 040, not 010 (stage_facts_sink.go, ledgerCoveringPR).
@@ -231,14 +243,7 @@ func (b *boot) applyGitHubClientAppPolicyHooks(client *github.Client) {
 // does not let the requesting agent push. Read through b.cfg on every call so
 // a per-repo level change takes effect without a restart.
 func (b *boot) prRepoPolicyGate(agentName, repo string) error {
-	level := b.cfg.EffectiveACMMLevelForRepo(repo)
-	if level <= 0 {
-		level = b.cfg.ACMMLevelOrZero()
-	}
-	if !crux.DefaultAgentMode(agentName, level).CanPush() {
-		return fmt.Errorf("repo %s effective ACMM L%d does not allow %s to open PRs", repo, level, agentName)
-	}
-	return nil
+	return b.cfg.PRRepoPolicyRefusal(agentName, repo)
 }
 
 // selfAuthorizationHoldEnabled reports whether the self-authorization hold
@@ -382,9 +387,17 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// governor's cached snapshot now, instead of waiting for GitHub's
 		// `closed` delivery to come back round through the hub.
 		evictHiveClosedPR(b.dashSrv, rec, time.Now())
+		// #18493: a PR the hive merged or closed releases its topic claim.
+		if state := topicStateForAudit(rec.Action); state != "" {
+			releaseTopicClaimsForPR(b.beadStores, rec.Repo, rec.Target, state, b.logger)
+		}
 	})
 	client.SetPRTerminalObservedHook(func(obs github.PRTerminalObservation) {
 		ts := obs.ObservedAt.UTC().Format(time.RFC3339)
+		// #18493: an observed merge or close releases the PR's topic claim.
+		if state := topicStateForTerminal(obs.State); state != "" {
+			releaseTopicClaimsForPR(b.beadStores, obs.Repo, obs.Number, state, b.logger)
+		}
 		switch obs.State {
 		case github.PRStateMerged:
 			path := obs.Attribution
@@ -452,6 +465,8 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 			sessions = b.agentMgr
 		}
 		recordPRFollowUpPointer(b.cfg, sessions, d, time.Now(), b.logger)
+		// The kick this PR came from is told (hivecommons/hive#18916).
+		kickOutcomesFor(b.cfg, b.logger).PROpened(d.Agent, d.URL, d.Number, time.Now())
 		// The issues the PR fixes get their own pr_opened stage: the
 		// start→PR SLA boundary, and the link a later merge folds back on.
 		recordPROpenedForIssues(b.dashSrv, b.cfg.Project.Org, d.Agent, d.Repo, d.Number, d.URL, d.Issues)
@@ -460,13 +475,17 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// PR already covers in the gap between (hivecommons/hive#14472).
 		client.RecordOpenedPRClaims(getClaimLedger(b.logger), d, hiveIdentity(b.cfg), time.Now())
 	})
+	client.SetAgentActionHook(func(a github.AgentAction) { kickOutcomeAgentAction(kickOutcomesFor(b.cfg, b.logger), a) })
 	client.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, b.handleCanaryLeak)
+	// Observe-only session taint (#18987, phase 0): nil unless enabled.
+	client.SetSessionTaint(b.sessionTaintObserver())
 }
 
 // handleCanaryLeak records an ioscan canary leak on the audit log and as a
 // critical advisory bead for the leaking agent. Shared by the GitHub client
 // and the GitHub proxy scanners.
 func (b *boot) handleCanaryLeak(leak ioscan.CanaryLeak) {
+	b.recordCanaryTaint(leak)
 	detail := fmt.Sprintf("rule=%s, agent=%s, source=%s", ioscan.CanaryLeakRule, leak.Agent, leak.Source)
 	b.dashSrv.AuditLog(leak.Agent, "ioscan_canary_leak", detail, leak.Agent)
 	if store, ok := b.beadStores[leak.Agent]; ok && store != nil {
@@ -546,4 +565,15 @@ func (b *boot) observeWritebackRepos() {
 	for _, repo := range b.cfg.Project.Repos {
 		g.ObserveRepo(repo)
 	}
+}
+
+// trackerKeyPrefixes lists the project keys of the configured Jira and
+// Linear work sources.
+func (b *boot) trackerKeyPrefixes() []string {
+	ws := b.cfg.Governor.WorkSource
+	keys := append([]string(nil), ws.Jira.ProjectKeys...)
+	for _, t := range ws.Linear.Teams {
+		keys = append(keys, t.Key)
+	}
+	return keys
 }

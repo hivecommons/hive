@@ -58,11 +58,19 @@ import (
 	"time"
 )
 
-// ReHoldLabel is the label the guard re-applies to a drifted PR. It MUST be a
-// member of github.HoldLabels so the re-applied label actually re-engages the
-// hold machinery (enumeration moves the PR back into Hold.Items and both
-// auto-merge sweeps skip it); cmd/hive pins that agreement with a test.
-const ReHoldLabel = "hold"
+// ReHoldLabel is the label the guard re-applies to a drifted PR: the hive's
+// decision-needed gate label (github.DefaultDecisionNeededLabel). The hive
+// never applies `hold` itself (hivecommons/hive#18468); a person's `hold`
+// means hands-off. It MUST be recognised by github.HasHoldLabel so the
+// re-applied label actually re-engages the hold machinery (enumeration moves
+// the PR back into Hold.Items and both auto-merge sweeps skip it); cmd/hive
+// pins that agreement with a test. cmd/hive applies the configured spelling
+// (github.DecisionNeededLabelName), which defaults to this.
+const ReHoldLabel = "decision-needed"
+
+// CommentHeadingPhrase opens the drift comment CommentBody posts; the
+// #18468 label migration reads it as the guard's provenance for a re-hold.
+const CommentHeadingPhrase = "Hold-gate integrity: branch changed"
 
 // Retention is how long an entry survives without being observed (held, lifted
 // clean, or drifted). Entries for PRs that merged or closed while held have no
@@ -533,7 +541,7 @@ func shortSHA(sha string) string {
 // smuggled in.
 func CommentBody(d Drift) string {
 	var b strings.Builder
-	b.WriteString("## 🔒 Hold-gate integrity: branch changed while hold-gated — fresh review required\n\n")
+	b.WriteString("## 🔒 " + CommentHeadingPhrase + " while hold-gated — fresh review required\n\n")
 	fmt.Fprintf(&b,
 		"This PR's branch moved while it sat hold-gated: the head recorded when the hold was applied was `%s`, but the branch now sits at `%s`. ",
 		shortSHA(d.RecordedHeadSHA), shortSHA(d.CurrentHeadSHA))

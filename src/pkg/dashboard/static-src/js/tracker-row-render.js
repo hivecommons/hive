@@ -63,6 +63,7 @@
     // needs-attention count and a mini per-column distribution. Keyed
     // `group:owner/repo` by the render so the reconcile keeps it stable.
     function stageTrackerGroupHeaderHtml(g, stages, ctx) {
+      const groupWorkflow = typeof stageTrackerWorkflowOf === 'function' ? stageTrackerWorkflowOf(ctx, g.repo) : null;
       const max = Math.max(1, ...g.cols);
       const dist = g.cols.map((c, i) => `<i class="ham-gd ham-gd-${c ? Math.max(1, Math.ceil(c / max * STAGE_TRACKER_GROUP_DIST_STEPS)) : 0}" title="${esc(stageTrackerColName(i, stages) + ': ' + c)}"></i>`).join('');
       const attn = g.attention ? `<span class="ham-group-attn">${g.attention} need${g.attention === 1 ? 's' : ''} attention</span>` : '';
@@ -70,10 +71,10 @@
       const chipCtx = { repoChips: Object.assign({}, (ctx && ctx.repoChips) || {}) };
       return `<div class="ham-group${g.collapsed ? ' ham-group-collapsed' : ''}" data-ham-repo="${esc(g.repo)}" role="row">
         <button type="button" class="ham-group-toggle" data-action="hamGroupToggle" data-arg0="${esc(g.repo)}" data-stop="1" aria-expanded="${g.collapsed ? 'false' : 'true'}" aria-label="${esc((g.collapsed ? 'Expand ' : 'Collapse ') + g.repo)}"><span class="ham-group-caret" aria-hidden="true">${g.collapsed ? '▸' : '▾'}</span></button>
-        ${stageTrackerRepoChipHtml(g.repo, chipCtx)}<span class="ham-group-name">${esc(g.repo)}</span>
+        ${stageTrackerRepoChipHtml(g.repo, chipCtx)}<span class="ham-group-name">${esc(g.repo)}</span>${groupWorkflow ? stageTrackerWorkflowBadgeHtml(groupWorkflow) : ''}
         <span class="ham-group-n">${g.count} ${g.count === 1 ? 'row' : 'rows'}</span>${attn}
-        <span class="ham-group-dist" role="img" aria-label="${esc(g.cols.map((c, i) => stageTrackerColName(i, stages) + ' ' + c).join(', '))}">${dist}</span>
-      </div>`;
+        ${groupWorkflow ? '' : `<span class="ham-group-dist" role="img" aria-label="${esc(g.cols.map((c, i) => stageTrackerColName(i, stages) + ' ' + c).join(', '))}">${dist}</span>`}
+      </div>${typeof stageTrackerGroupColumnsHtml === 'function' ? stageTrackerGroupColumnsHtml(g, groupWorkflow, stages, ctx) : ''}`;
     }
 
     // Row = title line (number, title, chips, since) + thin strip. Non-active
@@ -137,7 +138,7 @@
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
             terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '', hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '', hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null, human_gate: lp.human_gate || null, mid_flight: lp.mid_flight || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -171,7 +172,8 @@
             ${stageTrackerTitleHtml(title)}
             ${item.claim_reference ? `<span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}
             ${typeof stageTrackerLinkedElsewhereHtml === 'function' ? stageTrackerLinkedElsewhereHtml(item) : ''}
-            ${item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
+            ${item.umbrella ? `<span class="ham-badge" title="${esc('Umbrella (' + String(item.umbrella) + '): the owner and the hive coordinate it; it is not offered to contributors and can still be closed')}">Umbrella · owner${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
+            ${item.owner_only ? `<span class="ham-badge" title="${esc('Owner only (' + String(item.owner_only) + '): waits on a person; it is not offered to contributors')}">Owner only</span>` : ''}
           </div>`;
       } else {
         const li = stageTrackerPRIssueSlot(item);
@@ -194,16 +196,24 @@
       // One note line per row: the human line takes the stage note (folded
       // or dropped), so the event slot below the caption renders nothing.
       const rowKey = stageTrackerItemKey(item);
+      // A repository bound to a workflow model draws the model's columns
+      // (tracker-workflows.js); null keeps the built-in strip byte for byte.
+      const rowWorkflow = typeof stageTrackerWorkflowOf === 'function' ? stageTrackerWorkflowOf(ctx, item.repo) : null;
       const humanNote = typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(item, stages, nowMs, subRows, ctx, rowKey) : '';
       const noteCtx = humanNote && typeof stageTrackerNoteTakenCtx === 'function' ? stageTrackerNoteTakenCtx(ctx, rowKey) : ctx;
+      // One human-gate pill per gated row (hivecommons/hive#17470): it
+      // absorbs the sentinel / hold / needs-human chips and the lead verbs;
+      // a secondary row of a shared PR gets only the chip that links to its
+      // primary. Guarded: the harnesses load helpers by name.
+      const gate = typeof stageTrackerHumanGateHtml === 'function' ? stageTrackerHumanGateHtml(item, shown, nowMs, subRows, { sharedUnder }) : '';
       return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(item, stages, ctx) : ''}${sharedCls}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${sharedUnder ? ` data-ham-shared-under="${sharedUnder}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '') + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(item, hamNotesCtx(item)) : ''), prTargetKey)}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + (typeof stageTrackerWorkflowGapHtml === 'function' ? stageTrackerWorkflowGapHtml(item, ctx.workflows) : '') + stageTrackerChipsHtml(shown, { gate: !!gate }) + (gate || (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '')) + (!gate && typeof stageTrackerGateWaitingHtml === 'function' ? stageTrackerGateWaitingHtml(shown) : '') + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(item, hamNotesCtx(item)) : ''), prTargetKey)}
         </div>
         <div class="ham-strip-row">
           ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
-          <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
+          <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${rowWorkflow ? stageTrackerWorkflowStripItems(shown, rowWorkflow, stages) : stageTrackerStripItems(shown, stages, range, nowMs, sharedUnder ? Object.assign({}, ctx, { gateElsewhere: true }) : ctx)}</ol>
           ${stageTrackerSinceHtml(shown, nowMs)}${typeof stageTrackerPillHtml === 'function' ? stageTrackerPillHtml(shown, stages, range, nowMs, ctx) : ''}
         </div>${humanNote}${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, noteCtx, rowKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(rowKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${typeof stageTrackerNotesPanelHtml === 'function' ? stageTrackerNotesPanelHtml(item, hamNotesCtx(item)) : ''}${subs}
       </div>`;

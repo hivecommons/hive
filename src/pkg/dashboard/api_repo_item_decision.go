@@ -85,16 +85,23 @@ const (
 	// superseding PR (hivecommons/hive#15136). It queues the same adoption
 	// the Adopt decision does; it is never implied by an Approve.
 	repoItemDecisionReauthor = "re-author"
+	// model-reply records one of the human-gate replies the repository's
+	// bound workflow model declares for the issue's current state
+	// (hivecommons/hive#17620, RFC phase 4): the verb rides in Reply and is
+	// recorded as `/hive <verb>`; the model's mapped label, if any, is
+	// applied. Refused on unbound repositories.
+	repoItemDecisionModelReply = "model-reply"
 
 	repoItemDecisionMaxBody    = 16 << 10
 	repoItemDecisionMaxComment = 4000
 
-	auditRepoItemDecisionApprove   = "repo_item_decision_approve"
-	auditRepoItemDecisionDirection = "repo_item_decision_direction"
-	auditRepoItemDecisionClose     = "repo_item_decision_close"
-	auditRepoItemDecisionAdopt     = "repo_item_decision_adopt"
-	auditRepoItemDecisionMerge     = "repo_item_decision_merge"
-	auditRepoItemDecisionQueue     = "repo_item_decision_queue_merge"
+	auditRepoItemDecisionApprove    = "repo_item_decision_approve"
+	auditRepoItemDecisionDirection  = "repo_item_decision_direction"
+	auditRepoItemDecisionModelReply = "repo_item_decision_model_reply"
+	auditRepoItemDecisionClose      = "repo_item_decision_close"
+	auditRepoItemDecisionAdopt      = "repo_item_decision_adopt"
+	auditRepoItemDecisionMerge      = "repo_item_decision_merge"
+	auditRepoItemDecisionQueue      = "repo_item_decision_queue_merge"
 
 	// repoItemDecisionAdoptMarker opens the attributed note an Adopt
 	// decision leaves on the PR.
@@ -125,6 +132,8 @@ type repoItemDecisionRequest struct {
 	Force bool `json:"force,omitempty"`
 	// To with decision "reroute" is the target clanker's login, or "any".
 	To string `json:"to,omitempty"`
+	// Reply with decision "model-reply" is the workflow model's verb.
+	Reply string `json:"reply,omitempty"`
 }
 
 // parseRepoItemSupersededBy resolves a "superseded by" reference the way an
@@ -266,6 +275,10 @@ func repoItemDecisionResultWith(repoFull string, number int, itemType, decision,
 			out.Outcome = "`/hive approve` recorded; parking labels lifted, `" + label + "` applied."
 			out.Next = "The hive un-parks the issue and carries on; nothing is merged."
 		}
+	case repoItemDecisionModelReply:
+		out.Action = rowActionDirected
+		out.Outcome = "Workflow reply recorded as `/hive " + strings.TrimSuffix(strings.TrimSpace(comment), ".") + "`; parking labels lifted, `" + label + "` applied."
+		out.Next = "The hive applies the label the model maps to this reply, if any, and carries on; nothing is merged."
 	case repoItemDecisionDirection:
 		out.Action = rowActionDirected
 		out.Outcome = "Direction recorded as `/hive decision`: " + strings.TrimSuffix(strings.TrimSpace(comment), ".") + "."
@@ -518,6 +531,39 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		s.audit.LogRecord(user, auditRepoItemDecisionClose, auditDetail("repo", repoFull, "number", numStr, "type", itemType, "reason", verb, "superseded_by", supersededBy), "", repoFull, number)
 		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "closed", Label: label,
 			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, supersededBy, label, nil)})
+	case repoItemDecisionModelReply:
+		verb := strings.TrimSpace(body.Reply)
+		if verb == "" {
+			jsonError(w, "a model reply needs the verb", http.StatusBadRequest)
+			return
+		}
+		if itemType == "pr" {
+			jsonError(w, "model replies are recorded on issues only", http.StatusBadRequest)
+			return
+		}
+		profile := s.workflowProfileForRepo(repoFull)
+		if profile == nil {
+			jsonError(w, "repository is not bound to a workflow model", http.StatusConflict)
+			return
+		}
+		event, err := gh.RecordOperatorIssueModelReply(ctx, repoFull, number, user, verb, comment, profile)
+		switch {
+		case errors.Is(err, ghpkg.ErrUnknownModelReply):
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		case errors.Is(err, ghpkg.ErrIssueNotParked):
+			jsonError(w, "issue is not waiting on a decision", http.StatusConflict)
+			return
+		case errors.Is(err, ghpkg.ErrDecisionTargetIsPR):
+			jsonError(w, "this is a pull request; model replies are recorded on issues only", http.StatusBadRequest)
+			return
+		case err != nil:
+			jsonError(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		s.audit.LogRecord(user, auditRepoItemDecisionModelReply, auditDetail("repo", repoFull, "number", numStr, "workflow", profile.Name+"@"+profile.Version, "reply", verb, "decision", event.Decision), "", repoFull, number)
+		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "unparked", Label: ghpkg.HumanAckLabel,
+			Result: repoItemDecisionResult(repoFull, number, itemType, decision, event.Decision, "", ghpkg.HumanAckLabel, nil)})
 	case repoItemDecisionReroute:
 		if itemType != "pr" {
 			jsonError(w, "reroute applies to pull requests", http.StatusBadRequest)
@@ -567,7 +613,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		}
 		s.handlePullRequestMergeDecision(ctx, w, repoFull, number, user, decision, comment)
 	default:
-		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, close-read, close-issue, adopt, reroute, re-author, merge-now or queue-merge", http.StatusBadRequest)
+		jsonError(w, "unknown decision; want approve, direction, model-reply, close-superseded, close-wontfix, close-read, close-issue, adopt, reroute, re-author, merge-now or queue-merge", http.StatusBadRequest)
 	}
 }
 

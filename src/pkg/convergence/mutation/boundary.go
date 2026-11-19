@@ -40,6 +40,34 @@ type Boundary struct {
 	// leaves the unresolved state: applied, already applied, or reconciled.
 	OnResolved func(logicalID string)
 	StuckAfter time.Duration
+	// UnresolvedTTL bounds, per effect kind, how long a journaled operation
+	// may stay Planned/Unknown while Execute keeps refusing retries of it.
+	// Past it the refused call expires the operation to NotApplied (see
+	// ExpireUnresolved) and reports it resolved, so the stuck alert stops and
+	// the caller's NEXT attempt — which runs its own duplicate check first —
+	// may proceed. The refused call itself never runs the effect. Nil uses
+	// DefaultUnresolvedTTLs; a missing or non-positive entry keeps refusing
+	// until an explicit Reconcile.
+	UnresolvedTTL map[string]time.Duration
+}
+
+// DefaultUnresolvedTTLs returns the per-kind unresolved TTLs a Boundary uses
+// when UnresolvedTTL is nil. Only issue creates are listed: every issue
+// create caller searches for an existing twin before it reaches Execute, so
+// an Unknown create that is still refused an hour later was never found and
+// a fresh attempt cannot duplicate a visible issue. Without this an advisory
+// issue create left Unknown by an ambiguous response stayed refused and
+// reported stuck forever (hivecommons/hive#17693).
+func DefaultUnresolvedTTLs() map[string]time.Duration {
+	return map[string]time.Duration{effects.KindIssueCreate: effects.DefaultUnresolvedTTL}
+}
+
+func (b *Boundary) unresolvedTTL(kind string) time.Duration {
+	ttls := b.UnresolvedTTL
+	if ttls == nil {
+		ttls = DefaultUnresolvedTTLs()
+	}
+	return ttls[kind]
 }
 
 // ExecuteJournaled preserves legacy Execute's off-mode passthrough while
@@ -162,6 +190,10 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 			return out, fmt.Errorf("%w: %v", effects.ErrDenied, execErr)
 		}
 		if errors.Is(execErr, ErrNeedsReconciliation) {
+			if b.expireRefused(ctx, claim) {
+				b.noteResolved(logicalID)
+				return out, fmt.Errorf("%w: %w: %w", effects.ErrNeedsReconciliation, execErr, effects.ErrUnresolvedExpired)
+			}
 			b.noteStuck(executor, logicalID)
 			return out, fmt.Errorf("%w: %w", effects.ErrNeedsReconciliation, execErr)
 		}
@@ -193,6 +225,25 @@ func (b *Boundary) noteStuck(executor Executor, logicalID string) {
 		return
 	}
 	b.OnStuck(op, age)
+}
+
+// expireRefused expires claim's refused operation to NotApplied once it has
+// been unresolved for longer than its kind's UnresolvedTTL. It never runs the
+// effect: the retry is left to the caller's next attempt.
+func (b *Boundary) expireRefused(ctx context.Context, claim effects.Claim) bool {
+	ttl := b.unresolvedTTL(claim.Kind)
+	if ttl <= 0 {
+		return false
+	}
+	expired, err := b.ExpireUnresolved(ctx, claim, ttl)
+	if err != nil {
+		if b.Logger != nil {
+			b.Logger.Warn("expiring unresolved external mutation failed",
+				"repo", claim.Repo, "kind", claim.Kind, "target", claim.Target, "error", err)
+		}
+		return false
+	}
+	return expired
 }
 
 func (b *Boundary) noteResolved(logicalID string) {

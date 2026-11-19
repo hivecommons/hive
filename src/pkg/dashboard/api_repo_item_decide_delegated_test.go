@@ -24,6 +24,10 @@ func newDelegatedServer(t *testing.T, mock *repoItemDecisionMock) *Server {
 	srv := newRepoItemDecisionServer(t, mock)
 	// PR decisions fail closed without an enumeration snapshot.
 	srv.status = &StatusPayload{}
+	// The mid-flight guard fails closed on a PR whose review state it cannot
+	// read (hivecommons/hive#18889): serve the tracker rows of PRs #8 and #9
+	// as settled, head-less so they match whatever head a test's mock reports.
+	seedSettledTrackerPRs(srv, 8, 9)
 	return srv
 }
 
@@ -132,7 +136,7 @@ func TestDelegatedDecisionOwnerOnlyLabelsAndKeepsPark(t *testing.T) {
 		t.Fatalf("code=%d job=%+v", w.Code, job)
 	}
 	joined := strings.Join(mock.added, ",")
-	if !strings.Contains(joined, delegatedecision.LabelNeedsOwner) || !strings.Contains(joined, delegatedecision.LabelHold) || strings.Contains(joined, github.HumanAckLabel) {
+	if !strings.Contains(joined, delegatedecision.LabelNeedsOwner) || !strings.Contains(joined, delegatedecision.LabelDecisionNeeded) || strings.Contains(joined, delegatedecision.LabelHold) || strings.Contains(joined, github.HumanAckLabel) {
 		t.Fatalf("added = %v", mock.added)
 	}
 	if len(mock.comments) != 1 || strings.Contains(mock.comments[0], "/hive decision") || !strings.Contains(mock.comments[0], "owner action required") || !strings.Contains(mock.comments[0], "stays") {

@@ -3,6 +3,7 @@ package effects
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -191,4 +192,32 @@ func TestLoggingBoundaryLookupAppliedForwards(t *testing.T) {
 	if _, ok := LookupApplied(ctx, LoggingBoundary{Next: NoopBoundary{}}, reconcilingClaim); ok {
 		t.Fatal("LoggingBoundary over a non-Lookup must not report applied")
 	}
+}
+
+// A boundary that already expired the operation while refusing (the refusal
+// carries ErrUnresolvedExpired) authorizes the retry even though its own
+// ExpireUnresolved now finds nothing unresolved to expire.
+func TestExecuteReconcilingBoundaryExpiredRefusalRetries(t *testing.T) {
+	b := &expiredOnRefusalBoundary{}
+	ran := 0
+	res, err := ExecuteReconciling(context.Background(), b, reconcilingClaim,
+		func(context.Context) (ExternalState, error) { return ExternalState{}, errors.New("api down") },
+		time.Minute, okEffect(&ran))
+	if err != nil || ran != 1 || res.Provenance != "ran" {
+		t.Fatalf("got (%+v, %v, ran=%d), want the effect to run once", res, err, ran)
+	}
+}
+
+type expiredOnRefusalBoundary struct{ refused bool }
+
+func (b *expiredOnRefusalBoundary) Execute(ctx context.Context, _ Claim, effect func(context.Context) (Result, error)) (Result, error) {
+	if !b.refused {
+		b.refused = true
+		return Result{}, fmt.Errorf("%w: %w", ErrNeedsReconciliation, ErrUnresolvedExpired)
+	}
+	return effect(ctx)
+}
+
+func (b *expiredOnRefusalBoundary) ExpireUnresolved(context.Context, Claim, time.Duration) (bool, error) {
+	return false, nil
 }

@@ -198,7 +198,7 @@ Initial badges:
 ## Local-model achievement track
 
 Local-model achievements use existing Hive attribution where possible. PR
-footers already use the shape `— hive: agent=… backend=… model=…`; backends and
+footers already use the shape `-- hive: agent=… backend=… model=…`; backends and
 models known to be local runners count as local. Examples include Ollama,
 llama.cpp-compatible runners, local OpenAI-compatible endpoints configured as
 local, and other provider keys Hive classifies as local. Ambiguous provider data
@@ -280,14 +280,13 @@ The shipped implementation uses existing data only:
 - GitHub PR, review, author, merge, and issue linkage data already collected for
   dashboard contribution views;
 - PR attribution trailers parsed by `src/pkg/github/attribution.go`, especially
-  `agent`, `backend`, and `model` from `— hive: agent=… backend=… model=…`;
+  `agent`, `backend`, and `model` from `-- hive: agent=… backend=… model=…`;
 - existing dashboard achievement/dossier/leaderboard records;
 - swarm player and achievement data from the existing swarm dashboard;
-- Spektacular run/campaign data already projected under `/api/runs` and
-  `/api/campaigns` when present.
+- Spektacular run data already projected under `/api/runs`.
 
-The implementation joins the available Spektacular run projection, Campaign Jam
-threads/suggestions/polls/revisions, the federation registry's
+The implementation joins the available Spektacular run projection, the
+federation registry's
 `active_contributor_names`, and swarm player records. It deliberately does not
 consume any private chat log or add a new GitHub credential path.
 
@@ -321,7 +320,12 @@ Acceptance criteria:
 - guardrail review confirms no streaks, timers, random rewards, or pay-to-win
   rewards were added.
 
-### Phase 2: Spek/Jam role evidence (**shipped**)
+### Phase 2: Spek/Jam role evidence (**shipped**, Jam part retired)
+
+Campaign Jam was retired with inception campaigns, so Jam threads, suggestions,
+polls and decisions no longer feed achievements. Run stages still do, and the
+Full SDLC Fireteam badge now counts spec, plan and implement coverage by at
+least three distinct actors (Jam was the only source of the review role).
 
 Join Spektacular run stages and Campaign Jam revisions, accepted suggestions,
 poll votes, and decisions to Fireteam/Raid roles so a spec can prove planning,

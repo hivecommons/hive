@@ -57,6 +57,9 @@ var issueCommentBudgetPerDay = sync.OnceValue(func() int {
 type issueCommentBudget struct {
 	mu     sync.Mutex
 	posted map[string][]time.Time
+	// warned records when a suppression was last logged at warn level per
+	// key, so a saturated issue warns once per window instead of per call.
+	warned map[string]time.Time
 	// perDay and now are test seams; zero means the process defaults.
 	perDay int
 	now    func() time.Time
@@ -113,7 +116,11 @@ func (c *Client) CreateIssueCommentBudgeted(ctx context.Context, repo string, nu
 	key := foldedTrackerKey(owner+"/"+repoName, number)
 	ok, used := c.commentBudget.allow(key)
 	if !ok {
-		c.logger.Warn("issue comment suppressed: per-issue bot comment budget reached",
+		level := slog.LevelDebug
+		if c.commentBudget.firstSuppression(key) {
+			level = slog.LevelWarn
+		}
+		c.logger.Log(ctx, level, "issue comment suppressed: per-issue bot comment budget reached",
 			slog.String("repo", owner+"/"+repoName), slog.Int("number", number),
 			slog.Int("posted_24h", used), slog.Int("cap", c.commentBudget.cap()))
 		return ErrIssueCommentBudget
@@ -132,4 +139,25 @@ func (b *issueCommentBudget) refund(key string) {
 	if n := len(b.posted[key]); n > 0 {
 		b.posted[key] = b.posted[key][:n-1]
 	}
+}
+
+// firstSuppression reports whether a suppression on key has not yet been
+// logged at warn level within the budget window, and records it if so. The
+// suppression is deliberate, so repeats must not look like a repeated error
+// to fleet self-reporting (#18345).
+func (b *issueCommentBudget) firstSuppression(key string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := time.Now()
+	if b.now != nil {
+		now = b.now()
+	}
+	if at, ok := b.warned[key]; ok && at.After(now.Add(-issueCommentBudgetWindow)) {
+		return false
+	}
+	if b.warned == nil {
+		b.warned = map[string]time.Time{}
+	}
+	b.warned[key] = now
+	return true
 }

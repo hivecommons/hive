@@ -311,3 +311,31 @@ func TestReach_WindowRollover(t *testing.T) {
 			c.winStart.Load(), c.winTotal.Load(), c.winErrors.Load())
 	}
 }
+
+func TestSaveReachState_ConcurrentWritersDoNotRace(t *testing.T) {
+	resetReach(t)
+	_, span := StartSpan(context.Background(), "governor.eval_cycle")
+	span.End()
+	path := filepath.Join(t.TempDir(), "reach-state.json")
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 64)
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- SaveReachState(path)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent SaveReachState: %v", err)
+		}
+	}
+	entries, _ := filepath.Glob(path + "*.tmp")
+	if len(entries) != 0 {
+		t.Fatalf("leftover temp files: %v", entries)
+	}
+}

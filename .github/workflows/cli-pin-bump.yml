@@ -64,6 +64,8 @@ on:
       - '.github/workflows/cli-pin-bump.yml'
       - 'src/scripts/cli-pin-bump.sh'
       - 'src/scripts/test-cli-pin-bump.sh'
+      - 'src/scripts/cli-pin-signoff.sh'
+      - 'src/scripts/test-cli-pin-signoff.sh'
       - 'src/scripts/check-cli-model-lists.sh'
       - 'src/scripts/test-check-cli-model-lists.sh'
       - 'src/scripts/cli-model-requirements.txt'
@@ -95,6 +97,9 @@ jobs:
           bash -n src/scripts/test-cli-pin-bump.sh
           bash -n .github/scripts/check-bob-launch-flags.sh
           bash src/scripts/test-cli-pin-bump.sh
+          bash -n src/scripts/cli-pin-signoff.sh
+          bash -n src/scripts/test-cli-pin-signoff.sh
+          bash src/scripts/test-cli-pin-signoff.sh
           bash -n src/scripts/check-cli-model-lists.sh
           bash -n src/scripts/test-check-cli-model-lists.sh
           bash src/scripts/test-check-cli-model-lists.sh
@@ -279,8 +284,22 @@ jobs:
               echo "::error::Could not resolve the TOPUP_PUSH_TOKEN owner; a PR it opens would squash to a mismatched-signoff (#11412)."
               exit 1
             fi
-            git commit --amend --no-edit \
-              --trailer "Signed-off-by: ${login} <${id}+${login}@users.noreply.github.com>"
+            # The squash is authored under the owner's PRIMARY email, which is
+            # not the noreply one, so the DCO app flagged every bump on the
+            # v5 -> v6 top-up (#18697). Sign off for each address GitHub may
+            # attribute (public profile email, then the primary from
+            # user/emails when the token may read it; best-effort).
+            emails=()
+            pub="$(GH_TOKEN="$PR_TOKEN" gh api user --jq '.email // empty' 2>/dev/null || true)"
+            [ -z "$pub" ] || emails+=("$pub")
+            while IFS= read -r em; do
+              [ -z "$em" ] || emails+=("$em")
+            done < <(GH_TOKEN="$PR_TOKEN" gh api user/emails --jq '.[] | select(.primary) | .email' 2>/dev/null || true)
+            args=()
+            while IFS= read -r t; do
+              [ -z "$t" ] || args+=(--trailer "$t")
+            done < <(bash src/scripts/cli-pin-signoff.sh "$login" "$id" "${emails[@]}")
+            git commit --amend --no-edit "${args[@]}"
           fi
           git push --force-with-lease origin "$HEAD_BRANCH"
 

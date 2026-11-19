@@ -8,6 +8,8 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
+	wfstore "github.com/hivecommons/hive/pkg/workflowmodel/store"
 )
 
 // The central stage engine (ADR-0025, hivecommons/hive#12999) is built once
@@ -37,16 +39,59 @@ func stageEngineOptions(cfg *config.Config, logger *slog.Logger) *stageengine.Op
 		if logger == nil {
 			logger = slog.Default()
 		}
+		var wf *wfstore.Store
+		if cfg != nil {
+			wf = wfstore.Open(wfstore.Root(cfg.Data.WorkflowsDir))
+		}
 		stageEngine.opts = &stageengine.Options{
-			Mode:    stageEngineConfiguredMode(cfg),
-			Store:   stagelabels.Shared(),
-			Issue:   github.IssueDeriver(),
-			PR:      stageengine.PRDeriver(),
-			Logger:  logger,
-			Metrics: stageengine.DefaultCounters(),
+			Mode:        stageEngineConfiguredMode(cfg),
+			Store:       stagelabels.Shared(),
+			Issue:       github.IssueDeriver(),
+			PR:          stageengine.PRDeriver(),
+			Logger:      logger,
+			Metrics:     stageengine.DefaultCounters(),
+			WorkflowFor: stageEngineWorkflowFor(cfg, wf, logger),
+		}
+		if cfg != nil {
+			stageEngine.opts.WorkflowProvisioned = wf
+			stageEngine.opts.WorkflowLabelGC = func() bool { return cfg.Workflow.LabelGCEnabled() }
 		}
 	})
 	return stageEngine.opts
+}
+
+// stageEngineWorkflowFor resolves the workflow model bound to a repository
+// (hivecommons/hive#17620). cfg is read on every call — hive.yaml reloads
+// and dashboard binding edits mutate it in place — so a binding or the
+// workflow.enabled flag takes effect on the next derivation. A bound model
+// that is missing or no longer compiles is logged once per key and the
+// repository falls back to hive-default rather than going unlabelled.
+func stageEngineWorkflowFor(cfg *config.Config, st *wfstore.Store, logger *slog.Logger) func(owner, repo string) *workflowmodel.Profile {
+	if cfg == nil || st == nil {
+		return nil
+	}
+	var warned sync.Map
+	return func(owner, repo string) *workflowmodel.Profile {
+		if !cfg.Workflow.Enabled {
+			return nil
+		}
+		full := repo
+		if owner != "" {
+			full = owner + "/" + repo
+		}
+		b, ok := cfg.WorkflowBindingFor(full)
+		if !ok {
+			return nil
+		}
+		p, err := st.Profile(b.Name, b.Version)
+		if err != nil {
+			if _, dup := warned.LoadOrStore(b.Key()+"|"+err.Error(), true); !dup && logger != nil {
+				logger.Warn("workflow binding unusable; repository falls back to hive-default", "repo", full, "workflow", b.Key(), "err", err)
+			}
+			return nil
+		}
+		return p
+	}
 }
 
 func stageEngineConfiguredMode(cfg *config.Config) stageengine.Mode {

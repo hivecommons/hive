@@ -21,7 +21,7 @@ func (p *GitHubProxy) dialCopilotUpstream(host string) (net.Conn, error) {
 	// SO_MARK the outbound socket so the forced-egress redirect exempts the
 	// proxy's own upstream traffic (see proxyEgressMark). The override hook above
 	// still wins when set, so tests are unaffected.
-	return tls.DialWithDialer(markDialer(upstreamDialTimeout), "tcp", net.JoinHostPort(host, "443"), &tls.Config{ServerName: host})
+	return p.dialUpstreamTLS(net.JoinHostPort(host, "443"), host, upstreamDialTimeout)
 }
 
 // copilotInternalPathPrefix marks the Copilot CLI's auth-exchange endpoints on

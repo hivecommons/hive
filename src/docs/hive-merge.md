@@ -438,6 +438,29 @@ underlying endpoint is `GET/PUT /api/config/auto-merge` (owner-only), whose
 response carries `bot_authors: [{login, source: known|discovered|custom,
 trusted}]`.
 
+Every login on that list — a Settings toggle or a typed-in custom bot — is
+owned by the trusted-bot lane: the contributor lane hands it off as
+`trusted-bot-lane` (never `contributor-lane:app-authored`), and every
+`automerge skip` / `automerge hold` line the self-authored sweep logs carries
+`tier=trusted-bot` so a stuck bot PR can be grepped by lane. The lane's
+contract is "safety is established by CI", so the review swarm's verdict on
+a trusted bot's PR is **advisory** by default: a `requires_human`,
+decision-requested or `changes_requested` verdict is recorded on the
+evidence bundle and logged (`trusted-bot lane: review verdict advisory`)
+but neither holds the merge nor parks the PR at "needs a person". Set
+`auto_merge.trusted_bot_skip_review: false` to make bot PRs obey the swarm
+exactly like the App's own; a trusted human's `changes_requested` review
+always holds regardless. When `auto_merge.required_checks` names a check
+the repo never produces (for example `build-gate` declared hive-wide but
+absent on a docs repo), the lane does not wait forever: if at least one
+other check reports on the head and none is red or still running, it merges
+on "every reported check green" and warns once per repo per hour
+(`trusted-bot lane: required check "build-gate" never reported on
+<owner>/<repo>`); if nothing else reports, the PR is held with
+`required-check-never-reported:<check>`, which the Activity Monitor shows as
+the human-gate reason. Declare the repo's real set under
+`auto_merge.repos.<repo>.required_checks` to clear either condition.
+
 ### Event-driven sweeps on the ForgeState cache
 
 With `forgestate.enabled: true` the three sweep lanes (self-authored,
@@ -529,6 +552,21 @@ write-ahead identity. Its conflict-repair allowance lasts only through the
 existing mutation-reconciliation TTL; a failed/conflicting result returns to
 the normal repair path, never a ready seat.
 
+**A changelog-only base move does not make a head stale.** When the head is
+behind, the current-base gate (`currentBaseGate` in
+`src/pkg/github/automerge/automerge_current_base.go`) also compares the PR's
+merge base with the base tip. If every file changed there is the root
+`CHANGELOG.md` or lies under the root `changelog.d/` (the
+`changelogOnlyFile` and `changelogOnlyFragmentDir` allowlist), and the PR
+changes none of those same files, the head counts as current: it is not
+refreshed and does not enter preparation, and the INFO line `automerge head
+treated as current` carries `reason="behind only by changelog-only commits"`.
+The release gate's CHANGELOG-only merges therefore no longer re-run every
+workflow on every green head. The rule fails closed: a missing merge base, an
+API error, a compare that is not `ahead`, an empty or possibly truncated file
+list (`compareFilesResponseCap`, GitHub's 300-file limit), or any other path
+leaves the head stale and refreshed exactly as before.
+
 **Ownership serializes refreshes, not ready merges.** A successor that is
 already current-base, CI-green and reviewed passes every normal merge gate
 without waiting for a preparing owner. A behind successor cannot skip testing.
@@ -607,6 +645,38 @@ then refresh and re-pass current-head gates if still behind. This scheduler
 cannot stop external writers and does not relax strict current-base checks.
 Deploying the changed hive binary activates the policy; no agent, memory,
 review, CI, hold or authorization setting needs changing.
+
+### Agents leave merely-behind PRs to the owner; ci-maintainer measures churn
+
+The preparation owner above is the only thing that refreshes a PR that is
+merely behind. Agent prompts say so: the ci-maintainer and quality lanes
+(item 4 of "CI Throughput and Merge Order" in every
+`src/pkg/policies/defaults/ci-maintainer*.md` and `quality*.md` variant) and
+the scanner's conflict section in `scanner-full.md` no longer call
+`update-branch` / `update_pull_request_branch` on a PR that is only behind,
+even when it touches the files of a change that just merged. A refresh by
+anyone else reruns every pull_request workflow and cancels the run in
+flight, which sends the owner back to the start. Agents touch a behind
+branch only to repair a real conflict (`CONFLICTING` / `DIRTY`, or
+`git merge-tree` exit 1), and the shared-baseline helper's `MERGE_BASE`
+repair of a red check still applies. When an agent cannot tell whether the
+gate applies to a repository it assumes it does; where the gate is off, the
+merge train already updates overlapping siblings. `TestPoliciesDoNotRefreshMerelyBehindPRs`
+in `src/pkg/policies/ci_throughput_test.go` keeps the old instructions out.
+
+`ci-maintainer-full.md` also carries a standing **Merge Churn** goal: once a
+week it measures the primary repository's last 7 days (at most the 100 most
+recently merged PRs), writes one `merge churn: week of <date>` bead, and
+keeps one open `[ci-maintainer] Merge churn over threshold in <owner/repo>`
+issue while any threshold is crossed (a comment per new week, closed after a
+full week back under every threshold).
+
+| Measure | Name | Over threshold when |
+| --- | --- | --- |
+| App base refreshes per merged PR | `refreshes_per_merged_pr` | mean above 1.5 |
+| pull_request runs cancelled on a head a refresh replaced | `refresh_cancelled_run_share` | above 20% of the week's pull_request runs |
+| Releases published per day | `release_merges_per_day` | above 6 |
+| Latest approving review to merge | `approval_to_merge_median` / `approval_to_merge_p90` | median above 4h or p90 above 24h |
 
 ### CI reporting reconciliation
 
@@ -737,8 +807,9 @@ merges use merge commits; other PRs squash). It refuses excluded labels
 (`hold`, `do-not-merge`, and `needs-human` by default), existing hold/exempt
 labels, fork PRs whose author is not a repo member, and any PR with an
 outstanding `CHANGES_REQUESTED` review. Each merge records the tier as
-`trusted-author` and leaves an audit comment naming the author role, GitHub
-permission, and green head SHA.
+`trusted-author` and records an audit note naming the author role, GitHub
+permission, and green head SHA: an `auto-merge` section of the PR's `hive:status`
+card in `quiet` notification mode (the default), a standalone comment in `normal`.
 
 ```yaml
 auto_merge:
@@ -824,6 +895,34 @@ approved for, nor is a PR carrying the sentinel or an `exclude_labels` label,
 nor one touching `.github/workflows/**`. The App needs **Actions: Read and
 write** for the call; without it the approve fails, is logged once per head,
 and the PR waits for a person as before.
+
+The lane also asks Prow to start presubmits for any admitted author
+(hivecommons/hive#17474). On a Prow-managed repository (Prow's labels such as
+`size/*` or `needs-ok-to-test`, or its `[APPROVALNOTIFIER]` comment) the
+trigger plugin runs presubmits for a non-member's fork PR only after a trusted
+user comments `/ok-to-test`, so #17359 sat green on GitHub Actions while Tide
+reported `Jobs … have not succeeded`. While such a fork head is not green, the
+author's `author_association` is not `OWNER`, `MEMBER` or `COLLABORATOR`, the
+PR has no `ok-to-test` label and Prow has reported no presubmit status on the
+head (a status other than `tide` from the account that reports `tide`), the
+lane posts `/ok-to-test` once per head with the same per-head marker and
+mutation-boundary dedupe as the trusted-lane command. If Prow replies
+`Cannot trigger testing until a trusted user`, the lane logs it once with
+`skipped=prow-rejects-bot-commands`, leaves one
+`<!-- hive-ok-to-test-rejected -->` needs-human note and never posts the
+command on that PR again; making the App a Prow trusted user is the
+repository's Prow configuration. Prow's answer is the repository's, so it is
+also remembered per repository (hivecommons/hive#18608): once Prow has refused
+the App anywhere in the repository, the lane skips the first command on every
+later fork PR there and leaves the `<!-- hive-ok-to-test-rejected -->` note
+directly. The memory is not stored: after a restart it is re-derived from one
+bounded read of the repository's comments of the last 30 days (Prow's refusal
+addressed to the App, or the hive's own note quoting it), kept for an hour, and
+cleared while the repository carries `.github/workflows/hive-ok-to-test.yml`.
+A repository with no refusal on record behaves as before. The note in that case
+does not quote Prow's wording, so only a real refusal renews the memory and it
+ages out if Prow later trusts the App. The merge-request relay's read-only
+evaluation posts nothing.
 
 A PR merges through this tier only when all of the following hold:
 

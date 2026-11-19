@@ -5,12 +5,18 @@ const {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict,
-  ProviderUnavailable, FORWARD_MERGE, PROW,
+  ProviderUnavailable, ProviderVerdict, PROVIDER_VERDICT_NOTE, FORWARD_MERGE, FORWARD_MERGE_HEAD, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX,
   DCO_ENUMERATION_SUMMARY_FALLBACK,
   DCO_PROVIDER_UNAVAILABLE_TEXT,
   DCO_PROVIDER_RUNBOOK,
+  PR_EVENTS, LEGACY_VERIFIER_EVENTS, HIVE_STATUS_CHECKS, HIVE_CREATOR_ENV, POLICY_CHECK_SOURCE,
+  hiveCreatorLogin, assertHiveStatus, assertEvidence,
 } = require('./native-queue-policy.cjs');
+
+// Hermetic: the workflow sets this from a repository variable, and the cases
+// that need the hive provider configured set it themselves (withCreator).
+delete process.env[HIVE_CREATOR_ENV];
 
 const sha = n => n.toString(16).padStart(40, '0');
 // App 1861 check run 125732155592 on #16378, head 1989d20aa8d0d92cce761786ac05825aef1d9d3a.
@@ -47,6 +53,7 @@ function fixture(eventName = 'merge_group') {
     queue: clone(entries), prs: [eligible(1), eligible(2)], seen: [], reviews: [],
     runs: new Map([1, 2].map(n => [sha(10 + n), checks(sha(10 + n))])),
     ancestry: 'ahead', ref: group.head_sha, queueReads: 0, prReads: 0, reviewReads: 0,
+    statuses: [], statusReads: 0,
   };
   const github = {
     rest: {
@@ -66,11 +73,12 @@ function fixture(eventName = 'merge_group') {
           return { data: {
             id, check_suite_id: id + 9000,
             path: state.badWorkflow || `.github/workflows/${source[0]}`,
-            event: source[1][0], head_sha: state.workflowHead,
+            event: definition[0] === 'verify PR contents' && state.verifierEvent ? state.verifierEvent : source[1][0],
+            head_sha: state.workflowHead,
           } };
         },
       },
-      repos: { compareCommitsWithBasehead: async ({ basehead }) => {
+      repos: { listCommitStatusesForRef: 'statuses', compareCommitsWithBasehead: async ({ basehead }) => {
         state.seen.push(basehead);
         return { data: { status: state.ancestry, merge_base_commit: { sha: basehead.split('...')[0] } } };
       } },
@@ -85,6 +93,10 @@ function fixture(eventName = 'merge_group') {
           check_run_url: `https://api.github.com/repos/acme/widget/check-runs/${100 + index}`,
           status: 'completed', conclusion: 'success',
         }];
+      }
+      if (method === 'statuses') {
+        state.statusReads++;
+        return clone(state.statuses);
       }
       if (method === 'checks') {
         state.workflowHead = args.ref;
@@ -167,7 +179,7 @@ test('no Actions-generated DCO, stale success, or skipped policy proof', () => {
 });
 
 test('provider enumeration UNKNOWN blocks both admission paths without retry or substituted proof', async () => {
-  for (const eventName of ['pull_request_target', 'merge_group']) {
+  for (const eventName of ['pull_request', 'pull_request_target', 'merge_group']) {
     const f = fixture(eventName);
     const runs = f.state.runs.get(sha(11));
     const dco = runs.find(r => r.name === 'DCO');
@@ -203,7 +215,30 @@ test('UNKNOWN reporting requires trusted exact-head completed DCO and the specif
       error => !(error instanceof ProviderUnavailable));
   }
   assert.throws(() => evidenceForHead([{ ...dco, conclusion: 'failure' }], sha(11), { DCO: null }),
-    error => !(error instanceof ProviderUnavailable) && error.message === 'DCO: failure');
+    error => !(error instanceof ProviderUnavailable) && error instanceof ProviderVerdict &&
+      error.message.startsWith(`DCO: failure on ${sha(11)} `));
+});
+
+for (const prEvent of PR_EVENTS) test('a red provider is named as a per-PR verdict, not a shared CI incident (#18280)' + ` [${prEvent}]`, async () => {
+  for (const [name, conclusion] of [
+    ['DCO', 'action_required'], ['changelog-fragment-guard', 'failure'],
+    ['verify PR contents', 'cancelled'], ['Sign-off survives the squash', 'timed_out'],
+  ]) {
+    const f = fixture(prEvent);
+    f.state.runs.get(sha(11)).find(r => r.name === name).conclusion = conclusion;
+    await assert.rejects(evaluate(f), error => {
+      assert.ok(error instanceof ProviderVerdict, `${name} must be a ProviderVerdict`);
+      assert.ok(!(error instanceof PendingEvidence), 'a completed verdict is not worth waiting on');
+      assert.equal(error.provider, name);
+      assert.equal(error.conclusion, conclusion);
+      assert.ok(error.message.startsWith(`${name}: ${conclusion} on ${sha(11)} (`), error.message);
+      assert.ok(error.message.includes(PROVIDER_VERDICT_NOTE), error.message);
+      return true;
+    });
+  }
+  // A path-scoped skip of a technical job is still not a verdict.
+  const runs = checks(sha(11), BUILD_CHECKS).map(r => ({ ...r, conclusion: 'skipped' }));
+  assert.doesNotThrow(() => evidenceForHead(runs, sha(11), BUILD_CHECKS));
 });
 
 // #17030: v6-topup.yml's PR whose probot DCO rejects a commit already on v5.
@@ -267,6 +302,32 @@ test('one commit unreachable from v5 keeps the forward-merge on probot DCO', asy
   assert.match(await evaluate(unreachable), /DCO path: probot DCO \(App 1861\); sync\/v5-to-v6 fallback/);
 });
 
+// #18931: a squash or rebase queue never contains the PR's own head commit, so
+// a forward-merge PR in such a group is refused by name.
+test('a forward-merge PR whose head is not in the tested group is refused as a merge-method violation', async () => {
+  for (const ref of ['sync/v5-to-v6', 'sync/v5-to-v6-2026-11-18', 'sync/v4-to-v5', 'topup/v5-to-v6-202611171235']) {
+    const f = fixture('merge_group');
+    f.state.prs[0].head = { ...f.state.prs[0].head, ref };
+    f.state.ancestry = 'diverged';
+    await assert.rejects(evaluate(f), error => {
+      assert.match(error.message, /must land with a merge commit, never a squash or rebase/);
+      assert.ok(error.message.includes(ref), error.message);
+      return true;
+    });
+    // Contained head (the merge-commit method): the guard stays out of the way.
+    const ok = fixture('merge_group');
+    ok.state.prs[0].head = { ...ok.state.prs[0].head, ref };
+    await evaluate(ok);
+  }
+  // Any other branch keeps the generic message: the guard is scoped to forward-merges.
+  const other = fixture('merge_group');
+  other.state.prs[0].head = { ...other.state.prs[0].head, ref: 'feature/sync-things' };
+  other.state.ancestry = 'diverged';
+  await assert.rejects(evaluate(other), /current PR head is not contained in the tested group/);
+  for (const ref of ['sync/v5-to-v6', 'topup/x', 'sync/v4-to-v5-3']) assert.ok(FORWARD_MERGE_HEAD.test(ref), ref);
+  for (const ref of ['feature/topup/x', 'fix/sync/v5-to-v6', 'sync-v5-to-v6', 'topup']) assert.ok(!FORWARD_MERGE_HEAD.test(ref), ref);
+});
+
 test('another head branch, base, fork or author keeps requiring probot DCO', async () => {
   for (const change of [
     pr => { pr.head.ref = 'sync/v5-to-v6-extra'; },
@@ -277,19 +338,20 @@ test('another head branch, base, fork or author keeps requiring probot DCO', asy
   ]) {
     const f = forwardMergeFixture();
     change(f.state.prs[0]);
-    await assert.rejects(evaluate(f), error => error.message === 'DCO: action_required');
+    await assert.rejects(evaluate(f), error => error.message === `DCO: action_required on ${sha(11)} (${PROVIDER_VERDICT_NOTE})`);
     assert.equal(f.state.seen.length, 0);
   }
   const v5 = forwardMergeFixture();
   v5.state.prs[0].base.ref = 'v5';
   v5.context.payload.pull_request.base.ref = 'v5';
-  await assert.rejects(evaluate(v5), error => error.message === 'DCO: action_required');
+  await assert.rejects(evaluate(v5), error => error.message === `DCO: action_required on ${sha(11)} (${PROVIDER_VERDICT_NOTE})`);
 });
 
 test('forward-merge path fails without a successful prow-created dco status', async () => {
   const failed = forwardMergeFixture();
   failed.state.statuses.push({ id: 2, context: 'dco', state: 'failure', creator: { login: PROW.login, id: PROW.id } });
-  await assert.rejects(evaluate(failed), /prow dco: failure.*DCO path: prow dco/);
+  await assert.rejects(evaluate(failed), error => error instanceof ProviderVerdict &&
+    /prow dco: failure on .*per-PR provider verdict.*DCO path: prow dco/.test(error.message));
   // Any workflow token can post a `dco` status; it never stands in for prow.
   const forged = forwardMergeFixture();
   forged.state.statuses = [{ id: 3, context: 'dco', state: 'success', creator: { login: 'github-actions[bot]', id: 41898282 } }];
@@ -304,6 +366,19 @@ test('draft, closed, held and moved-head/base PRs cannot pass', () => {
     { draft: true }, { state: 'closed' }, { head: { sha: sha(99) } }, { base: { ref: 'v6' } },
     ...['hold', 'needs-human', 'do-not-merge', 'do-not-merge/security', 'release-in-progress'].map(name => ({ labels: [{ name }] })),
   ]) assert.throws(() => assertEligible({ ...eligible(1), ...change }, sha(11), 'v5'));
+});
+
+test('ineligibility names the tripped condition, not a generic verdict (#18128)', () => {
+  const expect = (change, pattern) =>
+    assert.throws(() => assertEligible({ ...eligible(1), ...change }, sha(11), 'v5'), pattern);
+  expect({ draft: true }, /#1 is a draft/);
+  expect({ state: 'closed' }, /#1 is closed, not open/);
+  expect({ head: { sha: sha(99) } }, new RegExp(`#1 head moved to ${sha(99)} \\(event head ${sha(11)}\\)`));
+  expect({ base: { ref: 'v6' } }, /#1 base moved to v6 \(event base v5\)/);
+  expect({ labels: [{ name: 'size/L' }, { name: 'needs-human' }, { name: 'hold' }] },
+    /#1 is held by label needs-human, hold/);
+  expect({ labels: [{ name: 'do-not-merge/work-in-progress' }] }, /PR state, not a CI failure/);
+  assert.doesNotThrow(() => assertEligible({ ...eligible(1), labels: [{ name: 'stage/070-fixing' }] }, sha(11), 'v5'));
 });
 
 test('group evaluation checks each member head, all evidence, and live synthetic ref', async () => {
@@ -321,15 +396,15 @@ test('membership lookup consumes every page up to this group, not pending succes
   assert.equal(f.state.queueReads, 4);
 });
 
-test('PR-target admission consumes policy providers without group APIs', async () => {
-  const f = fixture('pull_request_target');
+for (const prEvent of PR_EVENTS) test('PR-target admission consumes policy providers without group APIs' + ` [${prEvent}]`, async () => {
+  const f = fixture(prEvent);
   assert.match(await evaluate(f), /five existing policy providers/);
   assert.equal(f.state.queueReads, 0);
   assert.equal(f.state.seen.length, 0);
 });
 
-test('closed PR on pull_request_target passes as a no-op and skips evidence lookup', async () => {
-  const f = fixture('pull_request_target');
+for (const prEvent of PR_EVENTS) test('closed PR on pull_request_target passes as a no-op and skips evidence lookup' + ` [${prEvent}]`, async () => {
+  const f = fixture(prEvent);
   f.state.prs[0].state = 'closed';
   let lookups = 0;
   const paginate = f.github.paginate;
@@ -338,8 +413,8 @@ test('closed PR on pull_request_target passes as a no-op and skips evidence look
   assert.equal(lookups, 0);
 });
 
-test('PR closed during evidence wait passes as a no-op', async () => {
-  const f = fixture('pull_request_target');
+for (const prEvent of PR_EVENTS) test('PR closed during evidence wait passes as a no-op' + ` [${prEvent}]`, async () => {
+  const f = fixture(prEvent);
   const get = f.github.rest.pulls.get;
   let reads = 0;
   f.github.rest.pulls.get = async args => {
@@ -350,9 +425,9 @@ test('PR closed during evidence wait passes as a no-op', async () => {
   assert.match(await evaluate(f), new RegExp(closedNoop(f.state.prs[0])));
 });
 
-test('a 5xx from the API is retried as pending evidence, never read as a verdict', async () => {
+for (const prEvent of PR_EVENTS) test('a 5xx from the API is retried as pending evidence, never read as a verdict' + ` [${prEvent}]`, async () => {
   const apiError = status => Object.assign(new Error(`GET /check-runs - ${status}`), { status });
-  for (const eventName of ['pull_request_target', 'merge_group']) {
+  for (const eventName of [prEvent, 'merge_group']) {
     const f = fixture(eventName);
     const paginate = f.github.paginate;
     let calls = 0;
@@ -367,7 +442,7 @@ test('a 5xx from the API is retried as pending evidence, never read as a verdict
   }
   // Only the server side is transient: a 4xx or a non-HTTP failure stays a hard failure.
   for (const failure of [apiError(404), apiError(403), new Error('socket hang up')]) {
-    const f = fixture('pull_request_target');
+    const f = fixture(prEvent);
     f.github.paginate = async () => { throw failure; };
     await assert.rejects(evaluate(f), error => !(error instanceof PendingEvidence) && error === failure);
   }
@@ -378,39 +453,40 @@ test('a 5xx from the API is retried as pending evidence, never read as a verdict
   assert.equal(isTransientAPIError(undefined), false);
 });
 
-test('open PR with moved head still fails closed on pull_request_target', async () => {
-  const f = fixture('pull_request_target');
+for (const prEvent of PR_EVENTS) test('open PR with moved head still fails closed on pull_request_target' + ` [${prEvent}]`, async () => {
+  const f = fixture(prEvent);
   f.state.prs[0].head.sha = sha(99);
-  await assert.rejects(evaluate(f), /head\/base moved/);
+  await assert.rejects(evaluate(f), /#1 head moved to/);
 });
 
 test('untrusted events and workflow provenance are rejected', async () => {
-  const f = fixture('pull_request');
-  await assert.rejects(evaluate(f), /Unsupported/);
+  for (const eventName of ['push', 'workflow_dispatch', 'issue_comment', 'workflow_run']) {
+    await assert.rejects(evaluate(fixture(eventName)), /Unsupported/);
+  }
   const g = fixture();
   g.state.badWorkflow = '.github/workflows/untrusted.yml';
   await assert.rejects(evaluate(g), /Unexpected workflow/);
 });
 
-test('copied expected-run URL/name cannot substitute a foreign check suite or check identity', async () => {
+for (const prEvent of PR_EVENTS) test('copied expected-run URL/name cannot substitute a foreign check suite or check identity' + ` [${prEvent}]`, async () => {
   for (const change of [
     { id: 999, check_suite: { id: 99999 } },
     { id: 999 }, // Even a claimed matching suite cannot replace actual job membership.
     { check_suite: null },
   ]) {
-    const f = fixture('pull_request_target');
+    const f = fixture(prEvent);
     const gate = f.state.runs.get(sha(11)).find(r => r.name === 'gate');
     Object.assign(gate, change);
     await assert.rejects(evaluate(f), /suite\/job identity mismatch/);
   }
 });
 
-test('expected workflow suite alone does not accept a wrong job head, name or conclusion', async () => {
+for (const prEvent of PR_EVENTS) test('expected workflow suite alone does not accept a wrong job head, name or conclusion' + ` [${prEvent}]`, async () => {
   for (const change of [
     { head_sha: sha(99) }, { name: 'another job' }, { conclusion: 'failure' },
     { run_id: 99999 }, { status: 'in_progress' },
   ]) {
-    const f = fixture('pull_request_target');
+    const f = fixture(prEvent);
     const paginate = f.github.paginate;
     f.github.paginate = async (method, args) => {
       const results = await paginate(method, args);
@@ -420,9 +496,9 @@ test('expected workflow suite alone does not accept a wrong job head, name or co
   }
 });
 
-test('Dependabot PR-target events require an actual successful verifier, never a skipped proof', async () => {
+for (const prEvent of PR_EVENTS) test('Dependabot PR-target events require an actual successful verifier, never a skipped proof' + ` [${prEvent}]`, async () => {
   for (const conclusion of ['success', 'skipped', 'failure']) {
-    const f = fixture('pull_request_target');
+    const f = fixture(prEvent);
     f.context.actor = 'dependabot[bot]';
     f.context.payload.sender = { login: 'dependabot[bot]', type: 'Bot' };
     f.context.payload.pull_request.user = clone(f.context.payload.sender);
@@ -464,13 +540,13 @@ test('changes requested, withdrawn and stale approvals block group validation', 
   }
 });
 
-test('late hold or approval withdrawal is caught by the final re-read', async () => {
+for (const prEvent of PR_EVENTS) test('late hold or approval withdrawal is caught by the final re-read' + ` [${prEvent}]`, async () => {
   for (const change of [{ holdOnPRRead: 3 }, { dismissOnReviewRead: 3 }]) {
     const f = fixture();
     Object.assign(f.state, change);
     await assert.rejects(evaluate(f), /held|approval/);
   }
-  const pr = fixture('pull_request_target');
+  const pr = fixture(prEvent);
   pr.state.holdOnPRRead = 2;
   await assert.rejects(evaluate(pr), /held/);
 });
@@ -483,6 +559,12 @@ test('API failure is never interpreted as an empty successful member list', asyn
 
 test('isCosmeticLabelFlip is true only for unread labels on label events', () => {
   const ctx = (eventName, action, label) => ({ eventName, payload: { action, ...(label && { label: { name: label } }) } });
+  for (const eventName of PR_EVENTS) {
+    assert.equal(isCosmeticLabelFlip(ctx(eventName, 'labeled', 'size/L')), true);
+    assert.equal(isCosmeticLabelFlip(ctx(eventName, 'unlabeled', 'size/L')), true);
+    assert.equal(isCosmeticLabelFlip(ctx(eventName, 'labeled', 'hold')), false);
+  }
+  assert.equal(isCosmeticLabelFlip(ctx('workflow_dispatch', 'labeled', 'size/L')), false);
   assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'labeled', 'size/L')), true);
   assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'unlabeled', 'size/L')), true);
   assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'labeled', 'hold')), false);
@@ -492,8 +574,8 @@ test('isCosmeticLabelFlip is true only for unread labels on label events', () =>
   assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'labeled')), false);
 });
 
-function replayFixture(priorRuns, labels = [], workflowOverride = {}) {
-  const f = fixture('pull_request_target');
+function replayFixture(priorRuns, labels = [], workflowOverride = {}, prEvent = 'pull_request_target') {
+  const f = fixture(prEvent);
   f.state.prs[0].labels = labels;
   const head = sha(11);
   f.state.listed = [];
@@ -506,7 +588,7 @@ function replayFixture(priorRuns, labels = [], workflowOverride = {}) {
   const basePaginate = f.github.paginate;
   f.github.rest.actions.getWorkflowRun = async ({ run_id: id }) => (id < 3000 ? baseGetWorkflowRun({ run_id: id }) : { data: {
     id, check_suite_id: id + 2000, path: '.github/workflows/native-queue-policy.yml',
-    event: 'pull_request_target', head_sha: head, ...workflowOverride,
+    event: prEvent, head_sha: head, ...workflowOverride,
   } });
   f.github.paginate = async (method, args) => {
     // Policy provider evidence comes from the base fixture (all green).
@@ -609,7 +691,8 @@ test('replay rejects a same-named success run from another workflow', async () =
   const run = { id: 7, status: 'completed', conclusion: 'success' };
   for (const override of [
     { path: '.github/workflows/forged.yml' },
-    { event: 'pull_request' },
+    { event: 'workflow_dispatch' },
+    { event: 'push' },
     { head_sha: sha(99) },
     { check_suite_id: 1 },
   ]) {
@@ -621,4 +704,260 @@ test('replay rejects a same-named success run from another workflow', async () =
   await assert.rejects(replayLastVerdict(replayFixture([
     { ...run, details_url: 'https://github.com/acme/widget/actions/runs/3008/job/1' },
   ])), /Unexpected workflow|identity mismatch/);
+});
+
+// --- hive-posted commit status as evidence for `verify PR contents` ---------
+
+const HIVE_LOGIN = 'hive-gate[bot]';
+const VERIFY = 'verify PR contents';
+const repo = { owner: 'acme', repo: 'widget' };
+const status = (id, state, over = {}) => ({
+  id, context: VERIFY, state, creator: { login: HIVE_LOGIN, id: 4242 }, ...over,
+});
+const statusGithub = statuses => ({
+  rest: { repos: { listCommitStatusesForRef: 'statuses' } },
+  paginate: async (method, args) => {
+    assert.equal(method, 'statuses');
+    assert.equal(args.ref, sha(11));
+    return clone(statuses);
+  },
+});
+
+async function withCreator(login, fn) {
+  const saved = process.env[HIVE_CREATOR_ENV];
+  if (login === undefined) delete process.env[HIVE_CREATOR_ENV]; else process.env[HIVE_CREATOR_ENV] = login;
+  try {
+    return await fn();
+  } finally {
+    if (saved === undefined) delete process.env[HIVE_CREATOR_ENV]; else process.env[HIVE_CREATOR_ENV] = saved;
+  }
+}
+
+const removeRun = (f, name) => {
+  const runs = f.state.runs.get(sha(11));
+  runs.splice(runs.findIndex(r => r.name === name), 1);
+};
+
+test('legacy evidence is only widened: other contexts and the original verifier event are unchanged', () => {
+  assert.deepEqual(POLICY_CHECKS[VERIFY], ['pr-verifier.yml', ['pull_request', 'pull_request_target', 'workflow_dispatch']]);
+  assert.deepEqual(LEGACY_VERIFIER_EVENTS, ['pull_request', 'pull_request_target', 'workflow_dispatch']);
+  assert.ok(POLICY_CHECKS[VERIFY][1].includes('pull_request_target'));
+  assert.deepEqual(POLICY_CHECK_SOURCE, ['native-queue-policy.yml', ['pull_request', 'pull_request_target']]);
+  assert.deepEqual(PR_EVENTS, ['pull_request', 'pull_request_target']);
+  assert.deepEqual(POLICY_CHECKS.gate, ['docker.yml', ['push', 'pull_request']]);
+  assert.equal(POLICY_CHECKS.DCO, null);
+  assert.deepEqual(POLICY_CHECKS['changelog-fragment-guard'], ['changelog-fragment-guard.yml', ['pull_request']]);
+  assert.deepEqual(POLICY_CHECKS['Sign-off survives the squash'], ['dco-squash-attribution.yml', ['pull_request']]);
+  assert.deepEqual([...HIVE_STATUS_CHECKS], [VERIFY]);
+});
+
+test('legacy verifier evidence is accepted from pull_request, pull_request_target and workflow_dispatch', async () => {
+  await withCreator(undefined, async () => {
+    for (const verifierEvent of LEGACY_VERIFIER_EVENTS) {
+      for (const prEvent of PR_EVENTS) {
+        const f = fixture(prEvent);
+        f.state.verifierEvent = verifierEvent;
+        assert.match(await evaluate(f), /five existing policy providers/, `${verifierEvent} under ${prEvent}`);
+      }
+    }
+    // Any other event for that workflow is still a provenance failure.
+    for (const verifierEvent of ['push', 'schedule', 'issue_comment', 'merge_group']) {
+      const f = fixture('pull_request');
+      f.state.verifierEvent = verifierEvent;
+      await assert.rejects(evaluate(f), /Unexpected workflow/);
+    }
+  });
+});
+
+test('hive status: only the configured creator counts, newest wins', async () => {
+  const pass = (statuses, name = VERIFY) => assertHiveStatus(statusGithub(statuses), repo, sha(11), name, HIVE_LOGIN);
+  await pass([status(1, 'success')]);
+  // Older failure, newer success: newest wins.
+  await pass([status(1, 'failure'), status(2, 'success')]);
+  await pass([status(2, 'success'), status(1, 'error')]);
+  // Newer failure beats an older success.
+  await assert.rejects(pass([status(1, 'success'), status(2, 'failure')]), ProviderVerdict);
+  // A newer pending status supersedes an older success: not yet evidence.
+  await assert.rejects(pass([status(1, 'success'), status(2, 'pending')]), PendingEvidence);
+  // Login comparison is case-insensitive (GitHub logins are).
+  await assertHiveStatus(statusGithub([status(1, 'success', { creator: { login: 'HIVE-GATE[bot]' } })]),
+    repo, sha(11), VERIFY, HIVE_LOGIN);
+});
+
+test('hive status: a spoofed creator is ignored, whatever its state or recency', async () => {
+  const forged = (id, state) => status(id, state, { creator: { login: 'github-actions[bot]', id: 41898282 } });
+  const run = statuses => assertHiveStatus(statusGithub(statuses), repo, sha(11), VERIFY, HIVE_LOGIN);
+  // A forged success never satisfies the gate.
+  await assert.rejects(run([forged(9, 'success')]), PendingEvidence);
+  await assert.rejects(run([status(1, 'success', { creator: undefined }), status(2, 'success', { creator: {} })]), PendingEvidence);
+  await assert.rejects(run([status(1, 'success', { creator: { login: 'hive-gate' } })]), PendingEvidence);
+  await assert.rejects(run([status(1, 'success', { creator: { login: 'hive-gate[bot]x' } })]), PendingEvidence);
+  // A newer forged success does not mask the genuine failure.
+  await assert.rejects(run([status(1, 'failure'), forged(9, 'success')]), ProviderVerdict);
+  // A newer forged failure does not mask the genuine success.
+  await run([status(1, 'success'), forged(9, 'failure')]);
+  // A genuine success for another context is not evidence for this one.
+  await assert.rejects(run([status(1, 'success', { context: 'DCO' })]), PendingEvidence);
+});
+
+test('hive status: missing and pending are pending evidence, failure and error are verdicts', async () => {
+  const run = statuses => assertHiveStatus(statusGithub(statuses), repo, sha(11), VERIFY, HIVE_LOGIN);
+  await assert.rejects(run([]), error => error instanceof PendingEvidence && /Missing hive verify PR contents/.test(error.message));
+  await assert.rejects(run([status(1, 'pending')]), PendingEvidence);
+  for (const state of ['failure', 'error']) {
+    await assert.rejects(run([status(1, state)]), error => {
+      assert.ok(error instanceof ProviderVerdict);
+      assert.ok(!(error instanceof PendingEvidence));
+      assert.equal(error.conclusion, state);
+      assert.match(error.message, new RegExp(`hive verify PR contents status: ${state} on ${sha(11)}`));
+      return true;
+    });
+  }
+});
+
+test('hive status: an unset or blank variable means not configured, never any creator', async () => {
+  for (const value of [undefined, '', '   ']) {
+    await withCreator(value, async () => {
+      assert.equal(hiveCreatorLogin(), '');
+      const github = statusGithub([status(1, 'success'), status(2, 'success', { creator: { login: 'anyone' } })]);
+      await assert.rejects(assertHiveStatus(github, repo, sha(11), VERIFY),
+        error => !(error instanceof PendingEvidence) && !(error instanceof ProviderVerdict) && /not configured/.test(error.message));
+    });
+  }
+  await withCreator(` ${HIVE_LOGIN} `, async () => {
+    assert.equal(hiveCreatorLogin(), HIVE_LOGIN);
+    await assertHiveStatus(statusGithub([status(1, 'success')]), repo, sha(11), VERIFY);
+  });
+});
+
+test('gate without the variable ignores hive statuses entirely and behaves as before', async () => {
+  await withCreator(undefined, async () => {
+    for (const prEvent of PR_EVENTS) {
+      // A missing legacy verifier stays pending, even with a hive success on the head.
+      const f = fixture(prEvent);
+      removeRun(f, VERIFY);
+      f.state.statuses = [status(1, 'success')];
+      await assert.rejects(evaluate(f), error => error instanceof PendingEvidence && /Missing verify PR contents/.test(error.message));
+      assert.equal(f.state.statusReads, 0);
+      // A red legacy verifier stays a verdict.
+      const g = fixture(prEvent);
+      g.state.runs.get(sha(11)).find(r => r.name === VERIFY).conclusion = 'failure';
+      g.state.statuses = [status(1, 'success')];
+      await assert.rejects(evaluate(g), ProviderVerdict);
+      assert.equal(g.state.statusReads, 0);
+    }
+  });
+});
+
+test('gate with the variable accepts either provider for verify PR contents', async () => {
+  await withCreator(HIVE_LOGIN, async () => {
+    for (const prEvent of PR_EVENTS) {
+      // Legacy green: accepted exactly as before, without consulting statuses.
+      const legacy = fixture(prEvent);
+      assert.match(await evaluate(legacy), /five existing policy providers/);
+      assert.doesNotMatch(await evaluate(fixture(prEvent)), /hive status/);
+      assert.equal(legacy.state.statusReads, 0);
+      // Hive only: no verifier run at all.
+      const hive = fixture(prEvent);
+      removeRun(hive, VERIFY);
+      hive.state.statuses = [status(1, 'success')];
+      assert.match(await evaluate(hive), /five existing policy providers.*hive status accepted for verify PR contents/);
+      // Legacy red but the hive status is green: either provider suffices.
+      const mixed = fixture(prEvent);
+      mixed.state.runs.get(sha(11)).find(r => r.name === VERIFY).conclusion = 'failure';
+      mixed.state.statuses = [status(1, 'success')];
+      assert.match(await evaluate(mixed), /hive status accepted/);
+    }
+  });
+});
+
+test('gate with the variable: a forged status never satisfies it, missing waits, failure is a verdict', async () => {
+  await withCreator(HIVE_LOGIN, async () => {
+    for (const prEvent of PR_EVENTS) {
+      const forged = fixture(prEvent);
+      removeRun(forged, VERIFY);
+      forged.state.statuses = [status(1, 'success', { creator: { login: 'github-actions[bot]', id: 41898282 } })];
+      await assert.rejects(evaluate(forged), PendingEvidence);
+
+      const missing = fixture(prEvent);
+      removeRun(missing, VERIFY);
+      await assert.rejects(evaluate(missing), error => error instanceof PendingEvidence && /Missing verify PR contents/.test(error.message));
+
+      const pending = fixture(prEvent);
+      removeRun(pending, VERIFY);
+      pending.state.statuses = [status(1, 'pending')];
+      await assert.rejects(evaluate(pending), PendingEvidence);
+
+      const failed = fixture(prEvent);
+      removeRun(failed, VERIFY);
+      failed.state.statuses = [status(1, 'failure')];
+      await assert.rejects(evaluate(failed), error => error instanceof ProviderVerdict && error.provider === 'hive verify PR contents status');
+
+      // A legacy verdict is not hidden behind a pending hive status.
+      const legacyRed = fixture(prEvent);
+      legacyRed.state.runs.get(sha(11)).find(r => r.name === VERIFY).conclusion = 'failure';
+      await assert.rejects(evaluate(legacyRed), error => error instanceof ProviderVerdict && error.provider === VERIFY);
+
+      // A legacy provenance failure stays a hard failure when the hive status is absent.
+      const untrusted = fixture(prEvent);
+      untrusted.state.verifierEvent = 'push';
+      await assert.rejects(evaluate(untrusted), error => !(error instanceof PendingEvidence) && /Unexpected workflow/.test(error.message));
+    }
+  });
+});
+
+test('a hive status satisfies only verify PR contents, never another required context', async () => {
+  await withCreator(HIVE_LOGIN, async () => {
+    for (const name of Object.keys(POLICY_CHECKS).filter(n => n !== VERIFY)) {
+      const f = fixture('pull_request');
+      removeRun(f, name);
+      f.state.statuses = [status(1, 'success', { context: name })];
+      await assert.rejects(evaluate(f), PendingEvidence, name);
+    }
+  });
+});
+
+test('merge-group evidence accepts either provider for verify PR contents per member head', async () => {
+  await withCreator(HIVE_LOGIN, async () => {
+    const f = fixture();
+    for (const n of [1, 2]) {
+      const runs = f.state.runs.get(sha(10 + n));
+      runs.splice(runs.findIndex(r => r.name === VERIFY), 1);
+    }
+    // The verifier is gone on both heads: statuses for the heads decide.
+    f.github.paginate = (base => async (method, args) => (method === 'statuses'
+      ? [status(1, 'success')] : base(method, args)))(f.github.paginate);
+    assert.match(await evaluate(f), /validated all 2 member heads.*hive status accepted for verify PR contents/);
+    // A forged status leaves the group pending.
+    const g = fixture();
+    for (const n of [1, 2]) {
+      const runs = g.state.runs.get(sha(10 + n));
+      runs.splice(runs.findIndex(r => r.name === VERIFY), 1);
+    }
+    g.github.paginate = (base => async (method, args) => (method === 'statuses'
+      ? [status(1, 'success', { creator: { login: 'mallory' } })] : base(method, args)))(g.github.paginate);
+    await assert.rejects(evaluate(g), PendingEvidence);
+  });
+});
+
+test('forward-merge DCO path still works with the hive provider configured', async () => {
+  await withCreator(HIVE_LOGIN, async () => {
+    const f = forwardMergeFixture();
+    assert.match(await assertEvidence(f.github, f.context.repo, 1, sha(11), POLICY_CHECKS, f.state.prs[0]), /prow dco/);
+  });
+});
+
+test('cosmetic-flip replay accepts a prior native-queue-policy success from either PR event', async () => {
+  for (const prEvent of PR_EVENTS) {
+    for (const runEvent of PR_EVENTS) {
+      const f = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }], [], { event: runEvent }, prEvent);
+      assert.match(await replayLastVerdict(f), /run 7 \(success\)/, `${runEvent} run under ${prEvent}`);
+    }
+  }
+});
+
+test('forward-merge fixture runs under the plain pull_request event too', async () => {
+  const f = forwardMergeFixture();
+  f.context.eventName = 'pull_request';
+  assert.match(await evaluate(f), /prow dco/);
 });

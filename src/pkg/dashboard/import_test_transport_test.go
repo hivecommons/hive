@@ -37,14 +37,22 @@ func routeImportFetchesToServer(t *testing.T, ts *httptest.Server) {
 		"gist.github.com":           {"140.82.121.3"},
 	})
 	previous := http.DefaultTransport
-	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	rewrite := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		rewritten := req.Clone(req.Context())
 		rewritten.URL.Scheme = target.Scheme
 		rewritten.URL.Host = target.Host
 		rewritten.Host = req.URL.Host
 		return previous.RoundTrip(rewritten)
 	})
-	t.Cleanup(func() { http.DefaultTransport = previous })
+	http.DefaultTransport = rewrite
+	// The import handler dials through the pinned transport (#18992), not
+	// http.DefaultTransport, so route that seam the same way.
+	previousPinned := ssrfPinnedTransport
+	ssrfPinnedTransport = rewrite
+	t.Cleanup(func() {
+		http.DefaultTransport = previous
+		ssrfPinnedTransport = previousPinned
+	})
 }
 
 // Guard against the helper above being mistaken for a production bypass: the

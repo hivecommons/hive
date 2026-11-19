@@ -45,6 +45,17 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			p.logClientRead("proxy client request read timed out", err, "agent", agentName)
 			return
 		}
+		// #19223: a request naming another host, or a path the upstream could
+		// resolve differently from the gates below, is refused before any gate
+		// reads it, and the connection is closed behind it.
+		if reason, refused := relayRequestTargetRefusal(req, host); refused {
+			_ = client.SetReadDeadline(time.Time{})
+			p.recordViolation(agentName, req.Method, reason)
+			_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+			_ = writeRelayBadRequest(client, reason)
+			_ = client.SetWriteDeadline(time.Time{})
+			return
+		}
 
 		blocked := false
 		blockReason := ""
@@ -73,11 +84,34 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// as paused even when the agent is also out of scope for it.
 		blockJSON := false
 		graphQLMutation := false
+		var graphQLBody []byte
 		// A direct write from a lane under write_surface.enforce (#9772) is
 		// refused and audited as agent_write_refused. Checked after pause and
 		// scope so their more specific reasons win when both apply.
 		writeSurfaceKind := ""
+		// Reference repos (#18015) sit outside every list below: not in
+		// allowedRepos (so the mode chain's repo filter would refuse the
+		// write with the wrong reason), not pausable, not agent-scoped. The
+		// gate runs first so its refusal — naming reference_repos and the
+		// tier — is what the agent reads, and an allowed opt-in write is
+		// remembered so the repo filter and the PR hard-deny below do not
+		// undo it (the credential it will carry is the reference repo's
+		// own, so authorship under the policy's Login is already guaranteed).
+		referenceWrite := false
 		if agentName != internalCallerName {
+			if pol, isRef := p.referenceRepoFor(repoScopePath(req)); isRef {
+				if reason, refused := p.referenceRepoRefusal(req); refused {
+					blocked = true
+					blockReason = reason
+					blockCode = DenyReasonReferenceRepo
+				} else {
+					referenceWrite = referenceWriteCredential(pol, req.Method, req.URL.Path, req.URL.RawQuery)
+				}
+			}
+		}
+		if blocked {
+			// Refused as a reference-repo write; nothing below can un-block it.
+		} else if agentName != internalCallerName {
 			if reason, paused := p.repoPauseRefusal(req.Method, repoScopePath(req)); paused {
 				blocked = true
 				blockReason = reason
@@ -91,8 +125,15 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blockReason = reason
 				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
+			} else if reason, refused := p.reviewThreadRefusal(req, agentName); !isLinear && refused {
+				// Review-thread replies, PR review comments and comment deletes
+				// (#19096): allowed only on the hive's own PR for the agent that
+				// opened it, or for the hive's own recent comment.
+				blocked = true
+				blockReason = reason
+				blockCode = DenyReasonReviewThread
 			} else if !isLinear {
-				if reason, kind, refused := WriteSurfaceEnforceRefusal(p.writeSurfaceEnforcedFunc(), agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
+				if reason, kind, refused := p.writeSurfaceEnforceRefusal(agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
 					blocked = true
 					blockReason = reason
 					blockCode = DenyReasonWriteSurfaceEnforced
@@ -133,13 +174,18 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				p.logTimeout("proxy GraphQL request body read timed out", readErr, "agent", agentName, "path", req.URL.Path)
 				return
 			}
-			if reason, refused := p.graphQLAutoMergeRefusal(body); agentName != internalCallerName && refused {
+			graphQLBody = body
+			if reason, refused := p.graphQLAgentRepoScopeRefusal(agentName, body); agentName != internalCallerName && refused {
+				blocked = true
+				blockReason = reason
+				blockCode = DenyReasonAgentRepoScope
+			} else if reason, refused := p.graphQLAutoMergeRefusal(body); agentName != internalCallerName && refused {
 				blocked = true
 				blockReason = reason
 				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
 			} else if agentName != internalCallerName {
-				if reason, refused := WriteSurfaceGraphQLRefusal(p.writeSurfaceEnforcedFunc(), agentName, body); refused {
+				if reason, refused := p.writeSurfaceGraphQLRefusal(agentName, body); refused {
 					blocked = true
 					blockReason = reason
 					blockCode = DenyReasonWriteSurfaceEnforced
@@ -165,6 +211,12 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			// autonomy. Its control-plane calls (App token mint, heartbeat)
 			// must not be gated as if they were agent writes. Repo-filter and
 			// canary-egress checks below still apply.
+		} else if referenceWrite && !referenceWriteAllowedByMode(mode, req.Method, req.URL.Path) {
+			blocked = true
+			blockCode = DenyReasonMode
+		} else if referenceWrite {
+			// Opt-in reference write at a sufficient mode: skip the PR
+			// hard-deny and the repo filter, both of which assume a managed repo.
 		} else if !AllowedByModeCaps(autonomyModeForRepo(agentName, ExtractRepo(repoScopePath(req)), mode), caps, req.Method, req.URL.Path) {
 			blocked = true
 			blockCode = DenyReasonMode
@@ -173,8 +225,9 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			// loudly on writes: a write from an unknown caller means UID
 			// attribution failed, not that the agent lacks the mode.
 			if agentName == "" && writeMethods[req.Method] {
-				p.logger.Warn("proxy: agent could not be identified — defaulting to ADVISORY and blocking a write; UID attribution failed (check the uid map and /proc/net/tcp visibility), this is NOT an agent-mode misconfiguration",
-					"method", req.Method, "path", req.URL.Path)
+				reason, peerUID := p.unidentifiedReason(client.RemoteAddr().String())
+				p.logger.Warn("proxy: agent could not be identified — defaulting to ADVISORY and blocking a write; UID attribution failed (see reason), this is NOT an agent-mode misconfiguration",
+					"method", req.Method, "path", req.URL.Path, "reason", reason, "peer_uid", peerUID)
 			}
 			// A hard-deny rule (e.g. direct PR creation) carries an agent-facing
 			// directive explaining the sanctioned alternative — surface it so the
@@ -244,6 +297,9 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				detail = blockReason
 			}
 			p.recordViolation(agentName, req.Method, detail)
+			if agentName != internalCallerName && !isLinear {
+				p.noteRefusedReviewReply(req, agentName, detail)
+			}
 			if writeSurfaceKind != "" {
 				p.auditWriteRefused(agentName, writeSurfaceKind, req.Method, repoScopePath(req))
 			}
@@ -302,6 +358,13 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			}
 		}
 
+		// Advisory attribution can use a caller-supplied name, so it
+		// cannot exempt a request from header filtering.
+		filterAgentHeaders := agentName != internalCallerName || p.proxyAdvisoryOK
+		if filterAgentHeaders {
+			stripRelayRequestHeaders(req)
+		}
+
 		// #1861: with injection enabled, the upstream credential is decided
 		// HERE — after the ACMM/repo/canary gates, immediately before either
 		// forwarding branch — so every byte that reaches GitHub has passed
@@ -323,6 +386,14 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// (possibly rotated-out) copy the agent's process still holds.
 		if isLinear && agentName != internalCallerName {
 			p.injectLinearCredential(req, agentName, mode)
+		}
+		// #19103: an allowed agent write's text fields get the same dash
+		// rewrite hive's own writes get, after every gate has read the body
+		// as the agent sent it. Git smart-HTTP traffic is never touched.
+		if err := p.sanitizeAgentWriteProse(req, agentName, isLinear); err != nil {
+			_ = client.SetReadDeadline(time.Time{})
+			p.logTimeout("proxy prose-filter body read timed out", err, "agent", agentName, "path", req.URL.Path)
+			return
 		}
 		// Git smart HTTP uses chunked streaming that http.ReadResponse
 		// can't handle reliably. After the ACMM check passes, forward
@@ -386,6 +457,19 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// longer than responseBodyStallTimeout errors out and lets the
 		// handler's deferred Closes reclaim the sockets.
 		resp.Body = &stallBoundedBody{body: resp.Body, conn: upstream, idle: p.bodyStallTimeoutDuration()}
+		if graphQLBody != nil && resp.StatusCode == http.StatusOK {
+			resp.Body = &graphQLRepoCapture{
+				ReadCloser: resp.Body,
+				length:     resp.ContentLength,
+				observe: func(body []byte) {
+					p.observeGraphQLRepoResponse(agentName, graphQLBody, body, resp.Header.Get("Content-Encoding"))
+				},
+			}
+		}
+
+		if filterAgentHeaders {
+			stripRelayResponseHeaders(resp)
+		}
 
 		// Rolling per-Write deadline (see stallBoundedWriter): a response that
 		// keeps flowing is never cut for being long, while a client that stops

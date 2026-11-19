@@ -22,9 +22,24 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
 
+# Required context: never CANCEL a run on the head SHA (#18578). GitHub scores
+# every check-run of a required name on a commit, so one cancelled sibling
+# leaves the PR BLOCKED beside a green survivor and Tide jams on it (#11250).
+# The verdict does depend on labels (merge-method/merge), so label events keep
+# re-running the job in full, but:
+#   - the group carries the head SHA, so runs on different commits never meet;
+#   - labeled/unlabeled/reopened runs also carry github.run_id, so each runs
+#     in its own group: a burst of label flips can neither cancel the run in
+#     flight nor have its queued runs cancelled by the next one to queue
+#     (GitHub does that to pending runs even with cancel-in-progress false).
+#     Every run reads the label set from its own event payload, and the
+#     newest run carries the newest set.
+#   - runs on a superseded commit finish (5 min cap) rather than being
+#     cancelled; their verdict lands on that old SHA, which never merges.
+# .github/scripts/test-required-check-concurrency.py enforces this.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}${{ contains(fromJSON('["labeled","unlabeled","reopened"]'), github.event.action) && format('-{0}-{1}', github.event.action, github.run_id) || '' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -39,7 +54,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          # Shallow on purpose: `fetch-depth: 0` fetches EVERY branch and tag
+          # (`+refs/heads/*` `+refs/tags/*`). On this repo's ref count that
+          # took 17-35s on a good day and, on #18482 (run 43960382195), hung
+          # for the whole 5-minute job budget before the check ever ran. The
+          # step below fetches only the histories the checker reads.
+          fetch-depth: 1
           # The merge commit GitHub synthesises for a PR is not what gets
           # squashed; the PR's own commits are. Check those.
           ref: ${{ github.event.pull_request.head.sha }}
@@ -47,17 +67,48 @@ jobs:
       - name: Self-test the attribution checker
         run: bash src/scripts/test-check-squash-signoff-attribution.sh
 
-      - name: Make the default branch resolvable
+      - name: Fetch the PR, base and default-branch histories
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # A healthy targeted fetch finishes well inside this; a stalled
+          # connection is killed and retried instead of eating the job budget.
+          FETCH_ATTEMPT_TIMEOUT_SECS: '60'
+          FETCH_ATTEMPTS: '3'
         run: |
           set -euo pipefail
-          # Commits already on the default branch are excluded from the check
-          # (see the script). Without this ref a sync PR re-flags every commit
-          # it carries forward, so fetch it explicitly rather than relying on
-          # checkout having populated remote-tracking refs.
-          git fetch --no-tags origin \
-            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          # The checker walks BASE_SHA..HEAD_SHA, and commits already on the
+          # default branch are excluded (see the script): without that ref a
+          # sync PR re-flags every commit it carries forward. Fetch exactly
+          # those three histories, in full, and nothing else.
+          #
+          # Blobless (--filter=blob:none): the checker reads only commits and
+          # trees (rev-list, log formats, diff-tree --name-only), never file
+          # contents, and git marks origin as a promisor so anything that did
+          # need a blob would lazy-fetch it. Unshallowing WITH blobs measured
+          # 38-42s on the self-hosted pool (#18609), slower than the old
+          # all-refs checkout; blobless cuts the transfer ~10x (277 MB -> 24 MB
+          # measured for v5's history).
+          for attempt in $(seq 1 "$FETCH_ATTEMPTS"); do
+            unshallow=()
+            if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+              unshallow=(--unshallow)
+            fi
+            if timeout "$FETCH_ATTEMPT_TIMEOUT_SECS" git fetch --no-tags --filter=blob:none ${unshallow[@]+"${unshallow[@]}"} origin \
+                "$HEAD_SHA" "$BASE_SHA" \
+                "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"; then
+              break
+            fi
+            if [ "$attempt" = "$FETCH_ATTEMPTS" ]; then
+              echo "::error::git fetch failed or stalled ${FETCH_ATTEMPTS} times (${FETCH_ATTEMPT_TIMEOUT_SECS}s each)" >&2
+              exit 1
+            fi
+            echo "::warning::git fetch attempt ${attempt} failed or stalled; retrying" >&2
+          done
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          git rev-parse --verify "${BASE_SHA}^{commit}" >/dev/null
+          git rev-parse --verify "${HEAD_SHA}^{commit}" >/dev/null
           git rev-parse --verify "refs/remotes/origin/${DEFAULT_BRANCH}^{commit}" >/dev/null
 
       - name: Check sign-off attribution across the PR's commits

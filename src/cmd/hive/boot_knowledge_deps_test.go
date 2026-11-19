@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/hivecommons/hive/crux/cruxtest"
 
@@ -35,8 +33,7 @@ type bootKnowledgeFake struct {
 	cleanupAudit     *dashboard.AuditLog
 	nousDirs         int
 	inceptionDir     string
-	restarts         []string
-	restartErr       error
+	wikiReconnects   int
 }
 
 func newBootKnowledgeFake(t *testing.T) *bootKnowledgeFake {
@@ -64,12 +61,9 @@ func newBootKnowledgeFake(t *testing.T) *bootKnowledgeFake {
 		startWorkspaceCleanup: func(_ context.Context, _ *slog.Logger, a *dashboard.AuditLog) { f.cleanupAudit = a },
 		ensureNousDirs:        func(*slog.Logger) { f.nousDirs++ },
 		loadNousState:         func(*slog.Logger) *dashboard.NousState { return &dashboard.NousState{Mode: "observe"} },
-		newInceptionEngine: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine {
-			return knowledge.NewInceptionEngine(f.inceptionDir, api, logger)
-		},
-		restartBrainstorm: func(_ context.Context, _ crux.Runtime, msg string) error {
-			f.restarts = append(f.restarts, msg)
-			return f.restartErr
+		reconnectInceptionWiki: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) {
+			f.wikiReconnects++
+			knowledge.ReconnectInceptionWiki(f.inceptionDir, api, logger)
 		},
 	}
 	return f
@@ -97,19 +91,6 @@ func newBootKnowledgeBoot(t *testing.T, cfg *config.Config) *boot {
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	b.beadStores = map[string]*beads.Store{}
 	return b
-}
-
-func writeInceptionState(t *testing.T, dir string, phase knowledge.InceptionPhase, startedAt time.Time) {
-	t.Helper()
-	st := knowledge.InceptionState{Phase: phase, Mode: knowledge.InceptionGreenfield, IdeaText: "x", StartedAt: startedAt}
-	data, _ := json.Marshal(st)
-	path := filepath.Join(dir, "inception", "state.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestBootKnowledgeWithMinimalConfigAutoEnablesFileAPI(t *testing.T) {
@@ -142,14 +123,11 @@ func TestBootKnowledgeWithMinimalConfigAutoEnablesFileAPI(t *testing.T) {
 	if b.nousState == nil || b.nousState.SnapshotDir != nousSnapshotDir {
 		t.Fatalf("nous state = %+v", b.nousState)
 	}
-	if b.inceptionEngine == nil || b.sched.GetInception() != b.inceptionEngine {
-		t.Fatal("inception engine not wired into scheduler")
+	if f.wikiReconnects != 1 {
+		t.Fatalf("past inception facts must be reconnected once at boot, got %d", f.wikiReconnects)
 	}
 	if !b.agentMgr.IsPaused("brainstorm") {
-		t.Fatal("brainstorm must be paused on-demand when no inception is active")
-	}
-	if len(f.restarts) != 0 {
-		t.Fatalf("no inception means no restart: %v", f.restarts)
+		t.Fatal("brainstorm must be paused on-demand at boot")
 	}
 }
 
@@ -314,75 +292,6 @@ func TestBootKnowledgeWithGraphStoreWiring(t *testing.T) {
 		}
 		if !strings.Contains(log.String(), "knowledge graph store opened") {
 			t.Fatalf("log:\n%s", log.String())
-		}
-	})
-}
-
-func TestBootKnowledgeWithInceptionResume(t *testing.T) {
-	t.Run("active inception restarts brainstorm", func(t *testing.T) {
-		b := newBootKnowledgeBoot(t, bootKnowledgeConfig(t))
-		var log strings.Builder
-		b.logger = slog.New(slog.NewTextHandler(&log, nil))
-		f := newBootKnowledgeFake(t)
-		writeInceptionState(t, f.inceptionDir, knowledge.PhaseClarify, time.Now().Add(-time.Minute))
-
-		b.bootKnowledgeWith(f.deps)
-
-		if len(f.restarts) != 1 {
-			t.Fatalf("restarts = %v", f.restarts)
-		}
-		if b.agentMgr.IsPaused("brainstorm") {
-			t.Fatal("brainstorm must not be paused while resuming an active inception")
-		}
-		if !strings.Contains(log.String(), "brainstorm resumed for active inception") {
-			t.Fatalf("log:\n%s", log.String())
-		}
-	})
-	t.Run("restart failure is a warning", func(t *testing.T) {
-		b := newBootKnowledgeBoot(t, bootKnowledgeConfig(t))
-		var log strings.Builder
-		b.logger = slog.New(slog.NewTextHandler(&log, nil))
-		f := newBootKnowledgeFake(t)
-		f.restartErr = errors.New("no runtime")
-		writeInceptionState(t, f.inceptionDir, knowledge.PhaseClarify, time.Now().Add(-time.Minute))
-
-		b.bootKnowledgeWith(f.deps)
-
-		if !strings.Contains(log.String(), "failed to resume brainstorm for active inception") {
-			t.Fatalf("log:\n%s", log.String())
-		}
-	})
-	t.Run("stale inception is reset and brainstorm paused", func(t *testing.T) {
-		b := newBootKnowledgeBoot(t, bootKnowledgeConfig(t))
-		var log strings.Builder
-		b.logger = slog.New(slog.NewTextHandler(&log, nil))
-		f := newBootKnowledgeFake(t)
-		writeInceptionState(t, f.inceptionDir, knowledge.PhaseClarify, time.Now().Add(-time.Hour))
-
-		b.bootKnowledgeWith(f.deps)
-
-		if len(f.restarts) != 0 {
-			t.Fatalf("stale inception must not restart: %v", f.restarts)
-		}
-		if st := b.inceptionEngine.GetState(); st != nil {
-			t.Fatalf("inception not reset: %+v", st)
-		}
-		if !b.agentMgr.IsPaused("brainstorm") {
-			t.Fatal("brainstorm must be paused after a stale reset")
-		}
-		if !strings.Contains(log.String(), "skipping stale inception resume") {
-			t.Fatalf("log:\n%s", log.String())
-		}
-	})
-	t.Run("completed inception pauses brainstorm", func(t *testing.T) {
-		b := newBootKnowledgeBoot(t, bootKnowledgeConfig(t))
-		f := newBootKnowledgeFake(t)
-		writeInceptionState(t, f.inceptionDir, knowledge.PhaseComplete, time.Now())
-
-		b.bootKnowledgeWith(f.deps)
-
-		if len(f.restarts) != 0 || !b.agentMgr.IsPaused("brainstorm") {
-			t.Fatalf("restarts=%v paused=%v", f.restarts, b.agentMgr.IsPaused("brainstorm"))
 		}
 	})
 }

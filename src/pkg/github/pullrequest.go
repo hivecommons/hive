@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/forgestate"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // forwardMergeHeadRe matches the branches the v5-topup / v6-topup workflows
@@ -215,6 +216,9 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 	if head == "" {
 		return CreatePRResult{}, fmt.Errorf("CreatePR: head branch is required")
 	}
+	if reason := invalidHeadReason(head); reason != "" {
+		return CreatePRResult{}, &errInvalidHead{head: head, reason: reason}
+	}
 	if base = strings.TrimSpace(base); base == "" {
 		resolved, err := c.DefaultBranch(ctx, owner, repo)
 		if err != nil {
@@ -230,8 +234,8 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 			return CreatePRResult{}, fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
 		}
 	}
-	title = logscrub.ScrubString(title)
-	body = logscrub.ScrubString(body)
+	title = prosefilter.SanitizeTitle(logscrub.ScrubString(title))
+	body = prosefilter.Sanitize(logscrub.ScrubString(body))
 
 	// Idempotency: don't open a second PR for a branch that already has an open
 	// one. GitHub itself 422s on a duplicate, but checking first lets us return
@@ -464,6 +468,14 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 		commitMessage = credit.CommitMessage
 		c.NoteMergeCredit(owner+"/"+repo, number, credit)
 	}
+	// A squash carries the branch's Signed-off-by trailers into the landing
+	// commit, or does not happen (hivecommons/hive#18203).
+	commitMessage, err = c.MergeCreditor().SquashSignoff(ctx, owner, repo, number, mergeMethod, commitMessage)
+	if err != nil {
+		return MergePRResult{}, fmt.Errorf("merging PR %s/%s#%d (%s): %w", owner, repo, number, mergeMethod, err)
+	}
+	// The landing commit message is outbound text like the PR body (#19103).
+	commitMessage = prosefilter.Sanitize(commitMessage)
 	var res *gh.PullRequestMergeResult
 	boundary := c.mutationBoundary()
 	claim := effects.Claim{

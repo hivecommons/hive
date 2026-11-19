@@ -11,17 +11,26 @@
 <p align="center">
   <a href="#install">Get started</a> ·
   <a href="src/docs/what-is-hive.md">Overview</a> ·
+  <a href="https://www.youtube.com/watch?v=uo1KGTyJJyU">How Hive works (video)</a> ·
   <a href="#community">Community</a>
 </p>
 
 <p align="center">
   <a href="https://www.twitch.tv/hivecommons"><img src="https://img.shields.io/twitch/status/hivecommons?style=flat&logo=twitch&label=live" alt="Watch the hive live on Twitch"></a>
   <a href="https://app.fossa.com/projects/custom%2B162%2Fhivecommons%2Fhive?ref=badge_shield&issueType=license"><img src="https://app.fossa.com/api/projects/custom%2B162%2Fhivecommons%2Fhive.svg?type=shield&issueType=license" alt="FOSSA license scan status"></a>
+  <a href="https://github.com/hivecommons/hive/actions/workflows/v2-tests.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Ftests.json" alt="Tests on the default branch"></a>
+  <a href="https://github.com/hivecommons/hive/actions/workflows/coverage-hourly.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Fcoverage.json" alt="Test coverage"></a>
+  <a href="src/docs/quality-report.md#the-badges"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Facmm.json" alt="Maturity level"></a>
+  <a href="https://github.com/hivecommons/hive/actions/workflows/go-security-analysis.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Fsecurity.json" alt="Security scan"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/hivecommons/hive"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Fscorecard.json" alt="Supply-chain scorecard"></a>
+  <a href="src/docs/benchmarks/outcomes-2026-10.md"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhivecommons%2Fhive%2Fquality-badges%2Foutcomes.json" alt="Sent back, then approved"></a>
 </p>
 
 ---
 
 Hive helps people and AI agents work together across their projects.
+
+Hive is the work-governance plane for AI coding agents that maintain repositories. It is not a model gateway or an inference server. See [what Hive is and is not](src/docs/what-is-hive.md#what-hive-is-and-is-not).
 
 It connects the work, the rules and the review history. Bring your own agents. You decide what they can do.
 
@@ -139,7 +148,7 @@ Use official images from `ghcr.io/hivecommons/hive`.
 
 ## Community
 
-[First contribution](docs/getting-started-contributing.md) · [Contributing](CONTRIBUTING.md) · [Contribute compute](src/docs/contributor-relay.md) · [Discord](https://hivecommons.dev/discord) · [Community meeting](https://docs.hivecommons.dev/docs/community/meetings) · [Live stream (Twitch)](https://www.twitch.tv/hivecommons) · [Discussions](https://github.com/hivecommons/hive/discussions).
+[How Hive works (video)](https://www.youtube.com/watch?v=uo1KGTyJJyU) · [First contribution](docs/getting-started-contributing.md) · [Contributing](CONTRIBUTING.md) · [Contribute compute](src/docs/contributor-relay.md) · [Discord](https://hivecommons.dev/discord) · [Community meeting](https://docs.hivecommons.dev/docs/community/meetings) · [Live stream (Twitch)](https://www.twitch.tv/hivecommons) · [Discussions](https://github.com/hivecommons/hive/discussions).
 
 [Code of Conduct](CODE_OF_CONDUCT.md) · [Project governance](GOVERNANCE.md) · [Report a vulnerability](SECURITY.md) · [Telemetry](src/docs/telemetry.md).
 

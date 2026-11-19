@@ -83,7 +83,47 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /bd ./cmd/bd && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl && \
-    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /crux ./cmd/crux
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /crux ./cmd/crux && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-whisper ./cmd/hive-whisper && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-pdftext ./cmd/hive-pdftext
+
+
+# --- Go security scanners for the sec-check lane (#18192) ---
+# The sec-check policy runs govulncheck and gosec on Go targets; until this
+# stage existed the policy named scanners the image never shipped. Pins match
+# .github/workflows/go-security-analysis.yml so an agent in the pod and CI
+# reach the same verdict on the same tree — bump both places together. The
+# gosec floor is load-bearing (see that workflow): v2.21.4 pins a
+# golang.org/x/tools that does not compile under current Go.
+#
+# Cross-compiled on BUILDPLATFORM like /hive above so the arm64 image does not
+# compile two tool trees under QEMU. Only the two static binaries leave this
+# stage: the module and build caches are mounts, never image layers.
+# `go install pkg@version` writes to $GOPATH/bin/${GOOS}_${GOARCH}/ when
+# cross-compiling and to $GOPATH/bin/ when the target equals the host, and it
+# refuses GOBIN for cross builds, so the copy below checks both locations.
+FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS go-sec-tools
+ARG GOVULNCHECK_VERSION=1.1.4
+ARG GOSEC_VERSION=2.29.0
+ARG TARGETOS
+ARG TARGETARCH
+# One `go install` per tool: with pkg@version arguments go requires every
+# argument to come from the same module at the same version.
+RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
+    --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
+    for pkg in "golang.org/x/vuln/cmd/govulncheck@v${GOVULNCHECK_VERSION}" \
+               "github.com/securego/gosec/v2/cmd/gosec@v${GOSEC_VERSION}"; do \
+      for i in 1 2 3; do \
+        GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 \
+          go install "$pkg" && break; \
+        [ "$i" = 3 ] && exit 1; sleep $((i * 2)); \
+      done; \
+    done && \
+    mkdir -p /out && \
+    for b in govulncheck gosec; do \
+      if [ -x "/go/bin/${TARGETOS}_${TARGETARCH}/$b" ]; then cp "/go/bin/${TARGETOS}_${TARGETARCH}/$b" "/out/$b"; \
+      else cp "/go/bin/$b" "/out/$b"; fi; \
+    done
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
@@ -109,6 +149,70 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && tar xz -C /tmp -f /tmp/tmux.tar.gz \
  && cd /tmp/tmux-${TMUX_VERSION} && ./configure --prefix=/usr/local && make -j$(nproc) && make install \
  && rm -rf /tmp/tmux-${TMUX_VERSION} /tmp/tmux.tar.gz
+
+# --- Built-in Inbox transcription engine (src/docs/inbox-transcription.md) ---
+# whisper.cpp (MIT) for speech-to-text and a minimal LGPL FFmpeg for decoding
+# recordings (mp3, m4a/mp4 AAC, webm/ogg Opus and Vorbis, FLAC, WAV) to the
+# 16 kHz mono WAV whisper needs. Both run only inside the hive-whisper sandbox
+# (src/cmd/hive-whisper): a separate low-privilege uid, no environment, CPU,
+# memory and wall-clock limits, a private 0700 work dir. No model ships in the
+# image; the hive downloads a pinned, checksummed ggml model on first use (or
+# the operator pre-seeds /data/models/whisper).
+#
+# FFmpeg is configured with --disable-everything and only the audio demuxers,
+# decoders, the WAV muxer and file/pipe protocols enabled: no network
+# protocols, no autodetected external libraries and no --enable-gpl or
+# --enable-nonfree, so the binary is LGPL-2.1-or-later (asserted below).
+#
+# whisper.cpp is built with every CPU variant of the ggml backend
+# (GGML_CPU_ALL_VARIANTS, loaded at run time), so one image picks AVX2/AVX-512
+# on amd64 and dotprod/fp16/SVE on arm64 without risking SIGILL on older
+# cores. No OpenMP (ggml's own thread pool), no curl, no SDL.
+#
+# Compiled for the TARGET platform like tmux above (arm64 builds on the native
+# ARM runner). Pinned to the same node:26-slim digest; refresh together.
+FROM ${BASE_REGISTRY}/node:26-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS whisper-builder
+ARG WHISPER_CPP_VERSION=1.9.5
+ARG WHISPER_CPP_SHA256=ff1a9053feb509ff9d7729703355541ae9690073a6b1c40eb692c962e0dc1720
+ARG FFMPEG_VERSION=8.1.3
+ARG FFMPEG_SHA256=7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates gcc g++ make cmake xz-utils pkg-config \
+ && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors -o /tmp/ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
+ && echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
+ && mkdir -p /tmp/ffmpeg && tar xJ -C /tmp/ffmpeg --strip-components=1 -f /tmp/ffmpeg.tar.xz \
+ && cd /tmp/ffmpeg \
+ && ./configure --prefix=/opt/hive-whisper --disable-everything --disable-autodetect --disable-network \
+      --disable-doc --disable-debug --disable-ffplay --disable-ffprobe --disable-x86asm \
+      --enable-static --disable-shared --enable-small \
+      --enable-ffmpeg --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample \
+      --enable-protocol=file,pipe \
+      --enable-demuxer=mov,matroska,ogg,mp3,wav,flac,aac \
+      --enable-parser=aac,mpegaudio,opus,vorbis,flac \
+      --enable-decoder=aac,aac_latm,alac,mp3,mp3float,opus,vorbis,flac,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,pcm_u8,pcm_alaw,pcm_mulaw \
+      --enable-encoder=pcm_s16le --enable-muxer=wav \
+      --enable-filter=aresample,aformat,anull \
+ && make -j"$(nproc)" && make install \
+ && /opt/hive-whisper/bin/ffmpeg -hide_banner -L | grep -q "Lesser General Public" \
+ && ! /opt/hive-whisper/bin/ffmpeg -hide_banner -buildconf | grep -Eq -- "--enable-(gpl|nonfree)" \
+ && rm -rf /opt/hive-whisper/include /opt/hive-whisper/lib /opt/hive-whisper/share /tmp/ffmpeg /tmp/ffmpeg.tar.xz
+RUN curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors -o /tmp/whisper.tar.gz "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHISPER_CPP_VERSION}.tar.gz" \
+ && echo "${WHISPER_CPP_SHA256}  /tmp/whisper.tar.gz" | sha256sum -c - \
+ && mkdir -p /tmp/whisper && tar xz -C /tmp/whisper --strip-components=1 -f /tmp/whisper.tar.gz \
+ && cmake -S /tmp/whisper -B /tmp/whisper/build -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/opt/hive-whisper -DCMAKE_INSTALL_RPATH=/opt/hive-whisper/lib \
+      -DBUILD_SHARED_LIBS=ON -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON \
+      -DGGML_BACKEND_DIR=/opt/hive-whisper/lib -DGGML_OPENMP=OFF \
+      -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_CURL=OFF -DWHISPER_SDL2=OFF \
+ && cmake --build /tmp/whisper/build -j"$(nproc)" --target whisper-cli \
+ && cmake --build /tmp/whisper/build -j"$(nproc)" \
+ && cmake --install /tmp/whisper/build \
+ && find /opt/hive-whisper/bin -type f ! -name whisper-cli ! -name ffmpeg -delete \
+ && rm -rf /opt/hive-whisper/include /opt/hive-whisper/lib/cmake /opt/hive-whisper/lib/pkgconfig /tmp/whisper /tmp/whisper.tar.gz \
+ && /opt/hive-whisper/bin/whisper-cli --help >/dev/null 2>&1 \
+ && ls /opt/hive-whisper/lib/ | grep -q "ggml-cpu" \
+ && du -sh /opt/hive-whisper
 
 # Pinned to the same node:26-slim digest as the tmux-builder stage above —
 # refresh both FROM lines together.
@@ -245,9 +349,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     chmod +x /usr/local/bin/ttyd
 
 # --- Layer 2b: GitHub CLI (off-PATH — only snapshot publisher uses it) ---
-ARG GH_VERSION=2.103.3
-ARG GH_SHA256_AMD64=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d
-ARG GH_SHA256_ARM64=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63
+ARG GH_VERSION=2.105.0
+ARG GH_SHA256_AMD64=79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f
+ARG GH_SHA256_ARM64=b1278c75107423d818f1937fd92cafc9e5e9b606631568f68d7fb816f5885a02
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GH_ARCH=amd64; GH_SHA256="$GH_SHA256_AMD64" ;; \
@@ -291,6 +395,14 @@ ARG COPILOT_VERSION=1.0.88
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     "@github/copilot@${COPILOT_VERSION}" && npm cache clean --force || \
     echo "WARN: GitHub Copilot CLI install failed — skipping"
+# Wrap the platform binary so it starts through glibc's ld.so (#17729): the
+# Bun single-file ET_EXEC the package ships is rejected with ENOEXEC by Linux
+# 6.12 binfmt_elf (OKE UEK8 upgrade took every copilot agent down), while the
+# dynamic loader maps the same file fine. The installer is idempotent and a
+# no-op when the copilot layer above was skipped.
+COPY bin/install-copilot-exec-shim.sh /usr/local/bin/install-copilot-exec-shim.sh
+RUN chmod +x /usr/local/bin/install-copilot-exec-shim.sh && \
+    /usr/local/bin/install-copilot-exec-shim.sh /usr/local/lib/node_modules
 
 # --- Layer 3b: GitHub Copilot SDK (pinned; powers SDK-based model discovery) ---
 # The dashboard's copilot model discovery prefers a probe through the official
@@ -316,7 +428,7 @@ RUN timeout 120s npm install -g --ignore-scripts --no-fund --no-audit \
 # dashboard's codex model discovery (`codex app-server` model/list — pure
 # local stdio, no network, unaffected by the proxy CA) falls back to the
 # static list, and non-codex backends are unaffected.
-ARG CODEX_VERSION=0.167.0
+ARG CODEX_VERSION=0.170.0
 ARG CLINE_VERSION=3.0.74
 # npm can briefly advertise AWS SDK versions before all registry replicas serve
 # them. Wait at most three minutes between attempts and revalidate metadata.
@@ -334,7 +446,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.319
+ARG CLAUDE_CODE_VERSION=2.1.328
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -355,9 +467,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
 # Installs from the OFFICIAL aaif-goose/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.
-ARG GOOSE_VERSION=1.57.0
-ARG GOOSE_SHA256_AMD64=10eb96cb6a159b6e1d38eeedbef6ab64cd28168aad91948f1fa5c34eefdf98e3
-ARG GOOSE_SHA256_ARM64=c32605acfd560aeb2adbf17ec359cc0217e28022a7e647b35a6af5dcfca91749
+ARG GOOSE_VERSION=1.60.1
+ARG GOOSE_SHA256_AMD64=0327b1857f8030343f59b77503e0455629bbf472c2901cb94b88389d6278635a
+ARG GOOSE_SHA256_ARM64=6a962a0ba55829e00f6f297dff736d53b9bdc8da84f0f49c4768e2557ac39cbe
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
@@ -371,6 +483,67 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       rm -f /tmp/goose.tar.gz; \
     else \
       echo "WARN: Goose CLI download failed — skipping (backend: goose will be unavailable)"; \
+    fi
+
+# --- Layer 8.1: spektacular CLI (Inbox -> RFC destination) ---
+# Pinned hivecommons/spektacular release, SHA-256-verified before extraction,
+# installed to /usr/local/bin/spektacular so inbox.spek.binary /
+# runs.spektacular.binary resolve on PATH with no config. 0.31.0 provides the
+# agent-driven workflow commands (`init`, `skill`, `spec new|goto|file`) and
+# `publish`; it has no `voice` command (hivecommons/spektacular#123 was closed
+# unmerged) and never calls an LLM itself. So Inbox -> RFC always hands the
+# item to an agent (inbox.spek.agent), which drafts the spec with these
+# commands and files it with `spektacular publish`. Download failures are
+# tolerated (the agent prompt then says to install it); checksum mismatches
+# hard-fail the build.
+# Bump note: see src/docs/cli-pins.md (spektacular row); update the version and
+# both digests together from the release's checksums.txt.
+ARG SPEKTACULAR_VERSION=0.31.0
+ARG SPEKTACULAR_SHA256_AMD64=21bd077b6723de41185fa657c0e54ea5726c1c2928794548ada4a8776a7b4746
+ARG SPEKTACULAR_SHA256_ARM64=81d3b92c907bd6d66e4e1db79df24be8b64803dd26e0de1d7147f1ff5fc9b8d0
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    case "$ARCH" in \
+      amd64) SPEK_ARCH=x86_64; SPEK_SHA256="$SPEKTACULAR_SHA256_AMD64" ;; \
+      arm64) SPEK_ARCH=arm64; SPEK_SHA256="$SPEKTACULAR_SHA256_ARM64" ;; \
+      *) echo "unsupported arch for spektacular: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    mkdir -p /tmp/spek-dl && \
+    if curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused "https://github.com/hivecommons/spektacular/releases/download/${SPEKTACULAR_VERSION}/spektacular_${SPEKTACULAR_VERSION}_linux_${SPEK_ARCH}.tar.gz" -o /tmp/spek-dl/spektacular.tar.gz; then \
+      echo "${SPEK_SHA256}  /tmp/spek-dl/spektacular.tar.gz" | sha256sum -c - && \
+      tar xz -C /usr/local/bin -f /tmp/spek-dl/spektacular.tar.gz spektacular && \
+      chmod +x /usr/local/bin/spektacular && \
+      rm -rf /tmp/spek-dl; \
+    else \
+      echo "WARN: spektacular download failed - skipping (Inbox falls back to inbox.spek.agent)"; \
+    fi
+
+# --- Layer 8.2: Quorum meeting MCP server (meetings, hivecommons/hive#18294) ---
+# The pinned hivecommons/quorum release asset `quorum.mjs` (a single-file
+# Node bundle), SHA-256-verified, installed to /usr/local/lib/quorum so the
+# default meetings.quorum.binary resolves with no config. Quorum only runs
+# when meetings.enabled is set. Discord's DAVE encryption needs the native
+# @snazzah/davey module next to the bundle (per-platform prebuilt binaries,
+# resolved by npm for the target arch); without it Quorum logs
+# `discord disabled` and Discord tools answer platform_unavailable, so a
+# failed davey install only warns. A checksum mismatch hard-fails the build.
+# Bump note: see src/docs/cli-pins.md (quorum row); update QUORUM_VERSION and
+# QUORUM_SHA256 together from the release's quorum.mjs.sha256, and
+# QUORUM_DAVEY_VERSION from quorum's package-lock.json.
+ARG QUORUM_VERSION=v0.6.0
+ARG QUORUM_SHA256=5ca780c4caaf465c7813a86e066019f9a785936310654cd3b2a973027d13a20d
+ARG QUORUM_DAVEY_VERSION=0.1.12
+RUN if [ -n "${QUORUM_VERSION}" ]; then \
+      test -n "${QUORUM_SHA256}" || { echo "QUORUM_SHA256 is required with QUORUM_VERSION" >&2; exit 1; } && \
+      mkdir -p /usr/local/lib/quorum && \
+      curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused "https://github.com/hivecommons/quorum/releases/download/${QUORUM_VERSION}/quorum.mjs" -o /tmp/quorum.mjs && \
+      echo "${QUORUM_SHA256}  /tmp/quorum.mjs" | sha256sum -c - && \
+      install -m 0644 /tmp/quorum.mjs /usr/local/lib/quorum/quorum.mjs && \
+      rm -f /tmp/quorum.mjs && \
+      ( npm install --prefix /usr/local/lib/quorum --no-save --ignore-scripts --no-audit --no-fund "@snazzah/davey@${QUORUM_DAVEY_VERSION}" \
+        || echo "WARN: @snazzah/davey install failed - Discord meetings unavailable in this image" ) && \
+      ( npm cache clean --force >/dev/null 2>&1 || true ); \
+    else \
+      echo "QUORUM_VERSION unset - skipping the quorum bundle (meetings unavailable in this image)"; \
     fi
 
 # --- Layer 8.25: Google Antigravity CLI (backend: agy) ---
@@ -403,9 +576,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=18.18.0
-ARG OMP_SHA256_AMD64=ec271e0d7df4c0f57acb6a7a28f8585d46bd050bcef8494f6d33db8a6c0dfbba
-ARG OMP_SHA256_ARM64=b394bfbf7c0e0ba82e01913defb5fadf14a6ea5a71ee05348070ab5e40187144
+ARG OMP_VERSION=18.22.0
+ARG OMP_SHA256_AMD64=f706b27ba845834d8f8360705a2e9ba1534f3593fa24411d41358272de33642b
+ARG OMP_SHA256_ARM64=7238dd213d5c61bc9bf51735d552bc71901fdd44329f862b0a971146b1cdac3e
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
@@ -562,6 +735,20 @@ COPY --from=builder /hive-backup /usr/local/bin/hive-backup
 # the image so an operator can `crux ps` / `crux logs` against a definition
 # set inside the container without the dashboard.
 COPY --from=builder /crux /usr/local/bin/crux
+# Built-in Inbox transcription: the hive-whisper sandbox launcher and the
+# whisper.cpp + LGPL FFmpeg engine from the whisper-builder stage. They run as
+# the dedicated hive-transcribe uid (created below), never as dev.
+COPY --from=builder /hive-whisper /usr/local/bin/hive-whisper
+# Inbox PDF uploads are parsed out of process by the hive-pdftext sandbox
+# (pure Go, github.com/ledongthuc/pdf), as the same hive-transcribe uid.
+COPY --from=builder /hive-pdftext /usr/local/bin/hive-pdftext
+COPY --from=whisper-builder /opt/hive-whisper /opt/hive-whisper
+
+# Go security scanners for the sec-check lane (#18192); built in the
+# go-sec-tools stage above. Both call `go list` through the go-wrapper.sh shim
+# installed below, which passes every subcommand except test/vet through.
+COPY --from=go-sec-tools /out/govulncheck /usr/local/bin/govulncheck
+COPY --from=go-sec-tools /out/gosec /usr/local/bin/gosec
 
 # #5646 — hivectl travels in the image as CARGO, not as part of the runtime.
 # It is the host-side client of the dashboard API, and the whole premise of
@@ -597,11 +784,28 @@ COPY --from=builder /hivectl /usr/local/share/hive/hivectl
 # change (which stops the OCI-index form that enables the metacopy layout in the
 # first place) and this rewrite are independent, belt-and-suspenders defenses.
 RUN for b in /usr/local/bin/hive /usr/local/bin/bd /usr/local/bin/hive-backup \
-             /usr/local/bin/crux /usr/local/share/hive/hivectl; do \
+             /usr/local/bin/crux /usr/local/share/hive/hivectl \
+             /usr/local/bin/govulncheck /usr/local/bin/gosec /usr/local/bin/hive-whisper \
+             $(find /opt/hive-whisper -type f); do \
       cp --remove-destination "$b" "$b.fresh" && \
       mv -f "$b.fresh" "$b" && \
       chmod 0755 "$b"; \
-    done
+    done && \
+    /usr/local/bin/gosec -version >/dev/null && \
+    /opt/hive-whisper/bin/whisper-cli --help >/dev/null 2>&1 && \
+    /opt/hive-whisper/bin/ffmpeg -hide_banner -version >/dev/null && \
+    /usr/local/bin/hive-whisper -version >/dev/null
+
+# hive-transcribe: the uid the hive-whisper sandbox decodes and transcribes
+# untrusted recordings as. No home, no shell, no supplementary groups, so a
+# decoder exploit cannot read /data, dev's credentials or an agent's tree; the
+# hive (dev) reaches it through su-exec and hands the audio over stdin and
+# the model as an inherited read-only file descriptor.
+ARG HIVE_TRANSCRIBE_UID=1901
+RUN useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin \
+      --uid "${HIVE_TRANSCRIBE_UID}" --user-group hive-transcribe \
+ && [ "$(id -u hive-transcribe)" = "${HIVE_TRANSCRIBE_UID}" ] \
+ && [ -z "$(id -Gn hive-transcribe | tr ' ' '\n' | grep -vx hive-transcribe)" ]
 
 COPY src/proxy/ /opt/hive/proxy/
 
@@ -628,6 +832,7 @@ COPY bin/hive-open-pr.sh /usr/local/bin/hive-open-pr
 COPY bin/hive-open-issue.sh /usr/local/bin/hive-open-issue
 COPY bin/hive-merge.sh /usr/local/bin/hive-merge
 COPY bin/hive-review.sh /usr/local/bin/hive-review
+COPY bin/hive-topic.sh /usr/local/bin/hive-topic
 COPY bin/hive-push-branch.sh /usr/local/bin/hive-push-branch
 COPY bin/hive-baseline-check.sh /usr/local/bin/hive-baseline-check.sh
 COPY bin/gh-wrapper.sh /usr/local/bin/gh
@@ -641,7 +846,7 @@ COPY bin/copilot-models.mjs /usr/local/bin/copilot-models.mjs
 COPY config/backends.conf /usr/local/etc/hive/backends.conf
 RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bin/gh-app-token.sh \
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh /usr/local/go/bin/go \
-    /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-open-issue /usr/local/bin/hive-merge /usr/local/bin/hive-review \
+    /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-open-issue /usr/local/bin/hive-merge /usr/local/bin/hive-review /usr/local/bin/hive-topic \
     /usr/local/bin/hive-push-branch /usr/local/bin/hive-gh \
     /usr/local/bin/hive-baseline-check.sh
 

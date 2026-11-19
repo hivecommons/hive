@@ -57,13 +57,14 @@ The operator sidebar keeps the existing destinations, IDs, `data-action` handler
 | Group | Items |
 | --- | --- |
 | Dashboard | Overview, Governor, Throughput |
+| Collaborate | Inbox, Calendar, Meetings, Customers, Inception (spek) |
 | Agents | Dynamic agent tree, `+ Add agent`, `+ Group` |
 | Resources | Projects, Contributors |
-| Intelligence | Advisory, ACMM Eval, Inception, Knowledge, Experiment Lab |
+| Intelligence | Advisory, ACMM Eval, Knowledge, Experiment Lab |
 | Admin | Tokens, Cost, Review, Agents, Agent activity, Audit Log, Diagnostics |
 | Help | FAQ, Getting Started, API Spec (Redoc), Getting Started Guide, Join our Discord, Report an Issue |
 
-On the v6 line the sidebar also lists Runs and Platform. Sections hidden by the ACMM level or a feature setting are hidden from the sidebar too.
+Links stay in the group they are listed under here: reordering Dashboard sections (the sidebar grip or a saved layout) only reorders the Dashboard group, never moves a Collaborate, Resources, Intelligence, Admin or Help link into it. On the v6 line the sidebar also lists Runs and Platform. Sections hidden by the ACMM level or a feature setting are hidden from the sidebar too.
 
 Count badges use the shared `.badge-count` recipe. Zero counts render as dimmed `0` badges with `data-zero`.
 

@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -328,11 +330,13 @@ func (s *jiraSource) ListIssues(ctx context.Context) ([]Issue, error) {
 	var out []Issue
 	startAt := 0
 	pageToken := ""
+	matched := 0
 	for {
 		page, err := s.searchPage(ctx, startAt, pageToken)
 		if err != nil {
 			return nil, err
 		}
+		matched += len(page.Issues)
 		for _, it := range page.Issues {
 			if s.hasHoldLabel(it.Fields.Labels) {
 				continue
@@ -356,7 +360,23 @@ func (s *jiraSource) ListIssues(ctx context.Context) ([]Issue, error) {
 		}
 		pageToken = page.NextPageToken
 	}
+	if matched == 0 && !s.isDataCenter() {
+		if err := s.verifyCloudCredentials(ctx); err != nil {
+			return nil, err
+		}
+	}
 	return out, nil
+}
+
+// verifyCloudCredentials tells an empty backlog apart from rejected
+// credentials. Jira Cloud's enhanced search answers an unauthenticated or
+// bad-token request with HTTP 200 and no issues, so an empty search alone
+// would silently look like "nothing to do"; /myself returns 401 instead.
+func (s *jiraSource) verifyCloudCredentials(ctx context.Context) error {
+	if err := s.doJSON(ctx, http.MethodGet, s.restURL("myself"), nil, http.StatusOK, nil); err != nil {
+		return fmt.Errorf("worksource/jira: credentials rejected by Jira (GET /myself %w); the search returns an empty result for unauthenticated requests, so check email and api_token", err)
+	}
+	return nil
 }
 
 func (s *jiraSource) searchPage(ctx context.Context, startAt int, pageToken string) (*jiraSearchResponse, error) {
@@ -531,6 +551,9 @@ func jiraADFDocument(text string) map[string]any {
 	}
 }
 
+// jiraProseKeys are the Jira payload fields people read.
+var jiraProseKeys = prosefilter.Keys{"summary": prosefilter.Title, "description": prosefilter.Prose, "body": prosefilter.Prose, "text": prosefilter.Prose}
+
 func (s *jiraSource) doJSON(ctx context.Context, method, reqURL string, payload any, wantStatus int, out any) error {
 	if s.tlsErr != nil {
 		return s.tlsErr
@@ -542,6 +565,12 @@ func (s *jiraSource) doJSON(ctx context.Context, method, reqURL string, payload 
 			return fmt.Errorf("encode request: %w", err)
 		}
 		body = &buf
+	}
+	if buf, ok := body.(*bytes.Buffer); ok {
+		// Issue summaries, descriptions and comments, plain or ADF text
+		// nodes (#19103).
+		clean, _ := prosefilter.SanitizeJSON(buf.Bytes(), jiraProseKeys)
+		body = bytes.NewReader(clean)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {

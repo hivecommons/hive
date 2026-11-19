@@ -461,6 +461,11 @@
               <input type="text" value="${esc(a.linear_issue || '')}" placeholder="ONB-123" data-change-action="markDirty" data-arg0="advisory" data-arg1="linear_issue" data-arg-types="s,s,w">
             </div>
           </div>
+          <div class="config-toggle" style="margin-top:10px">
+            <div class="config-toggle-switch ${a.per_repo ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="advisory" data-key="per_repo"></div>
+            <span class="config-toggle-label">Advisory report in every repo ${yamlHint('governor.advisory.per_repo')}</span>
+          </div>
+          <div class="config-help">Off: one Hive Advisory Report in your primary repo covers all repos. On: each monitored repo also gets its own report.</div>
           <div class="config-field">
             <label>Update interval (s) ${yamlHint('governor.advisory.update_interval_s')} ${settingHelpMark('advisory', '', 'Update interval (s)', `How often the digest comment on the pinned advisory issue is checked and refreshed. 0 = default (60s, every governor cycle). Longer values (30&ndash;3600s) reduce GitHub API writes and notification churn on watched repos; changes apply live from the next cycle. Unchanged digests are already skipped, and the periodic forced refresh that heals hand-edited comments stretches with this interval.`)}</label>
             <input type="number" min="0" max="3600" step="1" value="${updateIntervalS}" data-change-action="gh76">

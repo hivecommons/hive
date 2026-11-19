@@ -657,11 +657,49 @@
       repaintReposForWidth();
       return { repo, item, fromKey, toKey };
     }
+    // A hold toggle moves its row between the held and actionable groups, and
+    // the status render that follows re-sorts them, so the button under the
+    // pointer changes a moment after every click. Clicking Hold down a card
+    // then landed the next click on another item's Release, and that item's
+    // hold came straight back off (hivecommons/hive#18054: #151 released in
+    // the same second #283 was held). A Release that arrives within
+    // REPO_HOLD_SHIFT_GUARD_MS of the rows moving is not sent; the operator
+    // clicks it again once the list is still. Hold is never delayed: under
+    // the pointer it can only park an item, and parking is what that click
+    // was doing anyway.
+    const REPO_HOLD_SHIFT_GUARD_MS = 1500;
+    let _repoHoldLayoutSig = null;
+    let _repoHoldShiftAt = 0;
+    const _repoHoldInFlight = {};
+    // Pure: the order and membership of every card's hold-toggle rows.
+    function repoHoldLayoutSignature(repos) {
+      const nums = list => (list || []).map(x => Number(x && x.number) || 0).join(',');
+      return (repos || []).map(r => (r.full || r.name || '') + ':' + nums(r.actionableIssues) + '|' + nums(r.heldIssues) + '|' + nums(r.openPrs) + '|' + nums(r.heldPrs)).join(';');
+    }
+    // Called on every repos render: remembers when the rows last moved. The
+    // first render is not a move; nothing was under the pointer before it.
+    function noteRepoHoldLayout(repos, now) {
+      const sig = repoHoldLayoutSignature(repos);
+      if (_repoHoldLayoutSig !== null && sig !== _repoHoldLayoutSig) _repoHoldShiftAt = now;
+      _repoHoldLayoutSig = sig;
+    }
+    function repoHoldReleaseTooSoon(now) {
+      return _repoHoldShiftAt > 0 && now - _repoHoldShiftAt < REPO_HOLD_SHIFT_GUARD_MS;
+    }
     async function toggleRepoItemHold(repoFull, number, type, held, btn) {
       if (btn && btn.dataset.busy === '1') return;
       const p = repoParts(repoFull);
       if (!p.owner || !p.repo || !number) return;
       const wantHeld = !!held;
+      // The busy mark lives on a button the optimistic repaint replaces, so
+      // the item itself carries the in-flight guard.
+      const flightKey = String(repoFull).toLowerCase() + '/' + type + '#' + number;
+      if (_repoHoldInFlight[flightKey]) return;
+      if (!wantHeld && repoHoldReleaseTooSoon(Date.now())) {
+        showToast('The list moved just as you clicked, so ' + repoFull + '#' + number + ' is still held. Click Release again to release it.', 'info');
+        return;
+      }
+      _repoHoldInFlight[flightKey] = true;
       const prevText = btn ? btn.textContent : '';
       const moved = moveRepoItemHold(repoFull, number, type, wantHeld, canonicalHiveHoldLabel());
       if (btn) { btn.dataset.busy = '1'; btn.textContent = '…'; }
@@ -680,6 +718,8 @@
         if (moved) moveRepoItemHold(repoFull, number, type, !wantHeld, canonicalHiveHoldLabel());
         showToast('Hold toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
         if (btn) { btn.dataset.busy = ''; btn.textContent = prevText || (wantHeld ? '⏸ Hold' : '▶ Release'); }
+      } finally {
+        delete _repoHoldInFlight[flightKey];
       }
     }
 

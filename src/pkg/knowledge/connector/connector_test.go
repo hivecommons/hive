@@ -95,7 +95,7 @@ func TestRegistryRegister(t *testing.T) {
 	if got := r.Types(); !reflect.DeepEqual(got, []string{"another", "fake"}) {
 		t.Fatalf("Types() = %v", got)
 	}
-	if got := DefaultRegistry().Types(); !reflect.DeepEqual(got, []string{TypeConfluence, TypeContext7, TypeDocument, TypeGit, TypeGitHubWiki, TypeGoogleDrive, TypeNotion, TypeRepoWiki, TypeSharePoint}) {
+	if got := DefaultRegistry().Types(); !reflect.DeepEqual(got, []string{TypeConfluence, TypeContext7, TypeDiscord, TypeDocument, TypeFathom, TypeFireflies, TypeGit, TypeGitHubWiki, TypeGoogleDrive, TypeGoogleMeet, TypeGranola, TypeLimitless, TypeNotion, TypeOtter, TypePlaud, TypeRepoWiki, TypeSharePoint, TypeSlackHuddles, TypeTeams, TypeWebex, TypeWisprFlow, TypeZoom}) {
 		t.Fatalf("DefaultRegistry().Types() = %v", got)
 	}
 }

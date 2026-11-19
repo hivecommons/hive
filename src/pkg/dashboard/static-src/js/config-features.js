@@ -226,17 +226,30 @@
         .concat(rvSelected.filter(n => !rvBuiltinNames.includes(n)))
         .filter((n, i, a) => a.indexOf(n) === i);
       const rvIsOn = (name) => rvSelected.length === 0 ? rvBuiltinNames.includes(name) || rvCustomNames.includes(name) : rvSelected.includes(name);
+      // Linked to a repo file (review.perspectives_source): the set shown is
+      // the linked one and every control is read-only, because the API
+      // refuses inline edits the next reload would replace (#17989).
+      const rvLinked = rv.perspectives_linked === true;
+      const rvSrc = rv.perspectives_source || {};
+      const rvSrcLabel = `${rvSrc.owner || ''}/${rvSrc.repo || ''}/${rvSrc.path || ''}${rvSrc.ref ? '@' + rvSrc.ref : ''}`;
+      const rvSrcStatus = rv.perspectives_source_status || '';
+      const rvSrcURL = /^https:\/\/github\.com\//.test(rv.perspectives_source_url || '') ? rv.perspectives_source_url : '';
+      const rvLinkedBanner = !rvLinked ? '' : `<div class="rv-perspectives-linked">
+              <div>Linked to ${rvSrcURL ? `<a href="${esc(rvSrcURL)}" target="_blank" rel="noopener noreferrer"><code>${esc(rvSrcLabel)}</code> &#8599;</a>` : `<code>${esc(rvSrcLabel)}</code>`} ${yamlHint('review.perspectives_source')} <span class="text-muted">&mdash; the perspectives below are read-only. Change them in that file, or use Unlink under &quot;Link perspectives to a repo file&quot; to edit them here.</span></div>
+            </div>`;
+      const rvSourceControls = reviewPerspectivesSourceHtml(rv, rvCanEdit);
+      const rvLockAttr = rvLinked ? ' disabled' : '';
       const rvPerspectiveRow = (name, defaultFocus) => {
         const custom = rvPrompts[name] || '';
         const isCustom = !rvBuiltinNames.includes(name);
         return `<div class="rv-perspective" data-perspective="${esc(name)}" style="margin-top:var(--sp-4);padding:8px 10px;border:1px solid var(--border);border-radius:var(--r)">
-            <label style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;font-weight:600;font-size:0.8rem">
-              <input type="checkbox" class="rv-perspective-on" ${rvIsOn(name) ? 'checked' : ''} data-change-action="gh91">
+            <label style="display:flex;align-items:center;gap:var(--sp-4);cursor:${rvLinked ? 'default' : 'pointer'};font-weight:600;font-size:0.8rem">
+              <input type="checkbox" class="rv-perspective-on" ${rvIsOn(name) ? 'checked' : ''}${rvLockAttr} data-change-action="gh91">
               <code>${esc(name)}</code>${isCustom ? ' <span style="font-size:var(--fs-xs);color:var(--muted);font-weight:400">custom</span>' : ''}
-              ${isCustom ? `<button type="button" class="hv-btn btn-secondary btn-sm btn-small btn-primary" data-action="gh93" data-arg0="${esc(name)}" data-arg-types="s">remove</button>` : ''}
+              ${isCustom && !rvLinked ? `<button type="button" class="hv-btn btn-secondary btn-sm btn-small btn-primary" data-action="gh93" data-arg0="${esc(name)}" data-arg-types="s">remove</button>` : ''}
             </label>
-            <textarea class="rv-perspective-focus" rows="2" style="width:100%;margin-top:var(--sp-3);font-size:0.76rem" placeholder="${esc(defaultFocus || 'what should this perspective look for?')}" data-change-action="gh92">${esc(custom)}</textarea>
-            ${defaultFocus ? `<p style="font-size:var(--fs-xs);color:var(--muted);margin:3px 0 0">Built-in: ${esc(defaultFocus)}${custom ? ' — <a href="#" data-action="gh94" data-prevent="1" data-arg0="' + esc(name) + '" data-arg-types="s">use built-in</a>' : ''}</p>` : ''}
+            <textarea class="rv-perspective-focus" rows="2" style="width:100%;margin-top:var(--sp-3);font-size:0.76rem" placeholder="${esc(defaultFocus || 'what should this perspective look for?')}"${rvLockAttr} data-change-action="gh92">${esc(custom)}</textarea>
+            ${defaultFocus ? `<p style="font-size:var(--fs-xs);color:var(--muted);margin:3px 0 0">Built-in: ${esc(defaultFocus)}${custom && !rvLinked ? ' — <a href="#" data-action="gh94" data-prevent="1" data-arg0="' + esc(name) + '" data-arg-types="s">use built-in</a>' : ''}</p>` : ''}
           </div>`;
       };
       const rvRec = rv.recommendations || {};
@@ -266,6 +279,8 @@
         </select></td></tr>`;
       }).join('');
       setTimeout(() => { if (rotationOn) loadRotationHeadroom(); }, 0);
+      /* Reviewer-stated rules (#19135): painted from their own owner-only endpoint. */
+      setTimeout(() => { if (typeof loadReviewRulesSettings === 'function') loadReviewRulesSettings(); }, 0);
       // Status line: distinguish ON+running from ON+not-configured from OFF.
       let trajStatus, trajStatusColor;
       if (!trajOn) { trajStatus = 'Off'; trajStatusColor = 'var(--muted)'; }
@@ -486,13 +501,15 @@
           </div>
           <div id="rv-perspectives" style="margin-top:10px">
             <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-2)">Which questions the reviewer asks of every PR, and what each one looks for. Edit the text to tell this hive&apos;s reviewer what matters in <em>your</em> repos &mdash; e.g. name the conventions doc for <code>style</code>. Blank means the built-in. Unchecking a perspective stops it running and stops its verdicts being accepted.</p>
+            ${rvSourceControls}
+            ${rvLinkedBanner}
             ${rvBuiltin.map(b => rvPerspectiveRow(b.name, b.focus)).join('')}
             ${rvCustomNames.map(n => rvPerspectiveRow(n, '')).join('')}
-            <div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-4);align-items:center">
+            ${rvLinked ? '' : `<div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-4);align-items:center">
               <input type="text" id="rv-new-perspective" placeholder="new perspective, e.g. api-compatibility" style="flex:1;font-size:0.76rem" pattern="[a-z][a-z0-9]*(-[a-z0-9]+)*">
               <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh95">Add perspective</button>
             </div>
-            <p style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">A new perspective needs focus text before it can be saved. Names: lowercase letters, digits, single dashes.</p>
+            <p style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">A new perspective needs focus text before it can be saved. Names: lowercase letters, digits, single dashes.</p>`}
           </div>
           <div class="config-subgroup">Reviewers</div>
           <div class="config-field" id="rv-reviewer-agents">
@@ -612,6 +629,10 @@
           </div>
         </div>
         <div class="settings-subsection">
+          <div class="settings-subsection-title">Reviewer-stated rules ${yamlHint('review_feedback.rules')} ${settingHelpMark('settings', 'features', 'Reviewer-stated rules', `When a person reviewing one of the hive's own PRs states a rule or a source of truth, the hive records it in its knowledge (the review-rules channel), replies on the PR with the rule id, and gives it to the authoring agent on its next run. Choose which phrases count and whose rules are recorded at once; others are queued for you.`)}</div>
+          <div id="cfg-review-rules-host"><div class="fs-sm text-muted">Loading…</div></div>
+        </div>
+        <div class="settings-subsection">
           <div class="settings-subsection-title">Merge Recommendations ${settingHelpMark('settings', 'features', 'Merge Recommendations', `A digest of what is worth merging next, written into one issue per repository and rewritten in place each cycle. It is separate from the review gate above: the gate decides whether a PR may merge, while this only reports what already can. It never merges, approves, closes or labels anything.`)}</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rvRec.enabled ? 'on' : ''}" id="rec-enabled-switch" data-action="gh82"></div>
@@ -633,6 +654,20 @@
             <div class="config-toggle-switch ${f.evidenceEnabled !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="evidenceEnabled"></div>
             <span class="config-toggle-label">Write evidence bundles ${yamlHint('evidence.enabled')} ${settingHelpMark('settings', 'features', 'Write evidence bundles', `On by default. Off stops writing review evidence bundles. Applies to the next review.`)}</span>
           </div>
+          <div class="settings-subsection-title">Benchmarks ${settingHelpMark('settings', 'features', 'Benchmarks', `This hive contributes anonymized per-PR records (model, harness, sandbox runtime, outcome, time-to-merge, ACMM level) to the fleet leaderboard at hivecommons.dev/benchmarks. No logins, prompts, findings or code ever leave the hive; the hive is identified only by the hash below. Repository names are included only for public repositories.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.benchmarksPublish !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="benchmarksPublish"></div>
+            <span class="config-toggle-label">Publish anonymized benchmark records ${yamlHint('benchmarks.publish')} ${settingHelpMark('settings', 'features', 'Publish benchmark records', `On by default. Off stops the hourly push to the hub and empties GET /api/benchmarks/export.`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.benchmarksRepoConsent !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="benchmarksRepoConsent"></div>
+            <span class="config-toggle-label">Name public repositories ${yamlHint('benchmarks.repo_consent')} ${settingHelpMark('settings', 'features', 'Name public repositories', `On by default: records for PUBLIC repositories carry the repository and org name, since that activity is already public. Off anonymizes every record. Private repositories are never named.`)}</span>
+          </div>
+          <div class="config-field settings-subsection-row"><label>Your hive on the leaderboard ${settingHelpMark('settings', 'features', 'Your hive on the leaderboard', `Salted SHA-256 of this hive's id (first 16 hex chars) — the only identifier that leaves the hive. Published records are keyed by it, so this is how you find your own row.`)}</label><input type="text" value="${esc(f.benchmarksHiveHash || '')}" readonly aria-readonly="true"><div class="config-help">Look this hash up in the &quot;Contributing hives&quot; table at <a href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener">hivecommons.dev/benchmarks</a> to verify your records arrived${f.benchmarksLastPushAt ? ` &middot; last pushed ${esc(f.benchmarksLastPushAt)} (${esc(String(f.benchmarksLastPushCount || 0))} records)` : ' &middot; nothing pushed yet'}.</div></div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Review evidence signing</div>
           <div class="config-field settings-subsection-row"><label>Signing key file ${yamlHint('evidence.signing_key_file')} ${settingHelpMark('settings', 'features', 'Evidence signing key file', `Path to an Ed25519 private key used to sign bundles. Empty means bundles are written unsigned. Only the path is shown; the key is never read by this dialog.`)}</label><input type="text" value="${esc(f.evidenceSigningKeyFile || '')}" placeholder="not set (bundles unsigned)" readonly aria-readonly="true"><div class="config-help">Read-only here: signing keys are provisioned on disk and set in hive.yaml.</div></div>
         </div>
         `)}
@@ -848,6 +883,33 @@
             <div class="config-toggle-switch ${f.reentrantTurnBackgroundFleetEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="reentrantTurnBackgroundFleetEnabled"></div>
             <span class="config-toggle-label">Include background fleet ${yamlHint('turn.reentrant.background_fleet_enabled')} ${settingHelpMark('settings', 'features', 'Re-entrant background fleet', `Extends the opt-in to every enabled background agent once a soak is underway. Off keeps the rollout to named agents. HIVE_REENTRANT_TURN_BACKGROUND_FLEET overrides it.`)}</span>
           </div>
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnabled"></div>
+            <span class="config-toggle-label">Customers ${yamlHint('customers.enabled')} ${settingHelpMark('settings', 'features', 'Customers', `ON by default. The Customers section keeps one profile per person: who they are, their tags, what they are trying to get done and how it is going for them. Dashboard users and people added by hand are customers; anyone else hive has seen is only a suggestion until someone accepts them. Everything is stored on this hive and nothing is sent anywhere else. Off opens no store and hides the section. A change takes effect when the hive restarts. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersEffective !== f.customersEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENABLED overrides this setting: Customers is currently <b>${f.customersEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersInference ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersInferenceEnabled"></div>
+            <span class="config-toggle-label">Suggest goals and satisfaction ${yamlHint('customers.inference.enabled')} ${settingHelpMark('settings', 'features', 'Customer goal and satisfaction suggestions', `OFF by default. When on, the hive reads what a customer has written (the issues they opened, the pull requests they authored and mail from them that was approved) and asks the model configured for meetings to suggest what they are trying to get done and how it is going for them. This sends that text, which can be about people who never signed up, to that model, and spends the model's daily budget (about forty thousand tokens a day). It only ever suggests: a person confirms, edits or rejects each one, a confirmed or manual value is never overwritten, and nothing suggested is shared outside the hive. Needs Customers on and a meetings model (an OpenAI-compatible endpoint or an Anthropic key). HIVE_CUSTOMERS_INFERENCE_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersInferenceEffective !== f.customersInference ? `<p class="config-help">HIVE_CUSTOMERS_INFERENCE_ENABLED (or turning Customers off) overrides this setting: suggestions are currently <b>${f.customersInferenceEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersAvatars ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersAvatarsEnabled"></div>
+            <span class="config-toggle-label">Customer avatars ${yamlHint('customers.avatars.enabled')} ${settingHelpMark('settings', 'features', 'Customer avatars', `ON by default. The Customers list shows a person's GitHub picture next to their name when they have a confirmed GitHub login. This is the one thing in Customers that leaves your browser: it asks github.com for https://github.com/<login>.png, once per person on screen, and sends no referrer. Nothing goes to the hive's server or the hub, and nobody known only by email is looked up anywhere. Off, the list shows initials and makes no request to github.com. Applies on the next refresh. HIVE_CUSTOMERS_AVATARS_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersAvatarsEffective !== f.customersAvatars ? `<p class="config-help">HIVE_CUSTOMERS_AVATARS_ENABLED overrides this setting: avatars are currently <b>${f.customersAvatarsEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersHubImport ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersHubImportEnabled"></div>
+            <span class="config-toggle-label">Import details people shared on the hub ${yamlHint('customers.hub_import.enabled')} ${settingHelpMark('settings', 'features', 'Customer hub import', `OFF by default. When on, and this hive is registered with a hub, the hive asks the hub about its confirmed customers about once an hour and when a person is accepted. The request carries salted hashes of their GitHub logins and nothing else: no names, no emails, never a suggested person. The hub answers only for people who chose, on the hub, to share their real name, organization or country with this hive, and only values they typed themselves. Those fields show "from the hub". Editing one here makes it yours and the hub never changes it again; a value set by hand is never overwritten. When a person withdraws, or the hub has not confirmed a value for three days, it is removed and the field goes back to automatic. A forgotten person is never rebuilt. The import never creates a person. This switch is needed but never enough: each person's consent on the hub decides what arrives. Needs Customers on. HIVE_CUSTOMERS_HUB_IMPORT_ENABLED overrides it. See src/docs/design/customers-hub-consent.md.`)}</span>
+          </div>
+          ${f.customersHubImportEffective !== f.customersHubImport ? `<p class="config-help">HIVE_CUSTOMERS_HUB_IMPORT_ENABLED (or turning Customers off) overrides this setting: the hub import is currently <b>${f.customersHubImportEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersSearch ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersSearchEnabled"></div>
+            <span class="config-toggle-label">Search GitHub when accepting a person ${yamlHint('customers.mention_search.enabled')} ${settingHelpMark('settings', 'features', 'Customer GitHub search on accept', `OFF by default. When on, accepting a suggested GitHub login makes one budgeted GitHub search (issues and pull requests that mention the login and ones it commented on, in this hive's own repositories) so the new profile starts with history beyond what the hive already holds. The results are stored as references only, never text. It is never run by the discovery sweep and never for an email address. It sends the login to GitHub, makes at most two search requests per accept, shares an hourly request budget across accepts (customers.mention_search.max_requests_per_hour in the config file, default 10), counts against the shared GitHub quota, and stands down while that quota is low or GitHub's secondary limit is engaged. Needs Customers on. HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersSearchEffective !== f.customersSearch ? `<p class="config-help">HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED (or turning Customers off) overrides this setting: the search is currently <b>${f.customersSearchEffective ? 'on' : 'off'}</b>.</p>` : ''}
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">
@@ -1177,25 +1239,7 @@
             <div class="config-field"><label>Prior-art max parks per cycle ${yamlHint('runs.triage.prior_art.max_parks_per_cycle')} ${settingHelpMark('settings', 'features', 'Prior-art max parks per cycle', `Caps how many issues one enumeration cycle may park, so enabling the gate on a backlog never floods a repo (default ${esc(String(runsDefaults.runsTriagePriorArtMaxParksPerCycle || 5))}). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.runsTriagePriorArtMaxParksPerCycle || ''))}" placeholder="${esc(String(runsDefaults.runsTriagePriorArtMaxParksPerCycle || 5))}" data-change-action="markDirty" data-arg0="features" data-arg1="runsTriagePriorArtMaxParksPerCycle" data-arg-types="s,s,N"></div>
           </div>
           <div class="config-field"><label>Prior-art bot close TTL ${yamlHint('runs.triage.prior_art.bot_close_ttl')} ${settingHelpMark('settings', 'features', 'Prior-art bot close TTL', `How long a clanker-filed park waits for a reply before it is closed as already-exists (default ${esc(runsDefaults.runsTriagePriorArtBotCloseTtl || '72h0m0s')}). Go duration; empty uses the default. A negative value that disables auto-close stays yaml-only.`)}</label><input type="text" value="${esc(f.runsTriagePriorArtBotCloseTtl || '')}" placeholder="${esc(runsDefaults.runsTriagePriorArtBotCloseTtl || '72h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="runsTriagePriorArtBotCloseTtl" data-arg-types="s,s,w"></div>
-          <div class="settings-subsection-title mt-5">Spek recheck ${settingHelpMark('spektacular', '', 'Spek recheck', `Continuous convergence: re-runs the spec for opted-in campaigns on a cadence and imports changed or new plan tasks. The source lists (runs.spektacular.recheck.sources, runs.spektacular.recheck.discovery.sources) and runs.spektacular.recheck.egress_allowlist are yaml-only.`)}</div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.spektacularRecheckEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularRecheckEnabled"></div>
-            <span class="config-toggle-label">Recheck cadence enabled ${yamlHint('runs.spektacular.recheck.enabled')} ${settingHelpMark('spektacular', '', 'Recheck cadence enabled', `Lets the scheduler start rechecks on cadence. A manual recheck also needs this unless it is forced.`)}</span>
-          </div>
-          <div class="config-field-row">
-            <div class="config-field"><label>Default interval ${yamlHint('runs.spektacular.recheck.default_interval')} ${settingHelpMark('spektacular', '', 'Recheck default interval', `Cadence for opted-in campaigns without their own interval (default ${esc(runsDefaults.spektacularRecheckDefaultInterval || '168h0m0s')}). Go duration; empty uses the default.`)}</label><input type="text" value="${esc(f.spektacularRecheckDefaultInterval || '')}" placeholder="${esc(runsDefaults.spektacularRecheckDefaultInterval || '168h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularRecheckDefaultInterval" data-arg-types="s,s,w"></div>
-            <div class="config-field"><label>Max delta tasks ${yamlHint('runs.spektacular.recheck.max_delta_tasks')} ${settingHelpMark('spektacular', '', 'Recheck max delta tasks', `Caps how many changed or new plan tasks one recheck imports (default ${esc(String(runsDefaults.spektacularRecheckMaxDeltaTasks || 50))}). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.spektacularRecheckMaxDeltaTasks || ''))}" placeholder="${esc(String(runsDefaults.spektacularRecheckMaxDeltaTasks || 50))}" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularRecheckMaxDeltaTasks" data-arg-types="s,s,N"></div>
-          </div>
-          <div class="config-field"><label>Discovery proxy ${yamlHint('runs.spektacular.recheck.discovery_proxy')} ${settingHelpMark('spektacular', '', 'Discovery proxy', `The relay egress proxy, e.g. http://relay:18443. Required when exact sources are configured; discovery never falls back to direct network access. No credentials, path, query or fragment.`)}</label><input type="text" value="${esc(f.spektacularRecheckDiscoveryProxy || '')}" placeholder="not set" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularRecheckDiscoveryProxy" data-arg-types="s,s,w"></div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.spektacularDiscoveryEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularDiscoveryEnabled"></div>
-            <span class="config-toggle-label">Outward discovery ${yamlHint('runs.spektacular.recheck.discovery.enabled')} ${settingHelpMark('spektacular', '', 'Outward discovery', `Gathers bounded evidence from the declared discovery sources before a recheck spec. Does nothing without sources.`)}</span>
-          </div>
-          <div class="config-field-row">
-            <div class="config-field"><label>Discovery timeout ${yamlHint('runs.spektacular.recheck.discovery.timeout')} ${settingHelpMark('spektacular', '', 'Discovery timeout', `Bounds each discovery pass (default ${esc(runsDefaults.spektacularDiscoveryTimeout || '30s')}). Go duration; empty uses the default.`)}</label><input type="text" value="${esc(f.spektacularDiscoveryTimeout || '')}" placeholder="${esc(runsDefaults.spektacularDiscoveryTimeout || '30s')}" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularDiscoveryTimeout" data-arg-types="s,s,w"></div>
-            <div class="config-field"><label>Discovery max items ${yamlHint('runs.spektacular.recheck.discovery.max_total_items')} ${settingHelpMark('spektacular', '', 'Discovery max total items', `Caps all discovery evidence for one revision (default ${esc(String(runsDefaults.spektacularDiscoveryMaxTotalItems || 100))}). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.spektacularDiscoveryMaxTotalItems || ''))}" placeholder="${esc(String(runsDefaults.spektacularDiscoveryMaxTotalItems || 100))}" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularDiscoveryMaxTotalItems" data-arg-types="s,s,N"></div>
-          </div>
-          <div class="config-help">Checkpoint, triage and recheck settings are applied live; no restart is needed.</div>
+          <div class="config-help">Checkpoint and triage settings are applied live; no restart is needed.</div>
         </div>
         <div class="settings-subsection">
           <div class="settings-subsection-title">Integration orchestration</div>

@@ -39,6 +39,22 @@ project:
   #   - repo: repo-two
   #     by: your-github-login
   #     reason: release freeze until Friday
+  # Optional: repos OUTSIDE the project that agents may study but not work
+  # (src/docs/agent-configuration.md#reference-repos-what-agents-may-study-projectreference_repos).
+  # Always owner/name; never also in `repos`. No queue, ACMM or work items.
+  # String form = read-only: clone/fetch and API GETs, sent unauthenticated
+  # (the hive token is stripped, so private repos are unreadable); every
+  # non-GET is refused with a 403 naming reference_repos. `write` opts in to
+  # ONLY: open an issue, open a PR / push a topic branch, comment on the hive's
+  # own issue/PR — never merge, default-branch push, labels, assignees, reviews
+  # or closing others' items. Writes use the App installed on that org (minted
+  # for the one repo) or write_token_file; boot exits 22 with neither. Kicks
+  # list them as 📚 REFERENCE REPOS; the dashboard shows a `reference · <tier>` chip.
+  # reference_repos:
+  #   - hivecommons/docs                          # read-only
+  #   - repo: hivecommons/hive
+  #     write: [issues, prs]                      # issues, prs, or both
+  #     write_token_file: /data/secrets/ref-pat   # optional; only with write
 
 # Optional opt-in "clanker-requested" policy, under project.issue_filter.reporter_trust.
 # Off by default. While on, a PR carrying the label below is treated as held.
@@ -48,6 +64,20 @@ project:
 #       clanker_requested: true                       # default: false
 #       clanker_requested_label: clanker-requested    # default: clanker-requested; must not be blank
 #       clanker_requested_addendum: ""                # optional free text, max 1000 bytes
+
+# Agent-filed strategist and outreach proposals are held by default until
+# acknowledged. Set this to {} to disable, or configure marker lists; see
+# docs/agent-configuration.md#agent-filed-direction-proposals.
+# project:
+#   issue_filter:
+#     agent_proposal: {}
+
+# PR-contents merge gate posted by the hive as commit statuses (default off;
+# see docs/github-app-setup.md). shadow posts only "verify PR contents (hive)".
+# auto_merge:
+#   pr_gate:
+#     mode: shadow
+#     repos: [your-org/your-repo]
 
 # Optional merge-request safety exceptions. Hive now merges into any protected
 # or unprotected base branch the App can write, while still refusing a PR with
@@ -77,6 +107,17 @@ project:
 # authorized users, allow-listed bots) receive informational notices only.
 # sentinel:
 #   trusted_authors_block: false  # set true to block trusted authors too
+
+# Optional observe-only session taint recorder (docs/design/session-taint.md).
+# Default: off, and nothing is recorded. When enabled it keeps a bounded,
+# in-memory record of coarse labels per agent session and logs and audits which
+# rule WOULD have held a later relay write. It never blocks, holds or changes
+# anything and stores labels, counts and ids only. Takes effect at restart.
+# session_taint:
+#   enabled: false
+#   max_sessions: 256
+#   max_labels_per_session: 32
+#   max_decisions: 128
 
 # Hive-curated `good first issue` advertising (default ON; `enabled: false`
 # opts out). A periodic sweep scores open, unclaimed issues; the few that qualify get
@@ -144,7 +185,8 @@ project:
 #   close_on_merge: true
 #   close_on_merge_backfill_interval: 1h
 #   reporter_confirmation: false
-#   # Trusted reporters' SHA-less bugs get this soft label, not `hold` (#12002).
+#   # Non-exempt reporters' SHA-less bugs get this soft label, not `hold` (#12002).
+#   # Owners/maintainers, hive accounts, issues naming repo paths and waived issues are exempt (#18866).
 #   sha_hold_trusted_label: needs-sha
 #   # Lift hive-applied hold/blocked once a referencing PR merges (#12002).
 #   lift_hive_hard_suppress: true
@@ -512,6 +554,8 @@ governor:
   labels:
     automerge: lgtm                     # Label applied by merger queue; default is lgtm
     # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues
+    # ready_for_review: ready-for-review # Gate label the hive applies instead of `hold` when its PR waits on review (#18468)
+    # decision_needed: decision-needed   # Gate label the hive applies instead of `hold` when it needs a human decision
     stage:                              # Hive-owned stage/NN-* pipeline labels (docs/labels-and-control-signals.md)
       enabled: true                     # One stage label per open issue/PR, plus author/* and the stage/stalled marker
       # stalled:                        # stage/stalled = "no activity"; never applied while the item waits on the hive (#12534)
@@ -634,6 +678,12 @@ governor:
   #   strategist:
   #     cron: "30 8 * * mon-fri"          # five-field cron expression
   #     tz: UTC
+
+  # Advisory digest (see docs/advisory.md). A multi-repo hive keeps one
+  # Hive Advisory Report in project.primary_repo that covers every repo.
+  # advisory:
+  #   per_repo: false                    # true: each monitored repo also gets its own
+  #                                      # report (HIVE_ADVISORY_PER_REPO sets the default)
 
   # Trajectory review lane — periodic second-model review of running agents.
   # Enabled by default; it no-ops until endpoint+model resolve here or via litellm.
@@ -853,6 +903,18 @@ governor:
 #   fan_out: false
 #   max_parallel_reviews: 5
 #   reviewer_agents: [] # optional explicit list; otherwise agents with review role/keywords are used
+#   analysis_factcheck:  # independent fact-check pass for analysis/report PRs (#19074); off by default
+#     enabled: false
+#     author_agents: []  # agents whose PRs qualify, e.g. [quality]; a PR also qualifies by labels
+#     labels: []         # PR labels that qualify a PR an agent opened
+#     reviewer_agents: [] # who may run the pass; default review.reviewer_agents, else role: reviewer. The author never qualifies
+#     reviewer_model: ""  # optional model the review is pinned to (judged for independence)
+#     independence: model # agent | model | family: how different the reviewer must be from the author
+#     max_rounds: 3       # author/reviewer rounds per PR, 1-10; then a person is asked once
+#     ready_policy: human # human (default) leaves draft-to-ready to a person | hive marks ready after a pass
+#     revision_wait: 6h   # how long the author has to push a revision after findings
+#     authoritative_files: [] # source of truth for people and roles; default MAINTAINERS, OWNERS, CODEOWNERS, .project/maintainers.yaml, GOVERNANCE.md
+#     rubric: ""          # extra domain guidance for the reviewer (where the scoring rubric lives, etc.)
 #   reviewers:
 #     autoscale:        # size the reviewer lane to its backlog (#14685); off by default
 #       enabled: false
@@ -868,6 +930,27 @@ governor:
 #   combined_perspectives: true # RECOMMENDED (#12126): one session + one comment covering every
 #                               # perspective; shared review boilerplate is sent once instead of once
 #                               # per perspective. Verdicts stay per-perspective. Default false.
+#   perspectives_source:  # optional; live-link the perspective names + focus text to a
+#     owner: my-org       # kind: ReviewPerspectives file in GitHub (#17975). When it resolves it
+#     repo: my-repo       # wins over perspectives/perspective_prompts, which stay the fallback.
+#     path: .hive/review-perspectives.yaml
+#     ref: main           # optional; default branch otherwise
+#                         # The repo must be on variables.security.github_prompt_allowlist (seed-only).
+#                         # File: "kind: ReviewPerspectives" + "perspectives: [{name, focus}]". Names and
+#                         # focus only; combined_perspectives, plan_match and max_perspectives_per_pr stay
+#                         # here. Format: src/docs/review-swarm.md, "Live-linked perspectives".
+#   preflight:           # facts gathered for the reviewer before it starts (#19069); per-repo
+#                       # overrides under repos.<repo>.review_preflight. src/docs/review-swarm.md,
+#                       # "Review preflight", lists every key and exactly what leaves the hive.
+#     rule_docs: true   # default on: start from README/CONTRIBUTING/agent files and follow
+#                       # the documents they link to; rule_doc_paths: [...] overrides discovery
+#     rules: []         # named operator rules: [{id, text, severity}]
+#     dependencies: false # default OFF: advisory and release-age lookups send package names
+#                       # and versions to OSV and the package registries
+#     offline: false    # or HIVE_REVIEW_PREFLIGHT_OFFLINE=true: no lookups, "could not check: offline"
+#     min_release_age_days: 0 # 0 = no policy: publish dates are reported as facts, no verdict
+#     block_severity: high
+#     ignore: []        # accepted risks: [{id, package, reason, expires}]
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
 #   fixer_fallback_agents: [] # opt-in ordered repair lanes, e.g. [fixer, scanner-2]
 #   fixer_fallback_after_undeliverable: 3 # consecutive refusals before rerouting;
@@ -1006,6 +1089,13 @@ dashboard:
   # authorized_users: [owner, reviewer:read, maintainer:read-write]
   # hub_proxied: false                    # True when trusted hub nginx injects identity headers
   # agent_poll_interval_s: 5
+  # sessions:                           # Inception (spek): interactive named CLI terminals in the dashboard (default on)
+  #   enabled: true                     # set false to hide Inception (spek); env HIVE_SESSIONS_ENABLED overrides; owner/read-write only, no bypass-permissions flags
+  #   max_sessions: 12                  # live sessions per spoke (env HIVE_SESSIONS_MAX)
+  #   max_per_user: 4                   # live sessions per creator (env HIVE_SESSIONS_MAX_PER_USER)
+  #   idle_ttl_hours: 72                # close after this idle time (env HIVE_SESSIONS_IDLE_TTL_HOURS)
+  #   workspace_repo: org/repo          # shared checkout sessions open in; default project.org/primary_repo (env HIVE_SESSIONS_WORKSPACE_REPO)
+  #   autostart: true                   # answer the CLI's startup screens (first-run notice, folder trust) so the first request runs unattended; never permission prompts or sign-in (env HIVE_SESSIONS_AUTOSTART)
   # stage_tracker:
   #   cache_ttl_s: 300                    # Hive activity monitor payload cache; default = governor.eval_interval_s
   # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord); or custom
@@ -1041,6 +1131,20 @@ dashboard:
 #       deny_titles: ["WIP*"]
 #       authors_mode: deny
 #       deny_authors: [dependabot[bot]]
+#   # Umbrella / tracker / owner-only issues are never handed to a contributor relay
+#   # (they stay actionable for the owner and the hive, and stay closable). All keys
+#   # are optional; per_repo fields left out inherit the hive-wide value.
+#   contribute_umbrella:
+#     enabled: true
+#     labels: [umbrella, tracker, epic, meta-tracker]
+#     title_prefixes: ["[Tracking]", "[Epic]", "[Umbrella]", "[Tracker]"]
+#     task_list_min: 2                  # issue or PR references in a checklist
+#     human_only_labels: [needs-human, human-only]
+#     withdraw_advertisement: true      # drop help wanted / good first issue from an umbrella on the next sweep
+#     per_repo:
+#       owner/repo:
+#         labels: [umbrella, program]
+#         withdraw_advertisement: false
 #   contribute_needs_decision_label: needs-decision  # label relays apply for no_work_needed — decision: ...; empty disables
 #   # Relay audit level this hive ASKS contributors to share (lifecycle |
 #   # commands | reasoning), shown on auth_ok and /contribute. A request only:
@@ -1066,6 +1170,9 @@ dashboard:
 #     http_allowlist: []
 #     allow_github_prompt: false
 #     github_prompt_allowlist: []
+#     # Owner-approved managed repos, written by Settings -> Security -> Prompt
+#     # sources (owner-only). Not needed in a hand-written seed.
+#     owner_github_prompt_repos: []
 #   defs:
 #     EXAMPLE_TOKEN:
 #       type: env
@@ -1290,3 +1397,52 @@ data:
   claude_sessions_dir: /data/home/.claude/projects
   copilot_sessions_dir: /data/home/.copilot/session-state
   agents_dir: /data/agent-configs
+
+# Workflow models (hivecommons/hive#17620, docs/design/workflow-models.md).
+# Repositories are bound to a model on Settings → Repos (project.workflow_bindings).
+# A binding always changes the Activity Monitor's columns for that repository;
+# `enabled` decides whether the bound model's rules also derive its stages and
+# whether the model's labels are provisioned in the repository. Owners can flip
+# it from Settings → Workflows → Library (PUT /api/workflows/enabled) without
+# editing this file; the change applies on the next derivation pass.
+# workflow:
+#   enabled: false           # false (default): bindings are columns only
+#   label_gc: true           # delete labels a previous binding provisioned once nothing wears them
+#   dispatch:                # hand model states to agents (docs/design/workflow-models.md#agent-dispatch)
+#     enabled: true          # default; also needs enabled: true above
+#     profiles:
+#       techdocs-drafter:
+#         agent: writer      # default: an agent named after the profile, else role writer, docs, feature
+#         prompt_template: ""  # default: the built-in dispatch prompt
+#       techdocs-verifier:
+#         disabled: false    # true: never dispatch automatically (Send to … still works)
+
+# Customers (docs/design/customers.md): one profile per person, built from
+# what the hive already holds. Dashboard users and people added by hand are
+# customers; anyone else the hive has seen is only a suggestion until someone
+# accepts them. Stored in /data/customers and /data/graph; nothing leaves the
+# hive. Default on.
+# customers:
+#   enabled: true            # false (or env HIVE_CUSTOMERS_ENABLED=false) opens no store and hides the section
+#   inference:
+#     enabled: false         # true (or env HIVE_CUSTOMERS_INFERENCE_ENABLED=true) suggests goals and satisfaction with the meetings model; default off
+#   avatars:
+#     enabled: true          # false (or env HIVE_CUSTOMERS_AVATARS_ENABLED=false) shows initials and makes no browser request to github.com for pictures; default on
+#   mention_search:
+#     enabled: false         # true (or env HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED=true) runs one budgeted GitHub search for mentions and comments when an owner accepts a suggested GitHub login; default off
+#     max_requests_per_hour: 10  # search requests all accepts may spend together per hour (default 10, at most 60); each accept spends at most 2
+
+
+# Sandbox Job GitHub read relay (docs/sandbox-isolation.md): lets sandbox Jobs
+# make authenticated, read-only GitHub reads without ever holding a credential.
+# Default off. There is NO default bind: with enabled: true, listen_addr is
+# required, and endpoint must be https:// (hive serves TLS with a certificate
+# from its proxy CA for the endpoint host). Hive-wide only; a per-agent job
+# block cannot enable or repoint it. Pair it with a NetworkPolicy.
+# agent_sandbox:
+#   job:
+#     github_read_proxy:
+#       enabled: false
+#       listen_addr: ":8443"                       # required when enabled; no default
+#       endpoint: https://hive.hive-system.svc:8443  # how Job pods reach hive; required when enabled
+#       no_proxy: []                               # optional extra hosts Jobs reach directly

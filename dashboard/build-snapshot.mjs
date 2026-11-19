@@ -79,7 +79,7 @@ async function fetchJson(endpoint, fallback = '{}') {
 async function main() {
   console.log(`Fetching data from ${dashboardUrl} (mode: ${snapshotMode})...`);
 
-  const [statusRaw, historyRaw, trendsRaw, timelineRaw, configRaw, versionRaw, nousStatusRaw, nousLedgerRaw, nousPrinciplesRaw, kbStatsRaw, kbFactsRaw, contributorsRaw, leaderboardRaw, auditRaw, inceptionRaw] = await Promise.all([
+  const [statusRaw, historyRaw, trendsRaw, timelineRaw, configRaw, versionRaw, nousStatusRaw, nousLedgerRaw, nousPrinciplesRaw, kbStatsRaw, kbFactsRaw, contributorsRaw, leaderboardRaw, auditRaw] = await Promise.all([
     fetchJson('/api/status'),
     fetchJson('/api/history', '[]'),
     fetchJson('/api/trends?range=week', '[]'),
@@ -93,11 +93,11 @@ async function main() {
     fetchJson('/api/knowledge', '{"facts":[]}'),
     fetchJson('/api/contributors', '[]'),
     fetchJson('/api/leaderboard', '{"leaderboard":[]}'),
-    // Audit Log and Project Inception load from their own endpoints on the
-    // live dashboard (via _deferredInit, which the snapshot strips), so bake
-    // them here or they sit at "Loading…" forever in the read-only preview.
+    // The Audit Log loads from its own endpoint on the live dashboard (via
+    // _deferredInit, which the snapshot strips), so bake it here or it sits
+    // at "Loading…" forever in the read-only preview. (/api/inception/state
+    // was retired with the inception API and now answers 410.)
     fetchJson('/api/audit', '{"entries":[]}'),
-    fetchJson('/api/inception/state', '{}'),
   ]);
 
   // Validate status
@@ -360,17 +360,6 @@ async function main() {
         _auditEntries = (_snapAudit && _snapAudit.entries) ? _snapAudit.entries : [];
         if (typeof renderAuditTable === 'function') renderAuditTable(_auditEntries);
       }
-    } catch (e) {}
-
-    // Project Inception — same story: /api/inception/state loads via
-    // _deferredInit. Bake the state and render the panel once (statically).
-    try {
-      var _snapInception = ${inceptionRaw};
-      // Mirror loadInceptionState(): only an active inception has a state.
-      if (typeof _inceptionState !== 'undefined') {
-        _inceptionState = (_snapInception && _snapInception.active) ? _snapInception.state : null;
-      }
-      if (typeof renderInception === 'function') renderInception();
     } catch (e) {}
 
     // Fix leaderboard link to use snapshot base path

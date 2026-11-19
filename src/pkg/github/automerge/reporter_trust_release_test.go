@@ -32,9 +32,19 @@ func reporterTrustNoticeComment(at string) map[string]any {
 }
 
 func holdEvent(event, actor, at string) map[string]any {
+	return labelEventFor("hold", event, actor, at)
+}
+
+// gateEvent is a label event for the decision-needed gate label the
+// reporter-trust gate applies since hivecommons/hive#18468.
+func gateEvent(event, actor, at string) map[string]any {
+	return labelEventFor(hgithub.DefaultDecisionNeededLabel, event, actor, at)
+}
+
+func labelEventFor(label, event, actor, at string) map[string]any {
 	return map[string]any{
 		"event":      event,
-		"label":      map[string]string{"name": "hold"},
+		"label":      map[string]string{"name": label},
 		"actor":      map[string]string{"login": actor},
 		"created_at": at,
 	}
@@ -106,7 +116,7 @@ func TestHoldProvenance(t *testing.T) {
 					http.NotFound(w, r)
 				}
 			})
-			got, notice, err := c.holdProvenance(context.Background(), "acme", "widget", 15020)
+			got, notice, err := c.holdProvenance(context.Background(), "acme", "widget", 15020, "hold")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,11 +132,11 @@ func TestHoldProvenance(t *testing.T) {
 
 func TestHoldProvenanceErrors(t *testing.T) {
 	var nilEngine *Engine
-	if prov, notice, err := nilEngine.holdProvenance(context.Background(), "acme", "widget", 1); prov != nil || notice != nil || err != nil {
+	if prov, notice, err := nilEngine.holdProvenance(context.Background(), "acme", "widget", 1, "hold"); prov != nil || notice != nil || err != nil {
 		t.Fatalf("nil engine = (%v, %v, %v), want no-op", prov, notice, err)
 	}
 	c, _ := releaseEngine(t, func(w http.ResponseWriter, r *http.Request) { http.Error(w, "boom", http.StatusInternalServerError) })
-	if _, _, err := c.holdProvenance(context.Background(), "acme", "widget", 1); err == nil || !strings.Contains(err.Error(), "listing comments") {
+	if _, _, err := c.holdProvenance(context.Background(), "acme", "widget", 1, "hold"); err == nil || !strings.Contains(err.Error(), "listing comments") {
 		t.Fatalf("err = %v, want listing-comments failure", err)
 	}
 	c, _ = releaseEngine(t, func(w http.ResponseWriter, r *http.Request) {
@@ -136,13 +146,13 @@ func TestHoldProvenanceErrors(t *testing.T) {
 		}
 		http.Error(w, "boom", http.StatusInternalServerError)
 	})
-	if _, notice, err := c.holdProvenance(context.Background(), "acme", "widget", 1); err == nil || !strings.Contains(err.Error(), "listing issue events") || notice == nil {
+	if _, notice, err := c.holdProvenance(context.Background(), "acme", "widget", 1, "hold"); err == nil || !strings.Contains(err.Error(), "listing issue events") || notice == nil {
 		t.Fatalf("(%v, %v), want listing-issue-events failure with the notice still returned", notice, err)
 	}
 }
 
 func TestReleaseSelfImposedReporterTrustHoldGuards(t *testing.T) {
-	obs := stageObservation{Owner: "acme", Repo: "widget", Number: 15020, Labels: []string{"hold", "needs-human"}}
+	obs := stageObservation{Owner: "acme", Repo: "widget", Number: 15020, Labels: []string{hgithub.DefaultDecisionNeededLabel, "needs-human"}}
 	c, _ := releaseEngine(t, func(w http.ResponseWriter, r *http.Request) { t.Errorf("unexpected %s %s", r.Method, r.URL.Path) })
 	for name, prov := range map[string]*stagelabels.HoldProvenance{
 		"nil":            nil,
@@ -158,11 +168,11 @@ func TestReleaseSelfImposedReporterTrustHoldGuards(t *testing.T) {
 }
 
 func TestReleaseSelfImposedReporterTrustHoldErrors(t *testing.T) {
-	obs := stageObservation{Owner: "acme", Repo: "widget", Number: 15020, Labels: []string{"hold", "needs-human"}}
+	obs := stageObservation{Owner: "acme", Repo: "widget", Number: 15020, Labels: []string{hgithub.DefaultDecisionNeededLabel, "needs-human"}}
 	prov := &stagelabels.HoldProvenance{By: "hive", Source: "reporter-trust", Reason: "reporter trust (issue #15017 by @Karibhou, contributor)"}
 	c, _ := releaseEngine(t, func(w http.ResponseWriter, r *http.Request) { http.Error(w, "boom", http.StatusInternalServerError) })
-	if released, err := c.releaseSelfImposedReporterTrustHold(context.Background(), obs, prov, nil); released || err == nil || !strings.Contains(err.Error(), "removing hold label") {
-		t.Fatalf("(%v, %v), want removing-hold-label failure", released, err)
+	if released, err := c.releaseSelfImposedReporterTrustHold(context.Background(), obs, prov, nil); released || err == nil || !strings.Contains(err.Error(), "removing decision-needed label") {
+		t.Fatalf("(%v, %v), want removing-decision-needed-label failure", released, err)
 	}
 	c, _ = releaseEngine(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
@@ -187,14 +197,14 @@ func TestApplyStageLabels_ReleasesSelfImposedReporterTrustHold(t *testing.T) {
 		api.labels[d.Name] = d.Color
 	}
 	api.issueComments = map[int][]map[string]any{15020: {reporterTrustNoticeComment("2026-10-20T17:14:18Z")}}
-	api.issueEvents = map[int][]map[string]any{15020: {holdEvent("labeled", testHiveAppBotLogin, "2026-10-20T17:14:14Z")}}
+	api.issueEvents = map[int][]map[string]any{15020: {gateEvent("labeled", testHiveAppBotLogin, "2026-10-20T17:14:14Z")}}
 	srv := newStageAPI(t, api)
 	defer srv.Close()
 	clock := &contributorLaneClock{at: time.Date(2026, 10, 20, 17, 40, 0, 0, time.UTC)}
 	e, _, store := newStageEngine(t, srv.URL, clock)
 	ctx := context.Background()
 
-	pr := stagePR(15020, "hold", "needs-human", "author/hive", "role/trusted", "stage/085-needs-decision")
+	pr := stagePR(15020, hgithub.DefaultDecisionNeededLabel, "needs-human", "author/hive", "role/trusted", "stage/085-needs-decision")
 	pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin), Type: gh.Ptr("Bot")}
 	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "label:hold", false, nil)
 	res, err := e.ApplyStageLabels(ctx)
@@ -204,7 +214,7 @@ func TestApplyStageLabels_ReleasesSelfImposedReporterTrustHold(t *testing.T) {
 	if res.Skipped != 1 || res.Comments != 1 {
 		t.Fatalf("result = %+v, want the row skipped after the release with one comment", res)
 	}
-	if strings.Join(api.removed, ",") != "hold,needs-human" || len(api.added) != 0 {
+	if strings.Join(api.removed, ",") != hgithub.DefaultDecisionNeededLabel+",needs-human" || len(api.added) != 0 {
 		t.Fatalf("removed=%v added=%v, want hold and needs-human released and nothing staged yet", api.removed, api.added)
 	}
 	if len(api.comments) != 1 || !IsReporterTrustReleaseComment(api.comments[0]) || !strings.Contains(api.comments[0], "reporter trust (issue #15017 by @Karibhou, contributor)") || !strings.Contains(api.comments[0], "The hive is this PR's author") {
@@ -217,7 +227,7 @@ func TestApplyStageLabels_ReleasesSelfImposedReporterTrustHold(t *testing.T) {
 	// Next pass, the hold gone: the PR stages normally and nothing is
 	// released again (the events now end in the hive's own unlabel).
 	api.reset()
-	api.issueEvents[15020] = append(api.issueEvents[15020], holdEvent("unlabeled", testHiveAppBotLogin, "2026-10-20T17:40:01Z"))
+	api.issueEvents[15020] = append(api.issueEvents[15020], gateEvent("unlabeled", testHiveAppBotLogin, "2026-10-20T17:40:01Z"))
 	pr = stagePR(15020, "author/hive", "role/trusted", "stage/085-needs-decision")
 	pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin), Type: gh.Ptr("Bot")}
 	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "queued", false, nil)
@@ -230,7 +240,7 @@ func TestApplyStageLabels_ReleasesSelfImposedReporterTrustHold(t *testing.T) {
 		}
 	}
 	for _, removed := range api.removed {
-		if removed == "hold" || removed == "needs-human" {
+		if removed == hgithub.DefaultDecisionNeededLabel || removed == "hold" || removed == "needs-human" {
 			t.Fatalf("removed %q again on an unheld PR: %v", removed, api.removed)
 		}
 	}
@@ -291,14 +301,14 @@ func TestApplyStageLabels_ReporterTrustHoldOnContributorPRIsNamed(t *testing.T) 
 		api.labels[d.Name] = d.Color
 	}
 	api.issueComments = map[int][]map[string]any{21: {reporterTrustNoticeComment("2026-10-20T17:14:18Z")}}
-	api.issueEvents = map[int][]map[string]any{21: {holdEvent("labeled", testHiveAppBotLogin, "2026-10-20T17:14:14Z")}}
+	api.issueEvents = map[int][]map[string]any{21: {gateEvent("labeled", testHiveAppBotLogin, "2026-10-20T17:14:14Z")}}
 	srv := newStageAPI(t, api)
 	defer srv.Close()
 	clock := &contributorLaneClock{at: time.Date(2026, 10, 20, 17, 40, 0, 0, time.UTC)}
 	e, _, store := newStageEngine(t, srv.URL, clock)
 	ctx := context.Background()
 
-	pr := stagePR(21, "hold", "needs-human", "author/human", "role/contributor", "stage/050-review-pending")
+	pr := stagePR(21, hgithub.DefaultDecisionNeededLabel, "needs-human", "author/human", "role/contributor", "stage/050-review-pending")
 	pr.User = &gh.User{Login: gh.Ptr("shared-pat-account")}
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, "excluded-label:hold", false, nil)
 	e.noteStageRole("acme", "widget", 21, stagelabels.RoleContributor)
@@ -306,7 +316,7 @@ func TestApplyStageLabels_ReporterTrustHoldOnContributorPRIsNamed(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, removed := range api.removed {
-		if removed == "hold" || removed == "needs-human" {
+		if removed == hgithub.DefaultDecisionNeededLabel || removed == "hold" || removed == "needs-human" {
 			t.Fatalf("the gate's hold on a PR the hive did not author was released: %v", api.removed)
 		}
 	}
@@ -321,15 +331,15 @@ func TestApplyStageLabels_ReporterTrustHoldOnContributorPRIsNamed(t *testing.T) 
 		}
 	}
 	for _, want := range []string{
-		"the `hold` label was set by the hive itself: reporter trust (issue #15017 by @Karibhou, contributor)",
-		"The hive set `hold` itself for reporter trust (issue #15017 by @Karibhou, contributor). **Release** it",
+		"the `decision-needed` label was set by the hive itself: reporter trust (issue #15017 by @Karibhou, contributor)",
+		"The hive set `decision-needed` itself for reporter trust (issue #15017 by @Karibhou, contributor). **Release** it",
 		"or **keep** it",
 	} {
 		if !strings.Contains(decision, want) {
 			t.Fatalf("085 comment lacks %q:\n%s", want, decision)
 		}
 	}
-	if strings.Contains(decision, "the `hold` label is set") {
+	if strings.Contains(decision, "the `decision-needed` label is set") || strings.Contains(decision, "the `hold` label is set") {
 		t.Fatalf("085 comment still prints the bare hold line:\n%s", decision)
 	}
 }

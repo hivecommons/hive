@@ -44,7 +44,7 @@ func (bootFakeConnector) Sync(_ context.Context, _ connector.Cursor, emit func(c
 
 func TestNewKnowledgeConnectorSyncer(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if s, err := newKnowledgeConnectorSyncer(nil, nil, nil, t.TempDir(), logger); s != nil || err != nil {
+	if s, err := newKnowledgeConnectorSyncer(nil, nil, nil, t.TempDir(), logger, nil); s != nil || err != nil {
 		t.Fatalf("no connectors = %v, %v; want nil, nil", s, err)
 	}
 
@@ -58,7 +58,7 @@ func TestNewKnowledgeConnectorSyncer(t *testing.T) {
 	api := knowledge.NewKnowledgeAPI(nil, knowledge.KnowledgeConfig{Enabled: true, Engine: "file"}, logger)
 	s, err := newKnowledgeConnectorSyncer([]config.KnowledgeConnector{
 		{Name: "guide", Type: "fake", Layer: "project"},
-	}, reg, api, base, logger)
+	}, reg, api, base, logger, nil)
 	if err != nil || s == nil {
 		t.Fatalf("newKnowledgeConnectorSyncer = %v, %v", s, err)
 	}

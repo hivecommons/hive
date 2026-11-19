@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -49,6 +50,22 @@ const (
 	// for its repo: a surge of claims fails open at once instead of each one
 	// re-running a listing that just timed out and re-logging the warning.
 	openPRLinkFailureTTL = time.Minute
+
+	// openPRLabelTimeout bounds the has-open-pr label write on its own
+	// budget. It used to share the caller's deadline (15s from the
+	// contribute lane) with the open-PR listing ahead of it, so a slow
+	// listing of a large repo left the label write an already-spent
+	// context and every guard pass failed with `context deadline exceeded`
+	// (hivecommons/hive#18589).
+	openPRLabelTimeout = 10 * time.Second
+	// openPRLabelRetryBackoff is how long a transient label failure
+	// (timeout, rate limit, 5xx) keeps the guard from re-trying that issue:
+	// the label is a tracker signal, and a claim surge on the same issue
+	// must not turn one slow write into a WARN per pass.
+	openPRLabelRetryBackoff = 15 * time.Minute
+	// openPRLabelRefusedBackoff is the same for a refusal that will not fix
+	// itself (no write access, issue gone or locked).
+	openPRLabelRefusedBackoff = 6 * time.Hour
 )
 
 // errOpenPRListingBackedOff marks an error replayed from the failure cache.
@@ -93,6 +110,9 @@ type openPRLinkCache struct {
 	repos map[string]*openPRLinkIndex
 	// failures holds each repo's last listing failure for openPRLinkFailureTTL.
 	failures map[string]openPRLinkFailure
+	// labelBackoff holds, per claimKey, when the guard may next try to
+	// label that issue after a failed has-open-pr write.
+	labelBackoff map[string]time.Time
 	// disabled is scanner.skip_issues_with_open_pr: false.
 	disabled bool
 	now      func() time.Time
@@ -100,7 +120,7 @@ type openPRLinkCache struct {
 
 func (c *Client) openPRLinks() *openPRLinkCache {
 	c.openPRLinkOnce.Do(func() {
-		c.openPRLinkState = &openPRLinkCache{repos: map[string]*openPRLinkIndex{}, failures: map[string]openPRLinkFailure{}, now: time.Now}
+		c.openPRLinkState = &openPRLinkCache{repos: map[string]*openPRLinkIndex{}, failures: map[string]openPRLinkFailure{}, labelBackoff: map[string]time.Time{}, now: time.Now}
 	})
 	return c.openPRLinkState
 }
@@ -297,18 +317,90 @@ func (c *Client) openPRLinkBlockReason(ctx context.Context, repo string, number 
 
 // markIssueHasOpenPR applies HasOpenPRLabel once. Idempotent on the labels
 // the caller just read; a label failure is logged, never fatal — the claim
-// is refused either way.
+// is refused either way. The write runs on its own budget, and a failed
+// write is remembered per issue so later passes skip it quietly until the
+// backoff lapses (hivecommons/hive#18589). A refusal that cannot fix itself
+// logs at INFO; a transient failure logs one WARN per backoff window.
 func (c *Client) markIssueHasOpenPR(ctx context.Context, repo string, number int, labels []string, link OpenPRLink) {
 	for _, l := range labels {
 		if strings.EqualFold(strings.TrimSpace(l), HasOpenPRLabel) {
 			return
 		}
 	}
-	if err := c.EnsureIssueLabel(ctx, repo, HasOpenPRLabel, hasOpenPRLabelColor, hasOpenPRLabelDescription); err != nil && c.logger != nil {
-		c.logger.Warn("open-PR guard: could not ensure label", slog.String("label", HasOpenPRLabel), slog.String("repo", repo), slog.String("error", err.Error()))
+	key := claimKey(c.canonicalRepo(repo), number)
+	cache := c.openPRLinks()
+	cache.mu.Lock()
+	until, backedOff := cache.labelBackoff[key]
+	backedOff = backedOff && cache.now().Before(until)
+	cache.mu.Unlock()
+	if backedOff {
+		return
 	}
-	if err := c.AddLabels(ctx, repo, number, []string{HasOpenPRLabel}); err != nil && c.logger != nil {
-		c.logger.Warn("open-PR guard: could not label issue", slog.String("label", HasOpenPRLabel),
-			slog.String("repo", repo), slog.Int("issue", number), slog.Int("pr", link.PRNumber), slog.String("error", err.Error()))
+
+	labelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openPRLabelTimeout)
+	defer cancel()
+	step := "could not ensure label"
+	err := c.EnsureIssueLabel(labelCtx, repo, HasOpenPRLabel, hasOpenPRLabelColor, hasOpenPRLabelDescription)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		// A failed lookup or create does not mean the label is missing:
+		// the add below still lands when it exists (or the forge creates
+		// it), so only a spent budget skips it.
+		if addErr := c.AddLabels(labelCtx, repo, number, []string{HasOpenPRLabel}); addErr != nil {
+			step, err = "could not label issue", addErr
+		} else {
+			err = nil
+		}
+	}
+
+	cache.mu.Lock()
+	now := cache.now()
+	for k, t := range cache.labelBackoff {
+		if !now.Before(t) {
+			delete(cache.labelBackoff, k)
+		}
+	}
+	if err == nil {
+		delete(cache.labelBackoff, key)
+		cache.mu.Unlock()
+		return
+	}
+	reason, refused := openPRLabelFailureReason(err)
+	backoff := openPRLabelRetryBackoff
+	if refused {
+		backoff = openPRLabelRefusedBackoff
+	}
+	cache.labelBackoff[key] = now.Add(backoff)
+	cache.mu.Unlock()
+
+	if c.logger == nil {
+		return
+	}
+	attrs := []any{slog.String("label", HasOpenPRLabel), slog.String("repo", repo), slog.Int("issue", number),
+		slog.Int("pr", link.PRNumber), slog.String("reason", reason), slog.Duration("retry_after", backoff), slog.String("error", err.Error())}
+	if refused {
+		c.logger.Info("open-PR guard: "+step+" (refused; not retrying this issue for a while)", attrs...)
+		return
+	}
+	c.logger.Warn("open-PR guard: "+step, attrs...)
+}
+
+// openPRLabelFailureReason names a has-open-pr write failure for the log and
+// reports whether it is a refusal that will not fix itself on retry: no
+// write access (403), the repo or issue is gone (404/410), or the forge
+// rejected the write — a locked issue answers 422.
+func openPRLabelFailureReason(err error) (reason string, refused bool) {
+	switch {
+	case isRateLimitErr(err):
+		return "rate-limited", false
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout", false
+	case githubStatusError(err, http.StatusForbidden):
+		return "forbidden", true
+	case githubStatusError(err, http.StatusNotFound), githubStatusError(err, http.StatusGone):
+		return "not-found", true
+	case githubStatusError(err, http.StatusUnprocessableEntity):
+		return "unprocessable", true
+	default:
+		return "error", false
 	}
 }

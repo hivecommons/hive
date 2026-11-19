@@ -118,6 +118,9 @@ func (c *Client) MigrateIssueNeedsDecisionStage(ctx context.Context, opts IssueN
 			continue
 		}
 		owner, name := c.splitRepo(item.Repo)
+		if repoKey := strings.ToLower(owner + "/" + name); c.stageArchived.has(repoKey) || c.stageLabelForbidden.has(repoKey) {
+			continue
+		}
 		if err := c.ensureStageLabelFamily(ctx, item.Repo); err != nil {
 			report.Errors = append(report.Errors, fmt.Sprintf("%s#%d: provisioning stage labels: %v", item.Repo, item.Number, err))
 			continue

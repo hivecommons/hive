@@ -454,6 +454,8 @@ func delegatedItemWord(it delegatedDecisionItem) string {
 		return "failed — " + it.Error
 	case it.Result != nil && it.Result.Action == rowActionNoop:
 		return "no change (already decided)"
+	case it.Result != nil && it.Result.Action == rowActionNoEffect && it.Result.Rule == delegatedecision.RuleMidFlight:
+		return "skipped (" + strings.TrimSuffix(strings.TrimPrefix(it.Result.Outcome, "Not decided: "), ".") + ")"
 	case it.Result != nil:
 		word := it.Result.Action
 		if it.Result.Rule != "" {
@@ -469,12 +471,14 @@ func delegatedItemWord(it delegatedDecisionItem) string {
 // untrusted)". Each PR's own result carries its outcome and next step.
 func delegatedPerPRResult(repoFull string, number int, items []delegatedDecisionItem) RowActionResult {
 	parts := make([]string, 0, len(items))
-	decided, noop, failed := 0, 0, 0
+	decided, noop, failed, waiting := 0, 0, 0, 0
 	for _, it := range items {
 		parts = append(parts, "#"+strconv.Itoa(it.Number)+" "+delegatedItemWord(it))
 		switch {
 		case it.Error != "":
 			failed++
+		case it.Result != nil && it.Result.Action == rowActionNoEffect && it.Result.Rule == delegatedecision.RuleMidFlight:
+			waiting++
 		case it.Result != nil && it.Result.Action == rowActionNoop:
 			noop++
 		default:
@@ -484,6 +488,9 @@ func delegatedPerPRResult(repoFull string, number int, items []delegatedDecision
 	out := RowActionResult{Action: rowActionDecidedEach, Target: rowActionTarget(repoFull, rowActionTargetIssue, number)}
 	out.Outcome = fmt.Sprintf("Decided each of the %d nested pull requests: %s.", len(items), strings.Join(parts, "; "))
 	out.Next = fmt.Sprintf("%d sent · %d decided · %d no-op", len(items), decided, noop)
+	if waiting > 0 {
+		out.Next += fmt.Sprintf(" · %d skipped (CI or review still running)", waiting)
+	}
 	if failed > 0 {
 		out.Next += fmt.Sprintf(" · %d failed", failed)
 	}
@@ -497,6 +504,13 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 	if err != nil {
 		s.audit.LogRecord(user, auditRepoItemDecisionDelegated+"_failed", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "error", err.Error()), "", repoFull, number)
 		return delegatedOutcome{Err: err}
+	}
+	// A head whose CI is still running or whose review is unfinished is not
+	// decided on (hivecommons/hive#18889): an approval here would be an
+	// approval of a head nobody has finished checking. Force does not lift
+	// it — "re-run" repeats a decision, it does not make a head ready.
+	if mf := s.delegatedMidFlight(repoFull, number, in); mf != nil {
+		return s.delegatedMidFlightOutcome(repoFull, number, itemType, user, mf)
 	}
 	// Consult the applied native decision BEFORE invoking any paid decider.
 	// A posted AI verdict alone is not proof of durable application.
@@ -517,7 +531,7 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 	// and write nothing (hivecommons/hive#15099).
 	if in.Kind == delegatedecision.KindIssue {
 		if b := s.delegatedBlocker(ctx, repoFull, number, s.delegatedCommentTexts(ctx, repoFull, number)); b != nil {
-			held := slices.Contains(in.Labels, delegatedecision.LabelHold)
+			held := delegatedecision.HeldByLabels(in.Labels)
 			res := blockerNoEffectResult(rowActionTarget(repoFull, rowActionTargetIssue, number), *b, held, s.blockerOptionsContext())
 			d := delegatedecision.Decision{Verdict: delegatedecision.VerdictRefused, Rule: "blocker:" + b.Kind, Text: res.Outcome, Rationale: res.Outcome, KeepsPark: true}
 			notes := []string{"blocked: " + b.Short + "; nothing written"}

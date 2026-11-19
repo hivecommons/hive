@@ -293,14 +293,35 @@ func isNoEndpointErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no model endpoint resolved")
 }
 
-// warnBlockedKick logs that fail-closed withheld a kick, naming the latest
-// classifier error and the config knobs so operators can act on it.
-func (s *Scheduler) warnBlockedKick(agentName string) {
-	args := []any{"agent", agentName}
-	if e, _ := s.lastClassifierErr.Load().(string); e != "" {
-		args = append(args, "classifier_error", e, "fix", classifierFixHint)
+// Fail-closed kick-block warnings. Only the "blocked" pair carries the
+// fleet-report keyword (pkg/fleetreport ClassIOScanClassifierUnavail); the
+// "injection finding" pair is listed in fleetreport.IsBenignMessage. Keep the
+// strings in sync with both.
+const (
+	blockedKickMsg                 = "ioscan fail-closed blocked kick"
+	blockedHeldPRKickMsg           = "ioscan fail-closed blocked held-PR coordination kick"
+	injectionWithheldKickMsg       = "ioscan fail-closed withheld kick on an injection finding"
+	injectionWithheldHeldPRKickMsg = "ioscan fail-closed withheld held-PR coordination kick on an injection finding"
+)
+
+// warnBlockedKick logs that fail-closed withheld a kick (heldPR: its held-PR
+// coordination section). A block while the classifier is failing is a
+// classifier outage: it keeps the fleet-reported wording and names the
+// classifier error and the config knobs so operators can act on it. With no
+// classifier error the injection policy tripped on untrusted text (a Critical
+// deterministic finding or a classifier block verdict): the defense working
+// as designed on content, not a hive defect (#18459), so it logs a distinct
+// message that stays in local logs. Each warns once per agent.
+func (s *Scheduler) warnBlockedKick(agentName string, heldPR bool) {
+	key, outageMsg, injectionMsg := "blocked-kick:", blockedKickMsg, injectionWithheldKickMsg
+	if heldPR {
+		key, outageMsg, injectionMsg = "blocked-held-pr-kick:", blockedHeldPRKickMsg, injectionWithheldHeldPRKickMsg
 	}
-	s.warnOnce("blocked-kick:"+agentName, "ioscan fail-closed blocked kick", args...)
+	if e, _ := s.lastClassifierErr.Load().(string); e != "" {
+		s.warnOnce(key+agentName, outageMsg, "agent", agentName, "classifier_error", e, "fix", classifierFixHint)
+		return
+	}
+	s.warnOnce("injection-"+key+agentName, injectionMsg, "agent", agentName)
 }
 
 // classifierErrored applies the fail mode when the classifier could not score

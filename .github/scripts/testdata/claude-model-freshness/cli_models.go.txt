@@ -1,0 +1,31 @@
+package dashboard
+
+// Miniature of src/pkg/dashboard/cli_models.go for
+// test-claude-model-freshness.py: the two Claude lists --apply claude edits.
+
+var claudeStaticModels = []string{
+	"claude-opus-5-5",
+	"claude-sonnet-5-5",
+	"claude-fable-5",
+	"claude-haiku-4-5-20251001",
+	// Bare aliases the Claude CLI also accepts (see claudeAlwaysIncludeModels).
+	"opus",
+	"sonnet",
+	"haiku",
+}
+
+var geminiStaticModels = []string{
+	"gemini-2.5-pro",
+}
+
+// claudePinnedCLIModels is the closed model set accepted by the Claude Code
+// version pinned in src/Dockerfile.
+var claudePinnedCLIModels = []string{
+	"claude-opus-5-5",
+	"claude-sonnet-5-5",
+	"claude-fable-5",
+	"claude-haiku-4-5-20251001",
+	"opus",
+	"sonnet",
+	"haiku",
+}

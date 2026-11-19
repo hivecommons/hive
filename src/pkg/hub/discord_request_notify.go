@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -129,11 +130,21 @@ func (s *HubServer) deliverDiscordRequestNotification(webhookURL, requestID stri
 		"request_id", requestID, "attempts", discordRequestWebhookMaxAttempts, "error", lastErr)
 }
 
+// discordWebhookProseKeys are the Discord webhook payload fields people read.
+var discordWebhookProseKeys = prosefilter.Keys{
+	"content":     prosefilter.Prose,
+	"description": prosefilter.Prose,
+	"value":       prosefilter.Prose,
+	"title":       prosefilter.Title,
+	"name":        prosefilter.Title,
+}
+
 func postDiscordRequestWebhook(ctx context.Context, webhookURL string, payload discordWebhookPayload) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
+	body, _ = prosefilter.SanitizeJSON(body, discordWebhookProseKeys)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
 	if err != nil {
 		return err

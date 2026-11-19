@@ -94,6 +94,11 @@ func (c *Client) StageReconciler(store *stagelabels.Store, opts *stageengine.Opt
 	if o.Logger == nil && logger != nil {
 		o.Logger = logger
 	}
+	if o.WorkflowFor != nil {
+		// The in-progress sweep and the FactSink must derive through the
+		// same bound model as the sweeps (hivecommons/hive#18434).
+		c.SetStageWorkflowFor(o.WorkflowFor)
+	}
 	r := stageengine.New(o)
 	if c.stageEngines == nil {
 		c.stageEngines = map[*stagelabels.Store]stageengine.Reconciler{}

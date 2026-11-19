@@ -66,12 +66,22 @@ type DeviceFlowState struct {
 // baseURL and apiURL allow overriding endpoints for GHE; pass empty strings
 // for default github.com behavior.
 func StartDeviceFlow(clientID, baseURL, apiURL string) (*DeviceFlowState, error) {
+	return StartDeviceFlowWithScope(clientID, deviceScope, baseURL, apiURL)
+}
+
+// StartDeviceFlowWithScope initiates a device flow asking GitHub for scope.
+// It exists for the ONE consent that is not a login: the hive owner
+// connecting their account so the hive can write to repositories it does not
+// manage (owner_identity.go, hivecommons/hive#18197). The dashboard login path
+// keeps calling StartDeviceFlow, which passes the empty deviceScope; nothing
+// on that path may pass a scope here (TestDashboardLoginNeverRequestsRepoScope).
+func StartDeviceFlowWithScope(clientID, scope, baseURL, apiURL string) (*DeviceFlowState, error) {
 	codeURL, _, _ := deviceFlowURLs(baseURL, apiURL)
 	data := url.Values{
 		"client_id": {clientID},
 	}
-	if deviceScope != "" {
-		data.Set("scope", deviceScope)
+	if scope != "" {
+		data.Set("scope", scope)
 	}
 	req, err := http.NewRequest("POST", codeURL, strings.NewReader(data.Encode()))
 	if err != nil {

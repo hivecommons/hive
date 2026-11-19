@@ -12,7 +12,7 @@ These rules apply to every AI agent (hive agents, Copilot CLI, Claude Code, Code
 
 - Keep changes surgical and PR-sized; one concern per PR.
 - Sign commits (`git commit -s`); PR titles start with an emoji (`✨` feature, `🐛` fix, `📖` docs or proposal, `🌱` chore, `⚠️` breaking); `📝` fails the PR Type gate.
-- Every PR with a user-visible `src/` code change needs a `changelog.d/<category>-<slug>.md` fragment at the repository root whose body is a single `- ` bullet.
+- Every PR with a user-visible `src/` code change needs a `changelog.d/<category>-<slug>.md` fragment at the repository root whose body is a single `- ` bullet. From inside `src/` (the Go module) that path is `../changelog.d/`; anything written to `src/changelog.d/` is never compiled into `CHANGELOG.md`, fails the guard, and fails the release (#18264).
 - Do not hand-edit `src/docs` file:line citations; when CI's citation guard reports drift, run `python3 src/scripts/check-docs-citations.py --fix`.
 
 ## Project knowledge is scoped, not global

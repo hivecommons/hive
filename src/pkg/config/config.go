@@ -23,6 +23,9 @@ import (
 	"testing"
 	"time"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/keystore"
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
@@ -101,16 +104,24 @@ type Config struct {
 	Data               DataConfig          `yaml:"data"`
 	Deployment         DeploymentConfig    `yaml:"deployment,omitempty" json:"deployment,omitempty"`
 	Knowledge          KnowledgeConfig     `yaml:"knowledge"`
-	Hub                HubConfig           `yaml:"hub"`
+	// Inbox routes voice-recorder items (Plaud, Wispr Flow) to spek RFCs or
+	// dibs from the dashboard Inbox.
+	Inbox InboxConfig `yaml:"inbox,omitempty" json:"inbox,omitempty"`
+	Hub   HubConfig   `yaml:"hub"`
 	// Issues tunes issue lifecycle automation. Zero value keeps the safe
 	// defaults: close issues after their fix PR merges, and backfill hourly.
 	Issues IssuesConfig `yaml:"issues,omitempty" json:"issues,omitempty"`
 	// Dedupe tunes the dedupe lane's follow-through on its checklists.
 	Dedupe     DedupeLaneConfig `yaml:"dedupe,omitempty" json:"dedupe,omitempty"`
 	Contribute ContributeConfig `yaml:"contribute,omitempty" json:"contribute,omitempty"`
-	HiveID     string           `yaml:"hive_id"`
-	ACMMLevel  *int             `yaml:"acmm_level,omitempty" json:"acmm_level"`
-	Variables  VariablesConfig  `yaml:"variables,omitempty"`
+	// Workflow gates the workflow-model engine (hivecommons/hive#17620).
+	// Off by default: every repository derives stages with the built-in
+	// derivers exactly as before. On, repositories bound to a workflow
+	// model derive through it; unbound repositories are unchanged.
+	Workflow  WorkflowConfig  `yaml:"workflow,omitempty" json:"workflow,omitempty"`
+	HiveID    string          `yaml:"hive_id"`
+	ACMMLevel *int            `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	Variables VariablesConfig `yaml:"variables,omitempty"`
 	// OTel configures standards-based OTLP trace export. It is the preferred
 	// operator-facing block; Tracing is retained as a legacy alias.
 	OTel    OTelConfig `yaml:"otel,omitempty" json:"otel,omitempty"`
@@ -118,6 +129,11 @@ type Config struct {
 	// Debug holds process-level diagnostics knobs (pprof listener). See
 	// docs/operator-reference.md "Runtime diagnostics".
 	Debug DebugConfig `yaml:"debug,omitempty" json:"debug,omitempty"`
+	// Network holds outbound-connectivity knobs: the optional upstream HTTP
+	// forward proxy that selected hosts (e.g. an enterprise GitHub reachable
+	// only via a corporate proxy) are chained through. Env overrides and
+	// HTTPS_PROXY fallback: see crux/upstreamproxy.Resolve.
+	Network NetworkConfig `yaml:"network,omitempty" json:"network,omitempty"`
 	// Triggers is an additive list of CEL-based declarative agent triggers.
 	// Default empty → existing label/governor triggering is unchanged.
 	Triggers []TriggerRule `yaml:"triggers,omitempty" json:"triggers,omitempty"`
@@ -141,12 +157,19 @@ type Config struct {
 	// escalation or codebase damage, from any author. Default on; see
 	// SentinelConfig.
 	Sentinel SentinelConfig `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+
+	// SessionTaint is the observe-only session taint recorder (#18987). Off by
+	// default; see SessionTaintConfig.
+	SessionTaint SessionTaintConfig `yaml:"session_taint,omitempty" json:"session_taint,omitempty"`
 	// Security holds the hive-wide security knobs that are not one agent's
 	// or one sweep's; see SecurityConfig.
 	Security SecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
 	// Evidence controls the review evidence bundles the review relay writes
 	// (hivecommons/hive#11060). Default on, unsigned; see EvidenceConfig.
 	Evidence EvidenceConfig `yaml:"evidence,omitempty" json:"evidence,omitempty"`
+	// Benchmarks governs the anonymized per-PR records this hive contributes
+	// to hivecommons/benchmarks (hivecommons/hive#17694); see BenchmarksConfig.
+	Benchmarks BenchmarksConfig `yaml:"benchmarks,omitempty" json:"benchmarks,omitempty"`
 	// Compliance selects framework profiles; see ComplianceConfig.
 	Compliance ComplianceConfig `yaml:"compliance,omitempty" json:"compliance,omitempty"`
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
@@ -159,11 +182,19 @@ type Config struct {
 	Jev JevConfig `yaml:"jev,omitempty" json:"jev,omitempty"`
 	// Runs tunes long-running runs and the opt-in Spektacular stage runner
 	// (hivecommons/hive#8303). Zero value: runner off, default retry budget.
-	Runs      RunsConfig      `yaml:"runs,omitempty" json:"runs,omitempty"`
-	Swarm     SwarmConfig     `yaml:"swarm,omitempty" json:"swarm,omitempty"`
-	Autonomy  AutonomyConfig  `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
-	Review    ReviewConfig    `yaml:"review,omitempty" json:"review,omitempty"`
-	AutoMerge AutoMergeConfig `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	Runs RunsConfig `yaml:"runs,omitempty" json:"runs,omitempty"`
+	// Meetings turns on hive as a live meeting participant through Quorum
+	// (hivecommons/hive#18284). Zero value: off, no Quorum process.
+	Meetings MeetingsConfig `yaml:"meetings,omitempty" json:"meetings,omitempty"`
+	Swarm    SwarmConfig    `yaml:"swarm,omitempty" json:"swarm,omitempty"`
+	Autonomy AutonomyConfig `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
+	Review   ReviewConfig   `yaml:"review,omitempty" json:"review,omitempty"`
+	// ReviewFeedback holds the owner's preferences for capturing rules that
+	// reviewers state on the hive's own PRs (hivecommons/hive#19135). Nil:
+	// every preference falls back to its env var, then its default. Read and
+	// written through ReviewRulesSettingsSnapshot / SetReviewRulesSettings.
+	ReviewFeedback *ReviewFeedbackConfig `yaml:"review_feedback,omitempty" json:"review_feedback,omitempty"`
+	AutoMerge      AutoMergeConfig       `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
 	// Decisions tunes how decisions on needs-human items are recorded; its
 	// `delegate` block gates the activity monitor's "Let hive decide"
 	// action (default on).
@@ -175,6 +206,9 @@ type Config struct {
 	// Chat tunes the dashboard Hive Chat panel; its `grounded_answers`
 	// block gates the model-backed answer path (default on).
 	Chat ChatConfig `yaml:"chat,omitempty" json:"chat,omitempty"`
+	// Customers gates the Customers section and its people store (default
+	// on). Nothing it stores leaves the hive.
+	Customers CustomersConfig `yaml:"customers,omitempty" json:"customers,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.
@@ -195,6 +229,10 @@ type Config struct {
 	// UpstreamWatch declares per-repo upstreams and filters for the fork
 	// upstream watch (hivecommons/hive#9966). Default off.
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`
+	// Repos holds per-repository overrides keyed by the bare name from
+	// project.repos or "owner/repo" (hivecommons/hive#18495). Absent means
+	// every repo inherits the hive-wide values. See RepoSettings.
+	Repos map[string]RepoSettings `yaml:"repos,omitempty" json:"repos,omitempty"`
 	// Convergence toggles the convergence-driven admission surfaces
 	// (kubestellar/hive#3845 follow-ons). Default off → zero behaviour change.
 	Convergence              ConvergenceConfig              `yaml:"convergence,omitempty" json:"convergence,omitempty"`
@@ -257,6 +295,11 @@ type Config struct {
 	// dashboard can raise a banner for each. Runtime-only; see
 	// DegradeContradictingLaunchCmds.
 	LaunchCmdDegradations []LaunchCmdDegradation `yaml:"-" json:"-"`
+	// ModelIDNormalizations lists the claude/copilot agents whose Claude
+	// model id the loader rewrote to their backend's naming convention, so
+	// the dashboard can warn for each. Runtime-only; see
+	// NormalizeModelIDConventions.
+	ModelIDNormalizations []ModelIDNormalization `yaml:"-" json:"-"`
 	// GateRegressions lists the safety gates a previous runtime overlay
 	// carried that this config lacks or weakens, as detected at boot
 	// (hivecommons/hive#16438). Runtime-only; served in /api/status as
@@ -268,6 +311,74 @@ type Config struct {
 	// by the caller, and zero means "use the declared replicas". Written
 	// via SetReviewerAutoscaleActive.
 	ReviewerAutoscaleActive int `yaml:"-" json:"-"`
+}
+
+// WorkflowConfig is the `workflow:` block (hivecommons/hive#17620).
+type WorkflowConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// LabelGC lets the stage engine delete a bound model's labels from a
+	// repository once the repository is unbound or rebound to a model that
+	// no longer declares them (RFC phase 4 follow-up). Only labels the hive
+	// itself provisioned, outside the built-in stage family and worn by no
+	// open issue or PR, are ever deleted; each deletion is audited as
+	// workflow_label_removed. nil means true; false leaves every label in
+	// place and logs what would have gone.
+	LabelGC *bool `yaml:"label_gc,omitempty" json:"label_gc,omitempty"`
+	// Marketplace configures the spoke's view of the hub workflow catalogue
+	// (hivecommons/hive#17620 phase 7).
+	Marketplace MarketplaceConfig `yaml:"marketplace,omitempty" json:"marketplace,omitempty"`
+	// Dispatch maps a bound model's agent profiles to hive agents
+	// (workflow_dispatch.go).
+	Dispatch WorkflowDispatchConfig `yaml:"dispatch,omitempty" json:"dispatch,omitzero"`
+}
+
+// LabelGCEnabled is the effective workflow.label_gc (default true).
+func (c WorkflowConfig) LabelGCEnabled() bool {
+	return c.LabelGC == nil || *c.LabelGC
+}
+
+// MarketplaceConfig is the `workflow.marketplace:` block. The spoke proxies
+// the hub catalogue index, imports bundles from it and publishes library
+// entries to it.
+type MarketplaceConfig struct {
+	// Enabled defaults to true; set false to hide the Marketplace view and
+	// return 404 from the proxy routes.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// URL is the hub base URL serving /api/marketplace/*. Empty means the
+	// configured hub.url (which itself defaults to the public hub).
+	URL string `yaml:"url,omitempty" json:"url,omitempty"`
+	// RefreshInterval bounds how long the spoke serves a cached index
+	// before revalidating with the hub (If-None-Match). Zero means the
+	// default of 15 minutes.
+	RefreshInterval time.Duration `yaml:"refresh_interval,omitempty" json:"refresh_interval,omitempty"`
+}
+
+// DefaultMarketplaceRefreshInterval is the spoke-side index cache TTL.
+const DefaultMarketplaceRefreshInterval = 15 * time.Minute
+
+// MarketplaceEnabled reports the effective workflow.marketplace.enabled.
+func (m MarketplaceConfig) MarketplaceEnabled() bool {
+	return m.Enabled == nil || *m.Enabled
+}
+
+// EffectiveRefreshInterval returns refresh_interval or its default.
+func (m MarketplaceConfig) EffectiveRefreshInterval() time.Duration {
+	if m.RefreshInterval <= 0 {
+		return DefaultMarketplaceRefreshInterval
+	}
+	return m.RefreshInterval
+}
+
+// MarketplaceURL resolves the hub base URL for marketplace calls: the
+// explicit workflow.marketplace.url, else hub.url.
+func (c *Config) MarketplaceURL() string {
+	if c == nil {
+		return ""
+	}
+	if u := strings.TrimSpace(c.Workflow.Marketplace.URL); u != "" {
+		return strings.TrimRight(u, "/")
+	}
+	return strings.TrimRight(strings.TrimSpace(c.Hub.URL), "/")
 }
 
 // UnmarshalYAML accepts the operator-facing agents.github_api_hourly_cap
@@ -317,6 +428,13 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	if governor := mappingValueNode(&node, "governor"); governor != nil {
 		if stall := mappingValueNode(governor, "merge_train_stall_warn_s"); stall != nil && stall.Tag != "!!null" {
 			c.Governor.mergeTrainStallWarnSet = true
+		}
+	}
+	// runs.spektacular.recheck is retired: accept the block, ignore it, and
+	// let WarnDeprecatedSpektacularRecheck say so once.
+	if runs := mappingValueNode(&node, "runs"); runs != nil {
+		if spek := mappingValueNode(runs, "spektacular"); spek != nil && mappingValueNode(spek, "recheck") != nil {
+			c.Runs.Spektacular.deprecatedRecheckSet = true
 		}
 	}
 	return nil
@@ -1016,6 +1134,14 @@ type VarSecurityConfig struct {
 	// bounds the blast radius to repos the operator explicitly trusts, so the
 	// feature cannot be used to read every repo the App happens to be installed on.
 	GitHubPromptAllowlist []string `yaml:"github_prompt_allowlist,omitempty"`
+	// OwnerGitHubPromptRepos is the owner-approved subset of the hive's own
+	// managed repos that prompt_source and definition_source may read from,
+	// each approved on its own from the dashboard (hivecommons/hive#18490).
+	// Unlike GitHubPromptAllowlist it needs no AllowGitHubPrompt, and an entry
+	// counts only while the repo is still in project.repos. Written only by the
+	// owner-only dashboard endpoint through Save; the overlay cannot set it.
+	// See owner_prompt_repos.go.
+	OwnerGitHubPromptRepos []OwnerPromptRepo `yaml:"owner_github_prompt_repos,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -1030,10 +1156,9 @@ type ProjectConfig struct {
 	// GitHub-only configs are unaffected. Use ForgeKind() to read it with the
 	// default applied.
 	Forge string `yaml:"forge,omitempty"`
-	// IssueFilter gates which open issues agents may initiate work on: the
-	// require_labels allow-list ("only work issues labeled X"). The exclude
-	// polarity is Governor.Labels.Exempt, which wins on conflict. Absent/empty
-	// = no filtering, the pre-existing behavior. See IssueFilterConfig.
+	// IssueFilter controls admission by label, reporter, and agent proposal
+	// markers. The require_labels allow-list is optional; the proposal gate
+	// defaults to strategist/outreach markers. See IssueFilterConfig.
 	IssueFilter IssueFilterConfig `yaml:"issue_filter,omitempty"`
 	// AgentIssueDecisionPolicy is "resolve" (default) or "escalate". Resolve
 	// keeps Hive-authored issues actionable when the only parking reason is a
@@ -1057,8 +1182,10 @@ type ProjectConfig struct {
 	// (#12129). The block is cut at heading boundaries — whole sections are
 	// kept or dropped, never clipped mid-rule — and when anything is dropped
 	// the kick carries a one-line warning naming the omitted sections and the
-	// scheduler logs it. Zero means the agentsmd default (8192); values below
-	// 2048 are raised to 2048.
+	// scheduler logs it. Zero means the agentsmd default (32768, or
+	// HIVE_AGENTS_MD_MAX_BYTES when set); values below 2048 are raised to
+	// 2048 and values above the 262144 hard ceiling are lowered to it.
+	// repos.<repo>.agents_md_max_bytes overrides this per repo (#18495).
 	AgentsMdMaxBytes int `yaml:"agents_md_max_bytes,omitempty"`
 
 	// Style is the hive-wide house style: a short list of how-to-change rules
@@ -1085,10 +1212,28 @@ type ProjectConfig struct {
 	// Optional and additive. Absent — the state of every existing config —
 	// means nothing is paused and the hive behaves exactly as before.
 	PausedRepos []RepoPause `yaml:"paused_repos,omitempty"`
+	// ReferenceRepos are repositories agents may STUDY but do not manage
+	// (hivecommons/hive#18015): explicit owner/name entries, read-only by
+	// default, with a rare per-entry opt-in for opening issues/PRs. They are
+	// NOT in Repos: no work is enumerated from them, no ACMM eval runs on
+	// them, and writes to them are refused unless opted in. See
+	// reference_repos.go.
+	ReferenceRepos []ReferenceRepo `yaml:"reference_repos,omitempty" json:"reference_repos,omitempty"`
+	// RemoteWriteIdentity picks which GitHub identity the hive writes to its
+	// write-tier reference repos as (hivecommons/hive#18196 follow-up):
+	// "bot" (the default when empty) posts as the hive's GitHub App on a
+	// granted repo whose owner installed that App themselves and as the hive
+	// owner's connected account elsewhere; "bot_only" posts as the App where
+	// it is installed and is read-only elsewhere; "owner" always posts as the
+	// hive owner's connected account. See remote_write_identity.go.
+	RemoteWriteIdentity string `yaml:"remote_write_identity,omitempty" json:"remote_write_identity,omitempty"`
 	// RepoPolicies stores optional per-repository policy overrides keyed by
 	// repo name. project.repos remains the watched-repo identity list; this
 	// sidecar list lets existing string-list configs keep round-tripping.
 	RepoPolicies []RepoPolicy `yaml:"repo_policies,omitempty" json:"repo_policies,omitempty"`
+	// WorkflowBindings assigns stored workflow models to repositories
+	// (hivecommons/hive#17620). Unbound repositories use hive-default.
+	WorkflowBindings []WorkflowBinding `yaml:"workflow_bindings,omitempty" json:"workflow_bindings,omitempty"`
 	// WritingGuide is the hive owner's instruction for how the issues, PRs and
 	// reviews its agents write should READ — length, structure, register — as
 	// free text (hivecommons/hive#7667). It is rendered into every default
@@ -1503,13 +1648,23 @@ func SplitCadenceTargetKey(key string) (agent, repo string) {
 // legal config, and refusing to boot on it would turn a diagnostic into an
 // outage.
 func AgentSandboxGateWarnings(cfg *Config) []string {
+	return AgentSandboxGateReport(cfg).Warnings
+}
+
+// AgentSandboxGateReport is AgentSandboxGateWarnings plus the preflight
+// findings kept apart per runtime, so callers can attribute them to the agents
+// on that runtime without parsing strings. Warnings is the same flat list.
+func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 	if cfg == nil || !cfg.AgentSandbox.Enabled {
 		// The sandbox is off globally. That is the documented default and the
 		// posture the docs describe; it is not a misconfiguration.
-		return nil
+		return SandboxGateReport{}
 	}
 
-	var optedIn, noImage, noClaim, badRuntime []string
+	var noPullSecrets, badPullSecrets, hostnamePinned []string
+	var optedIn, noImage, noClaim, noGateway, noDigest, badRuntime []string
+	var openshellBlocks []SandboxOpenShellConfig
+	var substrateBlocks []SandboxSubstrateConfig
 	for name, a := range cfg.Agents {
 		if !a.SandboxEnabled(cfg.AgentSandbox) {
 			continue
@@ -1518,17 +1673,52 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 		if strings.TrimSpace(a.SandboxImage(cfg.AgentSandbox)) == "" {
 			noImage = append(noImage, name)
 		}
+		if a.SandboxRuntime(cfg.AgentSandbox) == SandboxRuntimeJob {
+			job := a.SandboxJob(cfg.AgentSandbox)
+			if _, pinned := job.NodeSelector["kubernetes.io/hostname"]; pinned {
+				hostnamePinned = append(hostnamePinned, name)
+			}
+			if err := ValidateImagePullSecrets(job.ImagePullSecrets); err != nil {
+				badPullSecrets = append(badPullSecrets, name)
+			} else if strings.TrimSpace(job.ServiceAccount) != "" && len(job.ImagePullSecrets) == 0 {
+				noPullSecrets = append(noPullSecrets, name)
+			}
+		}
 		switch rt := a.SandboxRuntime(cfg.AgentSandbox); {
 		case !ValidSandboxRuntimes[rt]:
 			badRuntime = append(badRuntime, name+"="+rt)
 		case rt == SandboxRuntimeJob && strings.TrimSpace(a.SandboxJob(cfg.AgentSandbox).WorkspaceClaim) == "":
 			noClaim = append(noClaim, name)
+		case rt == SandboxRuntimeOpenShell:
+			os := a.SandboxOpenShell(cfg.AgentSandbox)
+			if strings.TrimSpace(os.GatewayURL) == "" {
+				noGateway = append(noGateway, name)
+			}
+			if strings.TrimSpace(os.WorkspaceClaim) == "" {
+				noClaim = append(noClaim, name)
+			}
+			if strings.TrimSpace(os.GatewayURL) != "" {
+				openshellBlocks = append(openshellBlocks, os)
+			}
+		case rt == SandboxRuntimeSubstrate:
+			sb := a.SandboxSubstrate(cfg.AgentSandbox)
+			// Substrate refuses tag-only images; the agent image is usually a
+			// tag, so the substrate block must carry the digest-pinned one.
+			if !strings.Contains(sb.Image, "@sha256:") {
+				noDigest = append(noDigest, name)
+			}
+			substrateBlocks = append(substrateBlocks, sb)
 		}
 	}
 	sort.Strings(optedIn)
 	sort.Strings(noImage)
 	sort.Strings(noClaim)
+	sort.Strings(noGateway)
+	sort.Strings(noDigest)
 	sort.Strings(badRuntime)
+	sort.Strings(noPullSecrets)
+	sort.Strings(badPullSecrets)
+	sort.Strings(hostnamePinned)
 
 	var out []string
 	if len(optedIn) == 0 {
@@ -1536,7 +1726,7 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 			"agent_sandbox.enabled is true but NO agent is opted in, so the sandbox is inert and all %d agent(s) still run unconfined on the tmux path — "+
 				"the per-agent gate is separate: set `sandbox: {enabled: true}` on each agent that should be sandboxed (#4918)",
 			len(cfg.Agents)))
-		return out
+		return SandboxGateReport{Warnings: out}
 	}
 	if len(noImage) > 0 {
 		out = append(out, fmt.Sprintf(
@@ -1552,16 +1742,49 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 	}
 	if len(noClaim) > 0 {
 		out = append(out, fmt.Sprintf(
-			"agent(s) %s use the job sandbox runtime but resolve no job.workspace_claim; the Job has no way to see the workspace and every kick will fail — "+
-				"set agent_sandbox.job.workspace_claim (or the per-agent sandbox.job.workspace_claim) to the PVC hive's data lives on (#6311)",
+			"agent(s) %s use the job or openshell sandbox runtime but resolve no workspace_claim; the sandbox has no way to see the workspace and every kick will fail — "+
+				"set agent_sandbox.job.workspace_claim / agent_sandbox.openshell.workspace_claim (or the per-agent one) to the PVC hive's data lives on (#6311)",
 			strings.Join(noClaim, ", ")))
+	}
+	if len(badPullSecrets) > 0 {
+		out = append(out, fmt.Sprintf(
+			"agent(s) %s have an invalid sandbox.job.image_pull_secrets (names only, at most %d); sandboxed kicks will be refused (#18819)",
+			strings.Join(badPullSecrets, ", "), MaxJobImagePullSecrets))
+	}
+	if len(noPullSecrets) > 0 {
+		out = append(out, fmt.Sprintf(
+			"agent(s) %s run Jobs under sandbox.job.service_account with no sandbox.job.image_pull_secrets; hive reads that service account's imagePullSecrets only when its Role grants `get serviceaccounts`, and without it a private-registry sandbox image fails ImagePullBackOff (see the launcher warning) — set sandbox.job.image_pull_secrets to the registry Secret names (#18819)",
+			strings.Join(noPullSecrets, ", ")))
+	}
+	if len(hostnamePinned) > 0 {
+		out = append(out, fmt.Sprintf(
+			"agent(s) %s pin sandbox.job.node_selector kubernetes.io/hostname to a single node; if it is cordoned or down the Job may remain Pending until its deadline — consider node affinity instead (#18809)",
+			strings.Join(hostnamePinned, ", ")))
+	}
+	if len(noGateway) > 0 {
+		out = append(out, fmt.Sprintf(
+			"agent(s) %s use the openshell sandbox runtime but resolve no openshell.gateway_url; every kick will fail — "+
+				"set agent_sandbox.openshell.gateway_url (or the per-agent sandbox.openshell.gateway_url) to the OpenShell gateway's gRPC address (ADR-0026)",
+			strings.Join(noGateway, ", ")))
+	}
+	if len(noDigest) > 0 {
+		out = append(out, fmt.Sprintf(
+			"agent(s) %s use the substrate sandbox runtime but resolve no digest-pinned substrate.image; Substrate refuses tag-only images and every kick will fail — "+
+				"set agent_sandbox.substrate.image (or the per-agent sandbox.substrate.image) to the sandbox image's …@sha256:… reference (ADR-0026 phase 2)",
+			strings.Join(noDigest, ", ")))
 	}
 	if len(optedIn) < len(cfg.Agents) {
 		out = append(out, fmt.Sprintf(
 			"agent_sandbox.enabled is true but only %d of %d agent(s) are opted in (%s); the rest still run unconfined on the tmux path (#4918)",
 			len(optedIn), len(cfg.Agents), strings.Join(optedIn, ", ")))
 	}
-	return out
+	// Last, because it may reach the network (bounded and cached): the static
+	// warnings above must not wait on a gateway.
+	openshellWarnings := cruxconfig.OpenShellPreflightWarnings(openshellBlocks)
+	substrateWarnings := cruxconfig.SubstratePreflightWarnings(substrateBlocks)
+	out = append(out, openshellWarnings...)
+	out = append(out, substrateWarnings...)
+	return SandboxGateReport{Warnings: out, OpenShell: openshellWarnings, Substrate: substrateWarnings}
 }
 
 // CadenceIsOperatorOwned reports whether an operator explicitly set the
@@ -1620,6 +1843,11 @@ type GovernorConfig struct {
 	// "Webhook-driven CI failure reaction".
 	CIFailureWebhookKick   *bool `yaml:"ci_failure_webhook_kick,omitempty"`
 	CIFailureKickCooldownS int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
+	// ReleaseFeeds is the release-feed watcher (hivecommons/hive#18494): per
+	// agent, the upstream feeds whose new versions kick that agent with a
+	// ${NEW_RELEASES} block. Nil (the default) means off. See
+	// docs/release-feeds.md.
+	ReleaseFeeds *ReleaseFeedsConfig `yaml:"release_feeds,omitempty" json:"ReleaseFeeds,omitempty"`
 	// MergeTrainStallWarnS is how long, in seconds, a merge train's head
 	// may sit without progressing before the Activity Monitor marks the
 	// train stalled on the queued rows' chips and the dashboard writes one
@@ -2221,6 +2449,17 @@ type AdvisoryConfig struct {
 	// post — the digest is never redirected to GitHub without being asked.
 	// Authentication reuses governor.work_source.linear.api_key.
 	LinearIssue string `yaml:"linear_issue,omitempty" json:"linear_issue,omitempty"`
+	// PerRepo opts a multi-repo hive into one Hive Advisory Report in EVERY
+	// monitored repo (#18448), not just project.primary_repo. Off by default:
+	// the one report in the primary repo covers all repos (#18568). When on,
+	// each other repo in project.repos gets exactly one report, found by its
+	// title plus the hive/advisory label or the hive marker before anything is
+	// created, so a restart never files a second one; a report a human closed
+	// stays closed. Turning it off stops updating those reports but leaves
+	// them in place. *bool so absent is distinct from an explicit false:
+	// absent falls back to AdvisoryPerRepoEnvVar, then off. Resolve it
+	// through PerRepoEnabled.
+	PerRepo *bool `yaml:"per_repo,omitempty" json:"per_repo,omitempty"`
 	// QueueHealth tunes the owner-advice queue-health rules (#9103): the
 	// thresholds at which the weekly advice tells the owner to reduce the
 	// blocked PR queue, clear the human gate, and so on. Every field is a
@@ -2275,6 +2514,27 @@ func (a AdvisoryConfig) ResolvedTarget() string {
 // PRAutoCloseEnabled resolves AdvisoryConfig.PRAutoClose with its default (on).
 func (a AdvisoryConfig) PRAutoCloseEnabled() bool {
 	return a.PRAutoClose == nil || *a.PRAutoClose
+}
+
+// AdvisoryPerRepoEnvVar overrides the default of governor.advisory.per_repo
+// when the key is absent from hive.yaml: a strconv.ParseBool value ("true",
+// "1", "false", ...). An explicit per_repo in hive.yaml or a dashboard edit
+// always wins.
+const AdvisoryPerRepoEnvVar = "HIVE_ADVISORY_PER_REPO"
+
+// PerRepoEnabled resolves AdvisoryConfig.PerRepo: an explicit value wins,
+// otherwise AdvisoryPerRepoEnvVar, otherwise off (one report, in the primary
+// repo). An unparseable env value is ignored and resolves to off.
+func (a AdvisoryConfig) PerRepoEnabled() bool {
+	if a.PerRepo != nil {
+		return *a.PerRepo
+	}
+	if v := strings.TrimSpace(os.Getenv(AdvisoryPerRepoEnvVar)); v != "" {
+		if on, err := strconv.ParseBool(v); err == nil {
+			return on
+		}
+	}
+	return false
 }
 
 // AutoCloseSupersededEnabled resolves GovernorConfig.AutoCloseSuperseded
@@ -2700,12 +2960,21 @@ func (g *GovernorConfig) AttributionTrailerEnabled() bool {
 // backend is the agent's backend name (typically "litellm"); it selects which
 // explicit gateway to consult.
 func (g GovernorConfig) ResolveLiteLLMInferenceKey(backend string) string {
+	key, _ := g.ResolveLiteLLMInferenceKeyWithSource(backend)
+	return key
+}
+
+// ResolveLiteLLMInferenceKeyWithSource is ResolveLiteLLMInferenceKey plus the
+// log-safe source ("file:<path>" / "env:<NAME>") the key came from. The
+// inference proxy re-runs it at request time so a rotated key is picked up
+// without a restart (hive#18532).
+func (g GovernorConfig) ResolveLiteLLMInferenceKeyWithSource(backend string) (string, string) {
 	if len(g.Gateways) > 0 {
 		if gw := g.ResolveGateway(backend); gw != nil {
-			return gw.ResolveAPIKey()
+			return gw.ResolveAPIKeyWithSource()
 		}
 	}
-	return g.LiteLLM.ResolveAPIKey()
+	return g.LiteLLM.ResolveAPIKeyWithSource()
 }
 
 // ReplanConfig governs the Phase 3 stall-replan lane: a periodic check that
@@ -2833,6 +3102,44 @@ type LabelsConfig struct {
 	// (hivecommons/hive#12581). The trust axis (`role/<tier>`) is not
 	// renameable.
 	Author AuthorLabelsConfig `yaml:"author"`
+	// ReadyForReview is the gate label the hive applies when its work on a
+	// PR is done and a maintainer must review it (the ACMM level gate at
+	// L3-L5). Defaults to DefaultReadyForReviewLabel. The hive never
+	// applies `hold` itself (hivecommons/hive#18468): a person's `hold`
+	// means hands-off. Blank or `hold` keeps the default.
+	ReadyForReview string `yaml:"ready_for_review,omitempty"`
+	// DecisionNeeded is the gate label the hive applies when it is blocked
+	// on a human decision (reporter trust, self-authorization, the hold
+	// guard, an owner-only delegated decision). Defaults to
+	// DefaultDecisionNeededLabel. Blank or `hold` keeps the default.
+	DecisionNeeded string `yaml:"decision_needed,omitempty"`
+}
+
+// Default hive gate label names (hivecommons/hive#18468); they match
+// github.DefaultReadyForReviewLabel / github.DefaultDecisionNeededLabel.
+const (
+	DefaultReadyForReviewLabel = "ready-for-review"
+	DefaultDecisionNeededLabel = "decision-needed"
+)
+
+// ReadyForReviewLabelOrDefault returns governor.labels.ready_for_review or
+// its default. `hold` is never returned: the hive must not apply it.
+func (c LabelsConfig) ReadyForReviewLabelOrDefault() string {
+	return gateLabelOrDefault(c.ReadyForReview, DefaultReadyForReviewLabel)
+}
+
+// DecisionNeededLabelOrDefault returns governor.labels.decision_needed or
+// its default. `hold` is never returned: the hive must not apply it.
+func (c LabelsConfig) DecisionNeededLabelOrDefault() string {
+	return gateLabelOrDefault(c.DecisionNeeded, DefaultDecisionNeededLabel)
+}
+
+func gateLabelOrDefault(v, def string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.EqualFold(v, "hold") {
+		return def
+	}
+	return v
 }
 
 // AuthorLabelsConfig is governor.labels.author: the label names for the
@@ -3742,6 +4049,31 @@ type GitHubConfig struct {
 // and exited before the HTTP listener bound — invisible from the dashboard.
 const PlaceholderAppID int64 = 999999999
 
+// PlaceholderOrgPrefixes are the project.org prefixes a pooled hosted slot
+// carries before it is claimed: the pool replenisher seeds "available-<id>",
+// and older slots carry the legacy "placeholder" form. An unclaimed slot is
+// NOT org-less — the hub templates this synthetic org into the spoke
+// hive.yaml — so every "is this hive onboarded yet?" test must consult this
+// list rather than only checking for an empty org (#17593).
+var PlaceholderOrgPrefixes = []string{"available-", "placeholder"}
+
+// IsPlaceholderOrg reports whether org is the synthetic project.org of an
+// unclaimed pool slot (case-insensitive, surrounding whitespace ignored). An
+// empty org is NOT a placeholder; callers that also treat "no org at all" as
+// unclaimed must test for that separately.
+func IsPlaceholderOrg(org string) bool {
+	org = strings.ToLower(strings.TrimSpace(org))
+	if org == "" {
+		return false
+	}
+	for _, pre := range PlaceholderOrgPrefixes {
+		if strings.HasPrefix(org, pre) {
+			return true
+		}
+	}
+	return false
+}
+
 const (
 	// DefaultGitHubPRDetailTTL is the default freshness window for cached
 	// GET /repos/{owner}/{repo}/pulls/{number} detail responses.
@@ -4585,6 +4917,35 @@ type ContributeHelpLink struct {
 	URL   string `yaml:"url" json:"url"`
 }
 
+// NetworkConfig groups outbound-connectivity settings.
+type NetworkConfig struct {
+	UpstreamProxy UpstreamProxyConfig `yaml:"upstream_proxy,omitempty" json:"upstream_proxy,omitempty"`
+}
+
+// UpstreamProxyConfig names a corporate HTTP forward proxy and the hosts
+// whose TLS egress (control-plane GitHub clients, in-process git, and every
+// agent :443 flow intercepted by the MITM proxy) must be chained through it
+// with CONNECT. Env mapping: HIVE_UPSTREAM_PROXY_URL, HIVE_UPSTREAM_PROXY_HOSTS
+// (comma-separated), HIVE_NO_PROXY; when none of these nor the file block is
+// set, standard HTTPS_PROXY/HTTP_PROXY/NO_PROXY apply to all hosts.
+type UpstreamProxyConfig struct {
+	// URL is the proxy, e.g. http://proxy.corp.example:3128 (userinfo is
+	// sent as Proxy-Authorization: Basic).
+	URL string `yaml:"url,omitempty" json:"url,omitempty"`
+	// Hosts restricts chaining to matching hosts: exact ("ghe.corp.example"),
+	// wildcard ("*.ghe.corp.example", subdomains only), dotted suffix
+	// (".corp.example"), IP, CIDR, or "*". Empty means every host not in
+	// NoProxy.
+	Hosts []string `yaml:"hosts,omitempty" json:"hosts,omitempty"`
+	// NoProxy lists hosts (same grammar) that are always dialled directly.
+	NoProxy []string `yaml:"no_proxy,omitempty" json:"no_proxy,omitempty"`
+}
+
+// UpstreamProxy converts the file block into the selector package's input.
+func (c UpstreamProxyConfig) UpstreamProxy() upstreamproxy.Config {
+	return upstreamproxy.Config{URL: c.URL, Hosts: c.Hosts, NoProxy: c.NoProxy}
+}
+
 type HubConfig struct {
 	Enabled             bool   `yaml:"enabled"`
 	URL                 string `yaml:"url"`
@@ -4698,6 +5059,10 @@ type HubConfig struct {
 	// ContributeRepoFilters are optional, full owner/name keyed admission
 	// filters layered on top of the hive-wide title/author/label filters.
 	ContributeRepoFilters map[string]ContributeRepoFilter `yaml:"contribute_repo_filters,omitempty" json:"contribute_repo_filters,omitempty"`
+	// ContributeUmbrella decides which issues are umbrella, tracker or
+	// owner-only work that a contributor relay is never handed, with a
+	// per-repo override map (hivecommons/hive#19078). See ContributeUmbrella.
+	ContributeUmbrella ContributeUmbrella `yaml:"contribute_umbrella,omitempty" json:"contribute_umbrella,omitempty"`
 	// ContributeSkipAssignedToOthers, when true, makes the /contribute queue
 	// skip any issue that is already assigned to someone OTHER than the
 	// contributor requesting work. An issue assigned to the contributor
@@ -5095,6 +5460,13 @@ type DashboardConfig struct {
 	//
 	// Deprecated: set dashboard.experiment_lab instead.
 	StrategyLab bool `yaml:"strategy_lab,omitempty" json:"strategy_lab,omitempty"`
+	// SubscriptionGaugeHeader also shows the owner the plan usage gauge (a
+	// row per provider) as a chip in the dashboard header; the gauge is on the
+	// Overview by default and needs no config. It is display-only: it reads
+	// the usage readings hive already makes (provider rotation or the default
+	// publish-only manager) and never starts, stops or changes any
+	// measurement, rotation or agent.
+	SubscriptionGaugeHeader bool `yaml:"subscription_gauge_header,omitempty" json:"subscription_gauge_header,omitempty"`
 	// Matrix is the default-off Code activity source configuration.
 	// The dashboard.matrix name is deprecated but retained for compatibility.
 	Matrix MatrixConfig `yaml:"matrix,omitempty" json:"matrix,omitempty"`
@@ -5175,6 +5547,8 @@ type DashboardConfig struct {
 	// StageTracker tunes the Hive activity monitor's server-side payload cache
 	// (hivecommons/hive#12682).
 	StageTracker DashboardStageTrackerConfig `yaml:"stage_tracker,omitempty" json:"stage_tracker,omitempty"`
+	// Sessions configures the interactive Sessions terminals (default off).
+	Sessions DashboardSessionsConfig `yaml:"sessions,omitempty" json:"sessions,omitempty"`
 }
 
 // DashboardStageTrackerConfig is dashboard.stage_tracker.
@@ -5211,6 +5585,12 @@ type DashboardStageTrackerConfig struct {
 	// age takes the muted-stale tone (hivecommons/hive#15784). 0 means the
 	// default (4); a negative value never marks the wait stale.
 	WaitingPushStaleH int `yaml:"waiting_push_stale_h,omitempty" json:"waiting_push_stale_h,omitempty"`
+	// CIActivityStaleM is how many minutes a head's CI snapshot may claim a
+	// check still running or queued before the tracker re-lists the head's
+	// check runs on its next build, whatever the batch cache or ETag says
+	// (hivecommons/hive#17508). 0 means the default (10); a negative value
+	// disables the re-list.
+	CIActivityStaleM int `yaml:"ci_activity_stale_m,omitempty" json:"ci_activity_stale_m,omitempty"`
 	// ToastInfoS is how many seconds the activity monitor's informational
 	// toasts (action results, waiting-on-human nudges, the merge banner)
 	// stay up before dismissing themselves (hivecommons/hive#15813).
@@ -5354,6 +5734,23 @@ func (c *Config) StageTrackerWebhookRefreshDebounce() time.Duration {
 		return time.Duration(c.Dashboard.StageTracker.WebhookRefreshDebounceMS) * time.Millisecond
 	}
 	return defaultStageTrackerWebhookRefreshDebounce
+}
+
+// defaultStageTrackerCIActivityStale is dashboard.stage_tracker.ci_activity_stale_m's default.
+const defaultStageTrackerCIActivityStale = 10 * time.Minute
+
+// StageTrackerCIActivityStale is the effective
+// dashboard.stage_tracker.ci_activity_stale_m as a duration: how old a CI
+// snapshot that still claims a check running or queued may be before the
+// tracker re-lists the head's check runs. 0 disables the re-list.
+func (c *Config) StageTrackerCIActivityStale() time.Duration {
+	if c == nil || c.Dashboard.StageTracker.CIActivityStaleM == 0 {
+		return defaultStageTrackerCIActivityStale
+	}
+	if c.Dashboard.StageTracker.CIActivityStaleM < 0 {
+		return 0
+	}
+	return time.Duration(c.Dashboard.StageTracker.CIActivityStaleM) * time.Minute
 }
 
 // StageTrackerCacheTTL is the effective dashboard.stage_tracker.cache_ttl_s:
@@ -5731,6 +6128,10 @@ type DataConfig struct {
 	CopilotSessionsDir string `yaml:"copilot_sessions_dir"`
 	BobSessionsDir     string `yaml:"bob_sessions_dir"`
 	AgentsDir          string `yaml:"agents_dir"`
+	// WorkflowsDir is the durable root for stored workflow models
+	// (hivecommons/hive#17620); models live under <dir>/workflows. Empty
+	// means the hive data dir (/data); HIVE_WORKFLOWS_DATA_DIR overrides.
+	WorkflowsDir string `yaml:"workflows_dir,omitempty"`
 
 	// SessionRetentionDays is how many days of CLI session-state directories to
 	// keep. Session directories are created per CLI invocation and were never
@@ -5770,6 +6171,9 @@ func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Con
 	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config %s: %w", path, err)
 	}
+	if err := cfg.openPersistedSecrets(); err != nil {
+		return nil, fmt.Errorf("config %s: %w", path, err)
+	}
 
 	if envPath != "-" {
 		if envPath == "" {
@@ -5804,6 +6208,9 @@ func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Con
 	// when the base entry carries the same stale launch_cmd. Drop it here
 	// rather than let validation exit the process.
 	cfg.DegradeContradictingLaunchCmds()
+	// A claude or copilot agent carrying the other CLI's spelling of its
+	// Claude model id is rejected by its CLI; rewrite it.
+	cfg.NormalizeModelIDConventions()
 
 	if err := cfg.ApplyAgentSpecRepoScopes(); err != nil {
 		return nil, fmt.Errorf("applying agent spec repo scopes: %w", err)
@@ -5892,6 +6299,24 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// pack apply saw nothing to respect. Adopt them BEFORE the fullness guard,
 	// like WorkSource, so a short overlay still carries them.
 	adoptOperatorCadenceOverrides(cfg, &overlay)
+	// Review gate and agent sandbox (#18804): the dashboard saves both into
+	// the overlay (the Config marshals whole), but this reload used to rebuild
+	// them from the seed alone, so a reload that starts from the seed (the
+	// read-only ConfigMap mount on a first boot or reprovision, config-check,
+	// a watcher reload of the seed path) silently dropped
+	// review.combined_perspectives, review.require_labels,
+	// review.perspectives_source and agent_sandbox.image/job.*, the same shape
+	// as #5632 and the work source. Adopt each block whole when the overlay
+	// carries it, BEFORE the fullness guard so a short overlay still wins; an
+	// overlay that says nothing leaves the seed's block untouched. This is the
+	// same overlay-wins rule the entrypoint's boot merge applies to every
+	// block. Variables stays seed-only (see the invariant below).
+	if !reflect.DeepEqual(overlay.Review, ReviewConfig{}) {
+		cfg.Review = overlay.Review
+	}
+	if !reflect.DeepEqual(overlay.AgentSandbox, cruxconfig.AgentSandboxConfig{}) {
+		cfg.AgentSandbox = overlay.AgentSandbox
+	}
 	if len(overlay.RemovedAgents) > 0 {
 		cfg.RemovedAgents = overlay.RemovedAgents
 		cfg.PruneRemovedAgents()
@@ -5908,7 +6333,7 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// Guard: the overlay must look like a full hive config (same check the
 	// entrypoint and validateSaveGuard apply) before we trust its agents.
 	if overlay.Project.Org == "" || len(overlay.Agents) == 0 {
-		return cfg, nil
+		return cfg, cfg.validateJobAffinities()
 	}
 	// Overlay agents win — they carry the reconciled pack-behavior fields.
 	//
@@ -5937,6 +6362,34 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	for name := range agents {
 		cfg.ApplyAgentDefaults(name)
 	}
+	// Per-agent files (/data/agent-configs/<name>.yaml) are the higher layer
+	// (config-layering.md), but the whole-entry replacement above buried them
+	// under the overlay's older copy of the same agent, so an operator's
+	// `paused: true` or `sandbox:` block in the agent file never took effect
+	// while the overlay and runtime config still said otherwise (#18804). Carry
+	// those two operator-owned fields forward from the file. Not the whole
+	// entry: an explicit overlay `converse: false` deliberately beats the file
+	// (#7503), and pack-reconciled fields live in the overlay. `paused: false`
+	// in a file is indistinguishable from unset, so only a pause is carried;
+	// unpause through the dashboard, which writes both layers.
+	if cfg.Data.AgentsDir != "" {
+		if files, ferr := LoadAgentOverrides(cfg.Data.AgentsDir); ferr == nil {
+			for name, fa := range files {
+				a, ok := cfg.Agents[name]
+				if !ok || cfg.IsAgentRemoved(name) {
+					continue
+				}
+				if fa.Paused {
+					a.Paused = true
+					a.PauseOwner = fa.PauseOwner
+				}
+				if fa.Sandbox != nil {
+					a.Sandbox = fa.Sandbox
+				}
+				cfg.Agents[name] = a
+			}
+		}
+	}
 	if err := cfg.ApplyAgentSpecRepoScopes(); err != nil {
 		return cfg, err
 	}
@@ -5948,7 +6401,7 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// block is intentionally NOT merged. The dashboard overlay is user-writable,
 	// so honoring its resolver policy would let a compromised overlay enable
 	// script/http execution. Keep this true if overlay merging is ever expanded.
-	return cfg, nil
+	return cfg, cfg.validateJobAffinities()
 }
 
 // adoptOperatorCadenceOverrides re-applies the dashboard overlay's
@@ -6036,6 +6489,9 @@ func (c *Config) applyConfigEnv(path string) error {
 
 	if v, ok := env["PROJECT_ORG"]; ok {
 		c.Project.Org = v
+	}
+	if v, ok := env["PROJECT_NAME"]; ok {
+		c.Project.Name = v
 	}
 	if v, ok := env["PROJECT_REPOS"]; ok {
 		c.Project.Repos = strings.Fields(v)
@@ -6317,19 +6773,21 @@ func (c *Config) ResolveRegistryForAgent(agentName string, logger *slog.Logger) 
 // given "owner/repo" slug is permitted to be fetched. This mirrors the seed-only
 // gating used for exec/http resolvers: it consults c.Variables.Security, which
 // LoadWithDashboardOverlay guarantees comes ONLY from the trusted config seed
-// (the dashboard overlay's Variables block is never merged). It returns false
-// unless the feature is explicitly enabled AND the slug is on the seed-declared
+// (the dashboard overlay's Variables block is never merged). The seed path
+// needs the feature explicitly enabled AND the slug on the seed-declared
 // allowlist, so a user-writable overlay can never widen the set of readable repos.
+//
+// It also admits a repo the hive owner approved from the dashboard
+// (OwnerPromptRepoAllowed, hivecommons/hive#18490): one of the hive's own
+// managed repos, approved individually and persisted through Save. That path
+// is bounded to project.repos, so it cannot widen the set beyond repos the
+// hive already manages. Callers (the prompt, definition and perspectives
+// resolvers, and repo-discovered agents) should keep using this function.
 func (c *Config) GitHubPromptAllowed(slug string) bool {
-	if slug == "" || !c.Variables.Security.AllowGitHubPrompt {
+	if slug == "" {
 		return false
 	}
-	for _, allowed := range c.Variables.Security.GitHubPromptAllowlist {
-		if strings.EqualFold(strings.TrimSpace(allowed), slug) {
-			return true
-		}
-	}
-	return false
+	return c.SeedGitHubPromptAllowed(slug) || c.OwnerPromptRepoAllowed(slug)
 }
 
 // GitHubDefinitionAllowed reports whether an agent's definition_source pointing
@@ -6466,6 +6924,7 @@ func (c *Config) applyDefaults() {
 	// value, after which this is a no-op for the life of the hive.
 	c.MigrateReviewFixHumanPRs()
 	c.WarnDeprecatedReviewAllAuthors()
+	c.WarnDeprecatedSpektacularRecheck()
 	// Repo targets are built as org + "/" + repo, so an entry that already
 	// carries the org resolves to "org/org/repo" and every agent fails. Strip a
 	// matching org prefix off both primary_repo and every repos entry on load.
@@ -7235,6 +7694,7 @@ func (c *Config) ExpandAgentReplicas() error {
 		}
 		return normalizeReplicaCount(agent.Replicas)
 	}
+	c.dropStrayReplicaOverlays(baseAgents, effectiveReplicas)
 	derivedNames := map[string]string{}
 	for name, agent := range baseAgents {
 		replicas := normalizeReplicaCount(agent.Replicas)
@@ -7295,6 +7755,43 @@ func (c *Config) ExpandAgentReplicas() error {
 		}
 	}
 	return nil
+}
+
+// dropStrayReplicaOverlays removes from baseAgents (and c.Agents) every
+// per-agent overlay whose name is a replica that another base agent's
+// replicas setting derives: reviewer-2.yaml next to reviewer.replicas: 2
+// (#18137). Such a file is a serialized derived replica — ReplicaOf is not
+// persisted, so it loads as a base agent — and the collision used to fail
+// ExpandAgentReplicas, which exits the process before the dashboard binds and
+// crash-loops the hive with no supported way back in (same shape as #6024).
+//
+// Only overlay-sourced entries are dropped; a colliding agent declared in the
+// main config is still an error, because nothing in it can be a stale copy.
+// Dropping the file changes nothing that runs: the replica it names is
+// re-derived from the base agent below. Every drop is logged at ERROR naming
+// the file so the operator can delete it.
+func (c *Config) dropStrayReplicaOverlays(baseAgents map[string]AgentConfig, effectiveReplicas func(string, AgentConfig) int) {
+	for name, agent := range baseAgents {
+		if n := normalizeReplicaCount(agent.Replicas); n < 1 || n > MaxAgentReplicas {
+			continue // reported by the caller's range check
+		}
+		replicas := effectiveReplicas(name, agent)
+		for i := 2; i <= replicas; i++ {
+			derived := replicaAgentName(name, i)
+			stray, ok := baseAgents[derived]
+			if !ok || stray.ReplicaOf != "" || stray.SourceFile() == "" {
+				continue
+			}
+			slog.Default().Error("config: ignored per-agent overlay file for a derived replica - the replica is re-derived from its base agent; delete the file (#18137)",
+				"hive_id", c.HiveID,
+				"agent", derived,
+				"replica_of", name,
+				"file", stray.SourceFile(),
+			)
+			delete(baseAgents, derived)
+			delete(c.Agents, derived)
+		}
+	}
 }
 
 // MarshalYAML persists only declared agents. Runtime-derived replicas are
@@ -7540,18 +8037,14 @@ func (c *Config) saveLocked() error {
 	// layer this Save is about to persist.
 	overlayErr := c.saveDashboardOverlay()
 
-	// Open the existing file (preserving its inode) rather than creating a
-	// temp file and renaming. Rename breaks Docker bind mounts because it
-	// replaces the inode — the host file is never updated, so acmm_level
-	// and other runtime changes are lost on container restart.
+	// Replace the primary config atomically (temp file + fsync + rename onto
+	// the resolved target) — see writeFileAtomic for why that is safe on the
+	// #17468 symlink and still works on single-file Docker bind mounts.
 	//
-	// #17468: the same in-place write is what keeps hosted spokes durable.
-	// There the copy-config init container makes SourcePath
-	// (/etc/hive/hive.yaml, an emptyDir) a symlink to RuntimeConfigFile on
-	// the PVC; O_WRONLY|O_TRUNC follows the link and writes the PVC file,
-	// whereas a temp-file+rename would replace the link with a regular
-	// emptyDir file and silently revert the fix. Pinned by
-	// TestSaveThroughSymlinkKeepsLink — do not switch this to a rename.
+	// #17862: the previous O_WRONLY|O_TRUNC in-place write could be killed
+	// between truncate and write (liveness probe on a crash-looping hive),
+	// leaving a 0-byte runtime config that the entrypoint skipped in favour
+	// of a months-stale hive.yaml.bak. Pinned by TestSaveSurvivesKillMidWrite.
 	//
 	// #3961: a source-path failure must NOT abort the save. On deployments
 	// that mount the config read-only (a ConfigMap mounted straight at
@@ -7565,23 +8058,8 @@ func (c *Config) saveLocked() error {
 	// writing the runtime layer, and report success iff the state will actually
 	// survive a restart.
 	var srcErr error
-	f, err := os.OpenFile(c.SourcePath, os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		// File may not exist yet — fall back to create. Continue below so
-		// the PVC backup and dashboard overlay are still written.
-		if writeErr := os.WriteFile(c.SourcePath, data, 0o644); writeErr != nil {
-			srcErr = fmt.Errorf("writing config (create fallback): %w", writeErr)
-		}
-	} else {
-		if _, err := f.Write(data); err != nil {
-			_ = f.Close() // best-effort cleanup; the write error is what's recorded
-			srcErr = fmt.Errorf("writing config: %w", err)
-		} else if err := f.Sync(); err != nil {
-			_ = f.Close() // best-effort cleanup; the sync error is what's recorded
-			srcErr = fmt.Errorf("syncing config: %w", err)
-		} else if err := f.Close(); err != nil {
-			srcErr = fmt.Errorf("closing config: %w", err)
-		}
+	if err := writeFileAtomic(c.SourcePath, data, sourceConfigMode(c.SourcePath)); err != nil {
+		srcErr = fmt.Errorf("writing config: %w", err)
 	}
 
 	// Persist the runtime config to the PVC. In K8s this is the boot input
@@ -7605,11 +8083,11 @@ func (c *Config) saveLocked() error {
 	if guardLivePVCPathUnderTest(runtimePath, defaultRuntimeConfigFile, "RuntimeConfigFile") {
 		// Not written, so not persisted: keep the primary-path error visible.
 		runtimeErr = errLivePVCPathGuarded
-	} else if err := os.WriteFile(runtimePath, data, 0o600); err != nil {
+	} else if err := writeFileAtomic(runtimePath, data, 0o600); err != nil {
 		// Common cause: init container created the file as root, runtime user
 		// can't overwrite. Remove and retry so runtime state is not silently lost.
-		_ = os.Remove(runtimePath) // best-effort; the retry's own WriteFile error is what's recorded below
-		if retryErr := os.WriteFile(runtimePath, data, 0o600); retryErr != nil {
+		_ = os.Remove(runtimePath) // best-effort; the retry's own error is what's recorded below
+		if retryErr := writeFileAtomic(runtimePath, data, 0o600); retryErr != nil {
 			runtimeErr = retryErr
 			log.Printf("[config] warning: failed to write PVC runtime config to %s (even after remove): %v", runtimePath, retryErr)
 		} else {
@@ -7617,12 +8095,6 @@ func (c *Config) saveLocked() error {
 		}
 	} else {
 		log.Printf("[config] PVC runtime config written to %s", runtimePath)
-		// os.WriteFile's mode only applies when it CREATES the file; a
-		// pre-existing world-readable inode (every hive deployed before
-		// this fix) keeps its old 0644 bits, so tighten explicitly.
-		if chmodErr := os.Chmod(runtimePath, 0o600); chmodErr != nil {
-			log.Printf("[config] warning: failed to tighten permissions on %s: %v", runtimePath, chmodErr)
-		}
 	}
 
 	if srcErr == nil {
@@ -7639,6 +8111,16 @@ func (c *Config) saveLocked() error {
 		return nil
 	}
 	return srcErr
+}
+
+// sourceConfigMode returns the mode Save should give the primary config
+// path: the existing file's permission bits when it exists (an operator may
+// have tightened them), else the historical 0644 default.
+func sourceConfigMode(path string) os.FileMode {
+	if fi, err := os.Stat(path); err == nil {
+		return fi.Mode().Perm()
+	}
+	return 0o644
 }
 
 // RuntimeConfigFile is where Save() persists the full runtime config on the
@@ -7665,11 +8147,12 @@ const defaultRuntimeConfigFile = "/data/hive.yaml.runtime"
 
 // RuntimeConfigFileLegacy is the pre-rename name of RuntimeConfigFile.
 //
-// It is READ as a fallback and never written, renamed or removed: ~51 live
-// hives carry only this file, and on Docker/LXC it is the single copy of
-// their live configuration. Mutating it at boot could lose owner
-// customisations with no warning, so the migration is copy-forward only —
-// readers prefer RuntimeConfigFile and fall back to this one.
+// It is READ as a fallback and never written by Save: ~51 live hives carry
+// only this file, and on Docker/LXC it is the single copy of their live
+// configuration. Readers prefer RuntimeConfigFile and fall back to this one.
+// The entrypoint refreshes it from a good RuntimeConfigFile on every clean
+// boot (#17862) — a fallback frozen at the Aug 2026 rename booted a
+// months-old level/roster when a kill mid-save truncated the runtime file.
 //
 // Removable one release after every live hive has written the new name.
 const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
@@ -7903,7 +8386,44 @@ func (c *Config) redactedForPersist() *Config {
 	if stringSlicesEqual(cp.Governor.Sensing.LoginPatterns, defaultLoginPatterns) {
 		cp.Governor.Sensing.LoginPatterns = nil
 	}
+	// hivecommons/hive#18159: a reference repo derived from an accepted
+	// request issue lives in memory only. yaml:"-" hides its provenance, but
+	// the entry itself would still marshal as a plain repo and outlive the
+	// grant in the overlay or runtime config (#18137), so the derived entries
+	// are dropped from the persisted copy here, on every save path.
+	cp.Project.ReferenceRepos = HandWrittenReferenceRepos(cp.Project.ReferenceRepos)
+	// hivecommons/hive#18214: the PAT is the one credential VALUE this file
+	// carries (every other secret is a path). With a keystore provider active
+	// it is persisted as an envelope string; the YAML shape is unchanged and
+	// openPersistedSecrets reverses it on load. In legacy mode the value is
+	// written as before.
+	if sealed, err := keystore.SealActive(context.Background(), cp.GitHub.Token, githubTokenAAD); err == nil {
+		cp.GitHub.Token = sealed
+	} else {
+		log.Printf("[config] warning: github.token could not be sealed for persistence; it is written as it was: %v", err)
+	}
 	return &cp
+}
+
+// githubTokenAAD binds the persisted github.token envelope to its slot, so an
+// envelope lifted from a secret file cannot be pasted in as the PAT.
+var githubTokenAAD = []byte("config:github.token")
+
+// openPersistedSecrets reverses redactedForPersist's sealing after the YAML
+// is parsed: a github.token envelope is opened with the active provider; a
+// plaintext value (a hand-written config, or one saved in legacy mode) is left
+// as is. An envelope this process cannot open is a load error naming the cure
+// rather than a silently empty token, because an empty PAT would make a PAT
+// hive fail every GitHub call with a far less actionable 401.
+func (c *Config) openPersistedSecrets() error {
+	token, _, _, err := keystore.OpenActive(context.Background(), c.GitHub.Token, githubTokenAAD)
+	if err != nil {
+		return fmt.Errorf("github.token is sealed at rest and cannot be opened with the current keystore (%w); "+
+			"set %s to the key material it was sealed with, or %s=none only if the value is to be re-entered",
+			err, keystore.EnvSecretsKeyPrevious, keystore.EnvProviderName)
+	}
+	c.GitHub.Token = token
+	return nil
 }
 
 func mergeOTelOverride(base, override OTelConfig) OTelConfig {
@@ -8089,6 +8609,10 @@ type ReviewConfig struct {
 	// dispatch (hivecommons/hive#11091); see review_dispatch.go.
 	EventDriven    *bool `yaml:"event_driven,omitempty" json:"event_driven,omitempty"`
 	EventDebounceS int   `yaml:"event_debounce_s,omitempty" json:"event_debounce_s,omitempty"`
+	// AnalysisFactCheck is the independent fact-check pass for analysis and
+	// report PRs (hivecommons/hive#19074); see review_factcheck.go. Off by
+	// default.
+	AnalysisFactCheck AnalysisFactCheckConfig `yaml:"analysis_factcheck,omitempty" json:"analysis_factcheck,omitempty"`
 	// MaxPerspectivesPerPR caps how many review perspectives one PR may be
 	// given, as a LIFETIME budget per head SHA — not a per-cycle limit. It
 	// exists because parallel review slots are a fixed budget spent in PR
@@ -8131,6 +8655,20 @@ type ReviewConfig struct {
 	// rather than left to infer them from the tree; a hive can only get that
 	// by writing it down. An entry that is blank means "use the built-in".
 	PerspectivePrompts map[string]string `yaml:"perspective_prompts,omitempty" json:"perspective_prompts,omitempty"`
+	// PerspectivesSource live-links the perspective names and focus text to a
+	// kind: ReviewPerspectives file in a GitHub repo (hivecommons/hive#17975),
+	// so maintainers can change the set through ordinary PRs. When it is set
+	// and resolved it wins over Perspectives/PerspectivePrompts, which remain
+	// the fallback. A partially filled source (no owner, repo or path) is
+	// treated as unset, matching DefinitionSourceConfig.IsSet. Only names and
+	// focus are sourced: combined_perspectives, plan_match and
+	// max_perspectives_per_pr stay operator-owned.
+	PerspectivesSource *DefinitionSourceConfig `yaml:"perspectives_source,omitempty" json:"perspectives_source,omitempty"`
+	// LinkedPerspectives is the set most recently resolved from
+	// PerspectivesSource. It is runtime-only and never persisted, so a fetched
+	// document can never be written back into the overlay. Read the effective
+	// set through EffectivePerspectives, never this field directly.
+	LinkedPerspectives *LinkedPerspectives `yaml:"-" json:"-"`
 	// PerspectiveModels pins the backend/model one perspective's swarm review
 	// runs with, keyed by perspective name. An entry replaces the reviewer
 	// agent's review_models pool for that perspective only; the agent's
@@ -8288,6 +8826,11 @@ type ReviewConfig struct {
 	// reviewer's memory of it have both moved on. Empty means
 	// DefaultReviewDeltaMaxAge.
 	DeltaMaxAge string `yaml:"delta_max_age,omitempty" json:"delta_max_age,omitempty"`
+	// Evidence configures the facts the hive gathers before a review: the
+	// repository's own rule documents, named operator rules, and dependency
+	// vulnerability and release-age data (hivecommons/hive#19069). Per-repo
+	// overrides live at repos.<repo>.review_preflight.
+	Preflight ReviewPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
 	// HumanDecisionLabel names an EXISTING repo label to apply when the review
 	// swarm holds a PR for a human. The review comment's in-body marker is
 	// always the primary signal and never depends on this: a label makes the
@@ -8376,6 +8919,30 @@ type ReviewConfig struct {
 	// Reviewers configures the reviewer agents themselves; see
 	// ReviewersConfig and review.reviewers.autoscale (hivecommons/hive#14685).
 	Reviewers ReviewersConfig `yaml:"reviewers,omitempty" json:"reviewers,omitzero"`
+}
+
+// LinkedPerspectives is a review perspective set resolved from
+// ReviewConfig.PerspectivesSource. It is already validated by the resolver;
+// pkg/config deliberately does not import pkg/review to re-check it.
+type LinkedPerspectives struct {
+	Names []string
+	Focus map[string]string
+	// Source is the provenance shown to operators, e.g. owner/repo/path@ref.
+	Source string
+	// Warning carries the last resolve failure while an older, still-valid set
+	// stays in effect. Empty when the latest document was applied.
+	Warning string
+}
+
+// EffectivePerspectives returns the perspective names and focus text every
+// consumer should use: the linked set when PerspectivesSource is set and has
+// resolved, otherwise the inline Perspectives and PerspectivePrompts. With no
+// source configured the result is exactly the inline values, unchanged.
+func (r ReviewConfig) EffectivePerspectives() (names []string, focus map[string]string) {
+	if r.PerspectivesSource.IsSet() && r.LinkedPerspectives != nil {
+		return r.LinkedPerspectives.Names, r.LinkedPerspectives.Focus
+	}
+	return r.Perspectives, r.PerspectivePrompts
 }
 
 // PlanMatchConfig is the switch for the plan_match review perspective
@@ -8568,6 +9135,14 @@ type AutoMergeConfig struct {
 	// (`trusted_bot_authors: []`) disables the lane. Matched case-insensitively
 	// by exact login, e.g. "dependabot[bot]".
 	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
+	// TrustedBotSkipReview makes the review swarm's verdict advisory for PRs
+	// authored by a TrustedBotAuthors login. The trusted-bot lane's contract
+	// is "safety is established by CI": a dependency bump a reviewer routed
+	// to requires_human must not park at "needs a person" when its required
+	// checks are green. nil/unset means true; set false to let a
+	// requires_human / changes_requested swarm verdict hold trusted-bot PRs
+	// exactly like the App's own.
+	TrustedBotSkipReview *bool `yaml:"trusted_bot_skip_review,omitempty" json:"trusted_bot_skip_review,omitempty"`
 	// BotTakeover lets the sweep re-author a trusted `github-actions[bot]` PR
 	// whose required `pull_request` checks can never run because the bot
 	// opened it with a workflow GITHUB_TOKEN (#12003). The App pushes the
@@ -8688,6 +9263,58 @@ type AutoMergeConfig struct {
 	// copies of other PRs (@clubanderson: "if a pr is superseded by a pr
 	// that a hive agent creates, it should auto merge"). Default ON.
 	HiveSuperseding HiveSupersedingAutoMergeConfig `yaml:"hive_superseding,omitempty" json:"hive_superseding,omitempty"`
+	// PRGate lets the hive publish the PR-contents merge gate as commit
+	// statuses itself, for repositories whose required `verify PR contents`
+	// check comes from a pull_request_target workflow GitHub is about to
+	// block by default (hivecommons/hive#19038). Default OFF with an explicit
+	// repository scope: nothing is posted unless a mode is set AND the
+	// repository is listed.
+	PRGate PRGateConfig `yaml:"pr_gate,omitempty" json:"pr_gate,omitempty"`
+}
+
+// PR gate modes (auto_merge.pr_gate.mode).
+const (
+	PRGateModeOff     = "off"
+	PRGateModeShadow  = "shadow"
+	PRGateModeEnforce = "enforce"
+)
+
+// PRGateConfig is auto_merge.pr_gate.*.
+type PRGateConfig struct {
+	// Mode is "off" (default), "shadow" (post only the shadow-named status
+	// `verify PR contents (hive)` and compare it with the workflow result) or
+	// "enforce" (post the real required context names). Empty means off.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	// Repos is the explicit scope (owner/repo, case-insensitive). Empty means
+	// no repository: there is deliberately no "every repository" default.
+	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+}
+
+// ModeFor returns the configured mode for repo (owner/repo): off unless the
+// repository is listed and the mode is a known non-off value.
+func (g PRGateConfig) ModeFor(repo string) string {
+	mode := strings.ToLower(strings.TrimSpace(g.Mode))
+	if mode != PRGateModeShadow && mode != PRGateModeEnforce {
+		return PRGateModeOff
+	}
+	if !repoListSet(g.Repos)[strings.ToLower(strings.TrimSpace(repo))] {
+		return PRGateModeOff
+	}
+	return mode
+}
+
+// Validate rejects an unknown mode and an active mode with no repository.
+func (g PRGateConfig) Validate() error {
+	switch strings.ToLower(strings.TrimSpace(g.Mode)) {
+	case "", PRGateModeOff:
+		return nil
+	case PRGateModeShadow, PRGateModeEnforce:
+		if len(repoListSet(g.Repos)) == 0 {
+			return fmt.Errorf("auto_merge.pr_gate.mode %q needs auto_merge.pr_gate.repos (owner/repo) listing where it applies", g.Mode)
+		}
+		return nil
+	}
+	return fmt.Errorf("auto_merge.pr_gate.mode must be off, shadow or enforce, got %q", g.Mode)
 }
 
 // NativeMergeQueueAutoMergeConfig is auto_merge.native_merge_queue.*.
@@ -9137,6 +9764,13 @@ func (a AutoMergeConfig) TrustedBotAuthorSet() map[string]bool {
 		set[login] = true
 	}
 	return set
+}
+
+// TrustedBotSkipsReview reports whether the review swarm's verdict is
+// advisory for trusted-bot lane PRs (auto_merge.trusted_bot_skip_review,
+// default true).
+func (a AutoMergeConfig) TrustedBotSkipsReview() bool {
+	return a.TrustedBotSkipReview == nil || *a.TrustedBotSkipReview
 }
 
 func (t TrustedAuthorAutoMergeConfig) EffectiveRequireRole() string {

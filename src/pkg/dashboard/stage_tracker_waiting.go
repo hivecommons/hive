@@ -141,6 +141,11 @@ func stageTrackerWaitingOnHuman(items []StageTrackerItem) StageTrackerWaitingOnH
 			continue
 		}
 		kind, who := stageTrackerWaitKind(*it)
+		if kind == "" && it.NeedsHumanWhy != nil && it.Advisory == nil && it.Decided == nil {
+			// Filed-for-help, level-gate and hive-hold waits: a person
+			// owes the next move though no stage names it.
+			kind, who = waitKindOther, waitWhoOperator
+		}
 		if kind == "" {
 			continue
 		}

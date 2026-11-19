@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
 )
 
 // Transition is what Reconcile reports to its caller and the audit log.
@@ -38,14 +41,32 @@ type Reconciler interface {
 
 // Options configures New.
 type Options struct {
-	Mode    Mode
-	Store   *stagelabels.Store // stagelabels.Shared() by default; API unchanged
-	Writer  StageWriter
-	Issue   Deriver // defaults to DeriveIssue
-	PR      Deriver // defaults to DerivePR
-	Now     func() time.Time
-	Logger  *slog.Logger
-	Metrics Metrics
+	Mode   Mode
+	Store  *stagelabels.Store // stagelabels.Shared() by default; API unchanged
+	Writer StageWriter
+	Issue  Deriver // defaults to DeriveIssue
+	PR     Deriver // defaults to DerivePR
+	// Workflow, when set, derives through the compiled workflow model
+	// (DeriveFromModel) and overrides Issue and PR. hivecommons/hive#17620.
+	Workflow *workflowmodel.Profile
+	// WorkflowFor, when set, resolves the compiled model bound to a
+	// repository (owner/repo) at derivation time; nil means the repository
+	// is unbound and the Issue/PR derivers run unchanged. It composes with
+	// Workflow: Workflow is the engine-wide model, WorkflowFor the
+	// per-repository override. hivecommons/hive#17620 (RFC phase 2).
+	WorkflowFor func(owner, repo string) *workflowmodel.Profile
+	// WorkflowProvisioned remembers, per repository, the model labels the
+	// label reconciler created, so a later pass can tell its own labels
+	// from the repository's. nil: nothing is remembered and no model label
+	// is ever deleted. hivecommons/hive#17620 (RFC phase 4 follow-up).
+	WorkflowProvisioned workflowmodel.ProvisionedStore
+	// WorkflowLabelGC, read on every pass, says whether a remembered model
+	// label the current binding no longer declares may be deleted from the
+	// repository (workflow.label_gc). nil means true.
+	WorkflowLabelGC func() bool
+	Now             func() time.Time
+	Logger          *slog.Logger
+	Metrics         Metrics
 }
 
 // ErrNoWriter is returned by an enforce-mode Reconcile with no Writer.
@@ -73,11 +94,19 @@ func New(o Options) Reconciler {
 	if o.Store == nil {
 		o.Store = stagelabels.Shared()
 	}
+	if o.Workflow != nil {
+		o.Issue = DeriveFromModel(o.Workflow, stagelabels.IssueItem)
+		o.PR = DeriveFromModel(o.Workflow, stagelabels.PRItem)
+	}
 	if o.Issue == nil {
 		o.Issue = IssueDeriver()
 	}
 	if o.PR == nil {
 		o.PR = PRDeriver()
+	}
+	if o.WorkflowFor != nil {
+		o.Issue = DeriveForRepo(o.WorkflowFor, o.Issue)
+		o.PR = DeriveForRepo(o.WorkflowFor, o.PR)
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -183,6 +212,7 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 			r.rememberStageWrite(f, from, out.Stage, d.Reason)
 		}
 	}
+	noteTriageCleared(r.opts.Store, key, f, out.Removed)
 	if err == nil {
 		// The gate's refusal is a fact about the record: readers that
 		// compare the record with the item's labels must know the labels
@@ -198,6 +228,25 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 		return tr, fmt.Errorf("stage engine: write %s: %w", f.Ref, err)
 	}
 	return tr, nil
+}
+
+// noteTriageCleared records on the issue's record that this write took the
+// reporter-trust awaiting label off. Every hive write that can remove it —
+// the issue sweep's batch and every FactSink submission — passes through
+// Reconcile, so this is the one place the removal is booked; a later read
+// that finds the label back makes the hive yield it on that issue
+// (hivecommons/hive#18387).
+func noteTriageCleared(store *stagelabels.Store, key string, f Facts, removed []string) {
+	if store == nil || f.Issue == nil || f.Ref.Kind != stagelabels.IssueItem {
+		return
+	}
+	label := strings.TrimSpace(f.Issue.TriageAwaitingLabel)
+	if label == "" {
+		return
+	}
+	if slices.ContainsFunc(removed, func(l string) bool { return strings.EqualFold(l, label) }) {
+		store.NoteTriageCleared(key, f.ObservedAt)
+	}
 }
 
 // noteCoveringPR keeps the issue record's memory of its covering PR in

@@ -11,7 +11,7 @@ raw pkg/github/automerge/automerge_contributor_held_runs.go 1
 raw pkg/github/automerge/automerge_contributor_lane.go 3
 raw pkg/github/automerge/automerge_contributor_nudge.go 1
 raw pkg/github/automerge/automerge_contributor_workflow_approval.go 1
-raw pkg/github/automerge/automerge_held_runs.go 3
+raw pkg/github/automerge/automerge_held_runs.go 2
 raw pkg/github/automerge/automerge_merge_commit.go 1
 raw pkg/github/automerge/automerge_merge_forward.go 1
 raw pkg/github/automerge/automerge_signoff_attribution.go 1
@@ -22,7 +22,7 @@ raw pkg/github/automerge/automerge_sweep_trusted.go 4
 raw pkg/github/automerge/automerge_unauthorized.go 3
 raw pkg/github/automerge/reporter_trust_release.go 2
 raw pkg/github/automerge/self_authorization_release.go 2
-raw pkg/github/client.go 12
+raw pkg/github/client.go 10
 raw pkg/github/close_on_merge.go 3
 raw pkg/github/duplicate_sweep.go 2
 raw pkg/github/fleet_report.go 2
@@ -120,6 +120,7 @@ wrap pkg/github/review_backlog_routing.go 1
 wrap pkg/github/review_backlog_selfcheck.go 1
 wrap pkg/github/review_request_watcher.go 2
 wrap pkg/github/stage_labeler.go 2
+wrap pkg/github/tracker_autoclose.go 1
 wrap pkg/github/tracking_issue.go 1
 wrap pkg/prfollowup/prfollowup.go 2
 wrap pkg/questionclose/questionclose.go 2

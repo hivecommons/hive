@@ -15,20 +15,26 @@
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">🚦</span><span class="oc-nav-text">Governor</span><span id="governor-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
       <a class="oc-nav-item" data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📈</span><span class="oc-nav-text">Throughput</span></a>
     </div>
+    <div class="oc-nav-group" id="collaborate-nav-group">
+      <div class="oc-nav-label">Collaborate</div>
+      <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
+      <a class="oc-nav-item" data-section="calendar-section" data-action="ocNavigate" data-arg0="calendar-section"><span class="oc-nav-emoji">📅</span><span class="oc-nav-text">Calendar</span><span id="calendar-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
+      <a class="oc-nav-item" data-section="meetings-section" data-action="ocNavigate" data-arg0="meetings-section"><span class="oc-nav-emoji">🎙</span><span class="oc-nav-text">Meetings</span></a>
+      <a class="oc-nav-item" data-section="customers-section" data-action="ocNavigate" data-arg0="customers-section" hidden><span class="oc-nav-emoji">🪪</span><span class="oc-nav-text">Customers</span></a>
+      <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
+    </div>
     <div class="oc-nav-group" id="oc-agent-nav-group">
       <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
         <span class="oc-tree-arrow">▼</span> <span>Agents</span>
       </div>
-      <div class="oc-tree-children" id="oc-agent-tree">
-        <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
-      </div>
-      <div id="nous-sidebar-config" data-feature="experiment_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
-        <div><span id="nous-sb-mode"></span></div>
-        <div id="nous-sb-phase" style="opacity:0.8"></div>
-      </div>
-      <div class="oc-agent-actions" aria-label="Agent actions">
-        <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
-        <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
+      <div class="oc-tree-children" id="oc-agent-tree-body">
+        <div id="oc-agent-tree">
+          <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
+        </div>
+        <div class="oc-agent-actions" aria-label="Agent actions">
+          <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
+          <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
+        </div>
       </div>
     </div>
     <div class="oc-nav-group">
@@ -40,7 +46,6 @@
       <div class="oc-nav-label">Intelligence</div>
       <a class="oc-nav-item" data-section="advisory-section" data-action="ocNavigate" data-arg0="advisory-section"><span class="oc-nav-emoji">📣</span><span class="oc-nav-text">Advisory</span></a>
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
-      <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spektacular)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
     </div>

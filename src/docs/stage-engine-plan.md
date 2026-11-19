@@ -271,9 +271,13 @@ Shipped as three PRs (hivecommons/hive#13011):
   still live) and `030 → 020` (PR evidence lapsed, claim held).
 
 - **018 open for discussion** ([#17150](https://github.com/hivecommons/hive/issues/17150)):
-  an open issue labelled `proposal` or `kind/design` with no live claim
-  derives `stage/018-open-for-discussion` instead of 010 / 015.
-  `pkg/github` resolves the label into `IssueFacts.DiscussionLabel`; the
+  an open issue labelled `proposal`, `kind/design` or `architecture
+  discussion` with no live claim derives `stage/018-open-for-discussion`
+  instead of 010 / 015, as does an unlabelled issue whose title opens with
+  `[RFC]` / `RFC:` (reason `open for discussion: rfc title`,
+  [#18141](https://github.com/hivecommons/hive/issues/18141)).
+  `pkg/github` resolves the label or title into
+  `IssueFacts.DiscussionLabel`; the
   deriver applies it wherever the issue would otherwise sit unclaimed (the
   actionable / reporter-triage buckets, and an umbrella whose claim is not
   staged), and names the label in the reason (`open for discussion:

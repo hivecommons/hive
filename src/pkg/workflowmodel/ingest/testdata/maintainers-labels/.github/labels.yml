@@ -1,0 +1,15 @@
+- name: kind/bug
+  color: d73a4a
+  description: Something is not working
+- name: kind/feature
+  color: a2eeef
+- name: priority/P0
+  color: b60205
+  description: Drop everything
+- name: priority/P1
+  color: d93f0b
+- name: needs-triage
+  color: ededed
+  description: Awaiting a maintainer's look
+- name: documentation
+  color: 0075ca

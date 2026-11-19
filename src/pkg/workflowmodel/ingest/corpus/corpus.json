@@ -1,0 +1,2133 @@
+[
+ {
+  "name": "Aeraki Mesh",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "aeraki-mesh/aeraki"
+  ]
+ },
+ {
+  "name": "Agent Substrate",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "agent-substrate/substrate"
+  ]
+ },
+ {
+  "name": "Agones",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "agones-dev/agones"
+  ]
+ },
+ {
+  "name": "Akri",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "project-akri/akri"
+  ]
+ },
+ {
+  "name": "Antrea",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "antrea-io/antrea"
+  ]
+ },
+ {
+  "name": "Apicurio Registry",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "Apicurio/apicurio-registry"
+  ]
+ },
+ {
+  "name": "Argo",
+  "maturity": "graduated",
+  "category": "App Definition and Development",
+  "repos": [
+   "argoproj/argo-cd"
+  ]
+ },
+ {
+  "name": "Armada",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "armadaproject/armada"
+  ]
+ },
+ {
+  "name": "Artifact Hub",
+  "maturity": "incubating",
+  "category": "App Definition and Development",
+  "repos": [
+   "artifacthub/hub"
+  ]
+ },
+ {
+  "name": "Athenz",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "AthenZ/athenz"
+  ]
+ },
+ {
+  "name": "Atlantis",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "runatlantis/atlantis"
+  ]
+ },
+ {
+  "name": "Backstage",
+  "maturity": "incubating",
+  "category": "App Definition and Development",
+  "repos": [
+   "backstage/backstage"
+  ]
+ },
+ {
+  "name": "Bank-Vaults",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "bank-vaults/bank-vaults",
+   "bank-vaults/secrets-webhook",
+   "bank-vaults/vault-operator",
+   "bank-vaults/vault-sdk"
+  ]
+ },
+ {
+  "name": "BFE",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "bfenetworks/bfe"
+  ]
+ },
+ {
+  "name": "bootc",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "bootc-dev/bootc"
+  ]
+ },
+ {
+  "name": "bpfman",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "bpfman/bpfman",
+   "bpfman/bpfman-operator"
+  ]
+ },
+ {
+  "name": "Brigade",
+  "maturity": "archived",
+  "category": "App Definition and Development",
+  "repos": [
+   "brigadecore/brigade"
+  ]
+ },
+ {
+  "name": "Buildpacks",
+  "maturity": "graduated",
+  "category": "App Definition and Development",
+  "repos": [
+   "buildpacks/pack"
+  ]
+ },
+ {
+  "name": "Cadence Workflow",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "cadence-workflow/cadence"
+  ]
+ },
+ {
+  "name": "CAIPE",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "caipe-io/agentic-apps",
+   "caipe-io/ai-platform-engineering",
+   "caipe-io/caipe-cli",
+   "caipe-io/governance"
+  ]
+ },
+ {
+  "name": "Capsule",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "projectcapsule/capsule"
+  ]
+ },
+ {
+  "name": "Carina",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "carina-io/carina"
+  ]
+ },
+ {
+  "name": "Cartography",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "cartography-cncf/cartography"
+  ]
+ },
+ {
+  "name": "Carvel",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "carvel-dev/ytt"
+  ]
+ },
+ {
+  "name": "CDK for Kubernetes (CDK8s)",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "cdk8s-team/cdk8s"
+  ]
+ },
+ {
+  "name": "Cedar",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "cedar-policy/cedar",
+   "cedar-policy/cedar-access-control-for-k8s"
+  ]
+ },
+ {
+  "name": "cert-manager",
+  "maturity": "graduated",
+  "category": "Provisioning",
+  "repos": [
+   "cert-manager/cert-manager"
+  ]
+ },
+ {
+  "name": "Chaos Mesh",
+  "maturity": "incubating",
+  "category": "Observability and Analysis",
+  "repos": [
+   "chaos-mesh/chaos-mesh"
+  ]
+ },
+ {
+  "name": "Chaosblade",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "chaosblade-io/chaosblade"
+  ]
+ },
+ {
+  "name": "Cilium",
+  "maturity": "graduated",
+  "category": "Runtime",
+  "repos": [
+   "cilium/cilium"
+  ]
+ },
+ {
+  "name": "Cloud Custodian",
+  "maturity": "incubating",
+  "category": "Provisioning",
+  "repos": [
+   "cloud-custodian/cloud-custodian"
+  ]
+ },
+ {
+  "name": "CloudEvents",
+  "maturity": "graduated",
+  "category": "App Definition and Development",
+  "repos": [
+   "cloudevents/spec"
+  ]
+ },
+ {
+  "name": "CloudNativePG",
+  "maturity": "incubating",
+  "category": "App Definition and Development",
+  "repos": [
+   "cloudnative-pg/cloudnative-pg"
+  ]
+ },
+ {
+  "name": "Clusternet",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "clusternet/clusternet"
+  ]
+ },
+ {
+  "name": "Clusterpedia",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "clusterpedia-io/clusterpedia"
+  ]
+ },
+ {
+  "name": "CNI-Genie",
+  "maturity": "archived",
+  "category": "Runtime",
+  "repos": [
+   "cni-genie/CNI-Genie"
+  ]
+ },
+ {
+  "name": "CoHDI",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": []
+ },
+ {
+  "name": "composefs",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "composefs/composefs"
+  ]
+ },
+ {
+  "name": "Confidential Containers",
+  "maturity": "incubating",
+  "category": "Provisioning",
+  "repos": [
+   "confidential-containers/confidential-containers"
+  ]
+ },
+ {
+  "name": "Connect RPC",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "connectrpc/connect-go"
+  ]
+ },
+ {
+  "name": "Container Network Interface (CNI)",
+  "maturity": "incubating",
+  "category": "Runtime",
+  "repos": [
+   "containernetworking/cni"
+  ]
+ },
+ {
+  "name": "container2wasm",
+  "maturity": "sandbox",
+  "category": "Wasm",
+  "repos": [
+   "container2wasm/container2wasm"
+  ]
+ },
+ {
+  "name": "containerd",
+  "maturity": "graduated",
+  "category": "Runtime",
+  "repos": [
+   "containerd/containerd"
+  ]
+ },
+ {
+  "name": "ContainerSSH",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "containerssh/containerssh"
+  ]
+ },
+ {
+  "name": "Contour",
+  "maturity": "incubating",
+  "category": "Orchestration & Management",
+  "repos": [
+   "projectcontour/contour"
+  ]
+ },
+ {
+  "name": "Copa",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "project-copacetic/copacetic"
+  ]
+ },
+ {
+  "name": "CoreDNS",
+  "maturity": "graduated",
+  "category": "Orchestration & Management",
+  "repos": [
+   "coredns/coredns"
+  ]
+ },
+ {
+  "name": "Cortex",
+  "maturity": "incubating",
+  "category": "Observability and Analysis",
+  "repos": [
+   "cortexproject/cortex"
+  ]
+ },
+ {
+  "name": "Cozystack",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "cozystack/cozystack"
+  ]
+ },
+ {
+  "name": "CRI-O",
+  "maturity": "graduated",
+  "category": "Runtime",
+  "repos": [
+   "cri-o/cri-o"
+  ]
+ },
+ {
+  "name": "Crossplane",
+  "maturity": "graduated",
+  "category": "Orchestration & Management",
+  "repos": [
+   "crossplane/crossplane"
+  ]
+ },
+ {
+  "name": "CubeFS",
+  "maturity": "graduated",
+  "category": "Runtime",
+  "repos": [
+   "cubeFS/cubefs"
+  ]
+ },
+ {
+  "name": "Curiefense",
+  "maturity": "archived",
+  "category": "Provisioning",
+  "repos": []
+ },
+ {
+  "name": "Curve",
+  "maturity": "archived",
+  "category": "Runtime",
+  "repos": [
+   "opencurve/curve"
+  ]
+ },
+ {
+  "name": "Curvine",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "CurvineIO/curvine"
+  ]
+ },
+ {
+  "name": "Dalec",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "project-dalec/dalec"
+  ]
+ },
+ {
+  "name": "Dapr",
+  "maturity": "graduated",
+  "category": "App Definition and Development",
+  "repos": [
+   "dapr/dapr"
+  ]
+ },
+ {
+  "name": "Devfile",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "devfile/api"
+  ]
+ },
+ {
+  "name": "DevSpace",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "devspace-sh/devspace"
+  ]
+ },
+ {
+  "name": "DevStream",
+  "maturity": "archived",
+  "category": "Provisioning",
+  "repos": [
+   "devstream-io/devstream"
+  ]
+ },
+ {
+  "name": "Dex",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "dexidp/dex"
+  ]
+ },
+ {
+  "name": "Distribution",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "distribution/distribution"
+  ]
+ },
+ {
+  "name": "Dragonfly",
+  "maturity": "graduated",
+  "category": "Provisioning",
+  "repos": [
+   "dragonflyoss/dragonfly"
+  ]
+ },
+ {
+  "name": "Drasi",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "drasi-project/drasi-platform"
+  ]
+ },
+ {
+  "name": "Easegress",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "easegress-io/easegress"
+  ]
+ },
+ {
+  "name": "Emissary-Ingress",
+  "maturity": "incubating",
+  "category": "Orchestration & Management",
+  "repos": [
+   "emissary-ingress/emissary"
+  ]
+ },
+ {
+  "name": "Envoy",
+  "maturity": "graduated",
+  "category": "Orchestration & Management",
+  "repos": [
+   "envoyproxy/envoy"
+  ]
+ },
+ {
+  "name": "Eraser",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "eraser-dev/eraser"
+  ]
+ },
+ {
+  "name": "etcd",
+  "maturity": "graduated",
+  "category": "Orchestration & Management",
+  "repos": [
+   "etcd-io/etcd"
+  ]
+ },
+ {
+  "name": "external-secrets",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "external-secrets/external-secrets"
+  ]
+ },
+ {
+  "name": "FabEdge",
+  "maturity": "archived",
+  "category": "Runtime",
+  "repos": [
+   "FabEdge/fabedge"
+  ]
+ },
+ {
+  "name": "Falco",
+  "maturity": "graduated",
+  "category": "Provisioning",
+  "repos": [
+   "falcosecurity/falco"
+  ]
+ },
+ {
+  "name": "Flatcar Container Linux",
+  "maturity": "incubating",
+  "category": "Platform",
+  "repos": [
+   "flatcar/Flatcar"
+  ]
+ },
+ {
+  "name": "Fluentd",
+  "maturity": "graduated",
+  "category": "Observability and Analysis",
+  "repos": [
+   "fluent/fluentd"
+  ]
+ },
+ {
+  "name": "Fluid",
+  "maturity": "incubating",
+  "category": "Orchestration & Management",
+  "repos": [
+   "fluid-cloudnative/fluid"
+  ]
+ },
+ {
+  "name": "Flux",
+  "maturity": "graduated",
+  "category": "App Definition and Development",
+  "repos": [
+   "fluxcd/flux2"
+  ]
+ },
+ {
+  "name": "Fonio",
+  "maturity": "archived",
+  "category": "Observability and Analysis",
+  "repos": [
+   "foniod/foniod"
+  ]
+ },
+ {
+  "name": "gRPC",
+  "maturity": "incubating",
+  "category": "Orchestration & Management",
+  "repos": [
+   "grpc/grpc"
+  ]
+ },
+ {
+  "name": "HAMi",
+  "maturity": "incubating",
+  "category": "Orchestration & Management",
+  "repos": [
+   "Project-HAMi/HAMi"
+  ]
+ },
+ {
+  "name": "Harbor",
+  "maturity": "graduated",
+  "category": "Provisioning",
+  "repos": [
+   "goharbor/harbor"
+  ]
+ },
+ {
+  "name": "Headlamp",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "kubernetes-sigs/headlamp"
+  ]
+ },
+ {
+  "name": "Helm",
+  "maturity": "graduated",
+  "category": "App Definition and Development",
+  "repos": [
+   "helm/helm"
+  ]
+ },
+ {
+  "name": "Hexa",
+  "maturity": "archived",
+  "category": "Provisioning",
+  "repos": [
+   "hexa-org/policy-orchestrator"
+  ]
+ },
+ {
+  "name": "Higress",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "higress-group/higress"
+  ]
+ },
+ {
+  "name": "Hive Commons",
+  "maturity": "sandbox",
+  "category": "AI Agent",
+  "repos": [
+   "hivecommons/hive"
+  ]
+ },
+ {
+  "name": "HolmesGPT",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "HolmesGPT/holmesgpt"
+  ]
+ },
+ {
+  "name": "HwameiStor",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "hwameistor/hwameistor"
+  ]
+ },
+ {
+  "name": "Hyperlight",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "hyperlight-dev/hyperlight"
+  ]
+ },
+ {
+  "name": "in-toto",
+  "maturity": "graduated",
+  "category": "Provisioning",
+  "repos": [
+   "in-toto/in-toto"
+  ]
+ },
+ {
+  "name": "Inclavare Containers",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "inclavare-containers/inclavare-containers"
+  ]
+ },
+ {
+  "name": "Inspektor Gadget",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "inspektor-gadget/inspektor-gadget"
+  ]
+ },
+ {
+  "name": "Interlink",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "interlink-hq/interLink"
+  ]
+ },
+ {
+  "name": "Istio",
+  "maturity": "graduated",
+  "category": "Orchestration & Management",
+  "repos": [
+   "istio/istio"
+  ]
+ },
+ {
+  "name": "Jaeger",
+  "maturity": "graduated",
+  "category": "Observability and Analysis",
+  "repos": [
+   "jaegertracing/jaeger"
+  ]
+ },
+ {
+  "name": "k0s",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "k0sproject/k0s"
+  ]
+ },
+ {
+  "name": "k3s",
+  "maturity": "sandbox",
+  "category": "Platform",
+  "repos": [
+   "k3s-io/k3s"
+  ]
+ },
+ {
+  "name": "k8gb",
+  "maturity": "incubating",
+  "category": "Orchestration & Management",
+  "repos": [
+   "k8gb-io/k8gb"
+  ]
+ },
+ {
+  "name": "K8sGPT",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "k8sgpt-ai/k8sgpt"
+  ]
+ },
+ {
+  "name": "K8up",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "k8up-io/k8up"
+  ]
+ },
+ {
+  "name": "kagent",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "kagent-dev/kagent"
+  ]
+ },
+ {
+  "name": "KAI Scheduler",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kai-scheduler/KAI-Scheduler"
+  ]
+ },
+ {
+  "name": "Kairos",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "kairos-io/kairos"
+  ]
+ },
+ {
+  "name": "KAITO",
+  "maturity": "sandbox",
+  "category": "Inference",
+  "repos": [
+   "kaito-project/kaito"
+  ]
+ },
+ {
+  "name": "Kanister",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "kanisterio/kanister"
+  ]
+ },
+ {
+  "name": "Karmada",
+  "maturity": "graduated",
+  "category": "Orchestration & Management",
+  "repos": [
+   "karmada-io/karmada"
+  ]
+ },
+ {
+  "name": "kbind",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "kbind-dev/kbind"
+  ]
+ },
+ {
+  "name": "KCL",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "kcl-lang/kcl"
+  ]
+ },
+ {
+  "name": "kcp",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kcp-dev/kcp"
+  ]
+ },
+ {
+  "name": "KEDA",
+  "maturity": "graduated",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kedacore/keda"
+  ]
+ },
+ {
+  "name": "Kepler",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "sustainable-computing-io/kepler"
+  ]
+ },
+ {
+  "name": "Keptn",
+  "maturity": "archived",
+  "category": "App Definition and Development",
+  "repos": [
+   "keptn/lifecycle-toolkit"
+  ]
+ },
+ {
+  "name": "Keycloak",
+  "maturity": "incubating",
+  "category": "Provisioning",
+  "repos": [
+   "keycloak/keycloak"
+  ]
+ },
+ {
+  "name": "Keylime",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "keylime/keylime"
+  ]
+ },
+ {
+  "name": "Kgateway",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kgateway-dev/kgateway"
+  ]
+ },
+ {
+  "name": "KitOps",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "kitops-ml/kitops"
+  ]
+ },
+ {
+  "name": "Kmesh",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kmesh-net/kmesh"
+  ]
+ },
+ {
+  "name": "Knative",
+  "maturity": "graduated",
+  "category": "Orchestration & Management",
+  "repos": [
+   "knative/serving"
+  ]
+ },
+ {
+  "name": "ko",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "ko-build/ko"
+  ]
+ },
+ {
+  "name": "Konveyor",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "konveyor/operator"
+  ]
+ },
+ {
+  "name": "Koordinator",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "koordinator-sh/koordinator"
+  ]
+ },
+ {
+  "name": "kpt",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "kptdev/kpt"
+  ]
+ },
+ {
+  "name": "Krator",
+  "maturity": "archived",
+  "category": "App Definition and Development",
+  "repos": [
+   "krator-rs/krator"
+  ]
+ },
+ {
+  "name": "Krkn",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "krkn-chaos/krkn"
+  ]
+ },
+ {
+  "name": "Krustlet",
+  "maturity": "archived",
+  "category": "Runtime",
+  "repos": [
+   "krustlet/krustlet"
+  ]
+ },
+ {
+  "name": "KServe",
+  "maturity": "incubating",
+  "category": "Inference",
+  "repos": [
+   "kserve/kserve"
+  ]
+ },
+ {
+  "name": "Kuadrant",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kuadrant/kuadrant-operator"
+  ]
+ },
+ {
+  "name": "Kuasar",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "kuasar-io/kuasar"
+  ]
+ },
+ {
+  "name": "Kube-burner",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "kube-burner/kube-burner"
+  ]
+ },
+ {
+  "name": "Kube-OVN",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "kubeovn/kube-ovn"
+  ]
+ },
+ {
+  "name": "kube-rs",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kube-rs/kube"
+  ]
+ },
+ {
+  "name": "kube-vip",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "kube-vip/kube-vip"
+  ]
+ },
+ {
+  "name": "Kubean",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "kubean-io/kubean"
+  ]
+ },
+ {
+  "name": "KubeArmor",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "kubearmor/kubearmor"
+  ]
+ },
+ {
+  "name": "KubeClipper",
+  "maturity": "sandbox",
+  "category": "Platform",
+  "repos": [
+   "kubeclipper/kubeclipper"
+  ]
+ },
+ {
+  "name": "KubeDL",
+  "maturity": "archived",
+  "category": "Provisioning",
+  "repos": [
+   "kubedl-io/kubedl"
+  ]
+ },
+ {
+  "name": "KubeEdge",
+  "maturity": "graduated",
+  "category": "Provisioning",
+  "repos": [
+   "kubeedge/kubeedge"
+  ]
+ },
+ {
+  "name": "KubeElasti",
+  "maturity": "sandbox",
+  "category": "Serverless",
+  "repos": [
+   "KubeElasti/KubeElasti"
+  ]
+ },
+ {
+  "name": "KubeFleet",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kubefleet-dev/kubefleet"
+  ]
+ },
+ {
+  "name": "Kubeflow",
+  "maturity": "graduated",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kubeflow/kubeflow"
+  ]
+ },
+ {
+  "name": "KubeRay",
+  "maturity": "sandbox",
+  "category": "AI Native Infra",
+  "repos": [
+   "kuberay-project/kuberay"
+  ]
+ },
+ {
+  "name": "Kuberhealthy",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "kuberhealthy/kuberhealthy"
+  ]
+ },
+ {
+  "name": "Kubernetes",
+  "maturity": "graduated",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kubernetes/kubernetes"
+  ]
+ },
+ {
+  "name": "Kubescape",
+  "maturity": "incubating",
+  "category": "Provisioning",
+  "repos": [
+   "kubescape/kubescape"
+  ]
+ },
+ {
+  "name": "KubeSlice",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kubeslice/kubeslice"
+  ]
+ },
+ {
+  "name": "KubeStellar",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kubestellar/kubestellar"
+  ]
+ },
+ {
+  "name": "KubeVela",
+  "maturity": "incubating",
+  "category": "App Definition and Development",
+  "repos": [
+   "kubevela/kubevela"
+  ]
+ },
+ {
+  "name": "KubeVirt",
+  "maturity": "graduated",
+  "category": "App Definition and Development",
+  "repos": [
+   "kubevirt/kubevirt"
+  ]
+ },
+ {
+  "name": "Kubewarden",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "kubewarden/adm-controller",
+   "kubewarden/community",
+   "kubewarden/helm-charts",
+   "kubewarden/policies",
+   "kubewarden/sbomscanner"
+  ]
+ },
+ {
+  "name": "KUDO",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "kudobuilder/kudo"
+  ]
+ },
+ {
+  "name": "Kuma",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kumahq/kuma"
+  ]
+ },
+ {
+  "name": "Kured",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "kubereboot/kured"
+  ]
+ },
+ {
+  "name": "KusionStack",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "KusionStack/kusion"
+  ]
+ },
+ {
+  "name": "Kyverno",
+  "maturity": "graduated",
+  "category": "Provisioning",
+  "repos": [
+   "kyverno/kyverno"
+  ]
+ },
+ {
+  "name": "Lima",
+  "maturity": "incubating",
+  "category": "Runtime",
+  "repos": [
+   "lima-vm/lima"
+  ]
+ },
+ {
+  "name": "Linkerd",
+  "maturity": "graduated",
+  "category": "Orchestration & Management",
+  "repos": [
+   "linkerd/linkerd2"
+  ]
+ },
+ {
+  "name": "Litmus",
+  "maturity": "incubating",
+  "category": "Observability and Analysis",
+  "repos": [
+   "litmuschaos/litmus"
+  ]
+ },
+ {
+  "name": "llm-d",
+  "maturity": "sandbox",
+  "category": "Inference",
+  "repos": [
+   "llm-d/llm-d"
+  ]
+ },
+ {
+  "name": "Logging Operator (Kube Logging)",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "kube-logging/logging-operator"
+  ]
+ },
+ {
+  "name": "Longhorn",
+  "maturity": "incubating",
+  "category": "Runtime",
+  "repos": [
+   "longhorn/longhorn"
+  ]
+ },
+ {
+  "name": "LoxiLB",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "loxilb-io/loxilb"
+  ]
+ },
+ {
+  "name": "MatrixHub",
+  "maturity": "sandbox",
+  "category": "AI Native Infra",
+  "repos": [
+   "matrixhub-ai/matrixhub"
+  ]
+ },
+ {
+  "name": "Merbridge",
+  "maturity": "archived",
+  "category": "Orchestration & Management",
+  "repos": [
+   "merbridge/merbridge"
+  ]
+ },
+ {
+  "name": "Meshery",
+  "maturity": "incubating",
+  "category": "Provisioning",
+  "repos": [
+   "meshery/meshery"
+  ]
+ },
+ {
+  "name": "metal3-io",
+  "maturity": "incubating",
+  "category": "Provisioning",
+  "repos": [
+   "metal3-io/baremetal-operator"
+  ]
+ },
+ {
+  "name": "MetalLB",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "metallb/metallb"
+  ]
+ },
+ {
+  "name": "Microcks",
+  "maturity": "incubating",
+  "category": "App Definition and Development",
+  "repos": [
+   "microcks/microcks"
+  ]
+ },
+ {
+  "name": "ModelPack",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "modelpack/model-spec"
+  ]
+ },
+ {
+  "name": "NATS",
+  "maturity": "graduated",
+  "category": "App Definition and Development",
+  "repos": [
+   "nats-io/jetstream-gh-action",
+   "nats-io/k8s",
+   "nats-io/nack",
+   "nats-io/nats-architecture-and-design",
+   "nats-io/nats-server",
+   "nats-io/nats-surveyor",
+   "nats-io/nats-top",
+   "nats-io/nats.c",
+   "nats-io/nats.deno",
+   "nats-io/nats.docs",
+   "nats-io/nats.go",
+   "nats-io/nats.java",
+   "nats-io/nats.js",
+   "nats-io/nats.net",
+   "nats-io/nats.py",
+   "nats-io/nats.rs",
+   "nats-io/natscli",
+   "nats-io/terraform-provider-jetstream"
+  ]
+ },
+ {
+  "name": "Network Service Mesh",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "networkservicemesh/api"
+  ]
+ },
+ {
+  "name": "NMstate",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "nmstate/nmstate"
+  ]
+ },
+ {
+  "name": "Nocalhost",
+  "maturity": "archived",
+  "category": "App Definition and Development",
+  "repos": [
+   "nocalhost/nocalhost"
+  ]
+ },
+ {
+  "name": "Notary Project",
+  "maturity": "incubating",
+  "category": "Provisioning",
+  "repos": [
+   "notaryproject/notation"
+  ]
+ },
+ {
+  "name": "OAuth2 Proxy",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "oauth2-proxy/manifests",
+   "oauth2-proxy/oauth2-proxy"
+  ]
+ },
+ {
+  "name": "Open Cluster Management",
+  "maturity": "incubating",
+  "category": "Orchestration & Management",
+  "repos": [
+   "open-cluster-management-io/ocm"
+  ]
+ },
+ {
+  "name": "Open Policy Agent (OPA)",
+  "maturity": "graduated",
+  "category": "Provisioning",
+  "repos": [
+   "open-policy-agent/opa"
+  ]
+ },
+ {
+  "name": "Open Policy Containers",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "opcr-io/policy"
+  ]
+ },
+ {
+  "name": "Open Service Mesh",
+  "maturity": "archived",
+  "category": "Orchestration & Management",
+  "repos": [
+   "openservicemesh/osm"
+  ]
+ },
+ {
+  "name": "Open Workflow Specification",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "open-workflow-specification/specification"
+  ]
+ },
+ {
+  "name": "OpenChoreo",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "openchoreo/openchoreo"
+  ]
+ },
+ {
+  "name": "OpenCost",
+  "maturity": "incubating",
+  "category": "Observability and Analysis",
+  "repos": [
+   "opencost/opencost"
+  ]
+ },
+ {
+  "name": "OpenEBS",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "openebs/openebs"
+  ]
+ },
+ {
+  "name": "OpenELB",
+  "maturity": "archived",
+  "category": "Orchestration & Management",
+  "repos": [
+   "openelb/openelb"
+  ]
+ },
+ {
+  "name": "OpenEverest",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "openeverest/openeverest"
+  ]
+ },
+ {
+  "name": "OpenFeature",
+  "maturity": "incubating",
+  "category": "Observability and Analysis",
+  "repos": [
+   "open-feature/spec"
+  ]
+ },
+ {
+  "name": "OpenFGA",
+  "maturity": "incubating",
+  "category": "Provisioning",
+  "repos": [
+   "openfga/openfga"
+  ]
+ },
+ {
+  "name": "OpenFunction",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "OpenFunction/OpenFunction"
+  ]
+ },
+ {
+  "name": "openGemini",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "openGemini/openGemini"
+  ]
+ },
+ {
+  "name": "OpenGitOps",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "open-gitops/project"
+  ]
+ },
+ {
+  "name": "OpenKruise",
+  "maturity": "incubating",
+  "category": "App Definition and Development",
+  "repos": [
+   "openkruise/kruise"
+  ]
+ },
+ {
+  "name": "OpenMetrics",
+  "maturity": "archived",
+  "category": "Observability and Analysis",
+  "repos": [
+   "prometheus/OpenMetrics"
+  ]
+ },
+ {
+  "name": "OpenShell",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "NVIDIA/OpenShell"
+  ]
+ },
+ {
+  "name": "OpenTelemetry",
+  "maturity": "graduated",
+  "category": "Observability and Analysis",
+  "repos": [
+   "open-telemetry/community"
+  ]
+ },
+ {
+  "name": "OpenTofu",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "opentofu/opentofu"
+  ]
+ },
+ {
+  "name": "OpenTracing",
+  "maturity": "archived",
+  "category": "Observability and Analysis",
+  "repos": [
+   "opentracing/opentracing-go"
+  ]
+ },
+ {
+  "name": "OpenYurt",
+  "maturity": "incubating",
+  "category": "Provisioning",
+  "repos": [
+   "openyurtio/openyurt"
+  ]
+ },
+ {
+  "name": "Operator Framework",
+  "maturity": "incubating",
+  "category": "App Definition and Development",
+  "repos": [
+   "operator-framework/operator-sdk"
+  ]
+ },
+ {
+  "name": "ORAS",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "oras-project/oras"
+  ]
+ },
+ {
+  "name": "OSCAL-COMPASS",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "oscal-compass/compliance-to-policy",
+   "oscal-compass/compliance-trestle",
+   "oscal-compass/compliance-trestle-agile-authoring",
+   "oscal-compass/compliance-trestle-demos"
+  ]
+ },
+ {
+  "name": "OVN-Kubernetes",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "ovn-kubernetes/ovn-kubernetes"
+  ]
+ },
+ {
+  "name": "Oxia",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "oxia-db/oxia",
+   "oxia-db/oxia-client-java"
+  ]
+ },
+ {
+  "name": "Paralus",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "paralus/paralus"
+  ]
+ },
+ {
+  "name": "Parsec",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "parallaxsecond/parsec"
+  ]
+ },
+ {
+  "name": "Perses",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "perses/perses"
+  ]
+ },
+ {
+  "name": "PipeCD",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "pipe-cd/pipecd"
+  ]
+ },
+ {
+  "name": "Piraeus Datastore",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "piraeusdatastore/piraeus-operator"
+  ]
+ },
+ {
+  "name": "Pixie",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "pixie-io/pixie"
+  ]
+ },
+ {
+  "name": "Podman Container Tools",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "podman-container-tools/podman"
+  ]
+ },
+ {
+  "name": "Podman Desktop",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "podman-desktop/podman-desktop"
+  ]
+ },
+ {
+  "name": "Porter",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "getporter/porter"
+  ]
+ },
+ {
+  "name": "Pravega",
+  "maturity": "archived",
+  "category": "App Definition and Development",
+  "repos": [
+   "pravega/pravega"
+  ]
+ },
+ {
+  "name": "Praxis",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "praxis-proxy/praxis"
+  ]
+ },
+ {
+  "name": "Prometheus",
+  "maturity": "graduated",
+  "category": "Observability and Analysis",
+  "repos": [
+   "prometheus/prometheus"
+  ]
+ },
+ {
+  "name": "Radius",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "radius-project/radius"
+  ]
+ },
+ {
+  "name": "Ratify",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "notaryproject/ratify"
+  ]
+ },
+ {
+  "name": "rkt",
+  "maturity": "archived",
+  "category": "Runtime",
+  "repos": [
+   "rkt/rkt"
+  ]
+ },
+ {
+  "name": "Rook",
+  "maturity": "graduated",
+  "category": "Runtime",
+  "repos": [
+   "rook/rook"
+  ]
+ },
+ {
+  "name": "Runme Notebooks",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "runmedev/runme"
+  ]
+ },
+ {
+  "name": "SchemaHero",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "schemahero/schemahero"
+  ]
+ },
+ {
+  "name": "Score",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "score-spec/spec"
+  ]
+ },
+ {
+  "name": "sealer",
+  "maturity": "archived",
+  "category": "App Definition and Development",
+  "repos": [
+   "sealerio/sealer"
+  ]
+ },
+ {
+  "name": "Sermant",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "sermant-io/Sermant"
+  ]
+ },
+ {
+  "name": "Serverless Devs",
+  "maturity": "sandbox",
+  "category": "Orchestration & Management",
+  "repos": [
+   "serverless-devs/serverless-devs"
+  ]
+ },
+ {
+  "name": "Service Mesh Interface (SMI)",
+  "maturity": "archived",
+  "category": "Orchestration & Management",
+  "repos": [
+   "servicemeshinterface/smi-spec"
+  ]
+ },
+ {
+  "name": "Service Mesh Performance",
+  "maturity": "archived",
+  "category": "Orchestration & Management",
+  "repos": [
+   "service-mesh-performance/service-mesh-performance"
+  ]
+ },
+ {
+  "name": "Shipwright",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "shipwright-io/build"
+  ]
+ },
+ {
+  "name": "Skooner",
+  "maturity": "archived",
+  "category": "Observability and Analysis",
+  "repos": [
+   "skooner-k8s/skooner"
+  ]
+ },
+ {
+  "name": "SlimFaaS",
+  "maturity": "sandbox",
+  "category": "Serverless",
+  "repos": [
+   "SlimPlanet/SlimFaas"
+  ]
+ },
+ {
+  "name": "SlimToolkit",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "slimtoolkit/slim"
+  ]
+ },
+ {
+  "name": "SOPS",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "getsops/sops"
+  ]
+ },
+ {
+  "name": "Spiderpool",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "spidernet-io/spiderpool"
+  ]
+ },
+ {
+  "name": "SPIFFE",
+  "maturity": "graduated",
+  "category": "Provisioning",
+  "repos": [
+   "spiffe/spiffe"
+  ]
+ },
+ {
+  "name": "Spin",
+  "maturity": "sandbox",
+  "category": "Wasm",
+  "repos": [
+   "spinframework/spin"
+  ]
+ },
+ {
+  "name": "SpinKube",
+  "maturity": "sandbox",
+  "category": "Wasm",
+  "repos": [
+   "spinframework/spin-operator"
+  ]
+ },
+ {
+  "name": "SPIRE",
+  "maturity": "graduated",
+  "category": "Provisioning",
+  "repos": [
+   "spiffe/spire"
+  ]
+ },
+ {
+  "name": "Stacker",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "project-stacker/stacker"
+  ]
+ },
+ {
+  "name": "Strimzi",
+  "maturity": "incubating",
+  "category": "App Definition and Development",
+  "repos": [
+   "strimzi/strimzi-kafka-operator"
+  ]
+ },
+ {
+  "name": "Submariner",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "submariner-io/submariner"
+  ]
+ },
+ {
+  "name": "SuperEdge",
+  "maturity": "archived",
+  "category": "Provisioning",
+  "repos": [
+   "superedge/superedge"
+  ]
+ },
+ {
+  "name": "Tekton",
+  "maturity": "incubating",
+  "category": "App Definition and Development",
+  "repos": [
+   "tektoncd/pipeline"
+  ]
+ },
+ {
+  "name": "Telepresence",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "telepresenceio/telepresence"
+  ]
+ },
+ {
+  "name": "Teller",
+  "maturity": "archived",
+  "category": "Provisioning",
+  "repos": [
+   "tellerops/teller"
+  ]
+ },
+ {
+  "name": "Thanos",
+  "maturity": "incubating",
+  "category": "Observability and Analysis",
+  "repos": [
+   "thanos-io/thanos"
+  ]
+ },
+ {
+  "name": "The Update Framework (TUF)",
+  "maturity": "graduated",
+  "category": "Provisioning",
+  "repos": [
+   "theupdateframework/python-tuf"
+  ]
+ },
+ {
+  "name": "TiKV",
+  "maturity": "graduated",
+  "category": "App Definition and Development",
+  "repos": [
+   "tikv/tikv"
+  ]
+ },
+ {
+  "name": "Tinkerbell",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "tinkerbell/tinkerbell"
+  ]
+ },
+ {
+  "name": "Tokenetes",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "tokenetes/tokenetes"
+  ]
+ },
+ {
+  "name": "Tremor",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "tremor-rs/tremor-runtime"
+  ]
+ },
+ {
+  "name": "Trickster",
+  "maturity": "sandbox",
+  "category": "Observability and Analysis",
+  "repos": [
+   "trickstercache/trickster"
+  ]
+ },
+ {
+  "name": "urunc",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "urunc-dev/urunc"
+  ]
+ },
+ {
+  "name": "Velero",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "velero-io/velero"
+  ]
+ },
+ {
+  "name": "Vineyard",
+  "maturity": "archived",
+  "category": "Runtime",
+  "repos": [
+   "v6d-io/v6d"
+  ]
+ },
+ {
+  "name": "Virtual Kubelet",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "virtual-kubelet/virtual-kubelet"
+  ]
+ },
+ {
+  "name": "Visual Studio Code Kubernetes Tools",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "vscode-kubernetes-tools/vscode-kubernetes-tools"
+  ]
+ },
+ {
+  "name": "Vitess",
+  "maturity": "graduated",
+  "category": "App Definition and Development",
+  "repos": [
+   "vitessio/arewefastyet",
+   "vitessio/enhancements",
+   "vitessio/vitess",
+   "vitessio/website"
+  ]
+ },
+ {
+  "name": "Volcano",
+  "maturity": "incubating",
+  "category": "Orchestration & Management",
+  "repos": [
+   "volcano-sh/volcano"
+  ]
+ },
+ {
+  "name": "wasmCloud",
+  "maturity": "incubating",
+  "category": "Orchestration & Management",
+  "repos": [
+   "wasmCloud/wasmCloud"
+  ]
+ },
+ {
+  "name": "WasmEdge Runtime",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "WasmEdge/WasmEdge"
+  ]
+ },
+ {
+  "name": "werf",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "werf/werf"
+  ]
+ },
+ {
+  "name": "Xline",
+  "maturity": "archived",
+  "category": "Orchestration & Management",
+  "repos": [
+   "xline-kv/Xline"
+  ]
+ },
+ {
+  "name": "xRegistry",
+  "maturity": "sandbox",
+  "category": "App Definition and Development",
+  "repos": [
+   "xregistry/server",
+   "xregistry/spec",
+   "xregistry/xregistry.github.io"
+  ]
+ },
+ {
+  "name": "youki",
+  "maturity": "sandbox",
+  "category": "Runtime",
+  "repos": [
+   "youki-dev/youki"
+  ]
+ },
+ {
+  "name": "zot",
+  "maturity": "sandbox",
+  "category": "Provisioning",
+  "repos": [
+   "project-zot/zot"
+  ]
+ }
+]

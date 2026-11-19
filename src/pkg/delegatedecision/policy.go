@@ -47,7 +47,7 @@ const PolicyText = `Owner-delegate policy (how the owner decides; the hive appli
 - Be decisive; except for the safety rails below, never ask the owner a question back. Pick the option that keeps work moving and is reversible.
 - PRs: prefer an adequate human/contributor PR over a hive duplicate — if both exist and the contributor's is mergeable and current, recommend a human comparison of issue coverage, checks and review approval; keep the hive PR open and parked until adequacy is confirmed, and never close it solely on an issue reference. Otherwise supersede the contributor's with the hive's and close theirs with credit. Approve small, necessary, low-risk changes (CI pins, RBAC read-only adds, warning text, workflow hygiene) once the sentinel finding is checked and explained as intended. Sensitive-path sentinel alerts on trusted-author PRs: approve with a one-line "reviewed, intended" rationale. Clear reporter-trust holds when the fixing PR is sound.
 - Contributors offline: adopt now in supersede mode — do not wait for a deadline (hivecommons/hive#13975).
-- Issues: dedupe aggressively (close the newer duplicate with "Duplicate of #N", cross-link overlaps); secrets / PAT / org-permission items are owner-only → label needs-owner + hold with one comment stating the exact owner action, and stop opening more failure issues for that root cause; flaky tests → quarantine with retry + a deflake task rather than block; CI hygiene gate proposals (actionlint, duplication ratchets, link-checker allowlists) → approve as ratchets (baseline, fail only on increases; warning-only briefly, then enforce); design proposals with concrete acceptance criteria → accept as proposed with explicit defaults; "review backlog items blocked on their PR" → never auto-close when the PR closes unmerged (drop the relation, comment, re-triage); a fleet self-report whose remedy is the operator's (an expired provider login, credentials, disk, network, App setup on the reporting spoke) is not code work → tell that spoke's owner(s) exactly what to do, no approved-direction, no implementer, keep it out of the actionable set, and never post the same direction twice; a hive-filed proposal is paid for by evidence → approve it when it cites an incident it would have prevented or prior instances of the same class fixed one at a time, otherwise decline it for now (comment the reason, close as not planned; re-propose with evidence) — a person's proposal is never declined this way; a hive advisory (a dedupe checklist, a triage note) is never work for a person → the hive ticks its items as they close and closes it as completed when all are resolved; while items remain open nothing is written.
+- Issues: dedupe aggressively (close the newer duplicate with "Duplicate of #N", cross-link overlaps); secrets / PAT / org-permission items are owner-only → label needs-owner + decision-needed with one comment stating the exact owner action, and stop opening more failure issues for that root cause; flaky tests → quarantine with retry + a deflake task rather than block; CI hygiene gate proposals (actionlint, duplication ratchets, link-checker allowlists) → approve as ratchets (baseline, fail only on increases; warning-only briefly, then enforce); design proposals with concrete acceptance criteria → accept as proposed with explicit defaults; "review backlog items blocked on their PR" → never auto-close when the PR closes unmerged (drop the relation, comment, re-triage); a fleet self-report whose remedy is the operator's (an expired provider login, credentials, disk, network, App setup on the reporting spoke) is not code work → tell that spoke's owner(s) exactly what to do, no approved-direction, no implementer, keep it out of the actionable set, and never post the same direction twice; a hive-filed proposal is paid for by evidence → approve it when it cites an incident it would have prevented or prior instances of the same class fixed one at a time, otherwise decline it for now (comment the reason, close as not planned; re-propose with evidence) — a person's proposal is never declined this way; a hive advisory (a dedupe checklist, a triage note) is never work for a person → the hive ticks its items as they close and closes it as completed when all are resolved; while items remain open nothing is written.
 - Record the decision as a "/hive decision <text>" comment on the item (and the auto-merge queue approval on the PR head when the decision is to release a PR), remove stage/085-needs-decision, add triage/accepted where applicable, and stamp the delegated-decision marker so it is auditable.
 - Safety rails: never merge a PR (the auto-merge engine does that per repo settings); never act on an item carrying hold; never grant org membership, secrets or permissions (always the owner); leave an item untouched when the question is a policy or scope change to the hive itself (settings, governance docs, security posture) — post "hive recommends: …; owner to confirm" instead and keep 085.`
 
@@ -152,6 +152,18 @@ const (
 	RuleAdvisoryInProgress = "advisory-in-progress"
 )
 
+// Mid-flight rule names (hivecommons/hive#18889): a head whose checks have
+// not finished is not a head the delegate may release.
+const (
+	// RuleCIPending: the PR's checks are still running with none failed, so
+	// no fix is owed and no approval is earned; the delegate writes nothing.
+	RuleCIPending = "ci-pending"
+	// RuleMidFlight: the dashboard's server-side guard — CI is running or
+	// the review is incomplete on the current head — answered before any
+	// decider ran.
+	RuleMidFlight = "mid-flight"
+)
+
 // AdvisoryChecklist is the progress of a hive advisory's checklist: how
 // many of its items are resolved. Total 0 is an advisory without items.
 type AdvisoryChecklist struct {
@@ -165,9 +177,17 @@ const (
 	LabelAdoptSupersede = "adoption/supersede"
 	// RuleCapabilityGap is the recommend-only rule for a blocker no decision
 	// can clear: the GitHub App lacks a permission (hivecommons/hive#15099).
-	RuleCapabilityGap   = "capability-gap"
-	LabelNeedsOwner     = "needs-owner"
-	LabelHold           = "hold"
+	RuleCapabilityGap = "capability-gap"
+	LabelNeedsOwner   = "needs-owner"
+	// LabelHold is a person's "do not merge / do not act" label. The
+	// delegate reads it (the hold rail) but never adds or lifts it
+	// (hivecommons/hive#18468).
+	LabelHold = "hold"
+	// LabelDecisionNeeded is the hive's own gate label for an item blocked
+	// on a human decision (github.DefaultDecisionNeededLabel). The delegate
+	// applies it instead of `hold`; it blocks merges like `hold` and the
+	// delegate never lifts it either.
+	LabelDecisionNeeded = "decision-needed"
 	LabelTriageAccepted = "triage/accepted"
 	LabelFlakyTest      = "flaky-test"
 	LabelNeedsDecision  = "stage/085-needs-decision"
@@ -185,6 +205,11 @@ type CompetingPR struct {
 	// train as a duplicate of the item (same `Fixes #N`,
 	// hivecommons/hive#15395); the item is the PR the queue kept.
 	HeldDuplicate bool
+	// PersonAuthored: a person pushed it (author/human, or one of this
+	// hive's owners). With HiveAuthored it is the trust that lets the
+	// competitor cover a contributor PR's issue (RuleCoveredByOtherPR,
+	// hivecommons/hive#18900): a contributor copy never beats either.
+	PersonAuthored bool
 }
 
 // Input is everything the delegate reads about one parked item.
@@ -242,6 +267,12 @@ type Input struct {
 	Overlaps []int
 	// Competing lists the other open PRs for the same work.
 	Competing []CompetingPR
+	// IssueClaimHolder names a person or hive agent holding a live claim on
+	// an issue this PR closes ("" = none), IssueClaimIssue is that issue:
+	// work a person or the hive already holds is not adopted from a
+	// contributor (hivecommons/hive#18900).
+	IssueClaimHolder string
+	IssueClaimIssue  int
 	// TrainDuplicateOf is the open PR the merge queue kept for the same
 	// issue when it held this one as a duplicate (0 = not held);
 	// TrainDuplicateIssue is that issue (hivecommons/hive#15395).
@@ -482,7 +513,7 @@ func ownerOnlyDecision(in Input, rationale string) Decision {
 	return Decision{
 		Verdict: VerdictOwnerOnly, Rule: "owner-only", Text: text, Rationale: rationale, KeepsPark: true,
 		Actions: []Action{
-			{Kind: ActionLabelsAdd, Labels: []string{LabelNeedsOwner, LabelHold}},
+			{Kind: ActionLabelsAdd, Labels: []string{LabelNeedsOwner, LabelDecisionNeeded}},
 			{Kind: ActionRecommendOnly, Text: text},
 		},
 	}
@@ -592,6 +623,17 @@ func operatorActionDecision(sr SelfReport, remedy string) Decision {
 	}
 }
 
+// ciPendingDecision declines to release a PR whose checks are still
+// running: nothing is written and the PR stays parked until they finish.
+func ciPendingDecision(ref string) Decision {
+	return Decision{
+		Verdict: VerdictRefused, Rule: RuleCIPending,
+		Text:      "wait on " + ref + ": CI is still running on the current head",
+		Rationale: "CI is still running on the current head, so there is nothing yet to approve; decide again once the checks finish",
+		KeepsPark: true,
+	}
+}
+
 // notNowDecision declines a hive-filed proposal that shows neither an
 // incident nor a recurrence: the reason is posted and the issue is closed
 // as not planned, the way a declined proposal leaves the tracker.
@@ -649,11 +691,11 @@ func ownerAction(in Input) string {
 	t := strings.ToLower(in.Title + " " + in.Question)
 	switch {
 	case strings.Contains(t, "org") && (strings.Contains(t, "member") || strings.Contains(t, "permission")):
-		return "grant or adjust the organization membership/permission named in the title, then remove `hold` and `needs-owner`"
+		return "grant or adjust the organization membership/permission named in the title, then remove `decision-needed` and `needs-owner`"
 	case strings.Contains(t, "scope") || strings.Contains(t, "pat") || strings.Contains(t, "token"):
-		return "rotate or re-scope the token named in the title in the hive's secret store, then remove `hold` and `needs-owner`"
+		return "rotate or re-scope the token named in the title in the hive's secret store, then remove `decision-needed` and `needs-owner`"
 	default:
-		return "set or rotate the secret named in the title, then remove `hold` and `needs-owner`"
+		return "set or rotate the secret named in the title, then remove `decision-needed` and `needs-owner`"
 	}
 }
 
@@ -743,6 +785,13 @@ func decidePR(in Input) Decision {
 			Rationale: "the head is not mergeable yet; the direction names the fix and nothing else",
 			Actions:   []Action{decisionComment(text)},
 		}
+	}
+	// CIRed is false while checks are merely pending, so fixList above names
+	// nothing for a head still running its checks; without this the two
+	// approvals below ("green head") fired on a head that was not green
+	// (hivecommons/hive#18889).
+	if in.CIPending {
+		return ciPendingDecision(ref)
 	}
 	if in.IsSmall() || in.LowRiskPaths {
 		return releasePR("small-low-risk", "approve "+ref+": small, necessary, low-risk change on a green head", "small low-risk changes (CI pins, read-only RBAC, warning text, workflow hygiene) are approved once checked")
@@ -1031,7 +1080,7 @@ func ApplyRails(d Decision, r Rails) Decision {
 			out.Refusals = append(out.Refusals, fmt.Sprintf("%s: not in the allowed action set", a.Kind))
 			continue
 		}
-		if a.Kind == ActionLabelsRemove && hasLabel(a.Labels, LabelHold) {
+		if a.Kind == ActionLabelsRemove && (hasLabel(a.Labels, LabelHold) || hasLabel(a.Labels, LabelDecisionNeeded)) {
 			out.Refusals = append(out.Refusals, "labels-remove hold: the delegate never lifts a hold")
 			continue
 		}
@@ -1054,7 +1103,13 @@ func ApplyRails(d Decision, r Rails) Decision {
 
 // Run is Decide followed by ApplyRails with the hold rail read from the labels.
 func Run(in Input) Decision {
-	return ApplyRails(Decide(in), Rails{Held: hasLabel(in.Labels, LabelHold), PersonAuthored: in.PersonAuthored()})
+	return ApplyRails(Decide(in), Rails{Held: HeldByLabels(in.Labels), PersonAuthored: in.PersonAuthored()})
+}
+
+// HeldByLabels is the hold rail: a person's `hold`, or the decision-needed
+// gate label the hive applied when it handed the item to a person.
+func HeldByLabels(labels []string) bool {
+	return hasLabel(labels, LabelHold) || hasLabel(labels, LabelDecisionNeeded)
 }
 
 // CommentBody renders the comment the delegate posts for a decision: the

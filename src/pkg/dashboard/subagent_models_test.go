@@ -49,7 +49,7 @@ func TestSubAgentModelsDetailWiring(t *testing.T) {
 		"row.olderGeneration ?",
 		"⚠ older generation",
 		"${subAgentModelsHtml(a)}",
-		"JSON.stringify(a.subAgentModels || [])].join('|')",
+		"JSON.stringify(a.subAgentModels || []), agentToggleGateReason()].join('|')",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("missing detail rendering/refresh guard: %s", snippet)

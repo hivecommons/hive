@@ -41,6 +41,24 @@ type OpenRouterSuggestedModel struct {
 	Label string `json:"label"`
 }
 
+// OpenRouterPricing is a catalog model's USD price PER TOKEN. A nil field is
+// unknown (not published, or variable), never zero.
+type OpenRouterPricing struct {
+	Prompt         *float64 `json:"prompt,omitempty"`
+	Completion     *float64 `json:"completion,omitempty"`
+	InputCacheRead *float64 `json:"input_cache_read,omitempty"`
+}
+
+// OpenRouterModel is one entry of the provider's public catalog: id, display
+// name, context window and published prices. The JSON shape is what the model
+// pickers read (/api/openrouter/models and gateway discovery's model_info).
+type OpenRouterModel struct {
+	ID            string            `json:"id"`
+	Name          string            `json:"name,omitempty"`
+	ContextLength int               `json:"context_length,omitempty"`
+	Pricing       OpenRouterPricing `json:"pricing"`
+}
+
 // OpenRouterFlow is a recovered pending PKCE flow: the server-held verifier
 // plus the hive and model the flow was started for.
 type OpenRouterFlow struct {
@@ -79,6 +97,9 @@ type OpenRouterGateway interface {
 	DefaultModel() string
 	// SuggestedModels is the curated funding-screen list.
 	SuggestedModels() []OpenRouterSuggestedModel
+	// PublicModels is the provider's public catalog (no key needed), cached
+	// by the provider package; nil when it has never been readable.
+	PublicModels() []OpenRouterModel
 	// QRPNG renders the authorize URL as a PNG so the image stays same-origin.
 	QRPNG(text string) ([]byte, error)
 	// ExchangeCode redeems code+verifier for the user-scoped API key. The key

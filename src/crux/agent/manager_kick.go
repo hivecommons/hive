@@ -98,13 +98,18 @@ func notRunningReason(agent *AgentProcess) string {
 	}
 }
 
-func (m *Manager) SendKick(name string, message string) (err error) {
+func (m *Manager) SendKick(name string, message string) error {
+	return m.sendKick(name, message, "send-kick")
+}
+
+// sendKick is SendKick with the delivery trigger spelled out; the trigger is
+// what the audit log, prompt history and the canary-retry bookkeeping see.
+func (m *Manager) sendKick(name, message, trigger string) (err error) {
 	// Agent-kick span. No-op with zero export cost when tracing is disabled
 	// (the default). SendKick has no context parameter, so this span roots at
 	// Background; it still captures the kick leg of the governor→agent
 	// lifecycle. Ended before delivery bookkeeping via defer.
-	_, span := m.startSpan(context.Background(), "agent.send_kick",
-		attribute.String("agent.name", name))
+	_, span := m.startSpan(context.Background(), "agent.send_kick")
 	defer span.End()
 
 	// Kick duration/outcome metrics; role stays kickRoleUnknown until the
@@ -120,6 +125,7 @@ func (m *Manager) SendKick(name string, message string) (err error) {
 		return fmt.Errorf("agent %s not found", name)
 	}
 	role = name
+	span.SetAttributes(attribute.String("agent.name", role))
 
 	if m.agentSandboxEnabledLocked(agent) {
 		return m.startSandboxKickLocked(agent, message)
@@ -229,7 +235,7 @@ func (m *Manager) SendKick(name string, message string) (err error) {
 		return err
 	}
 
-	return m.deliverKickLocked(agent, message, "send-kick")
+	return m.deliverKickLocked(agent, message, trigger)
 }
 
 // deliverKickLocked types a message into the agent's CLI and records the
@@ -252,11 +258,14 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// change the lock alone made it impossible. Two typists sharing one pane
 	// would interleave their chunks into a single corrupt prompt.
 	if !agent.kickDelivering.CompareAndSwap(false, true) {
-		m.logger.Warn("kick delivery skipped: another kick is already being typed into this pane",
+		// Expected back-pressure, not a defect: callers treat ErrAgentBusy
+		// as "retry later". Info keeps it out of the warn-level selfreport.
+		m.logger.Info("kick delivery skipped: another kick is already being typed into this pane",
 			"agent", agent.Name, "trigger", trigger)
 		return fmt.Errorf("%w: agent %s kick delivery already in progress", crux.ErrAgentBusy, agent.Name)
 	}
 	defer agent.kickDelivering.Store(false)
+	agent.lastKickInput = message
 
 	visible := m.captureVisiblePaneForAgent(agent)
 	if err := m.checkKickPromptReadyLocked(agent, visible, trigger); err != nil {
@@ -420,6 +429,7 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 	agent.LastKickMessage = message
 	agent.KickRefused = false
 	agent.KickRefusalReason = ""
+	agent.canaryRetryDone = trigger == kickTriggerCanaryRetry
 	// The session now holds this kick's output; the next rotation point
 	// (kick, restart, shutdown) must archive it before it is destroyed.
 	agent.kickLogPending = true

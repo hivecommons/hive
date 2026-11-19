@@ -83,6 +83,9 @@ func TestSkipGraphQLString(t *testing.T) {
 		{"block string with quotes inside", `"""a"b""" rest`, 0, 9, true},
 		{"block string with newline", "\"\"\"a\nb\"\"\"", 0, 9, true},
 		{"unterminated block string", `"""abc`, 0, 0, false},
+		{"block string escaped triple quote", `"""a\"""b""" rest`, 0, 12, true},
+		{"block string only escaped triple quote", `"""\""""""`, 0, 10, true},
+		{"block string escaped terminator unterminated", `"""a\"""`, 0, 0, false},
 		{"offset start", `x "hi" y`, 2, 6, true},
 	}
 	for _, tt := range tests {

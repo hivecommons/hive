@@ -418,3 +418,28 @@ func TestDispatchAt(t *testing.T) {
 		t.Fatalf("inflight=%+v", got)
 	}
 }
+
+// Release puts an in-flight dispatch back without an attempt or a backoff:
+// the relay never reported on it, so the PR is immediately dispatchable.
+func TestReleaseReturnsDispatchWithoutAttempt(t *testing.T) {
+	c := newClock()
+	s := newSched(c)
+	s.Enqueue("ida", red(1, time.Hour, c))
+	d := s.Dispatch("ida", Capacity{Max: 1})
+	if d == nil {
+		t.Fatal("dispatch expected")
+	}
+	if s.Release("ida", "nope") != nil || s.Release("zed", d.ID) != nil {
+		t.Fatal("unknown dispatch released")
+	}
+	got := s.Release("ida", d.ID)
+	if len(got) != 1 || got[0].Attempts != 0 || !got[0].NotBefore.IsZero() {
+		t.Fatalf("released = %+v", got)
+	}
+	if st := s.Status("ida", Capacity{Max: 1}); st.Queued != 1 || st.InFlight != 0 || st.FocusUntil != nil {
+		t.Fatalf("status after release = %+v", st)
+	}
+	if s.Dispatch("ida", Capacity{Max: 1}) == nil {
+		t.Fatal("released item must be dispatchable at once")
+	}
+}

@@ -55,9 +55,9 @@ const (
 //     supersession_sweep, compliance.posture_checks, planning, swarm
 //     and tool_approval.inbox_path (featuresPlatformBody in
 //     api_governor_features_platform.go)
-//   - runs.checkpoints, runs.wait_*, runs.triage scalars, runs.spektacular.recheck
-//     scalars, the Flue endpoint, every workflow_version and the vibe-kanban
-//     host (featuresRunsBody in api_governor_features_runs.go)
+//   - runs.checkpoints, runs.wait_*, runs.triage scalars, the Flue endpoint,
+//     every workflow_version and the vibe-kanban host (featuresRunsBody in
+//     api_governor_features_runs.go)
 //
 // Every field is a pointer so an absent key leaves the corresponding config
 // untouched — the same "only what you send is changed" contract the other
@@ -135,6 +135,22 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		ClaimsMaxTTLS         *int `json:"claimsMaxTtlS"`
 
 		PRFollowUpEnabled *bool `json:"prFollowUpEnabled"`
+
+		// #18742: customers.enabled, the one switch for the Customers
+		// section. Read at boot, so a change applies on the next restart.
+		CustomersEnabled *bool `json:"customersEnabled"`
+		// #18742: customers.inference.enabled, goal and satisfaction
+		// suggestions made with a model. Default off.
+		CustomersInferenceEnabled *bool `json:"customersInferenceEnabled"`
+		// customers.avatars.enabled: GitHub profile pictures on the
+		// Customers list. Default on.
+		CustomersAvatarsEnabled *bool `json:"customersAvatarsEnabled"`
+		// #19163: customers.hub_import.enabled, the import of fields a
+		// person consented on the hub to share with this hive. Default off.
+		CustomersHubImportEnabled *bool `json:"customersHubImportEnabled"`
+		// #18884: customers.mention_search.enabled, the budgeted GitHub
+		// search made when a suggested person is accepted. Default off.
+		CustomersSearchEnabled *bool `json:"customersSearchEnabled"`
 
 		AutonomyAutoPromote  *bool   `json:"autonomyAutoPromote"`
 		AutonomyAutoDemote   *bool   `json:"autonomyAutoDemote"`
@@ -356,6 +372,26 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.PRFollowUpEnabled != nil {
 		cfg.Turn.PRFollowUp.Enabled = *body.PRFollowUpEnabled
 	}
+	if body.CustomersEnabled != nil {
+		on := *body.CustomersEnabled
+		cfg.Customers.Enabled = &on
+	}
+	if body.CustomersInferenceEnabled != nil {
+		on := *body.CustomersInferenceEnabled
+		cfg.Customers.Inference.Enabled = &on
+	}
+	if body.CustomersAvatarsEnabled != nil {
+		on := *body.CustomersAvatarsEnabled
+		cfg.Customers.Avatars.Enabled = &on
+	}
+	if body.CustomersHubImportEnabled != nil {
+		on := *body.CustomersHubImportEnabled
+		cfg.Customers.HubImport.Enabled = &on
+	}
+	if body.CustomersSearchEnabled != nil {
+		on := *body.CustomersSearchEnabled
+		cfg.Customers.MentionSearch.Enabled = &on
+	}
 	if claimsTTLsChanged {
 		applyClaimsTTLs(&cfg.Governor.Claims, body.ClaimsTTLS, body.ClaimsHumanTTLS, body.ClaimsAgentTTLS, body.ClaimsContributorTTLS, body.ClaimsMaxTTLS)
 		// Live claims keep their expiry; claims made or renewed from now on
@@ -497,6 +533,9 @@ func (s *Server) featuresLinkedView() map[string]interface{} {
 // which is what the governor config GET serves.
 func (s *Server) featuresSectionWithLinked(cfg *config.Config) map[string]interface{} {
 	out := featuresSectionResponse(cfg)
+	for k, v := range s.featuresBenchmarksResponse(cfg) {
+		out[k] = v
+	}
 	for k, v := range s.featuresLinkedView() {
 		out[k] = v
 	}
@@ -519,63 +558,73 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	acmmLevel := cfg.ACMMLevelOrZero()
 	rotationCfg := cfg.Governor.Rotation
 	out := map[string]interface{}{
-		"ioscanEnabled":              cfg.Ioscan.IsEnabled(),
-		"tracingEnabled":             otelCfg.Enabled,
-		"tracingEndpoint":            otelCfg.Endpoint,
-		"tracingSampleRatio":         otelCfg.SampleRatio,
-		"otelEnabled":                otelCfg.Enabled,
-		"otelEndpoint":               otelCfg.Endpoint,
-		"otelServiceName":            otelCfg.ServiceName,
-		"otelInsecure":               otelCfg.Insecure,
-		"otelSampleRatio":            otelCfg.SampleRatio,
-		"otelHasHeaders":             len(otelCfg.Headers) > 0,
-		"retroEnabled":               cfg.Retro.Enabled,
-		"retroAnalysisModel":         cfg.Retro.AnalysisModel,
-		"retroScanIntervalS":         cfg.Retro.ScanIntervalS,
-		"retroMaxFixAttempts":        cfg.Retro.MaxFixAttempts,
-		"retroMaxKicks":              cfg.Retro.MaxKicks,
-		"retroLongStallDays":         cfg.Retro.LongStallDays,
-		"retroRecentClosedWindowS":   cfg.Retro.RecentClosedWindowS,
-		"mintEnabled":                cfg.Mint.Enabled,
-		"mintIssuer":                 cfg.Mint.Issuer,
-		"planFromLabel":              planFromLabel,
-		"formalEnabled":              cfg.Quality.Formal,
-		"planMatchEnabled":           cfg.Review.PlanMatch.Enabled,
-		"extFlueEnabled":             cfg.Runs.External.Flue.Enabled,
-		"extFlueMode":                cfg.FlueBindingMode(),
-		"extFlueModes":               config.FlueBindingModes(),
-		"extFlueEndpointSet":         strings.TrimSpace(cfg.Runs.External.Flue.Endpoint) != "",
-		"extOmpEnabled":              cfg.Runs.External.OMP.Enabled,
-		"extOmpMode":                 cfg.OMPBindingMode(),
-		"extOmpModes":                config.ExternalBindingModes(),
-		"extOmpVersionSet":           strings.TrimSpace(cfg.Runs.External.OMP.WorkflowVersion) != "",
-		"formalAvailable":            acmmLevel >= config.FormalQualityMinACMMLevel,
-		"formalMinACMMLevel":         config.FormalQualityMinACMMLevel,
-		"claimsEnabled":              cfg.Governor.Claims.Enabled,
-		"claimsTtlS":                 int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
-		"prFollowUpEnabled":          cfg.Turn.PRFollowUp.Enabled,
-		"prFollowUpEffective":        cfg.PRFollowUpResumeEnabled(),
-		"publicationEnabled":         cfg.Publication.Enabled,
-		"publicationPrivateChannel":  cfg.Publication.PrivateChannel,
-		"publicationOwner":           cfg.Publication.Owner,
-		"publicationAvailable":       acmmLevel >= config.PublicationMinACMMLevel,
-		"publicationMinACMMLevel":    config.PublicationMinACMMLevel,
-		"acmmLevel":                  acmmLevel,
-		"spektacularEnabled":         cfg.Runs.Spektacular.Enabled,
-		"spektacularBinary":          cfg.Runs.Spektacular.Binary,
-		"spektacularPollS":           int(cfg.Runs.Spektacular.PollInterval().Seconds()),
-		"maxStageRetries":            cfg.Runs.MaxStageRetriesOrDefault(),
-		"autonomyAutoPromote":        cfg.Autonomy.AutoPromote,
-		"autonomyAutoDemote":         cfg.Autonomy.AutoDemote,
-		"autonomyPromoteAfter":       cfg.Autonomy.EffectivePromoteAfter(),
-		"autonomyDemoteOn":           cfg.Autonomy.EffectiveDemoteOn(),
-		"autonomyMaxLevel":           cfg.Autonomy.EffectiveMaxLevel(config.MaxACMMLevel),
-		"autonomyCooldownDays":       cfg.Autonomy.EffectiveCooldownDays(),
-		"rotationEnabled":            rotationCfg.Enabled,
-		"rotationThresholdPct":       rotationCfg.EffectiveThreshold(),
-		"rotationHighVolumeCadenceS": rotationCfg.EffectiveHighVolumeCadenceS(),
-		"rotationProviders":          rotationCfg.Providers,
-		"rotationAgents":             rotationCfg.AgentTiers,
+		"ioscanEnabled":               cfg.Ioscan.IsEnabled(),
+		"tracingEnabled":              otelCfg.Enabled,
+		"tracingEndpoint":             otelCfg.Endpoint,
+		"tracingSampleRatio":          otelCfg.SampleRatio,
+		"otelEnabled":                 otelCfg.Enabled,
+		"otelEndpoint":                otelCfg.Endpoint,
+		"otelServiceName":             otelCfg.ServiceName,
+		"otelInsecure":                otelCfg.Insecure,
+		"otelSampleRatio":             otelCfg.SampleRatio,
+		"otelHasHeaders":              len(otelCfg.Headers) > 0,
+		"retroEnabled":                cfg.Retro.Enabled,
+		"retroAnalysisModel":          cfg.Retro.AnalysisModel,
+		"retroScanIntervalS":          cfg.Retro.ScanIntervalS,
+		"retroMaxFixAttempts":         cfg.Retro.MaxFixAttempts,
+		"retroMaxKicks":               cfg.Retro.MaxKicks,
+		"retroLongStallDays":          cfg.Retro.LongStallDays,
+		"retroRecentClosedWindowS":    cfg.Retro.RecentClosedWindowS,
+		"mintEnabled":                 cfg.Mint.Enabled,
+		"mintIssuer":                  cfg.Mint.Issuer,
+		"planFromLabel":               planFromLabel,
+		"formalEnabled":               cfg.Quality.Formal,
+		"planMatchEnabled":            cfg.Review.PlanMatch.Enabled,
+		"extFlueEnabled":              cfg.Runs.External.Flue.Enabled,
+		"extFlueMode":                 cfg.FlueBindingMode(),
+		"extFlueModes":                config.FlueBindingModes(),
+		"extFlueEndpointSet":          strings.TrimSpace(cfg.Runs.External.Flue.Endpoint) != "",
+		"extOmpEnabled":               cfg.Runs.External.OMP.Enabled,
+		"extOmpMode":                  cfg.OMPBindingMode(),
+		"extOmpModes":                 config.ExternalBindingModes(),
+		"extOmpVersionSet":            strings.TrimSpace(cfg.Runs.External.OMP.WorkflowVersion) != "",
+		"formalAvailable":             acmmLevel >= config.FormalQualityMinACMMLevel,
+		"formalMinACMMLevel":          config.FormalQualityMinACMMLevel,
+		"claimsEnabled":               cfg.Governor.Claims.Enabled,
+		"claimsTtlS":                  int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
+		"prFollowUpEnabled":           cfg.Turn.PRFollowUp.Enabled,
+		"prFollowUpEffective":         cfg.PRFollowUpResumeEnabled(),
+		"customersEnabled":            cfg.Customers.IsEnabled(),
+		"customersEffective":          cfg.CustomersEnabled(),
+		"customersInference":          cfg.Customers.Inference.IsEnabled(),
+		"customersInferenceEffective": cfg.CustomersInferenceEnabled(),
+		"customersAvatars":            cfg.Customers.Avatars.IsEnabled(),
+		"customersAvatarsEffective":   cfg.CustomersAvatarsEnabled(),
+		"customersHubImport":          cfg.Customers.HubImport.IsEnabled(),
+		"customersHubImportEffective": cfg.CustomersHubImportEnabled(),
+		"customersSearch":             cfg.Customers.MentionSearch.IsEnabled(),
+		"customersSearchEffective":    cfg.CustomersMentionSearchEnabled(),
+		"publicationEnabled":          cfg.Publication.Enabled,
+		"publicationPrivateChannel":   cfg.Publication.PrivateChannel,
+		"publicationOwner":            cfg.Publication.Owner,
+		"publicationAvailable":        acmmLevel >= config.PublicationMinACMMLevel,
+		"publicationMinACMMLevel":     config.PublicationMinACMMLevel,
+		"acmmLevel":                   acmmLevel,
+		"spektacularEnabled":          cfg.Runs.Spektacular.Enabled,
+		"spektacularBinary":           cfg.Runs.Spektacular.Binary,
+		"spektacularPollS":            int(cfg.Runs.Spektacular.PollInterval().Seconds()),
+		"maxStageRetries":             cfg.Runs.MaxStageRetriesOrDefault(),
+		"autonomyAutoPromote":         cfg.Autonomy.AutoPromote,
+		"autonomyAutoDemote":          cfg.Autonomy.AutoDemote,
+		"autonomyPromoteAfter":        cfg.Autonomy.EffectivePromoteAfter(),
+		"autonomyDemoteOn":            cfg.Autonomy.EffectiveDemoteOn(),
+		"autonomyMaxLevel":            cfg.Autonomy.EffectiveMaxLevel(config.MaxACMMLevel),
+		"autonomyCooldownDays":        cfg.Autonomy.EffectiveCooldownDays(),
+		"rotationEnabled":             rotationCfg.Enabled,
+		"rotationThresholdPct":        rotationCfg.EffectiveThreshold(),
+		"rotationHighVolumeCadenceS":  rotationCfg.EffectiveHighVolumeCadenceS(),
+		"rotationProviders":           rotationCfg.Providers,
+		"rotationAgents":              rotationCfg.AgentTiers,
 	}
 	for k, v := range claimsTTLsResponse(cfg.Governor.Claims) {
 		out[k] = v
@@ -689,6 +738,7 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		PostRetryBackoffS *int                              `json:"post_retry_backoff_s"`
 		Target            *string                           `json:"target"`
 		LinearIssue       *string                           `json:"linear_issue"`
+		PerRepo           *bool                             `json:"per_repo"`
 		QueueHealth       *config.AdvisoryQueueHealthConfig `json:"queue_health"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -803,11 +853,20 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 	if body.QueueHealth != nil {
 		cfg.Governor.Advisory.QueueHealth = *body.QueueHealth
 	}
+	// per_repo (#18448) decides whether every monitored repo gets its own
+	// advisory report, so its before/after goes into the audit detail.
+	auditKV := []string{"section", "advisory"}
+	if body.PerRepo != nil {
+		before := cfg.Governor.Advisory.PerRepoEnabled()
+		v := *body.PerRepo
+		cfg.Governor.Advisory.PerRepo = &v
+		auditKV = append(auditKV, "per_repo", fmt.Sprintf("%t->%t", before, v))
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after advisory update", "error", err)
 	}
-	s.auditFromRequest(r, "config_governor_advisory", auditDetail("section", "advisory"), "")
+	s.auditFromRequest(r, "config_governor_advisory", auditDetail(auditKV...), "")
 	s.refreshAndPersist()
 	jsonResponse(w, advisorySectionResponse(cfg))
 }
@@ -835,6 +894,7 @@ func advisorySectionResponse(cfg *config.Config) map[string]interface{} {
 		},
 		"target":       a.ResolvedTarget(),
 		"linear_issue": a.LinearIssue,
+		"per_repo":     a.PerRepoEnabled(),
 	}
 }
 

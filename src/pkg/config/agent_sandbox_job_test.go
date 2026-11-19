@@ -147,3 +147,65 @@ func TestGateWarnsUnknownRuntime(t *testing.T) {
 		t.Errorf("warnings = %q, want one naming deps=lambda and the valid runtimes", got)
 	}
 }
+
+func TestSandboxJobImagePullSecretsMergeAndValidation(t *testing.T) {
+	global := AgentSandboxConfig{Job: &SandboxJobConfig{WorkspaceClaim: "hive-data", ImagePullSecrets: []string{"reg-a"}}}
+	inherit := &AgentConfig{Sandbox: &AgentSandboxOverride{Job: &SandboxJobConfig{ServiceAccount: "sa"}}}
+	if got := inherit.SandboxJob(global).ImagePullSecrets; len(got) != 1 || got[0] != "reg-a" {
+		t.Errorf("inherited = %v, want [reg-a]", got)
+	}
+	own := &AgentConfig{Sandbox: &AgentSandboxOverride{Job: &SandboxJobConfig{ImagePullSecrets: []string{"reg-b"}}}}
+	if got := own.SandboxJob(global).ImagePullSecrets; len(got) != 1 || got[0] != "reg-b" {
+		t.Errorf("own = %v, want [reg-b]", got)
+	}
+	if err := ValidateImagePullSecrets([]string{"reg-a", "x.y"}); err != nil {
+		t.Errorf("valid names refused: %v", err)
+	}
+	for _, bad := range []string{"user:pass", "UPPER", "a b", ""} {
+		if err := ValidateImagePullSecrets([]string{bad}); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if err := ValidateImagePullSecrets(make([]string, MaxJobImagePullSecrets+1)); err == nil {
+		t.Error("over-long list accepted")
+	}
+}
+
+func TestSandboxJobImagePullSecretsYAMLRoundTrip(t *testing.T) {
+	var job SandboxJobConfig
+	if err := yaml.Unmarshal([]byte("service_account: sa\nimage_pull_secrets: [reg-a, reg-b]\n"), &job); err != nil {
+		t.Fatal(err)
+	}
+	out, err := yaml.Marshal(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back SandboxJobConfig
+	if err := yaml.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	if len(back.ImagePullSecrets) != 2 || back.ImagePullSecrets[1] != "reg-b" {
+		t.Errorf("round trip = %v", back.ImagePullSecrets)
+	}
+}
+
+func TestGateWarnsServiceAccountWithoutImagePullSecrets(t *testing.T) {
+	yes := true
+	mk := func(pull []string) *Config {
+		return &Config{AgentRuntimeConfig: AgentRuntimeConfig{
+			AgentSandbox: AgentSandboxConfig{Enabled: true, Image: "img", Runtime: SandboxRuntimeJob,
+				Job: &SandboxJobConfig{WorkspaceClaim: "hive-data", ServiceAccount: "job-sa", ImagePullSecrets: pull}},
+			Agents: map[string]AgentConfig{"deps": {Sandbox: &AgentSandboxOverride{Enabled: &yes}}},
+		}}
+	}
+	got := AgentSandboxGateWarnings(mk(nil))
+	if len(got) != 1 || !strings.Contains(got[0], "image_pull_secrets") {
+		t.Errorf("warnings = %q, want one naming image_pull_secrets", got)
+	}
+	if got := AgentSandboxGateWarnings(mk([]string{"reg-a"})); len(got) != 0 {
+		t.Errorf("configured list must raise no warning, got %q", got)
+	}
+	if got := AgentSandboxGateWarnings(mk([]string{"user:pass"})); len(got) != 1 || !strings.Contains(got[0], "invalid") {
+		t.Errorf("invalid name warnings = %q", got)
+	}
+}

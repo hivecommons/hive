@@ -84,7 +84,7 @@ func dcoCommitStatsForHive(commits []*gh.RepositoryCommit, appLogin, prAuthor st
 			} else {
 				stats.unsignedOther++
 			}
-		} else if !selfSquash && dcoCommitOwnedByHive(rc, appLogin, isHive) && !messageHasPRAuthorSignoff(msg, prAuthor) {
+		} else if !selfSquash && dcoCommitOwnedByHive(rc, appLogin, isHive) && !commitHasPRAuthorSignoff(rc, prAuthor) {
 			stats.squashUnsafeHive++
 		}
 	}
@@ -189,6 +189,34 @@ func hiveAuthoredPR(obs stageObservation, policy StageLabelPolicy, appLogin stri
 // remains bot-authored. Unsigned commits are still counted and rejected.
 func botSquashAuthor(login string) bool {
 	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(login)), "[bot]")
+}
+
+// commitHasPRAuthorSignoff mirrors signoff_is_pr_author in
+// check-squash-signoff-attribution.sh: a sign-off certifies the PR author
+// when it is that account's GitHub noreply, or when GitHub links the commit
+// AUTHOR to the PR author and the sign-off is that author's own git email
+// (or noreply). The committer is not consulted, so a hive rebase that makes
+// the App the committer of the author's own signed commit does not file it
+// as the hive's to re-sign (hivecommons/hive#17789).
+func commitHasPRAuthorSignoff(commit *gh.RepositoryCommit, prAuthor string) bool {
+	msg := commit.GetCommit().GetMessage()
+	if messageHasPRAuthorSignoff(msg, prAuthor) {
+		return true
+	}
+	want := normalizeBotLogin(prAuthor)
+	if want == "" || normalizeBotLogin(commit.GetAuthor().GetLogin()) != want {
+		return false
+	}
+	authorEmail := strings.ToLower(strings.TrimSpace(commit.GetCommit().GetAuthor().GetEmail()))
+	for _, line := range strings.Split(msg, "\n") {
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "signed-off-by:") {
+			continue
+		}
+		if email := signedOffEmail(line); email != "" && email == authorEmail {
+			return true
+		}
+	}
+	return false
 }
 
 func messageHasPRAuthorSignoff(message, prAuthor string) bool {

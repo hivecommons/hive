@@ -161,6 +161,22 @@ type SandboxRun struct {
 	// scrubbed tail of the transcript. Bounded; see sandboxRunSummaryMax.
 	Summary string          `json:"summary,omitempty"`
 	Usage   SandboxRunUsage `json:"usage,omitempty"`
+	// FailReason is "node_unhealthy" (the node preflight failed) or
+	// "waiting_for_node" (no node took the pod in time) when the run failed
+	// for the infrastructure's reason rather than the agent's; Node is where
+	// the pod ran, when known (hivecommons/hive#18811).
+	FailReason string `json:"failReason,omitempty"`
+	Node       string `json:"node,omitempty"`
+}
+
+// SandboxPhase is what an in-flight sandboxed kick is doing when that is not
+// plain "running": Phase "waiting_for_node" means its Job's pod is Pending
+// and Unschedulable, with the scheduler's message in Detail.
+type SandboxPhase struct {
+	Phase  string    `json:"phase"`
+	Node   string    `json:"node,omitempty"`
+	Detail string    `json:"detail,omitempty"`
+	Since  time.Time `json:"since"`
 }
 
 // Duration is how long the run took, zero when the record is incomplete.

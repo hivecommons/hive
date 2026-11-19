@@ -16,9 +16,29 @@ import (
 )
 
 // AttributionTrailerPrefix opens the visible trailer line. Neutral wording,
-// stable and greppable — also the marker AppendTrailer uses to avoid stacking
-// a second trailer onto a retried request.
-const AttributionTrailerPrefix = "— hive:"
+// stable and greppable, also the marker AppendTrailer uses to avoid stacking
+// a second trailer onto a retried request. It is a plain-ASCII "-- " because
+// em-dashes are never allowed in text hive writes.
+const AttributionTrailerPrefix = "-- hive:"
+
+// LegacyAttributionTrailerPrefix is the em-dash spelling of the trailer that
+// hive wrote before the plain-ASCII rule. Readers must keep recognising it:
+// thousands of PRs and issues already carry it. Writers never emit it.
+const LegacyAttributionTrailerPrefix = "\u2014 hive:"
+
+// trailerPrefixes lists every spelling a reader must accept, current first.
+var trailerPrefixes = []string{AttributionTrailerPrefix, LegacyAttributionTrailerPrefix}
+
+// HasAttributionTrailerPrefix reports whether s starts with either spelling of
+// the trailer prefix, and which one.
+func HasAttributionTrailerPrefix(s string) (string, bool) {
+	for _, p := range trailerPrefixes {
+		if strings.HasPrefix(s, p) {
+			return p, true
+		}
+	}
+	return "", false
+}
 
 // Audit action names for creation events, following the audit log's
 // snake_case action convention (cf. "config_governor_health").
@@ -57,6 +77,10 @@ const (
 	// the dashboard audit log: issue created → PR created → PR merged. Detail
 	// carries path= naming which hive path merged it (see PRAuditPath*).
 	AuditActionPRMerged = "pr_merged"
+	// AuditActionWorkflowLabelRemoved records a workflow model's stale
+	// label deleted from a repository on unbind/rebind
+	// (hivecommons/hive#17620).
+	AuditActionWorkflowLabelRemoved = "workflow_label_removed"
 	// AuditActionPRClosed is the audit action recorded when the hive closes a
 	// PR WITHOUT merging it: the issue-request watcher's close relay targeting
 	// a pull request number. It is the "closed without merging" half of the
@@ -262,7 +286,7 @@ func (m InvocationMeta) pairs() []string {
 
 // Trailer renders the one-line visible trailer, e.g.:
 //
-//	— hive: agent=quality backend=bob model=auto bobshell=1.0.6 session=abc123
+//	-- hive: agent=quality backend=bob model=auto bobshell=1.0.6 session=abc123
 //
 // Unknown fields are omitted; all-unknown metadata renders "" (no trailer at
 // all rather than a bare prefix).
@@ -316,7 +340,7 @@ func ParseRunTrailers(body string) (runKey, planRef string) {
 // the watcher retries after a partial failure must not stack trailers.
 func AppendTrailer(body string, m InvocationMeta) string {
 	t := m.Trailer()
-	if t == "" || strings.Contains(body, AttributionTrailerPrefix) {
+	if t == "" || HasAttributionTrailer(body) {
 		return body
 	}
 	body = strings.TrimRight(body, "\n")
@@ -326,7 +350,7 @@ func AppendTrailer(body string, m InvocationMeta) string {
 	return body + "\n\n" + t
 }
 
-// HasAttributionTrailer reports whether body carries the visible `— hive:`
+// HasAttributionTrailer reports whether body carries the visible `-- hive:`
 // trailer, i.e. whether the artifact was hive-mediated: opened through the
 // PR-request watcher, stamped by ReconcilePRAttribution, or opened by a
 // contributor relay running on a person's own credentials (whose PRs GitHub
@@ -336,7 +360,7 @@ func AppendTrailer(body string, m InvocationMeta) string {
 // (hivecommons/hive#7638). Author login alone cannot make this call: a relay
 // PR has a human author, and a human's hand-written PR has the same one.
 func HasAttributionTrailer(body string) bool {
-	return strings.Contains(body, AttributionTrailerPrefix)
+	return strings.Contains(body, AttributionTrailerPrefix) || strings.Contains(body, LegacyAttributionTrailerPrefix)
 }
 
 // attributionIdentityFooter matches only the terminal block emitted by
@@ -386,7 +410,7 @@ func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, AttributionTrailerPrefix) {
+		if _, ok := HasAttributionTrailerPrefix(line); ok {
 			trailer = line
 		}
 		break
@@ -395,7 +419,8 @@ func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
 		return InvocationMeta{}, false
 	}
 	meta := InvocationMeta{}
-	fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(trailer, AttributionTrailerPrefix)))
+	prefix, _ := HasAttributionTrailerPrefix(trailer)
+	fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(trailer, prefix)))
 	for _, field := range fields {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {
@@ -409,6 +434,8 @@ func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
 			meta.Backend = value
 		case "model":
 			meta.Model = value
+		case "effort":
+			meta.Effort = value
 		}
 	}
 	meta.Agent = NormalizeAttributionValue(meta.Agent)
@@ -419,6 +446,11 @@ func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
 	}
 	if meta.Backend == "unknown" {
 		meta.Backend = ""
+	}
+	// effort= is optional (only effort-capable backends write it); an absent
+	// or placeholder value stays "" rather than "unknown".
+	if meta.Effort == "unknown" {
+		meta.Effort = ""
 	}
 	return meta, true
 }

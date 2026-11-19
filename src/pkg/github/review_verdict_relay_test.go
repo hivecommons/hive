@@ -854,6 +854,7 @@ func TestLogVerdictDispatchRefusalLevel(t *testing.T) {
 		wantLevel string
 	}{
 		{"author_self_approval", "level=INFO"},
+		{"missing_head_sha_without_dispatch", "level=INFO"},
 		{"non_reviewer_without_dispatch", "level=WARN"},
 		{"dispatch_state_unavailable", "level=WARN"},
 	}

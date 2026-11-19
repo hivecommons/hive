@@ -26,11 +26,11 @@ import (
 // or prompt-injected agent re-listing the repo.
 //
 // Semantics:
-//   - Absent/empty: current behavior EXACTLY — every issue is eligible. There
-//     is no default-on filtering; that would silently idle every existing
-//     hive whose repos use no approval label.
+//   - Absent/empty RequireLabels: no allow-list restriction.
 //   - Non-empty RequireLabels: an issue is eligible only if it carries AT
 //     LEAST ONE of these labels (case-insensitive exact match).
+//   - Agent proposal markers default to strategist/outreach; an explicit empty
+//     agent_proposal block disables that separate admission gate.
 //
 // Matching is deliberately EXACT (case-insensitive), not substring/prefix:
 // a require-gate that prefix-matched would over-admit ("approved-for-review"
@@ -122,11 +122,13 @@ type IssueFilterConfig struct {
 	// runs BEFORE RequireLabels, which still applies to everything afterwards,
 	// so "everyone needs triage" stays expressible exactly as before.
 	ReporterTrust ReporterTrustConfig `yaml:"reporter_trust,omitempty" json:"reporter_trust,omitempty"`
+	// AgentProposal overrides the default proposal markers; an empty block disables the gate.
+	AgentProposal *AgentProposalGateConfig `yaml:"agent_proposal,omitempty" json:"agent_proposal,omitempty"`
 }
 
-// IsZero reports whether the filter is absent/empty — i.e. no filtering at all.
+// IsZero reports whether no filter settings are explicitly configured.
 func (f IssueFilterConfig) IsZero() bool {
-	return len(f.RequireLabels) == 0 && f.HardSuppressLabels.IsZero() && f.ReporterTrust.IsZero()
+	return len(f.RequireLabels) == 0 && f.HardSuppressLabels.IsZero() && f.ReporterTrust.IsZero() && f.AgentProposal == nil
 }
 
 // Equal reports whether two filters are identical (order-sensitive, exact).
@@ -146,7 +148,7 @@ func (f IssueFilterConfig) Equal(o IssueFilterConfig) bool {
 		!equalStringSlices(f.HardSuppressLabels.NeedsSpec, o.HardSuppressLabels.NeedsSpec) {
 		return false
 	}
-	return f.ReporterTrust.Equal(o.ReporterTrust)
+	return f.ReporterTrust.Equal(o.ReporterTrust) && f.AgentProposal.Equal(o.AgentProposal)
 }
 
 // labelMatches reports a case-insensitive exact match, ignoring surrounding

@@ -45,7 +45,39 @@ const (
 	// the footer may sit in for the notice to count as live (the footer
 	// itself plus a possible status/spinner line under it).
 	claudeAutoModeNoticeFooterLines = 2
+
+	// ClaudeFirstRunNoticeLabel identifies Claude Code's first-run security
+	// notice, the onboarding step a HOME without hasCompletedOnboarding shows
+	// before the input prompt. Verbatim from a live research-1 pane:
+	//
+	//	1. Claude can make mistakes …
+	//	2. Due to prompt injection risks, only use it with code you trust …
+	//	Press Enter to continue…
+	//
+	// Two body phrases AND the footer must all be present, so a pane (or a
+	// kick) that merely quotes one of them never matches.
+	ClaudeFirstRunNoticeLabel = "claude first-run security notice"
+	// claudeFirstRunNoticeMistakesMarker / ClaudeFirstRunNoticeInjectionMarker
+	// are the two distinctive body lines of the notice. The injection marker is
+	// exported because it also contains "prompt injection", a kick-refusal
+	// pattern, and the refusal scanner must not read the notice as a refusal.
+	claudeFirstRunNoticeMistakesMarker  = "Claude can make mistakes"
+	ClaudeFirstRunNoticeInjectionMarker = "Due to prompt injection risks"
+	claudeFirstRunNoticeFooter          = "Press Enter to continue"
+	// claudeFirstRunNoticeFooterLines is how many trailing non-blank lines the
+	// footer may sit in for the notice to count as live. Once Enter is pressed
+	// the CLI draws the next screen below it, and lingering scrollback must not
+	// hold the readiness gate or re-fire Enter.
+	claudeFirstRunNoticeFooterLines = 2
 )
+
+// ShowsClaudeFirstRunNotice reports whether the pane tail is Claude Code's
+// first-run security notice (see ClaudeFirstRunNoticeLabel).
+func ShowsClaudeFirstRunNotice(pane string) bool {
+	return strings.Contains(pane, claudeFirstRunNoticeMistakesMarker) &&
+		strings.Contains(pane, ClaudeFirstRunNoticeInjectionMarker) &&
+		strings.Contains(PaneTail(pane, claudeFirstRunNoticeFooterLines), claudeFirstRunNoticeFooter)
+}
 
 var BlockingPrompts = []BlockingPrompt{
 	{
@@ -82,6 +114,18 @@ var BlockingPrompts = []BlockingPrompt{
 		},
 		key:   "",
 		label: ClaudeAutoModeNoticeLabel,
+	},
+	{
+		backend: "claude",
+		// Claude Code's first-run security notice. It is an onboarding step,
+		// so it appears only in a HOME whose .claude.json lacks
+		// hasCompletedOnboarding — typically a freshly provisioned agent added
+		// at runtime (the meetings research pool). It has no options: Enter
+		// continues. Unanswered, every kick waited out inputPromptTimeout and
+		// failed with "did not reach input prompt".
+		match: ShowsClaudeFirstRunNotice,
+		key:   "",
+		label: ClaudeFirstRunNoticeLabel,
 	},
 	{
 		backend: "claude",
@@ -306,6 +350,9 @@ var claudePermissionDialogExclusions = []string{
 	"Is this a project you created or one you trust",
 	APIKeyPromptTitle,
 	"Update available",
+	// The first-run security notice is a numbered list too ("1. Claude can
+	// make mistakes", "2. Due to prompt injection risks …") answered by Enter.
+	ClaudeFirstRunNoticeInjectionMarker,
 }
 
 // ClaudePermissionDialog reports whether the pane tail shows a Claude Code

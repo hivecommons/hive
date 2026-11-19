@@ -64,6 +64,14 @@ type HardSuppressClassifier interface {
 	HardSuppressIssueBucket(labels []string) string
 }
 
+// AgentProposalGate identifies direction proposals that need human acknowledgement
+// before an agent can work on them.
+type AgentProposalGate interface {
+	IsAgentProposal(labels []string, title string) bool
+}
+
+const agentProposalFilterReason = "Agent proposal awaiting " + HumanAckLabel
+
 // NeedsDecisionLabeler is the optional configurable name of the label that
 // parks an issue on a maintainer decision. The issue relay applies it when an
 // agent files an issue with needs_decision set (hivecommons/hive#11215). A

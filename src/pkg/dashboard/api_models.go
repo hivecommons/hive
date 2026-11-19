@@ -159,6 +159,14 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 	if def := s.inferenceBackendDefaultModel(backend); def != "" {
 		resp["default_model"] = def
 	}
+	// An OpenRouter gateway's catalog carries prices and context windows; the
+	// per-agent model pickers group its ~hundreds of ids by provider and show
+	// "$/1M in · out" from this. Never attached to the static fallback.
+	if !fallback {
+		if gw := s.resolveGatewayForBackend(backend); gw != nil {
+			s.attachOpenRouterModelInfo(resp, gw.Kind, gw.Endpoint, models)
+		}
+	}
 	jsonResponse(w, resp)
 }
 
@@ -445,7 +453,7 @@ func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
 // headers (e.g. watsonx's X-IBM-Project-ID). apiKey, when non-empty, is sent as
 // the Bearer; for watsonx the caller passes the minted IAM token as apiKey.
 func fetchModelsWithHeaders(baseURL, apiKey string, extraHeaders map[string]string) ([]string, error) {
-	modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
+	modelsURL := openAIModelsURL(baseURL)
 	client := &http.Client{
 		Timeout: inferenceModelQueryTimeout,
 		// SECURITY (audit F13): Go's default redirect policy PRESERVES the
@@ -484,6 +492,22 @@ func fetchModelsWithHeaders(baseURL, apiKey string, extraHeaders map[string]stri
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 	return models, nil
+}
+
+// openAIModelsURL builds the OpenAI-compatible model-list URL for a gateway
+// endpoint. Most endpoints are stored as the server root (vLLM's
+// http://host:8000, watsonx's .../ml/gateway) and get "/v1/models"; an
+// endpoint that already ends in "/v1" (OpenRouter's https://openrouter.ai/api/v1,
+// which is the URL the OpenRouter preset and scan-to-fund store) gets
+// "/models", mirroring how the inference proxy builds /chat/completions.
+// Without this an OpenRouter gateway probed /api/v1/v1/models, got a 404, and
+// its model dropdown fell back to unrelated static aliases.
+func openAIModelsURL(endpoint string) string {
+	base := strings.TrimRight(endpoint, "/")
+	if strings.HasSuffix(base, "/v1") {
+		return base + "/models"
+	}
+	return base + "/v1/models"
 }
 
 // parseModelsResponse decodes an OpenAI-style GET /v1/models body into the

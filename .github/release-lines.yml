@@ -156,6 +156,8 @@ pinned:
   # v5-topup.yml's exclusions: it is not the branch this workflow watches (v4
   # reaches v6 through v5), and v6 is the merge TARGET, not a trigger.
   v6-topup.yml: [-v4, -v6]
+  # Tests the resolver v6-topup.yml runs; it lives on the same one line.
+  v6-topup-autoresolve-tests.yml: [-v4, -v6]
   # Publishes src/crux to hivecommons/crux (#14138). It watches the ONE line
   # the published module is cut from — v5, where the nested module lives and
   # where `crux/vX.Y.Z` tags are made. v4 is feature-frozen and has no

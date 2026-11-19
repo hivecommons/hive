@@ -234,6 +234,8 @@ type agentRecord struct {
 	restartStartedAt time.Time
 	// wedgeAlerted latches the wedged-restart alert.
 	wedgeAlerted bool
+	// authFailure rate-limits the credential-failure ERROR log (#19205).
+	authFailure authFailureLog
 	// Conditions is the agent's published condition set.
 	Conditions []Condition
 }
@@ -801,7 +803,7 @@ func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observa
 	if status == ConditionFalse && prev.Status != ConditionFalse {
 		// Credential re-seed is an operator action (RFC): alert loudly, never
 		// restart into the dead credential.
-		r.logger.Error("watchdog: agent credential failure", "agent", name, "backend", obs.Backend, "reason", reason, "detail", message)
+		r.logAuthFailure(name, obs.Backend, reason, message, now)
 		if r.alerter != nil {
 			r.alerter.AddSystemAlert(authAlertID(name), severityError,
 				fmt.Sprintf("Agent %q needs re-authentication (%s): %s", name, reason, message))
@@ -825,6 +827,9 @@ func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observa
 	// re-raises it on the next False transition.
 	if r.alerter != nil && prev.Status == ConditionFalse && status != ConditionFalse {
 		r.alerter.ClearSystemAlert(authAlertID(name))
+	}
+	if status == ConditionTrue {
+		r.clearAuthFailureLog(name)
 	}
 }
 
@@ -950,8 +955,3 @@ func (r *Reconciler) reconcileReadiness(name string, obs Observation, now time.T
 func (r *Reconciler) publish(name string) {
 	r.fleet.SetConditions(name, r.Conditions(name))
 }
-
-func crashLoopAlertID(name string) string { return alertPrefix + "crashloop-" + name }
-func wedgeAlertID(name string) string     { return alertPrefix + "wedged-restart-" + name }
-func authAlertID(name string) string      { return alertPrefix + "auth-" + name }
-func producingAlertID(name string) string { return alertPrefix + "producing-" + name }

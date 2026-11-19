@@ -29,6 +29,13 @@ const (
 	// its own honest state instead of being collapsed into a definitive expiry
 	// claim.
 	BackendAuthForbidden = "forbidden"
+	// BackendAuthRevoked is a credential the PROVIDER rejected on a live check
+	// while the credential file itself still looked valid (hivecommons/hive
+	// #18732): an unexpired access token answered HTTP 401. Unlike
+	// token-expired it is never refreshable — the grant behind the file is
+	// dead — so the hub and dashboard route it straight to an operator
+	// sign-in, and the spoke never spends a token-triggered restart on it.
+	BackendAuthRevoked = "revoked"
 )
 
 // BackendAuthState is the per-agent backend-auth canary (#6558): the spoke's

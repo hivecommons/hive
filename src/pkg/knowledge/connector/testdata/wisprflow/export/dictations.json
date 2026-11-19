@@ -1,0 +1,4 @@
+{"dictations": [
+  {"transcriptEntityId": "j-1", "formattedText": "Spec idea: a wisprflow knowledge connector for hive.", "asrText": "spec idea a wispr flow knowledge connector for hive", "timestamp": "2026-11-10T12:00:00Z", "app": "com.electron.wispr-flow", "numWords": 8},
+  {"transcriptEntityId": "j-old", "formattedText": "Too old to matter.", "timestamp": "2019-05-05T12:00:00Z", "app": "com.apple.Notes"}
+]}

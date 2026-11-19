@@ -27,14 +27,16 @@ built from the advisor's decision records and joined by the issue ref:
 - `AdvisorArm`: `none` (no decisions), `shadow` (shadow mode, delivery unchanged),
   `deliver` (rank mode, advice delivered), `holdout` (every kick was held out:
   the model ranked but nothing was typed), or `mixed` (kicks in more than one arm).
-- `AdvisorDecisions`, `AdvisorDelivered`, `AdvisorHeldOut`: counters over those decisions.
+- `AdvisorDecisions`, `AdvisorDelivered`, `AdvisorHeldOut`, `AdvisorRateLimited`: counters over
+  those decisions. A `rate-limited` decision (the model endpoint answered 429) is counted but
+  assigns no arm, so a throttled hour does not move a bead into `deliver`.
 
 Only these counters reach the analysis model; the advisor's reasons and pane text never do.
 
 The decision records live in the knowledge-advisor decision store,
 `/data/knowledge-advisor-decisions.jsonl` (`retro.AdvisorDecisionStore`): one JSON line per
 ranking decision with the agent, kick id, the kick's primed issue/PR refs, mode, arm, outcome and
-slug, rotated with lumberjack like prompt history, at 5 MiB, 3 gzipped backups, 90 days. The retro lane reads it in
+slug (plus the model call's latency and token counts when one was made), rotated with lumberjack like prompt history, at 5 MiB, 3 gzipped backups, 90 days. The retro lane reads it in
 production; without the PVC it is in-memory only.
 
 To read the comparison, call `Lane.AdvisorArmSummary()`: per arm it gives the bead
@@ -43,6 +45,28 @@ call (it works with `retro.analysis_model` empty). Compare `deliver` against `ho
 both arms share the same selection, so a lower mean in `deliver` is the signal that
 delivered advice helped. Treat small bead counts as noise, and ignore `mixed` and `none`
 for the verdict.
+
+### Reading the comparison from the dashboard
+
+`GET /api/knowledge/advisor/summary` (read role or higher; optional `?since=<RFC3339>`)
+returns the same comparison without an exec, and the Knowledge section shows it as the
+**Advisor** card. The response carries:
+
+- `window`: the first and last decision timestamps, the first `rank` decision
+  (`rank_mode_start`) and the decision count.
+- `settings`: the advisor settings read-only (`enabled`, `mode`, `model`, `holdout_percent`,
+  the call budget, `candidates`, `on_error`). The endpoint and API key are never returned.
+- `counts`: decisions by mode, arm (`shadow`, `deliver`, `holdout`) and outcome.
+- `arms`: the `Lane.AdvisorArmSummary()` rows for `shadow`, `deliver` and `holdout`, with
+  `mixed` and `none` listed separately under their own keys. These cover every closed bead
+  with a closed PR; `since` does not narrow them.
+- `cost`: mean model latency and mean prompt and completion tokens, over the records that
+  carry them (decisions made before these fields existed, or that never reached the model,
+  have none; the sample counts are returned).
+- `small_n` and `caveat`: true, with a one-line caveat, while either `deliver` or `holdout`
+  has fewer than 30 closed beads.
+
+Only counts and means are returned: never a slug, ref, agent, kick id or any entry content.
 
 ## Deterministic findings
 

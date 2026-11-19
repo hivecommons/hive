@@ -106,7 +106,7 @@ func TestStageTrackerCuesWiring(t *testing.T) {
 		`stageTrackerNoteEvents(data); stageTrackerResultToastsSync(data); stageTrackerPendingExpire(data);`,
 		`stageTrackerCueAgeSync(el, nowMs);`,
 		`function celebrateRow(rowEl, opts) {`,
-		`const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }]`,
+		`const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: headHtml }]`,
 		`if (!visible.length && !Object.keys(_stageTrackerCelebrating).length) {`,
 		`data-change-action="stageTrackerCelebrateChange"`,
 	} {
@@ -674,7 +674,9 @@ assert.strictEqual(odoText(n), '33', 'never backwards');
 stageTrackerNoteMerges({ items: [], merged: merged(34, [rec(1, 'hive', 'feat: one'), rec(31, 'clubanderson'), rec(30)]) });
 assert.strictEqual(odoText(n), '33', 'held back while the glyph flies');
 tick(0); assert.strictEqual(flights().length, 1);
-assert.ok(banners.children[0].innerHTML.includes('feat: one (hive, by hive, '), 'the banner carries the ledger title and merger: ' + banners.children[0].innerHTML);
+assert.ok(banners.children[0].innerHTML.includes('feat: one (hive, by hive) · merged '), 'the banner carries the ledger title and merger: ' + banners.children[0].innerHTML);
+// The time is the ledger's merged_at, not the poll that noticed it, and rides the head line.
+assert.ok(banners.children[0].innerHTML.includes('<time class="merge-banner-when" datetime="' + new Date(clock - 60000).toISOString() + '">· '), 'the head carries when it merged: ' + banners.children[0].innerHTML);
 assert.ok(banners.children[0].innerHTML.includes('href="https://github.com/o/r/pull/1"'), 'and the link');
 assert.ok(banners.children[0].innerHTML.includes('<span class="merge-banner-num">#1</span> merged'), 'the head carries the number although esc drops non-strings: ' + banners.children[0].innerHTML);
 // The number may live only in a nested pr record or the GitHub URL (an issue-headed ledger row): the head still reads "#15122 merged", never a bare "#".
@@ -714,13 +716,13 @@ const closeBtn = el('button'); banners.children[0].appendChild(closeBtn); closeB
 hamBannerDismiss(closeBtn); tick(180 * 1.5 + 1);
 assert.strictEqual(banners.children.length, before - 1, 'dismissed');
 // The banner body is itself the dismiss target (a tap on a phone); the title
-// and its "(lane, by, hh:mm)" tail are separate spans so the phone CSS can
-// stack them, while the full line still rides the title attribute.
+// and its "(lane, by)" tail are separate spans so the phone CSS can stack
+// them, while the full line, time included, still rides the title attribute.
 while (banners.children.length) banners.children[0].remove();
 const split = stageTrackerMergeBanner({ key: 'o/r/pr#40', repo: 'o/r', number: 40, title: 'fix: forty', merged_by: 'clubanderson', lane: 'review', at: 0 });
 assert.strictEqual(split.attrs['data-action'], 'hamBannerDismiss'); assert.strictEqual(split.attrs['data-arg-types'], 't');
-assert.ok(split.innerHTML.includes('<span class="merge-banner-title">fix: forty</span> <span class="merge-banner-meta">(review, by @clubanderson, '), split.innerHTML);
-assert.ok(split.innerHTML.includes('title="fix: forty (review, by @clubanderson, '), split.innerHTML);
+assert.ok(split.innerHTML.includes('<span class="merge-banner-title">fix: forty</span> <span class="merge-banner-meta">(review, by @clubanderson)</span>'), split.innerHTML);
+assert.ok(split.innerHTML.includes('title="fix: forty (review, by @clubanderson) · merged '), split.innerHTML);
 assert.ok(split.innerHTML.includes('data-action="hamBannerOpenLink" data-stop="1">Open on GitHub</a>'), 'the link stops the tap from also dismissing: ' + split.innerHTML);
 split.remove();
 // Phone (≤480px): only the newest STAGE_TRACKER_MERGE_BANNER_PHONE_MAX banners

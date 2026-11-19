@@ -90,3 +90,26 @@ func TestPlaceholderAppIDSatisfiesValidation(t *testing.T) {
 		t.Fatal("a config with neither a token nor any app_id must still be rejected")
 	}
 }
+
+// TestIsPlaceholderOrg pins the shared "is this slot unclaimed?" org test used
+// by the dashboard health check and fleetreport (#17593): the pool's
+// "available-<id>" org and the legacy "placeholder" form, case-insensitive,
+// whitespace-tolerant — and an empty org is deliberately NOT a placeholder.
+func TestIsPlaceholderOrg(t *testing.T) {
+	cases := map[string]bool{
+		"":                                false,
+		"   ":                             false,
+		"available-lke648397-260827-boq9": true,
+		" Available-OKE-07 ":              true,
+		"placeholder":                     true,
+		"PLACEHOLDER-oke-03":              true,
+		"acme":                            false,
+		"unavailable-corp":                false,
+		"my-placeholder":                  false,
+	}
+	for org, want := range cases {
+		if got := IsPlaceholderOrg(org); got != want {
+			t.Errorf("IsPlaceholderOrg(%q) = %v, want %v", org, got, want)
+		}
+	}
+}

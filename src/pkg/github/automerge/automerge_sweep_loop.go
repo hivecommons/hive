@@ -202,6 +202,9 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				c.reconcileNativeQueueGate(ctx, stageLaneSelf, owner, repoName, pr, reason)
 				c.recordStage(stageLaneSelf, repo, owner, repoName, pr, reason, merged, err)
 			}
+			// tier names the lane on every skip/hold line so an operator can
+			// grep a trusted bot's PR by `"tier":"trusted-bot"`.
+			tier := c.selfAuthoredSweepTier(pr)
 			if _, held := train.duplicateOf(number); held {
 				result.Skipped++
 				repoSkipped++
@@ -224,7 +227,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				continue
 			}
 			if reason, handled := c.mergeTrainFront(ctx, train, pr); handled {
-				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[autoMergeReasonMergeTrainRebasing]++
@@ -282,9 +285,9 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			}
 			if reason := c.detectTrustedRegistryClankerWorkflowApprovalRequired(ctx, repo, owner, repoName, pr); reason != "" {
 				if isTerminalRequiredCheckHold(reason) {
-					c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason)
+					c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason, "tier", tier)
 				} else {
-					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				}
 				result.Skipped++
 				repoSkipped++
@@ -293,7 +296,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				continue
 			}
 			if reason := c.prefilterSelfAuthoredPR(pr); reason != "" {
-				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++
@@ -323,10 +326,10 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			if reason != "" {
 				if isTerminalRequiredCheckHold(reason) || isPermanentMergeRefusal(reason) {
 					if c.markTerminalHoldLogged(owner, repoName, number, pr.GetHead().GetSHA(), reason) {
-						c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason)
+						c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason, "tier", tier)
 					}
 				} else {
-					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				}
 				result.Skipped++
 				repoSkipped++
@@ -732,7 +735,8 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 // sweepPass runs the three lanes once, in order, sharing one merge budget,
 // then reconciles stage labels. targets narrows an event-driven pass to the
 // PRs a webhook named (nil: everything); cause names what started the pass
-// for the log. It returns nil when the self-authored lane failed outright
+// for the log. It returns nil when the self-authored lane failed outright or
+// the contributor lane was interrupted by cancellation of the sweep context
 // (its callers then keep the current cadence).
 func (c *Engine) sweepPass(ctx context.Context, maxMerges int, acmmAllowed bool, targets SweepTargets, cause string) *AutoMergeSweepResult {
 	c.sweepClock.begin(cause, targets, c.now())
@@ -781,6 +785,12 @@ func (c *Engine) sweepPass(ctx context.Context, maxMerges int, acmmAllowed bool,
 	if remaining > 0 && c.currentContributorLanePolicy().Enabled {
 		laneResult, laneErr := c.SweepContributorLaneAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: remaining, Targets: targets})
 		if laneErr != nil {
+			// A client hand-over or shutdown cancels the whole sweep. Do not
+			// report that expected interruption as a failed contributor pass,
+			// or start stage reconciliation on the canceled context.
+			if ctx.Err() == context.Canceled && errors.Is(laneErr, context.Canceled) {
+				return nil
+			}
 			c.warn("contributor-lane automerge sweep failed", "error", laneErr, "cause", cause)
 			if isRateLimited(laneErr) {
 				c.refreshRateLimitCache(ctx)

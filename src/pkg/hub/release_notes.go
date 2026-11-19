@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/releasenotes"
 )
 
@@ -30,7 +31,9 @@ const (
 
 var (
 	hubReleaseNotesRawBaseURL = "https://raw.githubusercontent.com"
-	hubReleaseNotesHTTP       = &http.Client{Timeout: 10 * time.Second}
+	// Contents reads go through pkg/github's transport so repeat fetches of an
+	// unchanged ref are ETag 304s and the calls show up in /api/gh-rate-limits.
+	hubReleaseNotesHTTP       = &http.Client{Transport: hgithub.NewHTTPTransport(nil), Timeout: 10 * time.Second}
 	hubReleaseNotesSHAPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 )
 

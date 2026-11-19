@@ -2,6 +2,7 @@
       refreshSectionCardShell('repos-section');
       if (_repoResizeDrag || _repoOrderDrag) return;
       repos = repoOrderApply(repos || []);
+      noteRepoHoldLayout(repos, Date.now());
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
       const showDesign = showPlan && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
@@ -346,10 +347,69 @@
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.changesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
           </div>${pillsHtml}${hfRepoSectionHtml(r)}
         </div>`;
-      }).join(''));
+      }).join('') + renderReferenceRepoCards(status.referenceRepos, hostLabel));
       hfRenderEditor();
       hfRenderPinned();
       hfRenderCrossRepo();
+    }
+
+    /**
+     * project.reference_repos (#18015): repos outside the project the hive may
+     * study. Deliberately minimal — a name and a tier chip, no stats, no ACMM,
+     * no pause/swarm controls — so they are legible as "not managed here".
+     * Hidden while a pill or project filter is active (they have no work items
+     * to match).
+     */
+    function renderReferenceRepoCards(refs, hostLabel) {
+      if (!Array.isArray(refs) || !refs.length) return '';
+      if (repoPillFilterActive(repoPillFilterState()) || overviewProjectFilterState()) return '';
+      const base = window._githubBaseUrl || 'https://github.com';
+      return refs.map(rr => {
+        const full = String(rr.full || '');
+        const tier = String(rr.reference_tier || rr.tier || 'read-only');
+        const tip = tier === 'read-only'
+          ? 'Reference repo: agents may clone and read it; every write is refused by the proxy.'
+          : `Reference repo: agents may clone and read it, and may open ${tier.replace('+', ' and ')} (never merge, push to the default branch, label, assign, review, or close others' items).`;
+        const derived = renderReferenceRepoDerived(rr);
+        return `<div class="repo-card repo-card-reference${derived ? ' repo-card-reference-derived' : ''}" data-repo="${esc(full)}">
+          <div class="repo-provider-label repo-reference-provider" title="This repo lives on ${esc(hostLabel)} and is outside this project">${esc(hostLabel)}</div>
+          <div class="repo-name"><a class="repo-reference-link" href="${esc(base + '/' + full)}" target="_blank" rel="noopener" title="${esc(full)}">${esc(full)}</a><span class="repo-header-badges"><span class="repo-reference-pill" title="${esc(tip)}">📚 reference · ${esc(tier)}</span></span></div>
+          ${derived}<div class="repo-reference-note">Outside this project — studied, not worked. No work items, no ACMM evaluation.</div>
+        </div>`;
+      }).join('');
+    }
+
+    /**
+     * A reference repo derived from an accepted request issue (#18139, #18161)
+     * is read-only here: a lock, a "from owner/repo#N" link to the request
+     * issue and its credential chip. It is rebuilt from the issue on every
+     * config load, so the dashboard never offers to edit or remove it; closing
+     * the issue or removing triage/accepted drops it. '' for hand-written.
+     */
+    function renderReferenceRepoDerived(rr) {
+      const from = String((rr && rr.derived_from) || '');
+      if (!from) return '';
+      const url = String(rr.derived_from_url || '');
+      const src = url
+        ? `<a class="repo-reference-source" href="${esc(url)}" target="_blank" rel="noopener" title="Open the request issue this entry is derived from">${esc(from)}</a>`
+        : `<span class="repo-reference-source">${esc(from)}</span>`;
+      const state = String(rr.credential_state || '');
+      const reason = String(rr.credential_reason || '');
+      const login = String(rr.credential_login || '');
+      const identity = String(rr.credential_identity || '');
+      const note = String(rr.credential_note || '');
+      const chips = {
+        'write-tier': identity === 'bot'
+          ? ['ok', '🤖 as ' + (login || 'hive bot'), 'Issues and PRs here appear under the hive\'s GitHub App' + (login ? ' (' + login + ')' : '') + (note ? ': ' + note : '') + '.']
+          : ['ok', login ? '🔑 as ' + login : '🔑 owner account', 'Issues and PRs here appear under ' + (identity === 'token_file' ? 'the write_token_file account' : 'the hive owner\'s GitHub account') + (login ? ' (' + login + ')' : '') + (note ? '; ' + note : '') + '.'],
+        'read-only': ['ro', 'read-only', reason || 'No credential covers this repo, so the entry was downgraded to read-only.'],
+        'unresolved': ['warn', 'unresolved', reason || 'The App installation could not be checked; served read-only until the next pass resolves it.'],
+      };
+      const chip = chips[state];
+      const chipHTML = chip
+        ? ` <span class="repo-reference-cred repo-reference-cred-${chip[0]}" data-credential-state="${esc(state)}" title="${esc(chip[2])}">${esc(chip[1])}</span>`
+        : '';
+      return `<div class="repo-reference-derived" title="Derived from an accepted request issue: read-only here, rebuilt on every config load. Close the issue or remove triage/accepted to drop it.">🔒 from ${src}${chipHTML}</div>`;
     }
 
     /**

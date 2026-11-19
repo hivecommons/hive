@@ -472,6 +472,11 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .work-kind.rework{background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);color:var(--status-attention);border-color:color-mix(in srgb,var(--status-attention) var(--component-border),transparent)}
 .clanker-idle-rework,.clanker-rework-pending{color:var(--status-error);font-weight:600}
 .clanker-rework-pending .cc-issue-link{color:var(--status-error)}
+.clanker-rework-pending .clanker-rework-why{font-weight:400;color:var(--text-muted)}
+.clanker-rework-more{display:inline;font-weight:400}
+.clanker-rework-more>summary{display:inline;cursor:pointer;color:var(--text-faint);user-select:none;list-style:none}
+.clanker-rework-more>summary::-webkit-details-marker{display:none}
+.clanker-rework-more[open]>summary{display:none}
 .clanker-pane{margin-top:var(--sp-3);font-size:.72rem}
 .clanker-pane>summary{cursor:pointer;color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;user-select:none;list-style:none}
 .clanker-pane>summary::before{content:"\25B8";display:inline-block;width:1em;color:var(--text-muted)}
@@ -1165,6 +1170,7 @@ select.admin-act{min-width:0;max-width:100%%}
    Never hidden, so the operator can always see and Resume it. */
 .cc-q-item.cc-q-held{opacity:.55}
 .cc-q-item.cc-q-held:hover{opacity:.8}
+.cc-q-excluded-note{margin:var(--sp-2) var(--sp-0) var(--sp-0);font-size:var(--fs-xs);color:var(--text-muted)}
 .cc-q-held-tag{margin-left:7px;font-size:var(--fs-2xs);font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--status-attention);background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);border:var(--line-width) solid color-mix(in srgb,var(--status-attention) var(--component-border),transparent);border-radius:var(--r-pill);padding:var(--sp-0) var(--sp-3);vertical-align:middle}
 /* Resume-all (#queue-hold): a small amber header button. Hidden until there is at
    least one held issue and the viewer is owner/read-write (JS-toggled display). */
@@ -2460,6 +2466,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <button type="button" class="hv-btn btn-icon btn-sm queue-suspend-btn btn-secondary" id="queue-suspend-btn" title="Pause contributions" aria-label="Pause contributions" style="display:none"><span id="queue-suspend-icon"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span></button>
 </span>
 <span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
+<div class="cc-q-excluded-note" id="queue-excluded-note" hidden></div>
 <!-- Playlist-style SEARCH (#2592). A pure VIEW filter over the loaded queue
      (repo / number / title / label, case-insensitive, live) — it never changes
      the persisted order, only what is shown. Read-only, so visible to everyone. -->
@@ -5292,7 +5299,7 @@ function knowledgeLine(c){
 // raw reason as a fallback so a new server-side reason still renders legibly.
 function idleReasonLabel(r){
   var m={contribution_suspended:'contribution suspended',hub_not_ready:'hub not ready',
-    no_matching_work:'no matching work',token_mint_failed:'token mint failed',
+    no_matching_work:'no matching work',queue_empty:'queue empty',token_mint_failed:'token mint failed',
     tier_disabled:'tier disabled',concurrency_limit:'concurrency limit'};
   return m[r]||String(r).replace(/_/g,' ');
 }
@@ -5518,14 +5525,29 @@ function clankerIdleLine(c){
   if(pend>0)return '<div class="clanker-sub clanker-idle-rework">idle &middot; '+pend+' PR'+(pend===1?'':'s')+' awaiting rework</div>';
   return c.idle_reason?('<div class="clanker-sub">idle: '+esc(idleReasonLabel(c.idle_reason))+'</div>'):'';
 }
+// At most this many pending PRs are linked inline; the rest sit behind a
+// "show N more" disclosure (the card is a status line, not a backlog).
+var CLANKER_REWORK_INLINE_MAX=3;
 function clankerPendingReworkLine(c){
   var pend=c.pending_rework|0;
   if(pend<=0)return '';
-  var prs=(c.pending_rework_prs||[]).map(function(p){return (p.repo||'')+'#'+(p.number||'')+(p.cause?(' ('+p.cause+')'):'')+(p.state?(' — '+p.state):'');}).join(', ');
-  var links=(c.pending_rework_prs||[]).map(function(p){return clankerWorkRef(p)+(p.state?(' <i class="clanker-rework-state">'+esc(p.state)+'</i>'):'');}).join(', ');
+  var items=c.pending_rework_prs||[];
+  var prs=items.map(function(p){return (p.repo||'')+'#'+(p.number||'')+(p.cause?(' ('+p.cause+')'):'')+(p.state?(' — '+p.state):'');}).join(', ');
+  var refs=items.map(function(p){return clankerWorkRef(p)+(p.state?(' <i class="clanker-rework-state">'+esc(p.state)+'</i>'):'');});
+  var links=refs.slice(0,CLANKER_REWORK_INLINE_MAX).join(', ');
+  var rest=refs.slice(CLANKER_REWORK_INLINE_MAX);
+  if(rest.length){
+    var key=(c.github_username||c.contributor_id||'').toLowerCase()+':rework';
+    var open=ccOpenPanes[key]?' open':'';
+    links+=', <details class="clanker-rework-more" data-pane="'+esc(key)+'"'+open+'><summary>show '+rest.length+' more</summary>'+rest.join(', ')+'</details>';
+  }
   var depth=c.fix_queue_depth|0;
   var q=depth>0?(' &middot; fix queue '+depth):'';
-  return '<div class="clanker-sub clanker-rework-pending" title="'+esc(prs)+'">'+pend+' PR'+(pend===1?'':'s')+' awaiting rework (not yet dispatched)'+q+(links?(': '+links):'')+'</div>';
+  // The server's own account of why the dispatcher is holding the fix
+  // (offline, no fix-pr capability, orphaned dispatch, backoff, focus
+  // window, waiting for the relay's next ready); older hubs send none.
+  var why=c.pending_rework_blocked?('not dispatched: <span class="clanker-rework-why">'+esc(c.pending_rework_blocked)+'</span>'):'not yet dispatched';
+  return '<div class="clanker-sub clanker-rework-pending" title="'+esc(prs)+'">'+pend+' PR'+(pend===1?'':'s')+' awaiting rework ('+why+')'+q+(links?(': '+links):'')+'</div>';
 }
 // #7317 item 3 helpers. Both return '' when there is nothing to show so a
 // healthy row is byte-for-byte what it was before.
@@ -5546,7 +5568,7 @@ function clankerPaneBlock(lines,key){
   return '<details class="clanker-pane" data-pane="'+esc(key)+'"'+open+'><summary>agent pane &middot; '+lines.length+' line'+(lines.length===1?'':'s')+'</summary><pre>'+esc(lines.join('\n'))+'</pre></details>';
 }
 onEl('clanker-list','toggle',function(e){
-  var d=e.target;if(!d||!d.classList||!d.classList.contains('clanker-pane'))return;
+  var d=e.target;if(!d||!d.classList||!(d.classList.contains('clanker-pane')||d.classList.contains('clanker-rework-more')))return;
   var k=d.getAttribute('data-pane');if(!k)return;
   if(d.open)ccOpenPanes[k]=true;else delete ccOpenPanes[k];
 },true);
@@ -5784,6 +5806,22 @@ function ccScenarioLabel(sc){
     abandoned_handback:'handed back (relay asked for new work)',abandoned_disconnect:'handed back (connection lost)',abandoned_other:'handed back'};
   return map[sc]||(sc||'').replace(/_/g,' ');
 }
+// ccModelEvidenceFailTip (#18721) is the tooltip on a wall post's "failed"
+// model-evidence figure: the model's runs split by scenario (labelled as in the
+// run history above), then its failed runs by kind, so a high failure figure
+// reads as "the contributors' environments" or "the work". Plain text for a
+// title attribute; empty when the server sent no split (an older hub).
+function ccModelEvidenceFailTip(me){
+  var sc=(me&&me.scenarios)||{},lines=[];
+  var order=['verdict_complete','idle_complete','headless_complete','env_failure','task_failure','unspecified_failure','abandoned_handback','abandoned_disconnect','abandoned_other'];
+  Object.keys(sc).filter(function(k){return order.indexOf(k)<0;}).sort().forEach(function(k){order.push(k);});
+  order.forEach(function(k){if(sc[k])lines.push(ccScenarioLabel(k)+': '+sc[k]);});
+  var fk=me&&me.failure_kinds;
+  if(fk&&((fk.environment||0)+(fk.task||0)+(fk.unspecified||0))>0){
+    lines.push('Failed runs by kind: environment '+(fk.environment||0)+' \u00b7 task '+(fk.task||0)+' \u00b7 unspecified '+(fk.unspecified||0));
+  }
+  return lines.join('\n');
+}
 function ccRenderRuns(user,data){
   var el=document.getElementById('runs-list'),cnt=document.getElementById('runs-count');
   if(!el)return;
@@ -5965,6 +6003,10 @@ async function opsPoll(){
     ccCooldownCount=(data&&typeof data.cooldown_count==='number')?data.cooldown_count:0;
     ccInFlightCount=(data&&typeof data.in_flight_count==='number')?data.in_flight_count:0;
     ccHeldCount=(data&&typeof data.held_count==='number')?data.held_count:0;
+    // #19078: umbrella / owner-only issues are never offered to a contributor; the
+    // queue header says how many, so "N workable" is not mistaken for the whole backlog.
+    ccUmbrellaCount=(data&&typeof data.umbrella_count==='number')?data.umbrella_count:0;
+    ccHumanOnlyCount=(data&&typeof data.human_only_count==='number')?data.human_only_count:0;
     safeRender('queue-counts',function(){if(typeof ccRenderQueue==='function')ccRenderQueue();});
     safeRender('cooldown-count',function(){if(typeof ccRenderCooldownCount==='function')ccRenderCooldownCount();});
   }catch(e){
@@ -6036,13 +6078,20 @@ var ccLastAch=0;           // debounce achievement pops
 var ccCooldownCount=0;     // issues still within cooldown (from fleet payload, #2649)
 var ccInFlightCount=0;     // issues currently held by a live connection (fleet payload)
 var ccHeldCount=0;         // issues manually PARKED by the operator (fleet payload, on-hold tally)
+var ccUmbrellaCount=0;     // umbrella / tracker issues withheld from contributors (fleet payload)
+var ccHumanOnlyCount=0;    // owner-only issues withheld from contributors (fleet payload)
 var ccWallPosts=[];
 var ccWallEnabled=false;
 function ccWallPostHTML(p){
   var tags=p.tags||{};
   var evidence='';
   if(p.model_evidence){
-    evidence='<div class="ops-note">model evidence: '+(p.model_evidence.runs||0)+' runs · '+Math.round((p.model_evidence.verified_pr_share||0)*100)+'%% verified PR · '+Math.round((p.model_evidence.failure_rate||0)*100)+'%% failed</div>';
+    // Name the canonical model id (the one the Governor's PRs-by-model card
+    // groups by, #18718) when it differs from the tag, raw spelling in the tooltip.
+    var evCanon=String(p.model_evidence.canonical_model||''),evRaw=String(p.model_evidence.model||tags.model||'');
+    var evName=(evCanon&&evCanon!=='unknown'&&evCanon.toLowerCase()!==evRaw.toLowerCase())?' for <span class="wall-canonical-model" title="Reported as '+esc(evRaw)+'">'+esc(evCanon)+'</span>':'';
+    var failTip=ccModelEvidenceFailTip(p.model_evidence);
+    evidence='<div class="ops-note">model evidence'+evName+': '+(p.model_evidence.runs||0)+' runs · '+Math.round((p.model_evidence.verified_pr_share||0)*100)+'%% verified PR · <span'+(failTip?' title="'+esc(failTip)+'"':'')+'>'+Math.round((p.model_evidence.failure_rate||0)*100)+'%% failed</span></div>';
   }
   var controls='';
   if(ccMeUsername&&p.author&&p.author.toLowerCase()===ccMeUsername.toLowerCase())controls+='<button type="button" class="hv-btn btn-secondary btn-sm admin-act" data-wall-del="'+esc(p.id)+'">delete</button>';
@@ -6311,11 +6360,19 @@ function ccRenderQueue(flip){
   // the fleet payload (#2649 companion). A segment is OMITTED when its count is 0
   // so the header stays compact; " · " (a middot) separates present segments.
   if(qc){
-    var segs=[ccQueue.length+' ready'];
+    var segs=[ccQueue.length+' workable'];
     if(ccCooldownCount>0)segs.push(ccCooldownCount+' in cooldown');
     if(ccInFlightCount>0)segs.push(ccInFlightCount+' in flight');
     if(ccHeldCount>0)segs.push(ccHeldCount+' on hold');
     qc.textContent=segs.join(' · ');
+  }
+  // #19078: one quiet line naming the umbrella and owner-only issues that are not offered
+  // to contributors. Hidden at zero. Text only (textContent), never markup.
+  var xn=document.getElementById('queue-excluded-note');
+  if(xn){
+    var xcount=ccUmbrellaCount+ccHumanOnlyCount;
+    xn.hidden=xcount<=0;
+    xn.textContent=xcount>0?(xcount+' umbrella and owner-only item'+(xcount===1?' is':'s are')+' not offered to contributors'):'';
   }
   // No-blink guard: if a per-row ⋯ menu / "Move to #" dialog is OPEN and this is a
   // POLL re-render (flip is falsy — NOT a drag/move, which the operator initiated),
@@ -7029,7 +7086,7 @@ function ccNarrate(e){
     case 'left': body=who+' left the hive'; break;
     case 'picked up': body=who+' grabbed'+pickedRef; break;
     case 'completed': body=who+' completed'+(e.task?' '+ccTaskRefLink(e.task):''); break;
-    case 'failed': body=who+' hit a snag on'+(e.task?' '+ccTaskRefLink(e.task):''); break;
+    case 'failed': body=who+' hit a snag on'+(e.task?' '+ccTaskRefLink(e.task):'')+(e.reason?' <span class="ref">('+esc(e.reason)+')</span>':''); break;
     case 'promoted': body=who+' was promoted to <b>'+esc(e.task||e.role||'contributor')+'</b>'; break;
     default: body=who+' '+esc(e.action)+ref;
   }

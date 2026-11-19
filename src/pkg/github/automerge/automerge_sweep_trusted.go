@@ -12,6 +12,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -102,6 +103,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 	c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
 	verdict := c.contributorLaneVerdictFor(owner+"/"+repo, number, evaluatedHeadSHA)
+	// Trusted-bot lane: the swarm verdict is advisory (safety is the repo's
+	// CI), so a requires_human on a dependency bump never derives 085.
+	verdict = c.trustedBotLaneVerdict(displayRepo, number, evaluatedHeadSHA, lane, verdict)
 	c.noteStageVerdict(owner, repo, number, verdict)
 	priorApprover, _ := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, evaluatedHeadSHA, verdict)
 	priorChecked := verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true})
@@ -138,6 +142,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "behind", pr)
 	}
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
+		if reason, ok := c.resolveConflictingDependabotPR(ctx, displayRepo, owner, repo, pr, number, evaluatedHeadSHA); ok {
+			return AutoMergeSweepEvent{}, reason, nil
+		}
 		return AutoMergeSweepEvent{}, "conflicting", nil
 	}
 	baseBranch := ""
@@ -150,7 +157,8 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, reason, nil
 	}
 	headPushedAt := c.headPushedAt(ctx, owner, repo, number, evaluatedHeadSHA, pr)
-	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, evaluatedHeadSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
+	ciState, _, err := c.commitCIForPRSkipping(ctx, owner, repo, baseBranch, evaluatedHeadSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx), nil)
+	green, reason := ciState.Green, ciState.Reason
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
 	}
@@ -166,6 +174,18 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		green, reason, err = c.recheckSkippedByDesign(ctx, displayRepo, owner, repo, baseBranch, pr, number, evaluatedHeadSHA, headPushedAt, reason)
 		if err != nil {
 			return AutoMergeSweepEvent{}, reason, err
+		}
+	}
+	if !green {
+		// auto_merge.required_checks may name a check this repo never runs
+		// (automerge_trusted_bot_lane.go): gate on the checks that do report,
+		// or surface the absent check by name.
+		green, reason, err = c.recheckRequiredCheckNeverReported(ctx, displayRepo, owner, repo, baseBranch, pr, number, evaluatedHeadSHA, headPushedAt, ciState, reason)
+		if err != nil {
+			return AutoMergeSweepEvent{}, reason, err
+		}
+		if strings.HasPrefix(reason, requiredCheckNeverReportedPrefix) {
+			return AutoMergeSweepEvent{}, reason, nil
 		}
 	}
 	if !green {
@@ -278,7 +298,10 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, refused, nil
 	}
 
-	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, evaluatedHeadSHA, method)
+	mergeMessage, mergeOpts, refused := c.mergeOptions(ctx, owner, repo, current, evaluatedHeadSHA, method)
+	if refused != "" {
+		return AutoMergeSweepEvent{}, refused, nil
+	}
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, evaluatedHeadSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
@@ -741,7 +764,10 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return AutoMergeSweepEvent{}, refused, nil
 	}
 
-	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, headSHA, method)
+	mergeMessage, mergeOpts, refused := c.mergeOptions(ctx, owner, repo, current, headSHA, method)
+	if refused != "" {
+		return AutoMergeSweepEvent{}, refused, nil
+	}
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, headSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
@@ -819,13 +845,20 @@ func (c *Engine) isForkPR(pr *gh.PullRequest) bool {
 // date — update-branch, merge-forward, a merge-train rebase request — asks
 // this first: Renovate stops rebasing a branch for good once another identity
 // has committed to it (projectbluefin/utah#1097), and under strict freshness
-// it rebases a behind branch itself. A nil PR is never a bot branch.
+// it rebases a behind branch itself. A Dependabot branch is the exception on
+// the update-branch steps (dependabotUpdateBranchAllowed, #18441). A nil PR
+// is never a bot branch.
 func (c *Engine) leaveBaseSyncToDependencyBot(displayRepo, owner, repo string, pr *gh.PullRequest, step string) bool {
 	if pr == nil {
 		return false
 	}
 	headRef, author := pr.GetHead().GetRef(), hgithub.SafeGetLogin(pr.GetUser())
 	if !hgithub.DependencyBotBranch(headRef, author) {
+		return false
+	}
+	if dependabotUpdateBranchAllowed(pr, step) {
+		// Dependabot never rebases a merely-behind branch and ignores the
+		// App's commands, so the App updates it (#18441).
 		return false
 	}
 	number, headSHA := pr.GetNumber(), pr.GetHead().GetSHA()
@@ -837,8 +870,8 @@ func (c *Engine) leaveBaseSyncToDependencyBot(displayRepo, owner, repo string, p
 }
 
 // updateBranchAndSkip merges the base into pr's head with GitHub's
-// update-branch. A dependency bot's branch is never updated: it holds as
-// "behind" until the bot rebases it.
+// update-branch. A dependency bot's branch other than Dependabot's is never
+// updated: it holds as "behind" until the bot rebases it.
 func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, reason string, pr *gh.PullRequest) (AutoMergeSweepEvent, string, error) {
 	if c.leaveBaseSyncToDependencyBot(displayRepo, owner, repo, pr, "update-branch") {
 		return AutoMergeSweepEvent{}, "behind", nil
@@ -995,6 +1028,23 @@ func (c *Engine) commentTrustedAuthorMerge(ctx context.Context, owner, repo stri
 	body := fmt.Sprintf("merged by Hive trusted-author auto-merge: author @%s holds role %s and GitHub permission %s on repo; CI green at %s.", author, role, permission, sha)
 	if login := strings.TrimPrefix(role, trustedAuthorRoleOperatorApprovedPrefix); login != role {
 		body = fmt.Sprintf("merged by Hive on behalf of @%s, who approved this head (%s) with \"Approve and let hive merge\": author @%s holds no trusted-author role; CI green at %s.", login, stagelabels.OperatorApprovalAdmission(login), author, sha)
+	}
+	return c.postAutoMergeNote(ctx, owner, repo, number, body)
+}
+
+// postAutoMergeNote records that the hive merged the PR. Nobody has to act
+// on it, so in github.notifications.mode: quiet (the default) it becomes the
+// auto-merge section of the PR's hive:status card, edited in place: an edit
+// emails nobody, where a fresh comment on every merge emailed the author and
+// every watcher (~32 a day, hivecommons/hive#18452). prstatus.Write
+// neutralises the @logins in it, so the card never notifies either. Mode
+// normal keeps today's standalone comment. A merge that waits on a person
+// is not this note: the 085 / 090 entry comments still post as their own
+// comment.
+func (c *Engine) postAutoMergeNote(ctx context.Context, owner, repo string, number int, body string) error {
+	if c.stagePolicy().QuietNotifications {
+		_, err := c.writeStatusSectionWith(ctx, owner, repo, number, prstatus.KeyAutoMerge, body, prstatus.Write)
+		return err
 	}
 	_, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)})
 	return err

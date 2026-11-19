@@ -192,6 +192,17 @@ func closeOnMergeClaimSettled(claim IssueClaim, now time.Time, recheck time.Dura
 	return now.Sub(claim.CloseOnMergeSettledAt) < recheck
 }
 
+// closeOnMergePRUnreadable reports a terminal read failure: the PR is gone or
+// this identity cannot see it (404/403), so retrying every tick is noise.
+func closeOnMergePRUnreadable(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil {
+		return false
+	}
+	code := ghErr.Response.StatusCode
+	return code == http.StatusNotFound || code == http.StatusForbidden
+}
+
 // closeOnMergeClaimMergedAt is the instant the sweep treats as the claim's
 // merge time for MergedAfter filtering: MergedAt, else the first observation.
 func closeOnMergeClaimMergedAt(claim IssueClaim) time.Time {
@@ -254,6 +265,11 @@ func (c *Client) CloseOnMergeLedgerSweep(ctx context.Context, ledger *ClaimLedge
 		if err != nil {
 			if opts.Logger != nil {
 				opts.Logger.Warn("close-on-merge: could not read merged PR", "repo", claim.PRRepo, "pr", claim.PRNumber, "error", err)
+			}
+			// 404/403 will not heal on the next tick: remember it so the
+			// warning repeats at most once per recheck window.
+			if closeOnMergePRUnreadable(err) && ledger.MarkCloseOnMergeSettled(claim.Repo, claim.Issue, claim.PRNumber, now) {
+				sweep.Marked++
 			}
 			continue
 		}

@@ -26,6 +26,23 @@ test('pinned pure verifier actually validates the immutable upstream rules', () 
   }
 });
 
+test('PR Type and PR Issue verdicts keep the upstream check text (#18764)', () => {
+  assert.deepEqual(policy.prTypeVerdict('WIP: [scope] ✨\uFE0F add thing'), {name: 'PR Type',
+    conclusion: 'success', title: 'PR Type in Title', summary: 'Found ✨ PR (feature)',
+    text: 'Final title:\n\n\tadd thing\n'});
+  assert.equal(policy.prTypeVerdict(':running: chore').summary, 'Found 🌱 PR (infra)');
+  const missing = policy.prTypeVerdict('📝 proposal');
+  assert.equal(missing.conclusion, 'failure');
+  assert.equal(missing.summary, 'No matching PR type indicator found in title.');
+  assert.ok(missing.text.startsWith("I saw a title of `📝 proposal`, which doesn't seem to have"));
+  assert.deepEqual(policy.prIssueVerdict('🐛 fix flake'), {name: 'PR Issue', conclusion: 'success',
+    title: 'Issue/PR tag in PR title', summary: 'Your PR title does not contain any Issue or PR tags', text: ''});
+  const tagged = policy.prIssueVerdict('🐛 fix #123');
+  assert.equal(tagged.conclusion, 'failure');
+  assert.equal(tagged.summary, 'Your PR has an Issue or PR number in the title.');
+  assert.equal(policy.prIssueVerdict('🐛 fix #12a').conclusion, 'success');
+});
+
 test('member snapshots never accept another head/repo/member or an unrelated merge', async () => {
   assert.equal((await policy.snapshot(client(member()), subject())).length, 1);
   const mutations = [

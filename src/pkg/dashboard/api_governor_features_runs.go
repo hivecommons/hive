@@ -40,14 +40,6 @@ type featuresRunsBody struct {
 	RunsTriagePriorArtMaxParksPerCycle *int    `json:"runsTriagePriorArtMaxParksPerCycle"`
 	RunsTriagePriorArtBotCloseTTL      *string `json:"runsTriagePriorArtBotCloseTtl"`
 
-	RecheckEnabled         *bool   `json:"spektacularRecheckEnabled"`
-	RecheckDefaultInterval *string `json:"spektacularRecheckDefaultInterval"`
-	RecheckMaxDeltaTasks   *int    `json:"spektacularRecheckMaxDeltaTasks"`
-	RecheckDiscoveryProxy  *string `json:"spektacularRecheckDiscoveryProxy"`
-	DiscoveryEnabled       *bool   `json:"spektacularDiscoveryEnabled"`
-	DiscoveryTimeout       *string `json:"spektacularDiscoveryTimeout"`
-	DiscoveryMaxTotalItems *int    `json:"spektacularDiscoveryMaxTotalItems"`
-
 	ExtFlueEndpoint        *string `json:"extFlueEndpoint"`
 	ExtFlueWorkflowVersion *string `json:"extFlueWorkflowVersion"`
 	ExtOMPWorkflowVersion  *string `json:"extOmpWorkflowVersion"`
@@ -67,9 +59,11 @@ var runsWaitSeverities = []string{"decision", "info"}
 // the vibe-kanban project id).
 const maxRunsSettingLen = 200
 
-// prepare validates every field the request carried against cur and returns
-// the mutation to apply. Nothing is changed when an error is returned.
-func (b featuresRunsBody) prepare(cur *config.Config) (func(*config.Config), error) {
+// prepare validates every field the request carried and returns the mutation
+// to apply. Nothing is changed when an error is returned. The current config
+// is accepted for symmetry with the other features bodies; no runs field
+// needs it since the recheck discovery proxy was retired.
+func (b featuresRunsBody) prepare(_ *config.Config) (func(*config.Config), error) {
 	var steps []func(*config.Config)
 
 	for _, f := range []struct {
@@ -95,8 +89,6 @@ func (b featuresRunsBody) prepare(cur *config.Config) (func(*config.Config), err
 	}{
 		{b.RunsTriageEnabled, func(c *config.Config) *bool { return &c.Runs.Triage.Enabled }},
 		{b.RunsTriageClarityGateEnabled, func(c *config.Config) *bool { return &c.Runs.Triage.ClarityGate.Enabled }},
-		{b.RecheckEnabled, func(c *config.Config) *bool { return &c.Runs.Spektacular.Recheck.Enabled }},
-		{b.DiscoveryEnabled, func(c *config.Config) *bool { return &c.Runs.Spektacular.Recheck.Discovery.Enabled }},
 		{b.ExtVibeKanbanEnabled, func(c *config.Config) *bool { return &c.Runs.External.VibeKanban.Enabled }},
 	} {
 		if f.v == nil {
@@ -116,8 +108,6 @@ func (b featuresRunsBody) prepare(cur *config.Config) (func(*config.Config), err
 		{b.RunsTriageMinBodyChars, "runs triage min_body_chars", func(c *config.Config) *int { return &c.Runs.Triage.MinBodyChars }},
 		{b.RunsTriagePriorArtMaxFindings, "runs triage prior_art max_findings", func(c *config.Config) *int { return &c.Runs.Triage.PriorArt.MaxFindings }},
 		{b.RunsTriagePriorArtMaxParksPerCycle, "runs triage prior_art max_parks_per_cycle", func(c *config.Config) *int { return &c.Runs.Triage.PriorArt.MaxParksPerCycle }},
-		{b.RecheckMaxDeltaTasks, "runs spektacular recheck max_delta_tasks", func(c *config.Config) *int { return &c.Runs.Spektacular.Recheck.MaxDeltaTasks }},
-		{b.DiscoveryMaxTotalItems, "runs spektacular recheck discovery max_total_items", func(c *config.Config) *int { return &c.Runs.Spektacular.Recheck.Discovery.MaxTotalItems }},
 	} {
 		if f.v == nil {
 			continue
@@ -181,38 +171,6 @@ func (b featuresRunsBody) prepare(cur *config.Config) (func(*config.Config), err
 			return nil, fmt.Errorf("runs wait_severity must be empty (default) or one of %s", strings.Join(runsWaitSeverities, ", "))
 		}
 		steps = append(steps, func(c *config.Config) { c.Runs.WaitSeverity = v })
-	}
-
-	if b.RecheckDefaultInterval != nil {
-		d, err := parseSettingsDuration("runs spektacular recheck default_interval", *b.RecheckDefaultInterval)
-		if err != nil {
-			return nil, err
-		}
-		steps = append(steps, func(c *config.Config) { c.Runs.Spektacular.Recheck.DefaultInterval = d })
-	}
-	if b.DiscoveryTimeout != nil {
-		d, err := parseSettingsDuration("runs spektacular recheck discovery timeout", *b.DiscoveryTimeout)
-		if err != nil {
-			return nil, err
-		}
-		steps = append(steps, func(c *config.Config) { c.Runs.Spektacular.Recheck.Discovery.Timeout = d })
-	}
-	if b.RecheckDiscoveryProxy != nil {
-		proxy := strings.TrimSpace(*b.RecheckDiscoveryProxy)
-		if proxy != "" {
-			u, err := url.Parse(proxy)
-			if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-				return nil, fmt.Errorf("runs spektacular recheck discovery_proxy must be empty or the HTTP(S) relay proxy without credentials, path, query or fragment")
-			}
-		}
-		// With exact sources configured the proxy is mandatory; reuse the
-		// config validator so the dialog cannot save a policy boot rejects.
-		recheck := cur.Runs.Spektacular.Recheck
-		recheck.DiscoveryProxy = proxy
-		if err := recheck.ValidateDiscovery(); err != nil {
-			return nil, err
-		}
-		steps = append(steps, func(c *config.Config) { c.Runs.Spektacular.Recheck.DiscoveryProxy = proxy })
 	}
 
 	if b.ExtFlueEndpoint != nil {
@@ -300,14 +258,6 @@ func featuresRunsResponse(cfg *config.Config) map[string]interface{} {
 		"runsTriagePriorArtMaxParksPerCycle": r.Triage.PriorArt.MaxParksPerCycle,
 		"runsTriagePriorArtBotCloseTtl":      settingsDurationString(r.Triage.PriorArt.BotCloseTTL),
 
-		"spektacularRecheckEnabled":         r.Spektacular.Recheck.Enabled,
-		"spektacularRecheckDefaultInterval": settingsDurationString(r.Spektacular.Recheck.DefaultInterval),
-		"spektacularRecheckMaxDeltaTasks":   r.Spektacular.Recheck.MaxDeltaTasks,
-		"spektacularRecheckDiscoveryProxy":  r.Spektacular.Recheck.DiscoveryProxy,
-		"spektacularDiscoveryEnabled":       r.Spektacular.Recheck.Discovery.Enabled,
-		"spektacularDiscoveryTimeout":       settingsDurationString(r.Spektacular.Recheck.Discovery.Timeout),
-		"spektacularDiscoveryMaxTotalItems": r.Spektacular.Recheck.Discovery.MaxTotalItems,
-
 		"extFlueModeSetting":     r.External.Flue.Mode,
 		"extFlueEndpoint":        r.External.Flue.Endpoint,
 		"extFlueWorkflowVersion": r.External.Flue.WorkflowVersion,
@@ -332,10 +282,6 @@ func featuresRunsResponse(cfg *config.Config) map[string]interface{} {
 			"runsTriagePriorArtMaxFindings":      config.DefaultPriorArtGateMaxFindings,
 			"runsTriagePriorArtMaxParksPerCycle": config.DefaultPriorArtGateMaxParksPerCycle,
 			"runsTriagePriorArtBotCloseTtl":      config.DefaultPriorArtGateBotCloseTTL.String(),
-			"spektacularRecheckDefaultInterval":  config.DefaultSpektacularRecheckInterval.String(),
-			"spektacularRecheckMaxDeltaTasks":    config.DefaultSpektacularMaxDeltaTasks,
-			"spektacularDiscoveryTimeout":        fmt.Sprintf("%ds", config.DefaultSpektacularDiscoveryTimeoutS),
-			"spektacularDiscoveryMaxTotalItems":  config.DefaultSpektacularDiscoveryMaxTotalItems,
 			"extFlueMode":                        config.DefaultFlueBindingMode,
 			"implementCheckpointMinAcmm":         config.RunImplementCheckpointMinACMM,
 		},

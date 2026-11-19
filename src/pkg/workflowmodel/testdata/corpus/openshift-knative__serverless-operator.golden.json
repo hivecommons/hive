@@ -1,0 +1,29 @@
+{
+  "columns": [
+    "Open",
+    "Actionable",
+    "Claimed",
+    "PR in progress",
+    "CI / Review",
+    "Merge queue",
+    "Merged"
+  ],
+  "roles": {
+    "other": 1
+  },
+  "pipelines": [
+    {
+      "id": "tkn-tekton-docker-build",
+      "role": "other",
+      "nodes": 16,
+      "levels": 6,
+      "events": null
+    }
+  ],
+  "ciSubstages": null,
+  "findings": {
+    "no-trigger": 1,
+    "pipelineref-external": 2
+  },
+  "columnDiff": null
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -724,7 +725,7 @@ func issueFromBranchName(branch string) (int, bool) {
 	if len(m) < 4 {
 		return 0, false
 	}
-	if branchIssueMatchOverlapsDate(branch, m[2], m[3]) {
+	if branchIssueMatchOverlapsDate(branch, m[2], m[3]) || branchIssueMatchIsTrackerKey(branch, m[2]) {
 		return 0, false
 	}
 	n, err := strconv.Atoi(branch[m[2]:m[3]])
@@ -732,6 +733,43 @@ func issueFromBranchName(branch string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// trackerKeyPrefixes holds the project keys of the hive's Jira and Linear
+// work sources (lower case), installed by SetTrackerKeyPrefixes.
+var trackerKeyPrefixes = struct {
+	sync.RWMutex
+	keys map[string]bool
+}{}
+
+// SetTrackerKeyPrefixes installs the project keys of the configured Jira and
+// Linear work sources (jira.project_keys, linear.teams[].key). A branch named
+// after one of their items ("ceh-12725-...") then claims no GitHub issue.
+func SetTrackerKeyPrefixes(keys []string) {
+	m := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		if k = strings.ToLower(strings.TrimSpace(k)); k != "" {
+			m[k] = true
+		}
+	}
+	trackerKeyPrefixes.Lock()
+	defer trackerKeyPrefixes.Unlock()
+	trackerKeyPrefixes.keys = m
+}
+
+// branchIssueMatchIsTrackerKey reports whether the number at start is the
+// numeric half of a configured Jira/Linear key, such as "CEH-12725" in
+// "ceh-12725-mcp-client". That number is not a GitHub issue in this
+// repository. Any other word (hotfix-, bug-, feat-) keeps the claim.
+func branchIssueMatchIsTrackerKey(branch string, start int) bool {
+	if start < 2 || branch[start-1] != '-' {
+		return false
+	}
+	head := branch[:start-1]
+	word := strings.ToLower(head[strings.LastIndexAny(head, "/_-")+1:])
+	trackerKeyPrefixes.RLock()
+	defer trackerKeyPrefixes.RUnlock()
+	return trackerKeyPrefixes.keys[word]
 }
 
 func branchIssueMatchOverlapsDate(branch string, start, end int) bool {
@@ -934,6 +972,7 @@ func (c *Client) RecordOpenedPRClaims(ledger *ClaimLedger, d PROpenedDetail, ide
 		return nil
 	}
 	claims := ClaimsFromPROpened(d, c.getRepos(), identity, now)
+	c.canonicalizeClaimRepos(claims)
 	for _, claim := range claims {
 		if err := ledger.Record(claim); err != nil && c.logger != nil {
 			c.logger.Warn("duplicate-PR guard: could not persist claim from just-opened PR",
@@ -1027,6 +1066,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 					continue
 				}
 				prClaims := claimsFromPR(pr, repo, identity, now)
+				c.canonicalizeClaimRepos(prClaims)
 				for i := range prClaims {
 					prClaims[i].PRState = PRStateOpen
 				}
@@ -1121,6 +1161,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 				// #16116: other people's reviews reach the throughput card's
 				// Reviewed row the way their merges reach Merged·Closed.
 				prClaims := claimsFromPR(pr, repo, identity, now)
+				c.canonicalizeClaimRepos(prClaims)
 				history = append(history, prHistoryFromClaims(prClaims, PRStateMerged, now)...)
 				for _, claim := range prClaims {
 					claim.MergedPR = true
@@ -1184,6 +1225,9 @@ type ClaimLedger struct {
 	// #3768 gave the contribute WS hub a read path into it, so reads now happen
 	// concurrently with the eval cycle's Reconcile/Save writes.
 	mu sync.RWMutex
+	// saveMu serializes Save so concurrent callers cannot interleave their
+	// write-temp/rename steps (hivecommons/hive#18975).
+	saveMu sync.Mutex
 	// claims is keyed by "repo#issue".
 	claims map[string]IssueClaim
 	// history is the churn record (hivecommons/hive#7995): "repo#issue" → PR
@@ -1824,6 +1868,9 @@ func (l *ClaimLedger) Save() error {
 	if l == nil {
 		return nil
 	}
+	// Snapshot under saveMu so an older snapshot cannot rename after a newer one.
+	l.saveMu.Lock()
+	defer l.saveMu.Unlock()
 	data, err := json.MarshalIndent(ledgerFile{
 		SavedAt: l.now(),
 		Claims:  l.Claims(),
@@ -1832,11 +1879,25 @@ func (l *ClaimLedger) Save() error {
 	if err != nil {
 		return fmt.Errorf("marshaling claim ledger: %w", err)
 	}
-	tmp := l.path + ".tmp"
-	if err := os.WriteFile(tmp, data, claimLedgerFileMode); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(l.path), filepath.Base(l.path)+".*.tmp")
+	if err != nil {
 		return fmt.Errorf("writing temp claim ledger: %w", err)
 	}
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, claimLedgerFileMode)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("writing temp claim ledger: %w", werr)
+	}
 	if err := os.Rename(tmp, l.path); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("renaming claim ledger: %w", err)
 	}
 	return nil

@@ -209,6 +209,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		token, _ := strings.CutPrefix(r.Header.Get("Authorization"), bearerPrefix)
 		if project, projectToken := s.LaneAuth.Project(token); projectToken {
 			if !s.isWorkService(r.URL.Path) {
+				recordAuthRejection(r.Context(), rejectProjectForbidden)
 				s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "project credentials cannot access agent RPCs")
 				return
 			}
@@ -217,6 +218,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 		if s.Token == "" {
 			if network != networkUnix {
+				recordAuthRejection(r.Context(), rejectNoTokenConfigured)
 				s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "this server has no bearer token; only unix-socket requests are accepted")
 				return
 			}
@@ -225,6 +227,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), bearerPrefix)
 		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(s.Token)) != 1 {
+			recordAuthRejection(r.Context(), rejectInvalidToken)
 			w.Header().Set("WWW-Authenticate", `Bearer realm="crux"`)
 			s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "missing or invalid bearer token")
 			return

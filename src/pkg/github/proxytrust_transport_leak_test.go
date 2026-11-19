@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 )
 
 // Regressions for the client-side half of issue #3875: every JWT/token-mint
@@ -136,5 +138,46 @@ func TestProxyTrustingHTTPClient_ReusesConnections(t *testing.T) {
 	const maxConns = 2
 	if got := connsOpened.Load(); got > maxConns {
 		t.Fatalf("%d calls opened %d connections (want <= %d) — per-call transports are manufacturing sockets again (#3875)", calls, got, maxConns)
+	}
+}
+
+// TestSetUpstreamProxy_RebuildsSharedTransport asserts that installing (or
+// clearing) an upstream-proxy selector swaps the shared transport's Proxy
+// func without touching the RootCAs pool, and that the rebuild is keyed on
+// the selector so repeated calls with the same selector stay cached.
+func TestSetUpstreamProxy_RebuildsSharedTransport(t *testing.T) {
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "proxy-ca.pem")
+	writeTestCA(t, caPath)
+	withProxyCAPath(t, caPath)
+	t.Cleanup(func() { SetUpstreamProxy(nil) })
+
+	SetUpstreamProxy(nil)
+	before := sharedProxyTrust.sharedTransport()
+
+	sel, err := upstreamproxy.New("http://proxy.corp.example:3128", []string{"ghe.corp.example"}, nil, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetUpstreamProxy(sel)
+	after := sharedProxyTrust.sharedTransport()
+	if after == before {
+		t.Fatal("installing a selector must rebuild the shared transport")
+	}
+	if sharedProxyTrust.sharedTransport() != after {
+		t.Fatal("same selector must keep the rebuilt transport cached")
+	}
+	if after.TLSClientConfig.RootCAs != before.TLSClientConfig.RootCAs {
+		t.Fatal("selector change must not rebuild the RootCAs pool")
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, "https://ghe.corp.example/api/v3/user", nil)
+	u, err := after.Proxy(req)
+	if err != nil || u == nil || u.Host != "proxy.corp.example:3128" {
+		t.Fatalf("Proxy(ghe) = %v, %v; want proxy.corp.example:3128", u, err)
+	}
+	req, _ = http.NewRequest(http.MethodGet, "https://api.github.com/user", nil)
+	if u, _ := after.Proxy(req); u != nil {
+		t.Fatalf("Proxy(api.github.com) = %v, want direct", u)
 	}
 }

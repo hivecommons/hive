@@ -184,9 +184,16 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"jevMode":          agentCfg.JevMode,
 			"jevReady":         s.deps.Config.JevReady(),
 			"explainMode":      agentCfg.ExplainMode,
+			"sandboxSubstrate": agentSandboxSubstrateOrEmpty(agentCfg),
 			"sandboxEnabled":   agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
 			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
-			"replicas":         agentCfg.Replicas,
+			// What turning the sandbox on would resolve to (#18525): whether
+			// the agent's own fields plus agent_sandbox defaults are a
+			// complete block, and which other agents a block can be copied from.
+			"sandboxDefaultsProblem": agentCfg.SandboxBlockProblem(s.deps.Config.AgentSandbox),
+			"sandboxCopySources":     s.sandboxCopySources(name),
+			"sandboxFields":          agentSandboxFieldsView(agentCfg, s.deps.Config.AgentSandbox),
+			"replicas":               agentCfg.Replicas,
 		},
 		"cadences":     cadences,
 		"models":       models,
@@ -652,13 +659,61 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			agentCfg.Aliases = a
 		}
 	}
-	if v, ok := body["sandboxEnabled"]; ok {
-		if b, ok := v.(bool); ok {
-			if agentCfg.Sandbox == nil {
-				agentCfg.Sandbox = &config.AgentSandboxOverride{}
-			}
-			bb := b
-			agentCfg.Sandbox.Enabled = &bb
+	// Sandbox block edits (#18525, #18797). Field edits land first unless a
+	// copy_from is named, so "enable + set the image" in one save sees the
+	// image; with a copy the copied block is written first and the edits go
+	// on top of it. A bare sandboxCopyFrom (no sandboxEnabled) copies and
+	// enables, the dialog's "Copy sandbox settings from" action.
+	copyFrom := sandboxCopyFromBody(body)
+	if copyFrom == "" {
+		if err := applySandboxEdits(&agentCfg, body); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	enable, hasToggle := body["sandboxEnabled"].(bool)
+	if !hasToggle && copyFrom != "" {
+		enable, hasToggle = true, true
+	}
+	if hasToggle {
+		block, err := s.sandboxBlockForToggle(name, agentCfg, enable, copyFrom)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		agentCfg.Sandbox = block
+	}
+	if copyFrom != "" {
+		if err := applySandboxEdits(&agentCfg, body); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if sandboxEditsPresent(body) {
+		if err := sandboxEnabledProblem(name, agentCfg, s.deps.Config.AgentSandbox); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if v, ok := body["sandboxSubstrate"]; ok {
+		raw, err := json.Marshal(v)
+		var in config.SandboxSubstrateConfig
+		if err == nil {
+			err = json.Unmarshal(raw, &in)
+		}
+		var sub *config.SandboxSubstrateConfig
+		if err == nil {
+			sub, err = sanitizeSubstrateConfig(in)
+		}
+		if err != nil {
+			jsonError(w, "invalid sandboxSubstrate: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if sub != nil && agentCfg.Sandbox == nil {
+			agentCfg.Sandbox = &config.AgentSandboxOverride{}
+		}
+		if agentCfg.Sandbox != nil {
+			agentCfg.Sandbox.Substrate = sub
 		}
 	}
 	if v, ok := body["cavemanMode"]; ok {
@@ -1018,8 +1073,18 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		agentCfg.Model = sanitizeString(body.Model)
 		agentCfg.ModelOwner = config.FieldOwnerOperator
 		effectiveModel = agentCfg.Model
-		modelChanged = agentCfg.Model != prevModel
 	}
+	// A Claude id in the other CLI's convention, whether sent in this request
+	// or carried over by a backend change, is stored in this backend's
+	// spelling (claude-sonnet-5-5 on claude, claude-sonnet-5.5 on copilot),
+	// with a warning. Each CLI rejects the other's spelling.
+	normalizedModel, modelWarning := canonicalizeModelForBackend(name, effectiveBackend, effectiveModel)
+	if modelWarning != "" {
+		agentCfg.Model = normalizedModel
+		agentCfg.ModelOwner = config.FieldOwnerOperator
+		effectiveModel = normalizedModel
+	}
+	modelChanged = effectiveModel != prevModel
 	if body.ReasoningEffort != nil {
 		effort := sanitizeString(*body.ReasoningEffort)
 		// Same set-time rejection rationale as ValidateBackend above: an
@@ -1082,7 +1147,8 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 			s.logger.Warn("failed to apply backend from config endpoint", "agent", name, "error", err)
 		}
 	}
-	resp := map[string]any{"ok": true, "status": "updated", "agent": name, "applied": true, "restarted": false}
+	resp := withModelWarning(map[string]any{"ok": true, "status": "updated", "agent": name, "applied": true, "restarted": false}, modelWarning)
+	s.noteModelIDNormalization(name, modelWarning)
 	if modelChanged || backendChanged || effortChanged {
 		if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
 			// Persisted and applied to the launch configuration, but the
@@ -1914,4 +1980,11 @@ func (s *Server) getAgentHooks(name string) map[string][]any {
 		return h
 	}
 	return map[string][]any{"preKick": {}, "postIdle": {}}
+}
+
+func agentSandboxSubstrateOrEmpty(a config.AgentConfig) config.SandboxSubstrateConfig {
+	if a.Sandbox == nil {
+		return config.SandboxSubstrateConfig{}
+	}
+	return substrateOrEmpty(a.Sandbox.Substrate)
 }

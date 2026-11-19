@@ -23,7 +23,7 @@ func neverCalled(t *testing.T) func() string {
 }
 
 func TestDecideProviderBudgetAlertLatchedSuspended(t *testing.T) {
-	got := decideProviderBudgetAlert(true, true, "spend cap hit", time.Now(), 1, neverCalled(t))
+	got := decideProviderBudgetAlert(true, true, "spend cap hit", time.Now(), 1, 30*time.Minute, neverCalled(t))
 
 	if got.Clear {
 		t.Fatal("a held latch must not clear the banner")
@@ -40,7 +40,7 @@ func TestDecideProviderBudgetAlertLatchedSuspended(t *testing.T) {
 }
 
 func TestDecideProviderBudgetAlertLatchedProbing(t *testing.T) {
-	got := decideProviderBudgetAlert(true, false, "spend cap hit", time.Now(), 1, neverCalled(t))
+	got := decideProviderBudgetAlert(true, false, "spend cap hit", time.Now(), 1, 30*time.Minute, neverCalled(t))
 
 	if !strings.Contains(got.Message, "probing with a single agent kick") {
 		t.Fatalf("a stale latch probes rather than staying muted, got %q", got.Message)
@@ -54,7 +54,7 @@ func TestDecideProviderBudgetAlertLatchedProbing(t *testing.T) {
 // between "one call was refused" and "this has been refusing since Tuesday".
 func TestDecideProviderBudgetAlertRepeatedRebuffsAreQuantified(t *testing.T) {
 	since := time.Date(2026, 9, 16, 14, 30, 0, 0, time.UTC)
-	got := decideProviderBudgetAlert(true, true, "spend cap hit", since, 47, neverCalled(t))
+	got := decideProviderBudgetAlert(true, true, "spend cap hit", since, 47, 30*time.Minute, neverCalled(t))
 
 	if !strings.Contains(got.Message, "47 refused calls") {
 		t.Fatalf("repeated rebuffs must be counted, got %q", got.Message)
@@ -66,7 +66,7 @@ func TestDecideProviderBudgetAlertRepeatedRebuffsAreQuantified(t *testing.T) {
 
 func TestDecideProviderBudgetAlertSingleRebuffIsNotQuantified(t *testing.T) {
 	since := time.Date(2026, 9, 16, 14, 30, 0, 0, time.UTC)
-	got := decideProviderBudgetAlert(true, true, "spend cap hit", since, 1, neverCalled(t))
+	got := decideProviderBudgetAlert(true, true, "spend cap hit", since, 1, 30*time.Minute, neverCalled(t))
 
 	if strings.Contains(got.Message, "refused calls") {
 		t.Fatalf("a single rebuff must not be reported as a run of them, got %q", got.Message)
@@ -80,7 +80,7 @@ func TestDecideProviderBudgetAlertSingleRebuffIsNotQuantified(t *testing.T) {
 // branch: the provider is not refusing on money, but agents are individually
 // out of quota, which is a different cause and must not be silent.
 func TestDecideProviderBudgetAlertQuotaExhaustedFallback(t *testing.T) {
-	got := decideProviderBudgetAlert(false, false, "", time.Now(), 0,
+	got := decideProviderBudgetAlert(false, false, "", time.Now(), 0, 30*time.Minute,
 		func() string { return "3 agents out of quota" })
 
 	if got.Clear {
@@ -89,13 +89,18 @@ func TestDecideProviderBudgetAlertQuotaExhaustedFallback(t *testing.T) {
 	if !strings.Contains(got.Message, "provider quota exhausted") || !strings.Contains(got.Message, "3 agents out of quota") {
 		t.Fatalf("quota exhaustion must name itself and its reason, got %q", got.Message)
 	}
+	// #18112: the banner says the hive is holding those agents' kicks and
+	// when it retries them, not just that the quota ran out.
+	if !strings.Contains(got.Message, "their kicks are held and retried every 30m") {
+		t.Fatalf("quota exhaustion must say kicks are held and the probe interval, got %q", got.Message)
+	}
 	if got.Cause != "" {
 		t.Fatalf("only the latched branch replaces the cause, got %q", got.Cause)
 	}
 }
 
 func TestDecideProviderBudgetAlertHealthyClears(t *testing.T) {
-	got := decideProviderBudgetAlert(false, false, "", time.Now(), 0, func() string { return "" })
+	got := decideProviderBudgetAlert(false, false, "", time.Now(), 0, 30*time.Minute, func() string { return "" })
 
 	if !got.Clear {
 		t.Fatal("a healthy provider with no exhausted quota must clear the banner, or it sticks forever")
@@ -121,7 +126,7 @@ func TestDecideProviderBudgetAlertNeverRaisesAndClears(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decideProviderBudgetAlert(tc.latched, tc.suppress, "cause", time.Now(), 1,
+			got := decideProviderBudgetAlert(tc.latched, tc.suppress, "cause", time.Now(), 1, 30*time.Minute,
 				func() string { return tc.quota })
 			if got.Message != "" && got.Clear {
 				t.Fatalf("must never raise and clear in the same cycle: %+v", got)

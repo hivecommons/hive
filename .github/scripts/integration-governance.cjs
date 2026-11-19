@@ -9,7 +9,7 @@ const MAX_COMMITS = 1000;
 const MAX_AUTHOR_BATCH = 50;
 // This literal is inside the enrolled .github closure. A caller-supplied
 // preparedBy.sourceSHA must never choose a new executable verifier tree.
-const TRUSTED_SCRIPTS_TREE = '4307b1a9d25267e7ef60a7921e7a9fb68bd1bcde';
+const TRUSTED_SCRIPTS_TREE = '109f0f1af9f90cbdf4a7b433b22a0765bdb41d74';
 const SOURCE = 'https://github.com/kubernetes-sigs/kubebuilder-release-tools/tree/012269a88fa4c034a0acf1ba84c26b195c0dbab4';
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
 const git = (args, cwd = process.cwd()) =>
@@ -46,13 +46,74 @@ async function snapshot(github, subject) {
 
 // Readonly adaptation of verify/type.go, verify/issue.go and notes/common/prefix.go
 // at SOURCE (SPDX-License-Identifier: Apache-2.0, Copyright 2020 The Kubernetes Authors).
-// https://www.apache.org/licenses/LICENSE-2.0 . Unlike the
-// advisory image wrapper, unavailable validation never becomes success.
+// https://www.apache.org/licenses/LICENSE-2.0 . The same two verdicts back
+// the required `PR Type` / `PR Issue` checks that pr-verifier.yml posts
+// (.github/scripts/pr-verifier.cjs, #18764) and the integration `contents`
+// policy below, where unavailable validation never becomes success.
+// [type, String(), shortcodes and emoji in the order PRTypeFromTitle tries them]
+const PR_TYPES = [
+  ['feature', ':sparkles:', '✨'], ['bugfix', ':bug:', '🐛'], ['docs', ':book:', '📖'],
+  ['infra', ':seedling:', '🌱'], ['breaking', ':warning:', '⚠'], ['release', ':rocket:', '🚀'],
+  ['infra', ':running:', '🏃'],
+];
+const EMOJI = {feature: '✨', bugfix: '🐛', docs: '📖', infra: '🌱', breaking: '⚠', release: '🚀'};
+
+// notes/common/prefix.go PRTypeFromTitle: [type or null, title without prefix].
+function prTypeFromTitle(title) {
+  title = title.trim();
+  for (const [type, code, emoji] of PR_TYPES) {
+    if (title.startsWith(code) || title.startsWith(emoji)) {
+      title = title.startsWith(code) ? title.slice(code.length) : title;
+      title = title.startsWith(emoji) ? title.slice(emoji.length) : title;
+      title = title.startsWith('\uFE0F') ? title.slice(1) : title;
+      return [type, title.trim()];
+    }
+  }
+  return [null, title];
+}
+
+// Go's %#q: a backquoted string when it can be, else a quoted one.
+const goQuote = text => (/[`\u0000-\u0008\u000A-\u001F\u007F\uFEFF]/.test(text) ? JSON.stringify(text) : `\`${text}\``);
+
+// verify/type.go verifyPRType; output title from verify/main.go.
+function prTypeVerdict(rawTitle) {
+  const title = String(rawTitle ?? '').replace(/^\W?WIP\W/iu, '').trim().replace(/^\[[\w.-]*\]/, '').trim();
+  const [type, finalTitle] = prTypeFromTitle(title);
+  if (!type) {
+    return {name: 'PR Type', conclusion: 'failure', title: 'PR Type in Title',
+      summary: 'No matching PR type indicator found in title.',
+      text: `I saw a title of ${goQuote(title)}, which doesn't seem to have any of the acceptable prefixes.
+
+You need to have one of these as the prefix of your PR title:
+
+- Breaking change: ⚠ (\`:warning:\`)
+- Non-breaking feature: ✨ (\`:sparkles:\`)
+- Patch fix: 🐛 (\`:bug:\`)
+- Docs: 📖 (\`:book:\`)
+- Release: 🚀 (\`:rocket:\`)
+- Infra/Tests/Other: 🌱 (\`:seedling:\`)
+
+More details can be found at [sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md](https://sigs.k8s.io/kubebuilder-release-tools/VERSIONING.md).`};
+  }
+  return {name: 'PR Type', conclusion: 'success', title: 'PR Type in Title',
+    summary: `Found ${EMOJI[type]} PR (${type})`, text: `Final title:\n\n\t${finalTitle}\n`};
+}
+
+// verify/issue.go checkIssueInTitle; output title from verify/main.go.
+function prIssueVerdict(rawTitle) {
+  const [, title] = prTypeFromTitle(String(rawTitle ?? ''));
+  if (/#[0-9]+\b/.test(title)) {
+    return {name: 'PR Issue', conclusion: 'failure', title: 'Issue/PR tag in PR title',
+      summary: 'Your PR has an Issue or PR number in the title.',
+      text: `The title should just be descriptive.
+Issue numbers belong in the PR body as either \`Fixes #XYZ\` (if it closes the issue or PR), or something like \`Related to #XYZ\` (if it's just related).`};
+  }
+  return {name: 'PR Issue', conclusion: 'success', title: 'Issue/PR tag in PR title',
+    summary: 'Your PR title does not contain any Issue or PR tags', text: ''};
+}
+
 function verifyContents(title) {
-  const trimmed = title.replace(/^\W?WIP\W/iu, '').trim().replace(/^\[[\w.-]*\]/, '').trim();
-  const prefixes = ['✨', '🐛', '📖', '🌱', '⚠', '🚀', '🏃',
-    ':sparkles:', ':bug:', ':book:', ':seedling:', ':warning:', ':rocket:', ':running:'];
-  if (!prefixes.some(prefix => trimmed.startsWith(prefix)) || /#[0-9]+\b/.test(title)) {
+  if (prTypeVerdict(title).conclusion !== 'success' || prIssueVerdict(title).conclusion !== 'success') {
     throw new Error(`PR content policy rejected title; immutable source ${SOURCE}`);
   }
 }
@@ -155,4 +216,4 @@ async function verify(kind, subject, members, github) {
   }
 }
 
-module.exports = {SOURCE, row, digest, snapshot, verifyContents, verify};
+module.exports = {SOURCE, row, digest, snapshot, prTypeVerdict, prIssueVerdict, verifyContents, verify};

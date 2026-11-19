@@ -206,6 +206,13 @@ func (s *InferenceSink) Record(agent, model string, inputTokens, outputTokens in
 	s.record(agent, model, BackendInference, inputTokens, outputTokens, 0, 0)
 }
 
+// RecordWithCache is Record with the prompt split into uncached input and
+// cached reads (OpenAI usage.prompt_tokens_details.cached_tokens), so a
+// gateway's cache-read price applies. inputTokens EXCLUDES cacheRead.
+func (s *InferenceSink) RecordWithCache(agent, model string, inputTokens, outputTokens, cacheRead, cacheCreation int64) {
+	s.record(agent, model, BackendInference, inputTokens, outputTokens, cacheRead, cacheCreation)
+}
+
 // RecordCopilot adds one Copilot completion captured live by the MITM proxy.
 // Unlike Copilot session.shutdown metrics, each call has a real wall-clock
 // timestamp, so the collector persists a Usage timeline that /api/repo-cost can

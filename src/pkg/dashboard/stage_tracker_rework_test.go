@@ -247,6 +247,10 @@ assert.strictEqual(stageTrackerPresenceChipText(working), 'waiting on @Danathar 
 // A pushed head with nothing against it waits on the hive's reviewer (hivecommons/hive#16615).
 assert.strictEqual(stageTrackerPresenceChipText(pushed), 'waiting on 🐝 hive reviewer · re-review of bbb');
 assert.strictEqual(stageTrackerPresenceChipText(w(Object.assign({}, pushed.rework, { owed_by: 'author' }))), 'waiting on @Danathar · re-review pending', 'the server says the author still owes it');
+// hivecommons/hive#17789: an older payload without owed_by reads a DCO ask as the author's move too.
+assert.strictEqual(stageTrackerReReviewOwedByHive(Object.assign({}, pushed, { reason: 'hive-signoff-attribution' })), false);
+assert.strictEqual(stageTrackerReReviewOwedByHive(Object.assign({}, pushed, { reason: 'dco-missing' })), false);
+assert.strictEqual(stageTrackerPresenceChipText(Object.assign({}, pushed, { reason: 'hive-signoff-attribution', rework: Object.assign({}, pushed.rework, { owed_by: 'author' }) })), 'waiting on @Danathar · sign-off owed', 'no re-review is queued for a DCO ask');
 assert.match(stageTrackerReworkTip(requested, NOW), /^rework requested 1 hour ago \(\S+ .*\) · no response from @Danathar yet$/);
 assert.match(stageTrackerReworkTip(queued, NOW), /^rework queued for @Danathar's clanker · 2 ahead · queued 10 min ago \(/);
 assert.match(stageTrackerReworkTip(acked, NOW), /^@Danathar acknowledged · activity on the PR 20 min ago \(/);
@@ -305,6 +309,10 @@ func TestStageTrackerReworkOwedBy16615(t *testing.T) {
 		"red CI on the pushed head":           func(it *StageTrackerItem) { it.CIActivity.State = "failing" },
 		"findings on the pushed head":         func(it *StageTrackerItem) { it.ReviewActivity.State = "changes_requested" },
 		"conflict nobody in the hive rebases": func(it *StageTrackerItem) { it.Reason = "conflicting" },
+		// hivecommons/hive#17789: a DCO ask is the author's move; no
+		// re-review of the pushed head is queued for it.
+		"hive-signoff-attribution": func(it *StageTrackerItem) { it.Reason = "hive-signoff-attribution" },
+		"dco-missing":              func(it *StageTrackerItem) { it.Reason = "dco-missing" },
 	} {
 		it := base()
 		mutate(&it)

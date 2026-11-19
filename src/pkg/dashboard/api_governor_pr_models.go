@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -29,6 +30,15 @@ type governorPRModelsResponse struct {
 	Unknown      int                                  `json:"unknown"`
 	MostReworked []governorPRMostReworkedItem         `json:"most_reworked,omitempty"`
 	FixerQueue   map[string]governor.FixerQueueStatus `json:"fixer_queue,omitempty"`
+	// Coverage discloses how much history the counts rest on (same shape as
+	// /api/contribute/effective-models). EarliestPRCreatedAt is the oldest
+	// created_at among the PRs counted, omitted when there are none.
+	Coverage            contributeEffectiveModelsCoverage `json:"coverage"`
+	EarliestPRCreatedAt string                            `json:"earliest_pr_created_at,omitempty"`
+	// HiveCostCoverage describes the launch-cost snapshot behind each
+	// bucket's hive_cost (#18717). Always present; Ready=false means no
+	// bucket carries hive_cost.
+	HiveCostCoverage governorPRModelsHiveCostCoverage `json:"hive_cost_coverage"`
 }
 
 // governorPRModelBucket is one canonical model (modelfamily.Canonical folds
@@ -48,27 +58,163 @@ type governorPRModelBucket struct {
 	Rework         governorPRModelRework        `json:"rework"`
 	Effectiveness  governorPRModelEffectiveness `json:"effectiveness"`
 	Agents         []governorPRModelAgentBucket `json:"agents,omitempty"`
+	// Efforts splits the bucket by the trailer's effort= value ("unknown"
+	// when absent), sorted by PRs descending (hivecommons/hive#18715).
+	Efforts []governorPRModelEffort `json:"efforts,omitempty"`
+	// HiveCost is what this model's PRs cost the hive to review and repair
+	// (#18717); omitted when the launch-cost snapshot is not ready.
+	HiveCost *governorPRModelHiveCost `json:"hive_cost,omitempty"`
+
+	// ClosedUnmergedReasons splits ClosedUnmerged by why the PR was closed
+	// (#18719); the three counts always sum to ClosedUnmerged.
+	ClosedUnmergedReasons governorPRModelCloseReasons `json:"closed_unmerged_reasons"`
+	// Repos splits the bucket by canonical owner/repo (effectivePRRepo), PRs
+	// descending. Weeks splits it by ISO week (Monday, UTC) of created_at,
+	// oldest first, and is omitted for window=7d. Rework figures in both
+	// cover merged PRs only, as Rework does.
+	Repos []governorPRModelRepoBucket `json:"repos,omitempty"`
+	Weeks []governorPRModelWeekBucket `json:"weeks,omitempty"`
+}
+
+// governorPRModelRepoBucket is one repository's share of a model bucket.
+type governorPRModelRepoBucket struct {
+	Repo               string  `json:"repo"`
+	PRs                int     `json:"prs"`
+	Merged             int     `json:"merged"`
+	ClosedUnmerged     int     `json:"closed_unmerged"`
+	Open               int     `json:"open"`
+	FirstPassMerged    int     `json:"first_pass_merged"`
+	FirstPassMergeRate float64 `json:"first_pass_merge_rate"`
+	AvgReviewRounds    float64 `json:"avg_review_rounds"`
+	AvgFixAttempts     float64 `json:"avg_fix_attempts"`
+}
+
+// governorPRModelWeekBucket is one ISO week's share of a model bucket.
+// WeekStart is the Monday (UTC) as YYYY-MM-DD.
+type governorPRModelWeekBucket struct {
+	WeekStart          string  `json:"week_start"`
+	PRs                int     `json:"prs"`
+	Merged             int     `json:"merged"`
+	FirstPassMerged    int     `json:"first_pass_merged"`
+	FirstPassMergeRate float64 `json:"first_pass_merge_rate"`
+	AvgReviewRounds    float64 `json:"avg_review_rounds"`
+	AvgFixAttempts     float64 `json:"avg_fix_attempts"`
+}
+
+// governorPRModelWeekStart returns the Monday 00:00 UTC that starts t's ISO
+// week, as YYYY-MM-DD.
+func governorPRModelWeekStart(t time.Time) string {
+	t = t.UTC()
+	offset := (int(t.Weekday()) + 6) % 7 // Monday = 0
+	return time.Date(t.Year(), t.Month(), t.Day()-offset, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+}
+
+// governorPRModelRepoSlices finishes the per-repo slices, PRs descending.
+func governorPRModelRepoSlices(repos map[string]*governorPRModelSliceState, names map[string]string) []governorPRModelRepoBucket {
+	out := make([]governorPRModelRepoBucket, 0, len(repos))
+	for key, st := range repos {
+		rw := st.rework.finish()
+		out = append(out, governorPRModelRepoBucket{
+			Repo: names[key], PRs: st.prs, Merged: st.merged, ClosedUnmerged: st.closedUnmerged, Open: st.open,
+			FirstPassMerged: rw.FirstPassMerged, FirstPassMergeRate: rw.FirstPassMergeRate,
+			AvgReviewRounds: rw.AvgReviewRounds, AvgFixAttempts: rw.AvgFixAttempts,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PRs != out[j].PRs {
+			return out[i].PRs > out[j].PRs
+		}
+		return out[i].Repo < out[j].Repo
+	})
+	return out
+}
+
+// governorPRModelWeekSlices finishes the per-week slices, oldest first.
+func governorPRModelWeekSlices(weeks map[string]*governorPRModelSliceState) []governorPRModelWeekBucket {
+	out := make([]governorPRModelWeekBucket, 0, len(weeks))
+	for week, st := range weeks {
+		rw := st.rework.finish()
+		out = append(out, governorPRModelWeekBucket{
+			WeekStart: week, PRs: st.prs, Merged: st.merged,
+			FirstPassMerged: rw.FirstPassMerged, FirstPassMergeRate: rw.FirstPassMergeRate,
+			AvgReviewRounds: rw.AvgReviewRounds, AvgFixAttempts: rw.AvgFixAttempts,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].WeekStart < out[j].WeekStart })
+	return out
 }
 
 // governorPRModelSource is one raw attribution spelling folded into a bucket.
+// The outcome and rework fields are computed over this source's PRs the same
+// way the bucket's Rework is computed over merged PRs (hivecommons/hive#18715).
 type governorPRModelSource struct {
 	Model   string `json:"model"`
 	Backend string `json:"backend"`
 	PRs     int    `json:"prs"`
 	Merged  int    `json:"merged"`
+	governorPRModelSliceStats
+}
+
+// governorPRModelEffort is one effort= value within a bucket.
+type governorPRModelEffort struct {
+	Effort string `json:"effort"`
+	PRs    int    `json:"prs"`
+	Merged int    `json:"merged"`
+	governorPRModelSliceStats
+}
+
+// governorPRModelSliceStats are the outcome and rework figures shared by a
+// bucket's per-source and per-effort slices.
+type governorPRModelSliceStats struct {
+	ClosedUnmerged     int     `json:"closed_unmerged"`
+	Open               int     `json:"open"`
+	SamplePRs          int     `json:"sample_prs"`
+	FirstPassMerged    int     `json:"first_pass_merged"`
+	FirstPassMergeRate float64 `json:"first_pass_merge_rate"`
+	AvgReviewRounds    float64 `json:"avg_review_rounds"`
+	AvgFixAttempts     float64 `json:"avg_fix_attempts"`
+}
+
+// governorPRModelSliceState accumulates one per-source or per-effort slice.
+type governorPRModelSliceState struct {
+	prs, merged, closedUnmerged, open int
+	rework                            reworkAccumulator
+}
+
+func (st *governorPRModelSliceState) add(outcome string, rework ghpkg.PRReworkStats) {
+	addOutcome(&st.prs, &st.merged, &st.closedUnmerged, &st.open, outcome)
+	if outcome == "merged" {
+		st.rework.add(rework)
+	}
+}
+
+func (st *governorPRModelSliceState) finish() governorPRModelSliceStats {
+	r := st.rework.finish()
+	return governorPRModelSliceStats{
+		ClosedUnmerged:     st.closedUnmerged,
+		Open:               st.open,
+		SamplePRs:          r.SamplePRs,
+		FirstPassMerged:    r.FirstPassMerged,
+		FirstPassMergeRate: r.FirstPassMergeRate,
+		AvgReviewRounds:    r.AvgReviewRounds,
+		AvgFixAttempts:     r.AvgFixAttempts,
+	}
 }
 
 type governorPRModelRework struct {
-	SamplePRs            int     `json:"sample_prs"`
-	FirstPassMerged      int     `json:"first_pass_merged"`
-	FirstPassMergeRate   float64 `json:"first_pass_merge_rate"`
-	AvgReviewRounds      float64 `json:"avg_review_rounds"`
-	WorstReviewRounds    int     `json:"worst_review_rounds"`
-	AvgFixAttempts       float64 `json:"avg_fix_attempts"`
-	WorstFixAttempts     int     `json:"worst_fix_attempts"`
-	AvgFollowUpCommits   float64 `json:"avg_follow_up_commits"`
-	HumanChangeRequests  int     `json:"human_change_requests"`
-	MedianTimeToMergeMin int     `json:"median_time_to_merge_minutes"`
+	SamplePRs          int     `json:"sample_prs"`
+	FirstPassMerged    int     `json:"first_pass_merged"`
+	FirstPassMergeRate float64 `json:"first_pass_merge_rate"`
+	// FirstPassMergeRateCI is the Wilson 95% interval [low, high]; omitted
+	// when no merged PRs were sampled.
+	FirstPassMergeRateCI []float64 `json:"first_pass_merge_rate_ci,omitempty"`
+	AvgReviewRounds      float64   `json:"avg_review_rounds"`
+	WorstReviewRounds    int       `json:"worst_review_rounds"`
+	AvgFixAttempts       float64   `json:"avg_fix_attempts"`
+	WorstFixAttempts     int       `json:"worst_fix_attempts"`
+	AvgFollowUpCommits   float64   `json:"avg_follow_up_commits"`
+	HumanChangeRequests  int       `json:"human_change_requests"`
+	MedianTimeToMergeMin int       `json:"median_time_to_merge_minutes"`
 }
 
 type governorPRModelEffectiveness struct {
@@ -83,6 +229,12 @@ type governorPRModelEffectiveness struct {
 	VerifiedPRRunRate  float64 `json:"verified_pr_run_rate"`
 	FailureRate        float64 `json:"failure_rate"`
 	NothingToShipRate  float64 `json:"nothing_to_ship_rate"`
+	// Wilson 95% intervals [low, high]; omitted when the denominator is 0
+	// (merged PRs for the first-pass rate, runs for the three run rates).
+	FirstPassMergeRateCI []float64 `json:"first_pass_merge_rate_ci,omitempty"`
+	VerifiedPRRunRateCI  []float64 `json:"verified_pr_run_rate_ci,omitempty"`
+	FailureRateCI        []float64 `json:"failure_rate_ci,omitempty"`
+	NothingToShipRateCI  []float64 `json:"nothing_to_ship_rate_ci,omitempty"`
 }
 
 type governorPRMostReworkedItem struct {
@@ -113,11 +265,20 @@ func (s *Server) handleGovernorPRModels(w http.ResponseWriter, r *http.Request) 
 	minMergedPRs := effectiveModelsMinMergedPRs()
 	actionable := s.lastActionableForPRModels()
 	resp := aggregateGovernorPRModels(actionable.PRs.Attributed, window, time.Now())
+	applyGovernorPRModelCloseReasons(&resp, actionable.PRs.Attributed, governorPRModelsSupersededKeys(actionable.PRs.Attributed, actionable.PRs.Items), time.Now())
 	resp.FixerQueue = s.governorFixerQueue()
-	runs, _, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), governorPRModelsWindowDuration(window))
+	now := time.Now()
+	runs, rotated, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), governorPRModelsWindowDuration(window))
+	resp.Coverage = effectiveModelsCoverage(governorPRModelsWindowDuration(window), ghpkg.AttributedClosedPRLookback(), runs, rotated, now)
 	effective := aggregateEffectiveModelsFromPRAggregation(resp, aggregateEffectiveRunStats(runs, effectiveModelsFilterAll), effectiveModelsFilterAll, minMergedPRs)
 	applyGovernorPRModelEffectiveness(&resp, effective, minMergedPRs)
+	launchCost, launchCostReady := s.launchCostSnapshotForPRModels()
+	applyGovernorPRModelHiveCost(&resp, actionable.PRs.Attributed, launchCost, launchCostReady, now)
 	w.Header().Set("Content-Type", "application/json")
+	if model, ok := governorPRModelsQueryModel(r); ok {
+		_ = json.NewEncoder(w).Encode(withGovernorPRModelPRs(resp, actionable.PRs.Attributed, model, now))
+		return
+	}
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
@@ -144,13 +305,7 @@ func normalizeGovernorPRModelsWindow(window string) string {
 
 func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.Time) governorPRModelsResponse {
 	window = normalizeGovernorPRModelsWindow(window)
-	cutoff := time.Time{}
-	switch window {
-	case governorPRModelsWindow7d:
-		cutoff = now.AddDate(0, 0, -governorPRModelsDays7)
-	case governorPRModelsWindow30d:
-		cutoff = now.AddDate(0, 0, -governorPRModelsDays30)
-	}
+	cutoff := governorPRModelsCutoff(window, now)
 
 	type bucketState struct {
 		governorPRModelBucket
@@ -158,7 +313,16 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		sources  map[string]*governorPRModelSource
 		backends map[string]bool
 		rework   reworkAccumulator
+		// Per-source and per-effort slice accumulators (#18715).
+		sourceStats map[string]*governorPRModelSliceState
+		efforts     map[string]*governorPRModelSliceState
+		// Per-repo and per-week slices (#18716); repoNames keeps the first
+		// spelling seen for each case-folded repo key.
+		repos     map[string]*governorPRModelSliceState
+		repoNames map[string]string
+		weeks     map[string]*governorPRModelSliceState
 	}
+	withWeeks := window != governorPRModelsWindow7d
 	buckets := map[string]*bucketState{}
 	resp := governorPRModelsResponse{Window: window, MinMergedPRs: effectiveModelsMinMergedPRs()}
 	for _, pr := range prs {
@@ -182,6 +346,11 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 				agents:                map[string]*governorPRModelAgentBucket{},
 				sources:               map[string]*governorPRModelSource{},
 				backends:              map[string]bool{},
+				sourceStats:           map[string]*governorPRModelSliceState{},
+				efforts:               map[string]*governorPRModelSliceState{},
+				repos:                 map[string]*governorPRModelSliceState{},
+				repoNames:             map[string]string{},
+				weeks:                 map[string]*governorPRModelSliceState{},
 			}
 			buckets[model] = b
 		}
@@ -200,6 +369,17 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		}
 		if outcome == "merged" {
 			b.rework.add(pr.Rework)
+		}
+		governorPRModelSlice(b.sourceStats, srcKey).add(outcome, pr.Rework)
+		governorPRModelSlice(b.efforts, governorPRModelEffortKey(pr.HiveEffort)).add(outcome, pr.Rework)
+		repoName := strings.TrimSpace(effectivePRRepo(pr))
+		repoKey := strings.ToLower(repoName)
+		if _, ok := b.repoNames[repoKey]; !ok {
+			b.repoNames[repoKey] = repoName
+		}
+		governorPRModelSlice(b.repos, repoKey).add(outcome, pr.Rework)
+		if withWeeks && !pr.CreatedAt.IsZero() {
+			governorPRModelSlice(b.weeks, governorPRModelWeekStart(pr.CreatedAt)).add(outcome, pr.Rework)
 		}
 		if score := pr.Rework.ReviewRounds + pr.Rework.FixAttempts; score > 0 {
 			resp.MostReworked = append(resp.MostReworked, governorPRMostReworkedItem{
@@ -224,6 +404,11 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		}
 		addOutcome(&ab.PRs, &ab.Merged, &ab.ClosedUnmerged, &ab.Open, outcome)
 		resp.Total++
+		if !pr.CreatedAt.IsZero() {
+			if ts := pr.CreatedAt.UTC().Format(time.RFC3339); resp.EarliestPRCreatedAt == "" || ts < resp.EarliestPRCreatedAt {
+				resp.EarliestPRCreatedAt = ts
+			}
+		}
 		if model == modelfamily.Unknown {
 			resp.Unknown++
 		}
@@ -232,10 +417,18 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 	resp.Buckets = make([]governorPRModelBucket, 0, len(buckets))
 	for _, b := range buckets {
 		b.Rework = b.rework.finish()
+		b.Repos = governorPRModelRepoSlices(b.repos, b.repoNames)
+		if withWeeks && len(b.weeks) > 0 {
+			b.Weeks = governorPRModelWeekSlices(b.weeks)
+		}
 		b.Backends, b.Backend = joinedBackends(b.backends)
-		for _, src := range b.sources {
+		for key, src := range b.sources {
+			if st := b.sourceStats[key]; st != nil {
+				src.governorPRModelSliceStats = st.finish()
+			}
 			b.Sources = append(b.Sources, *src)
 		}
+		b.Efforts = finishGovernorPRModelEfforts(b.efforts)
 		sort.Slice(b.Sources, func(i, j int) bool {
 			if b.Sources[i].PRs != b.Sources[j].PRs {
 				return b.Sources[i].PRs > b.Sources[j].PRs
@@ -282,6 +475,37 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 	return resp
 }
 
+// governorPRModelSlice returns the accumulator for key, creating it.
+func governorPRModelSlice(m map[string]*governorPRModelSliceState, key string) *governorPRModelSliceState {
+	st := m[key]
+	if st == nil {
+		st = &governorPRModelSliceState{}
+		m[key] = st
+	}
+	return st
+}
+
+// governorPRModelEffortKey normalises a PR's effort= value; absent is "unknown".
+func governorPRModelEffortKey(effort string) string {
+	return ghpkg.NormalizeAttributionValue(effort)
+}
+
+// finishGovernorPRModelEfforts renders the per-effort slices sorted by PRs
+// descending, then effort name.
+func finishGovernorPRModelEfforts(m map[string]*governorPRModelSliceState) []governorPRModelEffort {
+	out := make([]governorPRModelEffort, 0, len(m))
+	for effort, st := range m {
+		out = append(out, governorPRModelEffort{Effort: effort, PRs: st.prs, Merged: st.merged, governorPRModelSliceStats: st.finish()})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PRs != out[j].PRs {
+			return out[i].PRs > out[j].PRs
+		}
+		return out[i].Effort < out[j].Effort
+	})
+	return out
+}
+
 // joinedBackends returns the sorted distinct backends and their comma-joined
 // display form ("codex, pi").
 func joinedBackends(set map[string]bool) ([]string, string) {
@@ -322,8 +546,18 @@ func applyGovernorPRModelEffectiveness(resp *governorPRModelsResponse, effective
 			VerifiedPRRunRate:  row.VerifiedPRRunRate,
 			FailureRate:        row.FailureRate,
 			NothingToShipRate:  row.NothingToShipRate,
+
+			FirstPassMergeRateCI: wilsonCI(row.FirstPassMerged, row.MergedPRs),
+			VerifiedPRRunRateCI:  wilsonCI(rateCount(row.VerifiedPRRunRate, row.RunCount), row.RunCount),
+			FailureRateCI:        wilsonCI(rateCount(row.FailureRate, row.RunCount), row.RunCount),
+			NothingToShipRateCI:  wilsonCI(rateCount(row.NothingToShipRate, row.RunCount), row.RunCount),
 		}
 	}
+}
+
+// rateCount recovers the integer numerator behind rate = k/n.
+func rateCount(rate float64, n int) int {
+	return int(math.Round(rate * float64(n)))
 }
 
 type reworkAccumulator struct {
@@ -360,6 +594,7 @@ func (a *reworkAccumulator) add(r ghpkg.PRReworkStats) {
 
 func (a reworkAccumulator) finish() governorPRModelRework {
 	out := governorPRModelRework{
+		FirstPassMergeRateCI: wilsonCI(a.firstPass, a.sample),
 		SamplePRs:            a.sample,
 		FirstPassMerged:      a.firstPass,
 		WorstReviewRounds:    a.worstReviewRounds,

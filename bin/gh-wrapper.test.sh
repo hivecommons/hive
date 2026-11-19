@@ -495,6 +495,28 @@ _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state merged -S review (block
   pr list --repo test/repo --state merged -S review
 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state merged --search=x (blocked: equals search flag)" \
   pr list --repo test/repo --state merged --search=x
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 0 "-" "$ENUM_DENY" "pr list --state open statusCheckRollup with HIVE_BASELINE_CHECK=1 (allowed: baseline helper's sibling lookup)" \
+  pr list --repo test/repo --state open --limit 100 --json number,headRefOid,isCrossRepository,statusCheckRollup
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 0 "-" "$ENUM_DENY" "pr list -R before the subcommand, equals/short forms with HIVE_BASELINE_CHECK=1 (allowed: same projection)" \
+  -R test/repo pr list --state=open -L50 --json=number,statusCheckRollup
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state open --search with HIVE_BASELINE_CHECK=1 (blocked)" \
+  pr list --repo test/repo --state open --search foo
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --label actionable with HIVE_BASELINE_CHECK=1 (blocked: flag outside the allowlist)" \
+  pr list --repo test/repo --state open --label actionable --limit 100 --json number,headRefOid,isCrossRepository,statusCheckRollup
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --json number,title,statusCheckRollup with HIVE_BASELINE_CHECK=1 (blocked: field outside the projection)" \
+  pr list --repo test/repo --state open --limit 100 --json number,title,statusCheckRollup
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --json title --json number with HIVE_BASELINE_CHECK=1 (blocked: gh accumulates repeated --json, every occurrence is checked)" \
+  pr list --repo test/repo --state open --limit 100 --json title --json number
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 0 "-" "$ENUM_DENY" "pr list --json number --json statusCheckRollup with HIVE_BASELINE_CHECK=1 (allowed: repeated --json, all fields in the projection)" \
+  pr list --repo test/repo --state open --limit 100 --json number --json statusCheckRollup
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --limit 500 with HIVE_BASELINE_CHECK=1 (blocked: over the helper's 100)" \
+  pr list --repo test/repo --state open --limit 500 --json number,headRefOid,isCrossRepository,statusCheckRollup
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state open without --json with HIVE_BASELINE_CHECK=1 (blocked: no projection)" \
+  pr list --repo test/repo --state open --limit 100
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state all with HIVE_BASELINE_CHECK=1 (blocked: --state open required)" \
+  pr list --repo test/repo --state all --limit 100 --json number,statusCheckRollup
+_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state open --json statusCheckRollup without HIVE_BASELINE_CHECK (blocked)" \
+  pr list --repo test/repo --state open --json statusCheckRollup
 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state with no value (blocked)" \
   pr list --repo test/repo --state
 _run_test_staff_gate 1 "$ENUM_DENY" "-" "issue list --state merged (blocked: issues are never merged)" \

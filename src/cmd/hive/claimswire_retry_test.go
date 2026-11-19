@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,5 +139,25 @@ func TestClaimEffectRetryable(t *testing.T) {
 		if got := claimEffectRetryable(c.err); got != c.want {
 			t.Errorf("%s: claimEffectRetryable(%v) = %v, want %v", name, c.err, got, c.want)
 		}
+	}
+}
+
+// An expected transient retry is logged below WARN so the fleet-report
+// classifier does not file it; only exhaustion warns, once
+// (hivecommons/hive#17782).
+func TestRetryClaimEffect_RetryLoggedBelowWarn(t *testing.T) {
+	swapClaimsEffectRetry(t, 3, nil)
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	retryClaimEffect(context.Background(), logger, "claimed stage", "acme/widgets#7", func() error {
+		return mutation.ErrNeedsReconciliation
+	})
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if strings.Contains(line, "retrying GitHub side effect") && strings.Contains(line, "level=WARN") {
+			t.Fatalf("retry logged at WARN: %s", line)
+		}
+	}
+	if got := strings.Count(buf.String(), "GitHub side effect failed"); got != 1 {
+		t.Fatalf("exhaustion warnings = %d, want 1", got)
 	}
 }

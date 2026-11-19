@@ -111,7 +111,9 @@ func reservedLabelForAgents(label, autoMergeLabel string) bool {
 			return true
 		}
 	}
-	return false
+	// The hive's gate labels (hivecommons/hive#18468) are set by its own
+	// gates and lifted by a person; an agent neither adds nor removes them.
+	return IsHiveGateLabel(name)
 }
 
 func agentRecordableHiveStateLabel(label string) bool {

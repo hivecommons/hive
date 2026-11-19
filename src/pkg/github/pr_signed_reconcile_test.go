@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -396,6 +399,47 @@ func TestSignedReconcile_UnchangedHeadIsNotRelisted(t *testing.T) {
 	}
 }
 
+// Unsupported file modes are a deliberate safety refusal, not an API outage.
+// Keep the branch intact, explain how to unblock it, and settle the head.
+func TestSignedReconcile_UnsupportedModeSettlesWithActionableNote(t *testing.T) {
+	for _, mode := range []string{"100755", "120000", "160000"} {
+		t.Run(mode, func(t *testing.T) {
+			m, c := reconcileFixture(t, true)
+			m.treeMode["tests/new_test.py"] = mode
+			m.prCommits = []map[string]any{prCommitJSON(m.headSHA, false, "", "quality@hive.kubestellar.io")}
+			var logs strings.Builder
+			c.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+			c.reconcileSignedCommits(context.Background())
+			c.reconcileSignedCommits(context.Background())
+
+			if m.refPatch != nil || m.graphql != nil || m.callIndex("POST /repos/o/r/git/refs") >= 0 {
+				t.Fatalf("unsupported mode must leave the branch untouched: %v", m.calls)
+			}
+			if m.countCalls(prCommitsCall) != 1 {
+				t.Errorf("unchanged unsupported head must be settled: %v", m.calls)
+			}
+			if len(m.posted) != 1 || !strings.Contains(m.posted[0], mode) ||
+				!strings.Contains(m.posted[0], "their own verified signature") ||
+				strings.Contains(m.posted[0], "drop your own commit") {
+				t.Fatalf("expected one actionable mode-specific comment, got %q", m.posted)
+			}
+			if strings.Contains(logs.String(), "could not re-author the unsigned tail") {
+				t.Errorf("expected skip must not be reported as an API failure: %s", logs.String())
+			}
+
+			newHead := "dddd000000000000000000000000000000000030"
+			m.headSHA = newHead
+			m.openPRs = []map[string]any{reconcilePR(77, reconcileBot, newHead)}
+			m.prCommits = []map[string]any{prCommitJSON(newHead, false, "", "quality@hive.kubestellar.io")}
+			c.reconcileSignedCommits(context.Background())
+			if m.countCalls(prCommitsCall) != 2 || len(m.posted) != 1 {
+				t.Errorf("new head must be retried without another comment: calls=%v posted=%q", m.calls, m.posted)
+			}
+		})
+	}
+}
+
 // A head that moved while the signed commit was built is transient: no
 // comment, and the next pass looks again (the open-time skip is retried).
 func TestSignedReconcile_MovedHeadRetriesNextPass(t *testing.T) {
@@ -638,4 +682,75 @@ func TestSignedReconcile_RunsFromWatcherLoop(t *testing.T) {
 			defer m.mu.Unlock()
 			return "the watcher loop never ran the reconcile pass:\n" + strings.Join(m.calls, "\n")
 		})
+}
+
+// clientTimeoutError is the net/http client-timeout cause go-github wraps in a
+// *url.Error ("context deadline exceeded (Client.Timeout exceeded while
+// awaiting headers)").
+type clientTimeoutError struct{}
+
+func (clientTimeoutError) Error() string {
+	return "context deadline exceeded (Client.Timeout exceeded while awaiting headers)"
+}
+func (clientTimeoutError) Timeout() bool   { return true }
+func (clientTimeoutError) Temporary() bool { return true }
+
+// hivecommons/hive#18243: a reconciler read that fails transiently is retried
+// on the next pass, so it logs at INFO and stays out of the WARN-fed fleet
+// selfreport; a failure that describes the repo or the App stays a WARN.
+func TestLogSignedReadFailure_TransientIsInfo(t *testing.T) {
+	ghStatus := func(code int) error {
+		return &gh.ErrorResponse{Response: &http.Response{StatusCode: code, Request: &http.Request{Method: "GET"}}, Message: http.StatusText(code)}
+	}
+	cases := []struct {
+		name string
+		err  error
+		warn bool
+	}{
+		{"client timeout", &url.Error{Op: "Get", URL: "https://api.github.com/repos/o/r/pulls?per_page=100&state=open", Err: clientTimeoutError{}}, false},
+		{"deadline", fmt.Errorf("list: %w", context.DeadlineExceeded), false},
+		{"canceled", fmt.Errorf("list: %w", context.Canceled), false},
+		{"bad gateway", ghStatus(http.StatusBadGateway), false},
+		{"too many requests", ghStatus(http.StatusTooManyRequests), false},
+		{"not found", ghStatus(http.StatusNotFound), true},
+		{"forbidden", ghStatus(http.StatusForbidden), true},
+		{"other", errors.New("unexpected end of JSON input"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs strings.Builder
+			c := &Client{logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+			c.logSignedReadFailure("signed-commit reconciler: listing open PRs failed", tc.err, "repo", "o/r")
+			out := logs.String()
+			if !strings.Contains(out, "signed-commit reconciler: listing open PRs failed") || !strings.Contains(out, "repo=o/r") || !strings.Contains(out, "err=") {
+				t.Fatalf("failure must still be logged with its repo and error: %s", out)
+			}
+			if gotWarn := strings.Contains(out, "level=WARN"); gotWarn != tc.warn {
+				t.Errorf("WARN=%v, want %v: %s", gotWarn, tc.warn, out)
+			}
+			if !tc.warn && !strings.Contains(out, "level=INFO") {
+				t.Errorf("transient failure must log at INFO: %s", out)
+			}
+		})
+	}
+}
+
+// The open-PR listing goes through logSignedReadFailure: a 404 (the repo is
+// gone or the App lost access) is still a WARN naming the repo.
+func TestSignedReconcile_ListOpenPRsNotFoundWarns(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := signedTestClient(t, srv.URL, true)
+	c.SetAppBotLogin(reconcileBot)
+	var logs strings.Builder
+	c.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	c.reconcileSignedCommits(context.Background())
+
+	out := logs.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "signed-commit reconciler: listing open PRs failed") || !strings.Contains(out, "repo=o/r") {
+		t.Errorf("a 404 listing open PRs must stay a WARN naming the repo: %s", out)
+	}
 }

@@ -422,7 +422,15 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// keeps the variable doing the job it was added for (#c5648bc9: deliver a
 	// dashboard-obtained token to an agent that cannot see the file) and stops
 	// it overriding a credential that can still refresh itself.
-	if m.claudeAuthToken != "" && backend == "claude" && !claudeCredentialReachable(agent, backend) {
+	//
+	// An operator-supplied long-lived token (HIVE_CLAUDE_OAUTH_TOKEN, from
+	// `claude setup-token`) is the exception: it lasts about a year and never
+	// needs a refresh, so pinning it is the point. It is injected whether or
+	// not a credentials file is reachable and wins over the dashboard
+	// sign-in, which only ever updates claudeAuthToken.
+	if m.claudeOperatorToken != "" && backend == "claude" {
+		vars = append(vars, agentEnvPair{"CLAUDE_CODE_OAUTH_TOKEN", m.claudeOperatorToken, true})
+	} else if m.claudeAuthToken != "" && backend == "claude" && !claudeCredentialReachable(agent, backend) {
 		vars = append(vars, agentEnvPair{"CLAUDE_CODE_OAUTH_TOKEN", m.claudeAuthToken, true})
 	}
 	// bob reads its key from BOBSHELL_API_KEY in 1.x and BOB_API_KEY in 2.x.

@@ -124,10 +124,28 @@ never appears with no rules under it.
 
 ### Size cap: whole sections, visible warning
 
-The block is capped at `project.agents_md_max_bytes` bytes (default **8192**
-— the same as the skills cap — minimum 2048;
-[#12129](https://github.com/hivecommons/hive/issues/12129)). `AGENTS.md` is a
-repo-owned contract, so the cap **never clips a rule mid-sentence**:
+The block is capped at **32768 bytes (32 KiB)** by default, minimum 2048, hard
+ceiling 262144 (256 KiB)
+([#12129](https://github.com/hivecommons/hive/issues/12129),
+[#18495](https://github.com/hivecommons/hive/issues/18495)). The default was
+8192 until #18495: real repositories outgrew it (a 13 KB `AGENTS.md` lost whole
+sections on every kick), so a file of that size is now included in full. The
+cap that applies to a repo is resolved in this order:
+
+1. `repos.<repo>.agents_md_max_bytes` — a per-repo override. `<repo>` is the
+   bare name from `project.repos` or `owner/repo`, matched case-insensitively.
+2. `project.agents_md_max_bytes` — the hive-wide value.
+3. The `HIVE_AGENTS_MD_MAX_BYTES` environment variable — the default for
+   operators who configure by environment (hosted spokes). A value that is not
+   a positive integer is ignored.
+4. The built-in default, 32768 (`agentsmd.DefaultMaxInjectionBytes`).
+
+Whatever the source, the value is raised to the 2048 floor and lowered to the
+256 KiB ceiling (`agentsmd.MaxInjectionBytesCeiling`), so one misconfigured repo
+cannot crowd the rest of the kick out of the model's context.
+
+`AGENTS.md` is a repo-owned contract, so the cap **never clips a rule
+mid-sentence**:
 
 - The body is split at its `#` and `##` headings (text before the first
   heading is the "(preamble)"; deeper headings and fenced code stay inside
@@ -143,20 +161,35 @@ When anything was dropped, a one-line warning follows the precedence statement
 and precedes the surviving rules, so the agent reads it first:
 
 ```
-> ⚠️ AGENTS.md exceeded 8192 bytes; 2 section(s) omitted (9114 bytes): "Style guide", "skill: release-notes" — read AGENTS.md in the repository root for the full instructions before you start.
+> ⚠️ AGENTS.md exceeded 32768 bytes; 2 section(s) omitted (9114 bytes): "Style guide", "skill: release-notes" — read AGENTS.md in the repository root for the full instructions before you start.
 ```
 
 The scheduler logs the same facts at warn
 (`agentsmd: AGENTS.md exceeded the injection cap; sections dropped whole`,
 with `cap_bytes`, `omitted_sections`, `omitted_bytes`, `whole_file`) so the
 repo owner learns the file outgrew the cap from the log, not from an agent that
-missed a rule. The fix on the repo side is to shorten `AGENTS.md` or move
-reference material to a linked file; on the hive side, raise the cap:
+missed a rule. The warning is logged **once per change** — the first kick that
+sees a given file content and cap logs it, later kicks with the same file stay
+quiet until the file or the cap changes — while the in-prompt warning line is
+on every truncated kick.
+
+The same facts are on the dashboard repo status: each entry in the `/api/status`
+payload's `repos` list carries an `agentsMd` object once a kick has read that
+repo's `AGENTS.md`, with `sourceBytes` (file size), `capBytes` (effective cap),
+`renderedBytes` (what reached the kick), `truncated`, `wholeFile`,
+`omittedSections`, `omittedBytes` and `updatedAt`. It is absent for a repo no
+kick has read a file for.
+
+The fix on the repo side is to shorten `AGENTS.md` or move reference material to
+a linked file; on the hive side, raise the cap hive-wide or for one repo:
 
 ```yaml
 project:
   checkouts_dir: /data/checkouts
-  agents_md_max_bytes: 16384   # 0 = default 8192; values under 2048 are raised
+  agents_md_max_bytes: 16384   # 0 = default 32768; clamped to 2048..262144
+repos:
+  big-docs-repo:
+    agents_md_max_bytes: 65536 # this repo only; 0 inherits project
 ```
 
 ### The precedence statement

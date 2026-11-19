@@ -54,15 +54,19 @@ type Facts struct {
 	Ref        Ref
 	ObservedAt time.Time
 	Labels     []string // list payload or fresh read; includes non-hive labels
-	Open       bool
-	Merged     bool
-	Draft      bool
-	Author     AuthorFacts
-	Park       ParkFacts
-	Adoption   AdoptionFacts
-	Origin     string // the origin/<source> label, "" for a human filing
-	Issue      *IssueFacts
-	PR         *PRFacts
+	// Title is the item's title when the producer had it, "" otherwise.
+	// Derivers do not read it; pkg/github resolves an issue's RFC-title
+	// discussion signal from it (hivecommons/hive#18141).
+	Title    string
+	Open     bool
+	Merged   bool
+	Draft    bool
+	Author   AuthorFacts
+	Park     ParkFacts
+	Adoption AdoptionFacts
+	Origin   string // the origin/<source> label, "" for a human filing
+	Issue    *IssueFacts
+	PR       *PRFacts
 }
 
 // AuthorFacts is who wrote the item.
@@ -180,11 +184,13 @@ type IssueFacts struct {
 	// UmbrellaLabel is the never-claim label the issue carries
 	// (governor.claims.never_claim_labels, default `epic`).
 	UmbrellaLabel string
-	// DiscussionLabel is the proposal / design label the issue carries
-	// (`proposal`, `kind/design`), "" when it carries none. An unclaimed
-	// issue wearing one derives 018-open-for-discussion instead of
-	// 010/015; a live claim or covering PR stages it as on any issue
-	// (hivecommons/hive#17150).
+	// DiscussionLabel is the discussion signal the issue carries: the
+	// proposal / design label (`proposal`, `kind/design`, `architecture
+	// discussion`) or `rfc title` for an unlabelled issue whose title opens
+	// with "[RFC]" / "RFC:"; "" when it carries none. An unclaimed issue
+	// with one derives 018-open-for-discussion instead of 010/015; a live
+	// claim or covering PR stages it as on any issue
+	// (hivecommons/hive#17150, hivecommons/hive#18141).
 	DiscussionLabel string
 	// TriageAwaiting is why an actionable issue is still untriaged (015):
 	// the reporter-trust awaiting label it carries or the gate's
@@ -197,6 +203,11 @@ type IssueFacts struct {
 	// then asks the writer to clear the stale label in the same write
 	// (hivecommons/hive#14586).
 	TriageAwaitingLabel string
+	// TriageClearYielded is set when the label came back after the hive
+	// removed it once (stagelabels.Record.TriageClearYielded): another
+	// writer owns it on this issue, so the deriver no longer asks for it
+	// to be cleared (hivecommons/hive#18387).
+	TriageClearYielded bool
 }
 
 // ClaimFact is the live claim on an issue.
@@ -241,6 +252,9 @@ type PRFacts struct {
 	// does (the PR is then parked for a maintainer with reason fork-guard).
 	ForkGuardChecks []string
 	Lanes           []LaneFact // automerge lane opinions, precedence order (self > trusted > contributor)
+	// PostMerge is the observed post-merge pipeline status of a merged PR
+	// (pipeline.status); nil when no observer reported on it.
+	PostMerge *PostMergeFacts
 	// Pass is what the sweep's own pass learned after the lanes spoke and
 	// before the stage was written: the inputs of ApplyStageLabels' pure
 	// post-steps (author-kind split, normalized-fixing guard, human route,

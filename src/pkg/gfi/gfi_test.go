@@ -40,7 +40,8 @@ func TestScoreTable(t *testing.T) {
 		{"assigned", func(c *Candidate) { c.Assignees = []string{"bob"} }, false, "assigned", ""},
 		{"linked pr", func(c *Candidate) { c.HasLinkedPR = true }, false, "linked-pr", ""},
 		{"hard suppress", func(c *Candidate) { c.Labels = append(c.Labels, "Needs-Human") }, false, "hard-suppress:needs-human", ""},
-		{"excluded label", func(c *Candidate) { c.Labels = append(c.Labels, "kind/epic") }, false, "excluded-label:kind/epic", ""},
+		{"umbrella label (hive/#19078)", func(c *Candidate) { c.Labels = append(c.Labels, "kind/epic") }, false, "umbrella:label:kind/epic", ""},
+		{"excluded label", func(c *Candidate) { c.Labels = append(c.Labels, "wontfix") }, false, "excluded-label:wontfix", ""},
 		{"security", func(c *Candidate) { c.Labels = append(c.Labels, "security") }, false, "excluded-label:security", ""},
 		{"hive claimed-by", func(c *Candidate) { c.Labels = append(c.Labels, "hive/claimed-by-worker") }, false, "excluded-label:hive/claimed-by-worker", ""},
 		{"epic title", func(c *Candidate) { c.Title = "Epic: rewrite everything" }, false, "title:epic", ""},
@@ -325,6 +326,54 @@ func (f *fakeForge) commentCount(repo string, n int) int {
 
 func quietOpts() SweepOptions {
 	return SweepOptions{Links: Links{Origin: "https://hive.example", HiveID: "acme-hive"}, Now: now, Logger: slog.New(slog.DiscardHandler)}
+}
+
+type archivedForge struct {
+	*fakeForge
+	archived bool
+	attempts int
+}
+
+var archivedErr = errors.New("archived repository")
+
+func (f *archivedForge) ArchivedWrite(repo string, err error) bool {
+	if repo != "acme/archived" {
+		return false
+	}
+	if errors.Is(err, archivedErr) {
+		f.archived = true
+	}
+	return f.archived
+}
+
+func (f *archivedForge) UpsertIssueMarkerComment(ctx context.Context, repo string, n int, marker, body string, create bool) (MarkerComment, error) {
+	if repo == "acme/archived" && create {
+		f.attempts++
+		return MarkerComment{}, archivedErr
+	}
+	return f.fakeForge.UpsertIssueMarkerComment(ctx, repo, n, marker, body, create)
+}
+
+func TestSweepSkipsArchivedRepoAfterRefusal(t *testing.T) {
+	forge := &archivedForge{fakeForge: newFakeForge()}
+	s := NewSweeper()
+	a := good()
+	a.Repo = "acme/archived"
+	b := a
+	b.Number++
+	active := good()
+	candidates := []Candidate{a, b, active}
+	first := s.Sweep(context.Background(), forge, candidates, quietOpts())
+	second := s.Sweep(context.Background(), forge, candidates, quietOpts())
+	if forge.attempts != 1 || first.Errors != 0 || second.Errors != 0 {
+		t.Fatalf("attempts=%d first=%+v second=%+v", forge.attempts, first, second)
+	}
+	if first.Skipped["archived-repo"] != 2 || second.Skipped["archived-repo"] != 2 {
+		t.Fatalf("archived skips: first=%+v second=%+v", first, second)
+	}
+	if len(first.Selected) != 1 || first.Selected[0] != active.Key() {
+		t.Fatalf("active repo not selected: %+v", first)
+	}
 }
 
 func TestSweepSelectsLabelsAndCommentsIdempotently(t *testing.T) {

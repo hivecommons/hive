@@ -71,24 +71,38 @@
        in another pod, so there is no hive-<agent> tmux session for ttyd to
        attach to. Their terminal is the read-only Job pod log viewer, served
        by the Go server under the same /terminal prefix so openTerminal()'s
-       handoff code and assertion cookie apply unchanged. */
+       handoff code and assertion cookie apply unchanged. openshell agents
+       (#17645) run each kick in a gateway-owned sandbox and use the same
+       viewer, which streams the sandbox's log instead; substrate agents
+       (#17777) run each kick in a Substrate actor and the viewer streams the
+       kick's output from the actor's bridge. */
     const JOB_SANDBOX_RUNTIME = 'job';
+    const OPENSHELL_SANDBOX_RUNTIME = 'openshell';
+    const SUBSTRATE_SANDBOX_RUNTIME = 'substrate';
+    function sandboxRuntimeWithoutTmux(sandboxRuntime) {
+      return sandboxRuntime === JOB_SANDBOX_RUNTIME || sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME
+        || sandboxRuntime === SUBSTRATE_SANDBOX_RUNTIME;
+    }
     function agentUsesJobTerminal(a) {
-      return !!a && a.sandboxRuntime === JOB_SANDBOX_RUNTIME;
+      return !!a && sandboxRuntimeWithoutTmux(a.sandboxRuntime);
     }
     function terminalUrl(agentName, sandboxRuntime) {
       const proto = window.location.protocol;
       const host = window.location.host;
-      if (sandboxRuntime === JOB_SANDBOX_RUNTIME) {
+      if (sandboxRuntimeWithoutTmux(sandboxRuntime)) {
         return `${proto}//${host}/terminal/job/${encodeURIComponent(agentName)}`;
       }
       const session = TMUX_SESSION_PREFIX + agentName;
       return `${proto}//${host}/terminal/?arg=${encodeURIComponent(session)}`;
     }
     function terminalLinkTitle(a, tmuxTitle) {
-      return agentUsesJobTerminal(a)
-        ? 'Stream the log of this agent\'s sandbox Job pod (read-only: it runs as a Kubernetes Job, not a tmux session)'
-        : tmuxTitle;
+      if (!agentUsesJobTerminal(a)) return tmuxTitle;
+      if (a.sandboxRuntime === SUBSTRATE_SANDBOX_RUNTIME) {
+        return 'Stream this agent\'s kick output and Substrate actor state (read-only: it runs in a Substrate actor, not a tmux session)';
+      }
+      return a.sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME
+        ? 'Stream the log of this agent\'s OpenShell sandbox (read-only: it runs in a gateway-owned sandbox, not a tmux session)'
+        : 'Stream the log of this agent\'s sandbox Job pod (read-only: it runs as a Kubernetes Job, not a tmux session)';
     }
     /* The hosted fleet has moved apex once already (hive.kubestellar.io ->
        hive.hivecommons.dev) and spokes are also served at vanity hostnames, so
@@ -282,6 +296,13 @@
        sentence — that one reports whether a login URL was actually seen, so it
        earns the space and always wins over the persisted dismissal. */
     const TERMINAL_KEYBOARD_COPY_HINT = 'Selecting text in the terminal: hold ⇧ (Shift) while dragging — tmux mouse mode owns an ordinary drag. Then ⌘C (macOS) or Ctrl+Shift+C copies, and ⌘V or Ctrl+Shift+V pastes.';
+    /* One-line card note for an out-of-quota agent (#18111). It never offers a
+       login: quota is a provider limit, and re-login does not lift it. */
+    function agentOutOfQuotaNoteHtml(a) {
+      const detail = String((a && a.backendAuthLastError) || '').trim();
+      const detailHtml = detail ? ` <span class="agent-quota-note-detail">${esc(detail)}</span>` : '';
+      return `<div class="agent-quota-note" role="note">Out of provider quota: this agent cannot run until the quota resets or it is moved to another provider.${detailHtml}</div>`;
+    }
     function terminalCopyHintHtml(needsLogin, sessionUnavailable, agentName, loginURL, backendAuthStatus, backendAuthLastError, statusEvidence, inferenceLastError) {
       if (sessionUnavailable) return '';
       /* #11761: inferenceLastError is the FULL error hive's inference proxy
@@ -638,6 +659,30 @@
       const down = (isDown === undefined) ? (a.state !== 'running') : isDown;
       return down && a.authKnown === true && a.authAvailable !== true;
     }
+    /* agentOutOfQuota (#18111): the provider refused this agent for quota.
+       quotaExhausted is the pane-poll flag that covers every backend (e.g.
+       Copilot's "exceeded your monthly quota"); backendAuthStatus 'quota' is
+       the inference-gateway classifier's verdict. The top-bar tile, collapsed
+       tile and agent card all ask this one helper so they cannot disagree.
+       Re-login does not help, so callers keep login problems ahead of it. */
+    function agentOutOfQuota(a) {
+      return !!a && (a.quotaExhausted === true || a.backendAuthStatus === 'quota');
+    }
+    /* agentOutOfQuotaShown: whether the out-of-quota red is painted at all.
+       Disabled, paused, held-off-by-mode, starting and stopped agents keep
+       their own look. The card and both tiles call this one predicate, with
+       the same paused/off/starting/stopped rules the card uses, so a held-off
+       or starting agent cannot be red on a tile and normal on its card.
+       Login problems are not checked here; every caller ranks them first. */
+    function agentOutOfQuotaShown(a) {
+      if (!agentOutOfQuota(a) || agentIsDisabled(a)) return false;
+      const isOnDemand = a.onDemand === true;
+      const isPaused = a.paused === true && !isOnDemand;
+      const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;
+      const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
+      const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
+      return !isPaused && !isOff && !isStarting && !isStopped;
+    }
 
     /* Agent blockers (#5594). THREE orthogonal flags decide whether an agent
        will ever do work: is its session up, has an operator paused it, and is
@@ -672,7 +717,7 @@
     function agentToggleTitle(a, isPaused, isOff) {
       if (isPaused) {
         const rest = [];
-        if (a.state !== 'running') rest.push('its session is down (use \u21bb restart)');
+        if (a.state !== 'running' && a.sandboxed !== true) rest.push('its session is down (use \u21bb restart)');
         if (a.offByCadence === true) rest.push('its cadence for the current governor mode is off (\u2699\uFE0F \u2192 Cadences)');
         if (a.unscheduledInMode === true) rest.push(`it has a cadence only in ${agentCadenceModesLabel(a)}, none for the current governor mode (\u2699\uFE0F \u2192 Cadences)`);
         if (a.noCadence === true) rest.push('no governor mode gives it a cadence (\u2699\uFE0F \u2192 Cadences)');
@@ -718,7 +763,12 @@
       return `<button class="hv-btn btn-secondary btn-sm btn-toggle off" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" data-tab="Cadences" title="${who} is enabled, but the governor has no cadence for it in the current mode — click to set one">⚙ ${esc(agentCadenceOffLabel())}</button>`;
     }
     function pausedAgentActionHtml(a) {
-      if (a.state === 'running') {
+      /* A sandboxed agent has no long-lived session: it sits in state 'paused'
+         or 'idle' and runs each kick in a throwaway container, so "session
+         down" is never its blocker. Offering "start & resume" there chained a
+         restart that has nothing to restart (#18813); plain resume is the
+         whole action. */
+      if (a.state === 'running' || a.sandboxed === true) {
         return `<button class="hv-btn btn-danger btn-sm btn-toggle paused" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="true" title="${esc(agentToggleTitle(a, true, false))}">\u25b6 resume</button>`;
       }
       const rest = [];
@@ -729,6 +779,34 @@
       if (rest.length > 0) title += ` Still not enough on its own: ${rest.join('; ')}.`;
       return `<button class="hv-btn btn-danger btn-sm btn-toggle paused" data-action="startResumeAgent" data-agent="${esc(a.name)}" data-paused="true" title="${esc(title)}">\u25b6 start &amp; resume</button>`;
     }
+    /* Owner-gated pause/resume slot (#18813). Never an empty slot: a viewer
+       below owner, or one whose role has not settled yet, sees the control
+       DISABLED with the reason in its tooltip. agentToggleGateReason returns
+       '' when the viewer may act. The role is "known" under the same rule the
+       Inbox uses: /api/role answered or gave up. */
+    const AGENT_GATE_NEEDS_OWNER = 'Needs the owner role';
+    const AGENT_GATE_CHECKING = 'Checking your access...';
+    function agentRoleKnown() { return window._hiveRoleSettled === true || window._hiveRole !== undefined; }
+    function agentToggleGateReason() {
+      if (dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) return '';
+      return agentRoleKnown() ? AGENT_GATE_NEEDS_OWNER : AGENT_GATE_CHECKING;
+    }
+    function agentGatedToggleHtml(a, isPaused, isOff) {
+      const reason = agentToggleGateReason() || AGENT_GATE_NEEDS_OWNER;
+      const label = isPaused
+        ? (a.state === 'running' || a.sandboxed === true ? '\u25b6 resume' : '\u25b6 start &amp; resume')
+        : '\u23f8 pause';
+      const cls = isPaused ? 'btn-danger paused' : 'btn-secondary running';
+      return `<button type="button" class="hv-btn ${cls} btn-sm btn-toggle gated" disabled aria-disabled="true" data-agent="${esc(a.name)}" data-gate="${agentRoleKnown() ? 'role' : 'checking'}" title="${esc(reason)}">${label}</button>`;
+    }
+    /* Repaint the role-gated agent surfaces the moment the role settles. The
+       cards used to be left as rendered with whatever role was known then. */
+    function agentsOnRoleReady() {
+      if (window._lastAgents) renderAgents(window._lastAgents);
+      if (typeof ocRenderAgentDetail === 'function') ocRenderAgentDetail();
+      if (typeof renderGovernorFromLastStatus === 'function') renderGovernorFromLastStatus();
+    }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(agentsOnRoleReady);
     function neverScheduledChipHtml(a, configTarget) {
       if (a.noCadence !== true) return '';
       const who = a.displayName || a.name;
@@ -740,18 +818,35 @@
        tmux session or in-pod process to be "down". Their health comes from
        the server-side sandboxRun verdict (last run + cadence), never from
        state !== 'running'. */
+    /* Preflight findings for this agent's sandbox runtime (openshell or
+       substrate), computed at boot/reload and carried as sandbox_warnings. */
+    function agentSandboxWarningsHtml(a) {
+      const ws = a && Array.isArray(a.sandbox_warnings) ? a.sandbox_warnings : [];
+      return ws.map(w => `<div class="agent-error" title="${esc(w)}">⚠ ${esc(w)}${sandboxImageFixLinksHtml(w, a)}</div>`).join('');
+    }
+    /* The "no sandbox image" warning is fixed in two places (#18797): this
+       agent's Sandbox settings, or the hive-wide default under Settings,
+       Security. Link both instead of describing a manual step. */
+    const NO_SANDBOX_IMAGE_WARNING = 'no sandbox image';
+    function sandboxImageFixLinksHtml(w, a) {
+      if (String(w || '').indexOf(NO_SANDBOX_IMAGE_WARNING) === -1) return '';
+      const agent = esc((a && a.name) || '');
+      return ` <a href="#" class="text-accent" data-action="openConfigDialog" data-prevent="1" data-agent="${agent}" data-config-type="agent" data-tab="General">Set this agent's image</a>`
+        + ` <a href="#" class="text-accent" data-action="openConfigDialog" data-prevent="1" data-config-type="governor" data-tab="Security">Set the default image</a>`;
+    }
     function agentSandboxRun(a) {
       return (a && a.sandboxed && a.sandboxRun && a.sandboxRun.health) ? a.sandboxRun : null;
     }
     function agentSessionDown(a) {
       const sr = agentSandboxRun(a);
-      if (sr) return sr.health === 'failed' || sr.health === 'overdue';
+      if (sr) return sr.health === 'failed' || sr.health === 'node_unhealthy' || sr.health === 'overdue';
       return a.state !== 'running';
     }
     function agentSandboxDownLabel(a) {
       const sr = agentSandboxRun(a);
       if (!sr) return '';
-      if (sr.health === 'failed') return sr.timedOut ? 'last run timed out' : 'last run failed';
+      if (sr.health === 'node_unhealthy') return 'node unhealthy';
+      if (sr.health === 'failed') return sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.timedOut ? 'last run timed out' : 'last run failed');
       if (sr.health === 'overdue') return 'run overdue';
       return '';
     }
@@ -760,7 +855,7 @@
       if (!sr || !sr.lastRunAt) return '';
       const ago = agentNowAgo((hiveNowMs || Date.now()) - Date.parse(sr.lastRunAt));
       const dur = sr.durationS >= 60 ? Math.round(sr.durationS / 60) + ' min' : (sr.durationS || 0) + ' s';
-      let text = (sr.succeeded ? 'last run succeeded' : (sr.timedOut ? 'last run timed out' : 'last run failed')) + ' \u00b7 ' + ago + ' \u00b7 ' + dur;
+      let text = (sr.succeeded ? 'last run succeeded' : (sr.failReason === 'node_unhealthy' ? 'node unhealthy' : (sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.timedOut ? 'last run timed out' : 'last run failed')))) + (sr.node ? ' on ' + sr.node : '') + ' \u00b7 ' + ago + ' \u00b7 ' + dur;
       if (sr.commitCount) text += ' \u00b7 ' + sr.commitCount + (sr.commitCount === 1 ? ' commit' : ' commits');
       return text;
     }
@@ -791,6 +886,8 @@
       } else if (sandboxRun) {
         const rt = sandboxRun.runtime === 'job' ? 'Job' : 'sandbox';
         if (sandboxRun.health === 'running') { session = rt + ' running'; sessionCls = 'ab-ok'; sessionTip = 'A sandboxed kick is in flight.'; }
+        else if (sandboxRun.health === 'waiting_for_node') { session = rt + ' waiting for a node'; sessionCls = 'ab-warn'; sessionTip = 'The Job is created but its pod is Pending and Unschedulable' + (sandboxRun.waitDetail ? ': ' + sandboxRun.waitDetail : '.'); }
+        else if (sandboxRun.health === 'node_unhealthy') { session = 'node unhealthy'; sessionCls = 'ab-bad'; sessionTip = 'The node preflight failed' + (sandboxRun.node ? ' on ' + sandboxRun.node : '') + ', also on the retry: ' + (sandboxRun.error || 'see the full log.'); }
         else if (sandboxRun.health === 'failed') { session = agentSandboxDownLabel(a); sessionCls = 'ab-bad'; sessionTip = 'The last sandboxed run failed: ' + (sandboxRun.error || 'see the full log.'); }
         else if (sandboxRun.health === 'overdue') { session = 'run overdue'; sessionCls = 'ab-bad'; sessionTip = 'A scheduled kick was due' + (sandboxRun.dueAt ? ' at ' + sandboxRun.dueAt : '') + ' and no run has started.'; }
         else { session = sandboxRun.lastRunAt ? rt + ' ok' : rt + ' ready'; sessionCls = 'ab-ok'; sessionTip = 'Sandboxed agent: each kick runs in its own container, so there is no session between kicks. ' + (agentSandboxRunText(a) || 'No run yet.'); }
@@ -839,6 +936,7 @@
       // Preserve custom prompt input values across re-renders
       const savedInputs = {};
       const focusedId = document.activeElement?.id;
+      const focusSnap = agentFocusSnapshot(document.activeElement);
       el.querySelectorAll('.kick-prompt').forEach(inp => {
         if (inp.value) savedInputs[inp.id] = inp.value;
       });
@@ -866,6 +964,10 @@
         const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
         const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
         const needsLogin = _agentNeedsLogin(a, isStopped);
+        // #18111: out of provider quota paints a live agent red. Disabled,
+        // paused, held-off, starting and stopped agents keep their own look,
+        // and a login problem outranks quota (re-login is the first fix).
+        const outOfQuota = !needsLogin && agentOutOfQuotaShown(a);
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
         let statusCls = '';
@@ -873,14 +975,14 @@
         else if (a.structuredStatus === 'NEEDS_CONTEXT') statusCls = 'status-needs-context';
         else if (isStale) statusCls = 'status-stale';
         const isOnDemandIdle = isOnDemand && a.busy !== 'working';
-        const cls = isDisabled ? 'disabled-agent' : needsLogin ? 'needs-login' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
+        const cls = isDisabled ? 'disabled-agent' : needsLogin ? 'needs-login' : outOfQuota ? 'out-of-quota' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
         // Down + unauthenticated CLI = attention-token needs-login (same formula as the
         // card's Login button above), not plain down-red (#2465).
-        const dotCls = isPoweredOff ? 'off' : (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
+        const dotCls = isPoweredOff ? 'off' : (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : outOfQuota ? 'out-of-quota' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
         // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
         const dotState = isOff ? 'off-healthy' : dotCls;
         const canToggle = a.beadRole !== 'supervisor';
-        const canPauseToggle = canToggle && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+        const canPauseToggle = canToggle && agentToggleGateReason() === '';
         /* RESUME LEADS (#5594). A paused agent's card offers its pause toggle
            FIRST and unconditionally; the governor-cadence gear must never take
            the slot, or the pause stays hidden until the gear's blocker is
@@ -897,13 +999,15 @@
            only lever that means anything here, so it is the only one shown. */
         const toggleBtn = (canToggle && !agentIsDisabled(a)) ? (isPaused && canPauseToggle
           ? pausedAgentActionHtml(a)
+          : isPaused
+          ? agentGatedToggleHtml(a, true, false)
           : isOff
           ? cadenceOffAgentActionHtml(a)
           : isOnDemand
           ? `<button class="hv-btn btn-secondary btn-sm btn-toggle on-demand" title="On-demand agent — kicked manually, not by governor cadence">⚡ on demand</button>`
           : canPauseToggle
           ? `<button class="hv-btn btn-secondary btn-sm btn-toggle running" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="false" title="${esc(agentToggleTitle(a, false, false))}">⏸ pause</button>`
-          : '') : '';
+          : agentGatedToggleHtml(a, false, false)) : '';
         // liveSummary is pushed via SSE every 5s — no separate fetch needed
         let summaryEl = '';
         if (a.liveSummary) {
@@ -952,6 +1056,7 @@
           ${agentSpanHandle}
           <span class="working-indicator"></span>
           <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${isDisabled ? disabledEnableBtn : ''}${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionActions} <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          ${outOfQuota ? agentOutOfQuotaNoteHtml(a) : ''}
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
           <div class="agent-state ${isPoweredOff ? 'disabled' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${agentStateText(a)}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');
@@ -978,6 +1083,7 @@
             const prefix = retrying ? 'retrying: ' : '';
             return `<div class="agent-error" title="${esc(a.lastError)}">⚠ ${esc(prefix)}${esc(a.lastError)}</div>`;
           })()}
+          ${agentSandboxWarningsHtml(a)}
           <div class="agent-card-details" data-agent-resize-y data-agent="${esc(a.name)}"${layoutHeightAttr}>
           <div class="agent-field"><span class="label" title="${isInferenceBackendName(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot). Pin to prevent governor from switching it.'}">${isInferenceBackendName(a.cli) ? 'method' : 'cli'}</span><span class="value">${cliChip(a.cli, a.pinnedBoth || a.pinnedCli, a.name)}${(a.pinnedBoth || a.pinnedCli) ? '' : ` <button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" title="Pin CLI — lock current backend">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="The LLM model powering this agent. Governor may change it based on budget or mode. Pin to lock.">model</span><span class="value">${modelChip(a.model, a.govReason, a.pinnedBoth || a.pinnedModel, a.name)}${(a.pinnedBoth || a.pinnedModel) ? '' : ` <button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" title="Pin model — lock current model">📌</button>`}</span></div>
@@ -1042,6 +1148,9 @@
           const prev = document.getElementById(focusedId);
           if (prev) { try { prev.focus({ preventScroll: true }); } catch (e) { prev.focus(); } }
         }
+        // Controls without an id (the method/model/effort selects) are matched
+        // by agent + action so a replaced <select> keeps focus (#18906).
+        agentFocusRestore(focusSnap);
         // Element-local scrollTop only, so the window never moves. Keep
         // following the tail only when the reader was already at the bottom
         // (or the pane is new); otherwise hold their place in the log.
@@ -1051,6 +1160,77 @@
           if (!(key in tailFollow) || tailFollow[key]) d.scrollTop = d.scrollHeight;
         });
         el.querySelectorAll('[data-agent-resize-y][data-agent-height]').forEach(d => { d.style.height = `${d.dataset.agentHeight}px`; });
+      }
+    }
+
+    // #18906: switching an agent's method/model/effort re-renders its card (and
+    // the detail panel, governor matrix and the model dropdown) while the
+    // operator is looking at that card. The card patches in place, but the
+    // <select> that was just used is replaced (its options changed), which
+    // drops focus, and the rows above/below resize, which moved the page away
+    // from the agent. These helpers hold the reader's place across such a
+    // synchronous re-render: the window scroll is re-pinned to the same card by
+    // key (delta based, so it composes with the scroll stabilizer), and focus
+    // returns to the same control by id or by (agent, action). Card ORDER is
+    // never touched here: a setting change must not re-sort the list.
+    const AGENT_VIEWPORT_MIN_DELTA_PX = 1;
+    function agentCssEscape(v) {
+      return (window.CSS && CSS.escape) ? CSS.escape(String(v)) : String(v).replace(/["\\]/g, '\\$&');
+    }
+    function agentFocusSnapshot(el) {
+      if (!el || el === document.body || typeof el.getAttribute !== 'function') return null;
+      if (el.id) return { id: el.id };
+      const agent = el.getAttribute('data-agent');
+      const action = el.getAttribute('data-change-action') || el.getAttribute('data-action');
+      return (agent && action) ? { agent, action, change: !!el.getAttribute('data-change-action') } : null;
+    }
+    function agentFocusRestore(snap) {
+      if (!snap) return;
+      let el = null;
+      if (snap.id) {
+        el = document.getElementById(snap.id);
+      } else {
+        const attr = snap.change ? 'data-change-action' : 'data-action';
+        el = document.querySelector(`#agents [data-agent="${agentCssEscape(snap.agent)}"][${attr}="${agentCssEscape(snap.action)}"]`);
+      }
+      if (!el || el.disabled || document.activeElement === el) return;
+      try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+    }
+    function agentViewportCapture(agentName, fallbackFocus) {
+      // fallbackFocus: the control focused when the switch began, used only when
+      // focus has since dropped to the document body (a disabled <select> blurs itself).
+      const snap = { scrollX: window.scrollX, scrollY: window.scrollY, key: '', top: 0, focus: agentFocusSnapshot(document.activeElement) || fallbackFocus || null };
+      const grid = document.getElementById('agents');
+      if (!grid) return snap;
+      const viewH = window.innerHeight || 0;
+      const visible = card => { const r = card.getBoundingClientRect(); return r.height > 0 && r.bottom > 0 && (!viewH || r.top < viewH); };
+      const cards = Array.from(grid.querySelectorAll('.agent-card[data-agent]'));
+      const own = cards.find(c => c.getAttribute('data-agent') === agentName);
+      const anchor = (own && visible(own)) ? own : cards.find(visible);
+      if (anchor) { snap.key = anchor.getAttribute('data-agent'); snap.top = anchor.getBoundingClientRect().top; }
+      return snap;
+    }
+    function agentViewportRestore(snap) {
+      if (!snap) return;
+      const grid = document.getElementById('agents');
+      const card = (snap.key && grid) ? grid.querySelector(`.agent-card[data-agent="${agentCssEscape(snap.key)}"]`) : null;
+      if (card && card.getClientRects().length) {
+        const delta = card.getBoundingClientRect().top - snap.top;
+        if (Math.abs(delta) >= AGENT_VIEWPORT_MIN_DELTA_PX) window.scrollBy(0, delta);
+      } else if (window.scrollY !== snap.scrollY) {
+        window.scrollTo(snap.scrollX, snap.scrollY);
+      }
+      agentFocusRestore(snap.focus);
+    }
+    // Run a synchronous re-render fn() so the reader keeps their place. A
+    // second pass on the next frame absorbs layout that settles after paint.
+    function withAgentViewportPreserved(agentName, fn, fallbackFocus) {
+      const snap = agentViewportCapture(agentName, fallbackFocus);
+      try {
+        return fn();
+      } finally {
+        agentViewportRestore(snap);
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => agentViewportRestore(snap));
       }
     }
 

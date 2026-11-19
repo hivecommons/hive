@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,30 @@ func repoHoldResult(repoFull string, number int, itemType string, held bool, lab
 	}
 	return &RowActionResult{Action: rowActionReleased, Target: target, Outcome: "Hold released: `" + strings.Join(removed, "`, `") + "` removed.",
 		Next: "The hive picks it up on its next pass."}
+}
+
+// repoHoldCoveringPR is the open covering PR that carries the hold an
+// issue row shows (the row draws it, so its gate pill reads the PR's hold),
+// or 0. A release on the issue removes nothing there
+// (hivecommons/hive#17564).
+func repoHoldCoveringPR(it StageTrackerItem) int {
+	for _, lp := range it.LinkedPRs {
+		if lp.State == "closed" || (lp.DrawnUnder != 0 && lp.DrawnUnder != it.Number) {
+			continue
+		}
+		if lp.Hold != nil || slices.Contains(lp.Modifiers, modHold) {
+			return lp.Number
+		}
+	}
+	return 0
+}
+
+// repoHoldElsewhereResult answers a release that removed nothing from an
+// issue whose covering PR carries the hold: no effect, naming the PR.
+func repoHoldElsewhereResult(repoFull string, number, pr int) *RowActionResult {
+	return &RowActionResult{Action: rowActionNoEffect, Target: rowActionTarget(repoFull, rowActionTargetIssue, number),
+		Outcome: "Nothing to release on #" + strconv.Itoa(number) + " — the hold is on #" + strconv.Itoa(pr) + ".",
+		Next:    "Release the hold on PR #" + strconv.Itoa(pr) + "."}
 }
 
 type repoHoldPermissionCacheEntry struct {
@@ -680,6 +705,14 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 		itemType = "issue"
 	}
 	minStatusSeq := s.applyRepoHoldToStatus(repoFull, number, itemType, body.Held, canonical, removed)
+	result := repoHoldResult(repoFull, number, itemType, body.Held, canonical, removed)
+	if !body.Held && len(removed) == 0 && itemType == rowActionTargetIssue {
+		if it, ok := s.stageTrackerItemFor(repoFull, number); ok {
+			if pr := repoHoldCoveringPR(it); pr > 0 {
+				result = repoHoldElsewhereResult(repoFull, number, pr)
+			}
+		}
+	}
 	jsonResponse(w, repoHoldResponse{
 		OK:           true,
 		Repo:         repoFull,
@@ -688,6 +721,6 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 		HoldLabel:    canonical,
 		Removed:      removed,
 		MinStatusSeq: minStatusSeq,
-		Result:       repoHoldResult(repoFull, number, itemType, body.Held, canonical, removed),
+		Result:       result,
 	})
 }

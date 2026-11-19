@@ -234,6 +234,22 @@ fi
 if [ -z "$HEAD" ]; then
   HEAD="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 fi
+# A detached checkout makes `git rev-parse --abbrev-ref HEAD` print the literal
+# "HEAD", which GitHub rejects as a PR head (422) and the hive would retry for
+# a day. If exactly one local branch points at the checked-out commit, use it;
+# otherwise refuse now, with the remedy, instead of queueing a request that can
+# never open.
+if [ "$HEAD" = "HEAD" ]; then
+  _detached_branches="$(git for-each-ref --points-at HEAD --format='%(refname:short)' refs/heads 2>/dev/null || true)"
+  if [ -n "$_detached_branches" ] && [ "$(printf '%s\n' "$_detached_branches" | wc -l | tr -d ' ')" = "1" ]; then
+    HEAD="$_detached_branches"
+    echo "hive-open-pr: HEAD is detached; using the one local branch at this commit: $HEAD" >&2
+  else
+    echo "hive-open-pr: REFUSING --head HEAD: the checkout is in detached-HEAD state, so there is no branch to open a PR from." >&2
+    echo "hive-open-pr: name one and push it (git switch -c <branch>; hive-push-branch --repo <owner/repo>), then re-run with --head <branch>. No request was written." >&2
+    exit 2
+  fi
+fi
 if [ -z "$REPO" ] || [ -z "$HEAD" ] || [ -z "$TITLE" ]; then
   echo "hive-open-pr: --repo, --head (or a current branch), and --title are required" >&2
   exit 2

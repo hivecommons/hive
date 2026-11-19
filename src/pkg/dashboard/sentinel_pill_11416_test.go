@@ -66,7 +66,7 @@ func TestSentinelFlaggedPRPillWiring(t *testing.T) {
 	}
 	// The role read must not depend on a signed-in user.
 	roleRead := strings.Index(html, "if (roleData.sentinel_label)")
-	userGate := strings.Index(html, "if (roleData.user) {\n          if (roleData.automerge_label)")
+	userGate := strings.Index(html, "if (!roleData.user) return false;")
 	if roleRead < 0 || userGate < 0 || roleRead > userGate {
 		t.Errorf("sentinel label must be read before the roleData.user gate")
 	}

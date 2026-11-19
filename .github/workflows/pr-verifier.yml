@@ -19,7 +19,7 @@ name: PR Verifier
 #     and the run's check lands on the branch tip, i.e. the pushed head. Only
 #     same-repo branches are ever dispatched (the autofix never pushes to
 #     forks); such a run uses the GitHub-hosted ARM runner like fork PRs do.
-# The concurrency group below bounds the cost.
+# The concurrency group below bounds the cost without cancelling anything.
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
@@ -30,29 +30,43 @@ on:
         required: true
         type: string
 
+# Required context: never CANCEL a run on the head SHA (#18578). GitHub scores
+# every check-run of a required name on a commit, so one cancelled sibling
+# leaves the PR BLOCKED beside a green survivor and Tide jams on it (#11250).
+# A per-PR group with cancel-in-progress let every label flip (lgtm, approved,
+# size, stage) cancel the run in flight, and a queued run in a shared group is
+# cancelled by the next one to queue even with cancel-in-progress false. So:
+#   - the group carries the head SHA, so runs on different commits never meet;
+#   - events that re-check the same head (labeled, unlabeled, edited,
+#     reopened, ready_for_review) also carry github.run_id: each runs in its
+#     own group and can neither cancel nor be cancelled. The wrapper is green
+#     whatever the label set or title verdict (the PR Type / PR Issue checks
+#     carry the verdict; the job fails only when it cannot record one,
+#     #18764), and the label types stay for #17036, not for the verdict.
+#   - runs on a superseded commit finish (10 min cap) rather than being
+#     cancelled; their verdict lands on that old SHA, which never merges.
+# .github/scripts/test-required-check-concurrency.py enforces this.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}${{ contains(fromJSON('["labeled","unlabeled","edited","reopened","ready_for_review"]'), github.event.action) && format('-{0}-{1}', github.event.action, github.run_id) || '' }}
+  cancel-in-progress: false
 
 permissions:
   checks: write
+  contents: read
   pull-requests: read
-  packages: read
 
 jobs:
   verify:
     name: verify PR contents
-    # This pinned v0.4.3 mirror is linux/arm64 only. Reuse the native ARM64
-    # override, never the general amd64 pool; forks stay on GitHub-hosted VMs.
-    runs-on: ${{ github.event.pull_request.head.repo.full_name == github.repository && fromJSON(vars.HIVE_ARM64_RUNNER || '["ubuntu-24.04-arm"]') || 'ubuntu-24.04-arm' }}
+    # Two API calls and no image: any runner will do. Forks never reach the
+    # self-hosted pool; a dispatch is only ever for a same-repo branch.
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
-    env:
-      PR_VERIFIER_IMAGE: ghcr.io/hivecommons/pr-verifier@sha256:8c2b63817c4bfa7de510ab699b154637f27a42f87826c98083903daf2a539943
     steps:
-      # A dispatched run has no pull_request payload. Rebuild one from the API
-      # for the verifier image, and bail out (green, nothing verified, said so)
-      # when the PR head is no longer this ref's tip: whoever moved it fired
-      # the normal events, and a verdict on a non-head commit is noise.
+      # A dispatched run has no pull_request payload. Rebuild one from the API,
+      # and bail out (green, nothing verified, said so) when the PR head is no
+      # longer this ref's tip: whoever moved it fired the normal events, and a
+      # verdict on a non-head commit is noise.
       - name: Reconstruct the pull_request payload for a dispatched run
         if: github.event_name == 'workflow_dispatch'
         id: dispatch_event
@@ -82,65 +96,32 @@ jobs:
             '{action: "synchronize", number: $pr.number, pull_request: $pr, repository: $repo}' \
             > "${RUNNER_TEMP}/pr-verifier-event.json"
           echo "event_path=${RUNNER_TEMP}/pr-verifier-event.json" >> "$GITHUB_OUTPUT"
-      # Login and pull are advisory for the same reason the verification below
-      # is: this check exists to report on PR CONTENTS, and a registry-side
-      # failure (org rename, package visibility change, GHCR outage — #6085
-      # documents 11 consecutive runs red on `manifest unknown` after the
-      # kubestellar→hivecommons move) says nothing about the PR. Failing here
-      # turns every open PR red at once before any content is examined, while
-      # the one step allowed to have an opinion is continue-on-error. When the
-      # image is unreachable the job logs it and stays green — an unreachable
-      # verifier is strictly less informative than a verifier that ran and
-      # objected, so it must not be treated more harshly.
-      - name: Login to GHCR
-        continue-on-error: true
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+      # The verifier scripts only. On pull_request_target GitHub runs the
+      # DEFAULT branch's copy of this workflow and github.sha is that branch's
+      # tip, so this never checks out PR code; a dispatched run checks out its
+      # own same-repo branch, which already supplied this workflow file.
+      - name: Check out the verifier scripts
+        if: steps.dispatch_event.outputs.stale != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Pull verifier image
-        id: pull
-        continue-on-error: true
-        run: |
-          if [ "$RUNNER_ARCH" != "ARM64" ]; then
-            echo "::error::The pinned PR Verifier requires native ARM64; HIVE_ARM64_RUNNER must not select $RUNNER_ARCH."
-            exit 1
-          fi
-          docker pull "$PR_VERIFIER_IMAGE"
-          image_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$PR_VERIFIER_IMAGE")"
-          if [ "$image_platform" != "linux/arm64" ]; then
-            echo "::error::PR Verifier platform $image_platform does not match the required linux/arm64."
-            exit 1
-          fi
-      - name: Report unreachable verifier image
-        if: steps.pull.outcome != 'success'
-        run: |
-          echo "::warning::PR Verifier image $PR_VERIFIER_IMAGE was unavailable or incompatible — verification was SKIPPED, not passed. Inspect the pull/platform error; this is a runner/registry/image problem, not a PR problem (#6085)."
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      # One completed create per check, never create-then-update (#18764).
+      # Not continue-on-error: a title verdict leaves this step green (the
+      # required check carries it), and the step fails only when a result
+      # could not be recorded.
       - name: Verifier action
-        if: steps.pull.outcome == 'success' && steps.dispatch_event.outputs.stale != 'true'
+        if: steps.dispatch_event.outputs.stale != 'true'
         id: verifier
-        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          # A dispatched run presents itself to the image as the
-          # pull_request_target run it stands in for (see dispatch_event).
-          VERIFIER_EVENT_NAME: ${{ github.event_name == 'workflow_dispatch' && 'pull_request_target' || github.event_name }}
           VERIFIER_EVENT_PATH: ${{ steps.dispatch_event.outputs.event_path || github.event_path }}
-        run: |
-          docker run --rm \
-            -e INPUT_GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-            -e GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-            -e GITHUB_ACTIONS="true" \
-            -e GITHUB_EVENT_NAME="$VERIFIER_EVENT_NAME" \
-            -e GITHUB_EVENT_PATH="/github/event.json" \
-            -e GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
-            -e GITHUB_SHA="$GITHUB_SHA" \
-            -e GITHUB_REF="$GITHUB_REF" \
-            -e GITHUB_WORKSPACE="/github/workspace" \
-            -v "$VERIFIER_EVENT_PATH:/github/event.json:ro" \
-            -v "$GITHUB_WORKSPACE:/github/workspace:ro" \
-            "$PR_VERIFIER_IMAGE"
-      - name: Report verifier failure
-        if: steps.verifier.outcome == 'failure'
-        run: |
-          echo "::warning::PR Verifier returned a failure. This wrapper is advisory: inspect the individual PR checks and verifier log; a green wrapper does not prove those checks passed."
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const {record} = require(path.join(process.env.GITHUB_WORKSPACE, '.github/scripts/pr-verifier.cjs'));
+            const event = JSON.parse(fs.readFileSync(process.env.VERIFIER_EVENT_PATH, 'utf8'));
+            await record({github, core, owner: context.repo.owner, repo: context.repo.repo, pr: event.pull_request});

@@ -1,0 +1,8 @@
+{
+  "data": [
+    {"id": "anthropic/claude-opus-5.5"},
+    {"id": "anthropic/claude-fable-5"},
+    {"id": "anthropic/claude-haiku-4.5"},
+    {"id": "anthropic/claude-mythos-6"}
+  ]
+}

@@ -29,10 +29,26 @@ type KnowledgeConnector struct {
 // keys (token, password, ...) are captured in Inline so validation can
 // reject them instead of the YAML decoder silently dropping a pasted secret.
 type KnowledgeConnectorAuth struct {
-	Env    string         `yaml:"env,omitempty"`
-	File   string         `yaml:"file,omitempty"`
-	Inline map[string]any `yaml:",inline"`
+	Env  string `yaml:"env,omitempty"`
+	File string `yaml:"file,omitempty"`
+	// Mode selects the OAuth grant of a client-registration connector
+	// (zoom: user_oauth or server_to_server). Empty is the connector default.
+	Mode string `yaml:"mode,omitempty"`
+	// ClientIDEnv / ClientSecretEnv / AccountIDEnv / TenantIDEnv name the
+	// environment variables that hold an OAuth client registration (zoom,
+	// teams). Like Env they are variable names, never values.
+	ClientIDEnv     string         `yaml:"client_id_env,omitempty"`
+	ClientSecretEnv string         `yaml:"client_secret_env,omitempty"`
+	AccountIDEnv    string         `yaml:"account_id_env,omitempty"`
+	TenantIDEnv     string         `yaml:"tenant_id_env,omitempty"`
+	Inline          map[string]any `yaml:",inline"`
 }
+
+// Auth modes accepted in KnowledgeConnectorAuth.Mode.
+const (
+	KnowledgeConnectorAuthModeUserOAuth      = "user_oauth"
+	KnowledgeConnectorAuthModeServerToServer = "server_to_server"
+)
 
 // IsEnabled reports whether the connector should be scheduled (default true).
 func (k KnowledgeConnector) IsEnabled() bool {
@@ -134,6 +150,16 @@ func validateKnowledgeConnectorAuth(field string, a KnowledgeConnectorAuth) erro
 	}
 	if file != "" && !filepath.IsAbs(file) {
 		return fmt.Errorf("%s.auth.file %q must be an absolute path", field, a.File)
+	}
+	switch strings.TrimSpace(a.Mode) {
+	case "", KnowledgeConnectorAuthModeUserOAuth, KnowledgeConnectorAuthModeServerToServer:
+	default:
+		return fmt.Errorf("%s.auth.mode %q must be %s or %s", field, a.Mode, KnowledgeConnectorAuthModeUserOAuth, KnowledgeConnectorAuthModeServerToServer)
+	}
+	for key, v := range map[string]string{"client_id_env": a.ClientIDEnv, "client_secret_env": a.ClientSecretEnv, "account_id_env": a.AccountIDEnv, "tenant_id_env": a.TenantIDEnv} {
+		if v = strings.TrimSpace(v); v != "" && !knowledgeConnectorEnvRe.MatchString(v) {
+			return fmt.Errorf("%s.auth.%s %q must be an environment variable name", field, key, v)
+		}
 	}
 	return nil
 }

@@ -27,6 +27,8 @@ A maintainer's role does not shield their hive's work from the hive's stand-in r
 3. Maintainers seek consensus. For routine changes, no objection after review is treated as approval.
 4. Controversial or cross-project decisions may be escalated to the Hive Commons maintainer committee.
 
+Larger design changes are proposed as `📝 RFC:` issues labelled `proposal`; [RFC and proposal process](src/docs/rfc-process.md) describes how they are filed, what accepted means, and how they are tracked and closed. It follows this decision process and adds no separate authority.
+
 ## Contributor ladder
 
 Hive follows the [Hive Commons Contributor Ladder](https://github.com/hivecommons/.github/blob/main/MAINTAINERS.md), maintained in the org-level `.github` repository: **Contributor → Organization Member → Reviewer → Maintainer**. Contributors earn additional responsibility through sustained, high-quality participation. Requests or nominations for expanded responsibility should be raised with maintainers.

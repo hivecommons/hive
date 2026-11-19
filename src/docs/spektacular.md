@@ -10,49 +10,13 @@ The runner is OFF by default. With `runs.spektacular.enabled` unset or `false`
 Hive never starts a Spek process and every existing lease behaviour is
 unchanged.
 
-Every retained Spek run is also projected as a dashboard campaign under
-`GET /api/campaigns`. The campaign id is the stable run/spec key (the same bare
-artifact name the status verbs use), the engine is `Spektacular`, and the row
-links back to `/api/runs/{key}` when run detail is available. Picking up a
-Spek campaign does not copy spek contents into Hive; `POST
-/api/campaigns/{id}/resume` returns the retained run projection and a CLI status
-command, while Spek reloads the current state from its working files and
-spek backend.
-
-## Jam Sessions
-
-Each campaign also has a Jam workspace for team interaction around the spec.
-The dashboard Campaigns list exposes a **Jam** action, backed by
-`/api/campaigns/{id}/jam` and the `/threads`, `/suggestions`, and `/polls`
-subroutes. Phase 1 is async: participants with read-write access can anchor
-threads and suggestions to spec sections, vote in advisory polls, and resume
-the workspace after a restart. Maintainers record poll decisions with a
-rationale; accepted suggestions and decisions create attributed spec revisions
-with human or agent/model attribution and diffs.
-
-Live Jam mode upgrades `/api/campaigns/{id}/jam/ws` to a WebSocket so signed-in
-participants can see who is present and which section each person is editing.
-Live spec edits carry the sender's last seen spec revision; stale edits are
-rejected with a conflict message instead of overwriting newer work, so
-reconnecting clients can refresh and merge intentionally.
-
-Maintainers can opt a campaign into GitHub Projects sync from the Jam tab. The
-sync publishes the current spec, recorded decisions, and derived suggestion
-items to the linked project; inbound project status updates are recorded on the
-campaign without rewriting local Jam decisions. Sync failures are kept with
-retry guidance so the dashboard shows what to fix before trying again.
-
-Sync posts to `https://api.github.com/graphql` with the hive's `GITHUB_TOKEN`.
-`HIVE_JAM_PROJECT_SYNC_URL` overrides the endpoint; an override must use
-`https` (plain `http` is accepted only for loopback hosts) and never receives
-`GITHUB_TOKEN`. Set `HIVE_JAM_PROJECT_SYNC_TOKEN` to give a custom endpoint its
-own bearer token.
-
-Maintainers can invite Spektacular or another configured hive agent into a Jam
-thread. Agent participation is deliberately review-gated: the attributed agent
-reply is posted in-thread and any proposed spec text is created as an open
-suggestion, but a permitted human maintainer must still accept it before the
-spec revision changes.
+Retained Spek runs are listed in [Runs](runs.md) (`GET /api/runs` and
+`GET /api/runs/{key}`). The old campaign projection (`/api/campaigns`), campaign
+Jam and campaign recheck were retired together with inception campaigns in
+favour of [Inception (spek) sessions](dashboard-sections/workflow-and-agents.md#inception-spek).
+On the first start after the upgrade Hive writes a one-time, read-only export of
+any campaign archives and Jam data it finds; see
+[Inception: retired campaigns export](inception.md#retired-campaigns-export).
 
 ## Enabling it
 
@@ -417,100 +381,14 @@ lists `implement` only after `ApprovePlan` (`POST /api/plans/{id}/approve`)
 sets `plan_status` to `approved`. A run whose epic already carries a plan is
 not re-imported.
 
-## Continuous convergence
+## Continuous convergence (retired)
 
-Spek campaigns can opt into a scheduler-owned recheck cadence without changing
-the one-shot default. The feature is off unless
-`runs.spektacular.recheck.enabled: true`; opted-in campaigns use
-`runs.spektacular.recheck.default_interval` (default `168h`) unless their
-retained campaign record carries `recheck.interval`, and imported delta tasks
-are capped by `runs.spektacular.recheck.max_delta_tasks` (default `50`).
-
-When a completed `implement` campaign is due, or an owner posts
-`POST /api/campaigns/{id}/recheck`, Hive creates a linked Spektacular revision
-(`revision_of`, `revision`) and starts that revision at the `spec` stage. The
-original campaign is never overwritten; the revision is a new generation with
-the prior final spec/plan treated as prior artifacts by convention. Manual
-requests return `409 Conflict` when another revision is already in flight and
-`404 Not Found` when recheck is disabled unless `?force=true` is supplied.
-
-The recheck follows the same human checkpoints as any Spek run. A final spec
-still waits at the spec boundary when that checkpoint is enabled, and a final
-plan imports as a draft plan until approval. At final-plan import Hive compares
-the revision task list with the prior final plan by normalized task-content
-hash. Unchanged tasks reuse the prior logical operation identity and are not
-imported again; only new or changed tasks become planner children. If the
-codebase and prior plan are unchanged, the delta is empty and Hive creates no
-new planner tasks or issues. If the delta exceeds `max_delta_tasks`, Hive
-imports the first capped set and records `campaign_recheck_delta_capped`.
-
-Each revision carries a `drift` evidence block with `codebase_changed`,
-`prior_revision`, `delta_count`, and `recheck_reason` (`cadence` or `manual`).
-The codebase signal compares the prior recorded head SHA with the current Git
-HEAD when available. Outward discovery can add two optional evidence shapes
-before the revision's `spec` lease starts: typed release/activity/feed signals
-as `drift.external[]`, and exact document snapshots as `drift.drift_source[]`.
-Both default to empty and perform no discovery network access unless explicitly
-configured.
-
-```yaml
-runs:
-  spektacular:
-    recheck:
-      discovery:
-        enabled: true
-        timeout: 30s
-        max_total_items: 100
-        sources:
-          - {kind: upstream_release, name: kubernetes, url_or_repo: kubernetes/kubernetes, max_items: 10}
-          - {kind: repo_activity, name: competitor-runtime, url_or_repo: example/runtime, allow_prerelease: true}
-          - {kind: standards_feed, name: ietf-http, url_or_repo: https://www.ietf.org/archive/id/atom.xml}
-          - {kind: landscape, name: project-landscape, max_items: 20}
-      discovery_proxy: http://relay:18443
-      egress_allowlist: [api.github.com, www.ietf.org]
-      sources:
-        - name: upstream-release-doc
-          kind: release
-          url: https://api.github.com/repos/jumppad-labs/spektacular/releases/latest
-variables:
-  security:
-    http_allowlist: [api.github.com, www.ietf.org]
-```
-
-Typed findings are recorded on the revision as
-`drift.external[] = {source, kind, title, url, published_at, summary}` with
-summaries capped at 280 characters, plus `external_count` and
-`sources_failed[] = {name, reason}`. A failed source is non-fatal: Hive records
-the typed reason and continues with the rest. The same evidence is included in
-the `spec` stage assignment prompt as context so the spec generator can decide
-what, if anything, belongs in the revised spec; the spec and plan human
-checkpoints remain the only approval gates.
-
-Exact document sources use `runs.spektacular.recheck.sources`.
-`discovery_proxy` must be the operator's existing relay egress proxy, with its
-normal network policy and trust roots installed. It is required when exact
-sources are configured; discovery never falls back to direct access, including
-when `NO_PROXY` matches. `egress_allowlist` contains exact DNS hostnames, with
-no wildcards or IP literals. Config validation rejects a source outside that
-list, even when cadence is disabled, because forced manual rechecks use the
-same policy.
-
-Each exact source declares a unique `name`, a `kind` (`release`, `changelog`,
-`repo`, `standards`, or `landscape`), and an exact HTTPS `url`. Source kind
-labels provenance; it does not enable crawling or additional API calls. A pass
-makes one GET per declared document, at most 16 sources, with a 10-second
-request timeout, a 30-second total deadline, and a 32 KiB UTF-8 response cap.
-Redirects are refused. No links are followed and no writes are issued. Each
-retained snapshot includes its name, kind, URL, SHA-256 and text; failed reads
-retain an error instead of claiming no drift. This exact-document path does not
-invoke `upstreamwatch`'s multi-page PR and release scanner.
-
-Campaign list/detail JSON includes
-`recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count,
-external_count, sources_failed}`; recheck revisions also include the `drift`
-block above. The dashboard Campaigns panel renders the cadence, shows
-`N external signals` with an expandable list, and provides an owner-only
-Recheck action.
+Campaign recheck (scheduler-owned recheck revisions, outward discovery and the
+`POST /api/campaigns/{id}/recheck` endpoint) was retired with inception
+campaigns. `runs.spektacular.recheck` is still accepted in `hive.yaml` so an
+existing file keeps loading and validating, but it has no effect and Hive logs a
+one-line deprecation warning; remove the block. The design history is in
+[ADR-0020](adr/0020-spek-continuous-convergence.md).
 
 ## Defensive handling of the open questions
 

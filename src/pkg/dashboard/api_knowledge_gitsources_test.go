@@ -130,6 +130,9 @@ case "$*" in
   *pull*)
     exit "${HIVE_FAKE_GIT_PULL_EXIT:-0}"
     ;;
+  *ls-remote*)
+    printf 'ref: refs/heads/%s\tHEAD\n' "${HIVE_FAKE_GIT_DEFAULT_BRANCH:-main}"
+    ;;
 esac
 exit 0
 `
@@ -181,7 +184,7 @@ func TestGitSourcesConnectSuccessPersistsAndDedupes(t *testing.T) {
 				"name": "docs",
 			},
 			want: []config.GitSourceConfigYAML{
-				{Name: "docs", Layer: "project"},
+				{Name: "docs", Branch: "main", Layer: "project"},
 			},
 		},
 		{
@@ -258,6 +261,47 @@ func TestGitSourcesConnectSuccessPersistsAndDedupes(t *testing.T) {
 	}
 }
 
+// TestGitSourcesConnectBlankBranchResolvesRemoteDefault pins that a blank
+// branch is resolved from the remote's HEAD symref instead of being guessed as
+// "main": the clone uses the resolved branch, and it is persisted to hive.yaml
+// and returned so the row shows what was indexed.
+func TestGitSourcesConnectBlankBranchResolvesRemoteDefault(t *testing.T) {
+	logPath := installHermeticGit(t)
+	t.Setenv("HIVE_FAKE_GIT_DEFAULT_BRANCH", "trunk")
+	s, deps, url := gitSourceTestServer(t)
+
+	rec := doPost(s, "/api/knowledge/git-sources", map[string]any{"name": "docs", "url": url})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("connect: expected 200, got %d (body %q)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Branch string `json:"branch"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Branch != "trunk" {
+		t.Errorf("response branch = %q, want trunk", resp.Branch)
+	}
+	want := config.GitSourceConfigYAML{Name: "docs", URL: url, Branch: "trunk", Layer: "project"}
+	if got := deps.Config.Knowledge.GitSources; len(got) != 1 || got[0] != want {
+		t.Fatalf("persisted git sources = %+v, want [%+v]", got, want)
+	}
+	if infos := deps.Knowledge.GitSources(); len(infos) != 1 || infos[0].Branch != "trunk" {
+		t.Errorf("live git sources = %+v, want branch trunk", infos)
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logged), "ls-remote --symref -- "+url+" HEAD") {
+		t.Errorf("default branch was not resolved via ls-remote; log:\n%s", logged)
+	}
+	if !strings.Contains(string(logged), "--branch trunk") {
+		t.Errorf("clone did not use the resolved branch; log:\n%s", logged)
+	}
+}
+
 func TestGitSourcesConnectPartialFailureDoesNotPersist(t *testing.T) {
 	installHermeticGit(t)
 	t.Setenv("HIVE_FAKE_GIT_SPARSE_SET_EXIT", "7")
@@ -307,8 +351,8 @@ func TestGitSourcesDisconnectSuccessFiltersAndPersists(t *testing.T) {
 	}
 
 	want := []config.GitSourceConfigYAML{
-		{Name: "root-docs", URL: url, Layer: "project"},
-		{Name: "other-docs", URL: otherURL, Layer: "project"},
+		{Name: "root-docs", URL: url, Branch: "main", Layer: "project"},
+		{Name: "other-docs", URL: otherURL, Branch: "main", Layer: "project"},
 	}
 	if got := deps.Config.Knowledge.GitSources; len(got) != len(want) {
 		t.Fatalf("remaining git sources = %+v, want %+v", got, want)

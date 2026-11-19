@@ -530,6 +530,40 @@ else
 fi
 cd "$repo" || exit 1
 
+# Bot authors (#18203): DCO_SKIP_BOT_AUTHORS skips the sign-off identity match
+# for a bot, never the missing-trailer check. A bot commit with no
+# Signed-off-by (the shape of f33758f5a) fails; a signed bot commit is skipped.
+bot_repo="$TMP/bot-repo"
+mkdir -p "$bot_repo"
+cd "$bot_repo" || exit 1
+git init -q
+git config user.name 'hivecommons-hive[bot]'
+git config user.email '280983584+hivecommons-hive[bot]@users.noreply.github.com'
+echo signed > file.txt
+git add file.txt
+git commit -q -m $'bot signed commit\n\nSigned-off-by: scanner <280983584+hivecommons-hive[bot]@users.noreply.github.com>'
+bot_signed_sha=$(git rev-parse HEAD)
+echo unsigned >> file.txt
+git add file.txt
+git commit -q -m $'bot squash without a sign-off\n\nCo-authored-by: scanner <280983584+hivecommons-hive[bot]@users.noreply.github.com>'
+bot_unsigned_sha=$(git rev-parse HEAD)
+set +e
+output=$(DCO_SKIP_BOT_AUTHORS=true bash "$CHECKER" 10 HEAD 2>&1); rc=$?
+set -e
+if [ "$rc" -eq 1 ] && out_grep -q "^FAIL ${bot_unsigned_sha} missing-signoff bot-author="; then
+  pass "a bot-authored commit with no sign-off is reported even when bots are skipped"
+else
+  bad "unsigned bot commit ${bot_unsigned_sha} was not reported (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+if out_grep -q "^FAIL ${bot_signed_sha}"; then
+  bad "a signed bot-authored commit should still be skipped"
+  echo "$output" | sed 's/^/      | /'
+else
+  pass "a signed bot-authored commit is still skipped"
+fi
+cd "$repo" || exit 1
+
 if [ "$fail" -ne 0 ]; then
   echo "test-check-dco-trailers FAILED"
   exit 1

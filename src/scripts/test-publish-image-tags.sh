@@ -144,15 +144,15 @@ if grep -q 'hive-hub:latest' "$capture"; then
   exit 1
 fi
 
-# Pin all three workflow integrations. The publisher test alone would still
+# Pin all four workflow integrations (hive, contributor, hub, hive-mx). The publisher test alone would still
 # pass if a later workflow edit bypassed it or forgot to stamp build metadata.
 workflow="$script_dir/../../.github/workflows/docker.yml"
-[[ $(grep -c 'io.kubestellar.hive.github-actions-run-number=' "$workflow") -eq 3 ]]
-[[ $(grep -c 'src/scripts/publish-image-tags.sh' "$workflow") -eq 3 ]]
+[[ $(grep -c 'io.kubestellar.hive.github-actions-run-number=' "$workflow") -eq 4 ]]
+[[ $(grep -c 'src/scripts/publish-image-tags.sh' "$workflow") -eq 4 ]]
 # #7721 Phase 1: v5 is the stable line. Every image row (and its cross-org
 # mirror step) publishes candidate + :latest; stable is moved only by
 # promote-stable.yml after soak, and edge belongs to the v6 lane.
-[[ $(grep -c 'v5 true candidate' "$workflow") -eq 3 ]]
+[[ $(grep -c 'v5 true candidate' "$workflow") -eq 4 ]]
 if grep -q 'v5 true stable\|v5 true candidate,stable\|CHANNELS: "stable\|CHANNELS: "candidate,stable' "$workflow"; then
   echo "docker workflow publishes stable on every v5 merge (bypasses promote-stable soak)" >&2
   exit 1
@@ -161,7 +161,7 @@ if grep -q 'v5 true edge\|v5 false edge\|CHANNELS: "edge' "$workflow"; then
   echo "docker workflow publishes v6-owned edge from the v5 lane" >&2
   exit 1
 fi
-[[ $(grep -c 'INCLUDE_LATEST: "true"' "$workflow") -eq 3 ]]
+[[ $(grep -c 'INCLUDE_LATEST: "true"' "$workflow") -eq 4 ]]
 if grep -q 'INCLUDE_LATEST: "false"' "$workflow"; then
   echo "cross-org mirror step fails to publish :latest from the stable (v5) lane" >&2
   exit 1

@@ -75,10 +75,44 @@ const PauseMinSightings = 2
 type SightingTracker struct {
 	mu     sync.Mutex
 	streak map[string]int
+	// revokedAlerted records which agents the operator has already been
+	// notified about for the current "login revoked" episode (#18732), so the
+	// page goes out once per episode rather than once per governor cycle.
+	revokedAlerted map[string]bool
 }
 
 func NewSightingTracker() *SightingTracker {
-	return &SightingTracker{streak: map[string]int{}}
+	return &SightingTracker{streak: map[string]int{}, revokedAlerted: map[string]bool{}}
+}
+
+// MarkRevokedAlerted reports whether this is the FIRST cycle the operator is
+// told about this agent's revoked credential; later cycles return false until
+// ClearRevokedAlert. A nil tracker alerts every cycle.
+func (t *SightingTracker) MarkRevokedAlerted(agent string) bool {
+	if t == nil {
+		return true
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.revokedAlerted == nil {
+		t.revokedAlerted = map[string]bool{}
+	}
+	if t.revokedAlerted[agent] {
+		return false
+	}
+	t.revokedAlerted[agent] = true
+	return true
+}
+
+// ClearRevokedAlert re-arms the once-per-episode page for an agent whose
+// credential is no longer reported revoked.
+func (t *SightingTracker) ClearRevokedAlert(agent string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.revokedAlerted, agent)
 }
 
 // observe records this cycle's reading for one agent and returns the resulting
@@ -126,6 +160,11 @@ func (t *SightingTracker) Retain(present map[string]bool) {
 	for name := range t.streak {
 		if !present[name] {
 			delete(t.streak, name)
+		}
+	}
+	for name := range t.revokedAlerted {
+		if !present[name] {
+			delete(t.revokedAlerted, name)
 		}
 	}
 }
@@ -210,6 +249,22 @@ type AgentManager interface {
 	Pause(name, trigger, reason string) error
 }
 
+// CredentialRevocationReporter is the optional manager extension the detector
+// consults before trusting the file-level credential answer (#18732). A
+// manager that verified the credential against the provider and was told 401
+// reports it here; a runtime without the capability simply does not implement
+// it and the detector behaves as before.
+type CredentialRevocationReporter interface {
+	AgentCredentialRevoked(agentName string) (revoked bool, detail string)
+}
+
+func credentialRevoked(agentMgr AgentManager, name string) (bool, string) {
+	if r, ok := agentMgr.(CredentialRevocationReporter); ok {
+		return r.AgentCredentialRevoked(name)
+	}
+	return false, ""
+}
+
 type Notifier interface {
 	Send(title, message string, priority notify.Priority)
 }
@@ -285,6 +340,41 @@ func Scan(
 		// sighting is recorded before the verdict is taken.
 		re := Match(backend, joined, compiled)
 		streak := sightings.Observe(name, re != nil)
+
+		// #18732: the file-level answer above is positive evidence only, and a
+		// REVOKED grant passes it — the file is intact, the tokens are dead.
+		// When the manager has asked the provider and been refused, this is
+		// the operator's case: not the token-restart heal's (it cannot work
+		// and would spend the restart budget) and not a pause's (a paused
+		// agent would not self-heal after the sign-in). Page once, leave the
+		// agent running at its prompt, and let the dashboard banner and hub
+		// verdict carry the state from the manager's BackendAuth mark.
+		revoked, revokedDetail := credentialRevoked(agentMgr, name)
+		if !revoked {
+			sightings.ClearRevokedAlert(name)
+		}
+		if re != nil && revoked {
+			logger.Warn("login revoked detected: the provider rejected the stored credential — operator sign-in needed, no restart will be attempted",
+				"agent", name,
+				"backend", backend,
+				"login_hint", "Sign in again from the dashboard",
+				"pattern", re.String(),
+				"detail", revokedDetail,
+			)
+			if sightings.MarkRevokedAlerted(name) {
+				notifier.Send(
+					fmt.Sprintf("\U0001F511 Claude login revoked: %s", name),
+					fmt.Sprintf(
+						"Agent '%s' is at a login prompt and the provider rejected the stored %s credential (%s). "+
+							"Restarting cannot fix this, so no restart is attempted. Sign in again from the dashboard; "+
+							"agents still at the prompt are restarted once afterwards.",
+						name, backend, revokedDetail,
+					),
+					notify.PriorityHigh,
+				)
+			}
+			continue
+		}
 
 		switch Verdict(re != nil, credentialValid, streak) {
 		case ActionIgnore:

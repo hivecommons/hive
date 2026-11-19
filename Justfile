@@ -524,6 +524,13 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
       GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
       echo "Authenticated as: ${GH_USER}"
     fi
+    # hivecommons/hive#18238: the agent can read this token, so recommend a
+    # fine-grained token limited to the contributor's forks over `repo`.
+    echo "NOTE: the agent you run for the hive can read this GitHub token. A classic"
+    echo "      token with the 'repo' scope can push to EVERY repository you can write to."
+    echo "      Prefer a fine-grained token limited to your forks (Contents and Pull"
+    echo "      requests: read and write): https://github.com/settings/personal-access-tokens/new"
+    echo "      then: gh auth login --with-token < token.txt, and rerun this setup."
     GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
     if [[ -n "$GH_TOKEN" ]]; then
       echo "GH_TOKEN=${GH_TOKEN}" > "{{config_dir}}/gh-auth.env"
@@ -795,6 +802,13 @@ contribute-move backend="claude": check-version (contribute-check-backend backen
       GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
       echo "Authenticated as: ${GH_USER}"
     fi
+    # hivecommons/hive#18238: the agent can read this token, so recommend a
+    # fine-grained token limited to the contributor's forks over `repo`.
+    echo "NOTE: the agent you run for the hive can read this GitHub token. A classic"
+    echo "      token with the 'repo' scope can push to EVERY repository you can write to."
+    echo "      Prefer a fine-grained token limited to your forks (Contents and Pull"
+    echo "      requests: read and write): https://github.com/settings/personal-access-tokens/new"
+    echo "      then: gh auth login --with-token < token.txt, and rerun this setup."
     GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
     if [[ -z "$GH_USER" || -z "$GH_TOKEN" ]]; then
       echo "ERROR: could not read your GitHub identity or token from gh."
@@ -1596,6 +1610,20 @@ contribute-hive backend="" mode="docker": check-version
         # not the Mac). The relay only dials out, so the default network
         # works; reach a localhost LiteLLM proxy via host.containers.internal.
       fi
+      # Rootless Docker (#19076): the daemon runs in a user namespace where the
+      # host user is container root and the image's `dev` user (uid 1000) is an
+      # unmapped sub-uid, so the host-owned 0600 contributor.env (and the config
+      # dir) are unreadable/unwritable inside. Docker has no keep-id, so the
+      # bind sources are staged and chowned to uid 1000 through the userns
+      # (see rootless_stage_owner below) instead of widening any file mode.
+      DOCKER_ROOTLESS=""
+      CONFIG_MOUNT_SRC="{{config_dir}}"
+      GH_MOUNT_SRC="${HOME}/.config/gh"
+      ROOTLESS_STAGES=()
+      if [[ "$RUNTIME" == "docker" ]] \
+         && "$RUNTIME" info --format '{{ "{{" }}.SecurityOptions{{ "}}" }}' 2>/dev/null | grep -q 'name=rootless'; then
+        DOCKER_ROOTLESS=1
+      fi
       if [[ "${HIVE_SKIP_PULL:-}" != "true" ]]; then
         echo "Pulling {{hive_image}} (${RUNTIME})..."
         "$RUNTIME" pull {{hive_image}} 2>/dev/null || echo "Pull failed — using local image"
@@ -1997,7 +2025,28 @@ contribute-hive backend="" mode="docker": check-version
         # Remove the ephemeral CLI config staging dir (H6). Any config the
         # container wrote — including a malicious injection — dies with it and
         # never touches the contributor's real host config.
+        # Rootless Docker: hand the staged trees back to the host user first,
+        # otherwise the sub-uid-owned files cannot be removed from the host.
+        if [ -n "${DOCKER_ROOTLESS}" ] && [ "${#ROOTLESS_STAGES[@]}" -gt 0 ]; then
+          rootless_stage_owner 0:0 "${ROOTLESS_STAGES[@]}" >/dev/null 2>&1 || true
+        fi
         [ -n "${CLI_STAGE:-}" ] && rm -rf "${CLI_STAGE}" 2>/dev/null || true
+        [ -n "${CONFIG_STAGE:-}" ] && rm -rf "${CONFIG_STAGE}" 2>/dev/null || true
+        [ -n "${GH_STAGE:-}" ] && rm -rf "${GH_STAGE}" 2>/dev/null || true
+      }
+      # rootless_stage_owner <uid:gid> <dir>...: chown bind-mount sources from
+      # inside the daemon's user namespace (container root == host user), so
+      # uid 1000 in the container owns them while modes stay exactly as copied
+      # (0600 stays 0600). 0:0 maps ownership back to the host user.
+      rootless_stage_owner() {
+        local owner="$1" d i=0 vols=() paths=()
+        shift
+        for d in "$@"; do
+          vols+=(-v "${d}:/stage/${i}")
+          paths+=("/stage/${i}")
+          i=$((i + 1))
+        done
+        "$RUNTIME" run --rm --user 0:0 --entrypoint chown "${vols[@]}" {{hive_image}} -R "$owner" "${paths[@]}"
       }
       trap cleanup_container EXIT
       report_container_termination() {
@@ -2015,14 +2064,34 @@ contribute-hive backend="" mode="docker": check-version
           echo "             Check the host's OOM logs for system-wide memory pressure."
         fi
       }
+      if [[ -n "$DOCKER_ROOTLESS" ]]; then
+        CONFIG_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/hive-config-stage.XXXXXX")"
+        chmod 700 "${CONFIG_STAGE}"
+        cp -a "{{config_dir}}/." "${CONFIG_STAGE}/"
+        CONFIG_MOUNT_SRC="${CONFIG_STAGE}"
+        ROOTLESS_STAGES+=("${CONFIG_STAGE}")
+        if [[ -d "${HOME}/.config/gh" ]]; then
+          GH_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/hive-gh-stage.XXXXXX")"
+          chmod 700 "${GH_STAGE}"
+          cp -a "${HOME}/.config/gh/." "${GH_STAGE}/"
+          GH_MOUNT_SRC="${GH_STAGE}"
+          ROOTLESS_STAGES+=("${GH_STAGE}")
+        fi
+        ROOTLESS_STAGES+=("${CLI_STAGE}")
+        echo "Rootless Docker detected: staging config for the container user (modes unchanged)."
+        if ! rootless_stage_owner 1000:1000 "${ROOTLESS_STAGES[@]}"; then
+          echo "ERROR: could not prepare config for rootless Docker; use HIVE_CONTAINER_RUNTIME=podman." >&2
+          exit 1
+        fi
+      fi
       "$RUNTIME" run -d \
         --name "${CONTAINER_NAME}" \
         ${RUNTIME_FLAGS} \
         "${RESOURCE_FLAGS[@]}" \
         ${NET_FLAGS} \
-        -v "{{config_dir}}:/home/dev/.config/hive${VOLSUF}" \
+        -v "${CONFIG_MOUNT_SRC}:/home/dev/.config/hive${VOLSUF}" \
         ${CLI_MOUNTS} \
-        -v "${HOME}/.config/gh:/home/dev/.config/gh${ROSUF}" \
+        -v "${GH_MOUNT_SRC}:/home/dev/.config/gh${ROSUF}" \
         -e HIVE_HUB="{{hive_hub}}" \
         -e AGENT_BACKEND="${BACKEND}" \
         -e GH_TOKEN="${GH_TOKEN:-}" \
@@ -2056,6 +2125,18 @@ contribute-hive backend="" mode="docker": check-version
       # the user only sees an opaque runtime error.
       CONTAINER_STATE=$("$RUNTIME" inspect -f '{{ "{{" }}.State.Running{{ "}}" }}' "${CONTAINER_NAME}" 2>/dev/null || echo "missing")
       if [[ "$CONTAINER_STATE" != "true" ]]; then
+        # Auto-detected docker failed on a permission error (UID mapping): fall
+        # back to podman once, with a one-line reason. Never overrides an
+        # explicit HIVE_CONTAINER_RUNTIME, and cannot loop.
+        if [[ "$RUNTIME" == "docker" && -z "{{container_runtime}}" && -z "${HIVE_RUNTIME_FALLBACK:-}" ]] \
+           && command -v podman >/dev/null 2>&1 \
+           && "$RUNTIME" logs "${CONTAINER_NAME}" 2>&1 | grep -q 'Permission denied'; then
+          echo "docker failed with 'Permission denied' on the mounted config (UID mapping); retrying with podman."
+          cleanup_container
+          trap - EXIT
+          HIVE_CONTAINER_RUNTIME=podman HIVE_RUNTIME_FALLBACK=1 \
+            exec "{{just_executable()}}" --justfile "{{justfile()}}" contribute-hive "{{backend}}" "{{mode}}"
+        fi
         CONTAINER_EXIT=$("$RUNTIME" inspect -f '{{ "{{" }}.State.ExitCode{{ "}}" }}' "${CONTAINER_NAME}" 2>/dev/null || echo "unknown")
         echo ""
         echo "ERROR: the contributor container exited during startup."
@@ -2099,7 +2180,7 @@ contribute-hive backend="" mode="docker": check-version
         else
           echo "Common causes:"
           echo "  * GH_TOKEN empty/expired  — re-run: just contribute-setup {{backend}}"
-          echo "  * config mounts unreadable (rootless podman UID mapping)"
+          echo "  * config mounts unreadable (rootless docker/podman UID mapping)"
           echo "  * missing HIVE_REGISTRATION_TOKEN"
         fi
         echo ""

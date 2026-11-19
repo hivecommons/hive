@@ -109,10 +109,19 @@ type backendResumeLayout struct {
 // in a mktemp file that is discarded on every relaunch (agy_turn.go), so a
 // captured id would point at a conversation the next launch never reopens.
 var backendResumeLayouts = map[string]backendResumeLayout{
+	// claude keeps the session transcript at ~/.claude/projects/<project>/<uuid>.jsonl.
+	// Per-subagent transcripts under <uuid>/subagents/agent-*.jsonl are not
+	// sessions, so only a UUID-named file yields an id.
 	"claude": {
-		root:    func(home, _ string) string { return filepath.Join(home, ".claude", "projects") },
-		ext:     ".jsonl",
-		id:      func(name string) string { return trimResumeName(name, "", ".jsonl") },
+		root: func(home, _ string) string { return filepath.Join(home, ".claude", "projects") },
+		ext:  ".jsonl",
+		id: func(name string) string {
+			id := trimResumeName(name, "", ".jsonl")
+			if !looksLikeUUID(id) {
+				return ""
+			}
+			return id
+		},
 		command: func(id string) string { return "claude --resume " + id },
 	},
 	"copilot": {
@@ -241,9 +250,15 @@ func looksLikeUUID(s string) bool {
 }
 
 // isSafeResumeID reports whether an id read from inside a transcript is safe
-// to render into a shell command: a bounded run of [A-Za-z0-9_-].
+// to render into a command: a bounded run of [A-Za-z0-9_-] that does NOT start
+// with '-'. The id is the file name of a transcript the session's own user can
+// plant, so a leading dash would let "--dangerously-skip-permissions" (or any
+// other flag) ride into the resume command line as if it were the id.
 func isSafeResumeID(id string) bool {
 	if len(id) < resumeIDMinLen || len(id) > resumeIDMaxLen {
+		return false
+	}
+	if id[0] == '-' {
 		return false
 	}
 	for _, r := range id {

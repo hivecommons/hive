@@ -49,10 +49,13 @@
         }
         // The Forge App tab renders a shell synchronously, then loads the
         // credential inventory (fingerprints only) from the spoke.
-        if (tabId === 'Forge App') loadForgeApps();
+        if (tabId === 'Forge App') { loadForgeApps(); loadWebhookSetup(); }
         // The Features tab's Linear Agent panel loads install/session state
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
+        if (tabId === 'Inbox') loadInboxSettingsInline();
+        if (tabId === 'Meetings') loadMeetingsSettingsInline();
+        if (tabId === 'Meeting attendee') loadMeetingAttendeeInline();
         // The same tab carries the upstream-watch editor and divergence view
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
@@ -63,6 +66,9 @@
         if (tabId === 'Appearance') loadThemeConfig();
         if (tabId === 'Knowledge') { renderPublicKnowledgeControls(); loadKnowledgeConnectors(); loadKnowledgePipeline(); }
         if (tabId === 'Compliance') loadComplianceStatus();
+        // The workflow editor's canvas needs real pointer listeners and a
+        // measured viewport once its SVG is in the DOM.
+        if (tabId === 'Workflows' && typeof wfEdAfterRender === 'function') wfEdAfterRender();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
       // invariant on every render (requirement #4). Cheap and idempotent — a
@@ -91,7 +97,9 @@
       var quickStarts = AGENT_QUICK_START_TEMPLATES.map(function(t) {
         return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="applyAgentQuickStart" data-arg0="' + esc(t.id) + '" title="' + esc(t.description) + '">' + esc(t.emoji) + ' ' + esc(t.displayName) + '</button>';
       }).join('');
+      setTimeout(loadDiscoveredAgents, 0);
       return '<div style="max-width:600px;margin:0 auto">' +
+        '<div id="discovered-agents" class="mb-6"></div>' +
         '<div style="background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:var(--sp-5);margin-bottom:var(--sp-6)">' +
           '<div style="font-weight:700;color:var(--text);margin-bottom:var(--sp-2)">Start with a template, then tune it</div>' +
           '<p class="fs-base text-muted" style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">Pick a common agent role to prefill the create form, or import/paste a full definition below.</p>' +
@@ -123,6 +131,75 @@
     }
 
     var _pendingImportData = null;
+
+    // Agents a managed repo declares under .hive/agents/ (#18491). Nothing
+    // runs until an owner approves; backend, model, mode and tools stay
+    // owner-controlled, so Approve registers the agent with the defaults and
+    // the owner tunes them in the agent's settings afterwards.
+    var DISCOVERED_AGENT_STATUS_LABELS = {pending: 'Waiting for approval', invalid: 'Invalid definition', approved: 'Approved', rejected: 'Rejected', orphaned: 'File removed, agent paused'};
+
+    async function loadDiscoveredAgents() {
+      var box = document.getElementById('discovered-agents');
+      if (!box) return;
+      try {
+        var resp = await fetch('/api/agents/discovered', {headers:_inceptionAuthHeaders()});
+        var d = await resp.json();
+        if (!resp.ok) { box.innerHTML = ''; return; }
+        renderDiscoveredAgents(box, d);
+      } catch(e) { box.innerHTML = ''; }
+    }
+
+    function renderDiscoveredAgents(box, d) {
+      if (!d || !d.enabled) { box.innerHTML = ''; return; }
+      var entries = (d.entries || []).filter(function(e) { return e.status !== 'approved'; });
+      var rows = entries.map(function(e) {
+        var title = (e.emoji ? esc(e.emoji) + ' ' : '') + esc(e.display_name || e.name || e.path);
+        var meta = esc(e.repo) + ' · ' + esc(e.path) + ' · ' + esc(DISCOVERED_AGENT_STATUS_LABELS[e.status] || e.status);
+        var detail = e.error ? '<div class="fs-base text-muted">' + esc(e.error) + '</div>' : (e.description ? '<div class="fs-base text-muted">' + esc(e.description) + '</div>' : '');
+        var actions = '';
+        if (e.status === 'pending') {
+          actions = '<button type="button" class="hv-btn btn-primary btn-sm" data-action="approveDiscoveredAgent" data-arg0="' + esc(e.id) + '">Approve</button> ' +
+            '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="rejectDiscoveredAgent" data-arg0="' + esc(e.id) + '">Reject</button>';
+        } else if (e.status === 'invalid') {
+          actions = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="rejectDiscoveredAgent" data-arg0="' + esc(e.id) + '">Reject</button>';
+        }
+        return '<div class="config-field mb-5"><label>' + title + '</label><div class="fs-base text-muted">' + meta + '</div>' + detail + (actions ? '<div>' + actions + '</div>' : '') + '</div>';
+      }).join('');
+      box.innerHTML = '<div class="config-field mb-5"><label>Declared in your repos</label>' +
+        '<p class="fs-base text-muted">Agent definitions found under <code>.hive/agents/</code> in allowlisted managed repos. Approving registers the agent with a copilot backend; set its model, mode and tools in the agent settings. <button type="button" class="hv-btn btn-secondary btn-sm" data-action="refreshDiscoveredAgents">Rescan</button></p>' +
+        (rows || '<p class="fs-base text-muted">None waiting.</p>') + '</div>';
+    }
+
+    async function discoveredAgentAction(path, id, okMessage) {
+      try {
+        var resp = await fetch(path, {method:'POST', headers:_inceptionAuthHeaders(), body:JSON.stringify({id:id})});
+        var d = await resp.json();
+        if (!resp.ok) { showToast(d.error || 'Request failed', 'error'); return false; }
+        showToast(okMessage(d), 'success');
+        return true;
+      } catch(e) { showToast('Error: ' + e.message, 'error'); return false; }
+    }
+
+    async function approveDiscoveredAgent(id) {
+      var ok = await discoveredAgentAction('/api/agents/discovered/approve', id, function(d) { return 'Agent "' + (d.name || '?') + '" approved'; });
+      if (!ok) return;
+      closeConfigDialog();
+      fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+    }
+
+    async function rejectDiscoveredAgent(id) {
+      if (await discoveredAgentAction('/api/agents/discovered/reject', id, function() { return 'Definition rejected'; })) loadDiscoveredAgents();
+    }
+
+    async function refreshDiscoveredAgents() {
+      var box = document.getElementById('discovered-agents');
+      try {
+        var resp = await fetch('/api/agents/discovered/refresh', {method:'POST', headers:_inceptionAuthHeaders()});
+        var d = await resp.json();
+        if (!resp.ok) { showToast(d.error || 'Rescan failed', 'error'); return; }
+        if (box) renderDiscoveredAgents(box, d);
+      } catch(e) { showToast('Error: ' + e.message, 'error'); }
+    }
 
     function applyAgentQuickStart(templateID) {
       var t = AGENT_QUICK_START_TEMPLATES.find(function(x) { return x.id === templateID; });
@@ -252,6 +329,7 @@
         case 'Thresholds': return renderGovThresholds(d) + renderGovSLATargets(d);
         case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || [], d.requireLabels || []);
         case 'Repos': return renderGovRepos(d.repos || []);
+        case 'Workflows': return renderGovWorkflows();
         case 'Budget': return renderGovBudget(d.budget || {}, d.health || {});
         case 'Notifications': return renderGovNotifications(d.notifications || {});
         case 'Health': return renderGovHealth(d.health || {});
@@ -261,6 +339,9 @@
         case 'Access': return renderGovSecurity(d.security || {});
         case 'Features': return renderGovFeatures(d.features || {}, d.auto_merge || {}, d.review || {});
         case 'Knowledge': return renderGovKnowledgeSharing();
+        case 'Inbox': return renderGovInbox();
+        case 'Meetings': return renderGovMeetings();
+        case 'Meeting attendee': return renderGovMeetingAttendee();
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Work Source': return renderGovWorkSource(d.work_source || {});
@@ -285,7 +366,7 @@
     }
 
     // ---- Settings → Knowledge → Connectors (#11075) ----
-    const KB_CONNECTOR_TYPE_ORDER = ['confluence', 'context7', 'document', 'git', 'github-wiki', 'google-drive', 'notion', 'repo-wiki', 'sharepoint'];
+    const KB_CONNECTOR_TYPE_ORDER = ['confluence', 'context7', 'discord', 'document', 'fathom', 'fireflies', 'git', 'github-wiki', 'google-drive', 'google-meet', 'granola', 'limitless', 'notion', 'otter', 'plaud', 'repo-wiki', 'sharepoint', 'slack-huddles', 'teams', 'webex', 'wisprflow', 'zoom'];
     const KC_TYPE_INFO = {
       'confluence': { label: 'Confluence', description: 'Sync Confluence Cloud or Data Center pages into knowledge facts.' },
       'context7': { label: 'Context7', description: 'Sync documentation for default Context7 libraries. The API key is a reference to an environment variable or secret file; the value is never shown.' },
@@ -294,8 +375,21 @@
       'github-wiki': { label: 'GitHub Wiki', description: 'Clone and index one or more GitHub wiki repositories.' },
       'google-drive': { label: 'Google Drive', description: 'Sync Google Docs, Sheets, markdown, and text files from Drive folders or shared drives.' },
       'notion': { label: 'Notion', description: 'Sync Notion pages and database rows visible to an internal integration.' },
+      'discord': { label: 'Discord meetings', description: 'Sync Discord meetings with a bot token: finished recordings posted to a channel (audio uploads or recording-bot links) and scheduled events with their channel chat. One fact per recording or event; items land in the Inbox.' },
+      'plaud': { label: 'Plaud voice notes', description: 'Sync Plaud Note recordings (Plaud summary + transcript) through the free official Plaud MCP server. Sign-in is Plaud OAuth in your browser; hive never stores the token.' },
       'repo-wiki': { label: 'Repo wiki', description: 'Sync .hive/wiki (or another directory) from one or more GitHub repositories.' },
-      'sharepoint': { label: 'SharePoint / OneDrive', description: 'Sync markdown, text, and HTML files from SharePoint document libraries or OneDrive drives.' }
+      'sharepoint': { label: 'SharePoint / OneDrive', description: 'Sync markdown, text, and HTML files from SharePoint document libraries or OneDrive drives.' },
+      'google-meet': { label: 'Google Meet recordings', description: 'Sync Google Meet meetings that produced a recording, transcript or Gemini notes through the Meet REST API: user-level OAuth for your own meetings or a service account with domain-wide delegation for Workspace users. One fact per meeting; items land in the Inbox.' },
+      'webex': { label: 'Webex recordings', description: 'Sync Webex Meetings recordings, transcripts and AI Assistant summaries through a Webex integration (OAuth) you register. One fact per meeting; items land in the Inbox with playback.' },
+      'slack-huddles': { label: 'Slack huddle notes', description: 'Sync the AI notes (and transcript, when the workspace allows it) Slack writes for a huddle into the huddle thread, from the channels you list, with a Slack bot or user token. Slack never records huddle audio, so items are text only. One fact per huddle; items land in the Inbox.' },
+      'otter': { label: 'Otter.ai conversations', description: 'Sync Otter.ai conversations: transcript, AI summary, outline and action items, through the Otter.ai Public API (Enterprise workspaces) with an API key. One fact per conversation; items land in the Inbox with playback.' },
+      'granola': { label: 'Granola meeting notes', description: 'Sync Granola meeting notes: the AI notes, your own notes and the transcript, through the Granola API with an API key. Granola keeps no audio, so items are text only. One fact per meeting; items land in the Inbox.' },
+      'limitless': { label: 'Limitless Pendant', description: 'Sync Limitless Pendant lifelogs (transcribed conversations with speakers and topics) through the Limitless Developer API with an API key. One fact per lifelog; items land in the Inbox as text (Pendant audio stays behind the API key).' },
+      'fathom': { label: 'Fathom meetings', description: 'Sync Fathom call recordings: transcript, AI summary and action items, through the Fathom API with an API key. One fact per meeting; items land in the Inbox with playback through Fathom recording downloads.' },
+      'fireflies': { label: 'Fireflies.ai meetings', description: 'Sync Fireflies.ai meeting transcripts, speakers and AI summaries (overview, action items) through the Fireflies GraphQL API with an API key. One fact per meeting; items land in the Inbox with playback (audio link on Pro plans and higher).' },
+      'teams': { label: 'Microsoft Teams recordings', description: 'Sync Teams meeting recordings and transcripts for the organizers you list, through Microsoft Graph application permissions (Entra app registration + admin consent). One fact per recorded meeting; items land in the Inbox.' },
+      'zoom': { label: 'Zoom recordings', description: 'Sync Zoom cloud recordings (topic, participants, AI summary, transcript) through a Zoom OAuth app you register: user-level OAuth for your own recordings or Server-to-Server for the account. One fact per recorded meeting; items land in the Inbox with playback.' },
+      'wisprflow': { label: 'Wispr Flow dictation', description: 'Sync your Wispr Flow dictation history (what you spoke, when, into which app) from the desktop app\'s local flow.sqlite or an export folder. Read-only, no sign-in, $0 beyond your Wispr Flow plan.' }
     };
     const KC_TYPE_ICONS = {
       // Vendor marks: simple-icons (CC0 1.0) paths, 24x24 viewBox, rendered with currentColor.
@@ -309,6 +403,20 @@
       // Generic glyphs (no vendor): document sheet and open book, drawn in-house.
       'context7': 'M4 4h3v16H4zm5 0h3v16H9zm5.2.6 2.9-.8 3.8 15.5-2.9.8z',
       'document': 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 12h8v1.6H8zm0 3.2h8v1.6H8zm0 3.2h5V20H8z',
+      'plaud': 'M12 2a3.5 3.5 0 0 0-3.5 3.5v6a3.5 3.5 0 0 0 7 0v-6A3.5 3.5 0 0 0 12 2zm-6 9.5h1.8a4.2 4.2 0 0 0 8.4 0H18a6 6 0 0 1-5.1 5.93V20h3v1.8H8.1V20h3v-2.57A6 6 0 0 1 6 11.5z',
+      'wisprflow': 'M3 10h2v4H3zm4-3h2v10H7zm4-5h2v20h-2zm4 5h2v10h-2zm4 3h2v4h-2z',
+      // Generic glyphs (no vendor): a camera for meeting recordings, two heads for a team.
+      'zoom': 'M3 6a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v3.2l4.2-2.8a.8.8 0 0 1 1.3.7v9.8a.8.8 0 0 1-1.3.7L16 14.8V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zm2 0v12h9V6z',
+      'discord': 'M12 3a8 8 0 0 0-8 8v5a3 3 0 0 0 3 3h1v-7H6v-1a6 6 0 0 1 12 0v1h-2v7h1a3 3 0 0 0 3-3v-5a8 8 0 0 0-8-8z',
+      'google-meet': 'M4 5h12a2 2 0 0 1 2 2v2.5l3.2-2.2a.8.8 0 0 1 1.3.6v8.2a.8.8 0 0 1-1.3.6L18 14.5V17a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm4 4v6l5-3z',
+      'webex': 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zm0 2a7 7 0 1 1 0 14 7 7 0 0 1 0-14zm-1 3v8l6-4z',
+      'slack-huddles': 'M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-6l-5 4v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm3 4v5h2V8zm4-1v7h2V7zm4 2v3h2V9z',
+      'otter': 'M12 4c4.4 0 8 2.9 8 7.5S16.4 20 12 20s-8-3.9-8-8.5S7.6 4 12 4zm-3 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-3 3c-1.1 0-2 .6-2 1.3s.9 1.2 2 1.2 2-.5 2-1.2-.9-1.3-2-1.3z',
+      'granola': 'M4 10h16a8 8 0 0 1-16 0zm3-6h2v4H7zm4-1h2v5h-2zm4 1h2v4h-2z',
+      'limitless': 'M12 2a1 1 0 0 1 1 1v2.1a7 7 0 1 1-2 0V3a1 1 0 0 1 1-1zm0 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6z',
+      'fathom': 'M3 14c2-3 4-3 6 0s4 3 6 0 4-3 6 0v2c-2-3-4-3-6 0s-4 3-6 0-4-3-6 0zm0-6c2-3 4-3 6 0s4 3 6 0 4-3 6 0v2c-2-3-4-3-6 0s-4 3-6 0-4-3-6 0z',
+      'fireflies': 'M12 2a3 3 0 0 1 3 3v1.2a5 5 0 0 1 2 4V16a5 5 0 0 1-10 0v-5.8a5 5 0 0 1 2-4V5a3 3 0 0 1 3-3zm-1 9v6h2v-6zM4 8l3 2-1 1.6-3-2zm16 0l1 1.6-3 2-1-1.6z',
+      'teams': 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 1a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM3 19a6 6 0 0 1 12 0v1H3zm13.5 1v-1c0-1.6-.5-3-1.3-4.2.5-.2 1.1-.3 1.8-.3a4 4 0 0 1 4 4v1.5z',
       'repo-wiki': 'M4 3h7.2c1.1 0 2 .55 2.8 1.3.8-.75 1.7-1.3 2.8-1.3H20v16h-3.2c-1 0-1.95.4-2.8 1.1V22h-4v-1.9c-.85-.7-1.8-1.1-2.8-1.1H4zm2 2v12h1.2c1.3 0 2.5.4 3.6 1.1V6.2C10.4 5.55 9.6 5 8.8 5zm12 0h-1.2c-.8 0-1.6.55-2 1.2v12.1c1.1-.7 2.3-1.1 3.6-1.1H18z'
     };
     function kbIntegrationIcon(type) {
@@ -324,8 +432,21 @@
       'github-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'master']],
       'google-drive': [['folder_ids', 'Folder IDs', 'folder123, folder456'], ['shared_drive_ids', 'Shared drive IDs', 'drive123'], ['include_mime', 'Include MIME groups', 'docs,md,txt']],
       'notion': [['root_page_ids', 'Root page IDs', '1a2b3c4d5e6f47a8b9c0d1e2f3a4b5c6'], ['database_ids', 'Database IDs', '0f1e2d3c-4b5a-4968-8776-655443322110'], ['include_archived', 'Include archived', 'false'], ['max_pages', 'Max pages', '2000'], ['full_sync_every', 'Full sync every', '10']],
+      'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@0.3.14'], ['since_days', 'Days back on first sync', '30'], ['max_files', 'Max recordings per sync', '200'], ['include_audio', 'Also store 24h audio link in the fact (Inbox playback never needs it)', 'false'], ['query', 'Name filter (optional)', 'standup'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['home', 'Token store HOME (optional)', '/data/knowledge/connector-state/plaud/home']],
       'repo-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'v5'], ['dir', 'Wiki directory', '.hive/wiki']],
-      'sharepoint': [['drive_ids', 'Drive IDs', 'b!drive-id'], ['site_ids', 'Site IDs', 'contoso.sharepoint.com,site-id,web-id'], ['folder_path', 'Folder path', '/Docs/Sub'], ['include_files', 'Include file extensions', '.md,.txt,.html']]
+      'sharepoint': [['drive_ids', 'Drive IDs', 'b!drive-id'], ['site_ids', 'Site IDs', 'contoso.sharepoint.com,site-id,web-id'], ['folder_path', 'Folder path', '/Docs/Sub'], ['include_files', 'Include file extensions', '.md,.txt,.html']],
+      'discord': [['guild', 'Server (guild) id, for scheduled events', '111111111111111111'], ['channels', 'Recording channel ids (comma-separated; where recordings are posted)', '222222222222222222'], ['recorder_bots', 'Only messages from these user ids (optional, e.g. the recording bot)', ''], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max items per sync', '200'], ['include_events', 'Scheduled events as meeting items', 'true'], ['include_chat', 'Include the event channel chat', 'true'], ['include_participants', 'List interested users', 'true'], ['include_video_link', 'Also store the recording-bot download link in the fact', 'false'], ['link_hosts', 'Recording-bot link hosts (comma-separated)', 'craig.horse, craig.chat'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'google-meet': [['users', 'Users to read (service account only: Workspace addresses, comma-separated)', 'alice@example.com, bob@example.com'], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max meetings per sync', '200'], ['include_summary', 'Fetch Gemini "Take notes for me" notes as the summary', 'true'], ['include_participants', 'Fetch the participant list', 'true'], ['include_video_link', 'Also store the Drive recording link in the fact', 'false'], ['redirect_uri', 'OAuth redirect URL registered on the client (user-level)', 'http://localhost:8199/google-meet/callback'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'webex': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max meetings per sync', '200'], ['include_summary', 'Fetch the AI Assistant summary (meeting:summaries_read)', 'true'], ['include_participants', 'Fetch the participant list (host only)', 'true'], ['include_video_link', 'Also store the Webex playback link in the fact', 'false'], ['site_url', 'Webex site (optional; default: all your sites)', 'acme.webex.com'], ['redirect_uri', 'OAuth redirect URL registered on the integration', 'http://localhost:8199/webex/callback'], ['oauth_scopes', 'OAuth scopes to request (optional override)', 'meeting:recordings_read meeting:transcripts_read'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'slack-huddles': [['channels', 'Channel ids whose huddles to read (comma-separated)', 'C0123ABC, G0456DEF'], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max huddles per sync', '200'], ['include_participants', 'List the huddle participants (users:read)', 'true'], ['tags', 'Extra tags (comma-separated)', 'huddles']],
+      'otter': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max conversations per sync', '200'], ['include_shared', 'Include conversations shared with you', 'false'], ['channel', 'Only this channel id (optional; overrides shared)', ''], ['include_summary', 'Fetch the summary, outline and action items', 'true'], ['include_participants', 'List the calendar guests', 'true'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'granola': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max notes per sync', '200'], ['folder', 'Only this folder id (optional)', ''], ['space', 'Only this space id (optional)', ''], ['include_private_notes', 'Include your own notes', 'true'], ['include_participants', 'List the attendees', 'true'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'limitless': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max lifelogs per sync', '200'], ['starred_only', 'Only starred lifelogs', 'false'], ['include_participants', 'List the speakers', 'true'], ['tags', 'Extra tags (comma-separated)', 'pendant']],
+      'fathom': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max meetings per sync', '200'], ['recorded_by', 'Only calls recorded by (emails, comma-separated; optional)', 'andy@example.com'], ['teams', 'Only these Fathom teams (comma-separated; optional)', ''], ['include_summary', 'Fetch the AI summary and action items', 'true'], ['include_participants', 'List the calendar invitees', 'true'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'fireflies': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max meetings per sync', '200'], ['mine', 'Only meetings you organized', 'false'], ['include_summary', 'Fetch the AI summary (overview, action items)', 'true'], ['include_participants', 'List the attendees', 'true'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'teams': [['users', 'Meeting organizers (object ids or UPNs, comma-separated)', '8b081ef6-4792-4def-b2c9-c363a1bf41d5, someone@contoso.example'], ['group', 'Or an Entra group object id (members are the organizers)', ''], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max recordings per sync', '200'], ['include_video_link', 'Also store the Teams meeting link in the fact', 'false'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'zoom': [['users', 'Recording owners (me, or user ids/emails for Server-to-Server)', 'me'], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max recordings per sync', '200'], ['include_summary', 'Fetch the Zoom AI meeting summary (meeting_summary:read)', 'true'], ['include_participants', 'Fetch the participant list (meeting:read past participants)', 'true'], ['include_video_link', 'Also store the Zoom play link in the fact (Inbox playback never needs it)', 'false'], ['redirect_uri', 'OAuth redirect URL registered on the Zoom app (user-level)', 'http://localhost:8199/zoom/callback'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'wisprflow': [['path', 'flow.sqlite or export folder (empty = app default)', '/Users/me/Library/Application Support/Wispr Flow/flow.sqlite'], ['since_days', 'Days back on first sync', '30'], ['max_items', 'Max dictations per sync', '500'], ['min_words', 'Skip dictations shorter than (words)', '3'], ['group', 'Fact per dictation or day', 'dictation'], ['apps', 'Only these apps (comma-separated, optional)', 'slack, obsidian, vscode'], ['include_raw', 'Include raw ASR text', 'false'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['sqlite3', 'sqlite3 command (optional)', 'sqlite3']]
     };
     let _kcState = { loaded: false, error: '', connectors: [], rows: [], types: [], layers: ['personal', 'project', 'org', 'community'], runtime: false, publish: null };
 
@@ -377,7 +498,7 @@
         const err = r.last_error || '';
         const n = esc(c.name);
         html += '<tr data-connector="' + n + '"><td><code>' + n + '</code></td><td>' + esc(c.type) + '</td><td>' + esc(c.layer) + '</td>'
-          + '<td><span class="kc-pill" data-status="' + esc(status) + '">' + esc(status) + '</span></td>'
+          + '<td><span class="kc-pill" data-status="' + esc(status) + '">' + esc(status) + '</span><div data-kc-progress-slot>' + (typeof kcProgressHtml === 'function' ? kcProgressHtml(r) : '') + '</div></td>'
           + '<td title="' + esc(r.last_sync || '') + '">' + esc(kcAgo(r.last_sync)) + '</td>'
           + '<td>' + (r.pages || 0) + ' / ' + (r.facts || 0) + '</td>'
           + '<td class="kc-error-cell" title="' + esc(err) + '">' + (err ? esc(err.length > 80 ? err.slice(0, 80) + '…' : err) : '—') + '</td>';
@@ -508,7 +629,13 @@
           </div>`;
       const schedules = d.schedules || ['hourly', 'daily'];
       const layers = d.layers || ['personal', 'project', 'org', 'community'];
+      const advisorOn = !!d.advisor;
       return `
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Mid-task advisor for sidecar runtimes</div>
+          ${toggle('sa-enabled', 'Serve the mid-task knowledge advisor to a sidecar runtime', 'knowledge.sidecar_advise', d.sidecar_advise, 'off by default; with it off a sidecar runtime gets no advisor.', true, 'Lets a sidecar-mode runtime ask this hive for mid-task knowledge hints over the callback endpoint. Needs the mid-task advisor, which is switched on in hive.yaml. The hive runs the same advisor it runs in-process and sends no model settings or credentials to the runtime. Off unless turned on.')}
+          ${advisorOn ? '' : '<div class="config-help">The mid-task advisor is off in hive.yaml, so this has no effect until it is on.</div>'}
+        </div>
         <div class="card-inset mt-5">
           <div class="settings-subsection-title">Bead synthesizer</div>
           ${toggle('bs-enabled', 'Synthesize completed beads into wiki facts', 'knowledge.bead_synthesizer.enabled', bs.enabled, 'on by default; starts or stops the running synthesizer.', true, 'Turns completed beads (and their merged PRs) into wiki facts on a schedule. On unless set to false. Saving starts or stops the running synthesizer at once.')}
@@ -584,6 +711,7 @@
     async function saveKnowledgePipeline() {
       const d = _kpState.data || {};
       const cur = {
+        top: { sidecar_advise: d.sidecar_advise },
         bead_synthesizer: d.bead_synthesizer || {},
         publish: (d.bead_synthesizer || {}).publish || {},
         retention_policy: (d.bead_synthesizer || {}).retention_policy || {},
@@ -592,6 +720,7 @@
         primer: d.primer || {}
       };
       const fields = [
+        ['top', 'sidecar_advise', 'sa-enabled', 'bool'],
         ['bead_synthesizer', 'enabled', 'bs-enabled', 'bool'],
         ['bead_synthesizer', 'schedule', 'bs-schedule', 'str'],
         ['bead_synthesizer', 'target_layer', 'bs-target_layer', 'str'],
@@ -622,7 +751,9 @@
       ];
       const body = {};
       const put = (group, key, v) => {
-        if (group === 'retention_policy' || group === 'publish') {
+        if (group === 'top') {
+          body[key] = v;
+        } else if (group === 'retention_policy' || group === 'publish') {
           body.bead_synthesizer = body.bead_synthesizer || {};
           body.bead_synthesizer[group] = body.bead_synthesizer[group] || {};
           body.bead_synthesizer[group][key] = v;
@@ -661,7 +792,7 @@
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
         _kpState = { loaded: true, error: '', data: data };
         const bsKeys = Object.keys(body.bead_synthesizer || {});
-        const liveOnly = Object.keys(body).length === 1 && bsKeys.length === 1 && bsKeys[0] === 'enabled';
+        const liveOnly = Object.keys(body).every(k => k === 'sidecar_advise' || (k === 'bead_synthesizer' && bsKeys.length === 1 && bsKeys[0] === 'enabled'));
         showToast(liveOnly ? 'Knowledge settings saved' : 'Knowledge settings saved — restart the hive to apply them', 'success');
         const el = document.getElementById('kp-pipeline-root');
         if (el) el.innerHTML = renderKnowledgePipelineBody();
@@ -682,6 +813,9 @@
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
       _kcState.connectors = data.connectors || [];
       await loadKnowledgeConnectors();
+      // The config is saved even when the running syncer did not follow;
+      // surface that verbatim instead of the caller's success toast (#18091).
+      if (data.runtime_error) throw new Error('saved, but the running syncer did not reload: ' + data.runtime_error);
     }
 
     function kcFind(name) { return _kcState.connectors.find(c => c.name === name); }
@@ -704,6 +838,8 @@
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         showToast('Sync started for ' + name, 'success');
         setTimeout(loadKnowledgeConnectors, 1500);
+        // Start the live progress poll right away (card bar + header indicator).
+        if (typeof kbSyncProgressTick === 'function') setTimeout(() => kbSyncProgressTick().catch(() => {}), 300);
       } catch (e) {
         showToast('Sync failed to start: ' + e.message, 'error');
       }
@@ -851,6 +987,15 @@
       markDirty('dashboard', 'issue_bands', bands);
     }
 
+    // dashboard.sessions.* is saved as one nested block (like issue_bands), so a
+    // toggle or a limit edit stages the whole block with the other fields intact.
+    function markDashboardSessions(key, value) {
+      const d = _configState.data.dashboard = _configState.data.dashboard || {};
+      const sessions = d.sessions = Object.assign({}, d.sessions || {});
+      sessions[key] = (key === 'enabled' || key === 'autostart') ? !!value : Math.max(0, parseInt(value || '0', 10) || 0);
+      markDirty('dashboard', 'sessions', sessions);
+    }
+
     function markBackendsPolicy(key, value) {
       _configState.data.backends = _configState.data.backends || {};
       _configState.data.backends[key] = splitConfigLines(value);
@@ -861,6 +1006,20 @@
       _configState.data.classifier = _configState.data.classifier || {};
       _configState.data.classifier[key] = splitConfigLines(value);
       markDirty('classifier', key, _configState.data.classifier[key]);
+    }
+
+    function renderGovDashboardSessions(dash) {
+      const sessions = dash.sessions || {};
+      const envNote = sessions.env_override ? ' <span class="text-muted">Overridden by <code>HIVE_SESSIONS_ENABLED</code> on this hive; the switch shows the saved value.</span>' : '';
+      const limit = (key, label, help) =>
+        '<div class="config-field"><label>' + label + ' ' + yamlHint('dashboard.sessions.' + key) + '</label><input type="number" min="0" step="1" value="' + esc(String(sessions[key] || 0)) + '" data-change-action="markDashboardSessions" data-arg0="' + key + '" data-arg-types="s,v"><div class="config-help">' + help + '</div></div>';
+      return '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.enabled ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="enabled"></div><span class="config-toggle-label">Inception (spek) sessions ' + yamlHint('dashboard.sessions.enabled') + ' ' + settingHelpMark('settings', 'dashboard', 'Sessions', 'Turns on the Inception (spek) section: named, shared CLI-agent terminals inside the dashboard. On by default; turning it off hides the section. The HIVE_SESSIONS_ENABLED environment variable, when set, overrides this switch.') + envNote + '</span></div>' +
+        '<div class="config-field-row">' +
+          limit('max_sessions', 'Max running sessions', 'Live sessions per hive. 0 uses the default (12); HIVE_SESSIONS_MAX overrides.') +
+          limit('max_per_user', 'Max per user', 'Live sessions one person may create. 0 uses the default (4); HIVE_SESSIONS_MAX_PER_USER overrides.') +
+          limit('idle_ttl_hours', 'Idle close (hours)', 'A session with no input and nobody attached ends after this long. 0 uses the default (72); HIVE_SESSIONS_IDLE_TTL_HOURS overrides.') +
+        '</div>' +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.autostart !== false ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="autostart"></div><span class="config-toggle-label">Answer the CLI startup screens ' + yamlHint('dashboard.sessions.autostart') + ' ' + settingHelpMark('settings', 'dashboard', 'Session startup', 'When a session starts, Hive takes the vendor CLI through its startup screens (first-run notice, trust for the session folder, onboarding) to its input prompt, so the first request runs without a person. It never answers a tool or command permission prompt and never signs in. On by default; the HIVE_SESSIONS_AUTOSTART environment variable, when set, overrides this switch.') + '</span></div>';
     }
 
     function renderGovDashboard(dash) {
@@ -874,7 +1033,9 @@
           '<div class="config-field"><label>Agent poll interval (seconds) ' + yamlHint('dashboard.agent_poll_interval_s') + '</label><input type="number" min="1" value="' + esc(String(dash.agent_poll_interval_s || 0)) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="agent_poll_interval_s" data-arg-types="s,s,N"></div>' +
         '</div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab ' + yamlHint('dashboard.experiment_lab') + '</span></div>' +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.subscription_gauge_header ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="subscription_gauge_header"></div><span class="config-toggle-label">Also show the usage gauge in the header ' + yamlHint('dashboard.subscription_gauge_header') + ' ' + settingHelpMark('settings', 'dashboard', 'Usage gauge in the header', 'The usage fuel gauge is on the Overview by default for the owner, with a row for each provider the agents use (Claude, Copilot and others). This also shows it as a small chip in the header on every page, with the needle on the limit closest to empty. It reads the usage measurements hive already makes, so it adds no calls to any provider. Only the hive owner sees it. These are the plans this hive is signed in with, not the hive token budget. Off by default.') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
+        renderGovDashboardSessions(dash) +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +
         '<div class="config-field"><label>Authorized users ' + yamlHint('dashboard.authorized_users[]') + '</label><textarea rows="5" data-change-action="markDashboardList" data-arg0="authorized_users" data-arg-types="s,v">' + esc((dash.authorized_users || []).join('\n')) + '</textarea><div class="config-help">One user per line; append <code>:read</code>, <code>:read-write</code>, or <code>:owner</code> for explicit roles.</div></div>' +
@@ -900,8 +1061,10 @@
       ];
       const zoneOptions = zones.filter(z => z !== 'UTC').map(z => `<option value="${esc(z)}"${pref === z ? ' selected' : ''}>${esc(z)}</option>`).join('');
       const options = fixed.map(([value, label]) => `<option value="${esc(value)}"${pref === value ? ' selected' : ''}>${esc(label)}</option>`).join('') + zoneOptions;
+      const clock = dashboardClockPreference();
+      const clockOptions = [['', 'Browser locale (default)'], ['12', '12-hour (4:05 PM)'], ['24', '24-hour (16:05)']].map(([value, label]) => `<option value="${value}"${clock === value ? ' selected' : ''}>${esc(label)}</option>`).join('');
       const preview = formatDashboardDateTime(new Date());
-      const datalist = zones.map(z => `<option value="${esc(z)}"></option>`).join('');
+      const datalist =zones.map(z => `<option value="${esc(z)}"></option>`).join('');
       return '<div class="config-section" id="dashboard-timezone-settings">' +
         '<h3>Display timezone</h3>' +
         '<p class="text-muted fs-base">Choose the timezone used for dashboard timestamps. Relative ages such as “1m ago” are unchanged.</p>' +
@@ -909,7 +1072,9 @@
         '<select id="dashboard-timezone-select" data-change-action="setDashboardTimeZonePreference" data-arg-types="v">' + options + '</select></div>' +
         '<div class="config-field"><label for="dashboard-timezone-custom">Search IANA timezone</label>' +
         '<input id="dashboard-timezone-custom" list="dashboard-timezone-list" value="' + esc(selectedCustom ? pref : '') + '" placeholder="America/Los_Angeles" data-change-action="setDashboardTimeZonePreference" data-arg-types="v">' +
-        '<datalist id="dashboard-timezone-list">' + datalist + '</datalist></div></div>' +
+        '<datalist id="dashboard-timezone-list">' + datalist + '</datalist></div>' +
+        '<div class="config-field"><label for="dashboard-clock-select">Time format</label>' +
+        '<select id="dashboard-clock-select" data-change-action="setDashboardClockPreference" data-arg-types="v">' + clockOptions + '</select></div></div>' +
         '<div class="text-muted fs-base">Preview: <strong id="dashboard-timezone-preview">' + esc(preview) + '</strong></div>' +
         '</div>';
     }
@@ -927,6 +1092,16 @@
       const root = document.getElementById('theme-config-root');
       if (root) root.outerHTML = renderGovAppearance();
       showToast('Display timezone saved: ' + dashboardTimeZoneLabel(selectedDashboardTimeZone()), 'success');
+    }
+
+    function setDashboardClockPreference(value) {
+      const pref = value === '12' || value === '24' ? value : '';
+      try { if (pref) localStorage.setItem(DASHBOARD_CLOCK_STORAGE_KEY, pref); else localStorage.removeItem(DASHBOARD_CLOCK_STORAGE_KEY); } catch (e) {}
+      tickNavbarClock();
+      if (window._lastStatus) render(window._lastStatus);
+      const root = document.getElementById('theme-config-root');
+      if (root) root.outerHTML = renderGovAppearance();
+      showToast('Time format saved: ' + (pref ? pref + '-hour' : 'browser locale'), 'success');
     }
 
     function renderGovAppearance() {
@@ -1700,6 +1875,10 @@
     // the models discovered for the add/edit form's endpoint+key.
     let _gateways = [];
     let _gatewayFormModels = [];
+    // Catalog details (prices, context) and curated suggestions the discover
+    // probe returns for OpenRouter gateways; empty for other kinds.
+    let _gatewayFormModelInfo = [];
+    let _gatewayFormSuggested = [];
     const _gatewayProbeResults = {};
     // Set by maybeOpenMethodConfig when a method switch jumps the user here to
     // configure a missing gateway; consumed once by loadGateways to auto-open a
@@ -1723,7 +1902,8 @@
           when its forge matches the forge this hive's repos live on; everything else is
           read-only. Private keys appear as fingerprints — key material never leaves the hive.
         </div>
-        <div id="forge-app-host"><div style="color:var(--muted);font-size:0.8rem">Loading forge Apps…</div></div>`;
+        <div id="forge-app-host"><div style="color:var(--muted);font-size:0.8rem">Loading forge Apps…</div></div>
+        ${renderGovWebhooksSection()}`;
     }
 
     async function loadForgeApps() {
@@ -2189,16 +2369,24 @@
         const r = await fetch('/api/openrouter/models');
         if (r.ok) models = await r.json();
       } catch (e) { /* fall back to manual entry */ }
+      // Curated suggestions pinned on top (the server already hid any the
+      // live catalog retired), then the full live catalog grouped by
+      // provider with prices. Unreadable catalog: suggestions only, and the
+      // typed text still works as a manual id.
       const sug = (models.suggested || []);
-      const opts = sug.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('')
-        + `<option value="__manual__">Enter a model id manually…</option>`;
+      const liveIds = Array.isArray(models.models) ? models.models : [];
+      const ids = liveIds.length ? liveIds : sug.map(m => m.id);
+      const picker = modelComboboxHtml({
+        id: 'or-model-combo', inputId: 'or-model-input', ids,
+        info: models.model_info, suggested: sug, current: models.default || (sug[0] && sug[0].id) || '',
+        label: 'Default model for the new gateway', placeholder: 'Search models or type an id…',
+      });
       host.innerHTML = `
         <div style="border:1px solid var(--cyan);border-radius:8px;padding:14px;margin-bottom:var(--sp-5);background:var(--surface)">
           <div style="font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-2)">⚡ Fund this hive with OpenRouter</div>
           <div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px">Scan the QR (or open the link) to authorize on OpenRouter. A scoped key funded from your OpenRouter credits is stored as the <code>openrouter</code> gateway — the key never leaves this hive.</div>
-          <label style="display:block;font-size:0.74rem;color:var(--muted);margin-bottom:var(--sp-2)">Default model for the new gateway</label>
-          <select id="or-model-select" data-change-action="orModelSelectChange" style="width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);margin-bottom:var(--sp-4)">${opts}</select>
-          <input id="or-model-manual" placeholder="e.g. anthropic/claude-opus-4.8" style="display:none;width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);margin-bottom:var(--sp-4);box-sizing:border-box">
+          <label for="or-model-input" class="d-block fs-sm text-muted mb-2">Default model for the new gateway</label>
+          <div class="mb-4">${picker}</div>
           <div style="display:flex;gap:var(--sp-4);margin-top:var(--sp-2)">
             <button class="hv-btn btn-primary" data-action="orStartFlow">Generate QR</button>
             <button class="hv-btn btn-primary" data-action="closeOpenRouterFund">Cancel</button>
@@ -2208,21 +2396,10 @@
         </div>`;
     }
 
-    function orModelSelectChange() {
-      const sel = document.getElementById('or-model-select');
-      const man = document.getElementById('or-model-manual');
-      if (!sel || !man) return;
-      man.style.display = sel.value === '__manual__' ? 'block' : 'none';
-    }
-
+    // orChosenModel is the funding picker's committed model id ('' lets the
+    // server apply its default).
     function orChosenModel() {
-      const sel = document.getElementById('or-model-select');
-      if (!sel) return '';
-      if (sel.value === '__manual__') {
-        const man = document.getElementById('or-model-manual');
-        return (man && man.value.trim()) || '';
-      }
-      return sel.value;
+      return modelComboValue('or-model-combo');
     }
 
     async function orStartFlow() {
@@ -2475,6 +2652,8 @@
     // it blank keeps it.
     function openGatewayForm(existing) {
       _gatewayFormModels = [];
+      _gatewayFormModelInfo = [];
+      _gatewayFormSuggested = [];
       const host = document.getElementById('gateways-form-host');
       if (!host) return;
       const isEdit = !!existing;
@@ -2577,7 +2756,17 @@
       const models = _gatewayFormModels;
       const cur = current || '';
       if (!models.length) {
-        return `<input type="text" id="gw-default-model" value="${esc(cur)}" placeholder="e.g. anthropic/claude-opus-4.8">`;
+        return `<input type="text" id="gw-default-model" value="${esc(cur)}" placeholder="e.g. deepseek/deepseek-v4.1-flash">`;
+      }
+      // Large catalogs (OpenRouter ~470 ids) get the searchable, grouped
+      // combobox; its input is #gw-default-model, so the typed text is the
+      // value and "Custom…" is simply typing an id the catalog lacks.
+      if (models.length >= MODEL_COMBOBOX_MIN_OPTIONS || _gatewayFormModelInfo.length) {
+        return modelComboboxHtml({
+          id: 'gw-default-model-combo', inputId: 'gw-default-model', ids: models,
+          info: _gatewayFormModelInfo, suggested: _gatewayFormSuggested, current: cur,
+          label: 'Default model', placeholder: 'Search ' + models.length + ' models or type an id…',
+        });
       }
       const inList = cur && models.indexOf(cur) !== -1;
       const options = models.map(m =>
@@ -2687,6 +2876,8 @@
         });
         const data = await res.json().catch(() => ({}));
         _gatewayFormModels = (res.ok && data.ok && Array.isArray(data.models)) ? data.models : [];
+        _gatewayFormModelInfo = (res.ok && data.ok && Array.isArray(data.model_info)) ? data.model_info : [];
+        _gatewayFormSuggested = (res.ok && data.ok && Array.isArray(data.suggested)) ? data.suggested : [];
         // Never show an empty dropdown with no explanation: a bad key, wrong
         // region/project or an unreachable endpoint must say so, with the
         // server's own error text, rather than looking like "no models exist".
@@ -2704,6 +2895,8 @@
         }
       } catch (e) {
         _gatewayFormModels = [];
+        _gatewayFormModelInfo = [];
+        _gatewayFormSuggested = [];
         showGatewayFormProbeError('Network error while discovering models: ' + e.message);
       }
       const host = document.getElementById('gw-default-model-field');
@@ -2803,9 +2996,13 @@
       const keyEnvWarning = litellm.apiKeyEnvLooksLikeKey
         ? `<div style="font-size:0.72rem;margin-top:3px;color:var(--red)">The saved value here (${esc(litellm.apiKeyEnv || '')}) looks like a key VALUE, not an environment variable name — move it to the API Key field above and Save; storing a key clears this field automatically.</div>`
         : '';
+      // hive#18533: a configured path outside the allowed secret dirs is never
+      // read; say so and name the key source actually in use.
       const keyFileWarning = litellm.apiKeyFileLooksLikeKey
         ? `<div style="font-size:0.72rem;margin-top:3px;color:var(--red)">The saved value here (${esc(litellm.apiKeyFile || '')}) looks like a key VALUE, not a file path — move it to the API Key field above and Save.</div>`
-        : '';
+        : (litellm.apiKeyFileAllowed === false
+          ? `<div style="font-size:0.72rem;margin-top:3px;color:var(--red)">This path is outside the allowed secret dirs (${esc((litellm.allowedKeyFileDirs || []).join(', '))}) and is ignored: ${esc(litellm.keySourceDescription || '')}. Mount the Secret under an allowed dir and point this field at the file there.</div>`
+          : '');
       const keyEnvValue = litellm.apiKeyEnvLooksLikeKey ? '' : (litellm.apiKeyEnv || '');
       const keyFileValue = litellm.apiKeyFileLooksLikeKey ? '' : (litellm.apiKeyFile || '');
       return `

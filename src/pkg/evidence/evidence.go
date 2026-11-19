@@ -91,13 +91,19 @@ type Bundle struct {
 
 // Author identifies the PR author. Kind is one of human, agent or bot. For
 // an agent-authored PR, Agent, Backend and Model are the launch metadata the
-// hive recorded when the agent opened it; empty when unknown.
+// hive recorded when the agent opened it; empty when unknown. Runtime is the
+// sandbox runtime the agent's kicks ran under (podman, job, openshell, or
+// "none" in-process) and TaskKind the benchmark task class
+// (hivecommons/hive#17694); both empty on records written before they were
+// stamped.
 type Author struct {
-	Login   string `json:"login"`
-	Kind    string `json:"kind"`
-	Agent   string `json:"agent,omitempty"`
-	Backend string `json:"backend,omitempty"`
-	Model   string `json:"model,omitempty"`
+	Login    string `json:"login"`
+	Kind     string `json:"kind"`
+	Agent    string `json:"agent,omitempty"`
+	Backend  string `json:"backend,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Runtime  string `json:"runtime,omitempty"`
+	TaskKind string `json:"task_kind,omitempty"`
 }
 
 // Policy snapshots the review policy in force when the bundle was written.

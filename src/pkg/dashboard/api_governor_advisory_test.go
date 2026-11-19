@@ -3,8 +3,11 @@ package dashboard
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 type advisoryAPIResponse struct {
@@ -254,5 +257,75 @@ func TestGovAdvisory_TargetRoundTrip(t *testing.T) {
 	}
 	if a := s.deps.Config.Governor.Advisory; a.ResolvedTarget() != "github" || a.LinearIssue != "ONB-123" {
 		t.Fatalf("after switching back = {%q %q}, want {github ONB-123}", a.Target, a.LinearIssue)
+	}
+}
+
+// TestGovAdvisory_PerRepoToggle covers "Advisory report in every repo"
+// (governor.advisory.per_repo, #18448): default off, the PUT stores an
+// explicit value, an unrelated PUT leaves it alone, and each change is
+// audited with its before and after.
+func TestGovAdvisory_PerRepoToggle(t *testing.T) {
+	t.Setenv(config.AdvisoryPerRepoEnvVar, "")
+	s := govServer(t)
+	type perRepoResp struct {
+		PerRepo bool `json:"per_repo"`
+	}
+	get := func() bool {
+		t.Helper()
+		rec := doOwnerGet(s, "/api/config/governor/advisory")
+		var resp perRepoResp
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &resp) != nil {
+			t.Fatalf("GET advisory: %d — %s", rec.Code, rec.Body.String())
+		}
+		return resp.PerRepo
+	}
+	if get() {
+		t.Fatal("per_repo must default to off")
+	}
+	since := time.Now().Add(-time.Minute)
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"per_repo": true}); rec.Code != http.StatusOK {
+		t.Fatalf("put per_repo: %d — %s", rec.Code, rec.Body.String())
+	}
+	if !get() || !s.deps.Config.Governor.Advisory.PerRepoEnabled() {
+		t.Fatal("per_repo: true not applied")
+	}
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"max_findings": 7}); rec.Code != http.StatusOK {
+		t.Fatalf("unrelated put: %d", rec.Code)
+	}
+	if !get() {
+		t.Fatal("an unrelated PUT turned per_repo off")
+	}
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"per_repo": false}); rec.Code != http.StatusOK {
+		t.Fatalf("put per_repo false: %d", rec.Code)
+	}
+	if get() || s.deps.Config.Governor.Advisory.PerRepo == nil {
+		t.Fatal("per_repo: false must be stored as an explicit false")
+	}
+	var details []string
+	for _, e := range s.audit.RecentWithPrefixSince(since, "config_governor_advisory") {
+		details = append(details, e.Detail)
+	}
+	joined := strings.Join(details, " | ")
+	if !strings.Contains(joined, "per_repo=false->true") || !strings.Contains(joined, "per_repo=true->false") {
+		t.Fatalf("per_repo changes not audited with before/after: %q", joined)
+	}
+}
+
+// TestGovAdvisory_PerRepoToggleInSettings pins the Settings control and its
+// help text.
+func TestGovAdvisory_PerRepoToggleInSettings(t *testing.T) {
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(raw)
+	for _, want := range []string{
+		`data-action="toggleConfigSwitch" data-section="advisory" data-key="per_repo"`,
+		"Advisory report in every repo",
+		"Off: one Hive Advisory Report in your primary repo covers all repos. On: each monitored repo also gets its own report.",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing per_repo toggle piece %q", want)
+		}
 	}
 }

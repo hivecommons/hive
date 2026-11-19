@@ -64,6 +64,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/authorkind"
@@ -86,6 +87,10 @@ type IssueStagePolicy struct {
 	// the generic human one, a retired per-login one, another hive's
 	// agent — is never touched by that sweep.
 	AgentNames []string
+	// ParentAutoClose returns the decomposed-parent auto-close policy for a
+	// repo (config.ParentAutoCloseOn / Off / EpicsToo, repos.<repo>.
+	// parent_autoclose, hivecommons/hive#18869). Nil means the default.
+	ParentAutoClose func(repo string) string
 }
 
 // SetIssueStageLabels installs the live policy resolver. Nil disables.
@@ -139,6 +144,10 @@ type IssueStageResult struct {
 	// (hivecommons/hive#12857).
 	ParentsClosed           int
 	ParentsAwaitingChildren int
+	// TrackersClosed counts tracker/umbrella issues closed because every
+	// issue and PR they reference is finished (trackers_too,
+	// hivecommons/hive#19071).
+	TrackersClosed int
 }
 
 // issueStageRESTCaller tags the writes for /api/gh-rate-limits.
@@ -165,9 +174,13 @@ var triageAwaitingLabel = config.DefaultReporterTrustAwaitingLabel
 // IssueStageInput is the one shape both actionable items and work-detail
 // rows reduce to before classification.
 type IssueStageInput struct {
-	Repo      string
-	Number    int
-	Labels    []string
+	Repo   string
+	Number int
+	Labels []string
+	// Title is the issue title; the only derivation that reads it is the
+	// RFC-title discussion signal ("[RFC]" / "RFC:" opener stages an
+	// unlabelled RFC 018, hivecommons/hive#18141).
+	Title     string
 	Bucket    string // "" for an issue still in the actionable set
 	Reason    string // the bucket's reason; for "filtered", the label that parked it
 	ClaimKind string
@@ -182,6 +195,10 @@ type IssueStageInput struct {
 	// DelegatesWork mirrors the watcher's unchecked issue-task predicate.
 	// Unlike Children, it includes body-only delegation without ledger entries.
 	DelegatesWork bool
+	// TrackerSignal is set when the issue announces itself as a tracker or
+	// umbrella (label, title, task list or close_when checklist), the only
+	// issues the trackers_too auto-close policy reads (hivecommons/hive#19071).
+	TrackerSignal bool
 	// SpekUmbrella is set when the body carries the Spek publish marker with
 	// no `task=`: the issue is a Spek-published RFC (spektacular#114), an
 	// umbrella like `epic`, so a claim on it is never staged.
@@ -217,6 +234,43 @@ func issueUntriaged(in IssueStageInput) (untriaged bool, why string) {
 		return true, "reporter-trust gate: awaiting the triage label"
 	}
 	return false, ""
+}
+
+// triageClearAllowed is the one decision on whether the hive may take the
+// reporter-trust awaiting label off an issue whose stage settled triage
+// (hivecommons/hive#18387). The hive removes it at most once per issue: a
+// repository's own triage tooling (Prow's require-matching-label, another
+// bot, a person) may own the same label and re-add it seconds later, and
+// removing it again on every pass only feeds a remove / re-add loop. So:
+// label absent → nothing to remove; already yielded → leave it; removed
+// once and back now → yield (yieldNow) and leave it; otherwise → remove.
+func triageClearAllowed(rec stagelabels.Record, labels []string) (remove, yieldNow bool) {
+	switch {
+	case !issueHasLabel(labels, triageAwaitingLabel), rec.TriageClearYielded:
+		return false, false
+	case !rec.TriageClearedAt.IsZero():
+		return false, true
+	}
+	return true, false
+}
+
+// settleTriageClear applies triageClearAllowed to key's stage record: on a
+// fresh yield it marks the record (persisted with the store, so the yield
+// survives a restart) and logs it once. remove says whether the stage
+// write may take the label off; yielded is what
+// IssueFacts.TriageClearYielded carries to the deriver. The issue sweep
+// and the FactSink's enrichment both call it, so the two paths cannot
+// disagree.
+func settleTriageClear(store *stagelabels.Store, key, repo string, number int, labels []string, logger *slog.Logger) (remove, yielded bool) {
+	if store == nil {
+		return issueHasLabel(labels, triageAwaitingLabel), false
+	}
+	rec, _ := store.Get(key)
+	remove, yieldNow := triageClearAllowed(rec, labels)
+	if yieldNow && store.MarkTriageClearYielded(key) && logger != nil {
+		logger.Info("issue stage labels: "+triageAwaitingLabel+" came back after the hive removed it; leaving it on this issue", "repo", repo, "issue", number, "label", triageAwaitingLabel)
+	}
+	return remove, rec.TriageClearYielded || yieldNow
 }
 
 // IssueStageFor classifies one enumerated issue: it resolves the hive's
@@ -297,25 +351,65 @@ func parkedOnPersonLabel(in IssueStageInput) string {
 }
 
 // discussionLabels are the labels that mark an issue whose remaining
-// content is a discussion — a proposal or a design question — rather than
-// agent work. An open issue wearing one with no live claim derives
-// stage/018-open-for-discussion instead of 010/015
-// (hivecommons/hive#17150). They are NOT claim-gate labels: admission
-// lets anyone claim such an issue, and the claim stages 020/030.
-var discussionLabels = []string{"proposal", "kind/design"}
+// content is a discussion — a proposal, a design question or an
+// architecture RFC — rather than agent work. An open issue wearing one
+// with no live claim derives stage/018-open-for-discussion instead of
+// 010/015 (hivecommons/hive#17150, hivecommons/hive#18141). Most specific
+// first: the reason names the first match. They are NOT claim-gate labels:
+// admission lets anyone claim such an issue, and the claim stages 020/030.
+var discussionLabels = []string{"proposal", "kind/design", "architecture discussion"}
+
+// rfcTitleDiscussionReason is the IssueFacts.DiscussionLabel value for an
+// issue whose title, not its labels, marks it as an RFC
+// (hivecommons/hive#18141): the 018 reason reads
+// "open for discussion: rfc title".
+const rfcTitleDiscussionReason = "rfc title"
+
+// rfcTitlePrefixes are the title openers (after any leading emoji,
+// case-insensitive) that mark an issue as an RFC before any label lands.
+var rfcTitlePrefixes = []string{"[rfc]", "rfc:"}
 
 // issueDiscussionLabel returns the first discussionLabels entry labels
 // carry (case-insensitive, as the issue spells it), or "".
 func issueDiscussionLabel(labels []string) string {
-	for _, l := range labels {
-		name := strings.TrimSpace(l)
-		for _, want := range discussionLabels {
+	for _, want := range discussionLabels {
+		for _, l := range labels {
+			name := strings.TrimSpace(l)
 			if strings.EqualFold(name, want) {
 				return name
 			}
 		}
 	}
 	return ""
+}
+
+// issueDiscussionSignal is what IssueFacts.DiscussionLabel carries: the
+// discussion label the issue wears, or rfcTitleDiscussionReason when it
+// wears none but its title opens with an RFC marker, or "".
+func issueDiscussionSignal(labels []string, title string) string {
+	if label := issueDiscussionLabel(labels); label != "" {
+		return label
+	}
+	if isRFCTitle(title) {
+		return rfcTitleDiscussionReason
+	}
+	return ""
+}
+
+// isRFCTitle reports whether title opens with "[RFC]" or "RFC:"
+// (case-insensitive) once any leading emoji, punctuation or whitespace is
+// skipped, so "📝 [RFC] v6 ..." and "RFC: ..." both count.
+func isRFCTitle(title string) bool {
+	rest := strings.TrimLeftFunc(title, func(r rune) bool {
+		return r != '[' && !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	rest = strings.ToLower(rest)
+	for _, p := range rfcTitlePrefixes {
+		if strings.HasPrefix(rest, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // issueAuthorKind is the stage input's author kind from the enumeration's
@@ -347,6 +441,11 @@ func forgeIssueLabels(labels []string, claim *IssueClaimContext) []string {
 	return removeIssueLabel(slices.Clone(labels), CoveredByPRLabel)
 }
 
+// issueStageInputFrom is the stage input for one actionable issue.
+func issueStageInputFrom(issue Issue) IssueStageInput {
+	return IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), Title: issue.Title, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), TrackerSignal: trackerSignal(issue.Title, issue.Labels, issue.Body), SpekUmbrella: spekmarker.IsUmbrella(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees}
+}
+
 // IssueStageInputs flattens an enumeration result into one row per open
 // issue the cycle saw, actionable items first, then every work-detail row.
 func IssueStageInputs(result *ActionableResult) []IssueStageInput {
@@ -355,7 +454,12 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
-		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), SpekUmbrella: spekmarker.IsUmbrella(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees})
+		// A Jira or Linear item has no GitHub issue (Number 0): there is no
+		// label to write, and every such item would collapse onto "repo#0".
+		if issue.Number <= 0 {
+			continue
+		}
+		out = append(out, issueStageInputFrom(issue))
 	}
 	// Held issues leave the pipeline at enumeration (Hold list, no
 	// work-detail row). They still have to be walked so a stage label
@@ -378,7 +482,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 			if row.Number <= 0 {
 				continue
 			}
-			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: forgeIssueLabels(row.Labels, row.ClaimContext), Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children, UpdatedAt: row.UpdatedAt, Assignees: row.Assignees})
+			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: forgeIssueLabels(row.Labels, row.ClaimContext), Title: row.Title, Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children, UpdatedAt: row.UpdatedAt, Assignees: row.Assignees})
 		}
 	}
 	return out
@@ -498,6 +602,11 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			}
 			awaitingChildren = true
 			res.ParentsAwaitingChildren++
+		} else if in.Children == nil && client.closeDoneTracker(ctx, in, store, key, now, logger) {
+			res.TrackersClosed++
+			res.Writes++
+			res.Comments++
+			continue
 		}
 		if closed, commented := handleMergedPRIssueStage(ctx, client, in, logger); closed {
 			res.MergedPRIssuesClosed++
@@ -520,6 +629,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		stage, covered, reason := d.Stage, d.Covered, d.Reason
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
+		var triageYielded bool
 		if stage == stagelabels.None {
 			store.ForgetStage(key)
 		} else {
@@ -535,9 +645,19 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			// Decision.Clear takes it off in the stage write, and the
 			// pre-plan here must see the same write as due so an issue
 			// whose stage label is already right is still reconciled
-			// (hivecommons/hive#14586).
-			if stage.SettlesTriage() && issueHasLabel(in.Labels, triageAwaitingLabel) {
-				want.Clear = []string{triageAwaitingLabel}
+			// (hivecommons/hive#14586). Only once per issue, though: a
+			// label that came back after that removal belongs to another
+			// writer and stays (hivecommons/hive#18387). The yield is only
+			// judged at a stage that settles triage: at 010/015 (say,
+			// after a claim release) the label is legitimately back, and
+			// a sticky yield must not be booked from that read.
+			triageYielded = rec.TriageClearYielded
+			if stage.SettlesTriage() {
+				clearTriage, yielded := settleTriageClear(store, key, in.Repo, in.Number, in.Labels, logger)
+				triageYielded = yielded
+				if clearTriage {
+					want.Clear = []string{triageAwaitingLabel}
+				}
 			}
 		}
 		if stage == stagelabels.PRInProgress || stage == stagelabels.CoveredByPR {
@@ -565,7 +685,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			}
 			continue
 		}
-		if client.stageArchived.has(strings.ToLower(owner + "/" + name)) {
+		if repoKey := strings.ToLower(owner + "/" + name); client.stageArchived.has(repoKey) || client.stageLabelForbidden.has(repoKey) {
 			continue
 		}
 		if err := client.ensureStageLabelFamily(ctx, in.Repo); err != nil {
@@ -575,6 +695,8 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			if logger != nil {
 				if client.stageArchived.has(strings.ToLower(owner + "/" + name)) {
 					logger.Warn("issue stage labels: repository is archived and read-only, skipping it until restart; remove it from the configured repos", "repo", in.Repo, "error", err)
+				} else if client.stageLabelForbidden.has(strings.ToLower(owner + "/" + name)) {
+					logger.Warn("issue stage labels: GitHub App cannot write labels in this repository, skipping it until restart; grant the App Issues write access or remove the repo from the configured repos", "repo", in.Repo, "error", err)
 				} else {
 					logger.Warn("issue stage labels: provisioning failed", "repo", in.Repo, "error", err)
 				}
@@ -585,6 +707,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		facts.Ref.Owner, facts.Ref.Repo = owner, name
 		facts.ObservedAt = now
 		facts.Issue.Stalled = want.Stalled
+		facts.Issue.TriageClearYielded = triageYielded
 		pending = append(pending, issueStagePending{in: in, key: key, want: want, tr: tr, covered: covered, reason: reason, facts: facts})
 	}
 	// The write: one ReconcileBatch for the pass. The reconciler re-reads
@@ -817,7 +940,7 @@ func ensureIssueStagePRLink(ctx context.Context, client *Client, in IssueStageIn
 	if !ok || rec.EntryCommented {
 		return false, false, false
 	}
-	if _, err := client.PostIssueNote(ctx, in.Repo, in.Number, prstatus.KeyIssuePRLink, link.StageComment, func(ctx context.Context) error {
+	if _, err := client.PostInformationalIssueNote(ctx, in.Repo, in.Number, prstatus.KeyIssuePRLink, link.StageComment, func(ctx context.Context) error {
 		return client.CreateIssueComment(ctx, in.Repo, in.Number, link.StageComment)
 	}); err != nil {
 		owner, name := client.splitRepo(in.Repo)
@@ -890,7 +1013,12 @@ func (c *Client) ensureStageLabelFamily(ctx context.Context, repo string) error 
 // create or edit because the repository is archived and read-only
 // (hivecommons/hive#14026), so later sweeps skip it instead of retrying.
 func (c *Client) noteArchivedLabelRefusal(key string, err error) {
-	c.noteArchivedWrite(key, err)
+	if c.noteArchivedWrite(key, err) {
+		return
+	}
+	if githubStatusError(err, http.StatusForbidden) && strings.Contains(strings.ToLower(err.Error()), "resource not accessible by integration") {
+		c.stageLabelForbidden.mark(key)
+	}
 }
 
 // noteArchivedWrite memoises the repo when err is GitHub's 403 refusal of a

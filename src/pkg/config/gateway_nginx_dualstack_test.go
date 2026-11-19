@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/internal/testutil"
@@ -212,5 +213,54 @@ func TestGatewayAuthRateLimiting(t *testing.T) {
 				t.Errorf("nginx.conf auth location %q must carry its own proxy_pass (nested locations do not inherit it; omitting it 404s the auth path)", tc.path)
 			}
 		})
+	}
+}
+
+// Permissions-Policy values the gateway emits. The dashboard document allows
+// the microphone (Sessions voice notes, Inbox ● Record) and display capture
+// (● Record's meeting tab audio) for its own origin only; the ttyd terminal
+// iframe and /api/ responses keep the fully closed policy.
+const (
+	gatewayDocumentPermissionsPolicy = `geolocation=(), camera=(), microphone=(self), display-capture=(self)`
+	gatewayClosedPermissionsPolicy   = `geolocation=(), camera=(), microphone=(), display-capture=()`
+)
+
+// TestGatewayPermissionsPolicyMicrophoneScope pins the microphone scope of
+// the gateway's Permissions-Policy: microphone=(self) only for documents
+// served by `location /` outside /terminal/, never a wildcard origin list.
+func TestGatewayPermissionsPolicyMicrophoneScope(t *testing.T) {
+	conf := readNginxConf(t)
+
+	mapBlock := regexp.MustCompile(`(?ms)^\s*map\s+\$uri\s+\$hive_document_permissions_policy\s*\{([^}]*)\}`).FindStringSubmatch(conf)
+	if mapBlock == nil {
+		t.Fatal("nginx.conf must define `map $uri $hive_document_permissions_policy` for the dashboard document")
+	}
+	body := mapBlock[1]
+	if !regexp.MustCompile(`(?m)^\s*default\s+"` + regexp.QuoteMeta(gatewayDocumentPermissionsPolicy) + `";`).MatchString(body) {
+		t.Errorf("dashboard document Permissions-Policy default must be %q", gatewayDocumentPermissionsPolicy)
+	}
+	if !regexp.MustCompile(`(?m)^\s*~\^/terminal/\s+"` + regexp.QuoteMeta(gatewayClosedPermissionsPolicy) + `";`).MatchString(body) {
+		t.Errorf("the ttyd terminal iframe (/terminal/) must keep %q", gatewayClosedPermissionsPolicy)
+	}
+
+	if regexp.MustCompile(`microphone=\*|microphone=\(\s*\*`).MatchString(conf) {
+		t.Error("nginx.conf must never allow the microphone for every origin")
+	}
+	if regexp.MustCompile(`display-capture=\*|display-capture=\(\s*\*`).MatchString(conf) {
+		t.Error("nginx.conf must never allow display capture for every origin")
+	}
+	// display-capture=(self) appears only in the dashboard document default.
+	if n := strings.Count(conf, "display-capture=(self)"); n != 1 {
+		t.Errorf("display-capture=(self) must appear exactly once (the dashboard document), found %d", n)
+	}
+
+	apiBlock := regexp.MustCompile(`(?ms)^\s*location\s+/api/\s*\{.*?add_header\s+Permissions-Policy\s+"([^"]+)"\s+always;`).FindStringSubmatch(conf)
+	if apiBlock == nil || apiBlock[1] != gatewayClosedPermissionsPolicy {
+		t.Errorf("/api/ responses must keep Permissions-Policy %q", gatewayClosedPermissionsPolicy)
+	}
+
+	rootBlock := regexp.MustCompile(`(?ms)^\s*location\s+/\s*\{.*?add_header\s+Permissions-Policy\s+"([^"]+)"\s+always;`).FindStringSubmatch(conf)
+	if rootBlock == nil || rootBlock[1] != `$hive_document_permissions_policy` {
+		t.Error("`location /` must emit Permissions-Policy from $hive_document_permissions_policy")
 	}
 }

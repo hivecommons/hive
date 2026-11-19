@@ -1,0 +1,4 @@
+inbox:
+  uploads:
+    max_files_per_drop: 20
+name: hive

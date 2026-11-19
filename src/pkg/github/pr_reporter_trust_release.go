@@ -58,8 +58,14 @@ func (c *Client) clearReleasedReporterTrustNeedsHuman(ctx context.Context, repo 
 			if event == nil || (event.GetEvent() != "labeled" && event.GetEvent() != "unlabeled") {
 				continue
 			}
-			switch strings.ToLower(event.GetLabel().GetName()) {
-			case "hold":
+			name := strings.ToLower(event.GetLabel().GetName())
+			if name == strings.ToLower(DecisionNeededLabelName()) {
+				// The reporter-trust gate's label since #18468; the literal
+				// `hold` it applied before is read the same way.
+				name = LegacyHiveHoldLabel
+			}
+			switch name {
+			case LegacyHiveHoldLabel:
 				if event.GetEvent() == "labeled" && (holdApplied == nil || !event.GetCreatedAt().Before(holdApplied.GetCreatedAt().Time)) {
 					holdApplied = event
 				}

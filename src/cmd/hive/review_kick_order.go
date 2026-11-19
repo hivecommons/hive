@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -99,9 +100,19 @@ func orderReviewFixKicksFirst(messages []scheduler.KickMessage, reviewKickByMess
 // particular PR is being starved. The planner drops the undelivered kick
 // from the dispatch state (review.ConfirmDelivered) and re-plans it on the
 // next cycle, so the line says so.
+//
+// The same kick for the same PR head fails with the same cause every cycle
+// while an agent's pane is not ready, so repeats are logged at debug (and
+// not re-audited) until the cause changes or undeliveredKickRewarnAfter
+// passes.
 func logUndeliveredReviewKick(logger *slog.Logger, auditor reviewFixAuditor, k review.DispatchKick, err error) {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if !undeliveredKicks.shouldReport(k, err, time.Now()) {
+		logger.Debug("review swarm kick still not delivered",
+			"kind", k.Kind, "agent", k.Agent, "pr", k.PRRef, "head", k.HeadSHA, "error", err)
+		return
 	}
 	logger.Warn("review swarm kick not delivered; re-planned next cycle",
 		"kind", k.Kind, "agent", k.Agent, "pr", k.PRRef, "head", k.HeadSHA, "error", err)
@@ -110,6 +121,41 @@ func logUndeliveredReviewKick(logger *slog.Logger, auditor reviewFixAuditor, k r
 	}
 	auditor.AuditLog("governor", "review_kick_undelivered",
 		fmt.Sprintf("kind=%s pr=%s head=%s agent=%s error=%v", k.Kind, k.PRRef, k.HeadSHA, k.Agent, err), k.Agent)
+}
+
+const (
+	undeliveredKickRewarnAfter = 30 * time.Minute
+	undeliveredKickMaxTracked  = 1024
+)
+
+type undeliveredKickReport struct {
+	cause string
+	at    time.Time
+}
+
+type undeliveredKickTracker struct {
+	mu   sync.Mutex
+	seen map[string]undeliveredKickReport
+}
+
+var undeliveredKicks = &undeliveredKickTracker{seen: map[string]undeliveredKickReport{}}
+
+func (t *undeliveredKickTracker) shouldReport(k review.DispatchKick, err error, now time.Time) bool {
+	key := k.Kind + "\x00" + k.Agent + "\x00" + k.PRRef + "\x00" + k.HeadSHA
+	cause := ""
+	if err != nil {
+		cause = err.Error()
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if prev, ok := t.seen[key]; ok && prev.cause == cause && now.Sub(prev.at) < undeliveredKickRewarnAfter {
+		return false
+	}
+	if len(t.seen) >= undeliveredKickMaxTracked {
+		t.seen = map[string]undeliveredKickReport{}
+	}
+	t.seen[key] = undeliveredKickReport{cause: cause, at: now}
+	return true
 }
 
 // governorKickDisplacementLimit is how many consecutive cycles an agent's

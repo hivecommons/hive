@@ -2,10 +2,10 @@
     // Only the finished server snapshot supplies human_attention; its identity
     // must still match the PR this row actually represents.
     function stageTrackerHumanAttentionOf(item) {
-      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
+      if (!item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
         || item.superseded_by || item.adopted_by) return null;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged')) return null;
+      if (mods.some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged')) return null;
       const a = item.human_attention;
       if (!a || a.kind !== item.kind || Number(a.number) !== Number(item.number)) return null;
       if (a.kind === 'pr' && String(a.head || '') !== String(item.head || '')) return null;
@@ -18,10 +18,10 @@
     // so the note line reads the same either way. null when the row is not
     // parked on a person, or when human_attention already says it.
     function stageTrackerNeedsHumanAsk(item) {
-      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
+      if (!item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
         || item.superseded_by || item.adopted_by) return null;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged')) return null;
+      if (mods.some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged')) return null;
       if (stageTrackerHumanAttentionOf(item)) return null;
       const n = Number(item.stage) || 0;
       const flagged = item.needs_human === true || mods.indexOf('needs-human') >= 0 || mods.indexOf('needs-decision') >= 0
@@ -89,8 +89,8 @@
       return parts.join(' · ');
     }
     function stageTrackerHumanRequirementText(item, subRows) {
-      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL || item.superseded_by || item.adopted_by ||
-        (item.modifiers || []).some(m => m === 'draft' || m === 'hold' || m === 'merged')) return '';
+      if (!item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL || item.superseded_by || item.adopted_by ||
+        (item.modifiers || []).some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged')) return '';
       const human = stageTrackerHumanAttentionLine(item, subRows);
       const d = item && item.decided;
       const review = d && d.current_blocker && String(d.head || '') === String(item.head || '')
@@ -165,7 +165,7 @@
         const view = href ? 'View ' + (it.kind === 'pr' ? 'PR' : 'issue') + ' #' + Number(it.number) : '';
         return entry(esc(e.text) + (view ? ` <a href="${esc(href)}" target="_blank" rel="noopener">${view}</a>` : ''), e.text + (view ? ' · ' + view : ''));
       });
-      if (lines.length || !item || item.advisory || item.hold || item.state === 'closed') return lines;
+      if (lines.length || !item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed') return lines;
       const stale = item.human_attention && !stageTrackerHumanAttentionOf(item);
       const staleLinks = item.kind === 'issue' ? (item.linked_prs || []).filter(lp =>
         stageTrackerLinkedPROpen(lp, item) && lp.human_attention && !stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp))) : [];
@@ -178,7 +178,7 @@
       if (linked.length > 1 || item.kind === 'issue' && (item.linked_prs || []).some(lp =>
         stageTrackerLinkedPROpen(lp, item) && stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp)))) return [];
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged') || item.superseded_by) return [];
+      if (mods.some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged') || item.superseded_by) return [];
       const actor = item.stage_actor;
       const actorHuman = actor && (actor.kind === 'human' || actor.kind === 'maintainer');
       const claimant = item.claimant;

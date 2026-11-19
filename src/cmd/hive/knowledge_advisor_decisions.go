@@ -47,5 +47,9 @@ func (d *knowledgeAdviserLLM) recordDecision(agent string, kick scheduler.KickSu
 		Arm:       retro.AdvisorDecisionArm(r.Mode, outcome),
 		Outcome:   outcome,
 		Slug:      slug,
+
+		LatencyMS:        dec.latency.Milliseconds(),
+		PromptTokens:     dec.promptTokens,
+		CompletionTokens: dec.completionTokens,
 	})
 }

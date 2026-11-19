@@ -57,10 +57,11 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 12, kind: 'pr', title:
 assert.ok(row.includes('<span class="ham-badge ham-title-tag" title="Filed by [scanner]">scanner</span> <span class="ham-title" title="[scanner] logscrub misses attrs">logscrub misses attrs</span>'), 'linked issue slot draws the chip: ' + row);
 
 // Open but held: the Open segment itself names the hold state and the row
-// tooltip names the matching hold label, while the trailing flag pill remains.
+// tooltip names the matching hold label; the hold is a human gate, so the
+// trailing control is the one gate pill (reason "hold") rather than a chip.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'pr', title: 'Paused', stage: 0, caption: 'No stage recorded yet', labels: ['do-not-merge/hold'], modifiers: ['hold'] }, stages, ctx);
-assert.deepStrictEqual(segStates(row), ['active ham-open-hold', T, T, T, T, T, 'todo cap']);
-assert.ok(row.includes('ham-mod-hold">hold</span>'), row);
+assert.deepStrictEqual(segStates(row), ['active ham-open-hold ham-human-gated', T, T, T, T, T, 'todo cap']);
+assert.ok(!row.includes('ham-mod-hold">hold</span>') && row.includes('ham-human-gate') && row.includes('Needs human · hold'), row);
 assert.ok(tooltip(row).includes('Open · on hold (do-not-merge/hold) · No stage recorded yet · acme/console'), tooltip(row));
 
 // Open and awaiting triage: the action chip reads "triage needed"; the Open
@@ -111,7 +112,7 @@ assert.deepStrictEqual(stageTrackerOpenSince({ created_at: '2025-01-01T00:00:00Z
 assert.deepStrictEqual(stageTrackerOpenSince({}), { ms: 0, fromCreated: false });
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 23, kind: 'pr', title: 'Held', stage: 0, stage_since: new Date(now - 3 * 86400000).toISOString(), modifiers: ['hold'] }, stages, ctx);
 assert.strictEqual(openWord(row), 'Open · hold', 'Open · hold never carries the age (owner)');
-assert.deepStrictEqual(segStates(row), ['active ham-open-hold', T, T, T, T, T, 'todo cap'], 'held: no stale tint either');
+assert.deepStrictEqual(segStates(row), ['active ham-open-hold ham-human-gated', T, T, T, T, T, 'todo cap'], 'held: no stale tint either');
 // Open · blocked (the blocked label) mirrors Open · hold but, unlike it,
 // keeps the age — a stale blocked item is what the owner wants to see
 // (hivecommons/hive#14194). hold wins when both are present.
@@ -151,7 +152,7 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 30, kind: 'issue', tit
 assert.ok(!row.includes('<span class="ham-since">3d</span>'), 'only blocked rows borrow created_at for the since column');
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 27, kind: 'pr', title: 'Held and blocked', stage: 0, stage_since: new Date(now - 3 * 86400000).toISOString(), modifiers: ['blocked', 'hold'] }, stages, ctx);
 assert.strictEqual(openWord(row), 'Open · hold', 'hold is a human instruction: it wins over blocked and still carries no age');
-assert.deepStrictEqual(segStates(row), ['active ham-open-hold', T, T, T, T, T, 'todo cap']);
+assert.deepStrictEqual(segStates(row), ['active ham-open-hold ham-human-gated', T, T, T, T, T, 'todo cap']);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 28, kind: 'pr', title: 'Blocked later', stage: 50, modifiers: ['blocked'] }, stages, ctx);
 assert.ok(!row.includes('ham-open-blocked') && !row.includes('Open · blocked'), 'blocked past Open is a chip, not an Open word');
 // A draft PR with no stage (hivecommons/hive#14572): the far-right pill
@@ -173,6 +174,7 @@ assert.strictEqual(stageTrackerCurrentStageHtml({ stage: 0, stage_since: new Dat
 // and the folded draft still explains itself on hover.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 31, kind: 'pr', title: 'Held draft', stage: 0, stage_since: new Date(now - 3 * 86400000).toISOString(), labels: ['do-not-merge/hold'], modifiers: ['hold', 'draft'] }, stages, ctx);
 assert.strictEqual(openWord(row), 'Open · hold', 'hold wins the Open word over draft');
+// A draft is not a human gate, so the held draft keeps its chips and no gate pill.
 assert.deepStrictEqual(segStates(row), ['active ham-open-hold', T, T, T, T, T, 'todo cap']);
 assert.ok(row.includes('ham-mod-hold" title="' + STAGE_TRACKER_DRAFT_TIP + '">hold +1</span>'), 'hold leads, draft folded: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 32, kind: 'pr', title: 'Still drafting', stage: 50, modifiers: ['draft'] }, stages, ctx);
@@ -241,7 +243,8 @@ assert.strictEqual(stageTrackerAnchor(95, stages, 'pr'), STAGE_TRACKER_MERGE_COL
 
 // PR returned to contributor: detour badge rides Review; chip cap = author kind + first modifier (+N).
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', title: 'Fix flaky', stage: 72, lane: 'contributor', tier: 'trusted', author: 'karibhou', author_kind: 'clanker', author_kind_source: 'inferred', modifiers: ['needs-rebase', 'needs-human'], caption: 'Returned to @karibhou', history: [{number:50,slug:'review-pending'},{number:60,slug:'reviewed'},{number:72,slug:'returned-to-contributor',from:60}] }, stages, ctx);
-assert.deepStrictEqual(segStates(row), [D, D, D, 'active detoured', T, T, 'todo cap']);
+// needs-human is a gate reason: the lit chevron wears the amber outline and the gate pill carries the verbs.
+assert.deepStrictEqual(segStates(row), [D, D, D, 'active detoured ham-human-gated', T, T, 'todo cap']);
 // hivecommons/hive#15159: the chevron names the routing — the contributor's clanker, for a clanker's PR.
 assert.ok(row.includes('<span class="ham-detour">Returned to @karibhou&#39;s clanker</span>'), row);
 // Invariant: a PR never occupies the issue slot. A PR with no linked issue
@@ -257,7 +260,8 @@ assert.ok(!/<a class="ham-ref"/.test(row), 'no #N link in the issue slot when th
 assert.ok(prCol(row)[0].includes('ham-author-ico ham-author-clanker') && prCol(row)[0].includes('aria-label="clanker · @karibhou"') && prCol(row)[0].includes('<span class="ham-pr-num">#102</span>') && prCol(row)[0].includes('<span class="ham-pr-title">Fix flaky</span>'), 'coloured author icon, #102, title in the PR column: ' + prCol(row)[0]);
 assert.strictEqual(titles(row, 'Fix flaky'), 1, 'title appears once');
 assert.strictEqual(chips(row), 1, 'author kind is an icon, not a chip');
-assert.ok(row.includes('ham-mod-needs-human">needs human +1</span>'), row);
+// needs-human moved into the gate pill, so the chip strip reads the remaining modifier alone.
+assert.ok(row.includes('ham-mod-needs-rebase">needs rebase</span>') && !row.includes('ham-mod-needs-human') && row.includes('ham-human-gate'), row);
 assert.ok(tooltip(row).includes('Flags: needs-rebase, needs-human') && tooltip(row).includes('Trail: CI / Review → Reviewed → Returned to contributor'), tooltip(row));
 
 // PR reviewed (060): pre-admission (CI pending or soak), so CI / Review stays lit; the merge gate starts at 080.
@@ -281,10 +285,15 @@ assert.ok(row.includes('<span class="ham-since ham-stalled">3h</span>'), row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 105, kind: 'pr', stage: 90 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap']);
 assert.ok(row.includes('<span class="ham-detour">Ready for human merge</span>'));
-// 085 has its own word; needs-decision as a modifier elsewhere reads "needs human decision".
+// 085 on a PR: the chevron reads the real stage column (the human gate is
+// the pill on the right, never a chevron word — hivecommons/hive#17470).
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 85, modifiers: ['blocked'], caption: 'DCO failing — fix, waive or close' }, stages, ctx);
-assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap']);
-assert.ok(row.includes('<span class="ham-detour">Needs human decision</span>') && !row.includes('ham-mod-needs-decision'), row);
+assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured ham-human-gated', 'todo cap']);
+assert.ok(row.includes('<span class="ham-detour">Merge queue</span>') && !row.includes('ham-mod-needs-decision'), row);
+// (The hover tooltip may still open with "Needs human decision"; the visible chevron copy never does.)
+assert.ok(!strip(row).split('<p class="ham-current-stage">')[0].replace(/<span [^>]*class="config-tooltip[^"]*"[^>]*>[\s\S]*?<\/span>/g, '').replace(/<[^>]*>/g, '').includes('Needs human'), 'no "Needs human" chevron word: ' + strip(row));
+assert.ok(row.includes('<p class="ham-current-stage">Needs human decision · '), 'the expander line still names the decision: ' + row);
+assert.ok(row.includes('ham-human-gate') && row.includes('Needs human · decision'), row);
 assert.ok(tooltip(row).includes('Needs a human decision'), row);
 // A blocked issue with a hive:recheck-after deadline names it on the chip
 // (hivecommons/hive#13310); a bare blocked row keeps the plain chip.
@@ -299,7 +308,7 @@ assert.ok(row.includes('>blocked</span>') && !row.includes('re-check'), row);
 // pre-045 issue still wearing 085 is drawn the same way until re-staged.
 for (const parked of [45, 85]) {
   row = stageTrackerRowHtml({ repo: 'acme/console', number: 355, kind: 'issue', stage: parked }, stages, ctx);
-  assert.deepStrictEqual(segStates(row), [D, 'active detoured', T, T, T, T, 'todo cap'], row);
+  assert.deepStrictEqual(segStates(row), [D, 'active detoured ham-human-gated', T, T, T, T, 'todo cap'], row);
   assert.ok(row.includes('<span class="ham-detour">Needs human decision</span>') && tooltip(row).includes('Needs a human decision') && !tooltip(row).includes('(its PR)'), row);
 }
 // 045 needs attention like the other parking stages.
@@ -314,7 +323,7 @@ assert.strictEqual(stageTrackerHeadline({ kind: 'pr', stage: 70, modifiers: ['re
 // ...but an issue whose single covering PR sits on 085 still rides the PR's
 // merge gate, with the "(its PR)" suffix.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 356, kind: 'issue', stage: 40, linked_prs: [{ number: 109, author_kind: 'hive', stage: 85 }] }, stages, ctx);
-assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap'], row);
+assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured ham-human-gated', 'todo cap'], row);
 assert.ok(tooltip(row).includes('Needs a human decision (its PR)'), row);
 // A PR parked at 085 lights the 080 column as a detour; its chevron hover
 // names the parking stage, not the column it rides on — the owner read
@@ -326,7 +335,8 @@ assert.ok(chevronTip(row).startsWith('Needs human decision') && !chevronTip(row)
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 14830, kind: 'pr', stage: 80, caption: 'CI green' }, stages, ctx);
 assert.ok(chevronTip(row).startsWith('Awaiting merge admission — not yet admitted') && chevronTip(row).includes('Next move: hive'), '080 keeps its own hover: ' + chevronTip(row));
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage: 50, modifiers: ['needs-decision'] }, stages, ctx);
-assert.ok(row.includes('ham-mod-needs-decision">needs human decision</span>') && tooltip(row).includes('Flags: needs human decision'), row);
+// needs-decision as a modifier is the gate pill's reason "decision", not a chip; the row tooltip still flags it.
+assert.ok(!row.includes('ham-mod-needs-decision') && row.includes('Needs human · decision') && tooltip(row).includes('Flags: needs human decision'), row);
 // Whose move it is, as an ink-coloured icon after the word: Review = hive,
 // PR in progress = the PR author, Claimed = the claimant; Open/Actionable carry none.
 assert.ok(row.includes('data-track="ci"') && row.includes('data-track="review"') && !row.includes('ham-actor-ico'), 'a native stage cannot identify the actual reviewer: ' + row);
@@ -559,7 +569,7 @@ assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 // is what the chevron says, the actor is whose move it is. The active
 // chevron now leads with its stage icon, so the regex skips that svg.
 const prWords = {};
-for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passed', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Queued for merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
+for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passed', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Queued for merge', 'hive'], [85, 'Merge queue', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
   const r = stageTrackerRowHtml({ repo: 'acme/console', number: 500 + st, kind: 'pr', stage: st, author_kind: 'clanker' }, stages, ctx);
   if ([50, 60, 70, 71, 72, 74].includes(st)) {
     assert.ok(r.includes('data-track="ci"') && r.includes('data-track="review"'), 'pre-gate tracks remain separate at ' + st);
@@ -749,7 +759,7 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
 // the person's move ON THE PR, not a merge matter: the row lights its REAL
 // stage — the CI track, stalled, amber-marked (ham-human-gated) — with
 // PR in progress passed and the Merge queue column empty; the ask rides
-// as the needs-human pill, never as a "Needs human" chevron of its own
+// in the one human-gate pill, never as a "Needs human" chevron of its own
 // (hivecommons/hive#17453). A merge-ready twin (approved + CI green) or a
 // queued one keeps the gate.
 {
@@ -805,7 +815,7 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
   assert.ok(/<li class="ham-seg ham-activity-track active ham-human-gated ham-current" data-track="ci"[^>]*data-motion="active"[^>]*>[\s\S]*?CI 3\/9 · 6 running<\/span>/.test(row), 'CI is the lit chevron, in motion, amber-marked: ' + strip(row));
   assert.ok(/<li class="ham-seg ham-activity-track done decided ham-current" data-track="review"/.test(row), 'Review is dim, decided: ' + strip(row));
   assert.ok(!/<li class="ham-seg active[^"]*"[^>]*>[\s\S]*?Needs human/.test(strip(row)), 'no "Needs human" stage chevron: ' + strip(row));
-  assert.ok(row.includes('ham-mod-needs-decision') && row.includes('>needs human decision<'), 'the ask rides as the needs-decision pill: ' + strip(row));
+  assert.ok(!row.includes('ham-mod-needs-decision') && row.includes('ham-human-gate') && row.includes('Needs human · review, decision'), 'the ask rides as the human-gate pill (review verdict + 085 stack): ' + row);
   assert.ok(row.includes('needs a person: ' + question.replace(/'/g, '&#39;')) || row.includes('needs a person: ' + question), 'the lit CI chevron\'s tooltip carries the question: ' + row);
   // The same row with CI green and the review verdict pending lights Review, stalled, amber-marked.
   const reviewing = stageTrackerRowHtml(shape({ ci_activity: { head, state: 'passing', caption: 'CI green', checks_passed: 9, checks_total: 9, source: 'checks', observed_at: seen }, review_activity: { head, state: 'unknown', caption: 'Review pending', perspectives_done: 0, perspectives_total: 5, source: 'review-dispatch-wait', observed_at: seen } }), stages, ctx);
@@ -814,8 +824,8 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
   assert.ok(/<li class="ham-seg ham-activity-track done ham-current" data-track="ci"[^>]*data-verdict="pass"/.test(reviewing), 'green CI is the ring alone: ' + strip(reviewing));
   // A payload that predates the server re-adding the modifier still shows the pill.
   const bare = stageTrackerRowHtml(shape({ modifiers: [] }), stages, ctx);
-  assert.ok(bare.includes('ham-mod-needs-decision'), 'the pill is derived client-side too: ' + strip(bare));
-  assert.strictEqual((bare.match(/ham-mod-needs-decision/g) || []).length, 1, bare);
+  assert.ok(bare.includes('ham-human-gate') && bare.includes('Needs human · review, decision'), 'the gate is derived client-side too: ' + bare);
+  assert.strictEqual((bare.match(/class="ham-human-gate"/g) || []).length, 1, 'exactly one gate control: ' + bare);
 }
 // hivecommons/hive#16599 rows (canonical: active = amber + words, inactive =
 // icon only). #16567 (dependabot, 050, review approved, 10 workflow runs

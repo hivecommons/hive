@@ -80,6 +80,7 @@ func (s *Server) InstallClaimHooks(base claims.Hooks) {
 		if prevReleased != nil {
 			prevReleased(c, reason)
 		}
+		s.contributorReleasedForHumanClaim(c, reason)
 	}
 	base.OnTakenOver = func(now, previous claims.Claim) {
 		s.integrationRelease(previous.Key(), previous.Holder, uint64(previous.ClaimedAt.UnixNano()), "claim takeover")
@@ -121,6 +122,38 @@ func (s *Server) preemptDisplacedHolder(now, previous claims.Claim) {
 		"by", now.Holder, "by_kind", now.Kind, "released", released, "reassigned_to", next)
 	s.AuditLog(now.Holder, "claim_preempt", fmt.Sprintf("%s taken from %s (%s); released=%d next=%s",
 		previous.Key(), previous.Holder, previous.Kind, released, next), "")
+}
+
+// contributorReleasedForHumanClaim is the "a person claimed it" half of the
+// precedence rule (hivecommons/hive#18899). The admission check refuses a
+// contributor on an issue an owner or maintainer claimed outside the ledger
+// (assignee, `/claim` comment, hand-applied hive/claimed-by-human), the
+// release tick or the next lease renewal then drops the contributor claim
+// with claims.HumanClaimReason, and this hook does what a takeover does for
+// a displaced contributor: yank the relay task (or revoke a disconnected
+// relay's lease) so the lane stops, and record the person's claim in the
+// ledger so every other producer sees it and the history says who. Any other
+// release reason is not this hook's.
+func (s *Server) contributorReleasedForHumanClaim(c claims.Claim, reason string) {
+	login, ok := claims.ParseHumanClaimReason(reason)
+	if !ok || c.Kind != claims.KindContributor {
+		return
+	}
+	released := 0
+	if s.contributeHub != nil && c.HolderID != "" {
+		released, _ = s.contributeHub.PreemptContributorIssue(c.HolderID, c.Repo, c.Issue, "preempted: "+reason)
+		if released == 0 {
+			s.contributeHub.revokeLeaseForKey(c.HolderID, c.Key())
+		}
+	}
+	if l := s.claimsLedger(); l != nil {
+		if _, err := l.Claim(claims.Request{Repo: c.Repo, Issue: c.Issue, Holder: login, Kind: claims.KindHuman}); err != nil {
+			s.logger.Warn("[claims] human claim not recorded after releasing a contributor", "issue", c.Key(), "by", login, "error", err)
+		}
+	}
+	s.logger.Info("[claims] contributor lease released: a person claimed the issue",
+		"issue", c.Key(), "holder", c.Holder, "holder_id", c.HolderID, "by", login, "reason", reason, "yanked", released)
+	s.AuditLog(login, "claim_preempt", fmt.Sprintf("%s released from %s (%s): %s; yanked=%d", c.Key(), c.Holder, c.Kind, reason, released), "")
 }
 
 // claimIssueForContributor records a contributor claim after the relay has
@@ -172,9 +205,21 @@ func (h *ContributeWSHub) renewClaimForLease(identity, repo string, number int) 
 	if !ok || c.HolderID != identity {
 		return
 	}
-	if _, err := l.Claim(claims.Request{Repo: c.Repo, Issue: c.Issue, Holder: c.Holder, HolderID: c.HolderID,
-		Kind: c.Kind, Session: c.Session, Tier: c.Tier, Verified: c.Verified}); err != nil {
+	res, err := l.Claim(claims.Request{Repo: c.Repo, Issue: c.Issue, Holder: c.Holder, HolderID: c.HolderID,
+		Kind: c.Kind, Session: c.Session, Tier: c.Tier, Verified: c.Verified})
+	if err != nil {
 		h.logger.Warn("[claims] contributor claim not renewed", "issue", c.Key(), "holder", c.Holder, "error", err)
+		return
+	}
+	// The renewal's admission check found a person's claim (hivecommons/hive#18899):
+	// release the contributor now rather than wait for the release tick. Off
+	// this goroutine: renewal runs inside the progress handler and the yank
+	// takes the connection locks.
+	if res.Outcome == claims.OutcomeRefused {
+		if _, human := claims.ParseHumanClaimReason(res.Reason); human {
+			reason, holderID, key := res.Reason, c.HolderID, c.Key()
+			go l.ReleaseByHolderID(holderID, reason, key)
+		}
 	}
 }
 
@@ -269,7 +314,9 @@ func (h *ContributeWSHub) recordCompletionPRClaim(task *WSTaskAssign, prURL, use
 // covers the issue the hold is renewed; once it merged, closed, or stopped
 // covering the issue the claim is released. Without the duplicate-PR ledger
 // wired there is nothing to re-check against, so the holds are left to their
-// own TTL. Returns how many claims were released.
+// own TTL. A hive agent's claim is renewed the same way while an open hive
+// PR covers its issue, in any managed repo (sweepAgentPRHeldClaim,
+// hivecommons/hive#18676). Returns how many claims were released.
 func (h *ContributeWSHub) sweepPRHeldClaims() int {
 	l := h.claimsLedger()
 	if l == nil || h.server == nil || h.server.deps == nil || h.server.deps.IssueClaimed == nil {
@@ -277,6 +324,10 @@ func (h *ContributeWSHub) sweepPRHeldClaims() int {
 	}
 	released := 0
 	for _, c := range l.List() {
+		if c.Kind == claims.KindAgent && c.HolderID != "" {
+			released += h.sweepAgentPRHeldClaim(l, c)
+			continue
+		}
 		if c.Kind != claims.KindContributor || c.PRNumber <= 0 || c.HolderID == "" {
 			continue
 		}
@@ -292,6 +343,50 @@ func (h *ContributeWSHub) sweepPRHeldClaims() int {
 		}
 	}
 	return released
+}
+
+// sweepAgentPRHeldClaim keeps a hive agent's claim alive while an open PR
+// the hive authored covers the issue, in whatever managed repo that PR lives
+// (hivecommons/hive#18676): the scanner claimed hivecommons/hive#18660 and
+// opened hivecommons/quorum-companion#3 with `Refs hivecommons/hive#18660`;
+// nothing renewed the claim once the agent's session ended, so it lapsed
+// two hours later while the PR waited on a decision and the issue read as
+// abandoned. A claim held this way (Claim.PRNumber set) is released once no
+// open hive PR covers the issue any more. A claim the sweep never held is
+// left to its own TTL. Returns 1 when it released the claim.
+func (h *ContributeWSHub) sweepAgentPRHeldClaim(l *claims.Ledger, c claims.Claim) int {
+	if pr, ok := h.agentCoveringPR(c); ok {
+		l.HoldForPR(c.HolderID, c.Key(), coveringPRRepo(pr), pr.PRNumber)
+		return 0
+	}
+	if c.PRNumber <= 0 {
+		return 0
+	}
+	released := 0
+	for _, r := range l.ReleaseByHolderID(c.HolderID, claims.ReasonCoveringPRDone, c.Key()) {
+		released++
+		h.logger.Info("[claims] PR-held agent claim released", "issue", r.Key(), "holder", r.Holder, "pr", r.PRNumber, "pr_repo", r.PRRepo)
+	}
+	return released
+}
+
+// agentCoveringPR reports the open, hive-authored pull request the
+// duplicate-PR claim ledger records against an agent claim's issue —
+// closing or a non-closing `Refs`, same repo or another managed repo (the
+// ledger keys a cross-repo `Refs owner/repo#N` under the issue's repo).
+func (h *ContributeWSHub) agentCoveringPR(c claims.Claim) (ghpkg.IssueClaim, bool) {
+	name := c.Repo
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	pr, ok := h.issueClaimedByOpenPR(c.Repo, name, c.Issue)
+	if !ok || pr.PRNumber <= 0 || pr.MergedPR || pr.ExternalAuthor {
+		return ghpkg.IssueClaim{}, false
+	}
+	if state := strings.TrimSpace(pr.PRState); state != "" && state != ghpkg.PRStateOpen {
+		return ghpkg.IssueClaim{}, false
+	}
+	return pr, true
 }
 
 // removeLegacyClaimLabelForLease tells the stage engine the contributor

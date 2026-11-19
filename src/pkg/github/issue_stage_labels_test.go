@@ -64,6 +64,10 @@ type issueStageServer struct {
 	// counts them in prLookups (guarded by mu).
 	prRateLimited bool
 	prLookups     int
+	// timelines is what GET /issues/N/timeline reports per issue (empty by
+	// default); timelineGets counts the reads.
+	timelines    map[int][]map[string]any
+	timelineGets int
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
@@ -181,6 +185,15 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 				state = "closed"
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels, "state": state, "body": s.bodies[n], "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/timeline"):
+			var n int
+			_, _ = sscanIssue(rest, &n)
+			s.timelineGets++
+			out := s.timelines[n]
+			if out == nil {
+				out = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/comments"):
 			var n int
 			_, _ = sscanIssue(rest, &n)
@@ -311,6 +324,71 @@ func issueStageTestClient(t *testing.T, srv *httptest.Server, enabled bool) *Cli
 }
 
 func stageNow() time.Time { return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC) }
+
+// TestIssueDiscussionSignal pins the 018 discussion signal
+// (hivecommons/hive#17150, hivecommons/hive#18141): the most specific
+// discussion label wins and is reported as the issue spells it; an
+// unlabelled issue whose title opens with "[RFC]" / "RFC:" (after any
+// leading emoji) reads "rfc title"; anything else is "".
+func TestIssueDiscussionSignal(t *testing.T) {
+	cases := []struct {
+		name   string
+		labels []string
+		title  string
+		want   string
+	}{
+		{"no signal", []string{"Epic", "help wanted"}, "v6 design: agent runtime", ""},
+		{"proposal", []string{"proposal"}, "", "proposal"},
+		{"kind/design as spelled", []string{"Kind/Design"}, "", "Kind/Design"},
+		{"architecture discussion", []string{"Epic", "architecture discussion"}, "Hold: v6 runtime", "architecture discussion"},
+		{"architecture discussion case-insensitive", []string{"Architecture Discussion"}, "", "Architecture Discussion"},
+		{"most specific label wins over order", []string{"architecture discussion", "proposal"}, "", "proposal"},
+		{"label outranks rfc title", []string{"kind/design"}, "[RFC] v6 agent runtime", "kind/design"},
+		{"[RFC] title", nil, "[RFC] v6 agent runtime", rfcTitleDiscussionReason},
+		{"RFC: title", nil, "RFC: v6 agent runtime", rfcTitleDiscussionReason},
+		{"lower-case rfc title", nil, "[rfc] v6 agent runtime", rfcTitleDiscussionReason},
+		{"emoji-prefixed RFC title", []string{"Epic"}, "📝 [RFC] v6 agent runtime", rfcTitleDiscussionReason},
+		{"emoji and spaces before RFC:", nil, "  🧭  RFC: v6 agent runtime", rfcTitleDiscussionReason},
+		{"rfc word without marker", nil, "RFC process cleanup", ""},
+		{"rfc mid-title", nil, "Implement the [RFC] runtime", ""},
+		{"empty title", nil, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := issueDiscussionSignal(tc.labels, tc.title); got != tc.want {
+				t.Fatalf("issueDiscussionSignal(%q, %q) = %q; want %q", tc.labels, tc.title, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIssueStageFor_DiscussionSignals pins the 018 derivation end to end
+// for the hivecommons/hive#18141 shapes: an unclaimed issue with only
+// `architecture discussion`, an unclaimed `[RFC]`-titled issue with no
+// discussion label, and the same issues once claimed (020 / 030).
+func TestIssueStageFor_DiscussionSignals(t *testing.T) {
+	cases := []struct {
+		name       string
+		in         IssueStageInput
+		want       stagelabels.Stage
+		wantReason string
+	}{
+		{"architecture discussion unclaimed", IssueStageInput{Labels: []string{"Epic", "architecture discussion"}, Title: "Hold: v6 agent runtime"}, stagelabels.OpenForDiscussion, "open for discussion: architecture discussion"},
+		{"[RFC] title, no discussion label", IssueStageInput{Labels: []string{"Epic", "help wanted"}, Title: "📝 [RFC] v6 agent runtime"}, stagelabels.OpenForDiscussion, "open for discussion: rfc title"},
+		{"RFC: title, no labels", IssueStageInput{Title: "RFC: v6 agent runtime"}, stagelabels.OpenForDiscussion, "open for discussion: rfc title"},
+		{"[RFC] title claimed by a person", IssueStageInput{Title: "[RFC] v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: "human", ClaimedBy: "alice"}, stagelabels.Claimed, "live issue claim"},
+		{"architecture discussion claimed with a PR under way", IssueStageInput{Labels: []string{"architecture discussion"}, Title: "Hold: v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner", PRStarted: true}, stagelabels.PRInProgress, "live claim with a PR under way"},
+		{"plain title stays 010", IssueStageInput{Labels: []string{"Epic", "help wanted"}, Title: "v6 agent runtime"}, stagelabels.Actionable, "actionable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stage, covered, reason := IssueStageFor(tc.in, nil)
+			if stage != tc.want || covered || reason != tc.wantReason {
+				t.Fatalf("got stage=%v covered=%v reason=%q; want stage=%v reason=%q", stage, covered, reason, tc.want, tc.wantReason)
+			}
+		})
+	}
+}
 
 func TestIssueStageFor(t *testing.T) {
 	prStage := func(repo string, number int) stagelabels.Stage {
@@ -469,6 +547,21 @@ func TestIssueStageInputs_CarriesAuthorKind(t *testing.T) {
 	}
 	if len(got) != 3 || got[0] != authorkind.Human || got[1] != authorkind.Hive || got[2] != authorkind.Unknown {
 		t.Fatalf("author kinds = %v", got)
+	}
+}
+
+// A Jira or Linear item rides the actionable list with Number 0. It has no
+// GitHub issue, so it gets no stage row: before, every such item became one
+// "repo#0" row whose label write failed with a 404.
+func TestIssueStageInputs_SkipsItemsWithoutGitHubNumber(t *testing.T) {
+	res := &ActionableResult{}
+	res.Issues.Items = []Issue{
+		{Repo: "o/r", Number: 0, SourceType: "jira", ExternalID: "CEH-1"},
+		{Repo: "o/r", Number: 7},
+	}
+	got := IssueStageInputs(res)
+	if len(got) != 1 || got[0].Number != 7 {
+		t.Fatalf("stage inputs = %+v, want only o/r#7", got)
 	}
 }
 
@@ -1352,5 +1445,106 @@ func TestNoteArchivedWrite(t *testing.T) {
 	}
 	if !c.stageArchived.has("acme/widgets") {
 		t.Fatal("archived repo not memoised")
+	}
+}
+
+// hivecommons/hive#17582: a 403 "Resource not accessible by integration" on a
+// label write memoises the repo as label-forbidden (not archived); a rate
+// limit 403 memoises neither.
+func TestEnsureStageLabelFamilyForbiddenMemo(t *testing.T) {
+	cases := []struct {
+		name          string
+		message       string
+		wantForbidden bool
+		wantArchived  bool
+	}{
+		{"integration", "Resource not accessible by integration", true, false},
+		{"archived", "Repository was archived so is read-only.", false, true},
+		{"rate limit", "API rate limit exceeded", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				mu.Lock()
+				calls++
+				mu.Unlock()
+				if r.Method == http.MethodPost {
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte(`{"message":"` + tc.message + `"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`[]`))
+			}))
+			t.Cleanup(srv.Close)
+			c := NewClientForTest(srv.URL, "acme", []string{"widgets"}, testLogger())
+			if err := c.ensureStageLabelFamily(context.Background(), "acme/widgets"); err == nil {
+				t.Fatal("want the refusal surfaced")
+			}
+			if got := c.stageLabelForbidden.has("acme/widgets"); got != tc.wantForbidden {
+				t.Fatalf("stageLabelForbidden = %v, want %v", got, tc.wantForbidden)
+			}
+			if got := c.stageArchived.has("acme/widgets"); got != tc.wantArchived {
+				t.Fatalf("stageArchived = %v, want %v", got, tc.wantArchived)
+			}
+		})
+	}
+}
+
+// The sweep pays one refused create for an App without label access, logs the
+// distinct warning once, and skips the repo on later sweeps.
+func TestSyncIssueStageLabels_LabelForbiddenRepoSkippedOnLaterSweeps(t *testing.T) {
+	fake := newIssueStageServer(t)
+	var mu sync.Mutex
+	labelCalls := 0
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/repos/acme/widgets/labels") {
+			w.Header().Set("Content-Type", "application/json")
+			mu.Lock()
+			labelCalls++
+			mu.Unlock()
+			if r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"message":"Resource not accessible by integration"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		fake.srv.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.Close)
+
+	var logMu sync.Mutex
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(lockedWriter{mu: &logMu, w: &logs}, nil))
+	c := NewClientForTest(front.URL, "acme", []string{"widgets"}, logger)
+	c.SetIssueStageLabels(func() IssueStagePolicy { return IssueStagePolicy{Enabled: true} })
+	store := stagelabels.NewStore("", stageNow)
+	result := &ActionableResult{}
+	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 1, Labels: []string{"bug"}}})
+	fake.seed(result)
+	ResetRateLimitPacingForTest()
+	resetRESTAccountingForTest(t, stageNow())
+
+	for sweep := 1; sweep <= 2; sweep++ {
+		SyncIssueStageLabelsWith(context.Background(), c, result, store, stageNow(), logger, nil)
+	}
+	mu.Lock()
+	got := labelCalls
+	mu.Unlock()
+	if got != 2 {
+		t.Fatalf("label API calls across two sweeps = %d, want 2 (one list + one refused create)", got)
+	}
+	logMu.Lock()
+	out := logs.String()
+	logMu.Unlock()
+	if n := strings.Count(out, "GitHub App cannot write labels in this repository"); n != 1 {
+		t.Fatalf("forbidden warning logged %d times, want 1:\n%s", n, out)
+	}
+	if strings.Contains(out, "provisioning failed") {
+		t.Fatalf("forbidden repo must not log the generic provisioning failure:\n%s", out)
 	}
 }

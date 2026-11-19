@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -148,7 +149,30 @@ func newInProcess(o options) crux.Runtime {
 	if o.sharedPool != nil {
 		mopts = append(mopts, agent.WithSharedSessionPool(o.sharedPool))
 	}
+	// The in-process runtime is the one that execs agent CLIs on this host,
+	// so this is where a kernel that refuses one of them (ENOEXEC, #17729)
+	// gets said out loud once at boot — in the background, so a slow
+	// `--version` never delays the manager.
+	go agent.LogBackendBinaryPreflight(context.Background(), o.logger, backendsInUse(o.defs))
 	return agent.AsRuntime(agent.NewManagerWithOptions(o.defs, o.logger, o.project, mopts...))
+}
+
+// backendsInUse lists the distinct backends the agent definitions name, so
+// the boot preflight probes the CLIs this hive will actually launch (and
+// every installed CLI when no definitions were handed in).
+func backendsInUse(defs map[string]config.AgentConfig) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, d := range defs {
+		b := strings.TrimSpace(d.Backend)
+		if b == "" || seen[b] {
+			continue
+		}
+		seen[b] = true
+		out = append(out, b)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // HostOf returns rt's crux.Host when rt is the in-process implementation.

@@ -69,6 +69,12 @@ const signedSkipRemedyPerson = "The hive re-signs only its own agents' commits (
 	"or drop your own commit from the branch so the hive can re-sign the agent's work on a later pass, " +
 	"then push your change again, signed, on top."
 
+// signedSkipRemedyUnsupported applies when the change cannot safely be
+// re-authored, rather than a person's commit blocking the rewrite.
+const signedSkipRemedyUnsupported = "The hive could not safely represent this change with GitHub's signing API. " +
+	"Have a contributor re-author the unsigned commits with their own verified signature and push the signed branch, " +
+	"preserving the file modes and contents. A new head also lets the hive try again."
+
 // signedSkipRemedyAPIRefused tells the PR owner how to unblock a head GitHub
 // kept refusing to sign: there is no person's commit to squash, only a new
 // head (or a repository-side fix) re-arms the reconciler.
@@ -225,7 +231,7 @@ func (c *Client) reconcileSignedCommits(ctx context.Context) {
 		owner, name := c.splitRepo(repo)
 		prs, err := c.listOpenPRsForSigning(ctx, owner, name)
 		if err != nil {
-			c.warn("signed-commit reconciler: listing open PRs failed", "repo", owner+"/"+name, "err", err)
+			c.logSignedReadFailure("signed-commit reconciler: listing open PRs failed", err, "repo", owner+"/"+name)
 			continue
 		}
 		prefix := owner + "/" + name + "#"
@@ -254,6 +260,23 @@ func (c *Client) reconcileSignedCommits(ctx context.Context) {
 		}
 		c.signedReconcile.prune(prefix, open)
 	}
+}
+
+// logSignedReadFailure logs a failed reconciler read. Every such read is
+// retried on the next pass (prSignedReconcileInterval), so a transient
+// failure (a transport timeout, a deadline, a rate limit or a 5xx; see
+// isRetryableGitHubError) or a shutdown cancellation is logged at INFO: one
+// slow GitHub minute across a handful of active repos otherwise crossed the
+// fleet selfreport's WARN repeat threshold (hivecommons/hive#18243). Any other
+// failure (401, 403, 404, a malformed response) says something about the repo
+// or the App and stays a WARN.
+func (c *Client) logSignedReadFailure(msg string, err error, args ...any) {
+	args = append(append([]any(nil), args...), "err", err)
+	if isRetryableGitHubError(err) || errors.Is(err, context.Canceled) {
+		c.info(msg+"; retrying next pass", args...)
+		return
+	}
+	c.warn(msg, args...)
 }
 
 func (c *Client) listOpenPRsForSigning(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
@@ -285,7 +308,7 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 
 	commits, err := c.listPRRepositoryCommits(ctx, owner, repo, number)
 	if err != nil {
-		c.warn("signed-commit reconciler: listing PR commits failed", append(logArgs, "err", err)...)
+		c.logSignedReadFailure("signed-commit reconciler: listing PR commits failed", err, logArgs...)
 		return ""
 	}
 	if len(commits) == 0 {
@@ -336,23 +359,25 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 	oid, replaced, err := c.signBranch(ctx, owner, repo, base, head)
 	if err != nil {
 		var moved signedHeadMovedError
-		c.warn("signed-commit reconciler: could not re-author the unsigned tail as a GitHub-signed commit", append(logArgs, "base", base, "reason", err.Error())...)
 		if errors.As(err, &moved) {
+			c.info("signed-commit reconciler: head moved while signing; will retry", append(logArgs, "base", base, "reason", err.Error())...)
 			return "" // transient: retry next pass
 		}
-		if !errors.Is(err, errSignedCommitSkip) {
-			if !signedAPIRefusal(err) {
-				return "" // outage (5xx, network): retry next pass, uncounted
-			}
-			if n := c.signedReconcile.noteFailure(key, headSHA); n < signedReconcileMaxAttempts {
-				return "" // retry next pass
-			}
-			c.warn("signed-commit reconciler: giving up on this head after repeated refusals", append(logArgs, "attempts", signedReconcileMaxAttempts)...)
-			reason := fmt.Sprintf("GitHub refused to sign this head %d times in a row: %s", signedReconcileMaxAttempts, signedSkipReason(err))
-			c.noteSignedSkip(ctx, owner, repo, number, reason, signedSkipRemedyAPIRefused)
+		if errors.Is(err, errSignedCommitSkip) {
+			c.info("signed-commit reconciler: cannot safely re-author unsigned tail; leaving branch unchanged", append(logArgs, "base", base, "reason", err.Error())...)
+			c.noteSignedSkip(ctx, owner, repo, number, err.Error(), signedSkipRemedyUnsupported)
 			return headSHA
 		}
-		c.noteSignedSkip(ctx, owner, repo, number, err.Error(), signedSkipRemedyPerson)
+		c.warn("signed-commit reconciler: could not re-author the unsigned tail as a GitHub-signed commit", append(logArgs, "base", base, "reason", err.Error())...)
+		if !signedAPIRefusal(err) {
+			return "" // outage (5xx, network): retry next pass, uncounted
+		}
+		if n := c.signedReconcile.noteFailure(key, headSHA); n < signedReconcileMaxAttempts {
+			return "" // retry next pass
+		}
+		c.warn("signed-commit reconciler: giving up on this head after repeated refusals", append(logArgs, "attempts", signedReconcileMaxAttempts)...)
+		reason := fmt.Sprintf("GitHub refused to sign this head %d times in a row: %s", signedReconcileMaxAttempts, signedSkipReason(err))
+		c.noteSignedSkip(ctx, owner, repo, number, reason, signedSkipRemedyAPIRefused)
 		return headSHA
 	}
 	c.signedReconcile.clearFailures(key)
@@ -438,7 +463,7 @@ func (c *Client) noteSignedSkip(ctx context.Context, owner, repo string, number 
 	}
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
-		c.warn("signed-commit reconciler: listing PR comments failed", "repo", owner+"/"+repo, "pr", number, "err", err)
+		c.logSignedReadFailure("signed-commit reconciler: listing PR comments failed", err, "repo", owner+"/"+repo, "pr", number)
 		return
 	}
 	for _, cm := range comments {

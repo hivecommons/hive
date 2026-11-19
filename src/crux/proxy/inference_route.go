@@ -37,6 +37,12 @@ type InferenceRoute struct {
 	// client would not send it). Empty for all other backends. Header VALUES
 	// here are identifiers, not secrets (the bearer stays in APIKey).
 	ExtraHeaders map[string]string
+	// KeyResolver, when set, supplies the CURRENT upstream key at request time
+	// and replaces APIKey on each request, so a key rotated in its Secret is
+	// picked up without a restart; an upstream 401 forces one re-resolve and
+	// retry (hive#18532). nil keeps APIKey fixed (vllm/llm-d, watsonx tokens).
+	// Shared by every copy of the route.
+	KeyResolver *InferenceKeyResolver
 }
 
 // DefaultInferencePreamble is injected at the top of the system prompt when
@@ -128,11 +134,15 @@ var DefaultInferenceTools = []openaiTool{
 type inferenceRouter struct {
 	mu     sync.RWMutex
 	routes map[string]*InferenceRoute // agent name → route
+	// cleared remembers agents whose route was removed, so a later "no route"
+	// can be told apart from an agent that never had one.
+	cleared map[string]struct{}
 }
 
 func newInferenceRouter() *inferenceRouter {
 	return &inferenceRouter{
-		routes: make(map[string]*InferenceRoute),
+		routes:  make(map[string]*InferenceRoute),
+		cleared: make(map[string]struct{}),
 	}
 }
 
@@ -140,12 +150,25 @@ func (ir *inferenceRouter) Set(agentName string, route *InferenceRoute) {
 	ir.mu.Lock()
 	defer ir.mu.Unlock()
 	ir.routes[agentName] = route
+	delete(ir.cleared, agentName)
 }
 
 func (ir *inferenceRouter) Clear(agentName string) {
 	ir.mu.Lock()
 	defer ir.mu.Unlock()
 	delete(ir.routes, agentName)
+	ir.cleared[agentName] = struct{}{}
+}
+
+// MissReason says why Get(agentName) found no route: "cleared" when one was
+// installed and later removed, "never_set" otherwise.
+func (ir *inferenceRouter) MissReason(agentName string) string {
+	ir.mu.RLock()
+	defer ir.mu.RUnlock()
+	if _, ok := ir.cleared[agentName]; ok {
+		return "cleared"
+	}
+	return "never_set"
 }
 
 func (ir *inferenceRouter) Get(agentName string) *InferenceRoute {
@@ -280,10 +303,21 @@ func inferenceTransport(caBundle string) (http.RoundTripper, error) {
 // inferenceHTTPClient returns the client for forwarding translated requests
 // to the route's endpoint. Like http.DefaultClient it has no overall
 // timeout — streaming completions can legitimately run for minutes.
+// The connect and response-header timeouts are opt-in
+// (governor.inference_resilience) and the idle-stream timeout wraps the
+// response body, not the client.
 func inferenceHTTPClient(route *InferenceRoute) (*http.Client, error) {
 	rt, err := inferenceTransport(route.CABundle)
 	if err != nil {
 		return nil, err
+	}
+	// Opt-in connect and response-header timeouts (hivecommons/hive#19057).
+	// Off by default: the branch below is skipped and the client is exactly
+	// the one returned before.
+	if res := currentInferenceResilience(); res.ConnectTimeout > 0 || res.ResponseHeaderTimeout > 0 {
+		if tuned := tunedInferenceTransport(route.CABundle, rt, res); tuned != nil {
+			return &http.Client{Transport: tuned}, nil
+		}
 	}
 	if rt == http.DefaultTransport {
 		return http.DefaultClient, nil

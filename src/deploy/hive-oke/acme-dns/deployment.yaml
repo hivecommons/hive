@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acme-dns
+  namespace: acme-dns
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: acme-dns}
+  template:
+    metadata:
+      labels: {app: acme-dns}
+    spec:
+      automountServiceAccountToken: false
+      # Lets knotd bind :53 whatever user the image runs as (a non-root process
+      # gets no effective NET_BIND_SERVICE from the container capability set).
+      securityContext:
+        sysctls:
+          - {name: net.ipv4.ip_unprivileged_port_start, value: "0"}
+      initContainers:
+        # Knot rewrites the zonefile, so seed a writable copy from the ConfigMap.
+        # Keep this image reference identical to the knot container's below.
+        - name: seed-zone
+          image: cznic/knot:v3.5.10@sha256:e0a345a681c71aef0b680db4139ad56882ef21303ce7df0f1cac12d157301cfe
+          command: ["sh", "-c", "cp /seed/acme.hive.hivecommons.dev.zone /zones/ && chmod 0664 /zones/*"]
+          volumeMounts:
+            - {name: seed, mountPath: /seed}
+            - {name: zones, mountPath: /zones}
+      containers:
+        - name: knot
+          image: cznic/knot:v3.5.10@sha256:e0a345a681c71aef0b680db4139ad56882ef21303ce7df0f1cac12d157301cfe
+          args: ["knotd", "-c", "/config/knot.conf"]
+          ports:
+            - {name: dns-udp, containerPort: 53, protocol: UDP}
+            - {name: dns-tcp, containerPort: 53, protocol: TCP}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_BIND_SERVICE"]
+          readinessProbe:
+            tcpSocket: {port: 53}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: secret, mountPath: /secret, readOnly: true}
+            - {name: zones, mountPath: /zones}
+            - {name: rundir, mountPath: /rundir}
+      volumes:
+        - name: seed
+          configMap:
+            name: acme-dns-knot
+            items: [{key: acme.hive.hivecommons.dev.zone, path: acme.hive.hivecommons.dev.zone}]
+        - name: config
+          configMap:
+            name: acme-dns-knot
+            items: [{key: knot.conf, path: knot.conf}]
+        - name: secret
+          secret: {secretName: acme-dns-tsig}
+        - {name: zones, emptyDir: {}}
+        - {name: rundir, emptyDir: {}}

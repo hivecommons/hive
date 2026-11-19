@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/egressmark"
 	"github.com/hivecommons/hive/pkg/imageref"
 )
 
@@ -674,6 +675,20 @@ func RestartFallbackForPatchFailure(logger *slog.Logger, patchErr error) Restart
 }
 
 func k8sAPIPatchOnce(path string, body []byte) error {
+	return k8sAPIPatchOnceWithContentType(path, body, strategicMergePatchContentType)
+}
+
+// strategicMergePatchContentType is the default PATCH content type.
+const strategicMergePatchContentType = "application/strategic-merge-patch+json"
+
+// k8sAPIPatchWithContentType is k8sAPIPatch for a caller that needs a patch
+// type other than strategic merge (an RFC 6902 JSON patch, for example).
+func k8sAPIPatchWithContentType(path string, body []byte, contentType string) error {
+	return patchWithRetry(selfUpgradePatchAttempts, selfUpgradePatchRetryBackoff, selfUpgradePatchSleep,
+		func() error { return k8sAPIPatchOnceWithContentType(path, body, contentType) })
+}
+
+func k8sAPIPatchOnceWithContentType(path string, body []byte, contentType string) error {
 	token, err := os.ReadFile(k8sTokenPath)
 	if err != nil {
 		return fmt.Errorf("reading service account token: %w", err)
@@ -686,7 +701,7 @@ func k8sAPIPatchOnce(path string, body []byte) error {
 
 	client := &http.Client{
 		Timeout:   selfUpgradePatchTimeout,
-		Transport: &http.Transport{TLSClientConfig: tlsConfig},
+		Transport: &http.Transport{TLSClientConfig: tlsConfig, DialContext: egressmark.Dialer(0).DialContext},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), selfUpgradePatchTimeout)
@@ -697,7 +712,7 @@ func k8sAPIPatchOnce(path string, body []byte) error {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
-	req.Header.Set("Content-Type", "application/strategic-merge-patch+json")
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := client.Do(req)
 	if err != nil {

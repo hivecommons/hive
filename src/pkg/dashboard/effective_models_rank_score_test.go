@@ -61,6 +61,29 @@ func liveModelFixture(now time.Time) ([]ghpkg.PullRequest, []TaskRunRecord) {
 	return prs, runs
 }
 
+func TestWilsonIntervalBracketsRate(t *testing.T) {
+	if _, _, ok := wilsonInterval(0, 0); ok {
+		t.Fatal("0/0 must have no interval")
+	}
+	for _, c := range [][2]int{{0, 7}, {7, 7}, {5, 6}, {61, 94}} {
+		low, high, ok := wilsonInterval(c[0], c[1])
+		rate := float64(c[0]) / float64(c[1])
+		if !ok || low < 0 || low > rate || rate > high || high > 1 {
+			t.Fatalf("wilson %d/%d = [%v, %v] ok=%v, want 0 <= low <= %v <= high <= 1", c[0], c[1], low, high, ok, rate)
+		}
+	}
+	low, high, _ := wilsonInterval(5, 6)
+	if math.Abs(low-0.44) > 0.01 || math.Abs(high-0.97) > 0.01 {
+		t.Fatalf("wilson(5/6) = [%.3f, %.3f], want ≈[0.44, 0.97]", low, high)
+	}
+	if lb := wilsonLowerBound(5, 6); lb != low {
+		t.Fatalf("wilsonLowerBound(5/6) = %v, want interval low %v", lb, low)
+	}
+	if wilsonCI(0, 0) != nil || len(wilsonCI(1, 2)) != 2 {
+		t.Fatal("wilsonCI must be nil for an empty denominator and [low, high] otherwise")
+	}
+}
+
 func TestWilsonLowerBoundPenalisesSmallSamples(t *testing.T) {
 	if got := wilsonLowerBound(5, 5); math.Abs(got-0.566) > 0.01 {
 		t.Fatalf("wilson(5/5) = %.3f, want ≈0.566", got)

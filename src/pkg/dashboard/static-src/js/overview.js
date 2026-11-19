@@ -501,7 +501,7 @@
     function overviewDefaultChartState() {
       const enabled = {};
       OVERVIEW_CHART_TYPES.forEach(type => { enabled[type] = type === 'donut'; });
-      return { enabled, carousel: false, intervalMs: OVERVIEW_CAROUSEL_DEFAULT_MS, transition: 'fade', duration: 'normal', active: { issue: 'donut', pr: 'donut' }, history: { issue: [], pr: [] }, labelMode: 'both', showKPIs: true, exportFormat: 'csv' };
+      return { enabled, carousel: false, intervalMs: OVERVIEW_CAROUSEL_DEFAULT_MS, transition: 'fade', duration: 'normal', active: { issue: 'donut', pr: 'donut' }, history: { issue: [], pr: [] }, labelMode: 'both', showKPIs: true, showUsageGauge: true, exportFormat: 'csv' };
     }
 
     function overviewChartsState() {
@@ -518,7 +518,7 @@
       const history = saved.history && typeof saved.history === 'object' ? saved.history : base.history;
       const labelMode = OVERVIEW_LABEL_MODES.includes(saved.labelMode) ? saved.labelMode : base.labelMode;
       const exportFormat = OVERVIEW_EXPORT_FORMATS.includes(saved.exportFormat) ? saved.exportFormat : base.exportFormat;
-      return { enabled, carousel: !!saved.carousel, intervalMs, transition, duration, active, history, labelMode, showKPIs: saved.showKPIs !== false, exportFormat };
+      return { enabled, carousel: !!saved.carousel, intervalMs, transition, duration, active, history, labelMode, showKPIs: saved.showKPIs !== false, showUsageGauge: saved.showUsageGauge !== false, exportFormat };
     }
 
     const OVERVIEW_KPI_WINDOWS = { '24h': 24 * 3600e3, '7d': 7 * 24 * 3600e3 };
@@ -734,7 +734,7 @@
         const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
         const format = ((state && state.exportFormat) || 'csv').toUpperCase();
-        const download = kind ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key))}" title="Export ${esc(s.label)} as ${format}" aria-label="Export ${esc(s.label)} as ${format}">⬇</button>` : '';
+        const download = kind && !s.outside ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key))}" title="Export ${esc(s.label)} as ${format}" aria-label="Export ${esc(s.label)} as ${format}">⬇</button>` : '';
         return `<div class="overview-chart-legend-row" data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(s.count, percentLabel, state))}</span>${download}</div>`;
       }).join('');
     }
@@ -969,6 +969,34 @@
         return null;
       }
       return overviewRepoForgeTotals(repos);
+    }
+
+    // The bands draw only tracked items (actionable + held) while the "Total
+    // open" cards count every open item from the same forge totals, so the
+    // charts showed fewer items than the cards with nothing saying why. The
+    // Outside slice is the difference, so each chart adds up to its card for
+    // any repo selection; its rule carries the same breakdown the card does.
+    function overviewOutsideSlice(kind, slices, forgeTotals) {
+      const total = forgeTotals && forgeTotals[kind === 'pr' ? 'prs' : 'issues'];
+      const drawn = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      const count = total ? Math.max(0, Number(total.forge || 0) - drawn) : 0;
+      const labels = kind === 'pr' ? OVERVIEW_PR_BREAKDOWN_LABELS : OVERVIEW_ISSUE_BREAKDOWN_LABELS;
+      const parts = Object.entries(labels).filter(([key]) => key !== 'hold').map(([key, label]) => {
+        const n = Number(total?.breakdown?.[key] || 0);
+        return n > 0 ? `${n} ${label}` : '';
+      }).filter(Boolean);
+      const what = kind === 'pr' ? 'Open PRs' : 'Open issues';
+      const rule = `${what} not in any band, left out by this hive's scanner settings${parts.length ? ': ' + parts.join(' · ') : ''}`;
+      return { key: 'outside', label: 'Outside', rule, count, className: 'overview-' + kind + '-outside', items: [], outside: true };
+    }
+
+    // overviewChartSlices is what the charts draw: the band slices plus the
+    // Outside slice when it is non-empty. The KPI cards keep the band slices.
+    function overviewChartSlices(kind, slices, repos) {
+      // renderOverviewKPIs sets the same scope; the forge totals read it.
+      _overviewKPILocalScope = overviewKPIRepoScope(repos);
+      const outside = overviewOutsideSlice(kind, slices, overviewKPIForgeTotals(repos));
+      return outside.count > 0 ? (slices || []).concat([outside]) : (slices || []);
     }
 
     function overviewKPIBreakdownSubline(total, labels) {
@@ -1414,7 +1442,7 @@
         const autoTitle = state.carousel ? 'Auto-play on — rotates every ' + Math.round(overviewCarouselDwellMs(state) / 1000) + 's through the ticked charts. Click to pause.' : 'Auto-play off — click to rotate through the ticked charts every ' + Math.round(overviewCarouselDwellMs(state) / 1000) + 's';
         return `<div class="overview-settings-section" aria-label="${esc(label)} chart controls"><div class="overview-settings-card-title">${esc(label)}</div><div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous ${esc(label)} chart" aria-label="Previous ${esc(label)} chart">◀</button><label class="overview-settings-field">Chart type<select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="${esc(label)} chart type">${overviewChartTypeOptions(active)}</select></label><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next ${esc(label)} chart" aria-label="Next ${esc(label)} chart">▶</button>${renderOverviewDots(enabled, active)}<span class="overview-chart-controls-sep"></span><button type="button" class="overview-carousel-arrow" data-action="toggleOverviewCarousel" data-stop="1" aria-pressed="${state.carousel ? 'true' : 'false'}" title="${esc(autoTitle)}" aria-label="${esc(autoTitle)}">${state.carousel ? '⏸ auto' : '⏵ auto'}</button><label class="overview-settings-field">Transition<select class="overview-chart-select" data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts">${overviewTransitionOptions(state.transition)}</select></label></div></div>`;
       };
-      setIfChanged(el, `<div class="overview-settings-section"><div class="overview-settings-card-title">Overview charts</div><div class="overview-settings-grid">${typeRows}</div><div class="overview-settings-grid"><label class="overview-settings-field">Interval (seconds)<input type="number" min="5" max="300" step="5" value="${seconds}" data-change-action="setOverviewCarouselInterval" data-arg-types="N"></label><label class="overview-settings-field">Duration<select data-change-action="setOverviewDuration" data-arg-types="v">${durationOptions}</select></label><label class="overview-settings-field">Export format<select data-change-action="setOverviewExportFormat" data-arg-types="v">${exportOptions}</select></label><label class="overview-settings-field">Donut labels<select data-change-action="setOverviewLabelMode" data-arg-types="v">${labelOptions}</select></label><label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewKPIs" data-arg-types="c"${state.showKPIs ? ' checked' : ''}>Show KPI strip</label></div><div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="resetOverviewSettings" data-stop="1">Reset to defaults</button></div></div>${overviewRepoFilterHTML(_overviewLastRepos || [])}${cardControls('issue', 'Issues')}${cardControls('pr', 'PRs')}`);
+      setIfChanged(el, `<div class="overview-settings-section"><div class="overview-settings-card-title">Overview charts</div><div class="overview-settings-grid">${typeRows}</div><div class="overview-settings-grid"><label class="overview-settings-field">Interval (seconds)<input type="number" min="5" max="300" step="5" value="${seconds}" data-change-action="setOverviewCarouselInterval" data-arg-types="N"></label><label class="overview-settings-field">Duration<select data-change-action="setOverviewDuration" data-arg-types="v">${durationOptions}</select></label><label class="overview-settings-field">Export format<select data-change-action="setOverviewExportFormat" data-arg-types="v">${exportOptions}</select></label><label class="overview-settings-field">Donut labels<select data-change-action="setOverviewLabelMode" data-arg-types="v">${labelOptions}</select></label><label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewKPIs" data-arg-types="c"${state.showKPIs ? ' checked' : ''}>Show KPI strip</label>${typeof subscriptionGaugeOwner === 'function' && subscriptionGaugeOwner() ? `<label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewUsageGauge" data-arg-types="c"${state.showUsageGauge ? ' checked' : ''}>Show usage gauge</label>` : ''}</div><div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="resetOverviewSettings" data-stop="1">Reset to defaults</button></div></div>${overviewRepoFilterHTML(_overviewLastRepos || [])}${cardControls('issue', 'Issues')}${cardControls('pr', 'PRs')}`);
     }
 
     function rerenderOverviewChartsFromState(state) {
@@ -1486,6 +1514,13 @@
       rerenderOverviewChartsFromState(state);
     }
 
+    function setOverviewUsageGauge(checked) {
+      const state = overviewChartsState();
+      state.showUsageGauge = !!checked;
+      rerenderOverviewChartsFromState(state);
+      if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
+    }
+
     function setOverviewRepoFilter(repo, checked) {
       const all = overviewAllRepoNames(_overviewLastRepos || []);
       const selected = new Set(overviewSelectedRepoNames(_overviewLastRepos || []));
@@ -1517,6 +1552,7 @@
     }
 
     function overviewNavigateBand(kind, band) {
+      if (band === 'outside') return overviewApplyKPIProjectFilter('outside');
       const key = kind === 'issue' ? (band === 'waiting' || band === 'done' ? 'blocked-needs-human' : 'actionable-now') : (band === 'waiting' || band === 'blocked' ? 'blocked-needs-human' : (band === 'draft' ? 'outside' : 'actionable-now'));
       overviewApplyKPIProjectFilter(key);
     }
@@ -1624,15 +1660,17 @@
       const repoSuffix = overviewRepoSubtitleSuffix(_overviewLastRepos, selectedNames);
       const issueSlices = overviewIssueBandSlices(selectedRepos);
       const prSlices = overviewPRBandSlices(selectedRepos);
-      const animationSignature = overviewAnimationSignature(issueSlices, prSlices, selectedNames);
+      const issueChartSlices = overviewChartSlices('issue', issueSlices, selectedRepos);
+      const prChartSlices = overviewChartSlices('pr', prSlices, selectedRepos);
+      const animationSignature = overviewAnimationSignature(issueChartSlices, prChartSlices, selectedNames);
       const dataChanged = overviewShouldAnimateData(animationSignature);
-      const issueSampled = overviewSampleHistory('issue', issueSlices, state);
-      const prSampled = overviewSampleHistory('pr', prSlices, state);
+      const issueSampled = overviewSampleHistory('issue', issueChartSlices, state);
+      const prSampled = overviewSampleHistory('pr', prChartSlices, state);
       const sampled = issueSampled || prSampled;
-      const total = issueSlices.concat(prSlices).reduce((n, s) => n + s.count, 0);
+      const total = issueChartSlices.concat(prChartSlices).reduce((n, s) => n + s.count, 0);
       const kpis = renderOverviewKPIs(selectedRepos, issueSlices, prSlices, state);
       const html = total
-        ? `${kpis}<div class="overview-grid">${renderOverviewPanel('issue', 'Issues by band', 'Actionable and held issues ' + repoSuffix + ' · hover a band for its rule', issueSlices, state)}${renderOverviewPanel('pr', 'PRs by band', 'Open and held pull requests ' + repoSuffix + ' · hover a band for its rule', prSlices, state)}</div>`
+        ? `${kpis}<div class="overview-grid">${renderOverviewPanel('issue', 'Issues by band', 'Open issues ' + repoSuffix + ' · hover a band for its rule', issueChartSlices, state)}${renderOverviewPanel('pr', 'PRs by band', 'Open pull requests ' + repoSuffix + ' · hover a band for its rule', prChartSlices, state)}</div>`
         : `${kpis}<div class="overview-empty">Nothing actionable — the hive is caught up</div>`;
       if (sampled) saveOverviewChartsState(state);
       setIfChanged(el, html);

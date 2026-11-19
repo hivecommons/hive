@@ -2,6 +2,7 @@ package tokens
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -40,7 +41,7 @@ import (
 //   - DeepSeek:            https://api-docs.deepseek.com/quick_start/pricing
 //   - Kimi:                https://platform.kimi.ai/docs/pricing/chat
 //   - Meta Llama / Gemini: representative OpenRouter/provider list prices
-const priceTableDate = "2026-11-09"
+const priceTableDate = "2026-11-17"
 
 // PriceTableDate returns the date the price table was last reconciled with
 // published list prices, so the UI can show "list prices as of <date>".
@@ -103,6 +104,9 @@ var modelPrices = map[string]ModelPrice{
 	// Fable 5.1 is the same list tier as Fable 5 (#13488); without this entry it
 	// fell to tierBig at roughly half the real rate and was flagged estimated.
 	"claude-fable-5-1": {InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 0.25, CacheWritePerMTok: 12.50},
+	// Fable 5.2: $8 in / $40 out; cache read $0.20 (0.025×), cache write $10
+	// (5-minute TTL) — per Anthropic's pricing page, 2026-11-17 (#18753).
+	"claude-fable-5-2": {InputPerMTok: 8.00, OutputPerMTok: 40.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 10.00},
 	// Sonnet 5.5: $2 in / $10 out; cache read $0.20, cache write $2.50 (1.25×)
 	// — per the Claude Code 2.1.284 changelog ("$2/$10 per Mtok with
 	// $0.20/Mtok cache reads", #9804).
@@ -113,6 +117,12 @@ var modelPrices = map[string]ModelPrice{
 	"claude-sonnet-4-5": {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.75},
 	// Haiku tier: $1 in / $5 out; cache read $0.10, cache write $1.25.
 	"claude-haiku-4-5": {InputPerMTok: 1.00, OutputPerMTok: 5.00, CacheReadPerMTok: 0.10, CacheWritePerMTok: 1.25},
+	// Haiku 5.5: base rate for prompts up to 100,000 tokens — $0.10 in /
+	// $0.50 out; cache read $0.01, cache write $0.125 (5-minute TTL) — per
+	// Anthropic's pricing page, 2026-11-17 (#18753). Prompts over 100,000
+	// tokens bill at $0.50 / $2.50 (cache read $0.05, write $0.625); that
+	// tier is not tracked here, so long-prompt Haiku 5.5 spend is undercounted.
+	"claude-haiku-5-5": {InputPerMTok: 0.10, OutputPerMTok: 0.50, CacheReadPerMTok: 0.01, CacheWritePerMTok: 0.125},
 
 	// ---- OpenAI GPT-5.x (Copilot/Codex model ids; representative list prices) ----
 	// GPT-5.x flagship: $1.25 in / $10 out; cached input $0.125.
@@ -318,16 +328,14 @@ func FallbackPrice(model string) (ModelPrice, bool) {
 // true = exact list price, false = tier estimate — so the UI can mark a row as
 // approximate, but the number is real either way. (This whole card is an
 // estimate; we do not depend on unavailable "actual" gateway spend.)
+//
+// A price a configured gateway publishes for the exact id (see
+// SetGatewayPricer) wins over the table and counts as exact. A model a
+// gateway serves without a price returns (0, false): see
+// EstimateCostWithSource for callers that must say "price unknown".
 func EstimateCostUSD(model string, inputTok, outputTok, cacheReadTok, cacheWriteTok int64) (usd float64, exact bool) {
-	p, ok := LookupPrice(model)
-	if !ok {
-		p, _ = FallbackPrice(model)
-	}
-	usd = float64(inputTok)/tokensPerMillion*p.InputPerMTok +
-		float64(outputTok)/tokensPerMillion*p.OutputPerMTok +
-		float64(cacheReadTok)/tokensPerMillion*p.CacheReadPerMTok +
-		float64(cacheWriteTok)/tokensPerMillion*p.CacheWritePerMTok
-	return usd, ok
+	usd, src := EstimateCostWithSource(model, false, inputTok, outputTok, cacheReadTok, cacheWriteTok)
+	return usd, src.Exact()
 }
 
 // ModelCost is the estimated dollar cost for one model or agent, plus whether
@@ -336,6 +344,13 @@ func EstimateCostUSD(model string, inputTok, outputTok, cacheReadTok, cacheWrite
 type ModelCost struct {
 	USD    float64 `json:"usd"`
 	Priced bool    `json:"priced"`
+	// PriceSource is where the price came from (gateway | table | tier |
+	// unknown). For an agent spanning several models it is the least certain
+	// source among them. unknown means USD excludes those tokens.
+	PriceSource PriceSource `json:"price_source,omitempty"`
+	// UnknownPriceModels lists, for an agent row, the models whose price is
+	// unknown (their tokens are not in USD).
+	UnknownPriceModels []string `json:"unknown_price_models,omitempty"`
 	// Token splits are echoed so the UI can show the basis of the estimate.
 	Input       int64 `json:"input"`
 	Output      int64 `json:"output"`
@@ -353,7 +368,11 @@ type EstimatedCost struct {
 	ByModel        map[string]ModelCost `json:"by_model"`
 	ByAgent        map[string]ModelCost `json:"by_agent"`
 	UnpricedModels []string             `json:"unpriced_models"`
-	PriceTableDate string               `json:"price_table_date"`
+	// UnknownPriceModels are gateway models with no published or configured
+	// price. Their tokens are NOT in TotalUSD, so the total is a floor; the
+	// UI says "price unknown" for them instead of showing $0.
+	UnknownPriceModels []string `json:"unknown_price_models"`
+	PriceTableDate     string   `json:"price_table_date"`
 }
 
 // EstimateFromSummary computes the total, per-model, and per-agent estimated
@@ -366,16 +385,26 @@ type EstimatedCost struct {
 // (hivecommons/hive#10025).
 func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 	out := EstimatedCost{
-		ByModel:        make(map[string]ModelCost),
-		ByAgent:        make(map[string]ModelCost),
-		UnpricedModels: []string{},
-		PriceTableDate: priceTableDate,
+		ByModel:            make(map[string]ModelCost),
+		ByAgent:            make(map[string]ModelCost),
+		UnpricedModels:     []string{},
+		UnknownPriceModels: []string{},
+		PriceTableDate:     priceTableDate,
 	}
 	if agg == nil {
 		return out
 	}
 
 	unpricedSeen := make(map[string]bool)
+	unknownSeen := make(map[string]bool)
+	// Models seen on the inference (gateway) path are never tier-guessed:
+	// they are priced from their gateway, the table, or reported unknown.
+	viaGateway := make(map[string]bool)
+	for _, s := range agg.Sessions {
+		if s.Backend == BackendInference {
+			viaGateway[normalizeModelID(s.Model)] = true
+		}
+	}
 
 	// Merge raw per-model buckets by NORMALIZED model id first. The scanners key
 	// tokens by the exact model string, so the same model shows up under both
@@ -418,25 +447,34 @@ func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 	}
 
 	// Per-model estimated cost — the authoritative source for the grand total.
-	for _, m := range merged {
-		usd, exact := EstimateCostUSD(m.display, m.input, m.output, m.cacheRead, m.cacheCreate)
+	for key, m := range merged {
+		usd, src := EstimateCostWithSource(m.display, viaGateway[key], m.input, m.output, m.cacheRead, m.cacheCreate)
 		out.ByModel[m.display] = ModelCost{
 			USD:         usd,
-			Priced:      exact,
+			Priced:      src.Exact(),
+			PriceSource: src,
 			Input:       m.input,
 			Output:      m.output,
 			CacheRead:   m.cacheRead,
 			CacheCreate: m.cacheCreate,
 		}
-		// Every model contributes to the total now — exact where we have a list
-		// price, tier estimate otherwise. UnpricedModels lists the estimated
-		// ones so the UI can mark them ~approximate (not exclude them).
+		// Every model with a price contributes to the total — exact where the
+		// gateway or table publishes one, tier estimate otherwise.
+		// UnpricedModels lists the tier-estimated ones so the UI can mark them
+		// ~approximate. A gateway model with NO price is excluded and listed
+		// in UnknownPriceModels: counting it as $0 or a tier guess would
+		// silently misstate gateway spend.
 		out.TotalUSD += usd
-		if !exact && m.display != "" && !unpricedSeen[m.display] {
+		switch {
+		case src == PriceSourceUnknown && m.display != "" && !unknownSeen[m.display]:
+			unknownSeen[m.display] = true
+			out.UnknownPriceModels = append(out.UnknownPriceModels, m.display)
+		case src == PriceSourceTier && m.display != "" && !unpricedSeen[m.display]:
 			unpricedSeen[m.display] = true
 			out.UnpricedModels = append(out.UnpricedModels, m.display)
 		}
 	}
+	sort.Strings(out.UnknownPriceModels)
 
 	// Price each agent by summing each of its sessions at that session's own
 	// model, instead of pricing the whole agent bucket at one "dominant"
@@ -446,6 +484,8 @@ func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 	// with total_usd.
 	agentUSD := make(map[string]float64, len(agg.ByAgentDetail))
 	agentExact := make(map[string]bool, len(agg.ByAgentDetail))
+	agentSource := make(map[string]PriceSource, len(agg.ByAgentDetail))
+	agentUnknown := make(map[string][]string)
 	for agent := range agg.ByAgentDetail {
 		agentExact[agent] = true
 	}
@@ -453,10 +493,15 @@ func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 		if _, ok := agg.ByAgentDetail[s.Agent]; !ok {
 			continue
 		}
-		usd, exact := EstimateCostUSD(s.Model, s.InputTokens, s.OutputTokens, s.CacheRead, s.CacheCreate)
+		via := s.Backend == BackendInference || viaGateway[normalizeModelID(s.Model)]
+		usd, src := EstimateCostWithSource(s.Model, via, s.InputTokens, s.OutputTokens, s.CacheRead, s.CacheCreate)
 		agentUSD[s.Agent] += usd
-		if !exact {
+		if !src.Exact() {
 			agentExact[s.Agent] = false
+		}
+		agentSource[s.Agent] = leastCertainSource(agentSource[s.Agent], src)
+		if src == PriceSourceUnknown && s.Model != "" && !containsString(agentUnknown[s.Agent], s.Model) {
+			agentUnknown[s.Agent] = append(agentUnknown[s.Agent], s.Model)
 		}
 	}
 
@@ -464,13 +509,17 @@ func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 		if b == nil {
 			continue
 		}
+		unknown := agentUnknown[agent]
+		sort.Strings(unknown)
 		out.ByAgent[agent] = ModelCost{
-			USD:         agentUSD[agent],
-			Priced:      agentExact[agent],
-			Input:       b.Input,
-			Output:      b.Output,
-			CacheRead:   b.CacheRead,
-			CacheCreate: b.CacheCreate,
+			USD:                agentUSD[agent],
+			Priced:             agentExact[agent],
+			PriceSource:        agentSource[agent],
+			UnknownPriceModels: unknown,
+			Input:              b.Input,
+			Output:             b.Output,
+			CacheRead:          b.CacheRead,
+			CacheCreate:        b.CacheCreate,
 		}
 	}
 

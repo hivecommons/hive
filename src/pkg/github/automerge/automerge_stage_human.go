@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/oktotest"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
@@ -517,14 +518,14 @@ func decisionActions(obs stageObservation, e stagelabels.Evidence) ([]string, bo
 		actions = append(actions, "Resolve the sentinel alert and have a maintainer clear its label.")
 	}
 	for _, label := range e.Holds {
-		if label == "hold" && e.Hold.SelfImposed() {
+		if (label == hgithub.LegacyHiveHoldLabel || hgithub.IsHiveGateLabel(label)) && e.Hold.SelfImposed() {
 			// The hive's own hold: name the gate and the two choices, so
 			// the operator is not left reading "hold +1" (hivecommons/hive#15020).
 			reason := strings.TrimSpace(e.Hold.Reason)
 			if reason == "" {
 				reason = "its own gate"
 			}
-			actions = append(actions, "The hive set `hold` itself for "+reason+". **Release** it (dashboard row menu → Release hold, or remove the `hold` label) and the lane merges on its next pass once the other gates are clear, or **keep** it until a maintainer has reviewed the issue's reporter; `/hive approve` does not remove it.")
+			actions = append(actions, "The hive set `"+label+"` itself for "+reason+". **Release** it (dashboard row menu → Release hold, or remove the `"+label+"` label) and the lane merges on its next pass once the other gates are clear, or **keep** it until a maintainer has reviewed the issue's reporter; `/hive approve` does not remove it.")
 			continue
 		}
 		actions = append(actions, "Resolve the reason for `"+label+"`, then have a maintainer remove that label; `/hive approve` does not remove it.")
@@ -701,7 +702,27 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	// (hivecommons/hive#16433): a later head or cause rewrites the hive's
 	// existing 085 / 090 comment with an "updated" line instead of posting
 	// another copy, which emailed everyone again to say the same thing.
-	if existing := c.findOwnEntryComment(ctx, obs, stagelabels.EntryCommentMarker(route.Stage)); existing != nil {
+	existing := c.findOwnEntryComment(ctx, obs, stagelabels.EntryCommentMarker(route.Stage))
+	if route.Stage == stagelabels.ReadyForHumanMerge && existing == nil && c.stagePolicy().QuietNotifications {
+		if readyEntryFolds(route) {
+			n, err := c.writeStatusSectionWith(ctx, obs.Owner, obs.Repo, obs.Number, prstatus.KeyStageReady, readyCardSection(body), prstatus.Write)
+			if err != nil {
+				c.warn("stage labels: ready line on the status card failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+				return 0, err
+			}
+			store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
+			store.MarkEntryCommentedDecisionKey(key, decisionKey)
+			c.info("stage labels: ready entry folded into the status card", "repo", obs.Display, "pr", obs.Number)
+			return n, nil
+		}
+		// A held or manual-merge 090 is a person's step and posts its own
+		// comment below; the plain "ready" line it replaces is dropped so
+		// the card never reads ready next to the hold. Best effort.
+		if _, err := c.writeStatusSectionWith(ctx, obs.Owner, obs.Repo, obs.Number, prstatus.KeyStageReady, "", prstatus.Write); err != nil {
+			c.warn("stage labels: clearing the ready line on the status card failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+		}
+	}
+	if existing != nil {
 		updated := stagelabels.EntryCommentUpdated(body, c.now())
 		// Rewrites the comment the gate admitted when it was posted; an edit notifies nobody.
 		if _, _, err := c.gh.Issues.EditComment(ctx, obs.Owner, obs.Repo, existing.GetID(), &gh.IssueComment{Body: gh.Ptr(updated)}); err != nil { // writeback:gated
@@ -721,6 +742,28 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	store.MarkEntryCommentedDecisionKey(key, decisionKey)
 	c.info("stage labels: entry comment posted", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reasons", route.Reasons)
 	return 1, nil
+}
+
+// readyCardMarker stamps the 090 status-card line. It deliberately is not
+// stagelabels.ReadyCommentMarker: findOwnEntryComment would read a card
+// carrying that marker as the entry comment and overwrite the whole card.
+const readyCardMarker = "<!-- hive:stage-ready-card -->"
+
+// readyEntryFolds reports whether a 090 entry is the plain "ready for a
+// human merge" note that quiet mode writes as the stage-ready line of the
+// PR's hive:status card (hivecommons/hive#18606): the PR's only objection is
+// the author's trust tier and the stage/090 label and tracker already show
+// it. A held head (a sentinel alert or hold label, route.Gates) or an
+// approved manual-merge route asks a person for a specific step, so it
+// keeps its own notifying comment, as does every 085 entry.
+func readyEntryFolds(route stagelabels.Route) bool {
+	return route.Stage == stagelabels.ReadyForHumanMerge && !route.ManualMerge && len(route.Gates) == 0
+}
+
+// readyCardSection is body (a stagelabels.ReadyComment) as a status-card
+// section: the same text under readyCardMarker.
+func readyCardSection(body string) string {
+	return strings.Replace(body, stagelabels.ReadyCommentMarker, readyCardMarker, 1)
 }
 
 // findOwnEntryComment returns the hive's existing entry comment carrying

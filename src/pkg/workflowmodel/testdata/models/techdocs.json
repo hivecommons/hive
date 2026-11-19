@@ -1,0 +1,79 @@
+{
+  "apiVersion": "workflow.hivecommons.dev/v1alpha1",
+  "kind": "WorkflowModel",
+  "metadata": {"name": "cncf-techdocs"},
+  "spec": {
+    "meta": {"version": "1", "author": "cncf/techdocs", "description": "Documentation engagement: request, analyse, review, iterate, publish", "source": "written"},
+    "scope": {"forge": "github.com", "repository": "cncf/techdocs"},
+    "initial": "requested",
+    "columns": [
+      {"id": "requested", "label": "Requested", "states": ["requested"]},
+      {"id": "analysis", "label": "Analysis", "states": ["analysing", "analysis-review"]},
+      {"id": "writing", "label": "Writing", "states": ["draft-under-way", "drafting", "draft-review"]},
+      {"id": "publishing", "label": "Publishing", "states": ["approved"]},
+      {"id": "done", "label": "Published", "states": ["published", "withdrawn"], "terminal": true}
+    ],
+    "states": [
+      {"id": "requested", "label": "Requested", "owner": "human", "lifecycle": {"number": 10, "kinds": ["issue"]}},
+      {"id": "analysing", "label": "Analysing", "owner": "registered-agent", "lifecycle": {"number": 20, "kinds": ["issue"], "replies": ["hand back"]}},
+      {"id": "analysis-review", "label": "Analysis review", "owner": "human", "lifecycle": {"number": 45, "kinds": ["issue"], "replies": ["approve analysis", "revise"]}},
+      {"id": "draft-under-way", "label": "Draft under way", "owner": "registered-agent", "lifecycle": {"number": 40, "kinds": ["issue"]}},
+      {"id": "drafting", "label": "Drafting", "owner": "registered-agent", "lifecycle": {"number": 70, "kinds": ["pr"]}},
+      {"id": "draft-review", "label": "Draft review", "owner": "human", "lifecycle": {"number": 50, "kinds": ["pr"], "replies": ["approve", "request changes"]}},
+      {"id": "approved", "label": "Approved", "owner": "human", "lifecycle": {"number": 90, "kinds": ["pr"]}},
+      {"id": "published", "label": "Published", "owner": "external-observation", "type": "final"},
+      {"id": "withdrawn", "label": "Withdrawn", "owner": "external-observation", "type": "final"}
+    ],
+    "roles": [
+      {"id": "techdocs-maintainer", "label": "TechDocs maintainer", "kind": "permission", "params": {"min": "maintain"}, "human": true},
+      {"id": "project-maintainer", "label": "Project maintainer", "kind": "frozen-set", "human": true}
+    ],
+    "gates": [
+      {"id": "analysis-approved", "releasedBy": "techdocs-maintainer", "reply": "approve analysis"},
+      {"id": "draft-approved", "releasedBy": "project-maintainer", "reply": "approve"}
+    ],
+    "events": [
+      {"id": "accepted", "fact": {"fact": "labels", "op": "has", "value": "techdocs/accepted"}, "actor": "techdocs-maintainer"},
+      {"id": "analysis-posted", "fact": {"fact": "labels", "op": "has", "value": "techdocs/analysis"}},
+      {"id": "draft-opened", "fact": {"fact": "issue.covered", "op": "true"}},
+      {"id": "pr-approved", "fact": {"fact": "pr.review", "op": "is", "value": "approved"}},
+      {"id": "merged", "fact": {"fact": "merged", "op": "true"}},
+      {"id": "closed", "fact": {"fact": "open", "op": "false"}}
+    ],
+    "agents": [
+      {"profile": "techdocs-analyst", "states": ["analysing"], "produces": ["analysis"]},
+      {"profile": "techdocs-writer", "states": ["drafting"], "produces": ["pr"]}
+    ],
+    "transitions": [
+      {"from": "requested", "to": "analysing", "on": "accepted"},
+      {"from": "analysing", "to": "analysis-review", "on": "analysis-posted"},
+      {"from": "analysis-review", "to": "analysing", "on": "analysis-posted", "note": "revise"},
+      {"from": "analysis-review", "to": "draft-under-way", "on": "draft-opened", "gateRef": "analysis-approved"},
+      {"from": "draft-under-way", "to": "published", "on": "merged"},
+      {"from": "draft-under-way", "to": "withdrawn", "on": "closed"},
+      {"from": "analysis-review", "to": "drafting", "on": "draft-opened", "gateRef": "analysis-approved"},
+      {"from": "drafting", "to": "draft-review", "on": "analysis-posted"},
+      {"from": "draft-review", "to": "drafting", "on": "analysis-posted"},
+      {"from": "draft-review", "to": "approved", "on": "pr-approved", "gateRef": "draft-approved"},
+      {"from": "approved", "to": "published", "on": "merged"},
+      {"from": "requested", "to": "withdrawn", "on": "closed"},
+      {"from": "analysing", "to": "withdrawn", "on": "closed"},
+      {"from": "drafting", "to": "withdrawn", "on": "closed"}
+    ],
+    "derivation": {
+      "mode": "rules",
+      "rules": [
+        {"id": "closed", "state": "withdrawn", "when": [{"fact": "open", "op": "false"}, {"fact": "merged", "op": "false"}], "reason": "closed without publishing"},
+        {"id": "published", "state": "published", "when": [{"fact": "merged", "op": "true"}]},
+        {"id": "approved", "kind": "pr", "state": "approved", "when": [{"fact": "pr.review", "op": "is", "value": "approved"}, {"fact": "pr.checks", "op": "is", "value": "green"}]},
+        {"id": "draft-review", "kind": "pr", "state": "draft-review", "when": [{"fact": "draft", "op": "false"}, {"fact": "labels", "op": "has", "value": "techdocs/*"}]},
+        {"id": "drafting", "kind": "pr", "state": "drafting", "when": [{"fact": "labels", "op": "has", "value": "techdocs/*"}]},
+        {"id": "analysis-review", "kind": "issue", "state": "analysis-review", "when": [{"fact": "labels", "op": "has", "value": "techdocs/analysis"}, {"fact": "issue.covered", "op": "false"}]},
+        {"id": "drafting-issue", "kind": "issue", "state": "draft-under-way", "when": [{"fact": "issue.covered", "op": "true"}]},
+        {"id": "analysing", "kind": "issue", "state": "analysing", "when": [{"fact": "labels", "op": "has", "value": "techdocs/accepted"}]},
+        {"id": "requested", "kind": "issue", "state": "requested", "when": [{"fact": "labels", "op": "has", "value": "techdocs/request"}]}
+      ]
+    },
+    "coverage": {"files": 0, "parsed": 0}
+  }
+}

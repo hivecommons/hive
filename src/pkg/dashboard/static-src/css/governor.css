@@ -43,7 +43,7 @@
     .gov-pr-models-toggle { display:flex; gap:var(--sp-2); }
     .gov-pr-models-toggle button { border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg); color:var(--muted); padding:3px 8px; font-size:var(--fs-xs); cursor:pointer; }
     .gov-pr-models-toggle button.active { color:var(--text); border-color:var(--amber); background:color-mix(in srgb, var(--amber) 14%, transparent); }
-    .gov-pr-models-empty { color:var(--muted); font-size:var(--fs-base); padding:var(--sp-4) var(--sp-0); }
+    .gov-pr-models-empty { color:var(--muted); font-size:var(--fs-sm); padding:var(--sp-4) var(--sp-0); }
     .gov-pr-model-row { display:grid; grid-template-columns:minmax(120px, 1.2fr) minmax(140px, 2fr) minmax(240px, 2fr) 92px; gap:10px; align-items:center; margin:7px 0; font-size:0.78rem; }
     .gov-pr-model-row > * { min-width: 0; }
     .gov-pr-model-name { overflow-wrap:anywhere; color:var(--text); font-weight:600; }
@@ -82,6 +82,14 @@
     .gov-pr-model-reworked-title { color:var(--amber); font-size:var(--fs-xs); font-weight:800; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:var(--sp-3); }
     .gov-pr-model-reworked ol { margin:var(--sp-0); padding-left:18px; color:var(--muted); font-size:0.74rem; }
     .gov-pr-model-reworked li { margin:var(--sp-2) var(--sp-0); }
+    .gov-pr-model-prs-toggle { margin:2px 0 0; padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg); color:var(--muted); font-size:var(--fs-2xs); cursor:pointer; }
+    .gov-pr-model-prs-toggle[aria-expanded="true"] { color:var(--text); border-color:var(--amber); }
+    .gov-pr-model-prlist { margin:0 0 var(--sp-3); padding:var(--sp-2) var(--sp-3); border-left:2px solid var(--border); font-size:0.74rem; color:var(--muted); }
+    .gov-pr-model-prlist ol { margin:var(--sp-0); padding-left:18px; max-height:320px; overflow-y:auto; }
+    .gov-pr-model-prlist li { margin:var(--sp-1) var(--sp-0); overflow-wrap:anywhere; }
+    .gov-pr-model-prlist-outcome.merged { color:var(--green); }
+    .gov-pr-model-prlist-outcome.open { color:var(--blue); }
+    .gov-pr-model-prlist-outcome.closed { color:var(--yellow); }
     .gov-pr-model-legend { display:flex; gap:10px; flex-wrap:wrap; color:var(--muted); font-size:var(--fs-xs); margin-top:var(--sp-4); }
     .gov-pr-model-legend span::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:var(--sp-2); vertical-align:middle; }
     .gov-pr-model-legend .merged::before { background:var(--green); }

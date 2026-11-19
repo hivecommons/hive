@@ -819,6 +819,75 @@
       return versionButtonHTML('Upgrade to ' + targetShort, 'Upgrade this Hive' + runtimeDeploymentSuffix + ' to ' + (ctx.offeredUpgradeLabel || 'target') + ' ' + targetShort + ' now', target.ref || targetHash, true);
     }
 
+    /* "Does this build contain PR #N?" (#18915). The lookup is answered by
+       GET /api/version/contains from git ancestry of the running commit: yes,
+       no, or unknown. Unknown is never a guess (commit not resolvable, PR not
+       found, lookup failed, or no GitHub access) and the reason says which.
+       The query and last answer live in window._versionContains so the menu,
+       which re-renders on every version poll, does not lose them. */
+    function versionContainsResultHTML(r) {
+      if (!r) return '';
+      if (r.error) return '<span class="text-muted">' + escapeHtml(String(r.error)) + '</span>';
+      const verdict = r.contains === 'yes' || r.contains === 'no' ? r.contains : 'unknown';
+      const q = r.query || {};
+      const what = q.kind === 'pr' ? 'PR #' + q.pr : 'commit ' + String(q.commit || '').slice(0, 7);
+      const tested = r.commit ? ' (' + String(r.commit).slice(0, 7) + ')' : '';
+      return '<span class="oc-version-contains-chip is-' + verdict + '">' + verdict + '</span> ' +
+        escapeHtml(what + tested) + (r.reason ? ': ' + escapeHtml(String(r.reason)) : '');
+    }
+
+    /* The newest image commit and the newest merged commit are shown
+       separately: a channel image can sit on an older commit than the newest
+       merge (merged, not yet built), and one number would hide that. */
+    function versionBuildBlockHTML(v) {
+      const newestImage = String((v && v.target && v.target.short) || (v && v.stableV4Short) || '');
+      const newestMerged = String((v && v.latestShort) || '');
+      const cell = function(label, text, title) {
+        return '<div class="oc-version-row" title="' + escapeHtml(title) + '"><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(text) + '</strong></div>';
+      };
+      let html = '';
+      if (newestImage) html += cell('Newest image', newestImage, 'The newest commit whose image is published for the channel this hive follows');
+      if (newestMerged) {
+        const unbuilt = newestImage && !versionSameCommit(newestImage, newestMerged);
+        html += cell('Newest merged', newestMerged + (unbuilt ? ' (not in the newest image)' : ''), 'The newest commit merged on this hive\'s branch');
+      }
+      const st = window._versionContains || {};
+      html += '<div class="oc-version-contains">' +
+        '<div class="oc-version-contains-form">' +
+        '<input type="text" id="oc-version-contains-q" placeholder="Contains PR # or commit SHA?" autocomplete="off" aria-label="Does this build contain a PR number or commit SHA" value="' + escapeHtml(st.q || '') + '" data-input-action="versionContainsDraft" data-arg-types="w" data-keydown-action="runVersionContains" data-keys="Enter">' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="runVersionContains">Check</button>' +
+        '</div>' +
+        '<div id="oc-version-contains-result" class="oc-version-contains-result" role="status" aria-live="polite">' + (st.html || '') + '</div>' +
+        '</div>';
+      return html;
+    }
+
+    function versionContainsDraft(value) {
+      window._versionContains = Object.assign({}, window._versionContains, { q: String(value || '') });
+    }
+
+    async function runVersionContains() {
+      const input = document.getElementById('oc-version-contains-q');
+      const out = document.getElementById('oc-version-contains-result');
+      const q = String((input && input.value) || (window._versionContains && window._versionContains.q) || '').trim();
+      if (!out || !q) return;
+      const seq = (window._versionContainsSeq = (window._versionContainsSeq || 0) + 1);
+      window._versionContains = { q: q, html: 'Checking…' };
+      out.textContent = 'Checking…';
+      let html;
+      try {
+        const res = await fetch('/api/version/contains?q=' + encodeURIComponent(q));
+        const body = await res.json();
+        html = versionContainsResultHTML(res.ok ? body : { error: body && body.error || 'Lookup failed; try again.' });
+      } catch (_) {
+        html = versionContainsResultHTML({ error: 'Lookup failed; try again.' });
+      }
+      if (seq !== window._versionContainsSeq) return;
+      window._versionContains = { q: q, html: html };
+      const live = document.getElementById('oc-version-contains-result');
+      if (live) live.innerHTML = html;
+    }
+
     function renderVersionDetails(v, ctx) {
       ctx = ctx || {};
       const fullHash = String(v && v.hash || 'unknown');
@@ -871,6 +940,7 @@
       if (lastUpgrade) html += row('History', value(lastUpgrade.text, lastUpgrade.title || lastUpgrade.text), lastUpgrade.title || lastUpgrade.text);
       const historyHTML = versionUpgradeHistoryHTML(v);
       if (historyHTML) html += '<div class="oc-version-row" title="Recent scheduled and manual upgrade attempts, as recorded by the hub"><span>Upgrade history</span></div>' + historyHTML;
+      html += versionBuildBlockHTML(v);
       if (compareURL && (v && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0)))) {
         html += '<a class="avatar-menu-item" href="' + escapeHtml(compareURL) + '" target="_blank" rel="noopener noreferrer">Compare with target ↗</a>';
       }

@@ -18,6 +18,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
     verbs: ["get", "list"]
+  # Names of the Job service account's imagePullSecrets (#18819). Optional:
+  # without it hive warns and uses job.image_pull_secrets only.
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

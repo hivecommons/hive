@@ -14,6 +14,18 @@ import (
 // modelSelectHelpersJS extracts the agent config dialog's Model select
 // helpers (hivecommons/hive#9945) plus a minimal environment for them, so a
 // node harness can render the options exactly as the browser does.
+// jsLineStartingWith returns the single line of html that starts with prefix
+// (after indentation), for pulling a const declaration into a node harness.
+func jsLineStartingWith(t *testing.T, html, prefix string) string {
+	t.Helper()
+	start := strings.Index(html, prefix)
+	if start < 0 {
+		t.Fatalf("%q not found in index.html", prefix)
+	}
+	rest := html[start:]
+	return rest[:strings.Index(rest, "\n")]
+}
+
 func modelSelectHelpersJS(t *testing.T, html string) string {
 	t.Helper()
 	start := strings.Index(html, "const MODEL_PRECEDENCE_TITLE = ")
@@ -27,8 +39,13 @@ func modelSelectHelpersJS(t *testing.T, html string) string {
 		extractJSFunction(t, html, "inferenceBackendDefaultModel") + "\n    }\n" +
 		extractJSFunction(t, html, "modelDisallowedByGateway") + "\n    }\n" +
 		extractJSFunction(t, html, "modelDefaultOptionLabel") + "\n    }\n" +
+		extractJSFunction(t, html, "modelOptionPriceSuffix") + "\n    }\n" +
 		extractJSFunction(t, html, "modelSelectOptionsHtml") + "\n    }\n" +
 		extractJSFunction(t, html, "_modelIdMatches") + "\n    }\n" +
+		jsLineStartingWith(t, html, "const STRICT_MODEL_ID_BACKENDS = ") + "\n" +
+		extractJSFunction(t, html, "_modelIdMatchesForBackend") + "\n    }\n" +
+		extractJSFunction(t, html, "modelIdMatchesStored") + "\n    }\n" +
+		extractJSFunction(t, html, "invalidModelSpellingFor") + "\n    }\n" +
 		`var _inferenceModelCache = (typeof _inferenceModelCache !== 'undefined') ? _inferenceModelCache : {};
 		var _configuredGateways = (typeof _configuredGateways !== 'undefined') ? _configuredGateways : [];
 		var INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm', 'watsonx'];

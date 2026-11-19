@@ -95,7 +95,7 @@ func kickLayoutMessage(t *testing.T, s *Scheduler, issues ...github.Issue) strin
 // one dynamic thing ahead of the static prefix (ADR-0008).
 func stripCanary(t *testing.T, msg string) string {
 	t.Helper()
-	if !strings.HasPrefix(msg, "SECURITY CANARY: "+ioscan.CanaryPrefix) {
+	if !strings.HasPrefix(msg, ioscan.CanaryPreamblePrefix) {
 		t.Fatalf("canary preamble must lead the kick:\n%s", msg[:min(len(msg), 200)])
 	}
 	end := strings.Index(msg, "\n\n")
@@ -187,7 +187,7 @@ func TestKickLayoutSeamOrderIsFixed(t *testing.T) {
 	msg := kickLayoutMessage(t, s, makeIssue("test-org/console", 1, "first issue", "scanner", 5, nil, false))
 
 	order := []string{
-		"SECURITY CANARY: " + ioscan.CanaryPrefix,
+		ioscan.CanaryPreamblePrefix,
 		"[agent:scanner]",
 		governorWorkSourceRule,
 		"## Independent review",
@@ -228,14 +228,14 @@ func TestKickLayoutKeepsCanaryAndRepoScopedTarget(t *testing.T) {
 	b := kickLayoutMessage(t, s, issue)
 
 	preamble := func(msg string) string {
-		end := strings.Index(msg, "\n")
+		end := strings.Index(msg, "\n\n")
 		if end < 0 {
 			return msg
 		}
 		return msg[:end]
 	}
 	for _, msg := range []string{a, b} {
-		if !strings.HasPrefix(msg, "SECURITY CANARY: "+ioscan.CanaryPrefix) {
+		if !strings.HasPrefix(msg, ioscan.CanaryPreamblePrefix) {
 			t.Fatalf("canary preamble must lead the kick:\n%s", msg[:min(len(msg), 200)])
 		}
 		if !strings.Contains(msg, "REPO-SCOPED CADENCE TARGET: test-org/console") {
@@ -266,5 +266,37 @@ func TestKickLayoutManualKickSharesPrefix(t *testing.T) {
 	}
 	if strings.Contains(manual, "AUTHORIZED REPOS") || strings.Contains(manual, "REPO-SCOPED") {
 		t.Errorf("manual kick must not grow the repos block:\n%s", manual)
+	}
+}
+
+// Section 10a: project.reference_repos render inside the AUTHORIZED REPOS
+// section of the assembled kick, ahead of the dynamic tail
+// (hivecommons/hive#18020).
+func TestKickLayoutReferenceReposFollowAuthorizedRepos(t *testing.T) {
+	s := kickLayoutScheduler(t)
+	s.cfg.Project.ReferenceRepos = []config.ReferenceRepo{
+		{Repo: "hivecommons/docs"},
+		{Repo: "hivecommons/hive", Write: []string{"issues", "prs"}},
+	}
+	msg := kickLayoutMessage(t, s, makeIssue("test-org/console", 1, "first issue", "scanner", 5, nil, false))
+	order := []string{
+		"AUTHORIZED REPOS",
+		"📚 REFERENCE REPOS",
+		"[reference · read-only]",
+		"[reference · issues+prs]",
+		"⛔ NEVER access",
+		"## Open hold-gated PR coordination",
+		concreteKickClosingInstruction,
+	}
+	last := -1
+	for _, want := range order {
+		at := strings.Index(msg, want)
+		if at < 0 {
+			t.Fatalf("kick missing %q:\n%s", want, msg)
+		}
+		if at < last {
+			t.Errorf("%q at %d is out of documented order (previous at %d):\n%s", want, at, last, msg)
+		}
+		last = at
 	}
 }

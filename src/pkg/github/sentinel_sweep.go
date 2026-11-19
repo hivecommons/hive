@@ -14,6 +14,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/sentinel"
 	"github.com/hivecommons/hive/pkg/writeback"
@@ -780,6 +781,14 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 			return event, true, nil
 		}
 		if !posted {
+			// Informational: nobody has to act, so in quiet mode the notice
+			// is a status-card section edited in place (#18453).
+			if c.sentinelFoldsNotice(prior != nil) {
+				if err := c.foldSentinelNotice(ctx, displayRepo, number, head, decision, findings); err != nil {
+					return SentinelSweepEvent{}, false, err
+				}
+				return event, true, nil
+			}
 			if err := writeSentinelComment(body, "notice"); err != nil {
 				return SentinelSweepEvent{}, false, err
 			}
@@ -789,14 +798,18 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	if err := c.EnsureIssueLabel(ctx, owner+"/"+repo, label, opts.LabelColor, opts.LabelDescription); err != nil {
 		return SentinelSweepEvent{}, false, fmt.Errorf("ensuring %s label: %w", label, err)
 	}
+	c.resyncSentinelLabelDescription(ctx, owner, repo, label, opts.LabelDescription)
 	_, resp, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{label}) // writeback:gated
 	c.noteWritebackOutcome(displayRepo, resp, err)
 	if err != nil {
 		return SentinelSweepEvent{}, false, fmt.Errorf("adding %s label: %w", label, err)
 	}
+	// Actionable: the alert always gets its own comment, in every
+	// notification mode, because only a new comment notifies (#18453).
 	if err := writeSentinelComment(SentinelComment(decision, head, author, findings), "alert"); err != nil {
 		return SentinelSweepEvent{}, false, err
 	}
+	c.clearSentinelNoticeSection(ctx, displayRepo, number)
 	return event, true, nil
 }
 
@@ -950,4 +963,26 @@ func SentinelComment(decision SentinelDecision, head, author string, findings []
 		fmt.Fprintf(&b, "\nHive did not add the `%s` label because this author is trusted. The finding remains recorded for audit and the dashboard Security tab; set `%s.trusted_authors_block: true` to require the blocking label for trusted authors too.\n", decision.Label, SentinelConfigKey)
 	}
 	return b.String()
+}
+
+// resyncSentinelLabelDescription moves a repo's sentinel label off the
+// pre-fix default description, which was over GitHub's 100-character cap and
+// made Prow label_sync abort. EnsureIssueLabel only creates, so without this
+// every repo that already carries the label would keep the long text. Only
+// the exact legacy default is rewritten; a description a maintainer chose is
+// left alone. Best effort: a failure never blocks the alert.
+func (c *Client) resyncSentinelLabelDescription(ctx context.Context, owner, repo, label, want string) {
+	want = clampLabelDescription(want)
+	if want == "" || want == clampLabelDescription(config.LegacySentinelLabelDescription) {
+		return
+	}
+	cur, _, err := c.client.Issues.GetLabel(ctx, owner, repo, label)
+	if err != nil || cur == nil || cur.GetDescription() != config.LegacySentinelLabelDescription {
+		return
+	}
+	_, _, _ = c.client.Issues.EditLabel(ctx, owner, repo, label, &gh.Label{
+		Name:        gh.Ptr(label),
+		Color:       cur.Color,
+		Description: gh.Ptr(want),
+	})
 }

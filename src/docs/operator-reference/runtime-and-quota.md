@@ -18,7 +18,7 @@ auth failures or advisory post failures — it files an issue on
 `hivecommons/hive` titled `[selfreport] <class>: <short message>`, or adds
 itself to an open issue that already describes the problem (fingerprint
 match, `hive/selfreport` + class match, or keyword match on a human-filed
-issue). Joining posts one "Also seen on **<hive>**" comment per 24h and
+issue). Joining adds an "Also seen on **<hive>**" section (at most once per 24h) to one seen-log comment per poster, edited in place so it does not re-notify, and
 bumps the `Affected hives (N)` block in the body, where each hive has its own
 line — `- <hive> (instance <id>) — owner(s): @login — seen N, last <time>` —
 naming the GitHub login(s) of the hive owner (`dashboard.authorized_users`
@@ -183,6 +183,57 @@ loops, so the proxy enforces two safeguards:
   once. Bodies are stored gzip-compressed, so the cap is several times its
   size in raw JSON.
 
+### Hub bearer validation and exhausted user tokens
+
+The hub validates a `Bearer` token it has not seen before with one
+`GET /user` **using that token**, then caches the login for 5 minutes. A token
+GitHub rejects (401, or 403/429 with `X-RateLimit-Remaining: 0`) is now also
+remembered: for 60 s by default, or until the token's `X-RateLimit-Reset`
+(capped at 15 minutes) when it is rate-limited. Without that negative entry a
+client retrying with an exhausted token made the hub re-probe GitHub on every
+request, charging the token owner's own core bucket while it was already at
+zero. The probe is recorded in `/api/gh-rate-limits` under caller
+`agent:hub-bearer-validate`, so a flood of 401s from one dead token is visible
+on the hub admin page; being a pass-through credential it never updates the
+hub's own core-bucket snapshot.
+
+### Keep personal tokens out of cluster secrets
+
+GitHub's 5,000 req/h core limit is **per user**, shared by every PAT and
+OAuth token (`gho_…`, `ghp_…`, `github_pat_…`) that user owns, from every
+host. A `gh auth token` pasted into a cluster secret therefore shares its
+owner's bucket with their laptop `gh`, the hub's bearer validation of that
+user, and any other service holding a copy. The hub itself authenticates as
+the GitHub App (`HIVE_HUB_GITHUB_APP_ID` / `HIVE_HUB_GITHUB_INSTALLATION_ID` /
+`HIVE_HUB_GITHUB_APP_KEY_FILE`, see [env-vars.md](../env-vars.md)) and uses
+`HIVE_HUB_GITHUB_TOKEN` only as a fallback, logging a startup `WARN` naming the
+identity it ended up with. Audit the rest of the fleet the same way:
+
+1. **Find copies.** For every cluster context, compare the first 8 characters
+   of each GitHub-looking secret value and `/data/gh-user-token` file against
+   the owner's token (`kubectl get secret -A -o json`, decode, never print the
+   full value). Known holders in a hive deployment are the Actions Runner
+   Controller (`gha-runner-scale-set`) `githubConfigSecret`, its generated
+   `*-listener-config` secret, and any sidecar that scrapes GitHub (dibs).
+2. **Move ARC to App auth.** The runner scale-set listener long-polls the
+   Actions broker and acknowledges every message; with a PAT those calls are
+   charged to the PAT owner (~3,000 req/h at 350 ephemeral runners/h). Grant
+   the GitHub App repository **Administration: read & write** (or organization
+   **Self-hosted runners: read & write** for an org-level runner group),
+   then replace the `githubConfigSecret` keys `github_token` with
+   `github_app_id`, `github_app_installation_id` and
+   `github_app_private_key` (the same PEM mounted on the hub as
+   `hive-hub-github-app-key`), and delete the listener pod so the controller
+   regenerates its `*-listener-config` from the new secret. App traffic lands
+   in the installation's own 15,000 req/h bucket.
+3. **Remove the PAT from the hub.** With the three App variables set, unset
+   `HIVE_HUB_GITHUB_TOKEN` on `deploy/hive-hub`; the startup log then reads
+   `hub GitHub API identity selected mode=app` instead of the `WARN`, and
+   `GET /api/gh-rate-limits` reports the App installation's `core.limit`.
+4. **Rotate.** Once no cluster holds it, revoke the leaked user token
+   (`gh auth refresh` mints a new `gho_`), so stale copies fail closed rather
+   than silently sharing the bucket again.
+
 The proxy returns JSON shaped for the GitHub CLI:
 
 ```json
@@ -206,23 +257,30 @@ GraphQL query fails, or GitHub returns `mergeable: UNKNOWN` for that PR.
 
 See [GitHub webhooks: cadence, patch and reconcile](../webhooks.md) for the
 cadence keys, the fallback to polling when deliveries degrade, and the
-accuracy guarantees of the ForgeState contract.
+accuracy guarantees of the ForgeState contract. Hive owners (not cluster
+operators) should start at the
+[owner guide](../webhooks.md#setting-up-webhooks-owner-guide): it covers the
+⚙ Settings → **Forge App** → **GitHub webhooks** section, which shows the
+payload URL, generates a per-hive secret and can create the org/repo hook.
 
 A spoke accepts GitHub App webhooks on the public `POST /api/webhook/github`,
 either delivered directly by GitHub or relayed by the hub (the hub forwards the
 original signed body to the hive that manages the repository). The receiver
-fails closed: it rejects every delivery until `GITHUB_WEBHOOK_SECRET` is set to
-the App's webhook secret, and it verifies `X-Hub-Signature-256` over the raw
-body exactly as the hub does. Deliveries for repositories the hive does not
-manage are ignored.
+fails closed: it accepts a delivery only when `X-Hub-Signature-256` verifies
+against `GITHUB_WEBHOOK_SECRET` (exactly as the hub does), or when the hub's
+relay signature verifies against this hive's own relay key (hosted spokes,
+below). With neither configured it rejects every delivery with 503.
+Deliveries for repositories the hive does not manage are ignored.
 
 #### What the operator configures
 
-1. **Secret.** Set `GITHUB_WEBHOOK_SECRET` in the spoke's environment (a
-   Secret mount on Kubernetes; never in `hive.yaml`) to the App's webhook
-   secret. On a hosted spoke this is the same value as the hub's
-   `webhook-secret.key`. Without it the receiver answers 503 and the loop
-   stays on the polling cadence.
+1. **Secret (self-hosted only).** Either press **Generate secret** in
+   ⚙ Settings → Forge App → GitHub webhooks (the hive writes
+   `/data/github-webhook-secret.key`, mode 0600, and shows the value once), or
+   set `GITHUB_WEBHOOK_SECRET` in the spoke's environment (a Secret mount on
+   Kubernetes; never in `hive.yaml`). The environment variable wins when both
+   exist. A hosted spoke needs nothing here: it never holds a GitHub secret and
+   verifies relays with its hub relay key instead (item 3).
 2. **GitHub App webhook.** Point the App's webhook URL at the hub
    (`POST /api/github/webhook`) for hosted spokes, or at the spoke's own
    `/api/webhook/github` for a stand-alone hive (a repository or organization
@@ -235,8 +293,14 @@ manage are ignored.
    (organization-scoped; see [Work sources](../work-sources.md#type-github_projects--github-projects-projects-v2)).
 3. **Hub relay.** The hub verifies the HMAC and relays the body byte-for-byte,
    with the original signature and `X-GitHub-Delivery`, to the spoke whose
-   reported dashboard URL manages the repository. Nothing to configure on the
-   spoke beyond the shared secret.
+   reported dashboard URL manages the repository. For a hosted hive it also
+   adds `X-Hive-Relay-Timestamp` and `X-Hive-Relay-Signature-256`
+   (`sha256=` HMAC-SHA256 over `timestamp.delivery-id.body`) keyed with that
+   hive's own relay key, which the hub mints at provisioning and delivers over
+   the heartbeat (persisted on the spoke as `/data/webhook-relay.key`). The
+   spoke rejects a relay whose signature does not verify, whose timestamp is
+   more than 5 minutes off, or whose delivery ID it already accepted.
+   Nothing to configure.
 4. **Pacing (optional).** `governor.eval_interval_webhook_s` (default `900`)
    is the base tick while webhooks are healthy; `governor.webhook_wake_debounce_s`
    (default `10`) and `governor.webhook_wake_min_gap_s` (default `30`) pace the
@@ -343,6 +407,15 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   records `ci_failure_kick` — "CI failed on #N (check) — kicked agent X" /
   "nudged contributor lane". **Agents never watch or poll CI themselves**:
   detection is out-of-band via this webhook path, or the sweep as fallback.
+- **Upstream releases kick subscribed agents.** `governor.release_feeds`
+  lists, per agent, GitHub release/tag, PyPI or generic index feeds. The
+  release-feed watcher polls them with conditional requests every
+  `interval_s` (default `HIVE_RELEASE_FEED_INTERVAL`, else 15m) and, on a new
+  version, queues a kick for the agent through the same gates as the
+  CI-failure kick above, with the releases in `${NEW_RELEASES}`, the reason in
+  kick history, and at most one such kick per agent per cooldown
+  ([#18494](https://github.com/hivecommons/hive/issues/18494)). See
+  [release-feeds.md](../release-feeds.md).
 - **Gated workflow runs are approved for trusted heads.** GitHub holds
   workflow runs for dependabot and first-time/fork contributors behind
   "Approve and run workflows" (`action_required`); such runs create no check
@@ -624,9 +697,10 @@ starve the governor:
 `/api/status` and `/api/gh-rate-limits` expose
 `webhooks: {healthy, last_event_at, events_1h, invalidations_1h,
 targeted_refreshes_1h, tracker_invalidations_1h, mode, since, mode_reason,
-healthy_windows}` (the middle two count the single-item re-reads and the
+healthy_windows, verification}` (the middle two count the single-item re-reads and the
 tracker cache drops webhooks caused; `mode` is `webhook` | `polling` and
-`since` when it began — see [webhooks.md](../webhooks.md));
+`since` when it began — see [webhooks.md](../webhooks.md); `verification` is
+`github-signed`, `relay (hub-signed)` or `none`);
 `/api/status` adds `evalMode` (`webhook` | `poll`), `evalIntervalS`,
 `lastWakeReason`, `lastWakeAt` and `webhookWakes`;
 `graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing
@@ -645,6 +719,7 @@ dashboard:
     webhook_refresh_replay_window_s: 1800   # re-apply re-reads to snapshots published meanwhile
     closed_sweep_interval_s: 300   # list items closed since the last look and evict rows still shown; -1 disables
     waiting_push_stale_h: 4        # hours without a push on a CI / Review row before the pill's age turns muted-amber
+    ci_activity_stale_m: 10        # minutes a CI snapshot may still claim a check running before the head's check runs are re-listed; -1 disables
     toast_info_s: 15               # how long the tracker's result / waiting-on-you toasts stay (3-120 s); the merge banner stays twice as long
     toast_error_s: 30              # how long a failed row action's toast stays (3-120 s); editable from the Activity Monitor's ⚙ → Toasts & timing
     merged_hold_s: 8               # ceiling on the "Merging · merge landed" bridge; celebration fires on the merged fact (min 3)

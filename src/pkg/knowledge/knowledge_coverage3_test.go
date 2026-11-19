@@ -58,13 +58,18 @@ func TestKnowledgeAPI_ConnectGitSource_InvalidURL(t *testing.T) {
 
 func TestKnowledgeAPI_ConnectGitSource_SuccessAddsSourceAndStartsSync(t *testing.T) {
 	api := &KnowledgeAPI{logger: covLogger()}
+	origLs := gitSourceLsRemote
 	origInit := initGitSourceForConnect
 	origStart := startGitSourceSyncLoopForConnect
 	t.Cleanup(func() {
+		gitSourceLsRemote = origLs
 		initGitSourceForConnect = origInit
 		startGitSourceSyncLoopForConnect = origStart
 	})
 
+	gitSourceLsRemote = func(context.Context, string) ([]byte, error) {
+		return []byte("ref: refs/heads/main\tHEAD\n"), nil
+	}
 	started := make(chan GitSourceConfig, 1)
 	initGitSourceForConnect = func(gs *GitSource, ctx context.Context) error {
 		if gs.Config().URL != "https://example.com/repo.git" {

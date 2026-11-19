@@ -34,11 +34,13 @@ How many issues and pull requests Hive is tracking right now, and how many of th
 - **PRs by band** groups open and held pull requests. The bands are Needs human, Merge-eligible, Blocked, In review, Open and Draft.
 - Merge-eligible means the pull request passed every check Hive uses before merging. Blocked means a failed check, a merge conflict, or a blocking review verdict.
 - Hover any band in a chart to see its exact rule.
+- Each chart also has a grey **Outside** slice for the open items in no band: what your filters kept off the work list, and draft pull requests. Its hover shows the same reasons as the Outside tile. With it, each chart adds up to its Total open tile, for all repositories or for the ones you picked. The slice is left out when it would be 0. Click it to filter Projects the way the Outside tile does.
 - The trend lines come from samples the hive takes on each status refresh, roughly every few minutes. Samples are kept for about 30 days and thinned to 96 points.
 - Your browser also keeps its own samples. When you filter by repository, only the browser's samples are used.
 
 **Numbers that look like they should match but do not.**
 
+- The chart's Outside slice can be larger than the Outside tile. Open issues that are labeled `needs-human` or wait on their reporter but sit in no band are in the slice. The tiles count those as Blocked / needs-human.
 - The band charts count more than Actionable now. The charts include items in "Needs human" and "Confirm & close". Actionable now leaves those out. So an issue chart can total 3 while Actionable now shows 2 issues.
 - The "PRs by band" chart puts held pull requests in "Needs human". The tiles count the same pull requests as Held. So the chart can show 4 needing a human while the Blocked / needs-human tile shows 0 pull requests.
 
@@ -94,7 +96,9 @@ Which AI models wrote the pull requests Hive opened, how well each model's work 
 **How the numbers are worked out.**
 
 - Each row is one model. Model ids are normalised so one model gets one row: a provider prefix (`openai-codex/gpt-6.1-sol`), a `:variant` suffix (`gpt-5.6-sol:high`) and a dash between version digits (`claude-opus-5-5`) are folded into `gpt-6.1-sol`, `gpt-5.6-sol` and `claude-opus-5.5`. The backends that drove the model appear as chips under its name; hover the row to see the raw ids and how many pull requests each contributed.
+- The row's tooltip also splits the model by backend and by effort, the reasoning effort the PR's `-- hive:` signature line records (`effort=high`; **unknown** when the line has none). Each backend line and each effort line shows its pull requests (merged, open, closed without merging), how many merged first pass, and the average review rounds and fix attempts of its merged pull requests, so you can see whether one harness or effort level needed more fixing. The API returns these as the extra fields on `sources[]` and as `efforts[]` on each model.
 - The bar splits a model's pull requests into merged, still open, and closed without merging.
+- Hover a row to see why its closed pull requests were closed: **superseded** (it carries the `hive/superseded` label, or another pull request in the same repository says `Supersedes #N` for it), **duplicate** (it has a `duplicate` label), or **other** (abandoned or rejected). Only **other** says something about the model. The three always add up to the closed count. The API returns them as `closed_unmerged_reasons` on each bucket of `/api/governor/pr-models`.
 - **Merged** is the number of merged pull requests in the window.
 - **1st pass** is the share of merged pull requests that merged without a review-requested fix round.
 - **PR runs** is the share of recorded task runs (from the contributor run log) that ended with a verified pull request.
@@ -104,6 +108,7 @@ Which AI models wrote the pull requests Hive opened, how well each model's work 
 - A model gets a rank only after it has at least 5 merged pull requests in the window. With fewer, the sample is too small to compare and the row is listed without a rank.
 - Rows whose pull requests carry no model id are shown last, muted, as **unattributed**. They are counted but never ranked.
 - You can show the last 7 days, the last 30 days, or all time. You can sort by rank or by count.
+- Hover a row to see where its pull requests went and how its work is trending. **By repository** lists each repository (`owner/repo`, so a short configured name and the full name count as one), with its pull requests, merged count, first-pass rate and average fix attempts. **Weekly trend** lists one line per week (weeks start Monday, UTC, by the date the pull request was opened), oldest first, with the same figures; weeks with no pull requests are left out. The weekly lines appear for the 30-day and all-time views only, since 7 days is a single week. First-pass rate and fix attempts count merged pull requests only, as the row does. The API returns these as `repos[]` and `weeks[]` on each bucket of `GET /api/governor/pr-models`.
 
 **What it is good for.** Use it when choosing which model a worker should use. A model with a low first-pass rate or a high failure rate costs more review and retry time; the rank already weighs both.
 

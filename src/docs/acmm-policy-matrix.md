@@ -76,7 +76,7 @@ level-specific qualifications, not just its template's `full` suffix.
 
 ### L1 — Inception (Assisted) (2 agents)
 
-A single interactive advisor helps with repo setup and architecture decisions. Guide agent makes advisory beads. Brainstorm agent handles project inception — turning raw ideas into structured KB facts and scaffold. No feedback loops. See the [Inception operator guide](inception.md) for the end-to-end workflow and API reference.
+A single interactive advisor helps with repo setup and architecture decisions. Guide agent makes advisory beads. Brainstorm agent proposes ideas as advisory beads; turning a raw idea into a project happens in Inception (spek) sessions. No feedback loops. See [Inception](inception.md).
 
 | Agent | Mode | Template |
 |-------|------|----------|

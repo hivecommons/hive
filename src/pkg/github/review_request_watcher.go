@@ -13,8 +13,10 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/sessiontaint"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/factcheck"
 	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -78,6 +80,11 @@ type ReviewRequest struct {
 	// instead of adding another one. Only honored for repos in
 	// Review.ReviseRepos; see review_revise.go.
 	Revise bool `json:"revise,omitempty"`
+	// Comments are line-anchored findings (hivecommons/hive#18531),
+	// submitted with Body in the SAME create-review call: one review, one
+	// notification, one resolvable thread per comment. A comment the diff
+	// cannot anchor is folded into Body. See review_inline_comments.go.
+	Comments []ReviewInlineComment `json:"comments,omitempty"`
 }
 
 // ReviewResponse is written next to a consumed request as <name>.result.json.
@@ -310,7 +317,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	// comment below so the reasoning is not lost. The request keeps its
 	// report, so the shape checks below treat it exactly as record_verdict.
 	noFindingsSuppressed := false
-	if okEvent && !recordOnly && !resolveThread && threadID == "" && !req.Revise &&
+	if okEvent && !recordOnly && !resolveThread && threadID == "" && !req.Revise && len(req.Comments) == 0 &&
 		c.notificationsQuiet() && strings.TrimSpace(req.Report) != "" {
 		reports, _ := review.ValidateReportsFor([]byte(strings.TrimSpace(req.Report)), c.perspectives)
 		if review.CleanReview(req.Body, reports) {
@@ -335,6 +342,10 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 		shapeErr = "thread_id is only valid with event comment (reply) or resolve_thread"
 	case okEvent && apiEvent != "APPROVE" && strings.TrimSpace(req.Body) == "":
 		shapeErr = "review request body is required for request_changes/comment"
+	case len(req.Comments) > 0 && (recordOnly || resolveThread || threadID != ""):
+		shapeErr = "inline comments are only valid on a PR-level review (approve|request_changes|comment)"
+	case len(req.Comments) > 0 && inlineCommentsShapeError(req.Comments) != "":
+		shapeErr = inlineCommentsShapeError(req.Comments)
 	case !recordOnly && !resolveThread && strings.TrimSpace(req.Body) != "":
 		// A finding whose evidence is text a secret scrubber already masked
 		// is wrong by construction (hivecommons/hive#8067). Refuse it here
@@ -481,7 +492,10 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	// pending entries); dropping it with the comment would leave the PR
 	// pending forever with nothing left to post. The result is ok:true with
 	// state record_verdict and a note, so the agent's own loop is done.
-	if !recordOnly && !req.Revise && apiEvent != "APPROVE" {
+	// An analysis fact-check round (review.analysis_factcheck) is exempt: it
+	// is the one review that pass is asked to post, often on a head the swarm
+	// already covered, and the pass bounds its own rounds per PR.
+	if !recordOnly && !req.Revise && apiEvent != "APPROVE" && !factcheck.IsMarkedReview(req.Body) {
 		if reason := c.perHeadReviewRefusal(ctx, req); reason != "" {
 			if c.notificationsQuiet() && strings.TrimSpace(req.Body) != "" {
 				// The head already carries its one hive review. The
@@ -541,19 +555,41 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	}
 
 	meta := c.attributionMeta(req.Agent)
-	body := leadWithDecisionQuestion(c.relayBody(req.Agent, req.Body))
-	if c.confidenceScoreOn() {
-		body = appendConfidenceLine(body, req.Report, c.perspectives)
-	}
-	if c.attributionTrailerOn() {
-		body = AppendTrailer(body, meta)
+	buildBody := func(text string) string {
+		b := leadWithDecisionQuestion(c.relayBody(req.Agent, text))
+		if c.confidenceScoreOn() {
+			b = appendConfidenceLine(b, req.Report, c.perspectives)
+		}
+		if c.attributionTrailerOn() {
+			b = AppendTrailer(b, meta)
+		}
+		return b
 	}
 
 	owner, repoName := c.splitRepo(req.Repo)
+	// Inline comments ride the one create-review call. An edit in place
+	// (--revise, a refreshed decision question) cannot add threads, so
+	// those paths carry every comment in the body; a fresh review carries
+	// the anchorable ones as threads and folds the rest.
+	var anchored []ReviewInlineComment
+	bodyText := req.Body
+	if len(req.Comments) > 0 {
+		if req.Revise {
+			bodyText = foldInlineComments(req.Body, req.Comments)
+			c.logInlineFold(req, len(req.Comments), "revision edits the existing review in place")
+		} else {
+			var folded []ReviewInlineComment
+			anchored, folded = c.partitionInlineComments(ctx, owner, repoName, req.Number, req.Comments)
+			bodyText = foldInlineComments(req.Body, folded)
+			c.logInlineFold(req, len(folded), "line is not part of the PR diff")
+		}
+	}
+	body := buildBody(bodyText)
 	reviewReq := &gh.PullRequestReviewRequest{Event: gh.Ptr(apiEvent)}
 	if strings.TrimSpace(body) != "" {
 		reviewReq.Body = gh.Ptr(body)
 	}
+	reviewReq.Comments = draftReviewComments(anchored, func(text string) string { return c.relayBody(req.Agent, text) })
 	resp := ReviewResponse{At: nowFn().UTC().Format(time.RFC3339)}
 	// Canary-gated like CreateIssue/CreatePR/CreateIssueComment
 	// (kubestellar/hive#4960): a PR review body is agent-supplied text posted
@@ -564,7 +600,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	decisionDeduped := false
 	ownPRNote := ""
 	reviewSubmitted := false
-	if leak, ok := c.scanCanaryText(req.Body, "hive-review:"+req.Repo); ok && c.canaryFailClosed {
+	if leak, ok := c.scanCanaryText(req.Body+"\n"+inlineCommentsText(req.Comments), "hive-review:"+req.Repo); ok && c.canaryFailClosed {
 		err = fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
 	} else if req.Revise {
 		// Correct the record rather than shouting over it. A revision that
@@ -580,7 +616,12 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 		// The same decision question is already standing on this PR from
 		// an earlier head (hivecommons/hive#15499): refresh that review in
 		// place rather than asking the person again. The verdict for the
-		// new head is still recorded below.
+		// new head is still recorded below. An edit cannot add threads, so
+		// every inline comment goes into the refreshed body.
+		if len(req.Comments) > 0 {
+			body = buildBody(foldInlineComments(req.Body, req.Comments))
+			c.logInlineFold(req, len(req.Comments), "decision review refreshed in place")
+		}
 		created, err = c.refreshDecisionReview(ctx, owner, repoName, req.Number, existing, body)
 		if err == nil {
 			decisionDeduped = true
@@ -588,39 +629,52 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	} else {
 		reviewSubmitted = true
 		provenance := owner + "/" + repoName + "#" + strconv.Itoa(req.Number)
-		_, err = effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
-			Repo:   owner + "/" + repoName,
-			Kind:   effects.KindReviewSubmit,
-			Target: strconv.Itoa(req.Number),
-			Actor:  req.Agent,
-			// The request file is the unit of intent: retries of one file must
-			// dedupe, but two files carrying byte-identical text (a second
-			// "no findings" pass on a newer head) are two reviews, not a
-			// replay. Without this the journal refused the second one as
-			// already applied and the request retried until quarantine.
-			Inputs: map[string]string{"event": apiEvent, "body": effects.StableDigest(body), "request": filepath.Base(path)},
-		}, func(ctx context.Context) (effects.ExternalState, error) {
-			return c.observeReviewSubmit(ctx, owner, repoName, req.Number, body, "", provenance)
-		}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
-			var apiErr error
-			for {
-				created, _, apiErr = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
-				if !IsOwnPullRequestReviewRefusal(apiErr) || ownPRNote != "" {
-					return effects.Result{Provenance: provenance}, apiErr
+		for {
+			_, err = effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
+				Repo:   owner + "/" + repoName,
+				Kind:   effects.KindReviewSubmit,
+				Target: strconv.Itoa(req.Number),
+				Actor:  req.Agent,
+				// The request file is the unit of intent: retries of one file must
+				// dedupe, but two files carrying byte-identical text (a second
+				// "no findings" pass on a newer head) are two reviews, not a
+				// replay. Without this the journal refused the second one as
+				// already applied and the request retried until quarantine.
+				Inputs: map[string]string{"event": apiEvent, "body": effects.StableDigest(body), "request": filepath.Base(path)},
+			}, func(ctx context.Context) (effects.ExternalState, error) {
+				return c.observeReviewSubmit(ctx, owner, repoName, req.Number, body, "", provenance)
+			}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
+				var apiErr error
+				for {
+					created, _, apiErr = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
+					if !IsOwnPullRequestReviewRefusal(apiErr) || ownPRNote != "" {
+						return effects.Result{Provenance: provenance}, apiErr
+					}
+					// GitHub never lets the App approve or request changes on
+					// its own pull request (422), and no retry changes that:
+					// post the same text once more as a COMMENT review so the
+					// verdict still lands on the PR (hivecommons/hive#15666).
+					// The verdict itself is recorded below as asked.
+					ownPRNote = fmt.Sprintf("%s downgraded to COMMENT: GitHub refuses a review on the App's own pull request", apiEvent)
+					commentEvent, _, _ := reviewEventToAPI("comment")
+					reviewReq.Event = gh.Ptr(commentEvent)
+					if reviewReq.Body == nil {
+						reviewReq.Body = gh.Ptr(contributorCommentBody(""))
+					}
 				}
-				// GitHub never lets the App approve or request changes on
-				// its own pull request (422), and no retry changes that:
-				// post the same text once more as a COMMENT review so the
-				// verdict still lands on the PR (hivecommons/hive#15666).
-				// The verdict itself is recorded below as asked.
-				ownPRNote = fmt.Sprintf("%s downgraded to COMMENT: GitHub refuses a review on the App's own pull request", apiEvent)
-				commentEvent, _, _ := reviewEventToAPI("comment")
-				reviewReq.Event = gh.Ptr(commentEvent)
-				if reviewReq.Body == nil {
-					reviewReq.Body = gh.Ptr(contributorCommentBody(""))
-				}
+			})
+			// GitHub refused an anchor the diff check let through (a
+			// truncated file list, a race with a push). Resubmit ONCE as a
+			// fresh claim with every comment in the body: the review and
+			// its findings still land, as one review and one notification.
+			if len(reviewReq.Comments) == 0 || !isInlineAnchorRefusal(err) {
+				break
 			}
-		})
+			c.logInlineFold(req, len(anchored), "GitHub refused an inline anchor: "+err.Error())
+			body = buildBody(foldInlineComments(req.Body, req.Comments))
+			reviewReq.Body = gh.Ptr(body)
+			reviewReq.Comments = nil
+		}
 	}
 	if reviewSubmitted {
 		c.recordNotificationWrite(ctx, notificationWrite{kind: notificationWriteReview, repo: owner + "/" + repoName, item: req.Number, body: body, class: NotificationClassRequiredReview, err: err})
@@ -656,6 +710,10 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 			slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", err.Error()))
 		return
 	}
+	// Session taint (#18987), observe only. Recorded once per review the hive
+	// completed, after every gate and retry. The enforcement phases move this
+	// check before the write.
+	c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayReview, req.Repo)
 	resp.OK = true
 	resp.Number = req.Number
 	resp.State = state
@@ -1006,6 +1064,6 @@ func reviewFindingsSection(req ReviewRequest) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "**Review findings** from `%s`", strings.TrimSpace(req.Agent))
 	b.WriteString(" (folded here because this head already carries its hive review):\n\n")
-	b.WriteString(strings.TrimSpace(req.Body))
+	b.WriteString(foldInlineComments(strings.TrimSpace(req.Body), req.Comments))
 	return b.String()
 }

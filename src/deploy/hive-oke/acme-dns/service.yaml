@@ -1,0 +1,19 @@
+# Public LoadBalancer pinned to the reserved OCI IP (hive-acme-dns). The CCM
+# annotation opens UDP/TCP 53 from the internet in the node security list.
+apiVersion: v1
+kind: Service
+metadata:
+  name: acme-dns
+  namespace: acme-dns
+  annotations:
+    oci.oraclecloud.com/load-balancer-type: nlb
+    oci-network-load-balancer.oraclecloud.com/security-list-management-mode: All
+    oci-network-load-balancer.oraclecloud.com/is-preserve-source: "true"
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 129.80.107.104
+  externalTrafficPolicy: Local
+  selector: {app: acme-dns}
+  ports:
+    - {name: dns-udp, port: 53, targetPort: 53, protocol: UDP}
+    - {name: dns-tcp, port: 53, targetPort: 53, protocol: TCP}

@@ -87,6 +87,28 @@ func TestLogUndeliveredReviewKickNamesPR(t *testing.T) {
 	logUndeliveredReviewKick(logger, nil, k, errors.New("x"))
 }
 
+// The same undelivered kick (same PR head, same cause) repeats every cycle
+// while the pane is not ready; only the first occurrence may warn/audit.
+func TestLogUndeliveredReviewKickDedupesRepeats(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	auditor := &recordingFixAuditor{}
+	k := review.DispatchKick{Kind: "fix", Agent: "dedupe-agent", PRRef: "hivecommons/hive#17724", HeadSHA: "abc1234"}
+	for i := 0; i < 5; i++ {
+		logUndeliveredReviewKick(logger, auditor, k, errors.New("pane not ready"))
+	}
+	if n := strings.Count(buf.String(), "review swarm kick not delivered"); n != 1 {
+		t.Fatalf("warn count = %d, want 1: %s", n, buf.String())
+	}
+	if len(auditor.entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(auditor.entries))
+	}
+	logUndeliveredReviewKick(logger, auditor, k, errors.New("different cause"))
+	if n := strings.Count(buf.String(), "review swarm kick not delivered"); n != 2 {
+		t.Fatalf("warn count after cause change = %d, want 2", n)
+	}
+}
+
 // hivecommons/hive#15166: a fix kick delivered first leaves the lane busy, so
 // the governor kick behind it is deferred; an adopted PR under
 // changes_requested is re-planned as a fix kick every cycle, so the scanner's

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/keystore"
 )
 
 // watsonxProbeMintTimeout bounds the IAM token mint done just to run a
@@ -54,7 +55,7 @@ var validGatewayKinds = map[string]bool{
 // struct (both are references, safe to expose), plus a hasKey flag and a masked
 // tail hint resolved from those references.
 func gatewaySectionResponse(gw config.GatewayConfig) map[string]interface{} {
-	key := gw.ResolveAPIKey()
+	key, keySource := gw.ResolveAPIKeyWithSource()
 	keySHA256 := ""
 	if key != "" {
 		keySHA256 = config.APIKeySHA256(key)
@@ -79,6 +80,11 @@ func gatewaySectionResponse(gw config.GatewayConfig) map[string]interface{} {
 		// a name (the dashboard renders that as "(unnamed)"), so no
 		// backwards-compat break.
 		"keyName": gw.KeyName,
+		// hive#18533: where the key actually came from (never the value), and
+		// whether the configured api_key_file is one hive will read.
+		"keySource":            redactSecret(keySource, key),
+		"keySourceDescription": redactSecret(config.DescribeKeySource(keySource, gw.APIKeyFile), key),
+		"apiKeyFileAllowed":    strings.TrimSpace(gw.APIKeyFile) == "" || config.SecretFilePathAllowed(gw.APIKeyFile),
 	}
 }
 
@@ -210,8 +216,8 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		// path, which is precisely why any absolute path used to be accepted and
 		// stored verbatim. ResolveAPIKey enforces the same confinement at read
 		// time for paths that reach hive.yaml by other routes.
-		if keyFile != "" && !config.SecretFilePathAllowed(keyFile) {
-			jsonError(w, "api_key_file must be under /secrets or "+config.WritableSecretsDir, http.StatusBadRequest)
+		if msg := config.SecretFilePathRejection("api_key_file", keyFile); msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
 			return
 		}
 	}
@@ -257,6 +263,8 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		gw.ProjectID = gws[idx].ProjectID
 		gw.Region = gws[idx].Region
 		gw.KeyName = gws[idx].KeyName
+		// prices: is YAML-only (the form does not edit it); keep it.
+		gw.Prices = gws[idx].Prices
 	}
 	if body.APIKeyEnv != nil {
 		gw.APIKeyEnv = strings.TrimSpace(*body.APIKeyEnv)
@@ -595,8 +603,58 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 	probe := map[string]interface{}{"ok": true, "model_count": len(models)}
 	probe["diagnostic"] = gatewayProbeDiagnosticText(probeGW, probe, key)
 	s.appendInferenceRouteForForm(probeGW, probe)
-	jsonResponse(w, map[string]interface{}{"ok": true, "models": models, "diagnostic": probe["diagnostic"], "probe": probe})
+	resp := map[string]interface{}{"ok": true, "models": models, "diagnostic": probe["diagnostic"], "probe": probe}
+	s.attachOpenRouterModelInfo(resp, kind, endpoint, models)
+	jsonResponse(w, resp)
 }
+
+// attachOpenRouterModelInfo adds the public catalog's name, context length and
+// prices for the discovered ids ("model_info") plus the curated suggestions
+// still live ("suggested") when the gateway is OpenRouter, so the form's model
+// picker can show "$/1M in · out · ctx" and pin the curated short list on top.
+// Other kinds publish no prices on /v1/models and are left untouched.
+func (s *Server) attachOpenRouterModelInfo(resp map[string]interface{}, kind, endpoint string, models []string) {
+	if !isOpenRouterGateway(kind, endpoint) {
+		return
+	}
+	or := s.openRouter()
+	if or == nil {
+		return
+	}
+	catalog := or.PublicModels()
+	if len(catalog) == 0 {
+		return
+	}
+	want := make(map[string]bool, len(models))
+	for _, m := range models {
+		want[m] = true
+	}
+	info := make([]OpenRouterModel, 0, len(models))
+	for _, m := range catalog {
+		if want[m.ID] {
+			info = append(info, m)
+		}
+	}
+	resp["model_info"] = info
+	resp["suggested"] = availableOpenRouterSuggested(or.SuggestedModels(), models)
+}
+
+// isOpenRouterGateway reports whether a gateway is OpenRouter, by kind or —
+// for a "custom" entry someone pointed at OpenRouter by hand — by endpoint
+// host.
+func isOpenRouterGateway(kind, endpoint string) bool {
+	if strings.EqualFold(kind, config.GatewayKindOpenRouter) {
+		return true
+	}
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Hostname(), openRouterAPIHost)
+}
+
+// openRouterAPIHost is the public OpenRouter API host.
+const openRouterAPIHost = "openrouter.ai"
 
 // handleGovernorGatewaysTest runs a live /v1/models probe against a named
 // gateway's resolved endpoint + key and returns {ok, model_count, error}.
@@ -850,11 +908,9 @@ func (s *Server) storeGatewayAPIKey(name, key string) (string, error) {
 		return "", actionableWriteError(gatewaySecretsDir, err)
 	}
 	path := filepath.Join(gatewaySecretsDir, "gateway_"+strings.ToLower(name)+"_api_key")
-	if err := os.WriteFile(path, []byte(key), gatewaySecretFileMode); err != nil {
-		return "", actionableWriteError(path, err)
-	}
-	// WriteFile does not change the mode of a pre-existing file.
-	if err := os.Chmod(path, gatewaySecretFileMode); err != nil {
+	// Sealed through the keystore (hive#18214) and replaced atomically at
+	// gatewaySecretFileMode, pre-existing file included.
+	if err := keystore.WriteFileMode(context.Background(), path, []byte(key), gatewaySecretFileMode); err != nil {
 		return "", actionableWriteError(path, err)
 	}
 	s.logger.Info("gateway api key stored", "gateway", name, "api_key_file", path)

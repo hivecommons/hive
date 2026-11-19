@@ -23,12 +23,12 @@ func levelHoldNotice(agent string) string {
 	agent = strings.TrimSpace(agent)
 	return fmt.Sprintf(`%s
 > [!IMPORTANT]
-> **Held for human review by the hive's ACMM level gate.**
+> **Ready for review: held for a maintainer by the hive's ACMM level gate.**
 >
-> This PR was opened by the %q agent while Hive policy required a human checkpoint for that agent. Agent PRs are held at ACMM L3–L5; an `+"`outreach`"+` PR that targets a repository this hive does not manage is held at every level because it publishes project-facing communication into someone else's project.
+> This PR was opened by the %q agent while Hive policy required a human checkpoint for that agent. Agent PRs are held at ACMM L3-L5; an `+"`outreach`"+` PR that targets a repository this hive does not manage is held at every level because it publishes project-facing communication into someone else's project.
 >
-> Hive will keep the `+"`hold`"+` label until a human removes it. Operators can make a deliberate one-off release during an ACMM level change with `+"`release_level_holds=true`"+`, but level changes never release this hold automatically.`,
-		levelHoldMarker(agent), agent)
+> The hive's work on this PR is done. Hive will keep the `+"`%s`"+` label until a maintainer reviews the PR and removes it; it blocks merging the same way `+"`hold`"+` does. Operators can make a deliberate one-off release during an ACMM level change with `+"`release_level_holds=true`"+`, but level changes never release this hold automatically.`,
+		levelHoldMarker(agent), agent, ReadyForReviewLabelName())
 }
 
 func levelHoldMarker(agent string) string {
@@ -100,9 +100,9 @@ type LevelHoldPR struct {
 	Agent  string `json:"agent,omitempty"`
 }
 
-// PendingLevelHolds lists open PRs across active repositories whose hold label
-// is attributable to the ACMM level gate and whose latest hold-label event was
-// the Hive App applying that hold. Human re-holds are not considered pending
+// PendingLevelHolds lists open PRs across active repositories whose
+// ready-for-review label is attributable to the ACMM level gate and whose
+// latest event for that label was the Hive App applying it. Human re-holds are not considered pending
 // level holds; they are a human's to remove.
 func (c *Client) PendingLevelHolds(ctx context.Context) ([]LevelHoldPR, error) {
 	if c == nil {
@@ -118,7 +118,10 @@ func (c *Client) PendingLevelHolds(ctx context.Context) ([]LevelHoldPR, error) {
 				return nil, fmt.Errorf("listing open pull requests for %s/%s: %w", owner, repo, err)
 			}
 			for _, pr := range prs {
-				if pr == nil || !HasHoldLabel(extractPRLabels(pr.Labels)) {
+				// Only the level gate's own label is ever released here; a
+				// `hold` (a person's, or a pre-#18468 one awaiting migration)
+				// is never touched.
+				if pr == nil || !hasExactLabel(extractPRLabels(pr.Labels), ReadyForReviewLabelName()) {
 					continue
 				}
 				meta, ok, comments, err := c.levelHoldMetadataAndCommentsForPR(ctx, owner, repo, pr.GetNumber())
@@ -135,7 +138,7 @@ func (c *Client) PendingLevelHolds(ctx context.Context) ([]LevelHoldPR, error) {
 				if blocked {
 					continue
 				}
-				appHeld, err := c.latestHoldLabelEventWasByApp(ctx, owner, repo, pr.GetNumber())
+				appHeld, _, err := c.latestLabelEventByApp(ctx, owner, repo, pr.GetNumber(), ReadyForReviewLabelName())
 				if err != nil {
 					return nil, err
 				}
@@ -152,7 +155,7 @@ func (c *Client) PendingLevelHolds(ctx context.Context) ([]LevelHoldPR, error) {
 	return pending, nil
 }
 
-// ReleaseLevelHoldsOnce removes the literal hold label from the level-held PRs
+// ReleaseLevelHoldsOnce removes the ready-for-review gate label from the level-held PRs
 // currently pending across active repositories and comments with the operator
 // and target level that authorized this deliberate one-off release.
 func (c *Client) ReleaseLevelHoldsOnce(ctx context.Context, level int, actor string) ([]LevelHoldPR, error) {
@@ -169,7 +172,7 @@ func (c *Client) ReleaseLevelHoldsOnce(ctx context.Context, level int, actor str
 	}
 	for _, pr := range pending {
 		owner, repo := c.splitRepo(pr.Repo)
-		if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, pr.Number, url.PathEscape("hold")); err != nil && !githubStatusError(err, http.StatusNotFound) {
+		if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, pr.Number, url.PathEscape(ReadyForReviewLabelName())); err != nil && !githubStatusError(err, http.StatusNotFound) {
 			return pending, fmt.Errorf("removing level hold label on %s#%d: %w", pr.Repo, pr.Number, err)
 		}
 		body := fmt.Sprintf("hold released by operator %s when raising to L%d", actor, level)
@@ -258,11 +261,6 @@ func hasSelfAuthorizationNotice(comments []*gh.IssueComment, appBotLogin string)
 		}
 	}
 	return false
-}
-
-func (c *Client) latestHoldLabelEventWasByApp(ctx context.Context, owner, repo string, number int) (bool, error) {
-	ok, _, err := c.latestHoldLabelEventByApp(ctx, owner, repo, number)
-	return ok, err
 }
 
 // latestHoldLabelEventByApp reports whether the newest `hold` label event on

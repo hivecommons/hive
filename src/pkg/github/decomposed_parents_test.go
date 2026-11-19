@@ -13,17 +13,17 @@ import (
 )
 
 func TestParentMarker_RoundTrip(t *testing.T) {
-	body := withParentMarker("Child body.\n", 12361)
+	body := withParentMarker("Child body.\n", "", 12361)
 	if !strings.HasSuffix(body, ParentMarker(12361)) || !strings.Contains(body, "Child body.") {
 		t.Fatalf("body = %q", body)
 	}
 	if ParseParentMarker(body) != 12361 {
 		t.Fatalf("parse = %d", ParseParentMarker(body))
 	}
-	if again := withParentMarker(body, 12361); again != body {
+	if again := withParentMarker(body, "", 12361); again != body {
 		t.Fatalf("marker must not repeat: %q", again)
 	}
-	if withParentMarker("x", 0) != "x" || ParseParentMarker("no marker") != 0 {
+	if withParentMarker("x", "", 0) != "x" || ParseParentMarker("no marker") != 0 {
 		t.Fatal("zero parent / absent marker must be no-ops")
 	}
 	if ParseParentMarker("<!-- hive:parent #42 -->") != 42 {
@@ -45,28 +45,28 @@ func TestChildrenOf_SummaryThenLedgerAndMarkerFallback(t *testing.T) {
 	}
 	summaries := map[int]IssueChildren{1: {Total: 4, Completed: 4}}
 
-	if got := childrenOf("acme/widgets", 1, summaries, ledger, open); got == nil || *got != (IssueChildren{Total: 4, Completed: 4}) {
+	if got := childrenOf("acme/widgets", 1, summaries, ledger, open, nil); got == nil || *got != (IssueChildren{Total: 4, Completed: 4}) {
 		t.Fatalf("summary must win: %+v", got)
 	}
 	// No summary: ledger children 3 and 4 (closed: absent from the snapshot)
 	// plus body-marked open child 2; the other repo's #6 is ignored.
-	got := childrenOf("acme/widgets", 1, nil, ledger, open)
+	got := childrenOf("acme/widgets", 1, nil, ledger, open, nil)
 	if got == nil || *got != (IssueChildren{Total: 3, Completed: 2}) {
 		t.Fatalf("fallback = %+v", got)
 	}
 	if got.Open() != 1 || got.AllClosed() {
 		t.Fatalf("open=%d allClosed=%v", got.Open(), got.AllClosed())
 	}
-	if childrenOf("acme/widgets", 2, nil, ledger, open) != nil {
+	if childrenOf("acme/widgets", 2, nil, ledger, open, nil) != nil {
 		t.Fatal("a leaf has no children")
 	}
-	if got := splitChildrenOf(ledger, "ACME/Widgets", 1); len(got) != 2 || got[0] != 3 || got[1] != 4 {
+	if got := splitChildrenOf(ledger, "ACME/Widgets", 1); len(got) != 2 || got[0] != (ChildRef{Number: 3}) || got[1] != (ChildRef{Number: 4}) {
 		t.Fatalf("splitChildrenOf = %v", got)
 	}
 }
 
 func TestDecomposedParentCloseComment(t *testing.T) {
-	got := decomposedParentCloseComment([]int{3, 4, 5}, map[int]int{3: 30, 5: 50})
+	got := decomposedParentCloseComment([]ChildRef{{Number: 3}, {Number: 4}, {Number: 5}}, map[ChildRef]int{{Number: 3}: 30, {Number: 5}: 50})
 	if !strings.HasPrefix(got, parentAutoCloseMarker) {
 		t.Fatalf("missing marker: %q", got)
 	}
@@ -80,6 +80,7 @@ func parentInput(children *IssueChildren, labels ...string) Issue {
 }
 
 func TestSyncIssueStageLabels_ClosesParentWhenAllChildrenClosed(t *testing.T) {
+	resetParentReopenCacheForTest(t)
 	fake := newIssueStageServer(t)
 	c := issueStageTestClient(t, fake.srv, true)
 	store := stagelabels.NewStore("", stageNow)
@@ -179,6 +180,7 @@ func TestSyncIssueStageLabels_ParentSnapshotLagsOpenChild(t *testing.T) {
 }
 
 func TestSyncIssueStageLabels_ParentLedgerFallbackClose(t *testing.T) {
+	resetParentReopenCacheForTest(t)
 	// No native sub-issue list (the link failed at create time): the ledger
 	// names the children and each is read live.
 	fake := newIssueStageServer(t)
@@ -234,7 +236,7 @@ func TestAnnotateIssueChildren_SetsParentsOnly(t *testing.T) {
 	actionable := []Issue{{Repo: "acme/widgets", Number: 1}, {Repo: "acme/widgets", Number: 2}}
 	details := []RepoWorkIssue{{Repo: "acme/widgets", Number: 3}, {Repo: "acme/widgets"}}
 	summaries := map[int]IssueChildren{1: {Total: 2, Completed: 1}, 3: {Total: 1, Completed: 1}}
-	annotateIssueChildren("acme/widgets", summaries, nil, nil, actionable, details)
+	annotateIssueChildren("acme/widgets", summaries, nil, nil, nil, actionable, details)
 	if actionable[0].Children == nil || actionable[0].Children.Total != 2 || actionable[1].Children != nil {
 		t.Fatalf("actionable = %+v", actionable)
 	}
@@ -279,5 +281,150 @@ func TestEnumerateActionable_SubIssueSummaryBecomesChildren(t *testing.T) {
 	}
 	if byNumber[42].Children != nil || byNumber[43].Children != nil {
 		t.Errorf("leaves must carry no children: %+v / %+v", byNumber[42].Children, byNumber[43].Children)
+	}
+}
+
+// resetParentReopenCacheForTest clears the process-global reopen-verdict
+// cache now and again when the test ends, so a "kept open" verdict one test
+// caches for acme/widgets#7 cannot veto the close another test expects.
+func resetParentReopenCacheForTest(t *testing.T) {
+	t.Helper()
+	clear := func() {
+		parentReopenMu.Lock()
+		parentReopenCache = map[string]parentReopenVerdict{}
+		parentReopenMu.Unlock()
+	}
+	clear()
+	t.Cleanup(clear)
+}
+
+func timelineEvent(event, actor, actorType, body, at string) map[string]any {
+	return map[string]any{"event": event, "created_at": at, "body": body, "actor": map[string]any{"login": actor, "type": actorType}}
+}
+
+// runParentSweep sweeps one all-children-closed parent #7 and reports
+// whether it was closed and how many timeline reads it cost.
+func runParentSweep(t *testing.T, policy func(string) string, timeline []map[string]any, labels ...string) (closed bool, res IssueStageResult, timelineGets int) {
+	t.Helper()
+	resetParentReopenCacheForTest(t)
+	fake := newIssueStageServer(t)
+	c := NewClientForTest(fake.srv.URL, "acme", []string{"widgets"}, testLogger())
+	c.SetIssueStageLabels(func() IssueStagePolicy { return IssueStagePolicy{Enabled: true, ParentAutoClose: policy} })
+	store := stagelabels.NewStore("", stageNow)
+	store.Observe(stagelabels.Key("acme/widgets", 7), stagelabels.Actionable, "actionable")
+	fake.mu.Lock()
+	fake.subIssues[7] = []subIssueRef{{Number: 3, State: "closed"}, {Number: 4, State: "closed"}}
+	fake.timelines = map[int][]map[string]any{7: timeline}
+	fake.mu.Unlock()
+	result := &ActionableResult{}
+	result.Issues = IssueResultFromItems([]Issue{parentInput(&IssueChildren{Total: 2, Completed: 2}, append([]string{stagelabels.Actionable.Label()}, labels...)...)})
+	res = syncSeeded(t, fake, c, result, store, stageNow())
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	_, closed = fake.closed[7]
+	return closed, res, fake.timelineGets
+}
+
+func TestParentAutoClose_HiveCreatedParentStillCloses(t *testing.T) {
+	closed, res, _ := runParentSweep(t, nil, nil)
+	if !closed || res.ParentsClosed != 1 {
+		t.Fatalf("default policy must still close a plain decomposed parent: closed=%v res=%+v", closed, res)
+	}
+}
+
+func TestParentAutoClose_EpicLabelledParentStaysOpen(t *testing.T) {
+	for _, label := range []string{"EPIC", "epic"} {
+		closed, res, gets := runParentSweep(t, nil, nil, label)
+		if closed || res.ParentsClosed != 0 {
+			t.Fatalf("%s-labelled parent with all children closed must stay open: closed=%v res=%+v", label, closed, res)
+		}
+		if gets != 0 {
+			t.Fatalf("label exemption must not cost a timeline read, got %d", gets)
+		}
+	}
+}
+
+func TestParentAutoClose_EpicsTooOptInCloses(t *testing.T) {
+	closed, _, _ := runParentSweep(t, func(string) string { return "epics_too" }, nil, "EPIC")
+	if !closed {
+		t.Fatal("epics_too must let an epic-labelled parent close")
+	}
+}
+
+func TestParentAutoClose_ConfigOffNeverCloses(t *testing.T) {
+	closed, _, gets := runParentSweep(t, func(string) string { return "false" }, nil)
+	if closed || gets != 0 {
+		t.Fatalf("parent_autoclose=false must not close (closed=%v gets=%d)", closed, gets)
+	}
+}
+
+func TestParentAutoClose_HumanReopenedParentNeverReclosed(t *testing.T) {
+	timeline := []map[string]any{
+		timelineEvent("closed", "hive[bot]", "Bot", "", "2026-10-19T10:00:00Z"),
+		timelineEvent("commented", "hive[bot]", "Bot", parentAutoCloseMarker+"\nAll children delivered", "2026-10-19T10:00:01Z"),
+		timelineEvent("reopened", "maintainer", "User", "", "2026-10-19T11:00:00Z"),
+	}
+	// Even with epics_too: a reopen outranks every config value.
+	for _, policy := range []func(string) string{nil, func(string) string { return "epics_too" }} {
+		closed, res, _ := runParentSweep(t, policy, timeline)
+		if closed || res.ParentsClosed != 0 {
+			t.Fatalf("a parent a person reopened after a hive auto-close must stay open: closed=%v res=%+v", closed, res)
+		}
+	}
+}
+
+func TestParentAutoClose_ReopenWithoutCommentStillRespected(t *testing.T) {
+	timeline := []map[string]any{
+		timelineEvent("closed", "hive[bot]", "Bot", "", "2026-10-19T10:00:00Z"),
+		timelineEvent("reopened", "maintainer", "User", "", "2026-10-19T11:00:00Z"),
+	}
+	if closed, _, _ := runParentSweep(t, nil, timeline); closed {
+		t.Fatal("reopen after a bot close must be respected even when the close comment is missing")
+	}
+}
+
+func TestParentAutoClose_ReopenBeforeAnyAutoCloseDoesNotBlock(t *testing.T) {
+	timeline := []map[string]any{
+		timelineEvent("closed", "maintainer", "User", "", "2026-10-01T10:00:00Z"),
+		timelineEvent("reopened", "maintainer", "User", "", "2026-10-02T10:00:00Z"),
+	}
+	if closed, _, _ := runParentSweep(t, nil, timeline); !closed {
+		t.Fatal("a reopen that precedes any hive auto-close is not a veto")
+	}
+}
+
+func TestParentAutoClose_NegativeVerdictCachedPerParent(t *testing.T) {
+	resetParentReopenCacheForTest(t)
+	fake := newIssueStageServer(t)
+	c := NewClientForTest(fake.srv.URL, "acme", []string{"widgets"}, testLogger())
+	for i := 0; i < 3; i++ {
+		if by, kept := c.parentKeptOpenBy(context.Background(), "acme", "widgets", 7, nil); kept || by != "" {
+			t.Fatalf("no reopen expected, got %q", by)
+		}
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.timelineGets != 1 {
+		t.Fatalf("timeline reads = %d, want 1 (cached)", fake.timelineGets)
+	}
+}
+
+func TestParentAutoCloseExempt(t *testing.T) {
+	cases := []struct {
+		policy string
+		labels []string
+		exempt bool
+	}{
+		{"true", nil, false},
+		{"true", []string{"Epic"}, true},
+		{"true", []string{"hold"}, true},
+		{"epics_too", []string{"epic", "hold"}, false},
+		{"trackers_too", []string{"epic", "hold"}, false},
+		{"false", nil, true},
+	}
+	for _, tc := range cases {
+		if got := parentAutoCloseExempt(tc.policy, tc.labels) != ""; got != tc.exempt {
+			t.Errorf("policy=%s labels=%v exempt=%v want %v", tc.policy, tc.labels, got, tc.exempt)
+		}
 	}
 }

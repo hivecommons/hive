@@ -12,8 +12,11 @@ import (
 // knowledge.code_maps and knowledge.primer keys. Every field is a pointer so
 // an absent key leaves the config untouched; 0 or "" restores the default.
 // Local vault paths and the engine are display-only
-// and not accepted here.
+// and not accepted here. SidecarAdvise is knowledge.sidecar_advise
+// (hivecommons/hive#17157): whether the hive serves the mid-task advisor to a
+// sidecar-mode runtime. It applies without a restart.
 type knowledgePipelineBody struct {
+	SidecarAdvise   *bool `json:"sidecar_advise"`
 	BeadSynthesizer *struct {
 		Enabled             *bool    `json:"enabled"`
 		Schedule            *string  `json:"schedule"`
@@ -64,6 +67,10 @@ func trimLower(p *string) string { return strings.ToLower(strings.TrimSpace(*p))
 func (b knowledgePipelineBody) prepare(cur config.KnowledgeConfig) (func(*config.KnowledgeConfig), error) {
 	var probe config.KnowledgeConfig
 	var steps []func(*config.KnowledgeConfig)
+	if b.SidecarAdvise != nil {
+		v := *b.SidecarAdvise
+		steps = append(steps, func(k *config.KnowledgeConfig) { k.SidecarAdvise = v })
+	}
 	if bs := b.BeadSynthesizer; bs != nil {
 		if bs.Enabled != nil {
 			v := *bs.Enabled
@@ -269,6 +276,10 @@ func knowledgePipelineResponse(cfg *config.Config) map[string]interface{} {
 	return map[string]interface{}{
 		// Display-only: the engine picks the knowledge backend at boot.
 		"engine": k.Engine,
+		// sidecar_advise is editable; the mid-task advisor switch it needs
+		// stays yaml-only and is shown so the control can say so.
+		"sidecar_advise": k.SidecarAdvise,
+		"advisor":        k.Advisor,
 		"bead_synthesizer": map[string]interface{}{
 			"publish":                 k.BeadSynthesizer.Publish.WithDefaults(),
 			"enabled":                 k.BeadSynthesizer.IsEnabled(),
@@ -341,7 +352,7 @@ func (s *Server) handleKnowledgePipelineGet(w http.ResponseWriter, r *http.Reque
 }
 
 // handleKnowledgePipelinePut updates the scalar bead synthesizer, curator,
-// code map and primer keys (owner-only). The request is validated before
+// code map and primer keys and knowledge.sidecar_advise (owner-only). The request is validated before
 // anything is applied, then persisted and audited. The bead synthesizer
 // switch starts or stops the running synthesizer at once, as
 // PUT /api/knowledge/bead-synthesizer/enabled does; every other key is read

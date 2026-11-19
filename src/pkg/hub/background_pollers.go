@@ -48,6 +48,15 @@ func (s *HubServer) StartBackgroundPollers(ctx context.Context) <-chan struct{} 
 	start(s.startAlertStatePersistence)
 	// Live-vs-approved org reconciliation for assigned hives (#11847).
 	start(s.startPlaceholderOrgSweep)
+	// Hourly commit of spoke benchmark records to hivecommons/benchmarks
+	// (hivecommons/hive#17694).
+	start(s.StartBenchmarksPublisher)
+	// Workflow marketplace nightly ingest + first-boot seed (#17620 phase 7).
+	start(s.StartMarketplaceRefresh)
+	// Self-service (byo-) registrations past HIVE_HUB_SELFSERVICE_EXPIRY with
+	// no accepted heartbeat are revoked and dropped from the registry (#18146).
+	start(s.startSelfServiceExpirySweep)
+	start(s.startCustomerConsentSweep)
 	s.githubActivityMu.Lock()
 	s.githubActivityCtx = ctx
 	feed := s.githubActivityFeed

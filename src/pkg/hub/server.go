@@ -31,6 +31,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/delegation"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
+	"github.com/hivecommons/hive/pkg/netguard"
 	"github.com/hivecommons/hive/pkg/reach"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
@@ -385,6 +386,8 @@ type RegistryEntry struct {
 	GitHubAppRequired        bool         `json:"githubAppRequired,omitempty"`
 	GitHubAppPermIssue       string       `json:"githubAppPermIssue,omitempty"`
 	GitHubAppState           string       `json:"githubAppState,omitempty"`
+	PRGateCause              string       `json:"prGateCause,omitempty"`
+	PRGateDependsOn          bool         `json:"prGateDependsOn,omitempty"`
 	GitHubAppTokenStatus     string       `json:"githubAppTokenStatus,omitempty"`
 	GitHubAppTokenLastMintAt string       `json:"githubAppTokenLastMintAt,omitempty"`
 	GitHubAppTokenError      string       `json:"githubAppTokenError,omitempty"`
@@ -940,7 +943,10 @@ func validateSingleRepoHost(spokeHost, primaryRepo string, repos []string) error
 
 // isValidRepoRef validates a repo entry, which may be a bare name ("repo")
 // or a cross-org "owner/repo" reference. Both segments must be safe names
-// (no path traversal); at most one slash is allowed. Cross-org repos are a
+// (no path traversal); at most one slash is allowed. "." and ".." pass the
+// safe-name charset but are dot segments that url.JoinPath and friends
+// resolve (owner/.. would become a request for /repos), and GitHub allows
+// neither as a repo or owner name, so both are refused (#18166). Cross-org repos are a
 // supported hive config (e.g. a primary repo in one org plus a secondary in
 // another), so the heartbeat must not 400-reject them — doing so silently
 // took a whole hive offline (no heartbeats → no upgrades, shows offline).
@@ -953,7 +959,7 @@ func isValidRepoRef(s string) bool {
 		return false
 	}
 	for _, p := range parts {
-		if !isValidName(p) {
+		if !isValidName(p) || p == "." || p == ".." {
 			return false
 		}
 	}
@@ -1002,6 +1008,8 @@ type HubServer struct {
 	webhookNoSecretOnce  sync.Once
 	selfExperimentFlags  sync.Map // hive ID -> nous.SelfFlagAssignment; restart fails closed
 	mux                  *http.ServeMux
+	mailReply            *mailReplier // nil unless the reply DKIM key is configured (#18746)
+	ask                  *hubAsk      // nil unless Ask AI help is enabled and configured (#19180)
 	registry             Registry
 	mu                   sync.RWMutex
 	logger               *slog.Logger
@@ -1045,8 +1053,16 @@ type HubServer struct {
 	hubGitBranch    string
 	sharedAgentPool *sharedAgentPool
 	hubSecret       string
-	myHivesCacheMu  sync.Mutex
-	myHivesCache    map[string]myHivesSnapshot
+	// selfService holds owner-registered (byo-) hives and the hashes of their
+	// random heartbeat keys (#18060). Nil on bare test literals; every method
+	// is nil-safe and answers "nothing registered".
+	selfService *selfServiceStore
+	// selfServiceOwnership is the GitHub repo-admin check the registration API
+	// runs with the user's own token (selfservice_api.go). Nil means the
+	// production api.github.com checker; tests inject an httptest stub.
+	selfServiceOwnership *selfServiceOwnershipChecker
+	myHivesCacheMu       sync.Mutex
+	myHivesCache         map[string]myHivesSnapshot
 	// keyGenerations is the ordered set of master generations this hub accepts
 	// (hub_generations.go). Until a rotation happens it holds exactly ONE
 	// generation whose secret IS hubSecret, so every derived key is
@@ -1210,6 +1226,12 @@ type HubServer struct {
 	// Same rationale and same guarding mutex as lastNetAdminReconcile above:
 	// both are poller-loop-only state.
 	lastPerHiveEnvReconcile time.Time
+	// lastHostAliasesReconcile throttles the per-cluster host_aliases
+	// reconcile (cluster_host_aliases.go). Same mutex, same rationale.
+	lastHostAliasesReconcile time.Time
+	// lastStartupProbeReconcile throttles the template startupProbe / init
+	// image reconcile (startup_probe_reconcile.go). Same mutex, same rationale.
+	lastStartupProbeReconcile time.Time
 	// lastContributeIngressReconcile throttles the hive-contribute Ingress
 	// auth-url reconcile (contribute_ingress_reconcile.go), which puts the
 	// #7457 annotations onto spokes provisioned before that fix (#7517).
@@ -1444,6 +1466,12 @@ type HubServer struct {
 	// field to point at a fake GitHub API before that first call.
 	dibsPublicOnce sync.Once
 	dibsPublic     *dibsPublicChecker
+
+	// Workflow marketplace catalogue (#17620 phase 7, marketplace*.go).
+	// Created lazily by marketplace(); tests pre-set the store/refresher.
+	marketplaceOnce      sync.Once
+	marketplaceStore     *marketplaceStore
+	marketplaceRefresher *marketplaceRefresher
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -1563,6 +1591,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		saveLoopStop:    make(chan struct{}),
 		saveLoopDone:    make(chan struct{}),
 		registryPath:    registryPath,
+		selfService:     newSelfServiceStore(selfServiceStorePath),
 		hubGitHash:      gitHash,
 		hubGitBranch:    gitBranch,
 		sharedAgentPool: newSharedAgentPool(),
@@ -1689,6 +1718,13 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	}
 
 	s.loadRegistry()
+	if err := s.selfService.load(); err != nil {
+		// Fail closed: an unreadable store means no self-service hive
+		// authenticates until an operator fixes the file.
+		logger.Warn("self-service registry not loaded; byo- hives will not authenticate", "path", selfServiceStorePath, "error", err)
+	} else if n := len(s.selfService.list()); n > 0 {
+		logger.Info("self-service registry loaded", "hives", n)
+	}
 	logHubGitHubIdentityMode(logger)
 	// Rebuild the in-memory upgrade-delivery map from the durable registry
 	// BEFORE the server takes its first heartbeat, so a hub restart can never
@@ -1721,6 +1757,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// same credential as /api/task-status. The only read path is the admin-gated
 	// GET registered in registerSaaSRoutes.
 	s.mux.HandleFunc("POST "+npsIngestPath, s.handleNPSIngest)
+	// Fleet benchmark records from spokes (hivecommons/hive#17694).
+	s.mux.HandleFunc("POST "+benchmarksIngestPath, s.handleBenchmarksIngest)
+	s.mux.HandleFunc("GET "+benchmarksStatusPath, s.handleBenchmarksStatus)
 	s.mux.HandleFunc("POST "+feedbackIngestPath, s.handleFeedbackIngest)
 	s.mux.HandleFunc("POST "+selfReportIngestPath, s.handleSelfReportIngest)
 	s.mux.HandleFunc("GET "+feedbackIssuesPath, s.handleFeedbackIssues)
@@ -1746,10 +1785,23 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// no hub decision reads a chain. See src/docs/delegation-chain.md.
 	s.mux.HandleFunc("GET "+delegation.KeysPath, s.handleDelegationKeys)
 	s.mux.HandleFunc("DELETE /api/hub/registry/{id}", s.handleRegistryDelete)
+	// Self-service (byo-) hive registration (#18060, selfservice_api.go).
+	// Behind HIVE_HUB_SELFSERVICE_REGISTRATION: every route but /status answers
+	// 404 while the flag is off.
+	s.mux.HandleFunc("GET /api/hub/selfservice/status", s.requireAuth(s.handleSelfServiceStatus))
+	s.mux.HandleFunc("GET /api/hub/selfservice/hives", s.requireAuth(s.handleSelfServiceList))
+	s.mux.HandleFunc("POST /api/hub/selfservice/hives", s.requireAuth(s.handleSelfServiceRegister))
+	s.mux.HandleFunc("POST /api/hub/selfservice/hives/{id}/rotate", s.requireAuth(s.handleSelfServiceRotate))
+	s.mux.HandleFunc("DELETE /api/hub/selfservice/hives/{id}", s.requireAuth(s.handleSelfServiceDelete))
+	// Hub registration protocol v1 (#18642, selfservice_v1_api.go): discovery
+	// first; the resource routes follow in later steps of the rollout.
+	s.registerHubV1Routes()
 	s.mux.HandleFunc("POST /api/contribute/register", s.handleContributeProxy)
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.handleContributeWSProxy)
 	s.mux.HandleFunc("POST /api/github/webhook", s.handleGitHubWebhook)
+	// hive-mx mail routing (#18395, mail_relay.go); 404 without HIVE_HUB_MAIL_TOKEN.
+	s.registerMailRoutes()
 	s.mux.HandleFunc("GET /gh-setup", s.handleGitHubAppSetupRouter)
 	s.mux.HandleFunc("GET /learn", s.serveStatic("static/learn.html"))
 	s.mux.HandleFunc("GET /get-started", s.serveStatic("static/get-started.html"))
@@ -1800,6 +1852,8 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// Fleet activity page (#16063): signed-in, read-only board over
 	// GET /api/hub/activity.
 	s.registerActivityPageRoutes()
+	// Workflow marketplace catalogue (#17620 phase 7).
+	s.registerMarketplaceRoutes()
 	go s.saveLoop()
 	go s.refreshActiveMyHivesSnapshotsLoop()
 
@@ -1913,6 +1967,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// retained to back GET /api/saas/admin/auth-rollout, where an operator can
 		// confirm no hive regressed after the cutover.
 		s.noteHeartbeatAuthPath(payload.HiveID, s.heartbeatBearerIsPerHive(presentedBearer, payload.HiveID))
+		// A self-service hive's accepted heartbeat is the liveness signal its
+		// registration expiry reads (#18060). Stamped only after the bearer
+		// bound this beat to the claimed ID.
+		if IsSelfServiceHiveID(payload.HiveID) {
+			if err := s.selfService.noteAcceptedHeartbeat(payload.HiveID, time.Now()); err != nil {
+				s.logger.Warn("self-service heartbeat stamp not persisted", "hive", payload.HiveID, "error", err)
+			}
+		}
 	}
 	// Adopt the spoke's reported dashboard-token hash into the hub's stored
 	// record — the reference spoke-relayed upgrade requests verify their proof
@@ -2037,15 +2099,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		ContributorCount:       clampInt(payload.Contributors.Registered, 0, 10_000),
 		ActiveContributors:     clampInt(payload.Contributors.Active, 0, 10_000),
 		Owner:                  sanitizeHeartbeatField(payload.Owner),
-		HiveType: func() string {
-			if payload.HiveType != "" {
-				return sanitizeHeartbeatField(payload.HiveType)
-			}
-			if strings.HasPrefix(payload.HiveID, "hosted-") || strings.HasPrefix(payload.HiveID, "saas-") {
-				return "hosted"
-			}
-			return "local"
-		}(),
+		// byo- hives are typed by the hub from the ID prefix, never from the
+		// payload (#18146); see hubAssignedHiveType.
+		HiveType:      hubAssignedHiveType(payload.HiveID, payload.HiveType),
 		IsPublic:      payload.IsPublic,
 		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
 		Health:        payload.Health,
@@ -2137,6 +2193,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// identifier sanitizer stripped every space out of it.
 		GitHubAppPermIssue:       sanitizeProseField(payload.GitHubAppPermIssue),
 		GitHubAppState:           sanitizeHeartbeatField(payload.GitHubAppState),
+		PRGateCause:              sanitizeHeartbeatField(payload.PRGateCause),
+		PRGateDependsOn:          payload.PRGateDependsOn,
 		GitHubAppTokenStatus:     sanitizeHeartbeatField(payload.GitHubAppTokenStatus),
 		GitHubAppTokenLastMintAt: sanitizeField(payload.GitHubAppTokenLastMintAt),
 		GitHubAppTokenError:      sanitizeProseField(payload.GitHubAppTokenError),
@@ -2837,6 +2895,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	resp.SelfExperimentFlag = s.selfExperimentFlagForHeartbeat(payload.HiveID, payload.SelfExperimentsOptIn)
 	resp.ActivityETag = activityAck
 	resp.ActivityEventsAck = s.activity.eventsAck(payload.HiveID)
+	resp.Protocol = heartbeatProtocolAckFor(payload.Protocol)
 
 	if entry.IsPublic != payload.IsPublic {
 		resp.IsPublic = &entry.IsPublic
@@ -2947,6 +3006,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.logger.Info("heartbeat: delivering cluster_id to spoke that reports none",
 			"hive_id", payload.HiveID, "cluster_id", cid)
 	}
+
+	// Deliver the cluster's host_aliases on every beat so the spoke converges
+	// its own Deployment, including on push-reported clusters the hub cannot
+	// patch (#18637). Keyed on the SaaS record's cluster, never the report.
+	resp.HostAliases = s.hostAliasesForHeartbeat(saasClusterID)
 
 	// Check if the hive should self-upgrade via heartbeat response.
 	//
@@ -3340,6 +3404,21 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			resp.GitHubAppConfig = &HeartbeatGitHubAppConfig{}
 		}
 		resp.GitHubAppConfig.SecondaryKey = secCfg
+	}
+
+	// Per-hive webhook relay key (#17911), attached the same independent way as
+	// the secondary key: it rides whatever config the branches above produced,
+	// or an otherwise-empty one, and only until the spoke reports holding it.
+	if relayKey := s.webhookRelayKeyForHeartbeat(&payload); relayKey != "" {
+		if resp.GitHubAppConfig == nil {
+			resp.GitHubAppConfig = &HeartbeatGitHubAppConfig{}
+		}
+		resp.GitHubAppConfig.WebhookRelayKey = relayKey
+		s.logger.Info("heartbeat: delivering webhook relay key to spoke",
+			"hive_id", payload.HiveID,
+			"fingerprint", webhookRelayKeyFingerprint(relayKey),
+			"spoke_fingerprint", payload.WebhookRelayKeyFingerprint,
+		)
 	}
 
 	// SECURITY (C1/N3, CWE-200/639): the fleet-wide additional-key broadcast that
@@ -4590,7 +4669,7 @@ func (s *HubServer) writeHubErrorPage(w http.ResponseWriter, code int) {
   <title>Hive — %[2]s</title>
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#e6edf3;display:flex;align-items:center;justify-content:center;min-height:100vh}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#e6edf3;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh}
     .container{text-align:center;max-width:520px;padding:40px 24px}
     .bee{font-size:64px;margin-bottom:24px}
     h1{font-size:1.5rem;font-weight:600;margin-bottom:12px}
@@ -4602,6 +4681,8 @@ func (s *HubServer) writeHubErrorPage(w http.ResponseWriter, code int) {
     a:hover{text-decoration:underline}
     .btn{display:inline-block;padding:10px 24px;background:#f0b429;color:#0d1117;border-radius:8px;font-weight:600;text-decoration:none;margin-top:8px}
     .btn:hover{background:#d4a017;text-decoration:none}
+    .lf-legal-footer{text-align:center;padding:0 24px 24px;font-size:.8rem}
+    .lf-legal-footer p{margin:0}
   </style>
   %[11]s
 </head>
@@ -4615,6 +4696,7 @@ func (s *HubServer) writeHubErrorPage(w http.ResponseWriter, code int) {
     <a id="login-btn" href="%[6]s" class="btn"%[9]s>Login with GitHub</a>
     <a id="home-btn" href="%[5]s" class="btn"%[10]s>Go to Hive Hub</a>
   </div>
+  `+lfProjectsLegalFooterHTML+`
 </body>
 </html>
 `,
@@ -4846,6 +4928,7 @@ func (s *HubServer) handleContributeLanding(w http.ResponseWriter, r *http.Reque
     .pill{border:1px solid var(--line);border-radius:999px;padding:4px 9px;background:rgba(255,255,255,.03)}
     .empty{padding:24px;border:1px dashed var(--line);border-radius:18px;background:rgba(22,27,34,.65)}
     a{color:var(--link)}
+    .lf-legal-footer{max-width:1080px;margin:0 auto;padding:0 24px 40px;text-align:center;font-size:.8rem}
   </style>
 </head>
 <body>
@@ -4883,6 +4966,7 @@ just contribute-mlx</code></pre>
       <a href="%[1]s#apple-mlx-local-inference">Complete installation, model requirements and troubleshooting</a>
     </section>
   </main>
+  `+lfProjectsLegalFooterHTML+`
 </body>
 </html>
 `, html.EscapeString(contributorRelayDocsURL), renderContributeLandingHiveList(hives))
@@ -5011,6 +5095,7 @@ func (s *HubServer) handleContributeProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = pinnedOrReplacedDefault(contributeProxyTransport)
 	r.URL.Path = "/api/contribute/register"
 	r.Host = target.Host
 	s.logger.Info("proxying contribute registration", "hive", hive.ID, "target", target.String())
@@ -5048,6 +5133,9 @@ func (s *HubServer) handleContributeWSProxy(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	proxy := newContributeWSReverseProxy(target)
+	if proxy.Transport == nil {
+		proxy.Transport = pinnedOrReplacedDefault(contributeProxyTransport)
+	}
 	r.URL.Path = "/api/contribute/ws"
 	r.Host = target.Host
 	s.logger.Info("proxying contribute WS", "hive", hive.ID, "target", target.String())
@@ -5055,6 +5143,35 @@ func (s *HubServer) handleContributeWSProxy(w http.ResponseWriter, r *http.Reque
 }
 
 var newContributeWSReverseProxy = httputil.NewSingleHostReverseProxy
+
+// contributeProxyTransport carries the contribute registration and WS proxies
+// to the selected hive (#19221, part of #18986). findContributeHive admits a
+// hive only when its self-reported DashboardURL passes isPrivateURL, but
+// httputil's default transport resolved the name again when it dialled, so a
+// DashboardURL whose name rebinds was checked as public and proxied to as
+// private. This transport resolves each dial once, checks every answer with
+// isPrivateURL, and connects only to an address it checked.
+var contributeProxyTransport http.RoundTripper = pinnedFetchTransport(isPrivateURL)
+
+// replacedDefaultTransport reports http.DefaultTransport when it was replaced
+// with something other than *http.Transport (tests and instrumented builds
+// inject a RoundTripper there). Every pinned call site shares this check so
+// they honour the override the same way.
+func replacedDefaultTransport() (http.RoundTripper, bool) {
+	if _, ok := http.DefaultTransport.(*http.Transport); ok {
+		return nil, false
+	}
+	return http.DefaultTransport, true
+}
+
+// pinnedOrReplacedDefault returns pinned, unless http.DefaultTransport was
+// replaced; then that replacement is used.
+func pinnedOrReplacedDefault(pinned http.RoundTripper) http.RoundTripper {
+	if rt, ok := replacedDefaultTransport(); ok {
+		return rt
+	}
+	return pinned
+}
 
 // privateURLDNSTimeout bounds DNS resolution inside the SSRF guard so a
 // slow or malicious DNS server cannot block the caller indefinitely.
@@ -5078,42 +5195,29 @@ func defaultHostResolver(ctx context.Context, host string) ([]string, error) {
 	return (&net.Resolver{}).LookupHost(resolveCtx, host)
 }
 
+// isPrivateURL reports whether rawURL targets a destination that is not
+// globally routable. It delegates to netguard, the one address classifier
+// shared by every isPrivateURL site (#18991): literals in any spelling are
+// classified with net/netip, names are resolved through privateURLResolver,
+// and a resolver failure fails closed.
 func isPrivateURL(ctx context.Context, rawURL string) bool {
-	for _, scheme := range []string{"https://", "http://", "wss://", "ws://"} {
-		if strings.HasPrefix(rawURL, scheme) {
-			rawURL = strings.TrimPrefix(rawURL, scheme)
-			break
-		}
-	}
-	host := rawURL
-	if idx := strings.IndexAny(host, ":/"); idx >= 0 {
-		host = host[:idx]
-	}
-	host = strings.ToLower(host)
-	blocked := []string{"localhost", "127.", "10.", "172.16.", "172.17.", "172.18.", "172.19.",
-		"172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
-		"172.28.", "172.29.", "172.30.", "172.31.", "192.168.", "169.254.", "[::1]", "[::ffff:", "0.0.0.0", "0."}
-	for _, p := range blocked {
-		if strings.HasPrefix(host, p) {
-			return true
-		}
-	}
+	return netguard.IsPrivateURL(ctx, rawURL, netguard.Resolver(privateURLResolver))
+}
 
-	// Resolve hostname to catch DNS names that map to private IPs (DNS rebinding).
-	addrs, err := privateURLResolver(ctx, host)
-	if err != nil {
-		// If DNS fails, treat as private (fail-closed) to prevent bypass.
-		return true
-	}
-	for _, addr := range addrs {
-		for _, p := range blocked {
-			if strings.HasPrefix(addr, p) {
-				return true
-			}
-		}
-	}
-
-	return false
+// pinnedFetchTransport returns the transport for a fetch whose URL a remote
+// party chose and that guard already checked (#18992). The pre-fetch guard
+// resolves the name, and a default http.Client resolves it again when it
+// dials, so a self-reported DashboardURL whose name rebinds passed the guard
+// as public and was connected to as private. This transport resolves each
+// dial once through privateURLResolver, runs guard on every answer, and
+// connects to an address it checked, for every connection including redirect
+// hops. guard is called on each dial, not captured, so a test that swaps the
+// guard var behind it reaches its loopback server through the same path.
+func pinnedFetchTransport(guard func(ctx context.Context, rawURL string) bool) *http.Transport {
+	return netguard.PinnedDialer{
+		Resolve: func(ctx context.Context, host string) ([]string, error) { return privateURLResolver(ctx, host) },
+		Refuse:  func(ctx context.Context, target string) bool { return guard(ctx, "http://"+target) },
+	}.Transport()
 }
 
 func clampInt(v, min, max int) int {

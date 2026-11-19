@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/sandbox"
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 )
 
 // gitEnvAllowlist is what the clone may see of the service's environment.
@@ -73,6 +74,10 @@ func execRunner(ctx context.Context, dir, name string, args ...string) ([]byte, 
 	// Never prompt and never carry a credential: the ad-hoc form is for
 	// public repositories on the allowlist, so git gets the sandbox's
 	// credential-free environment plus a no-prompt switch.
-	cmd.Env = append(sandbox.SanitizedEnv(os.Environ(), gitEnvAllowlist, nil), "GIT_TERMINAL_PROMPT=0")
+	env := append(sandbox.SanitizedEnv(os.Environ(), gitEnvAllowlist, nil), "GIT_TERMINAL_PROMPT=0")
+	// The sanitized environment drops HTTPS_PROXY; re-express the upstream
+	// forward-proxy rules as scoped git config so clones of hosts behind a
+	// corporate proxy still work.
+	cmd.Env = append(env, upstreamproxy.Default().GitEnv()...)
 	return cmd.CombinedOutput()
 }

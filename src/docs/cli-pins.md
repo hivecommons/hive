@@ -10,6 +10,8 @@ Every agent CLI hive drives is baked into the images at a fixed version:
 | pi | `PI_VERSION` (hub), `PI_CODING_AGENT_VERSION` (contributor) | npm `@earendil-works/pi-coding-agent` | npm |
 | Goose | `GOOSE_VERSION`, `GOOSE_SHA256_{AMD64,ARM64}` | GitHub releases `aaif-goose/goose` | SHA-256 per arch |
 | Antigravity (agy) | `AGY_VERSION` + `AGY_BUILD`, `AGY_SHA512_*` (hub); `AGY_VERSION=<ver>-<build>`, `AGY_SHA256_*` (contributor) | Google's updater artifact, as tracked by the Homebrew `antigravity-cli` cask | SHA-512 (hub) / SHA-256 (contributor) per arch |
+| spektacular | `SPEKTACULAR_VERSION`, `SPEKTACULAR_SHA256_{AMD64,ARM64}` | GitHub releases `hivecommons/spektacular` | SHA-256 per arch, from the release `checksums.txt` (manual bump for now; not yet in `cli-pin-bump.sh`) |
+| quorum (meetings bundle, not a CLI backend) | `QUORUM_VERSION`, `QUORUM_SHA256`, `QUORUM_DAVEY_VERSION` | GitHub releases `hivecommons/quorum` (`quorum.mjs` asset); `@snazzah/davey` at the version quorum's `package-lock.json` pins | SHA-256 of the single arch-independent bundle from the release `quorum.mjs.sha256`; davey through npm (manual bump) |
 | Oh My Pi (omp) | `OMP_VERSION`, `OMP_SHA256_*` | GitHub releases `can1357/oh-my-pi` | SHA-256 per arch, cross-checked with `SHA256SUMS.txt` |
 | Muse Code | `MUSE_VERSION`, `MUSE_SHA256_*` | `api.meta.ai/muse-code/channels/muse-stable` and its release manifest | SHA-256 per arch, cross-checked with the manifest |
 | bobshell (bob) | `BOBSHELL_VERSION`, `BOBSHELL_SHA256_*` | `bobshell2-version.txt` on IBM COS | SHA-256, cross-checked with the vendor `.tgz.sha256` |
@@ -108,6 +110,43 @@ A pin change can leave Hive's model lists behind. Two layers cover it:
   `HIVE_MODEL_CHECK_STRICT=1` to make drift fail.
 - Each bump PR body carries a checklist for what cannot be automated:
   allowlists/fallbacks, `static/index.html`, and `src/pkg/tokens/pricing.go`.
+- For Claude, `.github/workflows/claude-model-freshness.yml` does those edits
+  weekly (#18754). It takes the Claude ids on OpenRouter's public catalogue
+  that are newer than the lists' newest of the same line (Fable, Opus, Sonnet,
+  Haiku; never Mythos, never an id OpenRouter is withdrawing) and probes each
+  with the pinned Claude Code, unauthenticated: the CLI prints an
+  `unrecognized_model` diagnostic for an id its model table does not know.
+  Recognised ids go into `claudePinnedCLIModels`, `claudeStaticModels`,
+  `CLAUDE_CLI_MODELS`, `static/index.html`, a requirements line at the pin,
+  and a `modelPrices` row from `pricetable --add` (same plausibility rules as
+  the price refresh). Everything else is listed under "needs a check" in one
+  PR on `bot/claude-model-freshness`, which carries `needs-human`.
+- Gemini: `geminiPinnedCLIModels` is kept by hand. Neither `src/Dockerfile`
+  nor `src/Dockerfile.contributor` installs a Gemini CLI, so there is no
+  pinned binary to check ids against. The weekly
+  `static-model-freshness.yml` report still flags drift for it.
+- Goose: out of scope. Its models depend on whichever provider an operator
+  configures, so there is no single list to keep fresh; the dashboard's ACP
+  probe asks the configured provider at run time.
+- agy and omp: the running CLI already bounds what a hive can launch, because
+  the dashboard asks the local binary at run time (`agy models`,
+  `omp models --json`), so neither needs an allowlist. Their static floors
+  (`agyStaticModels` in `cli_models_agy.go`, `ompStaticModels` in
+  `cli_models_omp.go`, and the matching `AGY_CLI_MODELS` / `OMP_CLI_MODELS`
+  in `backends-tokens.js` and `static/index.html`) are **not** refreshed by CI,
+  because neither subcommand answers without a login. Checked on the pinned
+  binaries (agy 1.5.0, omp 18.22.0) with an empty `HOME` and no credentials:
+  `agy models` prints `Please sign in to view available models` and exits 1,
+  and `omp models --json` exits 0 with `{"models":[]}`. A key in the
+  environment would make omp list that one provider's catalogue, but that is
+  not what a signed-in account sees (the omp floor also carries OAuth-only
+  providers and a reasoning-effort map), so it is not used as a source. Both
+  floors are therefore **a manual capture**: sign in on a machine running the
+  pinned binary, run the two commands above, and copy the result into the Go
+  and JS lists in the CLI's own order. The agy floor is still the 1.1.18
+  snapshot until someone does that. Neither list is guessed.
+- Copilot and codex are tracked under
+  [#19028](https://github.com/hivecommons/hive/issues/19028).
 
 The PR then runs the normal gates. The docker workflow builds both images for
 linux/amd64 and linux/arm64, where every hash-verified layer runs
@@ -169,3 +208,8 @@ patch-only bump PR.
   this workflow. Dispatching by hand with `cli=<name>` is the interim path.
 - `KILO_CLI_VERSION` and `COPILOT_SDK_VERSION` are pinned but not bumped by
   this workflow.
+- The Plaud knowledge connector's default MCP command is pinned to
+  `npx -y @plaud-ai/mcp@0.3.14` by the `plaudMCPVersion` constant in
+  `src/pkg/knowledge/connector/plaud.go` (not a Dockerfile `ARG`: npx fetches
+  it at run time). It is bumped by hand; the constant's comment lists the
+  steps. See [knowledge-connectors.md](knowledge-connectors.md#plaud-note-pro-voice-notes-type-plaud).

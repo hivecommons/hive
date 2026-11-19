@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"sync"
+
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent/copilottoken"
 )
@@ -28,15 +30,30 @@ func readCopilotConfig(path string) (map[string]interface{}, error) {
 	return copilottoken.ReadConfig(path)
 }
 
+// sharedCopilotConfigMu serializes the hive's own writes to the shared
+// Copilot config.json: the token writers below (dashboard login, token sync,
+// expired-token clear) and the config bridge's merge of CLI-written fields
+// (mergeCopilotConfigIntoShared, #18671). Without it a merge that read the
+// shared file just before a dashboard login could rename its stale copy over
+// the new login. The bridge only ever TryLocks it, so a token writer blocked
+// on a GitHub login lookup never stalls an agent's pane poller.
+var sharedCopilotConfigMu sync.Mutex
+
 func clearExpiredTokens() error {
+	sharedCopilotConfigMu.Lock()
+	defer sharedCopilotConfigMu.Unlock()
 	return copilottoken.ClearExpiredTokens(sharedCopilotConfigPath, sharedConfigDesiredMode)
 }
 
 func restoreCopilotTokens(path, token string) error {
+	sharedCopilotConfigMu.Lock()
+	defer sharedCopilotConfigMu.Unlock()
 	return copilottoken.RestoreTokens(path, token, sharedConfigDesiredMode, githubTokenLogin)
 }
 
 func replaceCopilotTokens(path, token string) error {
+	sharedCopilotConfigMu.Lock()
+	defer sharedCopilotConfigMu.Unlock()
 	return copilottoken.ReplaceTokens(path, token, sharedConfigDesiredMode, githubTokenLogin)
 }
 

@@ -43,6 +43,101 @@ Reverse proxies, Routes, and Ingresses must preserve HTTP upgrade headers and lo
 | Kubernetes API | In-cluster spokes/hub | Used for health/provisioning/route discovery when those features are configured. |
 | Login provider issuers | Hub with multi-provider login | GitHub OAuth endpoints, plus the OIDC issuer/JWKS hosts for each configured provider (e.g. `accounts.google.com`, `login.microsoftonline.com`, `sso.redhat.com`, or your IBMid/custom issuer). |
 | OCI Object Storage (`objectstorage.<region>.oraclecloud.com`) | Hub running DR backups | Only when the opt-in backup CronJob is deployed; see [backup-restore.md](backup-restore.md). |
+| `api.deepgram.com:443` | Spokes with Inbox transcription via Deepgram | Only when `inbox.transcription.enabled` is true and the provider is (or `auto` resolves to) `deepgram`. The hive process itself (not an agent) uploads recording audio to Deepgram under the owner's own key, so it does not go through the agent MITM proxy; the hive also downloads the audio from the source's audio host (for Plaud, its presigned CDN link). See [inbox-transcription.md](inbox-transcription.md). |
+| `generativelanguage.googleapis.com:443` | Spokes with Inbox transcription via Gemini | Only when `inbox.transcription.enabled` is true and the provider is (or `auto` resolves to) `gemini`. The hive process sends the recording to the Gemini API under the hive's own Gemini key (inline, or through the Files API for large recordings, deleted after the run). See [inbox-transcription.md](inbox-transcription.md). |
+| `huggingface.co:443`, `*.hf.co:443` | Spokes with Inbox transcription via the built-in whisper | Only on the first whisper run, to download the pinned ggml model (about 148 MB for `base.en`) into `/data/models/whisper`. Nothing afterwards: decoding and transcription run on the hive with no network. Air-gapped hives pre-seed the model and set `HIVE_WHISPER_MODEL_DOWNLOAD=false`. See [inbox-transcription.md](inbox-transcription.md). |
+
+## Egress through a corporate forward proxy
+
+Some environments cannot reach a destination directly — the common case is an
+enterprise GitHub instance that is only reachable through a corporate HTTP
+forward proxy. Hive can chain selected hosts through such a proxy with
+`CONNECT`, on every path that carries TLS egress:
+
+- the control-plane GitHub clients (App JWT / installation-token minting, REST
+  and GraphQL calls);
+- in-process `git` runs (knowledge sources, ad-hoc worktree provisioning),
+  expressed as scoped `GIT_CONFIG_*` entries;
+- the in-process MITM proxy that all agent `:443` traffic is redirected into.
+  Agents keep `HTTPS_PROXY=http://127.0.0.1:<mitm-port>`; the MITM proxy dials
+  the upstream proxy for matching hosts and speaks TLS (inspected flows) or
+  splices bytes (passthrough flows) over the tunnel. Agents are never handed
+  the corporate proxy URL.
+
+Configure it in `hive.yaml`:
+
+```yaml
+network:
+  upstream_proxy:
+    url: http://proxy.corp.example:3128      # userinfo → Proxy-Authorization: Basic
+    hosts: ["ghe.corp.example", "*.ghe.corp.example"]
+    no_proxy: ["10.0.0.0/8"]
+```
+
+or via environment (`HIVE_UPSTREAM_PROXY_URL`, comma-separated
+`HIVE_UPSTREAM_PROXY_HOSTS`, `HIVE_NO_PROXY`), which overrides the file block.
+When neither is set, standard `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` apply to
+every host. `hosts` patterns: exact host, `*.domain` (subdomains only),
+`.domain` (domain and subdomains), IP literal, CIDR, or `*`; empty means every
+host not listed in `no_proxy`. Hosts outside the rules keep the direct path.
+Limitation: for `git`, only exact-host patterns can be expressed as per-URL
+`http.<url>.proxy` config; wildcard/suffix/CIDR rules apply to API and MITM
+traffic but not to in-process `git` unless `hosts` is empty.
+
+Hosted hubs set this per cluster in `/data/saas/clusters.json` so new pool
+slots on that cluster are provisioned with the env vars above:
+
+```json
+{
+  "id": "corp-cluster",
+  "upstream_proxy": {
+    "url": "http://proxy.corp.example:3128",
+    "hosts": ["ghe.corp.example", "*.ghe.corp.example"]
+  }
+}
+```
+
+Existing hive Deployments are not reconciled; patch them once with
+`kubectl -n <hive-ns> set env deploy/hive -c hive HIVE_UPSTREAM_PROXY_URL=... HIVE_UPSTREAM_PROXY_HOSTS=...`.
+
+### GitHub Enterprise behind a TLS reverse proxy (hostAliases)
+
+Some networks expose an enterprise GitHub not through a CONNECT forward proxy
+but through a **TLS reverse proxy** pinned to a fixed IP: the proxy serves a
+certificate valid for the GHE hostnames on :443 and forwards to GHE, while
+`CONNECT` is rejected (e.g. openresty answering `405 Not Allowed`) and direct
+egress to GHE times out. `upstream_proxy` cannot express that; the fix is a
+Pod `hostAliases` entry that resolves the GHE hostnames to the proxy IP so TLS
+SNI/verification and every path (API, git smart-HTTP, MITM) keep working.
+
+Hosted hubs declare it per cluster in `/data/saas/clusters.json`:
+
+```json
+{
+  "id": "corp-cluster",
+  "host_aliases": [
+    { "ip": "129.34.104.21", "hostnames": ["github.ibm.com", "api.github.ibm.com"] }
+  ]
+}
+```
+
+Entries are validated at load (the IP must parse, every entry needs at least
+one hostname; hostnames are lowercased). An invalid `host_aliases` block is
+logged and ignored — it never drops the cluster. New pool slots on the cluster
+are provisioned with the matching `spec.template.spec.hostAliases`, and a
+throttled reconcile sweep (at most 3 patches per 15 minutes, since each one
+rolls that hive's pod) converges existing hives on clusters the hub can reach
+with kubectl. The hub also sends the aliases on every heartbeat response
+(`host_aliases`), and each hosted spoke converges its own Deployment from it
+(at most one check per 15 minutes, sooner when the set changes). That is the
+only path on a push-reported (`pull_only`) cluster, where the hub never
+patches Deployments. Convergence is exact for the hostnames `clusters.json`
+lists: each resolves only to its configured IP. Unrelated hand-applied
+aliases for other hosts are preserved, and a cluster with no `host_aliases`
+is never touched. A spoke that cannot patch itself (missing get/patch on
+`deployments/hive`) logs a WARN, as does the hub sweep when it cannot read or
+patch a Deployment. Non-hub (standalone) deployments add the same
+`hostAliases` block to their own pod spec.
 
 ## Firewall recommendations
 

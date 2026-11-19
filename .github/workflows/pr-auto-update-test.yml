@@ -8,6 +8,8 @@ on:
       - '.github/workflows/pr-auto-update*.yml'
       - '.github/scripts/native-queue-*.cjs'
       - '.github/scripts/diagnose-dco-provider*.cjs'
+      - '.github/scripts/pr-verifier*.cjs'
+      - '.github/scripts/integration-governance.cjs'
       - 'src/pkg/dashboard/static-src/js/config-helpers.js'
       - 'src/pkg/dashboard/static-src/js/config-features.js'
       - 'src/pkg/dashboard/static-src/js/tracker-native-queue.js'
@@ -17,6 +19,9 @@ on:
       - '.github/workflows/v2-tests.yml'
       - '.github/workflows/go-security-analysis.yml'
       - '.github/workflows/pr-verifier.yml'
+      # Any workflow edit can change a required check's concurrency (#18578).
+      - '.github/scripts/test-required-check-concurrency.py'
+      - '.github/workflows/*.yml'
   push:
     branches: [v5, v6]
     paths:
@@ -25,6 +30,8 @@ on:
       - '.github/workflows/pr-auto-update*.yml'
       - '.github/scripts/native-queue-*.cjs'
       - '.github/scripts/diagnose-dco-provider*.cjs'
+      - '.github/scripts/pr-verifier*.cjs'
+      - '.github/scripts/integration-governance.cjs'
       - 'src/pkg/dashboard/static-src/js/config-helpers.js'
       - 'src/pkg/dashboard/static-src/js/config-features.js'
       - 'src/pkg/dashboard/static-src/js/tracker-native-queue.js'
@@ -34,6 +41,9 @@ on:
       - '.github/workflows/v2-tests.yml'
       - '.github/workflows/go-security-analysis.yml'
       - '.github/workflows/pr-verifier.yml'
+      # Any workflow edit can change a required check's concurrency (#18578).
+      - '.github/scripts/test-required-check-concurrency.py'
+      - '.github/workflows/*.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -55,6 +65,8 @@ jobs:
           node-version: '22'
       - name: Exercise native queue policy with mocked APIs
         run: node --test .github/scripts/native-queue-policy.test.cjs .github/scripts/native-queue-settings.test.cjs .github/scripts/native-queue-tracker.test.cjs .github/scripts/diagnose-dco-provider.test.cjs
+      - name: PR Verifier records completed PR Type / PR Issue results (#18764)
+        run: node --test .github/scripts/pr-verifier.test.cjs
       - name: Ensure YAML parser for workflow contracts
         run: |
           python3 -c 'import yaml' 2>/dev/null && exit 0
@@ -63,3 +75,5 @@ jobs:
           sudo apt-get install -y -qq python3-yaml
       - name: Check native queue workflow contracts
         run: python3 .github/scripts/test-native-queue-workflows.py
+      - name: Required checks are never cancelled by same-head re-checks (#18578)
+        run: python3 .github/scripts/test-required-check-concurrency.py

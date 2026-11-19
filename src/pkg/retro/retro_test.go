@@ -389,23 +389,29 @@ func TestApplyAdvisorDecisionsArms(t *testing.T) {
 		"o/r#1": {{Kick: "dev#1", Mode: "rank", Outcome: "held-out"}, {Kick: "dev#2", Mode: "rank", Outcome: "held-out"}},
 		"o/r#2": {{Kick: "dev#3", Mode: "rank", Outcome: "held-out"}, {Kick: "dev#4", Mode: "rank", Outcome: "delivered"}},
 		"o/r#4": {{Kick: "dev#5", Mode: "shadow", Outcome: "delivered"}},
+		// A rate-limited decision is counted but assigns no arm (#18151): the
+		// bead stays in the arm its other decisions put it in, or none.
+		"o/r#5": {{Kick: "dev#6", Mode: "rank", Outcome: AdvisorOutcomeRateLimited}},
+		"o/r#6": {{Kick: "dev#7", Mode: "rank", Outcome: AdvisorOutcomeRateLimited}, {Kick: "dev#8", Mode: "rank", Outcome: "held-out"}},
 	}
 	cases := []struct {
 		ref                  string
 		arm                  string
 		decisions, delivered int
-		heldOut              int
+		heldOut, rateLimited int
 	}{
-		{"o/r#1", "holdout", 2, 0, 2},
-		{"o/r#2", "mixed", 2, 1, 1},
-		{"o/r#3", "none", 0, 0, 0},
-		{"o/r#4", "shadow", 1, 1, 0},
+		{"o/r#1", "holdout", 2, 0, 2, 0},
+		{"o/r#2", "mixed", 2, 1, 1, 0},
+		{"o/r#3", "none", 0, 0, 0, 0},
+		{"o/r#4", "shadow", 1, 1, 0, 0},
+		{"o/r#5", "none", 1, 0, 0, 1},
+		{"o/r#6", "holdout", 2, 0, 1, 1},
 	}
 	for _, tt := range cases {
 		r := RetroRecord{IssueRef: tt.ref}
 		ApplyAdvisorDecisions(&r, reader)
-		if r.AdvisorArm != tt.arm || r.AdvisorDecisions != tt.decisions || r.AdvisorDelivered != tt.delivered || r.AdvisorHeldOut != tt.heldOut {
-			t.Fatalf("%s = %s/%d/%d/%d, want %s/%d/%d/%d", tt.ref, r.AdvisorArm, r.AdvisorDecisions, r.AdvisorDelivered, r.AdvisorHeldOut, tt.arm, tt.decisions, tt.delivered, tt.heldOut)
+		if r.AdvisorArm != tt.arm || r.AdvisorDecisions != tt.decisions || r.AdvisorDelivered != tt.delivered || r.AdvisorHeldOut != tt.heldOut || r.AdvisorRateLimited != tt.rateLimited {
+			t.Fatalf("%s = %s/%d/%d/%d/%d, want %s/%d/%d/%d/%d", tt.ref, r.AdvisorArm, r.AdvisorDecisions, r.AdvisorDelivered, r.AdvisorHeldOut, r.AdvisorRateLimited, tt.arm, tt.decisions, tt.delivered, tt.heldOut, tt.rateLimited)
 		}
 	}
 	r := RetroRecord{IssueRef: "o/r#1"}

@@ -76,6 +76,9 @@ func TestPublishFleetReports_PostsReportAndRecordsState(t *testing.T) {
 			http.Error(w, "boom", http.StatusInternalServerError)
 		case r.URL.Path == "/search/issues":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{"number": 7, "html_url": "https://github.com/hivecommons/hive/issues/7"}}})
+		// The seen-log upsert lists existing comments first (#18608).
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/hivecommons/hive/issues/7/comments":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues/7/comments":
 			comments.Add(1)
 			w.WriteHeader(http.StatusCreated)

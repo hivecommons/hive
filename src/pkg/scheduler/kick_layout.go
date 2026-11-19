@@ -25,10 +25,14 @@ import (
 //	8. <resolved policy body>                static text, then ${ISSUE_LIST}/${PR_LIST}/… where the template puts them
 //	9. REPO-SCOPED CADENCE TARGET            semi-static (repo-scoped kicks only)
 //	10. AUTHORIZED REPOS                     semi-static (include_repos)
+//	10a. 📚 REFERENCE REPOS                  semi-static (project.reference_repos; rendered inside 10, after
+//	                                         the authorized/paused lists and before its ⛔ scope lines, so
+//	                                         "repos not listed above" covers them — #18015/#18020)
 //	11. hold-gated PR coordination           dynamic (held PR snapshot)
 //	12. red-PR fix-before-new                dynamic (ci-failing.json)
 //	13. review-thread fix-before-new         dynamic (review-threads.json)
 //	14. PR follow-up handoff                 dynamic (pr-followup/)
+//	14a. topic claims                        dynamic (bd topic claims, #18493)
 //	15. guide flow line                      dynamic (guide only)
 //	16. in-flight note                       dynamic (session claims)
 //	16a. maintainer notes                    dynamic (dashboard notes on listed items)
@@ -83,6 +87,7 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	staticSeams := []func(string) string{
 		func(m string) string { return s.addHouseStyle(a.agent, m) },
 		addGovernorWorkSourceRule,
+		addPlainDashRule,
 		func(m string) string { return s.addIndependentReviewSection(a.agent, m) },
 		func(m string) string { return s.addWorkflowPushCeiling(a.agent, m) },
 		func(m string) string { return s.addFormalQualityCapability(a.agent, m) },
@@ -111,9 +116,12 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	message = s.addRedPRFixFirst(a.agent, message)
 	message = s.addReviewThreadFixFirst(a.agent, message)
 	message = s.addPRFollowUpHandoff(a.agent, message)
+	message = s.addRemoteItemHandoff(a.agent, message)
+	message = s.addTopicClaims(a.agent, message)
 	message = s.addGuideFlow(a.agent, a.actionable, message)
 	message = s.addInflightNote(message, a.issues)
 	message = s.addMaintainerNotes(message, a.issues)
+	message = s.addCustomerContext(message, a.issues)
 	message = s.addQuestionAnswerContract(a.agent, message, a.issues)
 	message = addInProgressClaimRule(message, a.issues)
 	if a.idleReason == "" {

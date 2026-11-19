@@ -68,8 +68,8 @@ func applyInferenceAuthBody(cur config.InferenceAuthConfig, body *inferenceAuthB
 		}
 		// SECURITY (audit N8, CWE-200/918): same confinement as the gateway
 		// and LiteLLM handlers — reject an out-of-root path at the door.
-		if keyFile != "" && !config.SecretFilePathAllowed(keyFile) {
-			return cur, "api_key_file must be under /secrets or " + config.WritableSecretsDir
+		if msg := config.SecretFilePathRejection("api_key_file", keyFile); msg != "" {
+			return cur, msg
 		}
 		cur.APIKeyFile = keyFile
 	}

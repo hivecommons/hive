@@ -70,6 +70,26 @@ func TestCaptureResumeHandle_ClaudeNamesNewestTranscript(t *testing.T) {
 	}
 }
 
+func TestCaptureResumeHandle_ClaudeIgnoresSubagentTranscripts(t *testing.T) {
+	home := homeForCapture(t)
+	now := time.Now()
+	const sid = "11111111-2222-3333-4444-555555555555"
+	project := filepath.Join(home, ".claude", "projects", "-data-work-hive")
+	writeResumeTranscript(t, filepath.Join(project, sid+".jsonl"), now.Add(-time.Hour))
+	writeResumeTranscript(t, filepath.Join(project, sid, "subagents", "agent-0123456789abcdef.jsonl"), now)
+
+	h, ok := capture("claude", now)
+	if !ok {
+		t.Fatal("no handle captured for claude")
+	}
+	if h.SessionID != sid {
+		t.Errorf("session id = %q, want the session transcript's %q", h.SessionID, sid)
+	}
+	if h.Command != "claude --resume "+sid {
+		t.Errorf("command = %q", h.Command)
+	}
+}
+
 func TestCaptureResumeHandle_CopilotUsesSessionDirectories(t *testing.T) {
 	home := homeForCapture(t)
 	now := time.Now()

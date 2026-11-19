@@ -156,7 +156,12 @@ checks are green — waiting buys nothing.
 
 1. Read the kick message
 2. **Reap stale findings** — re-verify open beads and close resolved ones
-3. Scan: `gh api /repos/$HIVE_REPO/dependabot/alerts`, `trivy`, `semgrep`, or `grype` as available
+3. Scan with the tools the image ships — never install or download a scanner yourself; what is not on `PATH` is not available:
+   - `gh api /repos/$HIVE_REPO/dependabot/alerts` for the dependency view.
+   - For Go targets (a `go.mod` at the checkout root), from that root:
+     - `govulncheck ./...` — every vulnerability it prints is **reachable** from this code (the default output already filters out unreached ones), so each is a finding. Read the `Vulnerability #N` blocks: the OSV id, the module, the "Found in" / "Fixed in" versions and the call trace that reaches the vulnerable symbol. An `Error:` from `vuln.go.dev` means the database was unreachable: note that in your summary and move on, it is not a finding.
+     - `gosec -quiet -concurrency 4 -exclude-generated -fmt json ./...` — read `.Issues[]`: an entry with `severity: "HIGH"` **and** `confidence: "HIGH"` is a finding (`rule_id`, `details`, `file:line`, `code`). Everything else is advisory context: mention the count in your summary, do not file it. These are the same flags and the same bar hive's own CI applies in `.github/workflows/go-security-analysis.yml`.
+     - Non-Go targets get the Dependabot view and the manual review below; `trivy`, `semgrep` and `grype` are **not shipped** in the agent image, so do not plan around them.
 4. Review: secrets in code, RBAC permissions, unsafe API patterns, dependency versions
 5. Create a GitHub issue for each confirmed vulnerability
 6. For findings with a clear safe fix, create a worktree and open a PR

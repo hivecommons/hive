@@ -30,6 +30,18 @@ https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md
 | `/area <area>` | Validates or requests an area label. The Hive label helper reports invalid values and lists the accepted area names; repositories may also have Prow or other automation that applies valid labels. | Any non-bot commenter accepted by the label-helper workflow, subject to any repository label automation that applies the label. | Issues and pull requests. | GitHub Actions on the new comment. | The helper itself changes no labels for valid `/area` comments; companion repository automation may add `area/<area>` or equivalent labels. |
 | `/assign` | Assigns the commenter where the repository's assignment automation supports slash-command assignment. The Hive assignment helper deliberately ignores the exact command because Prow handles it, but it points natural-language assignment requests to this command. | Repository assignment automation decides; the helper response is available to non-bot issue commenters. | Issues. | Repository assignment automation or GitHub Actions helper on the new comment. | Assignment state changes, not labels. |
 | `/unassign` | Removes the commenter's assignment where the repository's assignment automation supports it. | Repository assignment automation decides; the helper response is available to non-bot issue commenters. | Issues. | Repository assignment automation or GitHub Actions helper on the new comment. | Assignment state changes, not labels. |
+| `/claim` | Says "I am working this issue": a contributor-lane lease on the issue is released and its relay task yanked, no new contributor claim is accepted on it and the hive will not adopt a contributor PR for it unless you release it ([#18899](https://github.com/hivecommons/hive/issues/18899)). It is read from the forge by the claim gate, not parsed by a sweep and not written to the ledger by itself: to register a claim in the ledger use the dashboard or `hivectl claim owner/repo#N`. | A commenter with author association `OWNER`, `MEMBER` or `COLLABORATOR`; bots and the contributor holding the lease are ignored. | Open issues. | The contributor claim's next lease renewal or the five-minute claim release tick. | Applies `hive/claimed-by-human` and `stage/020-claimed` when the claim is recorded in the ledger. |
+| `/unclaim` | Withdraws your own `/claim` comment. | The same commenter. | Open issues. | Same as `/claim`. | None. |
+
+## Claiming an issue
+
+A person's claim outranks the contributor lane. Any of these on an open issue, made by an owner or maintainer (a person with `write`, `maintain` or `admin` repository permission, never a bot or the hive's own App), counts as a human claim even though none of them goes through the claim ledger ([#18899](https://github.com/hivecommons/hive/issues/18899), child of [#18890](https://github.com/hivecommons/hive/issues/18890)):
+
+- **Assigning the issue.** This is what an operator's dispatcher does: `gh issue edit --add-assignee` plus a plain "Claimed; fix in progress." comment. The assignment is the claim; the comment is courtesy. An assignee who is the contributor holding the lease is not a claim against that contributor (a maintainer handing the issue to them).
+- **A `/claim` comment** (or a plain comment opening with "Claimed") from an `OWNER`, `MEMBER` or `COLLABORATOR`, until the same person comments `/unclaim`.
+- **Applying `hive/claimed-by-human` by hand.** The same label applied by the hive is the ledger speaking and is not a claim.
+
+What a human claim does: a live contributor lease on the issue is released (release reason `human claim: assigned by <login>`, `human claim: /claim comment by <login>` or `human claim: hive/claimed-by-human label by <login>`), its relay task is yanked so the lane moves on, and the person is recorded as the ledger claim holder. While it stands a contributor's fresh claim and renewal are refused, and the hive does not adopt a contributor PR whose `Fixes #N` names the issue (the tracker row reads "an owner or maintainer has claimed the issue"). It lifts when the person unassigns, removes the label or comments `/unclaim`. The supported way to register a claim in the ledger is the dashboard or `hivectl claim owner/repo#N`; the three forge signals above are detected, not ledger entries of their own.
 
 ## Eligibility rules
 
@@ -43,6 +55,14 @@ seven days, unedited, authored by a human rather than the hive or another bot,
 and posted by someone who currently has `write`, `maintain`, or `admin`
 permission on the repository. A `/hive decision` must include non-empty
 instructions.
+
+On an issue, a first line of `Decision: <text>` (or `Decision (owner): <text>`)
+is read as `/hive decision <text>`, under the same permission, freshness and
+unedited rules; the lines after it are kept as part of the decision. A first
+line that names a decision without recording one (`Decision:` with no text,
+`decide ...`, `option 1`, or a bare option letter such as `B`) un-parks nothing
+and gets a reply telling the commenter to use `/hive decision <text>`. PRs keep
+the strict `/hive decision` shape.
 
 The on-demand `/hive help` workflow uses the same first-line command shape, is
 ignored for bot comments, and allows `triage`, `write`, `maintain`, or `admin`
@@ -163,6 +183,19 @@ not un-park an issue. When an eligible maintainer writes prose that looks like
 assent, Hive posts a hint asking for `/hive approve` or `/hive decision <text>`
 and leaves all labels unchanged. This avoids turning casual agreement into a
 state-changing instruction.
+
+## Model-defined replies
+
+A repository bound to a [workflow model](design/workflow-models.md) may
+declare its own human-gate verbs per state (`replies`). On a parked issue in
+such a repository, `/hive <verb>` with one of those verbs — multi-word verbs
+are fine, case does not matter — is accepted like `/hive decision`: the
+parking labels are cleared, `approved-direction` is added, the label the model
+maps to the verb's target state is applied when it declares one, and the reply
+comment says what the model did with the verb. Any text after the verb is kept
+as the decision. The Activity Monitor's human-gate pill offers the same verbs
+after the built-in ones. Repositories without a binding, and pull requests,
+behave exactly as described above; the model's verbs are not recognised there.
 
 ## Idempotency markers
 

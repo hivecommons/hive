@@ -30,7 +30,7 @@ Examples in the current packs:
 - `dedupe-issues.md` is the L5/L6 `dedupe` lane: a daily sweep over every open issue and PR that files and then updates in place one consolidation checklist issue per repository (hivecommons/hive#11582); it never closes or edits anyone else's items.
 - `redteam-holdgated.md` is the opt-in L5/L6 `redteam` lane (hivecommons/hive#17420), at both levels: it plays a malicious contributor and adds measured attack cases to the `ioscan` red-team corpus in `hold`-labelled PRs, never posting attack text anywhere else.
 - `supervisor-nogithub.md` is the supervisor policy from L2 through L6; it keeps orchestration separate from GitHub mutation.
-- `brainstorm-advisory.md` is the only brainstorm template referenced by v4, including L1 inception. `brainstorm-inception.md` is mentioned only by stale documentation from the retired v2 line, so operators should not create or rely on that filename unless they also set `kick_template` to it.
+- `brainstorm-advisory.md` is the only brainstorm template referenced by v4. It is ideation only: the inception workflow it used to drive was retired in favour of Inception (spek) sessions. `brainstorm-inception.md` is mentioned only by stale documentation from the retired v2 line, so operators should not create or rely on that filename unless they also set `kick_template` to it.
 
 ## Customizing prompts
 
@@ -94,12 +94,12 @@ The complete built-in scheduler set in v4 is:
 | `${ENABLED_AGENTS}` | Formatted enabled-agent list. | Alias of `${AGENT_LIST}`. |
 | `${AGENT_ROLES}` | Formatted role/metadata summary for configured agents. | Built from current config. |
 | `${KNOWLEDGE}` | Knowledge priming section for relevant issues. | Populated by configured knowledge layers; otherwise renders the scheduler's empty/none text. |
-| `${INCEPTION_IDEA}` | Current inception idea text. | Empty when no inception run is active. |
-| `${INCEPTION_PHASE}` | Current inception phase. | Empty when inactive. |
-| `${INCEPTION_MODE}` | Current inception mode. | Empty when inactive. |
-| `${INCEPTION_ANSWERS}` | Collected inception answers. | Empty when inactive. |
-| `${INCEPTION_SLUG}` | Inception slug. | Empty when inactive. |
-| `${INCEPTION_REPO_URL}` | Inception repository URL. | Empty when inactive. |
+| `${INCEPTION_IDEA}` | Deprecated: the inception workflow was retired. | Always empty; kept for one release so custom templates still render. |
+| `${INCEPTION_PHASE}` | Deprecated. | Always empty. |
+| `${INCEPTION_MODE}` | Deprecated. | Always empty. |
+| `${INCEPTION_ANSWERS}` | Deprecated. | Always empty. |
+| `${INCEPTION_SLUG}` | Deprecated. | Always empty. |
+| `${INCEPTION_REPO_URL}` | Deprecated. | Always empty. |
 | `${MERGE_ELIGIBLE}` | Formatted merge-eligible PR list from `/var/run/hive-metrics/merge-eligible.json`. | Renders `(none)` when the file is absent, invalid, or empty. |
 | `${CI_FAILING}` | Formatted failing-CI PR list from `/var/run/hive-metrics/ci-failing.json`. Held red PRs (`hold` label) are counted but not listed here: a held PR is repaired only by the agent that opened it, via the FIX-BEFORE-NEW block the scheduler prepends to that agent's kick, which marks it `held for human review — fix CI, do not remove the hold` ([#7438](https://github.com/hivecommons/hive/issues/7438)). Red PRs already deferred to a still-open shared-CI incident (`deferred_incident`) are listed under a separate `DEFERRED TO OPEN SHARED-CI INCIDENTS` heading with no repair instructions, and the FIX-BEFORE-NEW block omits them ([#10528](https://github.com/hivecommons/hive/issues/10528)). | Renders `(none)` when the file is absent, invalid, or empty. |
 

@@ -190,6 +190,27 @@ Things to know when you query them:
   older per-task files are pruned when the next attestation is stored, at most
   once an hour.
 
+## Hub self-service registration lines
+
+The hub does not write `audit.jsonl`; its accountability record is the
+`audit: <action>` lines in the hub server log (the same place `access
+granted`, `hub admin granted` and `registry entry removed` land). The
+self-service registration API ([#18060](https://github.com/hivecommons/hive/issues/18060),
+`pkg/hub/selfservice_api.go`) writes one line per decision. `user` is the hub
+login of the caller; `hive` is the `byo-` ID the request named or would have
+produced (empty when the name never became an ID). No line ever carries a key,
+a key hash, the master secret or the user's GitHub token.
+
+| Action | Written when | Keys |
+| --- | --- | --- |
+| `selfservice_hive_registered` | A registration passed every check and the key was minted | `user`, `hive`, `repos` (count), `org` |
+| `selfservice_hive_updated` | The owner changed `repos` and/or `dashboard_url` with `PATCH /api/hub/v1/registrations/{id}`; the heartbeat key is untouched. A request that changes nothing writes no line | `user`, `hive`, `repos_added` (count), `repos_removed` (count), `dashboard_changed`, `revision` |
+| `selfservice_hive_rotated` | The owner rotated the heartbeat key | `user`, `hive`, `overlap` (how long the previous key keeps authenticating) |
+| `selfservice_hive_revoked` | The owner or a hub admin revoked the hive; the registry entry is removed in the same request and `registry entry removed` follows | `user`, `hive`, `owner`, `by_admin` |
+| `selfservice_hive_expired` | The expiry sweep (`pkg/hub/selfservice_expiry.go`, every `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL`) removed a hive that went longer than `HIVE_HUB_SELFSERVICE_EXPIRY` without an accepted heartbeat; the key is revoked and `registry entry removed` (with `by=selfservice-expiry-sweep`) follows | `id`, `owner`, `last_heartbeat` (RFC 3339, or `never` when no heartbeat was ever accepted), `expiry` |
+| `selfservice_hive_refused` | A registration was turned away and nothing was stored | `user`, `hive`, `reason` (`invalid_name`, `invalid_login`, `reserved_prefix`, `duplicate_id`, `invalid_repos`, `invalid_dashboard_url`, `invalid_update` (a `PATCH` body the hub refused), `per_user_cap` with `max_per_user`, `no_github_token`, `no_github_login`, `not_repo_admin` with `repo`, `ownership_check_error` with `repo`, `proof_token_refused` (a failed `github-user-token` proof) with `proof_method`, `proof_reason` and `repo` when one repo failed) |
+| `selfservice_ownership_proven` | A v1 create or `PATCH` proved ownership with the `github-user-token` method; the token itself is never logged | `user`, `hive`, `proof_method`, `repos` (count) |
+
 ## Rotation and retention
 
 Rotation is handled by lumberjack:

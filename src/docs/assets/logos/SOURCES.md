@@ -18,10 +18,26 @@ Fetched from [simple-icons/simple-icons](https://github.com/simple-icons/simple-
 | `jira.svg` | Jira | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/jira.svg> |
 | `linear.svg` | Linear | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/linear.svg> |
 | `claude.svg` | Claude | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/claude.svg> |
-| `nvidia.svg` | NVIDIA | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/nvidia.svg> |
 | `kubernetes.svg` | Kubernetes | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/kubernetes.svg> |
 | `podman.svg` | Podman | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/podman.svg> |
 | `cncf.svg` | CNCF | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/cncf.svg> |
+
+## Project artwork
+
+Fetched from each project's own repository at the commit named in the URL.
+`openshell.svg` and `openbao.svg` are unmodified. `agent-substrate.png` is the
+project's `ate-logo.png` resized to 128 x 128 (the upstream SVG is about
+95 KB, over the 20 KB limit below).
+
+| File | Project | License | Source URL |
+| --- | --- | --- | --- |
+| `openshell.svg` | OpenShell (project mark, not the NVIDIA corporate logo) | [Apache-2.0](https://github.com/NVIDIA/OpenShell/blob/2e5589b2180dd432320adda124c4f7bcede119b5/LICENSE) | <https://github.com/NVIDIA/OpenShell/blob/2e5589b2180dd432320adda124c4f7bcede119b5/docs/brand/assets/openshell-mark.svg> |
+| `agent-substrate.png` | Agent Substrate ("Yolo", designed and donated by Nan Hockin) | [Apache-2.0 OR CC-BY-4.0](https://github.com/agent-substrate/substrate/blob/cf5768a075b741511829a207bdfb4e296d4114c7/logo/LICENSE), used here under CC-BY-4.0 | <https://github.com/agent-substrate/substrate/blob/cf5768a075b741511829a207bdfb4e296d4114c7/logo/ate-logo.png> |
+| `openbao.svg` | OpenBao | [CC-BY-4.0](https://github.com/openbao/artwork/blob/2387118edc846d2ec82ffd72409a3e0fe3be8519/LICENSE) | <https://github.com/openbao/artwork/blob/2387118edc846d2ec82ffd72409a3e0fe3be8519/color/openbao-color.svg> |
+
+The same three files are served on the hub landing page from
+`src/pkg/hub/static/integrations/`, next to copies of `podman.svg` and
+`kubernetes.svg` from the Simple Icons table above.
 
 ## Text badges (generated, no third-party asset)
 
@@ -49,10 +65,11 @@ third-party artwork and is covered by the repository license.
 | `openhands-badge.svg` | OpenHands | no redistributable logo found |
 | `gemini-badge.svg` | Gemini | no redistributable logo found |
 | `gh-aw-badge.svg` | GitHub Agentic Workflows | no redistributable logo found |
+| `keystore-badge.svg` | Hive built-in keystore | Hive feature, no third-party project |
 
 ## Rules for adding a logo
 
 - Prefer the project's own brand page or a Simple Icons SVG (CC0).
 - Record the exact source URL and license here in the same PR.
-- Keep each SVG under 20 KB with no scripts, external references, or embedded images.
+- Keep each SVG under 20 KB with no scripts, external references, or embedded images. Use a small PNG (128 px) when the upstream SVG is larger.
 - If no redistributable asset exists, add a text badge instead of copying a logo.

@@ -240,10 +240,19 @@ report_body() {
   }
 }
 
+# One-line body the existing marker comment is edited to once a PR that had
+# overlaps no longer has any. A PR that never had a finding gets no comment
+# at all: the full clean report goes to the step summary only (#17863).
+resolved_body() {
+  local base=$1
+  # shellcheck disable=SC2016 # backticks are literal Markdown
+  printf '%s\n\n### Open PR overlap check\n\n✅ Resolved: no conflicting open PRs or same-file overlaps remain against `%s`.\n' "$MARKER" "$base"
+}
+
 upsert_comment_and_label() {
-  local pr=$1 body=$2 has_conflicts=$3
+  local pr=$1 body=$2 has_conflicts=$3 has_any=${4:-1} base=${5:-}
   if ((DRY_RUN)); then
-    printf 'DRY RUN: would update PR #%s comment and label=%s\n' "$pr" "$has_conflicts"
+    printf 'DRY RUN: would update PR #%s comment and label=%s findings=%s\n' "$pr" "$has_conflicts" "$has_any"
     printf '%s\n' "$body"
     return 0
   fi
@@ -251,7 +260,13 @@ upsert_comment_and_label() {
   local comment_id
   comment_id=$(api "repos/${REPO}/issues/${pr}/comments?per_page=100" --paginate \
     --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" | head -n1)
-  if [[ -n "$comment_id" ]]; then
+  if [[ "$has_any" != '1' ]]; then
+    if [[ -n "$comment_id" ]]; then
+      api -X PATCH "repos/${REPO}/issues/comments/${comment_id}" -f body="$(resolved_body "$base")" >/dev/null
+    else
+      printf 'PR #%s: no overlap findings and no earlier comment; not posting\n' "$pr"
+    fi
+  elif [[ -n "$comment_id" ]]; then
     api -X PATCH "repos/${REPO}/issues/comments/${comment_id}" -f body="$body" >/dev/null
   else
     api -X POST "repos/${REPO}/issues/${pr}/comments" -f body="$body" >/dev/null
@@ -276,12 +291,12 @@ write_summary() {
 
 run_for_one_pr() {
   local pr=$1 base=$2 writable=$3 truncated=${4:-0}
-  local rows has_conflicts _has_any base_conflict body
-  make_report_for_pr "$pr" "$base" rows has_conflicts _has_any base_conflict
+  local rows has_conflicts has_any base_conflict body
+  make_report_for_pr "$pr" "$base" rows has_conflicts has_any base_conflict
   body=$(report_body "$pr" "$base" "$rows" "$truncated" "$base_conflict")
   write_summary "$body"
   if [[ "$writable" == '1' ]]; then
-    upsert_comment_and_label "$pr" "$body" "$has_conflicts"
+    upsert_comment_and_label "$pr" "$body" "$has_conflicts" "$has_any" "$base"
   fi
 }
 

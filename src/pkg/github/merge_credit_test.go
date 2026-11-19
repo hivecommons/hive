@@ -379,7 +379,9 @@ func TestMergePRViaSendsIssueAuthorCredit(t *testing.T) {
 			}
 			msg, _ := mergeBody["commit_message"].(string)
 			if !tc.enabled {
-				if msg != "" || issueGets != 0 {
+				// Credit off still rebuilds the squash body so the branch
+				// sign-off lands (hivecommons/hive#18203).
+				if msg != "Signed-off-by: K <k@example.com>" || issueGets != 0 {
 					t.Fatalf("credit off: commit_message=%q issueGets=%d", msg, issueGets)
 				}
 				if len(details) != 1 || strings.Contains(details[0], "issue_authors") {

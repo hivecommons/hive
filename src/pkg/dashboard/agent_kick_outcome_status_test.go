@@ -59,6 +59,16 @@ func TestBuildAgents_FinishedTurnIsNotWorking(t *testing.T) {
 	}
 }
 
+// #18458: a running agent that was never kicked has no turn in flight. It
+// read "working" forever because Settled(nil) is false.
+func TestBuildAgents_NeverKickedIsNotWorking(t *testing.T) {
+	proc := outcomeProc(time.Now(), crux.KickOutcome{})
+	proc.LastKick = nil
+	if a := buildOneAgent(t, proc); a.Busy != "idle" {
+		t.Fatalf("never-kicked running agent: busy=%q, want idle", a.Busy)
+	}
+}
+
 func TestBuildAgents_StandDownIsBlockedWithReason(t *testing.T) {
 	kickAt := time.Now().Add(-10 * time.Minute)
 	sd := crux.KickOutcome{Kind: crux.KickOutcomeStandDown, Reason: "● STAND DOWN.", At: kickAt.Add(time.Minute), KickAt: kickAt}

@@ -63,16 +63,20 @@ func TestContributorLaneMergeCreditOff(t *testing.T) {
 	if _, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy); err != nil || reason != "" {
 		t.Fatalf("reason=%q err=%v, want merge", reason, err)
 	}
-	if _, has := fx.mergeBody["commit_message"]; has || fx.merges != 1 {
-		t.Fatalf("credit off: merge body %+v (merges %d), want GitHub's default message", fx.mergeBody, fx.merges)
+	// Credit off still rebuilds the squash body from the branch commits so
+	// the sign-off lands (hivecommons/hive#18203), but reads no issue.
+	signoff := "Signed-off-by: " + contributorLaneTestAuthor + " <" + contributorLaneTestAuthor + "@example.com>"
+	if got, _ := fx.mergeBody["commit_message"].(string); got != signoff || fx.merges != 1 {
+		t.Fatalf("credit off: merge body %+v (merges %d), want only the branch sign-off", fx.mergeBody, fx.merges)
 	}
-	if fx.issueGets != 0 || fx.commitLists != 0 {
-		t.Fatalf("credit off still read issue (%d) / commits (%d)", fx.issueGets, fx.commitLists)
+	if fx.issueGets != 0 || fx.commitLists != 1 {
+		t.Fatalf("credit off read issue (%d) / commits (%d), want 0 / 1", fx.issueGets, fx.commitLists)
 	}
 }
 
-// A PR author who filed their own issue is not their own co-author, and the
-// merge then sends no message at all (no commit read either).
+// A PR author who filed their own issue is not their own co-author: the
+// merge credits nobody and sends only the branch sign-off
+// (hivecommons/hive#18203).
 func TestContributorLaneMergeCreditSkipsSelf(t *testing.T) {
 	fx := validContributorFixture()
 	fx.issueAuthor = contributorLaneTestAuthor
@@ -84,13 +88,15 @@ func TestContributorLaneMergeCreditSkipsSelf(t *testing.T) {
 	if _, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy); err != nil || reason != "" {
 		t.Fatalf("reason=%q err=%v, want merge", reason, err)
 	}
-	if _, has := fx.mergeBody["commit_message"]; has || fx.commitLists != 0 {
+	signoff := "Signed-off-by: " + contributorLaneTestAuthor + " <" + contributorLaneTestAuthor + "@example.com>"
+	if got, _ := fx.mergeBody["commit_message"].(string); got != signoff || fx.commitLists != 1 {
 		t.Fatalf("self-filed issue: merge body %+v (commit lists %d)", fx.mergeBody, fx.commitLists)
 	}
 }
 
 // The self-authored lane: a hive-opened PR already carries the trailer from
-// issue-coauthor.sh, so the merge adds nothing; a hive PR whose branch lacks
+// issue-coauthor.sh, so the merge adds no credit (the rebuilt body keeps the
+// branch trailers); a hive PR whose branch lacks
 // it gains it.
 func TestSelfAuthoredSweepMergeCredit(t *testing.T) {
 	for _, tc := range []struct {
@@ -101,6 +107,7 @@ func TestSelfAuthoredSweepMergeCredit(t *testing.T) {
 		{
 			name:    "branch already credits the issue author",
 			commits: []string{"Fix\n\nSigned-off-by: hive[bot] <hive@example.com>\nCo-authored-by: Dana Thar <12345+Danathar@users.noreply.github.com>"},
+			want:    "Signed-off-by: hive[bot] <hive@example.com>\nCo-authored-by: Dana Thar <12345+Danathar@users.noreply.github.com>",
 		},
 		{
 			name:    "branch lacks the trailer",

@@ -52,8 +52,10 @@ func (c *Engine) releaseSelfAuthorizationHoldIfEligible(ctx context.Context, dis
 	if !currentSelfAuthHold {
 		return false, nil
 	}
-	if _, err := c.gh.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape("hold")); err != nil && !isGitHubStatus(err, http.StatusNotFound) {
-		return false, fmt.Errorf("removing hold label: %w", err)
+	// Only the #5117 gate's own decision-needed label is removed; a
+	// literal `hold` is never lifted by the hive (hivecommons/hive#18468).
+	if _, err := c.gh.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(hgithub.DecisionNeededLabelName())); err != nil && !isGitHubStatus(err, http.StatusNotFound) {
+		return false, fmt.Errorf("removing %s label: %w", hgithub.DecisionNeededLabelName(), err)
 	}
 	comment := &gh.IssueComment{Body: gh.Ptr(selfAuthorizationReleaseComment)}
 	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, comment); err != nil {
@@ -106,7 +108,7 @@ func (c *Engine) currentHoldWasAppliedBySelfAuthorization(ctx context.Context, o
 			return false, fmt.Errorf("listing issue events: %w", err)
 		}
 		for _, event := range events {
-			if event == nil || event.GetLabel().GetName() == "" || !strings.EqualFold(event.GetLabel().GetName(), "hold") {
+			if event == nil || event.GetLabel().GetName() == "" || !strings.EqualFold(event.GetLabel().GetName(), hgithub.DecisionNeededLabelName()) {
 				continue
 			}
 			if event.GetEvent() != "labeled" && event.GetEvent() != "unlabeled" {

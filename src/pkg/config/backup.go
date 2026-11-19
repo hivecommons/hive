@@ -1,8 +1,11 @@
 package config
 
 import (
+	"context"
 	"os"
 	"strings"
+
+	"github.com/hivecommons/hive/crux/keystore"
 )
 
 // Backup encryption-key resolution.
@@ -94,7 +97,10 @@ func (c *BackupConfig) ResolveKeyWithSourceFunc(getenv func(string) string, read
 		getenv = os.Getenv
 	}
 	if readFile == nil {
-		readFile = os.ReadFile
+		// Through the keystore (hive#18214): the PVC key file is sealed at
+		// rest once a provider is active; the read-only /secrets mount is
+		// passed through untouched.
+		readFile = func(path string) ([]byte, error) { return keystore.ReadFile(context.Background(), path) }
 	}
 	if c == nil {
 		// No config in hand means no governor-config path to honour: this is

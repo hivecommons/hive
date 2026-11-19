@@ -435,6 +435,7 @@ func (c *Client) handleOnePushBranchRequest(ctx context.Context, path string, no
 		"force_with_lease", strconv.FormatBool(req.ForceWithLease))
 	c.writePushBranchResult(path, PushBranchResponse{OK: true, Branch: branch, SHA: sha, Attempts: attempts, At: nowFn().UTC().Format(time.RFC3339)})
 	_ = os.Remove(path)
+	c.notifyAgentAction(AgentAction{Agent: req.Agent, Kind: AgentActionPush, Repo: req.Repo, Branch: branch, SHA: sha, At: nowFn()})
 	c.logger.Info("push-branch-request watcher: branch pushed",
 		slog.String("repo", req.Repo), slog.String("branch", branch),
 		slog.String("sha", sha), slog.String("agent", req.Agent))

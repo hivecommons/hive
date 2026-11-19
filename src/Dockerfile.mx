@@ -1,0 +1,32 @@
+# hive-mx: hive's receive-only mail receiver (src/cmd/hive-mx, pkg/mailin;
+# hivecommons/hive#18395). One static Go binary on distroless/static, run as
+# the distroless nonroot user (65532). It listens on 2525 (the Service maps
+# port 25 to it, so no NET_BIND_SERVICE is needed) and 8080 for health.
+#
+# The builder is the same digest-pinned golang:1.27-alpine as src/Dockerfile
+# and src/Dockerfile.hub; refresh all three together. BASE_REGISTRY defaults
+# to mirror.gcr.io/library; CI falls back to docker.io/library when the mirror
+# throttles (see src/Dockerfile).
+ARG BASE_REGISTRY=mirror.gcr.io/library
+FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS builder
+WORKDIR /src
+COPY src/go.mod src/go.sum ./
+COPY src/crux/go.mod src/crux/go.sum crux/
+RUN go mod download
+COPY src/ .
+ARG TARGETOS
+ARG TARGETARCH
+# time/tzdata is linked in by cmd/hive-mx, so the image needs no zoneinfo.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w" -o /hive-mx ./cmd/hive-mx
+
+# gcr.io/distroless/static-debian12:nonroot, pinned to its multi-arch OCI
+# index digest (amd64 and arm64 both resolve from it). It carries CA
+# certificates for an https hub URL and nothing else: no shell, no package
+# manager. Refresh by resolving the tag's index digest
+# (curl -sI -H 'Accept: application/vnd.oci.image.index.v1+json'
+#  https://gcr.io/v2/distroless/static-debian12/manifests/nonroot).
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS runtime
+COPY --from=builder /hive-mx /hive-mx
+USER 65532:65532
+EXPOSE 2525 8080
+ENTRYPOINT ["/hive-mx"]

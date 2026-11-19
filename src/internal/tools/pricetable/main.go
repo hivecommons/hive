@@ -14,6 +14,14 @@
 //	go run ./internal/tools/pricetable                      # refresh in place
 //	go run ./internal/tools/pricetable --dry-run            # report only
 //	go run ./internal/tools/pricetable --check-age 60       # CI staleness guard
+//	go run ./internal/tools/pricetable --add claude-fable-5-2,claude-haiku-5-5
+//	                                                        # add rows the table lacks
+//
+// --add only inserts rows for the listed ids the table does not price yet,
+// each from the source's quote and only when that quote passes the same
+// plausibility rules a price move must pass; it never reprices an existing
+// row or moves priceTableDate. .github/workflows/claude-model-freshness.yml
+// uses it for the Claude models it adds to the dashboard's lists.
 //
 // The refresh is driven by .github/workflows/price-table-refresh.yml, which
 // turns a non-empty diff into a PR for a human to review; see
@@ -56,6 +64,7 @@ type options struct {
 	report     string
 	date       string
 	dryRun     bool
+	add        string
 	checkAge   int
 	staleAfter int
 	stdout     io.Writer
@@ -78,6 +87,7 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	fs.StringVar(&opts.report, "report", "", "write the markdown report to this file (default: stdout only)")
 	fs.StringVar(&opts.date, "date", "", "override today's date (YYYY-MM-DD) used for priceTableDate")
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "compute and report, but do not rewrite pricing.go")
+	fs.StringVar(&opts.add, "add", "", "comma-separated model ids to add as new rows when the table lacks them (existing rows are never repriced)")
 	fs.IntVar(&opts.checkAge, "check-age", 0, "exit non-zero when priceTableDate is older than this many days (no fetch, no rewrite)")
 	fs.IntVar(&opts.staleAfter, "stale-after", defaultStaleAfterDays, "bump priceTableDate even without price changes once it is older than this many days")
 	if err := fs.Parse(args); err != nil {
@@ -110,6 +120,9 @@ func execute(ctx context.Context, opts options) error {
 			return fmt.Errorf("--date: %w", err)
 		}
 		today = opts.date
+	}
+	if opts.add != "" {
+		return executeAdd(ctx, opts, src, table, today)
 	}
 
 	raw, err := opts.fetch(ctx, opts.source)

@@ -40,6 +40,35 @@ const (
 	// failure shape and same operator-login recovery as the Copilot case; the
 	// detail's outcome= distinguishes "missing" from "invalid or expired".
 	AuditClaudeTokenMissing = "claude_token_missing"
+
+	// AuditClaudeCredentialRebridged is recorded when an agent's per-agent
+	// ~/.claude/.credentials.json symlink to the shared Claude login had been
+	// replaced by a regular file (Claude Code saves a token refresh by renaming
+	// over the path) and hive re-bridged it: either promoting the agent's
+	// fresher token into the shared login or re-linking the agent to the
+	// shared one. The detail's kept= says which; it never carries token
+	// material.
+	AuditClaudeCredentialRebridged = "claude_credential_rebridged"
+
+	// AuditClaudeCredentialRefreshed is recorded when the hive itself redeems
+	// the shared Claude login's refresh grant ahead of the access token's
+	// expiry and writes the result to the shared credentials file, so the N
+	// CLIs sharing that grant never refresh it concurrently (reuse of a
+	// rotated refresh token revokes the whole grant, hivecommons/hive#18731).
+	// The detail's outcome= is "success", or "failed" with a reason= that
+	// says whether the grant itself was rejected (operator sign-in needed)
+	// or the attempt failed transiently. It never carries token material.
+	AuditClaudeCredentialRefreshed = "claude_credential_refreshed"
+
+	// AuditUserSessionLoginAdopted is recorded when a user session's HOME held
+	// a Claude, Codex or OpenCode login strictly newer than the shared one
+	// (the CLI in the session refreshed, or signed in, on its own copy) and
+	// hive adopted it into the shared login so the fleet and the session keep
+	// ONE login. The detail names the session, the trigger (boot, watchdog,
+	// sign-in, session-start, session-remove), where the replaced shared file
+	// was preserved and, for Codex and OpenCode, the vendor and login file; it
+	// never carries token material.
+	AuditUserSessionLoginAdopted = "user_session_login_adopted"
 )
 
 // AuditSink receives agent lifecycle events for durable, queryable recording.

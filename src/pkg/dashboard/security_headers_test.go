@@ -17,6 +17,7 @@ func TestSecurityHeadersSnapshotFrameAncestorsMatrix(t *testing.T) {
 		wantFrame   string
 		wantNoXFO   bool
 		wantXFODeny bool
+		wantXFO     string
 	}{
 		{
 			name:        "default denies snapshot framing",
@@ -45,6 +46,31 @@ func TestSecurityHeadersSnapshotFrameAncestorsMatrix(t *testing.T) {
 			wantFrame:   "frame-ancestors 'none'",
 			wantXFODeny: true,
 		},
+		{
+			// The Sessions section embeds this document in a same-origin iframe.
+			name:      "user-session terminal may be framed by this origin only",
+			path:      "/terminal/?arg=hive-sess-6772199e9bc0&code=abc",
+			wantFrame: "frame-ancestors 'self'",
+			wantXFO:   "SAMEORIGIN",
+		},
+		{
+			name:      "user-session terminal websocket keeps the same framing policy",
+			path:      "/terminal/ws?arg=hive-sess-6772199e9bc0",
+			wantFrame: "frame-ancestors 'self'",
+			wantXFO:   "SAMEORIGIN",
+		},
+		{
+			name:        "agent terminal stays unframeable",
+			path:        "/terminal/?arg=hive-scanner&code=abc",
+			wantFrame:   "frame-ancestors 'none'",
+			wantXFODeny: true,
+		},
+		{
+			name:        "session prefix outside /terminal grants nothing",
+			path:        "/api/sessions?arg=hive-sess-6772199e9bc0",
+			wantFrame:   "frame-ancestors 'none'",
+			wantXFODeny: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -68,6 +94,9 @@ func TestSecurityHeadersSnapshotFrameAncestorsMatrix(t *testing.T) {
 			}
 			if tt.wantXFODeny && xfo != "DENY" {
 				t.Fatalf("X-Frame-Options = %q, want DENY", xfo)
+			}
+			if tt.wantXFO != "" && xfo != tt.wantXFO {
+				t.Fatalf("X-Frame-Options = %q, want %q", xfo, tt.wantXFO)
 			}
 		})
 	}

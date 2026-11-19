@@ -6,6 +6,15 @@ open advisory beads of every agent into a single **advisory digest** and posts i
 as a pinned comment on the advisory issue of the primary repo, rewriting the same
 comment each cycle so a repo owner has exactly one place to look.
 
+A hive that manages several repos still keeps exactly **one** advisory report,
+in `project.primary_repo` (or the first repo in `project.repos` when no primary
+is set). By default no other repo in `project.repos` gets an advisory issue or a
+digest comment. The report is found by its title and the `hive/advisory` label
+before anything is created, so a restart reuses the open report instead of
+filing a new one ([#18568](https://github.com/hivecommons/hive/issues/18568)).
+An owner who wants a report in every repo can opt in; see
+[One report, or one per repo](#one-report-or-one-per-repo).
+
 Everything on this page lives under `governor.advisory` in `hive.yaml`, and every
 setting is also editable from **Governor Config → Advisory** in the dashboard
 (owner role required).
@@ -21,7 +30,39 @@ governor:
     digest_min_interval: 1h  # a CHANGED digest is rewritten at most this often; 0 = every changed cycle
     target: github        # github (default) | linear
     linear_issue: ""      # required when target is linear, e.g. ONB-123
+    per_repo: false       # true = every monitored repo also gets its own report
 ```
+
+## One report, or one per repo
+
+`governor.advisory.per_repo` (Settings, **Governor Config → Advisory**,
+"Advisory report in every repo"; default **off**) decides whether a multi-repo
+hive files one report or one per repo
+([#18448](https://github.com/hivecommons/hive/issues/18448)).
+
+- **Off** (default): one Hive Advisory Report in your primary repo covers all
+  repos. Nothing is created in any other repo.
+- **On**: each monitored repo also gets its own report, with the same digest
+  posted to it. Each repo gets exactly one: before creating anything the hive
+  looks for an existing report by its title together with the `hive/advisory`
+  label or the `<!-- hive:advisory-report -->` marker in its body, open or
+  closed, so a restart never files a second one. A repo added in Settings gets
+  its report on the next eval cycle.
+- **A closed report stays closed.** If someone closes a repo's report, the hive
+  stops posting to it and never reopens it or files a replacement, on this run
+  or after a restart. (The primary repo's report is different: it is reopened
+  when closed, because it is the hive's one place to look.)
+- **Repos the hive cannot write to are skipped.** A repo with Issues disabled,
+  or where the hive's GitHub App has no write access, is logged once and shown
+  as a dashboard warning; the hive checks it again at most hourly rather than
+  every cycle, and the other repos are not affected.
+- **Turning it off** stops updating the per-repo reports. They are not closed
+  or deleted; close them by hand if you no longer want them.
+
+When `per_repo` is absent from `hive.yaml`, the `HIVE_ADVISORY_PER_REPO`
+environment variable (`true` / `false`) sets the default. An explicit value in
+`hive.yaml`, or a change in Settings, always wins. Every change made in Settings
+is recorded in the audit log.
 
 ## Keeping findings current
 

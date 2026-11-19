@@ -354,7 +354,10 @@ func squashCreditMessage(commits []*gh.RepositoryCommit, added []IssueAuthorCred
 			parts = append(parts, para)
 		}
 	}
-	return strings.Join(append(parts, creditTrailers(added)), "\n\n")
+	if trailers := creditTrailers(added); trailers != "" {
+		parts = append(parts, trailers)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // mergeCommitCreditMessage is the merge commit body: GitHub's default (the

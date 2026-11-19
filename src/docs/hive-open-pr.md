@@ -132,8 +132,10 @@ one deliberate exception:
 (`bin/hive-open-pr.sh:149`). No warning is printed, on purpose: `--label hold`
 is in every hold-gated policy template, so it arrives on essentially every
 agent PR, and "ignoring unrecognized flag `--label`" would read to an agent
-mid-run as "your PR will not be held" — the opposite of the truth. The `hold`
-label does land, but not because of the flag: the PR-request watcher applies it
+mid-run as "your PR will not be held" — the opposite of the truth. The PR is
+held, but not because of the flag, and not with `hold`: the PR-request watcher
+applies the `ready-for-review` gate label (`decision-needed` for the #5117 and
+reporter-trust gates; the hive never applies `hold` itself, #18468)
 server-side from authoritative ACMM config after the PR is created
 (`src/pkg/github/pr_request_watcher.go:452-524`), and treats a failure to apply it
 as a failed request, not a cosmetic miss. Every **other** label in the flag's
@@ -158,7 +160,7 @@ look for the PR.
 Because the PR is authored by the App bot, the bot identity alone cannot answer
 "which agent/backend/model produced this?". So when the watcher opens the PR,
 it appends a visible one-line trailer to the body you wrote
-(`pkg/github.AppendTrailer`): the `— hive:` prefix followed by
+(`pkg/github.AppendTrailer`): the `-- hive:` prefix followed by
 space-separated `key=value` pairs, e.g. `agent=quality backend=bob model=auto
 bobshell=1.0.6 requested_by=@octocat`. (A verbatim trailer line is not
 reproduced here on purpose: the watcher's content check rejects a request whose
@@ -170,9 +172,9 @@ possible fields are `agent`, `backend`, `model`, `effort`, `<tool>=<version>`,
 `session`, and `requested_by`. The trailer is gated by
 `governor.attribution_trailer` (default ON), but the matching audit entry
 (`agent_pr_created` in `audit.jsonl`, same key=value pairs — see
-[audit-log.md](audit-log.md)) is written regardless of the toggle. The `— hive:`
+[audit-log.md](audit-log.md)) is written regardless of the toggle. The `-- hive:`
 prefix doubles as the stacking guard: a request the watcher retries after a
-partial failure will not gain a second trailer. Do not write a `— hive:` line
+partial failure will not gain a second trailer. Do not write a `-- hive:` line
 into your own body — the watcher will treat it as an existing trailer and skip
 its own.
 
@@ -429,6 +431,27 @@ Note the watcher deliberately does **not** try to read the agent's git state or
 test the credential helper itself: it runs in the hive process, not in the
 agent's UID, so any such check would answer a different question than the one
 that failed. It names the causes; you verify them from the agent's UID.
+
+### A detached HEAD is refused, not retried (#18907)
+
+`git rev-parse --abbrev-ref HEAD` prints the literal `HEAD` when the checkout is
+detached (a `git checkout <sha>`, a run-stage worktree). That is not a branch:
+GitHub answers `POST /pulls` with `422 head invalid`, and before this guard the
+request was retried every 15 minutes for 24 hours while the signed-commit step
+logged `HEAD has no changes against main`. Now:
+
+- `hive-open-pr` resolves a detached HEAD to the one local branch at the
+  checked-out commit, or exits `2` with the remedy (`git switch -c <branch>`,
+  `hive-push-branch`, then `--head <branch>`) and writes no request.
+- The watcher refuses a head that cannot be a branch (`HEAD`, empty, a tag ref, a
+  malformed name) before any GitHub call, writes `PR head rejected: ...` to the
+  `.result.json`, quarantines the request as `.rejected` and logs one ERROR,
+  `head is not a pushable branch, request rejected`, which the fleet report
+  classifies as `pr_request_head_invalid`. `CreatePR` and the signed-commit step
+  refuse the same heads, so no other caller can reach the 422.
+- A real-looking branch that still draws `422 head invalid` (GitHub's answer when
+  the push has not landed) is retried with backoff for 3 attempts, then
+  quarantined the same way.
 
 ### The log line to grep for
 

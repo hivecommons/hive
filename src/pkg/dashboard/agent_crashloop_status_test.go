@@ -21,7 +21,10 @@ import (
 // while normal restart churn below the threshold must not.
 
 func crashLoopProc(name string, events []crux.RestartEvent) *crux.Process {
+	// A kicked agent with an unsettled turn: a never-kicked one reads idle (#18458).
+	kick := time.Now().Add(-time.Minute)
 	return &crux.Process{
+		LastKick:      &kick,
 		Name:          name,
 		Config:        config.AgentConfig{Backend: "claude", Enabled: true},
 		State:         crux.StateRunning,

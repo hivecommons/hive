@@ -183,6 +183,9 @@ func (s *Server) handleClaudeAuthExchange(w http.ResponseWriter, r *http.Request
 	if s.deps != nil && s.deps.AgentMgr != nil {
 		s.deps.AgentMgr.ReloadClaudeToken()
 	}
+	// The sign-in is the remedy the "Claude login revoked" banner asked for
+	// (#18732); drop it now rather than at the next governor cycle.
+	s.ClearSystemAlert(ClaudeLoginRevokedAlertID)
 
 	// Clear the PKCE state.
 	s.claudeOAuthFlow.mu.Lock()

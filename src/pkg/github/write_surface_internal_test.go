@@ -250,6 +250,8 @@ func TestEnsureFleetReport_AuditedOnCommentWithRedactedFingerprint(t *testing.T)
 		switch {
 		case r.URL.Path == "/search/issues":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{"number": 7}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/hivecommons/hive/issues/7/comments":
+			_ = json.NewEncoder(w).Encode([]any{})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues/7/comments":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})

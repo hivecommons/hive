@@ -308,6 +308,8 @@ type HeartbeatPayload struct {
 	RepoTargetMisconfigured      bool                            `json:"repo_target_misconfigured,omitempty"`
 	RepoTargetIssue              string                          `json:"repo_target_issue,omitempty"`
 	GitHubAppState               string                          `json:"github_app_state,omitempty"`
+	PRGateCause                  string                          `json:"pr_gate_cause,omitempty"`
+	PRGateDependsOn              bool                            `json:"pr_gate_depends_on,omitempty"`
 	AutoUpgrade                  bool                            `json:"auto_upgrade,omitempty"`
 	Upgrading                    bool                            `json:"upgrading,omitempty"`
 	UpgradeTargetSHA             string                          `json:"upgrade_target_sha,omitempty"`
@@ -343,6 +345,7 @@ type HeartbeatPayload struct {
 	GatewayHealth                []inferencehealth.GatewayStatus `json:"gateway_health,omitempty"`
 	GitHubAppKeyFingerprint      string                          `json:"github_app_key_fingerprint,omitempty"`
 	GitHubAppKeyPerHive          bool                            `json:"github_app_key_per_hive,omitempty"`
+	WebhookRelayKeyFingerprint   string                          `json:"webhook_relay_key_fingerprint,omitempty"`
 	GitHubAppID                  int64                           `json:"github_app_id,omitempty"`
 	GitHubAppSlug                string                          `json:"github_app_slug,omitempty"`
 	GitHubInstallationID         int64                           `json:"github_installation_id,omitempty"`
@@ -359,6 +362,10 @@ type HeartbeatPayload struct {
 	// Absent from older or non-participating spokes; the hub re-sanitizes it
 	// and keeps it in memory only (activityStore).
 	Activity *hubactivity.Digest `json:"activity,omitempty"`
+	// Protocol is the optional feature negotiation offer (#19237). Absent
+	// from older spokes; answered only while HIVE_HUB_HEARTBEAT_PROTOCOL is
+	// on (heartbeat_protocol.go).
+	Protocol *HeartbeatProtocol `json:"protocol,omitempty"`
 }
 
 const (
@@ -411,6 +418,10 @@ type HeartbeatGitHubAppConfig struct {
 	BaseURL           string            `json:"base_url,omitempty"`
 	AdditionalKeys    []HeartbeatAppKey `json:"additional_keys,omitempty"`
 	SecondaryKey      *HeartbeatAppKey  `json:"secondary_key,omitempty"`
+	// WebhookRelayKey is this hive's own key for verifying webhooks the hub
+	// relays to it (webhook_relay_key.go). Never the App webhook secret.
+	// Empty means "leave the spoke's key unchanged".
+	WebhookRelayKey string `json:"webhook_relay_key,omitempty"`
 }
 
 type HeartbeatAppKey struct {
@@ -481,6 +492,15 @@ type HeartbeatResponse struct {
 	// hub holds for this hive (#15964); the spoke drops buffered events up
 	// to it. 0/absent = none. Decoded by spoke.HeartbeatResponse.
 	ActivityEventsAck uint64 `json:"activity_events_ack,omitempty"`
+	// HostAliases are the clusters.json host_aliases of the cluster the hub's
+	// SaaS record places this hive on (#18637). Sent on every beat; the spoke
+	// converges its own Deployment, which is the only path on a push-reported
+	// cluster. Decoded by spoke.HeartbeatResponse.HostAliases.
+	HostAliases []ClusterHostAlias `json:"host_aliases,omitempty"`
+	// Protocol answers the payload's protocol offer with the accepted and
+	// ignored features (#19237). Nil (absent) when the spoke made no offer
+	// or HIVE_HUB_HEARTBEAT_PROTOCOL is off.
+	Protocol *HeartbeatProtocolAck `json:"protocol,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

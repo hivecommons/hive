@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -62,6 +64,22 @@ type Resolver struct {
 	ProvisionedKeyPath string
 	// FileMode is applied to keys this Resolver writes.
 	FileMode os.FileMode
+
+	fpMu    sync.Mutex
+	fpCache map[string]heldFingerprint
+
+	// boundMu guards lastHeld and inflight for HeldFingerprintsWithin.
+	boundMu  sync.Mutex
+	lastHeld map[string]string
+	inflight chan struct{}
+}
+
+// heldFingerprint memoizes a key file's fingerprint against the size and mtime
+// it was computed from, so an unchanged file is never re-read.
+type heldFingerprint struct {
+	size  int64
+	mtime time.Time
+	fp    string
 }
 
 type tempKeyFile interface {
@@ -77,8 +95,9 @@ var (
 	createTempKey = func(dir, pattern string) (tempKeyFile, error) {
 		return os.CreateTemp(dir, pattern)
 	}
-	removeFile = os.Remove
-	renameFile = os.Rename
+	fingerprintFromFile = config.AppKeyFingerprintFromFile
+	removeFile          = os.Remove
+	renameFile          = os.Rename
 )
 
 // Default returns a Resolver using the production spoke layout.
@@ -125,6 +144,10 @@ func (r *Resolver) HeldFingerprints() map[string]string {
 		return nil
 	}
 	var held map[string]string
+	r.fpMu.Lock()
+	defer r.fpMu.Unlock()
+	seen := make(map[string]heldFingerprint)
+	defer func() { r.fpCache = seen }()
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -138,16 +161,62 @@ func (r *Resolver) HeldFingerprints() map[string]string {
 		if convErr != nil || id <= 0 {
 			continue
 		}
-		fp, fpErr := config.AppKeyFingerprintFromFile(filepath.Join(r.DataDir, name))
-		if fpErr != nil || fp == "" {
+		var fp string
+		info, infoErr := e.Info()
+		if infoErr != nil {
 			continue
 		}
+		if c, ok := r.fpCache[name]; ok && c.size == info.Size() && c.mtime.Equal(info.ModTime()) {
+			fp = c.fp
+		} else {
+			var fpErr error
+			fp, fpErr = fingerprintFromFile(filepath.Join(r.DataDir, name))
+			if fpErr != nil || fp == "" {
+				continue
+			}
+		}
+		seen[name] = heldFingerprint{size: info.Size(), mtime: info.ModTime(), fp: fp}
 		if held == nil {
 			held = make(map[string]string)
 		}
 		held[idStr] = fp
 	}
 	return held
+}
+
+// HeldFingerprintsWithin is HeldFingerprints with a wall-clock bound, for the
+// heartbeat hot path. The scan stats and reads files on the PVC, which can
+// stall for many seconds on a slow volume and eat the whole heartbeat collect
+// budget (#18484). The scan runs in a single-flight background goroutine; if it
+// does not finish within timeout, the last completed result is returned (nil
+// before the first completion) and the scan keeps going to refresh the cache
+// for the next beat.
+func (r *Resolver) HeldFingerprintsWithin(timeout time.Duration) map[string]string {
+	r.boundMu.Lock()
+	done := r.inflight
+	if done == nil {
+		done = make(chan struct{})
+		r.inflight = done
+		go func() {
+			held := r.HeldFingerprints()
+			r.boundMu.Lock()
+			r.lastHeld = held
+			r.inflight = nil
+			r.boundMu.Unlock()
+			close(done)
+		}()
+	}
+	r.boundMu.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
+	r.boundMu.Lock()
+	defer r.boundMu.Unlock()
+	return r.lastHeld
 }
 
 // writePerAppIDKey persists a hub-delivered per-app-id key to its PVC file

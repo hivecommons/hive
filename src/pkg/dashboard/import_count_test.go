@@ -63,8 +63,28 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// surfaces render one markup (hivecommons/hive#16236), plus
 	// pkg/maintainernotes, the append-only store behind the Activity
 	// Monitor's private per-item maintainer notes and the /api/notes routes,
-	// shared with the scheduler's kick injection (hivecommons/hive#17244).
-	const maxDashboardInternalImports = 59
+	// shared with the scheduler's kick injection (hivecommons/hive#17244),
+	// plus pkg/workflowmodel/store, the spoke-local library of workflow
+	// models behind the /api/workflows routes and the tracker's per-repo
+	// column block (RFC hivecommons/hive#17620, phase 2), plus pkg/inbox,
+	// the source-agnostic voice-recording triage service (items keyed by
+	// source + item id, spek_rfc/dibs destinations) behind the /api/inbox
+	// routes and the Inbox dashboard section, plus pkg/keystore, the
+	// secrets-at-rest seam every dashboard-written secret file (LiteLLM, Bob,
+	// gateway and backup keys, the Copilot login, the NPS relay identity) is
+	// sealed and opened through (hivecommons/hive#18214), plus pkg/mailallow,
+	// the calendar email allowlist, and pkg/mailin (its stdlib-only wire
+	// subpackage, the hive-mx delivery contract) behind the email-in routes
+	// (hivecommons/hive#18395), plus pkg/repoagents, the .hive/agents/
+	// discoverer behind the /api/agents/discovered approval routes
+	// (hivecommons/hive#18491), plus pkg/buildcontains, the dependency-free
+	// ancestry resolver shared with the hub behind GET /api/version/contains
+	// (hivecommons/hive#18915), plus pkg/netguard, the stdlib-only address
+	// classifier behind isPrivateURL that the hub shares so the two copies
+	// cannot drift (hivecommons/hive#18991), plus pkg/gfi, the umbrella and
+	// owner-only classifier the contributor queue gates and the tracker-row
+	// pill share so the two cannot disagree (hivecommons/hive#19078).
+	const maxDashboardInternalImports = 68
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

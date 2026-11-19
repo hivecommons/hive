@@ -240,6 +240,18 @@ type ClusterConfig struct {
 	InferenceEndpoint string `json:"inference_endpoint,omitempty" yaml:"inference_endpoint,omitempty"`
 	GitHubBaseURL     string `json:"github_base_url,omitempty" yaml:"github_base_url,omitempty"`
 	GitHubAPIURL      string `json:"github_api_url,omitempty" yaml:"github_api_url,omitempty"`
+	// UpstreamProxy names a corporate HTTP forward proxy the hives on THIS
+	// cluster must chain selected hosts through (e.g. an enterprise GitHub
+	// reachable only via the proxy). Injected into new pool slots as
+	// HIVE_UPSTREAM_PROXY_URL / HIVE_UPSTREAM_PROXY_HOSTS / HIVE_NO_PROXY.
+	UpstreamProxy *ClusterUpstreamProxy `json:"upstream_proxy,omitempty" yaml:"upstream_proxy,omitempty"`
+	// HostAliases are Pod hostAliases entries rendered into every hive
+	// Deployment on THIS cluster, for GitHub Enterprise hosts reachable only
+	// through a TLS reverse proxy pinned to a fixed IP (no CONNECT proxy, so
+	// upstream_proxy cannot express it). Validated at load by
+	// normalizeClusterHostAliases; existing hives are converged by the
+	// host_aliases reconcile sweep (cluster_host_aliases.go, #17801).
+	HostAliases []ClusterHostAlias `json:"host_aliases,omitempty" yaml:"host_aliases,omitempty"`
 	// GitHubAppSlug is the GitHub App's URL slug on THIS cluster's GitHub
 	// host. A GitHub Enterprise instance hosts its own App registration,
 	// which is rarely named "kubestellar-hive" — without this the spoke's
@@ -784,6 +796,15 @@ type SaaSHive struct {
 	// nil means nothing is queued. It is CLEARED on confirmation, not on
 	// delivery (see AppIdentityDelivered), so a lost beat is retried.
 	PendingAppConfig *PendingAppIdentity `json:"pending_app_config,omitempty"`
+
+	// WebhookRelayKey is this hive's own HMAC key for webhooks the hub relays
+	// to its spoke (webhook_relay_key.go, hivecommons/hive#17911). Minted at
+	// provisioning (or on the first heartbeat of a hive provisioned before
+	// relay keys existed) and delivered over the heartbeat. Per hive so one
+	// spoke's key can never sign a relay another spoke accepts, and so no
+	// spoke ever needs the GitHub App webhook secret. Replacing or clearing it
+	// rotates the key: the next beat delivers the new one.
+	WebhookRelayKey string `json:"webhook_relay_key,omitempty"`
 
 	// RequestedRestartAt (RFC3339) arms a rolling restart of this hive's spoke,
 	// delivered on every heartbeat inside spokeRestartDeliveryWindow and then
@@ -1484,22 +1505,21 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 // hosted-<name>-qcd0.apps... — same hive, same display name, different random
 // suffix, and nothing in the hub ever compared the two.
 //
-// Reality wins. The Route is what actually serves traffic, so when the live host
-// disagrees with the stored one the stored one is what is wrong, and we adopt
-// the live host rather than trying to make the cluster match the registry.
+// Reality wins. When none of the live hosts matches the stored one, we adopt
+// the first live host rather than trying to make the cluster match the registry.
 //
 // Conservative by design, mirroring the mint paths it sits beside:
 //   - A cluster that cannot be read (unreachable, kubectl error, no vanity
-//     route) yields "" from existingVanityHost, which is NOT evidence of drift.
+//     route) yields no existingVanityHosts, which is NOT evidence of drift.
 //     We return early and keep the stored value; a heartbeat-only cluster must
 //     never have its working URL blanked by an inability to look.
-//   - A live host that already matches the stored one is the overwhelmingly
-//     common case and writes nothing.
+//   - Any live host that matches the stored one writes nothing, even when an
+//     ingress also serves aliases before it in rule order.
 //   - No makeVanityHostServable call: the host we are adopting is, by
 //     construction, the one an existing Route already serves, so it needs no
 //     ingress work. That also keeps this path free of any cluster WRITE.
 //   - The record is RE-LOADED before writing, for the same reason every other
-//     path in this file does it: existingVanityHost can block for minutes in
+//     path in this file does it: existingVanityHosts can block for minutes in
 //     kubectl while the heartbeat path keeps load-modify-writing this hive
 //     (ClaimDelivered/ACMMDelivered latches, forge handshakes), and saving
 //     through a pre-window copy would silently revert them.
@@ -1508,18 +1528,20 @@ func (s *HubServer) reconcileStaleVanityURL(hiveID string, h *SaaSHive, cluster 
 	if stored == "" {
 		return false
 	}
-	liveHost := s.existingVanityHost(hiveID, cluster)
-	if liveHost == "" {
+	liveHosts := s.existingVanityHosts(hiveID, cluster)
+	if len(liveHosts) == 0 {
 		// Could not read the cluster, or there is no vanity route to compare
 		// against. Absence of evidence is not evidence of drift — keep what we
 		// have, since it is the only link the dashboard can offer.
 		s.recordVanityRepairFailure(hiveID, "could not read existing vanity route")
 		return false
 	}
-	liveURL := "https://" + liveHost
-	if stored == liveURL {
-		return false // already tracking the live route
+	for _, host := range liveHosts {
+		if stored == "https://"+host {
+			return false // already tracking a live route, not necessarily the first
+		}
 	}
+	liveURL := "https://" + liveHosts[0]
 	// Re-load before writing so we do not clobber fields written while the
 	// kubectl read above was blocked.
 	h = loadSaaSHive(hiveID)
@@ -1920,8 +1942,18 @@ func (s *HubServer) mintClaimVanityURL(hiveID string) {
 // Best-effort by design: on any error it returns "" and the caller mints a
 // fresh host exactly as before, so an unreachable cluster is no worse off.
 func (s *HubServer) existingVanityHost(hiveID string, cluster *ClusterConfig) string {
-	if cluster == nil {
+	hosts := s.existingVanityHosts(hiveID, cluster)
+	if len(hosts) == 0 {
 		return ""
+	}
+	return hosts[0]
+}
+
+// existingVanityHosts returns every non-placeholder host served by the live
+// vanity Route/Ingress, in rule order. An empty result is not evidence of drift.
+func (s *HubServer) existingVanityHosts(hiveID string, cluster *ClusterConfig) []string {
+	if cluster == nil {
+		return nil
 	}
 	ns := "hive-hosted-" + hiveID
 	placeholderHost := hiveID + "." + cluster.Domain
@@ -1930,23 +1962,28 @@ func (s *HubServer) existingVanityHost(hiveID string, cluster *ClusterConfig) st
 		out, err := kubectlForCluster(cluster, "-n", ns, "get", "route",
 			routeBaseDashboard+"-vanity", "-o", "jsonpath={.spec.host}").Output()
 		if err != nil {
-			return ""
+			return nil
 		}
-		return strings.TrimSpace(string(out))
+		host := strings.TrimSpace(string(out))
+		if host == "" || host == placeholderHost {
+			return nil
+		}
+		return []string{host}
 	}
 
-	// nginx: the vanity host is the rule whose host is not the placeholder.
+	// nginx: multiple rules may serve vanity hosts alongside the placeholder.
 	out, err := kubectlForCluster(cluster, "-n", ns, "get", "ingress", "hive",
 		"-o", "jsonpath={.spec.rules[*].host}").Output()
 	if err != nil {
-		return ""
+		return nil
 	}
+	var hosts []string
 	for _, host := range strings.Fields(string(out)) {
-		if host != placeholderHost && host != "" {
-			return host
+		if host != placeholderHost {
+			hosts = append(hosts, host)
 		}
 	}
-	return ""
+	return hosts
 }
 
 // makeVanityHostServable creates the ingress/route that makes vanityHost resolve,
@@ -2069,15 +2106,26 @@ func saveSaaSHive(h *SaaSHive) error {
 		return fmt.Errorf("invalid hive ID for save: %q", h.ID)
 	}
 	dir := filepath.Join(saasHivesDir, h.ID)
-	// Best-effort: a failed mkdir surfaces via the WriteFile error below.
-	_ = os.MkdirAll(dir, 0o755)
+	// meta.json carries WebhookRelayKey, so it is written rw------- under an
+	// rwx------ directory like the other hub secret stores (cluster App keys,
+	// generation stores). Best-effort: a failed mkdir surfaces via the
+	// WriteFile error below.
+	_ = os.MkdirAll(dir, 0o700)
+	// MkdirAll leaves pre-existing directories untouched, so tighten hives
+	// provisioned before meta.json carried key material. Only group/other
+	// bits are stripped: owner bits are left as found so a directory an
+	// operator (or a test) made read-only is never silently widened back to
+	// writable, and the WriteFile below still reports the failure.
+	if fi, err := os.Stat(dir); err == nil && fi.Mode().Perm()&0o077 != 0 {
+		_ = os.Chmod(dir, fi.Mode().Perm()&^0o077)
+	}
 	data, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(dir, "meta.json")
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
@@ -2647,15 +2695,20 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 			}
 			return "anyuid"
 		}(),
-		"InitContainerUID":  initContainerUID,
-		"InitContainerGID":  initContainerGID,
-		"InferenceEndpoint": cluster.InferenceEndpoint,
-		"HasInference":      cluster.InferenceEndpoint != "",
-		"IsPublic":          h.IsPublic,
-		"HiveType":          "hosted",
-		"HasGHE":            effectiveGitHubBaseURL(h, cluster) != "",
-		"GitHubBaseURL":     effectiveGitHubBaseURL(h, cluster),
-		"GitHubAPIURL":      effectiveGitHubAPIURL(h, cluster),
+		"InitContainerUID":     initContainerUID,
+		"InitContainerGID":     initContainerGID,
+		"InferenceEndpoint":    cluster.InferenceEndpoint,
+		"HasInference":         cluster.InferenceEndpoint != "",
+		"HasUpstreamProxy":     cluster.UpstreamProxy.enabled(),
+		"UpstreamProxyURL":     cluster.UpstreamProxy.url(),
+		"UpstreamProxyHosts":   cluster.UpstreamProxy.hosts(),
+		"UpstreamProxyNoProxy": cluster.UpstreamProxy.noProxy(),
+		"HostAliases":          cluster.HostAliases,
+		"IsPublic":             h.IsPublic,
+		"HiveType":             "hosted",
+		"HasGHE":               effectiveGitHubBaseURL(h, cluster) != "",
+		"GitHubBaseURL":        effectiveGitHubBaseURL(h, cluster),
+		"GitHubAPIURL":         effectiveGitHubAPIURL(h, cluster),
 		// app_slug follows the hive's GitHub host: a GHE hive gets the cluster's
 		// GHE App slug (e.g. "kubestellar-hive-ghe"); a public-GitHub hive emits
 		// none, letting config.ResolvedAppSlug() supply the public default. Only
@@ -3061,6 +3114,9 @@ rules:
 - apiGroups: [""]
   resources: ["pods", "pods/log"]
   verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -3395,6 +3451,18 @@ spec:
         app: hive
         hive-id: {{.ID}}
     spec:
+{{- if .HostAliases}}
+      # Per-cluster host_aliases (clusters.json): pins GHE hostnames to a TLS
+      # reverse-proxy IP where no CONNECT proxy exists. See #17801.
+      hostAliases:
+{{- range .HostAliases}}
+      - ip: "{{.IP}}"
+        hostnames:
+{{- range .Hostnames}}
+        - "{{.}}"
+{{- end}}
+{{- end}}
+{{- end}}
 {{- if .RequiresSCC}}
       serviceAccountName: hive-sa
 {{- else}}
@@ -3435,11 +3503,12 @@ spec:
         # Steady state (#17468): /etc/hive is an emptyDir, so a regular file
         # there is a throwaway cache and operator edits to it vanished on
         # restart. Symlink it to the PVC runtime config instead, so the path
-        # every runbook names IS the persisted boot source. Config.Save writes
-        # the config path in place (O_TRUNC, no rename), so the link survives
-        # saves. Only the NEW name is linked: the legacy .bak is never written
-        # (config.RuntimeConfigFileLegacy), and linking it would make every
-        # save write it.
+        # every runbook names IS the persisted boot source. Config.Save
+        # resolves the link and renames its temp file onto the TARGET
+        # (#17862), so the link survives saves. Only the NEW name is linked:
+        # the legacy .bak is refreshed by the entrypoint from a good runtime
+        # file on clean boots (never written by Save), and linking it would
+        # make every save write it.
         command: ["sh", "-c", "if [ -s /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; ln -sf /data/hive.yaml.runtime /etc/hive/hive.yaml && echo config-path-linked-to-runtime || echo config-path-link-failed; elif [ -s /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied-first-boot; fi"]
         volumeMounts:
         - name: config
@@ -3630,6 +3699,18 @@ spec:
 {{- if .HasInference}}
         - name: HIVE_VLLM_ENDPOINT
           value: "{{.InferenceEndpoint}}"
+{{- end}}
+{{- if .HasUpstreamProxy}}
+        - name: HIVE_UPSTREAM_PROXY_URL
+          value: "{{.UpstreamProxyURL}}"
+{{- if .UpstreamProxyHosts}}
+        - name: HIVE_UPSTREAM_PROXY_HOSTS
+          value: "{{.UpstreamProxyHosts}}"
+{{- end}}
+{{- if .UpstreamProxyNoProxy}}
+        - name: HIVE_NO_PROXY
+          value: "{{.UpstreamProxyNoProxy}}"
+{{- end}}
 {{- end}}
         ports:
         - name: terminal

@@ -29,7 +29,7 @@ legacy v1 host install and do not apply here.
 | Need logs without host access | [No-shell route](#no-shell-on-the-host) | Admin MCP is **v6-only**, not assumed available on v5 |
 | Notifications absent | [Notification checks](#notifications-ntfy--slack--discord-never-arrive) | Dashboard operator; outbound-network test needs container shell |
 | Agent committed but no remote branch/PR | [Publication diagnosis](#an-agent-session-completes-but-no-branch-or-pr-appears) | Container shell, with the agent's UID/HOME |
-| Login repeats or Copilot licensing fails | [Login loop](#an-agent-says-please-run-login-but-logging-in-changes-nothing), [license check](#every-copilot-agent-says-you-are-not-licensed-to-use-copilot) | Backend account owner; container admin for file-access repair |
+| Login repeats or Copilot licensing fails | [Login loop](#an-agent-says-please-run-login-but-logging-in-changes-nothing), [license check](#every-copilot-agent-says-you-are-not-licensed-to-use-copilot), [one Copilot agent ignores the login](#one-copilot-agent-stays-at-the-login-prompt-after-a-dashboard-login), [every Claude agent revoked at once](#every-claude-agent-says-oauth-token-revoked--please-run-login-at-once) | Backend account owner; container admin for file-access repair |
 | Browser terminal frozen | [Terminal recovery](#the-terminal-looks-frozen--no-new-output-and-reopening-it-doesnt-help) | Browser/dashboard first; container shell only for deeper diagnosis |
 | Agent behavior/model unexpected | [Reasoning logs](#an-agent-runs-but-not-the-way-i-expect--why-did-it-do-that), [model selection](#switching-an-agents-model) | Dashboard operator |
 | Dashboard access or API startup delays | [Auth/access](#dashboard-auth-and-access-problems), [startup response](#the-api-says-service-starting-up-please-retry), [health endpoints](#health-endpoints) | Dashboard owner or deployment admin, according to the failing layer |
@@ -222,6 +222,8 @@ Two more card behaviors remove the old one-reason-per-click treasure hunt:
   [memory-kill checks](#cli-dies-without-a-pod-restart) instead; another kick
   does not repair memory exhaustion.
 - **A paused agent's primary action is always its pause toggle.** With a live session the button is `▶ resume`, and its tooltip names anything resuming will *not* clear. If the session is also down, the one button reads `▶ start & resume` and clears both flags in a single click — client-side chaining of the two existing endpoints (`POST /api/resume/{agent}` first, so the fresh session is never born paused, then `POST /api/restart/{agent}`). No new API surface; scripts can chain the same two calls. A paused agent never offers a bare Start.
+
+A "Kick failed" toast or a `kick_refusal` health warning is explained reason by reason in [Kick refusals](kick-refusals.md).
 
 If the card says the agent should be running (session up, scheduling shows a cadence, next kick has an ETA) and it still misbehaves, *then* drop into the session as described below.
 
@@ -476,6 +478,44 @@ Common causes:
   The boot log reports the opt-in next to `no UID map found`.
   Ensure the shared UID can write the cache directory. This option does not
   restore UID isolation or clear the `uid_isolation` health alert.
+
+- **Writes blocked with `proxy: agent could not be identified`.** The proxy
+  could not attribute the write to an agent, so it fails closed to ADVISORY
+  (this is not an agent-mode misconfiguration, and the proxy never trusts a
+  self-asserted `Proxy-Authorization` name instead). The log line's `reason`
+  field says why: `shared_uid_mode` (a UID map with no per-agent UIDs and no
+  forced egress, the OpenShift `restricted-v2` shape; fix by granting the
+  NET_ADMIN SCC per [net-admin-requirement.md](net-admin-requirement.md)),
+  `no_uid_map` (no `uid-map.json` was loaded when the proxy started; see
+  below), `port_not_in_socket_table` (the peer
+  port is not visible in `/proc/net/tcp{,6}`), `uid_not_in_map` (the socket
+  owner's UID, logged as `peer_uid`, belongs to no agent) or `no_peer_port`.
+  The fleet reporter files this as the operator-action class
+  `proxy_writer_unidentified`, not as a fleet bug.
+
+  For `no_uid_map`, look for `no UID map found, agents will share dev UID` and
+  `proxy: no UID map` in the startup log. The proxy and the agent manager read
+  `/var/run/hive/uid-map.json` once, at startup. A map that is missing then
+  stays missing until the next restart, so the proxy cannot later switch to
+  trusting a self-asserted identity (#18184). The two usual causes:
+  - **The container booted with no agents in `hive.yaml`.** The entrypoint's
+    root phase creates the per-agent users, writes `uid-map.json` and sets up
+    forced egress only for the agent names it finds in `hive.yaml` at boot.
+    Agents added after that run under the shared `dev` UID and cannot be
+    attributed. Restart the hive once its agents are configured. The startup
+    log should then show `UID map written to …`.
+  - **No entrypoint root phase ran at all** (local dev, a native or systemd
+    install). No map can exist, so blocking writes is the correct result.
+    Run the container image, or set `HIVE_PROXY_ADVISORY_OK=true` to
+    deliberately accept the self-asserted `Proxy-Authorization` identity.
+
+- **`proxy upstream dial failed` for `api.github.com:443`.** The proxy could
+  not open its TLS connection to GitHub. The log's `error_class` field says
+  `timeout`, `refused`, `dns`, `unreachable`, `reset`, `tls` or `other`, next
+  to `host` and `error`; a burst of these is a flaky egress path on the
+  cluster and stays in the logs only. If it persists for over an hour the
+  reporter raises the operator-action class `proxy_upstream_degraded`; check
+  cluster egress, DNS and any outbound proxy toward GitHub.
 - The cache file exists but is empty, unreadable, or was not pre-created by the
   entrypoint as `dev:hive-<agent> 0640`.
 - The GitHub App is not installed on the repo, or token minting failed for the
@@ -571,6 +611,199 @@ Before [#4400](https://github.com/hivecommons/hive/issues/4400) hive read that l
 a login prompt: it badged the agent 🔑, and — because a valid token was on disk —
 auto-restarted it straight back into the same 403, which looked like the agent
 crash-looping. Hive no longer treats a 403 as a login signal; a 401 still is.
+
+## Claude agents sit at `Please run /login` although the credential file looks valid (login revoked)
+
+Symptom: every Claude agent shows `Please run /login`, the shared
+`.credentials.json` still holds an access token and a refresh token with future
+expiries, and the hive log shows the pane poller restarting agents into the same
+prompt a few times before `giving up on token-triggered restart`. Before the fix
+for [#18732](https://github.com/hivecommons/hive/issues/18732) the login detector
+also logged `login pattern matched but the backend credential is valid — leaving
+it to the token-restart heal` on every cycle and did nothing else, so the fleet
+stayed down until someone looked.
+
+Cause: the Claude OAuth grant was revoked (or otherwise killed) at the provider.
+Revocation does not touch the file, so every on-disk check ("is there an access
+token, is it unexpired, is there a refresh grant") keeps answering yes while the
+provider refuses every token in it. A restart re-reads the same dead file.
+
+What the hive does now: "valid" means the provider accepts the token. When a
+Claude agent sits at a login prompt and its credential file passes the on-disk
+check, the hive sends the live access token to the provider's read-only usage
+endpoint (the same call the headroom probe makes, one call per two minutes per
+credential file, shared by every agent on that file) before choosing a heal.
+
+- HTTP 200: the existing bounded token-triggered restart runs as before.
+- HTTP 401: the agent is marked `revoked`. Log line:
+  `Claude login revoked: the provider rejected the stored credential — no restart
+  will be attempted; sign in again from the dashboard`, once per agent. The
+  dashboard shows a red "Claude login revoked: sign in again" banner naming the
+  agents, the hub's health verdict and remediation say the same, the login
+  detector pages the operator once (`login revoked detected`), the agent card's
+  error says so, and the agent is left running at its prompt. No restart fires
+  and the 3-per-24h restart budget is not spent.
+- Anything else (an aged-out access token the CLI would refresh on start, 403,
+  429, 5xx, network error) is inconclusive and leaves the previous behaviour.
+
+Fix: sign in to Claude again from the dashboard. The sign-in lifts the `revoked`
+mark, clears the banner, and restarts every agent still at the login prompt once
+within the next 15 minutes, even when its 24h restart window is already
+exhausted. The operator's login is a new signal, not another retry. Nothing else
+is needed; if an agent is still at the prompt a minute after the sign-in, read
+its terminal (`tmux attach -t hive-<agent>`).
+
+Token contents are never logged; the detail recorded is the HTTP status only.
+
+## One Copilot agent stays at the login prompt after a dashboard login
+
+Symptom: the dashboard's Copilot device-flow login succeeds and every other
+Copilot agent keeps working, but one agent stays at the Copilot CLI login
+prompt. Before the fix for
+[#18443](https://github.com/hivecommons/hive/issues/18443) the hive restarted
+it a few times and then gave up (`giving up on token-triggered restart`).
+
+Cause: each per-agent `~/.copilot/config.json` is a symlink to the shared
+`/data/home/.copilot/config.json`, which is where the dashboard login and the
+token sync write. The Copilot CLI saves its config by writing a temp file and
+renaming it over `config.json`. That replaces the symlink with a private
+regular file, and from then on the agent never sees a new login. An agent whose
+private copy holds no login sits at the prompt. Agents whose private copy still
+holds an older token keep working until that token expires. A leftover
+`config.json.tmp.*` in the shared `.copilot` folder is the trace of such a save.
+
+Automatic repair: at every agent launch and restart, the hive checks the
+agent's `~/.copilot/config.json`. When it is a regular file instead of the link,
+the hive moves it aside to `config.json.bak-<UTC timestamp>` (keeping only the
+newest backup) and links it back to the shared file. The log line is
+`copilot config bridge: a private config.json had replaced the shared-login symlink; re-linked`.
+The credential check behind the token-triggered restart now looks at the file
+the agent actually reads: a private copy that holds no login, or that differs
+from the shared file, does not count as logged in. When the pane poller sees a
+Copilot agent stuck at the login prompt with such a copy, it relinks it first,
+so the one restart that follows starts a CLI that reads the shared login. File
+contents are never logged.
+
+The repair leaves the private copy in place when it holds a login and the
+shared file holds none (it may be the only login the hive has); the log says
+`copilot config bridge: repair not applied`. Sign in from the dashboard to fill
+the shared file and the next launch relinks the agent.
+
+Launch also removes leftover `config.json.tmp.*` files older than one hour from
+the shared and per-agent `.copilot` folders; younger ones may belong to a save
+in progress. Set `HIVE_COPILOT_CONFIG_TMP_MAX_AGE` (a Go duration such as
+`30m`) to change the threshold.
+
+Manual workaround (hives without the fix, or to force it now): inside the hive
+container, move the agent's private copy aside, then restart only that agent.
+
+```bash
+mv /data/home/agents/<agent>/.copilot/config.json \
+   /data/home/agents/<agent>/.copilot/config.json.bak-manual
+curl -X POST -H "Authorization: Bearer $HIVE_DASHBOARD_TOKEN" \
+   http://localhost:3002/api/restart/<agent>
+```
+
+The restart recreates the link to the shared login. Do not open or copy the
+config file's contents: it holds the Copilot token.
+
+## Every Claude agent says "OAuth token revoked · Please run /login" at once
+
+Symptom: on a per-UID hive, every Claude agent reports
+`OAuth token revoked · Please run /login` within a minute or two of each
+other, the hive restarts each a few times and then gives up
+(`giving up on token-triggered restart`), and the credential watchdog logs
+`reason=CredentialMissing` or `login expired`. The word is *revoked*, not
+*expired*: a re-login is the only recovery for the credential on disk.
+
+Cause: every Claude agent's `~/.claude/.credentials.json` is a symlink to the
+shared `/data/home/.claude/.credentials.json`, so the fleet runs on one OAuth
+grant. Claude Code refreshes its access token itself and Anthropic rotates the
+refresh token on every use. Because all N agents hold the same access token
+they reach its expiry together and refresh within seconds of each other: the
+first refresh rotates the grant, the rest present the now-dead refresh token,
+and the authorization server treats that reuse as a stolen token and revokes
+the whole grant, the fresh one included
+([#18731](https://github.com/hivecommons/hive/issues/18731)).
+
+Prevention: the hive is the one refresher. On a timer (every minute, checked;
+`HIVE_CLAUDE_SHARED_REFRESH_INTERVAL`) it redeems the shared grant itself when
+the access token has a quarter of its lifetime left (about two hours of the
+eight; `HIVE_CLAUDE_SHARED_REFRESH_LEAD` sets the lead directly, e.g. `3h`),
+using the same refresh grant and public client id Claude Code sends, and
+writes the result atomically to the shared file. The CLIs then always find a
+token with hours of life left and never refresh it themselves. The log line
+is `claude shared login: refreshed the shared Claude credential ahead of
+expiry`, and the audit log records `claude_credential_refreshed` with
+`outcome=success`. If a CLI still refreshes first, the per-agent credential
+bridge promotes its copy exactly as before (`kept=agent`). File contents are
+never logged. `HIVE_CLAUDE_SHARED_REFRESH=off` turns the central refresh off.
+
+Kill switch: with `HIVE_CLAUDE_SHARED_REFRESH=off` the hive never calls the
+token endpoint for the shared login. Each CLI then refreshes for itself, and
+the only protection is the after-the-fact repair by the agents' credential
+bridge and the session adopt-back, which cannot stop N CLIs from racing one
+refresh token. Use it only if the hive's own refresh misbehaves; a pending
+grant left by an earlier run is still adopted at boot with it off.
+
+The new refresh token must not be lost. The provider kills the old refresh
+token the moment it answers, so the hive saves the new grant to
+`.credentials.pending` (mode 0600, fsynced, beside the shared file) before it
+writes the shared file, holds it in memory, and retries the write with backoff
+(5 s doubling to 5 min, with no overall limit) without calling the token
+endpoint again. After a restart a pending grant newer than the shared file is
+adopted at boot; an older one is deleted. If the write keeps failing the hive
+logs `claude shared login: the hive redeemed the shared Claude grant but could
+NOT save the new one`, records `claude_credential_refreshed` with
+`reason=new grant could not be saved`, and raises the dashboard banner
+"The hive refreshed the shared Claude login but cannot write the new one",
+which names the time the login the agents read expires. Fix the disk space or
+ownership of `/data/home/.claude`, or sign in from the dashboard, before then.
+This closes the window while the process lives; across a crash it narrows it to
+the milliseconds between the provider's answer and the pending file's fsync,
+or to the case where both files fail and the process dies before either
+recovers. A refused grant is also not final while a newer one exists: before
+marking the login rejected the hive publishes any newer credential from an
+agent or session home and compares the shared file again.
+
+Everything that writes the shared login (this refresher, the agents' bridge
+promote-on-race, the session adopt-back) goes through one function under one
+lock, which writes only a usable credential that expires strictly later than
+the current one. Only the typed token block is ever written; any other content
+in the file is dropped, as the dashboard sign-in does, on purpose.
+
+Live check (a real CLI is needed; the unit tests cannot cover it). The hive
+assumes a running Claude CLI re-reads the rewritten file through its
+credential symlink instead of refreshing with a refresh token it cached; if
+it does not, its later refresh presents a dead token and trips the provider's
+reuse detection. The hive does not restart agents on a refresh. To confirm, on
+a hive with at least two Claude agents:
+
+1. Note each agent's pane and set `HIVE_CLAUDE_SHARED_REFRESH_LEAD` to a value
+   just under the current remaining lifetime so the next minute's pass refreshes
+   (or wait for the natural pass).
+2. Watch for `claude shared login: refreshed the shared Claude credential`
+   and the `claude_credential_refreshed` audit entry with `outcome=success`.
+3. Leave the agents running past the OLD access token's expiry and send each a
+   task. They must keep working with no `OAuth token revoked`, no login prompt,
+   and no `claude credential bridge ... re-bridged` entry with `kept=agent`
+   (that entry means a CLI refreshed on its own).
+4. If any agent shows the prompt, or a `kept=agent` entry appears, a running
+   CLI is not picking the file up: set `HIVE_CLAUDE_SHARED_REFRESH=off` and report it.
+
+If the shared grant is already dead, the hive's own refresh is rejected too:
+the log says
+`claude shared login: the authorization server rejected the shared refresh grant`
+and the audit log records `claude_credential_refreshed` with `outcome=failed`
+and `reason=refresh grant rejected`. Nothing on disk can mint a token any more;
+sign in once from the dashboard. The sign-in writes a new shared credential,
+relinks any agent whose link a private refresh had replaced, and the refresher
+takes over from there. A transient failure (network, 5xx) is retried after five
+minutes and recorded with `reason=transient`; it needs no action unless it
+persists.
+
+Operator-token hives (`HIVE_CLAUDE_OAUTH_TOKEN`) are not affected: their
+agents do not use the shared file and nothing is refreshed.
 
 ## Every Copilot agent says "You are not licensed to use Copilot"
 
@@ -802,7 +1035,9 @@ when self-reporting is enabled, as a `[selfreport]` issue.
   mutation journal (`/data/convergence/mutation/journal.json` in the pod). Check whether the effect
   exists on GitHub; the owning call site reconciles it on its next pass, or
   the op resolves once the request behind it is removed. A watcher retrying
-  a doomed request keeps the op pinned, so fix the request first.
+  a doomed request keeps the op pinned, so fix the request first. An
+  `issue_create` op still refused after 1h is expired to NotApplied by the
+  boundary itself and the report clears.
 - **`unclassified_error_repeated`** — any WARN/ERROR line repeated five times
   in ten minutes. The report's message is the normalised line; grep the log
   for it (`kubectl -n hive logs deploy/hive | grep -F "<message>"`) to find
@@ -884,6 +1119,38 @@ The two dominant causes, in order:
 A failed self-upgrade also exits the process with code **17**
 (`selfUpgradeFailureExitCode`) rather than 0, so the failure is visible in the
 container's termination state instead of looking like a clean shutdown.
+
+### Upgrade stuck: cannot unmarshal string "dashboard" into json.Number
+
+Every self-upgrade attempt fails, and the retry log or the `⚠ auto-update
+failed` tooltip shows:
+
+```text
+patching deployment <namespace>/hive: decoding startup probe before upgrade: json: cannot unmarshal string "dashboard" into Go value of type json.Number
+```
+
+Builds that include [#18010](https://github.com/hivecommons/hive/pull/18010)
+read the hive container's readiness and liveness probes before upgrading, so
+they can add a missing startupProbe. Those builds expected a numeric
+`httpGet.port`. A Deployment whose probes use the named container port
+`dashboard` failed to decode, and the whole upgrade aborted. Builds with the fix
+for [#18479](https://github.com/hivecommons/hive/issues/18479) accept named
+ports, and they never let a probe decode problem block the image upgrade.
+
+The bug is in the running binary, so an affected hive cannot upgrade itself to
+the fixed build. Change the probe ports to the numeric dashboard port once
+(replace `<namespace>` with the hive's namespace; `oc` takes the same
+arguments as `kubectl`):
+
+```bash
+kubectl -n <namespace> patch deployment hive --type=strategic -p \
+  '{"spec":{"template":{"spec":{"containers":[{"name":"hive","readinessProbe":{"httpGet":{"port":3002}},"livenessProbe":{"httpGet":{"port":3002}}}]}}}}'
+```
+
+The patch rolls the pod once. When it is Ready again, let the upgrade retry: the
+next instructed upgrade (from the hub, or **Self Upgrade** on the dashboard)
+decodes the numeric ports and lands. If the retry budget was already spent, the
+next new target gets a fresh budget, as described above.
 
 ## Podman (Quadlet) deployments: failure modes Docker does not have
 

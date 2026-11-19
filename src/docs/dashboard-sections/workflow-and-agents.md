@@ -172,21 +172,29 @@ There is no lab-wide progress bar. The whole-Hive snapshot count is a total, not
 
 **Settings that change it.** `dashboard.experiment_lab: true` turns it on (`dashboard.strategy_lab` is a deprecated alias for one release). See [Experiment Lab](../strategy-lab.md).
 
-## Inception
+## Inception (spek)
 
-A step-by-step guide that turns a new project idea into a first set of files and planned work.
+Named terminal sessions where a command-line AI agent runs inside Hive; everyone who can see a session watches it live, one person at a time holds the keyboard, and people with write access can join in.
 
-**What it tells you.** It walks you through describing a project. Hive asks questions, proposes a structure and creates the first files.
+**What it tells you.** A tab strip lists each session, grouped under headings you choose, with the CLI it runs and how many browsers are attached; a tab's tooltip names who holds the keyboard and who is watching, and the workspace (the hive's shared checkout of the project repo, with its spek skills) the session runs in. The tab strip holds sessions only: the **Campaigns** tab (the campaigns and Jam view carried over from the removed Inception wizard) was retired; start a session for new inception work and use [Runs](../runs.md) for Spektacular runs. The selected tab shows a live terminal; its header reads `keyboard: andy · watching: bob, carol` and offers **Take keyboard** or **Release keyboard**; a viewer without the keyboard sees `watching`. Ended sessions show their last output and a **Resume** button.
 
-**How the numbers are worked out.** This section has no numbers.
+**How the numbers are worked out.** The attached count is the number of browsers currently attached to that terminal. Only the keyboard holder's terminal accepts typing (everyone else is attached read-only), so typing is attributed to the holder of record; the creator holds the keyboard first, owners and the creator can take it at any time, and another writer can take it once it is released or the holder has been idle for a minute. Text from the input bar under the terminal (Send, Send and run, Attach file) is **queued** and typed only when the CLI prompt is idle, so two people's sends never interleave; the button reads `Send · queued behind N`, the list under the bar shows whose turn it is with Cancel on your own items, and each delivery is attributed to whoever queued it in the audit log.
 
-**What it is good for.** Use it when starting a new project with Hive. Answer its questions, review the plan, then approve it.
+**What it is good for.** Use it to run a CLI agent without leaving the dashboard, hand a long task to a teammate by sharing a tab and passing them the keyboard, or let someone who logs in later follow along. People with the `read` role watch a shared session's live terminal read-only (and can read its scrollback) but never type, Send or upload. Only `owner` and `read-write` roles can start sessions, hold the keyboard, Send or upload.
 
-**Example.** You describe a small web service. Inception asks two questions and then proposes a folder layout and five starter issues.
+**Voice notes.** In browsers with the Web Speech API (Chrome, Edge), people who can Send also see a **Voice** button in the input bar: click it, speak, and click again (or pause) to stop. The words appear live under the bar while you speak, and the final transcript is added to the Send text box for you to edit; nothing is sent until you press Send or Send and run. Transcription is done by your browser vendor's speech service (Chrome sends the audio to Google), not by Hive, and a one-line notice says so next to the button until you first use it. The dictation language follows your browser's language. Browsers without the API (for example Firefox) do not show the button. If the microphone permission is denied, nothing was heard, or the speech service is unreachable, a toast says so.
 
-**When it appears.** Always.
+**From the Inbox.** **🔗 Share ▾ → Hive → spek…** on an Inbox item (or **Hive ▾ → spek…** on a selection) sends recordings into a new or running session: the hive writes each one to `.hive/inbox/` in the workspace, inside an untrusted-data envelope, queues a Send asking the CLI to start a spec from those files with the spek-new skill, and opens the session's tab. See [Inbox and voice sources](../inbox-voice-sources.md#from-recording-to-an-inception-spek-session).
 
-**Settings that change it.** No settings change this section. See [Inception](../inception.md).
+**Starting up.** When a session starts, the pane header shows **Getting the CLI ready…** while the hive answers the vendor CLI's startup screens (first-run notice, trust for the session's folder, onboarding), then **Started**; whatever was queued for the session, such as Inbox items sent to spek, is delivered at that point with nobody at the keyboard. The hive never answers a tool or command permission prompt and never signs in: the header says **Needs sign-in**, or names the screen it stopped at, and leaves the terminal to you. See [Startup auto-answer](../api-reference/sessions.md#startup-auto-answer).
+
+**Example.** You start a session named "fix flaky test" in the group "ci" with the Claude CLI, paste the failing log into the input bar and press Send and run. A teammate opens the same tab and watches.
+
+**When it appears.** Whenever sessions are enabled on the hive, which is the default (`GET /api/sessions` reports `enabled: true`); with `dashboard.sessions.enabled: false` or `HIVE_SESSIONS_ENABLED=false` the section is hidden. Old `#inception-section` links open this section.
+
+**Closing and deleting.** **Close session** ends a running session's CLI and keeps the session, ended, so it can be resumed. **Delete session** on an ended or failed session removes its record and files; work in its workspace stays on its branch of the shared checkout. Deleting can take a minute or more for a session with large caches, so it runs in the background: the tab shows **Deleting…** with a spinner and no controls, and closes by itself when the hive is done. If the delete fails, the tab comes back as it was with the reason and a **Retry delete** button. See [Deleting a session](../api-reference/sessions.md#deleting-a-session).
+
+**Settings that change it.** Settings → Dashboard → **Inception (spek) sessions** (`dashboard.sessions.enabled`, default on) and the three limits beside it (`max_sessions`, `max_per_user`, `idle_ttl_hours`; 0 keeps the default). **Answer the CLI startup screens** (`dashboard.sessions.autostart`, default on) turns the startup auto-answer off or on. `HIVE_SESSIONS_ENABLED`, `HIVE_SESSIONS_AUTOSTART` and the matching `HIVE_SESSIONS_*` variables override the saved values. The terminal is drawn in the dashboard's terminal colours, so it matches the current theme. See [Inception](../inception.md) for the inception API it sits beside.
 
 ## Knowledge
 
@@ -201,6 +209,25 @@ The facts Hive has learned about your projects, where they came from, and how mu
 - Layers show where facts come from, such as one project or a shared source.
 
 **What it is good for.** Check it when a worker keeps making the same mistake. Correct the wrong fact here.
+
+## Inbox
+
+Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.
+
+**What it tells you.** Every recording a voice source (Plaud, Wispr Flow) syncs is already a Knowledge fact. The Inbox lists the ones you have not triaged yet, with the source, date, length and a short excerpt.
+
+**How the numbers are worked out.**
+
+- The sidebar count and the summary count items with no destination yet and not marked "Knowledge only".
+- Each item shows one pill per destination it was sent to: queued, running, filed (with a link) or failed.
+- Auto-routing rules run once per new item after a sync; the first matching rule wins.
+- The default RFC repository, dibs URL and rules can also be edited under Settings → Inbox. The **⚙ Auto-routing** dialog has two parts, Routing and Transcription; the config key of each setting is under **Config keys** at the end of its part.
+- **＋ Add** takes files, a link or a **Quick note**: typed or dictated text that becomes an item like an uploaded markdown file ([Quick note](../inbox-uploads.md#quick-note)).
+- Under the source chips, **Works today** and **Neural input (coming soon)** list input methods. They are not sources: a chip only shows a short explanation ([Input methods and the Inbox](../inbox-input-methods.md)).
+- **Send to this inbox**, under the toolbar, is the hive's email address (`hive@<dashboard host>`) as a link that opens a new mail, with a **Copy** button: email or forward a recording, document or note to it and it lands here. Owner and read-write users see it. On a hive that mail cannot reach it says **Not set up yet** and links to the setup guide.
+- **🗑 Delete** removes an item for good; tick several and use **Hive (n) ▾ → Delete…** to delete them together. The dialog says what goes: the file or recording this hive stores and its transcript record, or only the Inbox item for a synced source (which does not come back on the next sync) and for a meeting (its record stays in Meetings). The Knowledge copy is kept unless you tick the box. Owner and read-write users.
+
+**What it is good for.** Record an idea on your recorder, then turn it into an RFC with child issues (🔗 Share → Hive → RFC…), send it to dibs (DIBS), or just keep it searchable (Knowledge) without leaving the dashboard. See [Inbox and voice sources](../inbox-voice-sources.md).
 
 **Example.** A fact says tests run with `make test`, but your project uses `go test`. You edit the fact.
 
@@ -270,6 +297,8 @@ Each worker Hive runs, what it is doing now, and buttons to pause, restart or co
 **How the numbers are worked out.**
 
 - The header counts running workers and all workers.
+- At autonomy level L6 the hive runs itself, so the Agents section starts collapsed. Its summary still counts the workers and shows how many need your attention, such as a worker that is signed out or stopped. Open or close the section once and Hive remembers your choice on that browser, whatever the level. With no choice made, the section opens again if the level drops below L6.
+- In the left menu, **+ Add agent** and **+ Group** sit at the end of the Agents group and hide when you collapse it.
 - A worker's state comes from the hive, for example running, idle, paused or needs login.
 - A worker outside your autonomy level's usual set still shows when it is running or turned on.
 - The **Now:** line is on every card, in the full and the compact layout, and in the worker's detail panel. The next part explains its words.
@@ -330,6 +359,8 @@ More about the line:
 **The log buttons.** `📄 full log` opens the worker's whole log and `📋 log text` copies it; `🕘 past kicks` lists the logs of earlier rounds. For a normal worker this is the terminal it is typing in. For a worker that runs each round in a sandbox or a Kubernetes Job (its card says so), there is no terminal: the buttons show the output Hive captured from the sandbox when the last round ended, and `past kicks` holds the earlier rounds. Before such a worker's first round has ended the button says there is no archived run yet.
 
 **Sandboxed worker's last run.** A sandboxed worker's card also carries a **last run** line: when it ran, how long it took, whether it succeeded, and the pull request it opened. If the worker's own report said the run failed, or the sandbox exited with an error, Hive keeps any commits the run made off GitHub and the line reads `no PR opened: <reason>` — for example `no PR opened: agent report status=failed: RPM install returned 401`. The same line appears when a configured publish preflight (`publish.verify`, for example a whole-suite `pytest --collect-only`) failed after the run: `no PR opened: verify failed (1/2): uv run pytest --collect-only -q (exit 2)`, with the command's output tail in the tooltip. The full reason is in the line's tooltip and in the full log's outcome block, where each verify command has its own `---- verify: … ----` section.
+
+**Turning on Run in sandbox.** The **Run in sandbox** switch on a worker's General settings tab now asks where the sandbox settings come from before it saves: the hive-wide sandbox defaults (Governor → Security) when they name an image, or a copy of another worker that already runs in a sandbox. A copy leaves out that worker's own publish checks (`publish.verify`). If there are no usable defaults and no worker to copy from, the switch shows a red message saying what is missing and the save is refused, instead of leaving a worker that fails every round. When the switch takes effect, the worker's terminal session is stopped and it waits idle for its next sandboxed round. Turning the switch off keeps the settings for next time. See [Credential-free sandbox isolation](../sandbox-isolation.md#current-wiring).
 
 **Example.** A card says "needs login". You click **Login** and sign in again. Another card says `Now: working — no issue or pull request yet · started 50 min ago`. That worker has changed nothing through the hive for 50 minutes, so you open its log to see what it is doing.
 

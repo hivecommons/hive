@@ -42,7 +42,7 @@ func (c *BobConfig) resolveAPIKeyWithSource() (string, string) {
 		if !SecretFilePathAllowed(f) {
 			continue
 		}
-		if data, err := os.ReadFile(f); err == nil {
+		if data, err := readSecretFile(f); err == nil {
 			if key := strings.TrimSpace(string(data)); key != "" {
 				return key, "file:" + f
 			}
