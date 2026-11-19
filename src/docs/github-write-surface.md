@@ -25,6 +25,11 @@ By default agents still have their direct write paths (`gh`, the API through
 the proxy, `git push`). An operator removes them lane by lane; see
 [Enforcing the write surface](#enforcing-the-write-surface).
 
+Whichever path a write takes, its text gets the same outbound dash rule:
+relay bodies are filtered by the relay, and direct agent writes through the
+GitHub proxy have their JSON text fields filtered before they are forwarded.
+See [Outbound text: no em-dashes](outbound-prose.md).
+
 ## Relay operations
 
 Each relay authorizes a request in this order. It stops at the first refusal.

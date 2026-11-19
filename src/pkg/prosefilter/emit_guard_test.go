@@ -25,6 +25,10 @@ var emitDirs = []string{
 	"pkg/prfollowup",
 	"pkg/scheduler",
 	"pkg/review",
+	// Outbound send sites classed as templates (outbound_sites_test.go).
+	"pkg/forge",
+	"pkg/feedbackbundle",
+	"pkg/fleetreport",
 }
 
 // TestNoNewDashesInEmittedText is a ratchet: the em-dash and en-dash count of
