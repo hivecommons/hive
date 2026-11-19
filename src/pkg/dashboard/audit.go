@@ -109,6 +109,7 @@ var auditSensitiveActions = map[string]bool{
 	"config_repo_parent_autoclose":          true,
 	"config_remote_write_identity":          true,
 	"config_review":                         true,
+	"config_review_feedback_rules":          true,
 	"config_write_surface":                  true,
 	"contributor-tier-changed":              true,
 	"copilot_auth_logout":                   true,

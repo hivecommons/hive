@@ -386,6 +386,8 @@ type RegistryEntry struct {
 	GitHubAppRequired        bool         `json:"githubAppRequired,omitempty"`
 	GitHubAppPermIssue       string       `json:"githubAppPermIssue,omitempty"`
 	GitHubAppState           string       `json:"githubAppState,omitempty"`
+	PRGateCause              string       `json:"prGateCause,omitempty"`
+	PRGateDependsOn          bool         `json:"prGateDependsOn,omitempty"`
 	GitHubAppTokenStatus     string       `json:"githubAppTokenStatus,omitempty"`
 	GitHubAppTokenLastMintAt string       `json:"githubAppTokenLastMintAt,omitempty"`
 	GitHubAppTokenError      string       `json:"githubAppTokenError,omitempty"`
@@ -2191,6 +2193,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// identifier sanitizer stripped every space out of it.
 		GitHubAppPermIssue:       sanitizeProseField(payload.GitHubAppPermIssue),
 		GitHubAppState:           sanitizeHeartbeatField(payload.GitHubAppState),
+		PRGateCause:              sanitizeHeartbeatField(payload.PRGateCause),
+		PRGateDependsOn:          payload.PRGateDependsOn,
 		GitHubAppTokenStatus:     sanitizeHeartbeatField(payload.GitHubAppTokenStatus),
 		GitHubAppTokenLastMintAt: sanitizeField(payload.GitHubAppTokenLastMintAt),
 		GitHubAppTokenError:      sanitizeProseField(payload.GitHubAppTokenError),

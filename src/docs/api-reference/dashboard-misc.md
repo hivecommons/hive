@@ -117,7 +117,7 @@ review are settled.
 | `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:378` |
 | `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:379` |
 | `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:380` |
-| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1813` |
+| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1816` |
 ### Activity observation provenance
 
 The CI snapshot retains real check/node IDs, head, App ID and transition times.

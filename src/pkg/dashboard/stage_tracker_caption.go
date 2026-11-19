@@ -497,6 +497,7 @@ func unauthorizedStepWords(step string) string {
 const (
 	stageTrackerUnauthorizedApproveRuns = "The hive bot's GitHub App is missing the 'actions: write' permission needed to approve the workflow runs GitHub is holding for this head, so a person has to take that step: click Approve and run on the PR's checks banner (or the Actions tab); the `hive:unauthorized` comment on the PR lists the run ids. Hive resumes and clears the label once the required checks report."
 	stageTrackerUnauthorizedGeneric     = "The hive bot's GitHub App is missing a permission needed for the next step, so a person has to take that step. The `hive:unauthorized` comment on the PR names the permission and the action; hive resumes and clears the label once it's done."
+	stageTrackerUnauthorizedPRGate      = "The hive posts the required PR-contents check itself, and its GitHub App installation has no Commit statuses write grant (or GitHub refused the write), so that check will not report on this head. An organization owner accepts the App's pending permission request in the organization settings; the hive resumes on its next sweep."
 	stageTrackerUnauthorizedMergeWF     = "The hive bot's GitHub App is missing the 'workflows: write' permission needed to merge this owner-approved PR that edits .github/workflows files, so a person has to take that step: click Merge on GitHub (the approval already stands), or grant the App Workflows: Read and write so the hive can merge such PRs itself."
 )
 
@@ -514,6 +515,9 @@ func stageTrackerUnauthorized(reason string) (step, tip string) {
 	}
 	if rest == stageengineprstage.UnauthorizedStepMergeWorkflowPath {
 		return step, stageTrackerUnauthorizedMergeWF
+	}
+	if rest == stageengineprstage.UnauthorizedStepPostPRGateStatus {
+		return step, stageTrackerUnauthorizedPRGate
 	}
 	return step, "The hive bot's GitHub App is missing the permission needed to " + step + ", so a person has to take that step. The `hive:unauthorized` comment on the PR names the permission and the action; hive resumes and clears the label once it's done."
 }

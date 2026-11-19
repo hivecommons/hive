@@ -4,7 +4,7 @@ This page is the starting point for the dashboard's **Settings** tabs. It has on
 
 Every setting on a Settings tab has a small **?** mark next to its name. Rest the pointer on it, or move to it with the Tab key, to see a short explanation of the setting. Click it, tap it, or press Enter on it to open the page that explains the setting in a new tab. When a setting has its own guide, the mark opens that guide; otherwise it opens this page at the tab's entry. Clicking a mark never changes the setting.
 
-For the dashboard's other sections, see [Dashboard sections explained](dashboard-sections.md). If a key has no editable control, see [Editing `hive.yaml`](editing-hive-yaml.md) for file locations and reload behavior.
+For the dashboard's other sections, see [Dashboard sections explained](dashboard-sections.md); to find a section or a tab by its on-screen name, see the [Dashboard UI map](dashboard-ui-map.md). If a key has no editable control, see [Editing `hive.yaml`](editing-hive-yaml.md) for file locations and reload behavior.
 
 ## Linking to a setting
 
@@ -82,6 +82,7 @@ Optional capabilities, each off or inert until you turn it on. Where a feature h
 - Auto-merge: [App self-merge sweep](operator-reference.md#app-self-merge-sweep-auto_merge), [Trusted bot authors](hive-merge.md#trusted-bot-authors), and [Trusted-author auto-merge](hive-merge.md#trusted-author-auto-merge).
 - Review gate: [Review swarm](review-swarm.md#configuration), [Blocking line and backlog](review-swarm.md#blocking-line-reviewseverity-reviewbacklog), and [external review bot threads](review-bot-threads.md).
 - Trajectory review: [Trajectory-Review Lane](trajectory-review.md#configuration).
+- Reviewer-stated rules: [Reviewer-stated rules from review feedback](review-feedback-rules.md#settings). A card under Review (owner only, `review_feedback.rules.*`) turns capture on or off, picks whose rules are recorded at once, adds phrases that count, and switches built-in signals off; each control shows its default and where the current value comes from.
 - Linear agent: [Linear agent integration](linear-agent.md).
 - Upstream watch: [Upstream watch](upstream-watch.md#configuration).
 - Ask AI help: [Ask AI help](ask-ai-help.md).
@@ -118,6 +119,42 @@ The **Hub settings** block at the bottom of the tab sets explicit task acceptanc
 ## Model Gateways
 
 The OpenAI-compatible gateways (LiteLLM, OpenRouter, vLLM, and others) agents send inference through, and their keys. See [Configure model gateways and keys](hosted-hub.md#configure-model-gateways-and-keys).
+
+## Appearance
+
+The dashboard's look, stored under `dashboard.theme_overrides`: a background image (URL, opacity, position, size, attachment), the UI and monospace fonts, CSS token overrides and custom CSS. See [Appearance themes](dashboard.md#appearance-themes).
+
+## Agents
+
+The managed agents (click a name to open that agent's settings tabs, described under [Agent: General](#agent-general) and below) and the **Backend placement policy**, which restricts the CLI or inference backends agents may use. Deny wins over allow, and an empty allow list permits every supported backend. See [Agent Configuration](agent-configuration.md).
+
+## Workflows
+
+The workflow library: the workflows this hive can run for its repos. Each control's **?** tooltip explains it.
+
+## Inbox
+
+Settings for the [Inbox](dashboard-sections.md#inbox) section. See [Input methods and the Inbox](inbox-input-methods.md) and [Inbox and voice sources](inbox-voice-sources.md).
+
+## Project Observability
+
+Targets for the managed project's telemetry and operations agents. Platforms are referenced by name only (an endpoint environment variable and a credential secret reference); literal URLs, tokens and API keys are refused. Hive's own OpenTelemetry export is set elsewhere. See [How to opt in](telemetry.md#how-to-opt-in-governorproject_observability).
+
+## Meetings
+
+The connections Hive uses to join meetings: the Vexa tenant key and, for Discord, the bot token and the transcription and speech tokens. The tab shows only whether each secret is set. See [Meetings](meetings.md).
+
+## Forge App
+
+The GitHub App (or other forge app) this hive authenticates as, the per-app key files it holds, and the GitHub API budget. See [GitHub App setup](github-app-setup.md) and [GitHub API budget governor](operator-reference/sweeps-and-operations.md#github-api-budget-governor).
+
+## Bob
+
+The hive-wide API key for the IBM Bob CLI backend (agents that use bob cannot start without it) and the Bob session prefix. See [Tagging Bob sessions for Bobalytics](backend-support-tiers.md#tagging-bob-sessions-for-bobalytics).
+
+## Variables
+
+Named variables that agents' prompt templates can use: each has a name, a type, a scope, and a value or an environment variable, with an optional default.
 
 ## Dashboard
 

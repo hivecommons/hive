@@ -769,6 +769,9 @@ type StatusPayload struct {
 	Capabilities       *FrontendCapabilities `json:"capabilities,omitempty"`
 	GitHubAppPermIssue string                `json:"githubAppPermIssue,omitempty"`
 	GitHubAppState     string                `json:"githubAppState,omitempty"`
+	// PRGate is the PR-contents gate's state while auto_merge.pr_gate is
+	// configured for any repository (hivecommons/hive#19038); absent otherwise.
+	PRGate *github.PRGateHealth `json:"prGate,omitempty"`
 	// GitHubAppInstallMissing is CONFIG TRUTH, independent of any auth probe
 	// or classification: a real App is named (app_id set, not the placeholder)
 	// but installation_id is 0. That state alone means every token is a
@@ -2915,6 +2918,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	status.GitHubAppPermIssue = s.githubAppPermIssue
 	status.GitHubAppState = s.githubAppState
 	s.githubAppMu.RUnlock()
+	status.PRGate = s.PRGateHealth()
 
 	// CONFIG-TRUTH OVERRIDE, applied last so no probe-derived field can veto
 	// it: a real App with installation_id 0 must light the install banner the

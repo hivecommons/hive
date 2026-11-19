@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.333.0)
+
+### Added
+
+- Hub operators can enable a profile-sharing page where people enter their own profile details and grant or withdraw consent per hive and field. Scale Controls shows the effective setting. Off by default; no profile data is sent to hives in this phase ([#19160](https://github.com/hivecommons/hive/issues/19160)).
+
+### Fixed
+
+- Merge requests that run out of retries while CI is still pending are still quarantined, but the watcher now logs the CI timeout without opening a generic fleet self-report ([#19174](https://github.com/hivecommons/hive/issues/19174)).
+- The sentinel label description default is now 97 bytes (was 124, over GitHub's 100-character cap, which made Prow label_sync abort, #19193) with no em-dash; the hive rewrites the old default on repos that already carry it. The unauthorized label description is shortened to fit the cap too.
+
 ## 2026-11-19 (v5.332.0)
 
 ### Added

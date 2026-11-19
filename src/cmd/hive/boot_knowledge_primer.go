@@ -75,7 +75,7 @@ func (b *boot) registerKnowledgeStores(p *knowledge.Primer) {
 // on the first kick after it appears and connects it to the knowledge API, so
 // neither the kick nor the dashboard waits for a restart.
 func (b *boot) registerReviewRuleVault(api *knowledge.KnowledgeAPI, p *knowledge.Primer) {
-	if !reviewrules.Enabled() {
+	if !reviewRulesEnabled(b.cfg) {
 		return
 	}
 	dir := reviewrules.VaultDir()

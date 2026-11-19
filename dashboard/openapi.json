@@ -8425,6 +8425,143 @@
         }
       }
     },
+    "/api/config/review-feedback/rules": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reviewer-stated rule capture settings",
+        "description": "Returns review_feedback.rules.* (enabled, trusted_associations, extra_phrases, disabled_signals): for each, the saved value, the effective value, its source (settings, env or default), the default, its env var and YAML key; plus the associations an owner may trust, the built-in signals with examples, and the phrase limit. Owner only.",
+        "responses": {
+          "200": {
+            "description": "Current reviewer-rule capture settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "object"
+                    },
+                    "trusted_associations": {
+                      "type": "object"
+                    },
+                    "extra_phrases": {
+                      "type": "object"
+                    },
+                    "disabled_signals": {
+                      "type": "object"
+                    },
+                    "associations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "signals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "max_phrases": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set reviewer-stated rule capture settings",
+        "description": "Replaces the saved review_feedback.rules.* values. An absent or null field clears that saved value, falling back to its env var, then the default. Validated before anything changes; applies on the review-feedback sweep's next pass without a restart. Audited as config_review_feedback_rules. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "trusted_associations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "extra_phrases": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "disabled_signals": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current settings (same body as GET)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "object"
+                    },
+                    "trusted_associations": {
+                      "type": "object"
+                    },
+                    "extra_phrases": {
+                      "type": "object"
+                    },
+                    "disabled_signals": {
+                      "type": "object"
+                    },
+                    "associations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "signals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "max_phrases": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown association or signal, or an invalid phrase; nothing was stored"
+          },
+          "500": {
+            "description": "The config file could not be written; the previous values are restored"
+          }
+        }
+      }
+    },
     "/api/config/reference-repos": {
       "get": {
         "tags": [
