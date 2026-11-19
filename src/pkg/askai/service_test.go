@@ -19,14 +19,19 @@ type fakeUpstream struct {
 	answer  UpstreamAnswer
 	err     error
 	block   chan struct{}
+	// entered, when set, receives once per call that reached the vendor.
+	entered chan struct{}
 }
 
 func (f *fakeUpstream) Chat(ctx context.Context, thread, query string) (UpstreamAnswer, error) {
 	f.mu.Lock()
 	f.queries = append(f.queries, query)
 	f.threads = append(f.threads, thread)
-	block, answer, err := f.block, f.answer, f.err
+	block, answer, err, entered := f.block, f.answer, f.err, f.entered
 	f.mu.Unlock()
+	if entered != nil {
+		entered <- struct{}{}
+	}
 	if block != nil {
 		select {
 		case <-block:
@@ -299,12 +304,11 @@ func TestGlobalPerMinuteAndInFlight(t *testing.T) {
 
 	up.mu.Lock()
 	up.block = make(chan struct{})
+	up.entered = make(chan struct{}, 1)
 	up.mu.Unlock()
 	done := make(chan Outcome)
 	go func() { done <- ask("a") }()
-	for up.calls() < 3 {
-		time.Sleep(time.Millisecond)
-	}
+	<-up.entered
 	if got := ask("b"); got != OutcomeRateLimited {
 		t.Fatalf("global in-flight cap: %s", got)
 	}
