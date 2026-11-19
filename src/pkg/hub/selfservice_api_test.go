@@ -62,6 +62,8 @@ func newSelfServiceTestEnv(t *testing.T) *selfServiceTestEnv {
 	t.Helper()
 	t.Setenv(selfServiceRegistrationEnv, "true")
 	t.Setenv(selfServiceMaxPerUserEnv, "")
+	t.Setenv(selfServiceKeyGraceEnv, "")
+	t.Setenv(selfServiceKeyGraceWindowEnv, "")
 	t.Setenv(selfServiceTestAdminEnv, selfServiceTestAdmin)
 	withTempSaaSDirs(t)
 
