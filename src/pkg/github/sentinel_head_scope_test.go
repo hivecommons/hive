@@ -7,8 +7,10 @@ package github
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/prstatus"
@@ -255,5 +257,88 @@ func TestSentinelMarkerHead(t *testing.T) {
 	}
 	if got := sentinelMarkerHead("no marker"); got != "" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// A trusted author's PR still wearing the label the hive added for an
+// earlier head is cleared the same way on a clean head, once per head.
+func TestSweepSentinelTrustedCleanHeadClearsHiveLabel(t *testing.T) {
+	f := headScopeFixture(headScopeDocsFile, headScopeBot, "Bot", headScopeLabelAt)
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetAppBotLogin(headScopeBot)
+	opts := defaultSentinelOpts(nil)
+	opts.TrustedAuthor = func(repo, author string) SentinelAuthorTrust {
+		return SentinelAuthorTrust{Trusted: true, Reason: "hive agent"}
+	}
+	res, err := c.SweepSentinel(context.Background(), opts)
+	if err != nil || len(res.Cleared) != 1 || len(f.removed) != 1 {
+		t.Fatalf("res=%+v err=%v removed=%v", res, err, f.removed)
+	}
+	res, err = c.SweepSentinel(context.Background(), opts)
+	if err != nil || len(res.Cleared) != 0 || len(f.removed) != 1 {
+		t.Fatalf("unchanged head must stay quiet: res=%+v err=%v removed=%v", res, err, f.removed)
+	}
+}
+
+// The alert already names the current head (a restart before the heads map
+// was persisted): nothing is removed or rewritten.
+func TestSweepSentinelCleanHeadAlertForSameHeadUntouched(t *testing.T) {
+	f := headScopeFixture(headScopeDocsFile, headScopeBot, "Bot", headScopeLabelAt)
+	f.prs = []map[string]any{sentinelPR(headScopeNumber, "eve", headScopeOld, "sentinel-alert")}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetAppBotLogin(headScopeBot)
+	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Cleared) != 0 || len(f.removed) != 0 || f.comments[headScopeNumber][0] != headScopeOldAlert() {
+		t.Fatalf("res=%+v err=%v removed=%v", res, err, f.removed)
+	}
+}
+
+// A failed files read on a labelled PR forgets the head, so the next pass
+// reads it again instead of leaving the old head's label judged forever.
+func TestSweepSentinelLabelledHeadErrorRetries(t *testing.T) {
+	f := headScopeFixture(headScopeDocsFile, headScopeBot, "Bot", headScopeLabelAt)
+	f.filesStatus = http.StatusInternalServerError
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetAppBotLogin(headScopeBot)
+	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Errors) != 1 || len(f.removed) != 0 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	f.mu.Lock()
+	f.filesStatus = 0
+	f.mu.Unlock()
+	res, err = c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Cleared) != 1 || len(f.removed) != 1 {
+		t.Fatalf("retry must clear: res=%+v err=%v removed=%v", res, err, f.removed)
+	}
+}
+
+func TestSentinelHeadScopeHelpers(t *testing.T) {
+	if !sentinelCommentWrittenAt(nil).IsZero() {
+		t.Fatal("nil comment has no write time")
+	}
+	created := gh.Timestamp{Time: time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)}
+	if got := sentinelCommentWrittenAt(&gh.IssueComment{CreatedAt: &created}); !got.Equal(created.Time) {
+		t.Fatalf("created_at fallback = %v", got)
+	}
+	body := SentinelCleanComment(headScopeNew, "sentinel-alert", headScopeOld, "")
+	if strings.Contains(body, sentinelEarlierAlertSummary) || !strings.Contains(body, sentinelCleanHeading) {
+		t.Fatalf("empty history renders no block:\n%s", body)
+	}
+	if got := sentinelMarkerHead(SentinelMarker + " "); got != "" {
+		t.Fatalf("bare marker head = %q", got)
+	}
+	var s sentinelHeadsSeen
+	s.forget("missing")
+	s.unchanged("k", "h")
+	s.forget("k")
+	if s.isSeen("k", "h") {
+		t.Fatal("forget must drop the head")
 	}
 }

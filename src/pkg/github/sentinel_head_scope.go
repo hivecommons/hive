@@ -263,7 +263,7 @@ func (c *Client) trySentinelLabelledHead(ctx context.Context, displayRepo, owner
 		event.SuppressedReason = d.Reason
 		return event, true, nil
 	}
-	target, posted, err := c.findOwnMarkerComment(ctx, owner, repo, number, SentinelMarker+" "+head)
+	_, posted, err := c.findOwnMarkerComment(ctx, owner, repo, number, SentinelMarker+" "+head)
 	if err != nil {
 		return SentinelSweepEvent{}, false, err
 	}
@@ -272,10 +272,11 @@ func (c *Client) trySentinelLabelledHead(ctx context.Context, displayRepo, owner
 		// comment from a forged one: the label holds, nothing to rewrite.
 		return SentinelSweepEvent{}, false, nil
 	}
-	if target, posted, err = c.findOwnMarkerComment(ctx, owner, repo, number, SentinelMarker); err != nil {
+	target, found, err := c.findOwnMarkerComment(ctx, owner, repo, number, SentinelMarker)
+	if err != nil {
 		return SentinelSweepEvent{}, false, err
 	}
-	if !posted || target == nil {
+	if !found || target == nil {
 		return SentinelSweepEvent{}, false, nil
 	}
 	if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, target.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
