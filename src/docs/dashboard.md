@@ -1,5 +1,12 @@
 # Spoke dashboard
 
+## Pausing an agent
+
+On the hive dashboard, open **Agents** in the sidebar and select the worker.
+As a hive owner, choose **⏸ pause** on its card. This pauses the individual
+agent, not the fleet, and is separate from disabling the agent or changing
+its per-mode cadences.
+
 ## Resuming a paused agent
 
 On the agent card, hover or focus the information icon beside **paused** to
@@ -80,6 +87,27 @@ via YAML tags.
 Every dashboard section title has a small **?** mark. Hovering or focusing it shows a one-sentence summary; clicking it (or pressing Enter) opens that section's entry in [Dashboard sections explained](dashboard-sections.md), the plain-language help page for operators. The help sentences live in one table in `index.html` (`DASHBOARD_SECTION_HELP`), and `dashboardDocsHref` is the single place that builds every help address: a hive built from the `v6` branch or a `v6.x.y` tag opens the `v6` page, anything else opens `v5`. A guard test fails when a section has no help entry or its sentence drifts from the page.
 
 Settings fields use the same **?** mark, rendered by `settingHelpMark(page, anchor, label, tip)`: hovering or focusing it shows the setting's tooltip, and clicking it opens the guide that explains the setting, or the tab's entry in [Dashboard settings explained](settings.md), through the same `dashboardDocsHref`. Clicking the mark never changes the setting.
+
+Use the [dashboard UI map](dashboard-ui-map.md) to match section headings to
+their sidebar locations and Settings tabs.
+
+## Optional Ask AI help
+
+Where an operator has enabled **Ask**, the panel answers dashboard navigation
+questions with links to the docs. Answers are AI-generated; check the cited
+page before acting. Use the `?` marks or the docs directly if Ask is off,
+unavailable, or has no cited answer.
+
+Ask is off by default. Before your first question, review and accept the
+disclosure in the panel. Consent is recorded server-side for your signed-in
+dashboard identity, not shared with other users, and can be withdrawn in the
+panel. Hive asks again if the disclosure changes. Withdrawal stops future
+requests; it does not erase questions already sent.
+
+When you submit a question, Hive sends what you typed and, if enabled, a
+fixed dashboard section label to Kapa.ai. Project administrators can read
+questions in Kapa analytics. Do not paste secrets or private details.
+See [Ask data and consent](telemetry.md#ask-ai-help) for the full payload.
 
 ## Design system
 

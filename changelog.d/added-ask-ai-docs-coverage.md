@@ -1,0 +1,1 @@
+- Added a generated dashboard navigation map and documented Ask AI help, consent, and rollout checks ([#19182](https://github.com/hivecommons/hive/issues/19182)).
