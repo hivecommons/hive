@@ -1,0 +1,1 @@
+- The PR-contents gate now has a backstop sweep: every 10 minutes the hive posts the gate on open, non-draft PR heads in scope that do not carry it yet (missed webhooks, restarts, `github.token` autofix pushes), bounded per sweep and with no request while the gate is off ([#19285](https://github.com/hivecommons/hive/issues/19285)).

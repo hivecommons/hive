@@ -14,7 +14,12 @@ package customers
 //   - Only confirmed customers are asked about, never a suggestion, and only
 //     by a confirmed GitHub login.
 //   - Import never creates a person and touches nothing but the three fields.
-//   - manual is never overwritten; hub outranks auto.
+//   - manual is never overwritten. Precedence (#19306): manual > entered by
+//     the person on the hub > public forge profile (auto) > hub derived or
+//     admin-set. A derived or admin-set hub value only fills an empty field
+//     or replaces an earlier hub value; it never replaces an auto value.
+//   - Each hub value keeps the label the hub sent (Rule ProfileSourceHub*),
+//     which the dashboard shows in the pill tooltip and profile details.
 //   - A cleared entry, or a hub value not refreshed within HubImportMaxAge,
 //     removes only hub-provenance fields and hands them back to automatic.
 //   - A forgotten person is gone with a tombstone; import cannot rebuild them.
@@ -37,8 +42,23 @@ import (
 )
 
 const (
-	// ProfileSourceHub is the Rule a hub-provenance field carries.
+	// ProfileSourceHub is the Rule of a hub value the person entered and
+	// consented to share (also every value from a hub that sends no labels).
 	ProfileSourceHub = "hub_consent"
+	// ProfileSourceHubPerson: entered by the person on the hub, passed as
+	// public information without per-person consent (#19306).
+	ProfileSourceHubPerson = "hub_person"
+	// ProfileSourceHubAdmin: set by a hub admin on the person's behalf.
+	ProfileSourceHubAdmin = "hub_admin"
+	// ProfileSourceHubEmailDomain: derived on the hub from an organization
+	// email domain the hub operator listed. The email never crosses.
+	ProfileSourceHubEmailDomain = "hub_email_domain"
+	// ProfileSourceHubBrowserLanguage: a country the hub inferred from the
+	// browser language at sign-in.
+	ProfileSourceHubBrowserLanguage = "hub_browser_language"
+	// ProfileSourceHubUnrecorded: a hub value saved before the hub recorded
+	// who supplied it.
+	ProfileSourceHubUnrecorded = "hub_unrecorded"
 	// HubImportInterval is how often the bounded import pass runs.
 	HubImportInterval = time.Hour
 	// HubImportMaxAge is how long a hub value is kept without being
@@ -54,6 +74,11 @@ const (
 	// HubImportMaxReply is the most reply bytes read; it matches the hub's
 	// response cap plus headroom.
 	HubImportMaxReply = 160 << 10
+	// HubMatchLabelsHeader asks the hub for labeled public fields (pkg/hub
+	// customerMatchLabelsHeader); HubMatchLabelsV1 is its value. A hub that
+	// predates labels ignores it and answers consent-only.
+	HubMatchLabelsHeader = "X-Hive-Customer-Match-Labels"
+	HubMatchLabelsV1     = "1"
 )
 
 // Skip reasons of a hub import pass.
@@ -73,6 +98,52 @@ const (
 // HubFields are the only profile fields a hub import reads or writes.
 var HubFields = []string{FieldRealName, FieldOrganization, FieldCountry}
 
+// hubLabelRules maps the hub's wire source labels (pkg/hub
+// customerMatchSource*) to the Rule a hub value carries here.
+var hubLabelRules = map[string]string{
+	"consent":          ProfileSourceHub,
+	"person":           ProfileSourceHubPerson,
+	"admin":            ProfileSourceHubAdmin,
+	"email_domain":     ProfileSourceHubEmailDomain,
+	"browser_language": ProfileSourceHubBrowserLanguage,
+	"unrecorded":       ProfileSourceHubUnrecorded,
+}
+
+// hubPublicFields are the fields the hub may send under a public label;
+// a real name crosses only with consent.
+var hubPublicFields = []string{FieldOrganization, FieldCountry}
+
+// HubRuleEnteredByPerson reports whether a hub Rule is a value the person
+// entered on the hub, which outranks a public forge profile value.
+func HubRuleEnteredByPerson(rule string) bool {
+	return rule == ProfileSourceHub || rule == ProfileSourceHubPerson
+}
+
+// HubValueYieldsToForge reports whether f is a hub value that a public forge
+// profile value (or the country derived from the forge location) may
+// replace: a hub-derived, admin-set or unrecorded value. The profile fill
+// uses it so forge public > hub derived/admin holds whichever pass ran first.
+func HubValueYieldsToForge(f ProfileField) bool {
+	return f.Source == SourceHub && f.Rule != "" && !HubRuleEnteredByPerson(f.Rule)
+}
+
+// HubLabel is the provenance text a hub Rule shows, for tooltips.
+func HubLabel(rule string) string {
+	switch rule {
+	case ProfileSourceHubPerson:
+		return "from hub: entered by the person"
+	case ProfileSourceHubAdmin:
+		return "from hub: set by a hub admin"
+	case ProfileSourceHubEmailDomain:
+		return "from hub: derived from an organization email domain"
+	case ProfileSourceHubBrowserLanguage:
+		return "from hub: inferred from browser language"
+	case ProfileSourceHubUnrecorded:
+		return "from hub: source not recorded"
+	}
+	return "from hub: entered by the person, shared with consent"
+}
+
 // HubMatchEntry is one answer entry, already reduced to what import reads.
 type HubMatchEntry struct {
 	MatchHash    string
@@ -80,6 +151,17 @@ type HubMatchEntry struct {
 	Organization string
 	Country      string
 	Cleared      []string
+	// Rules is the Rule each value carries, from the hub's labels. A field
+	// without a label is ProfileSourceHub (consented, or an unlabeled hub).
+	Rules map[string]string
+}
+
+// rule is the Rule the named value is stored with.
+func (e HubMatchEntry) rule(field string) string {
+	if r := e.Rules[field]; r != "" {
+		return r
+	}
+	return ProfileSourceHub
 }
 
 // HubMatchReply is a decoded hub answer.
@@ -111,11 +193,12 @@ func HubMatchHash(key, login string) string {
 func DecodeHubMatchReply(r io.Reader) (HubMatchReply, error) {
 	var wire struct {
 		Matches []struct {
-			MatchHash    string   `json:"match_hash"`
-			RealName     string   `json:"real_name"`
-			Organization string   `json:"organization"`
-			Country      string   `json:"country"`
-			Cleared      []string `json:"cleared"`
+			MatchHash    string            `json:"match_hash"`
+			RealName     string            `json:"real_name"`
+			Organization string            `json:"organization"`
+			Country      string            `json:"country"`
+			Cleared      []string          `json:"cleared"`
+			Sources      map[string]string `json:"sources"`
 		} `json:"matches"`
 		Truncated bool `json:"truncated"`
 	}
@@ -135,9 +218,33 @@ func DecodeHubMatchReply(r io.Reader) (HubMatchReply, error) {
 				e.Cleared = append(e.Cleared, c)
 			}
 		}
+		e.Rules, e.RealName = hubLabels(m.Sources, e.RealName)
 		out.Matches = append(out.Matches, e)
 	}
 	return out, nil
+}
+
+// hubLabels turns the hub's source labels into Rules. An unknown label or
+// field is dropped (the value is then treated as consented, as before labels
+// existed). A real name labeled as anything but consent is dropped with its
+// value: the hub never sends one, and a hive must not store one.
+func hubLabels(sources map[string]string, realName string) (map[string]string, string) {
+	if len(sources) == 0 {
+		return nil, realName
+	}
+	if src, ok := sources[FieldRealName]; ok && hubLabelRules[src] != ProfileSourceHub {
+		realName = ""
+	}
+	rules := make(map[string]string, len(hubPublicFields))
+	for _, name := range hubPublicFields {
+		if r := hubLabelRules[sources[name]]; r != "" {
+			rules[name] = r
+		}
+	}
+	if len(rules) == 0 {
+		return nil, realName
+	}
+	return rules, realName
 }
 
 // SanitizeHubValue makes a hub value safe to store: control and format
@@ -191,10 +298,12 @@ var errHubUnchanged = errors.New("customers: hub import changed nothing")
 // ApplyHubMatch applies one hub answer entry to an existing customer who
 // still holds login as a confirmed GitHub identity. It never creates a
 // person and touches only HubFields: a manual field is left alone, a cleared
-// field that is hub provenance is emptied and handed back to automatic, and
-// a value is written as hub provenance over an auto or empty field. A value
-// the field already holds from the hub only refreshes its time. It returns
-// the names it set and the names it cleared.
+// field that is hub provenance is emptied and handed back to automatic, a
+// value the person entered on the hub is written over an auto or empty
+// field, and a derived or admin-set hub value only over an empty or hub
+// field. A value the field already holds from the hub with the same label
+// only refreshes its time. It returns the names it set and the names it
+// cleared.
 func (s *Store) ApplyHubMatch(id, login string, e HubMatchEntry) (set, cleared []string, err error) {
 	key := IdentityKey(KindGitHub, login)
 	_, err = s.changePerson(id, func(p *Person) error {
@@ -225,12 +334,16 @@ func (s *Store) ApplyHubMatch(id, login string, e HubMatchEntry) (set, cleared [
 			if v == "" {
 				continue
 			}
-			if f.Source == SourceHub && f.Value == v {
+			rule := e.rule(name)
+			if f.Source == SourceHub && f.Value == v && f.Rule == rule {
 				f.At = now
 				touched = true
 				continue
 			}
-			*f = ProfileField{Value: v, Source: SourceHub, Rule: ProfileSourceHub, At: now}
+			if !HubRuleEnteredByPerson(rule) && f.Source != SourceHub && f.Value != "" {
+				continue // a public forge profile value outranks hub derived/admin
+			}
+			*f = ProfileField{Value: v, Source: SourceHub, Rule: rule, At: now}
 			set = append(set, name)
 			touched = true
 		}

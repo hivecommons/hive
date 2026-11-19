@@ -213,13 +213,28 @@
       return typeof f.value === 'string' ? f.value : '';
     }
 
+    // CUSTOMERS_HUB_LABELS: where a hub value came from, by its rule
+    // (pkg/customers HubLabel, #19306). A hub value without a known rule was
+    // shared with consent.
+    const CUSTOMERS_HUB_LABELS = {
+      hub_consent: 'from hub: entered by the person, shared with consent',
+      hub_person: 'from hub: entered by the person',
+      hub_admin: 'from hub: set by a hub admin',
+      hub_email_domain: 'from hub: derived from an organization email domain',
+      hub_browser_language: 'from hub: inferred from browser language',
+      hub_unrecorded: 'from hub: source not recorded'
+    };
+    function customersHubLabel(f) {
+      return CUSTOMERS_HUB_LABELS[(f && f.rule) || ''] || CUSTOMERS_HUB_LABELS.hub_consent;
+    }
+
     // customersOrgPill: the organization as one small pill, with where it came
     // from in its tooltip. Nothing is shown when there is none.
     function customersOrgPill(p) {
       const v = customersProfileValue(p, 'organization');
       if (!v) return '';
       const f = p.profile.organization;
-      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub: the person shared it with this hive' : 'From the public GitHub profile');
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : 'From the public GitHub profile');
       const src = f.source === 'manual' || f.source === 'hub' ? f.source : 'auto';
       return '<span class="kc-pill customers-pill customers-org" data-source="' + src + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
@@ -575,9 +590,9 @@
       const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
         const cur = (p.profile && p.profile[f.key]) || {};
         const manual = cur.source === 'manual';
-        // A hub value is one the person shared from the hub (#19163);
-        // editing it here makes it manual.
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? 'from the hub' : (cur.rule === 'location' ? 'from location' : 'from GitHub'))) : (manual ? 'cleared by hand' : 'not known');
+        // A hub value carries its hub label (#19163, #19306); editing it
+        // here makes it manual.
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from GitHub'))) : (manual ? 'cleared by hand' : 'not known');
         return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
           (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');

@@ -1,0 +1,11 @@
+{
+  "state": "success",
+  "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "total_count": 4,
+  "statuses": [
+    {"context": "verify PR contents (hive)", "state": "success", "description": "PR Type: success; PR Issue: success", "creator": {"login": "example-app[bot]"}},
+    {"context": "dco", "state": "success", "description": "DCO signed", "creator": {"login": "example-prow[bot]"}},
+    {"context": "DCO", "state": "success", "description": "DCO signed", "creator": {"login": "example-other[bot]"}},
+    {"context": "tide", "state": "pending", "description": "Not mergeable.", "creator": {"login": "example-prow[bot]"}}
+  ]
+}

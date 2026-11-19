@@ -1,1 +1,0 @@
-- Hub-hosted spokes now receive the per-hive customer match key (`HIVE_CUSTOMER_MATCH_KEY`), so the customers hub import can work once enabled; default behaviour is unchanged.
