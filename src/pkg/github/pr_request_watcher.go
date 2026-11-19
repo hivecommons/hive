@@ -509,6 +509,11 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 			c.rejectPRRequest(path, req, "base-drift", reason, nowFn)
 			return
 		}
+		// A base branch that does not exist can never be fixed by retrying.
+		if reason, policy := missingBaseReason(err); policy {
+			c.rejectPRRequest(path, req, "base", reason, nowFn)
+			return
+		}
 		c.failPRRequest(path, req, err, nowFn)
 		return
 	}

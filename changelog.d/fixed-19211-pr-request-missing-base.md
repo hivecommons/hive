@@ -1,0 +1,1 @@
+- The PR-request watcher now rejects a request whose base branch does not exist on the remote with a clear result, instead of retrying it forever with an unclassified warning (#19211).
