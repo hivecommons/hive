@@ -33,9 +33,17 @@ import (
 //
 // An agent may also retract its own mistake: DELETE of an issue comment or a
 // review comment is allowed only when GitHub says the comment was written by
-// the hive's own identity and it is younger than OwnCommentDeleteWindow.
-// Anyone else's comment, and any older one, stays refused. A lookup that
-// fails refuses (fail closed) and says so.
+// the hive's own identity, it is younger than OwnCommentDeleteWindow, and it
+// sits on a PR the calling agent opened. Every agent posts as the same App
+// bot, so the author check alone cannot tell one agent's comment from
+// another's; the PR-owner check is what keeps an agent from deleting another
+// agent's or a reviewer's comment elsewhere (maintainer decision on #19102).
+// The PR is read from the comment's own pull_request_url (review comment) or
+// issue_url (issue comment) via the API, never from the request path, and is
+// checked against OwnPR exactly as the reply path does. Anyone else's
+// comment, any older one, one on a PR another agent opened, and one whose PR
+// cannot be resolved stays refused. A lookup that fails refuses (fail
+// closed) and says so.
 
 // DenyReasonReviewThread is the 403 reason code for a refused review-thread
 // reply, PR review comment or comment delete (see denial_message.go).
@@ -70,7 +78,7 @@ var (
 // The mode-table rules for the guarded routes. They only say WHICH modes may:
 // the review-thread gate runs first and refuses the reply routes unless the PR
 // is the hive's own and the caller opened it, and a delete unless the comment
-// is the hive's own and recent. Replies and PR review comments sit at the tier
+// is the hive's own, recent and on the caller's own PR. Replies and PR review comments sit at the tier
 // of a review (ISSUES_AND_PRS or converse); a delete at ISSUES_ONLY. No other
 // rule matches these (method, path) pairs, so appending keeps first-match-wins
 // order intact; they live here so rules.go stays inside its size ratchet.
@@ -177,7 +185,7 @@ func (g ReviewThreadGuard) now() time.Time {
 // stop instead of probing other routes: a probe comment on a person's review
 // is worse than an unanswered thread.
 func reviewThreadRefusalText(why string) string {
-	return "review-thread write refused: " + why + ". Replies inside review threads and PR review comments are allowed only on a PR the hive's own agent opened, and only for the agent that opened it; deleting a comment is allowed only for the hive's own comment within " + OwnCommentDeleteWindow.String() + " of posting. Do NOT retry, do NOT post the reply as an issue comment instead, and NEVER post a test or probe comment. Stop here: the hive's review-feedback sweep hands your drafted reply to a person."
+	return "review-thread write refused: " + why + ". Replies inside review threads and PR review comments are allowed only on a PR the hive's own agent opened, and only for the agent that opened it; deleting a comment is allowed only for the hive's own comment within " + OwnCommentDeleteWindow.String() + " of posting, and only on a PR the calling agent opened. Do NOT retry, do NOT post the reply as an issue comment instead, and NEVER post a test or probe comment. Stop here: the hive's review-feedback sweep hands your drafted reply to a person."
 }
 
 // reviewThreadRefusal is the per-request gate the MITM loop calls for
@@ -207,12 +215,19 @@ func (p *GitHubProxy) reviewThreadRefusal(req *http.Request, agentName string) (
 		}
 		number = n
 	}
-	owner, owned := g.OwnPR(w.repo, number)
+	return ownPRCallerRefusal(g, w.repo, number, agentName)
+}
+
+// ownPRCallerRefusal refuses unless repo#number is a PR the hive's own agent
+// opened and agentName is that agent. Replies, PR review comments and
+// deletes all share it.
+func ownPRCallerRefusal(g ReviewThreadGuard, repo string, number int, agentName string) (string, bool) {
+	owner, owned := g.OwnPR(repo, number)
 	if !owned {
-		return reviewThreadRefusalText(fmt.Sprintf("%s#%d was not opened by the hive's own agent", w.repo, number)), true
+		return reviewThreadRefusalText(fmt.Sprintf("%s#%d was not opened by the hive's own agent", repo, number)), true
 	}
 	if !strings.EqualFold(owner, agentName) {
-		return reviewThreadRefusalText(fmt.Sprintf("%s#%d was opened by agent %s, not by %s", w.repo, number, owner, agentName)), true
+		return reviewThreadRefusalText(fmt.Sprintf("%s#%d was opened by agent %s, not by %s", repo, number, owner, agentName)), true
 	}
 	return "", false
 }
@@ -271,7 +286,8 @@ func peekReviewDraft(req *http.Request) (body, inReplyTo string) {
 	return payload.Body, strings.Trim(string(payload.InReplyTo), `"`)
 }
 
-// ownCommentDeleteRefusal allows DELETE only of the hive's own recent comment.
+// ownCommentDeleteRefusal allows DELETE only of the hive's own recent comment
+// on a PR the calling agent opened.
 func (p *GitHubProxy) ownCommentDeleteRefusal(req *http.Request, agentName string, w reviewThreadWrite, g ReviewThreadGuard) (string, bool) {
 	meta, err := p.reviewCommentMeta(req, agentName, w.repo, w.commentSurface, w.commentID)
 	if err != nil {
@@ -295,7 +311,11 @@ func (p *GitHubProxy) ownCommentDeleteRefusal(req *http.Request, agentName strin
 	if age > OwnCommentDeleteWindow {
 		return reviewThreadRefusalText(fmt.Sprintf("comment %s is %s old, past the %s retract window", w.commentID, age.Round(time.Second), OwnCommentDeleteWindow)), true
 	}
-	return "", false
+	number, err := commentPRNumber(meta, w.commentSurface)
+	if err != nil {
+		return reviewThreadRefusalText(fmt.Sprintf("could not resolve which PR comment %s belongs to (%v)", w.commentID, err)), true
+	}
+	return ownPRCallerRefusal(g, w.repo, number, agentName)
 }
 
 // hiveLoginsFor is the hive's identity on repo: the guard's logins plus the
@@ -318,6 +338,9 @@ type reviewCommentMetadata struct {
 	} `json:"user"`
 	CreatedAt      time.Time `json:"created_at"`
 	PullRequestURL string    `json:"pull_request_url"`
+	// IssueURL is set on an issue comment; on a PR conversation comment it
+	// points at the PR's issue number.
+	IssueURL string `json:"issue_url"`
 }
 
 // reviewCommentMeta GETs /repos/{repo}/{issues|pulls}/comments/{id}.
@@ -342,13 +365,25 @@ func (p *GitHubProxy) reviewCommentPR(req *http.Request, agentName string, w rev
 	if err != nil {
 		return 0, err
 	}
-	i := strings.LastIndex(meta.PullRequestURL, "/pulls/")
-	if i < 0 {
-		return 0, fmt.Errorf("comment carries no pull_request_url")
+	return commentPRNumber(meta, "pulls")
+}
+
+// commentPRNumber reads the PR (or issue) number a comment belongs to from
+// the comment GitHub returned: pull_request_url for a review comment
+// ("pulls"), issue_url for an issue comment ("issues"). Never the request
+// path.
+func commentPRNumber(meta reviewCommentMetadata, surface string) (int, error) {
+	field, url, seg := "pull_request_url", meta.PullRequestURL, "/pulls/"
+	if surface == "issues" {
+		field, url, seg = "issue_url", meta.IssueURL, "/issues/"
 	}
-	n, err := strconv.Atoi(meta.PullRequestURL[i+len("/pulls/"):])
+	i := strings.LastIndex(url, seg)
+	if i < 0 {
+		return 0, fmt.Errorf("comment carries no %s", field)
+	}
+	n, err := strconv.Atoi(url[i+len(seg):])
 	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("unreadable pull_request_url %q", meta.PullRequestURL)
+		return 0, fmt.Errorf("unreadable %s %q", field, url)
 	}
 	return n, nil
 }

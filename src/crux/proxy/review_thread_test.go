@@ -24,6 +24,9 @@ const (
 	rtReplyID  = "4616203214"
 	rtOtherPR  = 99
 	rtCommentA = "6988449875"
+	// rtPeerPR is a hive PR another agent (rtPeer) opened.
+	rtPeerPR = 500
+	rtPeer   = "scanner"
 )
 
 // rtFixture is the fake GitHub the gate's own GETs read.
@@ -51,19 +54,29 @@ func (f *rtFixture) lookup(url, token string) ([]byte, error) {
 
 func newRTFixture(now time.Time) *rtFixture {
 	at := func(d time.Duration) string { return now.Add(-d).UTC().Format(time.RFC3339) }
+	issueURL := func(n int) string { return fmt.Sprintf("https://api.github.com/repos/cncf/techdocs/issues/%d", n) }
+	pullURL := func(n int) string { return fmt.Sprintf("https://api.github.com/repos/cncf/techdocs/pulls/%d", n) }
 	return &rtFixture{now: now, comments: map[string]string{
 		// A person's review comment on the hive's PR, and one on another PR.
 		"/repos/cncf/techdocs/pulls/comments/" + rtReplyID: fmt.Sprintf(`{"user":{"login":"nate"},"created_at":%q,"pull_request_url":"https://api.github.com/repos/cncf/techdocs/pulls/%d"}`, at(time.Hour), rtPR),
 		"/repos/cncf/techdocs/pulls/comments/777":          fmt.Sprintf(`{"user":{"login":"nate"},"created_at":%q,"pull_request_url":"https://api.github.com/repos/cncf/techdocs/pulls/%d"}`, at(time.Hour), rtOtherPR),
 		"/repos/cncf/techdocs/pulls/comments/778":          `{"user":{"login":"nate"},"created_at":"2026-01-01T00:00:00Z"}`,
-		// The hive's own probe comment, two minutes old.
-		"/repos/cncf/techdocs/issues/comments/" + rtCommentA: fmt.Sprintf(`{"user":{"login":%q},"created_at":%q}`, rtHiveBot, at(2*time.Minute)),
-		// The hive's own comment, but an hour old.
-		"/repos/cncf/techdocs/issues/comments/100": fmt.Sprintf(`{"user":{"login":%q},"created_at":%q}`, rtHiveBot, at(time.Hour)),
-		// A person's comment, a minute old.
-		"/repos/cncf/techdocs/issues/comments/101": fmt.Sprintf(`{"user":{"login":"nate"},"created_at":%q}`, at(time.Minute)),
-		// The hive's own review comment, a minute old.
-		"/repos/cncf/techdocs/pulls/comments/102": fmt.Sprintf(`{"user":{"login":%q},"created_at":%q}`, rtHiveBot, at(time.Minute)),
+		// The hive's own probe comment on rtOwner's PR, two minutes old.
+		"/repos/cncf/techdocs/issues/comments/" + rtCommentA: fmt.Sprintf(`{"user":{"login":%q},"created_at":%q,"issue_url":%q}`, rtHiveBot, at(2*time.Minute), issueURL(rtPR)),
+		// The hive's own comment on rtOwner's PR, but an hour old.
+		"/repos/cncf/techdocs/issues/comments/100": fmt.Sprintf(`{"user":{"login":%q},"created_at":%q,"issue_url":%q}`, rtHiveBot, at(time.Hour), issueURL(rtPR)),
+		// A person's comment on rtOwner's PR, a minute old.
+		"/repos/cncf/techdocs/issues/comments/101": fmt.Sprintf(`{"user":{"login":"nate"},"created_at":%q,"issue_url":%q}`, at(time.Minute), issueURL(rtPR)),
+		// The hive's own review comment on rtOwner's PR, a minute old.
+		"/repos/cncf/techdocs/pulls/comments/102": fmt.Sprintf(`{"user":{"login":%q},"created_at":%q,"pull_request_url":%q}`, rtHiveBot, at(time.Minute), pullURL(rtPR)),
+		// Hive-bot comments, a minute old, on a PR another agent opened.
+		"/repos/cncf/techdocs/issues/comments/105": fmt.Sprintf(`{"user":{"login":%q},"created_at":%q,"issue_url":%q}`, rtHiveBot, at(time.Minute), issueURL(rtPeerPR)),
+		"/repos/cncf/techdocs/pulls/comments/106":  fmt.Sprintf(`{"user":{"login":%q},"created_at":%q,"pull_request_url":%q}`, rtHiveBot, at(time.Minute), pullURL(rtPeerPR)),
+		// A hive-bot comment, a minute old, on a PR the hive did not open.
+		"/repos/cncf/techdocs/issues/comments/107": fmt.Sprintf(`{"user":{"login":%q},"created_at":%q,"issue_url":%q}`, rtHiveBot, at(time.Minute), issueURL(rtOtherPR)),
+		// A hive-bot comment, a minute old, whose PR GitHub does not say.
+		"/repos/cncf/techdocs/issues/comments/108": fmt.Sprintf(`{"user":{"login":%q},"created_at":%q}`, rtHiveBot, at(time.Minute)),
+		"/repos/cncf/techdocs/pulls/comments/109":  fmt.Sprintf(`{"user":{"login":%q},"created_at":%q,"pull_request_url":"https://api.github.com/repos/cncf/techdocs/pulls/x"}`, rtHiveBot, at(time.Minute)),
 		// The hive's comment dated in the future (clock trouble): unknown.
 		"/repos/cncf/techdocs/issues/comments/103": fmt.Sprintf(`{"user":{"login":%q},"created_at":%q}`, rtHiveBot, at(-time.Hour)),
 		// No author at all.
@@ -74,6 +87,9 @@ func newRTFixture(now time.Time) *rtFixture {
 func rtOwnPR(repo string, number int) (string, bool) {
 	if strings.EqualFold(repo, rtRepo) && number == rtPR {
 		return rtOwner, true
+	}
+	if strings.EqualFold(repo, rtRepo) && number == rtPeerPR {
+		return rtPeer, true
 	}
 	return "", false
 }
@@ -125,9 +141,16 @@ func TestReviewThreadRefusal_Matrix(t *testing.T) {
 		{"reply whose comment cannot be found", rtOwner, "POST", "/repos/cncf/techdocs/pulls/comments/5/replies", true, "could not resolve"},
 		{"reply whose comment has no PR url", rtOwner, "POST", "/repos/cncf/techdocs/pulls/comments/778/replies", true, "no pull_request_url"},
 		{"unidentified caller", "", "POST", replyPath, true, "could not be identified"},
-		// Deletes: the hive's own comment inside the window only.
-		{"delete own recent issue comment", rtOwner, "DELETE", "/repos/cncf/techdocs/issues/comments/" + rtCommentA, false, ""},
-		{"delete own recent review comment", "scanner", "DELETE", "/repos/cncf/techdocs/pulls/comments/102", false, ""},
+		// Deletes: the hive's own comment, inside the window, on the caller's own PR only.
+		{"delete own recent issue comment on own PR", rtOwner, "DELETE", "/repos/cncf/techdocs/issues/comments/" + rtCommentA, false, ""},
+		{"delete own recent review comment on own PR", rtOwner, "DELETE", "/repos/cncf/techdocs/pulls/comments/102", false, ""},
+		{"delete hive-bot issue comment on own PR by another agent", rtPeer, "DELETE", "/repos/cncf/techdocs/issues/comments/" + rtCommentA, true, "opened by agent quality, not by scanner"},
+		{"delete hive-bot review comment on own PR by another agent", rtPeer, "DELETE", "/repos/cncf/techdocs/pulls/comments/102", true, "opened by agent quality, not by scanner"},
+		{"delete hive-bot issue comment on a PR another agent opened", rtOwner, "DELETE", "/repos/cncf/techdocs/issues/comments/105", true, "opened by agent scanner, not by quality"},
+		{"delete hive-bot review comment on a PR another agent opened", rtOwner, "DELETE", "/repos/cncf/techdocs/pulls/comments/106", true, "opened by agent scanner, not by quality"},
+		{"delete hive-bot comment on a PR the hive did not open", rtOwner, "DELETE", "/repos/cncf/techdocs/issues/comments/107", true, "was not opened by the hive's own agent"},
+		{"delete hive-bot comment with no issue_url", rtOwner, "DELETE", "/repos/cncf/techdocs/issues/comments/108", true, "no issue_url"},
+		{"delete hive-bot review comment with unreadable pull_request_url", rtOwner, "DELETE", "/repos/cncf/techdocs/pulls/comments/109", true, "unreadable pull_request_url"},
 		{"delete own old comment", rtOwner, "DELETE", "/repos/cncf/techdocs/issues/comments/100", true, "past the 15m0s retract window"},
 		{"delete someone else's comment", rtOwner, "DELETE", "/repos/cncf/techdocs/issues/comments/101", true, "written by nate, not by the hive"},
 		{"delete comment dated in the future", rtOwner, "DELETE", "/repos/cncf/techdocs/issues/comments/103", true, "no usable creation time"},
@@ -202,9 +225,58 @@ func TestReviewThreadRefusal_LookupFailureFailsClosed(t *testing.T) {
 	}
 }
 
+// TestOwnCommentDelete_ScopedToCallersOwnPR asserts the delete invariant
+// (maintainer decision on #19102): a hive-bot comment may be deleted only by
+// the agent that opened the PR it sits on, only inside
+// OwnCommentDeleteWindow, and every lookup failure refuses.
+func TestOwnCommentDelete_ScopedToCallersOwnPR(t *testing.T) {
+	const ownPath = "/repos/cncf/techdocs/issues/comments/" + rtCommentA
+	t.Run("lookup failure refuses every caller", func(t *testing.T) {
+		f := newRTFixture(time.Now())
+		f.failAll = true
+		p := newRTProxy(t, f, nil)
+		for _, caller := range []string{rtOwner, rtPeer} {
+			for _, path := range []string{ownPath, "/repos/cncf/techdocs/pulls/comments/102"} {
+				reason, refused := p.reviewThreadRefusal(rtReq("DELETE", path, ""), caller)
+				if !refused || !strings.Contains(reason, "could not confirm") {
+					t.Fatalf("%s DELETE %s on lookup failure: refused=%v reason=%q", caller, path, refused, reason)
+				}
+			}
+		}
+	})
+	t.Run("ownership read from the comment, not from the guard's first PR", func(t *testing.T) {
+		f := newRTFixture(time.Now())
+		p := newRTProxy(t, f, nil)
+		if _, refused := p.reviewThreadRefusal(rtReq("DELETE", "/repos/cncf/techdocs/issues/comments/105", ""), rtPeer); refused {
+			t.Fatal("the agent that opened the PR the comment sits on may retract it")
+		}
+		if _, refused := p.reviewThreadRefusal(rtReq("DELETE", "/repos/cncf/techdocs/issues/comments/105", ""), rtOwner); !refused {
+			t.Fatal("a hive-bot comment on another agent's PR must be refused")
+		}
+	})
+	t.Run("age limit is OwnCommentDeleteWindow", func(t *testing.T) {
+		const margin = time.Second
+		for _, tc := range []struct {
+			age        time.Duration
+			wantRefuse bool
+		}{
+			{OwnCommentDeleteWindow - margin, false},
+			{OwnCommentDeleteWindow + margin, true},
+		} {
+			f := newRTFixture(time.Now())
+			f.comments[ownPath] = fmt.Sprintf(`{"user":{"login":%q},"created_at":%q,"issue_url":"https://api.github.com/repos/cncf/techdocs/issues/%d"}`, rtHiveBot, f.now.Add(-tc.age).UTC().Format(time.RFC3339Nano), rtPR)
+			p := newRTProxy(t, f, nil)
+			reason, refused := p.reviewThreadRefusal(rtReq("DELETE", ownPath, ""), rtOwner)
+			if refused != tc.wantRefuse {
+				t.Fatalf("age %s: refused=%v want %v (%q)", tc.age, refused, tc.wantRefuse, reason)
+			}
+		}
+	})
+}
+
 func TestReviewThreadRefusal_ReferenceRepoLoginCountsAsHive(t *testing.T) {
 	f := newRTFixture(time.Now())
-	f.comments["/repos/cncf/techdocs/issues/comments/200"] = fmt.Sprintf(`{"user":{"login":"hive-owner"},"created_at":%q}`, f.now.Add(-time.Minute).UTC().Format(time.RFC3339))
+	f.comments["/repos/cncf/techdocs/issues/comments/200"] = fmt.Sprintf(`{"user":{"login":"hive-owner"},"created_at":%q,"issue_url":"https://api.github.com/repos/cncf/techdocs/issues/%d"}`, f.now.Add(-time.Minute).UTC().Format(time.RFC3339), rtPR)
 	p := newRTProxy(t, f, nil)
 	pol := ReferenceRepoPolicy{Repo: rtRepo, Issues: true, PRs: true, Login: "hive-owner", Token: func() (string, bool) { return "ref-tok", true }}
 	p.SetReferenceRepos([]ReferenceRepoPolicy{pol})

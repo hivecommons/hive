@@ -287,8 +287,12 @@ agent to answer. The proxy lets it answer in place, and nothing wider
 | --- | --- |
 | `POST /repos/{o}/{r}/pulls/{n}/comments/{id}/replies` (also without `{n}`) | the comment's PR was opened by the hive's own agent (audit trail `agent_pr_created`, the sweep's ownership source) and the caller is the agent that opened it |
 | `POST /repos/{o}/{r}/pulls/{n}/comments` | the same: hive-opened PR, opening agent only |
-| `DELETE /repos/{o}/{r}/issues/comments/{id}`, `DELETE /repos/{o}/{r}/pulls/comments/{id}` | GitHub reports the comment was written by the hive's own identity (the App bot, or a reference repo's write login) and it is younger than `OwnCommentDeleteWindow` (15 minutes) |
+| `DELETE /repos/{o}/{r}/issues/comments/{id}`, `DELETE /repos/{o}/{r}/pulls/comments/{id}` | GitHub reports the comment was written by the hive's own identity (the App bot, or a reference repo's write login), it is younger than `OwnCommentDeleteWindow` (15 minutes), and it sits on a PR the calling agent opened (read from the comment's own `pull_request_url` or `issue_url`, never the request path, and checked against the audit trail as for replies) |
 
+Every agent posts as the same App bot, so the author check alone would let one
+agent delete another agent's or a reviewer's comment; the PR-owner check is
+what limits a delete to the caller's own PR (maintainer decision on
+[#19102](https://github.com/hivecommons/hive/pull/19102)).
 Any other PR, any other agent, anyone else's comment, an older comment, and
 any lookup that fails are refused with the `review_thread` reason, and the
 agent is told to stop rather than probe another route. The mode tier still
