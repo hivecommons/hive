@@ -46,16 +46,6 @@ type routeParityException struct {
 // test fails.
 var routeParityExceptions = []routeParityException{
 	{
-		method: "GET", path: "/ask-panel.js",
-		reason: "Ask AI help panel script (#19184): a static same-origin asset " +
-			"served only while ask is on, not a JSON data operation.",
-	},
-	{
-		method: "GET", path: "/ask-panel.css",
-		reason: "Ask AI help panel stylesheet (#19184): a static same-origin " +
-			"asset served only while ask is on, not a JSON data operation.",
-	},
-	{
 		method: "GET", path: "/api/health",
 		reason: "Kubernetes readiness probe. Returns a bare {\"status\":...} " +
 			"liveness signal, not a documented client-facing data operation.",
