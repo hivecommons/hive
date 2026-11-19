@@ -361,7 +361,7 @@ type Input struct {
 // RuleHumanOnly keeps an item whose ask only a person can answer (a
 // security review routed to a person, a human-only marker) parked for the
 // owner: no default approve, no agent, needs-owner on it.
-const RuleHumanOnly = "human-only"
+const RuleHumanOnly = "person-only"
 
 // Human-only reasons the caller may set on Input.HumanOnly.
 const (
