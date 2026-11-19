@@ -29,6 +29,9 @@ func TestCustomersHubMatcherPostsHashesWithBearer(t *testing.T) {
 		if r.Header.Get("Cookie") != "" {
 			t.Error("no cookie may be sent")
 		}
+		if r.Header.Get(customers.HubMatchLabelsHeader) != customers.HubMatchLabelsV1 {
+			t.Errorf("labels header = %q, want the public-fields labels request", r.Header.Get(customers.HubMatchLabelsHeader))
+		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Errorf("decode: %v", err)
 		}
