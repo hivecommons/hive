@@ -574,6 +574,11 @@ Train sibling refreshes and client-side follow-up/relay/supersession updates
 defer to preparation on these repositories; opted-out repositories retain
 their previous behavior.
 
+A refresh the App makes this way is cheap for CI on this repository: the
+heavy Docker multi-arch, FOSSA and Mutation jobs skip a head whose only
+change is that verified base merge, while every required context still
+reports. See [Refresh-only heads](ci-refresh-only-heads.md).
+
 Ownership and first-admission FIFO tickets live in `/data/base-preparation/`,
 with per-destination file locking and atomic durable snapshots. An update
 identity (PR/head/base SHA) is recorded before the request, across lanes,
@@ -595,6 +600,33 @@ yielded owners retain their tickets through pending CI/review observations.
 Admission provenance prevents a different lane's non-admission from revoking
 the owning lane's reservation or FIFO ticket. An old waiting ticket reserves
 order only: its head must qualify afresh in its lane before becoming owner.
+
+**Refreshes coalesce, and a ready owner is not overtaken.** Two bounded waits
+keep the front from being refreshed over and over
+(`src/pkg/github/automerge/automerge_base_preparation.go`):
+
+- *No re-refresh while the last refresh's CI runs.* When the owner is behind
+  again and its live head is the result of its recorded bot refresh, the next
+  refresh waits with reason `base-refresh:coalescing` (INFO `automerge base
+  preparation refresh coalesced`) while required CI on that head is still
+  pending or not yet reported. A new refresh would cancel that CI and pay for
+  it again. The refresh goes ahead as before once that CI finishes (green or
+  red), when the base commits since the refresh touch any file the PR changes,
+  when that delta cannot be read or may be truncated, for a repair owner, and
+  once `preparationRefreshCoalesceMaxWait` (30 minutes) has passed since the
+  refresh.
+- *A green, reviewed owner merges first.* The exception to "ownership
+  serializes refreshes, not ready merges" above: when the owner is CI-green
+  and approved on its completed refresh, any other PR reaching the
+  current-base gate for that destination, even one already current and ready,
+  holds with `base-refresh:queued-behind#<owner>` (INFO `automerge base
+  preparation successor held`). Letting it merge first would move the base
+  under the owner and send it back for another refresh, CI run and review,
+  which kept the front perpetually behind. An owner whose CI or review is
+  still pending holds nothing, so the readiness-first yield is unchanged. The
+  hold also ends `preparationRefreshCoalesceMaxWait` after the owner's
+  refresh, and any failed read, a repair owner or an invalid owner holds
+  nothing.
 
 The persisted owner head is the **admitted source head**, so a different live
 head is not by itself a stale reservation: an App-authored refresh preserves
@@ -645,6 +677,38 @@ then refresh and re-pass current-head gates if still behind. This scheduler
 cannot stop external writers and does not relax strict current-base checks.
 Deploying the changed hive binary activates the policy; no agent, memory,
 review, CI, hold or authorization setting needs changing.
+
+### Agents leave merely-behind PRs to the owner; ci-maintainer measures churn
+
+The preparation owner above is the only thing that refreshes a PR that is
+merely behind. Agent prompts say so: the ci-maintainer and quality lanes
+(item 4 of "CI Throughput and Merge Order" in every
+`src/pkg/policies/defaults/ci-maintainer*.md` and `quality*.md` variant) and
+the scanner's conflict section in `scanner-full.md` no longer call
+`update-branch` / `update_pull_request_branch` on a PR that is only behind,
+even when it touches the files of a change that just merged. A refresh by
+anyone else reruns every pull_request workflow and cancels the run in
+flight, which sends the owner back to the start. Agents touch a behind
+branch only to repair a real conflict (`CONFLICTING` / `DIRTY`, or
+`git merge-tree` exit 1), and the shared-baseline helper's `MERGE_BASE`
+repair of a red check still applies. When an agent cannot tell whether the
+gate applies to a repository it assumes it does; where the gate is off, the
+merge train already updates overlapping siblings. `TestPoliciesDoNotRefreshMerelyBehindPRs`
+in `src/pkg/policies/ci_throughput_test.go` keeps the old instructions out.
+
+`ci-maintainer-full.md` also carries a standing **Merge Churn** goal: once a
+week it measures the primary repository's last 7 days (at most the 100 most
+recently merged PRs), writes one `merge churn: week of <date>` bead, and
+keeps one open `[ci-maintainer] Merge churn over threshold in <owner/repo>`
+issue while any threshold is crossed (a comment per new week, closed after a
+full week back under every threshold).
+
+| Measure | Name | Over threshold when |
+| --- | --- | --- |
+| App base refreshes per merged PR | `refreshes_per_merged_pr` | mean above 1.5 |
+| pull_request runs cancelled on a head a refresh replaced | `refresh_cancelled_run_share` | above 20% of the week's pull_request runs |
+| Releases published per day | `release_merges_per_day` | above 6 |
+| Latest approving review to merge | `approval_to_merge_median` / `approval_to_merge_p90` | median above 4h or p90 above 24h |
 
 ### CI reporting reconciliation
 

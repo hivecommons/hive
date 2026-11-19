@@ -793,6 +793,11 @@
     "avatars": {},
     "hub_import": {},
     "profile_fill": {},
+    "enrichment": {
+      "gitdm": {},
+      "devstats": {},
+      "crowddev": {}
+    },
     "mention_search": {}
   },
   "duplicate_sweep": {},

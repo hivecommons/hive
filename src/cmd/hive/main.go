@@ -3673,6 +3673,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 			logger:      b.logger,
 		})
 		b.cleanup.push(svc.startCustomersProfileFill(b.ctx))
+		// Customers enrichment: public affiliation from cncf/gitdm, off
+		// unless customers.enrichment and its gitdm switch are on.
+		wireCustomersEnrichment(svc.svc, customersDataDir, b.customersMentionConfig, b.logger)
 		b.dashSrv.SetCustomersService(svc)
 		if b.sched != nil {
 			installCustomersAgentContext(svc, b.sched.SetCustomerContextLookup)

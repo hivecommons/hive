@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 const (
@@ -303,6 +304,7 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 		Number           int        `json:"number"`
 		Repo             string     `json:"repo"`
 		Title            string     `json:"title"`
+		Author           string     `json:"author"`
 		Agent            string     `json:"agent"`
 		FailingChecks    []string   `json:"failing_checks"`
 		Excerpt          string     `json:"excerpt"`
@@ -323,6 +325,7 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 		RebaseMax        int        `json:"rebase_attempts_max"`
 		BaseRef          string     `json:"base_ref"`
 		TrustedAuthor    bool       `json:"trusted_author"`
+		PersonAuthored   bool       `json:"person_authored"`
 		AppAuthored      bool       `json:"app_authored"`
 		HeadPushedAt     *time.Time `json:"head_pushed_at"`
 		Issues           []int      `json:"issues"`
@@ -477,6 +480,15 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 			if pr.SentinelAlert {
 				b.WriteString("    " + adoptedSentinelNote + "\n")
 			}
+		}
+		if pr.PersonAuthored && !pr.Adopted {
+			// hivecommons/hive#19110, #19102, #19063: own follow-up commits
+			// pushed to a person's PR fail the squash sign-off check.
+			who := "a person"
+			if a := strings.TrimSpace(pr.Author); a != "" {
+				who = a
+			}
+			b.WriteString("    PERSON'S PR (author " + who + "): " + stagelabels.PersonPRAgentCommitRule + "\n")
 		}
 		if pr.Conflict {
 			state := strings.TrimSpace(pr.MergeableState)
@@ -860,7 +872,7 @@ func rebaseResolveInstructions(baseRef string, attempt, max int, trustedAuthor b
 	var b strings.Builder
 	fmt.Fprintf(&b, "rebase-resolve (attempt %d/%d): `gh pr checkout`, `git rebase %s`, resolve every conflict keeping both sides' intent, re-run the build and tests, then `git push --force-with-lease` to the PR's OWN branch. Do not open a new PR; do not squash away the author's commits.", attempt, max, base)
 	if trustedAuthor {
-		b.WriteString(" This is a trusted author's PR the hive carries on their behalf — keep their authorship and sign-off intact.")
+		b.WriteString(" This is a trusted author's PR the hive carries on their behalf: replay their commits with their authorship and sign-off intact, and add no commit or Signed-off-by of your own.")
 	}
 	if attempt >= max {
 		b.WriteString(" Last attempt: if the head is still conflicting after this push the hive stops and asks a person.")

@@ -203,6 +203,7 @@ func (s *Server) registerCustomersRoutes() {
 	s.mux.HandleFunc("POST /api/customers/{id}/refresh-profile", s.handleCustomersRefreshProfile)
 	s.mux.HandleFunc("POST /api/customers/refresh-profiles", s.handleCustomersRefreshProfiles)
 	s.registerCustomersGraphRoutes()
+	s.registerCustomersEnrichmentRoutes()
 }
 
 // readOnlySelfService reports whether a write from a read-only user is one

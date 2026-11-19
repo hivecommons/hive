@@ -336,12 +336,9 @@ func resolveRedPRFixer(cfg *config.Config, owner string, available func(string) 
 }
 
 // redPRFixOwnSignoffExec is the `git rebase --exec` step the no-dco repair
-// advice names: it amends with --signoff only a commit whose author email is
-// the agent's own (git var GIT_AUTHOR_IDENT honours the lane's pinned
-// GIT_AUTHOR_* env), so a person's commit on the PR keeps exactly the
-// trailers its author wrote. A blanket `git rebase --signoff` appended the
-// agent's bot sign-off to a human's commit on hivecommons/hive#19102.
-const redPRFixOwnSignoffExec = `'case "$(git var GIT_AUTHOR_IDENT)" in *"<$(git log -1 --format=%ae)>"*) git commit --amend --no-edit --signoff;; esac'`
+// advice names (stagelabels.OwnSignoffRebaseExec): it signs off only the
+// agent's own commits, never a person's (hivecommons/hive#19102).
+const redPRFixOwnSignoffExec = stagelabels.OwnSignoffRebaseExec
 
 // redPRFixKick renders the targeted FIX-BEFORE-NEW kick a re-engagement
 // delivers. It names ONE PR — the stuck one — with its evidence, so the kick is
@@ -360,6 +357,10 @@ func redPRFixKick(o escalation.Observation, rerouted bool) string {
 		b.WriteString("  THEN fix any failing CI the same way.\n")
 	}
 	fmt.Fprintf(&b, "  gh pr checkout %d --repo %s → fix → git commit -s → git push\n", o.Number, o.Repo)
+	// The merge-request re-engagement path reaches this kick for a person's
+	// PR too (hivecommons/hive#19110: a coverage fix pushed as the lane
+	// failed the squash sign-off check), and the hook knows no author.
+	b.WriteString("  If the PR's author is a person, not the hive App or a bot: " + stagelabels.PersonPRAgentCommitRule + "\n")
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR.\n")
 	b.WriteString("After the push, STOP: do not watch, poll, or sleep on CI (no gh run watch/view loops).\n")
 	b.WriteString("The automerge sweep merges the PR once it is green; if the failure is infrastructure\n")
@@ -1361,6 +1362,15 @@ func sentinelSweepOptions(cfg *config.Config, ghClient *github.Client, dashSrv *
 			if dashSrv == nil {
 				return
 			}
+			if event.Cleared {
+				// The current head is clean and the hive removed its own
+				// label. The ring keeps the earlier head's finding for
+				// audit; only the clearance is logged (#19262).
+				detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, head=%s, cleared_head=%s",
+					event.Repo, event.Number, event.Author, event.HeadSHA, event.ClearedHead)
+				dashSrv.AuditLogRecord("system", github.SentinelAlertClearedAuditAction, detail, "", event.Repo, event.Number)
+				return
+			}
 			// Findings the write-back gate refused still reach the Security
 			// tab and /api/sentinel: the scan happened, only the GitHub
 			// write did not (#writeback containment).
@@ -1416,8 +1426,8 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 	if dashSrv != nil && cfg.Dashboard.Matrix.Active() {
 		dashSrv.RecordMatrixIngest(time.Now(), matrixIngestInterval)
 	}
-	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || result.Seen > 0 {
-		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "suppressed", len(result.Suppressed), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors), "cached_repos", result.CachedRepos, "listed_repos", result.ListedRepos)
+	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || len(result.Cleared) > 0 || result.Seen > 0 {
+		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "suppressed", len(result.Suppressed), "remediated", len(result.Remediated), "cleared", len(result.Cleared), "skipped", result.Skipped, "errors", len(result.Errors), "cached_repos", result.CachedRepos, "listed_repos", result.ListedRepos)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
@@ -1444,6 +1454,9 @@ func logSentinelResult(result *github.SentinelSweepResult, logger *slog.Logger) 
 	}
 	for _, ev := range result.Remediated {
 		logger.Info("sentinel unflagged trusted author PR", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "head", ev.HeadSHA)
+	}
+	for _, ev := range result.Cleared {
+		logger.Info("sentinel cleared alert on clean head", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "head", ev.HeadSHA, "cleared_head", ev.ClearedHead)
 	}
 }
 

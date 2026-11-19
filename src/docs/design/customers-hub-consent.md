@@ -257,6 +257,10 @@ constants for size and rate; none of this is final until phase 2.
   hub. The hub's per-person consent decides what arrives; the switch only says
   this hive asks. The help text states that the request carries hashed GitHub
   logins of confirmed customers and nothing else.
+- **Match key provisioning.** Hub-hosted spokes receive the per-hive match key
+  as `HIVE_CUSTOMER_MATCH_KEY` from the hub (provisioning and the per-hive env
+  reconcile, current master generation). Self-service (`byo-`) hives hold no
+  master and get no provisioning, so they cannot use the hub import in v1.
 
 ## Revocation
 

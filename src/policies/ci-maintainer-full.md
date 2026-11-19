@@ -97,10 +97,24 @@ test problem. Check these before diagnosing any single PR:
    say so on the PR once and prefer the order that rebases the smaller diff.
    Use a sticky comment (edit the existing one, marker `<!-- hive-pr-overlap -->`)
    rather than a new comment each run.
-4. **Behind the base.** After the base branch moves, a PR that touches the
-   same files as the merged change should be updated immediately
-   (`gh api -X PUT repos/<owner/repo>/pulls/<N>/update-branch`), not left to
-   turn red later. A `422` means it now conflicts: report it under item 3.
+4. **Behind the base: defer to the preparation owner.** Do not update a PR
+   branch merely because the base moved, even when it touches the same files
+   as the merged change. On repositories that use the current-base gate
+   (`auto_merge.require_current_base`, per repository or through
+   `auto_merge.require_current_base_default`), the hive's merge lane is the
+   one preparation owner: it refreshes a behind PR once its CI and review
+   pass, then waits for CI on the new head. Every extra refresh starts a
+   second full CI run, cancels the one in flight, and sends the owner back to
+   the start. If you cannot tell whether the gate applies, assume it does.
+   Where it is off, the merge train (on by default) updates overlapping
+   siblings after each merge, so the rule is the same. Touch a behind branch
+   only to repair a real conflict: GitHub reports the PR `CONFLICTING` /
+   `DIRTY`, or item 3's `git merge-tree` exits 1 against the base. Never call
+   `gh api -X PUT repos/<owner/repo>/pulls/<N>/update-branch` on a PR that
+   is only behind; on a conflict it returns `422` anyway, so report it under
+   item 3 and follow your lane's conflict rules. A `MERGE_BASE` verdict from
+   the shared-baseline helper on a red check is a repair, not a refresh, and
+   still applies.
 5. **Throughput fixes worth a PR.** When a repository's CI is slow, look for
    and propose, one PR each: a missing `concurrency` group with
    `cancel-in-progress` on pull_request workflows; `actions/setup-go` /
@@ -129,6 +143,64 @@ move tests with the code they cover, at most 4 resulting files of at least
 the file has no other open PRs against it, so the split does not become one
 more collision. Do not splinter: if the issue's evidence table no longer
 holds (few PRs, no overlaps), say so on the issue and close it instead.
+
+## Merge Churn (standing goal)
+
+Base refreshes are the most expensive thing CI does that finds nothing: each
+one reruns every pull_request workflow on a head whose PR content did not
+change, and cancels the run in flight. Keep that cost visible and falling.
+This is a standing item: it never closes, and it is measured, not fixed by
+touching PRs (see item 4 of CI Throughput and Merge Order).
+
+**Measure weekly.** On your first kick on or after Monday 00:00 UTC, skip if
+your newest `merge churn` bead is less than 7 days old. Otherwise measure the
+previous 7 days on the primary repository's default branch. The PR and run
+reads below are measurement only, an exception to any work-list prohibition
+on listing PRs; never use them to select work. Take at most the 100 most
+recently merged PRs (`gh pr list --repo <owner/repo> --state merged --base
+<default-branch> --search "merged:>=<YYYY-MM-DD>" --limit 100 --json
+number,mergedAt`) and say so in the report when the cap was hit.
+
+1. **Refreshes per merged PR** (`refreshes_per_merged_pr`): for each merged
+   PR, count its commits that are the hive App's base refresh (authored by
+   the App's bot login, message `Merge branch '<base>' into <branch>`):
+   `gh api repos/<owner/repo>/pulls/<N>/commits --paginate`. Report the mean
+   and the PR with the most.
+2. **CI runs cancelled by refreshes** (`refresh_cancelled_run_share`): for
+   each refresh commit from 1, its non-base parent is the head it replaced;
+   count that head's cancelled pull_request runs
+   (`gh api "repos/<owner/repo>/actions/runs?head_sha=<parent>&status=cancelled"`).
+   Report the count and its share of all pull_request runs created in the
+   week.
+3. **Release-merge cadence** (`release_merges_per_day`): releases published
+   in the week (`gh release list --repo <owner/repo> --limit 100 --json
+   tagName,publishedAt`) divided by 7. Every release commit moves the base
+   and makes every open PR behind.
+4. **Approval-to-merge latency** (`approval_to_merge_median`,
+   `approval_to_merge_p90`): for each merged PR, merge time minus its latest
+   `APPROVED` review (`gh api repos/<owner/repo>/pulls/<N>/reviews`); skip
+   PRs with none. Report median and p90.
+
+**Report.** Write one bead per week, title `merge churn: week of
+<YYYY-MM-DD>`, priority 3 (2 when any threshold below is crossed), with the
+four numbers, last week's numbers beside them, and the caps you hit.
+
+**Thresholds** (named so the report and the issue can cite them):
+
+| Name | Over threshold when |
+| --- | --- |
+| `refreshes_per_merged_pr` | mean above 1.5 |
+| `refresh_cancelled_run_share` | above 20% of the week's pull_request runs |
+| `release_merges_per_day` | above 6 |
+| `approval_to_merge_median` / `approval_to_merge_p90` | median above 4h or p90 above 24h |
+
+**Escalate once.** When any threshold is crossed, keep ONE open issue per
+repository, stable title `[ci-maintainer] Merge churn over threshold in
+<owner/repo>`, label `ci`: the numbers, which thresholds they cross, the
+worst PRs as evidence, and the likeliest lever (release cadence, refresh
+ordering, a slow lane). If that issue is already open, add one comment with
+the new week's numbers instead of a new issue. When a full week is back
+under every threshold, say so in one comment and close it.
 
 ## Opening Issues
 
@@ -231,7 +303,8 @@ checks are green — waiting buys nothing.
 5. Create a GitHub issue for each confirmed problem
 6. For problems with a clear fix, create a worktree and open a PR
 7. Create a bead for each finding
-8. Summarize CI health in your response
+8. Weekly: run the Merge Churn measurement when it is due
+9. Summarize CI health in your response
 
 ${KNOWLEDGE}
 

@@ -10,6 +10,8 @@ on:
       - '.github/scripts/diagnose-dco-provider*.cjs'
       - '.github/scripts/pr-verifier*.cjs'
       - '.github/scripts/integration-governance.cjs'
+      - '.github/scripts/refresh-only-head.sh'
+      - '.github/scripts/test-refresh-only-head.sh'
       - 'src/pkg/dashboard/static-src/js/config-helpers.js'
       - 'src/pkg/dashboard/static-src/js/config-features.js'
       - 'src/pkg/dashboard/static-src/js/tracker-native-queue.js'
@@ -32,6 +34,8 @@ on:
       - '.github/scripts/diagnose-dco-provider*.cjs'
       - '.github/scripts/pr-verifier*.cjs'
       - '.github/scripts/integration-governance.cjs'
+      - '.github/scripts/refresh-only-head.sh'
+      - '.github/scripts/test-refresh-only-head.sh'
       - 'src/pkg/dashboard/static-src/js/config-helpers.js'
       - 'src/pkg/dashboard/static-src/js/config-features.js'
       - 'src/pkg/dashboard/static-src/js/tracker-native-queue.js'
@@ -60,6 +64,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Exercise push and shared-CI incident recovery with mocked APIs
         run: bash .github/scripts/test_pr-auto-update.sh
+      - name: Refresh-only head detector answers false on every doubt
+        run: bash .github/scripts/test-refresh-only-head.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // The targeted FIX-BEFORE-NEW re-engagement kick carries no policy template,
@@ -59,6 +60,22 @@ func TestRedPRFixKickSignsOffOnlyOwnCommits(t *testing.T) {
 	for _, want := range []string{"git var GIT_AUTHOR_IDENT", "git log -1 --format=%ae", "git commit --amend --no-edit --signoff"} {
 		if !strings.Contains(redPRFixOwnSignoffExec, want) {
 			t.Errorf("own-signoff exec %q lacks %q", redPRFixOwnSignoffExec, want)
+		}
+	}
+}
+
+// hivecommons/hive#19110: the merge-request re-engagement kick reached a
+// person's red PR and the lane pushed its own coverage fix, which the squash
+// would land under the person's name with the lane's sign-off. The kick
+// carries the person's-PR rule whatever the labels say.
+func TestRedPRFixKickCarriesPersonPRRule(t *testing.T) {
+	for _, o := range []escalation.Observation{
+		{Repo: "hivecommons/hive", Number: 19110},
+		{Repo: "hivecommons/hive", Number: 19110, Labels: []string{"no-dco"}},
+	} {
+		got := redPRFixKick(o, false)
+		if !strings.Contains(got, "author is a person") || !strings.Contains(got, stagelabels.PersonPRAgentCommitRule) {
+			t.Errorf("kick for %v lacks the person's-PR rule:\n%s", o.Labels, got)
 		}
 	}
 }

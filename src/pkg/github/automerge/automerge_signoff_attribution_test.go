@@ -76,15 +76,15 @@ func TestSignoffAttributionRewrite(t *testing.T) {
 		{name: "same head and asks leave the note alone", previous: first, head: "eb40422ae63967eb7363a3f866e73121c58f2c1b", hiveSigned: 8},
 		{
 			name: "new head rewrites and records one line", previous: first, head: "2940830726b72f08dff5a1ef6a37bff871b4a7d5", hiveSigned: 20,
-			wantChanged: true, wantLines: 1, wantLast: "updated 2026-11-04 12:04 UTC: head `2940830726b7`, 20 commits signed off as the hive App",
+			wantChanged: true, wantLines: 1, wantLast: "updated 2026-11-04 12:04 UTC: head `2940830726b7`, 20 commits signed off by a hive agent",
 		},
 		{
 			name: "legacy per-head note is adopted under the stable marker", previous: legacy, head: "2940830726b72f08dff5a1ef6a37bff871b4a7d5", hiveSigned: 1,
-			wantChanged: true, wantLines: 1, wantLast: "updated 2026-11-04 12:04 UTC: head `2940830726b7`, 1 commit signed off as the hive App",
+			wantChanged: true, wantLines: 1, wantLast: "updated 2026-11-04 12:04 UTC: head `2940830726b7`, 1 commit signed off by a hive agent",
 		},
 		{
 			name: "history stays capped at five", previous: fiveDeep, head: "dc8ccef2b084b5860f317dacc5037071d78bc1b6", hiveSigned: 30,
-			wantChanged: true, wantLines: markerHistoryCap, wantLast: "updated 2026-11-04 12:04 UTC: head `dc8ccef2b084`, 30 commits signed off as the hive App",
+			wantChanged: true, wantLines: markerHistoryCap, wantLast: "updated 2026-11-04 12:04 UTC: head `dc8ccef2b084`, 30 commits signed off by a hive agent",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -164,7 +164,7 @@ func TestApplyStageLabelsSignoffAttributionUpsertsAcrossHeads(t *testing.T) {
 		if !strings.HasPrefix(last, SignoffAttributionMarker+"\n") || !strings.Contains(last, "Current head: `"+head+"`.") {
 			t.Fatalf("head %s: edit not the upserted note:\n%s", head, last)
 		}
-		if _, hist := splitMarkerHistory(last); len(hist) != i+1 || !strings.Contains(hist[i], "head `"+head+"`, 1 commit signed off as the hive App") {
+		if _, hist := splitMarkerHistory(last); len(hist) != i+1 || !strings.Contains(hist[i], "head `"+head+"`, 1 commit signed off by a hive agent") {
 			t.Fatalf("head %s: history %q", head, hist)
 		}
 	}

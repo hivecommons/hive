@@ -65,6 +65,13 @@ func TestSubscriptionGaugeOverviewWiring(t *testing.T) {
 	if strings.Contains(overview, "innerHTML") {
 		t.Fatalf("Overview gauge must build its DOM without innerHTML:\n%s", overview)
 	}
+	// Claude's usage-credits line renders under the dials only when the
+	// model built one, and is a display: the gauge has no credits control.
+	for _, want := range []string{"if (row.credits)", "'overview-usage-gauge__credits', row.credits.text", "credits.setAttribute('data-status', row.credits.status)"} {
+		if !strings.Contains(overview, want) {
+			t.Fatalf("renderSubscriptionGaugeOverview missing %q:\n%s", want, overview)
+		}
+	}
 	dial := jsFunc(t, html, "subscriptionGaugeDialSvg")
 	if !strings.Contains(dial, "createElementNS") || strings.Contains(dial, "innerHTML") {
 		t.Fatalf("fuel dial must be built with createElementNS, not innerHTML:\n%s", dial)

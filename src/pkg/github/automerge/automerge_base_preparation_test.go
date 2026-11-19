@@ -25,6 +25,8 @@ type preparationAPI struct {
 	pending           map[string]bool
 	missing           map[string]bool
 	stale             map[string]bool
+	failing           map[string]bool
+	baseDelta         map[string][]*gh.CommitFile
 	stacked           bool
 	requiredContexts  []string
 	requirementsError bool
@@ -58,6 +60,8 @@ func newPreparationAPI(t *testing.T) (*preparationAPI, *httptest.Server) {
 		prs: map[int]*gh.PullRequest{}, behind: map[string]int{}, pending: map[string]bool{},
 		missing:          map[string]bool{},
 		stale:            map[string]bool{},
+		failing:          map[string]bool{},
+		baseDelta:        map[string][]*gh.CommitFile{},
 		additionalChecks: map[string][]string{},
 		updates:          map[int]int{}, merges: map[int]int{},
 		files: map[int][]*gh.CommitFile{}, baseSHA: "base1",
@@ -122,6 +126,10 @@ func newPreparationAPI(t *testing.T) (*preparationAPI, *httptest.Server) {
 				w.WriteHeader(http.StatusNotFound)
 			}
 		case "compare":
+			if files, ok := api.baseDelta[path[4]]; ok {
+				write(map[string]any{"status": "ahead", "ahead_by": 1, "total_commits": 1, "files": files})
+				return
+			}
 			base, head, _ := strings.Cut(path[4], "...")
 			status := "diverged"
 			if api.stacked && base == "head2" && head == "refreshed1" {
@@ -184,6 +192,9 @@ func newPreparationAPI(t *testing.T) (*preparationAPI, *httptest.Server) {
 			}
 			if api.stale[head] {
 				state, conclusion = "success", "stale"
+			}
+			if api.failing[head] {
+				state, conclusion = "failure", "failure"
 			}
 			if path[5] == "status" {
 				statuses := []map[string]string{{"context": "build", "state": state}}
