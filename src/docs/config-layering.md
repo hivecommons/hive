@@ -2,6 +2,9 @@
 
 **Which layer sets this field, and where do I write to change it?**
 
+For deployment-specific paths and an editing workflow, start with
+[Editing `hive.yaml`](editing-hive-yaml.md).
+
 Until this document existed, that question was answerable only by reading a
 single line of pod boot logs. It cost real time: a GitHub Enterprise hive was
 repaired on the **fourth** attempt, after patching the hub's `meta.json`, then
