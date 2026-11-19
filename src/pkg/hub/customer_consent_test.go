@@ -158,3 +158,94 @@ func TestCustomerConsentRetention(t *testing.T) {
 		t.Fatalf("unexpected retention result: %+v", records)
 	}
 }
+
+func TestCustomerConsentDisclosureText(t *testing.T) {
+	page := profileSharePageHTML
+	for _, want := range []string{
+		"What is sent.", "To whom.", "can view and export", "What is never sent.",
+		"Withdrawing.", "at its next sync", "cannot recall", "learns that this hive has you as a customer",
+		`class="muted delivery"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("disclosure is missing %q", want)
+		}
+	}
+	if strings.Contains(page, "No profile details are sent") {
+		t.Error("disclosure still says nothing is sent to hives")
+	}
+	if customerConsentTextVersion == "1" {
+		t.Error("the disclosure changed materially; a version 1 consent must be reconfirmed")
+	}
+}
+
+func TestCustomerConsentAdminCounts(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	t.Setenv(customersShareEnv, "")
+	s := newHandlerHub()
+	s.mux = http.NewServeMux()
+	s.registerCustomerSharingRoutes()
+	mkUser(t, hubAdminUsername)
+	mkUser(t, "bob")
+	now := time.Now().UTC()
+	write := func(login string, records map[string]customerConsent) {
+		t.Helper()
+		u := &SaaSUser{GitHubUsername: login, FullName: "Private " + login, FullNameSource: countrySourceUser}
+		if err := saveSaaSUser(u); err != nil {
+			t.Fatal(err)
+		}
+		path, err := customerConsentPath(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := saveCustomerConsents(path, records); err != nil {
+			t.Fatal(err)
+		}
+	}
+	name := customerConsentFields{RealName: true}
+	current := func(f customerConsentFields) customerConsent {
+		return customerConsent{Fields: f, TextVersion: customerConsentTextVersion, GrantedAt: now, UpdatedAt: now}
+	}
+	old := current(name)
+	old.TextVersion = "1"
+	withdrawn := customerConsent{TextVersion: customerConsentTextVersion, WithdrawnAt: &now, FirstDeliveredAt: &now}
+	write("alice", map[string]customerConsent{"one": current(name), "two": current(customerConsentFields{Country: true})})
+	write("carol", map[string]customerConsent{"one": current(customerConsentFields{Organization: true}), "two": withdrawn})
+	write("dave", map[string]customerConsent{"one": old})
+
+	get := func(login string) *httptest.ResponseRecorder {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, reqWithUser("GET", "/api/saas/admin/profile-share/counts", "", login))
+		return w
+	}
+	if w := get(hubAdminUsername); w.Code != http.StatusNotFound {
+		t.Fatalf("switch off: status %d, want 404", w.Code)
+	}
+	t.Setenv(customersShareEnv, "true")
+	if w := get("bob"); w.Code != http.StatusForbidden {
+		t.Fatalf("non-admin: status %d, want 403", w.Code)
+	}
+	w := get(hubAdminUsername)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin: status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, leak := range []string{"alice", "carol", "dave", "Private", "real_name", "organization", "country\"", "fields"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("admin counts leaked %q: %s", leak, body)
+		}
+	}
+	var resp struct {
+		Hives []customerConsentHiveCount `json:"hives"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	want := []customerConsentHiveCount{
+		{HiveID: "one", Name: "one", Consents: 2, AwaitingReconfirmation: 1},
+		{HiveID: "two", Name: "two", Consents: 1},
+	}
+	if len(resp.Hives) != len(want) || resp.Hives[0] != want[0] || resp.Hives[1] != want[1] {
+		t.Fatalf("counts = %+v, want %+v", resp.Hives, want)
+	}
+}
