@@ -29,13 +29,14 @@ Hive sends a small number of operational signals outside the running hive only t
 
 ## Ask AI help
 
-On a deployment that offers Ask, the dashboard sends a question only after
-the signed-in person accepts the disclosure in the panel. The hub stores its
-users' consent records with hub data. A hive stores its dashboard users'
-consent in its own data directory, even if it relays questions through the
-hub. The record is scoped to the dashboard identity and the disclosure
-version; a changed disclosure requires fresh consent. An operator enabling
-the feature does not consent on anyone's behalf.
+These disclosures apply only where Ask is supported and enabled. A signed-in
+person must accept the panel's disclosure before sending a question. The
+hub stores its users' consent records with hub data. The planned hive
+rollout requires the hive to keep consent for its own dashboard users, even
+when the hub relays their questions. Consent is scoped to the dashboard
+identity and disclosure version; a changed disclosure requires fresh
+consent. An operator enabling the feature does not consent on anyone's
+behalf.
 
 Kapa does not receive dashboard content, URLs, repo or hive names, user
 identifiers, cookies, or session tokens as request context. It does receive
