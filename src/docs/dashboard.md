@@ -166,6 +166,14 @@ with the percentage left and when it resets:
 - **Claude**: the weekly limit, plus a 5-hour or model-specific weekly limit
   when the plan has one. A model-specific limit is named after its model the
   way Claude Code's `/usage` names it, for example "Weekly (Fable)".
+  Under the dials, one line shows Claude's usage credits (extra usage, which
+  keeps the account working past a plan limit) when Claude reports them:
+  "Usage credits: on · $0.00 of $350.00 used this month", "off", or "limit
+  reached" in amber once the monthly cap is spent. The line is hidden when
+  Claude does not report them. It is display only: the hive never turns
+  credits on or spends them. Claude's usage endpoint does not report a
+  purchased credit balance or banked limit resets, so the gauge cannot show
+  those; claude.ai's Settings › Usage page does.
 - **Copilot**: the monthly premium-request quota ("Premium requests"), as
   Copilot itself reports it, resetting at the start of each month.
 

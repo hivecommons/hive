@@ -185,6 +185,8 @@
     .overview-usage-gauge__provider { font-weight: var(--fw-semibold); }
     .overview-usage-gauge__users { font-size: var(--fs-sm); color: var(--text-muted); overflow-wrap: anywhere; }
     .overview-usage-gauge__spend { font-size: var(--fs-base); font-weight: 600; }
+    .overview-usage-gauge__credits { font-size: var(--fs-sm); color: var(--text-muted); }
+    .overview-usage-gauge__credits[data-status="warn"] { color: var(--status-warn); font-weight: 600; }
     .overview-usage-gauge__dials { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-4); }
     .overview-usage-gauge__dial { display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); text-align: center; }
     .overview-usage-gauge__label { font-weight: var(--fw-semibold); }
