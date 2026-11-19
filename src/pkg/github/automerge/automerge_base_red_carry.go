@@ -28,6 +28,18 @@ import (
 // CI-owning path (hgithub.TouchesCIOwningPath). Any other red check, a
 // CI-owning path, or a file list that could not be read keeps today's
 // author-facing route.
+//
+// After a restart (projectbluefin/common#1689, #1690). The memory and the
+// index live in the process and are published only when the first
+// CI-enriched enumeration finishes, which took about 25 minutes on
+// 2026-11-18. In that window every base read as not red: common's PRs red
+// only on main's own E2E check went to 070/072, and two that had sat at 072
+// past their grace were adopted at once (1:42 PM EST) and superseded, losing
+// a maintainer's approval, into copies red for the same reason. Until the
+// memory is published (StageLabelPolicy.BaseRedRememberedReady), a red head
+// whose red checks the memory does not cover reads its base tip directly,
+// once per base per humanChecksTTL (baseTipRedChecks), and is base red when
+// every check red on it is red there too.
 
 // baseRedFilesPages bounds the head's file listing (100 files per page),
 // like the enumeration's own (hgithub.baseRedMaxFilePages): a longer list is
@@ -51,8 +63,60 @@ func stageBaseRedRemembered(policy StageLabelPolicy, owner, repo, baseRef string
 	return policy.BaseRedRemembered(owner+"/"+repo, baseRef)
 }
 
+// stageBaseRedRememberedReady reports whether the policy's base-red memory
+// has been published since the hive started; nil reads as ready.
+func stageBaseRedRememberedReady(policy StageLabelPolicy) bool {
+	return policy.BaseRedRememberedReady == nil || policy.BaseRedRememberedReady()
+}
+
+// baseTipRedEntry is one base branch tip's red checks as baseTipRedChecks
+// read them, and when; ok is false when the read failed.
+type baseTipRedEntry struct {
+	at  time.Time
+	red []string
+	ok  bool
+}
+
+// baseTipRedChecks lists the checks red on obs's base branch tip (its
+// combined status and latest check run per name and app, as the head's own
+// digest reads them), cached per base for humanChecksTTL, failures included,
+// so a pass costs at most one read per base. ok is false when the read
+// failed.
+func (c *Engine) baseTipRedChecks(ctx context.Context, tracker *StageTracker, obs stageObservation, now time.Time) ([]string, bool) {
+	key := hgithub.BaseRedRememberedKey(obs.Owner+"/"+obs.Repo, obs.BaseRef)
+	tracker.mu.Lock()
+	entry, cached := tracker.baseTipRed[key]
+	tracker.mu.Unlock()
+	if cached && now.Sub(entry.at) < humanChecksTTL {
+		return entry.red, entry.ok
+	}
+	summary, err := c.summarizeChecks(ctx, obs.Owner, obs.Repo, obs.BaseRef, func() map[string]bool { return nil })
+	if err != nil {
+		c.debug("stage labels: base tip checks unavailable; a red head stays author-facing", "repo", obs.Display, "base", obs.BaseRef, "error", err)
+	}
+	entry = baseTipRedEntry{at: now, red: slices.Clone(summary.Red), ok: err == nil}
+	tracker.mu.Lock()
+	if tracker.baseTipRed == nil {
+		tracker.baseTipRed = map[string]baseTipRedEntry{}
+	}
+	tracker.baseTipRed[key] = entry
+	tracker.mu.Unlock()
+	return entry.red, entry.ok
+}
+
+// allIn reports whether every name in names is in set.
+func allIn(names, set []string) bool {
+	for _, name := range names {
+		if !slices.Contains(set, name) {
+			return false
+		}
+	}
+	return true
+}
+
 // foldBaseRed marks a red PR head base red when the index has no answer for
-// it and every check red on it is remembered red on its base.
+// it and every check red on it is remembered red on its base, or, before the
+// memory is published, red on the base tip.
 func (c *Engine) foldBaseRed(ctx context.Context, tracker *StageTracker, list []stageObservation, now time.Time) {
 	var o *stageObservation
 	for i := range list {
@@ -77,8 +141,10 @@ func (c *Engine) foldBaseRed(ctx context.Context, tracker *StageTracker, list []
 	if !red {
 		return
 	}
-	remembered := stageBaseRedRemembered(c.stagePolicy(), o.Owner, o.Repo, o.BaseRef)
-	if len(remembered) == 0 {
+	policy := c.stagePolicy()
+	remembered := stageBaseRedRemembered(policy, o.Owner, o.Repo, o.BaseRef)
+	ready := stageBaseRedRememberedReady(policy)
+	if len(remembered) == 0 && ready {
 		return
 	}
 	key := stageKey(o.Owner, o.Repo, o.Number)
@@ -86,10 +152,18 @@ func (c *Engine) foldBaseRed(ctx context.Context, tracker *StageTracker, list []
 	if !known || len(summary.Red) == 0 {
 		return
 	}
-	for _, name := range summary.Red {
-		if !slices.Contains(remembered, name) {
+	source := "remembered"
+	if !ready && !allIn(summary.Red, remembered) {
+		// Nothing published since the hive started: ask the base tip.
+		tip, ok := c.baseTipRedChecks(ctx, tracker, *o, now)
+		if !ok {
 			return
 		}
+		remembered = append(slices.Clone(remembered), tip...)
+		source = "base-tip"
+	}
+	if !allIn(summary.Red, remembered) {
+		return
 	}
 	touches, known := c.headTouchesCIOwningPath(ctx, tracker, key, *o)
 	if !known || touches {
@@ -103,7 +177,7 @@ func (c *Engine) foldBaseRed(ctx context.Context, tracker *StageTracker, list []
 			list[i].BaseRedChecks = append([]string(nil), checks...)
 		}
 	}
-	c.debug("stage labels: base-branch red read for a head the enumeration has not classified", "repo", o.Display, "pr", o.Number, "head", head, "base", o.BaseRef, "checks", checks)
+	c.debug("stage labels: base-branch red read for a head the enumeration has not classified", "repo", o.Display, "pr", o.Number, "head", head, "base", o.BaseRef, "checks", checks, "source", source)
 }
 
 // headTouchesCIOwningPath reports whether obs's head changes a CI-owning

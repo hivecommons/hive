@@ -180,6 +180,12 @@ type StageLabelPolicy struct {
 	// answer for yet is base red when every check red on it is one of these
 	// and it touches no CI-owning path (foldBaseRed). Nil means none.
 	BaseRedRemembered func(repo, baseRef string) []string
+	// BaseRedRememberedReady reports whether the CI enumeration has
+	// published BaseRedRemembered (and the BaseBranchRed index) since the
+	// hive started. Until it has, both are empty for every base, so
+	// foldBaseRed reads the base tip itself (baseTipRedChecks). Nil means
+	// ready: no tip reads.
+	BaseRedRememberedReady func() bool
 	// ForkGuard returns the failing checks on a fork PR head (repo
 	// "owner/name", number, head SHA) that refuse it only because it is from
 	// a fork, when EVERY failing check does —
@@ -313,6 +319,10 @@ type StageTracker struct {
 	// path (foldBaseRed); created on first use. Per head, like
 	// humanMergePathFence.
 	baseRedPaths map[string]baseRedPathsEntry
+	// baseTipRed remembers, per base branch, the checks red on its tip
+	// while the base-red memory is not published yet (baseTipRedChecks);
+	// created on first use.
+	baseTipRed map[string]baseTipRedEntry
 	// approvals remembers, per key, the trusted approval the human route
 	// read for a head no lane noted one on (headTrustedApproval); created
 	// on first use. Like humanMergePathFence it survives drain.

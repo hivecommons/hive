@@ -86,6 +86,14 @@ func stageBaseRedRemembered(repo, baseRef string) []string {
 	return append([]string(nil), (*m)[github.BaseRedRememberedKey(repo, baseRef)]...)
 }
 
+// stageBaseRedRememberedReady answers
+// StageLabelPolicy.BaseRedRememberedReady: whether a CI-enriched
+// enumeration has published the memory since the hive started. Until then
+// the stage reconciler reads base tips itself (projectbluefin/common#1689).
+func stageBaseRedRememberedReady() bool {
+	return stageBaseRedMemory.Load() != nil
+}
+
 // stageSharedCIIncident answers StageLabelPolicy.SharedCIIncident. repo is
 // "owner/name"; the snapshot may key a PR by either form. A head pushed
 // since the snapshot is not covered: the deferral was decided for the old
