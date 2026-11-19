@@ -28,14 +28,18 @@ case "$1:$2" in
   api:repos/acme/widgets/compare/trunk...*)
     # MOCK_COMPARE maps head oid → behind_by; an unmapped oid fails the call.
     oid="${2##*...}"
-    behind="$(jq -r --arg oid "$oid" '.[$oid] // empty' <<<"${MOCK_COMPARE:-{}}")"
+    # Not ${MOCK_COMPARE:-{}}: bash ends that expansion at the first "}", so a
+    # set value comes back with a stray trailing brace.
+    compare_map="${MOCK_COMPARE:-}"; [[ -n "$compare_map" ]] || compare_map='{}'
+    behind="$(jq -r --arg oid "$oid" '.[$oid] // empty' <<<"$compare_map")"
     [[ -n "$behind" ]] || exit 1
     printf '{"behind_by":%s,"ahead_by":1}\n' "$behind"
     ;;
   api:repos/acme/widgets/check-runs/*/annotations)
     # MOCK_ANNOTATIONS maps check-run id → annotations array; unmapped is [].
     id="${2#repos/acme/widgets/check-runs/}"; id="${id%/annotations}"
-    jq -c --arg id "$id" '.[$id] // []' <<<"${MOCK_ANNOTATIONS:-{}}"
+    annotations_map="${MOCK_ANNOTATIONS:-}"; [[ -n "$annotations_map" ]] || annotations_map='{}'
+    jq -c --arg id "$id" '.[$id] // []' <<<"$annotations_map"
     ;;
   pr:list)
     cat "$MOCK_PRS"
