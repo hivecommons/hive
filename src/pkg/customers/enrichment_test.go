@@ -227,3 +227,32 @@ func TestServiceEnrichmentSuggestionAndForget(t *testing.T) {
 		t.Fatal("Forget left no tombstone")
 	}
 }
+
+// Public activity shows in the detail view only while its source is on.
+func TestServicePublicContributionsFollowTheSwitch(t *testing.T) {
+	s := newService(t)
+	e, err := OpenEnrichment(filepath.Dir(s.Store().Path()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := false
+	s.SetEnrichment(e, func(source string) bool { return on && source == EnrichSourceDevstats })
+	ada, err := s.Add(ownerV, "Ada", []Identity{{Kind: KindGitHub, Value: "ada"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.SetSource(ada.ID, EnrichSourceDevstats, nil, []EnrichedActivity{{Project: "All CNCF", Contributions: 42, URL: "https://all.devstats.cncf.io/d/9"}}, enrichAt); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(ownerV, ada.ID); len(got.PublicContributions) != 0 {
+		t.Fatalf("source off, activity shown: %+v", got.PublicContributions)
+	}
+	on = true
+	got, err := s.Get(ownerV, ada.ID)
+	if err != nil || len(got.PublicContributions) != 1 || got.PublicContributions[0].Contributions != 42 {
+		t.Fatalf("source on = %+v, %v", got.PublicContributions, err)
+	}
+	if list, _ := s.List(ownerV); len(list.People) > 0 && len(list.People[0].PublicContributions) != 0 {
+		t.Fatal("the list view must not carry public activity")
+	}
+}
