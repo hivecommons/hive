@@ -590,6 +590,18 @@ func serverTimingHeader(metrics ...serverTimingMetric) string {
 
 func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values) ([]byte, error) {
 	user := ensureSaaSUser(username)
+	shareEnabled := customersShareEnabled()
+	var shareHiveIDs []string
+	if shareEnabled {
+		// Capture actual grants before the fleet's owner normalization can
+		// add missing grants. Admin visibility alone is not a personal grant.
+		for id, role := range user.Hives {
+			if role != "" {
+				shareHiveIDs = append(shareHiveIDs, id)
+			}
+		}
+		sort.Strings(shareHiveIDs)
+	}
 
 	s.mu.Lock()
 	offlineEvents := s.markStaleHives()
@@ -777,6 +789,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 	}
 
 	isAdmin := isHubAdmin(username)
+	var ownerRepairs []string
 	for _, h := range allHives {
 		if role, ok := user.Hives[h.ID]; ok {
 			// A stale/demoted stored role must not hide owner-gated UI (the
@@ -786,7 +799,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 			// OWN hives (#4081).
 			if role != "owner" && canonicalEqual(h.Owner, username) {
 				role = "owner"
-				user.Hives[h.ID] = "owner" // heal the demoted stored role
+				ownerRepairs = append(ownerRepairs, h.ID)
 			}
 			if isAdmin && role != "owner" {
 				role = "owner"
@@ -800,7 +813,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 			entry := MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID], AutoUpgradeMode: autoUpgradeModeMap[h.ID]}
 			enrichFromSaaSMeta(&entry)
 			result = append(result, entry)
-			user.Hives[h.ID] = "owner"
+			ownerRepairs = append(ownerRepairs, h.ID)
 			continue
 		}
 		if isAdmin {
@@ -826,7 +839,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 				// role (#4081).
 				if role != "owner" && canonicalEqual(sh.Owner, username) {
 					role = "owner"
-					user.Hives[hiveID] = "owner"
+					ownerRepairs = append(ownerRepairs, hiveID)
 				}
 				entry := MyHiveEntry{
 					RegistryEntry: RegistryEntry{
@@ -852,7 +865,9 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 
 	for _, sh := range listSaaSHives() {
 		if (canonicalEqual(sh.Owner, username) || isAdmin) && !seen[sh.ID] {
-			user.Hives[sh.ID] = "owner"
+			if canonicalEqual(sh.Owner, username) {
+				ownerRepairs = append(ownerRepairs, sh.ID)
+			}
 			entry := MyHiveEntry{
 				RegistryEntry: RegistryEntry{
 					ID:          sh.ID,
@@ -874,10 +889,19 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		}
 	}
 
-	if len(user.Hives) > 0 {
-		if err := saveSaaSUser(user); err != nil {
-			s.logger.Warn("handleMyHives: save failed", "user", username, "error", err)
+	if len(ownerRepairs) > 0 {
+		// Fleet refreshes independently of profile edits. Persist only the
+		// repaired grants against a fresh record, not the old profile snapshot.
+		customerProfileMu.Lock()
+		if current := loadSaaSUser(username); current != nil {
+			for _, id := range ownerRepairs {
+				current.Hives[id] = roleOwner
+			}
+			if err := saveSaaSUser(current); err != nil {
+				s.logger.Warn("handleMyHives: owner repair failed", "user", username, "error", err)
+			}
 		}
+		customerProfileMu.Unlock()
 	}
 
 	// Read the user roster ONCE for the access hover rather than per row —
@@ -1285,6 +1309,12 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		// Scoped to the hives this caller can already see, so it never leaks
 		// the existence of a hive they have no access to.
 		"alerts": s.fleetAlerts(result, alertFleet),
+	}
+	if shareEnabled {
+		resp["customersShareEnabled"] = true
+		if len(shareHiveIDs) > 0 {
+			resp["profileShareHiveIDs"] = shareHiveIDs
+		}
 	}
 
 	myReq := loadProvisionRequest(username)
