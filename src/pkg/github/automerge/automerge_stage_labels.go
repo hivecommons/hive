@@ -183,8 +183,9 @@ type StageLabelPolicy struct {
 	// BaseRedRememberedReady reports whether the CI enumeration has
 	// published BaseRedRemembered (and the BaseBranchRed index) since the
 	// hive started. Until it has, both are empty for every base, so
-	// foldBaseRed reads the base tip itself (baseTipRedChecks). Nil means
-	// ready: no tip reads.
+	// foldBaseRed reads the base tip itself (baseTipRedChecks) and an
+	// automatic adoption waits (adoptContributorPR). Nil means ready: no
+	// tip reads, no wait.
 	BaseRedRememberedReady func() bool
 	// ForkGuard returns the failing checks on a fork PR head (repo
 	// "owner/name", number, head SHA) that refuse it only because it is from

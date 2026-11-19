@@ -29,17 +29,21 @@ import (
 // CI-owning path, or a file list that could not be read keeps today's
 // author-facing route.
 //
-// After a restart (projectbluefin/common#1689, #1690). The memory and the
-// index live in the process and are published only when the first
-// CI-enriched enumeration finishes, which took about 25 minutes on
+// After a restart (projectbluefin/common#1689). The memory and the index
+// live in the process and are published only when the first CI-enriched
+// enumeration finishes, which took up to 27 minutes on knuckle on
 // 2026-11-18. In that window every base read as not red: common's PRs red
-// only on main's own E2E check went to 070/072, and two that had sat at 072
-// past their grace were adopted at once (1:42 PM EST) and superseded, losing
-// a maintainer's approval, into copies red for the same reason. Until the
-// memory is published (StageLabelPolicy.BaseRedRememberedReady), a red head
-// whose red checks the memory does not cover reads its base tip directly,
-// once per base per humanChecksTTL (baseTipRedChecks), and is base red when
-// every check red on it is red there too.
+// only on main's own E2E check went to 070/072, and #1689 (and #1690's
+// first adoption), past the 072 grace, was adopted at 1:42 PM EST and
+// superseded, losing a maintainer's approval, into a copy red for the same
+// reason. Until the memory is published
+// (StageLabelPolicy.BaseRedRememberedReady), a red head whose red checks the
+// memory does not cover reads its base tip directly, once per base per
+// humanChecksTTL (baseTipRedChecks), and is base red when every check red
+// on it is red there too. That read can still miss the base's red (a run in
+// progress on the tip, a tip without the check, a failed read), so
+// automatic adoption also waits for the publish (adoptContributorPR); an
+// operator's adoption does not.
 
 // baseRedFilesPages bounds the head's file listing (100 files per page),
 // like the enumeration's own (hgithub.baseRedMaxFilePages): a longer list is
@@ -69,6 +73,11 @@ func stageBaseRedRememberedReady(policy StageLabelPolicy) bool {
 	return policy.BaseRedRememberedReady == nil || policy.BaseRedRememberedReady()
 }
 
+// baseTipRedErrorTTL bounds how long a failed base tip read is reused: a
+// minute, not humanChecksTTL, so one API error does not leave the base
+// author-facing for the rest of a short startup window.
+const baseTipRedErrorTTL = time.Minute
+
 // baseTipRedEntry is one base branch tip's red checks as baseTipRedChecks
 // read them, and when; ok is false when the read failed.
 type baseTipRedEntry struct {
@@ -79,15 +88,21 @@ type baseTipRedEntry struct {
 
 // baseTipRedChecks lists the checks red on obs's base branch tip (its
 // combined status and latest check run per name and app, as the head's own
-// digest reads them), cached per base for humanChecksTTL, failures included,
-// so a pass costs at most one read per base. ok is false when the read
+// digest reads them: commit statuses as well as check runs), cached per
+// base for humanChecksTTL and a failed read for baseTipRedErrorTTL, so a
+// pass costs at most one read per base. A check still queued or in progress
+// on the tip, or with no run there, is not red. ok is false when the read
 // failed.
 func (c *Engine) baseTipRedChecks(ctx context.Context, tracker *StageTracker, obs stageObservation, now time.Time) ([]string, bool) {
 	key := hgithub.BaseRedRememberedKey(obs.Owner+"/"+obs.Repo, obs.BaseRef)
 	tracker.mu.Lock()
 	entry, cached := tracker.baseTipRed[key]
 	tracker.mu.Unlock()
-	if cached && now.Sub(entry.at) < humanChecksTTL {
+	ttl := humanChecksTTL
+	if !entry.ok {
+		ttl = baseTipRedErrorTTL
+	}
+	if cached && now.Sub(entry.at) < ttl {
 		return entry.red, entry.ok
 	}
 	summary, err := c.summarizeChecks(ctx, obs.Owner, obs.Repo, obs.BaseRef, func() map[string]bool { return nil })

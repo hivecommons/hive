@@ -187,11 +187,12 @@ func TestFoldBaseRedRedOptionalWhileSoaking(t *testing.T) {
 
 // projectbluefin/common#1689: knuckle restarted at 1:26 PM EST on 11-18 and
 // its first CI-enriched enumeration published the base-red memory and index
-// about 25 minutes later. At 1:42 PM the PR, red only on main's own E2E
+// up to 27 minutes later. At 1:42 PM the PR, red only on main's own E2E
 // check and past its 072 grace, was adopted and superseded. Before the
 // memory is published, the stage pass now reads the base tip: red there,
 // the head goes to 050 base-branch-red and is not adopted; green there, it
-// is adopted as before. Once the memory is published, no tip is read.
+// stays at 072 and its automatic adoption waits for the publish. Once the
+// memory is published, no tip is read.
 func TestBaseRedReadsTheBaseTipUntilTheMemoryIsPublished(t *testing.T) {
 	const e2e = "E2E — composed common suite / e2e / GNOME — common"
 	for _, tc := range []struct {
@@ -241,8 +242,14 @@ func TestBaseRedReadsTheBaseTipUntilTheMemoryIsPublished(t *testing.T) {
 			}
 			rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 1689))
 			if !tc.baseRed {
+				if len(h.adopt.pulls) != 0 || rec.Stage != stagelabels.ReturnedToContributor {
+					t.Fatalf("green base tip before the publish: pulls=%d stage %s, want 072 and no adoption yet", len(h.adopt.pulls), rec.Stage)
+				}
+				// The first enumeration publishes: the adoption goes ahead.
+				ready = true
+				h.observe(adoptPR(1689, "aaa", labels...), reason)
 				if len(h.adopt.pulls) != 1 {
-					t.Fatalf("green base tip: pulls=%d, want the adoption as before", len(h.adopt.pulls))
+					t.Fatalf("green base tip after the publish: pulls=%d, want the adoption as before", len(h.adopt.pulls))
 				}
 				return
 			}
@@ -253,6 +260,40 @@ func TestBaseRedReadsTheBaseTipUntilTheMemoryIsPublished(t *testing.T) {
 				t.Fatalf("record %s %q, want 050 %q", rec.Stage, rec.Reason, stageReasonBaseBranchRed+e2e)
 			}
 		})
+	}
+}
+
+// Before the base-red memory is published an automatic adoption waits, but
+// an operator's Adopt now does not.
+func TestForcedAdoptionNotHeldBeforeTheBaseRedMemoryIsPublished(t *testing.T) {
+	policy := adoptPolicy()
+	policy.BaseRedRememberedReady = func() bool { return false }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "spawn", Online: true}, policy)
+	defer done()
+	h.e.checkSummary = func(_ context.Context, _, _, sha string) (hgithub.CommitChecksSummary, error) {
+		if sha == "v5" {
+			return hgithub.CommitChecksSummary{Total: 3, Green: 3, DCO: 1}, nil
+		}
+		return hgithub.CommitChecksSummary{Total: 3, Green: 2, Red: []string{"unit"}, DCO: 1}, nil
+	}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+
+	// Grace elapsed: still not adopted while nothing is published.
+	h.clock.advance(2 * time.Hour)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 {
+		t.Fatalf("automatic adoption before the publish: pulls=%v", h.adopt.pulls)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); rec.Adopted("aaa") {
+		t.Fatalf("a deferred adoption must record nothing: %+v", rec)
+	}
+
+	h.e.stageStoreOrShared().NoteAdoptionForced(stageKey("acme", "widget", 7), "clubanderson", h.clock.now())
+	h.clock.advance(time.Second)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("Adopt now held for the unpublished memory: pulls=%v", h.adopt.pulls)
 	}
 }
 
@@ -294,12 +335,26 @@ func TestFoldBaseRedOptionalFromTheBaseTipBeforeTheMemoryIsPublished(t *testing.
 	}
 
 	tipFails = true
+	tracker := NewStageTracker()
 	list = obs()
-	e.foldBaseRed(context.Background(), NewStageTracker(), list, clock.now())
+	e.foldBaseRed(context.Background(), tracker, list, clock.now())
 	if len(list[0].BaseRedChecks) != 0 {
 		t.Fatalf("unreadable base tip: BaseRedChecks = %v, want none", list[0].BaseRedChecks)
 	}
 	if v := classifyStage(list[0]); v.Reason != stageReasonOptionalCheckFailing+e2e {
 		t.Fatalf("unreadable base tip: classifyStage = %+v, want %q", v, stageReasonOptionalCheckFailing+e2e)
+	}
+
+	// A failed read is reused for a minute, not the full humanChecksTTL.
+	tipFails = false
+	list = obs()
+	e.foldBaseRed(context.Background(), tracker, list, clock.now().Add(30*time.Second))
+	if len(list[0].BaseRedChecks) != 0 {
+		t.Fatalf("failed read re-tried within a minute: BaseRedChecks = %v", list[0].BaseRedChecks)
+	}
+	list = obs()
+	e.foldBaseRed(context.Background(), tracker, list, clock.now().Add(baseTipRedErrorTTL))
+	if got := list[0].BaseRedChecks; len(got) != 1 || got[0] != e2e {
+		t.Fatalf("failed read not re-tried after a minute: BaseRedChecks = %v", got)
 	}
 }
