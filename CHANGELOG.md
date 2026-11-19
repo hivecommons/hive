@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.338.0)
+
+### Added
+
+- Customers can import the real name, organization and country a confirmed customer entered on the hub and consented to share with this hive, shown "from the hub" and never over a value set by hand; a withdrawal or three days without confirmation clears it. Off by default: `customers.hub_import.enabled`, `HIVE_CUSTOMERS_HUB_IMPORT_ENABLED`, or Settings, Features ([#19163](https://github.com/hivecommons/hive/issues/19163)).
+
 ## 2026-11-19 (v5.337.1)
 
 ### Fixed
