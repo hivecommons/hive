@@ -233,6 +233,14 @@ X-Hive-Proof-Token: <a GitHub token>
 - **Clear refusals:** a failed proof answers `403 {error, proof_method, reason, repo, required_scopes, granted_scopes}`, where `reason` is one of `token_rejected`, `token_user_mismatch`, `sso_not_authorized`, `missing_scope`, `repo_not_visible`, `admin_role_not_visible` (GitHub showed the repo but not the role) or `not_admin`. `granted_scopes` appears only when GitHub reported the token's scopes.
 - **Off means off:** while the flag is off, asking for the method is `400` listing the methods the hub offers; it never falls back to the stored token. Without `X-Hive-Proof-Method` the hub proves with the stored token as before (`hub-session-token`). The v6 `/api/hub/selfservice/*` routes ignore both headers.
 
+#### Heartbeat feature negotiation
+
+A spoke may send `protocol: {"version": 1, "features": [...]}` in its heartbeat ([#19237](https://github.com/hivecommons/hive/issues/19237)). With `HIVE_HUB_HEARTBEAT_PROTOCOL` on (`1/true/yes/on`, default off, read per request), the hub answers with `protocol: {"version", "accepted", "ignored"}`: the version it speaks for this beat, the requested features it honours, and the requested features it does not. The features a v1 hub accepts are `activity_digest`, `activity_events` and `host_aliases`, all of which it already serves to every spoke; negotiation changes nothing else in the response.
+
+- **No offer, or the flag off:** the response is exactly what it was before, with no `protocol` field.
+- **Unknown version** (below `1`): the beat is still accepted, every requested feature is listed under `ignored`, and `unsupported_version` echoes what the spoke sent. A version above the hub's is answered with the hub's version, so a newer spoke can fall back to it.
+- **Bounds:** at most 32 features are evaluated per beat. Names must be lowercase letters, digits, `_`, `-` or `.`, start with a letter and be at most 64 bytes; anything else is not echoed back.
+
 #### Rotation
 
 The owner can rotate from the **Self-hosted hives** list or with `POST /api/hub/selfservice/hives/{id}/rotate`. The hub mints a new key and keeps the previous hash live for a 10 minute overlap so a running spoke can pick up the new value without a gap. After the overlap only the new key is accepted. Only the owner can rotate; a hub admin who does not own the hive gets `404`, the same answer as for a missing hive.
