@@ -281,6 +281,8 @@
       setTimeout(() => { if (rotationOn) loadRotationHeadroom(); }, 0);
       /* Reviewer-stated rules (#19135): painted from their own owner-only endpoint. */
       setTimeout(() => { if (typeof loadReviewRulesSettings === 'function') loadReviewRulesSettings(); }, 0);
+      /* Stranded review-feedback retry (#19320): its own owner-only endpoint. */
+      setTimeout(() => { if (typeof loadReviewRetrySettings === 'function') loadReviewRetrySettings(); }, 0);
       // Status line: distinguish ON+running from ON+not-configured from OFF.
       let trajStatus, trajStatusColor;
       if (!trajOn) { trajStatus = 'Off'; trajStatusColor = 'var(--muted)'; }
@@ -631,6 +633,10 @@
         <div class="settings-subsection">
           <div class="settings-subsection-title">Reviewer-stated rules ${yamlHint('review_feedback.rules')} ${settingHelpMark('settings', 'features', 'Reviewer-stated rules', `When a person reviewing one of the hive's own PRs states a rule or a source of truth, the hive records it in its knowledge (the review-rules channel), replies on the PR with the rule id, and gives it to the authoring agent on its next run. Choose which phrases count and whose rules are recorded at once; others are queued for you.`)}</div>
           <div id="cfg-review-rules-host"><div class="fs-sm text-muted">Loading…</div></div>
+        </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Stranded review feedback ${yamlHint('review_feedback.retry')} ${settingHelpMark('settings', 'features', 'Stranded review feedback', `When review feedback on one of the hive's own PRs is routed to its agent and the run ends with no push and no reply on the PR, the hive routes the same comments again after a wait that doubles each time. After the last retry it posts a needs-human note on the PR with the reason.`)}</div>
+          <div id="cfg-review-retry-host"><div class="fs-sm text-muted">Loading…</div></div>
         </div>
         <div class="settings-subsection">
           <div class="settings-subsection-title">Merge Recommendations ${settingHelpMark('settings', 'features', 'Merge Recommendations', `A digest of what is worth merging next, written into one issue per repository and rewritten in place each cycle. It is separate from the review gate above: the gate decides whether a PR may merge, while this only reports what already can. It never merges, approves, closes or labels anything.`)}</div>
