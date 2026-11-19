@@ -1,0 +1,1 @@
+- **Dashboard: new Sandstone light theme** ([#19351](https://github.com/hivecommons/hive/issues/19351)). Settings → Appearance now offers `sandstone`, a warm paper-toned light preset with terracotta accents, available on both the dashboard and contributor profile surfaces. It is an additive built-in; existing theme ids and the default are unchanged.
