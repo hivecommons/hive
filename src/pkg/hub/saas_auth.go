@@ -1059,11 +1059,24 @@ const publicPathGuestRole = "read"
 // while still picking up a re-provisioned token within a bounded window.
 const spokeProxyAuthCacheTTL = 5 * time.Minute
 
+// spokeProxyAuthStaleGrace is how long past its expiry a cached token is still
+// served when the refresh fails (kubectl slow, hung or pool-starved), so a
+// transient kubectl problem does not fail every signed-in request.
+const spokeProxyAuthStaleGrace = 30 * time.Minute
+
 // spokeProxyAuthEntry is a cached dashboard token with its expiry.
 type spokeProxyAuthEntry struct {
 	token   string
 	expires time.Time
+	// graceUntil is the last moment the token may still be served when
+	// refreshes keep failing. Zero means no grace (test fixtures).
+	graceUntil time.Time
 }
+
+// spokeProxyAuthRetryBackoff is how long a failed refresh is not retried while
+// the stale token is being served, so a hung kubectl costs one timeout per
+// window rather than one per request.
+const spokeProxyAuthRetryBackoff = 15 * time.Second
 
 // spokeProxyAuthToken returns the given hive's dashboard token — the shared
 // secret the spoke holds as its authToken (DASHBOARD_AUTH_TOKEN / the
@@ -1076,8 +1089,9 @@ func (s *HubServer) spokeProxyAuthToken(hiveID string) string {
 	now := time.Now()
 
 	s.spokeProxyAuthMu.Lock()
-	if entry, ok := s.spokeProxyAuthCache[hiveID]; ok && now.Before(entry.expires) {
-		tok := entry.token
+	stale, hadEntry := s.spokeProxyAuthCache[hiveID]
+	if hadEntry && now.Before(stale.expires) {
+		tok := stale.token
 		s.spokeProxyAuthMu.Unlock()
 		return tok
 	}
@@ -1100,11 +1114,23 @@ func (s *HubServer) spokeProxyAuthToken(hiveID string) string {
 
 	token := s.loadSpokeAuthToken(hive)
 	if token == "" {
+		// Refresh failed: keep serving the last good token for a bounded grace.
+		if hadEntry && stale.token != "" && now.Before(stale.graceUntil) {
+			s.logger.Warn("spoke auth token refresh failed; serving last good token", "hive", hiveID)
+			stale.expires = now.Add(spokeProxyAuthRetryBackoff)
+			s.spokeProxyAuthMu.Lock()
+			s.spokeProxyAuthCache[hiveID] = stale
+			s.spokeProxyAuthMu.Unlock()
+			return stale.token
+		}
 		return ""
 	}
 
 	s.spokeProxyAuthMu.Lock()
-	s.spokeProxyAuthCache[hiveID] = spokeProxyAuthEntry{token: token, expires: now.Add(spokeProxyAuthCacheTTL)}
+	s.spokeProxyAuthCache[hiveID] = spokeProxyAuthEntry{
+		token: token, expires: now.Add(spokeProxyAuthCacheTTL),
+		graceUntil: now.Add(spokeProxyAuthCacheTTL + spokeProxyAuthStaleGrace),
+	}
 	s.spokeProxyAuthMu.Unlock()
 
 	return token

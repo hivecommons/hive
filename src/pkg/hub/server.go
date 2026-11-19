@@ -1100,7 +1100,9 @@ type HubServer struct {
 	// dashboard instead of only in `kubectl describe` — the `target1` incident
 	// left the hub serving stale code for ~20 minutes with nothing surfaced.
 	hubUpgradeFault string
-	hubUpgradeMu    sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget + hubUpgradeFault
+	hubUpgradeMu    sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget + hubUpgradeFault + hubWatcherRunning
+	// hubWatcherRunning is true while a watchHubRollout goroutine is alive.
+	hubWatcherRunning bool
 	// Admin upgrade kill switch (upgrade_pause.go). Lazily loaded from its
 	// durable JSON file on first use so the state survives the hub's own
 	// frequent auto-rolls; guarded by its own mutex because it is consulted on
