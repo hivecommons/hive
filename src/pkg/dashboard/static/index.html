@@ -64982,6 +64982,10 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer avatars', key: 'customers.avatars.enabled', text: 'customers avatars avatar pictures photos github profile picture privacy HIVE_CUSTOMERS_AVATARS_ENABLED customers.avatars.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer hub import', key: 'customers.hub_import.enabled', text: 'customers hub import consent shared real name organization country from the hub privacy HIVE_CUSTOMERS_HUB_IMPORT_ENABLED customers.hub_import.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer GitHub search on accept', key: 'customers.mention_search.enabled', text: 'customers github search accept mention mentions comments history quota budget suggested person HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED customers.mention_search.enabled' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment', key: 'customers.enrichment.enabled', text: 'customers enrichment public affiliation activity employer company organization cncf colony HIVE_CUSTOMERS_ENRICHMENT_ENABLED customers.enrichment.enabled' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment: gitdm', key: 'customers.enrichment.gitdm.enabled', text: 'customers enrichment gitdm cncf affiliation affiliations employer company dates snapshot refresh interval HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED HIVE_CUSTOMERS_ENRICHMENT_GITDM_REFRESH_INTERVAL customers.enrichment.gitdm.enabled customers.enrichment.gitdm.refresh_interval' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment: devstats', key: 'customers.enrichment.devstats.enabled', text: 'customers enrichment devstats cncf public contributions activity github login hourly limit budget HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_HOURLY_LIMIT customers.enrichment.devstats.enabled customers.enrichment.devstats.hourly_limit' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment: crowd.dev', key: 'customers.enrichment.crowddev.enabled', text: 'customers enrichment crowd.dev crowddev lfx insights api token affiliation activity HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN customers.enrichment.crowddev.enabled customers.enrichment.crowddev.token_file' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Data directories and session retention', key: 'data.metrics_dir', text: 'data directories metrics logs agent configs claude copilot bob sessions retention prune janitor data.agents_dir data.bob_sessions_dir data.claude_sessions_dir data.copilot_sessions_dir data.logs_dir data.metrics_dir data.session_retention_days' },
       { tab: 'Features', section: 'Integrations & observability', label: 'Standalone deployment upgrades', key: 'deployment.podman_mode', text: 'deployment podman quadlet rootless rootful docker compose upgrade helper request dir deployment.podman_mode deployment.upgrade_helper deployment.upgrade_request_dir' },
@@ -79962,6 +79966,33 @@ function burnAreaChart() {
             <span class="config-toggle-label">Search GitHub when accepting a person ${yamlHint('customers.mention_search.enabled')} ${settingHelpMark('settings', 'features', 'Customer GitHub search on accept', `OFF by default. When on, accepting a suggested GitHub login makes one budgeted GitHub search (issues and pull requests that mention the login and ones it commented on, in this hive's own repositories) so the new profile starts with history beyond what the hive already holds. The results are stored as references only, never text. It is never run by the discovery sweep and never for an email address. It sends the login to GitHub, makes at most two search requests per accept, shares an hourly request budget across accepts (customers.mention_search.max_requests_per_hour in the config file, default 10), counts against the shared GitHub quota, and stands down while that quota is low or GitHub's secondary limit is engaged. Needs Customers on. HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
           </div>
           ${f.customersSearchEffective !== f.customersSearch ? `<p class="config-help">HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED (or turning Customers off) overrides this setting: the search is currently <b>${f.customersSearchEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersEnrichmentEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentEnabled"></div>
+            <span class="config-toggle-label">Public affiliation and activity (enrichment) ${yamlHint('customers.enrichment.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment', `OFF by default. The master switch for adding public facts about confirmed customers from CNCF sources: who they work for (cncf/gitdm, crowd.dev) and their public contributions (devstats). Each source below has its own switch and stays off until you turn it on too. Suggested people are never looked up, and nothing found ever replaces an organization a person set by hand or shared from the hub: an affiliation only appears as a suggestion you accept or dismiss. Forgetting a person deletes what was found for them. Needs Customers on. HIVE_CUSTOMERS_ENRICHMENT_ENABLED overrides it. See src/docs/customers-enrichment.md.`)}</span>
+          </div>
+          ${f.customersEnrichmentEffective !== f.customersEnrichmentEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENRICHMENT_ENABLED (or turning Customers off) overrides this setting: enrichment is currently <b>${f.customersEnrichmentEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <details class="settings-subsection-details"><summary class="settings-subsection-summary">Enrichment sources</summary>
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${f.customersEnrichmentGitdmEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentGitdmEnabled"></div>
+              <span class="config-toggle-label">gitdm affiliations ${yamlHint('customers.enrichment.gitdm.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment: gitdm', `OFF by default. Downloads the public CNCF affiliation files from github.com/cncf/gitdm (the same files for every hive) and matches confirmed customers against them on this hive. Nothing about any person is sent anywhere: the only request is for the public files, refreshed on the interval below (default 24h). A match is offered as an affiliation suggestion marked "gitdm" with its dates. Needs enrichment on. HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED overrides it.`)}</span>
+            </div>
+            ${f.customersEnrichmentGitdmEffective !== f.customersEnrichmentGitdmEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED (or a switch above) overrides this setting: gitdm is currently <b>${f.customersEnrichmentGitdmEffective ? 'on' : 'off'}</b>.</p>` : ''}
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${f.customersEnrichmentDevstatsEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentDevstatsEnabled"></div>
+              <span class="config-toggle-label">devstats contributions ${yamlHint('customers.enrichment.devstats.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment: devstats', `OFF by default. Looks up a confirmed customer's public contribution activity on CNCF devstats and shows it read-only in their details, with links. This sends the person's GitHub login, and nothing else (never an email), to devstats.cncf.io, so it is listed in src/docs/telemetry.md. Lookups are capped per hour (below, default 30). Needs enrichment on. HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED overrides it.`)}</span>
+            </div>
+            ${f.customersEnrichmentDevstatsEffective !== f.customersEnrichmentDevstatsEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED (or a switch above) overrides this setting: devstats is currently <b>${f.customersEnrichmentDevstatsEffective ? 'on' : 'off'}</b>.</p>` : ''}
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${f.customersEnrichmentCrowdDevEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentCrowdDevEnabled"></div>
+              <span class="config-toggle-label">crowd.dev (LFX Insights) ${yamlHint('customers.enrichment.crowddev.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment: crowd.dev', `OFF by default, and inert until this hive ships the crowd.dev source and you save an API token below. When active it sends a confirmed customer's GitHub login, and nothing else, to the crowd.dev API with your token. The token is sealed in the keystore and never shown again. Needs enrichment on. HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED overrides it.`)}</span>
+            </div>
+            ${f.customersEnrichmentCrowdDevEffective !== f.customersEnrichmentCrowdDevEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED (or a switch above) overrides this setting: crowd.dev is currently <b>${f.customersEnrichmentCrowdDevEffective ? 'on' : 'off'}</b>.</p>` : ''}
+            <div class="config-field-row">
+              <div class="config-field"><label>gitdm refresh interval ${yamlHint('customers.enrichment.gitdm.refresh_interval')} ${settingHelpMark('settings', 'features', 'gitdm refresh interval', `How often the public gitdm files are downloaded again, as a Go duration such as 24h or 72h. Empty uses the default (24h); the shortest allowed is 1h. HIVE_CUSTOMERS_ENRICHMENT_GITDM_REFRESH_INTERVAL overrides it.`)}</label><input type="text" value="${esc(f.customersEnrichmentGitdmRefresh || '')}" placeholder="${esc(String((f.customersEnrichmentDefaults || {}).customersEnrichmentGitdmRefresh || '24h0m0s'))}" data-change-action="markDirty" data-arg0="features" data-arg1="customersEnrichmentGitdmRefresh" data-arg-types="s,s,w"></div>
+              <div class="config-field"><label>devstats lookups per hour ${yamlHint('customers.enrichment.devstats.hourly_limit')} ${settingHelpMark('settings', 'features', 'devstats hourly limit', `How many devstats lookups all people together may make in one hour. 0 uses the default (30); the most allowed is 120. HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_HOURLY_LIMIT overrides it.`)}</label><input type="number" min="0" max="120" step="1" value="${esc(String(f.customersEnrichmentDevstatsHourlyLimit || ''))}" placeholder="${esc(String((f.customersEnrichmentDefaults || {}).customersEnrichmentDevstatsHourlyLimit || 30))}" data-change-action="markDirty" data-arg0="features" data-arg1="customersEnrichmentDevstatsHourlyLimit" data-arg-types="s,s,N"></div>
+              <div class="config-field"><label>crowd.dev API token ${yamlHint('customers.enrichment.crowddev.token_file')} ${settingHelpMark('settings', 'features', 'crowd.dev API token', `Saved straight away, owner only, sealed in the keystore at customers.enrichment.crowddev.token_file. It is never shown again; this field only says whether one is set. Clear removes it. HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN, when set, wins over the saved token.`)}</label><input type="password" id="customers-crowddev-token" autocomplete="new-password" placeholder="${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set' : 'No token set'}"><div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-3)"><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="save">Save token</button><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="clear">Clear</button></div><div class="config-help" id="customers-crowddev-token-status">${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set.' : 'No token set.'}</div></div>
+            </div>
+          </details>
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">
@@ -80379,6 +80410,29 @@ function burnAreaChart() {
           </div>
         </div>
         `)}`;
+    }
+
+    // saveCustomersCrowdDevToken writes or clears the crowd.dev API token used
+    // by customers enrichment through its owner-only endpoint. The token never
+    // goes through the Features save and is never read back.
+    async function saveCustomersCrowdDevToken(mode) {
+      const input = document.getElementById('customers-crowddev-token');
+      const status = document.getElementById('customers-crowddev-token-status');
+      const token = mode === 'clear' ? '' : ((input && input.value) || '').trim();
+      if (mode !== 'clear' && !token) {
+        if (status) status.textContent = 'Type a token first, or use Clear to remove the saved one.';
+        return;
+      }
+      try {
+        const r = await fetch('/api/customers/enrichment/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ crowddev_token: token }) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        if (input) { input.value = ''; input.placeholder = data.crowddev_token_set ? 'A token is set' : 'No token set'; }
+        if (status) status.textContent = data.crowddev_token_set ? 'A token is set.' : 'No token set.';
+        if (typeof showToast === 'function') showToast(mode === 'clear' ? 'crowd.dev token cleared' : 'crowd.dev token saved', 'success');
+      } catch (e) {
+        if (status) status.textContent = 'Could not save the token: ' + e.message;
+      }
     }
     // ── Review Gate: linked perspectives + agent sandbox settings (#18797) ──
     // Both used to be hand edits of the config files on the PVC. The Review

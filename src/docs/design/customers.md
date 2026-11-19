@@ -559,6 +559,14 @@ feature adds no outbound path from the hive, which is what allows it to be on by
 Any later proposal to send customer data to a hub is its own RFC and falls
 under that review.
 
+**Enrichment.** [Customers enrichment](../customers-enrichment.md) is the one
+reviewed outbound path for this section, and it is off by default with a
+switch per source. gitdm downloads public CNCF files and sends nothing about a
+person; devstats and crowd.dev send a confirmed customer's public GitHub login
+only, and are listed in [telemetry.md](../telemetry.md). Suggested people are
+never looked up, an affiliation found this way is only a suggestion, and Forget
+erases enrichment.
+
 **Audit.** Profile open, export, forget, merge, split, accept, suggestion
 confirm and reject, and graph queries each write an audit line.
 

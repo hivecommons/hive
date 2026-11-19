@@ -257,6 +257,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Crux: the agent runtime boundary](design/crux.md) — **Design record:** runtime separation, module boundary, staged rollout, and naming decision.
 - [One authorization point for writes](design/authorization-decision-point.md) - design for a single decision seam, decision events and per-decision scoped credentials across the proxy, relays and push broker (RFC #18988); the first slice, a shadow-mode check of the push broker's changed-files guard, is shipped, off by default and enforces nothing.
 - [Customers: a profile per person and a customer graph](design/customers.md) — proposed design for the Customers section, the people store, the read-only graph endpoint, and inferred goals and satisfaction (RFC #18742).
+- [Customers enrichment](customers-enrichment.md) - public affiliation (gitdm, crowd.dev) and activity (devstats) for confirmed customers, all off by default, with what each source sends.
 - [Design documents](design/README.md) — browse records labelled shipped, partly shipped, design-only, or historical; proposals are not current behavior.
 - [Discord reaction-consensus issue promotion](design/discord-issue-promotion.md) — proposed design for turning Discord reaction consensus into an audited Hive label write that composes with `project.issue_filter.require_labels` (RFC #6239).
 - [GitHub @-mention triggers](design/github-mention-triggers.md) — **v6 development branch only:** summon agents from issues/PRs with the existing permission guards; not a v5 feature.
