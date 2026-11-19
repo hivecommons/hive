@@ -11,6 +11,22 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.340.0)
+
+### Added
+
+- The Overview usage gauge shows Claude's usage credits (extra usage) under the Claude dials when Claude reports them: on or off, and how much of the monthly cap is spent, for example "Usage credits: on · $0.00 of $350.00 used this month", with "limit reached" in amber once the cap is spent. The line is hidden when Claude does not report it, and it is display only. `/api/providers/headroom` carries the same reading as `extra_usage`. Claude's usage endpoint does not report a purchased credit balance or banked limit resets, so those are not shown.
+
+### Fixed
+
+- Agents repairing a `no-dco` PR now sign off only the commits they authored. The FIX-BEFORE-NEW kick used to say `git rebase --signoff <base>`, which appended the agent's bot `Signed-off-by` to a person's commit and failed the "Sign-off survives the squash" check (#19102); it now names a `git rebase --exec` that amends with `--signoff` only when the commit's author is the agent, and tells the agent to leave other people's commits alone and ask their author (#19267). The sandbox push broker's refusal of a lane `Signed-off-by` on a commit another identity authored now says why and what to do instead.
+- Dashboard sidebar entries under Collaborate, Resources, Intelligence, Admin, Help and Filters now line up with the Dashboard group's entries (#19282). Only Dashboard entries carried a reorder grip, and that hidden grip was what indented them. Every sidebar entry now reserves the same grip-wide gutter through one shared `.oc-nav-item` rule, and a grip draws inside that gutter, so Dashboard and agent rows keep their position and the other groups move in to match.
+- The Overview's "Issues by band" and "PRs by band" charts now add up to the Total open issues and Total open PRs tiles. A grey Outside slice holds the open items that are in no band (filtered out by the hive's settings, or draft PRs), with the same breakdown as the Outside tile on hover, for all repositories or a picked subset. Before, the charts showed fewer items than the tiles with nothing saying why.
+
+### Security
+
+- Parsed agent HTTP relays now remove proxy credentials, forwarding metadata, internal Hive headers, and other hop-by-hop metadata before sending requests upstream.
+
 ## 2026-11-19 (v5.339.0)
 
 ### Added
