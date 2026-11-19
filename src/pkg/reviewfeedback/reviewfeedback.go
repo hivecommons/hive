@@ -148,6 +148,17 @@ type PRState struct {
 	BlockedDrafts []ReplyDraft `json:"blocked_drafts,omitempty"`
 	// BlockedNotedAt is when drafted replies were last handed to a person.
 	BlockedNotedAt time.Time `json:"blocked_noted_at,omitempty"`
+	// LastKickIDs are the comment ids the last kick routed (#19320).
+	LastKickIDs []string `json:"last_kick_ids,omitempty"`
+	// LastKickHead is the PR head SHA when the last kick was sent.
+	LastKickHead string `json:"last_kick_head,omitempty"`
+	// Retries counts re-routes of the same stranded feedback.
+	Retries int `json:"retries,omitempty"`
+	// RetryPending says the next kick is a re-route of stranded feedback.
+	RetryPending bool `json:"retry_pending,omitempty"`
+	// StrandedClosed says the last kick was judged: the agent acted, the
+	// feedback was answered, or it was handed to a person.
+	StrandedClosed bool `json:"stranded_closed,omitempty"`
 }
 
 // ReplyDraft is one reply the PR's agent tried to post and could not.
@@ -388,6 +399,14 @@ func (s *Store) Plan(key string, items []github.FeedbackItem, now time.Time, lim
 // RecordKick marks the items routed and persists. Call only after the kick was
 // accepted, so a refused kick is retried on the next pass.
 func (s *Store) RecordKick(key string, items []github.FeedbackItem, now time.Time) error {
+	return s.RecordKickHead(key, items, "", now)
+}
+
+// RecordKickHead is RecordKick that also remembers the PR head SHA, so a later
+// pass can tell whether the agent pushed (#19320). A kick that re-routes
+// stranded feedback (CheckStranded returned StrandedRetry) counts one retry;
+// any other kick starts the count again.
+func (s *Store) RecordKickHead(key string, items []github.FeedbackItem, head string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.get(key)
@@ -396,6 +415,15 @@ func (s *Store) RecordKick(key string, items []github.FeedbackItem, now time.Tim
 	}
 	st.LastKick = now
 	st.KickTimes = append(st.KickTimes, now)
+	st.LastKickIDs = feedbackIDs(items)
+	sort.Strings(st.LastKickIDs)
+	st.LastKickHead = head
+	if st.RetryPending {
+		st.Retries++
+	} else {
+		st.Retries = 0
+	}
+	st.RetryPending, st.StrandedClosed = false, false
 	return s.saveLocked(now)
 }
 

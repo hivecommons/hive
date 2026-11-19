@@ -623,7 +623,7 @@ A merged PR covered only part of the issue ([#11931](https://github.com/hivecomm
 
 **Checked by:** Close-on-merge sweep, PR-claim label sync and task-list sweep. **When:** Close-on-merge sweep for issues behind a confirmation gate.
 
-**Release or override.** Hive removes it when a later merged PR fully covers the issue and `hive/likely-done` is applied; humans may remove it
+**Release or override.** Hive removes it when a later merged PR fully covers the issue and `hive/likely-done` is applied; the hive closes the issue when the scanner's verification marker says complete and the guards hold, or parks it in `hive/verify-close`; humans may remove it
 
 **Configuration and implementation.** Fixed label (`src/pkg/github/close_on_merge.go`, `src/pkg/github/task_list_sweep.go`)
 
@@ -640,6 +640,22 @@ A `hive/likely-done` / already-done claim from a merged PR was checked and the i
 **Release or override.** Human removes when the issue is really done, or close-on-merge closes the issue
 
 **Configuration and implementation.** Fixed label (`src/pkg/github/prclaims.go` `VerifiedOpenLabel`, `src/cmd/hive/verifyonce.go`)
+
+#### `hive/verify-close`
+
+**Applies to:** Issues. **Kind:** Hard suppress (the 045 park); dashboard one-click Close.
+
+The verify-close lane. The scanner's verify-once note ends with a machine-readable verdict, `<!-- hive:verification verdict=complete prs=19172,19179 -->` (nothing left; `prs` names the merged PRs that delivered it) or `<!-- hive:verification verdict=partial prs=19172 -->` (work remains). For an open issue labelled `hive/partially-addressed`, the issue stage sweep reads the marker from the hive's own comments only (an agent note is relayed under the hive identity; a marker anyone else writes is ignored) and, once two reads `verifyCloseSettleInterval` (15 minutes, the tracker auto-close's settle interval) apart see the same evidence: closes the issue as *completed* with an evidence comment citing the merged PRs when every cited PR (the marker's plus the merged claim's) is merged and no PR linked from the timeline is still open; otherwise applies this label with one status note naming the unmet guard (a cited PR not merged, an open linked PR, notes that disagree, no cited PR, more than 20 PRs, or a human-filed bug whose reporter confirms the close). `verdict=partial` adds `hive/verified-open` instead. Never touched: a held or `hive/tracking` issue, an umbrella or tracker (the tracker auto-close owns those), a decomposed parent with an open child, an issue a person reopened, and an issue a person took out of the lane by removing this label. While the label is on, the issue derives `stage/045-needs-decision`, no agent is offered it, and the activity monitor row asks *The scanner verified this issue complete* and leads with **Close as completed** (one click, `decide:close-issue`).
+
+**Who applies it:** Hive.
+
+**Checked by:** Issue stage sweep (`closeVerifiedComplete`). **When:** Every stage sweep, at most one read of a candidate per settle interval.
+
+**Release or override.** A person closes the issue from the row, or removes the label when work remains (the hive does not re-apply it after that); the hive removes it when it closes the issue itself once the guards hold
+
+**Configuration and implementation.** Fixed label (`src/pkg/github/verified_close.go`, `src/pkg/config/issue_filter.go` `VerifyCloseLabel`, `src/pkg/scheduler/kickmessage.go` verify-once wording)
+
+**Claims across a relaunch.** A scanner claim on a partially-addressed issue is still released when its agent's CLI is relaunched (`releaseClaimsOnAgentRelaunch`): the relaunch notice fires only when a fresh CLI replaces the old one (a surviving pane never releases), and crux does not resume the previous session on a fresh launch, so "the same agent resumes" never reaches that path; keeping the claim would park the issue at 020 on a context that no longer exists (the #13083 incident the release was added for). The verdict no longer depends on the claim: it is on the issue as the marker, the verify-once gate still withholds the issue from a second verification (it reads the ledger's last attempt, which the release keeps), and this sweep acts on the marker whoever holds the issue next.
 
 #### `hive/already-done`
 

@@ -92,6 +92,14 @@ type PRFeedback struct {
 	State   string
 	Draft   bool
 	HeadRef string
+	// HeadSHA is the PR's head commit, "" when the read did not report it.
+	// The sweep compares it across passes to tell whether a kicked agent
+	// pushed (#19320).
+	HeadSHA string
+	// LastHiveReplyAt is when the hive's identity last commented, reviewed or
+	// replied in a thread on the PR, ignoring the sweep's own notes (needs
+	// human, review-rule notices). Zero when it never has.
+	LastHiveReplyAt time.Time
 	// Items are the unanswered human comments, oldest first.
 	Items []FeedbackItem
 	// Source is "graphql" or "rest": which read produced this result.
@@ -117,13 +125,14 @@ type rawPRFeedback struct {
 	IsDraft     bool   `json:"isDraft"`
 	Merged      bool   `json:"merged"`
 	HeadRefName string `json:"headRefName"`
+	HeadRefOid  string `json:"headRefOid"`
 	rawPRConversation
 }
 
 var prFeedbackQuery = fmt.Sprintf(`query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      state isDraft merged headRefName
+      state isDraft merged headRefName headRefOid
       comments(last: %d) { nodes { databaseId url body createdAt authorAssociation author { __typename login } } }
       reviews(last: %d) { nodes { databaseId url body createdAt authorAssociation state author { __typename login } } }
       reviewThreads(last: %d) {
@@ -176,14 +185,16 @@ func (c *Client) FetchPRFeedback(ctx context.Context, repo string, number int) (
 		state = "closed"
 	}
 	return PRFeedback{
-		State:          state,
-		Draft:          raw.IsDraft,
-		HeadRef:        raw.HeadRefName,
-		Items:          UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
-		Source:         source,
-		HiveReplies:    HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
-		AgentReplies:   HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
-		RuleCandidates: RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
+		State:           state,
+		Draft:           raw.IsDraft,
+		HeadRef:         raw.HeadRefName,
+		HeadSHA:         raw.HeadRefOid,
+		LastHiveReplyAt: LastHiveReplyAt(raw.rawPRConversation, c.isHiveAuthor),
+		Items:           UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
+		Source:          source,
+		HiveReplies:     HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
+		AgentReplies:    HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
+		RuleCandidates:  RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
 	}, nil
 }
 
@@ -466,7 +477,7 @@ func (c *Client) fetchPRFeedbackREST(ctx context.Context, owner, repo string, nu
 	if err != nil {
 		return nil, err
 	}
-	raw := &rawPRFeedback{State: strings.ToUpper(pr.GetState()), IsDraft: pr.GetDraft(), Merged: pr.GetMerged() || !pr.GetMergedAt().IsZero(), HeadRefName: pr.GetHead().GetRef()}
+	raw := &rawPRFeedback{State: strings.ToUpper(pr.GetState()), IsDraft: pr.GetDraft(), Merged: pr.GetMerged() || !pr.GetMergedAt().IsZero(), HeadRefName: pr.GetHead().GetRef(), HeadRefOid: pr.GetHead().GetSHA()}
 	author := func(u *gh.User) *rawPRCommentAuthor {
 		if u == nil {
 			return nil

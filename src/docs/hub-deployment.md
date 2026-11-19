@@ -183,10 +183,12 @@ The fence above is always on. The registration flow that fills the `byo-` namesp
 | `HIVE_HUB_SELFSERVICE_MAX_PER_USER` | `5` | How many `byo-` hives one GitHub login may hold at once. The next registration answers `429` until the user removes one. |
 | `HIVE_HUB_SELFSERVICE_MAX_REPOS` | `20` | How many repos one registration may list ([#18642](https://github.com/hivecommons/hive/issues/18642)). Each repo is one read-only GitHub ownership check, so values above `500` are clamped to `500`. `POST /api/hub/selfservice/hives` answers `400` over the cap; `POST /api/hub/v1/registrations` answers `413` with `limit: max_repos`. Advertised to clients by `GET /api/hub/v1` as `limits.max_repos`. Read per request. |
 | `HIVE_HUB_PROOF_GITHUB_USER_TOKEN` | off | Offers the `github-user-token` ownership proof on `POST /api/hub/v1/registrations` and `PATCH /api/hub/v1/registrations/{id}` ([#19238](https://github.com/hivecommons/hive/issues/19238)). See [Proving ownership with your own token](#proving-ownership-with-your-own-token). Accepts `1/true/yes/on`. Read per request. Only meaningful while `HIVE_HUB_SELFSERVICE_REGISTRATION` is on. |
+| `HIVE_HUB_SELFSERVICE_KEY_GRACE` | off | Key rotation with a grace window ([#19235](https://github.com/hivecommons/hive/issues/19235)); see [Rotation](#rotation). Accepts `1/true/yes/on`. Read per request. |
+| `HIVE_HUB_SELFSERVICE_KEY_GRACE_WINDOW` | `1h` | How long the old key keeps working after a rotation while `HIVE_HUB_SELFSERVICE_KEY_GRACE` is on. Clamped to `168h`. Read per request. |
 | `HIVE_HUB_SELFSERVICE_EXPIRY` | `24h` | How long a registered hive may go without an accepted heartbeat before the sweep removes it. Counted from the last accepted heartbeat, or from registration while there has been none. |
 | `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL` | `10m` | How often the expiry sweep runs. Read at startup; restart after changing. |
 
-All four are listed with the other hub variables in [env-vars.md](env-vars.md).
+All of them are listed with the other hub variables in [env-vars.md](env-vars.md).
 
 #### What a registration does
 
@@ -245,6 +247,8 @@ A spoke may send `protocol: {"version": 1, "features": [...]}` in its heartbeat 
 
 The owner can rotate from the **Self-hosted hives** list or with `POST /api/hub/selfservice/hives/{id}/rotate`. The hub mints a new key and keeps the previous hash live for a 10 minute overlap so a running spoke can pick up the new value without a gap. After the overlap only the new key is accepted. Only the owner can rotate; a hub admin who does not own the hive gets `404`, the same answer as for a missing hive.
 
+With `HIVE_HUB_SELFSERVICE_KEY_GRACE` on ([#19235](https://github.com/hivecommons/hive/issues/19235)), the overlap is the configurable grace window `HIVE_HUB_SELFSERVICE_KEY_GRACE_WINDOW` (default `1h`) instead of 10 minutes, on both the v6 route and `POST /api/hub/v1/registrations/{id}/keys`. Rotating again while a window is open keeps the old key, the one the spoke is still running, and replaces the pending key: the key from the earlier rotation stops working at once, and the window restarts. So rotating twice by mistake never cuts off the running spoke. The `overlap` in the response and `limits.key_rotation_overlap` in discovery report the window in effect. Existing registrations need no change.
+
 #### Expiry sweep
 
 A background sweep runs every `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL` and removes any `byo-` hive whose last accepted heartbeat is older than `HIVE_HUB_SELFSERVICE_EXPIRY`, or that never heartbeated within that window after registration. The key is revoked and the registry entry is removed in the same pass. The owner registers again when the hive is back; there is no grace list.
@@ -262,7 +266,7 @@ Every decision writes one structured log line, documented in [audit-log.md](audi
 | `selfservice_hive_registered` | A registration passed every check and a key was minted. |
 | `selfservice_hive_refused` | A registration was turned away; `reason` is one of `invalid_name`, `reserved_prefix`, `duplicate_id`, `invalid_repos`, `invalid_dashboard_url`, `invalid_update` (a `PATCH` body that was refused), `per_user_cap`, `no_github_token`, `no_github_login`, `not_repo_admin`, `ownership_check_error`. |
 | `selfservice_hive_updated` | The owner edited the repos or dashboard URL with `PATCH`; the line counts repos added and removed and carries no key. |
-| `selfservice_hive_rotated` | The owner rotated the key; `overlap` is how long the old key keeps working. |
+| `selfservice_hive_rotated` | The owner rotated the key; `overlap` is how long the old key keeps working, `grace` whether the grace window is on, `replaced_pending` whether a pending key inside an open window was replaced, `old_key_expires_at` when the old key stops working. No key or hash. |
 | `selfservice_hive_revoked` | The owner or an admin removed the hive; `by_admin` tells which. |
 | `selfservice_hive_expired` | The sweep removed a hive; `last_heartbeat` is RFC 3339 or `never`. |
 
