@@ -502,6 +502,26 @@ type Record struct {
 	TrainEjectedWhy  string    `json:"train_ejected_why,omitempty"`
 	TrainEjectedHead string    `json:"train_ejected_head,omitempty"`
 	TrainEjectedAt   time.Time `json:"train_ejected_at,omitempty"`
+	// AbandonedAt / AbandonedBlocker / AbandonedIdleSince record that a
+	// contributor PR parked at 071 or at an adoption-stalled 085 sat idle
+	// past governor.labels.stage.abandon_after (see abandon.go): when the
+	// flag was set, the blocker the park was for (the reason without its
+	// adoption-stalled: prefix) and when the idle clock started. The stage
+	// and Reason are unchanged; the flag only changes how the row reads
+	// ("abandoned 9d: check-failing:unit") and routes it to the "close or
+	// take over" review group. Outside activity clears all three.
+	AbandonedAt        time.Time `json:"abandoned_at,omitempty"`
+	AbandonedBlocker   string    `json:"abandoned_blocker,omitempty"`
+	AbandonedIdleSince time.Time `json:"abandoned_idle_since,omitempty"`
+	// AbandonCheckedAt is when the one confirming read (comments and
+	// reviews since the idle clock started) last ran for this PR, so a
+	// failed read backs off instead of repeating every sweep.
+	AbandonCheckedAt time.Time `json:"abandon_checked_at,omitempty"`
+	// AbandonNoticeAt is when the auto-close warning was posted
+	// (governor.labels.stage.abandon_close_repos); AbandonClosedAt is when
+	// the hive closed the PR after the grace. Both clear with the flag.
+	AbandonNoticeAt time.Time `json:"abandon_notice_at,omitempty"`
+	AbandonClosedAt time.Time `json:"abandon_closed_at,omitempty"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
