@@ -8,14 +8,21 @@ leaving it to the agent's discretion ([#19046](https://github.com/hivecommons/hi
 
 ## What happens
 
-1. **Classify.** Each human comment on the PR is matched against fixed phrase signals. A comment with at least one is a rule; the rest
-   are corrections and are handled as before. The signals are `source-of-truth`, `authoritative`, `always` ("should always", "must always"),
-   `never` ("should never", "must never"), `going-forward` ("going forward", "from now on", "next time", "for future assessments"),
-   `capture-request` ("capture this", "document this", "record it"), `assessment-criteria` ("assessment criteria", "assessment knowledge")
-   and `knowledge-base`. Comment text is data: it is matched and quoted, never executed, fetched or followed.
+1. **Classify.** Each human comment on the PR is matched against phrase signals. A comment with at least one is a rule; the rest are
+   corrections and are handled as before. The built-in signals are `source-of-truth`, `authoritative`, `always` ("should always", "must
+   always"), `never` ("should never", "must never"), `going-forward` ("going forward", "moving forward", "from now on", "in future", "next
+   time", "future assessments"), `capture-request` ("capture this", "document this", "record it"), `assessment-criteria` ("assessment
+   criteria", "assessment knowledge") and `knowledge-base`. The owner can switch built-in signals off and add plain phrases of their own (see
+   [Settings](#settings)). Block quotes (`>` lines), fenced code and questions never count: a reply that quotes the hive and asks "can the
+   hive add this to the knowledge base?" is not a rule ([#19135](https://github.com/hivecommons/hive/issues/19135)). Comment text is data:
+   it is matched and quoted, never executed, fetched or followed.
 2. **Extract.** The rule text is the sentences that carry a signal, without clauses that only ask for the capture, bounded to 600 characters.
+   A short rule sentence that refers back ("we should consider this in future") is recorded with the rest of the comment, so the rule keeps
+   what "this" is.
 3. **Gate on trust.** A rule changes what every later run is told, so only reviewers whose GitHub association is in
-   `HIVE_REVIEW_FEEDBACK_RULE_TRUSTED_ASSOCIATIONS` (default `OWNER,MEMBER,COLLABORATOR`) are captured at once. Any other reviewer's rule is
+   `review_feedback.rules.trusted_associations` (env `HIVE_REVIEW_FEEDBACK_RULE_TRUSTED_ASSOCIATIONS`, default `OWNER,MEMBER,COLLABORATOR`)
+   are captured at once. On a repo of an organisation the hive is not part of, an org member whose membership is private shows as
+   `CONTRIBUTOR`, so their rules are queued unless the owner trusts `CONTRIBUTOR`. Any other reviewer's rule is
    queued as a draft knowledge entry that a person approves. A trusted reviewer restating a queued rule activates it.
 4. **Persist.** The rule gets an id (`R-1`, `R-2`, ...) and is written to the `review-rules` local knowledge channel as an entry tagged `pin`,
    with provenance: the PR, the comment id and URL (the entry's `source`), the reviewer, their association, the time, and whether the hive or
@@ -77,10 +84,22 @@ neither kicks nor the dashboard wait for a restart. After a change, the primer r
 
 ## Settings
 
+Which phrases count and whose rules are recorded at once are the owner's preferences, per hive. Edit them in **Settings, Features, Review,
+Reviewer-stated rules** (owner only; applies on the sweep's next pass without a restart; audited as `config_review_feedback_rules`), or in
+hive.yaml. A value saved there wins over its env var; an unsaved one keeps the env var, then the default. Changing a preference applies to
+comments read from then on; a comment already read is not read again.
+
+| hive.yaml | Env var | Default | Meaning |
+|---|---|---|---|
+| `review_feedback.rules.enabled` | `HIVE_REVIEW_FEEDBACK_RULES` | on | Off stops rule capture; the sweep keeps running and recorded rules keep reaching agents until retracted. With the env var off at boot, a rule captured after switching on in Settings reaches kicks after the next restart. |
+| `review_feedback.rules.trusted_associations` | `HIVE_REVIEW_FEEDBACK_RULE_TRUSTED_ASSOCIATIONS` | `OWNER,MEMBER,COLLABORATOR` | Associations whose rules are captured at once; others are queued. |
+| `review_feedback.rules.extra_phrases` | `HIVE_REVIEW_FEEDBACK_RULE_EXTRA_PHRASES` (comma-separated) | none | Plain phrases (3 to 80 characters, at most 20) that also mark a rule, matched case-insensitively as whole words, for example "worth considering". |
+| `review_feedback.rules.disabled_signals` | `HIVE_REVIEW_FEEDBACK_RULE_DISABLED_SIGNALS` (comma-separated) | none | Built-in signal names that no longer mark a rule. |
+
+These stay env-only:
+
 | Variable | Default | Meaning |
 |---|---|---|
-| `HIVE_REVIEW_FEEDBACK_RULES` | on | Set to `0`, `false`, `off` or `no` to stop rule capture. The sweep keeps running. |
-| `HIVE_REVIEW_FEEDBACK_RULE_TRUSTED_ASSOCIATIONS` | `OWNER,MEMBER,COLLABORATOR` | Associations whose rules are captured at once; others are queued. |
 | `HIVE_REVIEW_FEEDBACK_RULES_MAX` | `200` | Bound on live (active or queued) rules. |
 | `HIVE_REVIEW_FEEDBACK_RULE_MERGE_THRESHOLD` | `0.8` | Text similarity at which same-scope rules merge. |
 | `HIVE_REVIEW_FEEDBACK_RULES_VAULT` | `/data/vaults/review-rules` | Knowledge channel the rules are written to. |
