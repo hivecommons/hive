@@ -24,7 +24,7 @@ func TestPlainWordsHumanMergesNoMergeQueuePromise(t *testing.T) {
 	for _, want := range []string{
 		"**Hive decided:** Approved for merge.",
 		"**What happens next:** A person merges this PR — auto-merge is off for this repo (its auto-merge setting, or the hive is below ACMM L6), so the hive will not merge it and has nothing left to do here.",
-		"Merge it by hand (Merge now as maintainer, or on GitHub) once its checks are green; approving again does not help.",
+		"Merge it by hand on GitHub (or Merge now, for a maintainer) once its checks are green; approving again does not help.",
 	} {
 		if !strings.Contains(off, want) {
 			t.Errorf("auto-merge-off words lack %q:\n%s", want, off)

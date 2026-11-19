@@ -84,9 +84,11 @@ var stageTrackerReturnedStages = []int{stagelabels.NeedsAuthor.Number(), stagela
 // row is the hive's to act on next. A decision whose effect timed out is
 // no longer the hive's: nothing re-runs it, so the row waits on a person
 // again by its real stage (projectbluefin/bluefin-bling#128 sat five days
-// as "no effect after 30m" and never reached Waiting on you).
+// as "no effect after 30m" and never reached Waiting on you). Nor is an
+// approval on a repo whose auto-merge is off (decided.human_merges): its
+// projected 090 row waits on a person's merge.
 func stageTrackerWaitKind(it StageTrackerItem) (kind, who string) {
-	decided := it.Decided != nil && it.Decided.Effect != decidedEffectTimedOut
+	decided := it.Decided != nil && it.Decided.Effect != decidedEffectTimedOut && !it.Decided.HumanMerges
 	if stageTrackerOnHold(it) || it.Advisory != nil || decided || stageTrackerWaitStandingMeta(it) {
 		return "", ""
 	}

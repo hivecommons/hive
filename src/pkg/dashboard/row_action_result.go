@@ -110,7 +110,7 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 // delegatedHumanMergesNext is the toast's next step for a PR the decision
 // cleared on a repo whose auto-merge is off (Server.delegatedHumanMerges):
 // no hive merge pass lands it, a person does.
-const delegatedHumanMergesNext = "A person merges this PR — auto-merge is off for this repo (its auto-merge setting, or the hive is below ACMM L6). Merge it by hand (Merge now as maintainer, or on GitHub) once its checks are green."
+const delegatedHumanMergesNext = "A person merges this PR — auto-merge is off for this repo (its auto-merge setting, or the hive is below ACMM L6). Merge it by hand on GitHub (or Merge now, for a maintainer) once its checks are green."
 
 // delegatedRowActionResultWith is delegatedRowActionResult with whether a
 // person merges the PR (Server.delegatedHumanMerges): the approval toast
@@ -216,8 +216,6 @@ func delegatedRowActionResultWith(in delegatedecision.Input, d delegatedecision.
 			out.Next = "Un-parked; the hive carries on. Nothing is merged."
 		case note("deferred"):
 			out.Next = "Approval follows once a person clears the sentinel label; the hive never clears it."
-		case note("queued for auto-merge"):
-			out.Next = "Queued: the auto-merge engine merges per repository settings."
 		case note("/lgtm"):
 			out.Next = "Hive merges it on its next merge pass once CI is green and the head has soaked."
 			if humanMerges {
@@ -226,6 +224,8 @@ func delegatedRowActionResultWith(in delegatedecision.Input, d delegatedecision.
 			out.Posted = append(out.Posted, "`/lgtm` posted", "`/approve` posted")
 		case humanMerges:
 			out.Next = delegatedHumanMergesNext
+		case note("queued for auto-merge"):
+			out.Next = "Queued: the auto-merge engine merges per repository settings."
 		default:
 			out.Next = "Hive merges it on its next merge pass once CI is green and the head has soaked."
 		}
@@ -235,6 +235,9 @@ func delegatedRowActionResultWith(in delegatedecision.Input, d delegatedecision.
 		out.Next = "Current CI, review, hold, sentinel and queue requirements still apply; approval is not merge readiness."
 		if note("incomplete") {
 			out.Next = "GitHub/Prow reporting is incomplete and audited. Native approval stands; current merge gates still apply, without another model decision."
+		}
+		if humanMerges {
+			out.Next += " " + delegatedHumanMergesNext
 		}
 	}
 	return out

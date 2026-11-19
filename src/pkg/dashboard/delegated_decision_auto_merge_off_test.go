@@ -5,9 +5,12 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
+	"github.com/hivecommons/hive/pkg/github/automerge"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // TestDelegatedHumanMergesReadsRepoAutoMerge: the decision comment's
@@ -129,7 +132,8 @@ func TestDelegatedRowActionResultHumanMerges(t *testing.T) {
 	pr := delegatedecision.Input{Repo: "o/r", Kind: delegatedecision.KindPR, Number: 8}
 	approve := delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove, Rule: "default-approve", Text: "approve #8"}
 	const onNext = "Hive merges it on its next merge pass once CI is green and the head has soaked."
-	for _, notes := range [][]string{nil, {"`/lgtm` + `/approve` recorded; auto-merge is off for this repo, so a person merges it once CI is green"}} {
+	for _, notes := range [][]string{nil, {"`/lgtm` + `/approve` recorded; auto-merge is off for this repo, so a person merges it once CI is green"},
+		{"Approve review submitted on the head; auto-merge is off for this repo, so a person merges it once CI is green"}} {
 		off := delegatedRowActionResultWith(pr, approve, notes, true)
 		if off.Next != delegatedHumanMergesNext || strings.Contains(off.Next, "merge pass") || strings.Contains(strings.ToLower(off.Next), "sweep") {
 			t.Errorf("auto-merge off, notes %v: next = %q", notes, off.Next)
@@ -145,6 +149,24 @@ func TestDelegatedRowActionResultHumanMerges(t *testing.T) {
 	if got := delegatedRowActionResultWith(pr, approve, lgtm, true).Posted; strings.Join(got, "|") != "`/lgtm` posted|`/approve` posted" {
 		t.Errorf("posted = %v", got)
 	}
+	// The merger-role path: the queued note never promises the auto-merge
+	// engine there, and the native-approval override keeps its gates
+	// sentence and adds who merges.
+	queued := []string{"Approve review submitted on the head and queued for auto-merge (the engine merges per repo settings)"}
+	if off := delegatedRowActionResultWith(pr, approve, queued, true); off.Next != delegatedHumanMergesNext {
+		t.Errorf("queued, auto-merge off: next = %q", off.Next)
+	}
+	if on := delegatedRowActionResult(pr, approve, queued); on.Next != "Queued: the auto-merge engine merges per repository settings." {
+		t.Errorf("queued, auto-merge on: next = %q", on.Next)
+	}
+	native := []string{"native approval durably recorded on the validated head; all other merge gates remain"}
+	const gates = "Current CI, review, hold, sentinel and queue requirements still apply; approval is not merge readiness."
+	if on := delegatedRowActionResult(pr, approve, native); on.Next != gates {
+		t.Errorf("native, auto-merge on: next = %q", on.Next)
+	}
+	if off := delegatedRowActionResultWith(pr, approve, native, true); off.Next != gates+" "+delegatedHumanMergesNext {
+		t.Errorf("native, auto-merge off: next = %q", off.Next)
+	}
 	// Other branches are untouched by the switch.
 	issue := delegatedecision.Input{Repo: "o/r", Kind: delegatedecision.KindIssue, Number: 7}
 	for _, tc := range []struct {
@@ -153,7 +175,6 @@ func TestDelegatedRowActionResultHumanMerges(t *testing.T) {
 	}{
 		{issue, nil},
 		{pr, []string{"queue approval deferred: the sentinel label is cleared only by a person"}},
-		{pr, []string{"Approve review submitted on the head and queued for auto-merge (the engine merges per repo settings)"}},
 	} {
 		if on, off := delegatedRowActionResult(tc.in, approve, tc.notes), delegatedRowActionResultWith(tc.in, approve, tc.notes, true); on.Next != off.Next {
 			t.Errorf("%s notes %v changed with the switch: %q -> %q", tc.in.Kind, tc.notes, on.Next, off.Next)
@@ -213,5 +234,62 @@ func TestDelegatedDecisionPlanMergeableAsIsAtL6KeepsMergeQueue(t *testing.T) {
 	}
 	if plan.Would != string(delegatedecision.VerdictApprove) || plan.Summary != "Approve #8 as it is and let the merge queue merge it." {
 		t.Fatalf("plan would=%q summary=%q", plan.Would, plan.Summary)
+	}
+}
+
+// TestStageTrackerDecidedApproveOnAutoMergeOffRepo: a recorded approval on
+// a repo whose auto-merge is off projected onto 080 "Queued for merge ·
+// next pass" and, past decisions.delegate.effect_timeout, read "no effect
+// after 30m" — for a merge no hive pass makes. It now leaves the park for
+// 090 with the auto-merge-off gate sentence, waits on a person and never
+// times out; on a repo the hive merges the projection is unchanged.
+func TestStageTrackerDecidedApproveOnAutoMergeOffRepo(t *testing.T) {
+	now := time.Date(2026, 11, 19, 23, 5, 0, 0, time.UTC)
+	level := 2
+	s := &Server{deps: &Dependencies{Config: &config.Config{ACMMLevel: &level, Project: config.ProjectConfig{Org: "o"}}}, stageStore: stagelabels.NewStore("", nil)}
+	s.sweepState = func() automerge.SweepState { return automerge.SweepState{NextFloorAt: now.Add(3 * time.Minute)} }
+	row := func(decidedAt time.Time) []StageTrackerItem {
+		return []StageTrackerItem{{Kind: "pr", Repo: "o/r", Number: 1707, Stage: stagelabels.NeedsDecision.Number(), StageSlug: stagelabels.NeedsDecision.Slug(),
+			Modifiers: []string{modNeedsHuman}, Caption: "Needs human decision",
+			LastOperatorAction: &StageTrackerOperatorAction{Action: operatorActionLetHiveDecide, Verdict: string(delegatedecision.VerdictApprove), Rule: "small-low-risk",
+				Actor: "owner", At: decidedAt, Outcome: operatorActionOutcomeApplied, State: operatorActionStateWaiting, StageAt: stagelabels.NeedsDecision.Number()}}}
+	}
+
+	for _, age := range []time.Duration{time.Minute, 35 * time.Minute} {
+		items := row(now.Add(-age))
+		s.applyDecidedProjection(items, now)
+		pr := items[0]
+		d := pr.Decided
+		t.Logf("auto-merge off, %s: stage %d decided %+v", age, pr.Stage, d)
+		if d == nil || d.Effect != decidedEffectPending || !d.HumanMerges || d.Word != "Approved" || d.Acting != "" || d.NextAt != nil {
+			t.Fatalf("auto-merge off, %s: decided %+v", age, d)
+		}
+		for _, bad := range []string{"Queued for merge", "next pass", "no effect", "not in effect"} {
+			if strings.Contains(d.Text+" "+d.Title, bad) {
+				t.Fatalf("auto-merge off, %s: %q in %q / %q", age, bad, d.Text, d.Title)
+			}
+		}
+		if d.Text != "Approved · "+stageTrackerAutoMergeOffGateText || !strings.Contains(d.Title, "a person merges it") {
+			t.Fatalf("auto-merge off, %s: text %q title %q", age, d.Text, d.Title)
+		}
+		if pr.Stage != stagelabels.ReadyForHumanMerge.Number() || pr.Caption != d.Text {
+			t.Fatalf("auto-merge off, %s: stage %d caption %q", age, pr.Stage, pr.Caption)
+		}
+		if kind, who := stageTrackerWaitKind(pr); kind != waitKindReadyForHumanMerge || who != waitWhoOperator {
+			t.Fatalf("auto-merge off, %s: wait %s/%s, want a person's merge", age, kind, who)
+		}
+	}
+
+	six := config.SelfMergeMinACMMLevel
+	s.deps.Config.ACMMLevel = &six
+	items := row(now.Add(-time.Minute))
+	s.applyDecidedProjection(items, now)
+	if d := items[0].Decided; d == nil || d.HumanMerges || d.Text != stageTrackerQueuedForMergeWord+" · next pass" || items[0].Stage != stagelabels.AwaitingMergeAdmission.Number() {
+		t.Fatalf("auto-merge on, pending: stage %d decided %+v", items[0].Stage, d)
+	}
+	items = row(now.Add(-35 * time.Minute))
+	s.applyDecidedProjection(items, now)
+	if d := items[0].Decided; d == nil || d.Effect != decidedEffectTimedOut || !strings.Contains(d.Text, "no effect after") {
+		t.Fatalf("auto-merge on, past the timeout: decided %+v", d)
 	}
 }

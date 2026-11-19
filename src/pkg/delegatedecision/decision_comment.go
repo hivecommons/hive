@@ -85,7 +85,7 @@ func ExpectedEffectWith(d Decision, opts CommentOptions) Effect {
 			IfNot: "Re-run the decision, or remove the park label by hand."}
 	case opts.HumanMerges:
 		return Effect{Settled: humanMergesSettled,
-			IfNot: "Merge it by hand (Merge now as maintainer, or on GitHub) once its checks are green; approving again does not help."}
+			IfNot: "Merge it by hand on GitHub (or Merge now, for a maintainer) once its checks are green; approving again does not help."}
 	default:
 		return Effect{Waits: true, What: "the merge queue merges this PR once its checks are green",
 			IfNot: "A maintainer can merge it by hand or send it back for a new commit; approving again does not help."}

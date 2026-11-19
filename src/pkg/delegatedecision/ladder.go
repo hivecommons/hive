@@ -23,8 +23,8 @@ const (
 	// closed it (or a merged PR declares it supersedes this one). The PR
 	// is closed as superseded; it is never adopted.
 	RuleAlreadyFixed = "already-fixed"
-	// RuleMergeableAsIs: the head is mergeable and green; the merge queue
-	// takes it with no adoption.
+	// RuleMergeableAsIs: the head is mergeable and green; it is approved
+	// as it is, with no adoption, and merges by the repo's merge path.
 	RuleMergeableAsIs = "mergeable-as-is"
 	// RuleRebaseThenMerge: conflicts are the only blocker. The unattended
 	// rebase-then-merge path (hivecommons/hive#15104) is not merged yet, so
@@ -178,7 +178,7 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 		return Decision{}, false
 	}
 
-	// Rung 2 — mergeable as-is: the merge queue takes it; no adoption. An
+	// Rung 2 — mergeable as-is: approved as it is; no adoption. An
 	// adoption that already stalled on a lane blocker (changes requested,
 	// attribution) is not one the gate would take on a green head alone.
 	// Nor is a head with a standing change request or a reviewer question
@@ -187,8 +187,10 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 	// code (projectbluefin/testsuite#1057: approved "as it is" over a
 	// maintainer's CHANGES_REQUESTED on the head).
 	if !in.Conflicting && in.CIGreen && !in.DCOMissing && !in.ReporterTrustHold && !in.AdoptionStalled && in.ChangeRequest() == "" && !in.HeadNeedsPerson() {
-		d := releasePR(RuleMergeableAsIs, "approve "+ref+": the head is mergeable and green, so it goes to the merge queue as it is", "a mergeable, green head needs no adoption; the merge queue takes it (hivecommons/hive#15289)")
-		return out(d, "mergeable and green; handed to the merge queue")
+		// Neutral on who merges: the merge queue where the hive merges, a
+		// person where the repo's auto-merge is off.
+		d := releasePR(RuleMergeableAsIs, "approve "+ref+": the head is mergeable and green, so it is approved as it is", "a mergeable, green head needs no adoption; it is approved as it is and merges by the repo's merge path (hivecommons/hive#15289)")
+		return out(d, "mergeable and green; approved as it is")
 	}
 	skip(RuleMergeableAsIs, mergeBlockers(in))
 

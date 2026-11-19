@@ -1266,9 +1266,12 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 					notes = append(notes, "native approval recorded; Prow bridge incomplete: "+queued.ReportingError)
 					s.audit.LogRecord(user, auditRepoItemDecisionDelegated+"_reporting_failed", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "head", in.HeadSHA, "error", queued.ReportingError), "", repoFull, number)
 				}
-				if queued.ReviewSubmitted {
+				switch {
+				case queued.ReviewSubmitted && commentOpts.HumanMerges:
+					notes = append(notes, "Approve review submitted on the head; auto-merge is off for this repo, so a person merges it once CI is green")
+				case queued.ReviewSubmitted:
 					notes = append(notes, "Approve review submitted on the head and queued for auto-merge (the engine merges per repo settings)")
-				} else {
+				default:
 					notes = append(notes, "queue attribution recorded on the hive's own head (the App cannot review its own pull request; native approval and all other gates are evaluated separately)")
 				}
 			} else {
