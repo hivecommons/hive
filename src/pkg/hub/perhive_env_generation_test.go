@@ -65,6 +65,7 @@ func TestDesiredPerHiveEnvUsesCurrentNotPrevious(t *testing.T) {
 		EnvHeartbeatKey:     derivePerHiveKey(perHiveGenSecretB, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(perHiveGenSecretB, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(perHiveGenSecretB, infoInviteKey, hiveID),
+		EnvCustomerMatchKey: customerMatchKey(perHiveGenSecretB, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretB, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretB, infoSessionEd25519Seed)),
 	}
@@ -72,6 +73,7 @@ func TestDesiredPerHiveEnvUsesCurrentNotPrevious(t *testing.T) {
 		EnvHeartbeatKey:     derivePerHiveKey(perHiveGenSecretA, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(perHiveGenSecretA, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(perHiveGenSecretA, infoInviteKey, hiveID),
+		EnvCustomerMatchKey: customerMatchKey(perHiveGenSecretA, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretA, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretA, infoSessionEd25519Seed)),
 	}
@@ -112,6 +114,9 @@ func TestDesiredPerHiveEnvUsesCurrentNotPrevious(t *testing.T) {
 	}
 	if provisionInviteKey(hiveID) != fromCurrent[EnvInviteKey] {
 		t.Error("provisionInviteKey did not follow the current generation")
+	}
+	if provisionCustomerMatchKey(hiveID) != fromCurrent[EnvCustomerMatchKey] {
+		t.Error("provisionCustomerMatchKey did not follow the current generation")
 	}
 	if provisionSessionPublicKey() != fromCurrent[envSessionPublicKey] {
 		t.Error("provisionSessionPublicKey did not follow the current generation")

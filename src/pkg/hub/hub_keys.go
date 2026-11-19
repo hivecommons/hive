@@ -130,6 +130,16 @@ func provisionInviteKey(hiveID string) string {
 	return derivePerHiveKey(provisionCurrentSecret(), infoInviteKey, hiveID)
 }
 
+// provisionCustomerMatchKey returns the PER-HIVE key a spoke salts GitHub login
+// hashes with for the customers hub import, injected as HIVE_CUSTOMER_MATCH_KEY.
+// It is customerMatchKey against the CURRENT generation, so a re-provisioned or
+// reconciled spoke moves to the current key after a master rotation (the hub
+// still accepts every live generation via customerMatchKeys). Hub-hosted spokes
+// never hold the master, so without this the import has no key and stays inert.
+func provisionCustomerMatchKey(hiveID string) string {
+	return customerMatchKey(provisionCurrentSecret(), hiveID)
+}
+
 // heartbeatKeyFor returns the per-hive heartbeat bearer the hub EXPECTS from
 // hiveID. Mirror of provisionHeartbeatKey, resolved against the running hub's
 // own master rather than the provisioning-time lookup.
@@ -354,6 +364,8 @@ const (
 	// both mints and verifies invite tokens with it, so it is symmetric; it exists
 	// so inviteSigningSecret() no longer has to read the raw master.
 	EnvInviteKey = "HIVE_INVITE_KEY"
+	// EnvCustomerMatchKey carries the per-hive customers hub import match key.
+	EnvCustomerMatchKey = "HIVE_CUSTOMER_MATCH_KEY"
 )
 
 // spokeDomainKey resolves a domain sub-key for spoke-side code. It prefers the
