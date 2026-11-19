@@ -174,6 +174,11 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		// failing-check set.
 		"stageNudgeCICooldown": cfg.Governor.Labels.Stage.ContributorNudge.CIFailureCooldown,
 		"stagePresenceWindow":  cfg.Governor.Labels.Stage.PresenceWindow,
+		// governor.labels.stage.abandon_after / abandon_close_repos: the
+		// stale contributor PR idle clock ("" = off) and the repositories
+		// that close abandoned PRs (ACMM L6 only).
+		"stageAbandonAfter":      cfg.Governor.Labels.Stage.AbandonAfter,
+		"stageAbandonCloseRepos": nonNilStrings(cfg.Governor.Labels.Stage.AbandonCloseRepos),
 		// governor.labels.stage.adoption.enabled / contributor_grace_*: the
 		// stage-074 adoption of red contributor PRs.
 		"stageAdoptionEnabled": cfg.Governor.Labels.Stage.Adoption.IsEnabled(),
@@ -825,6 +830,13 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		// governor.labels.stage.contributor_nudge.ci_failure_cooldown
 		// (hivecommons/hive#17328); a Go duration, empty restores 6h.
 		StageNudgeCICooldown *string `json:"stage_nudge_ci_failure_cooldown"`
+		// StageAbandonAfter is governor.labels.stage.abandon_after: a Go
+		// duration; "" or "0" turns the idle clock off.
+		StageAbandonAfter *string `json:"stage_abandon_after"`
+		// StageAbandonCloseRepos is governor.labels.stage.abandon_close_repos:
+		// the repositories (in project.repos) that close abandoned
+		// contributor PRs at ACMM L6. The whole list; empty clears it.
+		StageAbandonCloseRepos *[]string `json:"stage_abandon_close_repos"`
 		// Stage-074 adoption: governor.labels.stage.adoption.enabled and
 		// governor.labels.stage.contributor_grace_online / _offline.
 		StageAdoptionEnabled *bool `json:"stage_adoption_enabled"`
@@ -947,6 +959,20 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	stageAbandonAfter, msg := normalizeStageAbandonAfter(body.StageAbandonAfter)
+	if msg != "" {
+		jsonError(w, msg, http.StatusBadRequest)
+		return
+	}
+	var stageAbandonCloseRepos []string
+	if body.StageAbandonCloseRepos != nil {
+		repos, msg := s.autoMergeWatchedRepoList("stage_abandon_close_repos", *body.StageAbandonCloseRepos)
+		if msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+		stageAbandonCloseRepos = repos
+	}
 	if body.WritingGuide != nil {
 		if err := config.ValidateWritingGuide(*body.WritingGuide); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
@@ -1053,6 +1079,12 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.StagePresenceWindow != nil {
 		s.deps.Config.Governor.Labels.Stage.PresenceWindow = strings.TrimSpace(*body.StagePresenceWindow)
+	}
+	if body.StageAbandonAfter != nil {
+		s.deps.Config.Governor.Labels.Stage.AbandonAfter = stageAbandonAfter
+	}
+	if body.StageAbandonCloseRepos != nil {
+		s.deps.Config.Governor.Labels.Stage.AbandonCloseRepos = stageAbandonCloseRepos
 	}
 	if body.StageAdoptionEnabled != nil {
 		v := *body.StageAdoptionEnabled
@@ -3584,4 +3616,26 @@ func parseStageDwell(raw string) (map[string]string, error) {
 		out[slug] = dur
 	}
 	return out, nil
+}
+
+// normalizeStageAbandonAfter validates governor.labels.stage.abandon_after
+// from the Labels tab: "" or a zero duration ("0", "0s") turns the idle
+// clock off and is stored as "" so the YAML stays clean; anything else must
+// be a positive Go duration. A non-empty msg is the 400 to return.
+func normalizeStageAbandonAfter(v *string) (string, string) {
+	if v == nil {
+		return "", ""
+	}
+	raw := strings.TrimSpace(*v)
+	if raw == "" || raw == "0" {
+		return "", ""
+	}
+	d, err := time.ParseDuration(raw)
+	switch {
+	case err != nil || d < 0:
+		return "", "stage_abandon_after must be a Go duration such as 168h, or 0 to turn the idle clock off"
+	case d == 0:
+		return "", ""
+	}
+	return raw, ""
 }

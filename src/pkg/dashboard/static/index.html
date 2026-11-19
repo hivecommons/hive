@@ -68012,6 +68012,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Stage labels', key: 'governor.labels.stage.enabled', text: 'stage labels pipeline state review-pending merge-queue stalled role tier author kind human clanker hive governor.labels.stage.enabled' },
       { tab: 'Labels', section: 'Labels', label: 'Stalled requires quiet', key: 'governor.labels.stage.stalled.require_quiet', text: 'stalled no activity quiet dwell head push comment review ci label governor.labels.stage.stalled.require_quiet governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Central stage engine', key: 'governor.labels.stage.engine.mode', text: 'stage engine mode shadow enforce dry run pause anomaly reconciler ADR-0025 governor.labels.stage.engine.mode' },
+      { tab: 'Labels', section: 'Labels', label: 'Abandoned contributor PRs', key: 'governor.labels.stage.abandon_after', text: 'abandon abandoned stale idle clock contributor pr needs-author adoption-stalled needs-decision close or take over auto-close close abandoned repos governor.labels.stage.abandon_after governor.labels.stage.abandon_close_repos' },
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Adoption of a maintainer\'s PR', key: 'governor.labels.stage.adoption.maintainer_policy', text: 'adoption maintainer policy adopt ask never maintainer own pr clanker disconnected offline adopt action governor.labels.stage.adoption.maintainer_policy' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval auto_merge.nudge_repeat_after governor.labels.stage.contributor_nudge.ci_failure_cooldown governor.labels.stage.presence_window' },
@@ -75649,6 +75650,14 @@ function burnAreaChart() {
         </div>`;
     }
 
+    // Settings → Labels → Close abandoned PRs: stage the whole selection
+    // (governor.labels.stage.abandon_close_repos); none clears the opt-in.
+    function markDirtyStageAbandonCloseRepos() {
+      const el = (this && this.selectedOptions) ? this : document.getElementById('cfg-stage-abandon-close-repos');
+      const repos = el ? Array.from(el.selectedOptions).map(o => o.value).filter(Boolean) : [];
+      markDirty('labels', 'stage_abandon_close_repos', repos);
+    }
+
     function renderGovLabels(labels, holdLabels, requireLabels) {
       const permanentLabels = (holdLabels || []).concat(['do-not-merge']);
       const staticList = permanentLabels.map(l =>
@@ -75716,6 +75725,28 @@ function burnAreaChart() {
       const stageGraceOffline = (_configState.dirty.labels && _configState.dirty.labels.stage_grace_offline !== undefined)
         ? _configState.dirty.labels.stage_grace_offline
         : (_configState.data.stageGraceOffline || '');
+      // governor.labels.stage.abandon_after / abandon_close_repos: the stale
+      // contributor PR idle clock and the repositories that close abandoned
+      // PRs (ACMM L6 only). The repo list offers project.repos as owner/repo
+      // and keeps a configured entry outside it selected, so a save never
+      // drops it silently.
+      const stageAbandonAfter = (_configState.dirty.labels && _configState.dirty.labels.stage_abandon_after !== undefined)
+        ? _configState.dirty.labels.stage_abandon_after
+        : (_configState.data.stageAbandonAfter || '');
+      const stageAbandonCloseRepos = (_configState.dirty.labels && _configState.dirty.labels.stage_abandon_close_repos !== undefined)
+        ? _configState.dirty.labels.stage_abandon_close_repos
+        : (Array.isArray(_configState.data.stageAbandonCloseRepos) ? _configState.data.stageAbandonCloseRepos : []);
+      const stageAbandonProjectRepos = Array.isArray(_configState.data.repos) ? _configState.data.repos : [];
+      const stageAbandonSelected = new Set(stageAbandonCloseRepos.map(r => String(r).toLowerCase()));
+      const stageAbandonKnown = new Set(stageAbandonProjectRepos.map(r => String(r).toLowerCase()));
+      const stageAbandonRepoOptions = stageAbandonProjectRepos.map(r => {
+        const full = String(r).toLowerCase();
+        const on = stageAbandonSelected.has(full) || stageAbandonSelected.has(full.slice(full.indexOf('/') + 1));
+        return `<option value="${esc(r)}"${on ? ' selected' : ''}>${esc(r)}</option>`;
+      }).join('') + stageAbandonCloseRepos
+        .filter(r => { const v = String(r).toLowerCase(); return !stageAbandonKnown.has(v) && !Array.from(stageAbandonKnown).some(k => k.slice(k.indexOf('/') + 1) === v); })
+        .map(r => `<option value="${esc(r)}" selected>${esc(r)}</option>`).join('');
+      const stageAbandonRepoSize = Math.min(Math.max(stageAbandonProjectRepos.length || 3, 3), 8);
       return `
         ${renderOutsideBucketsPanel(labels, requireLabels)}
         <h4 style="margin:var(--sp-0) var(--sp-0) var(--sp-3)">Exempt labels (deny-list)</h4>
@@ -75794,6 +75825,16 @@ function burnAreaChart() {
           <label for="cfg-stage-grace-offline">Offline contributor grace ${yamlHint('governor.labels.stage.contributor_grace_offline')}</label>
           <input type="text" id="cfg-stage-grace-offline" value="${esc(stageGraceOffline)}" placeholder="1h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_grace_offline" data-arg-types="s,s,w">
           <div class="config-help">Go duration after the comment-only nudge before an offline or external author's red PR is adopted. With live hub presence the hive instead waits ${yamlHint('governor.labels.stage.adoption.after_offline')} (default 30m) after a registered relay's last heartbeat, or ${yamlHint('governor.labels.stage.adoption.after_unregistered')} (default 2h) for an author with no profile here, and adopts in place on the PR's own branch when GitHub permits ${yamlHint('governor.labels.stage.adoption.in_place')} (default on) rather than opening a superseding PR. An in-place adoption keeps a changed head only when GitHub links the commit to the App bot ${yamlHint('governor.labels.stage.adoption.strict_attribution')} (default on); otherwise the hive hands the PR back to the contributor. Once the hive owns the head, the contributor lane merges it under the hive's own authority when the hive-authored gates pass (CI green on the adopted head, reviewer verdict, DCO, diff fences, soak), without requiring the original author's trust tier ${yamlHint('governor.labels.stage.adoption.auto_merge')} (default on). When the hive supersedes instead, it closes the original in the same pass that opens its copy — one note naming the copy, <code>hive/superseded</code> — and reopens it if the copy is closed unmerged or red at two heads ${yamlHint('governor.labels.stage.adoption.supersede.close_first')} (default on; off keeps the original open at stage 074 until the copy merges). A clanker- or hive-authored original closes in that pass by policy even without the repo's write-back opt-in label, since the copy carries its commits and sign-off ${yamlHint('governor.labels.stage.adoption.close_superseded')} (default <code>on_adopt</code>; <code>on_merge</code> waits for the copy to merge; a person's PR always waits unless the label is present). A copy that conflicts with the base is handed to the fixer's rebase-resolve episode (two attempts, then stage 085 <code>rebase-failed-twice</code>); each fixer rebase attempt that sees no push within ${yamlHint('governor.labels.stage.adoption.rebase_attempt_timeout')} (default 15m) counts as failed, and an in-place adoption whose attempts are spent re-homes to a superseding PR at once; an adoption attempt that opened nothing is retried once the author's clanker has stayed offline for ${yamlHint('governor.labels.stage.adoption.offline_grace')} (default 30m).</div>
+        </div>
+        <div class="config-field">
+          <label for="cfg-stage-abandon-after">Abandon idle contributor PRs after ${yamlHint('governor.labels.stage.abandon_after')} ${settingHelpMark('settings', 'labels', 'Abandoned contributor PRs', `The stale contributor PR idle clock. A contributor PR parked at stage/071-needs-author, or at stage/085-needs-decision with an adoption-stalled reason (the hive adopted it but has nothing it can push), that has had no push, comment or review from anyone but the hive for this long is flagged abandoned. The stage does not change. The row reads "abandoned Nd: &lt;the original blocker&gt;", it moves to the inbox's "Stale: close or take over" group (the review_queue to_close count), the delegate recommends closing it as stale or a person taking it over (never doing either itself), and an issue it locks shows withheld covering_pr_stalled instead of open_pr_claim. The issue stays locked: whether to close or take over another author's PR is the owner's call. The hive's own comments and label changes never restart the clock; an author push or comment does, and clears the flag. Empty or 0 is off (the default).`)}</label>
+          <input type="text" id="cfg-stage-abandon-after" value="${esc(stageAbandonAfter)}" placeholder="off (e.g. 168h)" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_abandon_after" data-arg-types="s,s,w">
+          <div class="config-help">Go duration such as <code>168h</code> (7 days); empty or <code>0</code> = off, nothing changes. Applies to contributor PRs only.</div>
+        </div>
+        <div class="config-field">
+          <label for="cfg-stage-abandon-close-repos">Close abandoned PRs in ${yamlHint('governor.labels.stage.abandon_close_repos[]')} ${settingHelpMark('settings', 'labels', 'Close abandoned PRs', `Per-repository opt-in, off for every repository by default, and only at ACMM L6 (Autonomous), like supersession_sweep.close_contributor_prs. In a selected repository the hive posts one polite notice on an abandoned contributor PR, waits 24 hours, and closes it with a comment saying how to reopen — only if nobody but the hive pushed, commented or reviewed since the notice, the PR carries no hold label and no hive/keep-open label. Needs the idle clock above set.`)}</label>
+          <select id="cfg-stage-abandon-close-repos" multiple size="${stageAbandonRepoSize}" data-change-action="markDirtyStageAbandonCloseRepos">${stageAbandonRepoOptions}</select>
+          <div class="config-help">Ctrl/Cmd-click to select. No selection = the hive never closes an abandoned PR. Only at ACMM L6.</div>
         </div>
         ${renderReporterTrustBlock()}
         <h4>Writing guide</h4>
