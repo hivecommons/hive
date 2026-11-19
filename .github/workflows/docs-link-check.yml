@@ -127,7 +127,7 @@ jobs:
       # The sidebar and Settings tables in the dashboard UI map are generated
       # from the dashboard source so their labels match the screen (#19182).
       - name: Check the dashboard UI map is current
-        run: python3 src/scripts/render-dashboard-ui-map.py --check
+        run: python3 src/pkg/dashboard/uimap/render-dashboard-ui-map.py --check
 
       # Security docs must stay readable by a non-expert: Flesch-Kincaid grade
       # 11 or lower for SECURITY.md and the src/docs/security*/ioscan* set.

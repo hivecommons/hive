@@ -9,7 +9,7 @@ uses, see the [dashboard glossary](dashboard-glossary.md).
 
 The tables under [The map](#the-map) are generated from the dashboard source
 (the sidebar markup, the section help registry and the Settings tab lists) by
-`src/scripts/render-dashboard-ui-map.py`, and CI fails when they go stale, so
+`src/pkg/dashboard/uimap/render-dashboard-ui-map.py`, and CI fails when they go stale, so
 the labels here match the labels on screen. The rest of the page is written by
 hand.
 
@@ -67,7 +67,7 @@ terminal, sign in that agent's CLI (for example Copilot or Claude); see
 
 ## The map
 
-<!-- BEGIN GENERATED: dashboard-ui-map (src/scripts/render-dashboard-ui-map.py) -->
+<!-- BEGIN GENERATED: dashboard-ui-map (src/pkg/dashboard/uimap/render-dashboard-ui-map.py) -->
 
 ### Sidebar
 

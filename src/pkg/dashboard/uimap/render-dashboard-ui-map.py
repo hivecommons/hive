@@ -16,8 +16,8 @@ Only the text between the BEGIN and END markers is rewritten; the rest of the
 page is hand-written.
 
 Usage:
-  python3 src/scripts/render-dashboard-ui-map.py          # rewrite the page
-  python3 src/scripts/render-dashboard-ui-map.py --check  # exit 1 if stale
+  python3 src/pkg/dashboard/uimap/render-dashboard-ui-map.py          # rewrite the page
+  python3 src/pkg/dashboard/uimap/render-dashboard-ui-map.py --check  # exit 1 if stale
 """
 
 import html
@@ -25,7 +25,7 @@ import os
 import re
 import sys
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 DASH = os.path.join(ROOT, "src", "pkg", "dashboard", "static-src")
 SIDEBAR = os.path.join(DASH, "html", "sidebar.html")
 SECTIONS = os.path.join(DASH, "js", "sections.js")
@@ -35,7 +35,7 @@ PAGE = os.path.join(DOCS, "dashboard-ui-map.md")
 SETTINGS_PAGE = os.path.join(DOCS, "settings.md")
 SECTIONS_PAGE = "dashboard-sections.md"
 
-BEGIN = "<!-- BEGIN GENERATED: dashboard-ui-map (src/scripts/render-dashboard-ui-map.py) -->"
+BEGIN = "<!-- BEGIN GENERATED: dashboard-ui-map (src/pkg/dashboard/uimap/render-dashboard-ui-map.py) -->"
 END = "<!-- END GENERATED: dashboard-ui-map -->"
 
 # The Agents group is a live tree of the hive's own agents, not fixed entries.
@@ -166,7 +166,7 @@ def main():
         print("dashboard-ui-map.md is up to date")
         return 0
     if check:
-        print("dashboard-ui-map.md is stale: run python3 src/scripts/render-dashboard-ui-map.py", file=sys.stderr)
+        print("dashboard-ui-map.md is stale: run python3 src/pkg/dashboard/uimap/render-dashboard-ui-map.py", file=sys.stderr)
         return 1
     with open(PAGE, "w", encoding="utf-8") as f:
         f.write(updated)
