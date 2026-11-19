@@ -538,3 +538,134 @@ func TestContributorLaneCurrentBaseGateAfterGreen(t *testing.T) {
 		})
 	}
 }
+
+// TestCurrentBaseGateChangelogOnlyBaseMove pins the changelog-only rule: a
+// head behind its base only by commits that touch CHANGELOG.md or
+// changelog.d/ (the release gate's bookkeeping merges) counts as current and
+// is not refreshed, while any other base move, an unreadable or possibly
+// truncated comparison, or a changelog path the PR itself changes still
+// sends the head to base preparation as before.
+func TestCurrentBaseGateChangelogOnlyBaseMove(t *testing.T) {
+	const head = "sha-head"
+	const mergeBase = "sha-mergebase"
+	fileList := func(names ...string) []map[string]any {
+		out := make([]map[string]any, 0, len(names))
+		for _, n := range names {
+			out = append(out, map[string]any{"filename": n, "status": "modified"})
+		}
+		return out
+	}
+	manyFragments := func(n int) []map[string]any {
+		out := make([]map[string]any, 0, n)
+		for range n {
+			out = append(out, map[string]any{"filename": "changelog.d/fragment.md", "status": "removed"})
+		}
+		return out
+	}
+	cases := []struct {
+		name             string
+		behindBy         int
+		noMergeBase      bool
+		headFiles        []map[string]any
+		baseFiles        []map[string]any
+		baseStatus       string
+		baseCompareFails bool
+		wantStop         bool
+		wantReason       string
+		wantCompares     int
+		wantUpdates      int
+	}{
+		{name: "changelog-only behind is current", behindBy: 3, headFiles: fileList("pkg/a.go", "changelog.d/19000.md"), baseFiles: fileList("CHANGELOG.md", "changelog.d/18990.md"), wantCompares: 2},
+		{name: "fragments-only behind is current", behindBy: 1, headFiles: fileList("pkg/a.go"), baseFiles: fileList("changelog.d/18990.md"), wantCompares: 2},
+		{name: "mixed base move is stale", behindBy: 2, headFiles: fileList("pkg/a.go"), baseFiles: fileList("CHANGELOG.md", "pkg/b.go"), wantStop: true, wantReason: basePreparationReady, wantCompares: 2, wantUpdates: 1},
+		{name: "nested CHANGELOG.md is not allowlisted", behindBy: 1, headFiles: fileList("pkg/a.go"), baseFiles: fileList("docs/CHANGELOG.md"), wantStop: true, wantReason: basePreparationReady, wantCompares: 2, wantUpdates: 1},
+		{name: "base compare error is stale", behindBy: 2, headFiles: fileList("pkg/a.go"), baseCompareFails: true, wantStop: true, wantReason: basePreparationReady, wantCompares: 2, wantUpdates: 1},
+		{name: "possibly truncated base file list is stale", behindBy: 40, headFiles: fileList("pkg/a.go"), baseFiles: manyFragments(compareFilesResponseCap), wantStop: true, wantReason: basePreparationReady, wantCompares: 2, wantUpdates: 1},
+		{name: "empty base file list is stale", behindBy: 1, headFiles: fileList("pkg/a.go"), baseFiles: []map[string]any{}, wantStop: true, wantReason: basePreparationReady, wantCompares: 2, wantUpdates: 1},
+		{name: "unexpected base compare status is stale", behindBy: 1, headFiles: fileList("pkg/a.go"), baseFiles: fileList("CHANGELOG.md"), baseStatus: "diverged", wantStop: true, wantReason: basePreparationReady, wantCompares: 2, wantUpdates: 1},
+		{name: "changelog path the PR also changes is stale", behindBy: 1, headFiles: fileList("CHANGELOG.md"), baseFiles: fileList("CHANGELOG.md"), wantStop: true, wantReason: basePreparationReady, wantCompares: 2, wantUpdates: 1},
+		{name: "missing merge base is stale without a second compare", behindBy: 1, noMergeBase: true, headFiles: fileList("pkg/a.go"), wantStop: true, wantReason: basePreparationReady, wantCompares: 1, wantUpdates: 1},
+		{name: "zero behind is unchanged", behindBy: 0, headFiles: fileList("pkg/a.go"), baseFiles: fileList("pkg/b.go"), wantCompares: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			compares, updates := 0, 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "head": map[string]string{"sha": head}, "base": map[string]string{"ref": "main", "sha": "base1"}})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/main..."+head:
+					compares++
+					cmp := map[string]any{"status": "diverged", "behind_by": tc.behindBy, "ahead_by": 1, "files": tc.headFiles}
+					if !tc.noMergeBase {
+						cmp["merge_base_commit"] = map[string]string{"sha": mergeBase}
+					}
+					_ = json.NewEncoder(w).Encode(cmp)
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/"+mergeBase+"...main":
+					compares++
+					if tc.baseCompareFails {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					status := tc.baseStatus
+					if status == "" {
+						status = "ahead"
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": status, "ahead_by": tc.behindBy, "total_commits": tc.behindBy, "files": tc.baseFiles})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "commit": map[string]string{"sha": "base1"}})
+				case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
+					updates++
+					w.WriteHeader(http.StatusAccepted)
+					_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			c := newAutoMergeSweepClient(srv.URL)
+			c.requireCurrentBase = func(repo string) bool { return strings.EqualFold(repo, "acme/widget") }
+			_, reason, stop, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 7, "main", head, true, "behind", nil)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if stop != tc.wantStop || reason != tc.wantReason {
+				t.Fatalf("stop, reason = %v, %q; want %v, %q", stop, reason, tc.wantStop, tc.wantReason)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if compares != tc.wantCompares || updates != tc.wantUpdates {
+				t.Fatalf("compares, updates = %d, %d; want %d, %d", compares, updates, tc.wantCompares, tc.wantUpdates)
+			}
+		})
+	}
+}
+
+func TestIsChangelogOnlyPath(t *testing.T) {
+	for path, want := range map[string]bool{
+		"CHANGELOG.md":             true,
+		"changelog.d/19000.md":     true,
+		"changelog.d/sub/fragment": true,
+		"changelog.d/":             false,
+		"changelog.d":              false,
+		"changelog.d/../go.mod":    false,
+		"docs/CHANGELOG.md":        false,
+		"src/changelog.d/19000.md": false,
+		"changelog.dx/19000.md":    false,
+		"changelog.md":             false,
+		"CHANGELOG.md.bak":         false,
+		"src/pkg/github/merge.go":  false,
+	} {
+		if got := isChangelogOnlyPath(path); got != want {
+			t.Errorf("isChangelogOnlyPath(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
