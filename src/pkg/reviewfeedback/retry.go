@@ -1,12 +1,11 @@
 package reviewfeedback
 
 import (
-	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -17,21 +16,23 @@ import (
 // comments that are still unanswered when nothing happened, up to a cap with
 // a doubling backoff, then hands them to a person.
 
+// The knobs are named in pkg/config so the dashboard can show them without
+// importing this package.
 const (
 	// RetryMaxEnvVar overrides the retry cap (0 turns re-routing off).
-	RetryMaxEnvVar = "HIVE_REVIEW_FEEDBACK_RETRY_MAX"
+	RetryMaxEnvVar = config.ReviewRetryMaxEnvVar
 	// DefaultRetryMax is how many times stranded feedback is routed again.
-	DefaultRetryMax = 2
+	DefaultRetryMax = config.ReviewRetryDefaultMax
 	// RetryBackoffEnvVar overrides the base backoff.
-	RetryBackoffEnvVar = "HIVE_REVIEW_FEEDBACK_RETRY_BACKOFF"
+	RetryBackoffEnvVar = config.ReviewRetryBackoffEnvVar
 	// DefaultRetryBackoff is how long after a kick the sweep waits before
 	// judging it stranded; it doubles on each retry.
-	DefaultRetryBackoff = time.Hour
+	DefaultRetryBackoff = config.ReviewRetryDefaultBackoff
 	// MinRetryBackoff keeps a misconfigured backoff from re-kicking an agent
 	// that is still working on the first brief.
-	MinRetryBackoff = 10 * time.Minute
+	MinRetryBackoff = config.ReviewRetryMinBackoff
 	// MaxRetryMax bounds the cap an owner may set.
-	MaxRetryMax = 10
+	MaxRetryMax = config.ReviewRetryMaxMax
 )
 
 // Verdicts of CheckStranded.
@@ -53,14 +54,8 @@ type RetryPolicy struct {
 
 // RetryPolicyFromEnv reads the knobs, falling back to the defaults.
 func RetryPolicyFromEnv() RetryPolicy {
-	p := RetryPolicy{MaxRetries: DefaultRetryMax, Backoff: DefaultRetryBackoff}
-	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(RetryMaxEnvVar))); err == nil && n >= 0 {
-		p.MaxRetries = n
-	}
-	if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv(RetryBackoffEnvVar))); err == nil && d > 0 {
-		p.Backoff = d
-	}
-	return p.Normalized()
+	maxRetries, backoff := config.ReviewRetryFromEnv()
+	return RetryPolicy{MaxRetries: maxRetries, Backoff: backoff}.Normalized()
 }
 
 // Normalized clamps the knobs into their valid ranges.

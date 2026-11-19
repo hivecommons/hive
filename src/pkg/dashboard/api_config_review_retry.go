@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/reviewfeedback"
 )
 
 // The stranded-feedback retry editor on the Settings Features tab
@@ -36,19 +35,25 @@ type reviewRetryResponse struct {
 
 func reviewRetryResponseFor(cfg *config.Config) reviewRetryResponse {
 	set := cfg.ReviewRetrySettingsSnapshot()
-	env := reviewfeedback.RetryPolicyFromEnv()
-	maxR := reviewRulesField[int]{Default: reviewfeedback.DefaultRetryMax, Effective: env.MaxRetries, Source: "default",
-		EnvVar: reviewfeedback.RetryMaxEnvVar, YAMLKey: "review_feedback.retry.max_retries"}
-	if strings.TrimSpace(os.Getenv(reviewfeedback.RetryMaxEnvVar)) != "" {
+	envMax, envBackoff := config.ReviewRetryFromEnv()
+	if envMax > config.ReviewRetryMaxMax {
+		envMax = config.ReviewRetryMaxMax
+	}
+	if envBackoff < config.ReviewRetryMinBackoff {
+		envBackoff = config.ReviewRetryMinBackoff
+	}
+	maxR := reviewRulesField[int]{Default: config.ReviewRetryDefaultMax, Effective: envMax, Source: "default",
+		EnvVar: config.ReviewRetryMaxEnvVar, YAMLKey: "review_feedback.retry.max_retries"}
+	if strings.TrimSpace(os.Getenv(config.ReviewRetryMaxEnvVar)) != "" {
 		maxR.Source = "env"
 	}
 	if set.MaxRetries != nil {
 		v := *set.MaxRetries
 		maxR.Saved, maxR.Effective, maxR.Source = &v, v, "settings"
 	}
-	back := reviewRulesField[string]{Default: reviewfeedback.DefaultRetryBackoff.String(), Effective: env.Backoff.String(), Source: "default",
-		EnvVar: reviewfeedback.RetryBackoffEnvVar, YAMLKey: "review_feedback.retry.backoff"}
-	if strings.TrimSpace(os.Getenv(reviewfeedback.RetryBackoffEnvVar)) != "" {
+	back := reviewRulesField[string]{Default: config.ReviewRetryDefaultBackoff.String(), Effective: envBackoff.String(), Source: "default",
+		EnvVar: config.ReviewRetryBackoffEnvVar, YAMLKey: "review_feedback.retry.backoff"}
+	if strings.TrimSpace(os.Getenv(config.ReviewRetryBackoffEnvVar)) != "" {
 		back.Source = "env"
 	}
 	if set.Backoff != "" {
@@ -56,7 +61,7 @@ func reviewRetryResponseFor(cfg *config.Config) reviewRetryResponse {
 		back.Saved, back.Effective, back.Source = &v, v, "settings"
 	}
 	return reviewRetryResponse{MaxRetries: maxR, Backoff: back,
-		MaxMaxRetries: reviewfeedback.MaxRetryMax, MinBackoff: reviewfeedback.MinRetryBackoff.String()}
+		MaxMaxRetries: config.ReviewRetryMaxMax, MinBackoff: config.ReviewRetryMinBackoff.String()}
 }
 
 // reviewRetryPutBody is the PUT body.
@@ -71,8 +76,8 @@ func validateReviewRetryPut(body reviewRetryPutBody) (config.ReviewRetrySettings
 	var out config.ReviewRetrySettings
 	if body.MaxRetries != nil {
 		n := *body.MaxRetries
-		if n < 0 || n > reviewfeedback.MaxRetryMax {
-			return out, "max_retries must be between 0 and " + strconv.Itoa(reviewfeedback.MaxRetryMax)
+		if n < 0 || n > config.ReviewRetryMaxMax {
+			return out, "max_retries must be between 0 and " + strconv.Itoa(config.ReviewRetryMaxMax)
 		}
 		out.MaxRetries = &n
 	}
@@ -82,8 +87,8 @@ func validateReviewRetryPut(body reviewRetryPutBody) (config.ReviewRetrySettings
 			if err != nil {
 				return out, "backoff must be a duration such as 45m or 2h"
 			}
-			if d < reviewfeedback.MinRetryBackoff {
-				return out, "backoff must be at least " + reviewfeedback.MinRetryBackoff.String()
+			if d < config.ReviewRetryMinBackoff {
+				return out, "backoff must be at least " + config.ReviewRetryMinBackoff.String()
 			}
 			out.Backoff = d.String()
 		}

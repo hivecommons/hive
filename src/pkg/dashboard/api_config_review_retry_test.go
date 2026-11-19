@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/reviewfeedback"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // hivecommons/hive#19320: the owner-only review_feedback.retry.* editor.
@@ -23,8 +23,8 @@ func decodeReviewRetry(t *testing.T, body []byte) reviewRetryResponse {
 
 func clearReviewRetryEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv(reviewfeedback.RetryMaxEnvVar, "")
-	t.Setenv(reviewfeedback.RetryBackoffEnvVar, "")
+	t.Setenv(config.ReviewRetryMaxEnvVar, "")
+	t.Setenv(config.ReviewRetryBackoffEnvVar, "")
 }
 
 func TestReviewRetry_OwnerOnly(t *testing.T) {
@@ -48,13 +48,13 @@ func TestReviewRetry_GetShowsDefaultsAndEnv(t *testing.T) {
 		t.Fatalf("GET: %d %s", rec.Code, rec.Body.String())
 	}
 	got := decodeReviewRetry(t, rec.Body.Bytes())
-	if got.MaxRetries.Effective != reviewfeedback.DefaultRetryMax || got.MaxRetries.Source != "default" || got.MaxRetries.Saved != nil {
+	if got.MaxRetries.Effective != config.ReviewRetryDefaultMax || got.MaxRetries.Source != "default" || got.MaxRetries.Saved != nil {
 		t.Fatalf("max_retries = %+v", got.MaxRetries)
 	}
-	if got.Backoff.Effective != reviewfeedback.DefaultRetryBackoff.String() || got.Backoff.YAMLKey != "review_feedback.retry.backoff" {
+	if got.Backoff.Effective != config.ReviewRetryDefaultBackoff.String() || got.Backoff.YAMLKey != "review_feedback.retry.backoff" {
 		t.Fatalf("backoff = %+v", got.Backoff)
 	}
-	t.Setenv(reviewfeedback.RetryMaxEnvVar, "4")
+	t.Setenv(config.ReviewRetryMaxEnvVar, "4")
 	got = decodeReviewRetry(t, doOwnerGet(s, reviewRetryPath).Body.Bytes())
 	if got.MaxRetries.Effective != 4 || got.MaxRetries.Source != "env" {
 		t.Fatalf("env max_retries = %+v", got.MaxRetries)
@@ -79,7 +79,7 @@ func TestReviewRetry_PutAppliesValidatesAndClears(t *testing.T) {
 	}
 	for name, body := range map[string]map[string]any{
 		"negative":      {"max_retries": -1},
-		"too many":      {"max_retries": reviewfeedback.MaxRetryMax + 1},
+		"too many":      {"max_retries": config.ReviewRetryMaxMax + 1},
 		"not duration":  {"backoff": "soon"},
 		"under minimum": {"backoff": "1m"},
 	} {

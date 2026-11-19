@@ -1,9 +1,46 @@
 package config
 
 import (
+	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
+
+// Stranded review-feedback retry knobs (hivecommons/hive#19320). They live
+// here, not in pkg/reviewfeedback, so the dashboard's Settings card can name
+// them without importing the sweep.
+const (
+	// ReviewRetryMaxEnvVar overrides the retry cap (0 asks a person at once).
+	ReviewRetryMaxEnvVar = "HIVE_REVIEW_FEEDBACK_RETRY_MAX"
+	// ReviewRetryDefaultMax is how many times stranded feedback is re-routed.
+	ReviewRetryDefaultMax = 2
+	// ReviewRetryBackoffEnvVar overrides the base backoff.
+	ReviewRetryBackoffEnvVar = "HIVE_REVIEW_FEEDBACK_RETRY_BACKOFF"
+	// ReviewRetryDefaultBackoff is the wait after a kick before it is judged
+	// stranded; it doubles on each retry.
+	ReviewRetryDefaultBackoff = time.Hour
+	// ReviewRetryMinBackoff keeps a misconfigured backoff from re-kicking an
+	// agent still working on the first brief.
+	ReviewRetryMinBackoff = 10 * time.Minute
+	// ReviewRetryMaxMax bounds the cap an owner may set.
+	ReviewRetryMaxMax = 10
+)
+
+// ReviewRetryFromEnv returns the retry cap and backoff from the environment,
+// falling back to the defaults for an unset or invalid value. The caller
+// clamps them.
+func ReviewRetryFromEnv() (int, time.Duration) {
+	maxRetries, backoff := ReviewRetryDefaultMax, ReviewRetryDefaultBackoff
+	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(ReviewRetryMaxEnvVar))); err == nil && n >= 0 {
+		maxRetries = n
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv(ReviewRetryBackoffEnvVar))); err == nil && d > 0 {
+		backoff = d
+	}
+	return maxRetries, backoff
+}
 
 // reviewFeedbackMu guards Config.ReviewFeedback: the dashboard's Settings card
 // writes it while the review-feedback sweep reads it on the eval tick.
