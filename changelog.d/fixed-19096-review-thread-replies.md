@@ -1,1 +1,0 @@
-- Let the agent that opened a PR reply inside its review threads (`pulls/comments/{id}/replies`, `pulls/{n}/comments`) and retract a hive comment within 15 minutes on a PR that agent opened; every other PR, agent and comment stays refused, the review-feedback brief forbids probe comments, and a refused reply is posted in the sweep's needs-human note for a person (#19096).
