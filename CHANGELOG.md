@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.331.1)
+
+### Fixed
+
+- The issue un-park sweep now treats a maintainer's first line of `Decision: <text>` (or `Decision (owner): <text>`) on a parked issue as `/hive decision <text>`, and replies with the `/hive decision` hint to `option N`, `decide` and bare option-letter comments instead of ignoring them ([#19155](https://github.com/hivecommons/hive/issues/19155)).
+- Claude and Copilot agents can no longer end up on the other CLI's spelling of the same Claude model (`claude-sonnet-5.5` on claude, `claude-sonnet-5-5` on copilot), which each CLI rejects: switching backends, setting a model, and loading config now store the backend's own spelling through one shared mapping with a dashboard warning, and the model dropdowns show a wrong-convention id as stored and flag it instead of silently preselecting the valid option. Non-Claude ids are unchanged ([#19169](https://github.com/hivecommons/hive/issues/19169)).
+
 ## 2026-11-19 (v5.331.0)
 
 ### Added
