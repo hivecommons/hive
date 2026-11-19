@@ -340,10 +340,7 @@ jobs:
 
       - name: Install gotestsum
         if: steps.select.outputs.run == 'true'
-        run: |
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install gotest.tools/gotestsum@v1.13.0
-          "$(go env GOPATH)/bin/gotestsum" --version
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-gotestsum.sh"
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -631,10 +628,7 @@ jobs:
 
       - name: Install gotestsum
         if: steps.select.outputs.run == 'true'
-        run: |
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install gotest.tools/gotestsum@v1.13.0
-          "$(go env GOPATH)/bin/gotestsum" --version
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-gotestsum.sh"
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -910,10 +904,7 @@ jobs:
 
       - name: Install gotestsum
         if: steps.select.outputs.run == 'true'
-        run: |
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install gotest.tools/gotestsum@v1.13.0
-          "$(go env GOPATH)/bin/gotestsum" --version
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-gotestsum.sh"
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -1499,10 +1490,7 @@ jobs:
 
       - name: Install gotestsum
         if: steps.select.outputs.run == 'true'
-        run: |
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install gotest.tools/gotestsum@v1.13.0
-          "$(go env GOPATH)/bin/gotestsum" --version
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-gotestsum.sh"
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -1722,10 +1710,7 @@ jobs:
 
       - name: Install gotestsum
         if: steps.select.outputs.run == 'true'
-        run: |
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install gotest.tools/gotestsum@v1.13.0
-          "$(go env GOPATH)/bin/gotestsum" --version
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-gotestsum.sh"
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
