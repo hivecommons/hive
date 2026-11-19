@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.338.2)
+
+### Fixed
+
+- **More proxy checks fail closed when they cannot run.** If the review-thread ownership check, the GitHub lookup behind the reference-repo and review-thread gates, or the canary scan panics or hangs, the proxy now refuses that one request with a 403 instead of crashing the whole proxy or holding the request open. A canary scan that cannot finish refuses the write even in advisory canary mode. The results of the egress audit's error-path review, and the accepted risks, are recorded in the security model ([#19224](https://github.com/hivecommons/hive/issues/19224)).
+
 ## 2026-11-19 (v5.338.1)
 
 ### Fixed
