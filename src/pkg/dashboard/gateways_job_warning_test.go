@@ -10,10 +10,10 @@ import (
 func TestJobAgentsWithOwnModelSecret(t *testing.T) {
 	cfg := &config.Config{
 		Agents: map[string]config.AgentConfig{
-			"job-a": {Backend: "litellm", Sandbox: &config.AgentSandboxConfig{Runtime: "job", Job: &config.SandboxJobConfig{EnvFromSecrets: []string{"creds"}}}},
-			"job-b": {Backend: "litellm", Sandbox: &config.AgentSandboxConfig{Runtime: "job"}},
+			"job-a": {Backend: "litellm", Sandbox: &config.AgentSandboxOverride{Runtime: "job", Job: &config.SandboxJobConfig{EnvFromSecrets: []string{"creds"}}}},
+			"job-b": {Backend: "litellm", Sandbox: &config.AgentSandboxOverride{Runtime: "job"}},
 			"tmux":  {Backend: "litellm"},
-			"other": {Backend: "x", Sandbox: &config.AgentSandboxConfig{Runtime: "job", Job: &config.SandboxJobConfig{EnvFromSecrets: []string{"c"}}}},
+			"other": {Backend: "x", Sandbox: &config.AgentSandboxOverride{Runtime: "job", Job: &config.SandboxJobConfig{EnvFromSecrets: []string{"c"}}}},
 		},
 	}
 	got := jobAgentsWithOwnModelSecret(cfg, "litellm")
