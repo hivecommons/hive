@@ -1,6 +1,6 @@
 /* Ask AI help panel (#19177). Uses the host dashboard's tokens with plain
    fallbacks, docks to the side instead of floating over data (#7160), and
-   has no animation, so reduced-motion needs no special case. */
+   uses no motion effects, so reduced motion needs no special case. */
 :root {
   --hive-ask-width: 380px;
 }
