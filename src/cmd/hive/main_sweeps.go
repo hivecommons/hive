@@ -335,6 +335,14 @@ func resolveRedPRFixer(cfg *config.Config, owner string, available func(string) 
 	return ""
 }
 
+// redPRFixOwnSignoffExec is the `git rebase --exec` step the no-dco repair
+// advice names: it amends with --signoff only a commit whose author email is
+// the agent's own (git var GIT_AUTHOR_IDENT honours the lane's pinned
+// GIT_AUTHOR_* env), so a person's commit on the PR keeps exactly the
+// trailers its author wrote. A blanket `git rebase --signoff` appended the
+// agent's bot sign-off to a human's commit on hivecommons/hive#19102.
+const redPRFixOwnSignoffExec = `'case "$(git var GIT_AUTHOR_IDENT)" in *"<$(git log -1 --format=%ae)>"*) git commit --amend --no-edit --signoff;; esac'`
+
 // redPRFixKick renders the targeted FIX-BEFORE-NEW kick a re-engagement
 // delivers. It names ONE PR — the stuck one — with its evidence, so the kick is
 // answerable on its own rather than relying on the owner's next cadence kick
@@ -347,7 +355,8 @@ func redPRFixKick(o escalation.Observation, rerouted bool) string {
 	}
 	b.WriteString("Repair it BEFORE claiming new issues or opening any new PR:\n")
 	if slices.Contains(o.Labels, stagelabels.NoDCOLabel) {
-		fmt.Fprintf(&b, "  FIRST (required): the PR is %s — it inherited unsigned commits. Re-sign them: gh pr checkout %d --repo %s → git rebase --signoff <base> (original authors preserved) → git push --force-with-lease\n", stagelabels.NoDCOLabel, o.Number, o.Repo)
+		fmt.Fprintf(&b, "  FIRST (required): the PR is %s, a commit is missing its Signed-off-by. Sign off ONLY the commits you authored: gh pr checkout %d --repo %s → git rebase <base> --exec %s → git push --force-with-lease\n", stagelabels.NoDCOLabel, o.Number, o.Repo, redPRFixOwnSignoffExec)
+		b.WriteString("  NEVER add your Signed-off-by to a commit someone else wrote (git rebase --signoff signs every commit in the range, theirs too): leave their commits as they are and comment on the PR asking the author to sign them off.\n")
 		b.WriteString("  THEN fix any failing CI the same way.\n")
 	}
 	fmt.Fprintf(&b, "  gh pr checkout %d --repo %s → fix → git commit -s → git push\n", o.Number, o.Repo)
