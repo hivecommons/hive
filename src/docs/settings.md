@@ -4,7 +4,7 @@ This page is the starting point for the dashboard's **Settings** tabs. It has on
 
 Every setting on a Settings tab has a small **?** mark next to its name. Rest the pointer on it, or move to it with the Tab key, to see a short explanation of the setting. Click it, tap it, or press Enter on it to open the page that explains the setting in a new tab. When a setting has its own guide, the mark opens that guide; otherwise it opens this page at the tab's entry. Clicking a mark never changes the setting.
 
-For the dashboard's other sections, see [Dashboard sections explained](dashboard-sections.md). For which file a saved setting is written to, see [Spoke configuration layering](config-layering.md).
+For the dashboard's other sections, see [Dashboard sections explained](dashboard-sections.md). If a key has no editable control, see [Editing `hive.yaml`](editing-hive-yaml.md) for file locations and reload behavior.
 
 ## Linking to a setting
 
