@@ -185,11 +185,16 @@ type Config struct {
 	Runs RunsConfig `yaml:"runs,omitempty" json:"runs,omitempty"`
 	// Meetings turns on hive as a live meeting participant through Quorum
 	// (hivecommons/hive#18284). Zero value: off, no Quorum process.
-	Meetings  MeetingsConfig  `yaml:"meetings,omitempty" json:"meetings,omitempty"`
-	Swarm     SwarmConfig     `yaml:"swarm,omitempty" json:"swarm,omitempty"`
-	Autonomy  AutonomyConfig  `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
-	Review    ReviewConfig    `yaml:"review,omitempty" json:"review,omitempty"`
-	AutoMerge AutoMergeConfig `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	Meetings MeetingsConfig `yaml:"meetings,omitempty" json:"meetings,omitempty"`
+	Swarm    SwarmConfig    `yaml:"swarm,omitempty" json:"swarm,omitempty"`
+	Autonomy AutonomyConfig `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
+	Review   ReviewConfig   `yaml:"review,omitempty" json:"review,omitempty"`
+	// ReviewFeedback holds the owner's preferences for capturing rules that
+	// reviewers state on the hive's own PRs (hivecommons/hive#19135). Nil:
+	// every preference falls back to its env var, then its default. Read and
+	// written through ReviewRulesSettingsSnapshot / SetReviewRulesSettings.
+	ReviewFeedback *ReviewFeedbackConfig `yaml:"review_feedback,omitempty" json:"review_feedback,omitempty"`
+	AutoMerge      AutoMergeConfig       `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
 	// Decisions tunes how decisions on needs-human items are recorded; its
 	// `delegate` block gates the activity monitor's "Let hive decide"
 	// action (default on).

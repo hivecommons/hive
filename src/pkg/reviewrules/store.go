@@ -43,6 +43,14 @@ const (
 	// MergeThresholdEnvVar overrides how similar two rules' texts must be to
 	// merge, as a fraction between 0 and 1.
 	MergeThresholdEnvVar = "HIVE_REVIEW_FEEDBACK_RULE_MERGE_THRESHOLD"
+	// ExtraPhrasesEnvVar lists extra plain phrases, comma-separated, that mark
+	// a comment as a rule. hive.yaml's review_feedback.rules.extra_phrases
+	// wins when set.
+	ExtraPhrasesEnvVar = "HIVE_REVIEW_FEEDBACK_RULE_EXTRA_PHRASES"
+	// DisabledSignalsEnvVar lists built-in signal names, comma-separated, that
+	// no longer mark a rule. hive.yaml's review_feedback.rules.disabled_signals
+	// wins when set.
+	DisabledSignalsEnvVar = "HIVE_REVIEW_FEEDBACK_RULE_DISABLED_SIGNALS"
 	// DefaultMergeThreshold is the token-overlap (Jaccard) at which two rules
 	// of the same scope are the same rule.
 	DefaultMergeThreshold = 0.8
@@ -179,6 +187,23 @@ type Config struct {
 	MaxRules int
 	// MergeThreshold is the text similarity at which same-scope rules merge.
 	MergeThreshold float64
+	// ExtraPhrases are owner-chosen plain phrases that also mark a comment as
+	// a rule (review_feedback.rules.extra_phrases, hivecommons/hive#19135).
+	ExtraPhrases []string
+	// DisabledSignals are built-in signal names that no longer mark a rule
+	// (review_feedback.rules.disabled_signals).
+	DisabledSignals map[string]bool
+}
+
+// ParseList splits a comma-separated list into trimmed, non-empty items.
+func ParseList(list string) []string {
+	var out []string
+	for _, a := range strings.Split(list, ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // ConfigFromEnv reads the knobs, falling back to the Default* constants.
@@ -194,6 +219,13 @@ func ConfigFromEnv() Config {
 	}
 	if f, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(MergeThresholdEnvVar)), 64); err == nil && f > 0 && f <= 1 {
 		cfg.MergeThreshold = f
+	}
+	cfg.ExtraPhrases = ParseList(os.Getenv(ExtraPhrasesEnvVar))
+	if names := ParseList(os.Getenv(DisabledSignalsEnvVar)); len(names) > 0 {
+		cfg.DisabledSignals = map[string]bool{}
+		for _, n := range names {
+			cfg.DisabledSignals[strings.ToLower(n)] = true
+		}
 	}
 	return cfg
 }
@@ -255,6 +287,7 @@ type Store struct {
 	dir   string
 	vault string
 	cfg   Config
+	cls   Classifier
 	st    index
 	// Reindex, when set, is called after the vault changed so the primer's
 	// view is current without waiting for its periodic refresh.
@@ -265,7 +298,8 @@ type Store struct {
 // is an empty store; an unreadable one is returned with the error and still
 // usable in memory.
 func Open(dir, vault string, cfg Config) (*Store, error) {
-	s := &Store{dir: dir, vault: vault, cfg: cfg.Normalized()}
+	s := &Store{dir: dir, vault: vault}
+	s.applyConfig(cfg)
 	s.st = newIndex()
 	b, err := os.ReadFile(filepath.Join(dir, indexFile))
 	if err != nil {
@@ -285,6 +319,20 @@ func Open(dir, vault string, cfg Config) (*Store, error) {
 
 func newIndex() index {
 	return index{Next: 1, Comments: map[string]string{}, Seen: map[string]seenComment{}, Replies: map[string]time.Time{}, Evaluated: map[string]time.Time{}}
+}
+
+func (s *Store) applyConfig(cfg Config) {
+	s.cfg = cfg.Normalized()
+	s.cls = NewClassifier(s.cfg.ExtraPhrases, s.cfg.DisabledSignals)
+}
+
+// SetConfig replaces the capture policy (trust, phrases, signals, limits)
+// without reopening the store, so a Settings change applies on the next pass
+// (hivecommons/hive#19135). Comments already evaluated are not read again.
+func (s *Store) SetConfig(cfg Config) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.applyConfig(cfg)
 }
 
 func (s *Store) fillMaps() {
@@ -449,16 +497,16 @@ func (s *Store) Remember(c Comment, now time.Time) error {
 // It is idempotent per comment: a comment id that was captured, queued or
 // merged before returns OutcomeDuplicate and changes nothing.
 func (s *Store) CaptureComment(c Comment, now time.Time) Result {
-	cl := Classify(c.Body)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cl := s.cls.Classify(c.Body)
 	if cl.Kind != KindRule {
 		return Result{Outcome: OutcomeNotRule}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if id, ok := s.st.Comments[c.key()]; ok {
 		return Result{Outcome: OutcomeDuplicate, Rule: s.copyOf(s.resolve(s.byID(id))), Signals: cl.Signals}
 	}
-	text := ExtractRuleText(c.Body)
+	text := s.cls.ExtractRuleText(c.Body)
 	if text == "" {
 		return Result{Outcome: OutcomeRefused, Signals: cl.Signals, Err: errors.New("the comment has no text to record")}
 	}

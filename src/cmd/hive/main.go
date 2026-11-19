@@ -4816,6 +4816,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := spoke.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
 			lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
 				outputFreshnessHeartbeatFields(acmmLvl, govState, agents)
+			prGateCause, prGateDependsOn := b.dashSrv.PRGateCause()
 			ghAppTokenStatus, ghAppTokenLastMintAt, ghAppTokenError :=
 				githubAppTokenHeartbeatFields(b.cfg, b.dashSrv.GetGitHubAppPermIssue())
 			ghAppErrorClass, ghAppHTTPStatus := githubAppStructuredFailure(
@@ -5008,6 +5009,8 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				GitHubAppRequired:        b.dashSrv.IsGitHubAppRequired(),
 				GitHubAppPermIssue:       b.dashSrv.GetGitHubAppPermIssue(),
 				GitHubAppState:           b.dashSrv.GetGitHubAppState(),
+				PRGateCause:              prGateCause,
+				PRGateDependsOn:          prGateDependsOn,
 				GitHubAppTokenStatus:     ghAppTokenStatus,
 				GitHubAppTokenLastMintAt: ghAppTokenLastMintAt,
 				GitHubAppTokenError:      ghAppTokenError,

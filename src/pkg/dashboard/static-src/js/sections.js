@@ -186,12 +186,23 @@
       'faq-section': { heading: 'FAQ', help: 'Short answers to the questions people ask once a hive is running, each linking to the guide that explains it fully.' },
     });
     // The one place that decides where dashboard help lives: every help mark and
-    // Overview "Learn more" link is built here, so moving them (for example to
-    // docs.hivecommons.dev) is a single change. Builds that are not on a known
+    // Overview "Learn more" link is built here. Builds that are not on a known
     // release line (forks, feature branches, unknown versions) open v5's help.
+    // docs.hivecommons.dev publishes the v5 line from a curated list
+    // (hivecommons/docs scripts/sync-hive-docs.files.json), so on v5 a page that
+    // is on that list opens on the docs site, where the help search and Ask AI
+    // answers cite it (#19182). Every other page, and every other line, opens
+    // the Markdown on GitHub. Add a page here only once the docs site serves it
+    // at /docs/hive/<page>; the constants live inside the function because tests
+    // evaluate it on its own.
     function dashboardDocsHref(page, anchor) {
+      const docsSiteLine = 'v5';
+      const docsSiteBase = 'https://docs.hivecommons.dev/docs/hive/';
+      const docsSitePages = ['dashboard-sections', 'dashboard-sections/overview-and-metrics', 'dashboard-sections/workflow-and-agents', 'dashboard-sections/activity-monitor', 'dashboard-glossary', 'getting-started', 'agent-configuration', 'acmm-policy-matrix', 'contributor-relay', 'running-at-level-6', 'release-channels', 'stable-soak-policy', 'work-sources', 'webhooks', 'troubleshooting', 'kick-refusals', 'labels-and-control-signals', 'meetings', 'inbox-voice-sources', 'inbox-uploads', 'inbox-recording', 'inbox-input-methods', 'env-vars', 'register-self-hosted-hive'];
       const line = (typeof window !== 'undefined' && window._hiveDocsLine) || 'v5';
-      return `https://github.com/hivecommons/hive/blob/${line}/src/docs/${page}.md${anchor ? '#' + anchor : ''}`;
+      const hash = anchor ? '#' + anchor : '';
+      if (line === docsSiteLine && docsSitePages.includes(page)) return `${docsSiteBase}${page}${hash}`;
+      return `https://github.com/hivecommons/hive/blob/${line}/src/docs/${page}.md${hash}`;
     }
     function dashboardDocsHrefFromPath(path) {
       const m = /^\/docs\/([\w-]+(?:\/[\w-]+)*)\.md(?:#([\w-]+))?$/.exec(String(path || ''));

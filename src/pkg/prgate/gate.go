@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -165,6 +166,8 @@ type RepoStats struct {
 	Agreements     int
 	Disagreements  int
 	LastComparison string
+
+	forbiddenUntil time.Time
 }
 
 type expectation struct {
@@ -180,6 +183,9 @@ type Gate struct {
 	ModeOf func(repo string) Mode
 	Log    *slog.Logger
 	Now    func() time.Time
+	// Grant reads the installation's Commit statuses grant. Nil means no grant
+	// check (a credential with no App installation).
+	Grant GrantProvider
 
 	mu       sync.Mutex
 	sent     map[string]posted
@@ -187,6 +193,7 @@ type Gate struct {
 	stats    map[string]*RepoStats
 	prLocks  map[string]*prLock
 	inflight int
+	grant    grantState
 }
 
 type prLock struct {
@@ -203,15 +210,24 @@ func New(api API, modeOf func(string) Mode, log *slog.Logger) *Gate {
 		sent: map[string]posted{}, expect: map[string]expectation{}, stats: map[string]*RepoStats{}, prLocks: map[string]*prLock{}}
 }
 
+// mode is the mode the gate actually runs in for repo: the configured one,
+// with enforce clamped while unavailable, and forced off while the last grant
+// check found the Commit statuses write grant missing. It never promotes.
 func (g *Gate) mode(repo string) Mode {
 	if g == nil || g.ModeOf == nil {
 		return ModeOff
 	}
-	return Effective(g.ModeOf(repo))
+	m := Effective(g.ModeOf(repo))
+	if m != ModeOff && g.GrantMissing() {
+		return ModeOff
+	}
+	return m
 }
 
-// Active reports whether the gate does anything for repo.
-func (g *Gate) Active(repo string) bool { return g.mode(repo) != ModeOff }
+// Active reports whether repo is configured for the gate (a mode other than
+// off). A forced-off gate is still active: its events must reach the grant
+// check, which is how it notices the grant arriving.
+func (g *Gate) Active(repo string) bool { return Effective(g.ConfiguredMode(repo)) != ModeOff }
 
 // TryAcquire reserves one of a bounded number of concurrent event slots; the
 // caller releases it with Release. A burst beyond the bound is dropped and
@@ -268,9 +284,16 @@ func (g *Gate) repoStats(repo string) *RepoStats {
 // read of the PR still shows that head. Nothing is posted for a draft or
 // closed PR. Already-posted identical statuses are not posted again.
 func (g *Gate) HandleEvent(ctx context.Context, repo string, number int, eventHead string) Outcome {
+	if Effective(g.ConfiguredMode(repo)) == ModeOff {
+		return Outcome{Skipped: SkipModeOff}
+	}
+	if g.RepoForbidden(repo) {
+		return Outcome{Skipped: SkipForbiddenCooldown}
+	}
+	g.RefreshGrant(ctx)
 	mode := g.mode(repo)
 	if mode == ModeOff {
-		return Outcome{Skipped: SkipModeOff}
+		return Outcome{Skipped: SkipGrantMissing}
 	}
 	if !headSHARe.MatchString(eventHead) {
 		return Outcome{Skipped: SkipBadHead}
@@ -327,10 +350,11 @@ func (g *Gate) post(ctx context.Context, repo string, number int, sha string, st
 		return err
 	}
 	err := g.API.PostStatus(ctx, repo, number, sha, st.Context, st.State, st.Description)
+	mode := g.mode(repo)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	s := g.repoStats(repo)
-	s.Mode = g.mode(repo)
+	s.Mode = mode
 	s.LastPostAt, s.LastPostHead = g.Now(), sha
 	switch {
 	case err == nil:
@@ -340,6 +364,8 @@ func (g *Gate) post(ctx context.Context, repo string, number int, sha string, st
 	case errors.Is(err, ErrForbidden):
 		s.Forbidden++
 		s.LastPost = ResultForbidden
+		s.forbiddenUntil = g.Now().Add(ForbiddenCooldown)
+		g.invalidateGrantLocked()
 		g.Log.Warn("pr-gate: status refused with 403, the installation has no Commit statuses write grant", "repo", repo, "head", sha, "context", st.Context, "error", err)
 	default:
 		s.Errors++
@@ -431,4 +457,15 @@ func (g *Gate) Snapshot() map[string]RepoStats {
 		out[r] = *g.stats[r]
 	}
 	return out
+}
+
+var defaultGate atomic.Pointer[Gate]
+
+// SetDefault registers the process's gate for readers that cannot be handed
+// one (the merge lanes' held reason). Nil clears it.
+func SetDefault(g *Gate) { defaultGate.Store(g) }
+
+// DefaultHoldReason is HoldReason on the registered gate ("" when none).
+func DefaultHoldReason(repo, statusContext string) string {
+	return defaultGate.Load().HoldReason(repo, statusContext)
 }

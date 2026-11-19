@@ -454,6 +454,47 @@ func (s reviewFeedbackSweep) proposeRuleHome(ctx context.Context, repo string, n
 	return true
 }
 
+// activeRuleStore is the store the sweep captures into: nil while capture is
+// switched off, so the sweep runs exactly as without capture.
+func activeRuleStore(st *reviewrules.Store, on bool) *reviewrules.Store {
+	if !on {
+		return nil
+	}
+	return st
+}
+
+// reviewRulesEnabled reports whether rule capture runs: the Settings value
+// (review_feedback.rules.enabled) when the owner saved one, else
+// HIVE_REVIEW_FEEDBACK_RULES (default on).
+func reviewRulesEnabled(cfg *config.Config) bool {
+	if set := cfg.ReviewRulesSettingsSnapshot(); set.Enabled != nil {
+		return *set.Enabled
+	}
+	return reviewrules.Enabled()
+}
+
+// reviewRulesPolicy merges the owner's saved preferences over the env knobs
+// (hivecommons/hive#19135): each preference saved in hive.yaml
+// (review_feedback.rules.*) wins; an unsaved one keeps its env value or
+// default. The limits (max rules, merge threshold) stay env-only.
+func reviewRulesPolicy(cfg *config.Config) (reviewrules.Config, bool) {
+	rc := reviewrules.ConfigFromEnv()
+	set := cfg.ReviewRulesSettingsSnapshot()
+	if len(set.TrustedAssociations) > 0 {
+		rc.Trusted = reviewrules.ParseAssociations(strings.Join(set.TrustedAssociations, ","))
+	}
+	if len(set.ExtraPhrases) > 0 {
+		rc.ExtraPhrases = append([]string(nil), set.ExtraPhrases...)
+	}
+	if len(set.DisabledSignals) > 0 {
+		rc.DisabledSignals = map[string]bool{}
+		for _, n := range set.DisabledSignals {
+			rc.DisabledSignals[strings.ToLower(strings.TrimSpace(n))] = true
+		}
+	}
+	return rc, reviewRulesEnabled(cfg)
+}
+
 // parseReviewFeedbackKey splits "owner/repo#n".
 func parseReviewFeedbackKey(key string) (string, int, bool) {
 	i := strings.LastIndex(key, "#")
@@ -484,14 +525,17 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 	}
 	reviewFeedbackLastRun = now
 	store := openReviewFeedbackStore(logger)
-	if reviewRuleStore == nil && reviewrules.Enabled() {
-		rs, err := reviewrules.Open(reviewrules.Dir(), reviewrules.VaultDir(), reviewrules.ConfigFromEnv())
+	rulesCfg, rulesOn := reviewRulesPolicy(cfg)
+	if reviewRuleStore == nil && rulesOn {
+		rs, err := reviewrules.Open(reviewrules.Dir(), reviewrules.VaultDir(), rulesCfg)
 		if err != nil {
 			logger.Warn("review feedback: rule index unreadable or not writable; rules kept in memory only", "dir", reviewrules.Dir(), "error", err)
 		}
 		reviewRuleStore = rs
 	}
 	if reviewRuleStore != nil {
+		// Settings changes apply on the next pass, without a restart.
+		reviewRuleStore.SetConfig(rulesCfg)
 		for _, line := range reviewRuleStore.Reconcile(now) {
 			logger.Info("review feedback: rule changed by an operator", "change", line)
 		}
@@ -508,7 +552,7 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		Cursor:       reviewFeedbackCursor,
 		Now:          now,
 		Logger:       logger,
-		Rules:        reviewRuleStore,
+		Rules:        activeRuleStore(reviewRuleStore, rulesOn),
 		Lane:         cfg.BaseAgentName,
 		Managed:      cfg.IsManagedRepo,
 		Route: func(owner string) reviewFeedbackRoute {
