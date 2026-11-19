@@ -292,17 +292,11 @@ func (c *Engine) recoverByUpdateBranch(ctx context.Context, store *stagelabels.S
 		if wait := preparationWaitReason(err); wait != "" {
 			return adoptionRecovery{Deferred: true, Reason: adoptionRecoverySkipPrefix + wait}, true
 		}
-		var out adoptionRecovery
-		switch classifyUpdateBranchError(err, fork) {
-		case updateBranchUpToDate:
+		class := classifyUpdateBranchError(err, fork)
+		if class == updateBranchUpToDate {
 			return adoptionRecovery{}, false
-		case updateBranchForkNotEditable:
-			out = adoptionRecoverySkipped("fork-not-editable")
-		case updateBranchConflict:
-			out = adoptionRecoverySkipped("conflict")
-		default:
-			out = adoptionRecoverySkipped("update-branch-failed")
 		}
+		out := adoptionRecoverySkipped(adoptionRecoveryUpdateBranchSkip(class))
 		c.warn("adopted PR recovery", append(logArgs, "reason", out.Reason, "error", err)...)
 		return out, true
 	}
@@ -315,6 +309,25 @@ func (c *Engine) recoverByUpdateBranch(ctx context.Context, store *stagelabels.S
 		}
 	}
 	return adoptionRecovery{Attempted: true, Reason: adoptionRecoveryUpdateBranch}, true
+}
+
+// adoptionRecoveryUpdateBranchSkip names why a refused update-branch left
+// the adopted head as it was. A workflow-file refusal gets the merge
+// sweep's own reason (fork-workflow-update on a fork head the App cannot
+// push workflow files to, workflow-permission on a branch of the base
+// repository when the token lacks the grant), not the catch-all.
+func adoptionRecoveryUpdateBranchSkip(class updateBranchFailure) string {
+	switch class {
+	case updateBranchForkNotEditable:
+		return "fork-not-editable"
+	case updateBranchConflict:
+		return "conflict"
+	case updateBranchForkWorkflowUpdate:
+		return autoMergeReasonForkWorkflowUpdate
+	case updateBranchWorkflowPermission:
+		return autoMergeReasonWorkflowPermission
+	}
+	return "update-branch-failed"
 }
 
 // recoverByRerun re-runs the failed jobs of the latest failed run of every

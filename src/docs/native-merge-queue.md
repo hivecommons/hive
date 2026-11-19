@@ -231,6 +231,19 @@ behind head gets the update-branch the bypass skipped, and any other head
 reports `native-merge-queue-rejected` until it changes or a person acts. A
 removal by the hive itself or by a person is not counted.
 
+"Behind" here is read from a compare of the head with its base, not only
+from `mergeable_state`: a base whose rules do not require up-to-date branches
+reports a behind PR as `blocked`. When the removal reason is `failed_checks`
+and the head is behind, the mark does not lapse after 30 minutes. A head
+stays behind until it changes, so the hive keeps trying the update-branch
+instead of queueing the same head again
+([projectbluefin/utah-packages#1217](https://github.com/projectbluefin/utah-packages/pull/1217)
+was re-queued about every 35 minutes for 12 hours). If GitHub refuses the update,
+the PR reports why, for example `workflow-permission` at
+`stage/085-needs-decision`, and waits for a person to update the branch, or
+for a new base to retry the update against. Any other removal reason, and a
+head that is not behind, keeps the 30-minute recheck.
+
 ## API cost
 
 Each `isMergeQueueEnabled` probe is a GraphQL read. The answer is cached per

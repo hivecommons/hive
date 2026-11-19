@@ -325,8 +325,9 @@ func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequ
 		return "head-changed-since-eval", nil
 	}
 	// The queue already turned this exact head away. A behind head is
-	// updated on the next pass (nativeQueueSkipsCurrentBase); any other
-	// head waits here instead of buying the same merge-group run again.
+	// updated on the next pass (nativeQueueSkipsCurrentBase,
+	// nativeQueueRejectedHeadBehind); any other head waits here instead of
+	// buying the same merge-group run again.
 	if c.nativeQueueHeadRejected(claim.Repo, pr.GetNumber(), state) {
 		return nativeQueueReasonRejected, nil
 	}

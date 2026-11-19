@@ -1728,7 +1728,11 @@ maintainers may edit) or re-runs the failed workflow jobs when it is current,
 at most once per (head, base tip) and three times per adoption, logged as
 `adopted PR recovery` with `reason=update-branch`, `rerun-failed-jobs` or
 `skipped:<why>` (`skipped:dependency-bot-branch` for a behind `renovate/*` or
-dependency-bot branch, which is never updated); an escalation already in place for that head is released
+dependency-bot branch, which is never updated; `skipped:fork-workflow-update`
+when the base changed `.github/workflows/` and the head is in a fork, which
+GitHub refuses to update for any App whatever the base installation grants;
+`skipped:workflow-permission` when a branch of the base repository was refused
+because the token lacks `workflows: write`); an escalation already in place for that head is released
 (hivecommons/hive#14500). An adoption with nothing the hive can
 push past the dwell — after that recovery was tried and the head is still
 red — goes to `stage/085-needs-decision` as

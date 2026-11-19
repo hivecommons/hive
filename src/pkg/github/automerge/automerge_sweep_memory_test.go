@@ -21,6 +21,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -227,6 +228,57 @@ func TestMergeTrainSkipLoggedOnceAcrossSweeps(t *testing.T) {
 	}
 }
 
+// A lane's human-merge verdict on a head keeps the PR out of the train on
+// every engine over the client, not only on the one that reached it.
+// projectbluefin utah-packages#1222 (a github-actions bot PR, no linked
+// issue) sat at 090 after the long-lived loop's contributor lane said
+// `contributor-lane:no-linked-issue`; the per-minute one-shot engine had
+// no verdict, read the 090 stage record as ready, and parked the PR as
+// `merge-train:queued-behind#1217` at 080. The dampener suppressed the
+// 080/090 flip 51 times in 3.5 h.
+func TestMergeTrainHumanMergeVerdictSharedAcrossSweeps(t *testing.T) {
+	api := &mergeTrainAPI{
+		files: map[int][]string{1217: {"config/upstream-sources.json"}, 1222: {"config/upstream-sources.json"}},
+		state: map[int]string{1217: "clean", 1222: "clean"},
+	}
+	srv := newMergeTrainServer(t, api)
+	defer srv.Close()
+	store := stagelabels.NewStore("", nil)
+	tick := sweepTickEngines(srv.URL, Options{
+		StageStore: store,
+		MergeTrain: func() MergeTrainPolicy { return DefaultMergeTrainPolicy },
+	})
+	t0 := time.Date(2026, 11, 19, 13, 30, 0, 0, time.UTC)
+	front, bot := mtPR(1217, t0, "clean"), mtPR(1222, t0.Add(time.Hour), "clean")
+	prs := []*gh.PullRequest{front, bot}
+	plan := func(e *Engine) *mergeTrainPlan {
+		return e.planMergeTrains(context.Background(), stageLaneContributor, "acme/widget", "acme", "widget", prs, func(*gh.PullRequest) string { return "" })
+	}
+
+	// The long-lived loop's contributor lane: #1217 ready, #1222 a
+	// person's merge, recorded at 090.
+	loop := tick()
+	mtReady(loop, stageLaneContributor, front)
+	loop.noteMergeTrainOutcome(stageLaneContributor, "acme", "widget", 1222, bot.GetHead().GetSHA(), prstage.ContributorLaneReasonNoLinkedIssue)
+	store.Observe(stagelabels.Key("acme/widget", 1222), stagelabels.ReadyForHumanMerge, prstage.ContributorLaneReasonNoLinkedIssue)
+
+	for i := 1; i <= 3; i++ {
+		p := plan(tick())
+		if p.isFront(1222) || p.isSibling(1222) || p.isCandidate(1222) {
+			t.Fatalf("one-shot sweep %d put the human-merge PR in a train: front=%v sibling=%v candidate=%v", i, p.isFront(1222), p.isSibling(1222), p.isCandidate(1222))
+		}
+	}
+	if p := plan(loop); p.isSibling(1222) || p.isFront(1222) {
+		t.Fatal("the long-lived engine put the human-merge PR in a train")
+	}
+
+	// A new head starts clean: the old head's verdict does not hold it out.
+	bot.Head.SHA = gh.Ptr("sha1222-2")
+	if got := tick().mergeTrainHeadHumanMerge(stageLaneContributor, "acme", "widget", 1222, bot.GetHead().GetSHA()); got {
+		t.Fatal("a verdict on the old head held the new head out of the train")
+	}
+}
+
 // Engines over one client share the memory; a read-only integration probe
 // and an engine over a transport that keeps no state each get their own.
 func TestSweepMemorySharedPerClient(t *testing.T) {
@@ -241,6 +293,13 @@ func TestSweepMemorySharedPerClient(t *testing.T) {
 	}
 	if !first.markMergeForwardOnce("k") || second.markMergeForwardOnce("k") || !probe.markMergeForwardOnce("k") {
 		t.Fatal("once marks do not follow the shared memory")
+	}
+	first.noteMergeTrainOutcome(stageLaneContributor, "acme", "widget", 7, "sha7", prstage.ContributorLaneReasonNoLinkedIssue)
+	if !second.mergeTrainHeadHumanMerge(stageLaneContributor, "acme", "widget", 7, "sha7") {
+		t.Fatal("a merge-train verdict does not follow the shared memory")
+	}
+	if probe.mergeTrainHeadHumanMerge(stageLaneContributor, "acme", "widget", 7, "sha7") {
+		t.Fatal("the read-only integration probe reads the sweeps' merge-train verdicts")
 	}
 	other := sweepTickEngines("http://127.0.0.1:0", Options{})()
 	if other.memory() == first.memory() {
