@@ -74,6 +74,9 @@ func TestStageBaseRedRemembered(t *testing.T) {
 	if got := stageBaseRedRemembered("acme/widget", "main"); got != nil {
 		t.Fatalf("nothing published: %v", got)
 	}
+	if stageBaseRedRememberedReady() {
+		t.Fatal("ready before any publish")
+	}
 	publishStageBaseRedMemory(map[string][]string{github.BaseRedRememberedKey("acme/widget", "main"): {"Tests Passed", "Unit Tests"}})
 	if got := stageBaseRedRemembered("Acme/Widget", "main"); len(got) != 2 || got[0] != "Tests Passed" || got[1] != "Unit Tests" {
 		t.Fatalf("remembered = %v", got)
@@ -84,6 +87,9 @@ func TestStageBaseRedRemembered(t *testing.T) {
 	publishStageBaseRedMemory(nil)
 	if got := stageBaseRedRemembered("acme/widget", "main"); len(got) != 0 {
 		t.Fatalf("after an empty publish: %v", got)
+	}
+	if !stageBaseRedRememberedReady() {
+		t.Fatal("an empty publish is still a publish")
 	}
 }
 

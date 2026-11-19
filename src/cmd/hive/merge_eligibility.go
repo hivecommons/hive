@@ -167,6 +167,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			SharedCIIncident:          stageSharedCIIncident,
 			BaseBranchRed:             stageBaseBranchRed,
 			BaseRedRemembered:         stageBaseRedRemembered,
+			BaseRedRememberedReady:    stageBaseRedRememberedReady,
 			ForkGuard:                 stageForkGuard,
 			HeldWorkflowRuns:          stageHeldWorkflowRuns,
 			DCORequired:               stage.DCO.RequiredFor,

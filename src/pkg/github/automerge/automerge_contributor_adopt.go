@@ -951,6 +951,22 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	if !due {
 		return 0, nil
 	}
+	if !requested && !forced && !stageBaseRedRememberedReady(policy) {
+		// Until the first CI-enriched enumeration after a start publishes
+		// the base-red memory and index, a base's own red (and an open
+		// [shared-ci] incident) cannot be told from the PR's: on
+		// projectbluefin/common#1689 an automatic adoption nine minutes
+		// after a restart superseded a PR red only on main's E2E check. The
+		// stage pass's base tip read can miss a run still in progress, a
+		// tip without the check, or a failed read, and adoption cannot be
+		// undone, so an automatic one waits for the publish. Nothing is
+		// recorded; an operator's Adopt now or adopt-supersede request is
+		// not held.
+		if c.markAdoptionAwaitingBaseRedLogged(obs, reason, now) {
+			c.info("stage labels: adoption deferred until the base-red memory is published", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", reason)
+		}
+		return 0, nil
+	}
 	if !requested && !forced && adoptionForkGuardOnly(obs) {
 		// The guard asks a maintainer to publish the branch; an in-place
 		// push cannot turn it green and an automatic copy would publish it
@@ -2029,6 +2045,14 @@ func personAuthored(obs stageObservation, policy StageLabelPolicy) bool {
 // same head about once a minute).
 func (c *Engine) markPersonAdoptionRefusalLogged(obs stageObservation, reason string, requested bool, now time.Time) bool {
 	key := c.evaluatedHeadKey(obs.Owner, obs.Repo, obs.Number) + "@" + strings.ToLower(obs.HeadSHA) + "#adopt-refused-person@" + reason + "@requested=" + strconv.FormatBool(requested)
+	return c.memory().markHoldLogged(key, now)
+}
+
+// markAdoptionAwaitingBaseRedLogged records that an automatic adoption
+// deferred for the unpublished base-red memory was logged for this PR head
+// and due reason, and reports whether this is the first report.
+func (c *Engine) markAdoptionAwaitingBaseRedLogged(obs stageObservation, reason string, now time.Time) bool {
+	key := c.evaluatedHeadKey(obs.Owner, obs.Repo, obs.Number) + "@" + strings.ToLower(obs.HeadSHA) + "#adopt-awaiting-base-red@" + reason
 	return c.memory().markHoldLogged(key, now)
 }
 
