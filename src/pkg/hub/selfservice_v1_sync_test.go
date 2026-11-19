@@ -107,6 +107,9 @@ func TestHubV1SyncReposRefusesOutOfScopeRequests(t *testing.T) {
 	if rec := env.syncRepos(id, key, foreignETag, body); rec.Code != http.StatusPreconditionFailed || rec.Header().Get("ETag") != etag {
 		t.Fatalf("stale If-Match: %d %s", rec.Code, rec.Body.String())
 	}
+	if rec := env.syncRepos(id, key, etag, body); rec.Code != http.StatusBadRequest {
+		t.Fatalf("all-new repo list: %d %s", rec.Code, rec.Body.String())
+	}
 	if env.etagOf(t, id) != etag || env.etagOf(t, foreignID) != foreignETag {
 		t.Fatal("refused requests changed a registration")
 	}

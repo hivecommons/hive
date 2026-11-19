@@ -158,6 +158,9 @@ func hubV1ApplySyncRepos(h *SelfServiceHive, data []byte) *hubV1PatchRefusal {
 			pending = append(pending, repo)
 		}
 	}
+	if len(active) == 0 {
+		return hubV1Refuse(http.StatusBadRequest, "sync-repos must keep at least one already-proven repo active")
+	}
 	h.Repos = active
 	h.PendingProof = pending
 	h.RepoProofs = selfServiceProofTimes(h.RepoProofs, active, h.OwnershipCheckedAt, time.Time{}, nil)
