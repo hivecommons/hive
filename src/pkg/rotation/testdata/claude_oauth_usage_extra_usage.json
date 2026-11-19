@@ -1,0 +1,38 @@
+{
+  "five_hour": null,
+  "seven_day": {"utilization": 46.0, "resets_at": "2026-11-23T07:00:00.786379+00:00"},
+  "limits": [
+    {"kind": "weekly_all", "group": "weekly", "percent": 46, "severity": "normal", "resets_at": "2026-11-23T07:00:00.786379+00:00", "scope": null, "is_active": true},
+    {"kind": "weekly_scoped", "group": "weekly", "percent": 0, "severity": "normal", "resets_at": "2026-11-23T07:00:00+00:00", "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null}, "is_active": false}
+  ],
+  "extra_usage": {
+    "is_enabled": true,
+    "monthly_limit": 35000,
+    "used_credits": 0.0,
+    "utilization": null,
+    "currency": "USD",
+    "decimal_places": 2,
+    "disabled_reason": null,
+    "user_disabled": false,
+    "spend_limit_reached": false,
+    "credits_ever_enabled": true,
+    "daily": null,
+    "weekly": null
+  },
+  "spend": {
+    "used": {"amount_minor": 0, "currency": "USD", "exponent": 2},
+    "limit": {"amount_minor": 35000, "currency": "USD", "exponent": 2},
+    "percent": 0,
+    "severity": "normal",
+    "enabled": true,
+    "disabled_reason": null,
+    "cap": {"money": null, "credits": {"amount_minor": 35000, "exponent": 2}},
+    "balance": null,
+    "auto_reload": null,
+    "disclaimer": "Usage credits cover you when you hit your plan limits. [Learn more](https://support.claude.com/articles/12429409)",
+    "can_purchase_credits": false,
+    "can_toggle": false
+  },
+  "promo_credits": null,
+  "member_dashboard_available": false
+}

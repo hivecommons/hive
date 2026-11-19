@@ -56,6 +56,14 @@ available it should replace this file. The adapter's behaviour on an
 unrecognized schema (an empty/percent-less `limits` array) is pinned separately
 by `TestClaudeHeadroomRejectsUnrecognizedSchema`.
 
+`claude_oauth_usage_extra_usage.json` is shaped like a live response from the
+same endpoint (shape captured from a live response 2026-11-19, read-only;
+identifiers dropped, and the many feature keys that came back null are left
+out). Next to `limits` it carries the `extra_usage` and `spend` objects the
+prober reads for Claude's extra usage (usage credits): enabled, $0.00 used of a
+$350.00 monthly cap, in minor units with an exponent. `spend.balance` was null
+and no field reported banked limit resets, so neither is read.
+
 # Agy usage fixture
 
 `agy_usage.json` is a **real recorded payload** of
