@@ -72,6 +72,7 @@ type HealthVerdict struct {
 func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth, queuedWork int, now time.Time) HealthVerdict {
 	v := hiveHealthBase(e, rollup, app, queuedWork, now)
 	v = applyDetectorStates(v, e)
+	v = applyPRGate(v, e)
 	attachRemediation(&v, e)
 	return v
 }

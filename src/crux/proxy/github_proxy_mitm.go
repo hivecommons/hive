@@ -359,6 +359,14 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		if isLinear && agentName != internalCallerName {
 			p.injectLinearCredential(req, agentName, mode)
 		}
+		// #19103: an allowed agent write's text fields get the same dash
+		// rewrite hive's own writes get, after every gate has read the body
+		// as the agent sent it. Git smart-HTTP traffic is never touched.
+		if err := p.sanitizeAgentWriteProse(req, agentName, isLinear); err != nil {
+			_ = client.SetReadDeadline(time.Time{})
+			p.logTimeout("proxy prose-filter body read timed out", err, "agent", agentName, "path", req.URL.Path)
+			return
+		}
 		// Git smart HTTP uses chunked streaming that http.ReadResponse
 		// can't handle reliably. After the ACMM check passes, forward
 		// the request and switch to raw bidirectional streaming.

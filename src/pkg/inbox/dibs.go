@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // dibsTimeout bounds one idea submission.
@@ -51,8 +53,8 @@ func (d *DibsDestination) Deliver(ctx context.Context, it Item, c Content, _ Req
 	}
 	body := DibsBody(it, c)
 	payload, _ := json.Marshal(dibsIdea{
-		Title:      firstNonEmpty(c.Title, it.Title),
-		Body:       body,
+		Title:      prosefilter.SanitizeTitle(firstNonEmpty(c.Title, it.Title)),
+		Body:       prosefilter.Sanitize(body),
 		Visibility: "private",
 		Status:     "draft",
 	})
