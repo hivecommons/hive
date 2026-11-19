@@ -113,7 +113,9 @@ func TestDelegatedDecisionPlanMergeableAsIsOffersMerge(t *testing.T) {
 	if plan.Would != string(delegatedecision.VerdictApprove) || plan.Ladder == nil || plan.Ladder.Decision != delegatedecision.RuleMergeableAsIs || !plan.MergeableAsIs {
 		t.Fatalf("plan = %+v ladder=%+v", plan, plan.Ladder)
 	}
-	if plan.Summary != "Approve #8 as it is and let the merge queue merge it." || strings.Contains(plan.Summary, "Hive would") {
+	// The test hive runs at ACMM L2, where auto-merge is off for every
+	// repo: the plan names the person's merge, never the merge queue.
+	if plan.Summary != "Approve #8 as it is; a person merges it — auto-merge is off for this repo." || strings.Contains(plan.Summary, "Hive would") {
 		t.Fatalf("summary %q", plan.Summary)
 	}
 	if len(plan.Alternatives) == 0 || plan.Alternatives[0].Action != decisionActionMergeNow || plan.Alternatives[0].Label != decisionMergeNowLabel || !plan.Alternatives[0].Enabled {
