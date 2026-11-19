@@ -1,1 +1,0 @@
-- The issue un-park sweep now treats a maintainer's first line of `Decision: <text>` (or `Decision (owner): <text>`) on a parked issue as `/hive decision <text>`, and replies with the `/hive decision` hint to `option N`, `decide` and bare option-letter comments instead of ignoring them ([#19155](https://github.com/hivecommons/hive/issues/19155)).

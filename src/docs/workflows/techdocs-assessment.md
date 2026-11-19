@@ -453,7 +453,10 @@ file. Its findings go back to the drafter, which revises the same branch, for a 
 number of rounds.
 
 It is off by default and the model does not turn it on: the qualifying agents and labels are
-the operator's choice in `hive.yaml`. For a hive bound to `cncf/techdocs`, for example:
+the operator's choice in `hive.yaml`. There is no Settings control for this block. See
+[Editing `hive.yaml`](../editing-hive-yaml.md) for where to make the change and how to
+apply it, including what to ask for if you only have the hosted dashboard. For a hive
+bound to `cncf/techdocs`, for example:
 
 ```yaml
 review:

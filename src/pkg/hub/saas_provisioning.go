@@ -271,9 +271,9 @@ func enrichProvisionRequests(requests []ProvisionRequest) []ProvisionRequest {
 // messaging shipped with no user having a slack_id, settable only by hand one
 // user at a time; approval is the natural point of capture.
 //
-// It only ever FILLS A BLANK. An admin who has already curated these fields (or
-// a user who corrected them later) outranks whatever was typed into a request
-// form, and a re-approval must not silently revert that.
+// It fills blank name and Slack fields without undoing an explicit name clear.
+// A wizard country can replace an admin assignment or inference, but not a
+// user choice already on the record: approval may lag behind a profile edit.
 //
 // Nil-safe on both sides: it runs on the approval path beside other work that
 // can legitimately leave either side absent, and must not panic there.
@@ -281,22 +281,18 @@ func applyRequestContactToUser(user *SaaSUser, pr *ProvisionRequest) {
 	if user == nil || pr == nil {
 		return
 	}
-	if user.FullName == "" && pr.FullName != "" {
-		user.FullName = truncateRunes(strings.TrimSpace(pr.FullName), maxContactNameLen)
+	if name := strings.TrimSpace(pr.FullName); name != "" && user.FullName == "" &&
+		profileProvenanceRank(user.FullNameSource) < profileProvenanceRank(countrySourceUser) {
+		user.FullName = truncateRunes(name, maxContactNameLen)
+		user.FullNameSource = countrySourceUser
 	}
 	if user.SlackID == "" && pr.SlackID != "" {
 		user.SlackID = truncateRunes(strings.TrimSpace(pr.SlackID), maxContactSlackIDLen)
 	}
-	// The explicit pick outranks anything Accept-Language inferred at login, so
-	// unlike the two fields above this one overwrites a value already on the
-	// record — but only when the request actually carries a choice. Re-normalize
-	// rather than trusting the stored request: it may predate the validation.
-	if code := normalizeCountryCode(pr.Country); code != "" {
-		// The wizard pick is a deliberate statement BY THE USER, so it carries
-		// the same provenance the self-service endpoint stamps. Without this,
-		// an approval would leave the record looking "inferred", and the
-		// priority rule would hold only by the accident of the value being
-		// non-empty.
+	// A request's repository owner (Org) is not the requester's company.
+	// Re-normalize the country rather than trusting older stored requests.
+	if code := normalizeCountryCode(pr.Country); code != "" &&
+		profileProvenanceRank(effectiveCountrySource(user)) < profileProvenanceRank(countrySourceUser) {
 		setUserCountry(user, code, countrySourceUser)
 	}
 }
@@ -792,6 +788,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	// Manage Access — only the admin who provisioned the placeholder did — and
 	// on a heartbeat-only cluster (the heartbeat-only cluster) that stale list is what gets
 	// delivered to the spoke.
+	customerProfileMu.Lock()
 	user := loadSaaSUser(targetUsername)
 	if user == nil {
 		user = ensureSaaSUser(targetUsername)
@@ -805,6 +802,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	if err := saveSaaSUser(user); err != nil {
 		s.logger.Warn("assigned placeholder but failed to grant owner access", "user", targetUsername, "hive", hiveID, "error", err)
 	}
+	customerProfileMu.Unlock()
 
 	// Mark the request fulfilled, recording who approved it and which hive the
 	// requester actually received — that pairing is the whole point of the

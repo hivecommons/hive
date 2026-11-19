@@ -97,3 +97,18 @@ func TestSentinelBehaviorsAndDefaultPaths(t *testing.T) {
 		t.Fatal("DefaultSentinelSensitivePaths must return a copy")
 	}
 }
+
+func TestSentinelLabelDescriptionFitsGitHubLimit(t *testing.T) {
+	d := DefaultSentinelLabelDescription
+	if len(d) > GitHubLabelDescriptionMax {
+		t.Fatalf("description is %d bytes, over the %d-byte GitHub label cap: %q", len(d), GitHubLabelDescriptionMax, d)
+	}
+	for _, dash := range []string{"—", "–"} {
+		if strings.Contains(d, dash) {
+			t.Fatalf("description contains a forbidden dash %q: %q", dash, d)
+		}
+	}
+	if len(LegacySentinelLabelDescription) <= GitHubLabelDescriptionMax {
+		t.Fatal("legacy description should be the over-long pre-fix text")
+	}
+}

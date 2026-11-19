@@ -2,6 +2,9 @@
 
 Part of the [Dashboard REST API reference](../api-reference.md); see that page for how auth levels and `pkg/<file>:<line>` source citations are read and checked. Edit this file for routes in this area and run `src/scripts/check-api-reference-citations.sh --fix` to resync citations.
 
+For dashboard instructions and the difference between raw YAML and effective
+JSON, see [Editing `hive.yaml`](../editing-hive-yaml.md#view-yaml-or-export-effective-config).
+
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|

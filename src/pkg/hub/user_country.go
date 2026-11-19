@@ -40,12 +40,12 @@ const (
 	countrySourceUser = "user"
 )
 
-// countryProvenanceRank maps a source to its strength. Higher wins.
+// profileProvenanceRank maps a source to its strength. Higher wins.
 //
 // Ranks rather than a chain of if-statements at each call site, so "user beats
 // admin beats inference" is asserted in exactly one place and a future source
 // slots in by picking a number instead of by auditing every comparison.
-func countryProvenanceRank(source string) int {
+func profileProvenanceRank(source string) int {
 	switch source {
 	case countrySourceUser:
 		return 3
@@ -99,7 +99,11 @@ func effectiveCountrySource(user *SaaSUser) string {
 // stronger existing claim blocks the write — which is the whole precedence rule
 // (user > admin > inferred > unset) in one line.
 func mayOverwriteCountry(user *SaaSUser, source string) bool {
-	return countryProvenanceRank(source) >= countryProvenanceRank(effectiveCountrySource(user))
+	return mayOverwriteProfileSource(effectiveCountrySource(user), source)
+}
+
+func mayOverwriteProfileSource(current, incoming string) bool {
+	return profileProvenanceRank(incoming) >= profileProvenanceRank(current)
 }
 
 // setUserCountry is the ONE place a country and its provenance are written
@@ -315,13 +319,12 @@ func (s *HubServer) handleMyCountry(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusUnauthorized, "not authenticated")
 		return
 	}
-	user := loadSaaSUser(username)
-	if user == nil {
-		writeJSONError(w, http.StatusUnauthorized, "unknown user — please log in again")
-		return
-	}
-
 	if r.Method == http.MethodGet {
+		user := loadSaaSUser(username)
+		if user == nil {
+			writeJSONError(w, http.StatusUnauthorized, "unknown user — please log in again")
+			return
+		}
 		writeMyCountry(w, user)
 		return
 	}
@@ -350,6 +353,14 @@ func (s *HubServer) handleMyCountry(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "country must be an ISO 3166-1 alpha-2 code (two letters), or \"\" to clear it")
 			return
 		}
+	}
+
+	customerProfileMu.Lock()
+	defer customerProfileMu.Unlock()
+	user := loadSaaSUser(username)
+	if user == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unknown user — please log in again")
+		return
 	}
 
 	// Both a pick and a clear are deliberate, so BOTH stamp countrySourceUser
