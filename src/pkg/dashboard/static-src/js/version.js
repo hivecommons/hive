@@ -655,8 +655,8 @@
       if (st.completedAt) return '✅ Upgraded to ' + target + (elapsed ? ' · ' + elapsed : '');
       const mu = v && v.manualUpgrade;
       const um = v && v.upgradeMarker;
-      if ((mu && mu.state === 'failed') || (um && um.failed)) return '⚠ upgrade failed — check Audit Log';
-      if (st.overdue) return '⚠ upgrade taking longer than expected — <a href="#audit-section" data-action="ocNavigate" data-arg0="audit-section">check Audit Log</a>' + (elapsed ? ' · ' + escapeHtml(elapsed) : '');
+      if ((mu && mu.state === 'failed') || (um && um.failed)) return '⚠ upgrade failed — check Audit log';
+      if (st.overdue) return '⚠ upgrade taking longer than expected — <a href="#audit-section" data-action="ocNavigate" data-arg0="audit-section">check Audit log</a>' + (elapsed ? ' · ' + escapeHtml(elapsed) : '');
       let phase = 'queued';
       if (v && v.stableV4ImageReady === false) phase = 'building';
       else if (um && !um.failed) phase = 'restarting';

@@ -145,8 +145,9 @@
     .oc-waiting-on-you[hidden] { display: none; }
     #oc-settings-btn { flex: 0 0 auto; }
     .oc-topbar .git-version { color: var(--muted); }
-    .oc-health-badge, #welcome-topbar-btn, #oc-gh-avatar-wrap { flex: 0 0 auto; }
-    #oc-gh-avatar-wrap { position: relative; }
+    .oc-health-badge, #welcome-topbar-btn, #oc-help-menu-wrap, #oc-gh-avatar-wrap { flex: 0 0 auto; }
+    #oc-gh-avatar-wrap, #oc-help-menu-wrap { position: relative; }
+    #welcome-topbar-btn .nav-chip__caret { font-size: var(--fs-2xs); opacity: 0.8; }
     #oc-gh-avatar-wrap.layout-unsaved::after { content: ''; position: absolute; top: calc(-1 * var(--sp-1)); right: calc(-1 * var(--sp-1)); width: var(--sp-3); height: var(--sp-3); border-radius: var(--r-pill); background: var(--amber); border: var(--line-width) solid var(--panel); box-shadow: var(--shadow-soft); }
     #oc-gh-avatar { object-fit: cover; cursor: pointer; border-color: var(--green); vertical-align: middle; }
     .oc-gh-avatar-btn { display: inline-flex; flex: 0 0 auto; align-items: center; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: 0; cursor: pointer; border-radius: var(--r-pill); }
@@ -214,7 +215,7 @@
       .oc-topbar-center { justify-content: center; }
       #oc-project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #acmm-badge, #fleet-breaker-wrap, .oc-topbar-center, .oc-health-badge,
-      #welcome-topbar-btn, .widget-dl, #oc-gh-avatar-wrap { flex: 0 0 auto; }
+      #welcome-topbar-btn, #oc-help-menu-wrap, .widget-dl, #oc-gh-avatar-wrap { flex: 0 0 auto; }
       .oc-topbar-right { justify-content: flex-end; flex-wrap: nowrap; overflow: visible; }
       .oc-topbar-right .widget-dl { margin-left: var(--sp-0); margin-right: var(--sp-0); }
     }

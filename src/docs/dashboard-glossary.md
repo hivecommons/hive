@@ -58,13 +58,20 @@ The operator sidebar keeps the existing destinations, IDs, `data-action` handler
 | --- | --- |
 | Dashboard | Overview, Governor, Throughput |
 | Collaborate | Inbox, Calendar, Meetings, Customers, Inception (spek) |
-| Agents | Dynamic agent tree, `+ Add agent`, `+ Group` |
+| Agents | Control panel, Activity, then **All agents (n)**: the collapsible agent tree with `+ Add agent` and `+ Group`. Collapsing All agents keeps Control panel and Activity visible. |
 | Resources | Projects, Contributors |
 | Intelligence | Advisory, ACMM Eval, Knowledge, Experiment Lab |
-| Admin | Tokens, Cost, Review, Agents, Agent activity, Audit Log, Diagnostics |
-| Help | FAQ, Getting Started, API Spec (Redoc), Getting Started Guide, Join our Discord, Report an Issue |
+| Pull requests | Review, PR timeline |
+| Usage | Tokens, Cost |
+| Troubleshooting | Diagnostics, Audit log |
+| Help | Getting started, FAQ, Docs, API reference, Report an issue |
+| Community | Discord, Live on Twitch |
 
-Links stay in the group they are listed under here: reordering Dashboard sections (the sidebar grip or a saved layout) only reorders the Dashboard group, never moves a Collaborate, Resources, Intelligence, Admin or Help link into it. On the v6 line the sidebar also lists Runs and Platform. Sections hidden by the ACMM level or a feature setting are hidden from the sidebar too.
+The top bar **? Help** menu lists the same Help entries with the same targets: Getting started, Docs, FAQ and Report an issue. Getting started (the setup checklist, which links to the full guide on docs.hivecommons.dev) shows only for users who can change the hive.
+
+Earlier versions grouped Tokens, Cost, Review, Agents, Agent activity, Audit Log, Lifecycle Timeline and Diagnostics under Admin; the sections, their ids and route hashes are unchanged, only the labels (Agents is now Control panel, Agent activity is Activity, Lifecycle Timeline is PR timeline, Audit Log is Audit log) and groups moved.
+
+Links stay in the group they are listed under here: reordering Dashboard sections (the sidebar grip or a saved layout) only reorders the Dashboard group, never moves a Collaborate, Agents, Resources, Intelligence, Pull requests, Usage, Troubleshooting, Help or Community link into it. On the v6 line the sidebar also lists Runs and Platform. Sections hidden by the ACMM level or a feature setting are hidden from the sidebar too.
 
 Count badges use the shared `.badge-count` recipe. Zero counts render as dimmed `0` badges with `data-zero`.
 

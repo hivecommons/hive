@@ -13,23 +13,22 @@ import (
 
 func TestReviewSectionNavAndSubsectionOrder(t *testing.T) {
 	html := indexHTML(t)
-	navStart := strings.Index(html, `<div class="oc-nav-group">
-      <div class="oc-nav-label">Admin</div>`)
+	navStart := strings.Index(html, `<div class="oc-nav-group" id="pull-requests-nav-group">
+      <div class="oc-nav-label">Pull requests</div>`)
 	if navStart < 0 {
-		t.Fatal("admin nav group not found")
+		t.Fatal("Pull requests nav group not found")
 	}
-	navEnd := strings.Index(html[navStart:], `<div class="oc-nav-group">
-      <div class="oc-nav-label">Help</div>`)
+	navEnd := strings.Index(html[navStart+1:], `<div class="oc-nav-group"`)
 	if navEnd < 0 {
-		t.Fatal("admin nav group end not found")
+		t.Fatal("Pull requests nav group end not found")
 	}
-	nav := html[navStart : navStart+navEnd]
+	nav := html[navStart : navStart+1+navEnd]
 	if !strings.Contains(nav, `<span class="oc-nav-text">Review</span>`) {
-		t.Fatal("admin nav must contain Review")
+		t.Fatal("Pull requests nav must contain Review")
 	}
 	for _, forbidden := range []string{`<span class="oc-nav-text">Review Queue</span>`, `<span class="oc-nav-text">Review Pipeline</span>`, `data-section="review-pipeline-section"`} {
 		if strings.Contains(nav, forbidden) {
-			t.Fatalf("admin nav still contains standalone review entry %q", forbidden)
+			t.Fatalf("Pull requests nav still contains standalone review entry %q", forbidden)
 		}
 	}
 	cardStart := strings.Index(html, `id="review-queue-section" data-dashboard-section="review-queue-section"`)
