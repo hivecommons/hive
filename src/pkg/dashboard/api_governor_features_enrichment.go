@@ -90,6 +90,7 @@ func featuresEnrichmentResponse(cfg *config.Config) map[string]interface{} {
 		"customersEnrichmentDevstatsEffective":   cfg.CustomersEnrichmentDevstatsEnabled(),
 		"customersEnrichmentCrowdDevEnabled":     e.CrowdDev.IsEnabled(),
 		"customersEnrichmentCrowdDevEffective":   cfg.CustomersEnrichmentCrowdDevEnabled(),
+		"customersEnrichmentCrowdDevTokenSet":    tokErr == nil && tok != "",
 		"customersEnrichmentGitdmRefresh":        e.Gitdm.RefreshInterval,
 		"customersEnrichmentDevstatsHourlyLimit": e.Devstats.HourlyLimit,
 		"customersEnrichmentDefaults": map[string]interface{}{
