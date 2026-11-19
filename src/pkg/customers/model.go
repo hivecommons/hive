@@ -2,7 +2,8 @@
 // customer, the identities that belong to them, their tags, goals and
 // satisfaction, and the edges that tie them to artefacts the hive already
 // holds. Nothing in this package talks to the network, and nothing it stores
-// leaves the hive.
+// leaves the hive; the opt-in hub import (hub_import.go) only sends salted
+// hashes of confirmed GitHub logins, through a caller-supplied HubMatcher.
 //
 // Design record: src/docs/design/customers.md (RFC #18742).
 package customers
@@ -64,6 +65,10 @@ type Source string
 const (
 	SourceAuto   Source = "auto"
 	SourceManual Source = "manual"
+	// SourceHub is a profile field the person entered on the hub and
+	// consented to share with this hive (hub_import.go). It outranks auto
+	// and never overwrites manual.
+	SourceHub Source = "hub"
 )
 
 // Bounds on what one person may hold. They keep people.json small and stop
@@ -285,9 +290,11 @@ var ProfileFields = []string{FieldRealName, FieldOrganization, FieldLocation, Fi
 const ProfileSourceGitHub = "github_profile"
 
 // ProfileField is one optional fact about a person with its provenance, in
-// the shape of a tag's: Source is auto (filled from a public GitHub profile)
-// or manual (a person typed it, possibly to clear it). A manual value always
-// wins; "auto" hands the field back to the automatic source.
+// the shape of a tag's: Source is auto (filled from a public GitHub profile),
+// hub (the person entered it on the hub and consented to share it with this
+// hive) or manual (a person typed it here, possibly to clear it). A manual
+// value always wins, hub outranks auto; "auto" hands the field back to the
+// automatic source.
 type ProfileField struct {
 	Value  string    `json:"value,omitempty"`
 	Source Source    `json:"source,omitempty"`
@@ -296,9 +303,9 @@ type ProfileField struct {
 	By     string    `json:"by,omitempty"`
 }
 
-// Profile holds the optional descriptive fields of a person. All of it is
-// either the person's own public GitHub profile text or typed by a person;
-// nothing here comes from the hub.
+// Profile holds the optional descriptive fields of a person: the person's
+// own public GitHub profile text, what they consented to share from the hub
+// (customers.hub_import, off by default), or what a person typed.
 type Profile struct {
 	RealName     ProfileField `json:"real_name,omitempty"`
 	Organization ProfileField `json:"organization,omitempty"`
