@@ -1,0 +1,1 @@
+- Add a hub Deployment manifest check that rejects unexpected containers and literal OAuth/NPS relay secret env values, and document `-c hub` for container-scoped kubectl.
