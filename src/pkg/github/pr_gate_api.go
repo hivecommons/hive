@@ -17,6 +17,11 @@ type PRGateSubject struct {
 	// State is GitHub's "open" or "closed" (a merged PR reads closed).
 	State string
 	Draft bool
+	// HeadRepo is the head repository's owner/name ("" when the fork was
+	// deleted); Author is the PR author's login. The fork-head canary reads
+	// them to tell same-repo, fork and Dependabot heads apart.
+	HeadRepo string
+	Author   string
 }
 
 // prGateStatusCaller names the PR gate's status writes for REST accounting.
@@ -34,7 +39,8 @@ func (c *Client) ReadPRGateSubject(ctx context.Context, repo string, number int)
 	if err != nil {
 		return PRGateSubject{}, err
 	}
-	return PRGateSubject{HeadSHA: pr.GetHead().GetSHA(), Title: pr.GetTitle(), State: pr.GetState(), Draft: pr.GetDraft()}, nil
+	return PRGateSubject{HeadSHA: pr.GetHead().GetSHA(), Title: pr.GetTitle(), State: pr.GetState(), Draft: pr.GetDraft(),
+		HeadRepo: pr.GetHead().GetRepo().GetFullName(), Author: pr.GetUser().GetLogin()}, nil
 }
 
 // ErrPRGateStatusForbidden marks a gate status write that GitHub refused with

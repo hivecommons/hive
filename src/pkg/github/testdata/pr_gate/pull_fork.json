@@ -1,0 +1,1 @@
+{"number": 31, "state": "open", "draft": false, "title": "🐛 fix crash", "user": {"login": "contributor"}, "head": {"sha": "cccccccccccccccccccccccccccccccccccccccc", "ref": "fix-crash", "repo": {"full_name": "contributor/example-repo"}}, "base": {"ref": "main", "repo": {"full_name": "example-org/example-repo"}}}
