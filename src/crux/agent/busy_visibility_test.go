@@ -401,6 +401,63 @@ func TestBusyNoActivityStallEscalatesOnlyPastRecoveryBars(t *testing.T) {
 	}
 }
 
+// A CLI that never reaches its input prompt after a busy-no-activity restart
+// is a failed boot, not a live turn (#19257): it is restarted again after
+// busyUndeliverableThreshold kicks once the stall cooldown has passed, without
+// waiting out the full recovery bars a second time.
+func TestBusyNoActivityStallRetriesOffPromptPaneAfterRestart(t *testing.T) {
+	now := time.Date(2026, 11, 19, 15, 9, 0, 0, time.UTC)
+	offPrompt := "GitHub Copilot v1.0.88\nLoading environment..."
+	working := "◉ Working (12m 3s · esc interrupt)"
+	restarted := func() *AgentProcess {
+		return &AgentProcess{
+			Name:                    "guide",
+			KicksUndeliverable:      busyUndeliverableThreshold,
+			BusySince:               now.Add(-29 * time.Minute),
+			busyNoActivityRestartAt: now.Add(-39 * time.Minute),
+			busyNoActivityRestarts:  1,
+			lastSessionStallRestart: now.Add(-39 * time.Minute),
+		}
+	}
+
+	got := busyNoActivityStall(restarted(), offPrompt, now)
+	for _, want := range []string{"pane shows no input prompt", "after the previous busy-no-activity restart 39m0s ago", "3 kicks undeliverable"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("post-restart off-prompt reason = %q, want it to contain %q", got, want)
+		}
+	}
+
+	cases := map[string]func(a *AgentProcess) string{
+		"too few kicks": func(a *AgentProcess) string {
+			a.KicksUndeliverable = busyUndeliverableThreshold - 1
+			return offPrompt
+		},
+		"within restart cooldown": func(a *AgentProcess) string {
+			a.lastSessionStallRestart = now.Add(-10 * time.Minute)
+			return offPrompt
+		},
+		"no restart this episode": func(a *AgentProcess) string {
+			a.busyNoActivityRestartAt = time.Time{}
+			return offPrompt
+		},
+		"working pane keeps the full bars": func(a *AgentProcess) string {
+			return working
+		},
+		"input prompt reached": func(a *AgentProcess) string {
+			return "❯ "
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := restarted()
+			pane := mutate(a)
+			if got := busyNoActivityStall(a, pane, now); got != "" {
+				t.Fatalf("busyNoActivityStall = %q, want no escalation", got)
+			}
+		})
+	}
+}
+
 // transcriptRefreshTestManager returns a Manager with one Copilot agent whose
 // session-state tree lives under HOME (UID 0 agents run out of the process
 // HOME), and that HOME.
