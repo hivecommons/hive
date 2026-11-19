@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.337.0)
+
+### Added
+
+- Hub heartbeat feature negotiation (rollout step 5 of [#19056](https://github.com/hivecommons/hive/issues/19056)): a spoke may send `protocol: {version, features}` in its heartbeat, and with `HIVE_HUB_HEARTBEAT_PROTOCOL` on (default off) the hub answers with `protocol: {version, accepted, ignored}`, so a spoke learns which optional features this hub honours instead of guessing from its version. A version below `1` is still accepted, with every feature ignored and `unsupported_version` echoed; a heartbeat without `protocol`, or any heartbeat while the flag is off, is answered exactly as before ([#19237](https://github.com/hivecommons/hive/issues/19237)).
+
 ## 2026-11-19 (v5.336.2)
 
 ### Fixed
