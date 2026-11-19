@@ -77,3 +77,16 @@ type KnowledgeAdviser interface {
 	// result is dropped if the agent's kick has changed by the time it returns.
 	Advise(agent string, scope KnowledgeScope) []KnowledgeAdvice
 }
+
+// KickBoundKnowledgeAdviser is a KnowledgeAdviser that wants the identity of
+// the kick a scope was observed in: the agent's LastKick when the runtime
+// queued the scope. The runtime calls AdviseForKick instead of Advise when
+// the adviser implements it. The in-process adviser has no use for it (it
+// shares the runtime's address space and the runtime drops stale results
+// itself); the sidecar callback adviser sends it so the hive can refuse a
+// call that names a kick the agent is no longer in (hivecommons/hive#17157).
+type KickBoundKnowledgeAdviser interface {
+	KnowledgeAdviser
+	// AdviseForKick is Advise for the kick that started at kickAt.
+	AdviseForKick(agent string, kickAt time.Time, scope KnowledgeScope) []KnowledgeAdvice
+}

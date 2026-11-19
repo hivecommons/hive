@@ -163,6 +163,16 @@ func actionNoun(w []string, i int) (actions.Type, int, bool) {
 		if next == "session" {
 			return actions.TypeSpek, 1, true
 		}
+		if plainSpekRequest(w, i) {
+			return actions.TypeSpek, 0, true
+		}
+	case "specs", "design", "designs":
+		if plainSpekRequest(w, i) {
+			if next == "doc" || next == "document" || next == "session" {
+				return actions.TypeSpek, 1, true
+			}
+			return actions.TypeSpek, 0, true
+		}
 	case "knowledge":
 		switch next {
 		case "note", "item", "fact", "entry", "base":
@@ -173,6 +183,44 @@ func actionNoun(w []string, i int) (actions.Type, int, bool) {
 		return actions.TypeKnowledge, 0, true
 	}
 	return "", 0, false
+}
+
+// maxWordsBeforeSpekNoun bounds the words between the verb and "spec" or
+// "design" ("write up a quick spec").
+const maxWordsBeforeSpekNoun = 4
+
+// requestLeads may open a request before its verb ("can you please start").
+var requestLeads = map[string]bool{
+	"please": true, "can": true, "could": true, "would": true, "will": true, "you": true,
+	"go": true, "ahead": true, "and": true, "just": true, "now": true, "also": true,
+	"let's": true, "lets": true, "let": true, "us": true,
+}
+
+// notSpekDesignFollows are words after "design" that name something else
+// ("design review", "design meeting").
+var notSpekDesignFollows = map[string]bool{
+	"review": true, "reviews": true, "meeting": true, "meetings": true, "decision": true, "decisions": true,
+	"choice": true, "choices": true, "pattern": true, "patterns": true,
+}
+
+// plainSpekRequest reports whether "spec" or "design" at w[i] is the object of
+// a request: only request lead words, then an action verb, then a few words.
+// "the spec says" and "per the design" are talk about a spec, not a request.
+func plainSpekRequest(w []string, i int) bool {
+	if i+1 < len(w) && notSpekDesignFollows[w[i+1]] {
+		return false
+	}
+	for v := 0; v < i; v++ {
+		if actionVerbs[w[v]] {
+			for _, x := range w[:v] {
+				if !requestLeads[x] {
+					return false
+				}
+			}
+			return i-v-1 <= maxWordsBeforeSpekNoun
+		}
+	}
+	return false
 }
 
 func subjectOf(w []string) string {

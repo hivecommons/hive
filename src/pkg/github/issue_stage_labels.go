@@ -144,6 +144,10 @@ type IssueStageResult struct {
 	// (hivecommons/hive#12857).
 	ParentsClosed           int
 	ParentsAwaitingChildren int
+	// TrackersClosed counts tracker/umbrella issues closed because every
+	// issue and PR they reference is finished (trackers_too,
+	// hivecommons/hive#19071).
+	TrackersClosed int
 }
 
 // issueStageRESTCaller tags the writes for /api/gh-rate-limits.
@@ -191,6 +195,10 @@ type IssueStageInput struct {
 	// DelegatesWork mirrors the watcher's unchecked issue-task predicate.
 	// Unlike Children, it includes body-only delegation without ledger entries.
 	DelegatesWork bool
+	// TrackerSignal is set when the issue announces itself as a tracker or
+	// umbrella (label, title, task list or close_when checklist), the only
+	// issues the trackers_too auto-close policy reads (hivecommons/hive#19071).
+	TrackerSignal bool
 	// SpekUmbrella is set when the body carries the Spek publish marker with
 	// no `task=`: the issue is a Spek-published RFC (spektacular#114), an
 	// umbrella like `epic`, so a claim on it is never staged.
@@ -435,7 +443,7 @@ func forgeIssueLabels(labels []string, claim *IssueClaimContext) []string {
 
 // issueStageInputFrom is the stage input for one actionable issue.
 func issueStageInputFrom(issue Issue) IssueStageInput {
-	return IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), Title: issue.Title, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), SpekUmbrella: spekmarker.IsUmbrella(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees}
+	return IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), Title: issue.Title, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), TrackerSignal: trackerSignal(issue.Title, issue.Labels, issue.Body), SpekUmbrella: spekmarker.IsUmbrella(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees}
 }
 
 // IssueStageInputs flattens an enumeration result into one row per open
@@ -589,6 +597,11 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			}
 			awaitingChildren = true
 			res.ParentsAwaitingChildren++
+		} else if in.Children == nil && client.closeDoneTracker(ctx, in, store, key, now, logger) {
+			res.TrackersClosed++
+			res.Writes++
+			res.Comments++
+			continue
 		}
 		if closed, commented := handleMergedPRIssueStage(ctx, client, in, logger); closed {
 			res.MergedPRIssuesClosed++

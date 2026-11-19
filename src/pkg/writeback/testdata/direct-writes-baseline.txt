@@ -120,6 +120,7 @@ wrap pkg/github/review_backlog_routing.go 1
 wrap pkg/github/review_backlog_selfcheck.go 1
 wrap pkg/github/review_request_watcher.go 2
 wrap pkg/github/stage_labeler.go 2
+wrap pkg/github/tracker_autoclose.go 1
 wrap pkg/github/tracking_issue.go 1
 wrap pkg/prfollowup/prfollowup.go 2
 wrap pkg/questionclose/questionclose.go 2

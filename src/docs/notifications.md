@@ -473,6 +473,7 @@ without a class. Review submissions and review requests are always counted as
 | `dashboard.(*Server).handleRepoItemBlockerClosePartial` | `status` |  |
 | `dashboard.(*Server).handleRepoItemDecision` | `status` |  |
 | `dashboard.(*Server).handleRepoItemSentinelConfirm` | `status` |  |
+| `dashboard.(*Server).handleRepoItemSHAWaiver` | `status` |  |
 | `dashboard.(*Server).handleReviewQueueSupersededClose` | `status` |  |
 | `dashboard.(*Server).mirrorPlanWith` | `status` |  |
 | `github.(*Client).CloseIssueForConfiguredLinePR` | `status` |  |
@@ -489,6 +490,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).PostIssueNote` | `status` | passthrough wrapper (issue status card, `attention_pilot`); attributed to its caller |
 | `github.(*Client).PostInformationalIssueNote` | `status` | passthrough wrapper (issue status card in quiet mode or under `attention_pilot`, for notes nobody acts on); attributed to its caller |
 | `github.(*Client).closeDecomposedParent` | `status` |  |
+| `github.(*Client).closeDoneTracker` | `status` |  |
 | `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
 | `github.(*Client).closeSupersededPRDecision` | `status` |  |
 | `github.(*Client).fileReviewBacklog` | `status` |  |

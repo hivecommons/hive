@@ -50,6 +50,13 @@ type hivePolicyTarget interface {
 	SetDeadSessionRecoveryOwner(ownedElsewhere bool)
 }
 
+// hiveKnowledgeTarget is the manager's mid-task knowledge adviser setter. It
+// is separate from hivePolicyTarget so a runtime without the advisor still
+// takes the policy snapshot.
+type hiveKnowledgeTarget interface {
+	SetKnowledgeAdviser(crux.KnowledgeAdviser)
+}
+
 // policyApplier turns each new policy snapshot into setter calls. Resolvers
 // are installed once, the first time hive reports the value, and then read
 // the live snapshot; the pushed values (sandbox config, dead-session owner)
@@ -59,6 +66,13 @@ type policyApplier struct {
 	target hivePolicyTarget
 	policy *hivecap.Policy
 	errw   io.Writer
+
+	// knowledge and adviser, when set, install the sidecar knowledge adviser
+	// the first time a snapshot says the hive serves POST
+	// /v1/knowledge/advise (knowledge.sidecar_advise, default off). A hive
+	// that never says so leaves the runtime exactly as it was.
+	knowledge hiveKnowledgeTarget
+	adviser   crux.KnowledgeAdviser
 
 	mu        sync.Mutex
 	installed map[string]bool
@@ -85,6 +99,7 @@ func (a *policyApplier) apply(pol callback.Policy) {
 	once("kick_log_source", pol.KickLogSource != nil, func() { a.target.SetKickLogSourceResolver(p.KickLogSource) })
 	once("gateway_backends", pol.GatewayBackends != nil, func() { a.target.SetGatewayBackendChecker(p.GatewayBackend) })
 	once("repo_auto_merge", pol.RepoAutoMerge, func() { a.target.SetRepoAutoMergeEnabledResolver(p.RepoAutoMergeEnabled) })
+	once("knowledge_advise", pol.KnowledgeAdvise && a.knowledge != nil && a.adviser != nil, func() { a.knowledge.SetKnowledgeAdviser(a.adviser) })
 	if v := pol.DeadSessionRecoveryOwnedElsewhere; v != nil && (a.owner == nil || *a.owner != *v) {
 		owned := *v
 		a.owner = &owned
@@ -171,7 +186,11 @@ func (h *hiveCallback) watchPolicy(ctx context.Context, rt crux.Runtime, w, errw
 	if !ok {
 		return
 	}
-	go hivecap.WatchPolicy(ctx, h.set.Policy, 0, newPolicyApplier(m, h.set.Policy, errw).apply)
+	applier := newPolicyApplier(m, h.set.Policy, errw)
+	if kt, ok := rt.(hiveKnowledgeTarget); ok {
+		applier.knowledge, applier.adviser = kt, h.set.Knowledge
+	}
+	go hivecap.WatchPolicy(ctx, h.set.Policy, 0, applier.apply)
 	fmt.Fprintf(w, "hive callback %s: host policy\n", addressString(h.client.Address()))
 }
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/hivecap"
@@ -205,4 +206,74 @@ func TestWatchPolicyOverTheCallback(t *testing.T) {
 	if got := explainFn(); got != "on" {
 		t.Fatalf("explain = %q", got)
 	}
+}
+
+// knowledgePolicyTarget is a policyTarget whose manager also takes the
+// mid-task knowledge adviser.
+type knowledgePolicyTarget struct {
+	*policyTarget
+	advisers []crux.KnowledgeAdviser
+}
+
+func (k *knowledgePolicyTarget) SetKnowledgeAdviser(a crux.KnowledgeAdviser) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.advisers = append(k.advisers, a)
+}
+
+// The sidecar knowledge adviser is installed the first time a snapshot says
+// the hive serves the route, once, and never when it does not: a hive without
+// knowledge.sidecar_advise leaves the runtime exactly as it was.
+func TestPolicyApplierInstallsTheKnowledgeAdviserOnlyWhenTheHiveServesTheRoute(t *testing.T) {
+	hive := &policyHive{}
+	pol := hivecap.NewPolicy(hive, time.Second)
+	target := &knowledgePolicyTarget{policyTarget: &policyTarget{fakeRuntime: &fakeRuntime{}}}
+	var errw strings.Builder
+	a := newPolicyApplier(target, pol, &errw)
+	a.knowledge, a.adviser = target, hivecap.NewKnowledgeAdviser(hive, pol.KnowledgeAdvise, 0)
+
+	a.apply(callback.Policy{})
+	a.apply(callback.Policy{RepoAutoMerge: true})
+	if len(target.advisers) != 0 {
+		t.Fatalf("adviser installed from snapshots that do not advertise the route: %d", len(target.advisers))
+	}
+
+	a.apply(callback.Policy{KnowledgeAdvise: true})
+	a.apply(callback.Policy{KnowledgeAdvise: true, RepoAutoMerge: true})
+	a.apply(callback.Policy{})
+	a.apply(callback.Policy{KnowledgeAdvise: true})
+	if len(target.advisers) != 1 || target.advisers[0] != a.adviser {
+		t.Fatalf("adviser installs = %d, want exactly one (the applier's)", len(target.advisers))
+	}
+
+	// A target that cannot take an adviser, or an applier with none, installs
+	// nothing and does not fail.
+	plain := newPolicyApplier(&policyTarget{fakeRuntime: &fakeRuntime{}}, pol, &errw)
+	plain.apply(callback.Policy{KnowledgeAdvise: true})
+}
+
+// watchPolicy wires the manager's adviser setter into the applier.
+func TestWatchPolicyInstallsTheKnowledgeAdviserFromTheCallback(t *testing.T) {
+	hive := &policyHive{policy: callback.Policy{KnowledgeAdvise: true}}
+	sock := filepath.Join(shortSocketDir(t), "hive.sock")
+	ls, err := callback.Listen(callback.ListenConfig{Socket: sock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = callback.NewServer(hive, "").Serve(ctx, ls) }()
+
+	h, err := dialHiveCallback(sock, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := &knowledgePolicyTarget{policyTarget: &policyTarget{fakeRuntime: &fakeRuntime{}}}
+	var out, errw strings.Builder
+	h.watchPolicy(ctx, target, &out, &errw)
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		target.mu.Lock()
+		defer target.mu.Unlock()
+		return len(target.advisers) == 1
+	}, "the knowledge adviser was never installed from the callback's policy")
 }

@@ -571,7 +571,8 @@
       "BudgetOverride": false,
       "HoldoutPercent": 0,
       "OnError": ""
-    }
+    },
+    "SidecarAdvise": false
   },
   "inbox": {
     "spek": {},
@@ -716,6 +717,7 @@
   "quality": {},
   "intent": {},
   "sentinel": {},
+  "session_taint": {},
   "security": {},
   "evidence": {
     "complexity": {}

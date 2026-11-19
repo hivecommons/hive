@@ -714,6 +714,7 @@ Per repo, `repos.<repo>.parent_autoclose` chooses the policy:
 |---|---|
 | `true` (default) | close a decomposed parent when all children are closed, except `epic`/`hold`-labelled issues |
 | `epics_too` | also close `epic`/`hold`-labelled parents |
+| `trackers_too` | `epics_too`, and also close tracker/umbrella issues that have no sub-issue children once everything they reference is finished (below) |
 | `false` | never auto-close a parent in this repo |
 
 ```yaml
@@ -724,13 +725,48 @@ repos:
 
 You can also set it without editing YAML: Settings, Repos tab, "Parent auto-close"
 (owner only). Each monitored repo has a choice of "Close finished parents
-(default)", "Also close epics and holds" and "Never auto-close parents"; saving
+(default)", "Also close epics and holds", "Also close trackers whose work is done" and "Never auto-close parents"; saving
 applies it without a restart and is recorded in the audit log. Issues marked as
 tracking issues (`hive/tracking`, the `<!-- hive:tracking -->` marker, or "Keep
 this issue open") are never auto-closed under any value.
 
 The dashboard does not yet show a "kept open: reopened by <login>" pill; the
 kept-open decision is logged (`decomposed parent kept open`).
+
+**Trackers and umbrellas with no sub-issues (`trackers_too`).** Many umbrella and
+audit trackers are not decomposed parents: they have no sub-issue children and
+are referenced by `Refs`-only PRs. Under v5 a merge never closes an issue, so
+with `repos.<repo>.parent_autoclose: trackers_too` the sweep computes "done"
+from the state of what the tracker references, never from close keywords. It is
+off unless you choose it, and nothing changes for any other value.
+
+- *Which issues are read.* Only an issue that announces itself as a tracker: one
+  the shared umbrella classifier recognises (`umbrella`, `tracker`, `epic` or
+  `meta-tracker` label, the `<!-- hive:umbrella -->` marker, a `[Tracker]`-style
+  title prefix, or a task list of two or more issue references; see
+  `hub.contribute_umbrella`), an `audit` or `roadmap` label, or a `close_when`
+  checklist. A design or feature issue that merely has `Refs` PRs is never
+  closed this way, because a `Refs` PR is partial work by definition.
+- *The reference set.* With a `close_when` heading (or `close_when:` line) in the
+  body, the checklist under it is the whole set: the tracker is done when every
+  item is ticked or, for an item naming an issue or PR, closed. Otherwise the set
+  is every task-list item that names an issue or PR plus every PR that
+  references the tracker with `Refs`, a closing keyword or `Part of`. The tracker
+  is done when that set is non-empty, every PR in it is merged or closed and
+  every issue in it is closed.
+- *Safety.* `hive/tracking` issues (label, `<!-- hive:tracking -->` marker, "Keep
+  this issue open") and `hold`-labelled issues are never closed, even though
+  `trackers_too` implies `epics_too`. A tracker a person reopened after a hive
+  auto-close is never closed again. An unreadable reference or timeline, or more
+  than 50 references, means no close. Reads are cached per tracker, and the close
+  needs the same finished evidence on two fresh reads 15 minutes apart, so a
+  tracker is not closed between two PRs landing.
+- *Audit.* Before closing, the hive posts one comment (carrying
+  `<!-- hive:parent-autoclose -->`) listing every referenced issue and PR with
+  its state, then closes the tracker as completed. Reopening it is final.
+
+Closing done-but-open issues that sit in `stage/040-covered-by-pr` when the
+covering PR merges is not part of this rule.
 
 ### `stage/stalled` — "nobody is working this"
 

@@ -1723,6 +1723,8 @@
        rides last; past dashboard.stage_tracker.waiting_push_stale_h it takes
        the muted warning tone. "@zoe pushed abc1234 · 2m" links to the commit. */
     .ham-push-stale { color: color-mix(in srgb, var(--status-warn) 70%, var(--text-faint)); }
+    .ham-badge-sha-hold { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); }
+    .ham-badge-sha-hold.ham-sha-waived { color: var(--text-muted); border-color: color-mix(in srgb, var(--text-muted) 45%, transparent); }
     .ham-badge-push { text-decoration: none; }
     .ham-badge-push:hover { color: var(--text-muted); }
     /* Presence indicator on a waiting-on pill (hive PR 15051): who the row
@@ -20461,7 +20463,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // word, "Waiting on shared CI · #17463" (hivecommons/hive#17500).
         const incident = sg.detour && sg.number === 30 && remediation === 'deferred' && item.deferral && Number(item.deferral.incident) > 0 && item.deferral.incident_url ? '#' + Number(item.deferral.incident) : '';
         const detourText = incident && sg.detour.text.indexOf(incident) >= 0 ? esc(sg.detour.text).replace(esc(incident), `<a class="ham-incident-link" href="${esc(item.deferral.incident_url)}" target="_blank" rel="noopener" title="${esc('Shared-CI incident ' + incident)}">${esc(incident)}</a>`) : (sg.detour ? esc(sg.detour.text) : '');
-        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${detourText}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${progressHolderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${progressHolderHtml}${reasonHtml}</span>`);
+        // A held / waived SHA requirement rides the lit chevron as a note (#18866).
+        const shaHoldNote = active && !sg.cap && !sg.detour && !gateWord && typeof stageTrackerSHAHoldNoteHtml === 'function' ? stageTrackerSHAHoldNoteHtml(item) : '';
+        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${detourText}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${progressHolderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${progressHolderHtml}${reasonHtml}${shaHoldNote}</span>`);
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.
@@ -20471,9 +20475,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // the column is the row's history and wears the history mark.
         if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
         else if (active) {
+          const shaHold = typeof stageTrackerSHAHoldOf === 'function' ? stageTrackerSHAHoldOf(item) : null;
+          const shaHoldTip = shaHold ? shaHold.pill + ' — ' + shaHold.tip : '';
           const fullTip = [tip, gateCaption || (sg.detour ? sg.detour.text : sg.short + (progressActor ? ' · ' + progressActor.who : '')), item.caption, item.reason,
             item.head ? 'head ' + item.head : '',
-            item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : ''].filter(Boolean).join(' · ');
+            item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : '',
+            shaHoldTip].filter(Boolean).join(' · ');
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           const caption = gateWord || word;
           const text = decision ? stageTrackerDecisionTriggerHtml(decision, caption, fullTip) : caption;
@@ -20778,6 +20785,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const who = h.by === 'hive' ? 'hive' : '@' + h.by;
       return 'Held by ' + who + (h.reason ? ' · ' + h.reason : '');
     }
+    // Pure: the row's SHA-hold state (hivecommons/hive#18866) — `needs-sha`
+    // held, or `sha-waived` by a maintainer — as the server sends it in
+    // `sha_hold` ({state, pill, tip, note, by}); null for a PR or no state.
+    function stageTrackerSHAHoldOf(item) {
+      const h = item && item.kind === 'issue' ? item.sha_hold : null;
+      return h && (h.state === 'held' || h.state === 'waived') && h.pill ? h : null;
+    }
+    // The visible pill: "Held: needs commit SHA" / "SHA waived by <login>",
+    // its hover saying how to lift (post a SHA, or waive) or restore.
+    function stageTrackerSHAHoldChipHtml(item) {
+      const h = stageTrackerSHAHoldOf(item);
+      if (!h) return '';
+      const label = String(h.pill) + (h.tip ? ' — ' + h.tip : '');
+      return `<span class="ham-badge ham-badge-sha-hold ham-sha-${esc(h.state)}" title="${esc(h.tip || '')}" aria-label="${esc(label)}">${esc(h.pill)}</span>`;
+    }
+    // The note on the lit Open chevron, beside the stage word.
+    function stageTrackerSHAHoldNoteHtml(item) {
+      const h = stageTrackerSHAHoldOf(item);
+      return h && h.note ? `<span class="ham-human-reason ham-sha-hold-note"> · ${esc(h.note)}</span>` : '';
+    }
     // Pure: the hold pill's hover text — who, why, since when.
     function stageTrackerHoldTip(item, nowMs) {
       const h = item && item.hold;
@@ -20811,7 +20838,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // sentinel / hold / needs-human reasons itself — those chips step aside.
       const gated = !!(opts && opts.gate);
       // The informational notice is not a gate reason, so its chip stays.
-      const sentinel = (gated && !item.sentinel_notice ? '' : stageTrackerSentinelChipHtml(item)) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
+      const sentinel = (gated && !item.sentinel_notice ? '' : stageTrackerSentinelChipHtml(item)) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '') + (typeof stageTrackerSHAHoldChipHtml === 'function' ? stageTrackerSHAHoldChipHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .filter(m => !gated || STAGE_TRACKER_GATE_MODS.indexOf(m) < 0)
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
@@ -25292,7 +25319,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // is not generic: a row offers it either from the nudge (`adoption`)
     // or as a server decision option (a contributor PR's DCO / fixer
     // exhaustion, where it replaced "re-author"), never both.
-    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:close-issue'];
+    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'sha-waive', 'sha-restore', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:close-issue'];
     const _stageTrackerCloseIssueBusy = new Set();
     // Accept triage shows on an issue the chevron calls "Triage needed":
     // stage 015, or the needs-triage pill on a pre-claim stage (010 / 017 /
@@ -25740,6 +25767,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       out.push(has('hold')
         ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target }
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target });
+      // A SHA-held issue (needs-sha) offers the override next to the hold
+      // actions: Waive SHA requirement, then Restore once it is waived
+      // (hivecommons/hive#18866). Same roles as releasing a hold.
+      const shaHold = typeof stageTrackerSHAHoldOf === 'function' ? stageTrackerSHAHoldOf(item) : null;
+      if (shaHold) out.push(shaHold.state === 'waived'
+        ? { id: 'sha-restore', label: 'Restore SHA requirement', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE }
+        : { id: 'sha-waive', label: 'Waive SHA requirement', hint: 'hive works it without a SHA', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
       out.push({ id: 'retry', label: 'Re-evaluate now', hint: 'rescan', enabled: true, why: '' });
       // A model-bound row whose state the model hands to an agent profile
       // (cncf/techdocs#395): the owner can send it now.
@@ -26592,6 +26626,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       switch (id) {
         case 'hold': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: true, type } };
         case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type } };
+        case 'sha-waive': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/sha-waiver', body: { waived: true } };
+        case 'sha-restore': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/sha-waiver', body: { waived: false } };
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
         case 'wf-dispatch': return { url: '/api/workflows/dispatch', body: { repo: item.repo, number: n } };
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
@@ -27547,7 +27583,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMergeBannerMs() { return stageTrackerToastMs('info') * STAGE_TRACKER_MERGE_BANNER_FACTOR; }
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
-      'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'wf-dispatch': 'Sending to the agent…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
+      'hold': 'Holding…', 'release': 'Releasing hold…', 'sha-waive': 'Waiving SHA requirement…', 'sha-restore': 'Restoring SHA requirement…', 'retry': 'Re-evaluating…', 'wf-dispatch': 'Sending to the agent…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
       'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-deferred': 'Closing…', 'decide:close-issue': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…',
@@ -27557,7 +27593,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTION_WORDS = {
       adopted: 'adopted', approved: 'approved', dispatched: 'sent to its agent', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
       merged: 'merged', 'queued-for-merge': 'queued for merge — hive merges it on its next pass once CI is green', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
-      held: 'held', released: 'hold released', 'sentinel-confirmed': 'sentinel confirmed safe', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
+      held: 'held', released: 'hold released', 'sha-waived': 'SHA requirement waived', 'sha-restored': 'SHA requirement restored', 'sentinel-confirmed': 'sentinel confirmed safe', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
     };
     // Once the server has answered, a terminal action's caption says so
@@ -40014,6 +40050,40 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (optTail === curTail) return true;
       return _modelsEqual(optTail, curTail);
     }
+    // Backends whose CLI accepts exactly one spelling of a model id. Claude
+    // and Copilot serve the SAME Anthropic models under different naming
+    // conventions: the Claude CLI takes claude-sonnet-5-5 and rejects
+    // claude-sonnet-5.5, the Copilot CLI takes claude-sonnet-5.5 and rejects
+    // claude-sonnet-5-5. For these the dropdown must NOT treat the two as the
+    // same model: the tolerant match preselected the valid option for a
+    // stored wrong-convention id, and the agent failed every kick while its
+    // dropdown looked correct. The server rewrites such ids to the backend's
+    // spelling (config.CanonicalizeModelForBackend); the dropdown shows what
+    // is stored and flags it.
+    const STRICT_MODEL_ID_BACKENDS = ['claude', 'copilot'];
+    // _modelIdMatchesForBackend is _modelIdMatches, minus the dotted/dashed
+    // version folding on STRICT_MODEL_ID_BACKENDS.
+    function _modelIdMatchesForBackend(backend, optionValue, current) {
+      if (!STRICT_MODEL_ID_BACKENDS.includes(backend)) return _modelIdMatches(optionValue, current);
+      if (!current) return false;
+      return optionValue === current || optionValue.split('/').pop() === current.split('/').pop();
+    }
+    // modelIdMatchesStored is the Settings dialog's "is this option the stored
+    // model" test: strict on STRICT_MODEL_ID_BACKENDS, the separator-tolerant
+    // _modelsEqual elsewhere.
+    function modelIdMatchesStored(backend, optionValue, current) {
+      if (STRICT_MODEL_ID_BACKENDS.includes(backend)) return _modelIdMatchesForBackend(backend, optionValue, current);
+      return _modelsEqual(current, optionValue);
+    }
+    // invalidModelSpellingFor returns the valid option a stored model is only
+    // a different spelling of on a strict backend ('' when there is none), so
+    // the dropdown can flag the stored value instead of hiding it.
+    function invalidModelSpellingFor(backend, models, current) {
+      if (!current || !STRICT_MODEL_ID_BACKENDS.includes(backend)) return '';
+      if (models.some(m => _modelIdMatchesForBackend(backend, m.value, current))) return '';
+      const hit = models.find(m => _modelIdMatches(m.value, current));
+      return hit ? hit.value : '';
+    }
     // modelOptionsHtml builds the <option> list for a model dropdown:
     // discovered/known models first (already discovered-first from the API),
     // the current model preselected (prefix-insensitive), and — if the
@@ -40034,7 +40104,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const cur = soleOption || currentModel || '';
       let matched = false;
       const opts = models.map(m => {
-        const sel = !matched && _modelIdMatches(m.value, cur);
+        const sel = !matched && _modelIdMatchesForBackend(backend, m.value, cur);
         if (sel) matched = true;
         // The selected option's label doubles as the button's visible text
         // (native <select> renders it in place of the placeholder), so it
@@ -40051,7 +40121,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         body = modelOptgroupsHtml(Object.keys(byValue), v => byValue[v]);
       }
       if (cur && !matched) {
-        body = `<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current) ▾</option>` + body;
+        // The stored id is shown as it is stored. When it is only another
+        // spelling of a valid option (claude-sonnet-5.5 on claude), say so
+        // and name the id to pick, rather than presenting it as fine.
+        const validSpelling = invalidModelSpellingFor(backend, models, cur);
+        const note = validSpelling
+          ? ` (⚠ not valid for ${backend}; pick ${validSpelling.split('/').pop()})`
+          : ' (current)';
+        body = `<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())}${esc(note)} ▾</option>` + body;
       }
       return body;
     }
@@ -61486,6 +61563,10 @@ function burnAreaChart() {
         return;
       }
       dismissToast(toast, data.applied === false && data.message ? `${agent} ${label} → ${backend}: ${data.message}` : `${agent} ${label} → ${backend} (session restarted)`, 'success');
+      // The server rewrote a model id the new backend's CLI would reject
+      // (claude-sonnet-5.5 carried onto claude, claude-sonnet-5-5 onto
+      // copilot): say so.
+      if (data.warning) showToast(data.warning, 'warning');
       // The selection is saved; if its backing config is missing, land the
       // user on the Settings tab that fixes it (never blocks).
       maybeOpenMethodConfig(backend);
@@ -61567,7 +61648,12 @@ function burnAreaChart() {
       if (!data.ok) { dismissToast(toast, `Model switch failed: ${data.error || 'unknown'}`, 'error'); return; }
       // A change saved for an agent that is not running restarts nothing: show
       // the server's "saved; applies when <agent> starts" instead (#18905).
+      // The server may store a different spelling than was picked (a Claude
+      // id in the other CLI's convention is saved in this backend's); show
+      // what was saved.
+      if (data.model) model = data.model;
       dismissToast(toast, data.applied === false && data.message ? `${agent} model → ${model}: ${data.message}` : `${agent} model → ${model} (session restarted)`, 'success');
+      if (data.warning) showToast(data.warning, 'warning');
       // #18906: hold scroll position, focus and list order across the re-render.
       withAgentViewportPreserved(agent, () => {
         if (window._lastAgents) {
@@ -64759,7 +64845,7 @@ function burnAreaChart() {
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Plaud voice notes connector', key: 'knowledge.connectors', lazy: true, text: 'plaud voice notes recordings transcript summary mcp oauth connect npx @plaud-ai/mcp command since_days max_files include_audio tags knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Wispr Flow dictation connector', key: 'knowledge.connectors', lazy: true, text: 'wispr flow wisprflow dictation voice history flow.sqlite sqlite export path since_days max_items min_words group apps include_raw tags knowledge.connectors' },
-      { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path publish to repository knowledge.bead_synthesizer.publish.enabled knowledge.bead_synthesizer.publish.repo knowledge.bead_synthesizer.publish.path knowledge.bead_synthesizer.publish.base_branch knowledge.bead_synthesizer.publish.mode knowledge.bead_synthesizer.publish.cadence knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
+      { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled mid-task advisor sidecar runtime callback knowledge.sidecar_advise knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path publish to repository knowledge.bead_synthesizer.publish.enabled knowledge.bead_synthesizer.publish.repo knowledge.bead_synthesizer.publish.path knowledge.bead_synthesizer.publish.base_branch knowledge.bead_synthesizer.publish.mode knowledge.bead_synthesizer.publish.cadence knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
       { tab: 'Forge App', section: 'Forge App', label: 'GitHub API quota, PR scans and authorship', key: 'github.api_reserve', lazy: true, text: 'github api quota reserve critical agent reserve floor pr detail cache ttl etag cache size mb entries conditional request 304 graphql batch page size app authored prs bot signed commits forge api url docs installation oauth client token github.api_reserve github.api_critical github.agent_reserve_floor github.etag_cache_max_mb github.etag_cache_max_entries github.pr_detail_ttl_s github.graphql_pr_batch github.graphql_pr_batch_page_size github.app_authored_prs github.app_signed_commits github.forge github.api_url github.docs_installation_id github.oauth_client_id github.token github.key_file' },
     ];
     let _settingsSearch = { active: false, query: '', previousTab: '', index: null, bound: false };
@@ -66378,7 +66464,13 @@ function burnAreaChart() {
           </div>`;
       const schedules = d.schedules || ['hourly', 'daily'];
       const layers = d.layers || ['personal', 'project', 'org', 'community'];
+      const advisorOn = !!d.advisor;
       return `
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Mid-task advisor for sidecar runtimes</div>
+          ${toggle('sa-enabled', 'Serve the mid-task knowledge advisor to a sidecar runtime', 'knowledge.sidecar_advise', d.sidecar_advise, 'off by default; with it off a sidecar runtime gets no advisor.', true, 'Lets a sidecar-mode runtime ask this hive for mid-task knowledge hints over the callback endpoint. Needs the mid-task advisor, which is switched on in hive.yaml. The hive runs the same advisor it runs in-process and sends no model settings or credentials to the runtime. Off unless turned on.')}
+          ${advisorOn ? '' : '<div class="config-help">The mid-task advisor is off in hive.yaml, so this has no effect until it is on.</div>'}
+        </div>
         <div class="card-inset mt-5">
           <div class="settings-subsection-title">Bead synthesizer</div>
           ${toggle('bs-enabled', 'Synthesize completed beads into wiki facts', 'knowledge.bead_synthesizer.enabled', bs.enabled, 'on by default; starts or stops the running synthesizer.', true, 'Turns completed beads (and their merged PRs) into wiki facts on a schedule. On unless set to false. Saving starts or stops the running synthesizer at once.')}
@@ -66454,6 +66546,7 @@ function burnAreaChart() {
     async function saveKnowledgePipeline() {
       const d = _kpState.data || {};
       const cur = {
+        top: { sidecar_advise: d.sidecar_advise },
         bead_synthesizer: d.bead_synthesizer || {},
         publish: (d.bead_synthesizer || {}).publish || {},
         retention_policy: (d.bead_synthesizer || {}).retention_policy || {},
@@ -66462,6 +66555,7 @@ function burnAreaChart() {
         primer: d.primer || {}
       };
       const fields = [
+        ['top', 'sidecar_advise', 'sa-enabled', 'bool'],
         ['bead_synthesizer', 'enabled', 'bs-enabled', 'bool'],
         ['bead_synthesizer', 'schedule', 'bs-schedule', 'str'],
         ['bead_synthesizer', 'target_layer', 'bs-target_layer', 'str'],
@@ -66492,7 +66586,9 @@ function burnAreaChart() {
       ];
       const body = {};
       const put = (group, key, v) => {
-        if (group === 'retention_policy' || group === 'publish') {
+        if (group === 'top') {
+          body[key] = v;
+        } else if (group === 'retention_policy' || group === 'publish') {
           body.bead_synthesizer = body.bead_synthesizer || {};
           body.bead_synthesizer[group] = body.bead_synthesizer[group] || {};
           body.bead_synthesizer[group][key] = v;
@@ -66531,7 +66627,7 @@ function burnAreaChart() {
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
         _kpState = { loaded: true, error: '', data: data };
         const bsKeys = Object.keys(body.bead_synthesizer || {});
-        const liveOnly = Object.keys(body).length === 1 && bsKeys.length === 1 && bsKeys[0] === 'enabled';
+        const liveOnly = Object.keys(body).every(k => k === 'sidecar_advise' || (k === 'bead_synthesizer' && bsKeys.length === 1 && bsKeys[0] === 'enabled'));
         showToast(liveOnly ? 'Knowledge settings saved' : 'Knowledge settings saved — restart the hive to apply them', 'success');
         const el = document.getElementById('kp-pipeline-root');
         if (el) el.innerHTML = renderKnowledgePipelineBody();
@@ -82899,7 +82995,7 @@ function burnAreaChart() {
     function modelSelectOptionsHtml(backend, current, opts) {
       const models = opts || modelsForBackend(backend) || [];
       let html = `<option value="">${esc(modelDefaultOptionLabel(backend))}</option>`;
-      const renderOpt = m => `<option value="${esc(m.value)}"${_modelsEqual(current, m.value) ? ' selected' : ''}>${esc(fullModelLabel(m))}${esc(modelOptionPriceSuffix(backend, m.value))}</option>`;
+      const renderOpt = m => `<option value="${esc(m.value)}"${modelIdMatchesStored(backend, m.value, current) ? ' selected' : ''}>${esc(fullModelLabel(m))}${esc(modelOptionPriceSuffix(backend, m.value))}</option>`;
       // Large gateway catalogs (OpenRouter) are grouped by provider prefix.
       if (typeof shouldGroupModelOptions === 'function' && shouldGroupModelOptions(models.map(m => m.value))) {
         const byValue = {};
@@ -82908,8 +83004,12 @@ function burnAreaChart() {
       } else {
         html += models.map(renderOpt).join('');
       }
-      if (current && !models.some(m => _modelsEqual(current, m.value))) {
-        const note = modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
+      if (current && !models.some(m => modelIdMatchesStored(backend, m.value, current))) {
+        // A Claude id stored in the other CLI's naming convention is shown as
+        // stored and flagged with the id to pick, never silently matched.
+        const validSpelling = invalidModelSpellingFor(backend, models, current);
+        const note = validSpelling ? ` (current, ⚠ not valid for ${backend}; pick ${validSpelling})`
+          : modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
         html += `<option value="${esc(current)}" selected>${esc(current)}${note}</option>`;
       }
       return html;

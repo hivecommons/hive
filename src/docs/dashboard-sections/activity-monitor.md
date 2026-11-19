@@ -549,6 +549,10 @@ For a parked issue, *Decide…* offers *Approve direction* (records the same `/h
 
 Entries you may not use are greyed with the reason in their tooltip, never hidden. Confirmation and free-text input use the dashboard's own dialogs — no browser prompts. Every action is an existing audited dashboard endpoint (the decision endpoint is `POST /api/repos/{owner}/{repo}/items/{number}/decision` and triage acceptance is `POST /api/repos/{owner}/{repo}/items/{number}/accept-triage`, see [api-reference.md](../api-reference.md)); none of them bypasses the hive's governance or merges anything.
 
+#### SHA-held issues
+
+An issue held by the SHA-hold gate (`needs-sha`) is out of every agent lane, so its row used to read only "Open · since 11h". It now wears the pill *Held: needs commit SHA* (hover: "Post a commit SHA in the issue, or waive this requirement.") and the lit Open chevron carries the note *held: post a commit SHA* (#18866). The row's ⋯ menu offers *Waive SHA requirement* to the roles that can release a `hold` (the verified owner role, or write permission on the repo; greyed with the reason for anyone else). Once waived the pill reads *SHA waived by <login>* and the menu item flips to *Restore SHA requirement*. See `sha-waived` in the labels reference. A `hold` keeps its own pill.
+
 #### What a row tells you without a click (`tracker-cues`)
 
 The owner's framing (2026-10-28): "Hive is doing the right things mostly; we now need to keep the user informed of it — like a video game they can watch and see what happens easily." Every row therefore reads, in this order, *where it is → whether work is happening on it → what it waits on → what just happened*, with at most three cue types drawing the eye and nothing else blinking.
