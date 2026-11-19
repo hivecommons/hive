@@ -1,1 +1,0 @@
-- Hub user record saves no longer race on a shared temp file, so concurrent saves stop failing with rename errors (#19346).

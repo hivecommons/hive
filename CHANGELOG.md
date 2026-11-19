@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.344.1)
+
+### Fixed
+
+- fix(config): warn once per model id rewrite, not on every reload (#19330)
+- Hub user record saves no longer race on a shared temp file, so concurrent saves stop failing with rename errors (#19346).
+
 ## 2026-11-19 (v5.344.0)
 
 ### Added
