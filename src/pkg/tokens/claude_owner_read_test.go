@@ -343,3 +343,24 @@ func TestCollectorNoteClaudeTreeErr_LogsOncePerError(t *testing.T) {
 		t.Errorf("recurrence logged %d failures in total, want 2", n)
 	}
 }
+
+// TestParseClaudeSession_UserTypePromptStillAttributes: current Claude Code
+// transcripts record the prompt as type "user", never "human". The tree
+// owner must still be credited, or the agent's spend lands on "unknown".
+func TestParseClaudeSession_UserTypePromptStillAttributes(t *testing.T) {
+	content := strings.Join([]string{
+		`{"type":"user","timestamp":"2026-11-19T17:00:00Z","message":{"role":"user","content":"triage the queue"}}`,
+		`{"type":"assistant","timestamp":"2026-11-19T17:00:05Z","message":{"model":"claude-sonnet-5-5","usage":{"input_tokens":2,"output_tokens":337,"cache_read_input_tokens":67667,"cache_creation_input_tokens":713}}}`,
+	}, "\n") + "\n"
+	path := "/data/home/agents/scanner/.claude/projects/-tmp-x/s.jsonl"
+	summary, err := parseClaudeSessionReader(strings.NewReader(content), path, treeAgentDetector(path, "scanner"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Agent != "scanner" {
+		t.Errorf("Agent = %q, want scanner", summary.Agent)
+	}
+	if summary.TotalTokens != 2+337+67667+713 {
+		t.Errorf("TotalTokens = %d", summary.TotalTokens)
+	}
+}

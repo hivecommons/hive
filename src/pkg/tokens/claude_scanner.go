@@ -195,8 +195,15 @@ func parseClaudeSessionReader(r io.Reader, path string, agentDetector func(strin
 	summary.LastActive = lastTimestamp
 	summary.Usage, summary.UsageCoalesced = timeline.finish()
 
-	if agentDetector != nil && firstHumanMsg != "" {
-		summary.Agent = agentDetector(firstHumanMsg)
+	// Run the detector even without a first human message: current Claude
+	// Code transcripts record the prompt as type "user", which the switch
+	// above does not read, and the path / tree-owner detectors do not need
+	// the message at all. Gating on it left every such session "unknown",
+	// so its spend never reached the agent's per-run line (#19307).
+	if agentDetector != nil {
+		if agent := agentDetector(firstHumanMsg); agent != "" {
+			summary.Agent = agent
+		}
 	}
 
 	return summary, nil
