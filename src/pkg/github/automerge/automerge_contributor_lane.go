@@ -1636,7 +1636,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	queueSkipsBase := sync.OnceValue(func() bool {
 		return !serialized && !relay && c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr)
 	})
-	if mergeableState == "behind" && (!serialized || relay) && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) && !integrationCombinedBaseProvided(ctx) {
+	if (mergeableState == "behind" || c.nativeQueueRejectedHeadBehind(ctx, owner+"/"+repo, pr)) && (!serialized || relay) && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) && !integrationCombinedBaseProvided(ctx) {
 		if relay {
 			return eval, "behind", nil
 		}
