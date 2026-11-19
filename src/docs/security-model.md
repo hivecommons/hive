@@ -419,6 +419,23 @@ there. Operator-configured gateway endpoints and the fixed-host `/api/style`
 fetch are not pinned: a gateway may legitimately sit on a private address, and
 redirects off either are still checked.
 
+The hub's contribute proxies, lite-enrollment repo access checks and mail
+relay to a spoke's dashboard, and the dashboard's GitHub token check, dial
+through the same pinned transport. The
+token check refuses every barred class for public `api.github.com`; for a
+configured API URL, which is intentionally chosen and may be private, it still
+pins every dial but refuses only link-local (cloud metadata), multicast and
+unspecified answers, and it refuses any cross-host redirect so that allowance
+never reaches another host. Git knowledge sources run `git` as a subprocess, so
+they pin through git instead: each clone, `ls-remote` and pull resolves the
+host once, refuses the fetch when any answer is barred or the lookup fails or
+comes back empty, and passes the checked addresses to git as
+`-c http.curloptResolve=host:port:addr`, so git connects to them and never
+looks the name up itself (git 2.37 or later; redirects are already refused with
+`http.followRedirects=false`). `HIVE_ALLOW_PRIVATE_GIT_SOURCE=true` allows a
+private or loopback Git server; link-local, multicast and unspecified answers
+stay refused even then.
+
 **Proxy decisions fail closed.** The egress audit
 ([#18986](https://github.com/hivecommons/hive/issues/18986), item 5) walked
 every branch of the proxy's per-request decision path that can fail and

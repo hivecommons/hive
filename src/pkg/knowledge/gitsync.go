@@ -15,6 +15,9 @@ const (
 
 	// gitDirName is the hidden directory that marks a git repository.
 	gitDirName = ".git"
+
+	// gitPullTimeout bounds one `git pull`, the resolve pin included.
+	gitPullTimeout = 30 * time.Second
 )
 
 // GitSyncer periodically runs `git pull` on vault directories that are
@@ -103,19 +106,31 @@ func gitPull(ctx context.Context, dir string) error {
 	return gitPullWithEnv(ctx, dir, append(os.Environ(), "GIT_TERMINAL_PROMPT=0"))
 }
 
-func gitSourcePull(ctx context.Context, dir string) error {
-	return gitPullWithEnv(ctx, dir, gitSourceEnv())
+// gitSourcePull pulls a knowledge-source clone from remoteURL, the source's
+// configured URL. The remote's host is resolved once and the pull is pinned
+// to the checked addresses (gitSourcePinArgs), so a name that rebinds to a
+// private address after the source was validated is refused at sync time
+// rather than fetched.
+func gitSourcePull(ctx context.Context, dir, remoteURL string) error {
+	pullCtx, cancel := context.WithTimeout(ctx, gitPullTimeout)
+	defer cancel()
+	pin, err := gitSourcePinArgs(pullCtx, remoteURL)
+	if err != nil {
+		return &gitPullError{dir: dir, err: err}
+	}
+	return gitPullWithEnv(pullCtx, dir, gitSourceEnv(), pin...)
 }
 
-func gitPullWithEnv(ctx context.Context, dir string, env []string) error {
-	const gitPullTimeoutSeconds = 30
-	pullCtx, cancel := context.WithTimeout(ctx, gitPullTimeoutSeconds*time.Second)
+// gitPullWithEnv runs `git pull --ff-only` in dir. extra are leading `-c`
+// overrides (a resolve pin) placed before the subcommand.
+func gitPullWithEnv(ctx context.Context, dir string, env []string, extra ...string) error {
+	pullCtx, cancel := context.WithTimeout(ctx, gitPullTimeout)
 	defer cancel()
 
 	// AUDIT F8 (residual): `--ff-only` bounds what git will MERGE, not where it
 	// will FETCH FROM. Without redirect suppression the remote can 302 this pull
 	// at an internal address after the URL passed validation. See gitNoRedirectArgs.
-	cmd := exec.CommandContext(pullCtx, "git", gitCmdArgs("pull", "--ff-only")...)
+	cmd := exec.CommandContext(pullCtx, "git", gitCmdArgs(append(append([]string{}, extra...), "pull", "--ff-only")...)...)
 	cmd.Dir = dir
 	cmd.Env = env
 
