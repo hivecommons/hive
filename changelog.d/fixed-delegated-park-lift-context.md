@@ -1,0 +1,1 @@
+- A delegated decision ("Let hive decide") on a PR now takes the `needs-human` and `stage/085-needs-decision` labels off even when the decision itself used up its time budget. Before, the label lift ran on the already-expired request context, failed with `context deadline exceeded`, and the next pass parked the PR in 085 again (#19256).

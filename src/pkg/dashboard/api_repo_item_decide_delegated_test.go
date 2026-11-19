@@ -945,6 +945,22 @@ func TestDelegatedDecisionLiftsStaleNeedsHuman(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#19256: the lift runs after the decision's own writes,
+// when the caller's context is often already spent; it still takes the
+// park labels off instead of failing with `context deadline exceeded`.
+func TestDelegatedParkLiftSurvivesSpentContext(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"needs-human", stagelabels.NeedsDecision.Label()}}
+	srv := newDelegatedServer(t, mock)
+	in := delegatedecision.Input{Repo: "testorg/testrepo", Number: 8, Kind: delegatedecision.KindPR, Labels: mock.prLabels}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+	lifted := srv.liftDelegatedParkLabels(ctx, in, delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove})
+	if len(lifted) != 2 {
+		t.Fatalf("lifted = %v, removed = %v", lifted, mock.removed)
+	}
+}
+
 // hivecommons/hive#15289: the #15219 scenario end to end. A conflicting,
 // offline clanker PR whose issue a merged PR already closed is closed as
 // superseded with a note naming that PR — not adopted — and the job
