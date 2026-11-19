@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.335.1)
+
+### Fixed
+
+- The watchdog now logs an unchanged agent credential failure at ERROR once an hour instead of on every relaunch. A copilot or codex agent with no credential file reads "missing" while its CLI is stopped and "no opinion" while it runs, so each relaunch re-entered `Authenticated=False` and logged `watchdog: agent credential failure` again. One misconfigured agent tripped the fleet self-report as 8 failures in 10 minutes. Repeats inside the window are logged at Info, the dashboard re-authentication alert is unchanged, and a new reason or a failure after recovery is still logged at ERROR straight away (#19205).
+
 ## 2026-11-19 (v5.335.0)
 
 ### Added
