@@ -492,6 +492,18 @@ is re-read and returns the PR to the normal path. A PR with no non-merge
 commits, or whose commits could not be read, is *unknown*: its existing DCO
 pills are left alone and no stage decision is made from DCO.
 
+When a hive agent repairs a red `no-dco` PR (the FIX-BEFORE-NEW kick,
+`redPRFixKick` in `cmd/hive/main_sweeps.go`), it signs off **only the commits
+it authored**: `git rebase <base> --exec` amends with `--signoff` only a commit
+whose author email is the agent's own lane identity. A commit someone else
+wrote keeps exactly the trailers its author gave it, and the agent asks that
+author on the PR to sign it off. A blanket `git rebase --signoff` appended a
+bot `Signed-off-by` under a person's own and failed the "Sign-off survives the
+squash" check ([#19102](https://github.com/hivecommons/hive/pull/19102)). The
+sandbox push broker enforces the same rule: it refuses to push a commit that
+carries the lane's `Signed-off-by` when another identity authored or committed
+it (see [Sandbox isolation](../sandbox-isolation.md)).
+
 The labels are written on every managed repo; the **072 routing is per
 repo**. It applies only where the repo actually enforces DCO — detected when
 a `dco` / `DCO` context is in the branch's required checks or reported on
