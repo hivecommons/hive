@@ -434,6 +434,11 @@ func (r *SandboxReadRelay) intercept(conn net.Conn, host string, kick *sandboxRe
 			// another host must not ride that decision.
 			d = SandboxReadDecision{Reason: "the request names a different host than the CONNECT target"}
 		}
+		if d.Allowed && relayPathHasDotSegment(req.URL.EscapedPath()) {
+			// SandboxReadPolicy matches path suffixes; a dot segment would let
+			// the upstream resolve a path the policy never classified (#19223).
+			d = SandboxReadDecision{Reason: "the request path contains a dot segment"}
+		}
 		if !d.Allowed {
 			r.p.logger.Info("sandbox read relay: request refused", "agent", agentName, "host", host, "method", req.Method)
 			writeRelayRefusal(client, d.Reason)
