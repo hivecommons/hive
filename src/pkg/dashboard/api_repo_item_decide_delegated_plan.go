@@ -451,7 +451,7 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 	if verb, ok := decidedVerbs[plan.Would]; ok {
 		plan.Acting = verb.Acting
 	}
-	plan.Summary, plan.Consequences = delegatedPlanWording(in, d)
+	plan.Summary, plan.Consequences = delegatedPlanWordingWith(in, d, s.delegatedHumanMerges(in))
 	plan.Why = delegatedPlanWhy(in, d)
 	plan.RulePlain, plan.Rationale = delegatedPlanRule(in, d, plan.Why)
 	plan.Ladder, plan.WhyNot = d.Ladder, d.Ladder.WhyNot()
@@ -499,6 +499,14 @@ func delegatedPlanOptionName(o delegatedecision.Option) string {
 // words, no "Hive would:" prefix — the dialog's eyebrow says that once —
 // and nothing a reader has to know hive's vocabulary for.
 func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision) (string, []string) {
+	return delegatedPlanWordingWith(in, d, false)
+}
+
+// delegatedPlanWordingWith is delegatedPlanWording with whether a person
+// merges the PR (Server.delegatedHumanMerges): a PR approval on a repo
+// whose auto-merge is off then names the person's merge instead of the
+// merge queue.
+func delegatedPlanWordingWith(in delegatedecision.Input, d delegatedecision.Decision, humanMerges bool) (string, []string) {
 	ref := "#" + strconv.Itoa(in.Number)
 	target := 0
 	for _, a := range d.Actions {
@@ -536,6 +544,9 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 		// agent picks the issue up.
 		return "Approve the direction of " + ref + " and let the hive pick it up.",
 			[]string{"Hive records approval and removes the needs-decision hold.", "An agent claims " + ref + " on the next cycle."}
+	case d.Verdict == delegatedecision.VerdictApprove && humanMerges:
+		return "Approve " + ref + " as it is; a person merges it — auto-merge is off for this repo.",
+			[]string{"Hive approves the current commit.", "Auto-merge is off for this repo (its auto-merge setting, or the hive is below ACMM L6), so a person merges " + ref + " once CI is green; the hive does not."}
 	case d.Verdict == delegatedecision.VerdictApprove:
 		return "Approve " + ref + " as it is and let the merge queue merge it.",
 			[]string{"Hive approves the current commit.", ref + " merges once CI is green and it has soaked."}

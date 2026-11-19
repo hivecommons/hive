@@ -727,7 +727,7 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 	s.logDelegatedLadder(repoFull, number, d)
 	notes, execErr := s.executeDelegatedDecision(ctx, in, d, user, mergerRole)
 	notes = append(deciderNotes, notes...)
-	result := delegatedRowActionResult(in, d, notes)
+	result := delegatedRowActionResultWith(in, d, notes, s.delegatedHumanMerges(in))
 	if orphan.Dead > 0 && !orphan.Looped && execErr == nil {
 		result.Outcome = delegatedOrphanOutcome(orphan.Dead)
 	}
@@ -1169,7 +1169,8 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 	repoFull, number := in.Repo, in.Number
 	hiveID := s.delegateHiveID()
 	marker := delegatedecision.Marker(hiveID)
-	comment := delegatedecision.CommentBodyWith(d, hiveID, user, s.delegatedCommentOptions(in))
+	commentOpts := s.delegatedCommentOptions(in)
+	comment := delegatedecision.CommentBodyWith(d, hiveID, user, commentOpts)
 	if d.Verdict == delegatedecision.VerdictRefused {
 		return append(notes, "refused: "+d.Rationale), nil
 	}
@@ -1274,7 +1275,11 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 				if _, err := client.RecordOperatorPullRequestApproval(ctx, repoFull, number, user); err != nil {
 					return notes, fmt.Errorf("approving PR: %w", err)
 				}
-				notes = append(notes, "`/lgtm` + `/approve` recorded; hive merges it on its next merge pass once CI is green and the head has soaked")
+				if commentOpts.HumanMerges {
+					notes = append(notes, "`/lgtm` + `/approve` recorded; auto-merge is off for this repo, so a person merges it once CI is green")
+				} else {
+					notes = append(notes, "`/lgtm` + `/approve` recorded; hive merges it on its next merge pass once CI is green and the head has soaked")
+				}
 			}
 		case delegatedecision.ActionLabelsAdd:
 			for _, l := range a.Labels {
