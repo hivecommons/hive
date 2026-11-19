@@ -170,6 +170,8 @@
     .overview-pr-in-review { --slice-c: var(--band-in-review); }
     .overview-pr-open { --slice-c: var(--band-open); }
     .overview-pr-draft { --slice-c: var(--band-draft); }
+    /* Outside: open items not in any band; the Outside KPI card's neutral grey. */
+    .overview-issue-outside, .overview-pr-outside { --slice-c: var(--muted); }
 
     /* Plan usage gauge: Overview block, one row per provider, fuel dials. */
     .overview-usage-gauge { display: flex; flex-direction: column; gap: var(--sp-3); margin: var(--sp-0) var(--sp-0) var(--sp-4); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
