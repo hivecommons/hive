@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -355,12 +356,33 @@ func defaultReferenceLookup(url, token string) ([]byte, error) {
 	return body, nil
 }
 
+// referenceLookupOrDefault returns the lookup wrapped in the policy-seam
+// guard (#19224): a lookup that panics or outlives referenceLookupTimeout
+// answers an error, which every caller already turns into a refusal.
 func (p *GitHubProxy) referenceLookupOrDefault() referenceLookupFunc {
-	if p.referenceLookup != nil {
-		return p.referenceLookup
+	lookup := p.referenceLookup
+	if lookup == nil {
+		lookup = defaultReferenceLookup
 	}
-	return defaultReferenceLookup
+	return func(url, token string) ([]byte, error) {
+		type answer struct {
+			body []byte
+			err  error
+		}
+		a, ok := callPolicySeam(p, "reference lookup", referenceLookupTimeout, func() answer {
+			body, err := lookup(url, token)
+			return answer{body, err}
+		})
+		if !ok {
+			return nil, errReferenceLookupFailed
+		}
+		return a.body, a.err
+	}
 }
+
+// errReferenceLookupFailed is the error a guarded lookup answers when the
+// lookup itself panicked or timed out.
+var errReferenceLookupFailed = errors.New("the GitHub lookup failed or timed out")
 
 func (p *GitHubProxy) referenceToken(pol ReferenceRepoPolicy) string {
 	if pol.Token == nil {

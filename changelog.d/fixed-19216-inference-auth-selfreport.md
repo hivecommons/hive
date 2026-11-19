@@ -1,1 +1,0 @@
-- Upstream inference HTTP 401 responses now produce only the credential-specific fleet self-report, not a second generic upstream-error report ([#19216](https://github.com/hivecommons/hive/issues/19216)).

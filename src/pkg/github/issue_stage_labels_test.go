@@ -550,6 +550,21 @@ func TestIssueStageInputs_CarriesAuthorKind(t *testing.T) {
 	}
 }
 
+// A Jira or Linear item rides the actionable list with Number 0. It has no
+// GitHub issue, so it gets no stage row: before, every such item became one
+// "repo#0" row whose label write failed with a 404.
+func TestIssueStageInputs_SkipsItemsWithoutGitHubNumber(t *testing.T) {
+	res := &ActionableResult{}
+	res.Issues.Items = []Issue{
+		{Repo: "o/r", Number: 0, SourceType: "jira", ExternalID: "CEH-1"},
+		{Repo: "o/r", Number: 7},
+	}
+	got := IssueStageInputs(res)
+	if len(got) != 1 || got[0].Number != 7 {
+		t.Fatalf("stage inputs = %+v, want only o/r#7", got)
+	}
+}
+
 // An issue carrying needs-human and the PR-only 085 (pre-045 park) is
 // re-staged in one write: 045 on, 085 off.
 func TestSyncIssueStageLabels_NeedsHumanClearsStaleDecisionStage(t *testing.T) {

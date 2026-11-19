@@ -174,6 +174,45 @@ func (p *GitHubProxy) reviewThreadGuard() ReviewThreadGuard {
 	return p.reviewGuard.guard
 }
 
+// reviewOwnershipGate names the review-thread seams in a fail-closed refusal.
+const reviewOwnershipGate = "review-thread ownership"
+
+// guardedReviewThreadGuard is the installed guard with OwnPR and HiveLogins
+// routed through the policy-seam guard (#19224). A call that panics or times
+// out sets *failed and answers the deny value: not owned, no hive logins.
+// Nil seams stay nil so the "no guard installed" refusals are unchanged.
+func (p *GitHubProxy) guardedReviewThreadGuard(failed *bool) ReviewThreadGuard {
+	g := p.reviewThreadGuard()
+	if own := g.OwnPR; own != nil {
+		g.OwnPR = func(repo string, number int) (string, bool) {
+			type answer struct {
+				agent string
+				ok    bool
+			}
+			a, ok := callPolicySeam(p, reviewOwnershipGate, policyCallbackTimeout, func() answer {
+				owner, owned := own(repo, number)
+				return answer{owner, owned}
+			})
+			if !ok {
+				*failed = true
+				return "", false
+			}
+			return a.agent, a.ok
+		}
+	}
+	if logins := g.HiveLogins; logins != nil {
+		g.HiveLogins = func() []string {
+			out, ok := callPolicySeam(p, reviewOwnershipGate, policyCallbackTimeout, logins)
+			if !ok {
+				*failed = true
+				return nil
+			}
+			return out
+		}
+	}
+	return g
+}
+
 func (g ReviewThreadGuard) now() time.Time {
 	if g.Now != nil {
 		return g.Now()
@@ -193,11 +232,20 @@ func reviewThreadRefusalText(why string) string {
 // request must be blocked; a request that is not a guarded route returns
 // false and is left to the rest of the chain (mode table, repo filter).
 func (p *GitHubProxy) reviewThreadRefusal(req *http.Request, agentName string) (string, bool) {
+	var failed bool
+	reason, refused := p.reviewThreadDecision(req, agentName, &failed)
+	if failed {
+		return policyCallbackFailedReason(reviewOwnershipGate), true
+	}
+	return reason, refused
+}
+
+func (p *GitHubProxy) reviewThreadDecision(req *http.Request, agentName string, failed *bool) (string, bool) {
 	w, ok := classifyReviewThreadWrite(req.Method, req.URL.Path)
 	if !ok {
 		return "", false
 	}
-	g := p.reviewThreadGuard()
+	g := p.guardedReviewThreadGuard(failed)
 	if agentName == "" {
 		return reviewThreadRefusalText("the calling agent could not be identified"), true
 	}
@@ -243,7 +291,8 @@ func (p *GitHubProxy) noteRefusedReviewReply(req *http.Request, agentName, reaso
 	if !ok || w.kind == reviewWriteDelete {
 		return
 	}
-	g := p.reviewThreadGuard()
+	var failed bool
+	g := p.guardedReviewThreadGuard(&failed)
 	if g.OnRefused == nil || g.OwnPR == nil {
 		return
 	}
@@ -255,7 +304,7 @@ func (p *GitHubProxy) noteRefusedReviewReply(req *http.Request, agentName, reaso
 		}
 		number = n
 	}
-	if _, owned := g.OwnPR(w.repo, number); !owned {
+	if _, owned := g.OwnPR(w.repo, number); !owned || failed {
 		return
 	}
 	body, inReplyTo := peekReviewDraft(req)

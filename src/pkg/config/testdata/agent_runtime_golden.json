@@ -791,6 +791,7 @@
   "customers": {
     "inference": {},
     "avatars": {},
+    "hub_import": {},
     "mention_search": {}
   },
   "duplicate_sweep": {},
