@@ -713,7 +713,7 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 		timeout := s.delegatedEffectTimeout()
 		why := s.delegatedStuckWhy(in, d, req, prior)
 		options := delegatedStuckOptions(in, d, mergerRole, why)
-		res := delegatedDecisionEffectResult(rowActionTarget(repoFull, kind, number), in, d, prior.At, now, timeout, why, options)
+		res := delegatedDecisionEffectResult(rowActionTarget(repoFull, kind, number), in, d, s.delegatedHumanMerges(in), prior.At, now, timeout, why, options)
 		notes := append(deciderNotes, "already applied; nothing written")
 		noop := "already-applied"
 		if res.Action == rowActionNoEffect {
@@ -1169,7 +1169,7 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 	repoFull, number := in.Repo, in.Number
 	hiveID := s.delegateHiveID()
 	marker := delegatedecision.Marker(hiveID)
-	comment := delegatedecision.CommentBodyWith(d, hiveID, user, delegatedecision.CommentOptions{Kind: in.Kind, EffectTimeout: s.delegatedEffectTimeout()})
+	comment := delegatedecision.CommentBodyWith(d, hiveID, user, s.delegatedCommentOptions(in))
 	if d.Verdict == delegatedecision.VerdictRefused {
 		return append(notes, "refused: "+d.Rationale), nil
 	}

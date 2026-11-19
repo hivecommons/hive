@@ -149,6 +149,27 @@ func (s *Server) delegatedEffectTimeout() time.Duration {
 	return s.deps.Config.Decisions.Delegate.EffectTimeoutDuration()
 }
 
+// delegatedHumanMerges reports a PR on a repo the hive does not merge:
+// config.RepoAutoMergeEnabled is false (the repo's auto-merge setting, or
+// the hive below ACMM L6). It is the switch the governor's merge sweep
+// reads (repoAutoMergeOff in cmd/hive/merge_eligibility.go) and the reason
+// its merge verdict gives — "auto-merge is off for this repo (…) — a
+// person merges it". A decision that clears such a PR must not promise a
+// merge-queue merge, and nothing is left for its stalled follow-up to wait
+// on. No config reads as the hive merging, the wording before this check.
+func (s *Server) delegatedHumanMerges(in delegatedecision.Input) bool {
+	if in.Kind != delegatedecision.KindPR || s == nil || s.deps == nil || s.deps.Config == nil {
+		return false
+	}
+	return !s.deps.Config.RepoAutoMergeEnabled(in.Repo)
+}
+
+// delegatedCommentOptions tunes the decision comment's plain-words block
+// for in: its kind, the effect deadline, and whether a person merges it.
+func (s *Server) delegatedCommentOptions(in delegatedecision.Input) delegatedecision.CommentOptions {
+	return delegatedecision.CommentOptions{Kind: in.Kind, EffectTimeout: s.delegatedEffectTimeout(), HumanMerges: s.delegatedHumanMerges(in)}
+}
+
 // delegatedStuckWhy names, as a glossary slug, why the decision d recorded
 // on in has not taken effect. It reads the park reason the tracker row
 // showed (req.Reason / Caption), the gathered PR state, and the decision
@@ -283,9 +304,10 @@ func optionLabels(opts []StageTrackerDecisionOption) []string {
 // delegatedDecisionEffectResult is the dedup path's answer. Before the
 // deadline it is a no-op that still says, in plain words, what the hive
 // decided and by when it should show; past it, `no-effect` with the why
-// and the options.
-func delegatedDecisionEffectResult(target RowActionTarget, in delegatedecision.Input, d delegatedecision.Decision, prior time.Time, now time.Time, timeout time.Duration, why string, options []StageTrackerDecisionOption) RowActionResult {
-	eff := delegatedecision.ExpectedEffect(d, in.Kind)
+// and the options. humanMerges (delegatedHumanMerges) makes an approval
+// await nothing: a person merges the PR, so it never reads as stalled.
+func delegatedDecisionEffectResult(target RowActionTarget, in delegatedecision.Input, d delegatedecision.Decision, humanMerges bool, prior time.Time, now time.Time, timeout time.Duration, why string, options []StageTrackerDecisionOption) RowActionResult {
+	eff := delegatedecision.ExpectedEffectWith(d, delegatedecision.CommentOptions{Kind: in.Kind, HumanMerges: humanMerges})
 	at := prior.UTC().Truncate(time.Second)
 	stamp := at.Format(time.RFC3339)
 	plainAction := delegatedecision.ActionPlainOn(d, in.Kind)
