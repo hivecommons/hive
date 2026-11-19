@@ -15,6 +15,8 @@ concurrency:
 
 permissions:
   contents: read
+  # The refresh-only check reads this workflow's runs on the previous head.
+  actions: read
 
 jobs:
   fossa:
@@ -27,10 +29,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Refresh-only heads (src/docs/ci-refresh-only-heads.md): a verified
+      # hive App merge of the base that leaves the PR's three-dot diff
+      # unchanged, on a PR whose previous head already passed this scan, and
+      # whose base delta touches no dependency manifest, Dockerfile, deploy or
+      # CI path, has nothing new to scan. The scan steps below skip and the
+      # job reports success. Any failure here leaves refresh_only empty,
+      # which means "scan".
+      - name: Detect refresh-only head
+        id: refresh
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_PATH: .github/workflows/fossa.yml
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/refresh-only-head.sh
+
       # Forks and repos without the secret skip the scan instead of failing
       # the check on a missing input; the scan activates once FOSSA_API_KEY is set.
       - name: Skip when FOSSA_API_KEY is not configured
-        if: env.FOSSA_API_KEY == ''
+        if: env.FOSSA_API_KEY == '' && steps.refresh.outputs.refresh_only != 'true'
         run: echo "FOSSA_API_KEY secret not set; skipping FOSSA scan." >> "$GITHUB_STEP_SUMMARY"
 
       # The key must be a push-only token from the *CNCF* FOSSA organization so
@@ -41,7 +66,7 @@ jobs:
       # and forwards `team`/`branch` to it, which `fossa test` rejects. So:
       # always analyze (upload), then on PRs run the policy test separately.
       - name: Run FOSSA scan
-        if: env.FOSSA_API_KEY != ''
+        if: env.FOSSA_API_KEY != '' && steps.refresh.outputs.refresh_only != 'true'
         uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # v2.0.0
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
@@ -53,7 +78,7 @@ jobs:
       # Upload the exact diff baseline here so the PR test does not race it.
       # Check it out after the PR scan to keep it out of that scan's discovery.
       - name: Checkout FOSSA diff baseline
-        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request'
+        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request' && steps.refresh.outputs.refresh_only != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
@@ -61,7 +86,7 @@ jobs:
           persist-credentials: false
 
       - name: Analyze FOSSA diff baseline
-        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request'
+        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request' && steps.refresh.outputs.refresh_only != 'true'
         working-directory: .fossa-base
         env:
           FOSSA_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -74,7 +99,7 @@ jobs:
             --team "Hive Commons"
 
       - name: Run FOSSA policy test
-        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request'
+        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request' && steps.refresh.outputs.refresh_only != 'true'
         uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # v2.0.0
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
