@@ -678,7 +678,6 @@ func ParseReferencedIssues(text, defaultRepo string) []ClaimedRef {
 // of string or a -/_// separator) so a version string like "bump-v2-1" or a
 // SHA-ish suffix cannot be mistaken for an issue number.
 var branchIssuePattern = regexp.MustCompile(`(?i)(?:^|[/_-])(?:issue[/_-]?|fix[/_-]|gh[/_-])?(\d+)(?:[/_-]|$)`)
-var trackerKeyWordPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
 var branchDatePattern = regexp.MustCompile(`(?:^|[/_-])(?:19|20)\d{2}(?:\d{4}|[/_-]\d{2}[/_-]\d{2})(?:[/_-]|$)`)
 
 // headRef returns the PR's head branch name, guarding the nested pointers.
@@ -736,25 +735,41 @@ func issueFromBranchName(branch string) (int, bool) {
 	return n, true
 }
 
+// trackerKeyPrefixes holds the project keys of the hive's Jira and Linear
+// work sources (lower case), installed by SetTrackerKeyPrefixes.
+var trackerKeyPrefixes = struct {
+	sync.RWMutex
+	keys map[string]bool
+}{}
+
+// SetTrackerKeyPrefixes installs the project keys of the configured Jira and
+// Linear work sources (jira.project_keys, linear.teams[].key). A branch named
+// after one of their items ("ceh-12725-...") then claims no GitHub issue.
+func SetTrackerKeyPrefixes(keys []string) {
+	m := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		if k = strings.ToLower(strings.TrimSpace(k)); k != "" {
+			m[k] = true
+		}
+	}
+	trackerKeyPrefixes.Lock()
+	defer trackerKeyPrefixes.Unlock()
+	trackerKeyPrefixes.keys = m
+}
+
 // branchIssueMatchIsTrackerKey reports whether the number at start is the
-// numeric half of another tracker's key, such as Jira's "CEH-12725" in
-// "ceh-12725-mcp-client": a word joined to the number by a hyphen. That
-// number is not a GitHub issue in this repository. The agent prefixes the
-// pattern names (issue-, fix-, gh-) are not keys.
+// numeric half of a configured Jira/Linear key, such as "CEH-12725" in
+// "ceh-12725-mcp-client". That number is not a GitHub issue in this
+// repository. Any other word (hotfix-, bug-, feat-) keeps the claim.
 func branchIssueMatchIsTrackerKey(branch string, start int) bool {
 	if start < 2 || branch[start-1] != '-' {
 		return false
 	}
 	head := branch[:start-1]
-	word := head[strings.LastIndexAny(head, "/_-")+1:]
-	if !trackerKeyWordPattern.MatchString(word) {
-		return false
-	}
-	switch strings.ToLower(word) {
-	case "issue", "fix", "gh":
-		return false
-	}
-	return true
+	word := strings.ToLower(head[strings.LastIndexAny(head, "/_-")+1:])
+	trackerKeyPrefixes.RLock()
+	defer trackerKeyPrefixes.RUnlock()
+	return trackerKeyPrefixes.keys[word]
 }
 
 func branchIssueMatchOverlapsDate(branch string, start, end int) bool {
