@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 const forkQueueFixture = `{"generated_at":"2026-09-17T00:00:00Z","ci_failing":[
@@ -252,5 +253,31 @@ func TestRebaseResolveInstructions(t *testing.T) {
 		if !strings.Contains(last, want) {
 			t.Fatalf("last attempt missing %q: %s", want, last)
 		}
+	}
+}
+
+// hivecommons/hive#19110, #19102, #19063: the FIX-BEFORE-NEW block sent the
+// fixer to a person's PR with "commit -s → git push" and nothing else, and its
+// own follow-up commits failed `Sign-off survives the squash`. A person's row
+// carries the rule; the hive's own PR does not.
+func TestFormatRedPRFixData_PersonAuthoredRowCarriesSignoffRule(t *testing.T) {
+	data := `{"ci_failing":[` +
+		`{"number":19110,"repo":"hivecommons/hive","title":"human red","author":"clubanderson","failing_checks":["coverage"],"person_authored":true},` +
+		`{"number":19102,"repo":"hivecommons/hive","title":"human dirty","author":"clubanderson","conflict":true,"mergeable_state":"dirty","trusted_author":true,"person_authored":true,"base_ref":"v5","rebase_attempt":1,"rebase_attempts_max":2},` +
+		`{"number":19200,"repo":"hivecommons/hive","title":"hive red","author":"app/hivecommons-hive","app_authored":true,"failing_checks":["test"]}` +
+		`]}`
+	out := formatRedPRFixData([]byte(data), "scanner")
+	if got := strings.Count(out, stagelabels.PersonPRAgentCommitRule); got != 2 {
+		t.Fatalf("person's-PR rule appears %d times, want once per person's row:\n%s", got, out)
+	}
+	if !strings.Contains(out, "PERSON'S PR (author clubanderson)") {
+		t.Errorf("rule does not name the author:\n%s", out)
+	}
+	hive := out[strings.Index(out, "#19200"):]
+	if strings.Contains(hive, "PERSON'S PR") {
+		t.Errorf("the hive's own PR got the person's-PR rule:\n%s", hive)
+	}
+	if !strings.Contains(out, "add no commit or Signed-off-by of your own") {
+		t.Errorf("trusted-author rebase lacks the no-own-commit clause:\n%s", out)
 	}
 }

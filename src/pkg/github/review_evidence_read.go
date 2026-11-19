@@ -54,6 +54,13 @@ func reviewEvidenceVerifierForKey(key ed25519.PrivateKey) ReviewEvidenceVerifier
 	return ReviewEvidenceVerifier{publicKey: key.Public().(ed25519.PublicKey)}
 }
 
+// PolicyKey identifies the trust policy: two verifiers with the same key
+// accept and reject exactly the same bundles, so a cache of verified bundles
+// keyed by it never serves a bundle the current policy would reject.
+func (v ReviewEvidenceVerifier) PolicyKey() string {
+	return string(v.publicKey)
+}
+
 // Verify rejects modified bundles. Signed bundles require the configured
 // public key; unsigned bundles are accepted only in unsigned mode and only
 // when their content hash still matches.

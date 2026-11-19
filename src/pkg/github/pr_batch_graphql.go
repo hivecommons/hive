@@ -46,6 +46,9 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
             }
           }
         }
+        latestOpinionatedReviews(first: 20) { nodes { state submittedAt authorAssociation author { __typename login } } }
+        comments(first: 1) { totalCount }
+        reviewThreads(first: 1) { totalCount }
         closingIssuesReferences(first: 10) { nodes { number title state stateReason url repository { nameWithOwner } } }
       }
     }
@@ -110,6 +113,16 @@ type graphQLPRBatchNode struct {
 			} `json:"commit"`
 		} `json:"nodes"`
 	} `json:"commits"`
+	// LatestOpinionatedReviews and the totals feed the cached review state
+	// the same way the per-repo review query does (hivecommons/hive#19325):
+	// without them a CHANGES_REQUESTED PR read as "no human review yet".
+	LatestOpinionatedReviews opinionatedReviews `json:"latestOpinionatedReviews"`
+	Comments                 struct {
+		TotalCount int `json:"totalCount"`
+	} `json:"comments"`
+	ReviewThreads struct {
+		TotalCount int `json:"totalCount"`
+	} `json:"reviewThreads"`
 	ClosingIssuesReferences struct {
 		Nodes []struct {
 			Number      int    `json:"number"`
@@ -429,18 +442,14 @@ func (c *Client) graphQLBatchCheckObservedAt(repo string, number int, headSHA st
 }
 
 func (c *Client) storeGraphQLPRBatchReview(repo string, n graphQLPRBatchNode) {
-	c.prBatchMu.Lock()
-	defer c.prBatchMu.Unlock()
-	if c.prBatchReviews == nil {
-		c.prBatchReviews = map[string]map[int]prReviewState{}
+	// Derive the state before taking prBatchMu: the trusted-author test reads
+	// the hive identity and review-bot config under their own locks.
+	st := prReviewState{
+		decision:      ReviewDecision(strings.ToUpper(strings.TrimSpace(n.ReviewDecision))),
+		comments:      n.Comments.TotalCount,
+		reviewThreads: n.ReviewThreads.TotalCount,
 	}
-	key := canonicalPRDetailRepo(repo)
-	byNumber := c.prBatchReviews[key]
-	if byNumber == nil {
-		byNumber = map[int]prReviewState{}
-		c.prBatchReviews[key] = byNumber
-	}
-	st := prReviewState{decision: ReviewDecision(strings.ToUpper(strings.TrimSpace(n.ReviewDecision)))}
+	c.applyOpinionatedReviews(&st, n.LatestOpinionatedReviews.Nodes)
 	for _, li := range n.ClosingIssuesReferences.Nodes {
 		if li.Number > 0 {
 			st.linkedIssues = append(st.linkedIssues, PRLinkedIssue{
@@ -452,6 +461,17 @@ func (c *Client) storeGraphQLPRBatchReview(repo string, n graphQLPRBatchNode) {
 				URL:         li.URL,
 			})
 		}
+	}
+	c.prBatchMu.Lock()
+	defer c.prBatchMu.Unlock()
+	if c.prBatchReviews == nil {
+		c.prBatchReviews = map[string]map[int]prReviewState{}
+	}
+	key := canonicalPRDetailRepo(repo)
+	byNumber := c.prBatchReviews[key]
+	if byNumber == nil {
+		byNumber = map[int]prReviewState{}
+		c.prBatchReviews[key] = byNumber
 	}
 	byNumber[n.Number] = st
 }

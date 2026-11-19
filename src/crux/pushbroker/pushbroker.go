@@ -443,6 +443,18 @@ var signedOffByRE = regexp.MustCompile(`(?mi)^Signed-off-by:\s*(.*?)\s*<([^<>]+)
 // "Name <email> <timestamp> <tzoffset>". Only the name/email prefix is used.
 var gitIdentRE = regexp.MustCompile(`^(.*?)\s*<([^<>]*)>`)
 
+// foreignSignoffAdvice closes the refusal of a lane Signed-off-by on a
+// commit the lane did not write. A sign-off certifies the signer wrote the
+// change (DCO), so a lane may only sign its own commits; `git rebase
+// --signoff` over a branch with someone else's commits appends the lane's
+// trailer to theirs too and breaks the "Sign-off survives the squash" check
+// (seen on hivecommons/hive#19102).
+const foreignSignoffAdvice = "a lane signs off only commits it authored. Do not run git rebase --signoff over someone else's commits; keep their commits as they wrote them and leave DCO remediation to the author (ask them on the PR to sign off)"
+
+// rejectForgedLaneSignoffs judges every outgoing non-merge commit against
+// the pushing lane's identity: a commit the lane authored and committed must
+// carry the lane's Signed-off-by, and a commit someone else authored (or
+// committed) must not.
 func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, baseExists bool) error {
 	laneName, laneEmail, err := b.laneGitIdentity(ctx)
 	if err != nil {
@@ -500,7 +512,7 @@ func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, base
 				"lane", fmt.Sprintf("%s <%s>", laneName, laneEmail))
 		}
 		if laneSigned {
-			return fmt.Errorf("pushbroker: refusing to push commit %s authored by %s <%s> and committed by %s <%s> with %s's Signed-off-by trailer; leave DCO remediation to the author", shortSHA(sha), authorName, authorEmail, committerName, committerEmail, laneName)
+			return fmt.Errorf("pushbroker: refusing to push commit %s authored by %s <%s> and committed by %s <%s> with %s's Signed-off-by trailer: %s", shortSHA(sha), authorName, authorEmail, committerName, committerEmail, laneName, foreignSignoffAdvice)
 		}
 	}
 	return nil

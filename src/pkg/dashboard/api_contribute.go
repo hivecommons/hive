@@ -1737,14 +1737,22 @@ func validateGitHubToken(token, apiURL string) string {
 	}
 	ghTokenCacheMu.RUnlock()
 
-	userEndpoint := "https://api.github.com/user"
-	if apiURL != "" && apiURL != "https://api.github.com" {
+	userEndpoint := config.DefaultGitHubAPIURL + "/user"
+	ctx := context.Background()
+	if apiURL != "" && apiURL != config.DefaultGitHubAPIURL {
 		userEndpoint = apiURL + "/user"
+		// A configured API URL is intentionally chosen and may be private;
+		// githubTokenTransport still pins and checks every dial to it.
+		ctx = context.WithValue(ctx, githubTokenConfiguredTargetKey{}, true)
 	}
 
 	const tokenValidateTimeout = 10 * time.Second
-	client := &http.Client{Timeout: tokenValidateTimeout}
-	req, err := http.NewRequest("GET", userEndpoint, nil)
+	client := &http.Client{
+		Timeout:       tokenValidateTimeout,
+		Transport:     githubTokenRoundTripper(),
+		CheckRedirect: githubTokenCheckRedirect,
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, userEndpoint, nil)
 	if err != nil {
 		return ""
 	}

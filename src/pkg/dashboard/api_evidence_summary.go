@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -775,37 +774,10 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 // loadEvidenceBundles reads every bundle under root
 // (<owner>/<repo>/<pr>/<sha>.json). Unparseable files and bundles that fail
 // integrity verification are counted, not included in dashboard aggregates.
+// Results are memoised per file (evidenceBundleCache, #19309); the returned
+// bundles are shared and read-only.
 func loadEvidenceBundles(root string, verifier ghpkg.ReviewEvidenceVerifier) ([]*evidence.Bundle, int, error) {
-	var out []*evidence.Bundle
-	unreadable := 0
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			return err
-		}
-		if d.IsDir() {
-			// Reporting series share the root but are not review bundles.
-			rel, _ := filepath.Rel(root, path)
-			issueSeries := d.Name() == evidence.IssueSeriesDirName && len(strings.Split(rel, string(filepath.Separator))) == 3
-			if (d.Name() == complexity.DirName || issueSeries) && path != root {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if filepath.Ext(path) != ".json" {
-			return nil
-		}
-		b, lerr := ghpkg.LoadVerifiedReviewEvidence(path, verifier)
-		if lerr != nil || b.SchemaVersion != evidence.SchemaVersion {
-			unreadable++
-			return nil
-		}
-		out = append(out, b)
-		return nil
-	})
-	return out, unreadable, err
+	return evidenceBundles.load(root, verifier)
 }
 
 // evidenceWindowHas reports whether a PR opened inside the window.

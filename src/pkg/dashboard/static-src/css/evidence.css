@@ -110,6 +110,12 @@
     .ev-flow { display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-3); }
     .ev-flow h5 { margin:var(--sp-2) 0 0; font-size:var(--fs-2xs); color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
     .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
+    /* Load state (#19310): spans the card grid; the spinner reuses the shared
+       spin keyframes like .sessions-spinner and .inbox-tx-spinner. */
+    .ev-status { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
+    .ev-status-error { color:var(--red); }
+    .ev-spinner { display:inline-block; flex:none; width:var(--status-dot-size); height:var(--status-dot-size); border:2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color:var(--accent); border-radius:var(--r-pill); animation:spin 0.8s linear infinite; }
+    @media (prefers-reduced-motion: reduce) { .ev-spinner { animation-duration:2.4s; } }
     .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
     /* Compact tables inside a panel (issue reopen rate, control arm): the
        panel's own font scale, nowrap headers, overflow contained in the wrap

@@ -295,7 +295,7 @@ func (r *SandboxReadRelay) readToken() string {
 // attached only when d allows injection.
 func applySandboxReadAuth(req *http.Request, d SandboxReadDecision, token string) {
 	req.Header.Del("Authorization")
-	req.Header.Del("Proxy-Authorization")
+	stripRelayRequestHeaders(req)
 	req.Header.Del("Expect")
 	if !d.Allowed || !d.Inject || token == "" {
 		return
@@ -434,6 +434,11 @@ func (r *SandboxReadRelay) intercept(conn net.Conn, host string, kick *sandboxRe
 			// another host must not ride that decision.
 			d = SandboxReadDecision{Reason: "the request names a different host than the CONNECT target"}
 		}
+		if d.Allowed && relayPathHasDotSegment(req.URL.EscapedPath()) {
+			// SandboxReadPolicy matches path suffixes; a dot segment would let
+			// the upstream resolve a path the policy never classified (#19223).
+			d = SandboxReadDecision{Reason: "the request path contains a dot segment"}
+		}
 		if !d.Allowed {
 			r.p.logger.Info("sandbox read relay: request refused", "agent", agentName, "host", host, "method", req.Method)
 			writeRelayRefusal(client, d.Reason)
@@ -468,6 +473,7 @@ func (r *SandboxReadRelay) intercept(conn net.Conn, host string, kick *sandboxRe
 			return
 		}
 		resp.Body = &stallBoundedBody{body: resp.Body, conn: upstream, idle: r.p.bodyStallTimeoutDuration()}
+		stripRelayResponseHeaders(resp)
 		werr := resp.Write(&stallBoundedWriter{conn: client, idle: httpWriteTimeout})
 		_ = resp.Body.Close()
 		_ = client.SetWriteDeadline(time.Time{})

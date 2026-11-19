@@ -159,6 +159,12 @@ func (b *boot) sweepJobs() []sweepJob {
 		{"customers_hub_import", fixed(customersHubImportInterval), sweepOptional, func(ctx context.Context, _ *github.Client, cfg *config.Config) {
 			b.runCustomersHubImport(ctx, cfg, "")
 		}},
+		// Customers enrichment (customers.enrichment, off by default): the
+		// public gitdm snapshot, matched on the hive. Never handed the
+		// GitHub client; with the sources off a pass only tidies.
+		{"customers_enrichment", fixed(customersEnrichmentInterval), sweepOptional, func(ctx context.Context, _ *github.Client, cfg *config.Config) {
+			b.runCustomersEnrichment(ctx, cfg)
+		}},
 		{"rfc_notify", fixed(rfcnotify.DefaultInterval + time.Second), sweepOptional, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
 			runRFCNotifySweep(ctx, newRFCNotifySource(gh, notify), len(cfg.Project.Repos), cfg, b.dashSrv, notify, b.logger)
 		}},

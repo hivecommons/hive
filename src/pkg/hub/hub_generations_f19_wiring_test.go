@@ -106,6 +106,7 @@ func TestRotationReachesDesiredPerHiveEnv(t *testing.T) {
 		EnvHeartbeatKey:     derivePerHiveKey(newSecret, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(newSecret, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(newSecret, infoInviteKey, hiveID),
+		EnvCustomerMatchKey: customerMatchKey(newSecret, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(newSecret, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(newSecret, infoSessionEd25519Seed)),
 	}
@@ -167,6 +168,7 @@ func rawMasterDerivation(master, hiveID string) map[string]string {
 		EnvHeartbeatKey:     derivePerHiveKey(master, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(master, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(master, infoInviteKey, hiveID),
+		EnvCustomerMatchKey: customerMatchKey(master, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(master, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(master, infoSessionEd25519Seed)),
 	}

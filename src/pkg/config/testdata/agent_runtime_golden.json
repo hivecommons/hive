@@ -792,6 +792,11 @@
     "inference": {},
     "avatars": {},
     "hub_import": {},
+    "enrichment": {
+      "gitdm": {},
+      "devstats": {},
+      "crowddev": {}
+    },
     "mention_search": {}
   },
   "duplicate_sweep": {},

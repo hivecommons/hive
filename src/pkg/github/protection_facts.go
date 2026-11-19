@@ -300,20 +300,10 @@ type reviewDecisionResponse struct {
 				EndCursor   string `json:"endCursor"`
 			} `json:"pageInfo"`
 			Nodes []struct {
-				Number                   int    `json:"number"`
-				ReviewDecision           string `json:"reviewDecision"`
-				LatestOpinionatedReviews struct {
-					Nodes []struct {
-						State             string    `json:"state"`
-						SubmittedAt       time.Time `json:"submittedAt"`
-						AuthorAssociation string    `json:"authorAssociation"`
-						Author            *struct {
-							Typename string `json:"__typename"`
-							Login    string `json:"login"`
-						} `json:"author"`
-					} `json:"nodes"`
-				} `json:"latestOpinionatedReviews"`
-				Comments struct {
+				Number                   int                `json:"number"`
+				ReviewDecision           string             `json:"reviewDecision"`
+				LatestOpinionatedReviews opinionatedReviews `json:"latestOpinionatedReviews"`
+				Comments                 struct {
 					TotalCount int `json:"totalCount"`
 				} `json:"comments"`
 				ReviewThreads struct {
@@ -398,28 +388,7 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 					URL:         li.URL,
 				})
 			}
-			for _, r := range n.LatestOpinionatedReviews.Nodes {
-				login := ""
-				typename := ""
-				if r.Author != nil {
-					login = r.Author.Login
-					typename = r.Author.Typename
-				}
-				state := ReviewDecision(strings.ToUpper(strings.TrimSpace(r.State)))
-				switch state {
-				case ReviewDecisionApproved:
-					st.approvals++
-				case ReviewDecisionChangesRequested:
-					if login != "" {
-						st.changesRequestedBy = append(st.changesRequestedBy, login)
-					}
-				}
-				if c.isTrustedHumanReviewAuthor(login, typename, r.AuthorAssociation) && (state == ReviewDecisionApproved || state == ReviewDecisionChangesRequested) && r.SubmittedAt.After(st.latestHumanAt) {
-					st.latestHumanState = state
-					st.latestHumanBy = login
-					st.latestHumanAt = r.SubmittedAt
-				}
-			}
+			c.applyOpinionatedReviews(&st, n.LatestOpinionatedReviews.Nodes)
 			out[n.Number] = st
 		}
 		if !resp.Repository.PullRequests.PageInfo.HasNextPage || resp.Repository.PullRequests.PageInfo.EndCursor == "" {
@@ -428,6 +397,51 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 		vars["cursor"] = resp.Repository.PullRequests.PageInfo.EndCursor
 	}
 	return out
+}
+
+// opinionatedReviews is GitHub's latestOpinionatedReviews connection: one
+// node per reviewer, carrying that reviewer's current position.
+type opinionatedReviews struct {
+	Nodes []opinionatedReviewNode `json:"nodes"`
+}
+
+type opinionatedReviewNode struct {
+	State             string    `json:"state"`
+	SubmittedAt       time.Time `json:"submittedAt"`
+	AuthorAssociation string    `json:"authorAssociation"`
+	Author            *struct {
+		Typename string `json:"__typename"`
+		Login    string `json:"login"`
+	} `json:"author"`
+}
+
+// applyOpinionatedReviews folds the per-reviewer positions into st: approval
+// count, who requested changes, and the latest trusted human verdict. Both the
+// per-repo review query and the PR batch (hivecommons/hive#19325) use it, so a
+// PR's review state does not depend on which read served it.
+func (c *Client) applyOpinionatedReviews(st *prReviewState, nodes []opinionatedReviewNode) {
+	for _, r := range nodes {
+		login := ""
+		typename := ""
+		if r.Author != nil {
+			login = r.Author.Login
+			typename = r.Author.Typename
+		}
+		state := ReviewDecision(strings.ToUpper(strings.TrimSpace(r.State)))
+		switch state {
+		case ReviewDecisionApproved:
+			st.approvals++
+		case ReviewDecisionChangesRequested:
+			if login != "" {
+				st.changesRequestedBy = append(st.changesRequestedBy, login)
+			}
+		}
+		if c.isTrustedHumanReviewAuthor(login, typename, r.AuthorAssociation) && (state == ReviewDecisionApproved || state == ReviewDecisionChangesRequested) && r.SubmittedAt.After(st.latestHumanAt) {
+			st.latestHumanState = state
+			st.latestHumanBy = login
+			st.latestHumanAt = r.SubmittedAt
+		}
+	}
 }
 
 func (c *Client) isTrustedHumanReviewAuthor(login, typename, association string) bool {
