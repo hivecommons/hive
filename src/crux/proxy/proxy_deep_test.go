@@ -348,6 +348,8 @@ func TestGenerateCAProperties(t *testing.T) {
 func TestForwardPlainDirectSuccess(t *testing.T) {
 	// Create a mock upstream server
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertRelayHeaderHygiene(t, r.Header, relayTestRequestHeaders())
+		setRelayTestResponseHeaders(w.Header())
 		w.Header().Set("X-Test", "passed")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("upstream response"))
@@ -360,9 +362,11 @@ func TestForwardPlainDirectSuccess(t *testing.T) {
 	// successful relay, so it runs with the operator opt-in lifted.
 	p.allowPrivateForward = true
 	clientConn, proxyClient := net.Pipe()
+	defer proxyClient.Close()
 	defer clientConn.Close()
 
 	req, _ := http.NewRequest("GET", upstream.URL+"/test", nil)
+	req.Header = relayTestRequestHeaders()
 	go p.forwardPlainDirect(proxyClient, req)
 
 	resp, err := http.ReadResponse(bufio.NewReader(clientConn), nil)
@@ -372,6 +376,7 @@ func TestForwardPlainDirectSuccess(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
+	assertRelayResponseHeaderHygiene(t, resp)
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "upstream response") {
 		t.Errorf("body = %q, expected 'upstream response'", body)

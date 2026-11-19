@@ -403,6 +403,14 @@ on the same evidence as a literal IP. Set
 destination is intended; it lifts the guard for all three legs at once, and the
 proxy warns at boot when it is set.
 
+**HTTP relay header boundary.** Plain HTTP, inspected agent HTTP, and the
+sandbox read relay remove `Proxy-Authorization`, `X-Forwarded-*`,
+`X-Hive-*`, standard hop-by-hop fields, and fields nominated by `Connection`
+from forwarded requests. The parsed response path removes hop-by-hop fields
+in the other direction. These paths regenerate HTTP framing without
+forwarding trailers. The inspected agent relay and sandbox read relay apply
+the filter before adding their own upstream credentials.
+
 **Server-side fetches of user- or spoke-chosen URLs.** The dashboard's agent
 import and workflow spec fetches, the hub's hive config proxy and webhook
 relay to a spoke's self-reported dashboard URL, and knowledge document imports

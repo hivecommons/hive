@@ -295,7 +295,7 @@ func (r *SandboxReadRelay) readToken() string {
 // attached only when d allows injection.
 func applySandboxReadAuth(req *http.Request, d SandboxReadDecision, token string) {
 	req.Header.Del("Authorization")
-	req.Header.Del("Proxy-Authorization")
+	stripRelayRequestHeaders(req)
 	req.Header.Del("Expect")
 	if !d.Allowed || !d.Inject || token == "" {
 		return
@@ -468,6 +468,7 @@ func (r *SandboxReadRelay) intercept(conn net.Conn, host string, kick *sandboxRe
 			return
 		}
 		resp.Body = &stallBoundedBody{body: resp.Body, conn: upstream, idle: r.p.bodyStallTimeoutDuration()}
+		stripRelayResponseHeaders(resp)
 		werr := resp.Write(&stallBoundedWriter{conn: client, idle: httpWriteTimeout})
 		_ = resp.Body.Close()
 		_ = client.SetWriteDeadline(time.Time{})

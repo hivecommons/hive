@@ -347,6 +347,13 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			}
 		}
 
+		// Advisory attribution can use a caller-supplied name, so it
+		// cannot exempt a request from header filtering.
+		filterAgentHeaders := agentName != internalCallerName || p.proxyAdvisoryOK
+		if filterAgentHeaders {
+			stripRelayRequestHeaders(req)
+		}
+
 		// #1861: with injection enabled, the upstream credential is decided
 		// HERE — after the ACMM/repo/canary gates, immediately before either
 		// forwarding branch — so every byte that reaches GitHub has passed
@@ -447,6 +454,10 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 					p.observeGraphQLRepoResponse(agentName, graphQLBody, body, resp.Header.Get("Content-Encoding"))
 				},
 			}
+		}
+
+		if filterAgentHeaders {
+			stripRelayResponseHeaders(resp)
 		}
 
 		// Rolling per-Write deadline (see stallBoundedWriter): a response that

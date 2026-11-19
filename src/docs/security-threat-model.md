@@ -99,6 +99,11 @@ Read each control's exceptions and the residual risks, not just its name.
   it with a placeholder, is opt-in.
 * **Network is limited, not absent.** Agents can still reach GitHub reads,
   model backends and opaque `github.com` tunnels.
+* **Opaque forwarding has no HTTP header filter.** This includes uninspected
+  TLS tunnels and the response stream after the inspected Git smart-HTTP
+  handoff. The filter also leaves trusted internal inspected traffic
+  unchanged. Header filtering does not certify handling of ambiguous HTTP
+  framing or path normalization.
 * **The classifier fails open at L1–L4.** It is on by default from L4 and
   fails closed at L5–L6. The deterministic rules, canaries and proxy denials
   are the floor; the language-model classifier adds coverage above it.
