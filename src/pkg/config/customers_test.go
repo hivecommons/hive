@@ -167,3 +167,35 @@ func TestCustomersMentionSearchRequestsPerHour(t *testing.T) {
 		})
 	}
 }
+
+func TestCustomersHubImportEnabled(t *testing.T) {
+	t.Setenv(EnvCustomersEnabled, "")
+	t.Setenv(EnvCustomersHubImportEnabled, "")
+	cfg := &Config{}
+	if cfg.CustomersHubImportEnabled() {
+		t.Fatal("hub import must default off")
+	}
+	off, on := false, true
+	cfg.Customers.HubImport.Enabled = &on
+	if !cfg.CustomersHubImportEnabled() {
+		t.Fatal("explicit true")
+	}
+	t.Setenv(EnvCustomersHubImportEnabled, "false")
+	if cfg.CustomersHubImportEnabled() {
+		t.Fatal("env false must win over config true")
+	}
+	cfg.Customers.HubImport.Enabled = &off
+	t.Setenv(EnvCustomersHubImportEnabled, "true")
+	if !cfg.CustomersHubImportEnabled() {
+		t.Fatal("env true must win over config false")
+	}
+	cfg.Customers.Enabled = &off
+	if cfg.CustomersHubImportEnabled() {
+		t.Fatal("hub import needs Customers on")
+	}
+	var none *Config
+	t.Setenv(EnvCustomersHubImportEnabled, "")
+	if none.CustomersHubImportEnabled() {
+		t.Fatal("a nil config has hub import off")
+	}
+}

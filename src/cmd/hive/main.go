@@ -3656,6 +3656,12 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		// Step E (#18884): the budgeted GitHub search on accept. Off unless
 		// customers.mention_search.enabled; never reached by the sweep.
 		svc.mentions = newCustomersMentionSearch(svc.svc, b.customersMentionConfig, b.currentGitHubClient)
+		// Phase 3 of customers-hub-consent (#19163): pull hub-consented
+		// fields for a person just accepted. Off unless
+		// customers.hub_import.enabled and a hub registration.
+		svc.hubImport = func(ctx context.Context, person string) {
+			b.runCustomersHubImport(ctx, b.customersMentionConfig(), person)
+		}
 		b.dashSrv.SetCustomersService(svc)
 		if b.sched != nil {
 			installCustomersAgentContext(svc, b.sched.SetCustomerContextLookup)

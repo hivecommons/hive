@@ -5095,6 +5095,7 @@ func (s *HubServer) handleContributeProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = pinnedOrReplacedDefault(contributeProxyTransport)
 	r.URL.Path = "/api/contribute/register"
 	r.Host = target.Host
 	s.logger.Info("proxying contribute registration", "hive", hive.ID, "target", target.String())
@@ -5132,6 +5133,9 @@ func (s *HubServer) handleContributeWSProxy(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	proxy := newContributeWSReverseProxy(target)
+	if proxy.Transport == nil {
+		proxy.Transport = pinnedOrReplacedDefault(contributeProxyTransport)
+	}
 	r.URL.Path = "/api/contribute/ws"
 	r.Host = target.Host
 	s.logger.Info("proxying contribute WS", "hive", hive.ID, "target", target.String())
@@ -5139,6 +5143,35 @@ func (s *HubServer) handleContributeWSProxy(w http.ResponseWriter, r *http.Reque
 }
 
 var newContributeWSReverseProxy = httputil.NewSingleHostReverseProxy
+
+// contributeProxyTransport carries the contribute registration and WS proxies
+// to the selected hive (#19221, part of #18986). findContributeHive admits a
+// hive only when its self-reported DashboardURL passes isPrivateURL, but
+// httputil's default transport resolved the name again when it dialled, so a
+// DashboardURL whose name rebinds was checked as public and proxied to as
+// private. This transport resolves each dial once, checks every answer with
+// isPrivateURL, and connects only to an address it checked.
+var contributeProxyTransport http.RoundTripper = pinnedFetchTransport(isPrivateURL)
+
+// replacedDefaultTransport reports http.DefaultTransport when it was replaced
+// with something other than *http.Transport (tests and instrumented builds
+// inject a RoundTripper there). Every pinned call site shares this check so
+// they honour the override the same way.
+func replacedDefaultTransport() (http.RoundTripper, bool) {
+	if _, ok := http.DefaultTransport.(*http.Transport); ok {
+		return nil, false
+	}
+	return http.DefaultTransport, true
+}
+
+// pinnedOrReplacedDefault returns pinned, unless http.DefaultTransport was
+// replaced; then that replacement is used.
+func pinnedOrReplacedDefault(pinned http.RoundTripper) http.RoundTripper {
+	if rt, ok := replacedDefaultTransport(); ok {
+		return rt
+	}
+	return pinned
+}
 
 // privateURLDNSTimeout bounds DNS resolution inside the SSRF guard so a
 // slow or malicious DNS server cannot block the caller indefinitely.

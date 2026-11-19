@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.338.0)
+
+### Added
+
+- Customers can import the real name, organization and country a confirmed customer entered on the hub and consented to share with this hive, shown "from the hub" and never over a value set by hand; a withdrawal or three days without confirmation clears it. Off by default: `customers.hub_import.enabled`, `HIVE_CUSTOMERS_HUB_IMPORT_ENABLED`, or Settings, Features ([#19163](https://github.com/hivecommons/hive/issues/19163)).
+
+## 2026-11-19 (v5.337.1)
+
+### Fixed
+
+- **Hub: the contribute proxies and the lite enrollment repo-access check connect only to the address they checked** ([#19221](https://github.com/hivecommons/hive/issues/19221), part of [#18986](https://github.com/hivecommons/hive/issues/18986)). The `/api/contribute/register` and `/api/contribute/ws` proxies and the GitHub repo-access check behind lite enrollment and self-service registration validated a self-reported `DashboardURL` or caller-supplied `github_host` and then let the HTTP client resolve the name again, so a name that rebinds between the two lookups was checked as public and reached as private. They now use the hub's pinned transport: each dial resolves once, every answer is checked with the shared classifier, a lookup failure refuses the dial, and every redirect hop goes through the same check.
+
 ## 2026-11-19 (v5.337.0)
 
 ### Added
