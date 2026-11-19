@@ -563,8 +563,10 @@ A hive never sends mail. What a sender hears back comes from two places:
 Why no confirmation mail: an automatic reply to a `From` address that was
 not authenticated goes to whoever the forger named, which is how a mail
 server ends up on blocklists. A reply only to authenticated senders is
-designed in [#18746](https://github.com/hivecommons/hive/issues/18746) and
-is not built.
+designed in [#18746](https://github.com/hivecommons/hive/issues/18746). It
+is built but off until the project's DNS records exist and an operator turns
+it on ([Replies to the sender](meetings.md#replies-to-the-sender-off-by-default)),
+so today no confirmation mail is sent.
 
 The entries below are the reasons, by the code the Recent mail list and a
 problem report use. The limits are the defaults.
