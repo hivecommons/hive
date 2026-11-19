@@ -148,7 +148,7 @@ func (s *HubServer) handleHubV1Discovery(w http.ResponseWriter, r *http.Request)
 			"max_repos":            selfServiceMaxRepos(),
 			"max_per_user":         selfServiceMaxPerUser(),
 			"expiry":               selfServiceExpiry().String(),
-			"key_rotation_overlap": selfServiceKeyRotationOverlap.String(),
+			"key_rotation_overlap": currentSelfServiceKeyRotationPolicy().window.String(),
 		},
 		"proof_methods":        hubV1ProofMethods(),
 		"proof_method_details": hubV1ProofMethodDetails(),
@@ -222,8 +222,8 @@ func decodeStrict(data []byte, v any) error {
 }
 
 // handleHubV1RotateKey is POST /api/hub/v1/registrations/{id}/keys: the v6
-// rotation (the previous key keeps working for selfServiceKeyRotationOverlap)
-// with an optional If-Match. A caller-chosen grace window is rollout step 3,
+// rotation (the previous key keeps working for the current rotation policy's
+// window, selfservice_key_grace.go) with an optional If-Match. A caller-chosen grace window is rollout step 3,
 // so a body asking for one is refused rather than silently ignored.
 func (s *HubServer) handleHubV1RotateKey(w http.ResponseWriter, r *http.Request) {
 	if !s.requireSelfServiceEnabled(w) {
@@ -239,14 +239,15 @@ func (s *HubServer) handleHubV1RotateKey(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusBadRequest, "could not read the request body")
 		return
 	}
+	policy := currentSelfServiceKeyRotationPolicy()
 	if len(bytes.TrimSpace(data)) > 0 {
 		var body struct{}
 		if err := decodeStrict(data, &body); err != nil {
-			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("this hub takes no rotation options; the previous key stays valid for %s", selfServiceKeyRotationOverlap))
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("this hub takes no rotation options; the previous key stays valid for %s", policy.window))
 			return
 		}
 	}
-	rawKey, err := s.selfService.rotateIfMatch(h.ID, r.Header.Get("If-Match"))
+	rawKey, rotation, err := s.selfService.rotateWithPolicy(h.ID, r.Header.Get("If-Match"), policy)
 	if err != nil {
 		switch {
 		case errors.Is(err, errSelfServiceNotFound):
@@ -262,14 +263,14 @@ func (s *HubServer) handleHubV1RotateKey(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-	s.logger.Info("audit: selfservice_hive_rotated", "user", login, "hive", h.ID, "overlap", selfServiceKeyRotationOverlap.String())
+	s.auditSelfServiceRotated(login, h.ID, policy, rotation)
 	stored, _ := s.selfService.get(h.ID)
 	hubURL := hubPublicURL()
 	writeHubV1JSON(w, http.StatusCreated, selfServiceETag(stored), map[string]any{
 		"id":       h.ID,
 		"key":      rawKey,
 		"hub_url":  hubURL,
-		"overlap":  selfServiceKeyRotationOverlap.String(),
+		"overlap":  policy.window.String(),
 		"snippets": selfServiceSnippets(hubURL, h.ID, rawKey),
 	})
 }
