@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/colony/devstats"
 	"github.com/hivecommons/colony/gitdm"
 	"github.com/hivecommons/colony/resolver"
 
@@ -19,7 +20,8 @@ import (
 // src/docs/customers-enrichment.md). pkg/customers stores the facts and
 // decides how they are shown; this file runs the hivecommons/colony
 // providers and the sweep. gitdm downloads the public cncf/gitdm files and
-// matches on the hive, so no lookup sends anything about a person.
+// matches on the hive, so it sends nothing about a person. devstats sends one
+// confirmed GitHub login per lookup, never an email, within an hourly limit.
 
 const (
 	// customersEnrichmentInterval is how often the enrichment sweep runs.
@@ -39,7 +41,19 @@ const (
 	// customersEnrichmentAuditAction is the audit action for a change to a
 	// person's enrichment.
 	customersEnrichmentAuditAction = "customer_enrichment"
+	// customersDevstatsRefresh is how long a person's devstats activity is
+	// kept before it is looked up again.
+	customersDevstatsRefresh = 24 * time.Hour
+	// customersDevstatsWindow is the window the devstats hourly lookup
+	// limit (customers.enrichment.devstats.hourly_limit) counts over.
+	customersDevstatsWindow = time.Hour
 )
+
+// devstatsLookup is the part of the colony devstats provider the sweep uses.
+// Each lookup sends one GitHub login, never an email, to devstats.cncf.io.
+type devstatsLookup interface {
+	Lookup(ctx context.Context, q resolver.Query) (resolver.Result, error)
+}
 
 // gitdmLookup is the part of the colony gitdm provider the sweep uses.
 type gitdmLookup interface {
@@ -57,6 +71,12 @@ type customersEnricher struct {
 	gitdm    gitdmLookup
 	// newGitdm builds the provider; tests replace it.
 	newGitdm func(cacheDir string, refresh time.Duration) gitdmLookup
+	devstats devstatsLookup
+	// newDevstats builds the devstats provider; tests replace it.
+	newDevstats func() devstatsLookup
+	// devstatsSpent holds the start times of devstats lookups inside the
+	// last customersDevstatsWindow, the hourly budget.
+	devstatsSpent []time.Time
 }
 
 func newCustomersEnricher(dataDir string) *customersEnricher {
@@ -65,7 +85,37 @@ func newCustomersEnricher(dataDir string) *customersEnricher {
 		newGitdm: func(cacheDir string, refresh time.Duration) gitdmLookup {
 			return gitdm.New(gitdm.Options{CacheDir: cacheDir, Refresh: refresh})
 		},
+		newDevstats: func() devstatsLookup { return devstats.New(devstats.Options{}) },
 	}
+}
+
+// devstatsProvider returns the devstats provider, built on first use.
+func (c *customersEnricher) devstatsProvider() devstatsLookup {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.devstats == nil {
+		c.devstats = c.newDevstats()
+	}
+	return c.devstats
+}
+
+// reserveDevstats spends one lookup from the hourly budget, or reports that
+// the budget is used up.
+func (c *customersEnricher) reserveDevstats(now time.Time, limit int) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	kept := c.devstatsSpent[:0]
+	for _, at := range c.devstatsSpent {
+		if now.Sub(at) < customersDevstatsWindow {
+			kept = append(kept, at)
+		}
+	}
+	c.devstatsSpent = kept
+	if len(kept) >= limit {
+		return false
+	}
+	c.devstatsSpent = append(c.devstatsSpent, now)
+	return true
 }
 
 // gitdmProvider returns the provider for this refresh interval, building a
@@ -89,6 +139,8 @@ func customersEnrichmentActive(cfg func() *config.Config) func(source string) bo
 		switch source {
 		case customers.EnrichSourceGitdm:
 			return c.CustomersEnrichmentGitdmEnabled()
+		case customers.EnrichSourceDevstats:
+			return c.CustomersEnrichmentDevstatsEnabled()
 		default:
 			return false
 		}
@@ -175,6 +227,109 @@ func sameAffiliations(pe customers.PersonEnrichment, next []customers.EnrichedAf
 // customersEnrichmentResult counts one pass for the log line.
 type customersEnrichmentResult struct {
 	Looked, Changed, Pruned, Dropped, Errors int
+	// Devstats counts devstats lookups; Budgeted the people left for a
+	// later pass because the hourly limit was reached.
+	Devstats, Budgeted int
+}
+
+// devstatsActivity turns colony's devstats activity into the stored shape.
+func devstatsActivity(res resolver.Result) []customers.EnrichedActivity {
+	var out []customers.EnrichedActivity
+	for _, a := range res.Activity {
+		if a.Source != "" && a.Source != devstats.SourceName {
+			continue
+		}
+		out = append(out, customers.EnrichedActivity{Project: a.Project, Contributions: a.Contributions,
+			Period: a.Period, URL: a.URL, Source: customers.EnrichSourceDevstats})
+	}
+	return out
+}
+
+// sameActivity reports whether a person's stored devstats activity already
+// equals a lookup's answer.
+func sameActivity(pe customers.PersonEnrichment, next []customers.EnrichedActivity) bool {
+	var cur []customers.EnrichedActivity
+	for _, a := range pe.Activity {
+		if a.Source == customers.EnrichSourceDevstats {
+			cur = append(cur, a)
+		}
+	}
+	if len(cur) != len(next) {
+		return false
+	}
+	for i := range cur {
+		if cur[i] != next[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// devstatsLogin is the confirmed GitHub login a person may be looked up by
+// on devstats, or "". Emails are never used.
+func devstatsLogin(store *customers.Store, p customers.Person) string {
+	for _, id := range p.Identities {
+		if id.Kind == customers.KindGitHub && !id.Claimed && !store.Forgotten(id.Kind, id.Value) {
+			return id.Value
+		}
+	}
+	return ""
+}
+
+// runDevstatsStep looks up public activity for confirmed customers with a
+// GitHub login whose activity is older than customersDevstatsRefresh, within
+// the hourly budget. With devstats off it deletes stored activity.
+func runDevstatsStep(ctx context.Context, svc *customers.Service, cfg *config.Config, enr *customersEnricher,
+	people []customers.Person, now func() time.Time, audit func(person, provider string), res *customersEnrichmentResult) {
+	e, store := svc.Enrichment(), svc.Store()
+	if !cfg.CustomersEnrichmentDevstatsEnabled() {
+		if n, err := e.DropSource(customers.EnrichSourceDevstats); err == nil {
+			res.Dropped += n
+		} else {
+			res.Errors++
+		}
+		return
+	}
+	limit := cfg.CustomersEnrichmentDevstatsHourlyLimit()
+	ds := enr.devstatsProvider()
+	for _, p := range people {
+		if ctx.Err() != nil {
+			return
+		}
+		pe, _ := e.Get(p.ID)
+		if at, ok := pe.FetchedAt[customers.EnrichSourceDevstats]; ok && now().Sub(at) < customersDevstatsRefresh {
+			continue
+		}
+		login := devstatsLogin(store, p)
+		if login == "" {
+			continue
+		}
+		if !enr.reserveDevstats(now(), limit) {
+			res.Budgeted++
+			continue
+		}
+		out, err := ds.Lookup(ctx, resolver.Query{GitHubLogin: login})
+		res.Devstats++
+		if err != nil {
+			res.Errors++
+			continue
+		}
+		acts := devstatsActivity(out)
+		if _, err := store.Get(p.ID); err != nil {
+			continue
+		}
+		changed := !sameActivity(pe, acts)
+		if err := e.SetSource(p.ID, customers.EnrichSourceDevstats, nil, acts, now()); err != nil {
+			res.Errors++
+			continue
+		}
+		if changed {
+			res.Changed++
+			if audit != nil {
+				audit(p.ID, customers.EnrichSourceDevstats)
+			}
+		}
+	}
 }
 
 // runCustomersEnrichment is one enrichment pass. With the source off it only
@@ -197,9 +352,9 @@ func (b *boot) runCustomersEnrichment(ctx context.Context, cfg *config.Config) {
 		}
 	}
 	res := runCustomersEnrichmentPass(ctx, b.customers.svc, cfg, b.customersEnricher, time.Now, audit, b.logger)
-	if b.logger != nil && (res.Looked > 0 || res.Changed > 0 || res.Pruned > 0 || res.Dropped > 0 || res.Errors > 0) {
-		b.logger.Info("[customers] enrichment", "looked_up", res.Looked, "changed", res.Changed,
-			"pruned", res.Pruned, "dropped", res.Dropped, "errors", res.Errors)
+	if b.logger != nil && (res.Looked > 0 || res.Devstats > 0 || res.Changed > 0 || res.Pruned > 0 || res.Dropped > 0 || res.Errors > 0) {
+		b.logger.Info("[customers] enrichment", "looked_up", res.Looked, "devstats", res.Devstats, "budgeted", res.Budgeted,
+			"changed", res.Changed, "pruned", res.Pruned, "dropped", res.Dropped, "errors", res.Errors)
 	}
 }
 
@@ -223,9 +378,10 @@ func runCustomersEnrichmentPass(ctx context.Context, svc *customers.Service, cfg
 	} else {
 		res.Errors++
 	}
+	runDevstatsStep(ctx, svc, cfg, enr, people, now, audit, &res)
 	if !cfg.CustomersEnrichmentGitdmEnabled() {
 		if n, err := e.DropSource(customers.EnrichSourceGitdm); err == nil {
-			res.Dropped = n
+			res.Dropped += n
 		} else {
 			res.Errors++
 		}

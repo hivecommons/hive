@@ -84,6 +84,9 @@ type PersonView struct {
 	// stored fact: Accept writes it as a by-hand organization. Detail views
 	// only.
 	Affiliation *AffiliationSuggestion `json:"affiliation_suggestion,omitempty"`
+	// PublicContributions is read-only public activity from enrichment
+	// sources that are switched on (devstats). Detail views only.
+	PublicContributions []EnrichedActivity `json:"public_contributions,omitempty"`
 }
 
 // ListView is the Customers list as one viewer sees it.
@@ -121,6 +124,25 @@ func (s *Service) SetEnrichment(e *EnrichmentStore, active func(source string) b
 
 // Enrichment is the enrichment store, or nil.
 func (s *Service) Enrichment() *EnrichmentStore { return s.enrich }
+
+// activeEnrichedActivity is the public activity enrichment holds for a
+// person from sources that are switched on now.
+func (s *Service) activeEnrichedActivity(id string) []EnrichedActivity {
+	if s.enrich == nil || s.enrichActive == nil {
+		return nil
+	}
+	pe, ok := s.enrich.Get(id)
+	if !ok {
+		return nil
+	}
+	var out []EnrichedActivity
+	for _, a := range pe.Activity {
+		if s.enrichActive(a.Source) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
 
 // activeEnrichedAffiliations are the affiliations enrichment holds for a
 // person from sources that are switched on now.
@@ -194,6 +216,7 @@ func (s *Service) view(v Viewer, p Person, isMe, detail bool) PersonView {
 	out := PersonView{Person: p, Me: isMe}
 	if detail {
 		out.Affiliation = SuggestAffiliationWith(p, s.activeEnrichedAffiliations(p.ID), s.store.now())
+		out.PublicContributions = s.activeEnrichedActivity(p.ID)
 	}
 	if !v.Full {
 		// A viewer without the full view sees what they may edit. Notes,

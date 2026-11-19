@@ -39,3 +39,32 @@ must(customersAffiliationSourceChip({ value: 'x' }) === '', 'no source, no chip'
 		t.Fatalf("node: %v\n%s", err, strings.TrimSpace(string(out)))
 	}
 }
+
+// TestCustomersPublicContributionsBlock runs the read-only "Public
+// contributions" helper: one row per project with an external link that
+// opens in a new tab with no referrer, only https links, nothing editable,
+// and nothing at all without activity.
+func TestCustomersPublicContributionsBlock(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH: the public contributions helper was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := `function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }` + "\n" +
+		jsFunc(t, html, "customersPublicContributionsHtml") + `
+function must(cond, msg) { if (!cond) throw new Error(msg); }
+must(customersPublicContributionsHtml({}) === '' && customersPublicContributionsHtml({ public_contributions: [] }) === '', 'no activity must render nothing');
+const out = customersPublicContributionsHtml({ public_contributions: [
+  { project: 'All CNCF', contributions: 42, period: 'all time', url: 'https://all.devstats.cncf.io/d/9?x=1&y=2', source: 'devstats' },
+  { project: '<b>evil</b>', contributions: 1, url: 'javascript:alert(1)', source: 'devstats' },
+] });
+must(out.includes('Public contributions') && out.includes('All CNCF: 42 contributions'), 'block or row missing: ' + out);
+must(out.includes('href="https://all.devstats.cncf.io/d/9?x=1&amp;y=2" target="_blank" rel="noopener noreferrer"') && out.includes('&#8599;'), 'external link missing: ' + out);
+must(!out.includes('javascript:') && !out.includes('<b>evil</b>') && out.includes('&lt;b&gt;evil&lt;/b&gt;'), 'unsafe link or unescaped project: ' + out);
+must(!out.includes('<input') && !out.includes('data-action='), 'the block must be read only');
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}
