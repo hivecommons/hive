@@ -167,6 +167,7 @@ func rawMasterDerivation(master, hiveID string) map[string]string {
 		EnvHeartbeatKey:     derivePerHiveKey(master, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(master, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(master, infoInviteKey, hiveID),
+		EnvCustomerMatchKey: customerMatchKey(master, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(master, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(master, infoSessionEd25519Seed)),
 	}
