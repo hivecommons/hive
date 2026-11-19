@@ -64,6 +64,17 @@ type StageLabelPolicy struct {
 	// (governor.labels.stage.contributor_nudge.ci_failure_cooldown,
 	// default 6h; hivecommons/hive#17328). 0 disables the fold.
 	CIFailureCooldown time.Duration
+	// AbandonAfter is governor.labels.stage.abandon_after: how long a
+	// contributor PR parked at 071 or at an adoption-stalled 085 may sit
+	// with no outside activity before its record is flagged abandoned
+	// (stagelabels.Record.AbandonStep; automerge_stage_abandon.go). 0 is
+	// off, the default: the pass does exactly what it did before.
+	AbandonAfter time.Duration
+	// AbandonClose reports whether the hive may close an abandoned
+	// contributor PR in "owner/repo" (governor.labels.stage.
+	// abandon_close_repos, ACMM L6 only: config.Config.AbandonCloseAllowed).
+	// nil = never.
+	AbandonClose func(repo string) bool
 	// Adoption turns the stage-074 adoption on
 	// (governor.labels.stage.adoption.enabled, default true): a contributor
 	// PR still red after the grace is superseded by an App PR that preserves
@@ -1565,6 +1576,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				act.WaitingOnHive = true
 			}
 			store.NoteActivity(key, act)
+			// The stale contributor PR idle clock (automerge_stage_abandon.go):
+			// a flag on the record only; the stage written below is unchanged.
+			c.reconcileAbandoned(ctx, store, key, obs, policy, !(pass.AuthorIsApp || obs.AuthorKind == authorkind.Hive), now)
 			rec, _ := store.Get(key)
 			if tr.Suppressed {
 				verdict.Stage = rec.Stage
@@ -1685,6 +1699,14 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					store.MarkStallCommented(key)
 					result.Comments += n
 				}
+			}
+		}
+		if err == nil && !out.Suppressed {
+			// abandon_close_repos: warn once, then close after the grace.
+			n, aerr := c.closeAbandonedIfDue(ctx, store, key, obs, policy, now)
+			result.Comments += n
+			if aerr != nil && firstErr == nil {
+				firstErr = aerr
 			}
 		}
 		if obs.Route != nil && (want.Stage == stagelabels.ReadyForHumanMerge || want.Stage == stagelabels.NeedsDecision) {
