@@ -2276,11 +2276,11 @@ func TestApplyStageLabelsHiveBotSignoffOnHumanHeadNeedsAuthorWithInstructions(t 
 
 func TestSignoffAttributionAsk(t *testing.T) {
 	one := signoffAttributionAsk(stageDetail{DCOTotal: 1, DCOSquashUnsafeHive: 1})
-	if !strings.Contains(one, "1 commit is signed off as the hive App") || !strings.Contains(one, "`git commit --amend --reset-author -s && git push --force-with-lease`") {
+	if !strings.Contains(one, "1 commit is signed off by a hive agent") || !strings.Contains(one, "`git commit --amend --reset-author -s && git push --force-with-lease`") {
 		t.Fatalf("one: %s", one)
 	}
 	many := signoffAttributionAsk(stageDetail{DCOTotal: 3, DCOSquashUnsafeHive: 2})
-	if !strings.Contains(many, "2 commits are signed off as the hive App") || !strings.Contains(many, "git rebase --exec 'git commit --amend --no-edit --reset-author -s' HEAD~3 && git push --force-with-lease") {
+	if !strings.Contains(many, "2 commits are signed off by a hive agent") || !strings.Contains(many, "git rebase --exec 'git commit --amend --no-edit --reset-author -s' HEAD~3 && git push --force-with-lease") {
 		t.Fatalf("many: %s", many)
 	}
 	if zero := signoffAttributionAsk(stageDetail{}); !strings.Contains(zero, "1 commit is") {

@@ -504,6 +504,23 @@ sandbox push broker enforces the same rule: it refuses to push a commit that
 carries the lane's `Signed-off-by` when another identity authored or committed
 it (see [Sandbox isolation](../sandbox-isolation.md)).
 
+On a **person's PR** (GitHub author not the hive App and not a bot) an agent
+pushes no commit of its own and never re-signs the person's commits, unless the
+PR carries `merge-method/merge`. The squash lands every commit under the PR
+author, and the attribution check counts no `Co-authored-by`, so an agent's
+self-signed follow-up (a test fix or refreshed citations after a rebase, a
+coverage fix) fails it just like a re-signed commit
+([#19110](https://github.com/hivecommons/hive/pull/19110),
+[#19102](https://github.com/hivecommons/hive/pull/19102),
+[#19063](https://github.com/hivecommons/hive/pull/19063)). The agent may
+rebase such a PR (replaying the person's commits with their own trailers);
+any other change goes in a PR comment for the author. Every kick that sends an
+agent to such a branch carries this rule (`stagelabels.PersonPRAgentCommitRule`):
+the FIX-BEFORE-NEW block marks the row `person_authored`, and the targeted
+re-engagement kick states it for any author. The rule is prompt-level for
+agents that push outside the sandbox push broker, which only sees sandboxed
+kicks.
+
 The labels are written on every managed repo; the **072 routing is per
 repo**. It applies only where the repo actually enforces DCO — detected when
 a `dco` / `DCO` context is in the branch's required checks or reported on
