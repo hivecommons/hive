@@ -74,6 +74,26 @@ func askEffective(cfg *config.Config) (config.AskSettings, string) {
 	return st, ""
 }
 
+// askOn reports whether Ask is on and fully configured for cfg.
+func askOn(cfg *config.Config) bool {
+	st, problem := askEffective(cfg)
+	return st.Enabled && problem == ""
+}
+
+// handleAskPanelAsset serves the shared panel component (#19184) from 'self'
+// only while Ask is on; otherwise 404, like every other Ask route.
+func (s *Server) handleAskPanelAsset(contentType string, data []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !askOn(s.askConfig()) {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(data)
+	}
+}
+
 func (s *Server) askConfig() *config.Config {
 	if s.deps == nil {
 		return nil

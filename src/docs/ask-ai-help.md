@@ -62,6 +62,54 @@ direct mode with its own key, or stays off.
 3. If the hive is not hosted, or has no hub link, Settings says why Ask stays
    off.
 
+## Turning it on for a self-hosted hive
+
+A self-hosted hive (no hub, or registered with a hub, which the relay does not
+serve in this round) calls Kapa.ai itself with its own key:
+
+1. In the Kapa project, create an HTTP API integration and an API key.
+2. Put the key in a file under `/secrets` or `/data/secrets`, from a Secret
+   (Kubernetes) or a read-only bind mount (Docker Compose, Podman). For
+   Kubernetes:
+
+   ```sh
+   kubectl -n <hive-namespace> create secret generic hive-ask-kapa \
+     --from-file=api-key=<path-to-key-file>
+   ```
+
+   and mount it at `/secrets/kapa` in the hive container.
+3. Set in `hive.yaml` (or the matching `HIVE_ASK_*` env):
+
+   ```yaml
+   ask:
+     enabled: true
+     mode: direct
+     kapa:
+       project_id: <project id>
+       integration_id: <integration id>
+       api_key_file: /secrets/kapa/api-key
+   ```
+
+   The project id and integration id are configuration, never committed to a
+   repository; the config export redacts them.
+4. Settings, Features shows **Ask AI help** on, or the reason it stays off.
+
+The hive applies the same limits as the hub to its own traffic; a busy shared
+vendor quota shows "Busy, try again in N seconds" and the docs link.
+
+## Using the panel
+
+With Ask on, the dashboard header shows an **Ask** button. It opens a panel
+docked to the side (a bottom sheet on a phone). The first time, it shows the
+notice and **I understand, continue**; after that the person types a question
+(Enter sends, Shift+Enter adds a line) and gets a plain-text answer with a
+**Sources** list and the "AI generated, may be wrong" label. The label of the
+section in view, or of the open Settings tab, goes with the question. Every
+state has a docs link for the section in view. Escape closes the panel and
+returns focus to the button; answers and errors are announced to screen
+readers. With Ask off the button is not shown and the page loads nothing for
+it.
+
 ## Configuration keys
 
 | Key | Env | Default | Meaning |
@@ -96,3 +144,41 @@ Hive dashboard: `GET /api/ask/status`, `PUT` and `DELETE /api/ask/consent`,
 `POST /api/ask` (see `dashboard/openapi.json`); every route answers `404` while
 Ask is off. Hub: the same routes plus `GET /api/ask/stats` and the relay, in
 the [hub API reference](api-reference/hub-saas.md).
+
+## Verifying a rollout
+
+Run these after the Kapa key exists and Ask is switched on, first on the hub,
+then on one hosted hive, then on one self-hosted hive. Use a test account that
+has consented; nothing here needs a production change beyond the switch.
+
+1. **Hub, off first.** With `HIVE_ASK_ENABLED` unset, `GET /api/ask/status` and
+   `GET /ask-panel.js` on the hub answer `404`, the dashboard has no **Ask**
+   button, and `kubectl logs` for the hub shows no `ask:` line.
+2. **Hub, on.** Set the env and the Secret ([hub
+   steps](hub-deployment.md#ask-ai-help)), restart, and check the log for
+   `ask: enabled` (and no `ask: requested but staying off`). Open My Hives, click
+   **Ask**, confirm the notice, and ask "Where do I add a hosted hive?". Expect an
+   answer with at least one source on `docs.hivecommons.dev` and the AI label.
+3. **Refusal.** Ask a question containing a fake token such as
+   `ghp_` followed by 30 letters. Expect "This looks like it contains a password,
+   token or key" and, in the Kapa analytics, no new question.
+4. **Withdraw.** Click **Stop sending my questions**, ask again, and expect the
+   notice instead of an answer.
+5. **Hosted hive.** On a hosted hive, Settings, Features: turn on **Ask AI help**
+   and set **Ask mode** to `hub`. Open **Ask**, confirm, and ask "Where do I pause
+   an agent?". Expect an answer linking to the dashboard sections or agents
+   docs. The hub log shows `audit: ask request` with `hive=<that hive>`; the hive
+   log shows `audit: ask request` with `relay=true`. Neither line carries the
+   question.
+6. **Self-hosted hive.** Configure direct mode as above, restart, and ask the
+   same question. The hive log shows `ask: enabled mode=direct`.
+7. **Fallback.** On the self-hosted hive point `ask.kapa.api_key_file` at an
+   empty file and restart: Settings shows why Ask stays off and the button is
+   gone. Restore it.
+8. **Off again.** Turn Ask off on the hosted hive and on the hub. The button
+   disappears on the next reload, the routes answer `404`, and the hub's
+   `GET /api/ask/stats` (while on) showed the counts by outcome for the test.
+9. **What left.** In Kapa analytics, the test questions appear with the section
+   label prefix (`Dashboard section: ...`) and nothing else: no login, URL or
+   hive name.
+

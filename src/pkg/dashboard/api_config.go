@@ -51,6 +51,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"dashboard_issue_bands": cfg.Dashboard.IssueBands,
 		"writing_guide":         cfg.Project.WritingGuide,
 		"my_hives_url":          myHivesURL(cfg), // hub My Hives page for the user menu (#9696); "" when standalone
+		// ask_enabled tells the page to load the Ask AI help panel (#19184).
+		// With Ask off the page loads nothing and asks nothing.
+		"ask_enabled": askOn(cfg),
 	}
 	// The active project.issue_filter, read-only: which issues agents may
 	// initiate work on, by label. Omitted entirely when no filter is

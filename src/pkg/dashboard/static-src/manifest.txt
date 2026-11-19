@@ -167,6 +167,7 @@ js/plan-agent-controls.js
 js/acmm.js
 js/version.js
 js/sse-bootstrap.js
+js/ask.js
 js/config-state.js
 js/settings-search.js
 js/config-dialog.js
