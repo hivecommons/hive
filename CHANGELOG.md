@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v6.52.2)
+
+### Fixed
+
+- automerge: a PR the lane leaves to a person (for example `contributor-lane:no-linked-issue`) now stays out of the merge train on every sweep, so its stage no longer flips between 080 and 090. The lane's per-head merge-train verdict lived on the engine that reached it. The contributor lane runs both in the long-lived loop and every minute on a fresh engine, and the fresh engine never saw the loop's verdict: it read the PR's 090 stage record as ready and seated the PR behind another train member at 080 (`merge-train:queued-behind#…`), and the next pass put it back at 090. projectbluefin `utah-packages#1222`, a github-actions bot PR with no linked issue, did this 51 times in 3.5 hours, each one suppressed by the stage dampener. The verdicts now live in the sweep memory shared by every lane engine over the same GitHub client, next to the once-per-head marks. A read-only integration-eligibility check keeps its own memory, as before.
+- The supersession sweep no longer stops at a PR whose claimed issue does not exist. A branch such as `fix/common-dakota-1688` whose body says `Refs owner/common#1688` used to claim issue #1688 in the PR's own repository by branch name. When that issue did not exist, the 404 ended the whole pass, so every later PR and repository went unswept, every 15 minutes. A reference to the branch's issue number in any repository now overrules the branch-name claim, and a claimed issue GitHub answers 404 or 410 for is logged and skipped while the sweep carries on. Rate limits and other errors still end the pass.
+
 ## 2026-11-19 (v6.52.1)
 
 ### Fixed
