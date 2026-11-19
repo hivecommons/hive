@@ -516,6 +516,17 @@ func liteRepoAccessHTTPClient() *http.Client {
 			if isPrivateURL(req.Context(), req.URL.String()) {
 				return fmt.Errorf("redirect to private/internal github_host blocked")
 			}
+			// The request carries the enrolling user's GitHub token: never let
+			// it follow a hop off the original host or down to plain http
+			// (hivecommons/hive#19222).
+			if len(via) > 0 && via[0] != nil && via[0].URL != nil {
+				first := via[0].URL
+				downgrade := strings.EqualFold(first.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https")
+				if downgrade || !strings.EqualFold(req.URL.Host, first.Host) {
+					req.Header.Del("Authorization")
+					req.Header.Del("Cookie")
+				}
+			}
 			return nil
 		},
 	}

@@ -355,3 +355,37 @@ func TestDiscoverLiteInstallation_FoundAndNotFound(t *testing.T) {
 		t.Fatalf("want the not-found error naming the org, got %v", err)
 	}
 }
+
+// The repo-access check sends the user's GitHub token; a redirect hop off the
+// original host or down to plain http must not carry it, while a same-host
+// hop keeps it (hivecommons/hive#19222).
+func TestLiteRepoAccessHTTPClient_StripsTokenOffHost(t *testing.T) {
+	stubPrivateURLResolver(t, "ghe.example", "other.example")
+	client := liteRepoAccessHTTPClient()
+	mk := func(raw string) *http.Request {
+		r, err := http.NewRequestWithContext(context.Background(), http.MethodGet, raw, nil)
+		if err != nil {
+			t.Fatalf("build request: %v", err)
+		}
+		r.Header.Set("Authorization", "Bearer ghp-secret")
+		return r
+	}
+	via := []*http.Request{mk("https://ghe.example/api/v3/repos/o/r")}
+
+	for _, target := range []string{"https://other.example/repos/o/r", "http://ghe.example/api/v3/repos/o/r2"} {
+		req := mk(target)
+		if err := client.CheckRedirect(req, via); err != nil {
+			t.Fatalf("%s: %v", target, err)
+		}
+		if req.Header.Get("Authorization") != "" {
+			t.Errorf("%s: hop kept the GitHub token", target)
+		}
+	}
+	same := mk("https://ghe.example/api/v3/repositories/1")
+	if err := client.CheckRedirect(same, via); err != nil {
+		t.Fatal(err)
+	}
+	if same.Header.Get("Authorization") == "" {
+		t.Error("same-host hop lost the GitHub token")
+	}
+}
