@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.335.0)
+
+### Added
+
+- Hub operators can enable an optional Ask AI help backend that answers docs questions server side through the Kapa.ai Chat API: per-person consent, credential-shaped questions refused, only allowlisted cited sources, per-person and hub-wide limits, a circuit breaker and content-free audit lines. Off by default and inert until a key file, project id and integration id are configured; no panel yet ([#19180](https://github.com/hivecommons/hive/issues/19180)).
+
+### Fixed
+
+- Let the agent that opened a PR reply inside its review threads (`pulls/comments/{id}/replies`, `pulls/{n}/comments`) and retract a hive comment within 15 minutes on a PR that agent opened; every other PR, agent and comment stays refused, the review-feedback brief forbids probe comments, and a refused reply is posted in the sweep's needs-human note for a person (#19096).
+- **Reviewer-stated rules: quotes and questions no longer count, more future-looking phrasings do, and the preferences have a Settings card ([#19135](https://github.com/hivecommons/hive/issues/19135)).** Block quotes, fenced code and questions are no longer read as the reviewer's rule, so a reply that quotes the hive and asks "can the hive add this to the knowledge base?" is not recorded under the reviewer's name. A short rule sentence that refers back ("we should consider this in future") keeps the rest of the comment, and `going-forward` now matches "future assessments", "moving forward" and "for the future". Whether capture runs, which associations are recorded at once, extra phrases that count and built-in signals to switch off are `review_feedback.rules.*` keys with an owner-only card under Settings, Features, Review (env vars still work; a saved value wins), audited and applied on the next sweep pass without a restart.
+
 ## 2026-11-19 (v5.334.0)
 
 ### Added
