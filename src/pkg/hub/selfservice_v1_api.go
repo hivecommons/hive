@@ -51,7 +51,7 @@ type hubV1Operation struct {
 	IfMatch string `json:"if_match,omitempty"`
 }
 
-// hubV1Operations is what this hub implements. Discovery lists exactly this.
+// hubV1Operations are the operations available on every enabled hub.
 var hubV1Operations = []hubV1Operation{
 	{Name: "discovery", Method: http.MethodGet, Path: hubV1BasePath},
 	{Name: "create", Method: http.MethodPost, Path: hubV1BasePath + "/registrations"},
@@ -68,15 +68,16 @@ var hubV1Operations = []hubV1Operation{
 var hubV1PatchFields = []string{"repos", "dashboard_url"}
 
 // registerHubV1Routes wires the v1 routes onto the hub mux. Discovery is
-// public (a spoke reads it before it has a session); every other route is
-// behind the hub session like the v6 routes. All of them answer 404 while
-// HIVE_HUB_SELFSERVICE_REGISTRATION is off.
+// public (a spoke reads it before it has a session); the registration-key
+// PATCH lane is opt-in, and the remaining routes require hub auth.
+// All routes answer 404 while HIVE_HUB_SELFSERVICE_REGISTRATION is off
+// for callers with the appropriate credential.
 func (s *HubServer) registerHubV1Routes() {
 	s.mux.HandleFunc("GET "+hubV1BasePath, s.handleHubV1Discovery)
 	s.mux.HandleFunc("POST "+hubV1BasePath+"/registrations", s.requireAuth(s.handleHubV1Create))
 	s.mux.HandleFunc("GET "+hubV1BasePath+"/registrations", s.requireAuth(s.handleHubV1List))
 	s.mux.HandleFunc("GET "+hubV1BasePath+"/registrations/{id}", s.requireAuth(s.handleHubV1Get))
-	s.mux.HandleFunc("PATCH "+hubV1BasePath+"/registrations/{id}", s.requireAuth(s.handleHubV1Patch))
+	s.mux.HandleFunc("PATCH "+hubV1BasePath+"/registrations/{id}", s.routeHubV1Patch)
 	s.mux.HandleFunc("DELETE "+hubV1BasePath+"/registrations/{id}", s.requireAuth(s.handleHubV1Delete))
 	s.mux.HandleFunc("POST "+hubV1BasePath+"/registrations/{id}/keys", s.requireAuth(s.handleHubV1RotateKey))
 }
@@ -86,8 +87,9 @@ func (s *HubServer) registerHubV1Routes() {
 // proof times.
 type hubV1RegistrationView struct {
 	selfServiceHiveView
-	ETag       string           `json:"etag"`
-	RepoProofs []hubV1RepoProof `json:"repo_proofs"`
+	ETag         string           `json:"etag"`
+	RepoProofs   []hubV1RepoProof `json:"repo_proofs"`
+	PendingProof []string         `json:"pending_proof,omitempty"`
 }
 
 // hubV1RepoProof is when the owner's admin permission on one repo was last
@@ -112,6 +114,7 @@ func (s *HubServer) hubV1View(h SelfServiceHive) hubV1RegistrationView {
 		selfServiceHiveView: selfServiceView(h, s.selfServiceOnline(h.ID)),
 		ETag:                selfServiceETag(h),
 		RepoProofs:          proofs,
+		PendingProof:        h.PendingProof,
 	}
 }
 
@@ -139,11 +142,18 @@ func (s *HubServer) handleHubV1Discovery(w http.ResponseWriter, r *http.Request)
 	if !s.requireSelfServiceEnabled(w) {
 		return
 	}
+	operations := hubV1Operations
+	if hubV1SyncReposEnabled() {
+		operations = append(operations, hubV1Operation{
+			Name: hubV1SyncReposOp, Method: http.MethodPatch,
+			Path: hubV1BasePath + "/registrations/{id}", IfMatch: "required",
+		})
+	}
 	writeHubV1JSON(w, http.StatusOK, "", map[string]any{
 		"protocol":     hubV1Protocol,
 		"version":      hubV1ProtocolVersion,
 		"base_path":    hubV1BasePath,
-		"operations":   hubV1Operations,
+		"operations":   operations,
 		"patch_fields": hubV1PatchFields,
 		"limits": map[string]any{
 			"max_repos":            selfServiceMaxRepos(),
