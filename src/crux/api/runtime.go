@@ -779,6 +779,7 @@ const (
 	hostViaInferenceRoutes = "PUT|DELETE /v1/inference/routes/{agent}"
 	hostViaEffects         = "POST /v1/effects, POST /v1/effects/{id}/end"
 	hostViaConditions      = "POST /v1/conditions"
+	hostViaKnowledgeAdvise = "POST /v1/knowledge/advise"
 )
 
 // HostSetters maps every crux.Host setter to how a sidecar runtime gets
@@ -808,6 +809,10 @@ var HostSetters = map[string]HostSetter{
 	// Calls into hive -> their own callback families (stage 4).
 	"SetInferenceCallbacks":      {HostSetterCallback, hostViaInferenceRoutes},
 	"SetSandboxMutationBoundary": {HostSetterCallback, hostViaEffects},
+	// The mid-task knowledge adviser: the hive's policy snapshot says whether
+	// the route is on (knowledge.sidecar_advise, default off), and the route
+	// carries each scope and its advice (hivecommons/hive#17157).
+	"SetKnowledgeAdviser": {HostSetterCallback, hostViaPolicy + ", " + hostViaKnowledgeAdvise},
 
 	// Observers -> the event stream (stage 3). Conditions also go back
 	// over the callback so hive's fleet report sees them.
@@ -822,5 +827,4 @@ var HostSetters = map[string]HostSetter{
 	// In-process only.
 	"SetSpanStarter":            {HostSetterInProcessOnly, "OpenTelemetry global tracer in the runtime process; trajectory events are independent of spans"},
 	"SetSandboxGitHubReadRelay": {HostSetterInProcessOnly, "the relay holds the read-only GitHub credential and Enroll is a Go call into hive's proxy; neither crosses into a runtime process, so a sidecar runtime's Job kicks read GitHub without the relay (hivecommons/hive#18865)"},
-	"SetKnowledgeAdviser":       {HostSetterInProcessOnly, "the knowledge store lives in the hive process; a sidecar runtime runs without the mid-task knowledge advisor (hivecommons/hive#17052 phase 1)"},
 }

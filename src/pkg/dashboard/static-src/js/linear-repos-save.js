@@ -231,7 +231,7 @@
     function modelSelectOptionsHtml(backend, current, opts) {
       const models = opts || modelsForBackend(backend) || [];
       let html = `<option value="">${esc(modelDefaultOptionLabel(backend))}</option>`;
-      const renderOpt = m => `<option value="${esc(m.value)}"${_modelsEqual(current, m.value) ? ' selected' : ''}>${esc(fullModelLabel(m))}${esc(modelOptionPriceSuffix(backend, m.value))}</option>`;
+      const renderOpt = m => `<option value="${esc(m.value)}"${modelIdMatchesStored(backend, m.value, current) ? ' selected' : ''}>${esc(fullModelLabel(m))}${esc(modelOptionPriceSuffix(backend, m.value))}</option>`;
       // Large gateway catalogs (OpenRouter) are grouped by provider prefix.
       if (typeof shouldGroupModelOptions === 'function' && shouldGroupModelOptions(models.map(m => m.value))) {
         const byValue = {};
@@ -240,8 +240,12 @@
       } else {
         html += models.map(renderOpt).join('');
       }
-      if (current && !models.some(m => _modelsEqual(current, m.value))) {
-        const note = modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
+      if (current && !models.some(m => modelIdMatchesStored(backend, m.value, current))) {
+        // A Claude id stored in the other CLI's naming convention is shown as
+        // stored and flagged with the id to pick, never silently matched.
+        const validSpelling = invalidModelSpellingFor(backend, models, current);
+        const note = validSpelling ? ` (current, ⚠ not valid for ${backend}; pick ${validSpelling})`
+          : modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
         html += `<option value="${esc(current)}" selected>${esc(current)}${note}</option>`;
       }
       return html;

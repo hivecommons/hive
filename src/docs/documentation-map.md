@@ -27,6 +27,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 
 - [Self-hosted hub deployment](hub-deployment.md) — `HIVE_MODE=hub`, hub storage, heartbeat secrets, and SaaS spoke registration.
 - [`CAP_NET_ADMIN` and self-hosted spokes](net-admin-requirement.md) — **Operator:** diagnose fail-closed startup, grant required network capabilities, or understand the explicit advisory-only opt-out.
+- [Editing `hive.yaml`](editing-hive-yaml.md) — find the persisted config, choose Settings or YAML, and verify a reload or restart.
 - [Config layering](config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.
 - [Operator reference](operator-reference.md) — top-level config blocks, hive flags/env, GitHub token scopes, and image provenance.
 - [Running a hive at ACMM Level 6](running-at-level-6.md) — preparation, GitHub/coverage/knowledge/Hive/ClankeR settings, weekly routine, and incident recovery.
@@ -197,6 +198,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Experiment Lab (Nous)](strategy-lab.md) — experiment lifecycle, dashboard/API configuration, fast-fail bounds, and the gate-decision flow. No `nous:` block in `hive.yaml`.
 - [Hive-self background experiments (Nous)](nous-hive-self-experiments.md) — background-only self-improvement experiment mode, outcome questions (including user satisfaction), cohorts, guardrails, and auto-revert. Hidden from spoke dashboards and Experiment Lab.
 - [GitHub write surface](github-write-surface.md) — inventory agent and system writes, their audit coverage, and opt-in per-lane restrictions.
+- [Outbound text: no em-dashes](outbound-prose.md) - the shared dash filter, every outbound path it covers (proxy agent writes, notifications, meetings, hub posts, commit messages), the `HIVE_AGENT_PROSE_FILTER` switch and the CI inventory guard.
 - [Compact GitHub CLI reads (`hive-gh`) and one-line denials](github-cli-compact.md) — **Agent/developer reference:** compact output fields, full-read escape hatch, and denial codes.
 - [GitHub App setup](github-app-setup.md) — the Forge App on GitHub and GitHub Enterprise: app creation, permissions, Setup URL, and `/gh-setup`.
 - [Forge setup: GitLab, Gitea, and Forgejo](forge-app-setup.md) — **Adapter/reference only:** explains configured adapter surfaces and why a complete hive still requires GitHub.

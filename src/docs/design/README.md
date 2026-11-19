@@ -31,6 +31,31 @@ that status is the thing to check before treating a page as current behaviour:
   agent context block, and the position on personal data of people who never
   signed up. Nothing leaves the hive.
 
+- [Customers: opt-in, consent-first import of hub-held person fields](customers-hub-consent.md) -
+  **design only / decided.** Issue
+  [#19088](https://github.com/hivecommons/hive/issues/19088): the person
+  consents, per hive, on a hub page, and a per-person, per-hive consent record
+  is built before any spoke code. Only values the person entered themselves
+  (user provenance) can reach a hive's Customers profile, never admin-entered or
+  inferred ones; hub notes, email, Slack id and affiliation are never imported;
+  email affiliation stays spoke-local in v1. Records the consent record, the
+  match-by-hash wire shape that cannot tell a hive who exists on the hub,
+  revocation with a clearing reply, the privacy and audit rules, and four
+  phases, hub consent page and record first.
+
+- [Dashboard Ask AI help: an optional, isolated "Ask" panel](dashboard-ask-ai-help.md) -
+  **design only / proposed.** Issue
+  [#19177](https://github.com/hivecommons/hive/issues/19177): compares a
+  server-side call to the vendor's Chat API, a sandboxed frame and the public
+  docs widget on the authenticated origin, and recommends the server-side call
+  (no third-party code on the page, no CSP change, key held in a Secret, the
+  hub as the relay for hosted hives). Records exactly what leaves the
+  deployment (the question text and a closed section label), per-person consent
+  with an owner or operator switch, the `ask:` config keys, the docs-link
+  fallback, rate and cost limits against the vendor's shared per-team limit,
+  audit lines without content, accessibility, which docs the vendor must ingest,
+  and five phases, hub first.
+
 - [Meeting recordings in the Inbox: Zoom and Microsoft Teams](meeting-recordings.md) -
   **Zoom shipped; Teams scaffold shipped, live verification blocked on tenant
   consent.** Zoom cloud recordings (user-level OAuth with the hosted paste

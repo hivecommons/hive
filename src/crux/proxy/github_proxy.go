@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/egressmark"
 	"github.com/hivecommons/hive/crux/inferencehealth"
+	"github.com/hivecommons/hive/crux/prosefilter"
 	"github.com/hivecommons/hive/crux/upstreamproxy"
 )
 
@@ -85,6 +86,10 @@ type GitHubProxy struct {
 	caCert        tls.Certificate
 	caX509        *x509.Certificate
 	logger        *slog.Logger
+	// proseFilterOff turns off the agent-write dash filter
+	// (outbound_prose.go). Zero means on, so every proxy, test literals
+	// included, filters unless the operator set HIVE_AGENT_PROSE_FILTER=false.
+	proseFilterOff bool
 	// uidMap is read through loadedUIDMap and swapped only by refreshUIDMap
 	// under uidMapMu (#18184): agents added at runtime land in uid-map.json
 	// after construction. uidMapPath/uidMapInfo are what the refresh compares
@@ -346,6 +351,7 @@ func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logg
 		proxyAdvisoryOK:     advisoryOK,
 		allowPrivateForward: allowPrivateForward,
 		injectGHAuth:        injectGHAuth,
+		proseFilterOff:      !prosefilter.AgentWritesEnabled(),
 		allowedRepos:        allowed,
 		violations:          make(map[string]int),
 		certCache:           make(map[string]cachedCert),

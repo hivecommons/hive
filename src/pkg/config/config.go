@@ -157,6 +157,10 @@ type Config struct {
 	// escalation or codebase damage, from any author. Default on; see
 	// SentinelConfig.
 	Sentinel SentinelConfig `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+
+	// SessionTaint is the observe-only session taint recorder (#18987). Off by
+	// default; see SessionTaintConfig.
+	SessionTaint SessionTaintConfig `yaml:"session_taint,omitempty" json:"session_taint,omitempty"`
 	// Security holds the hive-wide security knobs that are not one agent's
 	// or one sweep's; see SecurityConfig.
 	Security SecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
@@ -286,6 +290,11 @@ type Config struct {
 	// dashboard can raise a banner for each. Runtime-only; see
 	// DegradeContradictingLaunchCmds.
 	LaunchCmdDegradations []LaunchCmdDegradation `yaml:"-" json:"-"`
+	// ModelIDNormalizations lists the claude/copilot agents whose Claude
+	// model id the loader rewrote to their backend's naming convention, so
+	// the dashboard can warn for each. Runtime-only; see
+	// NormalizeModelIDConventions.
+	ModelIDNormalizations []ModelIDNormalization `yaml:"-" json:"-"`
 	// GateRegressions lists the safety gates a previous runtime overlay
 	// carried that this config lacks or weakens, as detected at boot
 	// (hivecommons/hive#16438). Runtime-only; served in /api/status as
@@ -6194,6 +6203,9 @@ func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Con
 	// when the base entry carries the same stale launch_cmd. Drop it here
 	// rather than let validation exit the process.
 	cfg.DegradeContradictingLaunchCmds()
+	// A claude or copilot agent carrying the other CLI's spelling of its
+	// Claude model id is rejected by its CLI; rewrite it.
+	cfg.NormalizeModelIDConventions()
 
 	if err := cfg.ApplyAgentSpecRepoScopes(); err != nil {
 		return nil, fmt.Errorf("applying agent spec repo scopes: %w", err)

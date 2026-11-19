@@ -20,6 +20,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/crux/sessiontaint"
 	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
@@ -198,6 +199,8 @@ type Client struct {
 	canaryFailClosed          bool
 	canaryRegistry            *ioscan.CanaryRegistry
 	canaryLeakFunc            func(ioscan.CanaryLeak)
+	sessionTaint              *sessiontaint.Observer // nil unless session_taint.enabled; observe-only (#18987)
+	taintAudience             taintAudienceCache
 	appBotLogin               string // "<app-slug>[bot]" when the client authenticates as a GitHub App
 	appBotUserMu              sync.Mutex
 	appBotUserID              int64 // cached GitHub user id of appBotLogin; see AppBotUserID

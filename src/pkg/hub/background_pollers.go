@@ -56,6 +56,7 @@ func (s *HubServer) StartBackgroundPollers(ctx context.Context) <-chan struct{} 
 	// Self-service (byo-) registrations past HIVE_HUB_SELFSERVICE_EXPIRY with
 	// no accepted heartbeat are revoked and dropped from the registry (#18146).
 	start(s.startSelfServiceExpirySweep)
+	start(s.startCustomerConsentSweep)
 	s.githubActivityMu.Lock()
 	s.githubActivityCtx = ctx
 	feed := s.githubActivityFeed
