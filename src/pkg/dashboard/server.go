@@ -1919,6 +1919,9 @@ func (s *Server) Start() error {
 	s.StartBenchmarksPublisher(followCtx)
 	// Sessions: reconcile after a restart, then close idle sessions.
 	s.StartSessionSweeper(followCtx)
+	// PR-contents gate backstop (#19285): re-post the gate on open PR heads
+	// the webhook path missed. A no-op while auto_merge.pr_gate is off.
+	s.StartPRGateBackstop(followCtx)
 	return srv.Serve(ln)
 }
 

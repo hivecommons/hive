@@ -1,0 +1,4 @@
+[
+  {"number": 12, "state": "open", "draft": false, "title": "✨ add thing", "head": {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "repo": {"full_name": "example-org/example-repo"}}},
+  {"number": 11, "state": "open", "draft": true, "title": "🐛 draft fix", "head": {"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "repo": {"full_name": "contributor/example-repo"}}}
+]
