@@ -1011,9 +1011,10 @@ type mergeTrainState struct {
 	mergeTrainAttemptCount map[string]int
 	mergeTrainMerged       map[string]int
 	mergeTrainLogged       map[string]string
-	// mergeTrainVerdicts remembers, per lane and PR, the last head whose
-	// verdict keeps it from fronting (or riding) a train.
-	mergeTrainVerdicts map[string]mergeTrainVerdict
+	// The lanes' verdicts per head live in the sweep memory
+	// (sweepMemory.mergeTrainVerdicts), shared by every engine over the
+	// same client: a train planned on the per-minute one-shot engine must
+	// see the verdict the long-lived loop reached, and the reverse.
 	// mergeTrainSeats remembers, per lane and PR, the head that holds a
 	// train seat and since when (hivecommons/hive#15825): the seat orders
 	// the train (earliest first) and its loss is the ejection the log and
@@ -1156,7 +1157,7 @@ func (c *Engine) mergeTrainEjectWhyLocked(lane, owner, repo string, number int, 
 	case mergeTrainDirty(pr.GetMergeableState()):
 		return mergeTrainEjectConflicting
 	}
-	if v, ok := c.mergeTrainVerdicts[mergeTrainVerdictKey(lane, owner, repo, number)]; ok && v.sha == sha {
+	if v, ok := c.mergeTrainVerdictFor(lane, owner, repo, number, sha); ok {
 		switch {
 		case v.humanMerge:
 			return mergeTrainEjectHumanMerge
@@ -1260,25 +1261,31 @@ func (c *Engine) noteMergeTrainOutcome(lane, owner, repo string, number int, sha
 	}
 	key := mergeTrainVerdictKey(lane, owner, repo, number)
 	v := mergeTrainVerdict{sha: sha, blocked: mergeTrainBlockingReason(reason), humanMerge: mergeTrainHumanMergeReason(reason), readiness: mergeTrainReadinessOf(reason), reason: reason}
-	c.mergeTrainMu.Lock()
-	defer c.mergeTrainMu.Unlock()
+	m := c.memory()
+	m.mergeTrainVerdictsMu.Lock()
+	defer m.mergeTrainVerdictsMu.Unlock()
 	if (!v.humanMerge && !v.blocked && v.readiness == mergeTrainReadinessUnknown) || strings.TrimSpace(sha) == "" {
-		delete(c.mergeTrainVerdicts, key)
+		delete(m.mergeTrainVerdicts, key)
 		return
 	}
-	if c.mergeTrainVerdicts == nil {
-		c.mergeTrainVerdicts = map[string]mergeTrainVerdict{}
+	if m.mergeTrainVerdicts == nil {
+		m.mergeTrainVerdicts = map[string]mergeTrainVerdict{}
 	}
-	c.mergeTrainVerdicts[key] = v
+	m.mergeTrainVerdicts[key] = v
 }
 
+// mergeTrainVerdictFor is the lane's remembered verdict on this exact
+// head, from the sweep memory every engine over the client shares. It
+// takes only the memory's leaf lock, so a caller holding mergeTrainMu
+// (mergeTrainEjectWhyLocked) may use it.
 func (c *Engine) mergeTrainVerdictFor(lane, owner, repo string, number int, sha string) (mergeTrainVerdict, bool) {
 	if c == nil || sha == "" {
 		return mergeTrainVerdict{}, false
 	}
-	c.mergeTrainMu.Lock()
-	defer c.mergeTrainMu.Unlock()
-	v, ok := c.mergeTrainVerdicts[mergeTrainVerdictKey(lane, owner, repo, number)]
+	m := c.memory()
+	m.mergeTrainVerdictsMu.Lock()
+	defer m.mergeTrainVerdictsMu.Unlock()
+	v, ok := m.mergeTrainVerdicts[mergeTrainVerdictKey(lane, owner, repo, number)]
 	return v, ok && v.sha == sha
 }
 
