@@ -168,38 +168,93 @@ func (s *HubServer) ownershipChecker() *selfServiceOwnershipChecker {
 // admin specifically; maintain is not accepted (unlike the lite-enrollment
 // check, which has different stakes).
 func (c *selfServiceOwnershipChecker) repoAdmin(ctx context.Context, token, owner, repo string) (bool, error) {
+	res, err := c.repoAdminDetail(ctx, token, owner, repo)
+	return res.admin, err
+}
+
+// selfServiceRepoAdminResult is what one read-only ownership call learned.
+// repoAdmin uses only admin; the github-user-token proof
+// (selfservice_v1_proof.go) uses the rest to say why a proof failed.
+type selfServiceRepoAdminResult struct {
+	// status is GitHub's HTTP status for GET /repos/{owner}/{repo}.
+	status int
+	admin  bool
+	// permissionsReported is false when GitHub answered 200 without a
+	// permissions object, which is how an org restricting the token's access
+	// shows up: the repo is visible, the caller's role is not.
+	permissionsReported bool
+	// ssoRequired is set when GitHub answered 403 with an X-GitHub-SSO
+	// header: the token is not authorized for the org's SAML single sign-on.
+	ssoRequired bool
+	// scopes are the classic OAuth scopes GitHub reported for the token;
+	// scopesKnown is false when GitHub sent no X-OAuth-Scopes header (a
+	// fine-grained token or a GitHub App token).
+	scopes      []string
+	scopesKnown bool
+}
+
+// repoAdminDetail is repoAdmin with the detail a clear refusal needs. A 401,
+// 403 or 404 is a result, not an error; any other non-2xx is an error.
+func (c *selfServiceOwnershipChecker) repoAdminDetail(ctx context.Context, token, owner, repo string) (selfServiceRepoAdminResult, error) {
+	var res selfServiceRepoAdminResult
 	u, err := url.JoinPath(c.apiBase, "repos", owner, repo)
 	if err != nil {
-		return false, fmt.Errorf("build GitHub repo URL: %w", err)
+		return res, fmt.Errorf("build GitHub repo URL: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return false, fmt.Errorf("build GitHub ownership check: %w", err)
+		return res, fmt.Errorf("build GitHub ownership check: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("GitHub ownership check failed: %w", err)
+		return res, fmt.Errorf("GitHub ownership check failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	res.status = resp.StatusCode
+	res.scopes, res.scopesKnown = selfServiceTokenScopes(resp.Header)
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
-		return false, nil
+		res.ssoRequired = resp.StatusCode == http.StatusForbidden && strings.TrimSpace(resp.Header.Get("X-GitHub-SSO")) != ""
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, selfServiceOwnershipErrorBodyLimit))
+		return res, nil
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, selfServiceOwnershipErrorBodyLimit))
-		return false, fmt.Errorf("GitHub ownership check returned HTTP %d", resp.StatusCode)
+		return res, fmt.Errorf("GitHub ownership check returned HTTP %d", resp.StatusCode)
 	}
 	var payload struct {
-		Permissions struct {
+		Permissions *struct {
 			Admin bool `json:"admin"`
 		} `json:"permissions"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return false, fmt.Errorf("decode GitHub ownership check: %w", err)
+		return res, fmt.Errorf("decode GitHub ownership check: %w", err)
 	}
-	return payload.Permissions.Admin, nil
+	if payload.Permissions != nil {
+		res.permissionsReported = true
+		res.admin = payload.Permissions.Admin
+	}
+	return res, nil
+}
+
+// selfServiceTokenScopes reads GitHub's X-OAuth-Scopes header. known is false
+// when the header is absent (fine-grained and App tokens carry no scopes).
+func selfServiceTokenScopes(h http.Header) (scopes []string, known bool) {
+	values, known := h[http.CanonicalHeaderKey("X-OAuth-Scopes")]
+	if !known {
+		return nil, false
+	}
+	scopes = []string{}
+	for _, v := range values {
+		for _, scope := range strings.Split(v, ",") {
+			if scope = strings.TrimSpace(scope); scope != "" {
+				scopes = append(scopes, scope)
+			}
+		}
+	}
+	return scopes, true
 }
 
 // selfServiceRegisterRequest is the body of POST /api/hub/selfservice/hives.
@@ -469,6 +524,15 @@ func (s *HubServer) selfServiceRegisterCore(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusUnauthorized, "not authenticated")
 		return SelfServiceHive{}, "", false
 	}
+	// Only the v1 route reads a proof method; the v6 route always proves with
+	// the stored sign-in token, as before.
+	var proof hubV1Proof
+	if v1 {
+		var ok bool
+		if proof, ok = hubV1ReadProof(w, r); !ok {
+			return SelfServiceHive{}, "", false
+		}
+	}
 	var body selfServiceRegisterRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, selfServiceRequestBodyLimit())).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
@@ -525,7 +589,7 @@ func (s *HubServer) selfServiceRegisterCore(w http.ResponseWriter, r *http.Reque
 		return SelfServiceHive{}, "", false
 	}
 
-	if !s.selfServiceProveOwnership(w, r, login, id, user, repos) {
+	if !s.hubV1ProveOwnership(w, r, login, id, user, repos, proof) {
 		return SelfServiceHive{}, "", false
 	}
 

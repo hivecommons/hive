@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.338.2)
+
+### Fixed
+
+- **More proxy checks fail closed when they cannot run.** If the review-thread ownership check, the GitHub lookup behind the reference-repo and review-thread gates, or the canary scan panics or hangs, the proxy now refuses that one request with a 403 instead of crashing the whole proxy or holding the request open. A canary scan that cannot finish refuses the write even in advisory canary mode. The results of the egress audit's error-path review, and the accepted risks, are recorded in the security model ([#19224](https://github.com/hivecommons/hive/issues/19224)).
+
+## 2026-11-19 (v5.338.1)
+
+### Fixed
+
+- A hive with a Jira or Linear work source no longer treats those items as GitHub issues. The issue stage sweep skipped no item without a GitHub number, so every Jira item became one `repo#0` row whose label write failed with `404 Not Found` each cycle. The PR claim branch heuristic read the number in a branch named after a configured Jira/Linear key (`ceh-12725-mcp-client`, from `jira.project_keys` or `linear.teams[].key`) as GitHub issue #12725, so the supersession sweep failed with `404` on a PR that claims nothing. Other branch words (`hotfix-428`, `bug-428`) still claim the issue.
+
 ## 2026-11-19 (v5.338.0)
 
 ### Added

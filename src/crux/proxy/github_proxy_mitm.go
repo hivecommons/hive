@@ -45,6 +45,17 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			p.logClientRead("proxy client request read timed out", err, "agent", agentName)
 			return
 		}
+		// #19223: a request naming another host, or a path the upstream could
+		// resolve differently from the gates below, is refused before any gate
+		// reads it, and the connection is closed behind it.
+		if reason, refused := relayRequestTargetRefusal(req, host); refused {
+			_ = client.SetReadDeadline(time.Time{})
+			p.recordViolation(agentName, req.Method, reason)
+			_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+			_ = writeRelayBadRequest(client, reason)
+			_ = client.SetWriteDeadline(time.Time{})
+			return
+		}
 
 		blocked := false
 		blockReason := ""

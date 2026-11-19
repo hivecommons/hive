@@ -80,6 +80,7 @@ Read each control's exceptions and the residual risks, not just its name.
 | `ioscan` | Cleans and matches untrusted text, withholds matches, plants canaries and scans agent output for them. See [ioscan.md](ioscan.md). | Prompt injection and secret leakage before and after the agent. |
 | Trajectory review | A second model compares each agent's assigned intent with its recent transcript and pauses it on drift. Fails open if the reviewer is down. | Multi-step goal drift. |
 | Token budget | A seven-day budget warns at 90% and stops new tasks when exhausted. | Runaway cost. |
+| Fail-closed proxy decisions | Every check on the proxy's request path that cannot be evaluated refuses the request: an unreadable or oversized body, an unparseable GraphQL or Linear document, a policy callback or ownership lookup that errors, panics or times out, and a canary scan that cannot finish. Fault-injection tests cover each seam. See [security-model.md](security-model.md#5-network-and-credentials). | A crash or stall in one check opening a write path, or taking down egress for every agent. |
 | Shared address classifier | One classifier, `pkg/netguard`, decides which destinations a server-side fetch of a user-supplied URL may reach. It refuses loopback, private, link-local, carrier-grade NAT, multicast, reserved and documentation ranges, IPv6 unique-local and site-local, Teredo and discard-only space, and malformed all-numeric hosts, and it judges IPv4-mapped, NAT64 and 6to4 addresses by the IPv4 address they carry. The full range list is in [security-model.md](security-model.md). | SSRF to cloud metadata and internal services through alternate address spellings. |
 | Per-user-ID isolation | Each agent has its own Unix user, terminal socket and token file; the proxy attributes connections by user ID. `su-exec` is the only setuid binary, mode 4750. | Cross-agent file access; unattributed network decisions. |
 | Single sign-on and terminal authorization | Ed25519-signed sessions, short-lived signed terminal assertions, per-hive authorization. | Forged hub or terminal access. |
@@ -108,6 +109,12 @@ Read each control's exceptions and the residual risks, not just its name.
   fails closed at L5–L6. The deterministic rules, canaries and proxy denials
   are the floor; the language-model classifier adds coverage above it.
 * **Trajectory review reads transcripts, not reasoning**, and fails open.
+* **Unidentified callers can read.** When the proxy cannot attribute a
+  connection to an agent, it applies advisory mode: GitHub reads are allowed
+  and writes are refused. Budget limits, credential suppliers and audit sinks
+  on the proxy path are not fault-guarded, because none of them can turn a
+  refusal into an allow. See
+  [security-model.md](security-model.md#5-network-and-credentials).
 * **Hub compromise is high impact.** The hub still coordinates callbacks,
   registry data, terminal authorization and fleet visibility.
 

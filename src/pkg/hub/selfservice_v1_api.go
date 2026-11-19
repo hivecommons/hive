@@ -11,9 +11,9 @@ package hub
 // and status codes.
 //
 // Invariants (in addition to selfservice_api.go's):
-//   - Nothing here writes to GitHub. The only GitHub call is the read-only
-//     ownership check (GET /repos/{owner}/{repo}) at create, shared with the
-//     legacy route.
+//   - Nothing here writes to GitHub. The only GitHub calls are the read-only
+//     ownership checks (GET /repos/{owner}/{repo}, and GET /user for the
+//     github-user-token proof) at create and PATCH.
 //   - Every write carries an ETag precondition check inside the store lock, so
 //     two operators acting at once get 412, never a silent overwrite.
 
@@ -35,10 +35,9 @@ const (
 	hubV1Protocol = "hive-hub-registration"
 	// hubV1ProtocolVersion is the protocol version discovery advertises.
 	hubV1ProtocolVersion = "1"
-	// hubV1ProofHubSessionToken is the only ownership proof step 1 offers: the
-	// hub checks permissions.admin on each repo with the GitHub token stored at
-	// hub sign-in. The RFC's github-user-token (a per-request token with
-	// explicit scopes) is rollout step 2 and is not advertised until it exists.
+	// hubV1ProofHubSessionToken is the default ownership proof: the hub checks
+	// permissions.admin on each repo with the GitHub token stored at hub
+	// sign-in. The other methods are in selfservice_v1_proof.go.
 	hubV1ProofHubSessionToken = "hub-session-token"
 )
 
@@ -151,7 +150,8 @@ func (s *HubServer) handleHubV1Discovery(w http.ResponseWriter, r *http.Request)
 			"expiry":               selfServiceExpiry().String(),
 			"key_rotation_overlap": selfServiceKeyRotationOverlap.String(),
 		},
-		"proof_methods": []string{hubV1ProofHubSessionToken},
+		"proof_methods":        hubV1ProofMethods(),
+		"proof_method_details": hubV1ProofMethodDetails(),
 	})
 }
 
