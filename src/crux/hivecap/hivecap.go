@@ -66,6 +66,10 @@ type Set struct {
 	AppTokens *AppTokenWriter
 	Mint      AgentMint
 	Bob       *BobCredentials
+	// Knowledge is the sidecar's SetKnowledgeAdviser argument
+	// (hivecommons/hive#17157). It is inert until the hive's policy snapshot
+	// says the route is on.
+	Knowledge *KnowledgeAdviser
 }
 
 // New builds the adapters over caps. timeout bounds the calls made from
@@ -87,6 +91,7 @@ func New(caps callback.Capabilities, timeout time.Duration) *Set {
 	s.Mint = NewAgentMint(caps, timeout)
 	s.Bob = NewBobCredentials(caps, timeout)
 	s.Policy = NewPolicy(caps, timeout)
+	s.Knowledge = NewKnowledgeAdviser(caps, s.Policy.KnowledgeAdvise, 0)
 	s.Inference = NewInferenceRoutes(caps, timeout)
 	s.Mutation = NewMutationBoundary(caps)
 	return s
@@ -510,6 +515,14 @@ func (p *Policy) KickLogSource() string {
 		return *pol.KickLogSource
 	}
 	return ""
+}
+
+// KnowledgeAdvise reports whether the last snapshot says the hive serves POST
+// /v1/knowledge/advise. False without a snapshot, so a runtime that has not
+// heard from the hive (or talks to one that predates the route) never calls it.
+func (p *Policy) KnowledgeAdvise() bool {
+	pol, _ := p.Snapshot()
+	return pol.KnowledgeAdvise
 }
 
 // GatewayBackend is the SetGatewayBackendChecker predicate: backend names a

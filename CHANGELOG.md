@@ -11,6 +11,36 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.332.0)
+
+### Added
+
+- New opt-in `knowledge.sidecar_advise` (default `false`, also a switch at the top of Settings, Knowledge, applies without a restart) gives a sidecar-mode runtime the mid-task knowledge advisor through a new `POST /v1/knowledge/advise` route on the runtime-callback endpoint, which until now ran with no adviser at all. The route is served only behind the same bearer token as the other `/v1/*` callbacks and only while the knob, `knowledge.enabled` and `knowledge.advisor` are on; off, it answers `404 not_configured`, the hive does not advertise the `knowledge_advise` capability, and a sidecar runtime behaves exactly as before. The hive runs the adviser chain it runs in-process (phase 1, with the `advisor_llm` ranking pass, its budgets and the hive-wide pacer when configured), so no inference credential or model setting reaches the runtime and the model's reason is never typed. The runtime sends the scope and a pane tail redacted with `RedactPaneTokens` (the hive redacts again); the hive refuses with 403 an agent the calling runtime does not own or a kick that is not the agent's current one, with 429 a second call in flight for an agent or a third evaluation of one scope in a kick, with 400 a pane tail over `pane_lines`, and with 413 a body over 64 KiB. Any failure is no advice, with one warning per kick ([#17157](https://github.com/hivecommons/hive/issues/17157), part of [#17054](https://github.com/hivecommons/hive/issues/17054)).
+
+## 2026-11-19 (v5.331.1)
+
+### Fixed
+
+- The issue un-park sweep now treats a maintainer's first line of `Decision: <text>` (or `Decision (owner): <text>`) on a parked issue as `/hive decision <text>`, and replies with the `/hive decision` hint to `option N`, `decide` and bare option-letter comments instead of ignoring them ([#19155](https://github.com/hivecommons/hive/issues/19155)).
+- Claude and Copilot agents can no longer end up on the other CLI's spelling of the same Claude model (`claude-sonnet-5.5` on claude, `claude-sonnet-5-5` on copilot), which each CLI rejects: switching backends, setting a model, and loading config now store the backend's own spelling through one shared mapping with a dashboard warning, and the model dropdowns show a wrong-convention id as stored and flag it instead of silently preselecting the valid option. Non-Claude ids are unchanged ([#19169](https://github.com/hivecommons/hive/issues/19169)).
+
+## 2026-11-19 (v5.331.0)
+
+### Added
+
+- The inference translator can now cut a stalled upstream and retry a rate limit or server error, both opt-in and off by default. New `governor.inference_resilience` (or `HIVE_INFERENCE_*` environment variables) sets a connect timeout, a response-header timeout and an idle-stream timeout (no bytes for N seconds, so a slow but active stream is never cut), and a bounded retry with exponential backoff, jitter and `Retry-After` for `429` and `5xx` that only runs while no response byte has reached the agent, with a small attempt cap. Each retry and timeout logs the route and status (never content or headers) and increments `crux.proxy.inference.retries` or `crux.proxy.inference.timeouts`. A stream that dies mid-response is still logged and stopped, and key resolution and the single `401` retry are unchanged. Nothing changes while the settings are at their defaults ([#19057](https://github.com/hivecommons/hive/issues/19057)).
+
+## 2026-11-18 (v5.330.0)
+
+### Added
+
+- New opt-in `repos.<repo>.parent_autoclose: trackers_too` (also a fourth choice, "Also close trackers whose work is done", in Settings, Repos tab) closes tracker and umbrella issues that have no sub-issue children once everything they reference is finished. "Done" is computed from the state of the issues and PRs the tracker lists in its task list or `close_when` checklist, plus the PRs that reference it with `Refs`, never from close keywords, since v5 merges do not auto-close. Only issues that announce themselves as trackers are read, `hive/tracking` and `hold` issues never close, a person's reopen is final, and the close waits for the same finished evidence on two reads 15 minutes apart and leaves an evidence comment listing every reference and its state. Default behaviour is unchanged ([#19071](https://github.com/hivecommons/hive/issues/19071)).
+- New opt-in `session_taint` recorder, the observe-only first slice of session taint ([#18987](https://github.com/hivecommons/hive/issues/18987)). A pattern scan checks each outgoing message alone, so it cannot see that an agent earlier read something it should not repeat in a wider audience; this adds the memory half of the answer, as a measurement only. With `session_taint.enabled: true` the hive keeps a bounded in-memory record of the coarse labels each agent session has accrued (a canary hit sets `secret`) and, when that session later asks the issue, comment, PR or review relay to write, logs and audits which rule would have held the write (`session_taint_label` and `session_taint_would_act` audit entries, plus per-rule counters). It never blocks, holds, restricts or changes any request or action, stores labels, counts and ids only (no credential or content), takes effect at restart, starts every session clean after a restart, and does nothing at all when the key is absent. `max_sessions`, `max_labels_per_session` and `max_decisions` bound the store. Enforcement is a later, separately decided phase; see `docs/design/session-taint.md` and `docs/security-model.md`.
+
+### Fixed
+
+- Betty now treats plain requests such as "start a spec for this", "write a spec for X" and "draft a design for X" as a Spek session draft, the same as "Spek session" wording; the draft still waits for approval, and statements like "the spec says" or "the design review happened" are not requests ([#19157](https://github.com/hivecommons/hive/issues/19157)).
+
 ## 2026-11-18 (v5.329.1)
 
 ### Fixed

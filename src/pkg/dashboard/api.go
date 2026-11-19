@@ -29,6 +29,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	}
 	s.deps = deps
 	s.surfaceLaunchCmdDegradations()
+	s.surfaceModelIDNormalizations()
 	s.loadSidebarFromDisk()
 	s.mergedLedger()
 	s.registerContributeRoutes()

@@ -210,10 +210,11 @@ func (c *Client) EndEffect(ctx context.Context, id string, req EndEffectRequest)
 }
 
 var (
-	_ Capabilities    = (*Client)(nil)
-	_ PolicySource    = (*Client)(nil)
-	_ InferenceRouter = (*Client)(nil)
-	_ EffectBoundary  = (*Client)(nil)
+	_ Capabilities      = (*Client)(nil)
+	_ PolicySource      = (*Client)(nil)
+	_ InferenceRouter   = (*Client)(nil)
+	_ EffectBoundary    = (*Client)(nil)
+	_ KnowledgeAdvisers = (*Client)(nil)
 )
 
 // do performs one call. Transport failures, timeouts and 5xx become
@@ -293,6 +294,10 @@ func (c *Client) checkStatus(resp *http.Response, method, path string) error {
 		return fmt.Errorf("%w: %s", ErrEffectDenied, se.Body.Error)
 	case resp.StatusCode == http.StatusNotFound && se.Body.Code == CodeEffectUnknown:
 		return fmt.Errorf("%w: %s %s", ErrEffectUnknown, method, path)
+	case resp.StatusCode == http.StatusForbidden && se.Body.Code == CodeForbidden:
+		return fmt.Errorf("%w: %s %s", ErrForbidden, method, path)
+	case resp.StatusCode == http.StatusTooManyRequests && se.Body.Code == CodeRateLimited:
+		return fmt.Errorf("%w: %s %s", ErrRateLimited, method, path)
 	case resp.StatusCode >= 500:
 		return fmt.Errorf("%w: %s %s: HTTP %d %s: %w", ErrUnavailable, method, path, resp.StatusCode, se.Body.Code, se)
 	}
@@ -333,5 +338,13 @@ func (c *Client) MintAgentToken(ctx context.Context, req AgentMintRequest) (Agen
 func (c *Client) BobCredential(ctx context.Context) (BobCredential, error) {
 	var out BobCredential
 	err := c.do(ctx, http.MethodGet, PathBobCredential, nil, &out)
+	return out, err
+}
+
+// AdviseKnowledge is POST /v1/knowledge/advise. A hive that has not turned
+// the route on answers 404 not_configured (ErrNotConfigured).
+func (c *Client) AdviseKnowledge(ctx context.Context, req KnowledgeAdviseRequest) (KnowledgeAdviseResponse, error) {
+	var out KnowledgeAdviseResponse
+	err := c.do(ctx, http.MethodPost, PathKnowledgeAdvise, req, &out)
 	return out, err
 }

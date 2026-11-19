@@ -500,11 +500,6 @@ func (s *HubServer) handleImpersonationStatus(w http.ResponseWriter, r *http.Req
 // Registered behind requireAdmin; this handler does no auth of its own.
 func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
-	u := loadSaaSUser(username)
-	if u == nil {
-		writeJSONError(w, http.StatusNotFound, "user not found")
-		return
-	}
 	// Free-text fields land on a PVC, so bound the body before decoding it.
 	r.Body = http.MaxBytesReader(w, r.Body, maxUpdateUserBodyBytes)
 	var body struct {
@@ -529,6 +524,13 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusForbidden, "root hub admins can only be changed by root hub admins")
 		return
 	}
+	customerProfileMu.Lock()
+	defer customerProfileMu.Unlock()
+	u := loadSaaSUser(username)
+	if u == nil {
+		writeJSONError(w, http.StatusNotFound, "user not found")
+		return
+	}
 	// Whether the country branch below actually APPLIED, which is not the same
 	// as the key being present: a stronger user-chosen value declines the edit.
 	// Tracked so the audit line records what changed rather than what was asked.
@@ -541,8 +543,10 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	}
 	// Trim before capping so trailing whitespace does not eat the budget, and
 	// so clearing a field to spaces stores "" (and drops out via omitempty).
-	if body.FullName != nil {
+	nameEdited := body.FullName != nil && mayOverwriteProfileSource(u.FullNameSource, countrySourceAdmin)
+	if nameEdited {
 		u.FullName = truncateRunes(strings.TrimSpace(*body.FullName), maxContactNameLen)
+		u.FullNameSource = countrySourceAdmin
 	}
 	if body.SlackID != nil {
 		u.SlackID = truncateRunes(strings.TrimSpace(*body.SlackID), maxContactSlackIDLen)
@@ -550,8 +554,10 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	if body.Notes != nil {
 		u.Notes = truncateRunes(strings.TrimSpace(*body.Notes), maxContactNotesLen)
 	}
-	if body.Company != nil {
+	companyEdited := body.Company != nil && mayOverwriteProfileSource(u.CompanySource, countrySourceAdmin)
+	if companyEdited {
 		u.Company = truncateRunes(strings.TrimSpace(*body.Company), maxContactCompanyLen)
+		u.CompanySource = countrySourceAdmin
 	}
 	if body.Country != nil {
 		raw := strings.TrimSpace(*body.Country)
@@ -611,7 +617,7 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	// Logged only when the write actually applied, so the line never claims a
 	// change that mayOverwriteCountry declined.
 	attrs := []any{"target", username, "quota", u.SaaSQuota, "blocked", u.Blocked,
-		"contactEdited", body.FullName != nil || body.SlackID != nil || body.Notes != nil || body.Company != nil}
+		"contactEdited", nameEdited || body.SlackID != nil || body.Notes != nil || companyEdited}
 	if countryEdited {
 		attrs = append(attrs, "countryAssigned", u.Country, "countrySource", u.CountrySource)
 	}
@@ -635,6 +641,10 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusBadRequest, "invalid username")
 		return
 	}
+	customerConsentMu.Lock()
+	defer customerConsentMu.Unlock()
+	customerProfileMu.Lock()
+	defer customerProfileMu.Unlock()
 	u := loadSaaSUser(username)
 	if u == nil {
 		writeJSONError(w, http.StatusNotFound, "user not found")
@@ -651,11 +661,25 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 			len(ownedHives), strings.Join(ownedHives, ", ")))
 		return
 	}
-	path := filepath.Join(saasUsersDir, username+".json")
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		s.logger.Warn("admin delete user: remove failed", "target", username, "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "failed to delete user record")
+	// Remove consents first. If storage fails, leave the user in place so a
+	// subsequent deletion can retry; never report deletion with consents left.
+	consentPath, err := customerConsentPath(u)
+	if err == nil {
+		err = removeCustomerConsents(consentPath)
+	}
+	if err != nil {
+		s.logger.Warn("admin delete user: consent removal failed", "target", username, "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to delete user's consent records")
 		return
+	}
+	// Delete both canonical and legacy representations; otherwise a leftover
+	// fallback would become the live account as soon as the first file is gone.
+	for _, path := range saaSUserFilePaths(username) {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			s.logger.Warn("admin delete user: remove failed", "target", username, "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "failed to delete user record")
+			return
+		}
 	}
 	s.logger.Info("audit: admin deleted user", "target", username, "by", s.getAuthUser(r))
 	w.Header().Set("Content-Type", "application/json")

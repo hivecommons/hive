@@ -316,6 +316,40 @@
       if (optTail === curTail) return true;
       return _modelsEqual(optTail, curTail);
     }
+    // Backends whose CLI accepts exactly one spelling of a model id. Claude
+    // and Copilot serve the SAME Anthropic models under different naming
+    // conventions: the Claude CLI takes claude-sonnet-5-5 and rejects
+    // claude-sonnet-5.5, the Copilot CLI takes claude-sonnet-5.5 and rejects
+    // claude-sonnet-5-5. For these the dropdown must NOT treat the two as the
+    // same model: the tolerant match preselected the valid option for a
+    // stored wrong-convention id, and the agent failed every kick while its
+    // dropdown looked correct. The server rewrites such ids to the backend's
+    // spelling (config.CanonicalizeModelForBackend); the dropdown shows what
+    // is stored and flags it.
+    const STRICT_MODEL_ID_BACKENDS = ['claude', 'copilot'];
+    // _modelIdMatchesForBackend is _modelIdMatches, minus the dotted/dashed
+    // version folding on STRICT_MODEL_ID_BACKENDS.
+    function _modelIdMatchesForBackend(backend, optionValue, current) {
+      if (!STRICT_MODEL_ID_BACKENDS.includes(backend)) return _modelIdMatches(optionValue, current);
+      if (!current) return false;
+      return optionValue === current || optionValue.split('/').pop() === current.split('/').pop();
+    }
+    // modelIdMatchesStored is the Settings dialog's "is this option the stored
+    // model" test: strict on STRICT_MODEL_ID_BACKENDS, the separator-tolerant
+    // _modelsEqual elsewhere.
+    function modelIdMatchesStored(backend, optionValue, current) {
+      if (STRICT_MODEL_ID_BACKENDS.includes(backend)) return _modelIdMatchesForBackend(backend, optionValue, current);
+      return _modelsEqual(current, optionValue);
+    }
+    // invalidModelSpellingFor returns the valid option a stored model is only
+    // a different spelling of on a strict backend ('' when there is none), so
+    // the dropdown can flag the stored value instead of hiding it.
+    function invalidModelSpellingFor(backend, models, current) {
+      if (!current || !STRICT_MODEL_ID_BACKENDS.includes(backend)) return '';
+      if (models.some(m => _modelIdMatchesForBackend(backend, m.value, current))) return '';
+      const hit = models.find(m => _modelIdMatches(m.value, current));
+      return hit ? hit.value : '';
+    }
     // modelOptionsHtml builds the <option> list for a model dropdown:
     // discovered/known models first (already discovered-first from the API),
     // the current model preselected (prefix-insensitive), and — if the
@@ -336,7 +370,7 @@
       const cur = soleOption || currentModel || '';
       let matched = false;
       const opts = models.map(m => {
-        const sel = !matched && _modelIdMatches(m.value, cur);
+        const sel = !matched && _modelIdMatchesForBackend(backend, m.value, cur);
         if (sel) matched = true;
         // The selected option's label doubles as the button's visible text
         // (native <select> renders it in place of the placeholder), so it
@@ -353,7 +387,14 @@
         body = modelOptgroupsHtml(Object.keys(byValue), v => byValue[v]);
       }
       if (cur && !matched) {
-        body = `<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current) ▾</option>` + body;
+        // The stored id is shown as it is stored. When it is only another
+        // spelling of a valid option (claude-sonnet-5.5 on claude), say so
+        // and name the id to pick, rather than presenting it as fine.
+        const validSpelling = invalidModelSpellingFor(backend, models, cur);
+        const note = validSpelling
+          ? ` (⚠ not valid for ${backend}; pick ${validSpelling.split('/').pop()})`
+          : ' (current)';
+        body = `<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())}${esc(note)} ▾</option>` + body;
       }
       return body;
     }

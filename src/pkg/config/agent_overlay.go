@@ -147,6 +147,54 @@ func (c *Config) DegradeContradictingLaunchCmds() []LaunchCmdDegradation {
 	return degraded
 }
 
+// ModelIDNormalization records one agent whose stored model id the loader
+// rewrote to its backend's naming convention for the same Claude model.
+type ModelIDNormalization struct {
+	Agent   string
+	Backend string
+	From    string
+	To      string
+}
+
+// NormalizeModelIDConventions rewrites, for every claude- and copilot-backend
+// agent, a Claude model id stored in the OTHER CLI's naming convention to the
+// one its own CLI accepts (CanonicalizeModelForBackend): claude-sonnet-5.5 on
+// claude becomes claude-sonnet-5-5, claude-sonnet-5-5 on copilot becomes
+// claude-sonnet-5.5. Each rewrite is recorded in c.ModelIDNormalizations so
+// the dashboard can warn about it.
+//
+// The wrong spelling is carried over when an agent is switched between the
+// two backends and keeps its model. The Claude CLI rejects the dotted id on
+// every kick ("There's an issue with the selected model"); the Copilot CLI
+// rejects the dashed one and silently falls back to another model. The
+// dashboard's model dropdown used to match the two spellings as the same
+// model, so the stored value looked correct. Normalizing at load repairs
+// agents already in that state on the next boot; the dashboard write paths
+// normalize at set time so new ones are not created.
+func (c *Config) NormalizeModelIDConventions() []ModelIDNormalization {
+	var fixed []ModelIDNormalization
+	for name, agent := range c.Agents {
+		to, changed := CanonicalizeModelForBackend(agent.Backend, agent.Model)
+		if !changed {
+			continue
+		}
+		fixed = append(fixed, ModelIDNormalization{Agent: name, Backend: agent.Backend, From: agent.Model, To: to})
+		slog.Default().Warn("config: rewrote a Claude model id to the naming convention of the agent's backend",
+			"hive_id", c.HiveID,
+			"agent", name,
+			"file", agent.SourceFile(),
+			"backend", agent.Backend,
+			"from", agent.Model,
+			"to", to,
+		)
+		agent.Model = to
+		c.Agents[name] = agent
+	}
+	sort.Slice(fixed, func(i, j int) bool { return fixed[i].Agent < fixed[j].Agent })
+	c.ModelIDNormalizations = append(c.ModelIDNormalizations, fixed...)
+	return fixed
+}
+
 // validateAgentOverlay runs the per-agent gates that an overlay file can
 // realistically violate. Deliberately the same calls validateAgents makes, so
 // a file rejected here is exactly a file that would have failed the whole load.

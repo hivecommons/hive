@@ -238,6 +238,57 @@ kicks form a control group with the same selection, and compare the two arms'
 outcomes. Lower `holdout_percent` once the comparison is settled; `mode: off`
 returns to phase 1 at any time.
 
+### Sidecar runtimes (`knowledge.sidecar_advise`)
+
+A runtime in sidecar mode (`crux serve --hive-callback`) has no knowledge store
+and must never hold the inference credentials the ranking pass spends, so it
+gets the advisor over the hive's runtime-callback endpoint
+(`POST /v1/knowledge/advise`, hivecommons/hive#17157). **It is off by default**:
+with `knowledge.sidecar_advise: false` (or unset) the route answers `404
+not_configured`, the hive does not advertise the `knowledge_advise` capability
+or set `knowledge_advise` in its policy snapshot, the runtime installs no
+adviser, and a sidecar runtime behaves exactly as it did before the route
+existed. Turn it on in Settings, Knowledge (applies without a restart), or in
+`hive.yaml`; it also needs `knowledge.enabled` and `knowledge.advisor`.
+
+```yaml
+knowledge:
+  enabled: true
+  advisor: true
+  sidecar_advise: true   # default false
+```
+
+- **What crosses.** The runtime sends `{agent, kick_at, scope}`: the scope an
+  agent entered (kind, key, relative path, keywords, action) and, only when the
+  policy asks for a pane tail (`advisor_llm` on), the last `pane_lines` lines
+  of its scrollback. The pane tail is redacted with `logscrub.RedactPaneTokens`
+  in the runtime before it is sent and again on the hive. The hive answers the
+  advice lines (slug, title, summary, ref) and the delivery policy for the
+  agent (`enabled`, `max_per_kick`, `cooldown_ms`, `wants_pane_tail`,
+  `pane_lines`). No inference credential, endpoint or model setting is ever
+  sent to the runtime, and the model's `reason` never leaves the hive: the
+  runtime types only the advice fields, through phase 1's delivery primitive
+  and gates.
+- **Same chain.** The hive runs whichever adviser chain it runs in-process:
+  phase 1 alone, or phase 1 wrapped by the ranking pass with its budgets,
+  hive-wide pacer and holdout arm. The request cannot widen the scope or pick
+  an entry; candidates still come from the Primer under `knowledge.agent_scopes`.
+- **Authorization.** Served only on the runtime-callback server, behind the
+  same bearer token as the other `/v1/*` callbacks (an unauthenticated call
+  gets the same `401`). The hive checks that the named agent belongs to the
+  calling runtime and that `kick_at` is that agent's current kick; a mismatch is
+  `403` and no advice.
+- **Limits.** One call in flight per agent and at most two evaluations of a
+  scope per kick (a third is `429`), at most 128 scopes per kick. A pane tail
+  longer than `pane_lines` is `400`; a body over 64 KiB is `413`; an unknown
+  scope kind or action, an absolute path or one with `..`, and over-long keys
+  or keywords are `400`.
+- **Fail closed.** A transport error, a non-2xx answer, a malformed body or the
+  knob being off means no advice. The runtime logs one warning per kick, not
+  per poll tick. The runtime fetches each agent's policy in the background
+  (`policy_only` call, cached 30 s) and never waits on the hive on the poll
+  tick, so a hive that is away leaves the advisor off, not stalled.
+
 ## 3. AGENTS.md / CLAUDE.md: injected by Hive, not read natively
 
 Each agent's CLI starts in `/data/agents/<name>` (`crux.DefaultWorkDir`),
