@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
