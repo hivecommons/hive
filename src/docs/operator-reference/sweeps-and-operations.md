@@ -16,6 +16,15 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
   candidate issue is still open the PR is live work and the sweep leaves it
   alone — no notice, no label, no close (#12349: #12322, `Fixes` open
   #12117 and `Part of` closed #12080, was escalated to `needs-human`).
+  A branch name carries only a number, so a `Refs`/`Part of` reference to
+  that number in any repository (`fix/common-1688` with
+  `Refs owner/common#1688`) means the branch is about that issue, and the
+  PR claims nothing in its own repository by branch name.
+- **A claim on an issue that does not exist is skipped.** When GitHub
+  answers 404 or 410 for a claimed issue, the sweep logs `supersession
+  sweep: skipped PR whose claimed issue does not exist` and moves on to the
+  next PR. Any other error (rate limit, outage) still ends the pass, which
+  the next pass retries.
 - **A follow-up is not a duplicate.** A PR that was opened *after* the
   merged PR landed, and whose own title or body names that merged PR (`#M`,
   `owner/repo#M` or its pull request URL), was written knowing the issue was

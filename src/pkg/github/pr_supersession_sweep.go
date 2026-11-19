@@ -2,7 +2,10 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -43,6 +46,11 @@ const (
 	// did not; keeping it open until the extra change is reviewed is recommended.
 	SupersessionOutcomeExtraFiles = "extra-files"
 )
+
+// errSupersessionClaimGone marks a claimed issue GitHub answers 404 or 410
+// for: the claim names an issue that does not exist or was deleted. The sweep
+// skips that PR and carries on with the rest.
+var errSupersessionClaimGone = errors.New("claimed issue not found")
 
 type SupersessionSweepOptions struct {
 	MaxActions       int
@@ -144,6 +152,20 @@ func (c *Client) SweepSupersededOpenPRs(ctx context.Context, opts SupersessionSw
 			}
 			result.Seen++
 			event, action, err := c.trySweepSupersededPR(ctx, repo, owner, repoName, pr, identity, now, opts)
+			if errors.Is(err, errSupersessionClaimGone) {
+				// One PR naming an issue that does not exist (or was
+				// deleted) says nothing about the rest of the pass. Before
+				// this, the 404 ended the sweep for every later PR and repo
+				// (projectbluefin/testsuite#1262). Other errors still end
+				// it: a rate limit or outage would fail every later call
+				// too, and the next pass retries.
+				result.Skipped++
+				if c.logger != nil {
+					c.logger.Warn("supersession sweep: skipped PR whose claimed issue does not exist",
+						slog.String("repo", repo), slog.Int("pr", pr.GetNumber()), slog.String("error", err.Error()))
+				}
+				continue
+			}
 			if err != nil {
 				return result, err
 			}
@@ -373,6 +395,9 @@ func (c *Client) detectSupersessionDetail(ctx context.Context, prRepo string, pr
 		issueOwner, issueRepoName := c.splitRepo(claim.Repo)
 		issue, _, err := c.client.Issues.Get(ctx, issueOwner, issueRepoName, claim.Issue)
 		if err != nil {
+			if githubStatusError(err, http.StatusNotFound) || githubStatusError(err, http.StatusGone) {
+				err = fmt.Errorf("%w: %w", errSupersessionClaimGone, err)
+			}
 			return supersessionDetail{}, fmt.Errorf("checking claimed issue %s#%d for PR %s#%d: %w", claim.Repo, claim.Issue, prRepo, pr.GetNumber(), err)
 		}
 		if !strings.EqualFold(issue.GetState(), "closed") {

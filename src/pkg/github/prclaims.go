@@ -434,10 +434,12 @@ func claimKey(repo string, issue int) string {
 	return fmt.Sprintf("%s#%d", repo, issue)
 }
 
-// referencesIssue reports whether refs names repo#issue.
-func referencesIssue(refs []ClaimedRef, repo string, issue int) bool {
+// referencesIssueNumber reports whether refs names issue number issue in any
+// repository. A branch name carries only the number, so a reference to that
+// number anywhere is the author saying which issue the branch is about.
+func referencesIssueNumber(refs []ClaimedRef, issue int) bool {
 	for _, ref := range refs {
-		if ref.Issue == issue && strings.EqualFold(ref.Repo, repo) {
+		if ref.Issue == issue {
 			return true
 		}
 	}
@@ -832,9 +834,15 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	// that into a strong claim — which is what let SyncIssuePRClaimLabels
 	// give #12025 a GitHub closing link onto #12005 and arm auto-close on
 	// merge. The issue falls through to the reference tier below instead.
+	//
+	// A reference to the same number in another repository overrules it
+	// too: `fix/common-dakota-1688` with `Refs projectbluefin/common#1688`
+	// is about common#1688, not this repo's #1688. The branch claim had
+	// pointed projectbluefin/testsuite#1262 at a testsuite issue that does
+	// not exist, and the supersession sweep stopped on the 404.
 	referencedRefs := ParseReferencedIssues(text, repo)
 	if len(refs) == 0 {
-		if n, ok := issueFromBranchName(headRef(pr)); ok && !referencesIssue(referencedRefs, repo, n) {
+		if n, ok := issueFromBranchName(headRef(pr)); ok && !referencesIssueNumber(referencedRefs, n) {
 			refs = []ClaimedRef{{Repo: repo, Issue: n}}
 			refsAreClosing = false
 		}

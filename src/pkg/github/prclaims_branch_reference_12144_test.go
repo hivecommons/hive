@@ -57,6 +57,26 @@ func TestClaimsFromPR_ExplicitRefsOverrulesBranchName(t *testing.T) {
 			t.Fatalf("claims = %+v, want one closing claim on 12005", claims)
 		}
 	})
+	// projectbluefin/testsuite#1262: branch `fix/common-dakota-1688`, body
+	// `Refs projectbluefin/common#1688`. The branch claim pointed at
+	// testsuite#1688, which does not exist, and the supersession sweep
+	// stopped on the 404.
+	t.Run("Refs to the branch number in another repo drops the branch claim", func(t *testing.T) {
+		claims := claimsFromPR(build("Refs projectbluefin/common#1688", "fix/common-dakota-1688"), "testsuite", identity, now)
+		if len(claims) != 1 {
+			t.Fatalf("claims = %+v, want exactly one", claims)
+		}
+		c := claims[0]
+		if c.Repo != "projectbluefin/common" || c.Issue != 1688 || !c.Reference || c.Closing {
+			t.Fatalf("claim = %+v, want a reference claim on projectbluefin/common#1688 and none on testsuite#1688", c)
+		}
+	})
+	t.Run("Refs to the same repo by full name drops the branch claim", func(t *testing.T) {
+		claims := claimsFromPR(build("Refs hivecommons/hive#12005", "feat/12005-push"), "hive", identity, now)
+		if len(claims) != 1 || claims[0].Repo != "hivecommons/hive" || claims[0].Issue != 12005 || !claims[0].Reference {
+			t.Fatalf("claims = %+v, want one reference claim on hivecommons/hive#12005", claims)
+		}
+	})
 	t.Run("Refs to a different issue keeps the branch claim and adds the reference", func(t *testing.T) {
 		claims := claimsFromPR(build("Refs #777", "feat/12005-push"), "hivecommons/hive", identity, now)
 		got := map[int]IssueClaim{}

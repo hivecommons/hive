@@ -8,7 +8,8 @@ import (
 // sweepMemory is what the lanes remember across sweeps about a PR head:
 // the merge-forward tried on it, an update-branch or merge-forward GitHub
 // refused for lack of the workflows permission, a merge GitHub refused
-// (automerge_merge_refusal.go), and the holds already logged.
+// (automerge_merge_refusal.go), the holds already logged, and each lane's
+// last verdict on the head for the merge train (noteMergeTrainOutcome).
 //
 // It is shared by every engine built over the same GitHub client, not kept
 // on one engine. The hive runs the queued, trusted-author and contributor
@@ -17,7 +18,11 @@ import (
 // the long-lived self-authored loop, so a mark on the engine was empty
 // again on the next tick: projectbluefin fsdk-containers#508 sent the same
 // refused update-branch to GitHub every ~75 s, and the "logged once per
-// head" holds were logged every sweep.
+// head" holds were logged every sweep. The merge-train verdicts had the
+// same gap: the one-shot contributor lane never saw the long-lived loop's
+// `contributor-lane:no-linked-issue` on projectbluefin utah-packages#1222,
+// so it seated the PR in a train (080, queued-behind) on the passes the
+// other one parked it at 090, and the stage dampener absorbed the flip.
 //
 // An engine over a transport that does not share state (the sweep's test
 // fakes, a nil transport) keeps its own memory, as before. A read-only
@@ -31,6 +36,13 @@ type sweepMemory struct {
 	// mergeRefusalsMu guards mergeRefusals (automerge_merge_refusal.go).
 	mergeRefusalsMu sync.Mutex
 	mergeRefusals   map[string]mergeRefusal
+	// mergeTrainVerdictsMu guards mergeTrainVerdicts
+	// (automerge_merge_train.go). It is a leaf lock: it may be taken while
+	// an engine holds its mergeTrainMu, never the other way round.
+	mergeTrainVerdictsMu sync.Mutex
+	// mergeTrainVerdicts remembers, per lane and PR, the last head whose
+	// verdict keeps it from fronting (or riding) a train.
+	mergeTrainVerdicts map[string]mergeTrainVerdict
 }
 
 // sweepMemoryStateName is the name the memory is kept under on the client

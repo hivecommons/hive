@@ -84,6 +84,9 @@ type supersessionIssueFixture struct {
 	StateReason     string
 	GraphQLCloserPR int
 	ClosingCommit   string
+	// Status, when non-zero, is the HTTP status GET issue answers (404 for
+	// an issue that does not exist).
+	Status int
 }
 
 type supersessionObservations struct {
@@ -304,6 +307,11 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 		switch {
 		case len(parts) == 1 && r.Method == "GET":
 			issue := issueByNumber[n]
+			if issue.Status != 0 {
+				w.WriteHeader(issue.Status)
+				_ = json.NewEncoder(w).Encode(map[string]any{"message": http.StatusText(issue.Status)})
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": issue.State, "state_reason": issue.StateReason})
 		case len(parts) == 1 && r.Method == "PATCH":
 			obs.mu.Lock()
@@ -437,6 +445,45 @@ func TestSweepSupersededOpenPRs_ClosedByPullRequestReferenceClosesOwnAtL6(t *tes
 	}
 	if body := obs.comments[10][0]; !strings.Contains(body, "#1") || !strings.Contains(body, "/pull/20") {
 		t.Fatalf("comment %q does not link issue and closer PR", body)
+	}
+}
+
+// A claim on an issue GitHub answers 404 or 410 for skips that PR and the
+// sweep carries on: before, the error ended the pass, so every later PR and
+// repo went unswept (projectbluefin/testsuite#1262, claimed testsuite#1688).
+func TestSweepSupersededOpenPRs_MissingClaimedIssueSkipsPRAndContinues(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			org, repo := "hivecommons", "hive"
+			server, obs := supersessionSweepServer(t, org, repo,
+				[]supersessionPRFixture{
+					{Number: 30, Title: "names a missing issue", Body: "Fixes #1688", Author: "hive-app[bot]", Files: []string{"pkg/b.go"}},
+					{Number: 10, Title: "fix thing", Body: "Refs #1", Author: "hive-app[bot]", Files: []string{"pkg/a.go"}},
+					{Number: 20, Title: "landed", Body: "Fixes #1", Author: "hive-app[bot]", Merged: true, Files: []string{"pkg/a.go"}},
+				},
+				[]supersessionIssueFixture{
+					{Number: 1688, Status: status},
+					{Number: 1, State: "closed", GraphQLCloserPR: 20},
+				},
+			)
+			defer server.Close()
+
+			c := newTestClient(t, server, org, []string{repo})
+			c.SetAppBotLogin("hive-app[bot]")
+			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous }})
+			if err != nil {
+				t.Fatalf("SweepSupersededOpenPRs: %v, want the missing issue skipped", err)
+			}
+			if res.Seen != 2 || res.Skipped != 1 {
+				t.Fatalf("seen=%d skipped=%d, want 2 seen and #30 skipped", res.Seen, res.Skipped)
+			}
+			if len(res.Closed) != 1 || len(obs.closed) != 1 || obs.closed[0] != 10 {
+				t.Fatalf("closed result=%v wire=%v, want PR #10 (after #30) still swept and closed", res.Closed, obs.closed)
+			}
+			if len(obs.comments[30]) != 0 || len(obs.labels[30]) != 0 {
+				t.Fatalf("PR #30 got comments=%v labels=%v, want it left alone", obs.comments[30], obs.labels[30])
+			}
+		})
 	}
 }
 
