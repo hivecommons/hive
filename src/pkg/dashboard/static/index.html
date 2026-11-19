@@ -19993,7 +19993,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const q = item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question).toLowerCase() : '';
           const me = typeof window !== 'undefined' && window._hiveUser ? String(window._hiveUser).toLowerCase() : '';
           const mine = !!me && new RegExp('@' + me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-])').test(q);
-          if (typeof stageTrackerGateAnswered === 'function' && stageTrackerGateAnswered(item)) return count + (String(item.human_approver || '').trim() ? ' · signed off' : ' · no sign-off pending');
+          if (typeof stageTrackerGateAnswered === 'function' && stageTrackerGateAnswered(item)) return count + ' · ' + stageTrackerGateAnsweredWord(item);
           return count + (mine ? ' · needs your sign-off' : ' · needs owner sign-off');
         }
         case 'reviewing': return count + ' · ' + (actor ? actor + ' reviewing' : 'in progress');
@@ -20006,6 +20006,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'waiting_ci': case 'not_started': case 'not_requested': case 'closed': case 'unverified': return a.caption || count;
         default: return count + ' · ' + (newHead ? reReview : total && done ? 'perspectives' : 'queued');
       }
+    }
+
+    // How an answered sign-off ask was answered (human_gate.answered_via,
+    // stage_tracker_gate.go gateAnsweredVia*).
+    const STAGE_TRACKER_ANSWERED_VIA_REVIEW = 'review';
+    const STAGE_TRACKER_ANSWERED_VIA_DASHBOARD = 'dashboard';
+    const STAGE_TRACKER_ANSWERED_VIA_POLICY = 'policy';
+    // Pure: the review word once the reviewer's sign-off ask on this head is
+    // answered. "signed off" only for a GitHub Approve review (the
+    // human_approver the lane recorded); a dashboard approval names who
+    // approved; the owner-delegate policy reads "answered by policy"; else
+    // "decision answered". Never "no sign-off pending", which read like a
+    // missing DCO Signed-off-by.
+    function stageTrackerGateAnsweredWord(item) {
+      const g = item && item.human_gate && typeof item.human_gate === 'object' ? item.human_gate : null;
+      const via = g && g.answered_via ? String(g.answered_via) : '';
+      const by = String((g && g.answered_by) || '').trim().replace(/^@/, '');
+      if (via === STAGE_TRACKER_ANSWERED_VIA_REVIEW || (!via && String((item && item.human_approver) || '').trim())) return 'signed off';
+      if (via === STAGE_TRACKER_ANSWERED_VIA_POLICY) return 'answered by policy';
+      if (via === STAGE_TRACKER_ANSWERED_VIA_DASHBOARD && by) return 'approved by ' + by;
+      return 'decision answered';
     }
 
     // Unreported checks whose workflow runs sit behind GitHub's
