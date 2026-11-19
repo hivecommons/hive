@@ -3,6 +3,7 @@ package tokens
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,7 +62,13 @@ func parseClaudeSessionFile(path string, agentDetector func(string) string) (*Se
 		return nil, err
 	}
 	defer func() { _ = f.Close() }() // read-only fd; nothing to lose on close error
+	return parseClaudeSessionReader(f, path, agentDetector)
+}
 
+// parseClaudeSessionReader is parseClaudeSessionFile over an already-open
+// stream; path names the session (its base is the session id). The owner-read
+// path (claude_owner_read.go) streams agent-owned files through it.
+func parseClaudeSessionReader(r io.Reader, path string, agentDetector func(string) string) (*SessionSummary, error) {
 	sessionID := strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	summary := &SessionSummary{
 		SessionID: sessionID,
@@ -69,7 +76,7 @@ func parseClaudeSessionFile(path string, agentDetector func(string) string) (*Se
 		Backend:   BackendClaude,
 	}
 
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, maxScanBufSizeClaude), maxScanBufSizeClaude)
 
 	firstHumanMsg := ""
@@ -351,6 +358,16 @@ func ScanClaudeSessionTree(projectsDir, defaultAgent string) (*AggregateSummary,
 		return agg, nil
 	}
 
+	// A per-UID agent's tree is private to that agent's UID (Claude Code
+	// creates it 0700 with 0600 transcripts), so the hive process cannot
+	// list it and the glob below would silently match nothing. Read it as
+	// its owner instead (hivecommons/hive#19307).
+	if spec, ok, err := claudeTreeOwnerSpec(projectsDir); err != nil {
+		return nil, err
+	} else if ok {
+		return scanClaudeTreeAsOwner(agg, projectsDir, defaultAgent, spec)
+	}
+
 	patterns := []string{
 		filepath.Join(projectsDir, "*", "*.jsonl"),
 		filepath.Join(projectsDir, "*", "subagents", "*.jsonl"),
@@ -383,41 +400,46 @@ func ScanClaudeSessionTree(projectsDir, defaultAgent string) (*AggregateSummary,
 			continue
 		}
 
-		agg.Sessions = append(agg.Sessions, *summary)
-		agg.TotalTokens += summary.TotalTokens
-		agg.TotalInput += summary.InputTokens
-		agg.TotalOutput += summary.OutputTokens
-		agg.TotalCacheRead += summary.CacheRead
-		agg.TotalCacheCreate += summary.CacheCreate
-		agg.TotalMessages += summary.Messages
-		agg.ByAgent[summary.Agent] += summary.TotalTokens
-		agg.ByModel[summary.Model] += summary.TotalTokens
-
-		ab, ok := agg.ByAgentDetail[summary.Agent]
-		if !ok {
-			ab = &AgentModelBucket{}
-			agg.ByAgentDetail[summary.Agent] = ab
-		}
-		ab.Input += summary.InputTokens
-		ab.Output += summary.OutputTokens
-		ab.CacheRead += summary.CacheRead
-		ab.CacheCreate += summary.CacheCreate
-		ab.Messages += summary.Messages
-		ab.Sessions++
-
-		mb, ok := agg.ByModelDetail[summary.Model]
-		if !ok {
-			mb = &AgentModelBucket{}
-			agg.ByModelDetail[summary.Model] = mb
-		}
-		mb.Input += summary.InputTokens
-		mb.Output += summary.OutputTokens
-		mb.CacheRead += summary.CacheRead
-		mb.CacheCreate += summary.CacheCreate
-		mb.Messages += summary.Messages
-		mb.Sessions++
+		addClaudeSession(agg, summary)
 	}
 
 	agg.SessionCount = len(agg.Sessions)
 	return agg, nil
+}
+
+// addClaudeSession folds one parsed session into agg's totals and buckets.
+func addClaudeSession(agg *AggregateSummary, summary *SessionSummary) {
+	agg.Sessions = append(agg.Sessions, *summary)
+	agg.TotalTokens += summary.TotalTokens
+	agg.TotalInput += summary.InputTokens
+	agg.TotalOutput += summary.OutputTokens
+	agg.TotalCacheRead += summary.CacheRead
+	agg.TotalCacheCreate += summary.CacheCreate
+	agg.TotalMessages += summary.Messages
+	agg.ByAgent[summary.Agent] += summary.TotalTokens
+	agg.ByModel[summary.Model] += summary.TotalTokens
+
+	ab, ok := agg.ByAgentDetail[summary.Agent]
+	if !ok {
+		ab = &AgentModelBucket{}
+		agg.ByAgentDetail[summary.Agent] = ab
+	}
+	ab.Input += summary.InputTokens
+	ab.Output += summary.OutputTokens
+	ab.CacheRead += summary.CacheRead
+	ab.CacheCreate += summary.CacheCreate
+	ab.Messages += summary.Messages
+	ab.Sessions++
+
+	mb, ok := agg.ByModelDetail[summary.Model]
+	if !ok {
+		mb = &AgentModelBucket{}
+		agg.ByModelDetail[summary.Model] = mb
+	}
+	mb.Input += summary.InputTokens
+	mb.Output += summary.OutputTokens
+	mb.CacheRead += summary.CacheRead
+	mb.CacheCreate += summary.CacheCreate
+	mb.Messages += summary.Messages
+	mb.Sessions++
 }
