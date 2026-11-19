@@ -552,6 +552,21 @@ write-ahead identity. Its conflict-repair allowance lasts only through the
 existing mutation-reconciliation TTL; a failed/conflicting result returns to
 the normal repair path, never a ready seat.
 
+**A changelog-only base move does not make a head stale.** When the head is
+behind, the current-base gate (`currentBaseGate` in
+`src/pkg/github/automerge/automerge_current_base.go`) also compares the PR's
+merge base with the base tip. If every file changed there is the root
+`CHANGELOG.md` or lies under the root `changelog.d/` (the
+`changelogOnlyFile` and `changelogOnlyFragmentDir` allowlist), and the PR
+changes none of those same files, the head counts as current: it is not
+refreshed and does not enter preparation, and the INFO line `automerge head
+treated as current` carries `reason="behind only by changelog-only commits"`.
+The release gate's CHANGELOG-only merges therefore no longer re-run every
+workflow on every green head. The rule fails closed: a missing merge base, an
+API error, a compare that is not `ahead`, an empty or possibly truncated file
+list (`compareFilesResponseCap`, GitHub's 300-file limit), or any other path
+leaves the head stale and refreshed exactly as before.
+
 **Ownership serializes refreshes, not ready merges.** A successor that is
 already current-base, CI-green and reviewed passes every normal merge gate
 without waiting for a preparing owner. A behind successor cannot skip testing.
