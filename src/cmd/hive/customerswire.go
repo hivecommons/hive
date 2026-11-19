@@ -38,7 +38,11 @@ type customersDashboard struct {
 	// It asks only about the person just accepted and is off unless
 	// customers.hub_import.enabled and a hub registration.
 	hubImport func(ctx context.Context, person string)
-	logger    *slog.Logger
+	// profileFill fills profile fields from public forge profiles
+	// (#19302); nil when not wired. Off unless
+	// customers.profile_fill.enabled.
+	profileFill *customers.ProfileFill
+	logger      *slog.Logger
 	// spawn runs the search; nil means a goroutine. Tests run it inline.
 	spawn func(func())
 }
@@ -163,6 +167,7 @@ func (c *customersDashboard) Accept(v dashboard.CustomersViewer, suggestionID st
 	if err == nil {
 		c.searchOnAccept(res.ID, ident, found)
 		c.hubImportOnAccept(res.ID)
+		c.profileFillOnAccept(res.ID)
 	}
 	return res, err
 }
@@ -233,6 +238,7 @@ func (c *customersDashboard) AcceptInto(v dashboard.CustomersViewer, suggestionI
 	if err == nil {
 		c.searchOnAccept(res.ID, ident, found)
 		c.hubImportOnAccept(res.ID)
+		c.profileFillOnAccept(res.ID)
 	}
 	return res, err
 }

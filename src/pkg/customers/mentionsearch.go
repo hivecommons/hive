@@ -92,11 +92,6 @@ type MentionSearch struct {
 	// gate.
 	QuotaLow func() string
 
-	// Profiles and Store, when both set, enable the accept-time profile
-	// fetch (FetchProfile), which shares this gate and budget.
-	Profiles ProfileSource
-	Store    *Store
-
 	now func() time.Time
 
 	mu    sync.Mutex

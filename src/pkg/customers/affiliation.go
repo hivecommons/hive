@@ -173,10 +173,10 @@ func SuggestAffiliation(p Person) *AffiliationSuggestion {
 	ok := func(v string) bool {
 		return v != "" && len(v) <= MaxProfileFieldLen && !affiliationDismissed(p.Profile, strings.ToLower(v))
 	}
-	if org.Value != "" && org.Rule == ProfileSourceGitHub {
+	if org.Value != "" && IsForgeProfileRule(org.Rule) {
 		if v := TidyCompany(org.Value); v != org.Value && ok(v) {
 			return &AffiliationSuggestion{Value: v, Rule: AffiliationFromCompany,
-				Evidence: "from GitHub company field \"" + org.Value + "\""}
+				Evidence: "from " + ProfileSourceLabel(org.Rule) + " company field \"" + org.Value + "\""}
 		}
 		return nil
 	}

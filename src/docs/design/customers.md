@@ -92,7 +92,7 @@ contributor is one of several sources of identity for a person.
 | `goals` | See section 8. |
 | `satisfaction` | See section 8. |
 | `notes` | Free text, written by people only. |
-| `profile` | Optional `real_name`, `organization`, `location` and `country`, each `{value, source, rule, at, by}`. `source` is `auto` (the person's own public GitHub profile name, company and location, fetched once on accept; the country derived offline from the location, rule `location`) or `manual` (a person typed it or cleared it; neither the fetch nor the location changes it; `auto` hands it back). `country` is an ISO 3166 alpha-2 code. Also `dismissed_affiliations`, the suggested organizations a person refused (at most 20). Nothing here comes from the hub. |
+| `profile` | Optional `real_name`, `organization`, `location` and `country`, each `{value, source, rule, at, by, login}`. `source` is `auto` (the person's own public forge profile name, company and location, read by the profile fill, `rule` naming the source and `login` the login it was read for; the country derived offline from the location, rule `location`) or `manual` (a person typed it or cleared it; neither the fetch nor the location changes it; `auto` hands it back). `country` is an ISO 3166 alpha-2 code. Also `fetched` (the last profile-fill lookup: `at`, `outcome`, `sources`) and `dismissed_affiliations`, the suggested organizations a person refused (at most 20). Nothing here comes from the hub. |
 | `merged_from` | Merge history, so a merge can be undone. |
 
 **Identity** `{kind, value, source, confidence, manual, at, by}`. Kinds:
@@ -319,12 +319,10 @@ manual, by whom), answering no pins the pair so it is not asked again. A hint
 between two customers is answered by merging them, which is the merge and split
 UI of a later PR.
 
-Step E also makes ONE request for the accepted login's public profile, before the
-search, and keeps only the name, company and location the person published
-(`profile` in section 4). It shares step E's switch, hourly budget and quota
-stand-down, spends one request of that budget, and is never run by the sweep. A
-suggested person has no profile fields until accepted. Forget deletes the fields
-with the person and export includes them. The hub's own records of the same people
+Profile fields are filled by the profile fill (below, #19302), which has its own
+switch and budget; step E no longer reads the public profile. A suggested person
+has no profile fields until accepted. Forget deletes the fields with the person
+and export includes them. The hub's own records of the same people
 (name, company, country, notes, inferred affiliation) are not read or copied: that
 is the open question in section 15 and needs a consent decision first.
 
@@ -382,6 +380,63 @@ with history beyond what the hive already holds:
   or comment text is read into the store. The log line carries the person id and
   counts only, never the login, a query or a token. It runs in the background, so
   the accept does not wait for GitHub, and a failure never undoes the accept.
+
+### Profile fill
+
+The profile fill (#19302) fills a confirmed customer's real name, organization and
+location from their own public profile on a forge, and derives the country from the
+location. It is opt-in: `customers.profile_fill.enabled` defaults to **off** (env
+`HIVE_CUSTOMERS_PROFILE_FILL_ENABLED`, or Settings, Features), because it is a
+periodic network lookup about people and the goal above is no new network calls
+on a normal sweep. It needs the Customers section on and is independent of
+`customers.mention_search`.
+
+- **Sources.** One per forge, behind one interface (`customers.ProfileLookup`):
+  the hive's project-wide forge, then Linear. GitHub and GitHub Enterprise go
+  through the shared GitHub client (`GET /users/{login}`, and for a company field
+  of exactly `@handle`, `GET /orgs/{handle}` for the organization's public display
+  name, cached for a day); GitLab through the `pkg/forge` adapter (username search,
+  then `GET /users/{id}`); Gitea and Forgejo through theirs (`GET /users/{login}`,
+  no company field). When a Linear workspace is connected, one GraphQL query reads
+  the workspace member's name by a confirmed email address; Linear has no company
+  or location. A forge that cannot be reached (an enterprise server this hive has
+  no route to, say) is "no data". The website and avatar a profile names are read
+  but never stored or fetched. Organization membership lists are not fetched.
+- **Who.** Confirmed customers only (origin `hive_user`, `manual` or
+  `accepted`), never a suggestion. A forge is asked about the person's first
+  confirmed login identity, else a dashboard user name shaped like a login; Linear
+  only about a confirmed email. A bot login is never asked about.
+- **Fill rules.** Precedence is: a value set here by hand, then a hub value the
+  person entered or consented to share, then the public forge profile, then a hub
+  value the hub derived or an admin set (hub rules other than `hub_consent`,
+  `hub_person` and `hub_unrecorded`). So a manual or person-entered hub field is
+  never touched, and a derived or admin hub value is replaced only by a non-empty
+  forge value (a derived hub country by the country of a forge location). An
+  empty field is filled. A field an earlier fill wrote from a source that answered this time is
+  the fill's own: it is updated, or cleared when the person removed it from their
+  profile. Any other value is kept. The first source with a value wins, forge
+  before Linear. Each field records `source: auto`, `rule` (the profile source:
+  `github_profile`, `ghe_profile`, `gitlab_profile`, `gitea_profile` or
+  `linear_profile`), `login` and `at` (fetched); the dashboard tooltip shows them.
+  The organization is the company field with a leading `@` dropped, or the GitHub
+  organization's public name. The country is `DeriveCountry` over the location:
+  an unplaceable or ambiguous location gives no country.
+- **When.** A pass runs 2 minutes after boot and then every 15 minutes. It looks
+  up at most 20 people, never-fetched first (so existing customers, dashboard
+  users included, are backfilled in the first passes), then the stalest; a
+  success is refreshed after 7 days, a failure retried after 24 hours. Accepting a
+  suggestion fills that person in the background. "Refresh from profiles" on one
+  customer runs it now; for everyone it makes every customer due again.
+  `profile.fetched` records the last lookup (`at`, `outcome`, `sources`).
+- **Budget.** `customers.profile_fill.max_requests_per_hour` (default 60, at most
+  300) bounds every lookup together, reserved per lookup before it is made. The
+  GitHub source stands down while the API budget mode is not normal, the
+  secondary-limit caution window is engaged or the core bucket is low, so agents
+  are never starved; its requests carry the low pacing class and the caller label
+  `customers_profile_lookup`. A rate-limit refusal from any forge stops the pass
+  and backs off 15 minutes, doubling to at most 6 hours, until a lookup answers.
+- **Privacy.** Only text the person published on their own profile. The log
+  line carries counts and a fixed skip word, never a login, an email or a value.
 
 Automatic tags come from role, association and history: `maintainer` from an
 owner or merger role or a GitHub author association of owner, member or
