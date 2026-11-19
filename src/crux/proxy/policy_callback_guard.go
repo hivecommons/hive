@@ -24,6 +24,19 @@ import (
 // off, lane enforced. Fail closed, same direction as the dial-time
 // classifier in plain_forward_guard.go refusing an address it cannot parse.
 //
+// The same guard (callPolicySeam) covers the seams on the decision path that
+// are not Set*Func predicates (#19224):
+//
+//   - ReviewThreadGuard.OwnPR and HiveLogins (review-thread gate): a failure
+//     refuses the reply or delete.
+//   - referenceLookup, the GitHub GET behind the reference-repo own-item and
+//     default-branch checks and the review-thread comment lookup: it already
+//     refused on an error; a panic or a call past referenceLookupTimeout is
+//     now reported as that error.
+//   - CanaryScanner.Scan: a scan that panics or does not finish within
+//     canaryScanTimeout refuses the write, the same answer as a body the scan
+//     could not read.
+//
 // Intentional exceptions, not routed through this guard:
 //
 //   - githubBudgetCap / githubReserveFloor / githubReserveSnapshot are rate
@@ -31,13 +44,27 @@ import (
 //     and a wrong answer costs quota, not a policy bypass.
 //   - agentTokenSource / linearCredential supply credentials rather than
 //     decide; a missing credential already makes the upstream refuse.
-//   - writeRefusedAudit and canaryLeakFunc are sinks called after a decision
+//   - ReferenceRepoPolicy.Token supplies a credential; "" sends the lookup
+//     unauthenticated and GitHub then answers 404 for a private repo, which
+//     refuses.
+//   - writeRefusedAudit, canaryLeakFunc and ReviewThreadGuard.OnRefused are sinks called after a decision
 //     has been made; they cannot turn a deny into an allow.
 
 // policyCallbackTimeout bounds one policy predicate call. The predicates read
 // in-memory config, so anything near this is already a fault. A var only so
 // the fault-injection test can shorten it.
 var policyCallbackTimeout = 2 * time.Second
+
+// canaryScanTimeout bounds one canary scan of a write body. The scan is
+// in-process but works over up to maxGitHubWriteBodyScan bytes and their
+// decoded variants, so it gets more room than a config predicate. A var only
+// so the fault-injection test can shorten it.
+var canaryScanTimeout = 10 * time.Second
+
+// referenceLookupTimeout bounds one referenceLookup call. The default lookup
+// carries its own 10s client timeout; this is the backstop for a lookup that
+// ignores it. A var only so the fault-injection test can shorten it.
+var referenceLookupTimeout = 15 * time.Second
 
 // policyCallbackFailedReason is the agent-facing 403 body when a gate could
 // not be evaluated. It deliberately does not reuse the gate's own directive
@@ -49,12 +76,19 @@ func policyCallbackFailedReason(gate string) string {
 
 // callPolicyPredicate runs fn with panic recovery and policyCallbackTimeout.
 // ok is false when fn panicked or did not return in time; the caller must
-// then take its deny branch. On timeout the goroutine running fn is left to
-// finish on its own (Go cannot cancel it); the buffered channel lets it exit
-// without a reader.
+// then take its deny branch.
 func (p *GitHubProxy) callPolicyPredicate(gate string, fn func() bool) (result, ok bool) {
+	return callPolicySeam(p, gate, policyCallbackTimeout, fn)
+}
+
+// callPolicySeam is callPolicyPredicate for a seam of any result type and its
+// own deadline (#19224). ok is false when fn panicked or did not return within
+// timeout; the zero T is returned and the caller must take its deny branch.
+// On timeout the goroutine running fn is left to finish on its own (Go cannot
+// cancel it); the buffered channel lets it exit without a reader.
+func callPolicySeam[T any](p *GitHubProxy, gate string, timeout time.Duration, fn func() T) (result T, ok bool) {
 	type outcome struct {
-		value    bool
+		value    T
 		panicked bool
 		cause    any
 	}
@@ -67,18 +101,19 @@ func (p *GitHubProxy) callPolicyPredicate(gate string, fn func() bool) (result, 
 		}()
 		done <- outcome{value: fn()}
 	}()
-	timer := time.NewTimer(policyCallbackTimeout)
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
+	var zero T
 	select {
 	case o := <-done:
 		if o.panicked {
 			p.logPolicyCallbackFailure(gate, fmt.Sprintf("panic: %v", o.cause))
-			return false, false
+			return zero, false
 		}
 		return o.value, true
 	case <-timer.C:
-		p.logPolicyCallbackFailure(gate, "timed out after "+policyCallbackTimeout.String())
-		return false, false
+		p.logPolicyCallbackFailure(gate, "timed out after "+timeout.String())
+		return zero, false
 	}
 }
 
