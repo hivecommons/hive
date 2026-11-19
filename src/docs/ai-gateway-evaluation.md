@@ -229,6 +229,23 @@ Pass: `OPS_STEPS_MAX`, `OPS_IDLE_MEMORY_MB_MAX` and `OPS_PIN_BUMPS_PER_YEAR_MAX`
 
 Results go on the tracking issue as a table with the harness and raw numbers, so the run can be repeated. Each miss against a named threshold needs a written reason. The outcome is exactly one of: document only, document plus a small seam issue (for example forwarding an agent identity), or a follow-up RFC. No change to bundled components is made under this evaluation.
 
+### Results template
+
+Copy this onto the tracking issue and fill it in. Fix the threshold values (the table above) and the open-question choices before the first measurement, and record who agreed them.
+
+Run details: date, runner (not the recipe's author for the clean-setup run), Hive version, gateway name and version, backend and models, load generator and script location, workload used for metering.
+
+| Spike | Threshold (named) | Direct or bundled | Generic gateway | Pass or miss | Reason for a miss |
+| --- | --- | --- | --- | --- | --- |
+| 1. Latency overhead (p95, TTFT p95, p99, ratio) | `LATENCY_*` | | | | |
+| 2. Failure behavior (per case) | `GATEWAY_*`, `SLOW_GATEWAY_STALL_SECONDS` | | | | |
+| 3. Metering accuracy (tokens, cost) | `METERING_*` | | | | |
+| 4. Per-agent quota feasibility | `PER_AGENT_QUOTA_REQUIRED` | | | | |
+| 5. Credential handling | none (categorical) | | | | |
+| 6. Operations cost | `OPS_*` | | | | |
+
+Before closing the tracking issue, check that: the recipe was run once on a clean setup by someone other than the author, with notes; raw numbers and the harness are linked; each miss has a reason; and one outcome is chosen.
+
 ## What the current configuration cannot express
 
 - **Agent identity upstream.** No setting forwards the agent, hive or task to the gateway. Needs the seam described in [Per-agent quotas](#per-agent-quotas-without-a-code-change).

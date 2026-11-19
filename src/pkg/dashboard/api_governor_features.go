@@ -145,6 +145,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		// customers.avatars.enabled: GitHub profile pictures on the
 		// Customers list. Default on.
 		CustomersAvatarsEnabled *bool `json:"customersAvatarsEnabled"`
+		// #19163: customers.hub_import.enabled, the import of fields a
+		// person consented on the hub to share with this hive. Default off.
+		CustomersHubImportEnabled *bool `json:"customersHubImportEnabled"`
 		// #18884: customers.mention_search.enabled, the budgeted GitHub
 		// search made when a suggested person is accepted. Default off.
 		CustomersSearchEnabled *bool `json:"customersSearchEnabled"`
@@ -381,6 +384,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		on := *body.CustomersAvatarsEnabled
 		cfg.Customers.Avatars.Enabled = &on
 	}
+	if body.CustomersHubImportEnabled != nil {
+		on := *body.CustomersHubImportEnabled
+		cfg.Customers.HubImport.Enabled = &on
+	}
 	if body.CustomersSearchEnabled != nil {
 		on := *body.CustomersSearchEnabled
 		cfg.Customers.MentionSearch.Enabled = &on
@@ -593,6 +600,8 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"customersInferenceEffective": cfg.CustomersInferenceEnabled(),
 		"customersAvatars":            cfg.Customers.Avatars.IsEnabled(),
 		"customersAvatarsEffective":   cfg.CustomersAvatarsEnabled(),
+		"customersHubImport":          cfg.Customers.HubImport.IsEnabled(),
+		"customersHubImportEffective": cfg.CustomersHubImportEnabled(),
 		"customersSearch":             cfg.Customers.MentionSearch.IsEnabled(),
 		"customersSearchEffective":    cfg.CustomersMentionSearchEnabled(),
 		"publicationEnabled":          cfg.Publication.Enabled,

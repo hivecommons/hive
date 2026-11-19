@@ -446,17 +446,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			errBody, _ := io.ReadAll(resp.Body)
-			p.logger.Error("inference upstream error",
-				"agent", agentName,
-				"status", resp.StatusCode,
-				"url", upstreamURL,
-				"server", resp.Header.Get("Server"),
-				"body", truncateBytes(errBody, 500),
-			)
-			// A LiteLLM "team not allowed to access model" 403 carries the
-			// entitled set — cache it so the dashboard's model list narrows
-			// and its reconcile policy (#1848) can heal the agent.
-			p.recordInferenceError(route, agentName, resp.StatusCode, errBody)
+			p.recordInferenceResponseError(route, agentName, upstreamURL, resp, errBody)
 			backendMsg := inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))
 			p.recordAgentInferenceError(agentName, backendMsg, resp.StatusCode)
 			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`,
@@ -653,9 +643,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(resp.Body)
-		p.logger.Error("inference upstream error", "agent", agentName, "status", resp.StatusCode, "url", upstreamURL, "server", resp.Header.Get("Server"), "body", truncateBytes(errBody, 500))
-		// Same entitlement capture as the HTTP translator path.
-		p.recordInferenceError(route, agentName, resp.StatusCode, errBody)
+		p.recordInferenceResponseError(route, agentName, upstreamURL, resp, errBody)
 		backendMsg := inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))
 		p.recordAgentInferenceError(agentName, backendMsg, resp.StatusCode)
 		anthropicErr := &http.Response{
@@ -717,4 +705,19 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		Body:       io.NopCloser(bytes.NewReader(translated)),
 	}
 	_ = httpResp.Write(conn)
+}
+
+func (p *GitHubProxy) recordInferenceResponseError(route *InferenceRoute, agentName, upstreamURL string, resp *http.Response, body []byte) {
+	// recordInferenceError already emits the operator-action auth warning for
+	// a 401. The generic log would file a second fleet report for the same rejection.
+	if !isInferenceAuthStatus(resp.StatusCode) {
+		p.logger.Error("inference upstream error",
+			"agent", agentName,
+			"status", resp.StatusCode,
+			"url", upstreamURL,
+			"server", resp.Header.Get("Server"),
+			"body", truncateBytes(body, 500),
+		)
+	}
+	p.recordInferenceError(route, agentName, resp.StatusCode, body)
 }
