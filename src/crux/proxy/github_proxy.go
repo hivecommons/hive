@@ -110,6 +110,9 @@ type GitHubProxy struct {
 	referenceRepos    map[string]ReferenceRepoPolicy
 	referenceDefaults map[string]referenceDefaultBranch
 	referenceLookup   referenceLookupFunc
+	// reviewGuard holds the ownership seams for review-thread replies and
+	// own-comment deletes on the hive's own PRs (#19096, review_thread.go).
+	reviewGuard reviewGuardState
 
 	// repoPaused reports whether a repo ("owner/repo", as ExtractRepo yields it)
 	// is under an operator pause (#6203). Guarded because the dashboard can

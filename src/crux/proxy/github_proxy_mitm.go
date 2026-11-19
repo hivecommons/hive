@@ -114,6 +114,13 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blockReason = reason
 				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
+			} else if reason, refused := p.reviewThreadRefusal(req, agentName); !isLinear && refused {
+				// Review-thread replies, PR review comments and comment deletes
+				// (#19096): allowed only on the hive's own PR for the agent that
+				// opened it, or for the hive's own recent comment.
+				blocked = true
+				blockReason = reason
+				blockCode = DenyReasonReviewThread
 			} else if !isLinear {
 				if reason, kind, refused := p.writeSurfaceEnforceRefusal(agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
 					blocked = true
@@ -279,6 +286,9 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				detail = blockReason
 			}
 			p.recordViolation(agentName, req.Method, detail)
+			if agentName != internalCallerName && !isLinear {
+				p.noteRefusedReviewReply(req, agentName, detail)
+			}
 			if writeSurfaceKind != "" {
 				p.auditWriteRefused(agentName, writeSurfaceKind, req.Method, repoScopePath(req))
 			}

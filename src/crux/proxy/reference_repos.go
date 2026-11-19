@@ -174,8 +174,15 @@ func ReferenceRepoDecision(pol ReferenceRepoPolicy, method, path, rawQuery strin
 		m := refItemCommentsPath.FindStringSubmatch(path)
 		n, _ := strconv.Atoi(m[1])
 		return referenceOwnItem, n, ""
+	case method == "POST" && reviewReplyPathRe.MatchString(path),
+		method == "DELETE" && ownCommentDeletePathRe.MatchString(path):
+		// A reply inside a review thread, or retracting the hive's own recent
+		// comment (#19096). The ownership checks (the hive's own PR and its
+		// opening agent, or the hive's own comment inside the retract window)
+		// are the review-thread gate's, which runs right after this one.
+		return referenceAllow, 0, ""
 	}
-	return referenceDeny, 0, referenceRepoRefusal(pol, "only opening an issue or PR, forking it, pushing to the owner's fork and commenting on the hive's own items are ever allowed there — never merge, push to the default branch, label, assign, close or review")
+	return referenceDeny, 0, referenceRepoRefusal(pol, "only opening an issue or PR, forking it, pushing to the owner's fork, commenting on the hive's own items, replying in review threads on the hive's own PRs and retracting the hive's own recent comment are ever allowed there — never merge, push to the default branch, label, assign, close or review")
 }
 
 func referenceRepoRefusal(pol ReferenceRepoPolicy, why string) string {
