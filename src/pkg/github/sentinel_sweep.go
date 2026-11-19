@@ -238,6 +238,12 @@ type SentinelSweepEvent struct {
 	Suppressed bool
 	// SuppressedReason is the gate's reason when Suppressed.
 	SuppressedReason string
+	// Cleared is set when HeadSHA matched no rule and the sweep removed the
+	// alert label the hive itself added for an earlier head's finding
+	// (hivecommons/hive#19262). Findings is empty; ClearedHead names the
+	// earlier head, whose finding stays recorded for audit.
+	Cleared     bool
+	ClearedHead string
 }
 
 // Rules lists the triggered rule names.
@@ -249,6 +255,9 @@ type SentinelSweepResult struct {
 	Flagged    []SentinelSweepEvent
 	Notified   []SentinelSweepEvent
 	Remediated []SentinelSweepEvent
+	// Cleared lists PRs whose hive-added alert label was removed because
+	// the current head is clean (SentinelSweepEvent.Cleared).
+	Cleared []SentinelSweepEvent
 	// Suppressed lists findings the write-back gate kept off GitHub
 	// (dashboard/API only).
 	Suppressed []SentinelSweepEvent
@@ -265,7 +274,7 @@ type SentinelSweepResult struct {
 }
 
 func (r *SentinelSweepResult) actions() int {
-	return len(r.Flagged) + len(r.Notified) + len(r.Remediated)
+	return len(r.Flagged) + len(r.Notified) + len(r.Remediated) + len(r.Cleared)
 }
 
 // sentinelHeadsSeen remembers the head SHA each PR was last evaluated at so
@@ -289,6 +298,19 @@ func (s *sentinelHeadsSeen) isSeen(key, head string) bool {
 	defer s.mu.Unlock()
 	prev, ok := s.seen[key]
 	return ok && prev == head && head != ""
+}
+
+// forget drops key so its head is evaluated again on the next pass: a
+// labelled PR whose evaluation failed must not stay judged on a head the
+// sweep never finished reading.
+func (s *sentinelHeadsSeen) forget(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.seen[key]; !ok {
+		return
+	}
+	delete(s.seen, key)
+	s.saveLocked()
 }
 
 func (s *sentinelHeadsSeen) unchanged(key, head string) bool {
@@ -630,6 +652,14 @@ func (c *Client) sentinelEvaluatePR(ctx context.Context, result *SentinelSweepRe
 		return
 	}
 	event.Repo = repo
+	if event.Cleared {
+		result.Cleared = append(result.Cleared, event)
+		result.ReposHit[repo]++
+		if opts.Audit != nil {
+			opts.Audit(event)
+		}
+		return
+	}
 	c.recordReviewEvidenceSentinel(repo, pr, event.Findings, event.Blocked, time.Now())
 	if event.Suppressed {
 		result.Suppressed = append(result.Suppressed, event)
@@ -664,8 +694,18 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 		return SentinelSweepEvent{}, false, nil
 	}
 	if hasAlertLabel && decision.Block {
-		// Already alerted on; a maintainer has not cleared it yet.
-		return SentinelSweepEvent{}, false, nil
+		// The label is on. It used to end the evaluation here for good, so
+		// a finding on an early head kept the label on every later head
+		// (hivecommons/hive#19262). Now only a head this sweep already
+		// evaluated is skipped; a new head is judged on its own files.
+		if c.sentinelHeads.unchanged(key, head) {
+			return SentinelSweepEvent{}, false, nil
+		}
+		event, acted, err := c.trySentinelLabelledHead(ctx, displayRepo, owner, repo, pr, label, decision, opts)
+		if err != nil {
+			c.sentinelHeads.forget(key)
+		}
+		return event, acted, err
 	}
 	files, err := listPRFilesWithPatch(ctx, c.client, owner, repo, pr)
 	if err != nil {
@@ -676,6 +716,25 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	}
 	findings := sentinel.Evaluate(sentinel.PR{Author: author, Title: pr.GetTitle(), Files: files}, opts.Evaluator)
 	if len(findings) == 0 {
+		if hasAlertLabel {
+			// A trusted author's PR still wearing a label the hive added
+			// for an earlier head (before the author was trusted, say).
+			// Judged once per head, like the blocking path.
+			if c.sentinelHeads.unchanged(key, head) {
+				return SentinelSweepEvent{}, false, nil
+			}
+			event, acted, err := c.clearStaleSentinelAlert(ctx, displayRepo, owner, repo, pr, label)
+			if err != nil {
+				c.sentinelHeads.forget(key)
+			}
+			return event, acted, err
+		}
+		if !decision.Block {
+			// Only a trusted author's finding is folded into the status
+			// card, so only their PRs can carry a section naming an older
+			// head.
+			c.markSentinelNoticeSectionClean(ctx, displayRepo, number, head)
+		}
 		return SentinelSweepEvent{}, false, nil
 	}
 	event := SentinelSweepEvent{Number: number, Author: author, Title: pr.GetTitle(), HeadSHA: head, Findings: findings, Blocked: decision.Block, TrustedReason: decision.TrustedReason}

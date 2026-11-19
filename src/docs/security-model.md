@@ -564,7 +564,14 @@ sensitive paths, owner self-nomination, permission escalation in workflows,
 secret exposure, CI gate weakening, test removal, security policy edits, and
 remote code execution patterns. A match applies `sentinel-alert`, posts one
 comment and writes an audit entry. The label blocks Hive approval and every
-automerge lane until a maintainer removes it.
+automerge lane until a maintainer removes it, or until a later head matches
+no rule. Findings are head-scoped: every new head is evaluated again, and
+when the current head is clean Hive removes the label only if Hive itself
+added it for an earlier head's finding (its own alert comment names that
+head, and the newest label event is Hive's own, made no later than that
+comment). A label a person added stays. The earlier finding is kept in the
+audit log (`sentinel-alert-cleared` records the removal), `/api/sentinel`
+and that head's review evidence bundle.
 Whether that label and comment reach GitHub is decided by the **write-back
 containment gate** (`pkg/writeback`): on a PR Hive did not open, sentinel
 writes need ACMM L5 plus the review opt-in label (L6 without it), the repo
