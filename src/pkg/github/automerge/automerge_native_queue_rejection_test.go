@@ -106,10 +106,12 @@ func TestNativeQueueRejectionReArms(t *testing.T) {
 // sweeps enqueue a behind head. Once the queue rejects that head, a behind
 // head is updated instead of re-queued, and a head that is not behind
 // waits with native-merge-queue-rejected. Without a rejection the sweep
-// behaves exactly as before.
+// behaves exactly as before. "blocked-behind" is a behind head on a base
+// that does not require up-to-date branches, which GitHub reports as
+// "blocked" (projectbluefin/utah-packages#1217).
 func TestNativeQueueRejectedHeadSweepUpdatesInsteadOfRequeueing(t *testing.T) {
 	for _, lane := range []string{stageLaneSelf, stageLaneTrusted} {
-		for _, state := range []string{"behind", "clean"} {
+		for _, state := range []string{"behind", "blocked-behind", "clean"} {
 			for _, rejected := range []bool{true, false} {
 				t.Run(lane+"/"+state+"/"+map[bool]string{true: "rejected", false: "withdrawn-by-hive"}[rejected], func(t *testing.T) {
 					var merged []int
@@ -118,7 +120,11 @@ func TestNativeQueueRejectedHeadSweepUpdatesInsteadOfRequeueing(t *testing.T) {
 						author = "alice"
 					}
 					updates := 0
-					api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: author, baseRef: "main", baseSHA: "base1", mergeableState: state, statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged, func(w http.ResponseWriter, r *http.Request) {
+					mergeableState := state
+					if state == "blocked-behind" {
+						mergeableState = "blocked"
+					}
+					api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: author, baseRef: "main", baseSHA: "base1", mergeableState: mergeableState, statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged, func(w http.ResponseWriter, r *http.Request) {
 						switch {
 						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
 							_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "commit": map[string]string{"sha": "base1"}})
@@ -135,7 +141,7 @@ func TestNativeQueueRejectedHeadSweepUpdatesInsteadOfRequeueing(t *testing.T) {
 							_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
 						case strings.Contains(r.URL.Path, "/compare/"):
 							behind := 0
-							if state == "behind" {
+							if state != "clean" {
 								behind = 2
 							}
 							_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": behind, "ahead_by": 1})
@@ -184,7 +190,7 @@ func TestNativeQueueRejectedHeadSweepUpdatesInsteadOfRequeueing(t *testing.T) {
 						// The hive's own withdrawal is not a rejection: the
 						// next sweep queues the head again, as before.
 						wantEnqueues = 2
-					case state == "behind":
+					case state != "clean":
 						wantUpdates = 1
 					}
 					if f.enqueues != wantEnqueues || updates != wantUpdates || len(merged) != 0 {
@@ -255,5 +261,76 @@ func TestContributorLaneNativeQueueRejectedHead(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// projectbluefin/utah-packages#1217, 2026-11-19: the base does not require
+// up-to-date branches, so GitHub reported the behind PR as "blocked", never
+// "behind". The lane never updated the rejected head, and the hive queued
+// it again each time the 30-minute rejection mark re-armed. A rejected head
+// that is behind its base is now updated whatever mergeable_state says, and
+// a failed_checks rejection of a behind head waits for a new head; another
+// removal reason keeps the 30-minute recheck.
+func TestContributorLaneNativeQueueRejectedBehindBlockedHead(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		removalReason     string
+		updateStatus      int
+		wantThird         string
+		wantRecheckQueues int // enqueues after mergeRefusalRecheck; 0 skips the recheck
+	}{
+		{name: "update-branch succeeds", removalReason: nativeQueueRemovalFailedChecks, wantThird: "check-pending"},
+		{name: "update-branch refused after failed checks", removalReason: nativeQueueRemovalFailedChecks, updateStatus: http.StatusForbidden, wantThird: autoMergeReasonWorkflowPermission, wantRecheckQueues: 1},
+		{name: "update-branch refused after another removal reason", removalReason: "ci_timeout", updateStatus: http.StatusForbidden, wantThird: autoMergeReasonWorkflowPermission, wantRecheckQueues: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.nodeID = "PR_7"
+			fx.mergeableState = "blocked"
+			fx.behindBy = 18
+			if tc.updateStatus != 0 {
+				fx.updateStatus = tc.updateStatus
+				fx.updateMessage = "refusing to allow a GitHub App to create or update workflow `.github/workflows/build-stage.yml` without `workflows` permission"
+			}
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			clock := &contributorLaneClock{at: time.Date(2026, 11, 19, 14, 56, 0, 0, time.UTC)}
+			c := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+			f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: true}}
+			c.transport = f
+			enableNativeQueue(c, NativeMergeQueuePolicy{Enabled: true, SkipCurrentBaseGate: true})
+			sweep := func() string {
+				t.Helper()
+				_, reason, err := c.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return reason
+			}
+
+			if reason := sweep(); !strings.HasPrefix(reason, nativeQueueReason) || f.enqueues != 1 || fx.updates != 0 {
+				t.Fatalf("first pass: reason=%q enqueues=%d updates=%d, want the bypass to enqueue", reason, f.enqueues, fx.updates)
+			}
+			removeFromQueue(f, "removal1", mergeQueueBotLogin, "Bot")
+			f.state.TimelineItems.Nodes[len(f.state.TimelineItems.Nodes)-1].Reason = tc.removalReason
+			if reason := sweep(); reason != nativeQueueReasonRejected {
+				t.Fatalf("second pass: reason=%q, want %q", reason, nativeQueueReasonRejected)
+			}
+			if reason := sweep(); reason != tc.wantThird || f.enqueues != 1 || fx.updates != 1 {
+				t.Fatalf("third pass: reason=%q enqueues=%d updates=%d, want %q from one update-branch and no second enqueue", reason, f.enqueues, fx.updates, tc.wantThird)
+			}
+			if tc.wantRecheckQueues == 0 {
+				return
+			}
+			clock.advance(mergeRefusalRecheck + time.Minute)
+			sweep()
+			if f.enqueues != tc.wantRecheckQueues || fx.updates != 1 {
+				t.Fatalf("after the recheck window: enqueues=%d updates=%d, want enqueues=%d and the refused update not sent again", f.enqueues, fx.updates, tc.wantRecheckQueues)
+			}
+			if fx.merges != 0 {
+				t.Fatalf("merges=%d, want none", fx.merges)
+			}
+		})
 	}
 }

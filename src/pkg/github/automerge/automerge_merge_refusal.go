@@ -103,6 +103,10 @@ type mergeRefusal struct {
 	head  string
 	state string
 	at    time.Time
+	// behind marks a native-queue rejection whose head the lane found
+	// behind its base (nativeQueueRejectedHeadBehind); it re-arms on a new
+	// head only.
+	behind bool
 }
 
 func mergeRefusalReviewKey(a mergeAttempt) string {
