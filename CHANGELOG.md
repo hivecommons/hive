@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.344.2)
+
+### Fixed
+
+- A delegated decision ("Let hive decide") on a PR now takes the `needs-human` and `stage/085-needs-decision` labels off even when the decision itself used up its time budget. Before, the label lift ran on the already-expired request context, failed with `context deadline exceeded`, and the next pass parked the PR in 085 again (#19256).
+- **Hub: kubectl calls are bounded and a paused hub deployment no longer hangs self-upgrade** ([#19341](https://github.com/hivecommons/hive/issues/19341), [#19342](https://github.com/hivecommons/hive/issues/19342), [#19343](https://github.com/hivecommons/hive/issues/19343)). Every hub kubectl call now has a timeout and the per-cluster slot wait is deadline-bound, with a log line and counter when the pool is exhausted. The rollout readiness probe uses `--watch=false`, a paused hub deployment suspends self-upgrade with a dashboard warning, and only one rollout watcher runs at a time. The spoke auth-check reads the dashboard token with a 5 second timeout and serves the last good token for a bounded grace period when a refresh fails.
+
 ## 2026-11-19 (v5.344.1)
 
 ### Fixed
