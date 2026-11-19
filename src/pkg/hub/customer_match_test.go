@@ -285,7 +285,7 @@ func TestCustomerMatchLimits(t *testing.T) {
 	huge := `{"hive_id":"one","hashes":["` + strings.Repeat("a", maxCustomerMatchBody) + `"]}`
 	status(h.post(h.s.heartbeatKeyFor("one"), huge), http.StatusRequestEntityTooLarge)
 	status(h.match("one", "one", "ABC"), http.StatusBadRequest)
-	status(h.match("one", "one", strings.ToUpper(hex(1))), http.StatusBadRequest)
+	status(h.match("one", "one", strings.ToUpper(hex(0xabc))), http.StatusBadRequest)
 	status(h.post(h.s.heartbeatKeyFor("one"), `{"hive_id":"one","hashes":[],"emails":["a@b"]}`), http.StatusBadRequest)
 
 	// Per-hive rate limit; another hive keeps its own budget.
