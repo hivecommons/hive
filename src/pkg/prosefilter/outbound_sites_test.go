@@ -177,6 +177,7 @@ var outboundSites = map[string]outboundSite{
 	"proxy.(*GitHubProxy).inferenceTranslatorHandler":  machine(reasonModelPrompt),
 	"proxy.(*GitHubProxy).retryInferenceOnAuthFailure": machine(reasonModelPrompt),
 	"proxy.forwardToInference":                         machine(reasonModelPrompt),
+	"proxy.retryInferenceOnOverload":                   machine(reasonModelPrompt),
 	"retro.(*openAIChatClient).Complete":               machine(reasonModelPrompt),
 	"reviewpreflight.(*Client).do":                     machine(reasonInternalAPI),
 	"rotation.KiroProber.Probe":                        machine(reasonModelPrompt),
