@@ -78,6 +78,9 @@ const (
 	// marker's verdict values.
 	VerificationVerdictComplete = "complete"
 	VerificationVerdictPartial  = "partial"
+	// verifyCloseParkMarker opens the lane note, posted once when the
+	// issue enters the lane.
+	verifyCloseParkMarker = "<!-- hive:verify-close-park -->"
 	// verifyCloseStatusKey is the status-card section of the lane note.
 	verifyCloseStatusKey = "verify-close"
 )
@@ -451,19 +454,13 @@ func (c *Client) parkVerifiedForClose(ctx context.Context, in IssueStageInput, l
 		// Already in the lane: the note was posted when it entered.
 		return
 	}
-	if err := c.EnsureIssueLabel(ctx, in.Repo, VerifyCloseLabel, VerifyCloseLabelColor, VerifyCloseLabelDescription); err != nil {
-		if logger != nil {
-			logger.Warn("issue stage labels: ensuring verify-close label failed", "repo", in.Repo, "issue", in.Number, "error", err)
-		}
-		return
-	}
 	if err := c.AddLabels(ctx, in.Repo, in.Number, []string{VerifyCloseLabel}); err != nil {
 		if logger != nil {
 			logger.Warn("issue stage labels: adding verify-close label failed", "repo", in.Repo, "issue", in.Number, "error", err)
 		}
 		return
 	}
-	note := verifyCloseParkNote(reason)
+	note := verifyCloseParkMarker + "\n" + verifyCloseParkNote(reason)
 	if _, err := c.PostInformationalIssueNote(ctx, in.Repo, in.Number, verifyCloseStatusKey, note, func(ctx context.Context) error {
 		return c.CreateIssueCommentBudgeted(ctx, in.Repo, in.Number, note)
 	}); err != nil && logger != nil {
