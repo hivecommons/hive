@@ -182,6 +182,7 @@ The fence above is always on. The registration flow that fills the `byo-` namesp
 | `HIVE_HUB_SELFSERVICE_REGISTRATION` | off | Turns on `/api/hub/selfservice/*` and the **Register your own hive** form on the dashboard. Accepts `1/true/yes/on`. Read per request, so no restart is needed. While off, every route except `GET /api/hub/selfservice/status` answers `404`, and the dashboard button sends users to the self-hosting guide instead of the form. |
 | `HIVE_HUB_SELFSERVICE_MAX_PER_USER` | `5` | How many `byo-` hives one GitHub login may hold at once. The next registration answers `429` until the user removes one. |
 | `HIVE_HUB_SELFSERVICE_MAX_REPOS` | `20` | How many repos one registration may list ([#18642](https://github.com/hivecommons/hive/issues/18642)). Each repo is one read-only GitHub ownership check, so values above `500` are clamped to `500`. `POST /api/hub/selfservice/hives` answers `400` over the cap; `POST /api/hub/v1/registrations` answers `413` with `limit: max_repos`. Advertised to clients by `GET /api/hub/v1` as `limits.max_repos`. Read per request. |
+| `HIVE_HUB_PROOF_GITHUB_USER_TOKEN` | off | Offers the `github-user-token` ownership proof on `POST /api/hub/v1/registrations` and `PATCH /api/hub/v1/registrations/{id}` ([#19238](https://github.com/hivecommons/hive/issues/19238)). See [Proving ownership with your own token](#proving-ownership-with-your-own-token). Accepts `1/true/yes/on`. Read per request. Only meaningful while `HIVE_HUB_SELFSERVICE_REGISTRATION` is on. |
 | `HIVE_HUB_SELFSERVICE_EXPIRY` | `24h` | How long a registered hive may go without an accepted heartbeat before the sweep removes it. Counted from the last accepted heartbeat, or from registration while there has been none. |
 | `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL` | `10m` | How often the expiry sweep runs. Read at startup; restart after changing. |
 
@@ -216,6 +217,21 @@ The registry entry becomes a `self-hosted` hive in Active Hives and the fleet vi
 - **No GitHub writes.** The edit changes the hub's own registry only.
 
 The route is part of the v1 registration protocol and follows the same switch as the rest of it, `HIVE_HUB_SELFSERVICE_REGISTRATION`; discovery (`GET /api/hub/v1`) lists it under `operations` with `if_match: "required"` and its fields under `patch_fields`, so a hub that does not offer it does not advertise it. The v6 `/api/hub/selfservice/*` routes are unchanged.
+
+#### Proving ownership with your own token
+
+The hub signs users in with no GitHub scope, so when an org restricts OAuth apps GitHub hides the admin role from the stored token and registration says `not an admin` for repos the user does administer. With `HIVE_HUB_PROOF_GITHUB_USER_TOKEN` on, a v1 create or `PATCH` can prove ownership with a token sent on that request only:
+
+```
+X-Hive-Proof-Method: github-user-token
+X-Hive-Proof-Token: <a GitHub token>
+```
+
+- **Scopes:** none for public repos; the classic `repo` scope for private repos. A fine-grained token needs read access (Metadata) to every repo in the request. Discovery lists this under `proof_method_details`.
+- **Whose token:** the token must belong to the signed-in GitHub account (`GET /user`); a token made by another account is refused.
+- **Never kept:** the token is used for the read-only `GET /user` and `GET /repos/{owner}/{repo}` calls and then dropped. It is not stored, logged or echoed, and the stored sign-in token stays scopeless.
+- **Clear refusals:** a failed proof answers `403 {error, proof_method, reason, repo, required_scopes, granted_scopes}`, where `reason` is one of `token_rejected`, `token_user_mismatch`, `sso_not_authorized`, `missing_scope`, `repo_not_visible`, `admin_role_not_visible` (GitHub showed the repo but not the role) or `not_admin`. `granted_scopes` appears only when GitHub reported the token's scopes.
+- **Off means off:** while the flag is off, asking for the method is `400` listing the methods the hub offers; it never falls back to the stored token. Without `X-Hive-Proof-Method` the hub proves with the stored token as before (`hub-session-token`). The v6 `/api/hub/selfservice/*` routes ignore both headers.
 
 #### Heartbeat feature negotiation
 
