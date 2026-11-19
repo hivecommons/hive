@@ -1023,6 +1023,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | Issue filter                 | `project.issue_filter`                                                                                                                                                                                                                  |
 | Sentinel                     | `sentinel.settings`                                                                                                                                                                                                                     |
 | Label-driven approval        | `governor.label_driven`                                                                                                                                                                                                                 |
+| Stale contributor PRs        | `governor.stage_labels`                                                                                                                                                                                                                 |
 | Write-back                   | `writeback.kind_policy`                                                                                                                                                                                                                 |
 | Merge settings               | `auto_merge.update`                                                                                                                                                                                                                     |
 | Let hive decide              | `decisions.delegate_settings`                                                                                                                                                                                                           |
@@ -1220,6 +1221,31 @@ it is the shared identity of every workflow in the repository, including
 workflows started by untrusted events. The supersede-park actors list
 (`project.label_driven_supersede_park_actors`) is not offered: it has no
 Settings control either. These keys are not hub-managed.
+
+`governor.stage_labels` changes the stale contributor PR settings on
+Settings → Labels, through `PUT /api/config/governor/labels` (owner only).
+It is the first operation for any `governor.labels.stage.*` key:
+
+- `abandon_after` (`governor.labels.stage.abandon_after`), a Go duration
+  such as `168h`; `"0"` or `""` turns the idle clock off.
+- `abandon_close_repos` (`governor.labels.stage.abandon_close_repos`),
+  `{add, remove, clear}`. A bare name is sent as `owner/repo`; a repository
+  not in `project.repos` is refused.
+
+For example, to flag contributor PRs idle for a week and let one repository
+close them:
+
+```json
+{"operation": "governor.stage_labels",
+ "args": {"abandon_after": "168h",
+          "abandon_close_repos": {"add": ["testrepo"]}}}
+```
+
+The preview calls a change widening when it lets the hive close PRs it could
+not close before: a repository added to `abandon_close_repos`, or a shorter
+`abandon_after` where repositories are listed. Closing still needs ACMM L6, a
+notice and a 24h grace with no activity (see
+[sweeps-and-operations.md](operator-reference/sweeps-and-operations.md#abandoned-contributor-prs-abandon_after-abandon_close_repos)).
 
 `agent.cadences` and `writeback.kind_policy` change two more settings an
 owner otherwise changes on the dashboard, through the endpoints those

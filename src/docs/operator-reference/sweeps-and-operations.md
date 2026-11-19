@@ -277,6 +277,42 @@ see [contributor-relay.md](../contributor-relay.md#what-the-operator-sees-operat
 first cycle after upgrade. Full table, state diagram and migration note:
 [labels-and-control-signals.md](../labels-and-control-signals/stage-labels.md#stage-labels-stagennn--the-pipeline-state-machine).
 
+### Abandoned contributor PRs (`abandon_after`, `abandon_close_repos`)
+
+With `governor.labels.stage.abandon_after` set (off by default), the stage
+pass runs an idle clock on contributor PRs parked at `071-needs-author` or at
+an `adoption-stalled:` `085`. Past the threshold with no outside activity it
+flags the PR abandoned. The stage, the label and the recorded reason stay as
+they are. The flag shows as "abandoned Nd: <blocker>", puts the PR in the
+inbox's `CLOSE` group (`abandoned_recommended_close`), and gives the delegate
+a recommend-only rule (`abandoned-stale`). Details:
+[stage-labels.md](../labels-and-control-signals/stage-labels.md#abandoned-contributor-prs-the-idle-clock).
+
+Closing is a separate, per-repository opt-in. It mirrors
+`supersession_sweep.close_contributor_prs` (#11431):
+
+- only for repositories listed in `governor.labels.stage.abandon_close_repos`,
+  and only at ACMM L6 (the repository's effective level);
+- one warning notice (`<!-- hive:stage-abandoned-notice -->`) saying the PR
+  will be closed as stale unless someone comments or pushes;
+- a 24-hour grace from the notice (the supersession sweep's default grace);
+- before closing, one more read of comments and reviews. Any comment or
+  review by anyone but the hive (or any other outside activity) since the
+  notice keeps the PR open and clears the flag;
+- never with a hold label or `hive/keep-open` on the PR;
+- the close comment (`<!-- hive:stage-abandoned-close -->`) says "Reopen if
+  that's wrong".
+
+Both writes pass the write-back gate as `supersession_notice` /
+`supersession_close`. The issue an abandoned PR covers is never released or
+re-implemented by the hive. It stays locked and is withheld as
+`covering_pr_stalled` until a person closes or takes over the PR.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `governor.labels.stage.abandon_after` | unset (off) | Idle time after which a parked contributor PR is flagged abandoned. `0` or empty is off. |
+| `governor.labels.stage.abandon_close_repos` | empty | Repositories that close abandoned contributor PRs after a notice and a 24h grace, at ACMM L6 only. |
+
 ### Central stage engine rollout
 
 Every stage label is derived by one `pkg/stageengine` reconciler behind
