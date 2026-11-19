@@ -140,7 +140,8 @@ func TestCustomersEnrichmentGitdmPass(t *testing.T) {
 	// deletes the facts.
 	off := false
 	h.cfg.Customers.Enrichment.Gitdm.Enabled = &off
-	if got, _ := h.svc.svc.Get(ownerViewer, ada.ID); got.Affiliation != nil {
+	// The offline email-domain rule may still offer something; gitdm must not.
+	if got, _ := h.svc.svc.Get(ownerViewer, ada.ID); got.Affiliation != nil && got.Affiliation.Source != "" {
 		t.Fatalf("gitdm off still suggests %+v", got.Affiliation)
 	}
 	if res := h.pass(); res.Dropped != 1 {
