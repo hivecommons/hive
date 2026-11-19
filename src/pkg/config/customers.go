@@ -26,6 +26,31 @@ type CustomersConfig struct {
 	// ON. It is the one part of the section that makes the viewer's browser
 	// contact another site: github.com, for people already on screen.
 	Avatars CustomersAvatarsConfig `yaml:"avatars,omitempty" json:"avatars,omitempty"`
+	// HubImport gates the import of the real name, organization and country
+	// a person entered on the hub and consented to share with this hive
+	// (#19163). Default OFF.
+	HubImport CustomersHubImportConfig `yaml:"hub_import,omitempty" json:"hub_import,omitempty"`
+}
+
+// EnvCustomersHubImportEnabled overrides customers.hub_import.enabled when it
+// holds a recognised boolean.
+const EnvCustomersHubImportEnabled = "HIVE_CUSTOMERS_HUB_IMPORT_ENABLED"
+
+// CustomersHubImportConfig (`customers.hub_import:`) lets this hive ask its
+// hub for fields its confirmed customers entered there themselves. On, the
+// hive posts salted hashes of its confirmed customers' GitHub logins to the
+// hub on a bounded interval and when a customer is accepted; the hub answers
+// only for people who consented to share with this hive. The switch is
+// necessary and never sufficient: the person's consent on the hub decides
+// what arrives. See src/docs/design/customers-hub-consent.md.
+type CustomersHubImportConfig struct {
+	// Enabled turns the import on. nil = false.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether the import is on (default off).
+func (c CustomersHubImportConfig) IsEnabled() bool {
+	return c.Enabled != nil && *c.Enabled
 }
 
 // EnvCustomersAvatarsEnabled overrides customers.avatars.enabled when it
@@ -112,6 +137,24 @@ func (c *Config) CustomersAvatarsEnabled() bool {
 		return true
 	}
 	return c.Customers.Avatars.IsEnabled()
+}
+
+// CustomersHubImportEnabled reports whether the hub import is switched on:
+// the HIVE_CUSTOMERS_HUB_IMPORT_ENABLED env wins over
+// customers.hub_import.enabled when it holds a recognised boolean. It also
+// needs the Customers section to be on. A hub registration is checked by the
+// caller, which holds it.
+func (c *Config) CustomersHubImportEnabled() bool {
+	if !c.CustomersEnabled() {
+		return false
+	}
+	if v, ok := parseBoolEnv(EnvCustomersHubImportEnabled); ok {
+		return v
+	}
+	if c == nil {
+		return false
+	}
+	return c.Customers.HubImport.IsEnabled()
 }
 
 // EnvCustomersMentionSearchEnabled overrides customers.mention_search.enabled

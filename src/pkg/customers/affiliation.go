@@ -125,7 +125,7 @@ func affiliationDismissed(pr Profile, key string) bool {
 // person has settled the field, nothing supports one, or the person refused it.
 func SuggestAffiliation(p Person) *AffiliationSuggestion {
 	org := p.Profile.Organization
-	if org.Source == SourceManual {
+	if org.Source == SourceManual || org.Source == SourceHub {
 		return nil
 	}
 	ok := func(v string) bool {

@@ -216,8 +216,9 @@
       const v = customersProfileValue(p, 'organization');
       if (!v) return '';
       const f = p.profile.organization;
-      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : 'From the public GitHub profile';
-      return '<span class="kc-pill customers-pill customers-org" data-source="' + (f.source === 'manual' ? 'manual' : 'auto') + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub: the person shared it with this hive' : 'From the public GitHub profile');
+      const src = f.source === 'manual' || f.source === 'hub' ? f.source : 'auto';
+      return '<span class="kc-pill customers-pill customers-org" data-source="' + src + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
 
     // customersFlagEmoji: the flag for an ISO 3166 alpha-2 code, or '' when the
@@ -540,7 +541,9 @@
       const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
         const cur = (p.profile && p.profile[f.key]) || {};
         const manual = cur.source === 'manual';
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.rule === 'location' ? 'from location' : 'from GitHub')) : (manual ? 'cleared by hand' : 'not known');
+        // A hub value is one the person shared from the hub (#19163);
+        // editing it here makes it manual.
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? 'from the hub' : (cur.rule === 'location' ? 'from location' : 'from GitHub'))) : (manual ? 'cleared by hand' : 'not known');
         return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
           (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');

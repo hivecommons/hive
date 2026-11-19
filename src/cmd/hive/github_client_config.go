@@ -101,6 +101,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// The gate labels the hive applies instead of `hold`
 	// (hivecommons/hive#18468): process-wide, like github.HoldLabels.
 	github.SetHiveGateLabelNames(b.cfg.Governor.Labels.ReadyForReviewLabelOrDefault(), b.cfg.Governor.Labels.DecisionNeededLabelOrDefault())
+	// Jira/Linear keys, so a branch named after a tracker item claims no
+	// GitHub issue by its number.
+	github.SetTrackerKeyPrefixes(b.trackerKeyPrefixes())
 	// Umbrella issues no automated claim may take and no claim stages
 	// (governor.claims.never_claim_labels, default `epic`).
 	client.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
@@ -562,4 +565,15 @@ func (b *boot) observeWritebackRepos() {
 	for _, repo := range b.cfg.Project.Repos {
 		g.ObserveRepo(repo)
 	}
+}
+
+// trackerKeyPrefixes lists the project keys of the configured Jira and
+// Linear work sources.
+func (b *boot) trackerKeyPrefixes() []string {
+	ws := b.cfg.Governor.WorkSource
+	keys := append([]string(nil), ws.Jira.ProjectKeys...)
+	for _, t := range ws.Linear.Teams {
+		keys = append(keys, t.Key)
+	}
+	return keys
 }

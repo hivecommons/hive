@@ -11,6 +11,54 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.338.0)
+
+### Added
+
+- Customers can import the real name, organization and country a confirmed customer entered on the hub and consented to share with this hive, shown "from the hub" and never over a value set by hand; a withdrawal or three days without confirmation clears it. Off by default: `customers.hub_import.enabled`, `HIVE_CUSTOMERS_HUB_IMPORT_ENABLED`, or Settings, Features ([#19163](https://github.com/hivecommons/hive/issues/19163)).
+
+## 2026-11-19 (v5.337.1)
+
+### Fixed
+
+- **Hub: the contribute proxies and the lite enrollment repo-access check connect only to the address they checked** ([#19221](https://github.com/hivecommons/hive/issues/19221), part of [#18986](https://github.com/hivecommons/hive/issues/18986)). The `/api/contribute/register` and `/api/contribute/ws` proxies and the GitHub repo-access check behind lite enrollment and self-service registration validated a self-reported `DashboardURL` or caller-supplied `github_host` and then let the HTTP client resolve the name again, so a name that rebinds between the two lookups was checked as public and reached as private. They now use the hub's pinned transport: each dial resolves once, every answer is checked with the shared classifier, a lookup failure refuses the dial, and every redirect hop goes through the same check.
+
+## 2026-11-19 (v5.337.0)
+
+### Added
+
+- Hub heartbeat feature negotiation (rollout step 5 of [#19056](https://github.com/hivecommons/hive/issues/19056)): a spoke may send `protocol: {version, features}` in its heartbeat, and with `HIVE_HUB_HEARTBEAT_PROTOCOL` on (default off) the hub answers with `protocol: {version, accepted, ignored}`, so a spoke learns which optional features this hub honours instead of guessing from its version. A version below `1` is still accepted, with every feature ignored and `unsupported_version` echoed; a heartbeat without `protocol`, or any heartbeat while the flag is off, is answered exactly as before ([#19237](https://github.com/hivecommons/hive/issues/19237)).
+
+## 2026-11-19 (v5.336.2)
+
+### Fixed
+
+- **The `proxy_writer_unidentified` operator remedy now covers `reason=no_uid_map`** (#19232). The remedy used to name only the NET_ADMIN SCC, which fits only `shared_uid_mode`. It now tells the spoke owner to check the startup log for `no UID map found`. The container entrypoint writes `uid-map.json` only when `hive.yaml` names agents at boot, and the proxy reads the map once at startup, so the fix is to restart once agents are configured. A native install has no map at all and needs `HIVE_PROXY_ADVISORY_OK=true`. `docs/troubleshooting.md` documents both causes.
+
+## 2026-11-19 (v5.336.1)
+
+### Fixed
+
+- Upstream inference HTTP 401 responses now produce only the credential-specific fleet self-report, not a second generic upstream-error report ([#19216](https://github.com/hivecommons/hive/issues/19216)).
+
+## 2026-11-19 (v5.336.0)
+
+### Added
+
+- **Hub: per-hive customer match endpoint, consent only** ([#19162](https://github.com/hivecommons/hive/issues/19162)). `POST /api/customers/match` lets a hive, under its own per-hive heartbeat bearer, post salted hashes of its confirmed customers' GitHub logins and get back real name, organization and country only for people who consented to that hive, only for values they entered themselves, checked at answer time. Unknown and unconsented people get the same empty answer; a `cleared` entry is sent only after an earlier delivery. Batch, body, response and rate limits are named constants, deliveries are stamped on the consent record, and the route does not exist while `HIVE_HUB_CUSTOMERS_SHARE_ENABLED` is off. No spoke calls it yet.
+
+## 2026-11-19 (v5.335.2)
+
+### Fixed
+
+- The PR-request watcher now rejects a request whose base branch does not exist on the remote with a clear result, instead of retrying it forever with an unclassified warning (#19211).
+
+## 2026-11-19 (v5.335.1)
+
+### Fixed
+
+- The watchdog now logs an unchanged agent credential failure at ERROR once an hour instead of on every relaunch. A copilot or codex agent with no credential file reads "missing" while its CLI is stopped and "no opinion" while it runs, so each relaunch re-entered `Authenticated=False` and logged `watchdog: agent credential failure` again. One misconfigured agent tripped the fleet self-report as 8 failures in 10 minutes. Repeats inside the window are logged at Info, the dashboard re-authentication alert is unchanged, and a new reason or a failure after recovery is still logged at ERROR straight away (#19205).
+
 ## 2026-11-19 (v5.335.0)
 
 ### Added

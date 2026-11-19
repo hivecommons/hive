@@ -76,6 +76,9 @@ func (s *HubServer) registerCustomerSharingRoutes() {
 	s.mux.HandleFunc("GET /api/saas/me/profile-share/consents", s.requireCustomerSharing(s.handleListCustomerConsents))
 	s.mux.HandleFunc("POST /api/saas/me/profile-share/consents/{id}", s.requireCustomerSharing(s.handleChangeCustomerConsent))
 	s.mux.HandleFunc("DELETE /api/saas/me/profile-share/consents/{id}", s.requireCustomerSharing(s.handleChangeCustomerConsent))
+	// Hive-facing: per-hive bearer, not a session. The handler answers 404
+	// while the sharing switch is off, like the routes above (#19162).
+	s.mux.HandleFunc("POST "+customerMatchPath, s.handleCustomerMatch)
 }
 
 type customerConsentHive struct {
@@ -217,6 +220,8 @@ func (s *HubServer) handleChangeCustomerConsent(w http.ResponseWriter, r *http.R
 		s.customerConsentError(w, err)
 		return
 	}
+	// A new grant must not wait out the match index cache.
+	invalidateCustomerMatchIndex()
 	s.logger.Info("audit: customer consent "+action, "person", consent.Person, "hive", hiveID, "fields", auditFields.names())
 	w.WriteHeader(http.StatusNoContent)
 }

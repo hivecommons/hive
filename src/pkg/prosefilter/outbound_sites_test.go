@@ -167,6 +167,7 @@ var outboundSites = map[string]outboundSite{
 	"mailin.(*HubClient).do":                           machine(reasonSpokeToHub),
 	"main.(*delegateDeciderRunner).RunDeciderTurn":     machine(reasonModelPrompt),
 	"main.(*knowledgeAdviserLLM).complete":             machine(reasonModelPrompt),
+	"main.customersHubMatcher.Match":                   machine(reasonSpokeToHub),
 	"main.kbPost":                                      machine(reasonInternalAPI),
 	"managedagents.(*Adapter).doJSON":                  machine(reasonModelPrompt),
 	"meetings.(*Client).CompanionAudio":                machine(reasonTranscribe),

@@ -454,6 +454,11 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
+		// A Jira or Linear item has no GitHub issue (Number 0): there is no
+		// label to write, and every such item would collapse onto "repo#0".
+		if issue.Number <= 0 {
+			continue
+		}
 		out = append(out, issueStageInputFrom(issue))
 	}
 	// Held issues leave the pipeline at enumeration (Hold list, no

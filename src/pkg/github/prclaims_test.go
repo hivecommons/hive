@@ -175,6 +175,8 @@ func TestReviewScopeContract(t *testing.T) {
 }
 
 func TestIssueFromBranchName(t *testing.T) {
+	SetTrackerKeyPrefixes([]string{"CEH", " eng "})
+	t.Cleanup(func() { SetTrackerKeyPrefixes(nil) })
 	tests := []struct {
 		name   string
 		branch string
@@ -197,6 +199,14 @@ func TestIssueFromBranchName(t *testing.T) {
 		{"compact date is not an issue", "close-on-merge-20261009", 0, false},
 		{"delimited date is not an issue", "release/2026-10-09", 0, false},
 		{"issue plus date keeps issue", "issue-123-20261009", 123, true},
+		{"configured Jira key is not an issue", "ceh-12725-mcp-confidential-client", 0, false},
+		{"upper-case configured Jira key", "feature/CEH-12725", 0, false},
+		{"configured Linear key", "eng-42", 0, false},
+		{"fix-N is still an issue", "fix-428", 428, true},
+		{"hotfix-N is still an issue", "hotfix-428", 428, true},
+		{"bug-N is still an issue", "bug-428", 428, true},
+		{"feat-N is still an issue", "feat-428", 428, true},
+		{"unconfigured key-like word keeps the claim", "abc-428", 428, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

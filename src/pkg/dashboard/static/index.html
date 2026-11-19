@@ -54412,8 +54412,9 @@ function burnAreaChart() {
       const v = customersProfileValue(p, 'organization');
       if (!v) return '';
       const f = p.profile.organization;
-      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : 'From the public GitHub profile';
-      return '<span class="kc-pill customers-pill customers-org" data-source="' + (f.source === 'manual' ? 'manual' : 'auto') + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub: the person shared it with this hive' : 'From the public GitHub profile');
+      const src = f.source === 'manual' || f.source === 'hub' ? f.source : 'auto';
+      return '<span class="kc-pill customers-pill customers-org" data-source="' + src + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
 
     // customersFlagEmoji: the flag for an ISO 3166 alpha-2 code, or '' when the
@@ -54736,7 +54737,9 @@ function burnAreaChart() {
       const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
         const cur = (p.profile && p.profile[f.key]) || {};
         const manual = cur.source === 'manual';
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.rule === 'location' ? 'from location' : 'from GitHub')) : (manual ? 'cleared by hand' : 'not known');
+        // A hub value is one the person shared from the hub (#19163);
+        // editing it here makes it manual.
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? 'from the hub' : (cur.rule === 'location' ? 'from location' : 'from GitHub'))) : (manual ? 'cleared by hand' : 'not known');
         return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
           (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
@@ -64877,6 +64880,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Customers', key: 'customers.enabled', text: 'customers people profile person identities tags goals satisfaction suggested forget customer graph HIVE_CUSTOMERS_ENABLED customers.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer goal and satisfaction suggestions', key: 'customers.inference.enabled', text: 'customers inference infer suggest goals satisfaction model confirm HIVE_CUSTOMERS_INFERENCE_ENABLED customers.inference.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer avatars', key: 'customers.avatars.enabled', text: 'customers avatars avatar pictures photos github profile picture privacy HIVE_CUSTOMERS_AVATARS_ENABLED customers.avatars.enabled' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer hub import', key: 'customers.hub_import.enabled', text: 'customers hub import consent shared real name organization country from the hub privacy HIVE_CUSTOMERS_HUB_IMPORT_ENABLED customers.hub_import.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer GitHub search on accept', key: 'customers.mention_search.enabled', text: 'customers github search accept mention mentions comments history quota budget suggested person HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED customers.mention_search.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Data directories and session retention', key: 'data.metrics_dir', text: 'data directories metrics logs agent configs claude copilot bob sessions retention prune janitor data.agents_dir data.bob_sessions_dir data.claude_sessions_dir data.copilot_sessions_dir data.logs_dir data.metrics_dir data.session_retention_days' },
@@ -79848,6 +79852,11 @@ function burnAreaChart() {
             <span class="config-toggle-label">Customer avatars ${yamlHint('customers.avatars.enabled')} ${settingHelpMark('settings', 'features', 'Customer avatars', `ON by default. The Customers list shows a person's GitHub picture next to their name when they have a confirmed GitHub login. This is the one thing in Customers that leaves your browser: it asks github.com for https://github.com/<login>.png, once per person on screen, and sends no referrer. Nothing goes to the hive's server or the hub, and nobody known only by email is looked up anywhere. Off, the list shows initials and makes no request to github.com. Applies on the next refresh. HIVE_CUSTOMERS_AVATARS_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
           </div>
           ${f.customersAvatarsEffective !== f.customersAvatars ? `<p class="config-help">HIVE_CUSTOMERS_AVATARS_ENABLED overrides this setting: avatars are currently <b>${f.customersAvatarsEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersHubImport ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersHubImportEnabled"></div>
+            <span class="config-toggle-label">Import details people shared on the hub ${yamlHint('customers.hub_import.enabled')} ${settingHelpMark('settings', 'features', 'Customer hub import', `OFF by default. When on, and this hive is registered with a hub, the hive asks the hub about its confirmed customers about once an hour and when a person is accepted. The request carries salted hashes of their GitHub logins and nothing else: no names, no emails, never a suggested person. The hub answers only for people who chose, on the hub, to share their real name, organization or country with this hive, and only values they typed themselves. Those fields show "from the hub". Editing one here makes it yours and the hub never changes it again; a value set by hand is never overwritten. When a person withdraws, or the hub has not confirmed a value for three days, it is removed and the field goes back to automatic. A forgotten person is never rebuilt. The import never creates a person. This switch is needed but never enough: each person's consent on the hub decides what arrives. Needs Customers on. HIVE_CUSTOMERS_HUB_IMPORT_ENABLED overrides it. See src/docs/design/customers-hub-consent.md.`)}</span>
+          </div>
+          ${f.customersHubImportEffective !== f.customersHubImport ? `<p class="config-help">HIVE_CUSTOMERS_HUB_IMPORT_ENABLED (or turning Customers off) overrides this setting: the hub import is currently <b>${f.customersHubImportEffective ? 'on' : 'off'}</b>.</p>` : ''}
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.customersSearch ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersSearchEnabled"></div>
             <span class="config-toggle-label">Search GitHub when accepting a person ${yamlHint('customers.mention_search.enabled')} ${settingHelpMark('settings', 'features', 'Customer GitHub search on accept', `OFF by default. When on, accepting a suggested GitHub login makes one budgeted GitHub search (issues and pull requests that mention the login and ones it commented on, in this hive's own repositories) so the new profile starts with history beyond what the hive already holds. The results are stored as references only, never text. It is never run by the discovery sweep and never for an email address. It sends the login to GitHub, makes at most two search requests per accept, shares an hourly request budget across accepts (customers.mention_search.max_requests_per_hour in the config file, default 10), counts against the shared GitHub quota, and stands down while that quota is low or GitHub's secondary limit is engaged. Needs Customers on. HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
