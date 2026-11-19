@@ -215,6 +215,11 @@ var anaphor = regexp.MustCompile(`(?i)\b(?:this|that|these|those|it)\b`)
 // comment, so the rule keeps what "this" is.
 const minStandaloneWords = 8
 
+// minRuleRunes is the shortest rule text that can stand alone. A shorter one
+// ("Going forward.") is meaningless without the comment around it, so the
+// whole comment is kept instead.
+const minRuleRunes = 20
+
 // StripQuoted removes block-quoted lines and fenced code blocks from body:
 // what the reviewer quoted is not what the reviewer stated.
 func StripQuoted(body string) string {
@@ -339,7 +344,8 @@ func (c Classifier) ExtractRuleText(body string) string {
 		clauses = kept
 	}
 	text := NormalizeText(strings.Join(clauses, "; "))
-	if len(strings.Fields(text)) < minStandaloneWords && anaphor.MatchString(text) {
+	if utf8.RuneCountInString(text) < minRuleRunes ||
+		(len(strings.Fields(text)) < minStandaloneWords && anaphor.MatchString(text)) {
 		text = NormalizeText(own)
 	}
 	return truncateRunes(text, MaxRuleRunes)
