@@ -596,6 +596,33 @@ Admission provenance prevents a different lane's non-admission from revoking
 the owning lane's reservation or FIFO ticket. An old waiting ticket reserves
 order only: its head must qualify afresh in its lane before becoming owner.
 
+**Refreshes coalesce, and a ready owner is not overtaken.** Two bounded waits
+keep the front from being refreshed over and over
+(`src/pkg/github/automerge/automerge_base_preparation.go`):
+
+- *No re-refresh while the last refresh's CI runs.* When the owner is behind
+  again and its live head is the result of its recorded bot refresh, the next
+  refresh waits with reason `base-refresh:coalescing` (INFO `automerge base
+  preparation refresh coalesced`) while required CI on that head is still
+  pending or not yet reported. A new refresh would cancel that CI and pay for
+  it again. The refresh goes ahead as before once that CI finishes (green or
+  red), when the base commits since the refresh touch any file the PR changes,
+  when that delta cannot be read or may be truncated, for a repair owner, and
+  once `preparationRefreshCoalesceMaxWait` (30 minutes) has passed since the
+  refresh.
+- *A green, reviewed owner merges first.* The exception to "ownership
+  serializes refreshes, not ready merges" above: when the owner is CI-green
+  and approved on its completed refresh, any other PR reaching the
+  current-base gate for that destination, even one already current and ready,
+  holds with `base-refresh:queued-behind#<owner>` (INFO `automerge base
+  preparation successor held`). Letting it merge first would move the base
+  under the owner and send it back for another refresh, CI run and review,
+  which kept the front perpetually behind. An owner whose CI or review is
+  still pending holds nothing, so the readiness-first yield is unchanged. The
+  hold also ends `preparationRefreshCoalesceMaxWait` after the owner's
+  refresh, and any failed read, a repair owner or an invalid owner holds
+  nothing.
+
 The persisted owner head is the **admitted source head**, so a different live
 head is not by itself a stale reservation: an App-authored refresh preserves
 that source and its write-ahead attempt while the new head earns CI and a fresh
