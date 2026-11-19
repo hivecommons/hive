@@ -1,0 +1,1 @@
+- Documented how to add repositories and pause agents, what optional Ask AI help sends and how consent works, and what owners must verify before rolling out Kapa ([#19182](https://github.com/hivecommons/hive/issues/19182)).
