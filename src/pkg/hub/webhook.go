@@ -489,6 +489,11 @@ func (s *HubServer) loadAppPrivateKey(hive *RegistryEntry) string {
 	return decoded
 }
 
+// spokeAuthTokenLoadTimeout bounds the kubectl secret read on the auth-check
+// request path, so a hung kubectl can never hold a signed-in request until
+// nginx gives up with a 504.
+const spokeAuthTokenLoadTimeout = 5 * time.Second
+
 func (s *HubServer) loadSpokeAuthToken(hive *RegistryEntry) string {
 	ns := "hive-hosted-" + hive.ID
 	clusterID := hive.ClusterID
@@ -501,9 +506,15 @@ func (s *HubServer) loadSpokeAuthToken(hive *RegistryEntry) string {
 		return ""
 	}
 
-	out, err := kubectlForCluster(&cluster, "get", "secret", "hive-secrets", "-n", ns,
+	ctx, cancel := context.WithTimeout(context.Background(), spokeAuthTokenLoadTimeout)
+	defer cancel()
+	out, err := kubectlForClusterContext(ctx, &cluster, "get", "secret", "hive-secrets", "-n", ns,
 		"-o", "jsonpath={.data.dashboard-token}").Output()
-	if err != nil || len(out) == 0 {
+	if err != nil {
+		s.logger.Warn("spoke auth token load failed", "hive", hive.ID, "cluster_id", clusterID, "error", err)
+		return ""
+	}
+	if len(out) == 0 {
 		return ""
 	}
 
