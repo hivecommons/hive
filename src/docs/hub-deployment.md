@@ -146,6 +146,16 @@ To wire it once a Kapa API key exists:
    `ask: requested but staying off` line with the reason. Neither line, nor any
    API response, carries the key, the project id or the integration id.
 
+With it on, the hub dashboard shows an **Ask** button in the header. It opens a
+panel docked to the side (a bottom sheet on a phone) that first shows the
+disclosure and a single confirm; after that the person can ask, read the answer
+with its **Sources** and the "AI generated, may be wrong" label, and withdraw
+with **Stop sending my questions**. Every state keeps a plain docs link: no
+consent, Kapa.ai unreachable or busy, or no cited answer. The panel is our own
+same-origin script and stylesheet (`/ask-panel.js`, `/ask-panel.css`); with Ask
+off the hub serves neither and the dashboard document is unchanged. Hub
+operators see the effective switch under **Scale controls**.
+
 What leaves the hub per question: the question text (refused, not sent, when
 it looks like a password, token or key), the label of the dashboard section
 from a closed list of ids in `pkg/askai/sections.go` (set
