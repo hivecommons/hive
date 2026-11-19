@@ -55,9 +55,26 @@ BD=$(gitc rev-parse HEAD)
 gitc checkout -q -b prd "$P"
 gitc merge -q --no-ff --no-edit "$BD"
 D=$(gitc rev-parse HEAD)
+# One refresh of P per kind of base delta: base commit B<kind> on a branch
+# off A (so the delta holds only its own files), refresh R<kind> merging it
+# into P. Arguments after the kind are path/content pairs.
+refresh_with() {
+  local kind=$1; shift
+  gitc checkout -q -b "v5$kind" "$A"
+  while [ "$#" -ge 2 ]; do put "$1" "$2"; shift 2; done
+  gitc commit -qm "B$kind"
+  printf -v "B$kind" '%s' "$(gitc rev-parse HEAD)"
+  gitc checkout -q -b "pr$kind" "$P"
+  gitc merge -q --no-ff --no-edit "v5$kind"
+  printf -v "R$kind" '%s' "$(gitc rev-parse HEAD)"
+}
+refresh_with doc docs/guide.md docs changelog.d/fixed-x.md '- x' src/docs/y.md y CHANGELOG.md c README.md r
+refresh_with mk Makefile 'all:'
+refresh_with go src/pkg/x/x.go 'package x'
+refresh_with pkg web/ui/package-lock.json '{}'
 # The base branch the script fetches: v5 must contain every base parent.
 gitc checkout -q v5
-gitc merge -q --no-ff --no-edit "$BD"
+for b in "$BD" "$Bdoc" "$Bmk" "$Bgo" "$Bpkg"; do gitc merge -q --no-ff --no-edit "$b"; done
 
 # --- gh stub: answers from $tmp/fix ------------------------------------
 fix="$tmp/fix"
@@ -137,5 +154,19 @@ check "two refresh hops back to a passing head" true "$M" "$M2"
 reset; commit "$M2" true "$BOT" web-flow "$M" "$B2"; commit "$M" false "$BOT" web-flow "$P" "$B"
 runs "$M" cancelled; runs "$P" success
 check "unverified hop in the walk" false "$M" "$M2"
+
+# docs-only (docker.yml): every base-delta path must be docs or changelog.
+reset; commit "$M" true "$BOT" web-flow "$P" "$B"; runs "$P" success
+check "docs-only: base delta with a plain file runs" false "$P" "$M" DELTA_POLICY=docs-only
+reset; commit "$Rdoc" true "$BOT" web-flow "$P" "$Bdoc"; runs "$P" success
+check "docs-only: docs and changelog delta may skip" true "$P" "$Rdoc" DELTA_POLICY=docs-only
+reset; commit "$Rmk" true "$BOT" web-flow "$P" "$Bmk"; runs "$P" success
+check "docs-only: Makefile in the delta runs" false "$P" "$Rmk" DELTA_POLICY=docs-only
+check "deny: Makefile in the delta may skip" true "$P" "$Rmk"
+reset; commit "$Rgo" true "$BOT" web-flow "$P" "$Bgo"; runs "$P" success
+check "docs-only: .go file in the delta runs" false "$P" "$Rgo" DELTA_POLICY=docs-only
+reset; commit "$Rpkg" true "$BOT" web-flow "$P" "$Bpkg"; runs "$P" success
+check "deny: nested package-lock.json in the delta runs" false "$P" "$Rpkg"
+check "unknown policy runs" false "$P" "$Rpkg" DELTA_POLICY=bogus
 
 exit "$fail"

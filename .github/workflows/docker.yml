@@ -254,8 +254,8 @@ jobs:
       # Refresh-only heads (src/docs/ci-refresh-only-heads.md): when the new
       # PR head is nothing but a verified hive App merge of the base whose
       # three-dot diff is unchanged, this workflow already passed on the
-      # previous head, and the base delta touches no Dockerfile, dependency,
-      # deploy or CI path, the multi-arch build-* jobs below skip it. `gate`
+      # previous head, and every file the base delta brings in is docs or
+      # changelog only, the multi-arch build-* jobs below skip it. `gate`
       # itself still runs and reports success, so the required context
       # attaches as before. continue-on-error on both steps: a failure here
       # leaves refresh_only empty, which means "build everything", and can
@@ -283,6 +283,9 @@ jobs:
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REPO: ${{ github.repository }}
           WORKFLOW_PATH: .github/workflows/docker.yml
+          # Allowlist: skip only when every pulled-in base file is docs or
+          # changelog; any other file in the base delta builds the images.
+          DELTA_POLICY: docs-only
           GH_TOKEN: ${{ github.token }}
         run: bash .refresh-check/.github/scripts/refresh-only-head.sh
 

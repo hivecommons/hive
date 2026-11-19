@@ -16,16 +16,21 @@
 #   3. the walk reaches a head on which this same workflow concluded
 #      `success` (a run cancelled by the refresh is not a pass, so the walk
 #      continues to that head's own parent only while it, too, is a refresh);
-#   4. the cumulative base delta brought in since that passing head touches
-#      none of the paths in SENSITIVE below (dependency manifests,
-#      Dockerfiles, src/deploy/, CI definitions and this script).
+#   4. the cumulative base delta brought in since that passing head passes
+#      DELTA_POLICY:
+#        docs-only (docker.yml): EVERY changed path matches DOCS_ONLY below
+#          (CHANGELOG.md, changelog.d/, any *.md, docs/, src/docs/); any
+#          other path, a Makefile or a .go file included, means run;
+#        deny (default; FOSSA, Mutation): NO changed path matches SENSITIVE
+#          below (dependency manifests and lock files anywhere, .fossa.yml,
+#          Dockerfiles, src/deploy/, CI definitions and this script).
 #
 # Fail safe: every lookup failure, unexpected shape or doubt answers false,
 # and false means "run everything". The script never fails its step.
 #
 # Inputs (env): EVENT_NAME, EVENT_ACTION, BEFORE, HEAD_SHA, BASE_REF,
-# HEAD_REPO, REPO, WORKFLOW_PATH, GH_TOKEN, optional APP_BOT_LOGIN and
-# GITHUB_SERVER_URL. Outputs: refresh_only=true|false and reason=<text> on
+# HEAD_REPO, REPO, WORKFLOW_PATH, GH_TOKEN, optional DELTA_POLICY,
+# APP_BOT_LOGIN and GITHUB_SERVER_URL. Outputs: refresh_only=true|false and reason=<text> on
 # $GITHUB_OUTPUT, one summary line on $GITHUB_STEP_SUMMARY.
 set -uo pipefail
 
@@ -45,7 +50,9 @@ SHA_RE='^[0-9a-f]{40}$'
 ZERO_SHA='0000000000000000000000000000000000000000'
 # Base-delta paths that always force a full run (extended regex, matched
 # against each changed path).
-SENSITIVE='(^|/)(go\.mod|go\.sum|go\.work|go\.work\.sum|package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|pyproject\.toml|poetry\.lock|Cargo\.toml|Cargo\.lock|\.fossa\.ya?ml|\.dockerignore)$|(^|/)[^/]*[Dd]ockerfile[^/]*$|^src/deploy/|^\.github/workflows/|^\.github/actions/|^\.github/scripts/refresh-only-head\.sh$'
+SENSITIVE='(^|/)(go\.mod|go\.sum|go\.work|go\.work\.sum|package[^/]*\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*|pyproject\.toml|poetry\.lock|Cargo\.[^/]*|\.fossa\.ya?ml|\.dockerignore)$|(^|/)[^/]*[Dd]ockerfile[^/]*$|^src/deploy/|^\.github/workflows/|^\.github/actions/|^\.github/scripts/refresh-only-head\.sh$'
+# The only base-delta paths a docs-only policy accepts (extended regex).
+DOCS_ONLY='^CHANGELOG\.md$|^changelog\.d/|\.md$|^docs/|^src/docs/'
 
 out=${GITHUB_OUTPUT:-/dev/null}
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
@@ -158,7 +165,18 @@ ctx=''
 [ -n "$found" ] || no "$WORKFLOW_PATH has no successful run on a head within $MAX_HOPS refreshes"
 
 delta=$(g diff --name-only --no-renames "$hop_merge_base" "$newest_base_parent" 2>/dev/null) || no "base delta unreadable"
-hit=$(grep -E -m1 "$SENSITIVE" <<<"$delta" || true)
-[ -z "$hit" ] || no "base delta touches $hit"
+case "${DELTA_POLICY:-deny}" in
+  docs-only)
+    hit=$(grep -v -E -m1 "$DOCS_ONLY" <<<"$delta" || true)
+    [ -z "$hit" ] || no "base delta is not docs/changelog-only: it touches $hit"
+    delta_words='touches only docs and changelog files'
+    ;;
+  deny)
+    hit=$(grep -E -m1 "$SENSITIVE" <<<"$delta" || true)
+    [ -z "$hit" ] || no "base delta touches $hit"
+    delta_words='touches no build, dependency, deploy or CI path'
+    ;;
+  *) no "unknown DELTA_POLICY ${DELTA_POLICY}" ;;
+esac
 
-decide true "Head ${HEAD_SHA:0:12} is a verified $APP_BOT_LOGIN merge of $BASE_REF into the PR with an unchanged three-dot diff, $WORKFLOW_PATH passed on head ${found:0:12}, and the base delta since then touches no build, dependency, deploy or CI path."
+decide true "Head ${HEAD_SHA:0:12} is a verified $APP_BOT_LOGIN merge of $BASE_REF into the PR with an unchanged three-dot diff, $WORKFLOW_PATH passed on head ${found:0:12}, and the base delta since then $delta_words."
