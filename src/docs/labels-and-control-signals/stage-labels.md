@@ -1228,7 +1228,12 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    branch (`governor.labels.stage.adoption.in_place`, default `true`):
    - **in place** (`mode=in-place`) — the head is in the base repo, or the
      fork allows edits by maintainers (`maintainer_can_modify`, resolved with
-     one `GET pulls/N` at adoption time): the hive posts ONE
+     one `GET pulls/N` at adoption time). If the base changed a file under
+     `.github/workflows/` since the PR's merge-base, a head in the base repo
+     stays in place only when the App installation grants `workflows: write`
+     and a lane whose token asks for it (trusted or merger tier) serves the
+     repo, so the base-sync can be pushed; a fork head never does (see
+     above). The hive posts ONE
      `<!-- hive:adopted by=<hive-id> reason=<r> mode=in-place head=<sha> -->`
      comment, moves the PR to `stage/074-adopted-by-hive` and files it in
      `ci-failing.json` as its own (`"adopted": true`, `reachable_action:
@@ -1349,8 +1354,11 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      over. A pending `tide` or missing `lgtm` is never the reason —
      the lane has not admitted the head; the comment says so.
    - **supersede** (`mode=supersede`) — the fork forbids maintainer edits,
-     `in_place: false`, or the adopted head has unsigned commits (`no-dco`)
-     that the hive cannot repair by amending the contributor branch:
+     `in_place: false`, the base-sync of a head in the base repo carries a
+     `.github/workflows/` change the hive cannot push (no `workflows: write`
+     grant, or the head...base compare failed), or the adopted head has
+     unsigned commits (`no-dco`) that the hive cannot repair by amending the
+     contributor branch:
    - pushes `hive/adopt-<n>` in the base repo at the contributor's head SHA
      (the fork's commits, authorship and `Signed-off-by` preserved byte for
      byte — "sign-off survives the squash");

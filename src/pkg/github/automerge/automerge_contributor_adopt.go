@@ -2152,10 +2152,11 @@ func (c *Engine) canPushToPRBranch(ctx context.Context, obs stageObservation) bo
 	if obs.HeadRepo == "" {
 		return false
 	}
-	if c.baseSyncTouchesWorkflows(ctx, obs) {
+	sameRepo := strings.EqualFold(obs.HeadRepo, obs.Owner+"/"+obs.Repo)
+	if c.baseSyncTouchesWorkflows(ctx, obs, sameRepo) {
 		return false
 	}
-	if strings.EqualFold(obs.HeadRepo, obs.Owner+"/"+obs.Repo) {
+	if sameRepo {
 		return true
 	}
 	pr, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, obs.Number)
@@ -2182,24 +2183,46 @@ func (c *Engine) pushAccessLost(ctx context.Context, obs stageObservation) bool 
 }
 
 // baseSyncTouchesWorkflows reports whether the base has moved past a change
-// under .github/workflows/ since the PR's merge-base. Pushing such a
-// base-sync to a contributor's fork branch is refused for an App token
-// without the `workflows` grant (#6985; an installation with Workflows:
-// Read and write can merge approved workflow-path PRs into the base, #14664,
-// but a fork push is a separate matter), so in-place adoption would be a
-// dead end (#12865). A compare failure counts as touching: a superseding PR
-// is always deliverable.
-func (c *Engine) baseSyncTouchesWorkflows(ctx context.Context, obs stageObservation) bool {
+// under .github/workflows/ since the PR's merge-base that the hive cannot
+// push into the PR's branch, so in-place adoption would be a dead end
+// (#12865). GitHub refuses an App push that creates or updates a workflow
+// file without the `workflows` grant (#6985). On a contributor's fork no
+// grant on the base repository helps: the fork is not part of the
+// installation (projectbluefin/testsuite#1037). On a branch of the base
+// repository the push lands when the installation grants `workflows: write`
+// and a lane whose token asks for it serves the repo (#4677, #14664;
+// hgithub.Client.WorkflowsPushable), so sameRepo heads supersede only when
+// that grant is missing or unknown. A compare failure counts as touching: a
+// superseding PR is always deliverable.
+func (c *Engine) baseSyncTouchesWorkflows(ctx context.Context, obs stageObservation, sameRepo bool) bool {
 	file, err := c.baseSyncWorkflowFile(ctx, obs)
 	if err != nil {
 		c.warn("stage labels: adoption could not compare head to base for workflow changes; superseding", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return true
 	}
-	if file != "" {
-		c.info("stage labels: base-sync touches .github/workflows/ which the App cannot push; superseding", "repo", obs.Display, "pr", obs.Number, "file", file)
-		return true
+	if file == "" {
+		return false
 	}
-	return false
+	if sameRepo && c.workflowsPushable(ctx, obs.Owner+"/"+obs.Repo) {
+		c.info("stage labels: base-sync touches .github/workflows/ and the installation grants workflows: write; keeping the PR's own branch", "repo", obs.Display, "pr", obs.Number, "file", file)
+		return false
+	}
+	c.info("stage labels: base-sync touches .github/workflows/ which the App cannot push; superseding", "repo", obs.Display, "pr", obs.Number, "file", file, "same_repo", sameRepo)
+	return true
+}
+
+// workflowsPushableTransport is the optional transport hook that reports
+// whether the hive can push .github/workflows/** in a repository: the App
+// installation grants `workflows: write` and a lane whose token asks for it
+// serves the repo (hgithub.Client.WorkflowsPushable). Unknown reads false.
+type workflowsPushableTransport interface {
+	WorkflowsPushable(ctx context.Context, repo string) bool
+}
+
+// workflowsPushable reports the transport's answer, false when it has none.
+func (c *Engine) workflowsPushable(ctx context.Context, repo string) bool {
+	t, ok := c.transport.(workflowsPushableTransport)
+	return ok && t.WorkflowsPushable(ctx, repo)
 }
 
 // baseSyncWorkflowFile returns the first file under .github/workflows/ that
