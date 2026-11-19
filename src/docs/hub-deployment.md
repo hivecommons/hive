@@ -99,8 +99,37 @@ its API return `404`; stored choices are not deleted.
 People can enter or clear their real name, organization, and country, then
 confirm or withdraw their own selections separately for each hive. Legacy,
 administrator-entered, and inferred values are not eligible for sharing. A
-material disclosure change requires reconfirmation. This phase records consent
-on the hub only and does not send any profile fields to hives.
+material disclosure change requires reconfirmation: disclosure version 2, which
+replaced the version that said nothing was sent yet, suspends every earlier
+consent until the person confirms again.
+
+A hive asks for these values only when its owner turns on
+`customers.hub_import.enabled` (see
+[Customers hub import](telemetry.md#customers-hub-import)). The hive posts
+salted hashes of its confirmed customers' GitHub logins to
+`POST /api/customers/match` with its per-hive bearer. The hub answers only for
+people with an effective consent for that hive, with only the fields they
+selected and only values they entered themselves; an unknown and an
+unconsented person get the same empty answer. A withdrawal, a lost grant, a
+blocked account or a deleted hub user makes the next answer tell the hive to
+clear what it was sent.
+
+What each role sees:
+
+- **The person**, on the Profile sharing page: per hive, what was last sent and
+  when, which fields were sent at any time, and when the first delivery was.
+- **A hub admin**, in the dashboard's Scale Controls, under **Customers profile
+  sharing**: the number of consents per hive, and how many await
+  reconfirmation. No person, field choice or value is shown, and no admin route
+  can grant, change or read a consent. The same counts are at
+  `GET /api/saas/admin/profile-share/counts`.
+- **The hive owner and anyone with Customers access on that hive**: the values
+  the hive received, shown as "from the hub". They can export them, and the hub
+  cannot recall an exported copy.
+
+Audit lines carry names of fields, never values: `audit: customer consent
+grant`, `change` and `withdrawal` per consent change, and `audit: customer match`
+per request with the hive id and counts.
 
 ### Ask AI help
 
