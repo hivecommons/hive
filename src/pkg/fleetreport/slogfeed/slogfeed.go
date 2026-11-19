@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -158,6 +158,23 @@ const claudeCredentialRebridgedMessage = "claude credential bridge: a private cr
 // failed or refused repair logs a different message and stays reportable.
 func claudeCredentialRebridged(r slog.Record) bool {
 	return r.Level == slog.LevelWarn && strings.TrimSpace(r.Message) == claudeCredentialRebridgedMessage
+}
+
+// unauthorizedLoginRejected is the dashboard refusing a GitHub user who is not
+// on the hive's allowlist (device-flow login or SSO handoff). The denial is
+// the designed, user-caused outcome and is already recorded in the audit log
+// as login_denied, so repeats are not a hive defect (hivecommons/hive#19195).
+// The WARN stays in local logs.
+func unauthorizedLoginRejected(r slog.Record) bool {
+	if r.Level != slog.LevelWarn {
+		return false
+	}
+	switch strings.TrimSpace(r.Message) {
+	case "device-flow login rejected: user not authorized for this hive",
+		"sso handoff: user not authorized for this hive":
+		return true
+	}
+	return false
 }
 
 // ghcrTransientTimeout reports whether the record's error attribute is a

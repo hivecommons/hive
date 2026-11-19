@@ -1,0 +1,1 @@
+- A user who is not on a hive's allowlist and tries to sign in no longer causes the hive to file a fleet error report; the denial stays in local logs and the audit log ([#19195](https://github.com/hivecommons/hive/issues/19195)).

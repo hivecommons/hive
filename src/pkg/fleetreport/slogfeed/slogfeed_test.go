@@ -181,6 +181,24 @@ func TestClaudeCredentialRebridgeStaysInLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestUnauthorizedLoginRejectedStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "device-flow login rejected: user not authorized for this hive"
+	for range 6 {
+		logger.Warn(msg, "username", "mallory")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("unauthorized logins produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "not authorized"); n != 6 {
+		t.Fatalf("local logs lost the rejection: got %d, want 6: %s", n, out.String())
+	}
+	logger.Error(msg, "username", "mallory")
+	if len(*seen) != 1 {
+		t.Fatalf("error-level records must remain reportable: %+v", *seen)
+	}
+}
+
 func TestCanceledStageDigestStaysLocal(t *testing.T) {
 	logger, seen, out := newFeed(t)
 	const msg = "stage labels: check digest failed"
