@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.336.0)
+
+### Added
+
+- **Hub: per-hive customer match endpoint, consent only** ([#19162](https://github.com/hivecommons/hive/issues/19162)). `POST /api/customers/match` lets a hive, under its own per-hive heartbeat bearer, post salted hashes of its confirmed customers' GitHub logins and get back real name, organization and country only for people who consented to that hive, only for values they entered themselves, checked at answer time. Unknown and unconsented people get the same empty answer; a `cleared` entry is sent only after an earlier delivery. Batch, body, response and rate limits are named constants, deliveries are stamped on the consent record, and the route does not exist while `HIVE_HUB_CUSTOMERS_SHARE_ENABLED` is off. No spoke calls it yet.
+
 ## 2026-11-19 (v5.335.2)
 
 ### Fixed
