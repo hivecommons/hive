@@ -84,6 +84,7 @@ Optional capabilities, each off or inert until you turn it on. Where a feature h
 - Trajectory review: [Trajectory-Review Lane](trajectory-review.md#configuration).
 - Linear agent: [Linear agent integration](linear-agent.md).
 - Upstream watch: [Upstream watch](upstream-watch.md#configuration).
+- Ask AI help: [Ask AI help](ask-ai-help.md).
 
 The other features on this tab (OpenTelemetry export, external execution, auto-plan, issue claims, PR follow-up, long-running runs, provider rotation, merge recommendations, convergence rollout, stall replan, and question auto-close) are explained by their **?** tooltips, and their configuration keys are listed in the [Hive operator reference](operator-reference.md#configuration-blocks).
 

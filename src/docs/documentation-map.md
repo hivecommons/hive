@@ -17,6 +17,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 ### First installation
 
 - [Hosted Hive Hub onboarding](hosted-hub.md) — signing in at `https://hive.hivecommons.dev`, requesting a hosted hive, installing the GitHub App, configuring model gateways and Copilot login, reading `/fleet`, and fixing common setup problems.
+- [Ask AI help](ask-ai-help.md) — the optional Ask panel on the hub and hive dashboards: what leaves, consent, hub relay and direct modes, configuration keys and the docs-link fallback (#19177).
 - [Hub Fleet activity page](hub-fleet-activity.md) — the read-only `/activity` board of open issues and PRs across the hives you can see: per-viewer scoping, hive chips, group-by-hive freshness headers, always-visible truncation and stale-source disclosures, 15-second ETag polling, and display mode (`?kiosk=1`, `?display=1`, `am.*` views and `hub-activity` playlists).
 - [Docker Compose quick start](quickstart-docker-compose.md) — default standalone installation, prerequisites, and verification.
 - [Podman quick start](quickstart-podman.md) — standalone Quadlet/systemd installation, with rootless/rootful prerequisites.

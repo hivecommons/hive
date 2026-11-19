@@ -125,6 +125,9 @@ func (s *HubServer) registerAskRoutes() {
 	s.mux.HandleFunc("DELETE "+askConsentPath, s.requireAskSession(s.handleAskConsent))
 	s.mux.HandleFunc("POST "+askPath, s.requireAskSession(s.handleAsk))
 	s.mux.HandleFunc("GET "+askStatsPath, s.requireAdmin(s.handleAskStats))
+	// Hub relay for hosted hives (#19183): per-hive heartbeat bearer, no
+	// session.
+	s.mux.HandleFunc("POST "+askai.RelayPath, s.handleAskRelay)
 }
 
 // requireAskSession admits the person's signed browser session only: no API

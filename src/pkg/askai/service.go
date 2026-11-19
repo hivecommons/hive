@@ -160,6 +160,24 @@ func (s *Service) Ask(ctx context.Context, req Request) Result {
 	return s.ask(ctx, req, true)
 }
 
+// Relay answers a question relayed by a hive over the hub (phase 4, #19183).
+// The hive took the person's consent and applied its own per-person limits
+// before sending, so neither is checked again here; the hive's hourly cap and
+// the process-wide caps are. req.HiveID must be the authenticated hive; the
+// conversation handle is bound to it, so another hive cannot continue it.
+func (s *Service) Relay(ctx context.Context, req Request) Result {
+	req.Person = ""
+	if req.HiveID == "" {
+		return s.result(OutcomeRelayDisabled, msgRelayDisabled)
+	}
+	return s.ask(ctx, req, false)
+}
+
+// RelayDisabledResult is the answer for a hive the relay does not serve.
+func (s *Service) RelayDisabledResult() Result {
+	return s.result(OutcomeRelayDisabled, msgRelayDisabled)
+}
+
 // ValidateQuestion trims the question and reports whether it is usable and
 // free of credential shapes. It is exported so a relaying hive can refuse
 // before anything leaves it.
@@ -277,8 +295,11 @@ func (s *Service) finish(req Request, r Result, questionLen int, start time.Time
 	}
 	s.mu.Unlock()
 	if !skip {
-		attrs := []any{"person", req.Person, "outcome", string(r.Outcome), "question_len", questionLen,
+		attrs := []any{"outcome", string(r.Outcome), "question_len", questionLen,
 			"sources_kept", len(r.Sources), "latency_ms", s.now().Sub(start).Milliseconds()}
+		if req.Person != "" {
+			attrs = append(attrs, "person", req.Person)
+		}
 		if req.HiveID != "" {
 			attrs = append(attrs, "hive", req.HiveID)
 		}

@@ -77,7 +77,9 @@ func newLimiter(l Limits) *limiter {
 }
 
 // reserve takes one slot for person (and hive when non-empty). release must
-// be called exactly once after an ok reservation.
+// be called exactly once after an ok reservation. An empty person is a
+// relayed request: the hive it came from has already applied its own
+// per-person limits, so only the hive and process-wide caps apply here.
 func (l *limiter) reserve(now time.Time, person, hive string) limitDecision {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -101,12 +103,13 @@ func (l *limiter) reserve(now time.Time, person, hive string) limitDecision {
 		}
 		hw.roll(now, hourWindow)
 	}
+	perPerson := person != ""
 	switch {
-	case p.inFlight >= personInFlight:
+	case perPerson && p.inFlight >= personInFlight:
 		return limitDecision{retryAfter: time.Second}
-	case p.minute.count >= l.limits.PersonPerMinute:
+	case perPerson && p.minute.count >= l.limits.PersonPerMinute:
 		return limitDecision{retryAfter: p.minute.retryAfter(now, minuteWindow)}
-	case p.hour.count >= l.limits.PersonPerHour:
+	case perPerson && p.hour.count >= l.limits.PersonPerHour:
 		return limitDecision{retryAfter: p.hour.retryAfter(now, hourWindow)}
 	case hw != nil && hw.count >= l.limits.HivePerHour:
 		return limitDecision{retryAfter: hw.retryAfter(now, hourWindow)}
@@ -117,10 +120,12 @@ func (l *limiter) reserve(now time.Time, person, hive string) limitDecision {
 	case l.inFlight >= l.limits.InFlight:
 		return limitDecision{retryAfter: time.Second}
 	}
-	p.minute.count++
-	p.hour.count++
-	p.inFlight++
-	l.persons[person] = p
+	if perPerson {
+		p.minute.count++
+		p.hour.count++
+		p.inFlight++
+		l.persons[person] = p
+	}
 	if hw != nil {
 		hw.count++
 		l.hives[hive] = hw
