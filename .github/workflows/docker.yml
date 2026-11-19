@@ -137,6 +137,12 @@ jobs:
       ref_name: ${{ steps.decide.outputs.ref_name }}
       cross_org: ${{ steps.registries.outputs.cross_org }}
       cross_secret: ${{ steps.registries.outputs.cross_secret }}
+      refresh_only: ${{ steps.refresh.outputs.refresh_only }}
+    # Job-level permissions replace the workflow's: gate pushes nothing, and
+    # the refresh-only check below reads commits and this workflow's runs.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Decide push policy
         id: decide
@@ -245,6 +251,41 @@ jobs:
           echo "cross_secret=${cross_secret}" >> "$GITHUB_OUTPUT"
           echo "Native org: ${OWNER}; mirroring publishes to ghcr.io/${cross_org} using secret ${cross_secret}."
 
+      # Refresh-only heads (src/docs/ci-refresh-only-heads.md): when the new
+      # PR head is nothing but a verified hive App merge of the base whose
+      # three-dot diff is unchanged, this workflow already passed on the
+      # previous head, and the base delta touches no Dockerfile, dependency,
+      # deploy or CI path, the multi-arch build-* jobs below skip it. `gate`
+      # itself still runs and reports success, so the required context
+      # attaches as before. continue-on-error on both steps: a failure here
+      # leaves refresh_only empty, which means "build everything", and can
+      # never fail the required `gate`.
+      - name: Checkout refresh-only helper
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .refresh-check
+          persist-credentials: false
+          sparse-checkout: .github/scripts/refresh-only-head.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Detect refresh-only head
+        id: refresh
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_PATH: .github/workflows/docker.yml
+          GH_TOKEN: ${{ github.token }}
+        run: bash .refresh-check/.github/scripts/refresh-only-head.sh
+
   build:
     needs: gate
     # Runs when `gate` decided push=true, i.e. a long-lived branch or a
@@ -272,7 +313,8 @@ jobs:
     if: >-
       (needs.gate.outputs.push == 'true' ||
        (github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository)) &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        needs.gate.outputs.refresh_only != 'true')) &&
       !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
@@ -729,7 +771,8 @@ jobs:
     if: >-
       (needs.gate.outputs.push == 'true' ||
        (github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository)) &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        needs.gate.outputs.refresh_only != 'true')) &&
       !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
@@ -941,7 +984,8 @@ jobs:
     if: >-
       (needs.gate.outputs.push == 'true' ||
        (github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository)) &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        needs.gate.outputs.refresh_only != 'true')) &&
       !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
@@ -1172,7 +1216,8 @@ jobs:
     if: >-
       (needs.gate.outputs.push == 'true' ||
        (github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository)) &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        needs.gate.outputs.refresh_only != 'true')) &&
       !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:

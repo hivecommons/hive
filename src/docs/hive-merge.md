@@ -559,6 +559,11 @@ Train sibling refreshes and client-side follow-up/relay/supersession updates
 defer to preparation on these repositories; opted-out repositories retain
 their previous behavior.
 
+A refresh the App makes this way is cheap for CI on this repository: the
+heavy Docker multi-arch, FOSSA and Mutation jobs skip a head whose only
+change is that verified base merge, while every required context still
+reports. See [Refresh-only heads](ci-refresh-only-heads.md).
+
 Ownership and first-admission FIFO tickets live in `/data/base-preparation/`,
 with per-destination file locking and atomic durable snapshots. An update
 identity (PR/head/base SHA) is recorded before the request, across lanes,
