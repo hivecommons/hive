@@ -36,6 +36,9 @@ func (s *Server) prGateInstance() *github.PRGate {
 			return
 		}
 		s.prGate = github.NewPRGate(s.deps.GHClient, s.prGateModeOf, s.webhookLogger())
+		// The merge lanes read the gate for the held reason of a PR whose
+		// required context the hive cannot post.
+		s.prGate.RegisterAsDefault()
 	})
 	return s.prGate
 }
@@ -109,4 +112,85 @@ func (s *Server) observePRGateEvent(event string, body []byte) string {
 		g.HandleEvent(ctx, repo, number, head)
 	}()
 	return "scheduled"
+}
+
+// prGateGrantRefreshTimeout bounds one installation grant read.
+const prGateGrantRefreshTimeout = 30 * time.Second
+
+// prGateScope returns the repositories auto_merge.pr_gate applies to.
+func (s *Server) prGateScope() []string {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return nil
+	}
+	var scope []string
+	for _, repo := range s.deps.Config.AutoMerge.PRGate.Repos {
+		if repo = strings.TrimSpace(repo); repo != "" {
+			scope = append(scope, repo)
+		}
+	}
+	return scope
+}
+
+// prGateDependsOnRequired reports whether a required context of any scoped
+// repository is one the gate posts. A repository whose required set is not
+// declared in config counts as depending on it: the operator listed it for the
+// gate because its merge check comes from the gate's workflow.
+func (s *Server) prGateDependsOnRequired(scope []string) bool {
+	am := s.deps.Config.AutoMerge
+	for _, repo := range scope {
+		set, known := am.RequiredCheckSetForRepo(repo)
+		if !known {
+			return true
+		}
+		for name := range set {
+			if github.IsPRGateCheckName(name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// PRGateHealth is the gate's state for /api/status, the spoke banner and the
+// hub heartbeat. It is nil unless at least one repository is configured for
+// the gate, so a hive that never sets auto_merge.pr_gate reports nothing and
+// makes no request. A stale installation grant is re-read in the background.
+func (s *Server) PRGateHealth() *github.PRGateHealth {
+	scope := s.prGateScope()
+	if len(scope) == 0 || s.deps == nil || s.deps.Config == nil {
+		return nil
+	}
+	active := false
+	for _, repo := range scope {
+		if s.prGateModeOf(repo) != config.PRGateModeOff {
+			active = true
+			break
+		}
+	}
+	if !active {
+		return nil
+	}
+	g := s.prGateInstance()
+	if g == nil {
+		return nil
+	}
+	if g.GrantStale() {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), prGateGrantRefreshTimeout)
+			defer cancel()
+			g.RefreshGrant(ctx)
+		}()
+	}
+	return g.Health(scope, s.prGateDependsOnRequired(scope), time.Now())
+}
+
+// PRGateCause is the heartbeat view of PRGateHealth: why the gate cannot be
+// posted ("" when it can, or is not configured) and whether a required
+// context depends on it.
+func (s *Server) PRGateCause() (cause string, dependsOn bool) {
+	h := s.PRGateHealth()
+	if h == nil {
+		return "", false
+	}
+	return h.Cause, h.DependsOnGate
 }

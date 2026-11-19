@@ -170,6 +170,8 @@ var heartbeatMirrorFieldPolicy = map[string]mirrorFieldPolicy{
 	"GitHubAppErrorClass":      mirrorFieldMirrored,
 	"GitHubAppHTTPStatus":      mirrorFieldMirrored,
 	"GitHubAppState":           mirrorFieldMirrored,
+	"PRGateCause":              mirrorFieldMirrored,
+	"PRGateDependsOn":          mirrorFieldMirrored,
 	"GitHubAppID":              mirrorFieldMirrored,
 	"GitHubAppSlug":            mirrorFieldMirrored,
 	"GitHubInstallationID":     mirrorFieldMirrored,
