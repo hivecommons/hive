@@ -1431,6 +1431,9 @@ data:
 #   mention_search:
 #     enabled: false         # true (or env HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED=true) runs one budgeted GitHub search for mentions and comments when an owner accepts a suggested GitHub login; default off
 #     max_requests_per_hour: 10  # search requests all accepts may spend together per hour (default 10, at most 60); each accept spends at most 2
+#   profile_fill:
+#     enabled: false         # true (or env HIVE_CUSTOMERS_PROFILE_FILL_ENABLED=true) fills empty real name, organization, location and country from each confirmed customer's public GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo profile (and Linear member name); default off
+#     max_requests_per_hour: 60  # forge requests the fill may spend per hour across backfill, refresh, accepts and "Refresh from profiles" (default 60, at most 300)
 
 
 # Sandbox Job GitHub read relay (docs/sandbox-isolation.md): lets sandbox Jobs

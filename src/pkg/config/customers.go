@@ -30,6 +30,74 @@ type CustomersConfig struct {
 	// a person entered on the hub and consented to share with this hive
 	// (#19163). Default OFF.
 	HubImport CustomersHubImportConfig `yaml:"hub_import,omitempty" json:"hub_import,omitempty"`
+	// ProfileFill gates filling customer profiles (real name, organization,
+	// location, country) from each person's own public forge profile on
+	// GitHub, GitHub Enterprise, GitLab, Gitea/Forgejo or Linear
+	// (#19302). Default OFF: it is a periodic network lookup about people.
+	ProfileFill CustomersProfileFillConfig `yaml:"profile_fill,omitempty" json:"profile_fill,omitempty"`
+}
+
+// EnvCustomersProfileFillEnabled overrides customers.profile_fill.enabled
+// when it holds a recognised boolean.
+const EnvCustomersProfileFillEnabled = "HIVE_CUSTOMERS_PROFILE_FILL_ENABLED"
+
+// DefaultCustomersProfileFillMaxPerHour is how many forge requests the
+// profile fill may spend in one hour, across the periodic pass, the backfill,
+// accepts and "Refresh from profiles" together. A GitHub lookup is one or two
+// requests, so the default refreshes about 30 to 60 people an hour, about one
+// percent of a GitHub App's hourly core quota.
+const DefaultCustomersProfileFillMaxPerHour = 60
+
+// MaxCustomersProfileFillMaxPerHour caps what a config value may ask for.
+const MaxCustomersProfileFillMaxPerHour = 300
+
+// CustomersProfileFillConfig (`customers.profile_fill:`) controls the profile
+// fill: a bounded pass that reads each confirmed customer's own public forge
+// profile and fills the profile fields nobody set by hand. See
+// src/docs/design/customers.md.
+type CustomersProfileFillConfig struct {
+	// Enabled turns the fill on. nil = false.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// MaxRequestsPerHour bounds the forge requests of all lookups in one
+	// hour. 0 = DefaultCustomersProfileFillMaxPerHour; values above
+	// MaxCustomersProfileFillMaxPerHour are lowered to it.
+	MaxRequestsPerHour int `yaml:"max_requests_per_hour,omitempty" json:"max_requests_per_hour,omitempty"`
+}
+
+// IsEnabled reports whether the fill is on (default off).
+func (c CustomersProfileFillConfig) IsEnabled() bool {
+	return c.Enabled != nil && *c.Enabled
+}
+
+// RequestsPerHour is the hourly request budget with the default and the cap
+// applied.
+func (c CustomersProfileFillConfig) RequestsPerHour() int {
+	switch {
+	case c.MaxRequestsPerHour <= 0:
+		return DefaultCustomersProfileFillMaxPerHour
+	case c.MaxRequestsPerHour > MaxCustomersProfileFillMaxPerHour:
+		return MaxCustomersProfileFillMaxPerHour
+	default:
+		return c.MaxRequestsPerHour
+	}
+}
+
+// CustomersProfileFillEnabled reports whether the profile fill is on: the
+// HIVE_CUSTOMERS_PROFILE_FILL_ENABLED env wins over
+// customers.profile_fill.enabled when it holds a recognised boolean. It also
+// needs the Customers section to be on. It is independent of
+// customers.mention_search.
+func (c *Config) CustomersProfileFillEnabled() bool {
+	if !c.CustomersEnabled() {
+		return false
+	}
+	if v, ok := parseBoolEnv(EnvCustomersProfileFillEnabled); ok {
+		return v
+	}
+	if c == nil {
+		return false
+	}
+	return c.Customers.ProfileFill.IsEnabled()
 }
 
 // EnvCustomersHubImportEnabled overrides customers.hub_import.enabled when it

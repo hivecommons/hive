@@ -54447,6 +54447,32 @@ function burnAreaChart() {
       { key: 'country', label: 'Country (code or name)', max: 120 }
     ];
 
+    // CUSTOMERS_REFRESH_RELOAD_MS: how long after "Refresh from profiles" for
+    // everyone the list is read again, so the first pass shows.
+    const CUSTOMERS_REFRESH_RELOAD_MS = 5000;
+
+    // CUSTOMERS_PROFILE_SOURCES: the forge a profile-fill value was read
+    // from, by the rule it carries (#19302).
+    const CUSTOMERS_PROFILE_SOURCES = { github_profile: 'GitHub', ghe_profile: 'GitHub Enterprise', gitlab_profile: 'GitLab', gitea_profile: 'Gitea', linear_profile: 'Linear' };
+
+    // customersFieldSourceLabel: the forge an automatic field came from, or
+    // '' for anything else.
+    function customersFieldSourceLabel(f) {
+      return (f && Object.prototype.hasOwnProperty.call(CUSTOMERS_PROFILE_SOURCES, f.rule)) ? CUSTOMERS_PROFILE_SOURCES[f.rule] : '';
+    }
+
+    // customersFieldProvenance: where an automatic field came from, for its
+    // tooltip: the source, the login it was read for and when.
+    function customersFieldProvenance(f) {
+      if (f && f.rule === 'location') return 'Derived from the location';
+      const label = customersFieldSourceLabel(f) || 'GitHub';
+      let t = 'From the public ' + label + ' profile';
+      if (f && f.login) t += ' of ' + f.login;
+      if (f && f.rule) t += ' (source=' + f.rule + ')';
+      if (f && typeof f.at === 'string' && f.at) t += ', fetched ' + f.at.slice(0, 10);
+      return t;
+    }
+
     function customersProfileValue(p, key) {
       const f = (p && p.profile && p.profile[key]) || {};
       return typeof f.value === 'string' ? f.value : '';
@@ -54458,7 +54484,7 @@ function burnAreaChart() {
       const v = customersProfileValue(p, 'organization');
       if (!v) return '';
       const f = p.profile.organization;
-      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub: the person shared it with this hive' : 'From the public GitHub profile');
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub: the person shared it with this hive' : customersFieldProvenance(f));
       const src = f.source === 'manual' || f.source === 'hub' ? f.source : 'auto';
       return '<span class="kc-pill customers-pill customers-org" data-source="' + src + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
@@ -54487,7 +54513,9 @@ function burnAreaChart() {
       const code = customersProfileValue(p, 'country');
       if (!/^[A-Z]{2}$/.test(code)) return '';
       const name = customersCountryName(code);
-      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name) + '">' +
+      const f = p.profile.country;
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub' : customersFieldProvenance(f));
+      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name + ' - ' + why) + '">' +
         '<span aria-hidden="true">' + customersFlagEmoji(code) + '</span> ' + escapeHtml(code) + '</span>';
     }
 
@@ -54663,6 +54691,7 @@ function burnAreaChart() {
       const people = data.people || [];
       const suggestions = data.suggestions || [];
       out += customersAddFormHtml();
+      out += '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshAllProfiles" title="Look every customer up again on their public forge profile, a few at a time">Refresh from profiles</button></div>';
       out += '<div class="customers-block"><div class="section-label m-0">Customers</div><div class="customers-list">' +
         (people.length ? people.map(p => customersRowHtml(p, false)).join('') : '<p class="empty-dashed">No other customers yet. Add one, or accept a suggestion.</p>') + '</div></div>';
       out += '<details class="customers-block customers-suggested" data-ui-key="suggested"' + (_customersUi.open.suggested ? ' open' : '') + '><summary class="customers-summary">Suggested (' + suggestions.length + ')</summary>' +
@@ -54785,16 +54814,19 @@ function burnAreaChart() {
         const manual = cur.source === 'manual';
         // A hub value is one the person shared from the hub (#19163);
         // editing it here makes it manual.
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? 'from the hub' : (cur.rule === 'location' ? 'from location' : 'from GitHub'))) : (manual ? 'cleared by hand' : 'not known');
-        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? 'from the hub' : (cur.rule === 'location' ? 'from location' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub')))) : (manual ? 'cleared by hand' : 'not known');
+        const tip = cur.value && cur.source === 'auto' ? ' title="' + escapeHtml(customersFieldProvenance(cur)) + '"' : '';
+        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs"' + tip + '>(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
-          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let the public profile fill this in again">Auto</button>' : '');
       }).join('');
       const cc = customersProfileValue(p, 'country');
       const ccLine = /^[A-Z]{2}$/.test(cc) ? '<div class="muted-xs" data-customers-field="country-line"><span aria-hidden="true">' + customersFlagEmoji(cc) + '</span> ' + escapeHtml(cc) + ' ' + escapeHtml(customersCountryName(cc)) + '</div>' : '';
       return '<div class="customers-block"><div class="section-label m-0">Details</div>' + ccLine +
         '<div class="customers-inline">' + rows + '</div>' + customersAffiliationHtml(p) +
-        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>';
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button>' +
+        (customersIsFull() ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshProfile" title="Read this person\'s public forge profile now and fill the fields nobody set by hand">Refresh from profiles</button>' : '') +
+        '</div></div>';
     }
 
     function customersNotesHtml(p) {
@@ -55288,7 +55320,34 @@ function burnAreaChart() {
       if (saved) showToast('Details saved', 'success');
     }
 
-    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
+    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to the public profile'); }
+
+    // customersRefreshProfile: "Refresh from profiles" on the open profile
+    // (#19302). The hive reads the public forge profile now and fills the
+    // fields nobody set by hand.
+    async function customersRefreshProfile() {
+      if (!_customersOpen) return;
+      const id = _customersOpen.me ? 'me' : _customersOpen.id;
+      try {
+        const out = await customersRequest('POST', '/api/customers/' + encodeURIComponent(id) + '/refresh-profile', {});
+        if (out.customer) _customersOpen = out.customer;
+        customersShow();
+        const fill = out.fill || {};
+        if (fill.skipped) showToast('Not refreshed: ' + String(fill.skipped).replace(/_/g, ' '), 'warning');
+        else showToast(fill.filled ? 'Details filled from public profiles' : 'Public profiles checked: nothing new', 'success');
+        fetchCustomers();
+      } catch (e) { customersProfileError(e.message); }
+    }
+
+    // customersRefreshAllProfiles: "Refresh from profiles" for everyone. The
+    // hive looks every customer up again in the background, a few per pass.
+    async function customersRefreshAllProfiles() {
+      try {
+        await customersRequest('POST', '/api/customers/refresh-profiles', {});
+        showToast('Refreshing every customer from public profiles, a few at a time', 'success');
+        setTimeout(fetchCustomers, CUSTOMERS_REFRESH_RELOAD_MS);
+      } catch (e) { showToast(e.message, 'error'); }
+    }
 
     function customersAffiliationAccept(value) { customersEdit({ op: 'profile', field: 'organization', value: value }, 'Organization set'); }
 
@@ -64927,6 +64986,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer goal and satisfaction suggestions', key: 'customers.inference.enabled', text: 'customers inference infer suggest goals satisfaction model confirm HIVE_CUSTOMERS_INFERENCE_ENABLED customers.inference.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer avatars', key: 'customers.avatars.enabled', text: 'customers avatars avatar pictures photos github profile picture privacy HIVE_CUSTOMERS_AVATARS_ENABLED customers.avatars.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer hub import', key: 'customers.hub_import.enabled', text: 'customers hub import consent shared real name organization country from the hub privacy HIVE_CUSTOMERS_HUB_IMPORT_ENABLED customers.hub_import.enabled' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer profile fill', key: 'customers.profile_fill.enabled', text: 'customers profile fill public profile github gitlab gitea forgejo enterprise ghe linear real name organization company location country flag backfill refresh HIVE_CUSTOMERS_PROFILE_FILL_ENABLED customers.profile_fill.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer GitHub search on accept', key: 'customers.mention_search.enabled', text: 'customers github search accept mention mentions comments history quota budget suggested person HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED customers.mention_search.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Data directories and session retention', key: 'data.metrics_dir', text: 'data directories metrics logs agent configs claude copilot bob sessions retention prune janitor data.agents_dir data.bob_sessions_dir data.claude_sessions_dir data.copilot_sessions_dir data.logs_dir data.metrics_dir data.session_retention_days' },
@@ -79908,6 +79968,11 @@ function burnAreaChart() {
             <span class="config-toggle-label">Search GitHub when accepting a person ${yamlHint('customers.mention_search.enabled')} ${settingHelpMark('settings', 'features', 'Customer GitHub search on accept', `OFF by default. When on, accepting a suggested GitHub login makes one budgeted GitHub search (issues and pull requests that mention the login and ones it commented on, in this hive's own repositories) so the new profile starts with history beyond what the hive already holds. The results are stored as references only, never text. It is never run by the discovery sweep and never for an email address. It sends the login to GitHub, makes at most two search requests per accept, shares an hourly request budget across accepts (customers.mention_search.max_requests_per_hour in the config file, default 10), counts against the shared GitHub quota, and stands down while that quota is low or GitHub's secondary limit is engaged. Needs Customers on. HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
           </div>
           ${f.customersSearchEffective !== f.customersSearch ? `<p class="config-help">HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED (or turning Customers off) overrides this setting: the search is currently <b>${f.customersSearchEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersProfileFill ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersProfileFillEnabled"></div>
+            <span class="config-toggle-label">Fill customer details from public profiles ${yamlHint('customers.profile_fill.enabled')} ${settingHelpMark('settings', 'features', 'Customer profile fill', `OFF by default. When on, the hive reads each confirmed customer's own public profile on this hive's forge (GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo) by their login, and, when a Linear workspace is connected, their workspace member name by an email address the profile already holds. It fills the real name, organization (the company field, a GitHub @org shown by its public name) and location, and the country is derived from the location. Only empty fields are filled, plus fields an earlier fill wrote: a value set by hand or shared from the hub is never changed. Each field shows where it came from. Suggested people are never looked up. Existing customers are filled within a few passes after it is turned on, then refreshed about weekly; "Refresh from profiles" on the Customers section runs it now. It spends at most customers.profile_fill.max_requests_per_hour requests an hour (default 60), stands down while the shared GitHub quota is low and backs off when a forge rate-limits it. Needs Customers on. Independent of the GitHub search on accept. HIVE_CUSTOMERS_PROFILE_FILL_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersProfileFillEffective !== f.customersProfileFill ? `<p class="config-help">HIVE_CUSTOMERS_PROFILE_FILL_ENABLED (or turning Customers off) overrides this setting: the profile fill is currently <b>${f.customersProfileFillEffective ? 'on' : 'off'}</b>.</p>` : ''}
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">

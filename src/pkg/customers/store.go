@@ -637,6 +637,93 @@ func (s *Store) ApplyAutoProfile(id string, values map[string]string) (Person, b
 	return p, changed, err
 }
 
+// ProfileFillValue is one field value the profile fill read, with where it
+// came from.
+type ProfileFillValue struct {
+	Value  string
+	Source string // a ProfileSource* rule
+	Login  string
+}
+
+// profileFillFields are the fields a forge profile may fill. The country is
+// never read from a forge: it is derived from the location.
+var profileFillFields = []string{FieldRealName, FieldOrganization, FieldLocation}
+
+// ApplyProfileFill writes one profile-fill lookup to a person and records the
+// fetch. Rules, each pinned by profilefill_test.go:
+//   - A manual or hub field is never touched.
+//   - An empty field is filled.
+//   - An automatic field a source that answered this time filled before is
+//     the fill's own: it is updated, or cleared when that source no longer
+//     publishes it. Any other non-empty field is kept.
+//   - The country is derived again from the location.
+//
+// values is already merged in source priority order. It reports whether a
+// field changed, and records an "unchanged" fetch that changed a field as
+// "filled".
+func (s *Store) ApplyProfileFill(id string, values map[string]ProfileFillValue, fetch ProfileFetch) (Person, bool, error) {
+	changed := false
+	answered := map[string]bool{}
+	for _, src := range fetch.Sources {
+		answered[src] = true
+	}
+	p, err := s.changePerson(id, func(p *Person) error {
+		for _, name := range profileFillFields {
+			f := p.Profile.Field(name)
+			if f.Source == SourceManual || f.Source == SourceHub {
+				continue
+			}
+			nv := values[name]
+			v, err := cleanText(nv.Value, MaxProfileFieldLen, false)
+			if err != nil {
+				v = ""
+			}
+			owned := f.Source == SourceAuto && IsForgeProfileRule(f.Rule) && answered[f.Rule]
+			switch {
+			case v != "" && (f.Value == "" || owned):
+				if f.Value == v && f.Rule == nv.Source && f.Login == nv.Login {
+					continue
+				}
+				*f = ProfileField{Value: v, Source: SourceAuto, Rule: nv.Source, Login: nv.Login, At: fetch.At}
+				changed = true
+			case v == "" && owned && f.Value != "":
+				*f = ProfileField{}
+				changed = true
+			}
+		}
+		if deriveAutoCountry(p, s.now()) {
+			changed = true
+		}
+		rec := fetch
+		rec.Sources = append([]string(nil), fetch.Sources...)
+		if changed && rec.Outcome == FetchUnchanged {
+			rec.Outcome = FetchFilled
+		}
+		p.Profile.Fetched = &rec
+		return nil
+	})
+	return p, changed, err
+}
+
+// ClearProfileFetched forgets the last profile-fill lookup of every customer,
+// so the next passes refresh everyone ("Refresh from profiles" for all). It
+// returns how many records it cleared.
+func (s *Store) ClearProfileFetched() (int, error) {
+	n := 0
+	err := s.change(func() error {
+		for id, p := range s.people {
+			if p.Profile.Fetched == nil {
+				continue
+			}
+			p.Profile.Fetched = nil
+			s.people[id] = p
+			n++
+		}
+		return nil
+	})
+	return n, err
+}
+
 // Forget deletes a customer and leaves a salted-hash tombstone for each of
 // their confirmed identities, so a later sweep does not rebuild them. An
 // unconfirmed claim is not tombstoned: it may be someone else's. The returned

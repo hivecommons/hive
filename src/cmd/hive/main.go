@@ -3662,6 +3662,17 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		svc.hubImport = func(ctx context.Context, person string) {
 			b.runCustomersHubImport(ctx, b.customersMentionConfig(), person)
 		}
+		// #19302: fill profile fields from each customer's public forge
+		// profile (backfill, periodic refresh, on accept and on demand).
+		// Off unless customers.profile_fill.enabled.
+		svc.profileFill = newCustomersProfileFill(svc.svc.Store(), customersProfileFillDeps{
+			cfg:         b.customersMentionConfig,
+			client:      b.currentGitHubClient,
+			linearToken: b.dashSrv.LinearAgentAccessToken,
+			orgs:        newCustomersOrgNames(),
+			logger:      b.logger,
+		})
+		b.cleanup.push(svc.startCustomersProfileFill(b.ctx))
 		b.dashSrv.SetCustomersService(svc)
 		if b.sched != nil {
 			installCustomersAgentContext(svc, b.sched.SetCustomerContextLookup)
