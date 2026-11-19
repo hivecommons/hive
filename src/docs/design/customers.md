@@ -406,8 +406,13 @@ on a normal sweep. It needs the Customers section on and is independent of
   `accepted`), never a suggestion. A forge is asked about the person's first
   confirmed login identity, else a dashboard user name shaped like a login; Linear
   only about a confirmed email. A bot login is never asked about.
-- **Fill rules.** A manual or hub field is never touched. An empty field is
-  filled. A field an earlier fill wrote from a source that answered this time is
+- **Fill rules.** Precedence is: a value set here by hand, then a hub value the
+  person entered or consented to share, then the public forge profile, then a hub
+  value the hub derived or an admin set (hub rules other than `hub_consent`,
+  `hub_person` and `hub_unrecorded`). So a manual or person-entered hub field is
+  never touched, and a derived or admin hub value is replaced only by a non-empty
+  forge value (a derived hub country by the country of a forge location). An
+  empty field is filled. A field an earlier fill wrote from a source that answered this time is
   the fill's own: it is updated, or cleared when the person removed it from their
   profile. Any other value is kept. The first source with a value wins, forge
   before Linear. Each field records `source: auto`, `rule` (the profile source:

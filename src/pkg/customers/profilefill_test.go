@@ -350,3 +350,54 @@ func TestProfileLookupKey(t *testing.T) {
 		t.Fatalf("non-login hive user = %q", got)
 	}
 }
+
+// Precedence (#19319 labels hub values): by hand, then hub person-entered or
+// consented, then the public forge profile, then hub derived or admin-set.
+func TestProfileFillPrecedenceOverLabeledHubValues(t *testing.T) {
+	x := newFillFixture(t)
+	ada := mustAdd(t, x.store, "ada", Identity{Kind: KindGitHub, Value: "ada"})
+	if err := x.store.change(func() error {
+		p := x.store.people[ada.ID]
+		p.Profile.RealName = ProfileField{Value: "Ada K.", Source: SourceHub, Rule: hubRulePersonEntered}
+		p.Profile.Organization = ProfileField{Value: "example.com", Source: SourceHub, Rule: "hub_email_domain"}
+		p.Profile.Country = ProfileField{Value: "US", Source: SourceHub, Rule: "hub_browser_language"}
+		x.store.people[ada.ID] = p
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	x.fill.Run(context.Background(), "")
+	p := x.get(t, ada.ID)
+	if p.Profile.RealName.Value != "Ada K." || p.Profile.RealName.Source != SourceHub {
+		t.Fatalf("a person-entered hub value was overwritten: %+v", p.Profile.RealName)
+	}
+	if p.Profile.Organization.Value != "acme" || p.Profile.Organization.Rule != ProfileSourceGitHub {
+		t.Fatalf("a derived hub value did not yield to the forge: %+v", p.Profile.Organization)
+	}
+	if p.Profile.Country.Value != "GB" || p.Profile.Country.Source != SourceAuto {
+		t.Fatalf("a derived hub country did not yield to the forge location: %+v", p.Profile.Country)
+	}
+	// A derived hub value with no forge value to replace it is kept.
+	grace := mustAdd(t, x.store, "grace", Identity{Kind: KindGitHub, Value: "grace"})
+	x.gh.answers["grace"] = ForgeProfile{Name: "Grace Hopper"}
+	if err := x.store.change(func() error {
+		p := x.store.people[grace.ID]
+		p.Profile.Organization = ProfileField{Value: "Navy", Source: SourceHub, Rule: "hub_admin"}
+		x.store.people[grace.ID] = p
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	x.fill.Run(context.Background(), grace.ID)
+	if got := x.get(t, grace.ID).Profile.Organization; got.Value != "Navy" || got.Source != SourceHub {
+		t.Fatalf("an admin hub value was dropped with nothing to replace it: %+v", got)
+	}
+	for _, f := range []ProfileField{
+		{Source: SourceHub, Rule: ProfileSourceHub}, {Source: SourceHub, Rule: hubRulePersonEntered},
+		{Source: SourceHub, Rule: hubRuleUnrecorded}, {Source: SourceHub}, {Source: SourceAuto, Rule: "hub_admin"},
+	} {
+		if hubYieldsToForge(f) {
+			t.Errorf("hubYieldsToForge(%+v) = true", f)
+		}
+	}
+}
