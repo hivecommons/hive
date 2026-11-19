@@ -678,6 +678,7 @@ func ParseReferencedIssues(text, defaultRepo string) []ClaimedRef {
 // of string or a -/_// separator) so a version string like "bump-v2-1" or a
 // SHA-ish suffix cannot be mistaken for an issue number.
 var branchIssuePattern = regexp.MustCompile(`(?i)(?:^|[/_-])(?:issue[/_-]?|fix[/_-]|gh[/_-])?(\d+)(?:[/_-]|$)`)
+var trackerKeyWordPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
 var branchDatePattern = regexp.MustCompile(`(?:^|[/_-])(?:19|20)\d{2}(?:\d{4}|[/_-]\d{2}[/_-]\d{2})(?:[/_-]|$)`)
 
 // headRef returns the PR's head branch name, guarding the nested pointers.
@@ -725,7 +726,7 @@ func issueFromBranchName(branch string) (int, bool) {
 	if len(m) < 4 {
 		return 0, false
 	}
-	if branchIssueMatchOverlapsDate(branch, m[2], m[3]) {
+	if branchIssueMatchOverlapsDate(branch, m[2], m[3]) || branchIssueMatchIsTrackerKey(branch, m[2]) {
 		return 0, false
 	}
 	n, err := strconv.Atoi(branch[m[2]:m[3]])
@@ -733,6 +734,27 @@ func issueFromBranchName(branch string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// branchIssueMatchIsTrackerKey reports whether the number at start is the
+// numeric half of another tracker's key, such as Jira's "CEH-12725" in
+// "ceh-12725-mcp-client": a word joined to the number by a hyphen. That
+// number is not a GitHub issue in this repository. The agent prefixes the
+// pattern names (issue-, fix-, gh-) are not keys.
+func branchIssueMatchIsTrackerKey(branch string, start int) bool {
+	if start < 2 || branch[start-1] != '-' {
+		return false
+	}
+	head := branch[:start-1]
+	word := head[strings.LastIndexAny(head, "/_-")+1:]
+	if !trackerKeyWordPattern.MatchString(word) {
+		return false
+	}
+	switch strings.ToLower(word) {
+	case "issue", "fix", "gh":
+		return false
+	}
+	return true
 }
 
 func branchIssueMatchOverlapsDate(branch string, start, end int) bool {

@@ -197,6 +197,10 @@ func TestIssueFromBranchName(t *testing.T) {
 		{"compact date is not an issue", "close-on-merge-20261009", 0, false},
 		{"delimited date is not an issue", "release/2026-10-09", 0, false},
 		{"issue plus date keeps issue", "issue-123-20261009", 123, true},
+		{"Jira key is not an issue", "ceh-12725-mcp-confidential-client", 0, false},
+		{"upper-case Jira key", "feature/CEH-12725", 0, false},
+		{"Linear key", "eng-42", 0, false},
+		{"fix-N is still an issue", "fix-428", 428, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
