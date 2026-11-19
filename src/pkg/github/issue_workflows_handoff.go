@@ -213,6 +213,26 @@ func (c *Client) WorkflowsPushable(ctx context.Context, repo string) bool {
 	return known && granted
 }
 
+// FallbackFixAgent is the lane that rebases and fixes CI on a PR no lane
+// owns by branch name: an adopted, trusted-author or operator-requested head
+// (cmd/hive routeConflictFixAgent). The adoption sweep asks whether this
+// lane's own pushes may touch workflow files before it keeps an adopted PR
+// on its own branch across a base workflow change.
+const FallbackFixAgent = "scanner"
+
+// AgentWorkflowsPushable reports whether agent's own pushes may touch
+// .github/workflows/**: its token tier asks for the Workflows permission
+// (SetWorkflowsSelfPushFunc: trusted or merger) and the App installation
+// grants `workflows: write`. A token-authenticated client, an unknown
+// grant or an agent the lookup does not know reads false.
+func (c *Client) AgentWorkflowsPushable(ctx context.Context, agent string) bool {
+	if !c.workflowsSelfPushFor(agent) {
+		return false
+	}
+	granted, known := c.installationGrantsWorkflows(ctx)
+	return known && granted
+}
+
 // CapabilityAvailable is the blocker ledger's check (blocker.Ledger
 // SetCapabilityCheck): a workflows-permission blocker on repo#number is
 // refuted when WorkflowsPushable holds and the item is not a fork PR. A fork

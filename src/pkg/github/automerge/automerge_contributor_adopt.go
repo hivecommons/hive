@@ -2186,14 +2186,20 @@ func (c *Engine) pushAccessLost(ctx context.Context, obs stageObservation) bool 
 // under .github/workflows/ since the PR's merge-base that the hive cannot
 // push into the PR's branch, so in-place adoption would be a dead end
 // (#12865). GitHub refuses an App push that creates or updates a workflow
-// file without the `workflows` grant (#6985). On a contributor's fork no
-// grant on the base repository helps: the fork is not part of the
-// installation (projectbluefin/testsuite#1037). On a branch of the base
-// repository the push lands when the installation grants `workflows: write`
-// and a lane whose token asks for it serves the repo (#4677, #14664;
-// hgithub.Client.WorkflowsPushable), so sameRepo heads supersede only when
-// that grant is missing or unknown. A compare failure counts as touching: a
-// superseding PR is always deliverable.
+// file without the `workflows` grant (#6985). #12865 applied this to every
+// head because the App had no such grant then. Its premise has changed for
+// a branch of the base repository: an installation can grant `workflows:
+// write` (#14664), and pr_merge_state.go fences only forks. On a
+// contributor's fork no grant on the base repository helps, because the
+// fork is not part of the installation (projectbluefin/testsuite#1037). So
+// a sameRepo head supersedes only when the fallback fixer, which rebases
+// and fixes an adopted head (hgithub.FallbackFixAgent), cannot push
+// workflow files itself: its tier lacks the Workflows permission or the
+// installation's grant is missing or unknown
+// (hgithub.Client.AgentWorkflowsPushable). The governor's update-branch
+// would need only the grant, but a conflicting head is the fixer's to push.
+// A compare failure counts as touching: a superseding PR is always
+// deliverable.
 func (c *Engine) baseSyncTouchesWorkflows(ctx context.Context, obs stageObservation, sameRepo bool) bool {
 	file, err := c.baseSyncWorkflowFile(ctx, obs)
 	if err != nil {
@@ -2203,26 +2209,28 @@ func (c *Engine) baseSyncTouchesWorkflows(ctx context.Context, obs stageObservat
 	if file == "" {
 		return false
 	}
-	if sameRepo && c.workflowsPushable(ctx, obs.Owner+"/"+obs.Repo) {
-		c.info("stage labels: base-sync touches .github/workflows/ and the installation grants workflows: write; keeping the PR's own branch", "repo", obs.Display, "pr", obs.Number, "file", file)
+	if sameRepo && c.fixerPushesWorkflows(ctx) {
+		c.info("stage labels: base-sync touches .github/workflows/ and the fixer can push it; keeping the PR's own branch", "repo", obs.Display, "pr", obs.Number, "file", file, "fixer", hgithub.FallbackFixAgent)
 		return false
 	}
 	c.info("stage labels: base-sync touches .github/workflows/ which the App cannot push; superseding", "repo", obs.Display, "pr", obs.Number, "file", file, "same_repo", sameRepo)
 	return true
 }
 
-// workflowsPushableTransport is the optional transport hook that reports
-// whether the hive can push .github/workflows/** in a repository: the App
-// installation grants `workflows: write` and a lane whose token asks for it
-// serves the repo (hgithub.Client.WorkflowsPushable). Unknown reads false.
-type workflowsPushableTransport interface {
-	WorkflowsPushable(ctx context.Context, repo string) bool
+// agentWorkflowsPushableTransport is the optional transport hook that
+// reports whether an agent's own pushes may touch .github/workflows/**: its
+// tier asks for the Workflows permission and the App installation grants
+// `workflows: write` (hgithub.Client.AgentWorkflowsPushable). Unknown reads
+// false.
+type agentWorkflowsPushableTransport interface {
+	AgentWorkflowsPushable(ctx context.Context, agent string) bool
 }
 
-// workflowsPushable reports the transport's answer, false when it has none.
-func (c *Engine) workflowsPushable(ctx context.Context, repo string) bool {
-	t, ok := c.transport.(workflowsPushableTransport)
-	return ok && t.WorkflowsPushable(ctx, repo)
+// fixerPushesWorkflows reports whether the fallback fixer that works an
+// adopted head can push workflow files, false when the transport cannot say.
+func (c *Engine) fixerPushesWorkflows(ctx context.Context) bool {
+	t, ok := c.transport.(agentWorkflowsPushableTransport)
+	return ok && t.AgentWorkflowsPushable(ctx, hgithub.FallbackFixAgent)
 }
 
 // baseSyncWorkflowFile returns the first file under .github/workflows/ that

@@ -1139,15 +1139,15 @@ func prFixAgent(pr github.PullRequest, audited string) string {
 func routeConflictFixAgent(agent string, cfg *config.Config) (string, string) {
 	owner := strings.TrimSpace(agent)
 	if owner == "" {
-		return "scanner", ""
+		return github.FallbackFixAgent, ""
 	}
-	if strings.EqualFold(owner, "scanner") || cfg == nil {
+	if strings.EqualFold(owner, github.FallbackFixAgent) || cfg == nil {
 		return owner, ""
 	}
 	base := cfg.BaseAgentName(owner)
 	ac, ok := cfg.Agents[base]
 	if !ok || ac.Paused || !cfg.HasAnyCadence(base) || allConfiguredCadencesPaused(cfg, base) {
-		return "scanner", owner
+		return github.FallbackFixAgent, owner
 	}
 	return owner, ""
 }

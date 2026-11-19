@@ -1,8 +1,10 @@
 package automerge
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -14,8 +16,9 @@ import (
 )
 
 // workflowsGrantTransport is the engine's client with a fixed answer to
-// WorkflowsPushable: an installation that grants (or lacks) `workflows:
-// write` with a lane that asks for it serving the repo.
+// AgentWorkflowsPushable: the fallback fixer's tier asks for the Workflows
+// permission and the installation grants it (or not). The real predicate is
+// covered in pkg/github (TestAgentWorkflowsPushable).
 type workflowsGrantTransport struct {
 	*hgithub.Client
 	pushable bool
@@ -24,14 +27,14 @@ type workflowsGrantTransport struct {
 	asked []string
 }
 
-func (t *workflowsGrantTransport) WorkflowsPushable(_ context.Context, repo string) bool {
+func (t *workflowsGrantTransport) AgentWorkflowsPushable(_ context.Context, agent string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.asked = append(t.asked, repo)
+	t.asked = append(t.asked, agent)
 	return t.pushable
 }
 
-func (t *workflowsGrantTransport) askedRepos() []string {
+func (t *workflowsGrantTransport) askedAgents() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return append([]string(nil), t.asked...)
@@ -49,9 +52,10 @@ func withWorkflowsGrant(t *testing.T, h *adoptHarness, pushable bool) *workflows
 }
 
 // A base that changed .github/workflows/ supersedes a branch of the base
-// repository only when the hive cannot push workflow files there. With the
-// installation's `workflows: write` grant, the base-sync lands on the PR's
-// own branch, so the PR is adopted in place and keeps its number and
+// repository only when the fixer that works an adopted head cannot push
+// workflow files there. When its tier asks for the Workflows permission and
+// the installation grants `workflows: write`, the base-sync lands on the
+// PR's own branch, so the PR is adopted in place and keeps its number and
 // approvals (projectbluefin/common#1689 was closed and re-opened as #1708).
 // A compare failure still supersedes.
 func TestAdoptionInPlaceWorkflowGuardHonoursGrant(t *testing.T) {
@@ -63,10 +67,10 @@ func TestAdoptionInPlaceWorkflowGuardHonoursGrant(t *testing.T) {
 		wantInPlace bool
 		wantAsked   bool
 	}{
-		{name: "grant: same-repo head adopted in place", pushable: true, files: []string{".github/workflows/build.yml"}, wantInPlace: true, wantAsked: true},
-		{name: "no grant: same-repo head superseded", files: []string{".github/workflows/build.yml"}, wantAsked: true},
-		{name: "grant: compare error still supersedes", pushable: true, failCompare: true},
-		{name: "grant: no workflow change needs no grant read", pushable: true, files: []string{"src/a.go"}, wantInPlace: true},
+		{name: "fixer can push workflows: same-repo head adopted in place", pushable: true, files: []string{".github/workflows/build.yml"}, wantInPlace: true, wantAsked: true},
+		{name: "fixer cannot push workflows: same-repo head superseded", files: []string{".github/workflows/build.yml"}, wantAsked: true},
+		{name: "fixer can push, compare error still supersedes", pushable: true, failCompare: true},
+		{name: "no workflow change needs no capability read", pushable: true, files: []string{"src/a.go"}, wantInPlace: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,13 +96,13 @@ func TestAdoptionInPlaceWorkflowGuardHonoursGrant(t *testing.T) {
 			if superseded := len(h.adopt.pulls) == 1; superseded == tc.wantInPlace {
 				t.Fatalf("superseding PRs = %d, in-place want %v", len(h.adopt.pulls), tc.wantInPlace)
 			}
-			asked := tr.askedRepos()
+			asked := tr.askedAgents()
 			if (len(asked) > 0) != tc.wantAsked {
-				t.Fatalf("grant read for %v, want asked=%v", asked, tc.wantAsked)
+				t.Fatalf("capability read for %v, want asked=%v", asked, tc.wantAsked)
 			}
-			for _, repo := range asked {
-				if repo != "acme/widget" {
-					t.Fatalf("grant read for %q, want acme/widget", repo)
+			for _, agent := range asked {
+				if agent != hgithub.FallbackFixAgent {
+					t.Fatalf("capability read for %q, want the fallback fixer %q", agent, hgithub.FallbackFixAgent)
 				}
 			}
 		})
@@ -130,8 +134,8 @@ func TestAdoptionForkWorkflowGuardIgnoresGrant(t *testing.T) {
 	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.ForkRehomeRefused("aaa") {
 		t.Fatalf("fork head not recorded as staying with its author: %+v", rec)
 	}
-	if asked := tr.askedRepos(); len(asked) != 0 {
-		t.Fatalf("fork head read the base installation's grant: %v", asked)
+	if asked := tr.askedAgents(); len(asked) != 0 {
+		t.Fatalf("fork head read the fixer's workflows capability: %v", asked)
 	}
 }
 
@@ -161,5 +165,45 @@ func TestAdoptionRecoveryUpdateBranchSkip(t *testing.T) {
 	}
 	if got := adoptionRecoveryUpdateBranchSkip(classifyUpdateBranchError(errors.New("network"), false)); got != "update-branch-failed" {
 		t.Fatalf("plain error: %q", got)
+	}
+}
+
+// projectbluefin/utah-packages#1173 and projectbluefin/actions#752: an
+// in-place adoption of a fork head whose base changed .github/workflows/.
+// The stale-red recovery's update-branch is refused (GitHub will not let an
+// App push workflow files to a fork) and the log names that refusal instead
+// of the catch-all update-branch-failed.
+func TestAdoptedRecoveryForkWorkflowRefusalNamed(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(forkPR(7, "aaa"), recoveryReason)
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonGrace, h.clock.at)
+	h.api.reset()
+	h.adopt.compareBase = "base1"
+	h.adopt.compareBehind = 18
+	h.adopt.baseChecks = map[string]string{"coverage": "success"}
+	h.adopt.updateBranchStatus = http.StatusForbidden
+	h.adopt.updateBranchMessage = workflowPermissionRefusal
+	h.clock.advance(adoptedDwell + time.Minute)
+	var logs bytes.Buffer
+	h.e.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	h.observe(forkPR(7, "aaa", adoptedLabels...), recoveryReason)
+	if len(h.adopt.branchUpdates) != 1 {
+		t.Fatalf("branch updates=%v, want one refused attempt", h.adopt.branchUpdates)
+	}
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+		t.Fatalf("fork code copied into the base repository: pulls=%v refs=%v", h.adopt.pulls, h.adopt.refs)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "reason=skipped:fork-workflow-update") {
+		t.Fatalf("recovery log does not name the fork workflow refusal:\n%s", out)
+	}
+	if strings.Contains(out, "update-branch-failed") {
+		t.Fatalf("recovery log kept the catch-all reason:\n%s", out)
 	}
 }
