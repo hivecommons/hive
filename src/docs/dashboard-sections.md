@@ -102,6 +102,8 @@ Whether Hive thinks you could safely let it do more on its own, and what still h
 
 Full entry: [Ready to level up?](dashboard-sections/overview-and-metrics.md#ready-to-level-up).
 
+<a id="lifecycle-timeline"></a>
+
 ## PR timeline
 
 A timeline of recent pull requests, from when they were opened to when they were merged or got stuck.
@@ -246,6 +248,8 @@ The raw text output of each worker, for following what it is doing line by line.
 
 Full entry: [Agent Logs](dashboard-sections/workflow-and-agents.md#agent-logs).
 
+<a id="agents"></a>
+
 ## Control panel
 
 One card per worker with its status and buttons to pause, restart or configure it.
@@ -265,6 +269,8 @@ Full entry: [Hive activity monitor](dashboard-sections/activity-monitor.md#hive-
 ### Let hive decide
 
 The monitor's decision feature has its own entry: [Let hive decide](dashboard-sections/activity-monitor.md#let-hive-decide).
+
+<a id="agent-activity"></a>
 
 ## Activity
 
