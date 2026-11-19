@@ -888,6 +888,20 @@ test('#16484: count grammar — CI passed/total and Review done/total across eve
   assert.equal(review('changes_requested'), 'Review 3/5 · changes requested');
   assert.equal(review('human_decision'), 'Review 3/5 · needs owner sign-off', 'reviews done; the sign-off is what is left, never "awaiting human"');
   assert.equal(review('human_decision', {}, { decision_needed: { question: '@clubanderson should decide whether to accept this workflow change from a fork.' } }), 'Review 3/5 · needs owner sign-off', 'no viewer known: the owner');
+  // An answered sign-off ask: only a GitHub Approve review reads "signed
+  // off"; never "no sign-off pending", which read like a DCO failure.
+  const answeredConsts = ['STAGE_TRACKER_ANSWERED_VIA_REVIEW', 'STAGE_TRACKER_ANSWERED_VIA_DASHBOARD', 'STAGE_TRACKER_ANSWERED_VIA_POLICY'].map(name => constLine(strip, name)).join('\n');
+  const answeredWord = new Function(answeredConsts + '\n' + fn(strip, 'stageTrackerGateAnsweredWord') + ';return stageTrackerGateAnsweredWord;')();
+  const gate = (via, by) => ({ human_gate: { reasons: [], actions: [], answered: true, answered_by: by, answered_via: via } });
+  assert.equal(answeredWord(gate('review', 'octo')), 'signed off');
+  assert.equal(answeredWord({ human_approver: 'octo' }), 'signed off', 'an older payload: the recorded GitHub approver');
+  assert.equal(answeredWord(gate('dashboard', 'maintainer')), 'approved by maintainer');
+  assert.equal(answeredWord(gate('dashboard', '@maintainer')), 'approved by maintainer');
+  assert.equal(answeredWord(gate('dashboard', '')), 'decision answered', 'no login known: no name invented');
+  assert.equal(answeredWord(gate('policy', '')), 'answered by policy');
+  assert.equal(answeredWord(gate('', '')), 'decision answered');
+  assert.equal(answeredWord({}), 'decision answered');
+  for (const item of [{}, gate('', ''), gate('dashboard', ''), gate('policy', '')]) assert.ok(!/sign-off|signed off/.test(answeredWord(item)), 'no sign-off claimed without an Approve review: ' + JSON.stringify(item));
   globalThis.window = { _hiveUser: 'ClubAnderson' };
   try {
     assert.equal(review('human_decision', {}, { decision_needed: { question: '@clubanderson should decide whether to accept this workflow change from a fork.' } }), 'Review 3/5 · needs your sign-off', 'the ask names the viewer');
