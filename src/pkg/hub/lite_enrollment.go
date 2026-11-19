@@ -518,10 +518,7 @@ var liteRepoAccessTransport http.RoundTripper = pinnedFetchTransport(isPrivateUR
 // http.DefaultTransport was replaced (tests inject a RoundTripper there, the
 // same convention as hubGitHubHTTPClient); then that replacement is used.
 func liteRepoAccessRoundTripper() http.RoundTripper {
-	if _, ok := http.DefaultTransport.(*http.Transport); !ok {
-		return http.DefaultTransport
-	}
-	return liteRepoAccessTransport
+	return pinnedOrReplacedDefault(liteRepoAccessTransport)
 }
 
 func liteRepoAccessHTTPClient() *http.Client {
