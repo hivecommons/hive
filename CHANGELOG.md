@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v6.51.1)
+
+### Fixed
+
+- The dashboard's top bar no longer draws the project title and ACMM badge over its chips on a mid-size screen with the sidebar open, such as an iPad in landscape. The icon-only chip rule ([#13135](https://github.com/hivecommons/hive/issues/13135)) keyed on the viewport width, but the bar is the viewport minus the sidebar; it now also applies when the bar itself is 1000px wide or less.
+- The Hive activity monitor no longer draws a linked PR's title one letter per line when its repo chip, base-branch pill and status chips fill the row (seen on an iPad for utah-packages#1212). The PR's number and title now keep a minimum width and move to the next line instead.
+
 ## 2026-11-18 (v6.51.0)
 
 ### Added
