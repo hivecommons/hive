@@ -10,9 +10,15 @@ import (
 // Sentinel defaults. The label is deliberately descriptive rather than
 // accusatory: a finding is a reason for a person to look, not a verdict.
 const (
-	DefaultSentinelLabel            = "sentinel-alert"
-	DefaultSentinelLabelColor       = "b60205"
-	DefaultSentinelLabelDescription = "Hive sentinel: possible security override, privilege escalation or codebase damage — a maintainer must review before merge"
+	DefaultSentinelLabel      = "sentinel-alert"
+	DefaultSentinelLabelColor = "b60205"
+	// DefaultSentinelLabelDescription must stay within GitHub's 100-character
+	// label description cap (GitHubLabelDescriptionMax) and use no em or en
+	// dash; label_sync rejects an over-long description.
+	DefaultSentinelLabelDescription = "Hive sentinel: possible security override or privilege escalation; maintainer review before merge"
+	// LegacySentinelLabelDescription is the pre-fix default (124 bytes, over
+	// the cap). Repos that already carry it are re-synced to the default.
+	LegacySentinelLabelDescription = "Hive sentinel: possible security override, privilege escalation or codebase damage \u2014 a maintainer must review before merge"
 	// DefaultSentinelMaxActions caps PRs labelled per sweep pass so a burst
 	// of matching PRs cannot flood a repo with comments in one tick.
 	DefaultSentinelMaxActions = 20
