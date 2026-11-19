@@ -108,7 +108,11 @@ const (
 	decisionAskedByTriage     = "triage"
 	decisionAskedByHiveAgent  = "the hive"
 	decisionAskedByEscalation = "the needs-human label"
+	decisionAskedByHumanOnly  = "the human-only marker"
 )
+
+// decisionWhyPersonOnly is why "Let hive decide" is off on an owner-only ask.
+const decisionWhyPersonOnly = "Only a person can decide this; the hive would hand it to an agent that cannot act on it"
 
 // Blocker reason tokens the tracker coins when the lane left none. The
 // token is for machines (filters, tests); the popover prints Blocker.
@@ -228,6 +232,11 @@ func stageTrackerDecisionNeededWith(it StageTrackerItem, verdict *review.Aggrega
 		// The issue rides its covering PR; the PR's own row (nested under
 		// the issue) carries the decision.
 		return nil
+	case it.Kind == "issue" && issueOwnerOnlyAsk(it) && (it.Stage == stagelabels.IssueNeedsDecision.Number() || slices.Contains(it.Modifiers, modNeedsDecision) || slices.Contains(it.Modifiers, modNeedsHuman)):
+		// The ask is a person's alone (a security review hand-off, a
+		// human-only marker): "Let hive decide" would only send it to an
+		// agent that cannot act on it (hivecommons/hive#19229).
+		return decisionForOwnerOnlyIssue(it, held)
 	case it.Kind == "issue" && (it.Stage == stagelabels.IssueNeedsDecision.Number() || slices.Contains(it.Modifiers, modNeedsDecision)):
 		return decisionForIssue(it, held)
 	case it.Kind == "issue" && (it.Stage == stagelabels.TriageNeeded.Number() || slices.Contains(it.Modifiers, modNeedsTriage)):

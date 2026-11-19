@@ -35,6 +35,10 @@ const (
 	DecisionQuestionIneligible DecisionQuestionClass = "ineligible"
 )
 
+// ReasonSecurityRoutedToPerson is the classifier reason for a head the
+// security review routed to a person.
+const ReasonSecurityRoutedToPerson = "the security review routed this head to a person"
+
 // DecisionQuestionInput is what the classifier sees. It is a value, not a
 // GitHub read: callers gather the head's files and status first.
 type DecisionQuestionInput struct {
@@ -52,6 +56,12 @@ type DecisionQuestionInput struct {
 	// Files are the head's changed files with their patches (patch may be
 	// empty when the caller did not fetch it).
 	Files []DecisionQuestionFile
+	// SecurityRequiresPerson: the head's aggregate says the security
+	// review routed it to a person (Aggregate.SecurityRequiresPerson).
+	// That ask is a person's however it is worded: the hive never decides
+	// it for them and never files it as follow-up work an agent may claim
+	// (hivecommons/hive#19229).
+	SecurityRequiresPerson bool
 }
 
 // DecisionQuestionFile is one changed file of the PR under question.
@@ -109,6 +119,9 @@ func ClassifyDecisionQuestion(in DecisionQuestionInput) (DecisionQuestionClass, 
 	q := strings.ToLower(strings.TrimSpace(in.Question))
 	if q == "" {
 		return DecisionQuestionIneligible, "no reviewer question"
+	}
+	if in.SecurityRequiresPerson {
+		return DecisionQuestionPolicySignOff, ReasonSecurityRoutedToPerson
 	}
 	for _, f := range in.Files {
 		p := strings.TrimSpace(f.Path)

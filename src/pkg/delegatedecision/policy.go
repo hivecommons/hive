@@ -344,7 +344,31 @@ type Input struct {
 	// anyway ("" when the park is an ordinary one the rule overrides).
 	HiveSuperseding        bool
 	HiveSupersederHardStop string
+	// HumanOnly names why the ask is a person's alone ("" = it is not):
+	// the structured human-only marker or label on an issue
+	// (gfi.HumanOnlyMarker, `human-only`), or a governor follow-up that
+	// carries a security review's hand-off to a person. The caller sets it;
+	// RuleHumanOnly keeps such an item parked for the owner instead of
+	// approving it for an agent that cannot act (hivecommons/hive#19229).
+	HumanOnly string
+	// SecurityRequiresPerson: the PR head's review aggregate says the
+	// security perspective itself routed it to a person
+	// (review.Aggregate.SecurityRequiresPerson), a structured field rather
+	// than the reviewer's wording.
+	SecurityRequiresPerson bool
 }
+
+// RuleHumanOnly keeps an item whose ask only a person can answer (a
+// security review routed to a person, a human-only marker) parked for the
+// owner: no default approve, no agent, needs-owner on it.
+const RuleHumanOnly = "person-only"
+
+// Human-only reasons the caller may set on Input.HumanOnly.
+const (
+	// HumanOnlySecurityReview: the security review routed the work to a
+	// person (on a PR head, or quoted by the governor follow-up it filed).
+	HumanOnlySecurityReview = "security review routed to a person"
+)
 
 // CIRed reports a head that is not green because a check failed (or none
 // ever reported), as opposed to one still waiting on running checks.
@@ -396,8 +420,12 @@ var (
 	// workflow headlines ("the App cannot push workflows") that name no
 	// permission or path shape the ledger's workflows rule recognises.
 	appPermissionRE = regexp.MustCompile(`(?i)\b(?:app(?: token)?|installation|github app)\b[^\n]{0,80}\b(?:cannot|can't|lacks?|missing|without|no)\b[^\n]{0,60}\b(?:workflows?|permissions?)\b`)
-	duplicateOfRE   = regexp.MustCompile(`(?i)\bduplicate of #(\d+)`)
-	blockedOnPRRE   = regexp.MustCompile(`(?i)\b(review backlog|blocked on (?:its|their|the) PR)\b`)
+	// prOwnerGrantTitleRE: a PR title that opens (after an emoji and a
+	// conventional-commit prefix) with a verb that grants or sets
+	// something, the only title shape that is an owner ask on a PR.
+	prOwnerGrantTitleRE = regexp.MustCompile(`(?i)^[^\pL\pN]*(?:[\pL\pN]+(?:\([^)]*\))?!?:\s*)?(?:add|grant|set|rotate|provision|create|regenerate|renew|re-?scope|revoke)\b`)
+	duplicateOfRE       = regexp.MustCompile(`(?i)\bduplicate of #(\d+)`)
+	blockedOnPRRE       = regexp.MustCompile(`(?i)\b(review backlog|blocked on (?:its|their|the) PR)\b`)
 )
 
 // Classifier labels.
@@ -481,12 +509,22 @@ func CapabilityGap(in Input) bool {
 		in.Kind == KindIssue && isCapability(firstLines(in.Body, 12))
 }
 
-// OwnerOnly reports a secrets / PAT / org-permission item.
+// OwnerOnly reports a secrets / PAT / org-permission item. On an issue the
+// title, question, park reasons and the body's opening lines are read. A PR
+// is a code change, so its title names its topic, not an ask: a PR titled
+// "credential stripping for http clients" is a code review, not "set the
+// secret named in the title" (hivecommons/hive#19226). A PR is owner-only
+// when the question or a park reason names a secret / PAT / permission, or
+// when its title leads with a grant verb ("Add org membership for bot").
 func OwnerOnly(in Input) bool {
+	if in.Kind == KindPR {
+		asked := strings.Join(append([]string{in.Question}, in.Reasons...), "\n")
+		return secretsRE.MatchString(asked) || prOwnerGrantTitleRE.MatchString(in.Title) && secretsRE.MatchString(in.Title)
+	}
 	if secretsRE.MatchString(in.headline()) {
 		return true
 	}
-	return in.Kind == KindIssue && secretsRE.MatchString(firstLines(in.Body, 12))
+	return secretsRE.MatchString(firstLines(in.Body, 12))
 }
 
 func firstLines(s string, n int) string {
@@ -519,6 +557,21 @@ func ownerOnlyDecision(in Input, rationale string) Decision {
 	}
 }
 
+// humanOnlyDecision keeps an item parked for the owner: the ask is one no
+// delegate decision and no agent can answer, so approving it only sends it
+// to an agent that claims it and drops it again (hivecommons/hive#19229).
+func humanOnlyDecision(ref, why string) Decision {
+	text := "owner action required: " + ref + " needs a person (" + why + "); read it yourself, then decide it or close it"
+	return Decision{
+		Verdict: VerdictRecommendOnly, Rule: RuleHumanOnly, Text: text, KeepsPark: true,
+		Rationale: "the ask is a person's alone (" + why + "); a default approve would hand it to an agent that cannot act on it",
+		Actions: []Action{
+			{Kind: ActionLabelsAdd, Labels: []string{LabelNeedsOwner}},
+			{Kind: ActionRecommendOnly, Text: text},
+		},
+	}
+}
+
 func decideIssue(in Input) Decision {
 	ref := "#" + strconv.Itoa(in.Number)
 	if in.Advisory != nil {
@@ -541,6 +594,9 @@ func decideIssue(in Input) Decision {
 	}
 	if OwnerOnly(in) {
 		return ownerOnlyDecision(in, "secrets, PATs and org permissions are the owner's alone; the hive stops opening further failure issues for this root cause")
+	}
+	if why := strings.TrimSpace(in.HumanOnly); why != "" {
+		return humanOnlyDecision(ref, why)
 	}
 	if target := in.duplicateTarget(); target > 0 && target < in.Number {
 		text := fmt.Sprintf("Duplicate of #%d", target)
@@ -709,6 +765,19 @@ func decidePR(in Input) Decision {
 	}
 	if d, ok := decideHiveSuperseder(in, ref); ok {
 		return d
+	}
+	// A head the security review routed to a person is a person's to read,
+	// whatever else holds: no release, no fixer direction. The adopted-in-
+	// place branch below says the same in its own words
+	// (RuleAdoptedSecurityFinding), so it keeps that case.
+	if !in.AdoptedByHive {
+		why := strings.TrimSpace(in.HumanOnly)
+		if why == "" && in.SecurityRequiresPerson {
+			why = HumanOnlySecurityReview
+		}
+		if why != "" {
+			return humanOnlyDecision(ref, why)
+		}
 	}
 	if in.SentinelAlert {
 		if !in.TrustedAuthor {
