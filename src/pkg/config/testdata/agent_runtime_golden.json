@@ -793,6 +793,10 @@
     "avatars": {},
     "mention_search": {}
   },
+  "ask": {
+    "kapa": {},
+    "limits": {}
+  },
   "duplicate_sweep": {},
   "good_first_issue": {},
   "supersession_sweep": {},
