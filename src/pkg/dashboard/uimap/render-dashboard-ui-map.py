@@ -38,7 +38,8 @@ SECTIONS_PAGE = "dashboard-sections.md"
 BEGIN = "<!-- BEGIN GENERATED: dashboard-ui-map (src/pkg/dashboard/uimap/render-dashboard-ui-map.py) -->"
 END = "<!-- END GENERATED: dashboard-ui-map -->"
 
-# The Agents group is a live tree of the hive's own agents, not fixed entries.
+# The Agents group holds fixed entries (Control panel, Activity) followed by
+# "All agents (n)", a live tree of the hive's own agents.
 AGENT_TREE_GROUP = "Agents"
 
 
@@ -122,9 +123,6 @@ def render():
     lines.append("| Sidebar group | Entry | Section heading | What it shows | Help |")
     lines.append("|---|---|---|---|---|")
     for group, items in sidebar_groups():
-        if group == AGENT_TREE_GROUP:
-            lines.append("| Agents | One entry per agent, plus **＋ Add agent** and **＋ Group** | | Opens that agent's card. | [Agents](%s#agents) |" % SECTIONS_PAGE)
-            continue
         for text, section, optional in items:
             entry = "**%s**%s" % (cell(text), " (only when switched on)" if optional else "")
             if section and section in help_map:
@@ -134,6 +132,8 @@ def render():
                 lines.append("| %s | %s | | | |" % (group, entry))
             else:
                 lines.append("| %s | %s | | A link or dialog, not a dashboard section. | |" % (group, entry))
+        if group == AGENT_TREE_GROUP:
+            lines.append("| Agents | **All agents (n)**: one entry per agent, plus **＋ Add agent** and **＋ Group** | | Opens that agent's card. Collapsing the list keeps the entries above it visible. | [Control panel](%s#control-panel) |" % SECTIONS_PAGE)
     governor_tabs, agent_tabs = config_tabs()
     documented = settings_headings()
     lines += ["", "### Settings tabs", ""]

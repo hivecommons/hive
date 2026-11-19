@@ -102,11 +102,13 @@ Whether Hive thinks you could safely let it do more on its own, and what still h
 
 Full entry: [Ready to level up?](dashboard-sections/overview-and-metrics.md#ready-to-level-up).
 
-## Lifecycle Timeline
+<a id="lifecycle-timeline"></a>
+
+## PR timeline
 
 A timeline of recent pull requests, from when they were opened to when they were merged or got stuck.
 
-Full entry: [Lifecycle Timeline](dashboard-sections/overview-and-metrics.md#lifecycle-timeline).
+In the Pull requests group of the left menu, after Review. Earlier versions called it Lifecycle Timeline. Full entry: [PR timeline](dashboard-sections/overview-and-metrics.md#lifecycle-timeline).
 
 ## Throughput
 
@@ -144,11 +146,11 @@ Actions Hive wants to take that are waiting for you to approve or reject them.
 
 Full entry: [Approvals](dashboard-sections/workflow-and-agents.md#approvals).
 
-## Audit Log
+## Audit log
 
 A searchable record of everything Hive has done, newest first. The collapsed “sensitive” badge opens a 24h sensitive-only view, matching the server-side risk count.
 
-Full entry: [Audit Log](dashboard-sections/workflow-and-agents.md#audit-log).
+In the Troubleshooting group of the left menu, after Diagnostics. Full entry: [Audit log](dashboard-sections/workflow-and-agents.md#audit-log).
 
 ## Review
 
@@ -246,13 +248,17 @@ The raw text output of each worker, for following what it is doing line by line.
 
 Full entry: [Agent Logs](dashboard-sections/workflow-and-agents.md#agent-logs).
 
-## Agents
+<a id="agents"></a>
 
-Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.
+## Control panel
+
+One card per worker with its status and buttons to pause, restart or configure it.
+
+First entry in the Agents group of the left menu (earlier versions called it Agents and listed it under Admin). Below it sit Activity and the collapsible **All agents (n)** list, one row per agent with **＋ Add agent** and **＋ Group**; collapsing that list keeps Control panel and Activity visible.
 
 The pause/resume control is owner-only but never absent: below the owner role, or while the role is still being checked, it renders disabled with the tooltip "Needs the owner role" or "Checking your access...". Cards and the detail panel repaint when the role settles. A paused sandboxed agent offers plain `resume` (no session to start). The cadence table shows a single `paused` chip (with its reason on hover) beside the agent name; the mode columns show plain `paused` text.
 
-Full entry: [Agents](dashboard-sections/workflow-and-agents.md#agents).
+Full entry: [Control panel](dashboard-sections/workflow-and-agents.md#agents).
 
 ## Hive activity monitor
 
@@ -264,11 +270,13 @@ Full entry: [Hive activity monitor](dashboard-sections/activity-monitor.md#hive-
 
 The monitor's decision feature has its own entry: [Let hive decide](dashboard-sections/activity-monitor.md#let-hive-decide).
 
-## Agent activity
+<a id="agent-activity"></a>
+
+## Activity
 
 One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.
 
-Full entry: [Agent activity](dashboard-sections/activity-monitor.md#agent-activity).
+In the Agents group of the left menu, after Control panel (earlier versions called it Agent activity). Full entry: [Activity](dashboard-sections/activity-monitor.md#agent-activity).
 
 ## FAQ
 

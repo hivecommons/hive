@@ -73,7 +73,7 @@
          an absolutely-positioned dropdown inside it would be clipped away.
          Pin the account menu to the viewport under the navbar instead and
          let it scroll when taller than the phone screen. */
-      #oc-gh-user-menu {
+      #oc-help-menu, #oc-gh-user-menu {
         position: fixed;
         top: calc(var(--navbar-sticky-height) + env(safe-area-inset-top, 0px) + var(--sp-2));
         right: max(var(--sp-5), env(safe-area-inset-right, 0px));
@@ -590,7 +590,7 @@
          an absolutely-positioned dropdown inside it would be clipped away.
          Pin the account menu to the viewport under the navbar instead and
          let it scroll when taller than the phone screen. */
-      #oc-gh-user-menu {
+      #oc-help-menu, #oc-gh-user-menu {
         position: fixed;
         top: calc(var(--navbar-sticky-height) + env(safe-area-inset-top, 0px) + var(--sp-2));
         right: max(var(--sp-5), env(safe-area-inset-right, 0px));
