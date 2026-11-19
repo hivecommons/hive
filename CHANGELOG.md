@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v6.52.1)
+
+### Fixed
+
+- The "Merge blocked … requires changes to be made through the merge queue" banner no longer appears for a repo (and base branch) opted into `auto_merge.native_merge_queue`, where the auto-merge lanes enqueue the PR themselves; a banner already up for such a repo clears on the next five-minute check. On other repos the banner now suggests opting into the native queue, enqueueing the PR or merging it by hand, and no longer suggests removing the merge-queue rule.
+
 ## 2026-11-19 (v6.52.0)
 
 ### Added
