@@ -646,6 +646,38 @@ cannot stop external writers and does not relax strict current-base checks.
 Deploying the changed hive binary activates the policy; no agent, memory,
 review, CI, hold or authorization setting needs changing.
 
+### Agents leave merely-behind PRs to the owner; ci-maintainer measures churn
+
+The preparation owner above is the only thing that refreshes a PR that is
+merely behind. Agent prompts say so: the ci-maintainer and quality lanes
+(item 4 of "CI Throughput and Merge Order" in every
+`src/pkg/policies/defaults/ci-maintainer*.md` and `quality*.md` variant) and
+the scanner's conflict section in `scanner-full.md` no longer call
+`update-branch` / `update_pull_request_branch` on a PR that is only behind,
+even when it touches the files of a change that just merged. A refresh by
+anyone else reruns every pull_request workflow and cancels the run in
+flight, which sends the owner back to the start. Agents touch a behind
+branch only to repair a real conflict (`CONFLICTING` / `DIRTY`, or
+`git merge-tree` exit 1), and the shared-baseline helper's `MERGE_BASE`
+repair of a red check still applies. When an agent cannot tell whether the
+gate applies to a repository it assumes it does; where the gate is off, the
+merge train already updates overlapping siblings. `TestPoliciesDoNotRefreshMerelyBehindPRs`
+in `src/pkg/policies/ci_throughput_test.go` keeps the old instructions out.
+
+`ci-maintainer-full.md` also carries a standing **Merge Churn** goal: once a
+week it measures the primary repository's last 7 days (at most the 100 most
+recently merged PRs), writes one `merge churn: week of <date>` bead, and
+keeps one open `[ci-maintainer] Merge churn over threshold in <owner/repo>`
+issue while any threshold is crossed (a comment per new week, closed after a
+full week back under every threshold).
+
+| Measure | Name | Over threshold when |
+| --- | --- | --- |
+| App base refreshes per merged PR | `refreshes_per_merged_pr` | mean above 1.5 |
+| pull_request runs cancelled on a head a refresh replaced | `refresh_cancelled_run_share` | above 20% of the week's pull_request runs |
+| Releases published per day | `release_merges_per_day` | above 6 |
+| Latest approving review to merge | `approval_to_merge_median` / `approval_to_merge_p90` | median above 4h or p90 above 24h |
+
 ### CI reporting reconciliation
 
 An unfinished required check is not green merely because its Actions workflow
