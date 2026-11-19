@@ -117,6 +117,8 @@ var outboundSites = map[string]outboundSite{
 	// No human-read text.
 	"agent.(*sharedSessionPoolClient).request":         machine(reasonInternalAPI),
 	"api.(*Client).request":                            machine(reasonInternalAPI),
+	"askai.(*KapaClient).Chat":                         machine(reasonModelPrompt),
+	"askai.(*RelayAsker).ask":                          machine(reasonSpokeToHub),
 	"auth.(*Provider).fetchIDToken":                    machine(reasonAuth),
 	"callback.(*Client).do":                            machine(reasonInternalAPI),
 	"client.(*Client).doJSON":                          machine(reasonInternalAPI),

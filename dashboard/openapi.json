@@ -29852,6 +29852,223 @@
         }
       }
     },
+    "/api/ask/status": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Ask AI help status",
+        "description": "Whether the optional Ask AI help panel is on for the signed-in person, the disclosure they must confirm and whether they have. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183). Never returns the vendor key, project id or integration id.",
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "text_version": {
+                      "type": "string"
+                    },
+                    "disclosure": {
+                      "type": "string"
+                    },
+                    "consented": {
+                      "type": "boolean"
+                    },
+                    "docs_url": {
+                      "type": "string"
+                    },
+                    "ai_label": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
+          }
+        }
+      }
+    },
+    "/api/ask/consent": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Confirm the Ask disclosure",
+        "description": "Records the signed-in person's consent to the disclosure version the page showed. One audit line, no text. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text_version": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text_version"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded"
+          },
+          "400": {
+            "description": "Invalid JSON"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
+          },
+          "409": {
+            "description": "The disclosure text changed; reload and confirm again"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Withdraw Ask consent",
+        "description": "Withdraws the signed-in person's consent; takes effect on the next question. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183).",
+        "responses": {
+          "204": {
+            "description": "Withdrawn (or nothing to withdraw)"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
+          }
+        }
+      }
+    },
+    "/api/ask": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Ask a docs-help question",
+        "description": "Validates the question (length cap; credential-shaped input is refused and nothing is sent), checks consent and limits, then asks Kapa.ai directly (ask.mode direct) or through the hub relay (ask.mode hub, hosted hives). Only the question and, when on, the label of the dashboard section from a closed list of ids leave the hive. Answers without an allowlisted source come back as no_cited_answer. Always 200 with an outcome. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "section": {
+                    "type": "string"
+                  },
+                  "conversation": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "question"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "no_cited_answer",
+                        "refused_secret_shape",
+                        "rate_limited",
+                        "breaker_open",
+                        "upstream_error",
+                        "not_consented",
+                        "invalid_question",
+                        "relay_disabled"
+                      ]
+                    },
+                    "answer": {
+                      "type": "string",
+                      "description": "Plain text; render as text, never as HTML."
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "uncertain": {
+                      "type": "boolean"
+                    },
+                    "conversation": {
+                      "type": "string",
+                      "description": "Opaque follow-up handle bound to this person; the vendor thread id never leaves the server."
+                    },
+                    "retry_after_seconds": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "ai_generated": {
+                      "type": "boolean"
+                    },
+                    "docs_url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
+          }
+        }
+      }
+    },
     "/api/feedback/nps/status": {
       "get": {
         "tags": [

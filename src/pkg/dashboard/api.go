@@ -78,6 +78,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// response to the hub over the spoke's authenticated hub link. See nps.go.
 	s.mux.HandleFunc("GET /api/feedback/nps/status", s.handleNPSStatus)
 	s.mux.HandleFunc("POST /api/feedback/nps", s.handleNPSSubmit)
+	// Ask AI help (#19183): 404 unless ask is on and configured.
+	s.mux.HandleFunc("GET /api/ask/status", s.handleAskStatus)
+	s.mux.HandleFunc("PUT /api/ask/consent", s.handleAskConsent)
+	s.mux.HandleFunc("DELETE /api/ask/consent", s.handleAskConsent)
+	s.mux.HandleFunc("POST /api/ask", s.handleAsk)
 	s.mux.HandleFunc("GET /api/feedback/status", s.handleFeedbackStatus)
 	s.mux.HandleFunc("POST /api/feedback/report", s.handleFeedbackReport)
 	s.mux.HandleFunc("GET /api/feedback/mine", s.handleFeedbackMine)
