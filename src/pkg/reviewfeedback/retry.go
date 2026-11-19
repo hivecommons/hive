@@ -144,6 +144,10 @@ func (s *Store) CheckStranded(key, head string, lastReply time.Time, unanswered 
 		return StrandedCheck{Verdict: StrandedWaiting, IDs: still, Retries: st.Retries}, nil
 	}
 	if st.LastKickHead == "" {
+		// Persist the derived ids with the baseline: resetting LastKick
+		// breaks the "stamped at the kick time" derivation above.
+		st.LastKickIDs = append([]string(nil), routed...)
+		sort.Strings(st.LastKickIDs)
 		st.LastKickHead, st.LastKick = head, now
 		return StrandedCheck{Verdict: StrandedWaiting, IDs: still, Retries: st.Retries}, s.saveLocked(now)
 	}
