@@ -41,7 +41,7 @@ func TestProxyHTTPGitReceivePackStreaming(t *testing.T) {
 	}()
 
 	// Client: send git receive-pack request
-	gitBody := "0000want abcdef\n"
+	gitBody := "0000" // flush only: a delete-style push with no pack, forwarded unchanged
 	fmt.Fprintf(clientConn, "POST /org/repo.git/git-receive-pack HTTP/1.1\r\nHost: github.com\r\nContent-Length: %d\r\n\r\n%s", len(gitBody), gitBody)
 
 	// Read the response (raw git pack data)

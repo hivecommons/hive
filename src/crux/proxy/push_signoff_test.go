@@ -77,7 +77,7 @@ func TestPushSignoffRefusal(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body := testPackBody(t, [2]any{1, tc.commit}, [2]any{3, "blob data"})
 			req := pushReq(body)
-			_, refused := pushSignoffRefusal(req, "scanner")
+			_, refused, _ := pushSignoffRefusal(req, "scanner")
 			if refused != tc.refused {
 				t.Fatalf("refused = %v, want %v", refused, tc.refused)
 			}
@@ -90,15 +90,139 @@ func TestPushSignoffRefusal(t *testing.T) {
 }
 
 func TestPushSignoffRefusalFailClosedAndSkips(t *testing.T) {
-	if _, refused := pushSignoffRefusal(pushReq([]byte("0000garbage")), "scanner"); !refused {
+	if _, refused, _ := pushSignoffRefusal(pushReq([]byte("0000garbage")), "scanner"); !refused {
 		t.Fatal("unparseable push must be refused")
 	}
 	body := testPackBody(t, [2]any{1, testCommit("scanner <scanner@hive.invalid>", "scanner <scanner@hive.invalid>", "msg", 1)})
-	if _, refused := pushSignoffRefusal(pushReq(body), ""); refused {
+	if _, refused, _ := pushSignoffRefusal(pushReq(body), ""); refused {
 		t.Fatal("unnamed agent must not be inspected")
 	}
 	get, _ := http.NewRequest(http.MethodGet, "https://github.com/o/r.git/info/refs", nil)
-	if _, refused := pushSignoffRefusal(get, "scanner"); refused {
+	if _, refused, _ := pushSignoffRefusal(get, "scanner"); refused {
 		t.Fatal("non-push must pass")
+	}
+}
+
+func packObjBytes(typ int, extra []byte, payload []byte) []byte {
+	var out bytes.Buffer
+	size := len(payload)
+	b := byte(typ<<4) | byte(size&0x0f)
+	size >>= 4
+	for size > 0 {
+		out.WriteByte(b | 0x80)
+		b = byte(size & 0x7f)
+		size >>= 7
+	}
+	out.WriteByte(b)
+	out.Write(extra)
+	zw := zlib.NewWriter(&out)
+	_, _ = zw.Write(payload)
+	_ = zw.Close()
+	return out.Bytes()
+}
+
+func deltaVarintBytes(n int) []byte {
+	var out []byte
+	for {
+		b := byte(n & 0x7f)
+		n >>= 7
+		if n > 0 {
+			out = append(out, b|0x80)
+			continue
+		}
+		return append(out, b)
+	}
+}
+
+// insertOnlyDelta builds a delta that rewrites base into target with literals.
+func insertOnlyDelta(baseLen int, target string) []byte {
+	d := append(deltaVarintBytes(baseLen), deltaVarintBytes(len(target))...)
+	for t := []byte(target); len(t) > 0; {
+		n := min(len(t), 127)
+		d = append(d, byte(n))
+		d = append(d, t[:n]...)
+		t = t[n:]
+	}
+	return d
+}
+
+func wrapPack(objs ...[]byte) []byte {
+	var pack bytes.Buffer
+	pack.WriteString("PACK")
+	_ = binary.Write(&pack, binary.BigEndian, uint32(2))
+	_ = binary.Write(&pack, binary.BigEndian, uint32(len(objs)))
+	for _, o := range objs {
+		pack.Write(o)
+	}
+	sum := sha1.Sum(pack.Bytes())
+	pack.Write(sum[:])
+	return pack.Bytes()
+}
+
+func pktCmd(caps string) []byte {
+	cmd := "0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 refs/heads/x\x00" + caps
+	return []byte(fmt.Sprintf("%04x%s0000", len(cmd)+4, cmd))
+}
+
+func TestPushSignoffRefusalDeltifiedCommit(t *testing.T) {
+	lane := "scanner <scanner@hive.invalid>"
+	signed := "msg\n\nSigned-off-by: scanner <scanner@hive.invalid>"
+	base := testCommit(lane, lane, signed, 1)
+	bad := testCommit(lane, lane, "unsigned", 1)
+	good := testCommit(lane, lane, signed+"\n\nmore", 1)
+	for _, tc := range []struct {
+		name    string
+		target  string
+		refused bool
+	}{{"unsigned delta commit", bad, true}, {"signed delta commit", good, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseObj := packObjBytes(1, nil, []byte(base))
+			// OFS offset encoding of len(baseObj) (git big-endian varint).
+			n := len(baseObj)
+			off := []byte{byte(n & 0x7f)}
+			for n >>= 7; n > 0; n >>= 7 {
+				n--
+				off = append([]byte{byte(n&0x7f) | 0x80}, off...)
+			}
+			deltaObj := packObjBytes(6, off, insertOnlyDelta(len(base), tc.target))
+			body := append(pktCmd(" report-status"), wrapPack(baseObj, deltaObj)...)
+			if _, refused, _ := pushSignoffRefusal(pushReq(body), "scanner"); refused != tc.refused {
+				t.Fatalf("refused = %v, want %v", refused, tc.refused)
+			}
+		})
+	}
+}
+
+func TestPushSignoffRefusalThinDeltaStartingCommit(t *testing.T) {
+	lane := "scanner <scanner@hive.invalid>"
+	target := testCommit(lane, lane, "unsigned", 1)
+	deltaObj := packObjBytes(7, make([]byte, 20), insertOnlyDelta(10, target))
+	body := append(pktCmd(" report-status"), wrapPack(deltaObj)...)
+	if _, refused, _ := pushSignoffRefusal(pushReq(body), "scanner"); !refused {
+		t.Fatal("thin delta that inserts a commit header must be refused")
+	}
+	blob := packObjBytes(7, make([]byte, 20), insertOnlyDelta(10, "plain file text"))
+	body = append(pktCmd(" report-status"), wrapPack(blob)...)
+	if _, refused, _ := pushSignoffRefusal(pushReq(body), "scanner"); refused {
+		t.Fatal("thin blob delta must pass")
+	}
+}
+
+func TestPushSignoffRefusalPushOptions(t *testing.T) {
+	lane := "scanner <scanner@hive.invalid>"
+	pack := packObjBytes(1, nil, []byte(testCommit(lane, lane, "msg\n\nSigned-off-by: scanner <scanner@hive.invalid>", 1)))
+	opt := "ci.skip"
+	body := append(pktCmd(" report-status push-options"), []byte(fmt.Sprintf("%04x%s0000", len(opt)+4, opt))...)
+	body = append(body, wrapPack(pack)...)
+	if reason, refused, _ := pushSignoffRefusal(pushReq(body), "scanner"); refused {
+		t.Fatalf("push with push-options must be inspected, not refused: %s", reason)
+	}
+}
+
+func TestPushSignoffRefusalOversizeClosesConnection(t *testing.T) {
+	body := append(pktCmd(" report-status"), make([]byte, maxPushSignoffBody+1)...)
+	_, refused, closeConn := pushSignoffRefusal(pushReq(body), "scanner")
+	if !refused || !closeConn {
+		t.Fatalf("oversize push: refused=%v closeConn=%v, want both true", refused, closeConn)
 	}
 }
