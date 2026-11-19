@@ -32,15 +32,6 @@ func TestParseMode(t *testing.T) {
 	}
 }
 
-func TestEnforceRunsAsShadowUntilAvailable(t *testing.T) {
-	if EnforceAvailable {
-		t.Skip("enforce is available")
-	}
-	if Effective(ModeEnforce) != ModeShadow || Effective(ModeOff) != ModeOff || Effective(ModeShadow) != ModeShadow {
-		t.Error("Effective must clamp enforce to shadow and leave the others alone")
-	}
-}
-
 func TestHandleEventTable(t *testing.T) {
 	open := Subject{HeadSHA: headA, Title: "✨ add thing", State: "open"}
 	tests := []struct {
@@ -55,7 +46,7 @@ func TestHandleEventTable(t *testing.T) {
 	}{
 		{"mode off makes no API call at all", ModeOff, open, nil, headA, SkipModeOff, nil, 0},
 		{"shadow posts only the shadow name", ModeShadow, open, nil, headA, "", []string{ContextVerifyShadow}, 1},
-		{"enforce runs as shadow for now", ModeEnforce, open, nil, headA, "", []string{ContextVerifyShadow}, 1},
+		{"enforce without a confirmed grant runs as shadow", ModeEnforce, open, nil, headA, "", []string{ContextVerifyShadow}, 1},
 		{"draft is skipped", ModeShadow, Subject{HeadSHA: headA, Title: "✨ x", State: "open", Draft: true}, nil, headA, SkipDraft, nil, 1},
 		{"closed is skipped", ModeShadow, Subject{HeadSHA: headA, Title: "✨ x", State: "closed"}, nil, headA, SkipNotOpen, nil, 1},
 		{"a moved head is skipped", ModeShadow, Subject{HeadSHA: headB, Title: "✨ x", State: "open"}, nil, headA, SkipHeadMoved, nil, 1},
