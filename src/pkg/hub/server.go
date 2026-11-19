@@ -1007,6 +1007,7 @@ type HubServer struct {
 	selfExperimentFlags  sync.Map // hive ID -> nous.SelfFlagAssignment; restart fails closed
 	mux                  *http.ServeMux
 	mailReply            *mailReplier // nil unless the reply DKIM key is configured (#18746)
+	ask                  *hubAsk      // nil unless Ask AI help is enabled and configured (#19180)
 	registry             Registry
 	mu                   sync.RWMutex
 	logger               *slog.Logger

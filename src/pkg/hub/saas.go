@@ -538,6 +538,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/admin/journey-status", s.requireAdmin(s.handleJourneyStatus))
 	s.registerBuildContainsRoutes()
 	s.registerCustomerSharingRoutes()
+	s.registerAskRoutes()
 }
 
 func pendingAgentRestartResetsForHeartbeat(hiveID string) []string {
