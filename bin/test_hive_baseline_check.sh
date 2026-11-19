@@ -32,6 +32,11 @@ case "$1:$2" in
     [[ -n "$behind" ]] || exit 1
     printf '{"behind_by":%s,"ahead_by":1}\n' "$behind"
     ;;
+  api:repos/acme/widgets/check-runs/*/annotations)
+    # MOCK_ANNOTATIONS maps check-run id → annotations array; unmapped is [].
+    id="${2#repos/acme/widgets/check-runs/}"; id="${id%/annotations}"
+    jq -c --arg id "$id" '.[$id] // []' <<<"${MOCK_ANNOTATIONS:-{}}"
+    ;;
   pr:list)
     cat "$MOCK_PRS"
     ;;
@@ -221,6 +226,45 @@ run_helper acme/widgets pytest 40 41
 check_status 2 "a second positional is rejected"
 run_helper acme/widgets pytest --max-baseline-age-hours x
 check_status 2 "a non-numeric max age is rejected"
+
+# #19191 case d: a sibling whose failure annotation calls it a per-PR verdict
+# is not evidence of a shared incident.
+write_base '{"check_runs":[{"name":"queue","status":"completed","conclusion":"success","completed_at":"2026-08-30T01:00:00Z"}]}'
+write_prs '[
+  {"number":71,"headRefOid":"q71","statusCheckRollup":[{"name":"queue","conclusion":"FAILURE","detailsUrl":"https://github.com/acme/widgets/actions/runs/9/job/701"}]},
+  {"number":72,"headRefOid":"q72","statusCheckRollup":[{"name":"queue","conclusion":"FAILURE","detailsUrl":"https://github.com/acme/widgets/actions/runs/9/job/702"}]},
+  {"number":73,"headRefOid":"q73","statusCheckRollup":[{"name":"queue","conclusion":"FAILURE","detailsUrl":"https://github.com/acme/widgets/actions/runs/9/job/703"}]}
+]'
+VERDICT='[{"message":"sign-off: failure on q71 (per-PR provider verdict, not a shared CI incident: fix it on this PR)"}]'
+MOCK_ANNOTATIONS="{\"701\":$VERDICT,\"702\":$VERDICT}" MOCK_COMPARE='{"q71":0,"q72":0,"q73":0}' run_helper acme/widgets queue --json
+check_status 1 "per-PR verdict siblings drop below the threshold"
+check_output '"per_pr_verdict_prs":[71,72]' "per-PR verdict siblings are named"
+check_output '"sibling_prs":[73]' "only the remaining red sibling is counted"
+MOCK_ANNOTATIONS='{"701":[{"message":"Process completed with exit code 1."}]}' MOCK_COMPARE='{"q71":0,"q72":0,"q73":0}' run_helper acme/widgets queue --json
+check_status 0 "an ordinary failure annotation still counts"
+check_output '"per_pr_verdict_prs":[]' "no sibling is excused without the marker"
+
+# #19191 case e: no result on the default branch (a PR-only check) and
+# siblings that are behind or unreadable is drift, not an incident.
+write_base '{"check_runs":[]}'
+write_prs '[
+  {"number":81,"headRefOid":"s81","statusCheckRollup":[{"name":"signoff","conclusion":"FAILURE"}]},
+  {"number":82,"headRefOid":"s82","statusCheckRollup":[{"name":"signoff","conclusion":"FAILURE"}]},
+  {"number":83,"headRefOid":"s83","statusCheckRollup":[{"name":"signoff","conclusion":"FAILURE"}]},
+  {"number":84,"headRefOid":"s84","statusCheckRollup":[{"name":"signoff","conclusion":"FAILURE"}]}
+]'
+MOCK_COMPARE='{"s81":6,"s82":0,"s84":22}' run_helper acme/widgets signoff --json
+check_status 1 "missing base with mostly-behind siblings is not shared"
+check_output '"reason":"no-baseline"' "missing base is named as the reason"
+check_output '"action":"MERGE_BASE"' "missing base sends the agent to merge base first"
+MOCK_COMPARE='{"s81":6,"s82":0,"s84":22}' run_helper acme/widgets signoff
+check_output 'has no result on acme/widgets default branch "trunk"' "human output says the base has no result"
+printf '{"number":82,"headRefOid":"s82","isCrossRepository":false}\n' >"$MOCK_PR_VIEW"
+MOCK_COMPARE='{"s81":6,"s82":0,"s84":22}' run_helper acme/widgets signoff 82 --json
+check_status 1 "an up-to-date PR under a missing base is PR-local"
+check_output '"action":"FIX_DIFF"' "an up-to-date PR fixes its own diff"
+MOCK_COMPARE='{"s81":0,"s82":0,"s83":0,"s84":5}' run_helper acme/widgets signoff --json
+check_status 0 "missing base with THRESHOLD up-to-date red siblings is shared"
 
 MOCK_GH_FAIL=1 run_helper acme/widgets build
 check_status 2 "GitHub lookup failures are unknown, never isolated"
