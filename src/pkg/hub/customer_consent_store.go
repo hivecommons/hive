@@ -50,9 +50,13 @@ type customerConsent struct {
 	GrantedAt   time.Time             `json:"granted_at"`
 	UpdatedAt   time.Time             `json:"updated_at"`
 	WithdrawnAt *time.Time            `json:"withdrawn_at,omitempty"`
-	// Only the delivery path (phase 2) may stamp these times.
-	FirstDeliveredAt *time.Time `json:"first_delivered_at,omitempty"`
-	LastDeliveredAt  *time.Time `json:"last_delivered_at,omitempty"`
+	// Only the delivery path (stampCustomerDelivery, customer_match.go) may
+	// stamp these. DeliveredFields is the union of every field ever sent to
+	// this hive; DeliveredRev is the rev of the last answer.
+	FirstDeliveredAt *time.Time             `json:"first_delivered_at,omitempty"`
+	LastDeliveredAt  *time.Time             `json:"last_delivered_at,omitempty"`
+	DeliveredFields  *customerConsentFields `json:"delivered_fields,omitempty"`
+	DeliveredRev     string                 `json:"delivered_rev,omitempty"`
 }
 
 func (c customerConsent) discardable(now time.Time) bool {
