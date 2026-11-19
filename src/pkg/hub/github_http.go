@@ -28,10 +28,7 @@ func hubGitHubHTTPClient() *http.Client {
 	// Honour a replaced http.DefaultTransport (tests and instrumented builds
 	// inject a RoundTripper there); otherwise use the proxy-trusting shared
 	// socket transport.
-	var base http.RoundTripper
-	if _, ok := http.DefaultTransport.(*http.Transport); !ok {
-		base = http.DefaultTransport
-	}
+	base, _ := replacedDefaultTransport()
 	return &http.Client{Transport: hgithub.NewHTTPTransport(base)}
 }
 
