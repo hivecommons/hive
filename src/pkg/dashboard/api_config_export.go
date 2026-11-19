@@ -89,6 +89,12 @@ type configRedactionMarker struct {
 }
 
 var configExportSecretKeyRE = regexp.MustCompile(`(?i)(token|secret|password|authorization|api[_-]?key|apikey|backup.*key|webhook.*secret|oauth.*secret|bob.*key)`)
+
+// configExportSecretParents name blocks whose every configured value is
+// treated as a credential in the export: ask.kapa holds the vendor project and
+// integration ids and the key file path (#19183).
+var configExportSecretParents = map[string]bool{"kapa": true}
+
 var configEnvSecretKeyRE = regexp.MustCompile(`(?i)(TOKEN|KEY|SECRET|PASSWORD)`)
 
 func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
@@ -259,6 +265,10 @@ func redactConfigValue(v any, key string) any {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, val := range x {
+			if configExportSecretParents[key] && hasConfiguredValue(val) {
+				out[k] = redactMarker(fmt.Sprint(val))
+				continue
+			}
 			out[k] = redactConfigValue(val, k)
 		}
 		return out

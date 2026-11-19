@@ -85,6 +85,7 @@ Optional capabilities, each off or inert until you turn it on. Where a feature h
 - Reviewer-stated rules: [Reviewer-stated rules from review feedback](review-feedback-rules.md#settings). A card under Review (owner only, `review_feedback.rules.*`) turns capture on or off, picks whose rules are recorded at once, adds phrases that count, and switches built-in signals off; each control shows its default and where the current value comes from.
 - Linear agent: [Linear agent integration](linear-agent.md).
 - Upstream watch: [Upstream watch](upstream-watch.md#configuration).
+- Ask AI help: [Ask AI help](ask-ai-help.md).
 
 The other features on this tab (OpenTelemetry export, external execution, auto-plan, issue claims, PR follow-up, long-running runs, provider rotation, merge recommendations, convergence rollout, stall replan, and question auto-close) are explained by their **?** tooltips, and their configuration keys are listed in the [Hive operator reference](operator-reference.md#configuration-blocks).
 
