@@ -123,9 +123,9 @@ func askResult(t *testing.T, rec *httptest.ResponseRecorder) askai.Result {
 	return r
 }
 
-func askOn() *bool { v := true; return &v }
+func askTrue() *bool { v := true; return &v }
 
-var askDirect = config.AskConfig{Enabled: askOn(), Mode: config.AskModeDirect,
+var askDirect = config.AskConfig{Enabled: askTrue(), Mode: config.AskModeDirect,
 	Kapa: config.AskKapaConfig{ProjectID: askTestProject, IntegrationID: askTestIntegration, APIKeyFile: "key"}}
 
 // TestHiveAskOffIsInert: no ask block, or a half-configured one, answers 404
@@ -250,7 +250,7 @@ func TestHiveAskDirectModeFlow(t *testing.T) {
 // mode stays off.
 func TestHiveAskHubModeUsesTheRelay(t *testing.T) {
 	hubSrv := newAskFakeRemote(t, askHubReply)
-	hubMode := config.AskConfig{Enabled: askOn(), Mode: config.AskModeHub}
+	hubMode := config.AskConfig{Enabled: askTrue(), Mode: config.AskModeHub}
 	s, _ := askTestServer(t, hubMode, config.HubConfig{Enabled: true, URL: hubSrv.srv.URL, HiveType: config.HiveTypeHosted}, "")
 	askCall(s, "PUT", "/api/ask/consent", `{"text_version":"`+askai.ConsentTextVersion+`"}`, "alice")
 	r := askResult(t, askCall(s, "POST", "/api/ask", `{"question":"Where is pause?","section":"agents-section"}`, "alice"))
