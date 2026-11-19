@@ -106,6 +106,7 @@ func TestRotationReachesDesiredPerHiveEnv(t *testing.T) {
 		EnvHeartbeatKey:     derivePerHiveKey(newSecret, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(newSecret, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(newSecret, infoInviteKey, hiveID),
+		EnvCustomerMatchKey: customerMatchKey(newSecret, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(newSecret, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(newSecret, infoSessionEd25519Seed)),
 	}
