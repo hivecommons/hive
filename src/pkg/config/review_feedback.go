@@ -15,6 +15,76 @@ type ReviewFeedbackConfig struct {
 	// hive's own PRs into its knowledge (hivecommons/hive#19046,
 	// hivecommons/hive#19135).
 	Rules ReviewRulesSettings `yaml:"rules,omitempty" json:"rules,omitempty"`
+	// Retry is the owner's preferences for re-routing feedback a kicked agent
+	// left stranded: no push and no reply (hivecommons/hive#19320).
+	Retry ReviewRetrySettings `yaml:"retry,omitempty" json:"retry,omitempty"`
+}
+
+// ReviewRetrySettings are the owner's preferences for re-routing stranded
+// review feedback. Every field is optional: an unset field falls back to its
+// environment variable, then to the built-in default.
+type ReviewRetrySettings struct {
+	// MaxRetries is how many times stranded feedback is routed again before
+	// a person is asked (HIVE_REVIEW_FEEDBACK_RETRY_MAX; default 2). 0 turns
+	// re-routing off: stranded feedback is handed to a person at once.
+	MaxRetries *int `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`
+	// Backoff is how long after a kick the sweep waits before judging it
+	// stranded; it doubles on each retry (HIVE_REVIEW_FEEDBACK_RETRY_BACKOFF;
+	// default 1h). A Go duration such as "45m" or "2h".
+	Backoff string `yaml:"backoff,omitempty" json:"backoff,omitempty"`
+}
+
+func (s ReviewRetrySettings) empty() bool { return s.MaxRetries == nil && s.Backoff == "" }
+
+func (s ReviewRetrySettings) clone() ReviewRetrySettings {
+	out := ReviewRetrySettings{Backoff: s.Backoff}
+	if s.MaxRetries != nil {
+		v := *s.MaxRetries
+		out.MaxRetries = &v
+	}
+	return out
+}
+
+func (s ReviewRulesSettings) empty() bool {
+	return s.Enabled == nil && len(s.TrustedAssociations) == 0 && len(s.ExtraPhrases) == 0 && len(s.DisabledSignals) == 0
+}
+
+// ReviewRetrySettingsSnapshot returns a copy of the saved stranded-feedback
+// retry preferences (the zero value when none are saved).
+func (c *Config) ReviewRetrySettingsSnapshot() ReviewRetrySettings {
+	if c == nil {
+		return ReviewRetrySettings{}
+	}
+	reviewFeedbackMu.RLock()
+	defer reviewFeedbackMu.RUnlock()
+	if c.ReviewFeedback == nil {
+		return ReviewRetrySettings{}
+	}
+	return c.ReviewFeedback.Retry.clone()
+}
+
+// SetReviewRetrySettings replaces the saved retry preferences, keeping the
+// rule preferences, and returns the previous value for a rollback. An empty
+// block is dropped so hive.yaml only carries what the owner chose.
+func (c *Config) SetReviewRetrySettings(s ReviewRetrySettings) ReviewRetrySettings {
+	reviewFeedbackMu.Lock()
+	defer reviewFeedbackMu.Unlock()
+	var prev ReviewRetrySettings
+	var rules ReviewRulesSettings
+	if c.ReviewFeedback != nil {
+		prev = c.ReviewFeedback.Retry.clone()
+		rules = c.ReviewFeedback.Rules
+	}
+	c.ReviewFeedback = packReviewFeedback(rules, s.clone())
+	return prev
+}
+
+// packReviewFeedback builds the block, nil when both halves are empty.
+func packReviewFeedback(rules ReviewRulesSettings, retry ReviewRetrySettings) *ReviewFeedbackConfig {
+	if rules.empty() && retry.empty() {
+		return nil
+	}
+	return &ReviewFeedbackConfig{Rules: rules, Retry: retry}
 }
 
 // ReviewRulesSettings are the owner's preferences for reviewer-rule capture.
@@ -70,21 +140,19 @@ func (c *Config) ReviewRulesSettingsSnapshot() ReviewRulesSettings {
 
 // SetReviewRulesSettings replaces the saved review-rule preferences. Values are
 // stored as given (the dashboard validates them first); an all-empty value
-// removes the block, so hive.yaml only carries what the owner chose. It
+// drops the rules half (and the block when retry is unset too), so hive.yaml
+// only carries what the owner chose; saved retry preferences are kept. It
 // returns the previous value, for a rollback when the file cannot be written.
 func (c *Config) SetReviewRulesSettings(s ReviewRulesSettings) ReviewRulesSettings {
 	reviewFeedbackMu.Lock()
 	defer reviewFeedbackMu.Unlock()
 	var prev ReviewRulesSettings
+	var retry ReviewRetrySettings
 	if c.ReviewFeedback != nil {
 		prev = c.ReviewFeedback.Rules.clone()
+		retry = c.ReviewFeedback.Retry
 	}
-	s = s.clone()
-	if s.Enabled == nil && len(s.TrustedAssociations) == 0 && len(s.ExtraPhrases) == 0 && len(s.DisabledSignals) == 0 {
-		c.ReviewFeedback = nil
-		return prev
-	}
-	c.ReviewFeedback = &ReviewFeedbackConfig{Rules: s}
+	c.ReviewFeedback = packReviewFeedback(s.clone(), retry)
 	return prev
 }
 
