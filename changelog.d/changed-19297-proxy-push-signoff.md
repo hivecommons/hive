@@ -1,0 +1,1 @@
+- The egress proxy now applies the push broker's sign-off rules to in-pod agent pushes: a lane-authored commit without the lane's `Signed-off-by`, or a lane `Signed-off-by` on a commit the lane did not author and commit, is refused with reason `push_signoff` (#19297).
