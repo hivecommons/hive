@@ -496,3 +496,111 @@ func TestAgentMintAndBobCapabilities(t *testing.T) {
 		}
 	}
 }
+
+// fakeKnowledge is a KnowledgeAdviseService whose switch the test flips, as a
+// config reload flips knowledge.sidecar_advise.
+type fakeKnowledge struct {
+	mu   sync.Mutex
+	on   bool
+	reqs []callback.KnowledgeAdviseRequest
+	err  error
+}
+
+func (f *fakeKnowledge) set(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.on = on
+}
+
+func (f *fakeKnowledge) Enabled() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.on
+}
+
+func (f *fakeKnowledge) AdviseKnowledge(_ context.Context, req callback.KnowledgeAdviseRequest) (callback.KnowledgeAdviseResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reqs = append(f.reqs, req)
+	if f.err != nil {
+		return callback.KnowledgeAdviseResponse{}, f.err
+	}
+	return callback.KnowledgeAdviseResponse{
+		Advice: []callback.KnowledgeAdvice{{Slug: "s", Title: "t"}},
+		Policy: callback.KnowledgeAdvisorPolicy{Enabled: true},
+	}, nil
+}
+
+// The knowledge capability exists only while the service says it is enabled,
+// read live: no dep, or a dep that is switched off, is not configured, is not
+// in the policy snapshot, and is not dispatched.
+func TestKnowledgeAdviseFollowsTheLiveSwitch(t *testing.T) {
+	ctx := context.Background()
+	req := callback.KnowledgeAdviseRequest{Agent: "developer", PolicyOnly: true}
+
+	none := New(Deps{Policy: func() callback.Policy { return callback.Policy{} }})
+	if none.Configured(callback.CapabilityKnowledgeAdvise) {
+		t.Error("knowledge advise configured with no dep")
+	}
+	if _, err := none.AdviseKnowledge(ctx, req); !errors.Is(err, callback.ErrNotConfigured) {
+		t.Errorf("no dep: err = %v", err)
+	}
+	if pol, err := none.Policy(ctx); err != nil || pol.KnowledgeAdvise {
+		t.Errorf("no dep policy = %+v, %v", pol, err)
+	}
+
+	svc := &fakeKnowledge{}
+	caps := New(Deps{Knowledge: svc, Policy: func() callback.Policy { return callback.Policy{} }})
+	if caps.Configured(callback.CapabilityKnowledgeAdvise) {
+		t.Error("knowledge advise configured while the switch is off")
+	}
+	if _, err := caps.AdviseKnowledge(ctx, req); !errors.Is(err, callback.ErrNotConfigured) {
+		t.Errorf("switch off: err = %v", err)
+	}
+	if pol, err := caps.Policy(ctx); err != nil || pol.KnowledgeAdvise {
+		t.Errorf("switch off policy = %+v, %v", pol, err)
+	}
+	if len(svc.reqs) != 0 {
+		t.Fatalf("an off switch reached the service: %+v", svc.reqs)
+	}
+
+	svc.set(true)
+	if !caps.Configured(callback.CapabilityKnowledgeAdvise) {
+		t.Error("knowledge advise not configured while the switch is on")
+	}
+	if pol, err := caps.Policy(ctx); err != nil || !pol.KnowledgeAdvise {
+		t.Errorf("switch on policy = %+v, %v", pol, err)
+	}
+	resp, err := caps.AdviseKnowledge(ctx, req)
+	if err != nil || len(resp.Advice) != 1 || resp.Advice[0].Slug != "s" || len(svc.reqs) != 1 || svc.reqs[0].Agent != "developer" {
+		t.Fatalf("response = %+v, %v, reqs %+v", resp, err, svc.reqs)
+	}
+	svc.err = callback.ErrForbidden
+	if _, err := caps.AdviseKnowledge(ctx, req); !errors.Is(err, callback.ErrForbidden) {
+		t.Errorf("service refusal = %v, want it passed through", err)
+	}
+
+	// Over the socket the same switch is the route and the health list.
+	c, _ := serve(t, Deps{Knowledge: svc})
+	svc.err = nil
+	health, err := c.Health(ctx)
+	if err != nil || !containsString(health.Capabilities, callback.CapabilityKnowledgeAdvise) {
+		t.Fatalf("health = %+v, %v", health, err)
+	}
+	svc.set(false)
+	if health, err = c.Health(ctx); err != nil || containsString(health.Capabilities, callback.CapabilityKnowledgeAdvise) {
+		t.Fatalf("health after switching off = %+v, %v", health, err)
+	}
+	if _, err := c.AdviseKnowledge(ctx, req); !errors.Is(err, callback.ErrNotConfigured) {
+		t.Errorf("route after switching off: err = %v", err)
+	}
+}
+
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}

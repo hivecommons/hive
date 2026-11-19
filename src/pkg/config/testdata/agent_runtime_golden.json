@@ -571,7 +571,8 @@
       "BudgetOverride": false,
       "HoldoutPercent": 0,
       "OnError": ""
-    }
+    },
+    "SidecarAdvise": false
   },
   "inbox": {
     "spek": {},

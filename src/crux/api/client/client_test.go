@@ -102,7 +102,7 @@ func TestParityHostVersusSetterTable(t *testing.T) {
 		callback.PathTokens: true, callback.PathPolicy: true, callback.PathRepoAutoMerge: true,
 		callback.PathLinearCredential: true, callback.PathPulls: true, callback.PathConditions: true,
 		callback.PathInferenceRoutes + "/{agent}": true, callback.PathEffects: true, callback.PathEffects + "/{id}/end": true,
-		callback.PathAgentMint: true, callback.PathBobCredential: true,
+		callback.PathAgentMint: true, callback.PathBobCredential: true, callback.PathKnowledgeAdvise: true,
 	}
 	events := map[string]bool{api.EventKickOutcome: true, api.EventPauseTransition: true, api.EventRelaunch: true, api.EventPausePersist: true, api.EventPrompt: true, api.EventSandboxAudit: true, api.EventAudit: true, api.EventCondition: true}
 	for name, row := range api.HostSetters {
@@ -139,10 +139,13 @@ func TestParityHostVersusSetterTable(t *testing.T) {
 			t.Errorf("api.HostSetters[%q] has unknown kind %q", name, row.Kind)
 		}
 	}
-	for _, name := range []string{"SetSpanStarter", "SetKnowledgeAdviser", "SetSandboxGitHubReadRelay"} {
+	for _, name := range []string{"SetSpanStarter", "SetSandboxGitHubReadRelay"} {
 		if api.HostSetters[name].Kind != api.HostSetterInProcessOnly {
 			t.Errorf("%s is an in-process-only setter", name)
 		}
+	}
+	if row := api.HostSetters["SetKnowledgeAdviser"]; row.Kind != api.HostSetterCallback || !strings.Contains(row.Via, callback.PathKnowledgeAdvise) {
+		t.Errorf("SetKnowledgeAdviser is served by the knowledge advise callback route, got %+v", row)
 	}
 }
 

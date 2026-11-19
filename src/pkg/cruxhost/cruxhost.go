@@ -135,6 +135,23 @@ type Deps struct {
 	// in-process "mint off" contract.
 	Mint AgentMintIssuer
 	Bob  BobResolver
+	// Knowledge is the hive's mid-task knowledge adviser behind POST
+	// /v1/knowledge/advise (hivecommons/hive#17157); nil means the capability
+	// is absent. Even when set, the capability exists only while its Enabled
+	// reports true (knowledge.sidecar_advise, default off).
+	Knowledge KnowledgeAdviseService
+}
+
+// KnowledgeAdviseService answers a sidecar runtime's mid-task knowledge
+// requests. Enabled is read on every request and on every policy snapshot, so
+// a config reload turns the route on or off without a restart; while it is
+// false the route answers 404 not_configured and the capability is not
+// advertised. The checks that make the exchange safe (agent and kick
+// identity, request limits, rate limits) belong to the implementation; it
+// reports them as callback.ErrForbidden, ErrInvalidRequest and ErrRateLimited.
+type KnowledgeAdviseService interface {
+	Enabled() bool
+	AdviseKnowledge(ctx context.Context, req callback.KnowledgeAdviseRequest) (callback.KnowledgeAdviseResponse, error)
 }
 
 // AgentMintIssuer is crux.AgentMintIssuer restated so cruxhost does not
@@ -156,13 +173,14 @@ type Capabilities struct {
 }
 
 var (
-	_ callback.Capabilities    = (*Capabilities)(nil)
-	_ callback.Configured      = (*Capabilities)(nil)
-	_ callback.PolicySource    = (*Capabilities)(nil)
-	_ callback.InferenceRouter = (*Capabilities)(nil)
-	_ callback.EffectBoundary  = (*Capabilities)(nil)
-	_ callback.AgentMinter     = (*Capabilities)(nil)
-	_ callback.BobCredentials  = (*Capabilities)(nil)
+	_ callback.Capabilities      = (*Capabilities)(nil)
+	_ callback.Configured        = (*Capabilities)(nil)
+	_ callback.PolicySource      = (*Capabilities)(nil)
+	_ callback.InferenceRouter   = (*Capabilities)(nil)
+	_ callback.EffectBoundary    = (*Capabilities)(nil)
+	_ callback.AgentMinter       = (*Capabilities)(nil)
+	_ callback.BobCredentials    = (*Capabilities)(nil)
+	_ callback.KnowledgeAdvisers = (*Capabilities)(nil)
 )
 
 // New builds the capability set over deps.
@@ -202,6 +220,8 @@ func (c *Capabilities) Configured(capability string) bool {
 		return c.deps.Mint != nil
 	case callback.CapabilityBob:
 		return c.deps.Bob != nil
+	case callback.CapabilityKnowledgeAdvise:
+		return c.knowledgeAdviseOn()
 	}
 	return false
 }
@@ -418,7 +438,24 @@ func (c *Capabilities) Policy(context.Context) (callback.Policy, error) {
 	}
 	p := c.deps.Policy()
 	p.RepoAutoMerge = c.deps.RepoAutoMerge != nil
+	p.KnowledgeAdvise = c.knowledgeAdviseOn()
 	return p, nil
+}
+
+// knowledgeAdviseOn reports whether POST /v1/knowledge/advise is being
+// served right now.
+func (c *Capabilities) knowledgeAdviseOn() bool {
+	return c.deps.Knowledge != nil && c.deps.Knowledge.Enabled()
+}
+
+// AdviseKnowledge is callback.KnowledgeAdvisers.AdviseKnowledge. A hive whose
+// knowledge.sidecar_advise is off answers not_configured, as one with no
+// adviser at all.
+func (c *Capabilities) AdviseKnowledge(ctx context.Context, req callback.KnowledgeAdviseRequest) (callback.KnowledgeAdviseResponse, error) {
+	if !c.knowledgeAdviseOn() {
+		return callback.KnowledgeAdviseResponse{}, callback.ErrNotConfigured
+	}
+	return c.deps.Knowledge.AdviseKnowledge(ctx, req)
 }
 
 // RepoAutoMergeEnabled answers the per-repository auto-merge switch.
