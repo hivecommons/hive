@@ -259,6 +259,14 @@ func redactConfigValue(v any, key string) any {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, val := range x {
+			// ask.kapa.project_id and ask.kapa.integration_id are vendor
+			// identifiers that must never leave the process (#19180). Their
+			// names do not match the secret-key pattern, so they are named here,
+			// scoped to the kapa block so other keys of that name are untouched.
+			if key == "kapa" && (k == "project_id" || k == "integration_id") && hasConfiguredValue(val) {
+				out[k] = redactMarker(fmt.Sprint(val))
+				continue
+			}
 			out[k] = redactConfigValue(val, k)
 		}
 		return out

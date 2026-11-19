@@ -1433,6 +1433,25 @@ data:
 #     max_requests_per_hour: 10  # search requests all accepts may spend together per hour (default 10, at most 60); each accept spends at most 2
 
 
+# Ask AI help (docs/design/dashboard-ask-ai-help.md, #19177): an optional help
+# panel backend that sends a person's question, after they consent, to the
+# vendor's Chat API from the hub. Off by default and inert. The key lives in a
+# mounted Secret, never here. If enabled but a value is missing or the key file
+# is unreadable it stays off and logs one warning without values.
+# ask:
+#   enabled: false           # true (or env HIVE_ASK_ENABLED=true) switches it on; default off
+#   mode: direct             # direct on the hub (default); env HIVE_ASK_MODE
+#   kapa:
+#     project_id: ""         # env HIVE_ASK_KAPA_PROJECT_ID; never returned, logged or exported
+#     integration_id: ""     # env HIVE_ASK_KAPA_INTEGRATION_ID; same handling
+#     api_key_file: /secrets/ask-kapa-api-key   # env HIVE_ASK_KAPA_API_KEY_FILE; must be under the allowed secret directory
+#   send_section_label: true # false sends the question text alone
+#   limits:                  # optional; env HIVE_ASK_LIMIT_*; see docs/env-vars.md for the defaults
+#     person_burst: 3
+#     global_per_minute: 8
+#     daily: 500
+
+
 # Sandbox Job GitHub read relay (docs/sandbox-isolation.md): lets sandbox Jobs
 # make authenticated, read-only GitHub reads without ever holding a credential.
 # Default off. There is NO default bind: with enabled: true, listen_addr is

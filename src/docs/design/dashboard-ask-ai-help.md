@@ -551,9 +551,13 @@ Not verified, and the reason:
 - **Which CSP applies to the hub's main dashboard document** and whether the
   Node proxy or ingress adds one. Not traced. The recommended design does not
   depend on it.
-- **The vendor's non-streamed chat response shape** (source field names), the
-  streamed endpoint path and events, and whether the chat endpoint returns a
-  thread id in the body. The public pages read do not show them.
+- **The vendor's streamed endpoint path and events.** Not needed for v1.
+  Resolved in phase 1 (#19180): the non-streamed `POST
+  /query/v1/projects/{project_id}/chat/` returns `answer`, `thread_id`,
+  `question_answer_id`, `is_uncertain` and `relevant_sources` (each with
+  `source_url`, `title` and `contains_internal_data`); a follow-up is `POST
+  /query/v1/threads/{thread_id}/chat/`. The client pins this shape with a
+  contract test (`src/pkg/ask/client_test.go`).
 - **Whether the vendor documents a hosted or frame mode.** None was found; the
   claim is an absence in the pages read.
 - **Vendor per-source include and exclude patterns, and deletion of a single

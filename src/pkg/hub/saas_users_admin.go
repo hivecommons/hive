@@ -672,6 +672,22 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete user's consent records")
 		return
 	}
+	// The Ask AI consent record goes with the user (#19180), and any open
+	// conversation with it.
+	askConsentMu.Lock()
+	askPath, askErr := askConsentPath(u)
+	if askErr == nil {
+		askErr = removeAskConsent(askPath)
+	}
+	askConsentMu.Unlock()
+	if askErr != nil {
+		s.logger.Warn("admin delete user: ask consent removal failed", "target", username, "error", askErr)
+		writeJSONError(w, http.StatusInternalServerError, "failed to delete user's consent records")
+		return
+	}
+	if svc := s.askService(); svc != nil {
+		svc.Forget(askPersonStem(askPath))
+	}
 	// Delete both canonical and legacy representations; otherwise a leftover
 	// fallback would become the live account as soon as the first file is gone.
 	for _, path := range saaSUserFilePaths(username) {

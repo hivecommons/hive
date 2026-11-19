@@ -204,6 +204,8 @@ type Config struct {
 	// Customers gates the Customers section and its people store (default
 	// on). Nothing it stores leaves the hive.
 	Customers CustomersConfig `yaml:"customers,omitempty" json:"customers,omitempty"`
+	// Ask is the optional Ask AI help block (#19177). Default off and inert.
+	Ask AskConfig `yaml:"ask,omitempty" json:"ask,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.

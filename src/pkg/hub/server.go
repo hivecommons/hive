@@ -27,6 +27,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/openrouter"
+	"github.com/hivecommons/hive/pkg/ask"
 	"github.com/hivecommons/hive/pkg/auth"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/delegation"
@@ -1020,6 +1021,12 @@ type HubServer struct {
 	configPath           string
 	envGitHubToken       string
 	discordRequests      discordRequestNotificationState
+
+	// askOnce/askSvc hold the optional Ask AI help service (#19180); askSvc is
+	// nil when the feature is off or could not start.
+	askOnce sync.Once
+	askSvc  *ask.Service
+
 	// saveLoopStop / saveLoopDone make the debounced saveLoop goroutine
 	// joinable (#4774). A hub built by NewHubServer used to leak its saveLoop
 	// forever: in tests, the loop could wake up to registrySaveDelay after the

@@ -707,6 +707,28 @@ only when neither is configured.
 
 With two or more providers configured, `/login` renders a provider picker; with exactly one it redirects straight into it. A provider with a client id but missing/invalid issuer is **silently skipped** so it cannot take down login for the others — check the `hub login enabled providers=` startup log line when a button is missing.
 
+## Ask AI help (hub backend)
+
+Optional and **off by default**. Nothing here opens a route, makes a request or changes a header until the switch is on and every required value is set; if one is missing or the key file cannot be read, Ask stays off and logs one warning that names the reason and no value. Env wins over the `ask:` block in `hive.yaml`. The key is read from a file under the allowed secret directory; there is deliberately no variable that holds the key itself. Design: [dashboard Ask AI help](design/dashboard-ask-ai-help.md).
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `HIVE_ASK_ENABLED` | No | config `ask.enabled` (default off) | The switch. Off: every Ask route answers 404, no consent prompt, no request to the vendor. |
+| `HIVE_ASK_MODE` | No | config `ask.mode` (the hub defaults to `direct`) | `off`, `direct` (this process calls the vendor with its own key) or `hub` (a hive calling the hub relay; not available yet). The hub is always `direct`. |
+| `HIVE_ASK_KAPA_PROJECT_ID` | When enabled | config `ask.kapa.project_id` | The vendor project. Configuration only; never returned by an API, logged or exported. |
+| `HIVE_ASK_KAPA_INTEGRATION_ID` | When enabled | config `ask.kapa.integration_id` | The vendor integration identifier. Same handling as the project id. |
+| `HIVE_ASK_KAPA_API_KEY_FILE` | When enabled | config `ask.kapa.api_key_file` | Path to the vendor API key, which must be under the allowed secret directory (a mounted Secret). |
+| `HIVE_ASK_SEND_SECTION_LABEL` | No | config `ask.send_section_label` (default on) | Whether a fixed-vocabulary label for the dashboard section the person is in is sent with the question. Off sends the question text alone. |
+| `HIVE_ASK_LIMIT_PERSON_BURST` | No | `3` | Questions one person may ask per minute. |
+| `HIVE_ASK_LIMIT_PERSON_PER_HOUR` | No | `30` | Questions one person may ask per hour. |
+| `HIVE_ASK_LIMIT_HIVE_PER_HOUR` | No | `120` | Questions one hive may relay per hour (used by the hive relay in a later phase). |
+| `HIVE_ASK_LIMIT_GLOBAL_PER_MINUTE` | No | `8` | Vendor calls per minute across the hub; keep it under the vendor's per-team chat limit, which the docs site's widget shares. |
+| `HIVE_ASK_LIMIT_IN_FLIGHT` | No | `4` | Vendor calls in flight at once across the hub (one per person). |
+| `HIVE_ASK_LIMIT_DAILY` | No | `500` | Vendor calls per UTC day; when spent, Ask answers with the docs-link fallback until it resets. |
+| `HIVE_ASK_LIMIT_QUESTION_CHARS` | No | `1000` | Longest question accepted, in characters. |
+| `HIVE_ASK_LIMIT_ANSWER_CHARS` | No | `4000` | Longest answer returned, in characters. |
+| `HIVE_ASK_LIMIT_TIMEOUT_SECONDS` | No | `30` | Time allowed for one vendor call. |
+
 ## Kubernetes downward API and platform variables
 
 | Variable | Required | Default | Purpose |
