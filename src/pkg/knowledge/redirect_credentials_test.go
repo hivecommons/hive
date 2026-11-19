@@ -17,6 +17,7 @@ func redirectReq(t *testing.T, raw string) *http.Request {
 	r.Header.Set("Authorization", "Bearer secret")
 	r.Header.Set("Cookie", "s=1")
 	r.Header.Set("X-IBM-Project-ID", "p")
+	r.Header.Set("X-Api-Key", "k")
 	r.Header.Set("Accept", "application/json")
 	return r
 }
@@ -38,7 +39,7 @@ func TestStripCredentialsOnCrossHostRedirect(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := redirectReq(t, tc.to)
 			StripCredentialsOnCrossHostRedirect(req, []*http.Request{redirectReq(t, tc.from)})
-			for _, h := range []string{"Authorization", "Cookie", "X-IBM-Project-ID"} {
+			for _, h := range []string{"Authorization", "Cookie", "X-IBM-Project-ID", "X-Api-Key"} {
 				if got := req.Header.Get(h) == ""; got != tc.wantStripped {
 					t.Errorf("%s stripped = %v, want %v", h, got, tc.wantStripped)
 				}

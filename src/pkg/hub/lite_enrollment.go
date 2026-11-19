@@ -13,12 +13,16 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	hivegithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 const (
 	liteDefaultACMMLevel      = 2
 	liteMaxACMMLevel          = 2
 	liteRepoAccessHTTPTimeout = 10 * time.Second
+	// liteRepoAccessMaxRedirects bounds the repo-access redirect chain. Existing
+	// GHE redirect tests pin it; shrinking it is follow-up work (#19222).
+	liteRepoAccessMaxRedirects = 10
 )
 
 type LiteEnrollmentConfig struct {
@@ -510,7 +514,7 @@ func liteRepoAccessHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: liteRepoAccessHTTPTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
+			if len(via) >= liteRepoAccessMaxRedirects {
 				return fmt.Errorf("stopped after %d redirects", len(via))
 			}
 			if isPrivateURL(req.Context(), req.URL.String()) {
@@ -519,14 +523,7 @@ func liteRepoAccessHTTPClient() *http.Client {
 			// The request carries the enrolling user's GitHub token: never let
 			// it follow a hop off the original host or down to plain http
 			// (hivecommons/hive#19222).
-			if len(via) > 0 && via[0] != nil && via[0].URL != nil {
-				first := via[0].URL
-				downgrade := strings.EqualFold(first.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https")
-				if downgrade || !strings.EqualFold(req.URL.Host, first.Host) {
-					req.Header.Del("Authorization")
-					req.Header.Del("Cookie")
-				}
-			}
+			knowledge.StripCredentialsOnCrossHostRedirect(req, via)
 			return nil
 		},
 	}

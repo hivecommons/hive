@@ -1,12 +1,14 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -308,5 +310,75 @@ func TestDialUpstreamRawHostnameDelegatedToUpstreamProxy(t *testing.T) {
 	}
 	if cp.targets.Load() != 1 {
 		t.Fatal("a refused literal reached the upstream proxy")
+	}
+}
+
+func egressRedirectReq(t *testing.T, raw string) *http.Request {
+	t.Helper()
+	r, err := http.NewRequest(http.MethodGet, raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Header.Set("X-Api-Key", "k")
+	r.Header.Set("Proxy-Authorization", "Basic x")
+	return r
+}
+
+func stubEgressResolver(t *testing.T, m map[string]string) {
+	t.Helper()
+	orig := egressResolveHost
+	egressResolveHost = func(_ context.Context, host string) ([]netip.Addr, error) {
+		if a, ok := m[host]; ok {
+			return []netip.Addr{netip.MustParseAddr(a)}, nil
+		}
+		return nil, errors.New("no such host")
+	}
+	t.Cleanup(func() { egressResolveHost = orig })
+}
+
+func TestEgressCheckRedirectStripsAPIKeyCrossHost(t *testing.T) {
+	stubEgressResolver(t, map[string]string{"a.example": "93.184.216.34", "b.example": "93.184.216.35"})
+	check := egressCheckRedirect()
+	via := []*http.Request{egressRedirectReq(t, "https://a.example/x")}
+	off := egressRedirectReq(t, "https://b.example/x")
+	if err := check(off, via); err != nil {
+		t.Fatal(err)
+	}
+	if off.Header.Get("X-Api-Key") != "" || off.Header.Get("Proxy-Authorization") != "" {
+		t.Error("cross-host hop kept X-Api-Key or Proxy-Authorization")
+	}
+	same := egressRedirectReq(t, "https://a.example/y")
+	if err := check(same, via); err != nil {
+		t.Fatal(err)
+	}
+	if same.Header.Get("X-Api-Key") == "" {
+		t.Error("same-host hop lost X-Api-Key")
+	}
+}
+
+func TestEgressCheckRedirectRefusesPrivateTargets(t *testing.T) {
+	stubEgressResolver(t, map[string]string{
+		"pub.example": "93.184.216.34", "other.example": "93.184.216.35",
+		"rebind.example": "10.0.0.5", "meta.example": "169.254.169.254",
+		"inner.example": "10.0.0.9",
+	})
+	check := egressCheckRedirect()
+	pubVia := []*http.Request{egressRedirectReq(t, "https://pub.example/x")}
+	for _, target := range []string{
+		"https://127.0.0.1/x", "https://169.254.169.254/latest", "https://10.1.2.3/x",
+		"https://[::1]/x", "https://rebind.example/x", "https://meta.example/x",
+		"https://unresolvable.example/x", "https://localhost/x",
+	} {
+		if err := check(egressRedirectReq(t, target), pubVia); err == nil {
+			t.Errorf("%s: redirect from a public endpoint was allowed", target)
+		}
+	}
+	if err := check(egressRedirectReq(t, "https://other.example/x"), pubVia); err != nil {
+		t.Errorf("public target refused: %v", err)
+	}
+	// An in-cluster backend (private original) may redirect within the estate.
+	privVia := []*http.Request{egressRedirectReq(t, "http://inner.example/x")}
+	if err := check(egressRedirectReq(t, "http://10.0.0.7/x"), privVia); err != nil {
+		t.Errorf("private original to private target refused: %v", err)
 	}
 }

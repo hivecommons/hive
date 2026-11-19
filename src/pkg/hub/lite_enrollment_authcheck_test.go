@@ -368,6 +368,7 @@ func TestLiteRepoAccessHTTPClient_StripsTokenOffHost(t *testing.T) {
 			t.Fatalf("build request: %v", err)
 		}
 		r.Header.Set("Authorization", "Bearer ghp-secret")
+		r.Header.Set("Proxy-Authorization", "Basic x")
 		return r
 	}
 	via := []*http.Request{mk("https://ghe.example/api/v3/repos/o/r")}
@@ -376,6 +377,9 @@ func TestLiteRepoAccessHTTPClient_StripsTokenOffHost(t *testing.T) {
 		req := mk(target)
 		if err := client.CheckRedirect(req, via); err != nil {
 			t.Fatalf("%s: %v", target, err)
+		}
+		if req.Header.Get("Proxy-Authorization") != "" {
+			t.Errorf("%s: hop kept Proxy-Authorization", target)
 		}
 		if req.Header.Get("Authorization") != "" {
 			t.Errorf("%s: hop kept the GitHub token", target)

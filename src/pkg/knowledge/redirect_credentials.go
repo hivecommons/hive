@@ -9,7 +9,7 @@ import (
 // original host or downgrades https to http. The set matches the dashboard's
 // stripAuthOnCrossHostRedirect so every CheckRedirect in src/pkg strips the
 // same credentials (hivecommons/hive#19222).
-var redirectCredentialHeaders = []string{"Authorization", "Proxy-Authorization", "Cookie", "X-IBM-Project-ID"}
+var redirectCredentialHeaders = []string{"Authorization", "Proxy-Authorization", "Cookie", "X-IBM-Project-ID", "X-Api-Key"}
 
 // StripCredentialsOnCrossHostRedirect removes credential headers from a
 // redirect hop whose Host (port included, case-insensitive) differs from the
