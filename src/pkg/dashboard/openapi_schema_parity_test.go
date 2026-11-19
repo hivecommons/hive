@@ -64,6 +64,11 @@ func TestOpenAPISchemaFieldsExistOnGoTypes(t *testing.T) {
 			},
 		},
 		{
+			name:   "GET /api/ask/status",
+			path:   "/api/ask/status",
+			goType: reflect.TypeOf(hiveAskStatus{}),
+		},
+		{
 			name:   "GET /api/tokens",
 			path:   "/api/tokens",
 			goType: reflect.TypeOf(tokens.AggregateSummary{}),

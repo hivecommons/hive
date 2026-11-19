@@ -135,6 +135,9 @@ func (s *HubServer) registerAskRoutes() {
 	s.mux.HandleFunc("GET "+askStatsPath, s.requireAdmin(s.handleAskStats))
 	s.mux.HandleFunc("GET "+askPanelJSPath, serveAskAsset("text/javascript; charset=utf-8", askai.PanelJS))
 	s.mux.HandleFunc("GET "+askPanelCSSPath, serveAskAsset("text/css; charset=utf-8", askai.PanelCSS))
+	// Hub relay for hosted hives (#19183): per-hive heartbeat bearer, no
+	// session.
+	s.mux.HandleFunc("POST "+askai.RelayPath, s.handleAskRelay)
 }
 
 // askPanelTags are the only additions the panel makes to the dashboard

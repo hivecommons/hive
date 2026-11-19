@@ -167,6 +167,16 @@ and is deleted with the user. Answers without an allowlisted source
 (`docs.hivecommons.dev` or the GitHub docs path under `hivecommons/hive`) are
 shown as "no cited answer" with a docs link.
 
+Hosted hives ask through the hub: with Ask on, the hub also serves
+`POST /api/hub/ask/relay`, authenticated with each hive's per-hive heartbeat
+bearer, so the key stays on the hub. It serves hosted hives only in this round
+(`HIVE_ASK_RELAY_HIVES`, default `hosted`; `none` turns the relay off;
+`registered` is accepted and treated as `hosted` until self-hosted hives are
+approved), refuses hives listed in `HIVE_ASK_RELAY_DISABLED_HIVES`, and charges
+each hive at most 60 relayed questions an hour (`HIVE_ASK_LIMIT_HIVE_PER_HOUR`)
+inside the hub-wide limits. See [Ask AI help](ask-ai-help.md) for the hive
+side.
+
 Limits (env overrides in [Environment variables](env-vars.md)): per person 3 a
 minute, 20 an hour and one in flight; hub-wide 4 a minute (a fifth of the
 vendor's 20 a minute per-team limit, and never more than half of it), 2 in

@@ -165,6 +165,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		featuresOpsBody
 		featuresPlatformBody
 		featuresRunsBody
+		featuresAskBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -293,11 +294,17 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	applyAsk, err := body.featuresAskBody.prepare()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// --- apply ---
 	cfg := s.deps.Config
 	applyOps(cfg)
 	applyPlatform(cfg)
+	applyAsk(cfg)
 	applyRuns(cfg)
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
@@ -635,6 +642,9 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		out[k] = v
 	}
 	for k, v := range featuresRunsResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresAskResponse(cfg) {
 		out[k] = v
 	}
 	return out
