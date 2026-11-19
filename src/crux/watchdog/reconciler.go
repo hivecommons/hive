@@ -234,6 +234,13 @@ type agentRecord struct {
 	restartStartedAt time.Time
 	// wedgeAlerted latches the wedged-restart alert.
 	wedgeAlerted bool
+	// authFailureReason / authFailureLoggedAt record the last credential
+	// failure logged at ERROR, so a verdict that keeps re-entering False for
+	// the same reason (hivecommons/hive#19205) is logged once per
+	// credentialFailureRelogInterval instead of on every re-entry. Cleared
+	// by a True verdict: a recovered credential that fails again is news.
+	authFailureReason   string
+	authFailureLoggedAt time.Time
 	// Conditions is the agent's published condition set.
 	Conditions []Condition
 }
@@ -801,7 +808,18 @@ func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observa
 	if status == ConditionFalse && prev.Status != ConditionFalse {
 		// Credential re-seed is an operator action (RFC): alert loudly, never
 		// restart into the dead credential.
-		r.logger.Error("watchdog: agent credential failure", "agent", name, "backend", obs.Backend, "reason", reason, "detail", message)
+		if r.shouldLogAuthFailure(name, reason, now) {
+			r.logger.Error("watchdog: agent credential failure", "agent", name, "backend", obs.Backend, "reason", reason, "detail", message)
+		} else {
+			// The same failure re-entered False inside the relog window: the
+			// verdict flapped through Unknown (a copilot/codex agent with no
+			// credential file reads "no opinion" while its CLI is running,
+			// then "missing" again once it stops), the credential did not
+			// change. One ERROR per window is the operator signal; repeating
+			// it on every relaunch filed the flap fleet-wide as 8 failures
+			// in 10m (#19205). The dashboard alert below is still re-raised.
+			r.logger.Info("watchdog: agent credential still failing", "agent", name, "backend", obs.Backend, "reason", reason, "detail", message)
+		}
 		if r.alerter != nil {
 			r.alerter.AddSystemAlert(authAlertID(name), severityError,
 				fmt.Sprintf("Agent %q needs re-authentication (%s): %s", name, reason, message))
@@ -826,6 +844,34 @@ func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observa
 	if r.alerter != nil && prev.Status == ConditionFalse && status != ConditionFalse {
 		r.alerter.ClearSystemAlert(authAlertID(name))
 	}
+	if status == ConditionTrue {
+		r.mu.Lock()
+		rec := r.recordLocked(name)
+		rec.authFailureReason, rec.authFailureLoggedAt = "", time.Time{}
+		r.mu.Unlock()
+	}
+}
+
+// credentialFailureRelogInterval bounds how often one agent's unchanged
+// credential failure is logged at ERROR (#19205). An hour keeps a persistent
+// failure visible in the log and below the self-report repeat threshold
+// (5 in 10m), which a single misconfigured agent must not trip on its own.
+const credentialFailureRelogInterval = time.Hour
+
+// shouldLogAuthFailure reports whether a False transition for reason should
+// be logged at ERROR, and records it when so: a new reason, or the same one
+// after credentialFailureRelogInterval, is logged; a repeat inside the
+// window is not.
+func (r *Reconciler) shouldLogAuthFailure(name, reason string, now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec := r.recordLocked(name)
+	if rec.authFailureReason == reason && !rec.authFailureLoggedAt.IsZero() &&
+		now.Sub(rec.authFailureLoggedAt) < credentialFailureRelogInterval {
+		return false
+	}
+	rec.authFailureReason, rec.authFailureLoggedAt = reason, now
+	return true
 }
 
 // productionThreshold is the no-production window for one agent: the
