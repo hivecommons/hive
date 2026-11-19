@@ -80,9 +80,10 @@ type requestRelays struct {
 	// installs no gate.
 	mergePolicy func(*github.Client) github.MergeRequestPolicyGate
 	// nativeQueueOptedIn builds the auto_merge.native_merge_queue opt-in
-	// check for that client (the auto-merge engine's NativeQueueOptedIn).
-	// nil raises the merge-queue-required banner on every repo.
-	nativeQueueOptedIn func(*github.Client) func(repo string) bool
+	// check (repo and base) for that client (the auto-merge engine's
+	// NativeQueueOptedIn). nil raises the merge-queue-required banner on
+	// every repo.
+	nativeQueueOptedIn func(*github.Client) func(repo, base string) bool
 	// forgeMerge routes a relayed merge for a repo on GitLab/Gitea through
 	// that forge's merger. nil keeps every repo on the GitHub path.
 	forgeMerge github.ForgeMergeSelector

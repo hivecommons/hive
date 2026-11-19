@@ -221,23 +221,25 @@ func (c *Client) SetForgeMergeSelector(fn ForgeMergeSelector) {
 }
 
 // SetNativeQueueOptedIn installs the auto_merge.native_merge_queue opt-in
-// check (owner/repo). On an opted-in repo the auto-merge lanes enqueue the PR
-// through GitHub's merge queue themselves, so the relay's merge-queue-required
-// refusal there is expected and raises no operator banner. Call it before
+// check (owner/repo and the PR's base branch, so a Bases allow-list that
+// leaves the base out keeps the banner). On an opted-in base the auto-merge
+// lanes enqueue the PR through GitHub's merge queue themselves, so the
+// relay's merge-queue-required refusal there is expected and raises no
+// operator banner. Call it before
 // StartMergeRequestWatcher; nil raises the banner on every repo.
-func (c *Client) SetNativeQueueOptedIn(fn func(repo string) bool) {
+func (c *Client) SetNativeQueueOptedIn(fn func(repo, base string) bool) {
 	if c == nil {
 		return
 	}
 	c.nativeQueueOptedIn = fn
 }
 
-func (c *Client) repoNativeQueueOptedIn(repo string) bool {
-	if c == nil || c.nativeQueueOptedIn == nil {
+func (c *Client) repoNativeQueueOptedIn(repo, base string) bool {
+	if c == nil || c.nativeQueueOptedIn == nil || base == "" {
 		return false
 	}
 	owner, name := c.splitRepo(repo)
-	return c.nativeQueueOptedIn(owner + "/" + name)
+	return c.nativeQueueOptedIn(owner+"/"+name, base)
 }
 
 func (c *Client) forgeMergeFor(repo string) ForgeMergeFunc {
@@ -655,7 +657,7 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	res, err := c.MergePR(ctx, req.Repo, req.Number, req.Method, req.ExpectSHA)
 	if err != nil {
 		if isMergeQueueRequiredMergeBlocker(err.Error()) {
-			c.quarantineMergeQueueRequired(path, req, attempts, err.Error(), nowFn)
+			c.quarantineMergeQueueRequired(path, req, destination.GetBase().GetRef(), attempts, err.Error(), nowFn)
 			return
 		}
 		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
@@ -787,17 +789,17 @@ func (c *Client) quarantineMergeRequest(path string, req MergeRequest, attempts 
 // re-request for the same head is refused quietly and the classified message
 // is logged once per head. It logs at INFO: the blocker is the target repo's
 // configuration, not a hive defect, and a WARN per head would surface as an
-// unclassified_error_repeated selfreport. On a repo opted into
-// auto_merge.native_merge_queue the lanes enqueue the PR, so nobody has to act
-// and no alert is raised; elsewhere it raises the operator alert
+// unclassified_error_repeated selfreport. On a repo (and base) opted into
+// auto_merge.native_merge_queue the lanes enqueue the PR, so nobody has to
+// act and no alert is raised; elsewhere it raises the operator alert
 // (merge-queue-required) so the dashboard tells the operator to opt in,
 // enqueue or merge by hand.
-func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, attempts int, errMsg string, nowFn func() time.Time) {
+func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, base string, attempts int, errMsg string, nowFn func() time.Time) {
 	now := nowFn()
 	reason := mergeQueueRequiredReason + ": " + errMsg
 	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: reason, At: now.UTC().Format(time.RFC3339)})
 	c.putMergeRequestState(req.Repo, req.Number, mergeRequestPRState{SHA: req.ExpectSHA, Attempts: attempts, Exhausted: true, Reason: reason, At: now})
-	optedIn := c.repoNativeQueueOptedIn(req.Repo)
+	optedIn := c.repoNativeQueueOptedIn(req.Repo, base)
 	if !optedIn {
 		c.raiseMergeFailureAlert(req.Repo, req.Number, reason, req.ExpectSHA, req.Method)
 	}
@@ -805,7 +807,7 @@ func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, att
 	c.logger.Info("merge-request watcher: "+mergeQueueRequiredReason,
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", req.ExpectSHA), slog.Int("attempts", attempts),
-		slog.Bool("native_queue_opted_in", optedIn),
+		slog.String("base", base), slog.Bool("native_queue_opted_in", optedIn),
 		slog.String("error", errMsg))
 }
 

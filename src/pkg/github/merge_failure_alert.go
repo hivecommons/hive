@@ -189,9 +189,10 @@ func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() 
 			resolved = rerr == nil && runs != nil && runs.GetTotalCount() == 0
 		}
 		if !resolved && w.entry.key == "merge-queue-required" {
-			// The repo was opted into auto_merge.native_merge_queue after the
-			// alert was raised: the lanes enqueue its PRs now.
-			resolved = c.repoNativeQueueOptedIn(w.repo)
+			// The repo (and this PR's base) was opted into
+			// auto_merge.native_merge_queue after the alert was raised: the
+			// lanes enqueue its PRs now.
+			resolved = c.repoNativeQueueOptedIn(w.repo, pr.GetBase().GetRef())
 		}
 		if !resolved && w.entry.key == "merge-queue-required" && pr.GetBase().GetRef() != "" {
 			// Positive evidence the rule is gone: the base branch's active

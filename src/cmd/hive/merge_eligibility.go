@@ -534,8 +534,8 @@ func relayLanePolicyGate(opts automerge.Options) func(*github.Client) github.Mer
 // relayNativeQueueOptedIn builds the merge relay's native-queue opt-in check:
 // the auto-merge engine's NativeQueueOptedIn over the same options (and so the
 // same live auto_merge.native_merge_queue policy) the lanes use.
-func relayNativeQueueOptedIn(opts automerge.Options) func(*github.Client) func(string) bool {
-	return func(c *github.Client) func(string) bool {
+func relayNativeQueueOptedIn(opts automerge.Options) func(*github.Client) func(repo, base string) bool {
+	return func(c *github.Client) func(repo, base string) bool {
 		if c == nil {
 			return nil
 		}

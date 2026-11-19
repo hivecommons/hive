@@ -39,7 +39,10 @@ func TestMergeRequestWatcher_MergeQueueRequiredOptedInRaisesNoBanner(t *testing.
 	var logs strings.Builder
 	c.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	var asked []string
-	c.SetNativeQueueOptedIn(func(repo string) bool { asked = append(asked, repo); return repo == "o/r" })
+	c.SetNativeQueueOptedIn(func(repo, base string) bool {
+		asked = append(asked, repo+"#"+base)
+		return repo == "o/r" && base == "main"
+	})
 	sink := &recordingMergeAlertSink{}
 	c.SetMergeFailureAlertSink(sink)
 
@@ -59,8 +62,8 @@ func TestMergeRequestWatcher_MergeQueueRequiredOptedInRaisesNoBanner(t *testing.
 	if len(sink.adds) != 0 {
 		t.Fatalf("opted-in repo raised a merge-queue-required banner: %+v", sink.adds)
 	}
-	if len(asked) != 1 || asked[0] != "o/r" {
-		t.Fatalf("opt-in check asked for %v, want [o/r]", asked)
+	if len(asked) != 1 || asked[0] != "o/r#main" {
+		t.Fatalf("opt-in check asked for %v, want [o/r#main]", asked)
 	}
 	if !strings.Contains(logs.String(), "native_queue_opted_in=true") {
 		t.Fatalf("log line should record the opt-in:\n%s", logs.String())
@@ -85,7 +88,7 @@ func TestRevalidateMergeFailureAlerts_MergeQueueRequiredClearsOnceRepoOptsIn(t *
 
 	c := testMergeClient(t, srv.URL)
 	var optedIn atomic.Bool
-	c.SetNativeQueueOptedIn(func(repo string) bool { return optedIn.Load() && repo == "o/r" })
+	c.SetNativeQueueOptedIn(func(repo, base string) bool { return optedIn.Load() && repo == "o/r" && base == "main" })
 	sink := &recordingMergeAlertSink{}
 	c.SetMergeFailureAlertSink(sink)
 	c.raiseMergeFailureAlert("o/r", 7, mergeQueueRequiredErr)

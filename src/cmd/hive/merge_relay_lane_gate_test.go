@@ -194,7 +194,7 @@ func TestRelayNativeQueueOptedInWiring(t *testing.T) {
 	}
 	// No auto_merge.native_merge_queue policy: nothing is opted in, so the
 	// relay keeps raising the merge-queue-required banner.
-	if check("hivecommons/docs") {
+	if check("hivecommons/docs", "main") {
 		t.Fatal("repo reported opted in with no native-queue policy")
 	}
 }

@@ -110,10 +110,11 @@ quarantined (`.exhausted`) for that head immediately, without consuming the
 retry budget or re-engaging the fix loop; the result file records `repo requires
 merge queue; direct merge not possible — enqueue via merge queue or merge by
 hand` followed by GitHub's message, and the watcher logs it once per head at
-INFO with `native_queue_opted_in`. On a repo opted into
+INFO with `base` and `native_queue_opted_in`. On a repo opted into
 `auto_merge.native_merge_queue` (see the
-[operator reference](operator-reference/README.md)) the auto-merge lanes enqueue
-the PR themselves, so nothing else happens. On any other repo it also raises the
+[operator reference](operator-reference/README.md)), for a base its `bases`
+allow-list admits, the auto-merge lanes enqueue the PR themselves, so nothing
+else happens. On any other repo it also raises the
 "Merge blocked" operator alert, which suggests opting the repo in, enqueuing the
 PR on GitHub or merging it by hand. A new head SHA starts fresh like any other
 exhausted request.
@@ -157,7 +158,7 @@ five minutes (`mergeAlertRevalidateInterval` in
 PR is no longer open, and a fork-approval alert is dropped as soon as the PR
 head has no workflow runs still `action_required` — i.e. the operator approved
 them or relaxed the repo/org setting. A merge-queue-required alert is dropped
-once the repo is opted into `auto_merge.native_merge_queue`, or once the base
+once the repo and the PR's base are opted into `auto_merge.native_merge_queue`, or once the base
 branch's active rules, read successfully, no longer include a merge queue;
 otherwise it stays until the PR is closed or merged. API errors keep the alert
 in place.
