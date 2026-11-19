@@ -97,6 +97,11 @@ func (c *Engine) nativeQueueOptedIn(repo string) bool {
 	return c.nativeQueuePolicy().repoAllowed(repo) && c.nativeQueueTransport() != nil
 }
 
+// NativeQueueOptedIn is nativeQueueOptedIn for the merge relay, which
+// raises no merge-queue-required banner on an opted-in repo because the
+// lanes enqueue its PRs.
+func (c *Engine) NativeQueueOptedIn(repo string) bool { return c.nativeQueueOptedIn(repo) }
+
 // nativeQueueProbeKey identifies one base branch of one repo.
 func nativeQueueProbeKey(repo string, pr *gh.PullRequest) string {
 	return strings.ToLower(strings.TrimSpace(repo)) + "#" + pr.GetBase().GetRef()

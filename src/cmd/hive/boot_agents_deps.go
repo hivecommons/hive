@@ -79,6 +79,10 @@ type requestRelays struct {
 	// the relays run on (the auto-merge engine's RelayMergeRefusal). nil
 	// installs no gate.
 	mergePolicy func(*github.Client) github.MergeRequestPolicyGate
+	// nativeQueueOptedIn builds the auto_merge.native_merge_queue opt-in
+	// check for that client (the auto-merge engine's NativeQueueOptedIn).
+	// nil raises the merge-queue-required banner on every repo.
+	nativeQueueOptedIn func(*github.Client) func(repo string) bool
 	// forgeMerge routes a relayed merge for a repo on GitLab/Gitea through
 	// that forge's merger. nil keeps every repo on the GitHub path.
 	forgeMerge github.ForgeMergeSelector
@@ -106,6 +110,9 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 			github.ConfigureDestinationMerges(automerge.DefaultDestinationMergeDirectory())
 			if r.mergePolicy != nil {
 				c.SetMergeRequestPolicyGate(r.mergePolicy(c))
+			}
+			if r.nativeQueueOptedIn != nil {
+				c.SetNativeQueueOptedIn(r.nativeQueueOptedIn(c))
 			}
 			if r.forgeMerge != nil {
 				c.SetForgeMergeSelector(r.forgeMerge)

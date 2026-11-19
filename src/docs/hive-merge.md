@@ -107,13 +107,16 @@ merge call itself (`PUT /pulls/{n}/merge`) answers `405 Changes must be made
 through the merge queue`, the base branch's ruleset forbids direct merges and no
 retry, code push or re-engaged fix loop can change that. The request is
 quarantined (`.exhausted`) for that head immediately, without consuming the
-retry budget, raising an operator alert or re-engaging the fix loop; the result
-file records `repo requires merge queue; direct merge not possible — enqueue via
-merge queue or merge by hand` followed by GitHub's message, and the watcher logs
-it once per head at INFO. Clear it by enqueuing the PR through the merge queue
-(see `auto_merge.native_merge_queue.enabled` in the
-[operator reference](operator-reference/README.md)) or merging by hand; a new
-head SHA starts fresh like any other exhausted request.
+retry budget or re-engaging the fix loop; the result file records `repo requires
+merge queue; direct merge not possible — enqueue via merge queue or merge by
+hand` followed by GitHub's message, and the watcher logs it once per head at
+INFO with `native_queue_opted_in`. On a repo opted into
+`auto_merge.native_merge_queue` (see the
+[operator reference](operator-reference/README.md)) the auto-merge lanes enqueue
+the PR themselves, so nothing else happens. On any other repo it also raises the
+"Merge blocked" operator alert, which suggests opting the repo in, enqueuing the
+PR on GitHub or merging it by hand. A new head SHA starts fresh like any other
+exhausted request.
 
 **Wait state survives restarts and re-requests.** The attempt count, `ci_waits`,
 the pending-poll backoff and an "exhausted" record are kept per PR and head SHA
@@ -154,9 +157,10 @@ five minutes (`mergeAlertRevalidateInterval` in
 PR is no longer open, and a fork-approval alert is dropped as soon as the PR
 head has no workflow runs still `action_required` — i.e. the operator approved
 them or relaxed the repo/org setting. A merge-queue-required alert is dropped
-once the base branch's active rules, read successfully, no longer include a
-merge queue; otherwise it stays until the PR is closed or merged. API errors
-keep the alert in place.
+once the repo is opted into `auto_merge.native_merge_queue`, or once the base
+branch's active rules, read successfully, no longer include a merge queue;
+otherwise it stays until the PR is closed or merged. API errors keep the alert
+in place.
 
 **Unprotected base branches are allowed.** The watcher no longer makes a
 separate branch-protection lookup and no longer refuses solely because the base

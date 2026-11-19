@@ -220,6 +220,26 @@ func (c *Client) SetForgeMergeSelector(fn ForgeMergeSelector) {
 	c.forgeMergeSelector = fn
 }
 
+// SetNativeQueueOptedIn installs the auto_merge.native_merge_queue opt-in
+// check (owner/repo). On an opted-in repo the auto-merge lanes enqueue the PR
+// through GitHub's merge queue themselves, so the relay's merge-queue-required
+// refusal there is expected and raises no operator banner. Call it before
+// StartMergeRequestWatcher; nil raises the banner on every repo.
+func (c *Client) SetNativeQueueOptedIn(fn func(repo string) bool) {
+	if c == nil {
+		return
+	}
+	c.nativeQueueOptedIn = fn
+}
+
+func (c *Client) repoNativeQueueOptedIn(repo string) bool {
+	if c == nil || c.nativeQueueOptedIn == nil {
+		return false
+	}
+	owner, name := c.splitRepo(repo)
+	return c.nativeQueueOptedIn(owner + "/" + name)
+}
+
 func (c *Client) forgeMergeFor(repo string) ForgeMergeFunc {
 	if c == nil || c.forgeMergeSelector == nil {
 		return nil
@@ -767,19 +787,25 @@ func (c *Client) quarantineMergeRequest(path string, req MergeRequest, attempts 
 // re-request for the same head is refused quietly and the classified message
 // is logged once per head. It logs at INFO: the blocker is the target repo's
 // configuration, not a hive defect, and a WARN per head would surface as an
-// unclassified_error_repeated selfreport. It still raises the operator alert
-// (merge-queue-required) so the dashboard tells the operator to enqueue or
-// reconfigure.
+// unclassified_error_repeated selfreport. On a repo opted into
+// auto_merge.native_merge_queue the lanes enqueue the PR, so nobody has to act
+// and no alert is raised; elsewhere it raises the operator alert
+// (merge-queue-required) so the dashboard tells the operator to opt in,
+// enqueue or merge by hand.
 func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, attempts int, errMsg string, nowFn func() time.Time) {
 	now := nowFn()
 	reason := mergeQueueRequiredReason + ": " + errMsg
 	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: reason, At: now.UTC().Format(time.RFC3339)})
 	c.putMergeRequestState(req.Repo, req.Number, mergeRequestPRState{SHA: req.ExpectSHA, Attempts: attempts, Exhausted: true, Reason: reason, At: now})
-	c.raiseMergeFailureAlert(req.Repo, req.Number, reason, req.ExpectSHA, req.Method)
+	optedIn := c.repoNativeQueueOptedIn(req.Repo)
+	if !optedIn {
+		c.raiseMergeFailureAlert(req.Repo, req.Number, reason, req.ExpectSHA, req.Method)
+	}
 	_ = os.Rename(path, path+".exhausted")
 	c.logger.Info("merge-request watcher: "+mergeQueueRequiredReason,
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", req.ExpectSHA), slog.Int("attempts", attempts),
+		slog.Bool("native_queue_opted_in", optedIn),
 		slog.String("error", errMsg))
 }
 

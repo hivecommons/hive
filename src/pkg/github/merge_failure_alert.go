@@ -188,6 +188,11 @@ func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() 
 			})
 			resolved = rerr == nil && runs != nil && runs.GetTotalCount() == 0
 		}
+		if !resolved && w.entry.key == "merge-queue-required" {
+			// The repo was opted into auto_merge.native_merge_queue after the
+			// alert was raised: the lanes enqueue its PRs now.
+			resolved = c.repoNativeQueueOptedIn(w.repo)
+		}
 		if !resolved && w.entry.key == "merge-queue-required" && pr.GetBase().GetRef() != "" {
 			// Positive evidence the rule is gone: the base branch's active
 			// rules were read successfully and none is a merge queue.
@@ -269,7 +274,7 @@ func classifyMergeFailureForOperator(repo, errMsg string) (mergeFailureAlert, bo
 	case isMergeQueueRequiredMergeBlocker(msg):
 		return mergeFailureAlert{
 			key:     "merge-queue-required",
-			message: fmt.Sprintf("Merge blocked for %s: the base branch requires changes to be made through the merge queue, so the hive cannot merge directly. Enqueue the PR via the merge queue (or merge it by hand), or remove the merge-queue rule from the branch ruleset at https://github.com/%s/settings/rules.", repo, repo),
+			message: fmt.Sprintf("Merge blocked for %s: the base branch requires changes to be made through the merge queue, so the hive cannot merge directly. Opt the repo into auto_merge.native_merge_queue so the hive enqueues its PRs, enqueue the PR through the merge queue on GitHub, or merge it by hand.", repo),
 		}, true
 	case strings.Contains(lower, "fork pr workflow runs are awaiting maintainer approval"):
 		return mergeFailureAlert{
