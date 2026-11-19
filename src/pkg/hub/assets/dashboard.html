@@ -828,6 +828,9 @@
       <span id="nav-user" class="nav-user"></span>
     </nav>
     <div class="header-right">
+      <!-- Ask AI help opener (#19181): stays empty unless the hub serves the
+           panel script below, which it does only when Ask is on. -->
+      <span id="hive-ask-slot"></span>
       <span id="hub-version"></span>
       <a href="#" class="header-link" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
     </div>
@@ -1095,6 +1098,11 @@
           <h3>Customers profile sharing</h3>
           <p>In force: <strong id="customers-share-effective">Unknown</strong> · Default: Off</p>
           <p>Set <code>HIVE_HUB_CUSTOMERS_SHARE_ENABLED</code> on the hub to enable the personal profile and consent page. The environment is authoritative; this setting cannot be changed here. No profile details are sent to hives in this release.</p>
+        </div>
+        <div class="customers-share-setting">
+          <h3>Ask AI help <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hub-deployment.md#ask-ai-help" target="_blank" rel="noopener noreferrer" aria-label="Help: Ask AI help">?</a></h3>
+          <p>In force: <strong id="ask-effective">Unknown</strong> · Default: Off</p>
+          <p>Set <code>HIVE_ASK_ENABLED</code> and the Kapa values on the hub to show an Ask panel on this dashboard. When on, a signed-in person's question and the label of the section they are in are sent to Kapa.ai after they confirm a notice; nothing else is sent. The environment is authoritative; this setting cannot be changed here.</p>
         </div>
         <div style="font-size:0.85rem;color:var(--text);margin:var(--sp-5) var(--sp-0) var(--sp-4);font-weight:600">Per-cluster limits</div>
         <div class="table-wrap"><table style="width:100%;font-size:0.85rem"><thead><tr>
@@ -11682,6 +11690,8 @@
         var eff = data.effective || {};
         document.getElementById('customers-share-effective').textContent =
           typeof eff.customers_share_enabled !== 'boolean' ? 'Unknown' : (eff.customers_share_enabled ? 'On' : 'Off');
+        document.getElementById('ask-effective').textContent =
+          typeof eff.ask_enabled !== 'boolean' ? 'Unknown' : (eff.ask_enabled ? 'On' : 'Off');
         document.getElementById('scale-controls-summary').textContent =
           'wave ' + eff.upgrade_wave_size + ' · workers ' + eff.provision_workers +
           ' · per-cluster ' + eff.provision_per_cluster + ' · kubectl ' + eff.kubectl_per_cluster;
@@ -16569,5 +16579,6 @@
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
   </script>
+<!-- hive-ask-panel -->
 </body>
 </html>

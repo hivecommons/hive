@@ -667,6 +667,10 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 	if err == nil {
 		err = removeCustomerConsents(consentPath)
 	}
+	if err == nil {
+		// Ask AI help consent (#19180) lives in its own per-person file.
+		err = removeAskConsent(u)
+	}
 	if err != nil {
 		s.logger.Warn("admin delete user: consent removal failed", "target", username, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete user's consent records")
