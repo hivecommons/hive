@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // LinearAdvisoryMarker is the stable footer every hive-authored digest comment
@@ -15,7 +17,12 @@ import (
 // digest stays ONE comment rewritten in place instead of a new comment per
 // governor eval. Kept visible rather than an HTML comment because Linear's
 // markdown renderer does not reliably preserve HTML comments.
-const LinearAdvisoryMarker = "_Hive advisory digest (hive-advisory-digest) — rewritten every governor cycle._"
+const LinearAdvisoryMarker = "_Hive advisory digest (hive-advisory-digest) - rewritten every governor cycle._"
+
+// legacyLinearAdvisoryMarker is the footer digests carried before outbound
+// text lost its em-dashes (hivecommons/hive#19103); a comment carrying it is
+// still the hive's digest and is updated in place.
+const legacyLinearAdvisoryMarker = "_Hive advisory digest (hive-advisory-digest) \u2014 rewritten every governor cycle._"
 
 // ErrLinearAdvisoryIssueUnset is returned when the Linear target is selected
 // but governor.advisory.linear_issue is empty. It names the missing key so
@@ -80,7 +87,9 @@ func (p *LinearAdvisoryPoster) PostDigest(ctx context.Context, identifier, diges
 	if p == nil || strings.TrimSpace(p.apiKey) == "" {
 		return ErrLinearAdvisoryAPIKeyUnset
 	}
-	body := strings.TrimRight(digest, "\n") + "\n\n" + LinearAdvisoryMarker
+	// Filter before the compare below so the skip-if-unchanged guard sees
+	// the text Linear will actually hold (hivecommons/hive#19103).
+	body := prosefilter.Sanitize(strings.TrimRight(digest, "\n") + "\n\n" + LinearAdvisoryMarker)
 
 	raw, err := linearGraphQL(ctx, p.client, p.baseURL, p.apiKey, linearAdvisoryIssueQuery, map[string]interface{}{"id": identifier})
 	if err != nil {
@@ -107,7 +116,7 @@ func (p *LinearAdvisoryPoster) PostDigest(ctx context.Context, identifier, diges
 	}
 
 	for _, c := range lookup.Data.Issue.Comments.Nodes {
-		if !strings.Contains(c.Body, LinearAdvisoryMarker) {
+		if !strings.Contains(c.Body, LinearAdvisoryMarker) && !strings.Contains(c.Body, legacyLinearAdvisoryMarker) {
 			continue
 		}
 		if c.Body == body {

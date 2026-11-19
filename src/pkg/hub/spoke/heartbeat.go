@@ -880,7 +880,15 @@ type HeartbeatPayload struct {
 	// The hub uses it to avoid nudging — let alone threatening de-provisioning
 	// — a hive whose credentials the OPERATOR has not delivered. Empty from a
 	// spoke too old to report it, which must be read as "cannot tell".
-	GitHubAppState   string `json:"github_app_state,omitempty"`
+	GitHubAppState string `json:"github_app_state,omitempty"`
+	// PRGateCause says why the hive-posted PR-contents gate cannot be posted
+	// ("grant-missing": the installation has no Commit statuses write grant;
+	// "write-refused": GitHub refused a status write), "" when it can or the
+	// gate is not configured. PRGateDependsOn is true when a required context
+	// depends on the gate, which turns the cause from amber into red on the hub
+	// (hivecommons/hive#19038).
+	PRGateCause      string `json:"pr_gate_cause,omitempty"`
+	PRGateDependsOn  bool   `json:"pr_gate_depends_on,omitempty"`
 	AutoUpgrade      bool   `json:"auto_upgrade,omitempty"`
 	Upgrading        bool   `json:"upgrading,omitempty"`
 	UpgradeTargetSHA string `json:"upgrade_target_sha,omitempty"`
