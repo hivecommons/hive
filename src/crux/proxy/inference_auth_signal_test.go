@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -162,5 +164,43 @@ func TestRecordInferenceError_403IsNotAuthFailure(t *testing.T) {
 	}
 	if errMsg, _ := p.InferenceAuthError(); errMsg != "" {
 		t.Fatalf("repeated 403s must NOT latch the inference-auth signal, got %q", errMsg)
+	}
+}
+
+func TestInferenceProxyReportsUpstream401OnlyAsAuthFailure(t *testing.T) {
+	for _, path := range []struct {
+		name  string
+		serve func(*testing.T, *GitHubProxy, *InferenceRoute) int
+	}{
+		{"translator", serveTranslator},
+		{"mitm", serveMITM},
+	} {
+		t.Run(path.name, func(t *testing.T) {
+			for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+				t.Run(http.StatusText(status), func(t *testing.T) {
+					upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						w.WriteHeader(status)
+						if status == http.StatusUnauthorized {
+							_, _ = io.WriteString(w, `{"error":{"message":"Authentication Error, Invalid API key provided.","type":"token_not_found_in_db","code":"401"}}`)
+						}
+					}))
+					defer upstream.Close()
+					var logs bytes.Buffer
+					p := newKeyResolverTestProxy(&logs)
+					route := &InferenceRoute{Backend: "litellm", Endpoint: upstream.URL, Model: "m"}
+					if got := path.serve(t, p, route); got != status {
+						t.Fatalf("client status = %d, want %d", got, status)
+					}
+					want, unwanted := "inference backend auth failure", "inference upstream error"
+					if status != http.StatusUnauthorized {
+						want, unwanted = unwanted, want
+					}
+					out := logs.String()
+					if strings.Count(out, want) != 1 || strings.Contains(out, unwanted) {
+						t.Fatalf("want one %q and no %q, got:\n%s", want, unwanted, out)
+					}
+				})
+			}
+		})
 	}
 }
