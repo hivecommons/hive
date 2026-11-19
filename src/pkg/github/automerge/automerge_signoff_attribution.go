@@ -47,7 +47,7 @@ func signoffAttributionCore(n ContributorNudge, stage stagelabels.Stage) string 
 	b.WriteString(SignoffAttributionMarker)
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "@%s this PR is back in your court (`%s`). ", n.Author, stage.Label())
-	b.WriteString("Its commits are signed off as the hive App rather than as you, so a squash merge would misattribute them and the sign-off attribution check stays red. No hive agent can rewrite a contributor's commits — the fix is yours:\n\n")
+	b.WriteString("Some of its commits are signed off by a hive agent, not by you (an agent wrote them or re-signed them), so a squash merge would land them under your name with the agent's sign-off and the sign-off attribution check stays red. No hive agent rewrites a contributor's commits, so the fix is yours:\n\n")
 	for _, a := range n.ReviewAsks {
 		fmt.Fprintf(&b, "- %s\n", a)
 	}
@@ -64,7 +64,7 @@ func signoffAttributionChange(headSHA string, hiveSigned int) string {
 	if hiveSigned == 1 {
 		plural = ""
 	}
-	return fmt.Sprintf("head `%s`, %d commit%s signed off as the hive App", shortSHA(headSHA), hiveSigned, plural)
+	return fmt.Sprintf("head `%s`, %d commit%s signed off by a hive agent", shortSHA(headSHA), hiveSigned, plural)
 }
 
 // nudgeSignoffAttribution tells a non-clanker author once per PR that the
