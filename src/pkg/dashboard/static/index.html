@@ -54281,6 +54281,9 @@ function burnAreaChart() {
     const CUSTOMERS_ORIGIN_LABELS = { hive_user: 'hive user', manual: 'added by hand', accepted: 'accepted suggestion' };
     // The short origin pill on a row; the long wording stays in its tooltip.
     const CUSTOMERS_ORIGIN_SHORT = { hive_user: 'hive user', manual: 'added', accepted: 'accepted' };
+    // Long names of the public sources an affiliation suggestion can come from
+    // (customers.enrichment); the chip shows the short key.
+    const CUSTOMERS_AFFILIATION_SOURCES = { gitdm: 'cncf/gitdm', crowddev: 'crowd.dev (LFX Insights)' };
     // A row shows this many identity pills and tag pills, then "+N".
     const CUSTOMERS_SOURCE_PILLS_SHOWN = 2;
     const CUSTOMERS_TAG_PILLS_SHOWN = 3;
@@ -54514,12 +54517,25 @@ function burnAreaChart() {
         '<span aria-hidden="true">' + customersFlagEmoji(code) + '</span> ' + escapeHtml(code) + '</span>';
     }
 
+    // customersAffiliationSourceChip: for a suggestion that came from
+    // enrichment (customers.enrichment), a chip naming the public source and
+    // the dates it gives. Offline guesses have no chip.
+    function customersAffiliationSourceChip(s) {
+      if (!s || !s.source) return '';
+      const label = CUSTOMERS_AFFILIATION_SOURCES[s.source] || s.source;
+      const dates = s.from && s.until ? s.from + ' to ' + s.until : (s.from ? 'since ' + s.from : (s.until ? 'until ' + s.until : ''));
+      const title = 'From ' + label + (dates ? ', ' + dates : '') + '. Public data; nothing is saved until you accept.';
+      return '<span class="kc-pill customers-pill customers-affiliation-source" data-source="' + escapeHtml(s.source) + '" title="' + escapeHtml(title) + '">' + escapeHtml(s.source) + '</span>' +
+        (dates ? ' <span class="muted-xs">' + escapeHtml(dates) + '</span>' : '');
+    }
+
     // customersAffiliationHtml: the likely organization, with its evidence, as
     // a suggestion to accept or dismiss. Nothing is saved until Accept.
     function customersAffiliationHtml(p) {
       const s = p && p.affiliation_suggestion;
       if (!s || !s.value) return '';
-      return '<div class="customers-inline" data-customers-field="affiliation-suggestion"><span>Likely: <strong>' + escapeHtml(s.value) + '</strong> <span class="muted-xs">(' + escapeHtml(s.evidence || 'a guess') + ')</span></span>' +
+      const why = s.source ? customersAffiliationSourceChip(s) : '<span class="muted-xs">(' + escapeHtml(s.evidence || 'a guess') + ')</span>';
+      return '<div class="customers-inline" data-customers-field="affiliation-suggestion"><span>Likely: <strong>' + escapeHtml(s.value) + '</strong> ' + why + '</span>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationAccept" data-arg0="' + escapeHtml(s.value) + '">Accept</button>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationDismiss" data-arg0="' + escapeHtml(s.value) + '">Dismiss</button></div>';
     }

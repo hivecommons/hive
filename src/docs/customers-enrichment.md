@@ -18,10 +18,30 @@ made and nothing extra is stored or shown.
 | devstats | Public contribution activity per CNCF project, with links to devstats | The person's GitHub login, never an email, sent to CNCF devstats | `customers.enrichment.devstats.enabled` |
 | crowd.dev (LFX Insights) | Affiliation and activity from crowd.dev | The person's GitHub login, never an email, sent to the crowd.dev API with your token | `customers.enrichment.crowddev.enabled` |
 
-Rollout status: this release adds the switches, the Settings home and this
-page. The gitdm source, the devstats activity block and the crowd.dev source
-each land in their own later release; until a source ships, turning its switch
-on does nothing.
+Rollout status: the gitdm source is live. The devstats activity block and the
+crowd.dev source each land in their own later release; until a source ships,
+turning its switch on does nothing.
+
+## How gitdm works
+
+The `customers_enrichment` optional sweep runs every 30 minutes. With the gitdm
+switch on it:
+
+1. Downloads the public gitdm files again when the snapshot is older than
+   `customers.enrichment.gitdm.refresh_interval` (default 24h). The download
+   uses ETags, so an unchanged file is not sent again, and it is cached in
+   `/data/customers/colony-cache`.
+2. Looks up, on the hive, each confirmed customer whose last lookup is older
+   than the snapshot, by their confirmed GitHub login and confirmed email
+   addresses. At most 200 people per pass; the rest wait for the next one.
+3. Stores the affiliations found, with their dates, in
+   `/data/customers/enrichment.json`, and writes one audit line
+   (`customer_enrichment`, person id and provider) when a person's facts
+   change.
+
+With the switch off a pass only tidies: it deletes stored gitdm facts and the
+facts of people who are gone, and makes no request. Like every optional sweep
+it stands down when the hive's API budget asks optional work to wait.
 
 ## How results are used
 
@@ -37,9 +57,10 @@ on does nothing.
   confirmed email locally, on the hive).
 - **Forget erases enrichment.** Forgetting a person deletes everything found for
   them, and the tombstone stops it from being added again.
-- **Audit lines carry ids, not values.** Each lookup and each change to the
-  crowd.dev token writes an audit line with the person id and the provider (or
-  that the token changed), never the facts found or the token.
+- **Audit lines carry ids, not values.** Each change enrichment makes to a
+  person's facts writes a `customer_enrichment` audit line with the person id
+  and the provider, and each change to the crowd.dev token writes one saying
+  only that the token changed. Never the facts found or the token.
 
 Enrichment results are kept in `/data/customers/enrichment.json` (mode 0600),
 keyed by person id with the source and fetch time of each fact. The file can be

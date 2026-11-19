@@ -106,6 +106,39 @@ type Service struct {
 	store     *Store
 	index     *Index
 	resolvers Resolvers
+	// enrich holds public facts from customers.enrichment; nil when it is
+	// not wired. enrichActive says whether a source is switched on now, so a
+	// source turned off stops showing at once.
+	enrich       *EnrichmentStore
+	enrichActive func(source string) bool
+}
+
+// SetEnrichment wires the enrichment store. active reports whether a source
+// is switched on; nil means none is. Call before the service is shared.
+func (s *Service) SetEnrichment(e *EnrichmentStore, active func(source string) bool) {
+	s.enrich, s.enrichActive = e, active
+}
+
+// Enrichment is the enrichment store, or nil.
+func (s *Service) Enrichment() *EnrichmentStore { return s.enrich }
+
+// activeEnrichedAffiliations are the affiliations enrichment holds for a
+// person from sources that are switched on now.
+func (s *Service) activeEnrichedAffiliations(id string) []EnrichedAffiliation {
+	if s.enrich == nil || s.enrichActive == nil {
+		return nil
+	}
+	pe, ok := s.enrich.Get(id)
+	if !ok {
+		return nil
+	}
+	var out []EnrichedAffiliation
+	for _, a := range pe.Affiliations {
+		if s.enrichActive(a.Source) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // NewService wraps a store. index and resolvers may be nil.
@@ -160,7 +193,7 @@ func (s *Service) CanSee(v Viewer, id string) bool {
 func (s *Service) view(v Viewer, p Person, isMe, detail bool) PersonView {
 	out := PersonView{Person: p, Me: isMe}
 	if detail {
-		out.Affiliation = SuggestAffiliation(p)
+		out.Affiliation = SuggestAffiliationWith(p, s.activeEnrichedAffiliations(p.ID), s.store.now())
 	}
 	if !v.Full {
 		// A viewer without the full view sees what they may edit. Notes,
@@ -320,6 +353,11 @@ func (s *Service) Forget(v Viewer, id string) (int, error) {
 		return 0, err
 	}
 	if _, err := s.store.Forget(p.ID); err != nil {
+		return 0, err
+	}
+	// Enrichment goes with the person. The store's tombstones stop the
+	// person, and so their enrichment, from coming back.
+	if err := s.enrich.Delete(p.ID); err != nil {
 		return 0, err
 	}
 	if s.index == nil {
