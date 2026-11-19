@@ -307,9 +307,9 @@ func (s *HubServer) handleHubV1Patch(w http.ResponseWriter, r *http.Request) {
 		}
 		n.Repos = plan.repos
 		n.RepoProofs = selfServiceProofTimes(n.RepoProofs, plan.repos, n.OwnershipCheckedAt, now, plan.added)
-		if len(n.PendingProof) > 0 && len(plan.added) > 0 {
+		if len(n.PendingProof) > 0 && (len(plan.added) > 0 || len(plan.removed) > 0) {
 			n.PendingProof = slices.DeleteFunc(n.PendingProof, func(repo string) bool {
-				return hubV1ContainsFold(plan.added, repo)
+				return hubV1ContainsFold(plan.added, repo) || hubV1ContainsFold(plan.removed, repo)
 			})
 		}
 		n.DashboardURL = plan.dashboardURL
