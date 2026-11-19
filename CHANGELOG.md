@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-19 (v5.335.2)
+
+### Fixed
+
+- The PR-request watcher now rejects a request whose base branch does not exist on the remote with a clear result, instead of retrying it forever with an unclassified warning (#19211).
+
 ## 2026-11-19 (v5.335.1)
 
 ### Fixed
