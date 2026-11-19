@@ -506,9 +506,28 @@ func validateLiteGitHubHost(ctx context.Context, host string) error {
 	return nil
 }
 
+// liteRepoAccessTransport dials only an address isPrivateURL passed (#19221,
+// part of #18986). validateLiteGitHubHost checks the caller-supplied
+// github_host before the request, and a default transport resolved the name
+// again at dial time, so a host whose answer rebinds was checked as public
+// and connected to as private. Every connection, redirect hops included, is
+// resolved once and pinned to a checked address.
+var liteRepoAccessTransport http.RoundTripper = pinnedFetchTransport(isPrivateURL)
+
+// liteRepoAccessRoundTripper is liteRepoAccessTransport, unless
+// http.DefaultTransport was replaced (tests inject a RoundTripper there, the
+// same convention as hubGitHubHTTPClient); then that replacement is used.
+func liteRepoAccessRoundTripper() http.RoundTripper {
+	if _, ok := http.DefaultTransport.(*http.Transport); !ok {
+		return http.DefaultTransport
+	}
+	return liteRepoAccessTransport
+}
+
 func liteRepoAccessHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: liteRepoAccessHTTPTimeout,
+		Timeout:   liteRepoAccessHTTPTimeout,
+		Transport: liteRepoAccessRoundTripper(),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("stopped after %d redirects", len(via))
