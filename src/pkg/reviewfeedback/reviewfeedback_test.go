@@ -433,6 +433,5 @@ func TestBuildBrief_RepliesEndpointAndNoProbeComments(t *testing.T) {
 		if !strings.Contains(brief, want) {
 			t.Errorf("brief missing %q", want)
 		}
-		}
 	}
 }
