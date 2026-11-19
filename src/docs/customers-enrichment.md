@@ -18,9 +18,9 @@ made and nothing extra is stored or shown.
 | devstats | Public contribution activity per CNCF project, with links to devstats | The person's GitHub login, never an email, sent to CNCF devstats | `customers.enrichment.devstats.enabled` |
 | crowd.dev (LFX Insights) | Affiliation and activity from crowd.dev | The person's GitHub login, never an email, sent to the crowd.dev API with your token | `customers.enrichment.crowddev.enabled` |
 
-Rollout status: the gitdm source is live. The devstats activity block and the
-crowd.dev source each land in their own later release; until a source ships,
-turning its switch on does nothing.
+Rollout status: the gitdm and devstats sources are live. crowd.dev is not:
+LFX Insights has no public API it can use today (hivecommons/colony#5), so its
+switch and token field are accepted but make no request.
 
 ## How gitdm works
 
@@ -39,7 +39,19 @@ switch on it:
    (`customer_enrichment`, person id and provider) when a person's facts
    change.
 
-With the switch off a pass only tidies: it deletes stored gitdm facts and the
+## How devstats works
+
+With the devstats switch on, the same sweep looks up each confirmed customer
+who has a confirmed GitHub login and whose activity is older than 24 hours.
+Each lookup sends that login, and nothing else, to `devstats.cncf.io` (a POST
+to its public API). Lookups are capped by
+`customers.enrichment.devstats.hourly_limit` (default 30 an hour across all
+people); people over the limit wait for a later pass. The answer, total CNCF
+contributions with a link to the devstats dashboard, appears read-only as
+**Public contributions** in the person's details, with an external link.
+A person known only by email is never looked up.
+
+With a switch off a pass only tidies: it deletes stored gitdm facts and the
 facts of people who are gone, and makes no request. Like every optional sweep
 it stands down when the hive's API budget asks optional work to wait.
 

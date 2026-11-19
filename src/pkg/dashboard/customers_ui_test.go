@@ -97,7 +97,7 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersFocusSuggestion", "customersAfterSuggestion", "customersAccept", "customersDismiss", "customersShowMore",
 		"customersPickerOpen", "customersProfilePickerOpen", "customersPickerClose", "customersAttach", "customersHintAnswer",
 		"customersAvatarsOn", "customersGithubLogin", "customersAvatarHtml", "customersMorePill", "customersSourcePills",
-		"rowChevronHtml", "customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget", "customersOrgPill", "customersProfileValue", "customersDetailsHtml",
+		"rowChevronHtml", "customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget", "customersOrgPill", "customersProfileValue", "customersDetailsHtml", "customersPublicContributionsHtml",
 		"customersFieldSourceLabel", "customersFieldProvenance",
 		"customersFlagEmoji", "customersCountryName", "customersCountryPill", "customersAffiliationHtml",
 		"graphcanvasRound", "graphcanvasLabel", "graphcanvasLayout", "graphcanvasSvg",

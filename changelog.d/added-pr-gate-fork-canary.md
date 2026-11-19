@@ -1,0 +1,1 @@
+- The PR-contents gate records a fork-head canary: `/api/status` shows the latest gate status write per head origin (same-repo, fork, Dependabot) with its result and the latest accepted head, so an operator can see that fork and Dependabot heads get the status before switching a repository to enforce ([#19286](https://github.com/hivecommons/hive/issues/19286)).
