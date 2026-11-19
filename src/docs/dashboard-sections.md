@@ -2,6 +2,8 @@
 
 This page explains every section of the Hive dashboard in plain words. It is written for someone running Hive for the first time.
 
+To find where a section or a setting is on screen, see the [Dashboard UI map](dashboard-ui-map.md).
+
 Every section title on the dashboard has a small **?** mark next to it. Rest the pointer on it, or move to it with the Tab key, to see one sentence about the section. Click it, tap it, or press Enter on it to open this page at that section's entry.
 
 Each entry answers the same questions in the same order:
