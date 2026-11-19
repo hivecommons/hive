@@ -642,13 +642,17 @@ func TestGovernorFeatures_CustomersHubImportToggleRoundTrip(t *testing.T) {
 	}
 }
 
-// A hub-provenance field says "from the hub" on the profile and the
-// organization pill (#19163).
+// A hub-provenance field shows its hub label ("from hub: ...") on the
+// profile and the organization pill (#19163, #19306).
 func TestCustomersProfileShowsHubProvenance(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`cur.source === 'hub' ? 'from the hub'`,
-		`f.source === 'hub' ? 'From the hub`,
+		`cur.source === 'hub' ? customersHubLabel(cur)`,
+		`f.source === 'hub' ? customersHubLabel(f)`,
+		`hub_email_domain: 'from hub: derived from an organization email domain'`,
+		`hub_admin: 'from hub: set by a hub admin'`,
+		`hub_person: 'from hub: entered by the person'`,
+		`hub_browser_language: 'from hub: inferred from browser language'`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("Customers UI lacks %q", want)

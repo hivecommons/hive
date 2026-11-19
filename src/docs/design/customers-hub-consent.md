@@ -45,6 +45,117 @@ The operator's decision on #19088, followed exactly:
 7. **Never imported, not an option:** hub `notes`, email, Slack id, and the
    hub's cached affiliation.
 
+**Decisions 3 and 4 are changed in part on 2026-11-19.** See
+[Decision change (2026-11-19)](#decision-change-2026-11-19): country and
+organization now cross labeled, without per-person consent, to a hive's grant
+holders.
+
+## Decision change (2026-11-19)
+
+Issue [#19306](https://github.com/hivecommons/hive/issues/19306). The operator,
+on 2026-11-19: "derived info is fine to pass - labeled. i think country and
+affiliation are public info. forge, if public, is fine too. anything private
+domain is not ok to pass".
+
+What changes:
+
+- **Country and organization are public information.** The country and the
+  organization the hub holds or derives may cross to a hive for that hive's
+  grant holders without a consent record. Every value carries a label naming
+  where it came from, and the hive shows it in the organization pill tooltip
+  and the profile details. A person who is not a grant holder of the asking
+  hive, or is blocked, is the same silence as an unknown person.
+- **Labels** (`customerMatchSource*` in
+  `src/pkg/hub/customer_match_public.go`, stored on the hive as the field rule
+  `ProfileSourceHub*` in `src/pkg/customers/hub_import.go`):
+
+  | Label on the wire | Hive rule | Shown as | When |
+  |---|---|---|---|
+  | `consent` | `hub_consent` | from hub: entered by the person, shared with consent | real name, only with consent (unchanged) |
+  | `person` | `hub_person` | from hub: entered by the person | organization or country the person entered on the hub |
+  | `admin` | `hub_admin` | from hub: set by a hub admin | an admin set it on the person's behalf |
+  | `email_domain` | `hub_email_domain` | from hub: derived from an organization email domain | organization only, see below |
+  | `browser_language` | `hub_browser_language` | from hub: inferred from browser language | country guessed at sign-in from Accept-Language |
+  | `unrecorded` | `hub_unrecorded` | from hub: source not recorded | a value saved before the hub recorded who supplied it |
+
+- **Email-domain affiliation passes only for an organization's public domain.**
+  The hub derives an organization from the person's email domain only when
+  their organization is empty and was never explicitly cleared, and only when
+  the domain (or its parent, `us.ibm.com` under `ibm.com`) is on the hub
+  operator's list `HIVE_HUB_CUSTOMERS_ORG_DOMAINS` (`ibm.com=IBM,redhat.com=Red
+  Hat`). The list is empty by default, so nothing is derived until the operator
+  names domains. Free-mail and code-host domains (the same list the spoke's
+  likely-affiliation suggestion uses, `customers.IsFreeMailDomain`) are refused
+  even if listed. A personal or vanity domain, or any domain not on the list,
+  is dropped. The hub had no classification that tells a personal domain from
+  an organization's (the spoke's "Likely: IBM (from email domain ibm.com)"
+  suggestion only excludes free-mail), so a configured list is the only way a
+  domain counts. The email address and the domain never cross; only the
+  organization name and the `email_domain` label do.
+- **Public forge profile data is fine.** Filling from a person's public GitHub,
+  GitHub Enterprise, GitLab, Gitea or Linear profile is separate work
+  (`customers.profile_fill`).
+- **Precedence on the hive**, highest first: set by hand on the hive >
+  entered by the person on the hub (`hub_consent`, `hub_person`) > public forge
+  profile (automatic) > hub derived or admin-set (`hub_admin`,
+  `hub_email_domain`, `hub_browser_language`, `hub_unrecorded`). A manual edit
+  or manual clear on the hive is never overwritten. A derived or admin-set hub
+  value only fills an empty field or replaces an earlier hub value; the hub
+  stays authoritative for its own values. `customers.HubValueYieldsToForge`
+  tells the profile fill which hub values a forge value may replace.
+- **Everything else keeps the consent-first rule.** Real name still crosses
+  only with consent and only when the person entered it. Location is not held
+  by the hub and never crosses. Notes, email, email domain and Slack ids never
+  cross at all.
+
+Wire and compatibility:
+
+- A hive asks for labeled public fields with the request header
+  `X-Hive-Customer-Match-Labels: 1` (`customerMatchLabelsHeader`). A header,
+  not a body field, because the request body rejects unknown fields and a newer
+  hive asking an older hub would otherwise fail outright.
+- Each answer entry gains `sources`, a map from field name to label. A hive
+  that did not send the header gets the consent-only answer it always got, so
+  an older hive can never store a derived value as if the person consented.
+- Public deliveries are not consent deliveries: they are not stamped on a
+  consent record and no record is created for a person who never consented.
+  The per-request audit line adds a `public` count. A public value the hub
+  stops sending is removed on the hive by the existing 72 hour staleness
+  expiry (`HubImportMaxAge`); a withdrawn consent still clears the real name at
+  once.
+
+Disclosure text. The hub profile-sharing page (phase 4,
+[#19253](https://github.com/hivecommons/hive/pull/19253)) must say this beside
+the per-hive switches:
+
+```text
+Your country and organization are treated as public. Each hive you hold a
+grant on can show them on its Customers page without asking you, labeled with
+where they came from: entered by you, set by a hub administrator, inferred
+from your browser language, or, for organization only, derived from a known
+organization email domain such as ibm.com. A personal or free-mail email
+domain is never used. Your email address is never sent. Your real name is sent
+only to the hives you switch on below. Notes, email and Slack ids are never
+sent. To remove a country or organization from every hive, clear it here;
+hives drop it within 72 hours.
+```
+
+On the hive, every hub value shows its label ("from hub: ...") in the
+organization pill tooltip and beside the field in the profile details.
+
+What must be switched on before a hive shows hub flags and organizations (all
+off today):
+
+1. On the hub: `HIVE_HUB_CUSTOMERS_SHARE_ENABLED=true` (the match endpoint
+   answers `404` without it), and optionally `HIVE_HUB_CUSTOMERS_ORG_DOMAINS`
+   for email-domain organizations.
+2. Hub-side provisioning of the per-hive match key to the hive (#19246), or
+   the hive holding a hub secret it can derive the key from.
+3. On the hive: `customers.hub_import.enabled` (or
+   `HIVE_CUSTOMERS_HUB_IMPORT_ENABLED`) and a hub registration.
+4. The people must be confirmed customers on the hive with a confirmed GitHub
+   login, and grant holders of that hive on the hub.
+
 The sections below add only what the decision leaves open: the data model, the
 wire shape, revocation, audit and the phases. Where a choice is mine rather than
 the operator's it is marked **(design choice)** and listed under
