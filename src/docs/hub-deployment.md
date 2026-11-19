@@ -88,6 +88,20 @@ env:
 
 Without `HIVE_HUB_SECRET`, a protected hub returns `401 unauthorized`, the spoke logs `hub heartbeat rejected status=401`, and the hub shows the hive offline. This matches the gotcha in `manual-provisioning.md`.
 
+### Customer profile sharing
+
+`HIVE_HUB_CUSTOMERS_SHARE_ENABLED` is off by default. Set it to `1`, `true`,
+`yes`, or `on` in the hub environment to enable **Profile sharing** in Fleet
+and on hive cards where the signed-in person holds a grant. The hub dashboard's
+operator settings show the effective state. With the switch off, the page and
+its API return `404`; stored choices are not deleted.
+
+People can enter or clear their real name, organization, and country, then
+confirm or withdraw their own selections separately for each hive. Legacy,
+administrator-entered, and inferred values are not eligible for sharing. A
+material disclosure change requires reconfirmation. This phase records consent
+on the hub only and does not send any profile fields to hives.
+
 ### Reserved `byo-` hive IDs (credential fence)
 
 Hive IDs that start with `byo-` are reserved for hives that their owners run and register themselves ([#18060](https://github.com/hivecommons/hive/issues/18060)). A hub lists such a hive as directory metadata only, so its heartbeat response never carries hub-held credentials or management actions, whatever key the spoke authenticated with. The hub withholds these fields: the GitHub App config (including cluster, secondary and webhook relay keys), the pending gateway, the claimed project config, the cluster ID, the authorized-user list, visibility, upgrade and branch-switch instructions, the upgrade announcement and policy, spoke restarts, agent-restart resets, fleet-breaker instructions, and self-experiment flags. Display-only data such as admin banners still flows. When the fence withholds a field, the hub logs `heartbeat: credential fence withheld fields from self-service hive` with the field names, never the values. Do not give an operator-provisioned hive a `byo-` ID.

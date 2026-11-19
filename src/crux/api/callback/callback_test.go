@@ -53,6 +53,10 @@ type fakeCaps struct {
 	deny    bool
 	mints   []AgentMintRequest
 	bob     BobCredential
+	advise  []KnowledgeAdviseRequest
+	// adviseResp and adviseErr answer AdviseKnowledge.
+	adviseResp KnowledgeAdviseResponse
+	adviseErr  error
 }
 
 func (f *fakeCaps) Configured(c string) bool { return !f.absent[c] }
@@ -158,6 +162,16 @@ func (f *fakeCaps) BobCredential(context.Context) (BobCredential, error) {
 	return f.bob, f.fail
 }
 
+func (f *fakeCaps) AdviseKnowledge(_ context.Context, req KnowledgeAdviseRequest) (KnowledgeAdviseResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.advise = append(f.advise, req)
+	if f.adviseErr != nil {
+		return KnowledgeAdviseResponse{}, f.adviseErr
+	}
+	return f.adviseResp, f.fail
+}
+
 func (f *fakeCaps) RepoAutoMergeEnabled(_ context.Context, repo string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -212,10 +226,11 @@ func (f *fakeCaps) EndEffect(_ context.Context, id string, req EndEffectRequest)
 }
 
 var (
-	_ Capabilities    = (*fakeCaps)(nil)
-	_ PolicySource    = (*fakeCaps)(nil)
-	_ InferenceRouter = (*fakeCaps)(nil)
-	_ EffectBoundary  = (*fakeCaps)(nil)
+	_ Capabilities      = (*fakeCaps)(nil)
+	_ PolicySource      = (*fakeCaps)(nil)
+	_ InferenceRouter   = (*fakeCaps)(nil)
+	_ EffectBoundary    = (*fakeCaps)(nil)
+	_ KnowledgeAdvisers = (*fakeCaps)(nil)
 )
 
 // shortSocketDir returns a private directory whose socket paths fit in
@@ -887,17 +902,19 @@ func TestNotConfiguredSentinelStringAndCodes(t *testing.T) {
 }
 
 // bareCaps has no Configured method: the server assumes every capability
-// except the optional-interface ones (policy, inference routes, effects).
+// except the optional-interface ones (policy, inference routes, effects, the
+// agent mint, Bob) and the knowledge adviser, which is off unless Configured
+// says it is on.
 type bareCaps struct{ Capabilities }
 
 func TestCapabilitiesWithoutConfiguredHaveAll(t *testing.T) {
 	c, _ := serveUnix(t, NewServer(bareCaps{&fakeCaps{}}, ""), "")
 	h, err := c.Health(context.Background())
-	if err != nil || len(h.Capabilities) != len(allCapabilities)-5 {
+	if err != nil || len(h.Capabilities) != len(allCapabilities)-6 {
 		t.Errorf("health = %+v, %v", h, err)
 	}
 	for _, name := range h.Capabilities {
-		if name == CapabilityPolicy || name == CapabilityInferenceRoutes || name == CapabilityEffects {
+		if name == CapabilityPolicy || name == CapabilityInferenceRoutes || name == CapabilityEffects || name == CapabilityKnowledgeAdvise {
 			t.Errorf("health lists %s for a Capabilities without the optional interface", name)
 		}
 	}
@@ -1103,5 +1120,187 @@ func TestAgentMintAndBobOverTheWire(t *testing.T) {
 	}
 	if _, err := c3.MintAgentToken(ctx, AgentMintRequest{Agent: "a"}); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("failing mint = %v", err)
+	}
+}
+
+// adviseOnly is a Capabilities that implements KnowledgeAdvisers but, with no
+// Configured method, cannot say the route is on.
+type adviseOnly struct {
+	Capabilities
+	KnowledgeAdvisers
+}
+
+func TestKnowledgeAdviseOverTheWire(t *testing.T) {
+	kickAt := time.Date(2026, 11, 18, 12, 0, 0, 123456789, time.UTC)
+	caps := &fakeCaps{adviseResp: KnowledgeAdviseResponse{
+		Advice: []KnowledgeAdvice{{Slug: "s1", Title: "T", Summary: "body", Ref: "knowledge entry s1"}},
+		Policy: KnowledgeAdvisorPolicy{Enabled: true, MaxPerKick: 2, CooldownMS: 1500, WantsPaneTail: true, PaneLines: 40},
+	}}
+	c, logs := serveUnix(t, NewServer(caps, ""), "")
+	ctx := context.Background()
+
+	req := KnowledgeAdviseRequest{
+		Agent: "developer", KickAt: kickAt,
+		Scope: KnowledgeScope{Kind: "path", Key: "src/crux/agent", Path: "src/crux/agent/a.go", Keywords: []string{"crux"}, Action: "edit", PaneTail: "tail line"},
+	}
+	got, err := c.AdviseKnowledge(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Advice) != 1 || got.Advice[0] != caps.adviseResp.Advice[0] || got.Policy != caps.adviseResp.Policy {
+		t.Fatalf("response = %+v", got)
+	}
+	if len(caps.advise) != 1 || !caps.advise[0].KickAt.Equal(kickAt) || caps.advise[0].Agent != "developer" || caps.advise[0].Scope.PaneTail != "tail line" ||
+		caps.advise[0].Scope.Key != "src/crux/agent" || caps.advise[0].Scope.Action != "edit" || caps.advise[0].PolicyOnly {
+		t.Fatalf("server saw %+v", caps.advise)
+	}
+	if strings.Contains(logs.String(), "tail line") {
+		t.Fatalf("a request body was logged:\n%s", logs.String())
+	}
+
+	// No advice is an empty list on the wire, never null.
+	caps.adviseResp = KnowledgeAdviseResponse{}
+	empty, err := c.AdviseKnowledge(ctx, req)
+	if err != nil || empty.Advice == nil || len(empty.Advice) != 0 {
+		t.Fatalf("empty response = %+v, %v", empty, err)
+	}
+
+	// A policy request carries no scope.
+	if _, err := c.AdviseKnowledge(ctx, KnowledgeAdviseRequest{Agent: "developer", PolicyOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	if last := caps.advise[len(caps.advise)-1]; !last.PolicyOnly || !last.KickAt.IsZero() {
+		t.Fatalf("policy request as seen = %+v", last)
+	}
+
+	var se *api.StatusError
+	if _, err := c.AdviseKnowledge(ctx, KnowledgeAdviseRequest{}); !errors.As(err, &se) || se.Status != http.StatusBadRequest {
+		t.Fatalf("no agent = %v, want 400", err)
+	}
+
+	// Capability errors map to their statuses, and the client maps them back.
+	for _, tt := range []struct {
+		name   string
+		err    error
+		status int
+		is     error
+	}{
+		{"forbidden", fmt.Errorf("%w: not yours", ErrForbidden), http.StatusForbidden, ErrForbidden},
+		{"rate limited", fmt.Errorf("%w: slow down", ErrRateLimited), http.StatusTooManyRequests, ErrRateLimited},
+		{"invalid", fmt.Errorf("%w: too long", ErrInvalidRequest), http.StatusBadRequest, nil},
+		{"not configured", ErrNotConfigured, http.StatusNotFound, ErrNotConfigured},
+		{"upstream", errors.New("store down"), http.StatusBadGateway, ErrUnavailable},
+	} {
+		caps.adviseErr = tt.err
+		_, err := c.AdviseKnowledge(ctx, req)
+		if err == nil {
+			t.Errorf("%s: no error", tt.name)
+			continue
+		}
+		if tt.is != nil && !errors.Is(err, tt.is) {
+			t.Errorf("%s: err = %v, want %v", tt.name, err, tt.is)
+		}
+		if tt.is == nil && (!errors.As(err, &se) || se.Status != tt.status) {
+			t.Errorf("%s: err = %v, want status %d", tt.name, err, tt.status)
+		}
+	}
+}
+
+// The route is served only for a Capabilities that says it is configured: a
+// bare one is not served even when it implements the interface, and one that
+// denies it answers 404 not_configured and stays out of Health.
+func TestKnowledgeAdviseIsOffUnlessConfigured(t *testing.T) {
+	ctx := context.Background()
+	req := KnowledgeAdviseRequest{Agent: "developer", PolicyOnly: true}
+
+	for name, caps := range map[string]Capabilities{
+		"bare":   adviseOnly{Capabilities: &fakeCaps{}, KnowledgeAdvisers: &fakeCaps{}},
+		"absent": &fakeCaps{absent: map[string]bool{CapabilityKnowledgeAdvise: true}},
+	} {
+		c, _ := serveUnix(t, NewServer(caps, ""), "")
+		h, err := c.Health(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, listed := range h.Capabilities {
+			if listed == CapabilityKnowledgeAdvise {
+				t.Errorf("%s: health lists the knowledge adviser", name)
+			}
+		}
+		if _, err := c.AdviseKnowledge(ctx, req); !errors.Is(err, ErrNotConfigured) {
+			t.Errorf("%s: err = %v, want not_configured", name, err)
+		}
+	}
+	if !(&fakeCaps{}).Configured(CapabilityKnowledgeAdvise) {
+		t.Fatal("fakeCaps must report the capability configured by default")
+	}
+	// A Capabilities with no KnowledgeAdvisers at all (every existing one) is
+	// not served either.
+	c, _ := serveUnix(t, NewServer(bareCaps{&fakeCaps{}}, ""), "")
+	if _, err := c.AdviseKnowledge(ctx, req); !errors.Is(err, ErrNotConfigured) {
+		t.Errorf("no interface: err = %v, want not_configured", err)
+	}
+}
+
+// A body past the byte cap is refused with 413 before it reaches the
+// capability, and the route sits behind the same bearer check as the rest.
+func TestKnowledgeAdviseBodyCapAndAuth(t *testing.T) {
+	caps := &fakeCaps{}
+	ts := httptest.NewServer(NewServer(caps, testBearer).Handler())
+	t.Cleanup(ts.Close)
+	post := func(auth, body string) int {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+PathKnowledgeAdvise, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	big := `{"agent":"a","scope":{"kind":"path","key":"k","pane_tail":"` + strings.Repeat("x", maxKnowledgeAdviseBodyBytes) + `"}}`
+	if got := post("Bearer "+testBearer, big); got != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversize body: status %d, want 413", got)
+	}
+	if got := post("Bearer "+testBearer, `{"agent":`); got != http.StatusBadRequest {
+		t.Errorf("malformed body: status %d, want 400", got)
+	}
+	if got := post("", `{"agent":"a"}`); got != http.StatusUnauthorized {
+		t.Errorf("no token: status %d, want 401", got)
+	}
+	if got := post("Bearer nope", `{"agent":"a"}`); got != http.StatusUnauthorized {
+		t.Errorf("wrong token: status %d, want 401", got)
+	}
+	if len(caps.advise) != 0 {
+		t.Fatalf("refused requests reached the capability: %+v", caps.advise)
+	}
+	if got := post("Bearer "+testBearer, `{"agent":"a","policy_only":true}`); got != http.StatusOK {
+		t.Errorf("valid request: status %d, want 200", got)
+	}
+}
+
+// The wire names are the contract the runtime and hive agree on.
+func TestKnowledgeAdviseWireNames(t *testing.T) {
+	if PathKnowledgeAdvise != "/v1/knowledge/advise" || CapabilityKnowledgeAdvise != "knowledge_advise" {
+		t.Fatalf("route %q, capability %q", PathKnowledgeAdvise, CapabilityKnowledgeAdvise)
+	}
+	b, err := json.Marshal(KnowledgeAdviseRequest{Agent: "a", PolicyOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "kick_at") {
+		t.Errorf("a zero kick is omitted from the body: %s", b)
+	}
+	p, err := json.Marshal(Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(p), "knowledge_advise") {
+		t.Errorf("an unset knowledge_advise changes the policy snapshot: %s", p)
 	}
 }

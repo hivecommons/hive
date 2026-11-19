@@ -419,6 +419,7 @@ func TestParentAutoCloseExempt(t *testing.T) {
 		{"true", []string{"Epic"}, true},
 		{"true", []string{"hold"}, true},
 		{"epics_too", []string{"epic", "hold"}, false},
+		{"trackers_too", []string{"epic", "hold"}, false},
 		{"false", nil, true},
 	}
 	for _, tc := range cases {

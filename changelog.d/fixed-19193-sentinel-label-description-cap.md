@@ -1,0 +1,1 @@
+- The sentinel label description default is now 97 bytes (was 124, over GitHub's 100-character cap, which made Prow label_sync abort, #19193) with no em-dash; the hive rewrites the old default on repos that already carry it. The unauthorized label description is shortened to fit the cap too.

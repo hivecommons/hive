@@ -59,6 +59,14 @@ type KnowledgeConfig struct {
 	// AdvisorLLM configures the optional model-ranked advisor pass
 	// (hivecommons/hive#17054). Ignored unless Advisor is true.
 	AdvisorLLM AdvisorLLMConfig `yaml:"advisor_llm,omitempty"`
+	// SidecarAdvise turns on POST /v1/knowledge/advise on the hive's runtime
+	// callback endpoint, so a sidecar-mode runtime gets the mid-task adviser
+	// too (hivecommons/hive#17157). Default false: the route is absent, the
+	// hive does not advertise it, and a sidecar runtime runs without the
+	// advisor as before. Ignored unless Enabled and Advisor are true; the
+	// route serves whichever chain the hive runs in-process (phase 1, with
+	// the advisor_llm ranking pass when configured).
+	SidecarAdvise bool `yaml:"sidecar_advise,omitempty"`
 }
 
 // PublicKnowledgeConfig is the dashboard-persisted owner override for the
@@ -384,6 +392,13 @@ func (c *Config) KnowledgeAdvisorEnabledFor(agent string) bool {
 		}
 	}
 	return true
+}
+
+// KnowledgeSidecarAdviseEnabled reports whether the hive serves the sidecar
+// knowledge-advise route: knowledge, the advisor and knowledge.sidecar_advise
+// are all on. knowledge.sidecar_advise itself defaults off.
+func (c *Config) KnowledgeSidecarAdviseEnabled() bool {
+	return c != nil && c.Knowledge.Enabled && c.Knowledge.Advisor && c.Knowledge.SidecarAdvise
 }
 
 func (c *Config) KnowledgeAgentScope(agent string) (KnowledgeAgentScope, bool) {

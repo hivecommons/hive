@@ -2,6 +2,8 @@ package crux
 
 import (
 	"strings"
+
+	"github.com/hivecommons/hive/crux/config"
 )
 
 // copilotCLIAcceptedModels are the model ids the copilot CLI's --model flag
@@ -101,6 +103,13 @@ func CanonicalizeCopilotModel(id string) string {
 		return id
 	}
 	if canonical, ok := copilotModelByKey[copilotModelKey(id)]; ok {
+		return canonical
+	}
+	// A Claude id outside the list above still gets the Copilot spelling
+	// (claude-sonnet-5-5 -> claude-sonnet-5.5) from the one shared mapping
+	// between the Claude and Copilot conventions, so a newly released model
+	// does not have to be added here first.
+	if canonical, ok := config.CanonicalizeModelForBackend(config.CopilotBackend, id); ok {
 		return canonical
 	}
 	return id

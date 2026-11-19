@@ -1,0 +1,62 @@
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--surface-1);
+  color: var(--text);
+  font: var(--fs-base)/1.55 var(--font-ui);
+}
+a { color: var(--brand); }
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  padding: var(--sp-5) clamp(1rem, 4vw, 4.5rem);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.brand { font-size: var(--fs-lg); font-weight: 800; text-decoration: none; }
+.site-header nav { display: flex; gap: var(--sp-5); }
+main { width: min(100%, 64rem); margin: auto; padding: var(--sp-8) var(--sp-6); }
+h1, h2, h3 { margin: 0 0 var(--sp-3); line-height: 1.2; }
+p { margin: 0 0 var(--sp-4); }
+section { margin-top: var(--sp-8); }
+.muted { color: var(--text-muted); }
+.profile-fields, .consent-hives { display: grid; gap: var(--sp-5); }
+.profile-fields { grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); }
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  padding: var(--sp-6);
+  overflow-wrap: anywhere;
+}
+.disclosure, .consent { max-width: 52rem; }
+.disclosure p:last-child, .status:last-child { margin-bottom: 0; }
+.status { margin-top: var(--sp-4); }
+.status:empty { display: none; }
+.status[data-error] { color: var(--status-error); }
+.current { margin-bottom: var(--sp-1); font-weight: 600; white-space: pre-wrap; }
+fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.detail label span { display: block; }
+.detail input {
+  display: block;
+  width: 100%;
+  margin-top: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface-1);
+  color: var(--text);
+  font: inherit;
+}
+.choices, .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); }
+.choices { margin-top: var(--sp-2); }
+.choices label { display: inline-flex; align-items: center; gap: var(--sp-2); cursor: pointer; }
+.choices input { accent-color: var(--brand); }
+.actions { margin-top: var(--sp-4); }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+footer { border-top: 1px solid var(--line); padding: var(--sp-6); text-align: center; font-size: var(--fs-sm); }

@@ -56,6 +56,14 @@ and posted by someone who currently has `write`, `maintain`, or `admin`
 permission on the repository. A `/hive decision` must include non-empty
 instructions.
 
+On an issue, a first line of `Decision: <text>` (or `Decision (owner): <text>`)
+is read as `/hive decision <text>`, under the same permission, freshness and
+unedited rules; the lines after it are kept as part of the decision. A first
+line that names a decision without recording one (`Decision:` with no text,
+`decide ...`, `option 1`, or a bare option letter such as `B`) un-parks nothing
+and gets a reply telling the commenter to use `/hive decision <text>`. PRs keep
+the strict `/hive decision` shape.
+
 The on-demand `/hive help` workflow uses the same first-line command shape, is
 ignored for bot comments, and allows `triage`, `write`, `maintain`, or `admin`
 because it only posts reference text and changes no labels.

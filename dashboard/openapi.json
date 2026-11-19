@@ -8320,7 +8320,7 @@
           "System"
         ],
         "summary": "Parent auto-close policy per repo",
-        "description": "Returns repos.<repo>.parent_autoclose for every monitored repo (effective value and whether the repo carries its own), the default, and the three options the Settings editor offers. Owner only.",
+        "description": "Returns repos.<repo>.parent_autoclose for every monitored repo (effective value and whether the repo carries its own), the default, and the four options the Settings editor offers. Owner only.",
         "responses": {
           "200": {
             "description": "Current policy per monitored repo",
@@ -8356,7 +8356,7 @@
           "System"
         ],
         "summary": "Set a repo's parent auto-close policy",
-        "description": "Sets repos.<repo>.parent_autoclose for one monitored repo: true (close finished parents, the default and clears the override), epics_too (also close epic and hold parents) or false (never auto-close parents). Applies without a restart. Parents a person reopened and tracking issues are never auto-closed under any value. Audited as config_repo_parent_autoclose. Owner only.",
+        "description": "Sets repos.<repo>.parent_autoclose for one monitored repo: true (close finished parents, the default and clears the override), epics_too (also close epic and hold parents), trackers_too (as epics_too, and also close tracker or umbrella issues with no sub-issues once every PR and issue they reference is finished) or false (never auto-close parents). Applies without a restart. Parents a person reopened and tracking issues are never auto-closed under any value. Audited as config_repo_parent_autoclose. Owner only.",
         "requestBody": {
           "required": true,
           "content": {
@@ -8376,6 +8376,7 @@
                     "enum": [
                       "true",
                       "epics_too",
+                      "trackers_too",
                       "false"
                     ]
                   }
@@ -19340,7 +19341,7 @@
           "Knowledge"
         ],
         "summary": "Knowledge pipeline settings",
-        "description": "Returns the scalar knowledge.bead_synthesizer, knowledge.curator, knowledge.code_maps and knowledge.primer settings, plus the read-only engine, vault paths and primer merge strategy. Requires owner role.",
+        "description": "Returns the scalar knowledge.bead_synthesizer, knowledge.curator, knowledge.code_maps and knowledge.primer settings and knowledge.sidecar_advise, plus the read-only engine, advisor flag, vault paths and primer merge strategy. Requires owner role.",
         "responses": {
           "200": {
             "description": "Knowledge pipeline settings",
@@ -19352,6 +19353,14 @@
                     "engine": {
                       "type": "string",
                       "description": "Read-only: knowledge.engine"
+                    },
+                    "sidecar_advise": {
+                      "type": "boolean",
+                      "description": "knowledge.sidecar_advise: serve the mid-task knowledge advisor to a sidecar-mode runtime (default false)"
+                    },
+                    "advisor": {
+                      "type": "boolean",
+                      "description": "Read-only: knowledge.advisor, which sidecar_advise needs"
                     },
                     "bead_synthesizer": {
                       "type": "object",
@@ -19505,7 +19514,7 @@
           "Knowledge"
         ],
         "summary": "Update knowledge pipeline settings",
-        "description": "Updates the scalar bead synthesizer, curator, code map and primer settings. Fields are pointer-typed; absent fields are left unchanged and 0 or empty restores the default. Validated with config.ValidateKnowledgePipeline before anything is applied, then persisted and audited as config_knowledge_pipeline. bead_synthesizer.enabled starts or stops the synthesizer at once; every other field applies after a restart. Requires owner role.",
+        "description": "Updates the scalar bead synthesizer, curator, code map and primer settings and knowledge.sidecar_advise. Fields are pointer-typed; absent fields are left unchanged and 0 or empty restores the default. Validated with config.ValidateKnowledgePipeline before anything is applied, then persisted and audited as config_knowledge_pipeline. bead_synthesizer.enabled and sidecar_advise apply at once; every other field applies after a restart. Requires owner role.",
         "requestBody": {
           "required": true,
           "content": {
@@ -19513,6 +19522,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "sidecar_advise": {
+                    "type": "boolean",
+                    "description": "knowledge.sidecar_advise: serve the mid-task knowledge advisor to a sidecar-mode runtime (default false). Applies without a restart."
+                  },
                   "bead_synthesizer": {
                     "type": "object",
                     "properties": {
@@ -19638,6 +19651,14 @@
                     "engine": {
                       "type": "string",
                       "description": "Read-only: knowledge.engine"
+                    },
+                    "sidecar_advise": {
+                      "type": "boolean",
+                      "description": "knowledge.sidecar_advise: serve the mid-task knowledge advisor to a sidecar-mode runtime (default false)"
+                    },
+                    "advisor": {
+                      "type": "boolean",
+                      "description": "Read-only: knowledge.advisor, which sidecar_advise needs"
                     },
                     "bead_synthesizer": {
                       "type": "object",

@@ -7,17 +7,17 @@ The inception API was retired in favour of [Inception (spek) sessions](sessions.
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `POST` | `/api/inception/start` | Dashboard auth/session | Retired (was: Inception Start): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:433` |
-| `POST` | `/api/inception/scan` | Dashboard auth/session | Retired (was: Inception Scan): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:434` |
-| `GET` | `/api/inception/state` | Dashboard auth/session | Retired (was: Inception State): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:435` |
-| `POST` | `/api/inception/questions` | Dashboard auth/session | Retired (was: Inception Set Questions): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:436` |
-| `POST` | `/api/inception/answer` | Dashboard auth/session | Retired (was: Inception Answer): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:437` |
-| `POST` | `/api/inception/facts` | Dashboard auth/session | Retired (was: Inception Record Facts): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:438` |
-| `GET` | `/api/inception/scaffold` | Dashboard auth/session | Retired (was: Inception Scaffold): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:439` |
-| `POST` | `/api/inception/approve` | Dashboard auth/session | Retired (was: Inception Approve): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:440` |
-| `POST` | `/api/inception/reset` | Dashboard auth/session | Retired (was: Inception Reset): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:441` |
-| `GET` | `/api/inception/ideation-facts` | Dashboard auth/session | Retired (was: Inception Ideation Facts): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:442` |
-| `GET` | `/api/inception/download` | Dashboard auth/session | Retired (was: Inception Download): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:443` |
-| `GET` | `/api/inception/has-files` | Dashboard auth/session | Retired (was: Inception Has Files): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:444` |
-| `PUT` | `/api/inception/wiki-name` | Dashboard auth/session | Retired (was: Inception Rename Wiki): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:445` |
-| `POST` | `/api/inception/import` | Dashboard auth/session | Retired (was: Inception Import): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:446` |
+| `POST` | `/api/inception/start` | Dashboard auth/session | Retired (was: Inception Start): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:434` |
+| `POST` | `/api/inception/scan` | Dashboard auth/session | Retired (was: Inception Scan): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:435` |
+| `GET` | `/api/inception/state` | Dashboard auth/session | Retired (was: Inception State): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:436` |
+| `POST` | `/api/inception/questions` | Dashboard auth/session | Retired (was: Inception Set Questions): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:437` |
+| `POST` | `/api/inception/answer` | Dashboard auth/session | Retired (was: Inception Answer): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:438` |
+| `POST` | `/api/inception/facts` | Dashboard auth/session | Retired (was: Inception Record Facts): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:439` |
+| `GET` | `/api/inception/scaffold` | Dashboard auth/session | Retired (was: Inception Scaffold): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:440` |
+| `POST` | `/api/inception/approve` | Dashboard auth/session | Retired (was: Inception Approve): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:441` |
+| `POST` | `/api/inception/reset` | Dashboard auth/session | Retired (was: Inception Reset): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:442` |
+| `GET` | `/api/inception/ideation-facts` | Dashboard auth/session | Retired (was: Inception Ideation Facts): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:443` |
+| `GET` | `/api/inception/download` | Dashboard auth/session | Retired (was: Inception Download): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:444` |
+| `GET` | `/api/inception/has-files` | Dashboard auth/session | Retired (was: Inception Has Files): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:445` |
+| `PUT` | `/api/inception/wiki-name` | Dashboard auth/session | Retired (was: Inception Rename Wiki): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:446` |
+| `POST` | `/api/inception/import` | Dashboard auth/session | Retired (was: Inception Import): answers `410 Gone` pointing to `/api/sessions` | `pkg/dashboard/api.go:447` |

@@ -41,7 +41,7 @@ const (
 	// unauthorizedLabelColor / unauthorizedLabelDescription provision the
 	// label on first use so it does not appear in GitHub's random colour.
 	unauthorizedLabelColor       = "6e7781"
-	unauthorizedLabelDescription = "The hive's GitHub App lacks the permission for the next step; a maintainer must take it (see the hive:unauthorized comment)"
+	unauthorizedLabelDescription = "Hive's GitHub App lacks permission for the next step; a maintainer must take it (see the comment)"
 	// unauthorizedMarkerPrefix tags the one comment per (PR, step); a
 	// different blocked step gets its own note while a new push rewrites
 	// the existing one with the attempt count.

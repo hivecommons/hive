@@ -10,6 +10,7 @@ import (
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/proxy"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
+	"github.com/hivecommons/hive/crux/sessiontaint"
 	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/crux/trajectory"
 	"github.com/hivecommons/hive/crux/watchdog"
@@ -160,6 +161,8 @@ type boot struct {
 	dashSrv                       *dashboard.Server
 	writeback                     *writeback.Gate
 	writebackOnce                 sync.Once
+	sessionTaintOnce              sync.Once
+	sessionTaint                  *sessiontaint.Observer
 	beadStores                    map[string]*beads.Store
 	beadStoreLoadFailures         int
 	tokenCollector                *tokens.Collector

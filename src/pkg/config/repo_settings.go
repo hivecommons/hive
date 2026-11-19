@@ -26,8 +26,11 @@ type RepoSettings struct {
 	// repo (hivecommons/hive#18869): "true" (the default when empty) closes a
 	// decomposed parent once every child is closed, except an issue labelled
 	// epic or hold; "false" never auto-closes a parent; "epics_too" also
-	// closes epic/hold-labelled parents. A parent a person reopened after a
-	// hive auto-close is never re-closed under any value. YAML booleans
+	// closes epic/hold-labelled parents; "trackers_too" does that and also
+	// closes tracker or umbrella issues that have no sub-issue children once
+	// every PR and issue they reference is finished (hivecommons/hive#19071).
+	// A parent a person reopened after a hive auto-close is never re-closed
+	// under any value. YAML booleans
 	// true/false are accepted and read as the strings.
 	ParentAutoClose string `yaml:"parent_autoclose,omitempty" json:"parent_autoclose,omitempty"`
 	// ReviewPreflight overrides review.preflight for this repo
@@ -40,18 +43,21 @@ const (
 	ParentAutoCloseOn       = "true"
 	ParentAutoCloseOff      = "false"
 	ParentAutoCloseEpicsToo = "epics_too"
+	// ParentAutoCloseTrackersToo implies ParentAutoCloseEpicsToo and also
+	// closes tracker/umbrella issues whose referenced work is all finished.
+	ParentAutoCloseTrackersToo = "trackers_too"
 )
 
 // ParentAutoCloseFor is the normalised parent auto-close policy for repo:
-// one of ParentAutoCloseOn (default), ParentAutoCloseOff or
-// ParentAutoCloseEpicsToo. An unrecognised value falls back to the default.
+// one of ParentAutoCloseOn (default), ParentAutoCloseOff,
+// ParentAutoCloseEpicsToo or ParentAutoCloseTrackersToo. An unrecognised value falls back to the default.
 func (c *Config) ParentAutoCloseFor(repo string) string {
 	rs, ok := c.RepoSettingsFor(repo)
 	if !ok {
 		return ParentAutoCloseOn
 	}
 	switch v := strings.ToLower(strings.TrimSpace(rs.ParentAutoClose)); v {
-	case ParentAutoCloseOff, ParentAutoCloseEpicsToo:
+	case ParentAutoCloseOff, ParentAutoCloseEpicsToo, ParentAutoCloseTrackersToo:
 		return v
 	}
 	return ParentAutoCloseOn
@@ -93,7 +99,7 @@ func (c *Config) repoSettingsKeyLocked(repo string) (string, bool) {
 // included: the dashboard always sends an explicit choice).
 func NormalizeParentAutoClose(v string) (string, bool) {
 	switch n := strings.ToLower(strings.TrimSpace(v)); n {
-	case ParentAutoCloseOn, ParentAutoCloseOff, ParentAutoCloseEpicsToo:
+	case ParentAutoCloseOn, ParentAutoCloseOff, ParentAutoCloseEpicsToo, ParentAutoCloseTrackersToo:
 		return n, true
 	}
 	return "", false
@@ -126,7 +132,7 @@ func (c *Config) SetParentAutoClose(repo, value string) error {
 	}
 	norm, ok := NormalizeParentAutoClose(value)
 	if !ok {
-		return fmt.Errorf("parent_autoclose must be %q, %q or %q", ParentAutoCloseOn, ParentAutoCloseEpicsToo, ParentAutoCloseOff)
+		return fmt.Errorf("parent_autoclose must be %q, %q, %q or %q", ParentAutoCloseOn, ParentAutoCloseEpicsToo, ParentAutoCloseTrackersToo, ParentAutoCloseOff)
 	}
 	name, ok := c.monitoredRepoName(repo)
 	if !ok {

@@ -27,6 +27,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 
 - [Self-hosted hub deployment](hub-deployment.md) — `HIVE_MODE=hub`, hub storage, heartbeat secrets, and SaaS spoke registration.
 - [`CAP_NET_ADMIN` and self-hosted spokes](net-admin-requirement.md) — **Operator:** diagnose fail-closed startup, grant required network capabilities, or understand the explicit advisory-only opt-out.
+- [Editing `hive.yaml`](editing-hive-yaml.md) — find the persisted config, choose Settings or YAML, and verify a reload or restart.
 - [Config layering](config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.
 - [Operator reference](operator-reference.md) — top-level config blocks, hive flags/env, GitHub token scopes, and image provenance.
 - [Running a hive at ACMM Level 6](running-at-level-6.md) — preparation, GitHub/coverage/knowledge/Hive/ClankeR settings, weekly routine, and incident recovery.
