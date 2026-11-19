@@ -67,6 +67,11 @@ var clientSetterAllowlist = map[string]string{
 		"startRequestRelays installs the per-repo forge router on whichever client the merge relay " +
 		"runs on, and every rebuilt client re-arms the relays (armRequestRelays), so the selector is " +
 		"reinstalled alongside the merge authorizer it routes (#14113)",
+	"SetNativeQueueOptedIn": "owned by the request-relay supervisor, like SetMergeRequestPolicyGate: " +
+		"startRequestRelays installs the auto_merge.native_merge_queue opt-in check on whichever client " +
+		"the merge relay runs on (the relay's watcher both raises and revalidates the " +
+		"merge-queue-required banner), and every rebuilt client re-arms the relays (armRequestRelays), " +
+		"so the check is reinstalled with them",
 	"SetSandboxSpoolRelays": "owned by the request-relay supervisor, like SetMergeRequestPolicyGate: " +
 		"startRequestRelays installs the sandbox spool's issue authorizer and topic handler on whichever " +
 		"client the review relay (which drains the spool) runs on, and every rebuilt client re-arms the " +

@@ -181,3 +181,20 @@ func TestRelayLanePolicyGateWiring(t *testing.T) {
 		t.Fatalf("refusal = %q, err = %v; want fail-closed error", refusal, err)
 	}
 }
+
+func TestRelayNativeQueueOptedInWiring(t *testing.T) {
+	build := relayNativeQueueOptedIn(automerge.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if check := build(nil); check != nil {
+		t.Fatal("nil client must install no opt-in check")
+	}
+	client := github.NewClientForTest("http://127.0.0.1:0", "hivecommons", []string{"docs"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	check := build(client)
+	if check == nil {
+		t.Fatal("a live client must get the engine's NativeQueueOptedIn")
+	}
+	// No auto_merge.native_merge_queue policy: nothing is opted in, so the
+	// relay keeps raising the merge-queue-required banner.
+	if check("hivecommons/docs", "main") {
+		t.Fatal("repo reported opted in with no native-queue policy")
+	}
+}
