@@ -78,6 +78,7 @@ var hardSuppressIssueLabels = []string{
 	issueNeedsDecisionLabel,
 	issueNeedsDirectionLabel,
 	PossiblyExistsStageLabel,
+	VerifyCloseLabel,
 }
 
 // PossiblyExistsStageLabel is the prior-art gate's park: the issue stage
@@ -159,6 +160,10 @@ var escalationIssueLabelDefinitions = map[string]issueLabelDefinition{
 	LikelyDoneLabel: {
 		color:       LikelyDoneLabelColor,
 		description: LikelyDoneLabelDescription,
+	},
+	VerifyCloseLabel: {
+		color:       VerifyCloseLabelColor,
+		description: VerifyCloseLabelDescription,
 	},
 	"meta": {
 		color:       "5319e7",

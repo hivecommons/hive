@@ -200,7 +200,8 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 			if hasIssueLabel(issue.Labels, github.VerifiedOpenLabel) {
 				b.WriteString(fmt.Sprintf("; already verified (%s): remaining work is confirmed — do NOT re-verify, implement the rest", github.VerifiedOpenLabel))
 			} else {
-				b.WriteString(fmt.Sprintf("; verify once: close the issue if resolved, otherwise label it `%s` and implement the remainder (hive then stops asking); context: %s", github.VerifiedOpenLabel, reason))
+				b.WriteString(fmt.Sprintf("; verify once: close the issue if resolved, otherwise label it `%s` and implement the remainder (hive then stops asking); end the verification note with `%s` when nothing is left (hive closes it, or parks it for a person to close) or `%s` when work remains; context: %s",
+					github.VerifiedOpenLabel, github.VerificationMarker(github.VerificationVerdictComplete, issue.ClaimContext.PRNumber), github.VerificationMarker(github.VerificationVerdictPartial, issue.ClaimContext.PRNumber), reason))
 			}
 			b.WriteString("\n")
 		}

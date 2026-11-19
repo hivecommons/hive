@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -219,6 +220,10 @@ func stageTrackerDecisionNeededWith(it StageTrackerItem, verdict *review.Aggrega
 		return decisionForPR(it, verdict, sentinelLabel, held)
 	case it.Kind == "pr" && it.Stage == stagelabels.ReadyForHumanMerge.Number():
 		return decisionForHumanMerge(it, held)
+	case it.Kind == "issue" && stageTrackerHasLabel(it.Labels, ghpkg.VerifyCloseLabel):
+		// The scanner verified it complete; the hive only stopped short of
+		// closing it. The answer is Close, one click.
+		return decisionForVerifyClose(it, held)
 	case it.Kind == "issue" && it.Mirrored:
 		// The issue rides its covering PR; the PR's own row (nested under
 		// the issue) carries the decision.
@@ -263,4 +268,41 @@ func stageTrackerDecisionNeededWith(it StageTrackerItem, verdict *review.Aggrega
 func stageTrackerWithoutHold(it StageTrackerItem) StageTrackerItem {
 	it.Modifiers = slices.DeleteFunc(slices.Clone(it.Modifiers), func(m string) bool { return m == modHold })
 	return it
+}
+
+// The verify-close lane's action id and asker (hivecommons/hive#19299).
+const (
+	decisionActionCloseIssue = "decide:close-issue"
+	decisionAskedByScanner   = "the scanner's verification"
+)
+
+// stageTrackerHasLabel reports whether labels carries want (case-insensitive).
+func stageTrackerHasLabel(labels []string, want string) bool {
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l), want) {
+			return true
+		}
+	}
+	return false
+}
+
+// decisionForVerifyClose is the verify-close lane's popover: the scanner
+// verified the issue complete, a guard kept the hive from closing it
+// itself (its status card says which), and Close leads, one click.
+func decisionForVerifyClose(it StageTrackerItem, held bool) *StageTrackerDecision {
+	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByScanner, BlockerReason: "label:" + ghpkg.VerifyCloseLabel}
+	d.Question = "The scanner verified this issue complete. Close it, or remove " + ghpkg.VerifyCloseLabel + " if work remains?"
+	d.Blocker = "The hive did not close it on its own; the reason is in the issue's status card. No agent picks it up while it waits here."
+	if held {
+		d.Blocker += " " + decisionHeldBlocker(it.Hold)
+	}
+	closeOpt := decisionOption(decisionActionCloseIssue, "Close as completed", true, "")
+	closeOpt.Lead = true
+	closeOpt.Consequence = "Closes this issue as completed, attributed to you"
+	d.Options = []StageTrackerDecisionOption{
+		closeOpt,
+		decisionOption(decisionActionDirection, "Send back", true, ""),
+		decisionHoldOption(held),
+	}
+	return d
 }

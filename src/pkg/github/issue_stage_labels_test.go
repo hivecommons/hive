@@ -68,6 +68,9 @@ type issueStageServer struct {
 	// default); timelineGets counts the reads.
 	timelines    map[int][]map[string]any
 	timelineGets int
+	// pullRequests marks numbers GET /issues/N reports as pull requests,
+	// with their merged_at ("" = not merged), for the verified-close sweep.
+	pullRequests map[int]string
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
@@ -184,7 +187,15 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 			if _, done := s.closed[n]; done {
 				state = "closed"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels, "state": state, "body": s.bodies[n], "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+			resp := map[string]any{"number": n, "labels": labels, "state": state, "body": s.bodies[n], "user": map[string]any{"login": "hive[bot]", "type": "Bot"}}
+			if mergedAt, ok := s.pullRequests[n]; ok {
+				link := map[string]any{"url": "https://api.example/pulls"}
+				if mergedAt != "" {
+					link["merged_at"] = mergedAt
+				}
+				resp["pull_request"] = link
+			}
+			_ = json.NewEncoder(w).Encode(resp)
 		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/timeline"):
 			var n int
 			_, _ = sscanIssue(rest, &n)
