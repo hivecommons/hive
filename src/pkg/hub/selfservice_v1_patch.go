@@ -15,7 +15,8 @@ package hub
 //   - If-Match is required (428 when absent, 412 when stale). The precondition
 //     is checked before any GitHub call and again inside the store lock.
 //   - Only repos the edit ADDS are proven (the same read-only
-//     GET /repos/{owner}/{repo} as create, with the owner's stored token).
+//     GET /repos/{owner}/{repo} as create, with the owner's stored token or,
+//     when the request picks github-user-token, the token it carries).
 //     Repos that stay keep their proof time; removed repos lose theirs.
 //   - org, the owner, the ID, the keys and every timestamp are not editable:
 //     a body naming any other field is a 400, and the store restores them
@@ -266,6 +267,10 @@ func (s *HubServer) handleHubV1Patch(w http.ResponseWriter, r *http.Request) {
 		s.writeHubV1Stale(w, h.ID)
 		return
 	}
+	proof, ok := hubV1ReadProof(w, r)
+	if !ok {
+		return
+	}
 	data, err := io.ReadAll(io.LimitReader(r.Body, selfServiceRequestBodyLimit()))
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "could not read the request body")
@@ -287,7 +292,7 @@ func (s *HubServer) handleHubV1Patch(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusUnauthorized, "not authenticated")
 			return
 		}
-		if !s.selfServiceProveOwnership(w, r, login, h.ID, user, plan.added) {
+		if !s.hubV1ProveOwnership(w, r, login, h.ID, user, plan.added, proof) {
 			return
 		}
 	}
