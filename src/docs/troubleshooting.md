@@ -486,11 +486,28 @@ Common causes:
   field says why: `shared_uid_mode` (a UID map with no per-agent UIDs and no
   forced egress, the OpenShift `restricted-v2` shape; fix by granting the
   NET_ADMIN SCC per [net-admin-requirement.md](net-admin-requirement.md)),
-  `no_uid_map` (no `uid-map.json` loaded), `port_not_in_socket_table` (the peer
+  `no_uid_map` (no `uid-map.json` was loaded when the proxy started; see
+  below), `port_not_in_socket_table` (the peer
   port is not visible in `/proc/net/tcp{,6}`), `uid_not_in_map` (the socket
   owner's UID, logged as `peer_uid`, belongs to no agent) or `no_peer_port`.
   The fleet reporter files this as the operator-action class
   `proxy_writer_unidentified`, not as a fleet bug.
+
+  For `no_uid_map`, look for `no UID map found, agents will share dev UID` and
+  `proxy: no UID map` in the startup log. The proxy and the agent manager read
+  `/var/run/hive/uid-map.json` once, at startup. A map that is missing then
+  stays missing until the next restart, so the proxy cannot later switch to
+  trusting a self-asserted identity (#18184). The two usual causes:
+  - **The container booted with no agents in `hive.yaml`.** The entrypoint's
+    root phase creates the per-agent users, writes `uid-map.json` and sets up
+    forced egress only for the agent names it finds in `hive.yaml` at boot.
+    Agents added after that run under the shared `dev` UID and cannot be
+    attributed. Restart the hive once its agents are configured. The startup
+    log should then show `UID map written to …`.
+  - **No entrypoint root phase ran at all** (local dev, a native or systemd
+    install). No map can exist, so blocking writes is the correct result.
+    Run the container image, or set `HIVE_PROXY_ADVISORY_OK=true` to
+    deliberately accept the self-asserted `Proxy-Authorization` identity.
 
 - **`proxy upstream dial failed` for `api.github.com:443`.** The proxy could
   not open its TLS connection to GitHub. The log's `error_class` field says
