@@ -3557,6 +3557,9 @@ func (b *boot) bootSupervision() {
 	// the PR rows of the FIX-BEFORE-NEW and held-PR blocks. Read b.beadStores
 	// at call time, not at wire time.
 	b.sched.SetTopicClaimLookup(func() []scheduler.TopicClaim { return topicClaimLookup(b.beadStores)() })
+	// #19325: the audit trail's PR-to-agent attribution tags each held PR an
+	// agent opened as its own, whatever its lane topic or labels.
+	b.sched.SetPRAuthorLookup(cachedPRAuthorLookup(b.cfg.Project.Org, auditPRAgents, time.Now))
 	// #9584: close answered question issues unless the author objects (default off).
 	b.questionAutoclose.Store(wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger))
 	// The pr-request watcher's PR-opened hook (Linear session narration, the

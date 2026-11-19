@@ -27,7 +27,7 @@ func (s *Scheduler) addHeldPRCoordination(agentName string, actionable *github.A
 	if message == "" || !s.isHoldGatedPRAgent(agentName) {
 		return message
 	}
-	claims, failClosed := s.formatHeldPRClaimsWithPolicy(actionable)
+	claims, failClosed := s.formatHeldPRClaimsWithPolicy(agentName, actionable)
 	if failClosed {
 		// Persists every tick while the held PR stays open; warn once per agent
 		// like the main fail-closed kick path, then demote repeats to Debug.
@@ -43,6 +43,9 @@ for hours. Review latency is not abandonment.
 
 If one of your own held PRs shows unaddressed CHANGES REQUESTED, address the
 review on that same branch and reply on the PR. Never remove the hold label.
+A PR marked ` + "`[YOURS: you opened it]`" + ` is yours whatever its lane, topic,
+labels or subject: you opened it, so its review is your work. Never skip it as
+"not mine" or "another lane's".
 
 OPEN HOLD-GATED PRs:
 ` + claims + `
@@ -714,7 +717,7 @@ func scanReviewThreadPR(pr github.ReviewThreadPR, enforce threadEnforcer) (githu
 // then never open the PRs that would drain the backlog causing the overflow.
 const maxHeldPRsPerRepoPerKick = 100
 
-func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableResult) (string, bool) {
+func (s *Scheduler) formatHeldPRClaimsWithPolicy(agentName string, actionable *github.ActionableResult) (string, bool) {
 	if actionable == nil {
 		return "  (none)", false
 	}
@@ -726,6 +729,7 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 	byRepo := make(map[string][]github.HoldItem)
 	heldPRs := make(map[string]github.PullRequest, len(actionable.PRs.Held))
 	topics := s.allTopicClaims()
+	opened := s.prsOpenedBy(agentName)
 	for _, pr := range actionable.PRs.Held {
 		heldPRs[fmt.Sprintf("%s#%d", pr.Repo, pr.Number)] = pr
 	}
@@ -756,7 +760,7 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 			if reviewState != "" {
 				reviewState = " — " + reviewState
 			}
-			b.WriteString(fmt.Sprintf("  %s#%d%s %s%s\n", item.Repo, item.Number, topicTag(topics, item.Repo, item.Number), title, reviewState))
+			b.WriteString(fmt.Sprintf("  %s#%d%s%s %s%s\n", item.Repo, item.Number, ownPRTag(opened, item.Repo, item.Number), topicTag(topics, item.Repo, item.Number), title, reviewState))
 			shown++
 		}
 		if omitted := len(items) - limit; omitted > 0 {
@@ -789,6 +793,23 @@ func heldPRReviewState(pr github.PullRequest) string {
 	case github.ReviewDecisionApproved:
 		return "approved" + by
 	case github.ReviewDecisionNone:
+		// No latest trusted human verdict was determined. GitHub's own
+		// review decision still says whether changes were requested or the
+		// PR approved; never report "no human review yet" over it
+		// (hivecommons/hive#19325).
+		switch pr.Protection.ReviewDecision {
+		case github.ReviewDecisionChangesRequested:
+			if names := strings.Join(pr.Protection.ChangesRequestedBy, ", @"); names != "" {
+				by = " by @" + names
+			}
+			status := "unaddressed"
+			if github.HumanReviewAddressed(pr) {
+				status = "addressed"
+			}
+			return "CHANGES REQUESTED" + by + " (" + status + ")"
+		case github.ReviewDecisionApproved:
+			return "approved"
+		}
 		if len(pr.RequestedReviewers) > 0 || len(pr.RequestedTeams) > 0 {
 			return "review requested"
 		}

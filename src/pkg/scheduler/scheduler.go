@@ -51,6 +51,7 @@ type Scheduler struct {
 	maintainerNotes          MaintainerNotesLookup
 	customerContext          CustomerContextLookup
 	topicClaims              TopicClaimLookup
+	prAuthors                PRAuthorLookup
 	// newReleases feeds ${NEW_RELEASES} (new_releases.go); atomic because
 	// template substitution may run with s.mu held.
 	newReleases        atomic.Pointer[newReleasesHolder]
