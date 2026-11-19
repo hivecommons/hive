@@ -83,8 +83,10 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// classifier behind isPrivateURL that the hub shares so the two copies
 	// cannot drift (hivecommons/hive#18991), plus pkg/gfi, the umbrella and
 	// owner-only classifier the contributor queue gates and the tracker-row
-	// pill share so the two cannot disagree (hivecommons/hive#19078).
-	const maxDashboardInternalImports = 68
+	// pill share so the two cannot disagree (hivecommons/hive#19078), plus
+	// pkg/askai, the Ask AI help service and hub-relay client shared with the
+	// hub so consent, limits and filtering cannot drift (hivecommons/hive#19183).
+	const maxDashboardInternalImports = 69
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
