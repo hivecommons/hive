@@ -2437,6 +2437,100 @@
         }
       }
     },
+    "/api/customers/enrichment/settings": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Get customers enrichment secret settings",
+        "description": "Whether the crowd.dev API token used by customers enrichment is set (never its value). The enrichment switches and limits are on GET /api/config/governor (Features). Owner only.",
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "crowddev_token_set": {
+                      "type": "boolean",
+                      "description": "Whether a crowd.dev API token resolves (never its value)"
+                    },
+                    "crowddev_token_env_override": {
+                      "type": "boolean",
+                      "description": "HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN supplies the token"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Set the customers enrichment crowd.dev token",
+        "description": "Seals the crowd.dev API token into customers.enrichment.crowddev.token_file through the keystore; an empty string clears it and an absent field leaves it alone. Audited as customers_enrichment_settings with whether the token changed, never its value. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "crowddev_token": {
+                    "type": "string",
+                    "description": "crowd.dev API token (write-only); empty clears it"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "crowddev_token_set": {
+                      "type": "boolean",
+                      "description": "Whether a crowd.dev API token resolves (never its value)"
+                    },
+                    "crowddev_token_env_override": {
+                      "type": "boolean",
+                      "description": "HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN supplies the token"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          },
+          "400": {
+            "description": "Invalid request body"
+          },
+          "500": {
+            "description": "The token could not be saved"
+          }
+        }
+      }
+    },
     "/api/customers/{id}/export": {
       "get": {
         "tags": [
