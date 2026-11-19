@@ -261,7 +261,11 @@ authoritative list is the switch and the `specialPurposePrefixes` table in
 
 The Customers section keeps one profile per person. It lives in two files on the
 hive's own volume and nothing in it leaves the hive. It is not sent to the hub,
-written to GitHub or put in a heartbeat. The design is in
+written to GitHub or put in a heartbeat. The one exception is the opt-in
+Customers hub import (`customers.hub_import.enabled`, default off): it sends the
+hub only salted hashes of confirmed customers' GitHub logins, and receives only
+fields a person consented to share with this hive
+([telemetry](telemetry.md#customers-hub-import)). The design is in
 [customers](design/customers.md).
 
 Some of these people never signed up. They are issue authors, meeting guests and

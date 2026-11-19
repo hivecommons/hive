@@ -190,6 +190,7 @@
     .customers-share-setting { padding: var(--sp-5); margin-bottom: var(--sp-6); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); font-size: var(--fs-base); }
     .customers-share-setting h3 { font-size: var(--fs-base); margin-bottom: var(--sp-2); }
     .customers-share-setting p:last-child { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--sp-2); }
+    .customers-share-counts { font-size: var(--fs-sm); margin-top: var(--sp-2); }
 
     /* ── Hive search + facets ──
        The facet panel is a CLICK-TOGGLED left tray, collapsed by default so the
@@ -1094,7 +1095,8 @@
         <div class="customers-share-setting">
           <h3>Customers profile sharing</h3>
           <p>In force: <strong id="customers-share-effective">Unknown</strong> · Default: Off</p>
-          <p>Set <code>HIVE_HUB_CUSTOMERS_SHARE_ENABLED</code> on the hub to enable the personal profile and consent page. The environment is authoritative; this setting cannot be changed here. No profile details are sent to hives in this release.</p>
+          <p id="customers-share-counts" class="customers-share-counts" hidden></p>
+          <p>Set <code>HIVE_HUB_CUSTOMERS_SHARE_ENABLED</code> on the hub to enable the personal profile and consent page. The environment is authoritative; this setting cannot be changed here. A hive receives a person's real name, organization or country only after that person consents for that hive, and only values they entered themselves. Counts below are per hive; no person or value is shown.</p>
         </div>
         <div style="font-size:0.85rem;color:var(--text);margin:var(--sp-5) var(--sp-0) var(--sp-4);font-weight:600">Per-cluster limits</div>
         <div class="table-wrap"><table style="width:100%;font-size:0.85rem"><thead><tr>
@@ -11667,6 +11669,27 @@
         ' placeholder="' + placeholder + '"' +
         ' style="width:90px;padding:var(--sp-3) var(--sp-4);background:var(--surface);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem;text-align:right">';
     }
+    /* Hub admin view of profile sharing (#19164): consent counts per hive
+       only. The endpoint returns no person, field choice or value, and is
+       absent (404) while the sharing switch is off. */
+    async function loadCustomerConsentCounts(enabled) {
+      var el = document.getElementById('customers-share-counts');
+      if (!el) return;
+      if (!enabled) { el.hidden = true; el.textContent = ''; return; }
+      try {
+        var resp = await fetch('/api/saas/admin/profile-share/counts', { credentials: 'same-origin', cache: 'no-store' });
+        if (!resp.ok) { el.hidden = true; return; }
+        var data = await resp.json();
+        var rows = data.hives || [];
+        el.hidden = false;
+        if (!rows.length) { el.textContent = 'No person has consented to share with any hive.'; return; }
+        el.innerHTML = 'Consents per hive: ' + rows.map(function(r) {
+          var line = '<strong>' + esc(r.name || r.hive_id) + '</strong> ' + (r.consents | 0);
+          if (r.awaiting_reconfirmation) line += ' (' + (r.awaiting_reconfirmation | 0) + ' awaiting reconfirmation)';
+          return line;
+        }).join(' · ');
+      } catch (e) { /* transient: next poll retries */ }
+    }
     async function loadScaleSettings() {
       if (!_isAdmin) return;
       try {
@@ -11682,6 +11705,7 @@
         var eff = data.effective || {};
         document.getElementById('customers-share-effective').textContent =
           typeof eff.customers_share_enabled !== 'boolean' ? 'Unknown' : (eff.customers_share_enabled ? 'On' : 'Off');
+        loadCustomerConsentCounts(eff.customers_share_enabled === true);
         document.getElementById('scale-controls-summary').textContent =
           'wave ' + eff.upgrade_wave_size + ' · workers ' + eff.provision_workers +
           ' · per-cluster ' + eff.provision_per_cluster + ' · kubectl ' + eff.kubectl_per_cluster;

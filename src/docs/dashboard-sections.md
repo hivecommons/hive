@@ -226,7 +226,7 @@ Opening a profile shows:
 - **Merge** (owner and read-write): fold another customer into this profile when they are the same person. Identities, tags, goals and activity come across, and **Undo merge** gives them back exactly. Two dashboard users cannot be merged. **Split off** on an identity moves it, and the activity it produced, to a new customer.
 - **Export** and **Forget** (owner only): **Export this person** shows everything held about them in a viewer you can copy from. **Forget**: deletes the person, their identities and their activity links, and stops hive rebuilding the profile.
 
-Nothing in this section leaves the hive. Turn it off with **Settings › Features › Customers** (`customers.enabled`), which takes effect when the hive restarts. API: [customers](api-reference/customers.md). Design: [customers](design/customers.md).
+Nothing in this section leaves the hive, and nothing is read from the hub, unless the owner turns on **Settings › Features › Import details people shared on the hub** (`customers.hub_import.enabled`, default off). Then the hive sends the hub salted hashes of its confirmed customers' GitHub logins, and a person who opted in on the hub's **Profile sharing** page for this hive can have the real name, organization or country they entered there fill their profile, shown as "from the hub". A value set by hand here is never overwritten, and a withdrawal on the hub clears the imported value at the next sync. See [Customers hub import](telemetry.md#customers-hub-import). Turn the section off with **Settings › Features › Customers** (`customers.enabled`), which takes effect when the hive restarts. API: [customers](api-reference/customers.md). Design: [customers](design/customers.md).
 
 ## Contributors
 

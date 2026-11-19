@@ -1,6 +1,9 @@
 # Customers: opt-in, consent-first import of hub-held person fields (#19088)
 
-Status: **Decided; design only.** Spec for issue
+Status: **Decided; phases 1 to 4 built, off by default.** Operator-facing
+docs: [Customer profile sharing](../hub-deployment.md#customer-profile-sharing)
+on the hub and [Customers hub import](../telemetry.md#customers-hub-import) on
+the hive. Spec for issue
 [#19088](https://github.com/hivecommons/hive/issues/19088). The operator decided
 the model in that issue (option 1, below), so this page records it and cuts it
 into phases; it does not reopen it. No code or behaviour changes with this
