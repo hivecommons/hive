@@ -1889,7 +1889,7 @@ func contributorLaneConflictReason(pr *gh.PullRequest) string {
 	case "dirty", "conflicting":
 		return "conflicting"
 	case "unknown":
-		return "mergeable-unknown"
+		return prstage.StageReasonMergeableUnknown
 	default:
 		return ""
 	}

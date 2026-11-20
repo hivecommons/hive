@@ -852,6 +852,17 @@ func TestTrySweepContributorLanePRSkipReasons(t *testing.T) {
 		{name: "behind updates branch", mutate: func(fx *contributorLaneFixture) { fx.mergeableState = "behind" }, wantReason: "check-pending", wantUpdate: 1},
 		{name: "conflicting", mutate: func(fx *contributorLaneFixture) { fx.mergeableState = "dirty" }, wantReason: "conflicting"},
 		{name: "unknown mergeability waits", mutate: func(fx *contributorLaneFixture) { fx.mergeableState = "unknown" }, wantReason: "mergeable-unknown"},
+		// The lane reads mergeability before admission: a real conflict
+		// outranks a standing refusal, and an unknown state stops the pass
+		// with no stage opinion (TestMergeableUnknownPassKeeps*).
+		{name: "unknown mergeability stops before admission", mutate: func(fx *contributorLaneFixture) {
+			fx.body = "No issue here."
+			fx.mergeableState = "unknown"
+		}, wantReason: prstage.StageReasonMergeableUnknown},
+		{name: "conflict outranks no linked issue", mutate: func(fx *contributorLaneFixture) {
+			fx.body = "No issue here."
+			fx.mergeableState = "dirty"
+		}, wantReason: "conflicting"},
 		{
 			name:       "reviewer configured without approval",
 			verdict:    func(string, int, string) ContributorLaneVerdict { return ContributorLaneVerdict{Configured: true} },
