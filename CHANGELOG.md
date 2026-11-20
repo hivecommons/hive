@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-20 (v5.344.3)
+
+### Fixed
+
+- The "task released on disconnect" warning is now logged only when a release survives the reconnect grace window, so resumed socket flaps no longer trip the repeated-error self-report (#19357).
+
 ## 2026-11-19 (v5.344.2)
 
 ### Fixed
