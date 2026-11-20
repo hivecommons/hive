@@ -301,7 +301,9 @@ Closing is a separate, per-repository opt-in. It mirrors
   review by anyone but the hive, or a push it did not make, since the
   notice keeps the PR open and clears the flag;
 - never an owner's or a trusted author's PR, which the clock never flags;
-- never with a hold label or `hive/keep-open` on the PR;
+- never with a hold label or `hive/keep-open` on the PR. Either one added
+  after the notice cancels the countdown; once it is removed, a fresh
+  notice and a full grace are needed;
 - the close comment (`<!-- hive:stage-abandoned-close -->`) says "Reopen if
   that's wrong".
 

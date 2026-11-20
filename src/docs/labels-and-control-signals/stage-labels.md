@@ -1570,23 +1570,32 @@ one note there and, before this, nothing else ever happened.
 `governor.labels.stage.abandon_after` (a Go duration; unset or `0` is off,
 the default) turns on an idle clock for those two parks, on contributor PRs
 only. An owner's PR (`dashboard.authorized_users`), a trusted author's PR
-(`role/trusted`) and the hive's own PRs are never flagged or closed.
-**Idle since** is the later of:
+(`role/trusted`, the trusted-author or merger authorizers, or an `OWNER` /
+`MEMBER` / `COLLABORATOR` author association) and the hive's own PRs are
+never flagged or closed. Once a PR's author has been seen as trusted, the
+record remembers it, so a later pass whose role falls back to untrusted
+cannot flag it.
+**Idle since** is the later of two times:
 
-- the last outside activity: a head push the hive did not make, a new
-  comment, or a new review by a person. This is the clock's own anchor.
-  Unlike `stage/stalled`'s `LastActivityAt` it ignores verdict, CI and label
-  changes, which flip on every `085 ↔ 074` hop. Comments other hive
-  processes post, such as the review swarm's, are counted as comments, so
-  they can restart the clock (late, never early);
-- the start of the current park run. An `085 ↔ 074` flap (the adoption
-  retried and stalled again) is one run, so it does not restart the clock.
-  For 085 only adoption-stalled visits count: an earlier 085 for another
-  decision (a reviewer's `requires_human`, a sentinel alert) does not start
-  it, and a visit that became adoption-stalled without a stage hop starts
-  the run at that reason change.
+1. **The last outside activity.** That is a head push the hive did not
+   make, a new comment, or a new review by a person. This is the clock's own
+   anchor. Unlike `stage/stalled`'s `LastActivityAt`, it ignores verdict, CI
+   and label changes, which flip on every `085 ↔ 074` hop. Comments other
+   hive processes post, such as the review swarm's, are counted as comments,
+   so they can restart the clock (late, never early). The anchor is kept
+   only while the clock runs for the PR; after the setting was off (or the
+   PR was not eligible) it is re-seeded from `LastActivityAt`, so a push or
+   comment made meanwhile is not lost.
+2. **The start of the current park run.** An `085 ↔ 074` flap (the adoption
+   retried and stalled again) is one run, so it does not restart the clock.
 
-The hive's own comments and its stage-label writes never move it.
+For 085, only adoption-stalled visits count toward the run. An earlier 085
+for another decision (a reviewer's `requires_human`, a sentinel alert) does
+not start it. When the reason of the current 085 visit changed after the
+visit began — it began as another decision, went to another decision and
+back, or its blocker changed — the run starts at that last change.
+
+The hive's own comments and its stage-label writes never move the clock.
 
 When a PR has been idle for `abandon_after`, its stage record gets an
 **abandoned flag**. Nothing else about the PR changes: the stage stays 071 or
@@ -1635,7 +1644,10 @@ hive:
    close comes first and the comment after it, so a close GitHub refuses
    posts nothing; the retry waits an hour.
 
-Any activity after the notice cancels the close and clears the flag. Both
+Any activity after the notice cancels the close and clears the flag. A hold
+label or `hive/keep-open` added after the notice cancels the countdown too:
+once it is removed the hive posts a fresh notice and waits a full grace
+again. Both
 writes go through the write-back gate under the supersession kinds
 (`supersession_notice`, `supersession_close`). Human-merge paths
 (`auto_merge.human_merge_paths`) gate merges, not closes, so they do not apply.
