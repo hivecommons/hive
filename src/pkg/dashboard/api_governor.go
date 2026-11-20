@@ -186,6 +186,14 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		// never, what adoption does when the author maintains the
 		// repository (hivecommons/hive#14524).
 		"stageAdoptionMaintainerPolicy": cfg.Governor.Labels.Stage.Adoption.EffectiveMaintainerPolicy(),
+		// governor.labels.stage.adoption.person_after / person_grace /
+		// person_repos / person_human_repos (hivecommons/hive#19395): the
+		// opt-in timer for a person's sent-back PR ("" after = off, ""
+		// grace = the 24h default; ACMM L6 only).
+		"stageAdoptionPersonAfter":      cfg.Governor.Labels.Stage.Adoption.PersonAfter,
+		"stageAdoptionPersonGrace":      cfg.Governor.Labels.Stage.Adoption.PersonGrace,
+		"stageAdoptionPersonRepos":      nonNilStrings(cfg.Governor.Labels.Stage.Adoption.PersonRepos),
+		"stageAdoptionPersonHumanRepos": nonNilStrings(cfg.Governor.Labels.Stage.Adoption.PersonHumanRepos),
 		"stageStalledRequireQuiet":      cfg.Governor.Labels.Stage.Stalled.IsRequireQuiet(),
 		// governor.labels.stage.engine.mode: the ADR-0025 central stage
 		// engine's rollout switch (off | shadow | enforce).
@@ -844,6 +852,16 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		StageAdoptionMaintainerPolicy *string `json:"stage_adoption_maintainer_policy"`
 		StageGraceOnline              *string `json:"stage_grace_online"`
 		StageGraceOffline             *string `json:"stage_grace_offline"`
+		// The person-PR takeover timer (hivecommons/hive#19395):
+		// governor.labels.stage.adoption.person_after ("" or "0" = off) and
+		// person_grace ("" or "0" = the 24h default), Go durations, and
+		// person_repos / person_human_repos, the repositories (in
+		// project.repos) opted in for owners' agent-written PRs and for
+		// author/human PRs. Each list is sent whole; empty clears it.
+		StageAdoptionPersonAfter      *string   `json:"stage_adoption_person_after"`
+		StageAdoptionPersonGrace      *string   `json:"stage_adoption_person_grace"`
+		StageAdoptionPersonRepos      *[]string `json:"stage_adoption_person_repos"`
+		StageAdoptionPersonHumanRepos *[]string `json:"stage_adoption_person_human_repos"`
 		// governor.labels.stage.stalled.require_quiet (hivecommons/hive#12534).
 		StageStalledRequireQuiet *bool `json:"stage_stalled_require_quiet"`
 		// governor.labels.stage.engine.mode (ADR-0025): off | shadow | enforce.
@@ -973,6 +991,33 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		}
 		stageAbandonCloseRepos = repos
 	}
+	stagePersonAfter, msg := normalizeStagePersonDuration("stage_adoption_person_after", body.StageAdoptionPersonAfter, "or 0 to turn the takeover timer off")
+	if msg != "" {
+		jsonError(w, msg, http.StatusBadRequest)
+		return
+	}
+	stagePersonGrace, msg := normalizeStagePersonDuration("stage_adoption_person_grace", body.StageAdoptionPersonGrace, "or 0 for the 24h default")
+	if msg != "" {
+		jsonError(w, msg, http.StatusBadRequest)
+		return
+	}
+	var stagePersonRepos, stagePersonHumanRepos []string
+	if body.StageAdoptionPersonRepos != nil {
+		repos, msg := s.autoMergeWatchedRepoList("stage_adoption_person_repos", *body.StageAdoptionPersonRepos)
+		if msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+		stagePersonRepos = repos
+	}
+	if body.StageAdoptionPersonHumanRepos != nil {
+		repos, msg := s.autoMergeWatchedRepoList("stage_adoption_person_human_repos", *body.StageAdoptionPersonHumanRepos)
+		if msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+		stagePersonHumanRepos = repos
+	}
 	if body.WritingGuide != nil {
 		if err := config.ValidateWritingGuide(*body.WritingGuide); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
@@ -1092,6 +1137,18 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.StageAdoptionMaintainerPolicy != nil {
 		s.deps.Config.Governor.Labels.Stage.Adoption.MaintainerPolicy = strings.ToLower(strings.TrimSpace(*body.StageAdoptionMaintainerPolicy))
+	}
+	if body.StageAdoptionPersonAfter != nil {
+		s.deps.Config.Governor.Labels.Stage.Adoption.PersonAfter = stagePersonAfter
+	}
+	if body.StageAdoptionPersonGrace != nil {
+		s.deps.Config.Governor.Labels.Stage.Adoption.PersonGrace = stagePersonGrace
+	}
+	if body.StageAdoptionPersonRepos != nil {
+		s.deps.Config.Governor.Labels.Stage.Adoption.PersonRepos = stagePersonRepos
+	}
+	if body.StageAdoptionPersonHumanRepos != nil {
+		s.deps.Config.Governor.Labels.Stage.Adoption.PersonHumanRepos = stagePersonHumanRepos
 	}
 	if body.StageGraceOnline != nil {
 		s.deps.Config.Governor.Labels.Stage.ContributorGraceOnline = strings.TrimSpace(*body.StageGraceOnline)
@@ -3634,6 +3691,29 @@ func normalizeStageAbandonAfter(v *string) (string, string) {
 	switch {
 	case err != nil || d < 0:
 		return "", "stage_abandon_after must be a Go duration such as 168h, or 0 to turn the idle clock off"
+	case d == 0:
+		return "", ""
+	}
+	return raw, ""
+}
+
+// normalizeStagePersonDuration validates a person-PR takeover timer duration
+// from the Labels tab (stage_adoption_person_after / _grace): "" or a zero
+// duration is stored as "" — person_after off, person_grace the 24h default
+// (config.DefaultPersonTakeoverGrace) — so the YAML stays clean; anything
+// else must be a positive Go duration. zero completes the 400 message.
+func normalizeStagePersonDuration(name string, v *string, zero string) (string, string) {
+	if v == nil {
+		return "", ""
+	}
+	raw := strings.TrimSpace(*v)
+	if raw == "" || raw == "0" {
+		return "", ""
+	}
+	d, err := time.ParseDuration(raw)
+	switch {
+	case err != nil || d < 0:
+		return "", name + " must be a Go duration such as 24h, " + zero
 	case d == 0:
 		return "", ""
 	}

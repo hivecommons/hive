@@ -75,6 +75,20 @@ type StageLabelPolicy struct {
 	// abandon_close_repos, ACMM L6 only: config.Config.AbandonCloseAllowed).
 	// nil = never.
 	AbandonClose func(repo string) bool
+	// PersonAfter / PersonGrace / PersonTakeover are the opt-in timer for a
+	// person's sent-back PR (governor.labels.stage.adoption.person_after /
+	// person_grace / person_repos / person_human_repos,
+	// automerge_stage_person_takeover.go): how long a person's PR at 071 /
+	// 072 may sit idle before the takeover notice, how long after the
+	// notice the hive takes it over through the Adopt now path (<= 0 reads
+	// as config.DefaultPersonTakeoverGrace), and whether the timer applies
+	// in "owner/repo" to an author/human PR (human) or an owner's
+	// agent-written one (config.Config.PersonTakeoverAllowed, ACMM L6
+	// only). PersonAfter 0 or a nil PersonTakeover is off, the default:
+	// the hive never takes over a person's PR on its own.
+	PersonAfter    time.Duration
+	PersonGrace    time.Duration
+	PersonTakeover func(repo string, human bool) bool
 	// Adoption turns the stage-074 adoption on
 	// (governor.labels.stage.adoption.enabled, default true): a contributor
 	// PR still red after the grace is superseded by an App PR that preserves
@@ -1585,7 +1599,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 			trustRec, _ := store.Get(key)
 			abandonEligible := c.abandonContributor(obs, role, policy, trustRec)
-			act.TrackIdle = policy.AbandonAfter > 0 && abandonEligible
+			// The person-PR takeover timer (automerge_stage_person_takeover.go)
+			// reads the same anchor for a person's PR in a listed repository.
+			_, personTimed := personTakeoverApplies(obs, policy)
+			act.TrackIdle = (policy.AbandonAfter > 0 && abandonEligible) || personTimed
 			store.NoteActivity(key, act)
 			// A flag on the record only; the stage written below is unchanged.
 			c.reconcileAbandoned(ctx, store, key, obs, policy, abandonEligible, now)
@@ -1723,6 +1740,23 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				// (entry note, adoption, nudge) applies any more.
 				store.CountOwnComments(key, result.Comments-commentsBefore)
 				continue
+			}
+		}
+		if err == nil && !out.Suppressed && !obs.Merged {
+			// governor.labels.stage.adoption.person_after: warn once, then
+			// after the grace hand a person's idle PR to the Adopt now path.
+			n, takeover, perr := c.takeOverPersonPRIfDue(ctx, store, key, obs, policy, out.Stage, now)
+			result.Comments += n
+			if perr != nil && firstErr == nil {
+				firstErr = perr
+			}
+			if takeover {
+				// The forced-adoption mark is on the record; the
+				// adoption/supersede block below runs the operator's Adopt
+				// now path for it in this pass, as the pass after an
+				// operator's click does. The label is added to this pass's
+				// copy only: nothing is written to GitHub for it.
+				obs.Labels = append(append([]string(nil), obs.Labels...), delegatedecision.LabelAdoptSupersede)
 			}
 		}
 		if obs.Route != nil && (want.Stage == stagelabels.ReadyForHumanMerge || want.Stage == stagelabels.NeedsDecision) {

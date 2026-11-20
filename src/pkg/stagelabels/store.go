@@ -544,6 +544,22 @@ type Record struct {
 	AbandonClosedAt      time.Time `json:"abandon_closed_at,omitzero"`
 	AbandonCloseTriedAt  time.Time `json:"abandon_close_tried_at,omitzero"`
 	AbandonNoticeResetAt time.Time `json:"abandon_notice_reset_at,omitzero"`
+	// PersonNoticeAt / PersonNoticeResetAt / PersonTakeoverAt are the
+	// opt-in timer for a person's sent-back PR (governor.labels.stage.
+	// adoption.person_after, person_takeover.go): when the hive posted its
+	// one takeover notice, when a hold, a keep-open label, activity or the
+	// PR leaving 071 / 072 last cancelled that countdown (so a notice
+	// posted before it never counts again), and when the timer handed the
+	// PR to the Adopt now path. PersonCheckedAt is when the read before
+	// the notice last found a person's change request or failed, so it
+	// backs off (AbandonRecheckEvery) instead of repeating every sweep. The
+	// timer shares the idle anchor (AbandonActivityAt) with abandon_after.
+	// All omitzero, so a hive with the timer off persists exactly the bytes
+	// it did before.
+	PersonNoticeAt      time.Time `json:"person_notice_at,omitzero"`
+	PersonNoticeResetAt time.Time `json:"person_notice_reset_at,omitzero"`
+	PersonTakeoverAt    time.Time `json:"person_takeover_at,omitzero"`
+	PersonCheckedAt     time.Time `json:"person_checked_at,omitzero"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
@@ -577,8 +593,10 @@ type Activity struct {
 	WaitingOnHive bool
 	// TrackIdle keeps Record.AbandonActivityAt for the stale contributor
 	// PR idle clock (governor.labels.stage.abandon_after on, contributor
-	// PR). Off, the field is cleared (and so never written), and the next
-	// tracked pass reseeds it from LastActivityAt.
+	// PR) and for the person-PR takeover timer (adoption.person_after on
+	// for the PR's repository and kind). Off, the field is cleared (and so
+	// never written), and the next tracked pass reseeds it from
+	// LastActivityAt.
 	TrackIdle bool
 }
 

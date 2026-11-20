@@ -190,6 +190,9 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 	if a.BlockedBy == stagelabels.AdoptBlockedAuthorPerson {
 		return "author-owned — " + who + " remains the owner; human availability is unknown"
 	}
+	if a.QueuedBy == stagelabels.AdoptForcedByPersonTimer {
+		return "Adopting… (queued by this repository's takeover timer; the hive opens its copy on the next stage pass)"
+	}
 	if a.QueuedBy != "" {
 		return "Adopting… (queued by @" + a.QueuedBy + "; the hive opens its copy on the next stage pass)"
 	}

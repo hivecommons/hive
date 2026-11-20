@@ -82,8 +82,10 @@ func decisionForUnauthorized(it StageTrackerItem, held bool) *StageTrackerDecisi
 
 // decisionForWaitingOnAuthor: a human-authored PR at 071 Needs author /
 // 072 Returned to contributor — the hive waits for its author to push.
-// The hive never adopts a human's PR, so the person's choices are to wait,
-// hold, or close it (hivecommons/hive#15078).
+// The hive never adopts a human's PR on its own, so the person's choices
+// are to wait, hold, or close it (hivecommons/hive#15078) — unless the
+// repository opted into the takeover timer (it.PersonTakeover), and then
+// the question says when the hive takes it over (hivecommons/hive#19395).
 func decisionForWaitingOnAuthor(it StageTrackerItem, held bool) *StageTrackerDecision {
 	who := "its author"
 	if a := strings.TrimSpace(it.Author); a != "" {
@@ -96,7 +98,13 @@ func decisionForWaitingOnAuthor(it StageTrackerItem, held bool) *StageTrackerDec
 		what = "a new commit (" + clause + ")"
 	}
 	d.Question = "This PR waits on " + who + " to push " + what + ". The hive never rewrites a person's PR; it waits unless you say otherwise."
+	if pt := it.PersonTakeover; pt != nil && pt.Text != "" {
+		d.Question = "This PR waits on " + who + " to push " + what + ". " + pt.Text
+	}
 	d.Blocker = "Nothing for the hive to do until " + who + " pushes."
+	if it.PersonTakeover != nil {
+		d.Blocker = "The hive waits for " + who + " to push, or for this repository's takeover timer."
+	}
 	if held {
 		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 	}
@@ -125,7 +133,15 @@ func decisionForWaitingOnContributor(it StageTrackerItem, held bool, now time.Ti
 		gone = "is online but has not answered " + plural(a.Nudges, "nudge")
 	}
 	d.Question = who + " " + gone + " and the hive is not adopting on its own; take the PR over now, or reroute its follow-up work to another clanker?"
+	if pt := it.PersonTakeover; pt != nil && pt.Text != "" {
+		// An owner's agent PR in a repository with the takeover timer on
+		// (hivecommons/hive#19395): the hive will adopt it on its own.
+		d.Question = who + " " + gone + ". " + pt.Text + " Take the PR over now, or reroute its follow-up work to another clanker?"
+	}
 	d.Blocker = "The PR waits on " + who + "'s hive; adoption is held (" + a.BlockerReason() + ")."
+	if it.PersonTakeover != nil {
+		d.Blocker = "The PR waits on " + who + "'s hive; adoption is held (" + a.BlockerReason() + ") until this repository's takeover timer runs."
+	}
 	if held {
 		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 	}

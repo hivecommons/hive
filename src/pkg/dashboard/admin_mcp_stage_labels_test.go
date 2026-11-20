@@ -38,3 +38,29 @@ func TestAdminMCPStageLabelsOpWritesBothKeysOwnerOnly(t *testing.T) {
 		t.Fatalf("after the owner's write: abandon_after=%q abandon_close_repos=%v", st.AbandonAfter, st.AbandonCloseRepos)
 	}
 }
+
+// governor.stage_labels also writes the person-PR takeover timer under
+// governor.labels.stage.adoption (hivecommons/hive#19395) through the same
+// endpoint.
+func TestAdminMCPStageLabelsOpWritesPersonTakeoverKeys(t *testing.T) {
+	t.Setenv("HIVE_ADMIN_MCP_ENABLE_WRITES", "1")
+	t.Setenv("HIVE_ADMIN_MCP_PENDING_FILE", t.TempDir()+"/pending.json")
+	srv := newFullServer(t)
+	srv.authToken = "secret"
+	h := srv.authenticate(srv.roleEnforcement(srv.securityHeaders(srv.mux)))
+	owner := adminMCPAs(t, h, map[string]string{"Authorization": "Bearer secret"})
+	preview := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_preview","arguments":{"operation":"governor.stage_labels","args":{"person_after":"24h","person_grace":"12h","person_repos":{"add":["testrepo"]},"person_human_repos":{"add":["testrepo"]}}}}}`
+	confirm := func(id string) string {
+		return `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"write_confirm","arguments":{"confirmation_id":"` + id + `"}}}`
+	}
+	if got := owner(confirm(confirmationID(t, owner(preview)))); !strings.Contains(got, `"write_result"`) {
+		t.Fatalf("the owner's confirm = %s", got)
+	}
+	a := srv.deps.Config.Governor.Labels.Stage.Adoption
+	if a.PersonAfter != "24h" || a.PersonGrace != "12h" {
+		t.Fatalf("person_after=%q person_grace=%q, want 24h / 12h", a.PersonAfter, a.PersonGrace)
+	}
+	if len(a.PersonRepos) != 1 || a.PersonRepos[0] != "testorg/testrepo" || len(a.PersonHumanRepos) != 1 || a.PersonHumanRepos[0] != "testorg/testrepo" {
+		t.Fatalf("person_repos=%v person_human_repos=%v, want [testorg/testrepo] each", a.PersonRepos, a.PersonHumanRepos)
+	}
+}

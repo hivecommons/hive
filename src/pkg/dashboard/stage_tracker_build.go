@@ -256,6 +256,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if it.Takeover = stageTrackerTakeover(*it, rec, hasRec, presence, rerouteCandidates, adoptionClock, now); it.Takeover != nil {
 			it.Caption = stageTrackerTakeoverCaption(it.Caption, it.Takeover)
 		}
+		it.PersonTakeover = s.stageTrackerPersonTakeover(*it, rec, hasRec, now)
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)
 		if approver == "" && hasRec && stage == stagelabels.NeedsDecision {
 			// At 085 the reason carries no approver: the stage pass

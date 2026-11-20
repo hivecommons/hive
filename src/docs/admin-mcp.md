@@ -1232,6 +1232,15 @@ It is the first operation for any `governor.labels.stage.*` key:
 - `abandon_close_repos` (`governor.labels.stage.abandon_close_repos`),
   `{add, remove, clear}`. A bare name is sent as `owner/repo`; a repository
   not in `project.repos` is refused.
+- `person_after` (`governor.labels.stage.adoption.person_after`), a Go
+  duration such as `24h`; `"0"` or `""` turns the person-PR takeover timer
+  off.
+- `person_grace` (`governor.labels.stage.adoption.person_grace`), a Go
+  duration; `"0"` or `""` is the 24h default.
+- `person_repos` and `person_human_repos`
+  (`governor.labels.stage.adoption.person_repos` / `person_human_repos`),
+  `{add, remove, clear}`, the same way as `abandon_close_repos`: where the
+  timer applies to owners' agent-written PRs, and to `author/human` PRs.
 
 For example, to flag contributor PRs idle for a week and let one repository
 close them:
@@ -1247,6 +1256,11 @@ not close before: a repository added to `abandon_close_repos`, or a shorter
 `abandon_after` where repositories are listed. Closing still needs ACMM L6, a
 notice and a 24h grace with no activity (see
 [sweeps-and-operations.md](operator-reference/sweeps-and-operations.md#abandoned-contributor-prs-abandon_after-abandon_close_repos)).
+The timer keys are widening the same way: a repository added to
+`person_repos` or `person_human_repos`, or a shorter `person_after` or
+`person_grace` where repositories are listed, lets the hive take over a
+person's PR it could not take over before (see
+[stage-labels.md](labels-and-control-signals/stage-labels.md#a-persons-idle-pr-the-opt-in-takeover-timer)).
 
 `agent.cadences` and `writeback.kind_policy` change two more settings an
 owner otherwise changes on the dashboard, through the endpoints those
