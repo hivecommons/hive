@@ -307,6 +307,16 @@ func (r Record) AbandonStep(after time.Duration, countsKnown bool, now time.Time
 	return AbandonConfirm
 }
 
+// AbandonCountdownStart is when the current auto-close countdown could
+// first have warned: the later of the flag and the last cancelled notice.
+// A notice of the hive's own posted after it belongs to this countdown.
+func (r Record) AbandonCountdownStart() time.Time {
+	if r.AbandonNoticeResetAt.After(r.AbandonedAt) {
+		return r.AbandonNoticeResetAt
+	}
+	return r.AbandonedAt
+}
+
 // AbandonCloseDue reports whether an abandoned PR whose warning went out
 // at AbandonNoticeAt may be closed at now: the grace has passed, no
 // outside activity is on record since the notice, it was not closed yet

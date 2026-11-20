@@ -317,7 +317,7 @@ func (c *Engine) closeAbandonedIfDue(ctx context.Context, store *stagelabels.Sto
 }
 
 // ownAbandonNoticeSince returns when the hive's own auto-close notice on
-// the PR was posted, if one was posted after since, or zero. Only the
+// the PR was posted, if one was posted at or after since, or zero. Only the
 // hive's App login counts: anyone can type AbandonNoticeMarker. A hive
 // that cannot name its App login reads as "none".
 func (c *Engine) ownAbandonNoticeSince(ctx context.Context, obs stageObservation, since time.Time) (time.Time, error) {
@@ -331,7 +331,7 @@ func (c *Engine) ownAbandonNoticeSince(ctx context.Context, obs stageObservation
 		return time.Time{}, err
 	}
 	at := cm.GetCreatedAt().Time
-	if !at.After(since) {
+	if at.Before(since) {
 		return time.Time{}, nil
 	}
 	return at, nil
