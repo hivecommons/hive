@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-20 (v6.53.4)
+
+### Fixed
+
+- A hive restart or upgrade no longer drops reviewed, green PRs from `stage/090-ready-for-human-merge` back to `stage/060-reviewed` for a full soak window. The stage route soaks a head the contributor lane refuses before its own soak step (no linked issue, author association, auto-merge off for the repo), and it started that soak from its first sighting in the new process, while the lane's own soak was already seeded from when GitHub saw the head go green ([#12726](https://github.com/hivecommons/hive/pull/12726)). Both now share that seed, so a head that soaked before the restart stays at 090. On 2026-11-20 one upgrade moved 15 such PRs to 060 at once, and they came back 30 minutes later.
+
 ## 2026-11-20 (v6.53.3)
 
 ### Fixed
