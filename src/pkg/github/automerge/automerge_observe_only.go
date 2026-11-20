@@ -107,3 +107,46 @@ func observeOnlyStageReason(lane, reason string) string {
 	}
 	return reason
 }
+
+// foldObserveOnlyVerdict gives an observe-only observation the reviewer
+// verdict for its head when the drain carried none. A lane notes the
+// verdict (noteStageVerdict) before its merge decision but records the
+// observation only after the evaluation returns, and the engine ticker and
+// the queued sweep both drain the one shared tracker (hivecommons/hive#12573).
+// A drain by the other driver in between takes the note. The observation
+// then has no verdict unless a later lane in the same pass notes it again —
+// the contributor lane does for a trusted author, unless it stops first (repo
+// not in the lane, a prefilter or sentinel park, mergeable-unknown, a closing
+// or adoption-intent gate, an admission error), and nothing re-notes for the
+// App's own PRs. repo-auto-merge-disabled with no verdict classifies as 050,
+// so an approved head on an auto-merge-off repo flipped 090 ↔ 050 under the
+// same reason. The fold reads the review-verdicts record the lanes read,
+// for the observation's own head, so an unreviewed or new head is still 050.
+// It reads it through this engine's contributorLaneVerdictFor, which also
+// applies a recorded human decision (the observe-only engine has none);
+// foldRecordedDecision then skips a head already answered. The
+// trusted-bot lane's verdict is advisory (trustedBotLaneVerdict) and is left
+// to the lane.
+func (c *Engine) foldObserveOnlyVerdict(list []stageObservation) {
+	if c == nil || c.contributorLaneVerdict == nil {
+		return
+	}
+	for i := range list {
+		o := &list[i]
+		if o.Reason != observeOnlyReasonRepoAutoMergeDisabled || o.Detail.VerdictKnown || o.HeadSHA == "" {
+			continue
+		}
+		switch o.Lane {
+		case stageLaneTrusted, stageLaneContributor:
+		case stageLaneSelf:
+			if lane, ok := c.sweepLaneForAuthor(o.Author); !ok || lane != stageLaneSelf {
+				// A trusted bot's PR: its lane may downgrade the verdict.
+				continue
+			}
+		default:
+			continue
+		}
+		o.Detail.Verdict, o.Detail.VerdictKnown = c.contributorLaneVerdictFor(o.Owner+"/"+o.Repo, o.Number, o.HeadSHA), true
+		o.Detail = normalizeStageDetail(o.Detail)
+	}
+}
