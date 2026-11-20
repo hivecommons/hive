@@ -89,28 +89,52 @@ func (c *Engine) reconcileAbandoned(ctx context.Context, store *stagelabels.Stor
 	}
 }
 
-// abandonContributor reports whether the idle clock applies to the PR at
-// all: a contributor's PR, not the hive's own (the App, author/hive, one of
-// the hive's identities), not one of this hive's owners'
-// (dashboard.authorized_users) and not a trusted author's (role/trusted:
-// the trusted-author list or a registry tier the lanes trust). Owners and
-// trusted maintainers decide about their own PRs; the hive never flags or
-// closes them.
-func (c *Engine) abandonContributor(obs stageObservation, role stagelabels.Role, policy StageLabelPolicy) bool {
+// abandonTrustedAssociations are the author associations that make a PR a
+// maintainer's, not an outside contributor's.
+var abandonTrustedAssociations = map[string]bool{"OWNER": true, "MEMBER": true, "COLLABORATOR": true}
+
+// abandonTrustedAuthor reports whether this pass sees the PR's author as
+// trusted from a stable source, not only the pass's resolved role: role/
+// trusted, one of this hive's owners (policy.OwnerAuthor,
+// dashboard.authorized_users), an author the trusted-author or merger
+// authorizers admit (configuration, no GitHub call), or an OWNER / MEMBER /
+// COLLABORATOR author association from the list payload.
+func (c *Engine) abandonTrustedAuthor(obs stageObservation, role stagelabels.Role, policy StageLabelPolicy) bool {
 	login := strings.TrimSpace(obs.Author)
 	switch {
-	case obs.AuthorKind == authorkind.Hive, role == stagelabels.RoleTrusted:
-		return false
+	case role == stagelabels.RoleTrusted:
+		return true
+	case abandonTrustedAssociations[strings.ToUpper(strings.TrimSpace(obs.AuthorAssociation))]:
+		return true
 	case login == "":
+		return false
+	case policy.OwnerAuthor != nil && policy.OwnerAuthor(login):
+		return true
+	case c.trustedAuthorDecision(login, c.currentTrustedAuthorPolicy().RequireRole).Allowed:
+		return true
+	}
+	allowed, _ := c.isTrustedMerger(login)
+	return allowed
+}
+
+// abandonContributor reports whether the idle clock applies to the PR at
+// all: a contributor's PR — not the hive's own (the App, author/hive, one
+// of the hive's identities), not one whose author this pass sees as
+// trusted (abandonTrustedAuthor), and not one whose record says its author
+// was ever seen as trusted (Record.AbandonTrustedSeen), so a pass whose role
+// fell back to untrusted cannot flag or close a maintainer's PR. Owners and
+// trusted maintainers decide about their own PRs.
+func (c *Engine) abandonContributor(obs stageObservation, role stagelabels.Role, policy StageLabelPolicy, rec stagelabels.Record) bool {
+	login := strings.TrimSpace(obs.Author)
+	switch {
+	case obs.AuthorKind == authorkind.Hive, login == "", rec.AbandonTrustedSeen:
 		return false
 	case c.transport != nil && normalizeBotLogin(login) == normalizeBotLogin(c.transport.AppBotLogin()):
 		return false
 	case policy.HiveAuthor != nil && policy.HiveAuthor(login):
 		return false
-	case policy.OwnerAuthor != nil && policy.OwnerAuthor(login):
-		return false
 	}
-	return true
+	return !c.abandonTrustedAuthor(obs, role, policy)
 }
 
 // outsideActor reports whether a comment or review by u counts as someone
@@ -218,7 +242,13 @@ func (c *Engine) closeAbandonedIfDue(ctx context.Context, store *stagelabels.Sto
 	}
 	logArgs := []any{"repo", obs.Display, "pr", obs.Number, "author", obs.Author, "reason", rec.Reason}
 	if why := c.abandonCloseHeld(obs); why != "" {
-		c.debug("stage labels: abandoned PR not closed", append(logArgs, "why", why)...)
+		// A hold or keep-open label cancels the countdown: once it is
+		// lifted the hive warns again and waits a full grace.
+		if store.ResetAbandonNotice(key) {
+			c.info("stage labels: abandoned PR close countdown cancelled", append(logArgs, "why", why)...)
+		} else {
+			c.debug("stage labels: abandoned PR not closed", append(logArgs, "why", why)...)
+		}
 		return 0, false, nil
 	}
 	grace := config.AbandonCloseGrace

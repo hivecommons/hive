@@ -646,6 +646,7 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 	}
 	obs.ForwardMerge = hgithub.IsForwardMergeHead(pr.GetHead().GetRef())
 	obs.Author = hgithub.SafeGetLogin(pr.GetUser())
+	obs.AuthorAssociation = pr.GetAuthorAssociation()
 	obs.Title = pr.GetTitle()
 	obs.URL = pr.GetHTMLURL()
 	obs.Body = pr.GetBody()
@@ -1578,7 +1579,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// The stale contributor PR idle clock (automerge_stage_abandon.go)
 			// runs for contributor PRs only, and keeps its own activity
 			// anchor only while it runs (Activity.TrackIdle).
-			abandonEligible := c.abandonContributor(obs, role, policy)
+			if policy.AbandonAfter > 0 && c.abandonTrustedAuthor(obs, role, policy) {
+				store.MarkAbandonTrustedSeen(key)
+			}
+			trustRec, _ := store.Get(key)
+			abandonEligible := c.abandonContributor(obs, role, policy, trustRec)
 			act.TrackIdle = policy.AbandonAfter > 0 && abandonEligible
 			store.NoteActivity(key, act)
 			// A flag on the record only; the stage written below is unchanged.
@@ -1705,7 +1710,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			}
 		}
-		if err == nil && !out.Suppressed && c.abandonContributor(obs, role, policy) {
+		if abandonRec, _ := store.Get(key); err == nil && !out.Suppressed && c.abandonContributor(obs, role, policy, abandonRec) {
 			// abandon_close_repos: warn once, then close after the grace.
 			n, closed, aerr := c.closeAbandonedIfDue(ctx, store, key, obs, policy, out.Stage, now)
 			result.Comments += n

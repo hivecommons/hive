@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -368,24 +369,33 @@ func TestAbandonContributorScope(t *testing.T) {
 	policy.HiveAuthor = func(login string) bool { return login == "hive-agent" }
 	for name, tc := range map[string]struct {
 		author string
+		assoc  string
 		kind   authorkind.Kind
 		role   stagelabels.Role
 		want   bool
 	}{
-		"contributor":    {"contributor", authorkind.Human, stagelabels.RoleContributor, true},
-		"untrusted":      {"newbie", authorkind.Human, stagelabels.RoleUntrusted, true},
-		"clanker":        {"someones-agent", authorkind.Clanker, stagelabels.RoleContributor, true},
-		"owner":          {"owner", authorkind.Human, stagelabels.RoleContributor, false},
-		"trusted author": {"maintainer", authorkind.Human, stagelabels.RoleTrusted, false},
-		"hive kind":      {"anyone", authorkind.Hive, stagelabels.RoleNone, false},
-		"hive identity":  {"hive-agent", authorkind.Human, stagelabels.RoleNone, false},
-		"the App":        {testHiveAppBotLogin, authorkind.Unknown, stagelabels.RoleNone, false},
+		"contributor":             {"contributor", "CONTRIBUTOR", authorkind.Human, stagelabels.RoleContributor, true},
+		"untrusted":               {"newbie", "FIRST_TIME_CONTRIBUTOR", authorkind.Human, stagelabels.RoleUntrusted, true},
+		"clanker":                 {"someones-agent", "NONE", authorkind.Clanker, stagelabels.RoleContributor, true},
+		"owner":                   {"owner", "", authorkind.Human, stagelabels.RoleContributor, false},
+		"trusted author":          {"maintainer", "", authorkind.Human, stagelabels.RoleTrusted, false},
+		"collaborator, untrusted": {"maintainer", "COLLABORATOR", authorkind.Human, stagelabels.RoleUntrusted, false},
+		"org member, untrusted":   {"maintainer", "member", authorkind.Human, stagelabels.RoleUntrusted, false},
+		"repo owner, untrusted":   {"maintainer", "OWNER", authorkind.Human, stagelabels.RoleUntrusted, false},
+		"hive kind":               {"anyone", "", authorkind.Hive, stagelabels.RoleNone, false},
+		"hive identity":           {"hive-agent", "", authorkind.Human, stagelabels.RoleNone, false},
+		"the App":                 {testHiveAppBotLogin, "", authorkind.Unknown, stagelabels.RoleNone, false},
 	} {
 		obs := f.obs
-		obs.Author, obs.AuthorKind = tc.author, tc.kind
-		if got := f.e.abandonContributor(obs, tc.role, policy); got != tc.want {
+		obs.Author, obs.AuthorAssociation, obs.AuthorKind = tc.author, tc.assoc, tc.kind
+		if got := f.e.abandonContributor(obs, tc.role, policy, stagelabels.Record{}); got != tc.want {
 			t.Errorf("%s: abandonContributor = %v, want %v", name, got, tc.want)
 		}
+	}
+	// Seen trusted once: never a contributor again, whatever a later pass
+	// resolves the role to.
+	if f.e.abandonContributor(f.obs, stagelabels.RoleUntrusted, policy, stagelabels.Record{AbandonTrustedSeen: true}) {
+		t.Error("a PR once seen trusted read as a contributor's")
 	}
 
 	// Not a contributor: a flag on record is cleared and nothing is
@@ -508,5 +518,130 @@ func TestConfirmingReadPagesComments(t *testing.T) {
 	}
 	if !f.rec(t).IdleSince().Equal(recent) {
 		t.Fatalf("idle since = %v, want the reply %v", f.rec(t).IdleSince(), recent)
+	}
+}
+
+// A hold or keep-open label put on a PR inside the grace cancels the
+// countdown: when it is lifted, the hive warns again and waits a full grace
+// before closing.
+func TestCloseAbandonedHoldCancelsTheCountdown(t *testing.T) {
+	for _, label := range []string{"hold", hgithub.SupersessionKeepOpenLabel} {
+		t.Run(label, func(t *testing.T) {
+			f := abandonFlagged(t)
+			if n, _, _ := f.close(t, listedPolicy(f)); n != 1 {
+				t.Fatal("no notice")
+			}
+			f.clock.advance(20 * time.Hour)
+			f.obs.Labels = []string{label}
+			_, _, _ = f.close(t, listedPolicy(f))
+			if r := f.rec(t); !r.AbandonNoticeAt.IsZero() || !r.Abandoned() {
+				t.Fatalf("held: notice=%v flagged=%v; want the countdown cancelled, the flag kept", r.AbandonNoticeAt, r.Abandoned())
+			}
+			// The label comes off past the original grace: a fresh notice,
+			// no close.
+			f.clock.advance(10 * time.Hour)
+			f.obs.Labels = nil
+			n, closed, _ := f.close(t, listedPolicy(f))
+			if n != 1 || closed || f.api.closed || len(f.api.posted) != 2 || !strings.HasPrefix(f.api.posted[1], AbandonNoticeMarker) {
+				t.Fatalf("after the hold: n=%d closed=%v posted=%d", n, closed, len(f.api.posted))
+			}
+			f.clock.advance(23 * time.Hour)
+			if _, closed, _ := f.close(t, listedPolicy(f)); closed {
+				t.Fatal("closed inside the new grace")
+			}
+			f.clock.advance(2 * time.Hour)
+			if _, closed, _ := f.close(t, listedPolicy(f)); !closed {
+				t.Fatal("not closed after the new grace")
+			}
+		})
+	}
+}
+
+// Wiring: a full ApplyStageLabels pass in a listed L6 repository flags,
+// warns about and never closes an owner's or a trusted author's PR parked
+// at 071 past the threshold, while a contributor's PR in the same pass is
+// flagged and warned (so the path is live).
+func TestApplyStageLabelsAbandonSkipsOwnerAndTrustedPRs(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}, statefulComments: true}
+	var closes []string
+	api.extra = func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/reviews"):
+			_, _ = w.Write([]byte("[]"))
+			return true
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
+			closes = append(closes, r.URL.Path)
+			_, _ = w.Write([]byte(`{"state":"closed"}`))
+			return true
+		}
+		return false
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	e.stageLabelPolicy = func() StageLabelPolicy {
+		return StageLabelPolicy{
+			Enabled: true, StalledRequireQuiet: true, AbandonAfter: abandonAfterTest,
+			AbandonClose: func(string) bool { return true },
+			OwnerAuthor:  func(login string) bool { return login == "owner-login" },
+		}
+	}
+	type fixture struct {
+		number int
+		login  string
+		role   stagelabels.Role
+	}
+	prs := []fixture{
+		{41, "maintainer-login", stagelabels.RoleTrusted},
+		{42, "owner-login", stagelabels.RoleContributor},
+		{43, "contributor-login", stagelabels.RoleContributor},
+	}
+	sweep := func(trustedRole stagelabels.Role) {
+		t.Helper()
+		for _, p := range prs {
+			pr := stagePR(p.number, "author/human")
+			pr.Head.SHA = gh.Ptr("aaa")
+			pr.User = &gh.User{Login: gh.Ptr(p.login)}
+			e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, "conflicting", false, nil)
+			role := p.role
+			if p.number == 41 {
+				role = trustedRole
+			}
+			e.noteStageRole("acme", "widget", p.number, role)
+		}
+		if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sweep(stagelabels.RoleTrusted)
+	for i := 0; i < 3; i++ {
+		clock.advance(abandonAfterTest/2 + time.Hour)
+		// The last passes resolve the trusted author's role as untrusted
+		// (no lane reported a tier): the record remembers.
+		sweep(stagelabels.RoleUntrusted)
+	}
+	for _, n := range []int{41, 42} {
+		rec, _ := store.Get(stageKey("acme", "widget", n))
+		if rec.Stage != stagelabels.NeedsAuthor {
+			t.Fatalf("#%d stage = %s, want 071 (fixture)", n, rec.Stage)
+		}
+		if !rec.AbandonedAt.IsZero() || !rec.AbandonNoticeAt.IsZero() {
+			t.Fatalf("#%d was flagged or warned: %+v", n, rec)
+		}
+		for _, c := range api.posted[n] {
+			if b, _ := c["body"].(string); strings.HasPrefix(b, AbandonNoticeMarker) || strings.HasPrefix(b, AbandonCloseMarker) {
+				t.Fatalf("#%d got an abandon comment: %q", n, b)
+			}
+		}
+	}
+	for _, path := range closes {
+		if !strings.HasSuffix(path, "/pulls/43") {
+			t.Fatalf("closed %s", path)
+		}
+	}
+	control, _ := store.Get(stageKey("acme", "widget", 43))
+	if control.AbandonedAt.IsZero() || control.AbandonNoticeAt.IsZero() {
+		t.Fatalf("the contributor's PR was not flagged and warned, so the path did not run: %+v", control)
 	}
 }
