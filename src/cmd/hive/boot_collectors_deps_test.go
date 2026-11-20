@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,6 +78,13 @@ func bootCollectorsConfig(t *testing.T) *config.Config {
 
 func newBootCollectorsBoot(t *testing.T, cfg *config.Config) *boot {
 	t.Helper()
+	// bootWatchersWith registers a process-global release-line-lag provider
+	// that survives the test which wired it. Left in place, the first
+	// refreshDashboard here would call it, and hub.ReleaseLineLagStatus would
+	// start a background GitHub compare that outlives this test and races
+	// the fake clock of whichever test runs next (hivecommons/hive#19384).
+	dashboard.SetReleaseLineLagProvider(nil)
+	t.Cleanup(func() { dashboard.SetReleaseLineLagProvider(nil) })
 	b, _ := newDepsTestBoot(t, cfg)
 	b.gov = governor.New(cfg.Governor, cfg.EnabledAgents(), b.logger)
 	b.sched = scheduler.New(cfg, b.logger)
@@ -268,5 +276,22 @@ func TestBootCollectorsWithRefreshDashboardPublishesStatus(t *testing.T) {
 	b.refreshDashboard()
 	if spark1 := len(b.dashSrv.TokenSparklineHistory()); spark1 != spark0+1 {
 		t.Fatalf("refreshDashboard did not publish: sparkline %d -> %d", spark0, spark1)
+	}
+}
+
+// A release-line-lag provider left registered by an earlier test must not be
+// consulted by a later boot's dashboard refresh: it would start a real GitHub
+// compare in the background (hivecommons/hive#19384).
+func TestNewBootCollectorsBootDropsStaleReleaseLineLagProvider(t *testing.T) {
+	var calls atomic.Int32
+	dashboard.SetReleaseLineLagProvider(func() *dashboard.FrontendReleaseLineLag {
+		calls.Add(1)
+		return &dashboard.FrontendReleaseLineLag{}
+	})
+	b := newBootCollectorsBoot(t, bootCollectorsConfig(t))
+	b.bootCollectorsWith(newBootCollectorsFake().deps)
+	b.refreshDashboard()
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("stale release-line-lag provider called %d times", n)
 	}
 }
