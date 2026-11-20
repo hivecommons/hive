@@ -9,6 +9,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // Permanent vs transient failures of a relay request.
@@ -171,8 +172,43 @@ func issueRequestFailureIsPermanent(err error) bool {
 	if errors.As(err, &repoRef) {
 		return true
 	}
+	if issueRequestWritebackSuppressed(err) {
+		return true
+	}
 	if errors.Is(err, effects.ErrNeedsReconciliation) || isRetryableGitHubError(err) {
 		return false
 	}
 	return isDefiniteIssueRefusal(err)
+}
+
+// issueRequestWritebackSuppressed reports whether err is the unsolicited
+// write-back gate refusing the write by policy (backfill off, repo mode,
+// missing opt-in label, ...). Retrying the same request cannot change that
+// decision: the gate already recorded the suppression for the dashboard, and
+// a retry only re-asks the same question until the stuck self-report fires
+// (hivecommons/hive#19400: a strategist request on a pre-existing issue was
+// refused "writeback.unsolicited.backfill is off" three times in two minutes
+// and self-reported as issue_request_stuck). An operator pause is the one
+// gate refusal that is deliberately temporary, so it stays on the retry path
+// (see issueRequestPaused) instead of being quarantined.
+func issueRequestWritebackSuppressed(err error) bool {
+	if err == nil || issueRequestPaused(err) {
+		return false
+	}
+	return errors.Is(err, writeback.ErrSuppressed)
+}
+
+// issueRequestPaused reports whether err is the write-back gate holding a
+// write because the operator paused the target repo (#6203). The pause is a
+// deliberate, healthy quiet that lifts on its own; the request keeps its
+// backoff but is not a stuck queue.
+func issueRequestPaused(err error) bool {
+	if err == nil {
+		return false
+	}
+	var paused *RepoPausedError
+	if errors.As(err, &paused) {
+		return true
+	}
+	return errors.Is(err, writeback.ErrSuppressed) && strings.Contains(err.Error(), writeback.ReasonRepoPaused)
 }

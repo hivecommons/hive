@@ -1404,6 +1404,11 @@ func (c *Client) failIssueRequest(path string, req IssueRequest, kind string, re
 	}
 	c.logger.Warn("issue-request watcher: request failed, will retry with backoff",
 		slog.String("repo", req.Repo), slog.String("kind", kind), slog.String("error", err.Error()))
+	if issueRequestPaused(err) {
+		// An operator pause is deliberate quiet, not a clogged queue.
+		clearIssueRequestStuck(path)
+		return
+	}
 	c.observeIssueRequestStuck(path, req.Repo, kind, err, nowFn())
 }
 

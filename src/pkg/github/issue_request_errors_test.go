@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/convergence/proof"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 func ghStatusErr(status int) error {
@@ -71,6 +72,9 @@ func TestIssueRequestFailureClassification(t *testing.T) {
 		{"relay repo refusal", permanentIssueRequestErrorf("refusing repo"), true, false},
 		{"structural repo refusal", fmt.Errorf("CreateIssue: %w", validateRepoRef("<org>", "<repo>")), true, false},
 		{"other local error", errors.New("boom"), false, false},
+		{"writeback backfill suppression", fmt.Errorf("%w: #26 was created 2026-10-09T13:10:11Z, before hive could write to o/r; writeback.unsolicited.backfill is off", writeback.ErrSuppressed), true, false},
+		{"writeback repo paused", fmt.Errorf("%w: %s", writeback.ErrSuppressed, writeback.ReasonRepoPaused), false, false},
+		{"repo paused error", &RepoPausedError{Repo: "o/r"}, false, false},
 	} {
 		if got := issueRequestFailureIsPermanent(tc.err); got != tc.permanent {
 			t.Errorf("%s: issueRequestFailureIsPermanent = %v, want %v", tc.name, got, tc.permanent)
