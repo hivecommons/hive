@@ -474,3 +474,59 @@ func TestAbandonedReasonText(t *testing.T) {
 		t.Errorf("AbandonBlocker(071) = %q", got)
 	}
 }
+
+// Turning the clock off drops its anchor; a push or comment while it was
+// off is not lost, because the next tracked pass reseeds from
+// LastActivityAt, which saw it. No flag until a full abandon_after from
+// there.
+func TestIdleAnchorReseedsAfterAnOffPeriod(t *testing.T) {
+	const after = 7 * 24 * time.Hour
+	f := newAbandonFixture(t, NeedsAuthor, "check-failing:unit")
+	f.advance(5 * 24 * time.Hour)
+	// Off: the author comments; the counts move, the anchor is dropped.
+	f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 4, Reviews: 1, Digest: "verdict:approve|ci:red|"})
+	commented := f.now
+	if r := f.rec(); !r.AbandonActivityAt.IsZero() {
+		t.Fatalf("anchor kept while untracked: %v", r.AbandonActivityAt)
+	}
+	f.advance(3 * 24 * time.Hour)
+	f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 4, Reviews: 1, Digest: "verdict:approve|ci:red|", TrackIdle: true})
+	r := f.rec()
+	if !r.IdleSince().Equal(commented) {
+		t.Fatalf("idle since = %v, want the comment made while off %v", r.IdleSince(), commented)
+	}
+	if got := r.AbandonStep(after, true, f.now); got != AbandonKeep {
+		t.Fatalf("flagged on re-enable: %v", got)
+	}
+	f.advance(4*24*time.Hour + time.Hour)
+	if got := f.rec().AbandonStep(after, true, f.now); got != AbandonFlag {
+		t.Fatalf("a full abandon_after after the comment: %v, want flag", got)
+	}
+}
+
+// Within one 085 visit, a reason that left adoption-stalled and came back
+// without a hop restarts the run at the change.
+func TestParkRunRestartsOnReasonChangeInsideTheVisit(t *testing.T) {
+	f := newAbandonFixture(t, NeedsDecision, stalledReason)
+	f.advance(10 * 24 * time.Hour)
+	f.st.ObserveHead(f.key, "aaa", NeedsDecision, "reviewer-verdict:requires_human")
+	f.advance(time.Hour)
+	f.st.ObserveHead(f.key, "aaa", NeedsDecision, stalledReason)
+	if got := f.rec().ParkRunSince(); !got.Equal(f.now) {
+		t.Fatalf("park run = %v, want the return to adoption-stalled at %v", got, f.now)
+	}
+	if got := f.rec().AbandonStep(7*24*time.Hour, true, f.now); got != AbandonKeep {
+		t.Fatalf("re-flagged at once: %v", got)
+	}
+}
+
+// A trusted-seen mark is sticky and survives a clear.
+func TestAbandonTrustedSeenIsSticky(t *testing.T) {
+	f := newAbandonFixture(t, NeedsAuthor, "check-failing:unit")
+	f.st.MarkAbandonTrustedSeen(f.key)
+	f.st.MarkAbandoned(f.key, f.now)
+	f.st.ClearAbandoned(f.key)
+	if !f.rec().AbandonTrustedSeen {
+		t.Fatal("ClearAbandoned dropped the trusted mark")
+	}
+}

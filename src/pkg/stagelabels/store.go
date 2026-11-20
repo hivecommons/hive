@@ -523,6 +523,12 @@ type Record struct {
 	// clock runs for the PR (Activity.TrackIdle); seeded from LastActivityAt
 	// the first time.
 	AbandonActivityAt time.Time `json:"abandon_activity_at,omitzero"`
+	// AbandonTrustedSeen is set once the stage pass saw the PR's author as
+	// trusted (role/trusted, an owner, a trusted author, an OWNER / MEMBER
+	// / COLLABORATOR association) while the idle clock was on. Sticky for
+	// the life of the record: a later pass whose role fell back to
+	// untrusted never flags or closes the PR.
+	AbandonTrustedSeen bool `json:"abandon_trusted_seen,omitempty"`
 	// AbandonCheckedAt is when the one confirming read (comments and
 	// reviews since the idle clock started) last ran for this PR, so a
 	// failed read backs off instead of repeating every sweep.
@@ -568,7 +574,8 @@ type Activity struct {
 	WaitingOnHive bool
 	// TrackIdle keeps Record.AbandonActivityAt for the stale contributor
 	// PR idle clock (governor.labels.stage.abandon_after on, contributor
-	// PR). Off, the field is never written.
+	// PR). Off, the field is cleared (and so never written), and the next
+	// tracked pass reseeds it from LastActivityAt.
 	TrackIdle bool
 }
 
@@ -1071,6 +1078,12 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	}
 	if a.TrackIdle {
 		r.noteIdleActivity(a, at)
+	} else {
+		// Not tracked this pass (setting off, or the PR not eligible): the
+		// counts below still move, so a push or comment now would never
+		// read as a rise later. Drop the anchor; the next tracked pass
+		// reseeds it from LastActivityAt, which did see that activity.
+		r.AbandonActivityAt = time.Time{}
 	}
 	if changed && at.After(r.LastActivityAt) {
 		r.LastActivityAt = at

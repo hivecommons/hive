@@ -62,9 +62,10 @@ func adoptionStalledReason(reason string) bool {
 //
 // For 085 only adoption-stalled visits count. An 085 entered for another
 // decision (a reviewer's requires_human, a sentinel alert) ends the walk:
-// the hive was waiting on a person then, not stuck. When the current 085
-// visit itself began as another decision and became adoption-stalled later
-// without a hop, the run starts when the reason changed (ReasonChangedAt).
+// the hive was waiting on a person then, not stuck. When the reason of the
+// current 085 visit changed after it began (it began as another decision,
+// or went to another decision and back, or its blocker changed), the run
+// starts at the last change (ReasonChangedAt).
 //
 // Zero when the record is not an abandon candidate. History is capped at
 // HistoryLimit, so a run longer than that reads from the oldest hop kept,
@@ -100,6 +101,13 @@ func (r Record) ParkRunSince() time.Time {
 		}
 		if h.Stage == r.Stage && !h.At.IsZero() {
 			since = h.At
+			if i == len(r.History)-1 && r.Stage == NeedsDecision && r.ReasonChangedAt.After(h.At) {
+				// The reason changed inside the current 085 visit without a
+				// hop (it may have been another decision in between, or a
+				// new blocker): the run restarts at that change.
+				since = r.ReasonChangedAt
+				break
+			}
 		}
 	}
 	if since.IsZero() {
@@ -418,4 +426,35 @@ func (s *Store) MarkAbandonClosed(key string, now time.Time) {
 	r.AbandonClosedAt = now
 	s.items[key] = r
 	s.dirty = true
+}
+
+// MarkAbandonTrustedSeen records that the PR's author was seen as trusted
+// (Record.AbandonTrustedSeen); sticky.
+func (s *Store) MarkAbandonTrustedSeen(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AbandonTrustedSeen {
+		return
+	}
+	r.AbandonTrustedSeen = true
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ResetAbandonNotice drops a pending notice and a refused close attempt
+// while keeping the flag: a hold or keep-open label on the PR cancels the
+// countdown, and once it is lifted the hive must warn again and wait a full
+// grace before closing.
+func (s *Store) ResetAbandonNotice(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.AbandonNoticeAt.IsZero() && r.AbandonCloseTriedAt.IsZero()) {
+		return false
+	}
+	r.AbandonNoticeAt, r.AbandonCloseTriedAt = time.Time{}, time.Time{}
+	s.items[key] = r
+	s.dirty = true
+	return true
 }
