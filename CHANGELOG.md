@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-20 (v5.345.1)
+
+### Changed
+
+- images: bump codex 0.170.0 -> 0.171.0 (#19375)
+
 ## 2026-11-20 (v5.345.0)
 
 ### Added
