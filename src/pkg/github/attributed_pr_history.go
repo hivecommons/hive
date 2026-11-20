@@ -787,9 +787,9 @@ func (c *Client) AttributedPRHistory() ([]PullRequest, AttributedPRCoverage) {
 
 // recordAttributedPRHistory marks repo enumerated and stores its attributed
 // PRs from this pass (after rework enrichment, so closed records carry their
-// measurement). reworkCache is the cache the enrichment just loaded and updated, so it is
-// not read from disk twice. The write happens once per pass in
-// syncAttributedPRHistory.
+// measurement). reworkCache is the cache the enrichment just loaded and
+// updated, so it is not read from disk twice. The write happens once per
+// pass in syncAttributedPRHistory.
 func (c *Client) recordAttributedPRHistory(repo string, prs []PullRequest, reworkCache map[string]PRReworkStats) {
 	h := c.attributedPRHistory()
 	if h == nil {
