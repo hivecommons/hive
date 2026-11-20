@@ -1200,6 +1200,39 @@ _expect_fell_through "pr edit by branch name falls through to gh" pr
 _relay_run contributor issue edit 42 --repo test/repo --add-label bug
 _expect_fell_through "contributor issue edit --add-label is NOT relayed" issue
 
+# Title/body edits (#19399): relayed through edit-pr only for a lane under
+# write_surface.enforce, whose direct write is refused anyway. An unenforced
+# lane keeps the direct path, because the relay edits only hive-authored PRs
+# and a description touch-up on a contributor's PR must keep working.
+rm -f "$WRITE_SURFACE_FILE"
+_relay_run agent pr edit 7 --repo test/repo --body Updated
+_expect_fell_through "unenforced pr edit --body keeps the direct path" pr
+
+printf '{"version":1,"lanes":["%s"]}\n' "$RELAY_AGENT" >"$WRITE_SURFACE_FILE"
+_relay_run agent pr edit 7 --repo test/repo --title Refreshed --body Updated
+_expect_relayed "enforced pr edit --title/--body relays through hive-open-issue edit-pr" pr \
+  'edit-pr --repo test/repo 7 --title Refreshed --body Updated'
+
+_relay_run agent pr edit 7 --repo test/repo -F /work/body.md --add-label docs
+_expect_relayed "enforced pr edit --body-file with a label issues both relay requests" pr \
+  'label --repo test/repo 7 --label docs' \
+  'edit-pr --repo test/repo 7 --body-file /work/body.md'
+
+_relay_run agent pr edit 7 --repo test/repo --body=Updated
+_expect_relayed "enforced pr edit --body=VALUE relays the body" pr \
+  'edit-pr --repo test/repo 7 --body Updated'
+
+# `issue edit --title` has no relay: an enforced lane is refused, not relayed.
+_relay_run agent issue edit 42 --repo test/repo --title Renamed
+if [[ ! -s "$RELAY_LOG" && "$RELAY_RC" != "0" ]]; then
+  echo "PASS: enforced issue edit --title is refused, never relayed as edit-pr"
+  PASSED=$((PASSED + 1))
+else
+  _relay_fail "enforced issue edit --title is refused, never relayed as edit-pr" \
+    "rc=${RELAY_RC} relay log: $(cat "$RELAY_LOG" 2>/dev/null)"
+fi
+rm -f "$WRITE_SURFACE_FILE"
+
 # A refused relay request (reserved label, allowlist) must surface as a
 # non-zero exit, not read as success.
 HIVE_OPEN_ISSUE_FAIL=3 _relay_run agent issue edit 42 --repo test/repo --add-label lgtm
