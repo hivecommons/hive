@@ -1,1 +1,0 @@
-- Automerge no longer logs a WARN when the native merge queue refuses an enqueue because required checks are failing; the PR is held and retried next sweep.
