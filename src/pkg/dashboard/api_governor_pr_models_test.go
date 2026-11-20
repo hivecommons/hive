@@ -412,3 +412,33 @@ func TestAggregateGovernorPRModelsReposAndWeeks(t *testing.T) {
 		}
 	}
 }
+
+// Closed PRs the live scan no longer lists (#19365) stay in a 30d window once
+// the store reports coverage back to it.
+func TestGovernorPRModels30dCountsStoredRecordsOlderThanLiveScan(t *testing.T) {
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	var prs []ghpkg.PullRequest
+	for i, days := range []int{3, 16, 29} {
+		created := now.Add(-time.Duration(days) * 24 * time.Hour)
+		prs = append(prs, ghpkg.PullRequest{
+			Repo: "o/r", Number: i + 1, State: "closed", HiveAttributed: true,
+			HiveModel: "claude-opus-5.5", HiveBackend: "claude",
+			CreatedAt: created, ClosedAt: created.Add(time.Hour), MergedAt: created.Add(time.Hour),
+		})
+	}
+	got := aggregateGovernorPRModels(prs, "30d", now)
+	total := 0
+	for _, b := range got.Buckets {
+		total += b.PRs
+	}
+	if total != 3 {
+		t.Fatalf("30d PRs = %d, want all 3 (3, 16 and 29 days old)", total)
+	}
+	cov := effectiveModelsCoverage(30*24*time.Hour, 31*24*time.Hour, nil, false, now)
+	if cov.ClosedPRsPartial {
+		t.Fatalf("coverage = %+v, want closed PRs complete when the store reaches back 31d", cov)
+	}
+	if cov := effectiveModelsCoverage(30*24*time.Hour, 14*24*time.Hour, nil, false, now); !cov.ClosedPRsPartial {
+		t.Fatalf("coverage = %+v, want partial at the 14d scan lookback", cov)
+	}
+}

@@ -102,7 +102,7 @@ func (s *Server) handleContributeEffectiveModels(w http.ResponseWriter, r *http.
 	runs, rotated, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), windowDur)
 	now := time.Now()
 	resp := aggregateContributeEffectiveModels(prs, runs, window, filter, minMergedPRs, now)
-	resp.Coverage = effectiveModelsCoverage(windowDur, ghpkg.AttributedClosedPRLookback(), runs, rotated, now)
+	resp.Coverage = effectiveModelsCoverage(windowDur, ghpkg.AttributedClosedPRCoverage(), runs, rotated, now)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }

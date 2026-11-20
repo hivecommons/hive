@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -308,6 +309,8 @@ type Client struct {
 	attributedClosedPRMu     sync.Mutex
 	attributedClosedPRCache  map[string]attributedClosedPRCacheEntry
 	attributedClosedPRErrors map[string]string
+	// attributedPRStoreFile overrides AttributedPRStorePath (tests).
+	attributedPRStoreFile string
 	// issueClaimCache remembers the claim read for an issue at a given
 	// updated_at, so the per-issue comment fetch happens once per activity
 	// change rather than once per enumeration. Guarded by issueClaimMu.
@@ -1759,6 +1762,9 @@ func NewClientForTest(serverURL string, org string, repos []string, logger *slog
 		panic("bad test server URL: " + err.Error())
 	}
 	c.client.BaseURL = base
+	if dir, err := os.MkdirTemp("", "hive-attributed-pr-store-"); err == nil {
+		c.attributedPRStoreFile = filepath.Join(dir, AttributedPRStoreFile)
+	}
 	return c
 }
 
@@ -2641,8 +2647,20 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 	if err != nil {
 		c.warnAttributedClosedPRScan(repo, owner, repoName, err)
 		closed = c.cachedAttributedClosedPRs(repo)
+		if len(closed) == 0 {
+			closed = storedAttributedClosedPRs(c.attributedPRStorePath(), repo)
+		}
 	}
-	attributed = append(attributed, closed...)
+	// A stored closed record the repo has since reopened is listed as open.
+	open := make(map[int]bool, len(attributed))
+	for _, pr := range attributed {
+		open[pr.Number] = true
+	}
+	for _, pr := range closed {
+		if !open[pr.Number] {
+			attributed = append(attributed, pr)
+		}
+	}
 	c.enrichAttributedPRRework(ctx, attributed)
 
 	if unclassified := totalPRs - breakdown.Total(); unclassified > 0 {
@@ -2665,8 +2683,7 @@ func collectAttributedPRsFromList(repo string, prs []*gh.PullRequest) []PullRequ
 }
 
 func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, repo string) ([]PullRequest, error) {
-	lookback := attributedClosedPRLookback()
-	cutoff := time.Now().Add(-lookback)
+	headCutoff := time.Now().Add(-attributedClosedPRLookback())
 	opts := &gh.PullRequestListOptions{
 		State:       "closed",
 		Sort:        "updated",
@@ -2674,6 +2691,10 @@ func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, 
 		ListOptions: gh.ListOptions{PerPage: 100},
 	}
 	var out []PullRequest
+	// resume is the listing page the backfill continues from; headDone is
+	// true once the live window (or the whole listing) has been walked.
+	headDone := false
+	resume := 1
 	for page := 0; page < attributedClosedPRMaxPages; page++ {
 		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
 		if err != nil {
@@ -2684,7 +2705,7 @@ func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, 
 			if pr == nil {
 				continue
 			}
-			if pr.GetUpdatedAt().Time.Before(cutoff) {
+			if pr.GetUpdatedAt().Time.Before(headCutoff) {
 				pastWindow = true
 				break
 			}
@@ -2692,13 +2713,105 @@ func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, 
 				out = append(out, pullRequestAttributionRecord(repo, pr, meta))
 			}
 		}
-		if pastWindow || resp == nil || resp.NextPage == 0 {
+		if pastWindow {
+			headDone = true
+			resume = max(opts.Page, 1)
+			break
+		}
+		if resp == nil || resp.NextPage == 0 {
+			headDone, resume = true, 0
 			break
 		}
 		opts.Page = resp.NextPage
+		resume = resp.NextPage
 	}
-	c.storeAttributedClosedPRs(repo, out)
-	return out, nil
+	var coveredFrom time.Time
+	if headDone {
+		coveredFrom = headCutoff
+	}
+	var backfill *attributedPRBackfillState
+	if state := attributedPRStoreBackfillState(c.attributedPRStorePath(), repo); !state.Done && attributedPRBackfillWindow() > 0 {
+		if headDone && resume == 0 {
+			// The listing ended inside the live window: nothing is older.
+			backfill = &attributedPRBackfillState{Done: true}
+		} else {
+			// Reaching past the live window is a one-time, paged job that
+			// resumes on the next tick; a failure never fails the scan.
+			next, done, older, from := c.backfillAttributedClosedPRs(ctx, owner, repoName, repo, max(state.NextPage, resume))
+			out = append(out, older...)
+			backfill = &attributedPRBackfillState{Done: done, NextPage: next}
+			if done {
+				coveredFrom = from
+			}
+		}
+	}
+	recordAttributedClosedPRs(c.attributedPRStorePath(), repo, out, coveredFrom, backfill)
+	merged := mergeAttributedClosedPRs(out, storedAttributedClosedPRs(c.attributedPRStorePath(), repo))
+	c.storeAttributedClosedPRs(repo, merged)
+	return merged, nil
+}
+
+// backfillAttributedClosedPRs lists at most attributedPRBackfillPagesPerTick
+// closed-PR pages from startPage, collecting attributed PRs until the listing
+// passes the backfill horizon. It returns the page to resume at, whether the
+// backfill finished, the records and (when finished) the horizon reached.
+func (c *Client) backfillAttributedClosedPRs(ctx context.Context, owner, repoName, repo string, startPage int) (int, bool, []PullRequest, time.Time) {
+	if startPage < 1 {
+		startPage = 1
+	}
+	horizon := time.Now().Add(-attributedPRBackfillWindow())
+	opts := &gh.PullRequestListOptions{
+		State:       "closed",
+		Sort:        "updated",
+		Direction:   "desc",
+		ListOptions: gh.ListOptions{PerPage: 100, Page: startPage},
+	}
+	var out []PullRequest
+	for i := 0; i < attributedPRBackfillPagesPerTick; i++ {
+		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
+		if err != nil {
+			if c.logger != nil {
+				c.logger.Debug("attributed PR backfill paused", "repo", repo, "page", opts.Page, "error", err)
+			}
+			return opts.Page, false, out, time.Time{}
+		}
+		for _, pr := range prs {
+			if pr == nil {
+				continue
+			}
+			if pr.GetUpdatedAt().Time.Before(horizon) {
+				return 0, true, out, horizon
+			}
+			if meta, ok := ParseAttributionTrailer(pr.GetBody()); ok {
+				out = append(out, pullRequestAttributionRecord(repo, pr, meta))
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return 0, true, out, horizon
+		}
+		opts.Page = resp.NextPage
+	}
+	return opts.Page, false, out, time.Time{}
+}
+
+// mergeAttributedClosedPRs unions fresh scan records with stored ones; a
+// fresh record wins over the stored one for the same PR number.
+func mergeAttributedClosedPRs(fresh, stored []PullRequest) []PullRequest {
+	seen := make(map[int]bool, len(fresh)+len(stored))
+	out := make([]PullRequest, 0, len(fresh)+len(stored))
+	for _, pr := range fresh {
+		if !seen[pr.Number] {
+			seen[pr.Number] = true
+			out = append(out, pr)
+		}
+	}
+	for _, pr := range stored {
+		if !seen[pr.Number] {
+			seen[pr.Number] = true
+			out = append(out, pr)
+		}
+	}
+	return out
 }
 
 // AttributedClosedPRLookback is the updated-time window the closed attributed
