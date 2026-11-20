@@ -623,12 +623,13 @@ func TestPersonTimerLeavesTheDelegateRefusalInPlace(t *testing.T) {
 
 // The adoption comment and reasons name the timer, never an operator.
 func TestAdoptionPersonTimerWording(t *testing.T) {
-	obs := stageObservation{Author: "mallory", HeadSHA: "aaa"}
+	// A full-length head: the marker scan only reads heads of 7+ hex digits.
+	obs := stageObservation{Author: "mallory", HeadSHA: "abc1234def"}
 	body := AdoptionPersonTimerComment(obs, "acme-hive", 90)
-	if !strings.HasPrefix(body, AdoptionMarkerPrefix+" by=acme-hive reason=person-timer mode=supersede superseded_by=90 head=aaa -->") {
+	if !strings.HasPrefix(body, AdoptionMarkerPrefix+" by=acme-hive reason=person-timer mode=supersede superseded_by=90 head=abc1234def -->") {
 		t.Fatalf("marker: %s", body)
 	}
-	if m, ok := ParseAdoptionMarker(body); !ok || m.SupersededBy != 90 || m.Head != "aaa" {
+	if m, ok := ParseAdoptionMarker(body); !ok || m.SupersededBy != 90 || m.Head != "abc1234def" {
 		t.Fatalf("the marker scan cannot read the timer's adoption: %+v %v", m, ok)
 	}
 	if forcedAdoptReason(stagelabels.AdoptForcedByPersonTimer) != AdoptReasonPersonTimer || forcedAdoptReason("clubanderson") != AdoptReasonOperatorForced {
