@@ -51,24 +51,6 @@ func editPRShapeError(req IssueRequest) string {
 	return ""
 }
 
-// isHiveAccount reports whether user is positively one of this hive's own
-// accounts: the App bot login or a project.ai_author identity. Unlike
-// !isHumanAuthor it does not count every bot (dependabot, another App) as
-// ours, and an empty login is never ours.
-func (c *Client) isHiveAccount(user *gh.User) bool {
-	if c == nil {
-		return false
-	}
-	login := strings.TrimSpace(user.GetLogin())
-	if login == "" {
-		return false
-	}
-	if bot := strings.TrimSpace(c.appBotLogin); bot != "" && strings.EqualFold(login, bot) {
-		return true
-	}
-	return c.getHiveIdentity().Matches(login)
-}
-
 // editPRRefusal reads the target PR and reports whether the edit_pr relay must
 // refuse it, and why. A lookup failure is returned as err for the watcher's
 // retry/quarantine classification (a 404, i.e. not a PR, is a definite
