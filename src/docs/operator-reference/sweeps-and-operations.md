@@ -280,7 +280,8 @@ first cycle after upgrade. Full table, state diagram and migration note:
 ### Abandoned contributor PRs (`abandon_after`, `abandon_close_repos`)
 
 With `governor.labels.stage.abandon_after` set (off by default), the stage
-pass runs an idle clock on contributor PRs parked at `071-needs-author` or at
+pass runs an idle clock on contributor PRs (not owners' or trusted
+authors') parked at `071-needs-author` or at
 an `adoption-stalled:` `085`. Past the threshold with no outside activity it
 flags the PR abandoned. The stage, the label and the recorded reason stay as
 they are. The flag shows as "abandoned Nd: <blocker>", puts the PR in the
@@ -296,9 +297,10 @@ Closing is a separate, per-repository opt-in. It mirrors
 - one warning notice (`<!-- hive:stage-abandoned-notice -->`) saying the PR
   will be closed as stale unless someone comments or pushes;
 - a 24-hour grace from the notice (the supersession sweep's default grace);
-- before closing, one more read of comments and reviews. Any comment or
-  review by anyone but the hive (or any other outside activity) since the
+- before closing, one more read of comments and reviews. A comment or
+  review by anyone but the hive, or a push it did not make, since the
   notice keeps the PR open and clears the flag;
+- never an owner's or a trusted author's PR, which the clock never flags;
 - never with a hold label or `hive/keep-open` on the PR;
 - the close comment (`<!-- hive:stage-abandoned-close -->`) says "Reopen if
   that's wrong".

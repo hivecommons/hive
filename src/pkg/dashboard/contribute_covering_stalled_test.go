@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,12 +41,18 @@ func coveringClaim(issue int, prRepo string, pr int, merged bool) func(string, i
 		if number != issue {
 			return ghpkg.IssueClaim{}, false
 		}
+		// Built the way claimsFromPR builds them: an open claim from
+		// another author is ExternalAuthor, Closing, not a Reference.
 		c := ghpkg.IssueClaim{
 			PRNumber: pr, PRRepo: prRepo, PRURL: coveringStalledURL(pr), PRAuthor: "contributor",
-			ExternalAuthor: true,
+			ExternalAuthor: true, Closing: true,
 		}
 		if merged {
+			// The #8003 path needs a settled claim (IssueClaim.Settled:
+			// merged, closing, not external), so the merged fixture is
+			// the hive's own merged PR.
 			at := time.Now().Add(-(ghpkg.SettledClaimStaleAfter + 24*time.Hour))
+			c.PRAuthor, c.ExternalAuthor = "hive-bot", false
 			c.MergedPR, c.MergedAt, c.ObservedAt, c.FirstObservedAt = true, at, at, at
 		}
 		return c, true
@@ -111,8 +118,12 @@ func TestCoveringPRStalled_MergedClaimUnchanged(t *testing.T) {
 	hub, s := withheldHub(t, nil)
 	hub.stageStore = abandonedCoveringStore(t, coveringStalledRepo, 133, true)
 	s.deps.IssueClaimed = coveringClaim(601, coveringStalledRepo, 133, true)
-	if got := withheldReasonFor601(t, hub).Reason; got != contributorAdmissionReasonMergedClaimStale {
-		t.Fatalf("reason = %q, want %q", got, contributorAdmissionReasonMergedClaimStale)
+	item := withheldReasonFor601(t, hub)
+	if item.Reason != contributorAdmissionReasonMergedClaimStale {
+		t.Fatalf("reason = %q, want %q", item.Reason, contributorAdmissionReasonMergedClaimStale)
+	}
+	if !strings.Contains(item.Detail, "merged PR #133") {
+		t.Fatalf("detail = %q, want the #8003 question", item.Detail)
 	}
 }
 

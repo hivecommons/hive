@@ -1569,13 +1569,22 @@ one note there and, before this, nothing else ever happened.
 
 `governor.labels.stage.abandon_after` (a Go duration; unset or `0` is off,
 the default) turns on an idle clock for those two parks, on contributor PRs
-only. **Idle since** is the later of:
+only. An owner's PR (`dashboard.authorized_users`), a trusted author's PR
+(`role/trusted`) and the hive's own PRs are never flagged or closed.
+**Idle since** is the later of:
 
-- the last outside activity the stage store recorded — a head push, a
-  comment or review by anyone but the hive, a verdict, CI or non-hive
-  label change (`LastActivityAt`, the same clock `stage/stalled` uses);
+- the last outside activity: a head push the hive did not make, a new
+  comment, or a new review by a person. This is the clock's own anchor.
+  Unlike `stage/stalled`'s `LastActivityAt` it ignores verdict, CI and label
+  changes, which flip on every `085 ↔ 074` hop. Comments other hive
+  processes post, such as the review swarm's, are counted as comments, so
+  they can restart the clock (late, never early);
 - the start of the current park run. An `085 ↔ 074` flap (the adoption
   retried and stalled again) is one run, so it does not restart the clock.
+  For 085 only adoption-stalled visits count: an earlier 085 for another
+  decision (a reviewer's `requires_human`, a sentinel alert) does not start
+  it, and a visit that became adoption-stalled without a stage hop starts
+  the run at that reason change.
 
 The hive's own comments and its stage-label writes never move it.
 
@@ -1596,13 +1605,17 @@ what it meant. What the flag changes:
 - an issue the PR locks shows the withheld reason `covering_pr_stalled` (see
   [contributor-relay.md](../contributor-relay.md)). The issue stays locked.
 
-Outside activity of the kind listed above, such as an author push or a
-comment by the author or a maintainer, clears the flag and restarts the
-clock. The flag needs no extra GitHub reads in the
+Outside activity of the kind listed above clears the flag and restarts the
+clock. So does raising `abandon_after` past how long the PR has been idle.
+A flagged PR that goes back to 074 (the hive retried the adoption) keeps its
+flag and any pending notice, so a flap never posts a second warning. The flag needs no extra GitHub reads in the
 common case. One exception: a PR can cross the threshold on a sweep that did
-not fetch its comment and review counts. Then the hive reads once, about two
-calls (issue comments since the clock started, and the PR's reviews), so
-that a reply the counts missed is not taken for silence. A failed read is
+not fetch its comment and review counts. Then the hive reads once, usually
+two calls (issue comments since the clock started, paged up to ten pages so
+a crowd of bot comments cannot hide a reply, and the PR's reviews), so that
+a reply the counts missed is not taken for silence. Only the App and other
+bots are left out of that read; a `project.ai_author` login counts, since it
+may be a person. A failed read is
 retried after an hour, never every sweep.
 
 **Closing (opt-in per repository).** `governor.labels.stage.abandon_close_repos`
@@ -1615,10 +1628,12 @@ hive:
    PR will be closed as stale unless someone comments or pushes;
 2. waits 24 hours (`config.AbandonCloseGrace`, the supersession sweep's
    default grace);
-3. reads the PR's comments and reviews once more, then closes it with a
+3. reads the PR's comments and reviews once more, then closes it and posts a
    comment (`<!-- hive:stage-abandoned-close -->`) that ends "Reopen if that's
-   wrong". It closes only when nobody but the hive has acted since the notice,
-   the PR carries no hold label, and it has no `hive/keep-open` label.
+   wrong". It closes only when no one but the hive has acted since the notice,
+   the PR carries no hold label, and it has no `hive/keep-open` label. The
+   close comes first and the comment after it, so a close GitHub refuses
+   posts nothing; the retry waits an hour.
 
 Any activity after the notice cancels the close and clears the flag. Both
 writes go through the write-back gate under the supersession kinds
