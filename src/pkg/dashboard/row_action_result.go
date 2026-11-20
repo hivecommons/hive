@@ -102,8 +102,20 @@ func rowActionNoopResult(target RowActionTarget, what string, appliedAt time.Tim
 }
 
 // delegatedRowActionResult reads the delegate's decision and the execution
-// notes into the shared result shape.
+// notes into the shared result shape, for a repo the hive merges.
 func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Decision, notes []string) RowActionResult {
+	return delegatedRowActionResultWith(in, d, notes, false)
+}
+
+// delegatedHumanMergesNext is the toast's next step for a PR the decision
+// cleared on a repo whose auto-merge is off (Server.delegatedHumanMerges):
+// no hive merge pass lands it, a person does.
+const delegatedHumanMergesNext = "A person merges this PR — auto-merge is off for this repo (its auto-merge setting, or the hive is below ACMM L6). Merge it by hand on GitHub (or Merge now, for a maintainer) once its checks are green."
+
+// delegatedRowActionResultWith is delegatedRowActionResult with whether a
+// person merges the PR (Server.delegatedHumanMerges): the approval toast
+// then says so instead of promising the hive's next merge pass.
+func delegatedRowActionResultWith(in delegatedecision.Input, d delegatedecision.Decision, notes []string, humanMerges bool) RowActionResult {
 	kind := rowActionTargetIssue
 	if in.Kind == delegatedecision.KindPR {
 		kind = rowActionTargetPR
@@ -204,11 +216,16 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 			out.Next = "Un-parked; the hive carries on. Nothing is merged."
 		case note("deferred"):
 			out.Next = "Approval follows once a person clears the sentinel label; the hive never clears it."
-		case note("queued for auto-merge"):
-			out.Next = "Queued: the auto-merge engine merges per repository settings."
 		case note("/lgtm"):
 			out.Next = "Hive merges it on its next merge pass once CI is green and the head has soaked."
+			if humanMerges {
+				out.Next = delegatedHumanMergesNext
+			}
 			out.Posted = append(out.Posted, "`/lgtm` posted", "`/approve` posted")
+		case humanMerges:
+			out.Next = delegatedHumanMergesNext
+		case note("queued for auto-merge"):
+			out.Next = "Queued: the auto-merge engine merges per repository settings."
 		default:
 			out.Next = "Hive merges it on its next merge pass once CI is green and the head has soaked."
 		}
@@ -218,6 +235,9 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 		out.Next = "Current CI, review, hold, sentinel and queue requirements still apply; approval is not merge readiness."
 		if note("incomplete") {
 			out.Next = "GitHub/Prow reporting is incomplete and audited. Native approval stands; current merge gates still apply, without another model decision."
+		}
+		if humanMerges {
+			out.Next += " " + delegatedHumanMergesNext
 		}
 	}
 	return out

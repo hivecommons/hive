@@ -82,6 +82,9 @@ type StageTrackerDecided struct {
 	EffectTimeoutSeconds int64 `json:"effect_timeout_s,omitempty"`
 	// SupersededBy is the hive's copy once an adoption landed.
 	SupersededBy int `json:"superseded_by,omitempty"`
+	// HumanMerges marks an approval on a repo whose auto-merge is off: a
+	// person merges the PR, so the row waits on a person, not the hive.
+	HumanMerges bool `json:"human_merges,omitempty"`
 }
 
 // StageTrackerAdoptedFrom is the `adopted_from` field of the hive's copy
@@ -161,8 +164,20 @@ func stageTrackerDecidedVerdict(a *StageTrackerOperatorAction) string {
 }
 
 // stageTrackerDecided derives the decision projection for a PR row from
-// its newest recorded action, or nil when none is a decision.
+// its newest recorded action, or nil when none is a decision, on a repo
+// the hive merges.
 func stageTrackerDecided(it StageTrackerItem, sweep automerge.SweepState, now time.Time, timeout time.Duration) *StageTrackerDecided {
+	return stageTrackerDecidedWith(it, sweep, now, timeout, false)
+}
+
+// stageTrackerDecidedWith is stageTrackerDecided with whether a person
+// merges the row's PR: its repo's auto-merge is off
+// (config.RepoAutoMergeEnabled, the switch the merge sweep and the
+// tracker's 000-new auto-merge-off caption read). A recorded approval
+// there projects onto 090 Ready for human merge — "a person merges it" —
+// rather than 080 "Queued for merge · next pass", and never times out:
+// no hive pass is coming, so its absence is not a stall.
+func stageTrackerDecidedWith(it StageTrackerItem, sweep automerge.SweepState, now time.Time, timeout time.Duration, humanMerges bool) *StageTrackerDecided {
 	a := it.LastOperatorAction
 	verdict := stageTrackerDecidedVerdict(a)
 	if verdict == "" {
@@ -197,12 +212,21 @@ func stageTrackerDecided(it StageTrackerItem, sweep automerge.SweepState, now ti
 		return d
 	}
 	moved := a.StageAt != 0 && it.Stage != a.StageAt
+	personNext := ""
 	switch {
 	case it.AdoptedBy > 0 && verdict == string(delegatedecision.VerdictAdoptSupersede):
 		d.Effect, d.SupersededBy = decidedEffectLanded, it.AdoptedBy
 		d.Text = stageTrackerSupersededNote(it.AdoptedBy, false)
 	case moved || a.State == operatorActionStateAddressed:
 		d.Effect = decidedEffectLanded
+	case humanMerges && verdict == string(delegatedecision.VerdictApprove):
+		// Approved, and only a person's merge is left: the row leaves the
+		// park for 090 with the same sentence as the auto-merge-off gate,
+		// no "Approving…" spinner, no next pass and no timeout.
+		d.Effect, d.Word, d.Acting, d.HumanMerges = decidedEffectPending, "Approved", "", true
+		d.Text = "Approved · " + stageTrackerAutoMergeOffGateText
+		d.StageBefore, d.Stage, d.stage = it.Stage, stagelabels.ReadyForHumanMerge.Number(), stagelabels.ReadyForHumanMerge
+		personNext = "a person merges it (auto-merge is off for this repo)"
 	case !a.At.IsZero() && now.Sub(a.At) >= timeout:
 		d.Effect = decidedEffectTimedOut
 		d.Text = d.Word + " · no effect after " + formatETA(timeout) + " — options in the row menu"
@@ -224,7 +248,7 @@ func stageTrackerDecided(it StageTrackerItem, sweep automerge.SweepState, now ti
 			d.NextAt = &t
 		}
 	}
-	next := ""
+	next := personNext
 	if d.NextAt != nil {
 		pass := "next pass"
 		if verdict == string(delegatedecision.VerdictAdoptSupersede) {
@@ -343,6 +367,16 @@ func stageTrackerProjectDecided(it *StageTrackerItem, d *StageTrackerDecided, sw
 	}
 }
 
+// stageTrackerHumanMerges reports a repo whose auto-merge is off
+// (config.RepoAutoMergeEnabled), as the build path's 000-new caption reads
+// it; false without a config, the projection before this check.
+func (s *Server) stageTrackerHumanMerges(repo string) bool {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return false
+	}
+	return !s.deps.Config.RepoAutoMergeEnabled(repo)
+}
+
 // applyDecidedProjection stamps `decided` on every PR with a recorded
 // decision, projects pending ones onto their decided stage, carries the
 // projection to the issue rows riding those PRs, and makes adoption pairs
@@ -359,7 +393,7 @@ func (s *Server) applyDecidedProjection(items []StageTrackerItem, now time.Time)
 			continue
 		}
 		prs[it.Repo+"#"+strconv.Itoa(it.Number)] = it
-		if it.Decided = stageTrackerDecided(*it, sweep, now, timeout); it.Decided != nil {
+		if it.Decided = stageTrackerDecidedWith(*it, sweep, now, timeout, s.stageTrackerHumanMerges(it.Repo)); it.Decided != nil {
 			stageTrackerProjectDecided(it, it.Decided, sweep, now)
 		}
 	}

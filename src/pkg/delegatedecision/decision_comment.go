@@ -33,10 +33,31 @@ type Effect struct {
 	IfNot string
 	// Waits is true when something is expected to happen (What != "").
 	Waits bool
+	// Settled, when nothing is awaited, is the plain sentence "What
+	// happens next" prints in place of "Nothing by itself.": the decision
+	// already did all the hive does, and a person finishes the item (an
+	// approval on a repo whose auto-merge is off).
+	Settled string
 }
 
-// ExpectedEffect says what d should cause on an item of kind.
+// humanMergesSettled is "What happens next" for a decision that clears a
+// PR on a repo the hive does not merge (CommentOptions.HumanMerges). It
+// names the same switch as the merge verdict's "auto-merge is off for this
+// repo (…) — a person merges it" reason.
+const humanMergesSettled = "a person merges this PR — auto-merge is off for this repo (its auto-merge setting, or the hive is below ACMM L6), so the hive will not merge it and has nothing left to do here"
+
+// ExpectedEffect says what d should cause on an item of kind, on a repo the
+// hive merges. ExpectedEffectWith also reads whether a person merges it.
 func ExpectedEffect(d Decision, kind Kind) Effect {
+	return ExpectedEffectWith(d, CommentOptions{Kind: kind})
+}
+
+// ExpectedEffectWith says what d should cause on an item of opts.Kind. A PR
+// the decision clears for merge on a repo whose auto-merge is off
+// (opts.HumanMerges) awaits nothing from the hive: no merge-queue promise,
+// no deadline, and so no "decision-stalled" follow-up.
+func ExpectedEffectWith(d Decision, opts CommentOptions) Effect {
+	kind := opts.Kind
 	switch {
 	case d.Verdict == VerdictOperatorAction:
 		// Nothing the hive does moves this; the dedup answer reads "already
@@ -62,6 +83,9 @@ func ExpectedEffect(d Decision, kind Kind) Effect {
 	case kind == KindIssue:
 		return Effect{Waits: true, What: "the issue leaves Needs decision and an agent picks it up",
 			IfNot: "Re-run the decision, or remove the park label by hand."}
+	case opts.HumanMerges:
+		return Effect{Settled: humanMergesSettled,
+			IfNot: "Merge it by hand on GitHub (or Merge now, for a maintainer) once its checks are green; approving again does not help."}
 	default:
 		return Effect{Waits: true, What: "the merge queue merges this PR once its checks are green",
 			IfNot: "A maintainer can merge it by hand or send it back for a new commit; approving again does not help."}
@@ -95,6 +119,12 @@ type CommentOptions struct {
 	Kind Kind
 	// EffectTimeout is printed as "expected within …"; zero omits it.
 	EffectTimeout time.Duration
+	// HumanMerges marks a PR on a repo the hive does not merge: its
+	// auto-merge switch is off (config.RepoAutoMergeEnabled — the repo's
+	// setting, or a hive below ACMM L6). A decision that clears the PR then
+	// says a person merges it instead of promising the merge queue. False
+	// (the zero value) keeps the merge-queue wording.
+	HumanMerges bool
 }
 
 // PlainWords renders the four operator lines for d.
@@ -104,7 +134,7 @@ func PlainWords(d Decision, opts CommentOptions) string {
 	if why := RulePlain(d.Rule); why != "" {
 		fmt.Fprintf(&b, "\n**Why:** %s.", CapitalizeFirst(why))
 	}
-	eff := ExpectedEffect(d, opts.Kind)
+	eff := ExpectedEffectWith(d, opts)
 	if eff.Waits {
 		fmt.Fprintf(&b, "\n**What happens next:** %s", CapitalizeFirst(eff.What))
 		if opts.EffectTimeout > 0 {
@@ -112,6 +142,11 @@ func PlainWords(d Decision, opts CommentOptions) string {
 		}
 		b.WriteString(".")
 		fmt.Fprintf(&b, "\n**If it doesn't happen:** %s", eff.IfNot)
+	} else if eff.Settled != "" {
+		fmt.Fprintf(&b, "\n**What happens next:** %s.", CapitalizeFirst(eff.Settled))
+		if eff.IfNot != "" {
+			fmt.Fprintf(&b, " %s", eff.IfNot)
+		}
 	} else {
 		fmt.Fprintf(&b, "\n**What happens next:** Nothing by itself. %s", eff.IfNot)
 	}
