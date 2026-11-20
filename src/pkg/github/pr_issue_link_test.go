@@ -629,3 +629,42 @@ func TestBodySaysIssueStaysOpenNumberBoundary(t *testing.T) {
 		t.Fatal("leaving #12 open should keep #12 open")
 	}
 }
+
+// The issue-link marker lands above the attribution trailer, never below it,
+// so the rewrite does not drop the PR from the PR-models count. A body
+// without a trailer gets the marker appended at the end, as before.
+func TestRewriteRefsIssueLinkToClosingKeepsTrailerLast(t *testing.T) {
+	const trailer = "-- hive: agent=scanner backend=codex model=gpt-6-astra"
+	const footer = "\n\n---\n🐝 **Hive Agent**: `contributor` | **SHA:** `671737a3b`"
+	for _, tc := range []struct{ name, body, want string }{
+		{"refs-above-trailer", "Work.\n\nRefs #7\n\n" + trailer, "Work.\n\nFixes #7\n\n" + issueLinkFixedMarker + "\n\n" + trailer},
+		{"refs-above-trailer-and-footer", "Work.\n\nRefs #7\n\n" + trailer + footer, "Work.\n\nFixes #7\n\n" + issueLinkFixedMarker + "\n\n" + trailer + footer},
+		{"refs-below-trailer", "Work.\n\n" + trailer + "\nRefs #7", "Work.\n\n" + issueLinkFixedMarker + "\n\n" + trailer + "\nFixes #7"},
+		{"trailer-first", trailer + "\n\nRefs #7", issueLinkFixedMarker + "\n\n" + trailer + "\n\nFixes #7"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := rewriteRefsIssueLinkToClosing(tc.body, "hivecommons/hive", 7)
+			if !ok || got != tc.want {
+				t.Fatalf("rewrite = %v %q, want %q", ok, got, tc.want)
+			}
+			meta, ok := ParseAttributionTrailer(got)
+			if !ok || meta.Agent != "scanner" || meta.Model != "gpt-6-astra" {
+				t.Fatalf("ParseAttributionTrailer(%q) = %+v, %v; want the trailer kept", got, meta, ok)
+			}
+		})
+	}
+}
+
+func TestRewriteRefsIssueLinkToClosingWithoutTrailerAppendsMarker(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"plain", "## Summary\n\nWork.\n\nRefs #7\n", "## Summary\n\nWork.\n\nFixes #7\n\n<!-- hive:issue-link-fixed -->"},
+		{"trailer-then-prose", "Work.\n\n-- hive: agent=scanner backend=codex\n\nRefs #7\n\nMore prose.  \n", "Work.\n\n-- hive: agent=scanner backend=codex\n\nFixes #7\n\nMore prose.\n\n<!-- hive:issue-link-fixed -->"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := rewriteRefsIssueLinkToClosing(tc.body, "hivecommons/hive", 7)
+			if !ok || got != tc.want {
+				t.Fatalf("rewrite = %v %q, want %q", ok, got, tc.want)
+			}
+		})
+	}
+}

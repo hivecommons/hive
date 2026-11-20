@@ -1559,6 +1559,99 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
 All seven steps ship with the stage engine and the contribute hub
 (hivecommons/hive#12436).
 
+### Abandoned contributor PRs: the idle clock
+
+A contributor PR the hive cannot move ends in one of two parks:
+`071-needs-author` (the author has to act) or `085-needs-decision` with an
+`adoption-stalled:` reason (the hive adopted it but has nothing it can push:
+a fork with workflow files, or a red check it cannot fix). The hive posts
+one note there and, before this, nothing else ever happened.
+
+`governor.labels.stage.abandon_after` (a Go duration; unset or `0` is off,
+the default) turns on an idle clock for those two parks, on contributor PRs
+only. An owner's PR (`dashboard.authorized_users`), a trusted author's PR
+(`role/trusted`, the trusted-author or merger authorizers, or an `OWNER` /
+`MEMBER` / `COLLABORATOR` author association) and the hive's own PRs are
+never flagged or closed. Once a PR's author has been seen as trusted, the
+record remembers it, so a later pass whose role falls back to untrusted
+cannot flag it.
+**Idle since** is the later of two times:
+
+1. **The last outside activity.** That is a head push the hive did not
+   make, a new comment, or a new review by a person. This is the clock's own
+   anchor. Unlike `stage/stalled`'s `LastActivityAt`, it ignores verdict, CI
+   and label changes, which flip on every `085 ↔ 074` hop. Comments other
+   hive processes post, such as the review swarm's, are counted as comments,
+   so they can restart the clock (late, never early). The anchor is kept
+   only while the clock runs for the PR; after the setting was off (or the
+   PR was not eligible) it is re-seeded from `LastActivityAt`, so a push or
+   comment made meanwhile is not lost.
+2. **The start of the current park run.** An `085 ↔ 074` flap (the adoption
+   retried and stalled again) is one run, so it does not restart the clock.
+
+For 085, only adoption-stalled visits count toward the run. An earlier 085
+for another decision (a reviewer's `requires_human`, a sentinel alert) does
+not start it. When the reason of the current 085 visit changed after the
+visit began — it began as another decision, went to another decision and
+back, or its blocker changed — the run starts at that last change.
+
+The hive's own comments and its stage-label writes never move the clock.
+
+When a PR has been idle for `abandon_after`, its stage record gets an
+**abandoned flag**. Nothing else about the PR changes: the stage stays 071 or
+085 (no new stage, no 071 → 085 move), the stage label and the recorded
+reason stay as they were, and the `adoption-stalled:` prefix keeps meaning
+what it meant. What the flag changes:
+
+- the dashboard row reads `abandoned 9d: <the original blocker>` (the blocker
+  is the reason without its `adoption-stalled:` prefix) and its caption leads
+  with "Stale: close or take over";
+- the inbox puts it in its own `CLOSE` group, ownership reason
+  `abandoned_recommended_close` (the `review_queue` MCP's `to_close` count);
+- the delegate ("Let hive decide") answers it with the recommend-only rule
+  `abandoned-stale`: close it as stale or have a person take it over. It
+  never closes or adopts anything itself;
+- an issue the PR locks shows the withheld reason `covering_pr_stalled` (see
+  [contributor-relay.md](../contributor-relay.md)). The issue stays locked.
+
+Outside activity of the kind listed above clears the flag and restarts the
+clock. So does raising `abandon_after` past how long the PR has been idle.
+A flagged PR that goes back to 074 (the hive retried the adoption) keeps its
+flag and any pending notice, so a flap never posts a second warning. The flag needs no extra GitHub reads in the
+common case. One exception: a PR can cross the threshold on a sweep that did
+not fetch its comment and review counts. Then the hive reads once, usually
+two calls (issue comments since the clock started, paged up to ten pages so
+a crowd of bot comments cannot hide a reply, and the PR's reviews), so that
+a reply the counts missed is not taken for silence. Only the App and other
+bots are left out of that read; a `project.ai_author` login counts, since it
+may be a person. A failed read is
+retried after an hour, never every sweep.
+
+**Closing (opt-in per repository).** `governor.labels.stage.abandon_close_repos`
+(default empty) lists the repositories where the hive may close an abandoned
+PR. It works only at ACMM L6 (Autonomous), like
+`supersession_sweep.close_contributor_prs`. In a listed repository the
+hive:
+
+1. posts one polite notice (`<!-- hive:stage-abandoned-notice -->`) saying the
+   PR will be closed as stale unless someone comments or pushes;
+2. waits 24 hours (`config.AbandonCloseGrace`, the supersession sweep's
+   default grace);
+3. reads the PR's comments and reviews once more, then closes it and posts a
+   comment (`<!-- hive:stage-abandoned-close -->`) that ends "Reopen if that's
+   wrong". It closes only when no one but the hive has acted since the notice,
+   the PR carries no hold label, and it has no `hive/keep-open` label. The
+   close comes first and the comment after it, so a close GitHub refuses
+   posts nothing; the retry waits an hour.
+
+Any activity after the notice cancels the close and clears the flag. A hold
+label or `hive/keep-open` added after the notice cancels the countdown too:
+once it is removed the hive posts a fresh notice and waits a full grace
+again. Both
+writes go through the write-back gate under the supersession kinds
+(`supersession_notice`, `supersession_close`). Human-merge paths
+(`auto_merge.human_merge_paths`) gate merges, not closes, so they do not apply.
+
 ### Supersession: closed issue, another merged PR
 
 When the supersession sweep finds an open PR whose closing claim (`Closes

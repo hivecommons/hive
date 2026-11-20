@@ -38,7 +38,7 @@ The issue and PR counts that move the governor between modes, and how those thre
 
 ## Labels
 
-Which labels hold, require, or route work, the label the merger queue applies to queue a PR for auto-merge (applies after a restart), and the reporter-trust rules for outside PRs. See [Labels and control signals](labels-and-control-signals.md) and [Label policy](agent-configuration.md#label-policy-which-issues-agents-may-work).
+Which labels hold, require, or route work, the label the merger queue applies to queue a PR for auto-merge (applies after a restart), the reporter-trust rules for outside PRs, and when a contributor PR stuck at 071 or an adoption-stalled 085 counts as abandoned (`governor.labels.stage.abandon_after`) and in which repositories the hive may close it (`abandon_close_repos`, ACMM L6 only; see [Abandoned contributor PRs](labels-and-control-signals/stage-labels.md#abandoned-contributor-prs-the-idle-clock)). See [Labels and control signals](labels-and-control-signals.md) and [Label policy](agent-configuration.md#label-policy-which-issues-agents-may-work).
 
 ## Repos
 

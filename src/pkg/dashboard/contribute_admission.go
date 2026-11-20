@@ -116,8 +116,9 @@ type contributorAdmissionDecision struct {
 	// issueClaim carries the live claim behind an issue_claim refusal
 	// (#8380): who holds it and until when. Zero for every other reason.
 	issueClaim ghpkg.IssueClaimMark
-	// detail is the human-readable refusal behind owner_grace: the forge's own
-	// "owner grace: filed by ... N ago" sentence.
+	// detail is the human-readable refusal behind owner_grace (the forge's own
+	// "owner grace: filed by ... N ago" sentence) and covering_pr_stalled
+	// ("Open PR #N stalled Nd — …").
 	detail string
 	// convergence carries the dependency judgment behind a dependency-based
 	// refusal (#3845): which record was observed, at which generation, and
@@ -168,6 +169,16 @@ const (
 	// filed the issue inside the contributor grace window and no person has
 	// opened it to outside help yet (hivecommons/hive#18898).
 	contributorAdmissionReasonOwnerGrace = "owner_grace"
+	// contributorAdmissionReasonCoveringPRStalled: an open pull request by
+	// another author covers this issue and its stage record carries the
+	// abandoned flag (governor.labels.stage.abandon_after): it has sat at
+	// 071 or at an adoption-stalled 085 with no outside activity past the
+	// threshold. The issue stays locked exactly as under open_pr_claim /
+	// open_pr_linked — an open external PR is a claim the owner decides
+	// about (hivecommons/hive#9691, #17292), so the hive neither releases
+	// it nor re-implements it — but the reason says what the lock is
+	// waiting on: a person closing the PR or taking it over.
+	contributorAdmissionReasonCoveringPRStalled = "covering_pr_stalled"
 )
 
 // evaluateContributorNeutralAdmission applies repository-global admission
@@ -213,12 +224,18 @@ func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributor
 	claim, claimed := h.issueClaimedByOpenPR(candidate.repoFull, candidate.repoName, candidate.number)
 	if claimed {
 		reason := contributorAdmissionReasonOpenPRClaim
+		var detail string
 		if claim.SettledStale(time.Now()) {
 			reason = contributorAdmissionReasonMergedClaimStale
+		} else if !claim.MergedPR {
+			if d, ok := h.coveringPRStalledDetail(candidate.repoFull, claim.PRRepo, claim.PRNumber, time.Now()); ok {
+				reason, detail = contributorAdmissionReasonCoveringPRStalled, d
+			}
 		}
 		return contributorAdmissionDecision{
 			reason: reason,
 			claim:  claim,
+			detail: detail,
 		}
 	}
 
@@ -226,6 +243,13 @@ func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributor
 	// a PR opened since is only visible on the forge. One listing per repo
 	// per sweep, cached by the client.
 	if link, ok := h.openPRLinkingIssue(candidate); ok {
+		if d, stalled := h.coveringPRStalledDetail(candidate.repoFull, link.PRRepo, link.PRNumber, time.Now()); stalled {
+			return contributorAdmissionDecision{
+				reason: contributorAdmissionReasonCoveringPRStalled,
+				openPR: link,
+				detail: d,
+			}
+		}
 		return contributorAdmissionDecision{
 			reason: contributorAdmissionReasonOpenPRLinked,
 			openPR: link,

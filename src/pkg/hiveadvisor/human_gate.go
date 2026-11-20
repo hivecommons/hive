@@ -47,6 +47,7 @@ var gateReasons = map[string]gateReason{
 	"adjudicator_wait_elapsed":      {"escalated with no verdict after the adjudicator's wait", "decide the escalations the adjudicator never answered"},
 	"reviewer_unavailable":          {"escalated with no adjudicator available", "decide the escalations no adjudicator could take"},
 	"superseded_recommended_close":  {"superseded by another PR", "close the superseded PRs"},
+	"abandoned_recommended_close":   {"contributor PRs abandoned past the idle threshold", "close the abandoned PRs as stale or take them over"},
 	"superseded_extra_files_review": {"superseded but adding files the replacement did not", "check the extra files on superseded PRs"},
 	"adjudicator_recommended_close": {"the adjudicator recommended closing", "close what the adjudicator recommended closing"},
 	"adjudicator_reescalated":       {"re-escalated after the adjudicator's pass", "decide the re-escalated items"},

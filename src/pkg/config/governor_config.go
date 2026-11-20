@@ -457,6 +457,24 @@ type StageLabelsConfig struct {
 	// author who only got the GitHub comment (default 15m): an online
 	// clanker keeps its claim; an offline one gets fifteen minutes.
 	ContributorGraceOffline string `yaml:"contributor_grace_offline,omitempty"`
+	// AbandonAfter is the stale contributor PR idle clock: how long a
+	// contributor PR parked at 071 needs-author or at an adoption-stalled
+	// 085 may sit with no outside activity (head push, comment or review by
+	// anyone but the hive) before its stage record is flagged abandoned —
+	// read as "abandoned Nd: <blocker>", routed to the "Stale: close or take
+	// over" review group, given a recommend-only close-or-take-over delegate
+	// rule, and named on the issue it locks (withheld covering_pr_stalled).
+	// The stage is unchanged. Unset or "0" is off (the default): nothing
+	// changes.
+	AbandonAfter string `yaml:"abandon_after,omitempty"`
+	// AbandonCloseRepos opts repositories (owner/repo or bare name) into
+	// closing an abandoned contributor PR: a warning notice first, then a
+	// close with a "reopen if that's wrong" comment once
+	// AbandonCloseGrace passes with no outside activity, no hold and no
+	// keep-open label. Only at ACMM L6 (Autonomous), like
+	// supersession_sweep.close_contributor_prs. Empty (the default) never
+	// closes; it needs abandon_after set as well.
+	AbandonCloseRepos []string `yaml:"abandon_close_repos,omitempty"`
 	// Adoption configures stage/074-adopted-by-hive: the hive supersedes a
 	// contributor PR that is still red after the grace with an App PR that
 	// preserves the author's commits, and the scanner finishes it.
@@ -757,6 +775,58 @@ const DefaultPresenceWindow = 15 * time.Minute
 // (the caller falls back to auto_merge.nudge_repeat_after).
 func (c ContributorNudgeConfig) EffectiveRenudgeInterval() time.Duration {
 	return parseDurationOr(c.RenudgeInterval, 0)
+}
+
+// EffectiveAbandonAfter parses AbandonAfter; unset, "0", invalid or
+// non-positive returns 0 (the idle clock is off).
+func (s StageLabelsConfig) EffectiveAbandonAfter() time.Duration {
+	return parseDurationOr(s.AbandonAfter, 0)
+}
+
+// AbandonCloseGrace is how long the hive waits after posting the abandoned
+// PR's warning notice before closing it (governor.labels.stage.
+// abandon_close_repos). It matches supersession_sweep's default grace
+// (DefaultSupersessionGracePeriod in pkg/github, 24h): the same "comment
+// here to keep it open" window a contributor already gets there.
+const AbandonCloseGrace = 24 * time.Hour
+
+// AbandonCloseACMMLevel is the ACMM level the abandoned-PR auto-close needs
+// (L6, Autonomous), the level supersession_sweep.close_contributor_prs uses.
+const AbandonCloseACMMLevel = 6
+
+// AbandonCloseListed reports whether repo ("owner/repo" or a bare name,
+// matched case-insensitively) is in abandon_close_repos. It does not check
+// the ACMM level; AbandonCloseAllowed does.
+func (s StageLabelsConfig) AbandonCloseListed(repo string) bool {
+	set := repoListSet(s.AbandonCloseRepos)
+	if len(set) == 0 {
+		return false
+	}
+	repo = strings.ToLower(strings.TrimSpace(repo))
+	if repo == "" {
+		return false
+	}
+	if set[repo] {
+		return true
+	}
+	if i := strings.LastIndex(repo, "/"); i >= 0 {
+		return set[repo[i+1:]]
+	}
+	return false
+}
+
+// AbandonCloseAllowed reports whether the hive may close an abandoned
+// contributor PR in repo: the idle clock is on, the repository is listed in
+// abandon_close_repos and its effective ACMM level is L6.
+func (c *Config) AbandonCloseAllowed(repo string) bool {
+	if c == nil {
+		return false
+	}
+	stage := c.Governor.Labels.Stage
+	if stage.EffectiveAbandonAfter() <= 0 || !stage.AbandonCloseListed(repo) {
+		return false
+	}
+	return c.EffectiveACMMLevelForRepo(repo) >= AbandonCloseACMMLevel
 }
 
 // EffectivePresenceWindow parses PresenceWindow with the 15m default.
