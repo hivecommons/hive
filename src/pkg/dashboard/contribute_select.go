@@ -999,6 +999,12 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 					// #18898: the owner (or the owner's dispatcher) claims first.
 					h.logger.Info("[contribute-ws] skip: owner grace window",
 						"repo", repo.Full, "number", number, "reason", decision.detail)
+				case contributorAdmissionReasonCoveringPRStalled:
+					// The covering PR is flagged abandoned: the issue stays
+					// locked; the log names the PR a person has to settle.
+					h.logger.Info("[contribute-ws] skip: covering PR stalled — owner decides whether to close it or take it over",
+						"repo", repo.Full, "number", number,
+						"pr_url", decision.coveringPRURL(), "detail", decision.detail)
 				case contributorAdmissionReasonMergedClaimStale:
 					// #8003: the fix landed days ago and the issue is still
 					// open. Logged as the question it is, so the Operations

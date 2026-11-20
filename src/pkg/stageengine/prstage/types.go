@@ -142,6 +142,11 @@ type Observation struct {
 	Detail     Detail
 	// Author, Title, URL and OpenedAt feed the stage-072 contributor nudge.
 	Author string
+	// AuthorAssociation is GitHub's author_association for the PR author
+	// from the list payload (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, …);
+	// "" when the payload carried none. The stale contributor PR idle clock
+	// reads it as a stable trust signal (never flags a maintainer's PR).
+	AuthorAssociation string
 	// AuthorKind is who wrote the PR (authorkind.Detect), set on the
 	// resolved observation by ApplyStageLabels before the nudge/adoption
 	// hooks run: only an author/clanker PR has a hive to interrupt.

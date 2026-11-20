@@ -824,6 +824,7 @@ so the reason text can change without breaking them.
 | `adjudicator_wait_elapsed`, `reviewer_unavailable` | `REVIEW` |
 | `adjudicator_recommended_close` | `CLOSE` |
 | `superseded_recommended_close` | `CLOSE` |
+| `abandoned_recommended_close` | `CLOSE` |
 | `superseded_extra_files_review` | `REVIEW` |
 | `adjudicator_reescalated` | `REVIEW` |
 | `adjudicator_handed_off` | `REVIEW` |
@@ -861,6 +862,7 @@ means the situation cannot occur at that level.
 | Hive PR re-escalated with `needs-human` after an adjudicator pass | — | — | Yours — `REVIEW` | same |
 | Contributor PR the supersession sweep detected as superseded by a merged PR, without `hive/keep-open` | Yours — `CLOSE` (`superseded_recommended_close`: close as superseded or keep open, whether or not `supersession_sweep.close_contributor_prs` is on) | same | same | same |
 | Same, but the PR touches files the merged PR did not | Yours — `REVIEW` (`superseded_extra_files_review`: names the extra files; keep open recommended until the extra change is reviewed) | same | same | same |
+| Contributor PR flagged abandoned by the idle clock (`governor.labels.stage.abandon_after`: parked at 071 or at an `adoption-stalled:` 085 with no outside activity past the threshold), unheld | Yours — `CLOSE` (`abandoned_recommended_close`: "Stale: close or take over — abandoned Nd: <blocker>"; close it as stale or have a person take it over) | same | same | same |
 | Hive PR with `needs-human` the adjudicator handed to a maintainer (`reviewer-handoff`) | — | — | Yours — `REVIEW` (`adjudicator_handed_off`) | same |
 | Person's PR with `needs-human` | Yours — `REVIEW` | same | same | same |
 | PR of any author that `/api/review/pipeline` holds in `human_hold` for a review-swarm reason: a `requires_human` verdict (`review_requires_human`; one on an earlier head counts until a merge-eligible `approve` is recorded after it), a `reject` verdict (`review_rejected`) — either one released once a person's `APPROVED` review or `/hive approve` reply after the verdict has been recorded by the self-merge sweep, the release the sweep itself honours ([review-swarm.md](review-swarm.md)), a dispatch hold on the current head — reviews exhausted their retries, fix cap reached, no fixer agent (`review_dispatch_hold`; a hold on an older head does not count) — or the fix-cycle cap (`review_loop_cap`). `review.human_decision_label` does not change the decision. Once a person has answered the `requires_human` / `reject` verdict on the current head with an instruction (`/hive decision <instruction>` or a `CHANGES_REQUESTED` review, recorded after the verdict) the row is Not yours — "@who answered Hive's review on this head …; the hive is fixing it" — until a new head or a newer verdict, except on a PR the hive adopted whose branch it cannot push (fork-rehome-refused on the head, a fork without maintainer edits, an adoption escalated for a workflow-file diff, or a recorded capability blocker), which stays Yours — `DECIDE` (`adopted_push_refused`, naming why); a dispatch hold or the loop cap stays `REVIEW`, and a bare approval is left to the release rules above | Yours — `REVIEW` | same | Yours — `REVIEW`; a Hive PR that also carries `needs-human` waits for the adjudicator first, as in the row above | same |
@@ -885,7 +887,8 @@ yours; (2) sentinel-flagged → `INSPECT`; (3) a pull request the supersession
 sweep detected as superseded by a merged PR, without `hive/keep-open` →
 `CLOSE` (`superseded_recommended_close`), or `REVIEW`
 (`superseded_extra_files_review`) when it touches files the merged PR did not,
-ahead of any other hold source; (4)
+ahead of any other hold source; (3b) an unheld contributor PR flagged
+abandoned → `CLOSE` (`abandoned_recommended_close`); (4)
 covered by an open PR → Not yours; (5) on an issue, a parking bucket, checked
 in the order `needs_human`, `needs_direction`, `needs_decision`, `needs_spec`
 → `REVIEW`, `STEER`, `DECIDE`, `SPEC`, except that a `needs_decision` park an

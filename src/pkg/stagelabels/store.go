@@ -502,6 +502,48 @@ type Record struct {
 	TrainEjectedWhy  string    `json:"train_ejected_why,omitempty"`
 	TrainEjectedHead string    `json:"train_ejected_head,omitempty"`
 	TrainEjectedAt   time.Time `json:"train_ejected_at,omitempty"`
+	// AbandonedAt / AbandonedBlocker / AbandonedIdleSince record that a
+	// contributor PR parked at 071 or at an adoption-stalled 085 sat idle
+	// past governor.labels.stage.abandon_after (see abandon.go): when the
+	// flag was set, the blocker the park was for (the reason without its
+	// adoption-stalled: prefix) and when the idle clock started. The stage
+	// and Reason are unchanged; the flag only changes how the row reads
+	// ("abandoned 9d: check-failing:unit") and routes it to the "close or
+	// take over" review group. Outside activity clears all three. Every
+	// abandon field is omitzero, so a hive with the setting off persists
+	// exactly the bytes it did before.
+	AbandonedAt        time.Time `json:"abandoned_at,omitzero"`
+	AbandonedBlocker   string    `json:"abandoned_blocker,omitempty"`
+	AbandonedIdleSince time.Time `json:"abandoned_idle_since,omitzero"`
+	// AbandonActivityAt is the idle clock's own outside-activity anchor:
+	// the last head push that was not the hive's, or a rise in the comment
+	// or (people's) review count. Unlike LastActivityAt it ignores the
+	// verdict / CI / label digest, which flips on every 085 <-> 074 hop, so
+	// the hive's own churn never restarts the clock. Written only while the
+	// clock runs for the PR (Activity.TrackIdle); seeded from LastActivityAt
+	// the first time.
+	AbandonActivityAt time.Time `json:"abandon_activity_at,omitzero"`
+	// AbandonTrustedSeen is set once the stage pass saw the PR's author as
+	// trusted (role/trusted, an owner, a trusted author, an OWNER / MEMBER
+	// / COLLABORATOR association) while the idle clock was on. Sticky for
+	// the life of the record: a later pass whose role fell back to
+	// untrusted never flags or closes the PR.
+	AbandonTrustedSeen bool `json:"abandon_trusted_seen,omitempty"`
+	// AbandonCheckedAt is when the one confirming read (comments and
+	// reviews since the idle clock started) last ran for this PR, so a
+	// failed read backs off instead of repeating every sweep.
+	AbandonCheckedAt time.Time `json:"abandon_checked_at,omitzero"`
+	// AbandonNoticeAt is when the auto-close warning was posted
+	// (governor.labels.stage.abandon_close_repos); AbandonClosedAt is when
+	// the hive closed the PR after the grace; AbandonCloseTriedAt is the
+	// last close attempt GitHub refused, so a refusal backs off.
+	// AbandonNoticeResetAt is when a hold or keep-open label last cancelled
+	// the countdown, so a notice posted before it never counts again. All
+	// clear with the flag.
+	AbandonNoticeAt      time.Time `json:"abandon_notice_at,omitzero"`
+	AbandonClosedAt      time.Time `json:"abandon_closed_at,omitzero"`
+	AbandonCloseTriedAt  time.Time `json:"abandon_close_tried_at,omitzero"`
+	AbandonNoticeResetAt time.Time `json:"abandon_notice_reset_at,omitzero"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
@@ -533,6 +575,11 @@ type Activity struct {
 	// WaitingOnHive says the item is waiting on the hive (checks running,
 	// verdict pending): it must not stall.
 	WaitingOnHive bool
+	// TrackIdle keeps Record.AbandonActivityAt for the stale contributor
+	// PR idle clock (governor.labels.stage.abandon_after on, contributor
+	// PR). Off, the field is cleared (and so never written), and the next
+	// tracked pass reseeds it from LastActivityAt.
+	TrackIdle bool
 }
 
 // QuietSince is when the item's current quiet period began: the later of
@@ -1031,6 +1078,15 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 		(a.Reviews >= 0 && a.Reviews > r.ActivityReviews) ||
 		(a.Head != "" && r.ActivityHead != "" && a.Head != r.ActivityHead) {
 		s.resetDampenerLocked(key)
+	}
+	if a.TrackIdle {
+		r.noteIdleActivity(a, at)
+	} else {
+		// Not tracked this pass (setting off, or the PR not eligible): the
+		// counts below still move, so a push or comment now would never
+		// read as a rise later. Drop the anchor; the next tracked pass
+		// reseeds it from LastActivityAt, which did see that activity.
+		r.AbandonActivityAt = time.Time{}
 	}
 	if changed && at.After(r.LastActivityAt) {
 		r.LastActivityAt = at

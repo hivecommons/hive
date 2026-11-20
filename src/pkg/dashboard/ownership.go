@@ -266,7 +266,10 @@ type ownershipEnv struct {
 	// adoptedPushRefused names why the hive cannot push a PR's branch
 	// (adopted_push.go); nil or "" lets a recorded answer read as the
 	// hive fixing it.
-	adoptedPushRefused    func(pr github.PullRequest) string
+	adoptedPushRefused func(pr github.PullRequest) string
+	// abandonedPR reads the stage store's abandoned flag for a contributor
+	// PR (ownership_abandoned.go): the reason text and whether it is set.
+	abandonedPR           func(pr github.PullRequest) (string, bool)
 	reviewerLaneAvailable func(repo string) bool
 	escalatedAt           func(repo string, number int) time.Time
 	// laneCanOpenPR reports whether the running agent serving a routed lane
@@ -768,6 +771,15 @@ func decidePROwnership(pr github.PullRequest, held bool, env ownershipEnv) Owner
 		return holdSourcesOwnership(sources)
 	}
 	hive := prAgentRole(pr) != ""
+	// (3b) a contributor PR the idle clock flagged abandoned
+	// (governor.labels.stage.abandon_after): its own "close or take over"
+	// group, so it does not drown among live decisions. A hold wins (a
+	// person is already deciding), and the hive's own PRs never carry it.
+	if !hive && env.abandonedPR != nil {
+		if text, ok := env.abandonedPR(pr); ok {
+			return yourTurn(OwnershipReasonAbandonedRecommendedClose, text)
+		}
+	}
 	adjudicated := env.hiveLevel >= ownershipAdjudicatorMinLevel
 	if hive && adjudicated && labels[ownershipLabelReviewerRecommendClose] {
 		return yourTurn(OwnershipReasonAdjudicatorRecommendedClose, "The adjudicator recommended closing this pull request")
@@ -1082,6 +1094,7 @@ func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*crux.Process,
 	}
 	env.reviewSwarm.answer = decisionAnswerLookup(org)
 	env.adoptedPushRefused = adoptedPushRefusalFor(org)
+	env.abandonedPR = abandonedPRFor(org, now)
 	if leased := hub.leasedWorkItems(now, org); len(leased) > 0 {
 		env.leased = func(repo string, number int) bool { return leased[leaseItemKey(org, repo, number)] }
 	}

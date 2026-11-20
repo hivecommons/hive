@@ -147,6 +147,8 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			NudgeWithholdWhenAdopting: true,
 			RenudgeInterval:           nudgeRepeatAfter(cfg),
 			CIFailureCooldown:         stage.ContributorNudge.EffectiveCIFailureCooldown(),
+			AbandonAfter:              stage.EffectiveAbandonAfter(),
+			AbandonClose:              cfg.AbandonCloseAllowed,
 			Adoption:                  stage.Adoption.IsEnabled(),
 			GraceOnline:               stage.EffectiveContributorGraceOnline(),
 			GraceOffline:              stage.EffectiveContributorGraceOffline(),

@@ -39,7 +39,7 @@ const (
 )
 
 func configSurfaceWriteOps() []WriteOp {
-	return []WriteOp{issueFilterOp{}, sentinelSettingsOp{}, labelDrivenOp{}}
+	return []WriteOp{issueFilterOp{}, sentinelSettingsOp{}, labelDrivenOp{}, stageLabelsOp{}}
 }
 
 type issueFilterOp struct{}
