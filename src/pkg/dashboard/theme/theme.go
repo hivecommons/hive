@@ -135,10 +135,15 @@ type ThemeBackground struct {
 }
 
 type Overrides struct {
-	Tokens     map[string]string `yaml:"tokens,omitempty" json:"tokens,omitempty"`
-	Fonts      ThemeFonts        `yaml:"fonts,omitempty" json:"fonts,omitempty"`
-	Background *ThemeBackground  `yaml:"background,omitempty" json:"background,omitempty"`
-	CustomCSS  string            `yaml:"custom_css,omitempty" json:"custom_css,omitempty"`
+	Tokens map[string]string `yaml:"tokens,omitempty" json:"tokens,omitempty"`
+	// LightTokens are layered on the light-mode palette the selected theme
+	// emits under body.light-mode: its own light_tokens when it has them,
+	// otherwise the palette derived from its tokens. Without them, overrides
+	// of derived tokens (surfaces, lines, text) only reach dark mode.
+	LightTokens map[string]string `yaml:"light_tokens,omitempty" json:"light_tokens,omitempty"`
+	Fonts       ThemeFonts        `yaml:"fonts,omitempty" json:"fonts,omitempty"`
+	Background  *ThemeBackground  `yaml:"background,omitempty" json:"background,omitempty"`
+	CustomCSS   string            `yaml:"custom_css,omitempty" json:"custom_css,omitempty"`
 }
 
 var publicTokenAllowList = map[string]struct{}{
@@ -223,13 +228,11 @@ func ValidateSelection(id string, overrides Overrides) error {
 }
 
 func ValidateOverrides(overrides Overrides) error {
-	for token, value := range overrides.Tokens {
-		if _, ok := tokenAllowList[token]; !ok {
-			return fmt.Errorf("dashboard.theme_overrides.tokens contains unsupported token %q", token)
-		}
-		if strings.ContainsAny(value, "<>") || strings.Contains(strings.ToLower(value), "</style") {
-			return fmt.Errorf("dashboard.theme_overrides.tokens[%s] contains unsafe CSS characters", token)
-		}
+	if err := validateOverrideTokens("tokens", overrides.Tokens); err != nil {
+		return err
+	}
+	if err := validateOverrideTokens("light_tokens", overrides.LightTokens); err != nil {
+		return err
 	}
 	if len([]byte(overrides.CustomCSS)) > MaxCustomCSSBytes {
 		return fmt.Errorf("dashboard.theme_overrides.custom_css exceeds %d bytes", MaxCustomCSSBytes)
@@ -240,6 +243,18 @@ func ValidateOverrides(overrides Overrides) error {
 	if overrides.Background != nil {
 		if err := ValidateBackground(*overrides.Background); err != nil {
 			return fmt.Errorf("dashboard.theme_overrides.background: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateOverrideTokens(field string, tokens map[string]string) error {
+	for token, value := range tokens {
+		if _, ok := tokenAllowList[token]; !ok {
+			return fmt.Errorf("dashboard.theme_overrides.%s contains unsupported token %q", field, token)
+		}
+		if strings.ContainsAny(value, "<>") || strings.Contains(strings.ToLower(value), "</style") {
+			return fmt.Errorf("dashboard.theme_overrides.%s[%s] contains unsafe CSS characters", field, token)
 		}
 	}
 	return nil
@@ -261,6 +276,12 @@ func Effective(id string, overrides Overrides) (Theme, error) {
 			return Theme{}, fmt.Errorf("unknown dashboard theme %q", id)
 		}
 	}
+	return applyOverrides(th, overrides)
+}
+
+// applyOverrides layers operator overrides on a resolved base theme without
+// mutating the base's token maps.
+func applyOverrides(th Theme, overrides Overrides) (Theme, error) {
 	th.Tokens = cloneMap(th.Tokens)
 	th.LightTokens = cloneMap(th.LightTokens)
 	for k, v := range overrides.Tokens {
@@ -273,6 +294,17 @@ func Effective(id string, overrides Overrides) (Theme, error) {
 	if strings.TrimSpace(overrides.Fonts.Mono) != "" {
 		th.Fonts.Mono = strings.TrimSpace(overrides.Fonts.Mono)
 		th.Tokens["--font-mono"] = th.Fonts.Mono
+	}
+	if len(overrides.LightTokens) > 0 {
+		// A theme without light_tokens derives its light palette from tokens,
+		// so pin that palette first (after the dark-side overrides above) and
+		// override on top of it instead of replacing the whole light block.
+		if len(th.LightTokens) == 0 {
+			th.LightTokens = lightModeTokens(th)
+		}
+		for k, v := range compileTokens(overrides.LightTokens) {
+			th.LightTokens[k] = v
+		}
 	}
 	if overrides.Background != nil {
 		bg := *overrides.Background
