@@ -1,6 +1,9 @@
 package watchdog
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // observeDecisionRelogInterval bounds how often observe mode re-reports the
 // same would-be decision for one agent (hivecommons/hive#19393). Observe mode
@@ -32,4 +35,35 @@ func shouldReportObserveDecisionLocked(rec *agentRecord, action string, cls Pane
 	}
 	log.key, log.loggedAt = key, now
 	return true
+}
+
+// resetUnlessDead clears the record once the agent is no longer dead, so a
+// later death is news to observe mode (#19393).
+func (l *observeDecisionLog) resetUnlessDead(cls PaneClass) {
+	if !cls.Dead() {
+		*l = observeDecisionLog{}
+	}
+}
+
+// reportObservePauseLocked logs and audits an observe-mode would-pause
+// verdict, at most once per observeDecisionRelogInterval. Caller holds r.mu.
+func (r *Reconciler) reportObservePauseLocked(name string, rec *agentRecord, cls Classification, detail string, now time.Time) {
+	if !shouldReportObserveDecisionLocked(rec, auditActionPause, cls.Class, now) {
+		return
+	}
+	r.logger.Warn("watchdog: would escalate to pause (observe mode; no action taken)",
+		"agent", name, "failures", rec.Failures, "class", string(cls.Class), "mode", string(r.settings.Mode))
+	r.audit(auditActionFor(auditActionPause, false), "would pause: "+detail, name)
+}
+
+// reportObserveRestartLocked logs and audits an observe-mode would-restart
+// verdict, at most once per observeDecisionRelogInterval. Caller holds r.mu.
+func (r *Reconciler) reportObserveRestartLocked(name string, rec *agentRecord, cls Classification, now time.Time) {
+	if !shouldReportObserveDecisionLocked(rec, auditActionRestart, cls.Class, now) {
+		return
+	}
+	r.logger.Warn("watchdog: would restart dead agent (observe mode; no action taken)",
+		"agent", name, "class", string(cls.Class), "reason", cls.Reason, "mode", string(r.settings.Mode))
+	r.audit(auditActionFor(auditActionRestart, false),
+		fmt.Sprintf("would restart: class=%s reason=%s", cls.Class, cls.Reason), name)
 }
