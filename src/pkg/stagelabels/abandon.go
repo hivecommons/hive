@@ -50,10 +50,22 @@ func sameParkRun(cur, s Stage) bool {
 	return false
 }
 
+// adoptionStalledReason reports whether reason is an adoption-stalled park.
+func adoptionStalledReason(reason string) bool {
+	return strings.HasPrefix(strings.TrimSpace(reason), LaneReasonAdoptionStalledPrefix)
+}
+
 // ParkRunSince is when the record's current continuous park run started:
 // the earliest entry to its current stage in the trailing run of History
 // hops that sameParkRun keeps together. EnteredAt alone resets on every
 // 085↔074 flap, so it would restart the clock each time the hive retried.
+//
+// For 085 only adoption-stalled visits count. An 085 entered for another
+// decision (a reviewer's requires_human, a sentinel alert) ends the walk:
+// the hive was waiting on a person then, not stuck. When the current 085
+// visit itself began as another decision and became adoption-stalled later
+// without a hop, the run starts when the reason changed (ReasonChangedAt).
+//
 // Zero when the record is not an abandon candidate. History is capped at
 // HistoryLimit, so a run longer than that reads from the oldest hop kept,
 // which only makes the clock later, never earlier.
@@ -61,34 +73,87 @@ func (r Record) ParkRunSince() time.Time {
 	if !AbandonCandidate(r.Stage, r.Reason) {
 		return time.Time{}
 	}
-	since := r.EnteredAt
+	if len(r.History) == 0 {
+		since := r.EnteredAt
+		if r.Stage == NeedsDecision && r.ReasonChangedAt.After(since) {
+			// No hop to say what the visit began as: the reason change
+			// is the only safe start.
+			since = r.ReasonChangedAt
+		}
+		return since
+	}
+	var since time.Time
 	for i := len(r.History) - 1; i >= 0; i-- {
 		h := r.History[i]
 		if !sameParkRun(r.Stage, h.Stage) {
 			break
 		}
-		if h.Stage == r.Stage && !h.At.IsZero() && (since.IsZero() || h.At.Before(since)) {
+		if r.Stage == NeedsDecision && h.Stage == NeedsDecision && !adoptionStalledReason(h.Reason) {
+			if i == len(r.History)-1 {
+				// The current visit began as another decision.
+				since = r.ReasonChangedAt
+				if since.IsZero() || since.Before(h.At) {
+					since = h.At
+				}
+			}
+			break
+		}
+		if h.Stage == r.Stage && !h.At.IsZero() {
 			since = h.At
 		}
+	}
+	if since.IsZero() {
+		since = r.EnteredAt
 	}
 	return since
 }
 
 // IdleSince is when the PR's idle clock started: the later of the last
-// outside activity (LastActivityAt: a head push, a comment or review by
-// anyone but the hive, a verdict, CI or non-hive label change) and the
-// start of the current park run. The hive's own comments and its stage
-// label churn never move LastActivityAt, so they never restart it. Zero
-// when the record is not an abandon candidate.
+// outside activity and the start of the current park run. Outside
+// activity is AbandonActivityAt — a head push that was not the hive's, a
+// rise in the comment or people's review count — which ignores the
+// verdict / CI / label digest LastActivityAt also counts, so the hive's
+// own 085↔074 churn and label writes never restart it. Before the clock
+// has an anchor of its own (a record from before it ran) LastActivityAt
+// stands in. Zero when the record is not an abandon candidate.
 func (r Record) IdleSince() time.Time {
 	since := r.ParkRunSince()
 	if since.IsZero() {
 		return since
 	}
-	if r.LastActivityAt.After(since) {
-		return r.LastActivityAt
+	if act := r.idleActivityAt(); act.After(since) {
+		return act
 	}
 	return since
+}
+
+// idleActivityAt is the idle clock's outside-activity anchor.
+func (r Record) idleActivityAt() time.Time {
+	if !r.AbandonActivityAt.IsZero() {
+		return r.AbandonActivityAt
+	}
+	return r.LastActivityAt
+}
+
+// noteIdleActivity keeps AbandonActivityAt (Store.NoteActivity, with the
+// record's previous activity inputs still in r): a head the hive did not
+// push, or a rise in the comment or review count, is outside activity.
+// The first call seeds the anchor from LastActivityAt.
+func (r *Record) noteIdleActivity(a Activity, at time.Time) {
+	if r.AbandonActivityAt.IsZero() {
+		r.AbandonActivityAt = r.LastActivityAt
+		if r.AbandonActivityAt.IsZero() {
+			r.AbandonActivityAt = at
+		}
+	}
+	head := strings.TrimSpace(a.Head)
+	pushed := head != "" && r.ActivityHead != "" && head != r.ActivityHead &&
+		!r.HivePushedHead(head) && !strings.EqualFold(head, r.AdoptedHead)
+	commented := a.Comments >= 0 && a.Comments > r.ActivityComments
+	reviewed := a.Reviews >= 0 && a.Reviews > r.ActivityReviews
+	if (pushed || commented || reviewed) && at.After(r.AbandonActivityAt) {
+		r.AbandonActivityAt = at
+	}
 }
 
 // IdleFor is how long the PR has been idle at now (0 when unknown or not
@@ -166,8 +231,9 @@ const (
 	// AbandonKeep: nothing to do (not idle long enough, already flagged,
 	// or the setting is off with no flag on record).
 	AbandonKeep AbandonAction = iota
-	// AbandonClear: drop the flag (activity since it was set, the PR left
-	// the park, or the setting was turned off).
+	// AbandonClear: drop the flag and any pending close (activity since it
+	// was set, the PR left the park, the setting was turned off or raised
+	// past how long the PR has been idle).
 	AbandonClear
 	// AbandonConfirm: the PR crossed the threshold but this cycle did not
 	// fetch its comment and review counts; read them once before flagging.
@@ -176,21 +242,50 @@ const (
 	AbandonFlag
 )
 
+// abandonedIdleFor is how long a flagged record has been idle at now,
+// measured from the idle start recorded when the flag was set. It does
+// not move when History trims an old hop, so a long 085↔074 flap cannot
+// shorten it.
+func (r Record) abandonedIdleFor(now time.Time) time.Duration {
+	since := r.AbandonedIdleSince
+	if since.IsZero() {
+		since = r.IdleSince()
+	}
+	if since.IsZero() || !now.After(since) {
+		return 0
+	}
+	return now.Sub(since)
+}
+
 // AbandonStep decides the idle clock's action for r at now. after is
 // governor.labels.stage.abandon_after (<= 0 is off); countsKnown says the
 // lane fetched the PR's comment and review counts this cycle, so the
-// activity on record is current. Contributor-only: the caller never asks
-// for a hive-authored PR.
+// activity on record is current. The caller passes after = 0 for a PR the
+// clock must never apply to (the hive's own, an owner's, a trusted
+// author's), which clears any flag.
+//
+// A flagged adoption-stalled PR that went back to 074 (the hive retried
+// the adoption) keeps its flag and its pending notice: the retry is part of
+// the same park run, and clearing would post a fresh warning on every flap.
 func (r Record) AbandonStep(after time.Duration, countsKnown bool, now time.Time) AbandonAction {
 	flagged := !r.AbandonedAt.IsZero()
+	pending := flagged || !r.AbandonNoticeAt.IsZero() || !r.AbandonCloseTriedAt.IsZero()
 	switch {
-	case after <= 0, !AbandonCandidate(r.Stage, r.Reason):
-		if flagged {
+	case after <= 0:
+		if pending {
+			return AbandonClear
+		}
+		return AbandonKeep
+	case !AbandonCandidate(r.Stage, r.Reason):
+		if flagged && r.Stage == AdoptedByHive && !r.idleActivityAt().After(r.AbandonedAt) {
+			return AbandonKeep
+		}
+		if pending {
 			return AbandonClear
 		}
 		return AbandonKeep
 	case flagged:
-		if r.LastActivityAt.After(r.AbandonedAt) {
+		if r.idleActivityAt().After(r.AbandonedAt) || r.abandonedIdleFor(now) < after {
 			return AbandonClear
 		}
 		return AbandonKeep
@@ -205,14 +300,18 @@ func (r Record) AbandonStep(after time.Duration, countsKnown bool, now time.Time
 }
 
 // AbandonCloseDue reports whether an abandoned PR whose warning went out
-// at AbandonNoticeAt may be closed at now: the grace has passed and no
-// outside activity is on record since the notice. The caller still checks
-// holds, keep-open decisions and a fresh read of comments and reviews.
+// at AbandonNoticeAt may be closed at now: the grace has passed, no
+// outside activity is on record since the notice, it was not closed yet
+// and a refused close is not inside its back-off. The caller still checks
+// holds, keep-open labels and a fresh read of comments and reviews.
 func (r Record) AbandonCloseDue(grace time.Duration, now time.Time) bool {
 	if !r.Abandoned() || r.AbandonNoticeAt.IsZero() || !r.AbandonClosedAt.IsZero() {
 		return false
 	}
-	if r.LastActivityAt.After(r.AbandonNoticeAt) {
+	if r.idleActivityAt().After(r.AbandonNoticeAt) {
+		return false
+	}
+	if !r.AbandonCloseTriedAt.IsZero() && now.Sub(r.AbandonCloseTriedAt) < AbandonRecheckEvery {
 		return false
 	}
 	return now.Sub(r.AbandonNoticeAt) >= grace
@@ -242,21 +341,21 @@ func (s *Store) ClearAbandoned(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || (r.AbandonedAt.IsZero() && r.AbandonNoticeAt.IsZero() && r.AbandonClosedAt.IsZero()) {
+	if !ok || (r.AbandonedAt.IsZero() && r.AbandonNoticeAt.IsZero() && r.AbandonClosedAt.IsZero() && r.AbandonCloseTriedAt.IsZero()) {
 		return false
 	}
 	r.AbandonedAt, r.AbandonedBlocker, r.AbandonedIdleSince = time.Time{}, "", time.Time{}
-	r.AbandonNoticeAt, r.AbandonClosedAt = time.Time{}, time.Time{}
+	r.AbandonNoticeAt, r.AbandonClosedAt, r.AbandonCloseTriedAt = time.Time{}, time.Time{}, time.Time{}
 	s.items[key] = r
 	s.dirty = true
 	return true
 }
 
-// NoteAbandonCheck records the outcome of the one confirming read: it ran
-// at now, and activityAt (zero when the read found none) is the latest
-// comment or review by someone other than the hive since the idle clock
-// started. Activity moves LastActivityAt, which restarts the clock exactly
-// as if the lane had seen it.
+// NoteAbandonCheck records the outcome of a confirming read: it ran at now,
+// and activityAt (zero when the read found none) is the latest comment or
+// review by someone other than the hive since the idle clock started.
+// Activity moves AbandonActivityAt (and LastActivityAt), which restarts the
+// clock exactly as if the lane had seen it.
 func (s *Store) NoteAbandonCheck(key string, activityAt, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -268,6 +367,9 @@ func (s *Store) NoteAbandonCheck(key string, activityAt, now time.Time) {
 	if !activityAt.IsZero() {
 		if activityAt.After(now) {
 			activityAt = now
+		}
+		if activityAt.After(r.AbandonActivityAt) {
+			r.AbandonActivityAt = activityAt
 		}
 		if activityAt.After(r.LastActivityAt) {
 			r.LastActivityAt = activityAt
@@ -290,8 +392,22 @@ func (s *Store) MarkAbandonNoticed(key string, now time.Time) {
 	s.dirty = true
 }
 
+// MarkAbandonCloseTried records that GitHub refused the close at now; the
+// next attempt waits AbandonRecheckEvery.
+func (s *Store) MarkAbandonCloseTried(key string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.AbandonCloseTriedAt = now
+	s.items[key] = r
+	s.dirty = true
+}
+
 // MarkAbandonClosed records that the hive closed the abandoned PR at now,
-// so a retried pass never posts a second close comment.
+// so a retried pass never closes or comments again.
 func (s *Store) MarkAbandonClosed(key string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

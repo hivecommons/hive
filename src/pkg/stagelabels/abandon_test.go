@@ -1,6 +1,7 @@
 package stagelabels
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,7 +22,7 @@ func newAbandonFixture(t *testing.T, stage Stage, reason string) *abandonFixture
 	f := &abandonFixture{t: t, now: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC), key: Key("example/testrepo", 42)}
 	f.st = NewStore(filepath.Join(t.TempDir(), "s.json"), func() time.Time { return f.now })
 	f.st.ObserveHead(f.key, "aaa", stage, reason)
-	f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 3, Reviews: 1, Digest: "verdict:approve|ci:red|"})
+	f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 3, Reviews: 1, Digest: "verdict:approve|ci:red|", TrackIdle: true})
 	return f
 }
 
@@ -74,16 +75,29 @@ func TestIdleClockIgnoresHiveActivity(t *testing.T) {
 	f.st.CountOwnComments(f.key, 1)
 	// Owned stage labels never enter the digest, so a stage label rewrite
 	// carries the same digest.
-	if f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 4, Reviews: 1, Digest: "verdict:approve|ci:red|"}) {
+	if f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 4, Reviews: 1, Digest: "verdict:approve|ci:red|", TrackIdle: true}) {
 		t.Fatal("hive comment read as activity")
 	}
 	if got := f.rec().IdleSince(); !got.Equal(start) {
 		t.Fatalf("hive comment moved the idle clock: %v -> %v", start, got)
 	}
 	// Unknown counts (the lane did not fetch the PR) never read as activity.
-	f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: -1, Reviews: -1, Digest: "verdict:approve|ci:red|"})
+	f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: -1, Reviews: -1, Digest: "verdict:approve|ci:red|", TrackIdle: true})
 	if got := f.rec().IdleSince(); !got.Equal(start) {
 		t.Fatalf("an unknown count moved the idle clock: %v", got)
+	}
+	// A digest change (verdict, CI state, a non-hive label) moves
+	// LastActivityAt for stage/stalled but not the idle clock.
+	f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 4, Reviews: 1, Digest: "verdict:?|ci:none|someone-label", TrackIdle: true})
+	if r := f.rec(); !r.IdleSince().Equal(start) || !r.LastActivityAt.Equal(f.now) {
+		t.Fatalf("digest change: idle since %v (want %v), last activity %v", r.IdleSince(), start, r.LastActivityAt)
+	}
+	// A head the hive pushed itself is not the author's push.
+	f.st.MarkAdoptedInPlace(f.key, "aaa", "contributor-offline", f.now)
+	f.st.MarkHivePushedHead(f.key, "hive1")
+	f.st.NoteActivity(f.key, Activity{Head: "hive1", Comments: 4, Reviews: 1, Digest: "verdict:?|ci:none|someone-label", TrackIdle: true})
+	if got := f.rec().IdleSince(); !got.Equal(start) {
+		t.Fatalf("the hive's own push moved the idle clock: %v", got)
 	}
 	if idle := f.rec().IdleFor(f.now); idle != 24*time.Hour {
 		t.Fatalf("idle = %v, want 24h", idle)
@@ -91,35 +105,44 @@ func TestIdleClockIgnoresHiveActivity(t *testing.T) {
 
 	// The author comments.
 	f.advance(time.Hour)
-	f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 5, Reviews: 1, Digest: "verdict:approve|ci:red|"})
+	f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 5, Reviews: 1, Digest: "verdict:approve|ci:red|", TrackIdle: true})
 	if got := f.rec().IdleSince(); !got.Equal(f.now) {
 		t.Fatalf("author comment did not restart the clock: %v, want %v", got, f.now)
 	}
 
 	// The author pushes.
 	f.advance(48 * time.Hour)
-	f.st.NoteActivity(f.key, Activity{Head: "bbb", Comments: 5, Reviews: 1, Digest: "verdict:approve|ci:red|"})
+	f.st.NoteActivity(f.key, Activity{Head: "bbb", Comments: 5, Reviews: 1, Digest: "verdict:approve|ci:red|", TrackIdle: true})
 	if got := f.rec().IdleSince(); !got.Equal(f.now) {
 		t.Fatalf("author push did not restart the clock: %v, want %v", got, f.now)
 	}
 }
 
 // An 085↔074 flap (the adoption retried and stalled again) keeps the park
-// run's start: EnteredAt moves, the idle clock does not.
+// run's start, driven through NoteActivity the way the stage pass does: the
+// digest flips with the stage (085 "adoption-stalled:…" reads CI none, 074
+// "check-failing:…" reads red), which moves LastActivityAt but must not move
+// the idle clock.
 func TestIdleClockSurvivesAdoptionFlap(t *testing.T) {
-	f := newAbandonFixture(t, AdoptedByHive, "adopted")
+	f := newAbandonFixture(t, AdoptedByHive, "check-failing:unit")
+	note := func(digest string) {
+		f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 3, Reviews: 1, Digest: digest, TrackIdle: true})
+	}
 	f.advance(time.Hour)
 	f.st.ObserveHead(f.key, "aaa", NeedsDecision, stalledReason)
+	note("verdict:?|ci:none|")
 	parked := f.now
 	for i := 0; i < 3; i++ {
 		f.advance(6 * time.Hour)
-		f.st.ObserveHead(f.key, "aaa", AdoptedByHive, "adopted")
+		f.st.ObserveHead(f.key, "aaa", AdoptedByHive, "check-failing:unit")
+		note("verdict:?|ci:red|")
 		f.advance(6 * time.Hour)
 		f.st.ObserveHead(f.key, "aaa", NeedsDecision, stalledReason)
+		note("verdict:?|ci:none|")
 	}
 	r := f.rec()
-	if r.EnteredAt.Equal(parked) {
-		t.Fatal("fixture did not flap")
+	if r.EnteredAt.Equal(parked) || !r.LastActivityAt.After(parked) {
+		t.Fatal("fixture did not flap through NoteActivity")
 	}
 	if got := r.ParkRunSince(); !got.Equal(parked) {
 		t.Fatalf("park run restarted on the flap: %v, want %v", got, parked)
@@ -135,6 +158,103 @@ func TestIdleClockSurvivesAdoptionFlap(t *testing.T) {
 	f.st.ObserveHead(f.key, "ccc", NeedsDecision, stalledReason)
 	if got := f.rec().ParkRunSince(); !got.Equal(f.now) {
 		t.Fatalf("a new park kept the old run: %v, want %v", got, f.now)
+	}
+}
+
+// An earlier 085 for another decision does not start the clock: a PR that
+// sat ten days on a reviewer's requires_human, was adopted (074) and then
+// stalled (085 adoption-stalled) starts its run at the stall.
+func TestParkRunIgnoresEarlierDecision085(t *testing.T) {
+	f := newAbandonFixture(t, NeedsDecision, "reviewer-verdict:requires_human")
+	f.advance(10 * 24 * time.Hour)
+	f.st.ObserveHead(f.key, "aaa", AdoptedByHive, "check-failing:unit")
+	f.advance(3 * time.Hour)
+	f.st.ObserveHead(f.key, "aaa", NeedsDecision, stalledReason)
+	stalled := f.now
+	r := f.rec()
+	if got := r.ParkRunSince(); !got.Equal(stalled) {
+		t.Fatalf("park run = %v, want the stall at %v", got, stalled)
+	}
+	if got := r.AbandonStep(7*24*time.Hour, true, f.now); got != AbandonKeep {
+		t.Fatalf("flagged on the first pass after the stall: %v", got)
+	}
+
+	// The same 085 visit turning adoption-stalled without a hop starts
+	// the run at the reason change.
+	g := newAbandonFixture(t, NeedsDecision, "reviewer-verdict:requires_human")
+	g.advance(10 * 24 * time.Hour)
+	g.st.ObserveHead(g.key, "aaa", NeedsDecision, stalledReason)
+	if got := g.rec().ParkRunSince(); !got.Equal(g.now) {
+		t.Fatalf("reason change without a hop: park run = %v, want %v", got, g.now)
+	}
+}
+
+// A flagged adoption-stalled PR that goes back to 074 keeps its flag and
+// its pending notice, so the flap does not post a new warning.
+func TestAbandonFlagSurvivesAdoptionRetry(t *testing.T) {
+	const after = 7 * 24 * time.Hour
+	f := newAbandonFixture(t, NeedsDecision, stalledReason)
+	f.advance(after + time.Hour)
+	f.st.MarkAbandoned(f.key, f.now)
+	f.st.MarkAbandonNoticed(f.key, f.now)
+	noticed := f.now
+	f.advance(time.Hour)
+	f.st.ObserveHead(f.key, "aaa", AdoptedByHive, "check-failing:unit")
+	f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 3, Reviews: 1, Digest: "verdict:?|ci:red|", TrackIdle: true})
+	r := f.rec()
+	if r.Abandoned() {
+		t.Fatal("a 074 row read as abandoned")
+	}
+	if got := r.AbandonStep(after, true, f.now); got != AbandonKeep {
+		t.Fatalf("074 inside the run: step = %v, want keep", got)
+	}
+	f.advance(time.Hour)
+	f.st.ObserveHead(f.key, "aaa", NeedsDecision, stalledReason)
+	r = f.rec()
+	if !r.Abandoned() || !r.AbandonNoticeAt.Equal(noticed) {
+		t.Fatalf("flag or notice lost across the flap: %+v", r)
+	}
+	if got := r.AbandonStep(after, true, f.now); got != AbandonKeep {
+		t.Fatalf("back at 085: step = %v, want keep", got)
+	}
+}
+
+// Raising abandon_after past how long a flagged PR has been idle clears the
+// flag and its pending close.
+func TestAbandonRaisedThresholdClears(t *testing.T) {
+	f := newAbandonFixture(t, NeedsDecision, stalledReason)
+	f.advance(25 * time.Hour)
+	if got := f.rec().AbandonStep(24*time.Hour, true, f.now); got != AbandonFlag {
+		t.Fatalf("step = %v, want flag", got)
+	}
+	f.st.MarkAbandoned(f.key, f.now)
+	f.st.MarkAbandonNoticed(f.key, f.now)
+	if got := f.rec().AbandonStep(24*time.Hour, true, f.now); got != AbandonKeep {
+		t.Fatalf("same threshold: step = %v, want keep", got)
+	}
+	if got := f.rec().AbandonStep(7*24*time.Hour, true, f.now); got != AbandonClear {
+		t.Fatalf("raised threshold: step = %v, want clear", got)
+	}
+	f.st.ClearAbandoned(f.key)
+	if r := f.rec(); !r.AbandonedAt.IsZero() || !r.AbandonNoticeAt.IsZero() {
+		t.Fatalf("clear kept state: %+v", r)
+	}
+}
+
+// With the setting off nothing abandon-related is persisted.
+func TestAbandonFieldsOmittedWhenOff(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	st := NewStore("", func() time.Time { return now })
+	key := Key("example/testrepo", 9)
+	st.ObserveHead(key, "aaa", NeedsDecision, stalledReason)
+	st.NoteActivity(key, Activity{Head: "aaa", Comments: 1, Reviews: 0})
+	r, _ := st.Get(key)
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "abandon") {
+		t.Fatalf("setting-off record persists abandon fields: %s", data)
 	}
 }
 
@@ -216,7 +336,7 @@ func TestAbandonStepThreshold(t *testing.T) {
 
 			// The author comments: the flag clears and the clock restarts.
 			f.advance(time.Hour)
-			f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 9, Reviews: 1, Digest: "verdict:approve|ci:red|"})
+			f.st.NoteActivity(f.key, Activity{Head: "aaa", Comments: 9, Reviews: 1, Digest: "verdict:approve|ci:red|", TrackIdle: true})
 			if got := f.rec().AbandonStep(after, true, f.now); got != AbandonClear {
 				t.Fatalf("activity after the flag: step = %v, want clear", got)
 			}
@@ -311,10 +431,24 @@ func TestAbandonCloseDue(t *testing.T) {
 	g.st.MarkAbandoned(g.key, g.now)
 	g.st.MarkAbandonNoticed(g.key, g.now)
 	g.advance(time.Hour)
-	g.st.NoteActivity(g.key, Activity{Head: "bbb", Comments: 3, Reviews: 1, Digest: "verdict:approve|ci:red|"})
+	g.st.NoteActivity(g.key, Activity{Head: "bbb", Comments: 3, Reviews: 1, Digest: "verdict:approve|ci:red|", TrackIdle: true})
 	g.advance(2 * grace)
 	if g.rec().AbandonCloseDue(grace, g.now) {
 		t.Fatal("close due despite activity after the notice")
+	}
+
+	// A refused close backs off for AbandonRecheckEvery.
+	h := newAbandonFixture(t, NeedsDecision, stalledReason)
+	h.advance(10 * 24 * time.Hour)
+	h.st.MarkAbandoned(h.key, h.now)
+	h.st.MarkAbandonNoticed(h.key, h.now)
+	h.advance(2 * grace)
+	h.st.MarkAbandonCloseTried(h.key, h.now)
+	if h.rec().AbandonCloseDue(grace, h.now.Add(time.Minute)) {
+		t.Fatal("close retried inside the back-off")
+	}
+	if !h.rec().AbandonCloseDue(grace, h.now.Add(AbandonRecheckEvery)) {
+		t.Fatal("close not retried after the back-off")
 	}
 }
 

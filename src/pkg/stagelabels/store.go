@@ -509,19 +509,32 @@ type Record struct {
 	// adoption-stalled: prefix) and when the idle clock started. The stage
 	// and Reason are unchanged; the flag only changes how the row reads
 	// ("abandoned 9d: check-failing:unit") and routes it to the "close or
-	// take over" review group. Outside activity clears all three.
-	AbandonedAt        time.Time `json:"abandoned_at,omitempty"`
+	// take over" review group. Outside activity clears all three. Every
+	// abandon field is omitzero, so a hive with the setting off persists
+	// exactly the bytes it did before.
+	AbandonedAt        time.Time `json:"abandoned_at,omitzero"`
 	AbandonedBlocker   string    `json:"abandoned_blocker,omitempty"`
-	AbandonedIdleSince time.Time `json:"abandoned_idle_since,omitempty"`
+	AbandonedIdleSince time.Time `json:"abandoned_idle_since,omitzero"`
+	// AbandonActivityAt is the idle clock's own outside-activity anchor:
+	// the last head push that was not the hive's, or a rise in the comment
+	// or (people's) review count. Unlike LastActivityAt it ignores the
+	// verdict / CI / label digest, which flips on every 085 <-> 074 hop, so
+	// the hive's own churn never restarts the clock. Written only while the
+	// clock runs for the PR (Activity.TrackIdle); seeded from LastActivityAt
+	// the first time.
+	AbandonActivityAt time.Time `json:"abandon_activity_at,omitzero"`
 	// AbandonCheckedAt is when the one confirming read (comments and
 	// reviews since the idle clock started) last ran for this PR, so a
 	// failed read backs off instead of repeating every sweep.
-	AbandonCheckedAt time.Time `json:"abandon_checked_at,omitempty"`
+	AbandonCheckedAt time.Time `json:"abandon_checked_at,omitzero"`
 	// AbandonNoticeAt is when the auto-close warning was posted
 	// (governor.labels.stage.abandon_close_repos); AbandonClosedAt is when
-	// the hive closed the PR after the grace. Both clear with the flag.
-	AbandonNoticeAt time.Time `json:"abandon_notice_at,omitempty"`
-	AbandonClosedAt time.Time `json:"abandon_closed_at,omitempty"`
+	// the hive closed the PR after the grace; AbandonCloseTriedAt is the
+	// last close attempt GitHub refused, so a refusal backs off. All clear
+	// with the flag.
+	AbandonNoticeAt     time.Time `json:"abandon_notice_at,omitzero"`
+	AbandonClosedAt     time.Time `json:"abandon_closed_at,omitzero"`
+	AbandonCloseTriedAt time.Time `json:"abandon_close_tried_at,omitzero"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
@@ -553,6 +566,10 @@ type Activity struct {
 	// WaitingOnHive says the item is waiting on the hive (checks running,
 	// verdict pending): it must not stall.
 	WaitingOnHive bool
+	// TrackIdle keeps Record.AbandonActivityAt for the stale contributor
+	// PR idle clock (governor.labels.stage.abandon_after on, contributor
+	// PR). Off, the field is never written.
+	TrackIdle bool
 }
 
 // QuietSince is when the item's current quiet period began: the later of
@@ -1051,6 +1068,9 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 		(a.Reviews >= 0 && a.Reviews > r.ActivityReviews) ||
 		(a.Head != "" && r.ActivityHead != "" && a.Head != r.ActivityHead) {
 		s.resetDampenerLocked(key)
+	}
+	if a.TrackIdle {
+		r.noteIdleActivity(a, at)
 	}
 	if changed && at.After(r.LastActivityAt) {
 		r.LastActivityAt = at
