@@ -47,9 +47,12 @@ type prCommentEvent struct {
 	CreatedAt  time.Time
 }
 
-func (c *Client) enrichAttributedPRRework(ctx context.Context, prs []PullRequest) {
+// enrichAttributedPRRework stamps each attributed PR's rework stats, from the
+// rework cache or a fetch, and returns the cache as updated so the caller can
+// reuse it without reading the file again.
+func (c *Client) enrichAttributedPRRework(ctx context.Context, prs []PullRequest) map[string]PRReworkStats {
 	if c == nil {
-		return
+		return nil
 	}
 	cache := loadPRReworkCache()
 	changed := false
@@ -75,6 +78,7 @@ func (c *Client) enrichAttributedPRRework(ctx context.Context, prs []PullRequest
 	if changed {
 		storePRReworkCache(cache)
 	}
+	return cache
 }
 
 // MergedPRReworkCommits returns the number of commits pushed after the first

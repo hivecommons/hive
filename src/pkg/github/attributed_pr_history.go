@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -52,6 +53,10 @@ const (
 	// against it, so a stale stamp can only make a gap look earlier, never
 	// hide one.
 	attributedPRHistoryScanStamp = time.Hour
+	// attributedPRHistoryOpenSeenRefresh is how often an open record's
+	// last-seen time is rewritten. Open records not seen within the retention
+	// (a close never observed, a repo no longer enumerated) are pruned.
+	attributedPRHistoryOpenSeenRefresh = 24 * time.Hour
 
 	attributedPRBackfillLookbackEnv = "HIVE_ATTRIBUTED_PR_BACKFILL_LOOKBACK"
 	// attributedPRBackfillDefaultLookback is how far back (by PR creation)
@@ -106,6 +111,7 @@ type attributedPRRecord struct {
 	ReworkKnown bool      `json:"rework_known,omitempty"`
 	ReworkTries int       `json:"rework_tries,omitempty"`
 	FirstSeenAt time.Time `json:"first_seen_at,omitzero"`
+	LastSeenAt  time.Time `json:"last_seen_at,omitzero"`
 }
 
 func (r *attributedPRRecord) closed() bool {
@@ -183,9 +189,14 @@ type attributedPRRepoState struct {
 // attributedPRBackfillState is the resumable cursor of the one-time backfill:
 // closed PRs sorted by creation, newest first, down to Horizon.
 type attributedPRBackfillState struct {
-	StartedAt   time.Time `json:"started_at,omitzero"`
-	Horizon     time.Time `json:"horizon,omitzero"`
-	NextPage    int       `json:"next_page,omitempty"`
+	StartedAt time.Time `json:"started_at,omitzero"`
+	Horizon   time.Time `json:"horizon,omitzero"`
+	NextPage  int       `json:"next_page,omitempty"`
+	// LastPage is the page read last. A pass that resumes reads it again
+	// first: a closed PR reopened since shifts the list forward, and the
+	// re-read catches up to a page's worth of PRs that moved behind the
+	// cursor (records are keyed, so the overlap only rewrites them).
+	LastPage    int       `json:"last_page,omitempty"`
 	Listed      bool      `json:"listed,omitempty"`
 	ReachedEnd  bool      `json:"reached_end,omitempty"`
 	Done        bool      `json:"done,omitempty"`
@@ -212,6 +223,10 @@ type attributedPRHistory struct {
 	file     attributedPRHistoryFile
 	dirty    bool
 	lastWarn string
+	// stepMu single-flights the backfill step: several callers run
+	// EnumerateActionable, and two steps on one cursor would list the same
+	// pages and measure the same PRs twice.
+	stepMu sync.Mutex
 }
 
 // attributedPRHistories shares one store per path across clients, so a
@@ -251,6 +266,18 @@ func loadAttributedPRHistory(path string, logger *slog.Logger) *attributedPRHist
 				"path", path, "schema_version", loaded.SchemaVersion, "error", err)
 		}
 		return h
+	}
+	// A null entry (a hand-edited or truncated file) would be a nil pointer
+	// in every walk below; drop it rather than panic inside enumeration.
+	for key, st := range loaded.Repos {
+		if st == nil {
+			delete(loaded.Repos, key)
+		}
+	}
+	for key, rec := range loaded.Records {
+		if rec == nil || strings.TrimSpace(rec.Repo) == "" {
+			delete(loaded.Records, key)
+		}
 	}
 	h.file = loaded
 	return h
@@ -316,12 +343,18 @@ func (h *attributedPRHistory) upsert(prs []PullRequest, reworkCache map[string]P
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.ensureMapsLocked()
+	pruneFloor := h.pruneFloorLocked(now)
 	for _, pr := range prs {
 		if !pr.HiveAttributed || strings.TrimSpace(pr.Repo) == "" || pr.Number <= 0 {
 			continue
 		}
 		key := ReviewLinkKey(pr.Repo, pr.Number)
 		rec := attributedPRRecordFrom(pr)
+		// A closed PR older than what retention keeps would be pruned again
+		// on the next write: keeping it out saves a rewrite every pass.
+		if rec.closed() && !rec.CreatedAt.IsZero() && rec.CreatedAt.Before(pruneFloor) {
+			continue
+		}
 		if rec.closed() {
 			if cached, ok := reworkCache[key]; ok {
 				rec.Rework, rec.ReworkKnown = cached, true
@@ -329,15 +362,19 @@ func (h *attributedPRHistory) upsert(prs []PullRequest, reworkCache map[string]P
 		}
 		old := h.file.Records[key]
 		if old == nil {
-			rec.FirstSeenAt = now.UTC()
+			rec.FirstSeenAt, rec.LastSeenAt = now.UTC(), now.UTC()
 			h.file.Records[key] = rec
 			h.dirty = true
 			continue
 		}
 		if !old.closed() && !rec.closed() {
+			if now.Sub(old.LastSeenAt) >= attributedPRHistoryOpenSeenRefresh {
+				old.LastSeenAt = now.UTC()
+				h.dirty = true
+			}
 			continue
 		}
-		rec.FirstSeenAt = old.FirstSeenAt
+		rec.FirstSeenAt, rec.LastSeenAt = old.FirstSeenAt, old.LastSeenAt
 		if !rec.ReworkKnown {
 			if old.ReworkKnown && rec.closed() {
 				rec.Rework, rec.ReworkKnown = old.Rework, true
@@ -358,8 +395,9 @@ func sameAttributedPRRecord(a, b *attributedPRRecord) bool {
 	return errA == nil && errB == nil && bytes.Equal(ja, jb)
 }
 
-// flush prunes and writes the store when anything changed.
-func (h *attributedPRHistory) flush(now time.Time) error {
+// flush prunes and writes the store when anything changed. configured is the
+// client's configured repos (nil: all count toward the record cap).
+func (h *attributedPRHistory) flush(now time.Time, configured []string) error {
 	if h == nil {
 		return nil
 	}
@@ -368,7 +406,7 @@ func (h *attributedPRHistory) flush(now time.Time) error {
 	if !h.dirty {
 		return nil
 	}
-	h.pruneLocked(now)
+	h.pruneLocked(now, configured)
 	h.file.SchemaVersion = attributedPRHistorySchemaVersion
 	h.file.GeneratedAt = now.UTC()
 	raw, err := json.Marshal(h.file)
@@ -390,13 +428,40 @@ func (h *attributedPRHistory) flush(now time.Time) error {
 	return nil
 }
 
-// pruneLocked drops closed records past the retention, then the oldest closed
-// records beyond the cap, raising PrunedThrough to cover what went.
-func (h *attributedPRHistory) pruneLocked(now time.Time) {
+// pruneFloorLocked is the creation time before which closed records are not
+// kept: the retention cutoff, or PrunedThrough when the cap pruned past it.
+func (h *attributedPRHistory) pruneFloorLocked(now time.Time) time.Time {
 	cutoff := now.Add(-attributedPRHistoryRetention).UTC()
+	if h.file.PrunedThrough.After(cutoff) {
+		return h.file.PrunedThrough
+	}
+	return cutoff
+}
+
+// pruneLocked drops closed records past the retention and open records not
+// seen within it, then the oldest closed records of configured repos beyond
+// the cap, raising PrunedThrough to cover the closed ones that went. Records
+// of repos no longer configured are outside the cap (they are never served)
+// and age out by the retention alone.
+func (h *attributedPRHistory) pruneLocked(now time.Time, configured []string) {
+	cutoff := now.Add(-attributedPRHistoryRetention).UTC()
+	var want map[string]bool
+	if configured != nil {
+		want = make(map[string]bool, len(configured))
+		for _, repo := range configured {
+			want[repo] = true
+		}
+	}
 	var closed []string
 	for key, rec := range h.file.Records {
 		if !rec.closed() {
+			seen := rec.LastSeenAt
+			if seen.IsZero() {
+				seen = rec.FirstSeenAt
+			}
+			if !seen.IsZero() && seen.Before(cutoff) {
+				delete(h.file.Records, key)
+			}
 			continue
 		}
 		if !rec.CreatedAt.IsZero() && rec.CreatedAt.Before(cutoff) {
@@ -406,7 +471,9 @@ func (h *attributedPRHistory) pruneLocked(now time.Time) {
 			}
 			continue
 		}
-		closed = append(closed, key)
+		if want == nil || want[rec.Repo] {
+			closed = append(closed, key)
+		}
 	}
 	if len(closed) <= attributedPRHistoryMaxRecords {
 		return
@@ -462,18 +529,27 @@ func (h *attributedPRHistory) snapshot(repos []string, now time.Time) ([]PullReq
 	h.ensureMapsLocked()
 	cov := AttributedPRCoverage{Available: true, Full: true}
 	want := make(map[string]bool, len(repos))
+	scanned := 0
 	for _, repo := range repos {
 		want[repo] = true
 		since, full, ok := h.coveredSinceLocked(repo)
-		switch {
-		case !ok:
-			cov.Full, cov.Since = false, now
-		case !full:
+		if !ok {
+			// Never scanned (no access, deleted, or not reached yet): it has
+			// no PRs live or stored, so it cannot make a window partial. A
+			// repo that scanned before and then had a gap still counts,
+			// through its run floor.
+			continue
+		}
+		scanned++
+		if !full {
 			if cov.Full || since.After(cov.Since) {
 				cov.Since = since
 			}
 			cov.Full = false
 		}
+	}
+	if scanned == 0 {
+		cov.Full, cov.Since = false, now
 	}
 	if !h.file.PrunedThrough.IsZero() {
 		if cov.Full || h.file.PrunedThrough.After(cov.Since) {
@@ -529,12 +605,12 @@ func (h *attributedPRHistory) backfillStart(repo string, now time.Time, lookback
 }
 
 // backfillPage stores one listed page and advances the cursor.
-func (h *attributedPRHistory) backfillPage(repo string, prs []PullRequest, reworkCache map[string]PRReworkStats, nextPage int, reachedHorizon bool, now time.Time) {
+func (h *attributedPRHistory) backfillPage(repo string, prs []PullRequest, reworkCache map[string]PRReworkStats, page, nextPage int, reachedHorizon bool, now time.Time) {
 	h.upsert(prs, reworkCache, now)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	bf := &h.repoLocked(repo).Backfill
-	bf.NextPage = nextPage
+	bf.LastPage, bf.NextPage = page, nextPage
 	if reachedHorizon || nextPage == 0 {
 		bf.Listed = true
 		bf.ReachedEnd = !reachedHorizon
@@ -643,27 +719,36 @@ func (c *Client) AttributedPRHistory() ([]PullRequest, AttributedPRCoverage) {
 }
 
 // recordAttributedPRHistory stores one repo's attributed PRs from this pass
-// (after rework enrichment, so closed records carry their measurement). The
-// write happens once per pass in syncAttributedPRHistory.
-func (c *Client) recordAttributedPRHistory(prs []PullRequest) {
+// (after rework enrichment, so closed records carry their measurement).
+// reworkCache is the cache the enrichment just loaded and updated, so it is
+// not read from disk twice. The write happens once per pass in
+// syncAttributedPRHistory.
+func (c *Client) recordAttributedPRHistory(prs []PullRequest, reworkCache map[string]PRReworkStats) {
 	h := c.attributedPRHistory()
 	if h == nil || len(prs) == 0 {
 		return
 	}
-	h.upsert(prs, loadPRReworkCache(), time.Now())
+	if reworkCache == nil {
+		reworkCache = loadPRReworkCache()
+	}
+	h.upsert(prs, reworkCache, time.Now())
 }
 
 // syncAttributedPRHistory runs the enumeration pass's backfill step and
 // writes the store. Errors are logged, never returned: the history is a
-// dashboard aid and must not fail enumeration.
+// dashboard aid and must not fail enumeration. Only one backfill step runs at
+// a time; a pass that finds another step running skips its own.
 func (c *Client) syncAttributedPRHistory(ctx context.Context, repos []string) {
 	h := c.attributedPRHistory()
 	if h == nil {
 		return
 	}
 	now := time.Now()
-	c.backfillAttributedPRHistory(ctx, h, repos, now)
-	if err := h.flush(now); err != nil {
+	if h.stepMu.TryLock() {
+		c.backfillAttributedPRHistory(ctx, h, repos, now)
+		h.stepMu.Unlock()
+	}
+	if err := h.flush(now, c.getRepos()); err != nil {
 		h.warn("attributed PR history: write failed; keeping it in memory and retrying next pass", err)
 	}
 }
@@ -681,6 +766,38 @@ func (c *Client) attributedPRBackfillAllowed(ctx context.Context) bool {
 	}
 	mode, _ := c.APIBudgetMode()
 	return mode == APIBudgetNormal
+}
+
+// attributedPRBackfillErrClass sorts a backfill call's error by what it says
+// about the PR or repo asked for.
+type attributedPRBackfillErrClass int
+
+const (
+	// attributedPRBackfillErrItem is about this PR or repo (404, 403, a
+	// malformed answer): a rework measurement counts one try.
+	attributedPRBackfillErrItem attributedPRBackfillErrClass = iota
+	// attributedPRBackfillErrTransient is a GitHub hiccup (5xx, network, a
+	// request timeout): no try is counted and the pass moves to the next repo.
+	attributedPRBackfillErrTransient
+	// attributedPRBackfillErrStop is the budget or the pass itself (rate
+	// limit, pacing shed, enumeration cancelled or out of time): the pass
+	// ends and nothing is counted against the PR.
+	attributedPRBackfillErrStop
+)
+
+func classifyAttributedPRBackfillErr(ctx context.Context, err error) attributedPRBackfillErrClass {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, ErrPacingShed) ||
+		strings.Contains(err.Error(), pacingErrPrefix) || isRateLimitErr(err) {
+		return attributedPRBackfillErrStop
+	}
+	var ghErr *gh.ErrorResponse
+	if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusTooManyRequests {
+		return attributedPRBackfillErrStop
+	}
+	if isRetryableGitHubError(err) {
+		return attributedPRBackfillErrTransient
+	}
+	return attributedPRBackfillErrItem
 }
 
 // backfillAttributedPRHistory is one pass of the one-time backfill: at most
@@ -731,13 +848,22 @@ func (c *Client) backfillAttributedPRHistory(ctx context.Context, h *attributedP
 
 // backfillAttributedPRPages lists closed PRs by creation, newest first, from
 // the cursor until the page budget runs out or the walk passes the horizon.
-// stopped reports that the pass should end (budget gate or a listing error,
-// retried next pass from the same cursor).
+// A resumed walk first re-reads the page it read last (see LastPage). stopped
+// reports that the pass should end (budget gate, rate limit, cancellation);
+// any other listing error leaves this repo's cursor for the next pass and lets
+// the pass go on to the next repo.
+//
+// What the re-read cannot catch: more than a page of closed PRs reopened
+// between two passes of one walk, which could shift a PR behind the cursor
+// unseen. Reopening is rare and a walk takes few passes, so this is accepted.
 func (c *Client) backfillAttributedPRPages(ctx context.Context, h *attributedPRHistory, repo string, bf attributedPRBackfillState, budget int, reworkCache map[string]PRReworkStats, now time.Time) (int, bool) {
 	owner, repoName := c.splitRepo(repo)
 	page := bf.NextPage
 	if page <= 0 {
 		page = 1
+	}
+	if bf.LastPage > 0 && bf.LastPage < page && budget > 1 {
+		page = bf.LastPage
 	}
 	for budget > 0 {
 		if !c.attributedPRBackfillAllowed(ctx) {
@@ -753,7 +879,7 @@ func (c *Client) backfillAttributedPRPages(ctx context.Context, h *attributedPRH
 		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
 		if err != nil {
 			h.warn("attributed PR history: backfill listing failed; retrying next pass", fmt.Errorf("listing closed PRs for %s/%s: %w", owner, repoName, err), "repo", repo)
-			return budget, true
+			return budget, classifyAttributedPRBackfillErr(ctx, err) == attributedPRBackfillErrStop
 		}
 		var recs []PullRequest
 		reached := false
@@ -773,7 +899,7 @@ func (c *Client) backfillAttributedPRPages(ctx context.Context, h *attributedPRH
 		if resp != nil {
 			next = resp.NextPage
 		}
-		h.backfillPage(repo, recs, reworkCache, next, reached, now)
+		h.backfillPage(repo, recs, reworkCache, page, next, reached, now)
 		if reached || next == 0 {
 			return budget, false
 		}
@@ -783,7 +909,10 @@ func (c *Client) backfillAttributedPRPages(ctx context.Context, h *attributedPRH
 }
 
 // backfillAttributedPRRework measures rework for repo's closed records that
-// lack it, through the same fetch and cache the live enrichment uses.
+// lack it, through the same fetch and cache the live enrichment uses. Only an
+// error about the PR itself counts one of its tries; a hiccup moves on to the
+// next repo and a budget or cancellation error ends the pass, both leaving
+// the PR pending for a later pass.
 func (c *Client) backfillAttributedPRRework(ctx context.Context, h *attributedPRHistory, repo string, budget int, reworkCache map[string]PRReworkStats) (left int, stopped, cacheChanged bool) {
 	for _, pr := range h.reworkPending(repo) {
 		key := ReviewLinkKey(pr.Repo, pr.Number)
@@ -800,6 +929,12 @@ func (c *Client) backfillAttributedPRRework(ctx context.Context, h *attributedPR
 		budget--
 		rework, err := c.fetchPRRework(ctx, pr)
 		if err != nil {
+			switch classifyAttributedPRBackfillErr(ctx, err) {
+			case attributedPRBackfillErrStop:
+				return budget, true, cacheChanged
+			case attributedPRBackfillErrTransient:
+				return budget, false, cacheChanged
+			}
 			h.setRework(key, PRReworkStats{}, false)
 			continue
 		}

@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 func historyTestLogger() *slog.Logger {
@@ -143,21 +146,21 @@ func TestAttributedPRHistoryWriteErrorDoesNotFailEnumeration(t *testing.T) {
 	if got := historyNumbers(result.PRs.Attributed); len(got) != 1 || got[0] != 7 {
 		t.Fatalf("attributed = %v, want #7", got)
 	}
-	if err := c.attributedPRHistory().flush(time.Now()); err == nil {
+	if err := c.attributedPRHistory().flush(time.Now(), nil); err == nil {
 		t.Fatal("flush into a file-as-directory succeeded; the test did not exercise a write error")
 	}
 }
 
-// backfillTestServer serves a closed-PR list sorted by creation over
+// attributedBackfillFake serves a closed-PR list sorted by creation over
 // len(pages) pages, plus empty rework listings, and counts every request.
-type backfillTestServer struct {
+type attributedBackfillFake struct {
 	mu        sync.Mutex
 	listPages []string
 	rework    int
 	other     []string
 }
 
-func (b *backfillTestServer) handler(t *testing.T, pages [][]map[string]any) http.HandlerFunc {
+func (b *attributedBackfillFake) handler(t *testing.T, pages [][]map[string]any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		defer b.mu.Unlock()
@@ -191,7 +194,7 @@ func (b *backfillTestServer) handler(t *testing.T, pages [][]map[string]any) htt
 	}
 }
 
-func (b *backfillTestServer) take() (pages []string, rework int, other []string) {
+func (b *attributedBackfillFake) take() (pages []string, rework int, other []string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	pages, rework, other = b.listPages, b.rework, b.other
@@ -220,7 +223,7 @@ func TestAttributedPRBackfillBudgetResumeAndComplete(t *testing.T) {
 		{backfillMergedPR(20, now.Add(-20*day))},
 		{backfillMergedPR(10, now.Add(-25*day)), backfillMergedPR(5, now.Add(-45*day))},
 	}
-	fake := &backfillTestServer{}
+	fake := &attributedBackfillFake{}
 	srv := httptest.NewServer(fake.handler(t, pages))
 	defer srv.Close()
 
@@ -241,13 +244,14 @@ func TestAttributedPRBackfillBudgetResumeAndComplete(t *testing.T) {
 
 	// Restart: the cursor comes back from disk.
 	h = useHistoryAt(c, path)
-	if st := h.file.Repos["r"]; st == nil || st.Backfill.NextPage != 3 || st.Backfill.Listed || st.Backfill.Done {
-		t.Fatalf("persisted backfill = %+v, want cursor at page 3, not listed", st)
+	if st := h.file.Repos["r"]; st == nil || st.Backfill.NextPage != 3 || st.Backfill.LastPage != 2 || st.Backfill.Listed || st.Backfill.Done {
+		t.Fatalf("persisted backfill = %+v, want cursor at page 3 after page 2, not listed", st)
 	}
 	c.syncAttributedPRHistory(context.Background(), []string{"r"})
 	gotPages, _, other = fake.take()
-	if strings.Join(gotPages, ",") != "3" || len(other) != 0 {
-		t.Fatalf("pass 2 listed pages %v other=%v, want only page 3", gotPages, other)
+	// The resumed walk re-reads the page it read last, then goes on.
+	if strings.Join(gotPages, ",") != "2,3" || len(other) != 0 {
+		t.Fatalf("pass 2 listed pages %v other=%v, want page 2 re-read, then page 3", gotPages, other)
 	}
 	st := h.file.Repos["r"]
 	if !st.Backfill.Listed || st.Backfill.ReachedEnd || !st.Backfill.Done {
@@ -280,7 +284,7 @@ func TestAttributedPRBackfillRespectsAPIBudget(t *testing.T) {
 	useTempReworkCache(t)
 	now := time.Now().UTC()
 	resetRESTAccountingForTest(t, now)
-	fake := &backfillTestServer{}
+	fake := &attributedBackfillFake{}
 	srv := httptest.NewServer(fake.handler(t, [][]map[string]any{{backfillMergedPR(1, now.Add(-20*24*time.Hour))}}))
 	defer srv.Close()
 
@@ -343,10 +347,19 @@ func TestAttributedPRHistoryPrunesPastRetention(t *testing.T) {
 	h := loadAttributedPRHistory(filepath.Join(t.TempDir(), AttributedPRHistoryFile), historyTestLogger())
 	old := PullRequest{Repo: "r", Number: 1, HiveAttributed: true, State: "closed", CreatedAt: now.Add(-attributedPRHistoryRetention - 24*time.Hour), ClosedAt: now.Add(-attributedPRHistoryRetention)}
 	recent := PullRequest{Repo: "r", Number: 2, HiveAttributed: true, State: "closed", CreatedAt: now.Add(-48 * time.Hour), ClosedAt: now.Add(-24 * time.Hour)}
-	h.upsert([]PullRequest{old, recent}, nil, now)
+	h.upsert([]PullRequest{recent}, nil, now)
+	// #1 was stored while young and has since aged past the retention.
+	h.file.Records["r#1"] = attributedPRRecordFrom(old)
+	// An open record not seen within the retention (its close was never
+	// observed) goes too; one seen recently stays.
+	h.file.Records["r#3"] = &attributedPRRecord{Repo: "r", Number: 3, State: "open", LastSeenAt: now.Add(-attributedPRHistoryRetention - time.Hour)}
+	h.file.Records["r#4"] = &attributedPRRecord{Repo: "r", Number: 4, State: "open", LastSeenAt: now.Add(-time.Hour)}
 	h.noteScan("r", now, time.Time{}, true)
-	if err := h.flush(now); err != nil {
+	if err := h.flush(now, nil); err != nil {
 		t.Fatal(err)
+	}
+	if h.file.Records["r#3"] != nil || h.file.Records["r#4"] == nil {
+		t.Fatalf("open records after prune: #3=%v #4=%v, want the stale one dropped", h.file.Records["r#3"], h.file.Records["r#4"])
 	}
 	stored, cov := h.snapshot([]string{"r"}, now)
 	if got := historyNumbers(stored); len(got) != 1 || got[0] != 2 {
@@ -354,5 +367,169 @@ func TestAttributedPRHistoryPrunesPastRetention(t *testing.T) {
 	}
 	if cov.Full || cov.Since.Before(now.Add(-attributedPRHistoryRetention-time.Minute)) {
 		t.Fatalf("coverage = %+v, want it to start at the retention cutoff", cov)
+	}
+}
+
+// Only an error about the PR itself costs it a rework try; a GitHub hiccup or
+// a budget/cancellation error leaves it pending.
+func TestAttributedPRBackfillReworkTriesCountOnlyPerPRErrors(t *testing.T) {
+	useTempReworkCache(t)
+	now := time.Now().UTC()
+	resetRESTAccountingForTest(t, now)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/repos/o/r/pulls/2/"):
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+		case strings.HasPrefix(r.URL.Path, "/repos/o/r/pulls/1/"):
+			http.Error(w, `{"message":"unavailable"}`, http.StatusServiceUnavailable)
+		default:
+			writeJSON(t, w, []map[string]any{})
+		}
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, historyTestLogger())
+	h := useHistoryAt(c, filepath.Join(t.TempDir(), AttributedPRHistoryFile))
+	merged := func(n int, created time.Time) PullRequest {
+		return PullRequest{Repo: "r", Number: n, HiveAttributed: true, State: "closed", CreatedAt: created, ClosedAt: created.Add(time.Hour), MergedAt: created.Add(time.Hour)}
+	}
+	// #2 is newer, so it is measured first.
+	h.upsert([]PullRequest{merged(1, now.Add(-48*time.Hour)), merged(2, now.Add(-24*time.Hour))}, nil, now)
+
+	_, stopped, _ := c.backfillAttributedPRRework(context.Background(), h, "r", 5, map[string]PRReworkStats{})
+	if stopped {
+		t.Fatal("a 503 ended the whole pass; it should only move on to the next repo")
+	}
+	if got := h.file.Records["r#2"].ReworkTries; got != 1 {
+		t.Fatalf("#2 (404) tries = %d, want 1", got)
+	}
+	if got := h.file.Records["r#1"].ReworkTries; got != 0 {
+		t.Fatalf("#1 (503) tries = %d, want 0", got)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, err := range map[string]error{
+		"shed":      fmt.Errorf("listing reviews: %w", ErrPacingShed),
+		"cancelled": context.Canceled,
+		"429":       &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusTooManyRequests}},
+	} {
+		if got := classifyAttributedPRBackfillErr(context.Background(), err); got != attributedPRBackfillErrStop {
+			t.Errorf("%s: class = %v, want stop", name, got)
+		}
+	}
+	notFound := &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusNotFound}}
+	if got := classifyAttributedPRBackfillErr(ctx, notFound); got != attributedPRBackfillErrStop {
+		t.Errorf("error after the pass's context ended: class = %v, want stop", got)
+	}
+	if got := classifyAttributedPRBackfillErr(context.Background(), notFound); got != attributedPRBackfillErrItem {
+		t.Errorf("404: class = %v, want per-PR", got)
+	}
+}
+
+// A closed PR older than what retention keeps is not stored again, so the
+// next write does not have to prune it (and rewrite the file) every pass.
+func TestAttributedPRHistoryUpsertSkipsPrunedPRs(t *testing.T) {
+	now := time.Now().UTC()
+	h := loadAttributedPRHistory(filepath.Join(t.TempDir(), AttributedPRHistoryFile), historyTestLogger())
+	old := PullRequest{Repo: "r", Number: 1, HiveAttributed: true, State: "closed", CreatedAt: now.Add(-attributedPRHistoryRetention - time.Hour), ClosedAt: now.Add(-24 * time.Hour)}
+	h.upsert([]PullRequest{old}, nil, now)
+	if len(h.file.Records) != 0 || h.dirty {
+		t.Fatalf("records = %d dirty = %v, want the pre-retention PR skipped", len(h.file.Records), h.dirty)
+	}
+	h.file.PrunedThrough = now.Add(-10 * 24 * time.Hour)
+	capped := PullRequest{Repo: "r", Number: 2, HiveAttributed: true, State: "closed", CreatedAt: now.Add(-11 * 24 * time.Hour), ClosedAt: now.Add(-24 * time.Hour)}
+	h.upsert([]PullRequest{capped}, nil, now)
+	if len(h.file.Records) != 0 {
+		t.Fatalf("records = %d, want a PR created before pruned_through skipped", len(h.file.Records))
+	}
+}
+
+// A listing error that is not about the budget leaves that repo's cursor for
+// the next pass and lets the pass go on to the next repo.
+func TestAttributedPRBackfillListingErrorMovesToNextRepo(t *testing.T) {
+	useTempReworkCache(t)
+	now := time.Now().UTC()
+	resetRESTAccountingForTest(t, now)
+	var mu sync.Mutex
+	var listed []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("sort") == "created" {
+			mu.Lock()
+			listed = append(listed, r.URL.Path)
+			mu.Unlock()
+		}
+		switch r.URL.Path {
+		case "/repos/o/a/pulls":
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+		case "/repos/o/b/pulls":
+			writeJSON(t, w, []map[string]any{backfillMergedPR(9, now.Add(-20*24*time.Hour))})
+		default:
+			writeJSON(t, w, []map[string]any{})
+		}
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"a", "b"}, historyTestLogger())
+	h := useHistoryAt(c, filepath.Join(t.TempDir(), AttributedPRHistoryFile))
+	h.noteScan("a", now, now.Add(-14*24*time.Hour), false)
+	h.noteScan("b", now, now.Add(-14*24*time.Hour), false)
+
+	c.syncAttributedPRHistory(context.Background(), []string{"a", "b"})
+	mu.Lock()
+	got := strings.Join(listed, ",")
+	listed = nil
+	mu.Unlock()
+	if got != "/repos/o/a/pulls,/repos/o/b/pulls" {
+		t.Fatalf("listed %q, want repo a tried and repo b still listed", got)
+	}
+	if bf := h.file.Repos["a"].Backfill; bf.Listed || bf.NextPage != 1 {
+		t.Fatalf("repo a backfill = %+v, want its cursor kept for a retry", bf)
+	}
+	if bf := h.file.Repos["b"].Backfill; !bf.Listed || !bf.Done {
+		t.Fatalf("repo b backfill = %+v, want listed and done", bf)
+	}
+	c.syncAttributedPRHistory(context.Background(), []string{"a", "b"})
+	mu.Lock()
+	got = strings.Join(listed, ",")
+	mu.Unlock()
+	if got != "/repos/o/a/pulls" {
+		t.Fatalf("second pass listed %q, want only repo a retried", got)
+	}
+}
+
+// A repo that never scanned has nothing live or stored, so it must not make
+// every window partial; with no scanned repo at all nothing is covered.
+func TestAttributedPRHistoryCoverageIgnoresNeverScannedRepos(t *testing.T) {
+	now := time.Now().UTC()
+	day := 24 * time.Hour
+	h := loadAttributedPRHistory(filepath.Join(t.TempDir(), AttributedPRHistoryFile), historyTestLogger())
+	h.noteScan("r", now.Add(-time.Hour), now.Add(-15*day), false)
+	h.file.Repos["r"].Backfill = attributedPRBackfillState{StartedAt: now, Horizon: now.Add(-30 * day), Listed: true, Done: true}
+	if _, cov := h.snapshot([]string{"r", "gone"}, now); cov.Full || !cov.Since.Equal(now.Add(-30*day)) {
+		t.Fatalf("coverage = %+v, want the scanned repo's horizon", cov)
+	}
+	if _, cov := h.snapshot([]string{"gone"}, now); !cov.Available || cov.Full || !cov.Since.Equal(now) {
+		t.Fatalf("coverage with no scanned repo = %+v, want nothing covered", cov)
+	}
+}
+
+// Null entries in a hand-edited or truncated file are dropped on load
+// instead of panicking inside enumeration.
+func TestAttributedPRHistoryLoadDropsNullEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), AttributedPRHistoryFile)
+	raw := `{"schema_version":1,"repos":{"r":null},"records":{"r#1":null,"r#2":{"repo":"r","number":2,"state":"closed","closed_at":"2026-11-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := loadAttributedPRHistory(path, historyTestLogger())
+	if len(h.file.Repos) != 0 || len(h.file.Records) != 1 {
+		t.Fatalf("loaded repos=%d records=%d, want the null entries dropped", len(h.file.Repos), len(h.file.Records))
+	}
+	now := time.Now()
+	h.snapshot([]string{"r"}, now)
+	h.reworkPending("r")
+	h.backfillFinish("r", now)
+	h.dirty = true
+	if err := h.flush(now, []string{"r"}); err != nil {
+		t.Fatal(err)
 	}
 }

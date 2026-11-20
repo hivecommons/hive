@@ -488,8 +488,9 @@ capped at 256 KiB.
 
    Other notes:
    - `effective_models_read` also returns `coverage`. It says how far back the
-     closed-PR scan reaches and whether PR or run history is partial for the
-     window, so an `all` answer is not mistaken for lifetime totals.
+     hive's stored attributed PR history is complete (`closed_prs_since`) and
+     whether PR or run history is partial for the window, so an `all` answer
+     is not mistaken for lifetime totals.
    - None of them carries cost: `spend_read` has spend by model.
 
 **Meta tools**
