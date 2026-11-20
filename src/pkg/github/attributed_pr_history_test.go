@@ -79,8 +79,9 @@ func TestAttributedPRHistoryKeepsClosedPRPastLiveScanAndRestart(t *testing.T) {
 
 	// A 30-day lookback lists the PR once...
 	t.Setenv(attributedClosedPRLookbackEnv, "30d")
-	if _, _, _, _, attributed, _, _, err := c.fetchPRs(context.Background(), "r", nil); err != nil || len(attributed) != 1 {
-		t.Fatalf("first fetchPRs: attributed=%v err=%v, want #7 listed", historyNumbers(attributed), err)
+	_, _, _, _, live, _, _, err := c.fetchPRs(context.Background(), "r", nil)
+	if err != nil || len(live) != 1 {
+		t.Fatalf("first fetchPRs: attributed=%v err=%v, want #7 listed", historyNumbers(live), err)
 	}
 	// ...the default 14-day scan no longer does.
 	t.Setenv(attributedClosedPRLookbackEnv, "14d")
@@ -92,8 +93,11 @@ func TestAttributedPRHistoryKeepsClosedPRPastLiveScanAndRestart(t *testing.T) {
 		t.Fatalf("live attributed = %v, want the 14-day scan to drop #7", historyNumbers(attributed))
 	}
 	stored, _ := c.AttributedPRHistory()
-	if len(stored) != 1 || stored[0].Number != 7 || stored[0].MergedAt.IsZero() || stored[0].HiveModel != "auto" {
-		t.Fatalf("stored = %+v, want merged #7 with its attribution", stored)
+	// The stored attribution is what the live scan parsed (the trailer's
+	// model=auto normalizes like any other model value).
+	if len(stored) != 1 || stored[0].Number != 7 || stored[0].MergedAt.IsZero() ||
+		stored[0].HiveAgent != live[0].HiveAgent || stored[0].HiveBackend != live[0].HiveBackend || stored[0].HiveModel != live[0].HiveModel || stored[0].HiveAgent == "" {
+		t.Fatalf("stored = %+v, want merged #7 with the live scan's attribution %+v", stored, live[0])
 	}
 	c.syncAttributedPRHistory(context.Background(), []string{"r"})
 
