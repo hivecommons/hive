@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-20 (v6.52.5)
+
+### Fixed
+
+- A PR whose attribution trailer (`-- hive: agent=… backend=… model=…`) is followed by footer lines is counted again in Governor "PRs by model", Operations "Most effective models" and the rework and cost figures. The trailer was read only when it was the last non-blank line before the identity footer, so a `Refs #N`, `Closes #N` or `Fixes #N` line, an HTML marker, or a `🤖 Generated with …` line below it dropped the PR: 112 of 707 trailer-carrying projectbluefin PRs (16%), among them [projectbluefin/utah-packages#949](https://github.com/projectbluefin/utah-packages/pull/949), [#1014](https://github.com/projectbluefin/utah-packages/pull/1014) and [projectbluefin/website#1040](https://github.com/projectbluefin/website/pull/1040). Those lines, and an identity footer with a `Fixes #N` appended below it, are now skipped; any other line after the trailer still means the PR has none, so a trailer quoted in prose is not taken for the PR's own. The issue-link repair that rewrites `Refs #N` to `Fixes #N` now puts its `<!-- hive:issue-link-fixed -->` marker above the trailer instead of below it, so the hive no longer breaks its own attribution (22 of the 112).
+
 ## 2026-11-20 (v6.52.4)
 
 ### Fixed
