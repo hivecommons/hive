@@ -308,10 +308,8 @@ type AgentProcess struct {
 	// to observe.
 	kickDelivering   atomic.Bool
 	lastTokenRestart time.Time // cooldown for auto-restart after token detection
-	// promptTimeoutDumpAt is the UnixNano of this agent's last WARN pane dump
-	// from waitForInputPromptForAgentReason, and promptTimeoutDumpsSuppressed
-	// counts the dumps demoted to INFO since then. Atomics because concurrent
-	// kick goroutines each run their own prompt wait without m.mu (#19376).
+	// Last prompt-timeout WARN pane dump (UnixNano) and dumps demoted to INFO
+	// since; atomics as concurrent kick waits run without m.mu (#19376).
 	promptTimeoutDumpAt          atomic.Int64
 	promptTimeoutDumpsSuppressed atomic.Int64
 	// copilotModelFallbackRequested is the --model id (if any) the poller has
@@ -1236,27 +1234,6 @@ func (m *Manager) startSharedPoolLeaseWatcherLocked(agent *AgentProcess, name, l
 	}
 }
 
-// promptTimeoutDumpInterval is the minimum spacing between two WARN pane
-// dumps for one agent's prompt timeouts (#19376).
-var promptTimeoutDumpInterval = 10 * time.Minute
-
-// claimPromptTimeoutDump reports whether this prompt timeout may log the WARN
-// pane dump for agent: true at most once per promptTimeoutDumpInterval, so
-// concurrent waits that time out together dump the pane once. A refused claim
-// is counted and reported on the next dump that goes through.
-func (m *Manager) claimPromptTimeoutDump(agent *AgentProcess, now time.Time) bool {
-	for {
-		last := agent.promptTimeoutDumpAt.Load()
-		if last != 0 && now.Sub(time.Unix(0, last)) < promptTimeoutDumpInterval {
-			agent.promptTimeoutDumpsSuppressed.Add(1)
-			return false
-		}
-		if agent.promptTimeoutDumpAt.CompareAndSwap(last, now.UnixNano()) {
-			return true
-		}
-	}
-}
-
 // kickOutcomePollEvery throttles the post-kick turn-ended check to one visible
 // pane capture per this many 3s poll ticks (15s), so a long turn does not
 // cost an extra tmux exec every tick.
@@ -1326,15 +1303,7 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 			// self-report on its own (#19376); the stall itself is still
 			// self-reported by markKickUndeliverableLocked.
 			if !m.claimPromptTimeoutDump(agent, time.Now()) {
-				m.logger.Info("prompt timeout; pane already dumped recently",
-					"agent", agent.Name,
-					"session", agent.tmuxSession,
-					"permission_dialog", dialogTitle,
-					"dump_interval", promptTimeoutDumpInterval)
-				if hasDialog {
-					return false, claudePermissionDialogNotReadyReason(dialogTitle)
-				}
-				return false, kickPromptNotReadyReason
+				return false, m.promptTimeoutAlreadyDumped(agent, dialogTitle, hasDialog)
 			}
 			m.logger.Warn("prompt timeout — dumping pane",
 				"agent", agent.Name,
