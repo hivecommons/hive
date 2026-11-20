@@ -120,6 +120,11 @@ const (
 	// watcher asks users and/or teams to review a PR on an agent's behalf
 	// (kind "request_review", #9587). The detail carries who was asked.
 	AuditActionAgentReviewRequested = "agent_review_requested"
+	// AuditActionAgentPREdited is recorded when the issue-request watcher
+	// replaces the title and/or body of a hive-authored PR on an agent's
+	// behalf (kind "edit_pr", #19399). The detail names the fields edited,
+	// not their text.
+	AuditActionAgentPREdited = "agent_pr_edited"
 	// AuditActionAgentBranchPushed is recorded when the push-branch-request
 	// watcher pushes an agent's local branch to GitHub on its behalf (op
 	// push_branch, #9587). The detail carries the branch and the pushed

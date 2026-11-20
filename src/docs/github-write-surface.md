@@ -49,6 +49,7 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 | `close_issue` | `issue_request_watcher.go` kind `close` | `hive-open-issue close` | `agent_issue_closed` (`pr_closed` when the number is a PR) | yes | yes / issue or PR number |
 | `label` | `issue_request_watcher.go` kind `label` (`.../issue-requests`) | `hive-open-issue label` (also reached by `gh issue edit --add-label`/`--remove-label` and `gh pr edit --add-label`/`--remove-label`, which the `gh` wrapper translates into this relay) | `agent_label_applied` | yes | yes / issue or PR number |
 | `request_review` | `issue_request_watcher.go` kind `request_review` (`.../issue-requests`) | `hive-open-issue request-review` (also reached by `gh pr edit --add-reviewer`, which the `gh` wrapper translates into this relay) | `agent_review_requested` | yes | yes / PR number |
+| `edit_pr` | `issue_request_watcher.go` kind `edit_pr` (`.../issue-requests`), gated in `issue_request_edit_pr.go` | `hive-open-issue edit-pr` (also reached by `gh pr edit --title`/`--body`/`--body-file` from a lane under `write_surface.enforce`, which the `gh` wrapper translates into this relay) | `agent_pr_edited` (the detail names the fields edited) | yes | yes / PR number |
 | `review` | `review_request_watcher.go` events `approve`, `request_changes`, `comment`, `record_verdict`, and thread replies (`.../review-requests`, plus sandbox review spools via `review_request_sandbox_spool.go`, #14986) | `hive-review` | `agent_pr_reviewed` | yes | yes / PR number |
 | `resolve_thread` | `review_request_watcher.go` event `resolve_thread` | `hive-review` | `agent_pr_reviewed` (`state=thread_resolved`) | yes | yes / PR number |
 | `merge_pr` | `merge_request_watcher.go` (`.../merge-requests`) | `hive-merge` | `pr_merged` (`path=relay`, via `MergePR`) | yes | yes / PR number |
@@ -101,6 +102,31 @@ One reserved label refuses the whole request — nothing in it is applied — so
 batch can never partially land. The refusal is a policy denial like any other:
 `.denied`, a result file naming the labels, and an audit entry. A lane
 allowlist can narrow `label` further but can never widen it to these.
+
+### `edit_pr` edits the hive's own pull requests only
+
+The `edit_pr` operation replaces the title and/or body of an existing pull
+request (`hive-open-issue edit-pr --repo <owner/repo> <number> [--title <t>]
+[--body <b> | --body-file <f>]`, hivecommons/hive#19399). It exists so a PR's
+description can stay true after review changes it, whichever lane answers
+the review: the lane that pushes the follow-up is often not the lane that
+opened the PR, and a lane under `write_surface.enforce` has no direct
+`PATCH /pulls/{n}`. A field left out is left as it is on GitHub; the body
+replaces the whole description. Its own gates, before any write:
+
+- the PR's author must be **one of this hive's accounts** (the App bot login
+  or `project.ai_author`). A person's PR, another bot's PR, and a PR whose
+  author cannot be read are refused: the hive never edits a human-authored PR
+  body. A hive with neither identity configured refuses every edit, because
+  it cannot tell its own PRs from anyone else's;
+- a **merged** PR is refused: its description is the record of what landed;
+- the ACMM tier is that of the direct `PATCH /pulls/{n}`, `ISSUES_AND_PRS`.
+  An `ISSUES_ONLY` lane is refused by the authorizer, as its direct edit is at
+  the proxy.
+
+The body gets the outbound prose filter, the lane's mention sanitizing and,
+when the agent dropped it, the attribution trailer, like every relay body.
+A refusal is a policy denial (`.denied`, a result file with the reason).
 
 ### `push_branch` publishes topic branches only
 
@@ -382,9 +408,14 @@ makes the same decision one layer earlier, before the write is sent:
   `label create`) on the paths where they would reach GitHub directly. The
   refusal names the relay that performs the same write under audit;
 - **the relay redirects are unaffected**: `gh issue comment`, `gh issue close`,
-  `gh pr review`, `gh pr create` and a pure `gh issue edit --add-label` are
-  already translated into relay requests before this gate, so an enforced lane
-  keeps working through them. Only the direct fall-through is refused.
+  `gh pr review`, `gh pr create`, a pure `gh issue edit --add-label` and,
+  for an enforced lane only, a `gh pr edit` of labels, reviewers, `--title`
+  and `--body`/`--body-file` are already translated into relay requests
+  before this gate, so an enforced lane keeps working through them. Only the
+  direct fall-through is refused. An unenforced lane's `gh pr edit --title`
+  or `--body` keeps its direct path: the `edit_pr` relay refuses PRs the hive
+  did not open, and a description touch-up on a contributor's PR is a direct
+  write such a lane may make.
 - **every read still works**, including `gh issue view`, `gh pr list` and
   `gh api` GETs.
 
@@ -414,7 +445,7 @@ write_surface:
   Names are matched without regard to case or surrounding spaces, and the list
   is read live from config on every relay request.
 - **What is rewritten:** the agent-supplied body of `comment`, `create_issue`,
-  `open_pr`, `review` and review-thread replies. The rewrite is
+  `open_pr`, `edit_pr`, `review` and review-thread replies. The rewrite is
   `advisory.NeutralizeMentions`, the same sanitizer the advisory digest,
   recommendations and duplicate-sweep posts use: outside code `@user` becomes
   `` `user` ``; inside inline code and fenced blocks only the `@` is dropped.
