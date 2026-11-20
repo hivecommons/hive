@@ -236,6 +236,9 @@ type agentRecord struct {
 	wedgeAlerted bool
 	// authFailure rate-limits the credential-failure ERROR log (#19205).
 	authFailure authFailureLog
+	// observeDecision rate-limits observe-mode would-restart/would-pause
+	// reports for an agent that stays dead (#19393).
+	observeDecision observeDecisionLog
 	// Conditions is the agent's published condition set.
 	Conditions []Condition
 }
@@ -563,6 +566,10 @@ func (r *Reconciler) updateReadyConditionLocked(rec *agentRecord, cls Classifica
 // CrashLoopBackOff analog: Failures clear only after a continuous ready
 // window, so a flapping agent cannot launder its counter with one good probe.
 func (r *Reconciler) updateHealthyWindowLocked(name string, rec *agentRecord, cls Classification, now time.Time) {
+	if !cls.Class.Dead() {
+		// No longer dead: a later death is news to observe mode (#19393).
+		rec.observeDecision = observeDecisionLog{}
+	}
 	if cls.Class != ClassReady {
 		rec.HealthySince = time.Time{}
 		return
@@ -626,10 +633,13 @@ func (r *Reconciler) planRestartLocked(name string, rec *agentRecord, cls Classi
 			// Observe mode: report the terminal decision, take none of it. The
 			// CrashLooping latch is deliberately NOT set — latching would
 			// suppress this evidence on every later sweep, and observe mode
-			// exists to keep producing it.
-			r.logger.Warn("watchdog: would escalate to pause (observe mode; no action taken)",
-				"agent", name, "failures", rec.Failures, "class", string(cls.Class), "mode", string(r.settings.Mode))
-			r.audit(auditActionFor(auditActionPause, acting), "would pause: "+detail, name)
+			// exists to keep producing it — but at most once per
+			// observeDecisionRelogInterval for an unchanged verdict (#19393).
+			if shouldReportObserveDecisionLocked(rec, auditActionPause, cls.Class, now) {
+				r.logger.Warn("watchdog: would escalate to pause (observe mode; no action taken)",
+					"agent", name, "failures", rec.Failures, "class", string(cls.Class), "mode", string(r.settings.Mode))
+				r.audit(auditActionFor(auditActionPause, acting), "would pause: "+detail, name)
+			}
 			return nil
 		}
 
@@ -664,11 +674,15 @@ func (r *Reconciler) planRestartLocked(name string, rec *agentRecord, cls Classi
 	if !acting {
 		// Observe mode: no counter advance, no backoff arming, no restart —
 		// the record stays pristine so promoting to heal starts from a clean
-		// ladder rather than one already part-way up.
-		r.logger.Warn("watchdog: would restart dead agent (observe mode; no action taken)",
-			"agent", name, "class", string(cls.Class), "reason", cls.Reason, "mode", string(r.settings.Mode))
-		r.audit(auditActionFor(auditActionRestart, acting),
-			fmt.Sprintf("would restart: class=%s reason=%s", cls.Class, cls.Reason), name)
+		// ladder rather than one already part-way up. Nothing changes the
+		// agent between sweeps, so the same verdict is reported once per
+		// observeDecisionRelogInterval, not on every sweep (#19393).
+		if shouldReportObserveDecisionLocked(rec, auditActionRestart, cls.Class, now) {
+			r.logger.Warn("watchdog: would restart dead agent (observe mode; no action taken)",
+				"agent", name, "class", string(cls.Class), "reason", cls.Reason, "mode", string(r.settings.Mode))
+			r.audit(auditActionFor(auditActionRestart, acting),
+				fmt.Sprintf("would restart: class=%s reason=%s", cls.Class, cls.Reason), name)
+		}
 		return nil
 	}
 
