@@ -41,6 +41,26 @@ func TestAuthorizeIssueOpen_ModeGate(t *testing.T) {
 	}
 }
 
+// edit_pr is a PR write (#19399): it needs ISSUES_AND_PRS, the tier the proxy
+// asks of a direct PATCH /pulls/{n}, so the relay never lets an ISSUES_ONLY
+// lane do what its direct path may not.
+func TestAuthorizeIssueOpen_EditPRNeedsPRTier(t *testing.T) {
+	m := issueOpenManager()
+	if err := m.AuthorizeIssueOpen("writer", 0, "edit_pr"); err != nil {
+		t.Errorf("ISSUES_AND_PRS agent must be allowed edit_pr: %v", err)
+	}
+	err := m.AuthorizeIssueOpen("issuer", 0, "edit_pr")
+	if err == nil {
+		t.Fatal("ISSUES_ONLY agent must be denied edit_pr")
+	}
+	if !strings.Contains(err.Error(), "may not edit pull requests") {
+		t.Errorf("denial should cite the PR tier, got: %v", err)
+	}
+	if err := m.AuthorizeIssueOpen("advisor", 0, "edit_pr"); err == nil {
+		t.Error("ADVISORY agent must be denied edit_pr")
+	}
+}
+
 func TestAuthorizeIssueOpen_EmptyAgentName(t *testing.T) {
 	m := issueOpenManager()
 	for _, name := range []string{"", "   "} {

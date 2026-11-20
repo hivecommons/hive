@@ -208,7 +208,8 @@ func (m *Manager) AuthorizePushBranch(agentName string, fileUID int) error {
 // paths: "issue" requests need CanCreateIssues() (mode >= ISSUES_ONLY);
 // "comment", "claim", "close", "label" and "request_review" requests need the
 // same (commenting on, claiming, closing, labeling and requesting review on an
-// issue or PR are all issue-writes under the same tier). The same UID
+// issue or PR are all issue-writes under the same tier); "edit_pr" (a PR
+// title/body edit) needs CanCreatePRs(), the tier of the direct PATCH. The same UID
 // forge-resistance applies: the request file's owner must BE the claimed
 // agent. A nil manager or unknown agent is denied.
 func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int, kind string) error {
@@ -232,6 +233,13 @@ func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int, kind string)
 	}
 	if !m.agentMode(agent).CanCreateIssues() {
 		return fmt.Errorf("agent %q may not create issues or comments at this ACMM level (mode %s)",
+			agentName, m.agentMode(agent).String())
+	}
+	// Editing a PR's title or body is a PR write: the direct PATCH
+	// /pulls/{n} needs ISSUES_AND_PRS at the proxy, and the relay never
+	// widens the mode ladder (hivecommons/hive#19399).
+	if kind == "edit_pr" && !m.agentMode(agent).CanCreatePRs() {
+		return fmt.Errorf("agent %q may not edit pull requests at this ACMM level (mode %s)",
 			agentName, m.agentMode(agent).String())
 	}
 	return nil

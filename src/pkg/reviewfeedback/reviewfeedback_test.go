@@ -211,6 +211,22 @@ func TestBuildBrief_RequiredInstructionsAndDataFencing(t *testing.T) {
 	}
 }
 
+// A follow-up commit that answers review can leave the PR description stale;
+// the brief tells the agent to refresh it itself through the edit_pr relay
+// rather than ask a maintainer (#19399).
+func TestBuildBrief_RefreshesStaleDescriptionThroughRelay(t *testing.T) {
+	brief := BuildBrief("o/r", 12, "fix/x", "", []github.FeedbackItem{item("inline:1")})
+	for _, want := range []string{
+		"re-read the PR title and body against the new diff",
+		"hive-open-issue edit-pr --repo OWNER/REPO N --body-file FILE",
+		"Do not ask a maintainer or another lane to fix the description",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("brief missing %q", want)
+		}
+	}
+}
+
 func TestEnabled(t *testing.T) {
 	if !Enabled() {
 		t.Fatal("default must be on")
