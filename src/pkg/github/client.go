@@ -2655,7 +2655,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 	reworkCache := c.enrichAttributedPRRework(ctx, attributed)
 	// Persisted past the live scan's lookback so the PRs-by-model windows
 	// keep a PR once the scan stops listing it (attributed_pr_history.go).
-	c.recordAttributedPRHistory(attributed, reworkCache)
+	c.recordAttributedPRHistory(repo, attributed, reworkCache)
 
 	if unclassified := totalPRs - breakdown.Total(); unclassified > 0 {
 		breakdown.Other += unclassified

@@ -370,8 +370,9 @@ func TestAttributedPRHistoryPrunesPastRetention(t *testing.T) {
 	}
 }
 
-// Only an error about the PR itself costs it a rework try; a GitHub hiccup or
-// a budget/cancellation error leaves it pending.
+// An error about the PR itself costs it a rework try, a GitHub hiccup one of
+// its transient tries (and the next PR still gets its turn), and a
+// budget/cancellation error nothing. Both caps are finite.
 func TestAttributedPRBackfillReworkTriesCountOnlyPerPRErrors(t *testing.T) {
 	useTempReworkCache(t)
 	now := time.Now().UTC()
@@ -380,7 +381,7 @@ func TestAttributedPRBackfillReworkTriesCountOnlyPerPRErrors(t *testing.T) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/repos/o/r/pulls/2/"):
 			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
-		case strings.HasPrefix(r.URL.Path, "/repos/o/r/pulls/1/"):
+		case strings.HasPrefix(r.URL.Path, "/repos/o/r/pulls/3/"):
 			http.Error(w, `{"message":"unavailable"}`, http.StatusServiceUnavailable)
 		default:
 			writeJSON(t, w, []map[string]any{})
@@ -392,18 +393,30 @@ func TestAttributedPRBackfillReworkTriesCountOnlyPerPRErrors(t *testing.T) {
 	merged := func(n int, created time.Time) PullRequest {
 		return PullRequest{Repo: "r", Number: n, HiveAttributed: true, State: "closed", CreatedAt: created, ClosedAt: created.Add(time.Hour), MergedAt: created.Add(time.Hour)}
 	}
-	// #2 is newer, so it is measured first.
-	h.upsert([]PullRequest{merged(1, now.Add(-48*time.Hour)), merged(2, now.Add(-24*time.Hour))}, nil, now)
+	// Measured newest first: #3 (503), #2 (404), #1 (fine).
+	h.upsert([]PullRequest{merged(1, now.Add(-72*time.Hour)), merged(2, now.Add(-48*time.Hour)), merged(3, now.Add(-24*time.Hour))}, nil, now)
 
 	_, stopped, _ := c.backfillAttributedPRRework(context.Background(), h, "r", 5, map[string]PRReworkStats{})
 	if stopped {
-		t.Fatal("a 503 ended the whole pass; it should only move on to the next repo")
+		t.Fatal("a 503 or 404 ended the whole pass")
+	}
+	if rec := h.file.Records["r#3"]; rec.ReworkTries != 0 || rec.ReworkTransientTries != 1 {
+		t.Fatalf("#3 (503) tries = %d transient = %d, want 0/1", rec.ReworkTries, rec.ReworkTransientTries)
 	}
 	if got := h.file.Records["r#2"].ReworkTries; got != 1 {
 		t.Fatalf("#2 (404) tries = %d, want 1", got)
 	}
-	if got := h.file.Records["r#1"].ReworkTries; got != 0 {
-		t.Fatalf("#1 (503) tries = %d, want 0", got)
+	if !h.file.Records["r#1"].ReworkKnown {
+		t.Fatal("#1 was not measured: the failing PRs ahead of it blocked it")
+	}
+	for i := 0; i < attributedPRBackfillReworkTransientTries; i++ {
+		c.backfillAttributedPRRework(context.Background(), h, "r", 5, map[string]PRReworkStats{})
+	}
+	if pending := h.reworkPending("r"); len(pending) != 0 {
+		t.Fatalf("still pending after the caps: %v", historyNumbers(pending))
+	}
+	if rec := h.file.Records["r#3"]; rec.ReworkTransientTries != attributedPRBackfillReworkTransientTries {
+		t.Fatalf("#3 transient tries = %d, want the cap %d", rec.ReworkTransientTries, attributedPRBackfillReworkTransientTries)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -531,5 +544,73 @@ func TestAttributedPRHistoryLoadDropsNullEntries(t *testing.T) {
 	h.dirty = true
 	if err := h.flush(now, []string{"r"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A repo whose live enumeration succeeded but whose closed-PR scan never ran
+// is uncovered: its closed PRs are missing while its open ones are live.
+func TestAttributedPRHistoryCoverageEnumeratedWithoutScanIsUncovered(t *testing.T) {
+	now := time.Now().UTC()
+	day := 24 * time.Hour
+	h := loadAttributedPRHistory(filepath.Join(t.TempDir(), AttributedPRHistoryFile), historyTestLogger())
+	h.noteScan("r", now.Add(-time.Hour), now.Add(-15*day), false)
+	h.file.Repos["r"].Backfill = attributedPRBackfillState{StartedAt: now, Horizon: now.Add(-30 * day), Listed: true, Done: true}
+	h.noteEnumerated("new")
+	if _, cov := h.snapshot([]string{"r", "new", "gone"}, now); cov.Full || !cov.Since.Equal(now) {
+		t.Fatalf("coverage = %+v, want nothing covered while an enumerated repo has no scan", cov)
+	}
+}
+
+// A repo whose last closed-PR scan is older than the live lookback is
+// uncovered: PRs closed since are neither stored nor live.
+func TestAttributedPRHistoryCoverageStaleScanIsUncovered(t *testing.T) {
+	now := time.Now().UTC()
+	day := 24 * time.Hour
+	h := loadAttributedPRHistory(filepath.Join(t.TempDir(), AttributedPRHistoryFile), historyTestLogger())
+	h.noteScan("r", now.Add(-20*day), now.Add(-34*day), false)
+	h.file.Repos["r"].Backfill = attributedPRBackfillState{StartedAt: now.Add(-20 * day), Horizon: now.Add(-50 * day), Listed: true, Done: true}
+	if _, cov := h.snapshot([]string{"r"}, now); cov.Full || !cov.Since.Equal(now) {
+		t.Fatalf("coverage with a 20-day-old scan = %+v, want nothing covered", cov)
+	}
+	if _, cov := h.snapshot([]string{"r"}, now.Add(-19*day)); !cov.Since.Equal(now.Add(-50 * day)) {
+		t.Fatalf("coverage a day after that scan = %+v, want the backfill horizon", cov)
+	}
+}
+
+// A walk whose listing keeps failing with a per-repo error gives up after
+// the cap: no further calls, and the repo is not done, so coverage does not
+// claim the horizon.
+func TestAttributedPRBackfillListingFailuresCapStopsWalk(t *testing.T) {
+	useTempReworkCache(t)
+	now := time.Now().UTC()
+	day := 24 * time.Hour
+	resetRESTAccountingForTest(t, now)
+	var mu sync.Mutex
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, historyTestLogger())
+	h := useHistoryAt(c, filepath.Join(t.TempDir(), AttributedPRHistoryFile))
+	h.noteScan("r", now, now.Add(-14*day), false)
+
+	for i := 0; i < attributedPRBackfillListFailures+3; i++ {
+		c.syncAttributedPRHistory(context.Background(), []string{"r"})
+	}
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != attributedPRBackfillListFailures {
+		t.Fatalf("listing calls = %d, want the cap %d", got, attributedPRBackfillListFailures)
+	}
+	if bf := h.file.Repos["r"].Backfill; bf.Done || bf.Listed {
+		t.Fatalf("backfill = %+v, want it given up, not done", bf)
+	}
+	if _, cov := h.snapshot([]string{"r"}, now); !cov.Since.Equal(now.Add(-14 * day)) {
+		t.Fatalf("coverage = %+v, want the live scan's floor, not the horizon", cov)
 	}
 }

@@ -70,6 +70,16 @@ const (
 	// attributedPRBackfillReworkTries bounds rework retries for one PR, so a
 	// PR whose reviews cannot be read does not hold the backfill open.
 	attributedPRBackfillReworkTries = 3
+	// attributedPRBackfillReworkTransientTries bounds retries after GitHub
+	// hiccups (5xx, network, timeouts) for one PR: more forgiving than a
+	// per-PR error, but finite, so a PR whose fetch keeps failing cannot
+	// hold the repo's backfill open forever.
+	attributedPRBackfillReworkTransientTries = 10
+	// attributedPRBackfillListFailures bounds failed listings of one walk
+	// (per-repo errors such as 403/404/410/422, or repeated hiccups). A walk
+	// that hits it stops: the repo is never marked done, so its coverage
+	// keeps reporting that it does not reach the horizon.
+	attributedPRBackfillListFailures = 5
 )
 
 // AttributedPRHistoryPath is where the hive keeps its attributed PR history.
@@ -108,10 +118,12 @@ type attributedPRRecord struct {
 	Rework     PRReworkStats `json:"rework,omitzero"`
 	// ReworkKnown marks Rework as the closed PR's measurement (from the
 	// rework cache or a backfill fetch), not a zero left by a failed fetch.
-	ReworkKnown bool      `json:"rework_known,omitempty"`
-	ReworkTries int       `json:"rework_tries,omitempty"`
-	FirstSeenAt time.Time `json:"first_seen_at,omitzero"`
-	LastSeenAt  time.Time `json:"last_seen_at,omitzero"`
+	ReworkKnown bool `json:"rework_known,omitempty"`
+	ReworkTries int  `json:"rework_tries,omitempty"`
+	// ReworkTransientTries counts fetches lost to GitHub hiccups.
+	ReworkTransientTries int       `json:"rework_transient_tries,omitempty"`
+	FirstSeenAt          time.Time `json:"first_seen_at,omitzero"`
+	LastSeenAt           time.Time `json:"last_seen_at,omitzero"`
 }
 
 func (r *attributedPRRecord) closed() bool {
@@ -119,7 +131,8 @@ func (r *attributedPRRecord) closed() bool {
 }
 
 func (r *attributedPRRecord) reworkPending() bool {
-	return r.closed() && !r.ReworkKnown && r.ReworkTries < attributedPRBackfillReworkTries
+	return r.closed() && !r.ReworkKnown && r.ReworkTries < attributedPRBackfillReworkTries &&
+		r.ReworkTransientTries < attributedPRBackfillReworkTransientTries
 }
 
 func (r *attributedPRRecord) pullRequest() PullRequest {
@@ -196,11 +209,14 @@ type attributedPRBackfillState struct {
 	// first: a closed PR reopened since shifts the list forward, and the
 	// re-read catches up to a page's worth of PRs that moved behind the
 	// cursor (records are keyed, so the overlap only rewrites them).
-	LastPage    int       `json:"last_page,omitempty"`
-	Listed      bool      `json:"listed,omitempty"`
-	ReachedEnd  bool      `json:"reached_end,omitempty"`
-	Done        bool      `json:"done,omitempty"`
-	CompletedAt time.Time `json:"completed_at,omitzero"`
+	LastPage int `json:"last_page,omitempty"`
+	// ListFailures counts this walk's failed listings since its last good
+	// page; at attributedPRBackfillListFailures the walk stops.
+	ListFailures int       `json:"list_failures,omitempty"`
+	Listed       bool      `json:"listed,omitempty"`
+	ReachedEnd   bool      `json:"reached_end,omitempty"`
+	Done         bool      `json:"done,omitempty"`
+	CompletedAt  time.Time `json:"completed_at,omitzero"`
 }
 
 type attributedPRHistoryFile struct {
@@ -227,6 +243,11 @@ type attributedPRHistory struct {
 	// EnumerateActionable, and two steps on one cursor would list the same
 	// pages and measure the same PRs twice.
 	stepMu sync.Mutex
+	// enumerated holds the repos whose live PR enumeration has succeeded in
+	// this process. One of them with no scan state yet is uncovered (its
+	// closed-PR scan failed, or the store was reset); a configured repo that
+	// never enumerated has nothing live or stored and is left out.
+	enumerated map[string]bool
 }
 
 // attributedPRHistories shares one store per path across clients, so a
@@ -379,7 +400,7 @@ func (h *attributedPRHistory) upsert(prs []PullRequest, reworkCache map[string]P
 			if old.ReworkKnown && rec.closed() {
 				rec.Rework, rec.ReworkKnown = old.Rework, true
 			} else {
-				rec.ReworkTries = old.ReworkTries
+				rec.ReworkTries, rec.ReworkTransientTries = old.ReworkTries, old.ReworkTransientTries
 			}
 		}
 		if !sameAttributedPRRecord(old, rec) {
@@ -494,11 +515,17 @@ func (h *attributedPRHistory) pruneLocked(now time.Time, configured []string) {
 }
 
 // coveredSinceLocked is one repo's coverage start. ok is false before the
-// repo's first live scan.
-func (h *attributedPRHistory) coveredSinceLocked(repo string) (since time.Time, full, ok bool) {
+// repo's first live scan. A repo whose last scan is older than the live
+// scan's lookback is uncovered (since = now): PRs closed after that scan are
+// neither stored nor in the live data, and the next scan cannot reach back
+// to all of them.
+func (h *attributedPRHistory) coveredSinceLocked(repo string, now time.Time, liveLookback time.Duration) (since time.Time, full, ok bool) {
 	st := h.file.Repos[repo]
 	if st == nil || st.LastScanAt.IsZero() {
 		return time.Time{}, false, false
+	}
+	if now.Sub(st.LastScanAt) > liveLookback {
+		return now, false, true
 	}
 	if st.RunFull {
 		return time.Time{}, true, true
@@ -530,15 +557,20 @@ func (h *attributedPRHistory) snapshot(repos []string, now time.Time) ([]PullReq
 	cov := AttributedPRCoverage{Available: true, Full: true}
 	want := make(map[string]bool, len(repos))
 	scanned := 0
+	liveLookback := attributedClosedPRLookback()
 	for _, repo := range repos {
 		want[repo] = true
-		since, full, ok := h.coveredSinceLocked(repo)
+		since, full, ok := h.coveredSinceLocked(repo, now, liveLookback)
 		if !ok {
-			// Never scanned (no access, deleted, or not reached yet): it has
-			// no PRs live or stored, so it cannot make a window partial. A
-			// repo that scanned before and then had a gap still counts,
-			// through its run floor.
-			continue
+			if !h.enumerated[repo] {
+				// Never enumerated in this process (no access, deleted, or
+				// not reached yet): nothing of it is live or stored, so it
+				// cannot make a window partial.
+				continue
+			}
+			// Enumerated but never scanned: its open PRs are live while
+			// its closed ones are missing, so nothing is covered.
+			since, full = now, false
 		}
 		scanned++
 		if !full {
@@ -575,6 +607,19 @@ func (h *attributedPRHistory) snapshot(repos []string, now time.Time) ([]PullReq
 	return out, cov
 }
 
+// noteEnumerated records that repo's live PR enumeration succeeded.
+func (h *attributedPRHistory) noteEnumerated(repo string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.enumerated == nil {
+		h.enumerated = map[string]bool{}
+	}
+	h.enumerated[repo] = true
+}
+
 // backfillStart returns repo's backfill cursor, starting (or restarting) it
 // when needed. ok is false when the repo needs no backfill: done, or no live
 // scan yet to anchor it.
@@ -601,7 +646,19 @@ func (h *attributedPRHistory) backfillStart(repo string, now time.Time, lookback
 		*bf = attributedPRBackfillState{StartedAt: now.UTC(), Horizon: now.Add(-lookback).UTC(), NextPage: 1}
 		h.dirty = true
 	}
+	if !bf.Listed && bf.ListFailures >= attributedPRBackfillListFailures {
+		// The walk gave up on this repo; it stays not done.
+		return *bf, false
+	}
 	return *bf, true
+}
+
+// backfillListFailed counts one failed listing of repo's walk.
+func (h *attributedPRHistory) backfillListFailed(repo string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.repoLocked(repo).Backfill.ListFailures++
+	h.dirty = true
 }
 
 // backfillPage stores one listed page and advances the cursor.
@@ -610,7 +667,7 @@ func (h *attributedPRHistory) backfillPage(repo string, prs []PullRequest, rewor
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	bf := &h.repoLocked(repo).Backfill
-	bf.LastPage, bf.NextPage = page, nextPage
+	bf.LastPage, bf.NextPage, bf.ListFailures = page, nextPage, 0
 	if reachedHorizon || nextPage == 0 {
 		bf.Listed = true
 		bf.ReachedEnd = !reachedHorizon
@@ -656,6 +713,16 @@ func (h *attributedPRHistory) setRework(key string, rework PRReworkStats, ok boo
 		rec.ReworkTries++
 	}
 	h.dirty = true
+}
+
+// reworkTransientFailed counts one rework fetch lost to a GitHub hiccup.
+func (h *attributedPRHistory) reworkTransientFailed(key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if rec := h.file.Records[key]; rec != nil {
+		rec.ReworkTransientTries++
+		h.dirty = true
+	}
 }
 
 // backfillFinish marks repo's backfill complete once the walk reached its
@@ -718,14 +785,19 @@ func (c *Client) AttributedPRHistory() ([]PullRequest, AttributedPRCoverage) {
 	return c.attributedPRHistory().snapshot(c.activeRepos(), time.Now())
 }
 
-// recordAttributedPRHistory stores one repo's attributed PRs from this pass
-// (after rework enrichment, so closed records carry their measurement).
-// reworkCache is the cache the enrichment just loaded and updated, so it is
+// recordAttributedPRHistory marks repo enumerated and stores its attributed
+// PRs from this pass (after rework enrichment, so closed records carry their
+// measurement). reworkCache is the cache the enrichment just loaded and updated, so it is
 // not read from disk twice. The write happens once per pass in
 // syncAttributedPRHistory.
-func (c *Client) recordAttributedPRHistory(prs []PullRequest, reworkCache map[string]PRReworkStats) {
+func (c *Client) recordAttributedPRHistory(repo string, prs []PullRequest, reworkCache map[string]PRReworkStats) {
 	h := c.attributedPRHistory()
-	if h == nil || len(prs) == 0 {
+	if h == nil {
+		return
+	}
+	// Called only once the repo's open-PR listing succeeded.
+	h.noteEnumerated(repo)
+	if len(prs) == 0 {
 		return
 	}
 	if reworkCache == nil {
@@ -814,6 +886,9 @@ func (c *Client) backfillAttributedPRHistory(ctx context.Context, h *attributedP
 	pages, reworks := attributedPRBackfillPagesPerPass, attributedPRBackfillReworkPerPass
 	var reworkCache map[string]PRReworkStats
 	reworkCacheChanged := false
+	// Like enrichAttributedPRRework, this writes back the whole cache map it
+	// loaded, so a concurrent enrichment's additions in between are lost
+	// (last writer wins) and simply measured again later.
 	defer func() {
 		if reworkCacheChanged {
 			storePRReworkCache(reworkCache)
@@ -879,7 +954,13 @@ func (c *Client) backfillAttributedPRPages(ctx context.Context, h *attributedPRH
 		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
 		if err != nil {
 			h.warn("attributed PR history: backfill listing failed; retrying next pass", fmt.Errorf("listing closed PRs for %s/%s: %w", owner, repoName, err), "repo", repo)
-			return budget, classifyAttributedPRBackfillErr(ctx, err) == attributedPRBackfillErrStop
+			if classifyAttributedPRBackfillErr(ctx, err) == attributedPRBackfillErrStop {
+				return budget, true
+			}
+			// A per-repo error or a hiccup: counted against the walk, which
+			// gives up after attributedPRBackfillListFailures in a row.
+			h.backfillListFailed(repo)
+			return budget, false
 		}
 		var recs []PullRequest
 		reached := false
@@ -909,10 +990,10 @@ func (c *Client) backfillAttributedPRPages(ctx context.Context, h *attributedPRH
 }
 
 // backfillAttributedPRRework measures rework for repo's closed records that
-// lack it, through the same fetch and cache the live enrichment uses. Only an
-// error about the PR itself counts one of its tries; a hiccup moves on to the
-// next repo and a budget or cancellation error ends the pass, both leaving
-// the PR pending for a later pass.
+// lack it, through the same fetch and cache the live enrichment uses. An
+// error about the PR itself counts one of its tries and a hiccup one of its
+// (more numerous) transient tries, and the next PR gets its turn; a budget or
+// cancellation error ends the pass without counting anything.
 func (c *Client) backfillAttributedPRRework(ctx context.Context, h *attributedPRHistory, repo string, budget int, reworkCache map[string]PRReworkStats) (left int, stopped, cacheChanged bool) {
 	for _, pr := range h.reworkPending(repo) {
 		key := ReviewLinkKey(pr.Repo, pr.Number)
@@ -933,7 +1014,11 @@ func (c *Client) backfillAttributedPRRework(ctx context.Context, h *attributedPR
 			case attributedPRBackfillErrStop:
 				return budget, true, cacheChanged
 			case attributedPRBackfillErrTransient:
-				return budget, false, cacheChanged
+				// Counted on its own, larger cap, and the next PR gets its
+				// turn: the pending order is fixed, so returning here would
+				// put the same failing PR first on every pass.
+				h.reworkTransientFailed(key)
+				continue
 			}
 			h.setRework(key, PRReworkStats{}, false)
 			continue
