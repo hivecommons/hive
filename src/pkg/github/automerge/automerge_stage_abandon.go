@@ -244,7 +244,7 @@ func (c *Engine) closeAbandonedIfDue(ctx context.Context, store *stagelabels.Sto
 	if why := c.abandonCloseHeld(obs); why != "" {
 		// A hold or keep-open label cancels the countdown: once it is
 		// lifted the hive warns again and waits a full grace.
-		if store.ResetAbandonNotice(key) {
+		if store.ResetAbandonNotice(key, now) {
 			c.info("stage labels: abandoned PR close countdown cancelled", append(logArgs, "why", why)...)
 		} else {
 			c.debug("stage labels: abandoned PR not closed", append(logArgs, "why", why)...)
@@ -254,6 +254,20 @@ func (c *Engine) closeAbandonedIfDue(ctx context.Context, store *stagelabels.Sto
 	grace := config.AbandonCloseGrace
 	item := writebackItemForObservation(obs)
 	if rec.AbandonNoticeAt.IsZero() {
+		// The store saves after the pass, so a restart between the post and
+		// the save forgets the notice. The hive's own AbandonNoticeMarker
+		// comment posted inside this countdown is taken as the notice, not
+		// posted a second time.
+		posted, err := c.ownAbandonNoticeSince(ctx, obs, rec.AbandonCountdownStart())
+		if err != nil {
+			c.warn("stage labels: abandoned PR notice check failed; not warned yet", append(logArgs, "error", err)...)
+			return 0, false, err
+		}
+		if !posted.IsZero() {
+			store.MarkAbandonNoticed(key, posted)
+			c.info("stage labels: abandoned PR notice already posted; countdown resumed", append(logArgs, "noticed_at", posted)...)
+			return 0, false, nil
+		}
 		body := AbandonNoticeComment(obs, rec, grace, now)
 		if d := c.writebackAllowed(obs.Display, item, writeback.KindSupersessionNotice, body); !d.Allowed {
 			c.info("stage labels: abandoned PR notice suppressed by the write-back gate", append(logArgs, "writeback_reason", d.Reason, "writeback_detail", d.Detail)...)
@@ -300,6 +314,27 @@ func (c *Engine) closeAbandonedIfDue(ctx context.Context, store *stagelabels.Sto
 		return 0, true, err
 	}
 	return 1, true, nil
+}
+
+// ownAbandonNoticeSince returns when the hive's own auto-close notice on
+// the PR was posted, if one was posted after since, or zero. Only the
+// hive's App login counts: anyone can type AbandonNoticeMarker. A hive
+// that cannot name its App login reads as "none".
+func (c *Engine) ownAbandonNoticeSince(ctx context.Context, obs stageObservation, since time.Time) (time.Time, error) {
+	if c.transport == nil || normalizeBotLogin(c.transport.AppBotLogin()) == "" {
+		return time.Time{}, nil
+	}
+	cm, err := c.findOwnMarkerComment(ctx, obs.Owner, obs.Repo, obs.Number, func(body string) bool {
+		return strings.HasPrefix(body, AbandonNoticeMarker)
+	})
+	if err != nil || cm == nil {
+		return time.Time{}, err
+	}
+	at := cm.GetCreatedAt().Time
+	if !at.After(since) {
+		return time.Time{}, nil
+	}
+	return at, nil
 }
 
 // abandonedAgeText renders how long rec has been idle at now in words a

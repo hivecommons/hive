@@ -349,11 +349,12 @@ func (s *Store) ClearAbandoned(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || (r.AbandonedAt.IsZero() && r.AbandonNoticeAt.IsZero() && r.AbandonClosedAt.IsZero() && r.AbandonCloseTriedAt.IsZero()) {
+	if !ok || (r.AbandonedAt.IsZero() && r.AbandonNoticeAt.IsZero() && r.AbandonClosedAt.IsZero() && r.AbandonCloseTriedAt.IsZero() && r.AbandonNoticeResetAt.IsZero()) {
 		return false
 	}
 	r.AbandonedAt, r.AbandonedBlocker, r.AbandonedIdleSince = time.Time{}, "", time.Time{}
 	r.AbandonNoticeAt, r.AbandonClosedAt, r.AbandonCloseTriedAt = time.Time{}, time.Time{}, time.Time{}
+	r.AbandonNoticeResetAt = time.Time{}
 	s.items[key] = r
 	s.dirty = true
 	return true
@@ -445,8 +446,9 @@ func (s *Store) MarkAbandonTrustedSeen(key string) {
 // ResetAbandonNotice drops a pending notice and a refused close attempt
 // while keeping the flag: a hold or keep-open label on the PR cancels the
 // countdown, and once it is lifted the hive must warn again and wait a full
-// grace before closing.
-func (s *Store) ResetAbandonNotice(key string) bool {
+// grace before closing. now is kept as AbandonNoticeResetAt, so the
+// cancelled notice is never taken for the new countdown's.
+func (s *Store) ResetAbandonNotice(key string, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
@@ -454,6 +456,7 @@ func (s *Store) ResetAbandonNotice(key string) bool {
 		return false
 	}
 	r.AbandonNoticeAt, r.AbandonCloseTriedAt = time.Time{}, time.Time{}
+	r.AbandonNoticeResetAt = now
 	s.items[key] = r
 	s.dirty = true
 	return true

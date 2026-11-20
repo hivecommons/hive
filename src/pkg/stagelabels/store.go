@@ -536,11 +536,14 @@ type Record struct {
 	// AbandonNoticeAt is when the auto-close warning was posted
 	// (governor.labels.stage.abandon_close_repos); AbandonClosedAt is when
 	// the hive closed the PR after the grace; AbandonCloseTriedAt is the
-	// last close attempt GitHub refused, so a refusal backs off. All clear
-	// with the flag.
-	AbandonNoticeAt     time.Time `json:"abandon_notice_at,omitzero"`
-	AbandonClosedAt     time.Time `json:"abandon_closed_at,omitzero"`
-	AbandonCloseTriedAt time.Time `json:"abandon_close_tried_at,omitzero"`
+	// last close attempt GitHub refused, so a refusal backs off.
+	// AbandonNoticeResetAt is when a hold or keep-open label last cancelled
+	// the countdown, so a notice posted before it never counts again. All
+	// clear with the flag.
+	AbandonNoticeAt      time.Time `json:"abandon_notice_at,omitzero"`
+	AbandonClosedAt      time.Time `json:"abandon_closed_at,omitzero"`
+	AbandonCloseTriedAt  time.Time `json:"abandon_close_tried_at,omitzero"`
+	AbandonNoticeResetAt time.Time `json:"abandon_notice_reset_at,omitzero"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or

@@ -557,6 +557,62 @@ func TestCloseAbandonedHoldCancelsTheCountdown(t *testing.T) {
 	}
 }
 
+// A notice the store forgot (a restart between the post and the store's
+// save) is not posted again: the hive's own notice inside this countdown
+// restarts the grace from when it was posted. A stranger's copy of the
+// marker does not count.
+func TestCloseAbandonedNoticeLostFromTheStoreIsNotRepeated(t *testing.T) {
+	notice := func(login string, at time.Time) map[string]any {
+		return map[string]any{"id": 5, "body": AbandonNoticeMarker + " head=aaa -->\nThis pull request has had no push", "created_at": ghTime(at), "user": map[string]any{"login": login, "type": "Bot"}}
+	}
+	t.Run("own", func(t *testing.T) {
+		f := abandonFlagged(t)
+		noticedAt := f.clock.now()
+		f.api.comments = []map[string]any{notice(testHiveAppBotLogin, noticedAt)}
+		f.clock.advance(time.Hour)
+		n, closed, err := f.close(t, listedPolicy(f))
+		if err != nil || n != 0 || closed || len(f.api.posted) != 0 {
+			t.Fatalf("lost notice: n=%d closed=%v err=%v posted=%q; want it adopted, nothing posted", n, closed, err, f.api.posted)
+		}
+		if got := f.rec(t).AbandonNoticeAt; !got.Equal(noticedAt) {
+			t.Fatalf("notice at = %v, want the comment's %v", got, noticedAt)
+		}
+		f.clock.advance(24 * time.Hour)
+		n, closed, err = f.close(t, listedPolicy(f))
+		if err != nil || n != 1 || !closed || len(f.api.posted) != 1 || !strings.HasPrefix(f.api.posted[0], AbandonCloseMarker) {
+			t.Fatalf("after the grace: n=%d closed=%v err=%v posted=%q", n, closed, err, f.api.posted)
+		}
+	})
+	t.Run("stranger", func(t *testing.T) {
+		f := abandonFlagged(t)
+		f.api.comments = []map[string]any{notice("contributor", f.clock.now())}
+		f.clock.advance(time.Hour)
+		n, _, err := f.close(t, listedPolicy(f))
+		if err != nil || n != 1 || len(f.api.posted) != 1 || !strings.HasPrefix(f.api.posted[0], AbandonNoticeMarker) {
+			t.Fatalf("stranger's marker: n=%d err=%v posted=%q; want the hive's own notice", n, err, f.api.posted)
+		}
+	})
+	// A notice a hold cancelled belongs to the old countdown: once the
+	// hold is lifted the hive warns again.
+	t.Run("cancelled", func(t *testing.T) {
+		f := abandonFlagged(t)
+		noticedAt := f.clock.now()
+		if n, _, _ := f.close(t, listedPolicy(f)); n != 1 {
+			t.Fatal("no notice")
+		}
+		f.api.comments = []map[string]any{notice(testHiveAppBotLogin, noticedAt)}
+		f.clock.advance(time.Hour)
+		f.obs.Labels = []string{"hold"}
+		_, _, _ = f.close(t, listedPolicy(f))
+		f.clock.advance(time.Hour)
+		f.obs.Labels = nil
+		n, closed, _ := f.close(t, listedPolicy(f))
+		if n != 1 || closed || len(f.api.posted) != 2 || !strings.HasPrefix(f.api.posted[1], AbandonNoticeMarker) {
+			t.Fatalf("after the hold: n=%d closed=%v posted=%d; want a fresh notice", n, closed, len(f.api.posted))
+		}
+	})
+}
+
 // Wiring: a full ApplyStageLabels pass in a listed L6 repository flags,
 // warns about and never closes an owner's or a trusted author's PR parked
 // at 071 past the threshold, while a contributor's PR in the same pass is
