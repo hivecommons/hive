@@ -69,8 +69,9 @@ func parkWithdrawnBy(body string) string {
 }
 
 // trailerAgent reads the agent from the text's attribution trailer. Hidden
-// markers after it (the owner-step marker a park ends with) are skipped:
-// ParseAttributionTrailer reads only the final visible line.
+// markers after it (the owner-step marker a park ends with) are skipped
+// here as well as by ParseAttributionTrailer, which also skips the other
+// footer lines a PR body ends with.
 func trailerAgent(text string) string {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	for len(lines) > 0 {
