@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -275,11 +276,30 @@ func sweepRebaseLogged(t *testing.T, prs []github.PullRequest, now time.Time) ([
 	return payload.CIFailing, strings.Count(logs.String(), "PR routed to fixer for rebase")
 }
 
+// fixerKickCarrying is a delivered fixer kick whose fix-before-new section
+// hands over attempt of repo#number, laid out the way the scheduler's
+// builder writes it (pkg/scheduler TestKickCarriesRebaseAttempt pins the
+// builder side).
+func fixerKickCarrying(repo string, number, attempt int) string {
+	return "[agent:scanner]\nWORK LIST\n\n## 🔴 FIX-BEFORE-NEW — your open PRs with failing CI or merge conflicts (1)\n\n" +
+		"These PRs are YOURS and they are red or conflicted.\n\n" +
+		fmt.Sprintf("  #%d %s — adopted\n", number, repo) +
+		"    conflict: mergeable_state=dirty — merge the base branch or rebase the PR branch\n" +
+		fmt.Sprintf("    rebase-resolve (attempt %d/%d): `gh pr checkout`, `git rebase origin/v5`\n\n", attempt, rebasemerge.MaxRebaseAttempts)
+}
+
+func deliverFixerKick(message string, at time.Time) string {
+	var logs bytes.Buffer
+	recordRebaseAttemptDeliveries("scanner", message, at, slog.New(slog.NewTextHandler(&logs, nil)))
+	return logs.String()
+}
+
 // hivecommons/hive#16023: an adopted conflicting PR whose fixer never
 // pushes must not sit on attempt 1 forever. The attempt is routed (and
-// logged) once; past the per-attempt deadline it counts as failed and
-// attempt 2 is routed with one line; past the cap the row leaves the fixer
-// list so the adoption lane can re-home it.
+// logged) once; past the per-attempt deadline from the kick that handed it
+// to the fixer it counts as failed and attempt 2 is routed with one line;
+// past the cap the row leaves the fixer list so the adoption lane can
+// re-home it.
 func TestWriteMergeEligible_AdoptedRebaseAttemptTimesOutWithoutPush(t *testing.T) {
 	store := useMemoryRebaseAttempts(t)
 	const repo = "hivecommons/hive"
@@ -306,6 +326,7 @@ func TestWriteMergeEligible_AdoptedRebaseAttemptTimesOutWithoutPush(t *testing.T
 	if got := rebasemerge.AttemptTextAt(mustAttempt(t, store, repo, 15998), t0.Add(12*time.Minute)); got != "Rebasing · attempt 1/2 · waiting for scanner 12m" {
 		t.Fatalf("caption = %q", got)
 	}
+	deliverFixerKick(fixerKickCarrying(repo, 15998, 1), t0)
 	// No push by the deadline: attempt 1 failed, attempt 2 routed once.
 	failing, routed = sweepRebaseLogged(t, []github.PullRequest{pr}, t0.Add(timeout))
 	if len(failing) != 1 || failing[0].RebaseAttempt != 2 || routed != 1 {
@@ -315,6 +336,7 @@ func TestWriteMergeEligible_AdoptedRebaseAttemptTimesOutWithoutPush(t *testing.T
 	if len(failing) != 1 || failing[0].RebaseAttempt != 2 || routed != 0 {
 		t.Fatalf("attempt 2 re-sweep: rows=%+v routed=%d", failing, routed)
 	}
+	deliverFixerKick(fixerKickCarrying(repo, 15998, 2), t0.Add(timeout))
 	// Attempt 2 also times out: exhausted, off the fixer list.
 	failing, routed = sweepRebaseLogged(t, []github.PullRequest{pr}, t0.Add(2*timeout))
 	if len(failing) != 0 || routed != 0 {
@@ -322,6 +344,85 @@ func TestWriteMergeEligible_AdoptedRebaseAttemptTimesOutWithoutPush(t *testing.T
 	}
 	if a := mustAttempt(t, store, repo, 15998); !a.Exhausted() || a.Stalled != 2 {
 		t.Fatalf("episode = %+v, want exhausted by two timed-out attempts", a)
+	}
+}
+
+// projectbluefin/utah#1382: an adopted fork PR (maintainer edits allowed,
+// so the fixer can push in place) was routed for rebase twice while the
+// fixer was never kicked with it — its only starts in that window were
+// single-task review-fix kicks for another PR — and both attempts expired
+// from the routing time. The episode was exhausted, re-homing a fork is
+// refused (hivecommons/hive#14306), and the PR parked at 085
+// adoption-stalled:fork-rehome-refused without one in-place attempt.
+//
+// The deadline now runs from the kick that carries the attempt: a routed
+// attempt waits for the fixer however long that takes, a kick that does not
+// carry it (a review-fix prompt, another attempt) delivers nothing, and the
+// episode can only be exhausted, and the fork PR handed to a person, after
+// two attempts that each reached the fixer and saw no push.
+func TestWriteMergeEligible_AdoptedForkRebaseDeadlineStartsAtFixerKick(t *testing.T) {
+	store := useMemoryRebaseAttempts(t)
+	const repo = "hivecommons/hive"
+	adoptInPlace(t, repo, 1382, "5eed1382")
+	pr := github.PullRequest{Number: 1382, Repo: "hive", Author: "mendezr", HeadSHA: "5eed1382",
+		HeadRef: "feat/x", HeadRepo: "mendezr/hive", FromFork: true, MaintainerCanModify: true, BaseRef: "v5",
+		Mergeable: github.MergeableNo, MergeableState: "dirty", CIStatus: "pending",
+		Labels: []string{"needs-rebase", "stage/074-adopted-by-hive"}}
+	routedAt := time.Date(2026, 11, 20, 13, 43, 19, 0, time.UTC)
+	timeout := config.DefaultAdoptRebaseAttemptTimeout
+
+	failing, routed := sweepRebaseLogged(t, []github.PullRequest{pr}, routedAt)
+	if len(failing) != 1 || failing[0].RebaseAttempt != 1 || routed != 1 || failing[0].ReachableAction != github.ReachableActionPush {
+		t.Fatalf("first sweep: rows=%+v routed=%d, want push attempt 1 routed once", failing, routed)
+	}
+	// The fixer's only starts are review-fix kicks for another PR, and a
+	// kick for attempt 2 that never existed: nothing is handed over.
+	for _, msg := range []string{
+		"[review-fix:hivecommons/website#1054]\nFix review findings for PR hivecommons/website#1054.\n",
+		fixerKickCarrying(repo, 1382, 2),
+	} {
+		if logs := deliverFixerKick(msg, routedAt.Add(4*time.Minute)); strings.Contains(logs, "rebase attempt delivered to fixer") {
+			t.Fatalf("kick %q delivered the rebase:\n%s", msg, logs)
+		}
+	}
+	for _, after := range []time.Duration{timeout, 2 * timeout, 77 * time.Minute} {
+		failing, routed = sweepRebaseLogged(t, []github.PullRequest{pr}, routedAt.Add(after))
+		if len(failing) != 1 || failing[0].RebaseAttempt != 1 || routed != 0 {
+			t.Fatalf("%s after routing, never delivered: rows=%+v routed=%d, want attempt 1 still listed", after, failing, routed)
+		}
+	}
+	if a := mustAttempt(t, store, repo, 1382); a.Exhausted() || a.Stalled != 0 || a.Delivered() {
+		t.Fatalf("undelivered episode = %+v, want attempt 1 waiting, not exhausted", a)
+	}
+
+	// The fixer's next cadence kick carries the row: the deadline starts.
+	kickedAt := routedAt.Add(77 * time.Minute)
+	logs := deliverFixerKick(fixerKickCarrying(repo, 1382, 1), kickedAt)
+	if !strings.Contains(logs, "rebase attempt delivered to fixer") || !strings.Contains(logs, "attempt=1") || !strings.Contains(logs, "queued_for=1h17m0s") {
+		t.Fatalf("delivery log = %q", logs)
+	}
+	if logs = deliverFixerKick(fixerKickCarrying(repo, 1382, 1), kickedAt.Add(time.Minute)); logs != "" {
+		t.Fatalf("a second kick for the same attempt logged again: %q", logs)
+	}
+	failing, routed = sweepRebaseLogged(t, []github.PullRequest{pr}, kickedAt.Add(timeout-time.Second))
+	if len(failing) != 1 || failing[0].RebaseAttempt != 1 || routed != 0 {
+		t.Fatalf("inside the delivered deadline: rows=%+v routed=%d", failing, routed)
+	}
+	failing, routed = sweepRebaseLogged(t, []github.PullRequest{pr}, kickedAt.Add(timeout))
+	if len(failing) != 1 || failing[0].RebaseAttempt != 2 || routed != 1 {
+		t.Fatalf("delivered attempt 1 timed out: rows=%+v routed=%d, want attempt 2 routed", failing, routed)
+	}
+	if a := mustAttempt(t, store, repo, 1382); a.Exhausted() {
+		t.Fatalf("episode = %+v, exhausted after one delivered attempt", a)
+	}
+	attempt2 := kickedAt.Add(timeout + 9*time.Minute)
+	deliverFixerKick(fixerKickCarrying(repo, 1382, 2), attempt2)
+	failing, routed = sweepRebaseLogged(t, []github.PullRequest{pr}, attempt2.Add(timeout))
+	if len(failing) != 0 || routed != 0 {
+		t.Fatalf("two delivered attempts timed out: rows=%+v routed=%d, want the conflict left to a person", failing, routed)
+	}
+	if a := mustAttempt(t, store, repo, 1382); !a.Exhausted() || a.Stalled != 2 {
+		t.Fatalf("episode = %+v, want exhausted by two delivered, timed-out attempts", a)
 	}
 }
 

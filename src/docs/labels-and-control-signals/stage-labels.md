@@ -1120,7 +1120,11 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      074 dwell, supersede in that sweep rather than escalate to 085. Each
      fixer attempt is routed once and gets
      `governor.labels.stage.adoption.rebase_attempt_timeout` (default 15m)
-     to push; one with no push counts as failed and the next attempt is
+     to push, counted from the delivery of the first fixer kick that
+     carries it (routing only lists the row for the fixer's next kick, so
+     an attempt still waiting for that kick is not failed at that deadline;
+     one no kick carries ends after 8× the timeout from routing); one
+     with no push by then counts as failed and the next attempt is
      dispatched (the row reads "Rebasing · attempt 1/2 · waiting for
      scanner 12m" meanwhile). Once both attempts are spent the adoption
      supersedes at once instead of waiting out the dwell (#16023).

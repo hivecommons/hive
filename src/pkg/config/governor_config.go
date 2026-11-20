@@ -596,9 +596,10 @@ type StageAdoptionConfig struct {
 	OfflineGrace string `yaml:"offline_grace,omitempty"`
 	// RebaseAttemptTimeout is how long one fixer rebase attempt on an
 	// adopted (or otherwise hive-owned) conflicting PR may wait for the
-	// fixer's push before it counts as failed and the next attempt is
-	// dispatched; past the attempt cap an in-place adoption re-homes to a
-	// hive-owned superseding PR at once (default 15m;
+	// fixer's push, from the delivery of the first fixer kick that carried
+	// it, before it counts as failed and the next attempt is dispatched;
+	// past the attempt cap an in-place adoption re-homes to a hive-owned
+	// superseding PR at once (default 15m;
 	// hivecommons/hive#16023).
 	RebaseAttemptTimeout string `yaml:"rebase_attempt_timeout,omitempty"`
 	// InPlace lets the hive adopt by pushing to the PR's own branch when

@@ -506,7 +506,7 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 		writeBusy()
 		return b.String()
 	}
-	b.WriteString(fmt.Sprintf("\n## 🔴 FIX-BEFORE-NEW — your open PRs with failing CI or merge conflicts (%d)\n\n", len(mine)))
+	b.WriteString(fmt.Sprintf("\n%s — your open PRs with failing CI or merge conflicts (%d)\n\n", redPRFixHeader, len(mine)))
 	if forks > 0 {
 		b.WriteString(fmt.Sprintf("(%d red PR(s) from forks are NOT listed here: you cannot push to a fork — they appear under CI_FAILING as comment-only.)\n", forks))
 	}
@@ -579,6 +579,58 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 	b.WriteString("\n")
 	writeBusy()
 	return b.String()
+}
+
+// redPRFixHeader opens the fix-before-new section; KickCarriesRebaseAttempt
+// finds the section by it.
+const redPRFixHeader = "## 🔴 FIX-BEFORE-NEW"
+
+// KickCarriesRebaseAttempt reports whether a kick message hands the agent
+// the rebase-resolve work for attempt of repo#number: the PR is one of the
+// detailed rows of the message's fix-before-new section and its rebase
+// line names that attempt. Routing a rebase only lists it in ci-failing.json
+// for the fixer's next kick, so the delivery of a kick this reports true for
+// is when the attempt's deadline starts (rebasemerge.Attempts.Deliver). A
+// row past the detailed cap, a busy-branch row, or a row the kick listed
+// for another attempt was not handed over.
+func KickCarriesRebaseAttempt(message, repo string, number, attempt int) bool {
+	if number <= 0 || attempt < 1 || strings.TrimSpace(repo) == "" {
+		return false
+	}
+	rowPrefix := fmt.Sprintf("  #%d ", number)
+	repoPrefix := strings.ToLower(strings.TrimSpace(repo)) + " "
+	rebaseLine := fmt.Sprintf("    rebase-resolve (attempt %d/", attempt)
+	lines := strings.Split(message, "\n")
+	// Every line that opens the section is checked: earlier kick text (an
+	// issue body quoting a kick) can carry the header too.
+	for i, line := range lines {
+		if strings.HasPrefix(line, redPRFixHeader+" ") && redPRFixRowsCarry(lines[i+1:], rowPrefix, repoPrefix, rebaseLine) {
+			return true
+		}
+	}
+	return false
+}
+
+// redPRFixRowsCarry scans the lines after one fix-before-new header for a
+// detailed row starting rowPrefix, for repoPrefix, with rebaseLine under it.
+func redPRFixRowsCarry(lines []string, rowPrefix, repoPrefix, rebaseLine string) bool {
+	inRow, seenRow := false, false
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "  #"):
+			seenRow = true
+			rest, ok := strings.CutPrefix(line, rowPrefix)
+			inRow = ok && strings.HasPrefix(strings.ToLower(rest), repoPrefix)
+		case line == "":
+			// The rows end at the first blank line after them.
+			if seenRow {
+				return false
+			}
+		case inRow && strings.HasPrefix(line, rebaseLine):
+			return true
+		}
+	}
+	return false
 }
 
 // reviewThreadsPath is the review-thread monitor's artifact

@@ -211,7 +211,7 @@ func TestAttemptsLoopGuard(t *testing.T) {
 	}
 }
 
-// hivecommons/hive#16023: a dispatched attempt the fixer never pushes for
+// hivecommons/hive#16023: a delivered attempt the fixer never pushes for
 // counts as failed past the deadline, so the episode advances (and is
 // exhausted) without a new dirty head; each attempt is dispatched once.
 func TestAttemptsExpireAdvancesStalledAttempt(t *testing.T) {
@@ -229,6 +229,9 @@ func TestAttemptsExpireAdvancesStalledAttempt(t *testing.T) {
 	}
 	if a, first = s.Dispatch("o/r", 1, "scanner", now.Add(5*time.Minute)); first || !a.DispatchedAt.Equal(now) {
 		t.Fatalf("re-dispatch of the same attempt: %+v first=%v", a, first)
+	}
+	if a, first = s.Deliver("o/r", 1, 1, now); !first || !a.Delivered() {
+		t.Fatalf("first delivery: %+v first=%v", a, first)
 	}
 	if got := AttemptTextAt(a, now.Add(12*time.Minute)); got != "Rebasing · attempt 1/2 · waiting for scanner 12m" {
 		t.Fatalf("caption: %q", got)
@@ -251,6 +254,9 @@ func TestAttemptsExpireAdvancesStalledAttempt(t *testing.T) {
 	}
 	if a, first = s.Dispatch("o/r", 1, "", now.Add(timeout)); !first || a.DispatchedAttempt != 2 {
 		t.Fatalf("attempt 2 dispatch: %+v first=%v", a, first)
+	}
+	if _, first = s.Deliver("o/r", 1, 2, now.Add(timeout)); !first {
+		t.Fatal("attempt 2 delivery")
 	}
 	if got := AttemptTextAt(a, now.Add(timeout+3*time.Minute)); got != "Rebasing · attempt 2/2 · waiting for the fixer 3m" {
 		t.Fatalf("no-fixer caption: %q", got)
@@ -280,6 +286,78 @@ func TestAttemptsExpireAdvancesStalledAttempt(t *testing.T) {
 	}
 	if _, first = s.Dispatch("o/r", 9, "scanner", now); first {
 		t.Fatal("dispatch without an episode")
+	}
+}
+
+// The deadline is the fixer's, so it starts when a kick carrying the attempt
+// reached the fixer: an attempt that was only routed (listed for the fixer's
+// next kick) never expires however long it waits, a delivery of another
+// attempt changes nothing, and once delivered the attempt times out a full
+// timeout after the delivery, not after the routing
+// (projectbluefin/utah#1382 burned both attempts while the fixer was never
+// kicked with them).
+func TestAttemptsDeadlineStartsAtDelivery(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "attempts.json")
+	s := NewAttempts(path)
+	routed := time.Date(2026, 11, 20, 13, 43, 0, 0, time.UTC)
+	const timeout = 15 * time.Minute
+	if _, first := s.Deliver("o/r", 1, 1, routed); first {
+		t.Fatal("delivery without an episode")
+	}
+	s.Observe("o/r", 1, "aaa", routed)
+	if _, first := s.Deliver("o/r", 1, 1, routed); first {
+		t.Fatal("an attempt that was never routed cannot be delivered")
+	}
+	s.Dispatch("o/r", 1, "scanner", routed)
+	if got := s.AwaitingDelivery(); len(got) != 1 || got[0].Repo != "o/r" || got[0].Number != 1 || got[0].Count() != 1 {
+		t.Fatalf("awaiting delivery: %+v", got)
+	}
+	for _, at := range []time.Duration{timeout, 2 * timeout, undeliveredAttemptFactor*timeout - time.Second} {
+		if a, ok := s.Expire("o/r", 1, timeout, routed.Add(at)); ok || a.Count() != 1 || a.Exhausted() {
+			t.Fatalf("routed, never delivered, %s later: %+v advanced=%v", at, a, ok)
+		}
+	}
+	if _, first := s.Deliver("o/r", 1, 2, routed.Add(time.Hour)); first {
+		t.Fatal("a kick carrying another attempt must not deliver this one")
+	}
+	delivered := routed.Add(77 * time.Minute)
+	a, first := s.Deliver("o/r", 1, 1, delivered)
+	if !first || !a.Delivered() || !a.DeliveredAt.Equal(delivered) || a.DeliveredAttempt != 1 {
+		t.Fatalf("delivery: %+v first=%v", a, first)
+	}
+	if a, first = s.Deliver("o/r", 1, 1, delivered.Add(5*time.Minute)); first || !a.DeliveredAt.Equal(delivered) {
+		t.Fatalf("a later kick must keep the first delivery: %+v first=%v", a, first)
+	}
+	if got := s.AwaitingDelivery(); len(got) != 0 {
+		t.Fatalf("delivered attempt still awaiting delivery: %+v", got)
+	}
+	if got, ok := NewAttempts(path).Get("o/r", 1); !ok || !got.Delivered() || !got.DeliveredAt.Equal(delivered) {
+		t.Fatalf("reload: %+v ok=%v", got, ok)
+	}
+	if _, ok := s.Expire("o/r", 1, timeout, delivered.Add(timeout-time.Second)); ok {
+		t.Fatal("expired before a full timeout after delivery")
+	}
+	a, ok := s.Expire("o/r", 1, timeout, delivered.Add(timeout))
+	if !ok || a.Count() != 2 || a.Stalled != 1 || a.Delivered() || a.Dispatched() {
+		t.Fatalf("delivered attempt 1 timed out: %+v ok=%v", a, ok)
+	}
+	if _, first = s.Deliver("o/r", 1, 2, delivered.Add(timeout)); first {
+		t.Fatal("attempt 2 is not routed yet")
+	}
+	s.Dispatch("o/r", 1, "scanner", delivered.Add(timeout))
+	if got := s.AwaitingDelivery(); len(got) != 1 || got[0].Count() != 2 {
+		t.Fatalf("attempt 2 awaiting delivery: %+v", got)
+	}
+	// Attempt 2 is never handed over: the episode stays open through the
+	// fixer's deadline and well past it ...
+	routed2 := delivered.Add(timeout)
+	if a, ok = s.Expire("o/r", 1, timeout, routed2.Add(undeliveredAttemptFactor*timeout-time.Second)); ok || a.Exhausted() || a.Count() != 2 {
+		t.Fatalf("undelivered attempt 2: %+v advanced=%v", a, ok)
+	}
+	// ... until the backstop: an attempt no kick can carry (past the
+	// detailed cap, a busy branch, a paused fixer) must not wait forever.
+	if a, ok = s.Expire("o/r", 1, timeout, routed2.Add(undeliveredAttemptFactor*timeout)); !ok || !a.Exhausted() || a.Stalled != 2 {
+		t.Fatalf("undelivered attempt 2 past the backstop: %+v advanced=%v", a, ok)
 	}
 }
 

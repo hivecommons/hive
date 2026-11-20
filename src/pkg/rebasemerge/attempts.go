@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,10 +24,10 @@ var AttemptsPath = "/data/rebase-attempts.json"
 // Attempt is one PR's conflict episode: the dirty heads seen, oldest
 // first. The first dirty head is attempt 1 (the fixer's first task); a
 // pushed head that is still dirty is the next attempt, and so is an
-// attempt the fixer never pushed for within the per-attempt deadline
-// (Expire; hivecommons/hive#16023). Past MaxRebaseAttempts the episode is
-// exhausted. A PR that stops conflicting ends its episode (Clear) so a
-// later conflict starts fresh.
+// attempt the fixer was handed (Deliver) but never pushed for within the
+// per-attempt deadline (Expire; hivecommons/hive#16023). Past
+// MaxRebaseAttempts the episode is exhausted. A PR that stops conflicting
+// ends its episode (Clear) so a later conflict starts fresh.
 type Attempt struct {
 	Repo   string   `json:"repo"`
 	Number int      `json:"number"`
@@ -39,6 +40,12 @@ type Attempt struct {
 	DispatchedAttempt int       `json:"dispatched_attempt,omitempty"`
 	DispatchedAt      time.Time `json:"dispatched_at,omitempty"`
 	Fixer             string    `json:"fixer,omitempty"`
+	// DeliveredAttempt is the dispatched attempt a delivered fixer kick
+	// carried, at DeliveredAt. Routing only lists the row for the fixer's
+	// next kick; the deadline runs from here, so an attempt no kick ever
+	// carried is never counted as failed.
+	DeliveredAttempt int       `json:"delivered_attempt,omitempty"`
+	DeliveredAt      time.Time `json:"delivered_at,omitempty"`
 	// RequestedBy is the operator whose approval (or merge-now) asked for
 	// the rebase from the dashboard, so the fixer router lists the PR even
 	// when neither the hive nor a trusted author opened it.
@@ -57,6 +64,12 @@ func (a Attempt) Exhausted() bool { return a.Count() > MaxRebaseAttempts }
 // Dispatched reports whether the current attempt was handed to a fixer.
 func (a Attempt) Dispatched() bool {
 	return a.DispatchedAttempt > 0 && a.DispatchedAttempt == a.Count() && !a.DispatchedAt.IsZero()
+}
+
+// Delivered reports whether a kick carrying the current, dispatched
+// attempt reached the fixer.
+func (a Attempt) Delivered() bool {
+	return a.Dispatched() && a.DeliveredAttempt == a.Count() && !a.DeliveredAt.IsZero()
 }
 
 // Waiting is how long the current attempt has waited for the fixer's
@@ -204,17 +217,79 @@ func (s *Attempts) Dispatch(repo string, number int, fixer string, now time.Time
 	return a, true
 }
 
-// Expire counts the dispatched attempt of repo#number as failed once it
-// has waited timeout with no push from the fixer (a push is a new head,
-// which Observe already counts as the next attempt). advanced is true when
-// the episode moved to its next attempt; a timeout <= 0 never expires.
+// Deliver records that a kick carrying attempt of repo#number's open
+// episode reached the fixer at at. first is true only for the first
+// delivery of the current, dispatched attempt: a kick that carried an
+// earlier attempt (the episode moved on since it was built), an attempt
+// not yet dispatched, and later kicks for the same attempt change nothing.
+func (s *Attempts) Deliver(repo string, number, attempt int, at time.Time) (a Attempt, first bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	key := Key(repo, number)
+	a, ok := s.items[key]
+	if !ok || a.Exhausted() || !a.Dispatched() || a.Delivered() || attempt != a.Count() {
+		return a, false
+	}
+	a.DeliveredAttempt = a.Count()
+	a.DeliveredAt = at
+	a.UpdatedAt = at
+	s.items[key] = a
+	s.persist()
+	return a, true
+}
+
+// AwaitingDelivery lists the open episodes whose current attempt was
+// dispatched to a fixer but has not reached it in a kick yet, by key.
+func (s *Attempts) AwaitingDelivery() []Attempt {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	keys := make([]string, 0, len(s.items))
+	for key, a := range s.items {
+		if !a.Exhausted() && a.Dispatched() && !a.Delivered() {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	out := make([]Attempt, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, s.items[key])
+	}
+	return out
+}
+
+// undeliveredAttemptFactor bounds, in attempt timeouts from routing, how
+// long a routed attempt may wait for a kick that carries it (2h at the
+// default 15m). The fixer's next kick waits on its cadence, which a
+// review-fix kick restarts, so this is well past one cadence slot; it only
+// ends an attempt no kick can carry (a row past the detailed cap, a busy
+// branch, a paused fixer), which would otherwise wait forever
+// (hivecommons/hive#16023).
+const undeliveredAttemptFactor = 8
+
+// Expire counts the delivered attempt of repo#number as failed once it has
+// waited timeout since a kick carried it to the fixer, with no push (a push
+// is a new head, which Observe already counts as the next attempt). An
+// attempt that was routed but never reached the fixer is not failed at the
+// fixer's deadline: the fixer cannot fail work it was never handed. It
+// expires only after undeliveredAttemptFactor timeouts from routing.
+// advanced is true when the episode moved to its next attempt; a timeout
+// <= 0 never expires.
 func (s *Attempts) Expire(repo string, number int, timeout time.Duration, now time.Time) (a Attempt, advanced bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.load()
 	key := Key(repo, number)
 	a, ok := s.items[key]
-	if !ok || timeout <= 0 || a.Exhausted() || !a.Dispatched() || now.Sub(a.DispatchedAt) < timeout {
+	if !ok || timeout <= 0 || a.Exhausted() || !a.Dispatched() {
+		return a, false
+	}
+	if a.Delivered() {
+		if now.Sub(a.DeliveredAt) < timeout {
+			return a, false
+		}
+	} else if now.Sub(a.DispatchedAt) < undeliveredAttemptFactor*timeout {
 		return a, false
 	}
 	a.Stalled++
