@@ -665,7 +665,10 @@ Phase 5 registers the fleet-level write operations under that contract:
   for any `governor.labels.stage.*` key. Same pattern: `abandon_close_repos` is an
   `{add, remove, clear}` list merged onto the value read at preview, a `ConfirmGuard`
   fingerprint, and a disclosure that names every repository where the hive may now close
-  abandoned PRs. It sends only the two keys it changes.
+  abandoned PRs. It also writes the person-PR takeover timer under
+  `governor.labels.stage.adoption` (`person_after`, `person_grace`, and the `person_repos` /
+  `person_human_repos` lists, merged the same way), disclosing every repository where the hive
+  may now take over a person's PR. It sends only the keys it changes.
 - `agent.cadences` and `writeback.kind_policy` wrap `PUT /api/config/agent/{name}/cadences` and
   `PUT /api/config/governor/features` (its `writebackKinds` field) for two settings that had no
   operation: one agent's per-mode cadences and the write-back gate's per-kind overrides. They use

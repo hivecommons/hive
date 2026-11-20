@@ -641,6 +641,37 @@ type StageAdoptionConfig struct {
 	// a writeback opt-in label (writeback.kinds.contributor_adopt), else
 	// when the copy merges.
 	CloseSuperseded string `yaml:"close_superseded,omitempty"`
+	// PersonAfter is the opt-in timer for a person's sent-back PR
+	// (hivecommons/hive#19395): how long a person-authored PR waiting on
+	// its author at 071 needs-author or 072 returned-to-contributor, in a
+	// repository listed in PersonRepos or PersonHumanRepos, may go with no
+	// push, comment or review by anyone but the hive (the abandon_after
+	// idle clock) before the hive posts one takeover notice. When
+	// PersonGrace passes after the notice with no activity, no hold and no
+	// keep-open label, the hive takes the PR over through the operator's
+	// Adopt now path. Only work the hive can do counts: a merge conflict,
+	// a failed check, or a change request from the review swarm or a
+	// review bot; a person's change request means a person is engaged.
+	// Unset or "0" is off (the default): the hive never takes over a
+	// person's PR on its own (hivecommons/hive#15202). ACMM L6 only.
+	PersonAfter string `yaml:"person_after,omitempty"`
+	// PersonGrace is how long the hive waits after the takeover notice
+	// before it takes the PR over (default DefaultPersonTakeoverGrace,
+	// 24h). Unset, "0" or invalid reads as the default, never as "no
+	// grace": the notice always gets a full grace.
+	PersonGrace string `yaml:"person_grace,omitempty"`
+	// PersonRepos opts repositories (owner/repo or bare name) into the
+	// timer for the agent-written PRs of this hive's owners: PRs
+	// personAuthored counts as a person's because the author is an owner
+	// (dashboard.authorized_users), not because they carry author/human.
+	// Empty (the default) applies it nowhere.
+	PersonRepos []string `yaml:"person_repos,omitempty"`
+	// PersonHumanRepos opts repositories into the timer for hand-written
+	// PRs (author/human), an owner's or anyone else's. A separate switch
+	// from PersonRepos: an owner's offline agent is close to the
+	// contributor-offline case, a person's own PR is not. Empty (the
+	// default) applies it nowhere.
+	PersonHumanRepos []string `yaml:"person_human_repos,omitempty"`
 	// Supersede tunes supersede-mode adoption (the hive-authored copy from
 	// hive/adopt-<n>).
 	Supersede StageAdoptionSupersedeConfig `yaml:"supersede,omitempty"`
@@ -710,6 +741,56 @@ func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
 // EffectiveAfterUnregistered parses AfterUnregistered (default 15m).
 func (c StageAdoptionConfig) EffectiveAfterUnregistered() time.Duration {
 	return parseDurationOr(c.AfterUnregistered, DefaultAdoptAfterUnregistered)
+}
+
+// DefaultPersonTakeoverGrace is governor.labels.stage.adoption.person_grace's
+// default: the wait between the takeover notice on a person's PR and the
+// takeover. It matches AbandonCloseGrace, the "push or comment here" window
+// the abandoned-PR close gives.
+const DefaultPersonTakeoverGrace = 24 * time.Hour
+
+// PersonTakeoverACMMLevel is the ACMM level the timed takeover of a person's
+// PR needs (L6, Autonomous): like the abandoned-PR close
+// (AbandonCloseACMMLevel), it acts on another person's PR with no operator
+// click.
+const PersonTakeoverACMMLevel = 6
+
+// EffectivePersonAfter parses PersonAfter; unset, "0", invalid or
+// non-positive returns 0 (the timer is off).
+func (c StageAdoptionConfig) EffectivePersonAfter() time.Duration {
+	return parseDurationOr(c.PersonAfter, 0)
+}
+
+// EffectivePersonGrace parses PersonGrace; unset, "0", invalid or
+// non-positive returns DefaultPersonTakeoverGrace.
+func (c StageAdoptionConfig) EffectivePersonGrace() time.Duration {
+	return parseDurationOr(c.PersonGrace, DefaultPersonTakeoverGrace)
+}
+
+// PersonListed reports whether repo ("owner/repo" or a bare name, matched
+// case-insensitively) is in person_human_repos (human: an author/human PR)
+// or person_repos (an owner's agent-written PR). It checks neither
+// person_after nor the ACMM level; PersonTakeoverAllowed does.
+func (c StageAdoptionConfig) PersonListed(repo string, human bool) bool {
+	if human {
+		return repoListed(c.PersonHumanRepos, repo)
+	}
+	return repoListed(c.PersonRepos, repo)
+}
+
+// PersonTakeoverAllowed reports whether the hive may take over a person's
+// sent-back PR in repo on its timer: adoption is on, person_after is set,
+// the repository is in the list for the PR's kind (human: author/human)
+// and its effective ACMM level is L6.
+func (c *Config) PersonTakeoverAllowed(repo string, human bool) bool {
+	if c == nil {
+		return false
+	}
+	adoption := c.Governor.Labels.Stage.Adoption
+	if !adoption.IsEnabled() || adoption.EffectivePersonAfter() <= 0 || !adoption.PersonListed(repo, human) {
+		return false
+	}
+	return c.EffectiveACMMLevelForRepo(repo) >= PersonTakeoverACMMLevel
 }
 
 // RerouteConfig is governor.reroute.
@@ -799,7 +880,13 @@ const AbandonCloseACMMLevel = 6
 // matched case-insensitively) is in abandon_close_repos. It does not check
 // the ACMM level; AbandonCloseAllowed does.
 func (s StageLabelsConfig) AbandonCloseListed(repo string) bool {
-	set := repoListSet(s.AbandonCloseRepos)
+	return repoListed(s.AbandonCloseRepos, repo)
+}
+
+// repoListed reports whether repo ("owner/repo" or a bare name) is in list,
+// whose entries are owner/repo or bare names, matched case-insensitively.
+func repoListed(list []string, repo string) bool {
+	set := repoListSet(list)
 	if len(set) == 0 {
 		return false
 	}

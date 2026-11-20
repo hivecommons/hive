@@ -726,6 +726,13 @@ governor:
       #     close_first: true           # default true; close the original (hive/superseded, one note naming the
       #                                 # copy) in the pass that opens the copy; reopened if the copy fails.
       #                                 # false: original stays stage/074 and closes when the copy merges
+      #   person_after: 24h             # default off; opt-in timer for a person's PR (author/human, or a hive owner's
+      #                                 # agent PR) sent back to 071/072 for a conflict, a failed check or a review
+      #                                 # bot's change request: idle this long → one notice; ACMM L6 only (#19395)
+      #   person_grace: 24h             # default 24h (0/empty = 24h); after the notice with no push, comment, review
+      #                                 # or hold/do-not-merge/needs-human/hive/keep-open label → Adopt now path
+      #   person_repos: [your-org/repo] # default empty; repositories where it applies to owners' agent PRs
+      #   person_human_repos: []        # default empty; repositories where it applies to author/human PRs
 
   # Optional: read actionable work from Linear instead of GitHub Issues.
   # Secrets should come from env interpolation, not literal values.

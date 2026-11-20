@@ -697,6 +697,10 @@ type StageTrackerItem struct {
 	// Reroute offer and any pending reroute or forced adoption
 	// (hivecommons/hive#15038, stage_tracker_takeover.go).
 	Takeover *StageTrackerTakeover `json:"takeover,omitempty"`
+	// PersonTakeover is, on a person's 071 / 072 PR in a repository opted
+	// into governor.labels.stage.adoption.person_after, when the hive takes
+	// it over (hivecommons/hive#19395, stage_tracker_person_takeover.go).
+	PersonTakeover *StageTrackerPersonTakeover `json:"person_takeover,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`

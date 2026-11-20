@@ -133,7 +133,28 @@ const (
 	// taken at once by supersession, regardless of the author's presence,
 	// the grace window and maintainer_policy. The marker carries by=@login.
 	AdoptReasonOperatorForced = "operator-forced"
+	// AdoptReasonPersonTimer marks the same forced adoption when the
+	// person-PR takeover timer (governor.labels.stage.adoption.person_after,
+	// automerge_stage_person_takeover.go) recorded the Adopt now mark in
+	// place of an operator: everything an operator-forced adoption bypasses,
+	// it bypasses too (adoptReasonForced). The marker carries by=<hive>.
+	AdoptReasonPersonTimer = "person-timer"
 )
+
+// adoptReasonForced reports whether reason is an Adopt now adoption, by an
+// operator or by the person-PR takeover timer.
+func adoptReasonForced(reason string) bool {
+	return reason == AdoptReasonOperatorForced || reason == AdoptReasonPersonTimer
+}
+
+// forcedAdoptReason is the adoption reason for a forced mark recorded by
+// forcedBy: the timer's own, or an operator's.
+func forcedAdoptReason(forcedBy string) string {
+	if forcedBy == stagelabels.AdoptForcedByPersonTimer {
+		return AdoptReasonPersonTimer
+	}
+	return AdoptReasonOperatorForced
+}
 
 // AdoptionStalledMarker opens the one note posted when an adopted PR is
 // handed to a person (stage 085) for sitting past the 074 dwell.
@@ -234,6 +255,8 @@ func adoptReasonText(reason string, grace time.Duration, online bool, wait adopt
 			return "a maintainer asked the hive to take it over now rather than wait for your hive, which is online — no fault of yours"
 		}
 		return "a maintainer asked the hive to take it over now rather than wait out the offline grace window"
+	case AdoptReasonPersonTimer:
+		return "it went without a push, comment or review past this repository's takeover timer, and nobody answered the notice above"
 	}
 	if online {
 		return fmt.Sprintf("%s for %s after the nudge and the relay nudge went unanswered", wait.stayed(), formatGrace(grace))
@@ -523,6 +546,8 @@ func adoptionBodyCause(reason string, wait adoptionWait) string {
 		return "adopted in place, re-homed for DCO repair"
 	case AdoptReasonOperator:
 		return "adopted at a maintainer's request"
+	case AdoptReasonPersonTimer:
+		return "adopted after its author stayed idle past the repository's takeover timer and its notice"
 	}
 	switch {
 	case wait.red && len(wait.asks) > 0:
@@ -844,6 +869,13 @@ func AdoptionForcedComment(obs stageObservation, by string, superseding int, onl
 	return adoptionCommentBy(obs, "@"+strings.TrimPrefix(strings.TrimSpace(by), "@"), superseding, AdoptReasonOperatorForced, 0, online)
 }
 
+// AdoptionPersonTimerComment is the adoption note when the person-PR
+// takeover timer recorded the Adopt now mark: the marker names the hive
+// (by=<hive> reason=person-timer), never an operator.
+func AdoptionPersonTimerComment(obs stageObservation, hiveID string, superseding int) string {
+	return adoptionCommentBy(obs, nonEmpty(hiveID, "hive"), superseding, AdoptReasonPersonTimer, 0, false)
+}
+
 func adoptionCommentBy(obs stageObservation, by string, superseding int, reason string, grace time.Duration, online bool) string {
 	wait := adoptionWaitFor(obs)
 	finish := "rebase and fix CI there"
@@ -941,8 +973,10 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	if forced {
 		// An operator's "Adopt now" (hivecommons/hive#15038): adopt at
 		// once by supersession, whatever the author's presence, the grace
-		// window and maintainer_policy say. Only a hold label stops it.
-		due, reason = true, AdoptReasonOperatorForced
+		// window and maintainer_policy say. Only a hold label stops it. The
+		// person-PR takeover timer's mark takes the same path under its own
+		// reason.
+		due, reason = true, forcedAdoptReason(forcedBy)
 	} else if requested && obs.HeadSHA != "" && !(rec.Adopted(obs.HeadSHA) && rec.AdoptedBy > 0 && !rec.AdoptionCopyFailed()) {
 		// An explicit owner-delegate decision bypasses the nudge/grace and
 		// re-homes a stalled in-place adoption through the same supersede path.
@@ -997,13 +1031,19 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		return 0, nil
 	}
 	if forced {
-		if person {
+		switch {
+		case reason == AdoptReasonPersonTimer:
+			// The owner opted this repository into the timed takeover
+			// (governor.labels.stage.adoption.person_*); the timer, not an
+			// operator, recorded the mark after its notice and grace.
+			c.info("stage labels: takeover-timer adoption over a person-authored PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "author_kind", obs.AuthorKind.String(), "head", obs.HeadSHA, "by", forcedBy)
+		case person:
 			// An operator may take over anyone's PR, owners and
 			// maintainers included: the click is the decision, logged
 			// with the actor so the takeover stays attributable.
 			c.info("stage labels: operator-forced adoption over a person-authored PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "author_kind", obs.AuthorKind.String(), "head", obs.HeadSHA, "by", forcedBy)
 		}
-		c.info("stage labels: operator forced adoption; maintainer policy, admission and presence bypassed", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "by", forcedBy, "online", presence.Online, "policy", policy.maintainerPolicy())
+		c.info("stage labels: forced adoption; maintainer policy, admission and presence bypassed", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "by", forcedBy, "trigger", adoptionTrigger(reason, obs.Reason), "online", presence.Online, "policy", policy.maintainerPolicy())
 	} else if c.adoptionRefusedByAdmission(ctx, store, key, obs, requested, now) {
 		return 0, nil
 	} else if cover, covered := c.adoptionCoveringPR(ctx, obs, policy); covered {
@@ -1135,6 +1175,9 @@ const (
 	AdoptTriggerAutomatic = "automatic"
 	AdoptTriggerForced    = "operator-forced"
 	AdoptTriggerRequested = "operator-requested"
+	// AdoptTriggerPersonTimer: the person-PR takeover timer recorded the
+	// Adopt now mark.
+	AdoptTriggerPersonTimer = "person-timer"
 )
 
 // adoptionTrigger names what fired an adoption: the operator's forced
@@ -1145,6 +1188,8 @@ func adoptionTrigger(reason, laneReason string) string {
 	switch reason {
 	case AdoptReasonOperatorForced:
 		return AdoptTriggerForced
+	case AdoptReasonPersonTimer:
+		return AdoptTriggerPersonTimer
 	case AdoptReasonOperator:
 		return AdoptTriggerRequested
 	}
@@ -1199,7 +1244,7 @@ func delegatedAdoptionAttempted(before, after stagelabels.Record) bool {
 
 func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, grace time.Duration, online bool, dcoRehome bool, now time.Time) (int, error) {
 	forcedBy := ""
-	if reason == AdoptReasonOperatorForced {
+	if adoptReasonForced(reason) {
 		forcedBy, _ = rec.AdoptionForced()
 	}
 	if forcedBy != "" {
@@ -1383,13 +1428,18 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		c.requestAdoptionCopyRebase(ctx, store, key, obs, branch, superseding, created.GetHead().GetSHA())
 	}
 
-	if policy.AdoptSupersedeCloseFirst {
+	if policy.AdoptSupersedeCloseFirst && reason != AdoptReasonPersonTimer {
 		// hivecommons/hive#15135: one PR per issue — the original closes
 		// now, with the note naming the copy, not when the copy merges.
+		// A person's PR the takeover timer adopted stays open until its
+		// copy merges (hivecommons/hive#19395): its author may still come
+		// back to it.
 		return c.closeSupersededOriginalFirst(ctx, store, key, obs, policy, superseding, reason, rec.AdoptDiffFence, now)
 	}
 	body := AdoptionComment(obs, policy.HiveID, superseding, reason, grace, online)
-	if forcedBy != "" {
+	if forcedBy == stagelabels.AdoptForcedByPersonTimer {
+		body = AdoptionPersonTimerComment(obs, policy.HiveID, superseding)
+	} else if forcedBy != "" {
 		body = AdoptionForcedComment(obs, forcedBy, superseding, online)
 	}
 	if dcoRehome {
@@ -1718,9 +1768,10 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 	if !ok {
 		return 0, nil
 	}
-	if rec.AdoptReason == AdoptReasonOperatorForced {
-		// An operator forced this adoption; maintainer_policy: never does
-		// not hand it back.
+	if adoptReasonForced(rec.AdoptReason) {
+		// An operator (or the person-PR takeover timer an owner opted
+		// into) forced this adoption; maintainer_policy: never does not
+		// hand it back.
 	} else if maintainer, deferred := c.maintainerReleasesAdoption(ctx, obs, policy, now); deferred {
 		// No evidence either way: neither re-home nor release this pass.
 		return 0, nil
