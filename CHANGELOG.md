@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-20 (v6.53.0)
+
+### Added
+
+- **Stale contributor PRs get an idle clock (`governor.labels.stage.abandon_after`, off by default).** A contributor PR parked at `071-needs-author` or at an `adoption-stalled:` `085` used to get one note and then nothing, while it kept its linked issue locked. With the setting on, a contributor PR (never an owner's or a trusted author's) with no push, comment or review from anyone but the hive for that long is flagged abandoned. Its stage, label and reason do not change. The row reads `abandoned Nd: <blocker>` and lands in the inbox's "Stale: close or take over" `CLOSE` group (`abandoned_recommended_close`, which the `review_queue` MCP also shows). The delegate recommends closing it or a person taking it over (`abandoned-stale`, recommend-only). The issue it covers stays locked but shows the withheld reason `covering_pr_stalled`. `governor.labels.stage.abandon_close_repos` lets listed repositories at ACMM L6 close such PRs after one notice and a 24h grace with no activity, no hold and no `hive/keep-open`. Both keys are on Settings → Labels and in the new admin-MCP write `governor.stage_labels`.
+
 ## 2026-11-20 (v6.52.5)
 
 ### Fixed
