@@ -70,6 +70,11 @@ func TestStageBaseBranchRedIndex(t *testing.T) {
 }
 
 func TestStageBaseRedRemembered(t *testing.T) {
+	// stageBaseRedMemory is process-global and other tests in the package
+	// (eval cycle, repo rescan) publish into it without resetting, so under
+	// -shuffle or reordering it can already be set. Start from the unpublished
+	// state the assertions below rely on (hivecommons/hive#19385).
+	stageBaseRedMemory.Store(nil)
 	t.Cleanup(func() { stageBaseRedMemory.Store(nil) })
 	if got := stageBaseRedRemembered("acme/widget", "main"); got != nil {
 		t.Fatalf("nothing published: %v", got)
