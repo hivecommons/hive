@@ -122,6 +122,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// Evaluated heads persist so a restart or rebuild neither re-diffs every
 	// open PR nor blanks the Matrix feed until the next sweep (#16276).
 	client.SetSentinelHeadsPath(sentinelHeadsStatePath)
+	// Attributed PRs persist past the bounded closed-PR scan and a restart,
+	// so the PRs-by-model 30d/All windows rest on the same sample for every
+	// model; the store also carries the one-time backfill's cursor.
+	client.SetAttributedPRHistoryPath(github.AttributedPRHistoryPath)
 	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)
 	// The conditional-request cache is process-wide, not per client; size it
 	// from github.etag_cache_max_mb / _max_entries so a hive that evicts

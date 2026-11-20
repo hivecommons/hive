@@ -308,6 +308,10 @@ type Client struct {
 	attributedClosedPRMu     sync.Mutex
 	attributedClosedPRCache  map[string]attributedClosedPRCacheEntry
 	attributedClosedPRErrors map[string]string
+	// attributedHistory persists attributed PRs past the bounded closed scan
+	// and runs the one-time backfill (attributed_pr_history.go); nil until
+	// SetAttributedPRHistoryPath.
+	attributedHistory atomic.Pointer[attributedPRHistory]
 	// issueClaimCache remembers the claim read for an issue at a given
 	// updated_at, so the per-issue comment fetch happens once per activity
 	// change rather than once per enumeration. Guarded by issueClaimMu.
@@ -2006,6 +2010,11 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		return nil, fmt.Errorf("all %d repos failed to enumerate (last error: %w)", len(repos), lastFetchErr)
 	}
 
+	// Write this pass's attributed PR history and take one bounded step of
+	// its one-time backfill. Best-effort: neither can fail enumeration, and
+	// a finished backfill makes no calls (attributed_pr_history.go).
+	c.syncAttributedPRHistory(ctx, repos)
+
 	RankActionableIssues(allIssues)
 
 	// Review-priority order for the PR side of the snapshot: fixes >
@@ -2643,7 +2652,10 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 		closed = c.cachedAttributedClosedPRs(repo)
 	}
 	attributed = append(attributed, closed...)
-	c.enrichAttributedPRRework(ctx, attributed)
+	reworkCache := c.enrichAttributedPRRework(ctx, attributed)
+	// Persisted past the live scan's lookback so the PRs-by-model windows
+	// keep a PR once the scan stops listing it (attributed_pr_history.go).
+	c.recordAttributedPRHistory(repo, attributed, reworkCache)
 
 	if unclassified := totalPRs - breakdown.Total(); unclassified > 0 {
 		breakdown.Other += unclassified
@@ -2666,7 +2678,12 @@ func collectAttributedPRsFromList(repo string, prs []*gh.PullRequest) []PullRequ
 
 func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, repo string) ([]PullRequest, error) {
 	lookback := attributedClosedPRLookback()
-	cutoff := time.Now().Add(-lookback)
+	scanAt := time.Now()
+	cutoff := scanAt.Add(-lookback)
+	// oldest is the oldest updated time listed, the scan's floor when the
+	// page cap stops it before the cutoff; complete means the list ran out.
+	oldest := scanAt
+	pastWindow, complete := false, false
 	opts := &gh.PullRequestListOptions{
 		State:       "closed",
 		Sort:        "updated",
@@ -2679,7 +2696,6 @@ func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, 
 		if err != nil {
 			return nil, fmt.Errorf("listing closed PRs for %s/%s: %w", owner, repoName, err)
 		}
-		pastWindow := false
 		for _, pr := range prs {
 			if pr == nil {
 				continue
@@ -2688,16 +2704,28 @@ func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, 
 				pastWindow = true
 				break
 			}
+			if updated := pr.GetUpdatedAt().Time; !updated.IsZero() && updated.Before(oldest) {
+				oldest = updated
+			}
 			if meta, ok := ParseAttributionTrailer(pr.GetBody()); ok {
 				out = append(out, pullRequestAttributionRecord(repo, pr, meta))
 			}
 		}
-		if pastWindow || resp == nil || resp.NextPage == 0 {
+		if pastWindow {
+			break
+		}
+		if resp == nil || resp.NextPage == 0 {
+			complete = true
 			break
 		}
 		opts.Page = resp.NextPage
 	}
 	c.storeAttributedClosedPRs(repo, out)
+	floor := oldest
+	if pastWindow {
+		floor = cutoff
+	}
+	c.attributedPRHistory().noteScan(repo, scanAt, floor, complete)
 	return out, nil
 }
 
@@ -2708,9 +2736,15 @@ func AttributedClosedPRLookback() time.Duration {
 }
 
 func attributedClosedPRLookback() time.Duration {
-	raw := strings.TrimSpace(os.Getenv(attributedClosedPRLookbackEnv))
+	return lookbackFromEnv(attributedClosedPRLookbackEnv, attributedClosedPRDefaultLookback)
+}
+
+// lookbackFromEnv reads a positive duration from env: a Go duration ("336h")
+// or a day count ("14", "14d"). Unset or invalid is def.
+func lookbackFromEnv(env string, def time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(env))
 	if raw == "" {
-		return attributedClosedPRDefaultLookback
+		return def
 	}
 	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
 		return d
@@ -2723,7 +2757,7 @@ func attributedClosedPRLookback() time.Duration {
 	if days, err := strconv.Atoi(raw); err == nil && days > 0 {
 		return time.Duration(days) * 24 * time.Hour
 	}
-	return attributedClosedPRDefaultLookback
+	return def
 }
 
 func (c *Client) storeAttributedClosedPRs(repo string, prs []PullRequest) {
