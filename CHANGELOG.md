@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-20 (v5.345.2)
+
+### Fixed
+
+- Automerge no longer logs a WARN when the native merge queue refuses an enqueue because required checks are failing; the PR is held and retried next sweep.
+
 ## 2026-11-20 (v5.345.1)
 
 ### Changed
