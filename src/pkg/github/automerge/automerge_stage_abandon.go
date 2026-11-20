@@ -12,7 +12,7 @@ package automerge
 // reason are untouched.
 //
 // The flag costs no extra reads in the common case: the clock runs on the
-// activity the store already keeps (LastActivityAt, History). Only when a
+// activity the store already keeps (AbandonActivityAt, History). Only when a
 // PR first crosses the threshold on a cycle that did not fetch its comment
 // and review counts does the pass read them once (issue comments since the
 // idle clock started, plus the PR's reviews: two calls), so a reply the
@@ -32,6 +32,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -71,7 +72,7 @@ func (c *Engine) reconcileAbandoned(ctx context.Context, store *stagelabels.Stor
 		}
 	case stagelabels.AbandonConfirm:
 		since := rec.IdleSince()
-		at, err := c.lastOutsideActivitySince(ctx, obs, policy, since)
+		at, err := c.lastOutsideActivitySince(ctx, obs, since)
 		if err != nil {
 			store.NoteAbandonCheck(key, time.Time{}, now)
 			c.warn("stage labels: abandon confirming read failed; retried later", append(logArgs, "error", err)...)
@@ -88,10 +89,35 @@ func (c *Engine) reconcileAbandoned(ctx context.Context, store *stagelabels.Stor
 	}
 }
 
+// abandonContributor reports whether the idle clock applies to the PR at
+// all: a contributor's PR, not the hive's own (the App, author/hive, one of
+// the hive's identities), not one of this hive's owners'
+// (dashboard.authorized_users) and not a trusted author's (role/trusted:
+// the trusted-author list or a registry tier the lanes trust). Owners and
+// trusted maintainers decide about their own PRs; the hive never flags or
+// closes them.
+func (c *Engine) abandonContributor(obs stageObservation, role stagelabels.Role, policy StageLabelPolicy) bool {
+	login := strings.TrimSpace(obs.Author)
+	switch {
+	case obs.AuthorKind == authorkind.Hive, role == stagelabels.RoleTrusted:
+		return false
+	case login == "":
+		return false
+	case c.transport != nil && normalizeBotLogin(login) == normalizeBotLogin(c.transport.AppBotLogin()):
+		return false
+	case policy.HiveAuthor != nil && policy.HiveAuthor(login):
+		return false
+	case policy.OwnerAuthor != nil && policy.OwnerAuthor(login):
+		return false
+	}
+	return true
+}
+
 // outsideActor reports whether a comment or review by u counts as someone
-// other than the hive acting: not the App, not one of the hive's own
-// identities (policy.HiveAuthor), and not another bot.
-func (c *Engine) outsideActor(policy StageLabelPolicy, u *gh.User) bool {
+// other than the hive acting: not the App and not another bot. A person's
+// login configured as project.ai_author is not excluded: it may well be a
+// person, whose reply must count.
+func (c *Engine) outsideActor(u *gh.User) bool {
 	login := strings.TrimSpace(u.GetLogin())
 	if login == "" || strings.EqualFold(u.GetType(), "Bot") || strings.HasSuffix(strings.ToLower(login), "[bot]") {
 		return false
@@ -99,21 +125,22 @@ func (c *Engine) outsideActor(policy StageLabelPolicy, u *gh.User) bool {
 	if c.transport != nil && normalizeBotLogin(login) == normalizeBotLogin(c.transport.AppBotLogin()) {
 		return false
 	}
-	if policy.HiveAuthor != nil && policy.HiveAuthor(login) {
-		return false
-	}
 	return true
 }
+
+// abandonReadPages bounds the confirming read's comment pages (100 each).
+const abandonReadPages = 10
 
 // lastOutsideActivitySince is the one confirming read: the latest issue
 // comment or review submission on the PR after since by someone other than
 // the hive (zero when there is none). Issue comments are listed with
-// GitHub's since filter; reviews are one page, plus the last page when there
-// are more, so the newest are always seen.
-func (c *Engine) lastOutsideActivitySince(ctx context.Context, obs stageObservation, policy StageLabelPolicy, since time.Time) (time.Time, error) {
+// GitHub's since filter and paged (at most abandonReadPages), so a crowd of
+// hive or bot comments cannot hide an author's reply; reviews are one page
+// plus the last page when there are more, so the newest are always seen.
+func (c *Engine) lastOutsideActivitySince(ctx context.Context, obs stageObservation, since time.Time) (time.Time, error) {
 	var latest time.Time
 	note := func(at time.Time, u *gh.User) {
-		if at.After(since) && at.After(latest) && c.outsideActor(policy, u) {
+		if at.After(since) && at.After(latest) && c.outsideActor(u) {
 			latest = at
 		}
 	}
@@ -121,12 +148,18 @@ func (c *Engine) lastOutsideActivitySince(ctx context.Context, obs stageObservat
 	if !since.IsZero() {
 		opts.Since = gh.Ptr(since)
 	}
-	comments, _, err := c.gh.Issues.ListComments(ctx, obs.Owner, obs.Repo, obs.Number, opts)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("listing comments for %s#%d: %w", obs.Display, obs.Number, err)
-	}
-	for _, cm := range comments {
-		note(cm.GetCreatedAt().Time, cm.GetUser())
+	for page := 0; page < abandonReadPages; page++ {
+		comments, resp, err := c.gh.Issues.ListComments(ctx, obs.Owner, obs.Repo, obs.Number, opts)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("listing comments for %s#%d: %w", obs.Display, obs.Number, err)
+		}
+		for _, cm := range comments {
+			note(cm.GetCreatedAt().Time, cm.GetUser())
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 	reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, obs.Owner, obs.Repo, obs.Number, &gh.ListOptions{PerPage: 100})
 	if err != nil {
@@ -165,24 +198,28 @@ func (c *Engine) abandonCloseHeld(obs stageObservation) string {
 
 // closeAbandonedIfDue is the per-repository auto-close: post the warning
 // notice once, then close after the grace if nobody but the hive acted
-// since. It runs after the pass's stage write landed. It returns the number
-// of comments posted.
-func (c *Engine) closeAbandonedIfDue(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) (int, error) {
+// since. It runs after the pass's stage write landed, and only while the
+// stage written (written) is still the park the flag was set in. The PR is
+// closed first and the closing comment posted after, so a refused close
+// never leaves a comment behind to repeat; a refusal backs off. It returns
+// the number of comments posted and whether the PR was closed. The caller
+// counts the comments as the hive's own.
+func (c *Engine) closeAbandonedIfDue(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, written stagelabels.Stage, now time.Time) (int, bool, error) {
 	if policy.AbandonClose == nil || obs.Merged {
-		return 0, nil
+		return 0, false, nil
 	}
 	rec, ok := store.Get(key)
-	if !ok || !rec.Abandoned() || !rec.AbandonClosedAt.IsZero() {
-		return 0, nil
+	if !ok || !rec.Abandoned() || !rec.AbandonClosedAt.IsZero() || written != rec.Stage {
+		return 0, false, nil
 	}
 	repo := obs.Owner + "/" + obs.Repo
 	if !policy.AbandonClose(repo) {
-		return 0, nil
+		return 0, false, nil
 	}
 	logArgs := []any{"repo", obs.Display, "pr", obs.Number, "author", obs.Author, "reason", rec.Reason}
 	if why := c.abandonCloseHeld(obs); why != "" {
 		c.debug("stage labels: abandoned PR not closed", append(logArgs, "why", why)...)
-		return 0, nil
+		return 0, false, nil
 	}
 	grace := config.AbandonCloseGrace
 	item := writebackItemForObservation(obs)
@@ -190,52 +227,53 @@ func (c *Engine) closeAbandonedIfDue(ctx context.Context, store *stagelabels.Sto
 		body := AbandonNoticeComment(obs, rec, grace, now)
 		if d := c.writebackAllowed(obs.Display, item, writeback.KindSupersessionNotice, body); !d.Allowed {
 			c.info("stage labels: abandoned PR notice suppressed by the write-back gate", append(logArgs, "writeback_reason", d.Reason, "writeback_detail", d.Detail)...)
-			return 0, nil
+			return 0, false, nil
 		}
 		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
 			c.warn("stage labels: abandoned PR notice failed", append(logArgs, "error", err)...)
-			return 0, err
+			return 0, false, err
 		}
 		store.MarkAbandonNoticed(key, now)
-		c.noteOwnStageComment(obs.Owner, obs.Repo, obs.Number)
 		c.info("stage labels: abandoned PR warned before closing", append(logArgs, "grace", grace.String())...)
-		return 1, nil
+		return 1, false, nil
 	}
 	if !rec.AbandonCloseDue(grace, now) {
-		return 0, nil
+		return 0, false, nil
 	}
 	// A fresh read before the close: a reply the lane's counts never saw
 	// keeps the PR open (and clears the flag on the next pass).
-	at, err := c.lastOutsideActivitySince(ctx, obs, policy, rec.AbandonNoticeAt)
+	at, err := c.lastOutsideActivitySince(ctx, obs, rec.AbandonNoticeAt)
 	if err != nil {
 		c.warn("stage labels: abandoned PR close check failed; left open", append(logArgs, "error", err)...)
-		return 0, err
+		return 0, false, err
 	}
 	if !at.IsZero() {
 		store.NoteAbandonCheck(key, at, now)
 		c.info("stage labels: abandoned PR not closed: activity since the notice", append(logArgs, "activity_at", at)...)
-		return 0, nil
+		return 0, false, nil
 	}
 	body := AbandonCloseComment(rec, grace, now)
 	if d := c.writebackAllowed(obs.Display, item, writeback.KindSupersessionClose, body); !d.Allowed {
 		c.info("stage labels: abandoned PR close suppressed by the write-back gate, left open", append(logArgs, "writeback_reason", d.Reason, "writeback_detail", d.Detail)...)
-		return 0, nil
+		return 0, false, nil
 	}
-	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
-		c.warn("stage labels: abandoned PR close comment failed; left open", append(logArgs, "error", err)...)
-		return 0, err
-	}
-	c.noteOwnStageComment(obs.Owner, obs.Repo, obs.Number)
 	if _, _, err := c.gh.PullRequests.Edit(ctx, obs.Owner, obs.Repo, obs.Number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil { // writeback:gated
-		c.warn("stage labels: closing the abandoned PR failed; left open", append(logArgs, "error", err)...)
-		return 1, err
+		store.MarkAbandonCloseTried(key, now)
+		c.warn("stage labels: closing the abandoned PR failed; left open, retried later", append(logArgs, "error", err)...)
+		return 0, false, err
 	}
 	store.MarkAbandonClosed(key, now)
 	c.info("stage labels: abandoned contributor PR closed as stale", logArgs...)
-	return 1, nil
+	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
+		// Closed already; the comment is not retried (AbandonClosedAt).
+		c.warn("stage labels: abandoned PR closed but its closing comment failed", append(logArgs, "error", err)...)
+		return 0, true, err
+	}
+	return 1, true, nil
 }
 
-// abandonedAgeText renders how long rec has been idle at now ("9d").
+// abandonedAgeText renders how long rec has been idle at now in words a
+// contributor reads ("9 days", "5 hours").
 func abandonedAgeText(rec stagelabels.Record, now time.Time) string {
 	since := rec.AbandonedIdleSince
 	if since.IsZero() {
@@ -245,7 +283,25 @@ func abandonedAgeText(rec stagelabels.Record, now time.Time) string {
 	if !since.IsZero() && now.After(since) {
 		idle = now.Sub(since)
 	}
-	return strings.TrimPrefix(stagelabels.AbandonedReasonText(idle, ""), "abandoned ")
+	return durationWords(idle)
+}
+
+// durationWords renders d as whole days, else whole hours, else "less
+// than an hour".
+func durationWords(d time.Duration) string {
+	plural := func(n int, unit string) string {
+		if n == 1 {
+			return "1 " + unit
+		}
+		return fmt.Sprintf("%d %ss", n, unit)
+	}
+	switch {
+	case d >= 24*time.Hour:
+		return plural(int(d/(24*time.Hour)), "day")
+	case d >= time.Hour:
+		return plural(int(d/time.Hour), "hour")
+	}
+	return "less than an hour"
 }
 
 // abandonedBlockerText is the blocker the park was for, in backticks.
@@ -260,15 +316,12 @@ func abandonedBlockerText(rec stagelabels.Record) string {
 	return "`" + strings.ReplaceAll(blocker, "`", "'") + "`"
 }
 
-// graceText renders the grace in hours or days.
+// graceText renders the grace in words ("24 hours", "2 days").
 func graceText(grace time.Duration) string {
-	if grace >= 24*time.Hour && grace%(24*time.Hour) == 0 {
-		if n := int(grace / (24 * time.Hour)); n > 1 {
-			return fmt.Sprintf("%d days", n)
-		}
+	if grace == 24*time.Hour {
 		return "24 hours"
 	}
-	return grace.String()
+	return durationWords(grace)
 }
 
 // AbandonNoticeComment is the one warning before an abandoned PR is closed.

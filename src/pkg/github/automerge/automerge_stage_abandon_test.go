@@ -3,14 +3,17 @@ package automerge
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -20,10 +23,17 @@ import (
 type abandonAPI struct {
 	mu       sync.Mutex
 	comments []map[string]any
-	reviews  []map[string]any
-	reads    int
-	posted   []string
-	closed   bool
+	// commentPages, when set, serves the comments one page per entry with
+	// a Link rel="next" header, as GitHub pages them.
+	commentPages [][]map[string]any
+	reviews      []map[string]any
+	reads        int
+	posted       []string
+	closed       bool
+	// editFails makes the close (PATCH) fail with a 403.
+	editFails bool
+	edits     int
+	url       string
 }
 
 func (a *abandonAPI) server(t *testing.T) *httptest.Server {
@@ -34,6 +44,17 @@ func (a *abandonAPI) server(t *testing.T) *httptest.Server {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments":
 			a.reads++
+			if len(a.commentPages) > 0 {
+				page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+				if page < 1 {
+					page = 1
+				}
+				if page < len(a.commentPages) {
+					w.Header().Set("Link", fmt.Sprintf(`<%s/repos/acme/widget/issues/7/comments?page=%d>; rel="next"`, a.url, page+1))
+				}
+				_ = json.NewEncoder(w).Encode(a.commentPages[page-1])
+				return
+			}
 			_ = json.NewEncoder(w).Encode(a.comments)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
 			a.reads++
@@ -45,6 +66,12 @@ func (a *abandonAPI) server(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": len(a.posted), "body": body["body"]})
 		case r.Method == http.MethodPatch && r.URL.Path == "/repos/acme/widget/pulls/7":
+			a.edits++
+			if a.editFails {
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]any{"message": "Resource not accessible by integration"})
+				return
+			}
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			a.closed = body["state"] == "closed"
@@ -55,6 +82,7 @@ func (a *abandonAPI) server(t *testing.T) *httptest.Server {
 		}
 	}))
 	t.Cleanup(srv.Close)
+	a.url = srv.URL
 	return srv
 }
 
@@ -85,7 +113,7 @@ func newAbandonFixture(t *testing.T) *abandonFixture {
 	f.e = New(client, Options{Now: f.clock.now, StageStore: f.store, StageTracker: NewStageTracker()})
 	f.obs = stageObservation{Display: "acme/widget", Owner: "acme", Repo: "widget", Number: 7, HeadSHA: "aaa", Author: "contributor"}
 	f.store.ObserveHead(f.key, "aaa", stagelabels.NeedsDecision, stagelabels.LaneReasonAdoptionStalledPrefix+"check-failing:unit")
-	f.store.NoteActivity(f.key, stagelabels.Activity{Head: "aaa", Comments: 2, Reviews: 0})
+	f.store.NoteActivity(f.key, stagelabels.Activity{Head: "aaa", Comments: 2, Reviews: 0, TrackIdle: true})
 	return f
 }
 
@@ -96,6 +124,13 @@ func (f *abandonFixture) rec(t *testing.T) stagelabels.Record {
 		t.Fatal("record missing")
 	}
 	return r
+}
+
+// close runs the auto-close step with the record's own stage as the stage
+// the pass wrote.
+func (f *abandonFixture) close(t *testing.T, p StageLabelPolicy) (int, bool, error) {
+	t.Helper()
+	return f.e.closeAbandonedIfDue(context.Background(), f.store, f.key, f.obs, p, f.rec(t).Stage, f.clock.now())
 }
 
 func (f *abandonFixture) policy() StageLabelPolicy {
@@ -213,8 +248,7 @@ func listedPolicy(f *abandonFixture) StageLabelPolicy {
 // reopen.
 func TestCloseAbandonedAfterNoticeAndGrace(t *testing.T) {
 	f := abandonFlagged(t)
-	ctx := context.Background()
-	n, err := f.e.closeAbandonedIfDue(ctx, f.store, f.key, f.obs, listedPolicy(f), f.clock.now())
+	n, _, err := f.close(t, listedPolicy(f))
 	if err != nil || n != 1 || len(f.api.posted) != 1 || !strings.HasPrefix(f.api.posted[0], AbandonNoticeMarker) {
 		t.Fatalf("notice: n=%d err=%v posted=%q", n, err, f.api.posted)
 	}
@@ -223,11 +257,11 @@ func TestCloseAbandonedAfterNoticeAndGrace(t *testing.T) {
 	}
 	// Inside the grace: nothing more, and the notice is never repeated.
 	f.clock.advance(time.Hour)
-	if n, _ := f.e.closeAbandonedIfDue(ctx, f.store, f.key, f.obs, listedPolicy(f), f.clock.now()); n != 0 || len(f.api.posted) != 1 || f.api.closed {
+	if n, _, _ := f.close(t, listedPolicy(f)); n != 0 || len(f.api.posted) != 1 || f.api.closed {
 		t.Fatalf("inside the grace: n=%d posted=%d closed=%v", n, len(f.api.posted), f.api.closed)
 	}
 	f.clock.advance(25 * time.Hour)
-	n, err = f.e.closeAbandonedIfDue(ctx, f.store, f.key, f.obs, listedPolicy(f), f.clock.now())
+	n, _, err = f.close(t, listedPolicy(f))
 	if err != nil || n != 1 || !f.api.closed {
 		t.Fatalf("after the grace: n=%d err=%v closed=%v", n, err, f.api.closed)
 	}
@@ -237,7 +271,7 @@ func TestCloseAbandonedAfterNoticeAndGrace(t *testing.T) {
 	}
 	// Never twice.
 	f.api.closed = false
-	if n, _ := f.e.closeAbandonedIfDue(ctx, f.store, f.key, f.obs, listedPolicy(f), f.clock.now()); n != 0 || f.api.closed {
+	if n, _, _ := f.close(t, listedPolicy(f)); n != 0 || f.api.closed {
 		t.Fatal("closed twice")
 	}
 }
@@ -257,7 +291,7 @@ func TestCloseAbandonedNeedsTheRepoOptIn(t *testing.T) {
 			f := abandonFlagged(t)
 			for i := 0; i < 3; i++ {
 				f.clock.advance(48 * time.Hour)
-				if n, _ := f.e.closeAbandonedIfDue(context.Background(), f.store, f.key, f.obs, p(f), f.clock.now()); n != 0 {
+				if n, _, _ := f.close(t, p(f)); n != 0 {
 					t.Fatalf("posted %d", n)
 				}
 			}
@@ -276,7 +310,7 @@ func TestCloseAbandonedHonoursHoldAndKeepOpen(t *testing.T) {
 			f.obs.Labels = []string{label}
 			for i := 0; i < 3; i++ {
 				f.clock.advance(48 * time.Hour)
-				_, _ = f.e.closeAbandonedIfDue(context.Background(), f.store, f.key, f.obs, listedPolicy(f), f.clock.now())
+				_, _, _ = f.close(t, listedPolicy(f))
 			}
 			if len(f.api.posted) != 0 || f.api.closed {
 				t.Fatalf("posted=%q closed=%v", f.api.posted, f.api.closed)
@@ -292,16 +326,16 @@ func TestCloseAbandonedCancelledByActivityAfterNotice(t *testing.T) {
 	t.Run("seen by the lane", func(t *testing.T) {
 		f := abandonFlagged(t)
 		ctx := context.Background()
-		_, _ = f.e.closeAbandonedIfDue(ctx, f.store, f.key, f.obs, listedPolicy(f), f.clock.now())
+		_, _, _ = f.close(t, listedPolicy(f))
 		f.clock.advance(time.Hour)
-		f.store.NoteActivity(f.key, stagelabels.Activity{Head: "bbb", Comments: 3, Reviews: 0})
+		f.store.NoteActivity(f.key, stagelabels.Activity{Head: "bbb", Comments: 3, Reviews: 0, TrackIdle: true})
 		f.obs.HeadSHA = "bbb"
 		f.e.reconcileAbandoned(ctx, f.store, f.key, f.obs, f.policy(), true, f.clock.now())
 		if f.rec(t).Abandoned() {
 			t.Fatal("author push did not clear the flag")
 		}
 		f.clock.advance(48 * time.Hour)
-		_, _ = f.e.closeAbandonedIfDue(ctx, f.store, f.key, f.obs, listedPolicy(f), f.clock.now())
+		_, _, _ = f.close(t, listedPolicy(f))
 		if f.api.closed || len(f.api.posted) != 1 {
 			t.Fatalf("closed=%v posted=%d", f.api.closed, len(f.api.posted))
 		}
@@ -309,13 +343,13 @@ func TestCloseAbandonedCancelledByActivityAfterNotice(t *testing.T) {
 	t.Run("seen only by the pre-close read", func(t *testing.T) {
 		f := abandonFlagged(t)
 		ctx := context.Background()
-		_, _ = f.e.closeAbandonedIfDue(ctx, f.store, f.key, f.obs, listedPolicy(f), f.clock.now())
+		_, _, _ = f.close(t, listedPolicy(f))
 		replied := f.clock.now().Add(2 * time.Hour)
 		f.api.comments = []map[string]any{
 			{"id": 9, "body": "still on it", "created_at": ghTime(replied), "user": map[string]any{"login": "contributor", "type": "User"}},
 		}
 		f.clock.advance(48 * time.Hour)
-		if n, err := f.e.closeAbandonedIfDue(ctx, f.store, f.key, f.obs, listedPolicy(f), f.clock.now()); n != 0 || err != nil || f.api.closed {
+		if n, _, err := f.close(t, listedPolicy(f)); n != 0 || err != nil || f.api.closed {
 			t.Fatalf("closed despite the reply: n=%d err=%v closed=%v", n, err, f.api.closed)
 		}
 		f.e.reconcileAbandoned(ctx, f.store, f.key, f.obs, f.policy(), true, f.clock.now())
@@ -323,4 +357,156 @@ func TestCloseAbandonedCancelledByActivityAfterNotice(t *testing.T) {
 			t.Fatal("the reply did not clear the flag")
 		}
 	})
+}
+
+// The clock applies to contributor PRs only: an owner's PR, a trusted
+// author's PR, the hive's own and the App's are never flagged or closed.
+func TestAbandonContributorScope(t *testing.T) {
+	f := newAbandonFixture(t)
+	policy := f.policy()
+	policy.OwnerAuthor = func(login string) bool { return login == "owner" }
+	policy.HiveAuthor = func(login string) bool { return login == "hive-agent" }
+	for name, tc := range map[string]struct {
+		author string
+		kind   authorkind.Kind
+		role   stagelabels.Role
+		want   bool
+	}{
+		"contributor":    {"contributor", authorkind.Human, stagelabels.RoleContributor, true},
+		"untrusted":      {"newbie", authorkind.Human, stagelabels.RoleUntrusted, true},
+		"clanker":        {"someones-agent", authorkind.Clanker, stagelabels.RoleContributor, true},
+		"owner":          {"owner", authorkind.Human, stagelabels.RoleContributor, false},
+		"trusted author": {"maintainer", authorkind.Human, stagelabels.RoleTrusted, false},
+		"hive kind":      {"anyone", authorkind.Hive, stagelabels.RoleNone, false},
+		"hive identity":  {"hive-agent", authorkind.Human, stagelabels.RoleNone, false},
+		"the App":        {testHiveAppBotLogin, authorkind.Unknown, stagelabels.RoleNone, false},
+	} {
+		obs := f.obs
+		obs.Author, obs.AuthorKind = tc.author, tc.kind
+		if got := f.e.abandonContributor(obs, tc.role, policy); got != tc.want {
+			t.Errorf("%s: abandonContributor = %v, want %v", name, got, tc.want)
+		}
+	}
+
+	// Not a contributor: a flag on record is cleared and nothing is
+	// flagged, however long the PR idles.
+	g := abandonFlagged(t)
+	g.e.reconcileAbandoned(context.Background(), g.store, g.key, g.obs, g.policy(), false, g.clock.now())
+	if g.rec(t).Abandoned() {
+		t.Fatal("an owner's or trusted author's PR kept the flag")
+	}
+	g.clock.advance(30 * 24 * time.Hour)
+	g.e.reconcileAbandoned(context.Background(), g.store, g.key, g.obs, g.policy(), false, g.clock.now())
+	if g.rec(t).Abandoned() {
+		t.Fatal("an owner's or trusted author's PR was flagged")
+	}
+	if n, closed, _ := g.close(t, listedPolicy(g)); n != 0 || closed || len(g.api.posted) != 0 {
+		t.Fatalf("an owner's or trusted author's PR was noticed or closed: n=%d closed=%v", n, closed)
+	}
+}
+
+// The close happens first and the comment after it: a refused close posts
+// nothing and backs off; the retry closes and comments exactly once.
+func TestCloseAbandonedEditFailureNeverRepostsTheComment(t *testing.T) {
+	f := abandonFlagged(t)
+	if n, _, _ := f.close(t, listedPolicy(f)); n != 1 {
+		t.Fatal("no notice")
+	}
+	f.clock.advance(25 * time.Hour)
+	f.api.editFails = true
+	n, closed, err := f.close(t, listedPolicy(f))
+	if err == nil || closed || n != 0 || len(f.api.posted) != 1 {
+		t.Fatalf("refused close: n=%d closed=%v err=%v posted=%d", n, closed, err, len(f.api.posted))
+	}
+	// Inside the back-off: no second attempt.
+	f.clock.advance(10 * time.Minute)
+	if _, _, _ = f.close(t, listedPolicy(f)); f.api.edits != 1 {
+		t.Fatalf("retried inside the back-off: %d edits", f.api.edits)
+	}
+	f.api.editFails = false
+	f.clock.advance(stagelabels.AbandonRecheckEvery)
+	n, closed, err = f.close(t, listedPolicy(f))
+	if err != nil || !closed || n != 1 || !f.api.closed || len(f.api.posted) != 2 || !strings.HasPrefix(f.api.posted[1], AbandonCloseMarker) {
+		t.Fatalf("retry: n=%d closed=%v err=%v posted=%q", n, closed, err, f.api.posted)
+	}
+	if _, closed, _ := f.close(t, listedPolicy(f)); closed || len(f.api.posted) != 2 {
+		t.Fatal("closed or commented twice")
+	}
+}
+
+// The close needs the stage the pass wrote to still be the flagged park.
+func TestCloseAbandonedNeedsTheParkStillWritten(t *testing.T) {
+	f := abandonFlagged(t)
+	_, _, _ = f.close(t, listedPolicy(f))
+	f.clock.advance(25 * time.Hour)
+	n, closed, _ := f.e.closeAbandonedIfDue(context.Background(), f.store, f.key, f.obs, listedPolicy(f), stagelabels.ReviewPending, f.clock.now())
+	if n != 0 || closed || f.api.closed {
+		t.Fatalf("closed though the pass wrote another stage: n=%d closed=%v", n, closed)
+	}
+}
+
+// An 085↔074 flap through the real activity path (stageActivity's digest
+// flips with the reason) neither restarts the idle clock nor posts a second
+// notice; the close comes once, after the grace.
+func TestAbandonFlapThroughStageActivityPostsOneNotice(t *testing.T) {
+	f := newAbandonFixture(t)
+	f.obs.Detail.CommentsKnown, f.obs.Detail.Comments = true, 2
+	f.obs.Detail.ReviewsKnown, f.obs.Detail.Reviews = true, 0
+	stalled := stagelabels.LaneReasonAdoptionStalledPrefix + "check-failing:unit"
+	pass := func(stage stagelabels.Stage, reason string) {
+		obs := f.obs
+		obs.Reason = reason
+		f.store.ObserveHead(f.key, "aaa", stage, reason)
+		act := stageActivity(obs, stage)
+		act.TrackIdle = true
+		f.store.NoteActivity(f.key, act)
+		f.e.reconcileAbandoned(context.Background(), f.store, f.key, obs, f.policy(), true, f.clock.now())
+		_, _, _ = f.close(t, listedPolicy(f))
+	}
+	f.clock.advance(abandonAfterTest + time.Hour)
+	pass(stagelabels.NeedsDecision, stalled)
+	if !f.rec(t).Abandoned() || len(f.api.posted) != 1 {
+		t.Fatalf("fixture: flagged=%v posted=%d", f.rec(t).Abandoned(), len(f.api.posted))
+	}
+	idle := f.rec(t).AbandonedIdleSince
+	for i := 0; i < 3; i++ {
+		f.clock.advance(3 * time.Hour)
+		pass(stagelabels.AdoptedByHive, "check-failing:unit")
+		f.clock.advance(3 * time.Hour)
+		pass(stagelabels.NeedsDecision, stalled)
+	}
+	r := f.rec(t)
+	if len(f.api.posted) != 1 || !r.Abandoned() || !r.AbandonedIdleSince.Equal(idle) || !r.IdleSince().Equal(idle) {
+		t.Fatalf("after flaps: posted=%d flagged=%v idle since %v (want %v)", len(f.api.posted), r.Abandoned(), r.IdleSince(), idle)
+	}
+	f.clock.advance(7 * time.Hour)
+	pass(stagelabels.NeedsDecision, stalled)
+	if !f.api.closed || len(f.api.posted) != 2 {
+		t.Fatalf("after the grace: closed=%v posted=%d", f.api.closed, len(f.api.posted))
+	}
+}
+
+// The confirming read pages through comments, so a crowd of hive and bot
+// comments cannot hide the author's reply; a person who is also
+// project.ai_author is not excluded.
+func TestConfirmingReadPagesComments(t *testing.T) {
+	f := newAbandonFixture(t)
+	f.clock.advance(abandonAfterTest + time.Hour)
+	recent := f.clock.now().Add(-time.Hour)
+	var bots []map[string]any
+	for i := 0; i < 100; i++ {
+		bots = append(bots, map[string]any{"id": i, "body": "status", "created_at": ghTime(recent), "user": map[string]any{"login": testHiveAppBotLogin, "type": "Bot"}})
+	}
+	f.api.commentPages = [][]map[string]any{bots, {
+		{"id": 500, "body": "on it", "created_at": ghTime(recent), "user": map[string]any{"login": "operator-account", "type": "User"}},
+	}}
+	policy := f.policy()
+	policy.HiveAuthor = func(login string) bool { return login == "operator-account" }
+	f.e.reconcileAbandoned(context.Background(), f.store, f.key, f.obs, policy, true, f.clock.now())
+	if f.rec(t).Abandoned() {
+		t.Fatal("the reply on page 2 was missed")
+	}
+	if !f.rec(t).IdleSince().Equal(recent) {
+		t.Fatalf("idle since = %v, want the reply %v", f.rec(t).IdleSince(), recent)
+	}
 }

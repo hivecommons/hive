@@ -1575,10 +1575,14 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				// wait on the hive.
 				act.WaitingOnHive = true
 			}
+			// The stale contributor PR idle clock (automerge_stage_abandon.go)
+			// runs for contributor PRs only, and keeps its own activity
+			// anchor only while it runs (Activity.TrackIdle).
+			abandonEligible := c.abandonContributor(obs, role, policy)
+			act.TrackIdle = policy.AbandonAfter > 0 && abandonEligible
 			store.NoteActivity(key, act)
-			// The stale contributor PR idle clock (automerge_stage_abandon.go):
-			// a flag on the record only; the stage written below is unchanged.
-			c.reconcileAbandoned(ctx, store, key, obs, policy, !(pass.AuthorIsApp || obs.AuthorKind == authorkind.Hive), now)
+			// A flag on the record only; the stage written below is unchanged.
+			c.reconcileAbandoned(ctx, store, key, obs, policy, abandonEligible, now)
 			rec, _ := store.Get(key)
 			if tr.Suppressed {
 				verdict.Stage = rec.Stage
@@ -1701,12 +1705,18 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			}
 		}
-		if err == nil && !out.Suppressed {
+		if err == nil && !out.Suppressed && c.abandonContributor(obs, role, policy) {
 			// abandon_close_repos: warn once, then close after the grace.
-			n, aerr := c.closeAbandonedIfDue(ctx, store, key, obs, policy, now)
+			n, closed, aerr := c.closeAbandonedIfDue(ctx, store, key, obs, policy, out.Stage, now)
 			result.Comments += n
 			if aerr != nil && firstErr == nil {
 				firstErr = aerr
+			}
+			if closed {
+				// The PR is closed: nothing else this pass does for it
+				// (entry note, adoption, nudge) applies any more.
+				store.CountOwnComments(key, result.Comments-commentsBefore)
+				continue
 			}
 		}
 		if obs.Route != nil && (want.Stage == stagelabels.ReadyForHumanMerge || want.Stage == stagelabels.NeedsDecision) {
