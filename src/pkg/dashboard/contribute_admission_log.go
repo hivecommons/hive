@@ -20,6 +20,8 @@ func (d contributorAdmissionDecision) logKey() string {
 	switch d.reason {
 	case contributorAdmissionReasonOpenPRClaim, contributorAdmissionReasonMergedClaimStale:
 		parts = append(parts, d.claim.PRURL, strconv.FormatBool(d.claim.MergedPR), d.claim.Source)
+	case contributorAdmissionReasonCoveringPRStalled:
+		parts = append(parts, d.claim.PRURL, d.openPR.PRURL)
 	case contributorAdmissionReasonIssueClaim:
 		parts = append(parts, d.issueClaim.Identity, d.issueClaim.ExpiresAt.UTC().Format(time.RFC3339))
 	case contributorAdmissionReasonIssueChurn:

@@ -200,6 +200,8 @@
         "PresenceWindow": "",
         "ContributorGraceOnline": "",
         "ContributorGraceOffline": "",
+        "AbandonAfter": "",
+        "AbandonCloseRepos": null,
         "Adoption": {
           "Enabled": null,
           "AfterOffline": "",

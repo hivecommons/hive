@@ -1782,6 +1782,9 @@ func runEvalCycle(
 					agentQuotaHold.MarkProbeDelivered(msg.Agent, deliveredAt)
 				}
 				gov.RecordKickForRepoAt(msg.Agent, msg.Repo, deliveredAt)
+				// A routed fixer rebase attempt's deadline starts when a
+				// kick carrying it reaches the fixer, not when it was routed.
+				recordRebaseAttemptDeliveries(msg.Agent, msg.Message, deliveredAt, logger)
 				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
 				if k, ok := workflowKickByMessage[workflowDispatchKickKey(msg)]; ok {
 					recordWorkflowDispatchDelivered(cfg, k, deliveredAt, logger)

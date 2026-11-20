@@ -673,7 +673,7 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	if soak := c.currentContributorLanePolicy().Soak; soak > 0 {
 		e.Soak = soak
 		if known && summary.Total > 0 && summary.Pending == 0 && len(summary.Red) == 0 {
-			first := c.contributorSoak.observeGreen(contributorSoakKey(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA), now)
+			first := c.soakFirstGreen(ctx, obs.Owner, obs.Repo, obs.Number, obs.HeadSHA, now)
 			e.SoakElapsed = now.Sub(first)
 		}
 	}

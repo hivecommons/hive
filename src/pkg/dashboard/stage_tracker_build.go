@@ -198,6 +198,12 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		stageTrackerApplyMergeTrain(it)
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
+		if hasRec && it.Kind == "pr" && rec.Abandoned() {
+			// The idle clock's flag: same stage, same recorded reason; the
+			// row says how long it has been stuck and on what.
+			it.Abandoned = rec.AbandonedReason(now)
+			it.Caption = stageTrackerAbandonedCaption(it.Abandoned)
+		}
 		stageTrackerApplyTracking(it, stage)
 		if c := stageTrackerSoakCaption(rec, now); c != "" {
 			it.Caption = c

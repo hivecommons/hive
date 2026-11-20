@@ -369,6 +369,21 @@ func (c *Engine) headGreenSince(ctx context.Context, owner, repo, sha string) ti
 	return latest
 }
 
+// soakFirstGreen records that the head is green at now and returns when its
+// soak started. A head this process has not seen green yet is seeded from
+// headGreenSince, so a pod restart or upgrade does not restart an open soak:
+// the lane's own soak (hivecommons/hive#12726), and the soak the human route
+// shows as 060 on a head the lane refuses before its soak step (no linked
+// issue, author association, auto-merge off). Unseeded, every restart sent
+// those heads from 090 back to 060 for a full window, all at once.
+func (c *Engine) soakFirstGreen(ctx context.Context, owner, repo string, number int, headSHA string, now time.Time) time.Time {
+	var greenSince time.Time
+	if _, seen := c.contributorSoak.FirstGreen(owner, repo, number, headSHA); !seen {
+		greenSince = c.headGreenSince(ctx, owner, repo, headSHA)
+	}
+	return c.contributorSoak.observeGreenSince(contributorSoakKey(owner, repo, number, headSHA), now, greenSince)
+}
+
 func (c *Engine) currentContributorLanePolicy() ContributorLanePolicy {
 	if c == nil || c.contributorLanePolicy == nil {
 		return ContributorLanePolicy{}
@@ -1705,12 +1720,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		c.info("contributor-lane reviewer verdict cleared by trusted human approval", "repo", displayRepo, "pr", number, "head", headSHA, "approver", approver)
 	}
 	now := c.now()
-	soakKey := contributorSoakKey(owner, repo, number, headSHA)
-	var greenSince time.Time
-	if _, seen := c.contributorSoak.FirstGreen(owner, repo, number, headSHA); !seen {
-		greenSince = c.headGreenSince(ctx, owner, repo, headSHA)
-	}
-	firstGreen := c.contributorSoak.observeGreenSince(soakKey, now, greenSince)
+	firstGreen := c.soakFirstGreen(ctx, owner, repo, number, headSHA, now)
 	if soaked := now.Sub(firstGreen); soaked < policy.Soak {
 		eval.soakStartedAt, eval.soakRemaining = firstGreen, policy.Soak-soaked
 		return eval, contributorLaneReasonSoaking, nil
@@ -1889,7 +1899,7 @@ func contributorLaneConflictReason(pr *gh.PullRequest) string {
 	case "dirty", "conflicting":
 		return "conflicting"
 	case "unknown":
-		return "mergeable-unknown"
+		return prstage.StageReasonMergeableUnknown
 	default:
 		return ""
 	}

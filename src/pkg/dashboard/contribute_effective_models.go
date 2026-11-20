@@ -38,12 +38,16 @@ type contributeEffectiveModelsResponse struct {
 }
 
 // contributeEffectiveModelsCoverage reports how much history fed the table.
-// Closed attributed PRs come from a bounded rolling scan and runs from the
-// task-run log plus its single rotated predecessor, so a 30d/All window can
-// ask for more than is retained; the *_partial flags say so explicitly.
+// Closed attributed PRs come from the persisted attributed PR history (or,
+// without one, the bounded rolling scan) and runs from the task-run log plus
+// its single rotated predecessor, so a 30d/All window can ask for more than
+// is retained; the *_partial flags say so explicitly. ClosedPRsSince is the
+// history's coverage start (applyAttributedPRHistoryCoverage), omitted
+// without a history.
 type contributeEffectiveModelsCoverage struct {
 	ClosedPRLookbackDays int    `json:"closed_pr_lookback_days"`
 	ClosedPRsPartial     bool   `json:"closed_prs_partial"`
+	ClosedPRsSince       string `json:"closed_prs_since,omitempty"`
 	RunsSince            string `json:"runs_since,omitempty"`
 	RunsPartial          bool   `json:"runs_partial"`
 }
@@ -97,12 +101,13 @@ func (s *Server) handleContributeEffectiveModels(w http.ResponseWriter, r *http.
 		}
 	}
 
-	prs := s.lastActionableForPRModels().PRs.Attributed
+	prs, history := s.prModelsAttributedPRs(s.lastActionableForPRModels())
 	windowDur := governorPRModelsWindowDuration(window)
 	runs, rotated, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), windowDur)
 	now := time.Now()
 	resp := aggregateContributeEffectiveModels(prs, runs, window, filter, minMergedPRs, now)
 	resp.Coverage = effectiveModelsCoverage(windowDur, ghpkg.AttributedClosedPRLookback(), runs, rotated, now)
+	applyAttributedPRHistoryCoverage(&resp.Coverage, history, prs, windowDur, now)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }

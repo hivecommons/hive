@@ -147,6 +147,8 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			NudgeWithholdWhenAdopting: true,
 			RenudgeInterval:           nudgeRepeatAfter(cfg),
 			CIFailureCooldown:         stage.ContributorNudge.EffectiveCIFailureCooldown(),
+			AbandonAfter:              stage.EffectiveAbandonAfter(),
+			AbandonClose:              cfg.AbandonCloseAllowed,
 			Adoption:                  stage.Adoption.IsEnabled(),
 			GraceOnline:               stage.EffectiveContributorGraceOnline(),
 			GraceOffline:              stage.EffectiveContributorGraceOffline(),
@@ -1545,8 +1547,12 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			// next attempt, and past the cap the hive stops re-kicking.
 			// A fixer-owned attempt (adopted, trusted-author, requested)
 			// that saw no push within its deadline is the next attempt too
-			// (hivecommons/hive#16023): a busy fixer must not hold the
-			// episode at attempt 1 forever.
+			// (hivecommons/hive#16023): a fixer that was handed the work
+			// must not hold the episode at attempt 1 forever. The deadline
+			// runs from the kick that carried the attempt to the fixer
+			// (recordRebaseAttemptDeliveries), so an attempt still waiting
+			// for the fixer's next kick is not failed at that deadline (a
+			// backstop in Expire ends one no kick ever carries).
 			fixerRebase := adopted || trustedRebase || requested
 			rebaseNow := rebaseAttemptNow()
 			attempt := rebaseAttempts().Observe(fullRepo, pr.Number, pr.HeadSHA, rebaseNow)
@@ -1591,8 +1597,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			}
 			if fixerRebase {
 				// The row stays listed every sweep (the fixer's kick overlay
-				// reads it), but each attempt is routed and announced once;
-				// the dispatch time is the attempt's deadline clock.
+				// reads it), but each attempt is routed and announced once.
+				// Routing sends nothing: the attempt's deadline clock starts
+				// when a kick carrying the row is delivered.
 				if _, first := rebaseAttempts().Dispatch(fullRepo, pr.Number, agent, rebaseNow); first {
 					args := []any{"repo", fullRepo, "number", pr.Number, "work", "rebase", "adopted", adopted, "trusted_author", trustedRebase, "requested_by", attempt.RequestedBy, "attempt", attempt.Count(), "max", rebasemerge.MaxRebaseAttempts, "mergeable_state", pr.MergeableState, "fixer", agent, "sentinel_alert", row.SentinelAlert}
 					if timedOut != nil {

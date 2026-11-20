@@ -11,6 +11,48 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-20 (v6.53.5)
+
+### Fixed
+
+- An adopted or hive-owned PR with a merge conflict no longer uses up its two fixer rebase attempts before the fixer has seen it. Routing a rebase only lists the PR for the fixer's next kick, but each attempt's 15-minute deadline (`governor.labels.stage.adoption.rebase_attempt_timeout`) started at routing, so a fixer whose next kick came later (its cadence slot not due yet, or the slot taken by a single-task review-fix kick, which does not list conflicts) had both attempts expire without ever being handed the work. An in-place adoption of a fork PR then went straight to `stage/085-needs-decision` with `adoption-stalled:fork-rehome-refused`, because a fork is never re-homed into the base repository (#14306), even though the fixer could have pushed to the contributor's branch. The deadline now starts when a fixer kick that lists the attempt is delivered, so an attempt only counts as failed after the fixer was given it and pushed nothing for the full deadline ([#16023](https://github.com/hivecommons/hive/issues/16023)). An attempt no fixer kick ever carries (past the kick's detailed rows, a busy branch, a paused fixer) still ends, after 8× the deadline from routing (2h by default). Two adopted fork PRs parked this way on 2026-11-20.
+
+## 2026-11-20 (v6.53.4)
+
+### Fixed
+
+- A hive restart or upgrade no longer drops reviewed, green PRs from `stage/090-ready-for-human-merge` back to `stage/060-reviewed` for a full soak window. The stage route soaks a head the contributor lane refuses before its own soak step (no linked issue, author association, auto-merge off for the repo), and it started that soak from its first sighting in the new process, while the lane's own soak was already seeded from when GitHub saw the head go green ([#12726](https://github.com/hivecommons/hive/pull/12726)). Both now share that seed, so a head that soaked before the restart stays at 090. On 2026-11-20 one upgrade moved 15 such PRs to 060 at once, and they came back 30 minutes later.
+
+## 2026-11-20 (v6.53.3)
+
+### Fixed
+
+- Stage labels: a pass where GitHub reports a PR's mergeable state as `unknown`, which it does while it recomputes the merge after the base moves, no longer changes the PR's stage. The contributor lane stops on `mergeable-unknown` before admission, review or CI, and an approved head read as "nothing left for the author" became a weak `stage/080-awaiting-merge-admission` for that pass: a PR waiting on a person's merge for `contributor-lane:no-linked-issue` went 090 → 080 → 090, an admitted PR at 095 or 100 dropped to 080, and a conflicting PR at 072 could take the trusted-author lane's 090 for a pass. `mergeable-unknown` is now no stage opinion, like the destination-merge guard (#16819), and another lane's weak opinion does not stand in for it; an owned opinion from another lane still applies. The pass also keeps the lane's merge-train verdict on the head instead of clearing it, so a person's merge stays out of the train. [projectbluefin/utah-packages#1222](https://github.com/projectbluefin/utah-packages/pull/1222) flipped 090 → 080 → 090 twice in one evening this way.
+
+## 2026-11-20 (v6.53.2)
+
+### Fixed
+
+- On a repository whose auto-merge is off, an approved, green PR from a trusted author, a contributor or the hive itself now stays at `stage/090-ready-for-human-merge` instead of sometimes dropping to `stage/050-review-pending` and back under the same `repo-auto-merge-disabled` reason ([projectbluefin/server#699](https://github.com/projectbluefin/server/pull/699) flipped every ~25 minutes). The engine ticker and the queued automerge sweep share one stage tracker ([#12573](https://github.com/hivecommons/hive/issues/12573)). When one of them drained it between a lane noting the head's reviewer verdict and recording its observation, and no later lane in that pass noted the verdict again, the pass saw no verdict and called the head unreviewed. The stage pass now reads that head's verdict from the review record the lanes read when the drain carries none, so an unreviewed head still reads 050 and a new push still waits for its own review. A trusted bot's PR is left as before: its lane treats the verdict as advisory.
+
+## 2026-11-20 (v6.53.1)
+
+### Fixed
+
+- The Governor's **PRs by model** card and Operations' **Most effective models** table now count every attributed PR in their `30d` and `all` windows, not only those the closed-PR scan touched in the last 14 days. That scan stops at PRs updated in the last `HIVE_ATTRIBUTED_CLOSED_PR_LOOKBACK` (default 14 days) and kept its results only in memory, so a PR closed and left alone for longer silently dropped out and a restart lost them all. Models lost different shares that way (on one hive 55% of one model's PRs since late October and 90% of another's), so the ranking compared unequal samples. The hive now keeps a history of attributed PRs in `/data/attributed-pr-history.json` (parsed attribution, outcome and rework fields only, never PR bodies) that survives restarts, and a one-time backfill fills it back 30 days (`HIVE_ATTRIBUTED_PR_BACKFILL_LOOKBACK`). The backfill spends at most two list pages and five rework measurements per enumeration pass, only while the GitHub API budget is normal, resumes where it stopped after a restart and makes no calls once done; the per-pass closed-PR scan stays bounded as before. The `coverage` block reports where the history starts (new `closed_prs_since`) and marks `closed_prs_partial` only when a window starts before it.
+
+## 2026-11-20 (v6.53.0)
+
+### Added
+
+- **Stale contributor PRs get an idle clock (`governor.labels.stage.abandon_after`, off by default).** A contributor PR parked at `071-needs-author` or at an `adoption-stalled:` `085` used to get one note and then nothing, while it kept its linked issue locked. With the setting on, a contributor PR (never an owner's or a trusted author's) with no push, comment or review from anyone but the hive for that long is flagged abandoned. Its stage, label and reason do not change. The row reads `abandoned Nd: <blocker>` and lands in the inbox's "Stale: close or take over" `CLOSE` group (`abandoned_recommended_close`, which the `review_queue` MCP also shows). The delegate recommends closing it or a person taking it over (`abandoned-stale`, recommend-only). The issue it covers stays locked but shows the withheld reason `covering_pr_stalled`. `governor.labels.stage.abandon_close_repos` lets listed repositories at ACMM L6 close such PRs after one notice and a 24h grace with no activity, no hold and no `hive/keep-open`. Both keys are on Settings → Labels and in the new admin-MCP write `governor.stage_labels`.
+
+## 2026-11-20 (v6.52.5)
+
+### Fixed
+
+- A PR whose attribution trailer (`-- hive: agent=… backend=… model=…`) is followed by footer lines is counted again in Governor "PRs by model", Operations "Most effective models" and the rework and cost figures. The trailer was read only when it was the last non-blank line before the identity footer, so a `Refs #N`, `Closes #N` or `Fixes #N` line, an HTML marker, or a `🤖 Generated with …` line below it dropped the PR: 112 of 707 trailer-carrying projectbluefin PRs (16%), among them [projectbluefin/utah-packages#949](https://github.com/projectbluefin/utah-packages/pull/949), [#1014](https://github.com/projectbluefin/utah-packages/pull/1014) and [projectbluefin/website#1040](https://github.com/projectbluefin/website/pull/1040). Those lines, and an identity footer with a `Fixes #N` appended below it, are now skipped; any other line after the trailer still means the PR has none, so a trailer quoted in prose is not taken for the PR's own. The issue-link repair that rewrites `Refs #N` to `Fixes #N` now puts its `<!-- hive:issue-link-fixed -->` marker above the trailer instead of below it, so the hive no longer breaks its own attribution (22 of the 112).
+
 ## 2026-11-20 (v6.52.4)
 
 ### Fixed

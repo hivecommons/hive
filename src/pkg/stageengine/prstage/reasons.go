@@ -75,9 +75,14 @@ const (
 	// this pass because a merge to its destination was in flight
 	// (hivecommons/hive#16520); it says nothing about the stage.
 	StageReasonBaseRefreshMergeGuard = "base-refresh:merge-guard"
-	StageReasonForkGuard             = "fork-guard:"
-	StageReasonOptionalCheckFailing  = "optional-check-failing:"
-	StageReasonSharedCIIncident      = "shared-ci-incident:"
+	// StageReasonMergeableUnknown: GitHub reported mergeable_state
+	// "unknown" (it is still computing the merge, as it does after the
+	// base moves), so the contributor lane stopped before it evaluated the
+	// PR; like the merge guard it says nothing about the stage.
+	StageReasonMergeableUnknown     = "mergeable-unknown"
+	StageReasonForkGuard            = "fork-guard:"
+	StageReasonOptionalCheckFailing = "optional-check-failing:"
+	StageReasonSharedCIIncident     = "shared-ci-incident:"
 	// StageReasonUnauthorizedPrefix: the lane's next step needs an API
 	// call the hive's GitHub App is not permitted to make (403 "Resource
 	// not accessible by integration"); the rest names the step

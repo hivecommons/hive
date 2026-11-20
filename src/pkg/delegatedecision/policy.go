@@ -372,6 +372,13 @@ type Input struct {
 	// anyway ("" when the park is an ordinary one the rule overrides).
 	HiveSuperseding        bool
 	HiveSupersederHardStop string
+	// Abandoned: the PR's stage record carries the idle clock's abandoned
+	// flag (governor.labels.stage.abandon_after): a contributor PR parked
+	// at 071 needs-author or at an adoption-stalled 085 with no outside
+	// activity past the threshold. AbandonedReason is the rendered reason
+	// with its age and original blocker ("abandoned 9d: check-failing:unit").
+	Abandoned       bool
+	AbandonedReason string
 }
 
 // CIRed reports a head that is not green because a check failed (or none
@@ -809,6 +816,12 @@ func decidePR(in Input) Decision {
 			return d
 		}
 	}
+	// A contributor PR the idle clock flagged abandoned: nothing the hive
+	// can do moves it, so a person closes it as stale or takes it over.
+	// Recommend-only; it never closes.
+	if d, ok := decideAbandoned(in, ref); ok {
+		return d
+	}
 	// A PR the hive adopted in place is the hive's own to fix: the
 	// reviewer's finding and the head's blockers go to the fixer, never
 	// "back to the author" (hivecommons/hive#15722).
@@ -933,6 +946,29 @@ func decideAdoptedPushRefused(in Input, ref, why string, fix []string) Decision 
 	return recommendOnly(RuleAdoptedPushRefused,
 		"the hive adopted "+ref+" but cannot push its branch — "+why+" — so its fixer cannot carry out a direction, and "+in.OfflineWording(),
 		"a maintainer pushes the fix to "+ref+" ("+strings.Join(fix, ", ")+") or closes it; the hive cannot")
+}
+
+// RuleAbandonedStale: a contributor PR the idle clock flagged abandoned
+// (governor.labels.stage.abandon_after). The hive recommends closing it as
+// stale or a person taking it over and keeps the park; it never closes.
+const RuleAbandonedStale = "abandoned-stale"
+
+// decideAbandoned answers an abandoned contributor PR. A PR whose author's
+// relay has picked the rework up is not abandoned in fact, so it falls
+// through to the ordinary rules; so do the hive's own PRs, which never carry
+// the flag. Closing or taking over someone's work is the owner's call
+// (hivecommons/hive#17292), so the answer is always recommendOnly.
+func decideAbandoned(in Input, ref string) (Decision, bool) {
+	if in.Kind != KindPR || !in.Abandoned || in.HiveAuthored || in.ReworkPickedUp {
+		return Decision{}, false
+	}
+	why := strings.TrimSpace(in.AbandonedReason)
+	if why == "" {
+		why = "abandoned past the idle threshold"
+	}
+	return recommendOnly(RuleAbandonedStale,
+		ref+" is "+why+" — parked with no push, comment or review from anyone but the hive for longer than governor.labels.stage.abandon_after, and nothing the hive can push moves it; closing or taking over another author's work is a person's call",
+		"close "+ref+" as stale (say how to reopen), or have a person take it over; the hive does neither on its own"), true
 }
 
 // RuleHiveSuperseder is the owner's superseder rule: "if a pr is superseded

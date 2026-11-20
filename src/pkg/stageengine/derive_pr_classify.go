@@ -378,6 +378,15 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		// it at a merge train's front (projectbluefin/utah-packages#917).
 		return stageVerdict{}
 	}
+	if reason == prstage.StageReasonMergeableUnknown {
+		// GitHub had not computed the merge yet, so the lane stopped before
+		// admission, review or CI: no opinion, and the stage stands. Read
+		// as an approved head with nothing left for its author it was a
+		// weak 080 that replaced a standing 090 (no linked issue), 072
+		// (conflict) or 095 on an unchanged head for one pass
+		// (projectbluefin/utah-packages#1222).
+		return stageVerdict{}
+	}
 	if v, ok := HeldWorkflowRunsStage(o); ok {
 		return v
 	}
@@ -819,7 +828,14 @@ func ResolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stag
 	// weakLabelRole is the tier the PR already carries as seen by lanes
 	// with no owning opinion this pass.
 	weakLabelRole := stagelabels.RoleNone
+	// mergeableUnknown: a lane saw GitHub's mergeable_state still
+	// "unknown" and stopped before it evaluated the head (ClassifyStage).
+	mergeableUnknown := false
+	var unknownObs stageObservation
 	for _, o := range list {
+		if o.Reason == prstage.StageReasonMergeableUnknown {
+			mergeableUnknown, unknownObs = true, o
+		}
 		v := ClassifyStage(o)
 		if v.Rank > best.Rank {
 			best, bestObs = v, o
@@ -862,12 +878,26 @@ func ResolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stag
 			// Some lane admits this author; a lane that cannot vouch for
 			// them has nothing to say about the stage. Leave it as is. A
 			// weak 085 (requires_human verdict, #13115) is deliberately
-			// kept: the decision is owed whoever the author is.
+			// kept: the decision is owed whoever the author is (except on a
+			// mergeable-unknown pass, below, where it waits one pass).
+			best = stageVerdict{}
+		}
+		if mergeableUnknown {
+			// The lane that evaluates the head said nothing this pass, so
+			// another lane's weak opinion (the trusted-author lane's
+			// untrusted-author-role 090 candidate) does not replace the
+			// stage that lane set: a conflicting PR at 072 would read 090
+			// for one pass and go back. An owned opinion still applies.
 			best = stageVerdict{}
 		}
 	}
 	if best.Rank == stageRankNone {
 		bestObs = list[0]
+		if mergeableUnknown {
+			// Abstain under the reason that held the stage, not the first
+			// lane's (the dashboard's simulate view shows it).
+			bestObs = unknownObs
+		}
 	}
 	return best, role, bestObs
 }

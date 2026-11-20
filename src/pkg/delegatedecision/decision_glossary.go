@@ -109,6 +109,8 @@ var glossary = []GlossaryEntry{
 		Detail: "The hive adopted this PR in place, but the reviewer's finding is the security review's. That policy call is a person's: read the finding and reply /hive decision with the instruction for the hive's fixer, or close the PR."},
 	{Slug: RuleAdoptedPushRefused, Kind: GlossaryRule, Plain: "the hive adopted this PR but cannot push its branch",
 		Detail: "The hive adopted this PR, but it cannot push the branch: it recorded fork-rehome-refused, the fork allows no maintainer edits or the PR changes workflow files, or its fixer reported the push was refused. The author is offline, so a person pushes the fix or closes the PR."},
+	{Slug: RuleAbandonedStale, Kind: GlossaryRule, Plain: "the PR went quiet past the abandon threshold; close it as stale or take it over",
+		Detail: "A contributor PR parked waiting on its author (071) or on an adoption the hive could not push (085) has had no push, comment or review from anyone but the hive for longer than governor.labels.stage.abandon_after. Nothing the hive can do moves it. The hive recommends closing it as stale, with a note on how to reopen, or a person taking it over; it never closes or takes it over on its own."},
 	{Slug: RuleReturnToAuthor, Kind: GlossaryRule, Plain: "a person pushed this PR; the hive asked them, not adopted it",
 		Detail: "The PR was pushed by a person (author/human or one of this hive's owners), so the hive never adopts it. It told the author by name what to fix (rebase, sign-off, CI) and relayed the reviewer's question."},
 	{Slug: "owner-only", Kind: GlossaryRule, Plain: "only the hive owner can do this",

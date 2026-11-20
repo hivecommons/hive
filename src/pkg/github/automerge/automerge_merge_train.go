@@ -1254,9 +1254,13 @@ func mergeTrainVerdictKey(lane, owner, repo string, number int) string {
 // altogether, and its readiness tier. A verdict that says none of those
 // (a handoff, an error) clears the mark. Keyed by lane so the
 // trusted-author lane's "untrusted-author-role" for a PR the contributor
-// lane admits never touches the contributor lane's train.
+// lane admits never touches the contributor lane's train. A pass that
+// stopped on GitHub's mergeable_state "unknown" evaluated nothing, so it
+// keeps whatever verdict the lane last reached on the head: clearing it
+// let a person's merge (contributor-lane:no-linked-issue) be seated in a
+// train until the next evaluated pass (projectbluefin/utah-packages#1222).
 func (c *Engine) noteMergeTrainOutcome(lane, owner, repo string, number int, sha, reason string) {
-	if c == nil || number <= 0 {
+	if c == nil || number <= 0 || reason == prstage.StageReasonMergeableUnknown {
 		return
 	}
 	key := mergeTrainVerdictKey(lane, owner, repo, number)
