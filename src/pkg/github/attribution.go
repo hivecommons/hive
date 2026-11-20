@@ -428,10 +428,49 @@ func HasAttributionTrailer(body string) bool {
 	return strings.Contains(body, AttributionTrailerPrefix) || strings.Contains(body, LegacyAttributionTrailerPrefix)
 }
 
+// identityFooterLinePattern is the `🐝 **Hive Agent**: …` line of
+// bin/gh-wrapper.sh's _identity_footer, shared by the terminal-block regex
+// and the per-line check ParseAttributionTrailer applies to a footer that is
+// no longer last.
+const identityFooterLinePattern = "🐝 \\*\\*Hive Agent\\*\\*:(?: `[^`\\n]+`)?(?: \\| \\*\\*Instance:\\*\\* `[^`\\n]+`)? \\| \\*\\*SHA:\\*\\* `[^`\\n]+`"
+
 // attributionIdentityFooter matches only the terminal block emitted by
 // bin/gh-wrapper.sh's _identity_footer, not arbitrary trailing Markdown. The
 // footer may end with the origin marker (`<!-- hive:origin … -->`, #12539).
-var attributionIdentityFooter = regexp.MustCompile("\\n[ \\t]*---[ \\t]*\\n🐝 \\*\\*Hive Agent\\*\\*:(?: `[^`\\n]+`)?(?: \\| \\*\\*Instance:\\*\\* `[^`\\n]+`)? \\| \\*\\*SHA:\\*\\* `[^`\\n]+`[ \\t]*(?:\\n[ \\t]*<!-- " + OriginMarkerName + "[^>]*-->)?[ \\t\\n]*$")
+var attributionIdentityFooter = regexp.MustCompile("\\n[ \\t]*---[ \\t]*\\n" + identityFooterLinePattern + "[ \\t]*(?:\\n[ \\t]*<!-- " + OriginMarkerName + "[^>]*-->)?[ \\t\\n]*$")
+
+// attributionIdentityFooterLine is identityFooterLinePattern as a whole line.
+var attributionIdentityFooterLine = regexp.MustCompile("^" + identityFooterLinePattern + "[ \\t]*$")
+
+// attributionFooterRefLine matches a closing or reference keyword line that
+// tools and the hive itself write below the trailer: `Refs #489`, `Closes
+// #1000`, `Fixes owner/repo#12, #13`, `Part of #7`, optionally followed by a
+// note after a dash, colon or parenthesis (`Refs #503 - remaining: lockdev`).
+// It is anchored to the whole line, so prose that merely starts with "Fixes"
+// is not a footer line.
+var attributionFooterRefLine = func() *regexp.Regexp {
+	keyword := `(?:` + strings.Join(closingKeywords, "|") + `|refs?|part\s+of)`
+	ref := `(?:(?:[\w.-]+/[\w.-]+)?#\d+|https://github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+)`
+	gap := `(?:\s*:\s*|\s+)`
+	sep := `(?:\s*,\s*(?:and\s+)?|\s+and\s+|\s+)`
+	note := `(?:[.;]|\s*(?:-|\x{2013}|\x{2014}|:|\().*)?`
+	return regexp.MustCompile(`(?i)^` + keyword + gap + ref + `(?:` + sep + `(?:` + keyword + gap + `)?` + ref + `)*` + note + `$`)
+}()
+
+// isAttributionFooterLine reports whether line (already trimmed) is one of
+// the lines that may follow the trailer without hiding it: a closing or
+// reference keyword line, a single-line HTML comment (the hive's own
+// `<!-- hive:issue-link-fixed -->` and similar markers), or a
+// `🤖 Generated with …` line coding tools append.
+func isAttributionFooterLine(line string) bool {
+	if strings.HasPrefix(line, "<!--") && strings.Index(line, "-->") == len(line)-len("-->") {
+		return true
+	}
+	if strings.HasPrefix(line, "🤖 Generated with ") {
+		return true
+	}
+	return attributionFooterRefLine.MatchString(line)
+}
 
 // OriginFooterNote reports whether body is an agent's free-text note whose
 // only machine marker is the identity footer's `<!-- hive:origin … -->`
@@ -461,25 +500,50 @@ func OriginFooterNote(body string) (note string, ok bool) {
 	return note, true
 }
 
-// ParseAttributionTrailer extracts the launch metadata from the final visible
-// `— hive:` line in a PR body, optionally followed by Hive's identity footer.
-// Mentions of the template earlier in the body are deliberately ignored so
-// docs and quoted examples do not count as agent PRs.
-func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
+// attributionTrailerLine finds body's own trailer: the last `— hive:` line
+// with nothing after it but blank lines, footer lines
+// (isAttributionFooterLine) and one Hive identity footer. It returns the
+// trimmed trailer and its index among body's "\n"-separated lines, or ("",
+// -1) when any other line follows the last trailer or there is none. Line
+// indices are those of the CRLF-normalized body, which has the same lines.
+func attributionTrailerLine(body string) (string, int) {
 	body = strings.ReplaceAll(body, "\r\n", "\n")
-	body = attributionIdentityFooter.ReplaceAllString(body, "")
+	footerSeen := false
+	if loc := attributionIdentityFooter.FindStringIndex(body); loc != nil {
+		body = body[:loc[0]]
+		footerSeen = true
+	}
 	lines := strings.Split(body, "\n")
-	trailer := ""
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if line == "" {
+		if line == "" || isAttributionFooterLine(line) {
+			continue
+		}
+		// The identity footer is no longer last when a line was appended
+		// below it (`Fixes #N` added to a contributor PR). One footer, with
+		// its `---` rule directly above, is skipped like the terminal one.
+		if !footerSeen && i > 0 && strings.TrimSpace(lines[i-1]) == "---" && attributionIdentityFooterLine.MatchString(lines[i]) {
+			footerSeen = true
+			i--
 			continue
 		}
 		if _, ok := HasAttributionTrailerPrefix(line); ok {
-			trailer = line
+			return line, i
 		}
 		break
 	}
+	return "", -1
+}
+
+// ParseAttributionTrailer extracts the launch metadata from the final visible
+// `— hive:` line in a PR body. Only footer lines may follow it: Hive's
+// identity footer, closing/reference keyword lines, single-line HTML
+// comments and a `🤖 Generated with …` line (attributionTrailerLine). Mentions
+// of the template earlier in the body, or a trailer followed by any other
+// line, are deliberately ignored so docs and quoted examples do not count as
+// agent PRs.
+func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
+	trailer, _ := attributionTrailerLine(body)
 	if trailer == "" {
 		return InvocationMeta{}, false
 	}
