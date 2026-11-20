@@ -157,6 +157,9 @@ func (k *ciFailureKicker) deliver(p *ciFailurePending, limit int) {
 			if gov := k.governor(); gov != nil {
 				gov.RecordKickForRepo(p.sig.Agent, p.sig.Repo)
 			}
+			// The kick carries the agent's whole fix-before-new section,
+			// conflict rows included.
+			recordRebaseAttemptDeliveries(p.sig.Agent, message, k.clock(), logger)
 			logger.Info("ci failure webhook kick delivered", "agent", p.sig.Agent, "repo", p.sig.Repo, "number", p.sig.Number, "check", p.sig.Check, "attempts", p.attempts)
 			return
 		}

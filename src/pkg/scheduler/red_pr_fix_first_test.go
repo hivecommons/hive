@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -140,5 +141,87 @@ func TestAddRedPRFixFirst_Injection(t *testing.T) {
 	}
 	if got := s.addRedPRFixFirst("scanner", ""); got != "" {
 		t.Error("empty (fail-closed) message must stay empty")
+	}
+}
+
+// A routed fixer rebase is only handed over by a kick that renders it:
+// KickCarriesRebaseAttempt reads the kick text the fix-before-new builder
+// wrote, so cmd/hive can start the attempt's deadline at that kick's
+// delivery. It is true only for a detailed conflict row with the attempt the
+// ledger is on — not for another attempt, another PR or repo whose number
+// shares a prefix, a red row with no rebase line, a row past the detailed
+// cap, a busy-branch row, or a kick with no fix-before-new section.
+func TestKickCarriesRebaseAttempt(t *testing.T) {
+	data := `{"ci_failing":[
+	  {"number":1382,"repo":"projectbluefin/utah","title":"adopted fork conflict","agent":"scanner","from_fork":true,"adopted":true,
+	   "reachable_action":"push","head_repo":"mendezr/utah","conflict":true,"mergeable_state":"dirty","rebase_attempt":1,"rebase_attempts_max":2,"base_ref":"main"},
+	  {"number":972,"repo":"projectbluefin/utah-packages","title":"second conflict","agent":"scanner","conflict":true,
+	   "mergeable_state":"dirty","rebase_attempt":2,"rebase_attempts_max":2,"base_ref":"main"},
+	  {"number":138,"repo":"projectbluefin/utah","title":"red, not conflicting","agent":"scanner","failing_checks":["build"]}
+	]}`
+	section := formatRedPRFixData([]byte(data), "scanner")
+	kick := "[agent:scanner]\nWORK LIST\n  #1382 projectbluefin/utah — listed in the work list too\n" + "\n" + section +
+		"\n## 💬 FIX-BEFORE-NEW — review threads\n\n  #138 projectbluefin/utah — t\n    rebase-resolve (attempt 1/2): not the red section\n"
+
+	for _, tc := range []struct {
+		name    string
+		repo    string
+		number  int
+		attempt int
+		want    bool
+	}{
+		{"adopted fork row, current attempt", "projectbluefin/utah", 1382, 1, true},
+		{"repo spelled in another case", "ProjectBluefin/Utah", 1382, 1, true},
+		{"second row, its own attempt", "projectbluefin/utah-packages", 972, 2, true},
+		{"attempt the kick did not carry", "projectbluefin/utah", 1382, 2, false},
+		{"same number, other repo", "projectbluefin/utah-packages", 1382, 1, false},
+		{"repo that is a prefix of the listed one", "projectbluefin/utah", 972, 2, false},
+		{"number that is a prefix of a listed one", "projectbluefin/utah", 138, 1, false},
+		{"not listed at all", "projectbluefin/utah", 9999, 1, false},
+		{"zero attempt", "projectbluefin/utah", 1382, 0, false},
+	} {
+		if got := KickCarriesRebaseAttempt(kick, tc.repo, tc.number, tc.attempt); got != tc.want {
+			t.Errorf("%s: KickCarriesRebaseAttempt(%s#%d, attempt %d) = %v, want %v\n%s", tc.name, tc.repo, tc.number, tc.attempt, got, tc.want, kick)
+		}
+	}
+	if KickCarriesRebaseAttempt("[agent:scanner]\n  #1382 projectbluefin/utah — t\n    rebase-resolve (attempt 1/2): x\n", "projectbluefin/utah", 1382, 1) {
+		t.Error("a kick with no fix-before-new section must not count as carrying the rebase")
+	}
+	// An earlier header (an issue body in the work list quoting an old
+	// kick) must not hide the real section, and a quoted one that is not at
+	// the start of a line opens nothing.
+	quoted := "[agent:scanner]\nWORK LIST\n" + redPRFixHeader + " — quoted (1)\n\n  #7 o/other — t\n    rebase-resolve (attempt 1/2): old\n\n" + section
+	if !KickCarriesRebaseAttempt(quoted, "projectbluefin/utah", 1382, 1) {
+		t.Errorf("an earlier quoted header hid the real section:\n%s", quoted)
+	}
+	if KickCarriesRebaseAttempt("> "+redPRFixHeader+" — quoted (1)\n\n  #1382 projectbluefin/utah — t\n    rebase-resolve (attempt 1/2): x\n", "projectbluefin/utah", 1382, 1) {
+		t.Error("a header that does not start its line must not open the section")
+	}
+
+	// Past the detailed cap a row is only counted, never handed over.
+	var rows []string
+	for i := 0; i < redPRFixMaxDetailed+1; i++ {
+		rows = append(rows, fmt.Sprintf(`{"number":%d,"repo":"o/r","title":"t","agent":"scanner","conflict":true,"mergeable_state":"dirty","rebase_attempt":1,"rebase_attempts_max":2}`, 100+i))
+	}
+	capped := formatRedPRFixData([]byte(`{"ci_failing":[`+strings.Join(rows, ",")+`]}`), "scanner")
+	if !KickCarriesRebaseAttempt(capped, "o/r", 100, 1) {
+		t.Errorf("first detailed row must count:\n%s", capped)
+	}
+	if last := 100 + redPRFixMaxDetailed; KickCarriesRebaseAttempt(capped, "o/r", last, 1) {
+		t.Errorf("row #%d past the detailed cap must not count:\n%s", last, capped)
+	}
+
+	// A busy-branch row is listed "suggest, do not push": not handed over.
+	busy := formatRedPRFixDataGuarded([]byte(data), "scanner", nil, func(row busyBranchRow) string {
+		if row.Number == 1382 {
+			return "another worker holds it"
+		}
+		return ""
+	})
+	if !strings.Contains(busy, "#1382 projectbluefin/utah") || KickCarriesRebaseAttempt(busy, "projectbluefin/utah", 1382, 1) {
+		t.Errorf("busy row must be listed but not count as delivered:\n%s", busy)
+	}
+	if !KickCarriesRebaseAttempt(busy, "projectbluefin/utah-packages", 972, 2) {
+		t.Errorf("the other row is still handed over:\n%s", busy)
 	}
 }
