@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "generated_at": "2026-11-21T12:18:13Z",
+  "repository": "hivecommons/hive",
+  "branch": "v5",
+  "entries": [
+    {
+      "id": "tests",
+      "label": "tests",
+      "status": "ok",
+      "message": "passing",
+      "color": "brightgreen",
+      "value": "success",
+      "source": "https://github.com/hivecommons/hive/actions/runs/44899512619",
+      "as_of": "2026-11-21T11:36:56Z",
+      "detail": "latest completed v2-tests.yml run on v5"
+    },
+    {
+      "id": "coverage",
+      "label": "coverage",
+      "status": "ok",
+      "message": "89.7%",
+      "color": "yellowgreen",
+      "value": 89.72,
+      "source": "https://github.com/hivecommons/hive/actions/runs/44899157427",
+      "as_of": "2026-11-21T11:49:53Z",
+      "detail": "statement coverage of the coverage profile uploaded by coverage-hourly.yml"
+    },
+    {
+      "id": "acmm",
+      "label": "ACMM level",
+      "status": "unknown",
+      "message": "unknown",
+      "color": "lightgrey",
+      "value": null,
+      "source": "not configured",
+      "as_of": null,
+      "detail": "set the QUALITY_ACMM_URL repository variable to a public JSON with overall_level and last_evaluated_at"
+    },
+    {
+      "id": "security",
+      "label": "security scan",
+      "status": "ok",
+      "message": "clean",
+      "color": "brightgreen",
+      "value": "success",
+      "source": "https://github.com/hivecommons/hive/actions/runs/44875690642",
+      "as_of": "2026-11-21T06:32:30Z",
+      "detail": "latest completed go-security-analysis.yml run on v5"
+    },
+    {
+      "id": "scorecard",
+      "label": "scorecard",
+      "status": "unknown",
+      "message": "unknown",
+      "color": "lightgrey",
+      "value": null,
+      "source": "https://api.securityscorecards.dev/projects/github.com/hivecommons/hive",
+      "as_of": null,
+      "detail": "could not read the published score: HTTPError"
+    },
+    {
+      "id": "outcomes",
+      "label": "revised, then approved",
+      "status": "ok",
+      "message": "65.5% (369/563)",
+      "color": "blue",
+      "value": 65.54,
+      "source": "https://github.com/hivecommons/hive/blob/v5/src/docs/benchmarks/outcomes-2026-10.json",
+      "as_of": "2026-10-27T00:00:00Z",
+      "detail": "Followup.FixedAndApproved in outcomes-2026-10.json"
+    }
+  ]
+}
