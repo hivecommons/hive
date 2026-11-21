@@ -545,6 +545,11 @@ func TestRuntimeClassThresholdValues(t *testing.T) {
 	if got := Classes[ClassModelDiscoveryDegraded].MinDuration; got != time.Hour {
 		t.Fatalf("model_discovery_degraded MinDuration = %s, want 1h", got)
 	}
+	// A single launch-time forge blip is cleared by the next token refresh
+	// (40m by default); only an outage outliving it is filed (#19403).
+	if s := Classes[ClassForgeUnreachable]; s.MinCount != 1 || s.MinDuration != time.Hour {
+		t.Fatalf("forge_unreachable MinCount=%d MinDuration=%s, want 1 and 1h", s.MinCount, s.MinDuration)
+	}
 	if s := Classes[ClassUnclassifiedRepeated]; s.MinCount != 5 || s.Window != 10*time.Minute {
 		t.Fatalf("unclassified_error_repeated = %d in %s, want 5 in 10m", s.MinCount, s.Window)
 	}
