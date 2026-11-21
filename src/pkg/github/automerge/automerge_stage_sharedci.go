@@ -91,8 +91,15 @@ func stageHeldWorkflowRuns(policy StageLabelPolicy, owner, repo string, number i
 //
 // With no guard on the record either (the PR's first red head, or a PR that
 // came to 072 for another reason first), the head's own check annotations
-// are classified once (foldUnclassifiedForkGuard), so a head red only on a
-// fork guard is parked before anyone asks its author to fix it.
+// are classified once per head and red set (foldUnclassifiedForkGuard), so
+// a head red only on a fork guard is parked before anyone asks its author to
+// fix it.
+//
+// Whether the head is red comes from the lanes' reasons, and, when no lane
+// reason is red CI, from the head's check digest: a lane that stopped at a
+// gate or fence before its CI step (sentinel-blocked, workflow-path) never
+// names the red check, yet the human route reads the digest and hands a red
+// head to its author (projectbluefin/utah-packages#1258, #1263).
 //
 // A guard recordStage already carried from the record's `fork-guard:` reason
 // (automerge_fork_guard_carry.go, ForkGuardCarried) is verified the same way:
@@ -127,6 +134,32 @@ func (c *Engine) foldForkGuard(ctx context.Context, tracker *StageTracker, store
 		if l.HeadSHA == head && (classifyCIReason(l.Reason) == ciReasonRed || l.Detail.RedCheck(head) != "") {
 			red = true
 			break
+		}
+	}
+	if !red {
+		// A lane that stopped at a gate or fence before its CI step
+		// (sentinel-blocked, workflow-path) names no red check, and the
+		// human route then read the head's red guard as the author's to
+		// fix: 072, a nudge, an adoption (projectbluefin/utah-packages#1258,
+		// #1263). The head's own digest says whether anything is red; it
+		// is cached per head and the human route reads it anyway.
+		summary, known := c.headChecks(ctx, tracker, key, *o, now)
+		red = known && len(summary.Red) > 0
+		if parked := recordedForkGuard(rec, ok); !known && len(parked) > 0 {
+			// The digest is unreadable (cached for humanChecksTTL) and the
+			// PR is parked on a fork guard: the guard stands for this pass,
+			// as a carried guard does with a red lane reason, instead of
+			// the PR dropping to 060 "checks could not be read" and back.
+			// Only the parked reason counts: rec.ForkGuardChecks outlives
+			// a guard a maintainer's run has turned green.
+			for i := range list {
+				if list[i].HeadSHA == head {
+					list[i].ForkGuardChecks = append([]string(nil), parked...)
+					list[i].ForkGuardCarried = true
+				}
+			}
+			c.debug("stage labels: fork guard kept while the head's checks are unreadable", "repo", o.Display, "pr", o.Number, "head", head, "checks", parked)
+			return
 		}
 	}
 	if !red {

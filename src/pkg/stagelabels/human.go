@@ -419,6 +419,13 @@ const (
 	// adoption.
 	LaneReasonReviewerQuestion = "reviewer-verdict:requires_human"
 	laneReasonCheckFailing     = "check-failing:"
+	// LaneReasonForkGuardPrefix is the 085 reason, with the checks after
+	// it comma-separated, when the decision the route asks for is a fork
+	// guard's (prstage.StageReasonForkGuard aliases this constant; prstage
+	// imports this package). RouteHuman records it whatever lane reason
+	// handed the PR over, so a lane that stopped at a gate before its CI
+	// step records the guard too (projectbluefin/utah-packages#1258).
+	LaneReasonForkGuardPrefix = "fork-guard:"
 	// LaneReasonSupersededByMerge is the ledger reason when the hive closes
 	// its own PR because a merged PR superseded it (the issue it was for is
 	// closed, or the merged PR declares it) instead of parking it at 085 on
@@ -693,7 +700,11 @@ func routeProgress(e Evidence) Route {
 		return Route{Stage: ReviewPending, Reasons: []string{"no reviewer verdict for this head yet"}, Summary: summary}
 	}
 	var decide []string
+	// decideReason names the fork guard as the 085 reason, unless the
+	// reviewer's own question is owed too (that verdict keeps its reason).
+	var decideReason string
 	if len(e.ForkGuard) > 0 {
+		decideReason = LaneReasonForkGuardPrefix + strings.Join(e.ForkGuard, ",")
 		subject, verb, it, runs, whose := "check", "refuses", "it", "the check runs", "The check's"
 		if len(e.ForkGuard) > 1 {
 			subject, verb, it, runs, whose = "checks", "refuse", "them", "the checks run", "Each check's"
@@ -722,6 +733,7 @@ func routeProgress(e Evidence) Route {
 			break
 		}
 		decide = append(decide, RequiresHumanReasons(e.Head, e.DecisionFinding, e.DecisionQuestion, e.HumanSummaries)...)
+		decideReason = ""
 	}
 	// A sentinel alert or a hold-class label is a gate, not a stage
 	// (hivecommons/hive#17327): withGates rides it on whatever stage the
@@ -736,7 +748,7 @@ func routeProgress(e Evidence) Route {
 		decide = append(decide, decisionConsequenceReason)
 	}
 	if len(decide) > 0 {
-		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict,
+		return Route{Stage: NeedsDecision, Reasons: decide, LaneReason: decideReason, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict,
 			Holds: append([]string(nil), e.Holds...), Sentinel: e.Sentinel, ManualMerge: e.ManualMerge, ApprovalReleasesFence: e.ManualMerge && e.ApprovalReleasesFence, ApprovalReleasesPathHold: e.ManualMerge && e.ApprovalReleasesPathHold, HumanApprover: approver, Hold: e.Hold}
 	}
 	if e.HeadDirty {

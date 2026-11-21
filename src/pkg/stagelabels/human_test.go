@@ -788,7 +788,7 @@ func TestRouteHumanForkGuard(t *testing.T) {
 	e.ForkGuard = []string{"Canary"}
 	r := RouteHuman(e)
 	const want = "check `Canary` refuses pull requests from a fork, so neither the author nor the hive can turn it green: a maintainer must push this branch to the repository (or run or approve it for head `abc1234` as the repository requires). A run that passed on an earlier head does not cover `abc1234`, even when the change itself is the same: a rebase or a merge of the base changes the code the check runs. The check's own failure message on this head says what to run"
-	if r.Stage != NeedsDecision || r.LaneReason != "" || !containsString(r.Reasons, want) {
+	if r.Stage != NeedsDecision || r.LaneReason != LaneReasonForkGuardPrefix+"Canary" || !containsString(r.Reasons, want) {
 		t.Fatalf("fork-guard route = %+v", r)
 	}
 	if containsString(r.Reasons, decisionConsequenceReason) {
@@ -801,8 +801,20 @@ func TestRouteHumanForkGuard(t *testing.T) {
 	two.ForkGuard = []string{"Canary", "Publish"}
 	two.Checks.Red = []string{"Canary", "Publish"}
 	const wantTwo = "checks `Canary`, `Publish` refuse pull requests from a fork, so neither the author nor the hive can turn them green: a maintainer must push this branch to the repository (or run or approve them for head `abc1234` as the repository requires). A run that passed on an earlier head does not cover `abc1234`, even when the change itself is the same: a rebase or a merge of the base changes the code the checks run. Each check's own failure message on this head says what to run"
-	if r := RouteHuman(two); r.Stage != NeedsDecision || !containsString(r.Reasons, wantTwo) {
+	if r := RouteHuman(two); r.Stage != NeedsDecision || r.LaneReason != LaneReasonForkGuardPrefix+"Canary,Publish" || !containsString(r.Reasons, wantTwo) {
 		t.Fatalf("two fork-guard checks route = %+v", r)
+	}
+	// The fork guard is the recorded reason whatever lane reason handed the
+	// PR over (a gate such as sentinel-blocked, projectbluefin/utah-packages
+	// #1258); a requires_human question owed beside it keeps the verdict's.
+	gate := e
+	gate.Cause, gate.LaneReason, gate.Sentinel = CauseTrust, "contributor-lane:sentinel-blocked", true
+	if r := RouteHuman(gate); r.Stage != NeedsDecision || r.LaneReason != LaneReasonForkGuardPrefix+"Canary" || !containsString(r.Reasons, want) || !containsString(r.Gates, "a sentinel alert is open on this PR") {
+		t.Fatalf("fork-guard route under a sentinel gate = %+v", r)
+	}
+	asks := forkGuardFenceEvidence()
+	if r := RouteHuman(asks); r.Stage != NeedsDecision || r.LaneReason != "" {
+		t.Fatalf("fork guard beside a requires_human question: route = %+v, want 085 with no fork-guard reason", r)
 	}
 	e.Checks.Red = []string{"Canary", "unit"}
 	if r := RouteHuman(e); r.Stage != ReturnedToContributor || r.LaneReason != "check-failing:unit" || !containsString(r.Reasons, "red checks: unit") {

@@ -11,6 +11,7 @@ package automerge
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -647,9 +648,6 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		e.HumanApprover = humanMergeApprover
 	}
 	e.CauseAwaitsApproval = e.ApprovalReleasesFence && strings.HasSuffix(e.CauseReason, prstage.CauseWorkflowPathAwaitingApproval)
-	if strings.HasPrefix(obs.Reason, stageReasonForkGuard) {
-		e.ForkGuard = append([]string(nil), obs.ForkGuardChecks...)
-	}
 	sentinel := c.sentinelLabelName()
 	if sentinel == "" {
 		sentinel = defaultSentinelLabel
@@ -657,6 +655,7 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	e.Sentinel = hasLabelFold(obs.Labels, sentinel)
 	summary, known := c.headChecks(ctx, tracker, key, obs, now)
 	e.Checks = stagelabels.CheckSummary{Total: summary.Total, Green: summary.Green, Pending: summary.Pending, Red: summary.Red, Missing: summary.MissingRequired, Known: known}
+	e.ForkGuard = humanForkGuard(obs, summary.Red, known)
 	if c.hiveSupersedingPR(obs) {
 		e.HiveSuperseder = true
 		e.HiveSupersederHardStop, _ = hiveSupersederHardStop(e, contributorVerdict, c.sentinelAcknowledgedFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA))
@@ -678,6 +677,29 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		}
 	}
 	return e
+}
+
+// humanForkGuard is the fork guard the human route weighs for obs: the
+// head's red checks that refuse it only because it is from a fork. A
+// `fork-guard:` reason is the stage's own verdict and stands as recorded.
+// Any other reason (a gate or fence the lane stopped at before its CI
+// step, such as sentinel-blocked or workflow-path) takes the guard
+// foldForkGuard found for the head only for checks the digest shows red,
+// so a guard a maintainer's run has since turned green is not asked for
+// again (projectbluefin/utah-packages#1258). With the digest unreadable
+// the head's guard stands as foldForkGuard left it (the parked guard it
+// carried), so the PR does not flap to 060 and back.
+func humanForkGuard(obs stageObservation, red []string, known bool) []string {
+	if strings.HasPrefix(obs.Reason, stageReasonForkGuard) || !known {
+		return append([]string(nil), obs.ForkGuardChecks...)
+	}
+	var out []string
+	for _, name := range obs.ForkGuardChecks {
+		if slices.Contains(red, name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // manualMergeRuleReasonFor reports whether a lane reason is a rule no
