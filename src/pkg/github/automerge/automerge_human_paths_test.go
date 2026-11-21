@@ -391,7 +391,7 @@ func TestSetHumanMergePathsNilEngine(t *testing.T) {
 // whose files carry patches.
 var (
 	testPinNewSHA  = strings.Repeat("b", 40)
-	testPinOldLine = "      - uses: actions/checkout@" + strings.Repeat("a", 40) + " # v4"
+	testPinOldLine = "      - uses: actions/checkout@" + strings.Repeat("a", 40) + " # v5.0.0"
 	testPinNewLine = "      - uses: actions/checkout@" + testPinNewSHA + " # v5"
 )
 

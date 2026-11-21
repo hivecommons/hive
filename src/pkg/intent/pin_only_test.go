@@ -8,7 +8,7 @@ import (
 
 func TestClassifyPinOnly(t *testing.T) {
 	old := "  uses: actions/checkout@" + strings.Repeat("a", 40) + " # v4"
-	next := "  uses: actions/checkout@" + strings.Repeat("b", 40) + " # v5"
+	next := "  uses: actions/checkout@" + strings.Repeat("b", 40) + " # v4.1.0"
 	patch := func(a, b string) string { return "@@ -1 +1 @@\n-" + a + "\n+" + b }
 	file := ChangedFile{Filename: ".github/workflows/build.yml", Status: "modified", Additions: 1, Deletions: 1, Patch: patch(old, next)}
 	spec := PinOnlySpec{Paths: []string{".github/workflows/*.yml", "Containerfile"}, Kinds: []string{"action-sha", "image-digest", "version-pin"}}
@@ -168,15 +168,15 @@ func TestClassifyPinOnlyActionSHARef(t *testing.T) {
 	uses := func(sha, version string) string {
 		return "    uses: some-org/shared/.github/workflows/test.yml@" + sha + " # " + version
 	}
-	oldRef, newRef := "      test_ref: "+oldSHA+" # v1", "      test_ref: "+newSHA+" # v2"
-	oldGate, newGate := "      gate_test_ref: "+oldSHA+" # v1", "      gate_test_ref: "+newSHA+" # v2"
+	oldRef, newRef := "      test_ref: "+oldSHA+" # v1", "      test_ref: "+newSHA+" # v1.1.0"
+	oldGate, newGate := "      gate_test_ref: "+oldSHA+" # v1", "      gate_test_ref: "+newSHA+" # v1.1.0"
 	// ciFile bumps the reusable workflow and the input next to it;
 	// releaseFile holds only a bare input line and no uses: change.
 	ciFile := func(oldLine, newLine string) ChangedFile {
 		return ChangedFile{Filename: ci, Status: "modified", Additions: 2, Deletions: 2, Patch: "@@ -10,4 +10,4 @@\n" +
 			"   test:\n" +
 			"-" + uses(oldSHA, "v1") + "\n" +
-			"+" + uses(newSHA, "v2") + "\n" +
+			"+" + uses(newSHA, "v1.1.0") + "\n" +
 			"     with:\n" +
 			"-" + oldLine + "\n" +
 			"+" + newLine}
@@ -186,12 +186,12 @@ func TestClassifyPinOnlyActionSHARef(t *testing.T) {
 			Patch: "@@ -20 +20 @@\n-" + oldLine + "\n+" + newLine}
 	}
 	usesOnly := ChangedFile{Filename: ci, Status: "modified", Additions: 1, Deletions: 1,
-		Patch: "@@ -11 +11 @@\n-" + uses(oldSHA, "v1") + "\n+" + uses(newSHA, "v2")}
+		Patch: "@@ -11 +11 @@\n-" + uses(oldSHA, "v1") + "\n+" + uses(newSHA, "v1.1.0")}
 	both := []string{"action-sha", "action-sha-ref"}
 	spec := func(kinds []string) PinOnlySpec {
 		return PinOnlySpec{Paths: []string{".github/workflows/*.yml"}, Kinds: kinds}
 	}
-	wantPins := []ActionPin{{Repo: "some-org/shared", SHA: newSHA, Version: "v2"}}
+	wantPins := []ActionPin{{Repo: "some-org/shared", SHA: newSHA, Version: "v1.1.0"}}
 
 	// The pins a caller resolves upstream are those of the uses: lines alone.
 	ok, why, pinsAlone := ClassifyPinOnlyActions([]ChangedFile{usesOnly}, []string{ci}, spec([]string{"action-sha"}))
@@ -215,7 +215,7 @@ func TestClassifyPinOnlyActionSHARef(t *testing.T) {
 			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      gate_test_ref: "+oldSHA, "      gate_test_ref: "+newSHA)}, ""},
 
 		{"new SHA is not the uses: pin's", both,
-			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(oldGate, "      gate_test_ref: "+otherSHA+" # v2")}, release + unmatched},
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(oldGate, "      gate_test_ref: "+otherSHA+" # v1.1.0")}, release + unmatched},
 		{"old SHA is not the uses: pin's", both,
 			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      gate_test_ref: "+otherSHA+" # v1", newGate)}, release + unmatched},
 		{"the uses: move reversed", both,
@@ -313,5 +313,136 @@ func TestPinOnlyKindsListsEveryKind(t *testing.T) {
 		Patch: "@@ -1 +1 @@\n-ARG TOOL_VERSION=1.2.3\n+ARG TOOL_VERSION=1.2.4"}
 	if ok, why := ClassifyPinOnly([]ChangedFile{file}, []string{file.Filename}, PinOnlySpec{Paths: []string{"Containerfile"}, Kinds: want}); !ok {
 		t.Fatalf("every known kind together refused: %s", why)
+	}
+}
+
+// A move to another major version is an upgrade (or a downgrade), not a pin,
+// even when only the commit and its version comment change. Every kind that
+// carries a version refuses it with a reason that names both versions; the
+// same major version, and a line without a version comment, are accepted
+// exactly as before.
+func TestClassifyPinOnlyRefusesMajorVersionChange(t *testing.T) {
+	const (
+		workflow      = ".github/workflows/build.yml"
+		containerfile = "Containerfile"
+	)
+	spec := PinOnlySpec{Paths: []string{".github/workflows/*.yml", containerfile}, Kinds: []string{"action-sha", "image-digest", "version-pin"}}
+	uses := func(sha, comment string) string {
+		return "      - uses: actions/checkout@" + strings.Repeat(sha, 40) + comment
+	}
+	for _, tc := range []struct {
+		name, file, old, next string
+		reason                string // "" means accepted
+	}{
+		{"action-sha upgrade", workflow, uses("a", " # v4"), uses("b", " # v7"), "major version change v4 -> v7 is not a pin"},
+		{"action-sha downgrade", workflow, uses("a", " # v7"), uses("b", " # v4"), "major version change v7 -> v4 is not a pin"},
+		{"action-sha full versions across a major", workflow, uses("a", " # v4.9.9"), uses("b", " # v5.0.0"), "major version change v4.9.9 -> v5.0.0 is not a pin"},
+		{"action-sha same major, comment gains a minor", workflow, uses("a", " # v4"), uses("b", " # v4.2.0"), ""},
+		{"action-sha same major, minor bump", workflow, uses("a", " # v4.1.2"), uses("b", " # v4.2.0"), ""},
+		{"action-sha same comment", workflow, uses("a", " # v4"), uses("b", " # v4"), ""},
+		{"action-sha no comment", workflow, uses("a", ""), uses("b", ""), ""},
+
+		{"version-pin upgrade", containerfile, "version: 1.2.3", "version: 2.0.0", "major version change 1.2.3 -> 2.0.0 is not a pin"},
+		{"version-pin downgrade", containerfile, "version: 2.0.0", "version: 1.9.9", "major version change 2.0.0 -> 1.9.9 is not a pin"},
+		{"version-pin upgrade with a leading v", containerfile, "ARG TOOL_VERSION=v1.2.3", "ARG TOOL_VERSION=v2.0.0", "major version change v1.2.3 -> v2.0.0 is not a pin"},
+		{"version-pin upgrade, v on one side only", containerfile, "version: v1.2.3", "version: 2.0.0", "major version change v1.2.3 -> 2.0.0 is not a pin"},
+		{"version-pin quoted upgrade", containerfile, "version: '1.2.3'", "version: '2.0.0'", "major version change 1.2.3 -> 2.0.0 is not a pin"},
+		{"version-pin same major", containerfile, "version: 1.2.3", "version: 1.9.0", ""},
+		{"version-pin same major with a leading v", containerfile, "ARG TOOL_VERSION=v1.2.3", "ARG TOOL_VERSION=v1.3.0", ""},
+		{"version-pin patch bump", containerfile, "version: 1.2.3", "version: 1.2.4", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := ChangedFile{Filename: tc.file, Status: "modified", Additions: 1, Deletions: 1, Patch: "@@ -1 +1 @@\n-" + tc.old + "\n+" + tc.next}
+			ok, why := ClassifyPinOnly([]ChangedFile{file}, []string{tc.file}, spec)
+			if tc.reason == "" {
+				if !ok {
+					t.Fatalf("refused: %s", why)
+				}
+				return
+			}
+			if want := tc.file + ": " + tc.reason; ok || why != want {
+				t.Fatalf("got (%v, %q), want refused with %q", ok, why, want)
+			}
+		})
+	}
+}
+
+// action-sha-ref: a companion line whose version comment changes the major
+// version is refused even though a uses: pin in the same diff carries the
+// same commit move, and a uses: pin that changes the major version is refused
+// with action-sha-ref enabled too.
+func TestClassifyPinOnlyActionSHARefRefusesMajorVersionChange(t *testing.T) {
+	const ci = ".github/workflows/ci.yml"
+	oldSHA, newSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	file := func(usesOld, usesNew, refOld, refNew string) ChangedFile {
+		return ChangedFile{Filename: ci, Status: "modified", Additions: 2, Deletions: 2, Patch: "@@ -10,4 +10,4 @@\n" +
+			"   test:\n" +
+			"-    uses: some-org/shared/.github/workflows/test.yml@" + oldSHA + usesOld + "\n" +
+			"+    uses: some-org/shared/.github/workflows/test.yml@" + newSHA + usesNew + "\n" +
+			"     with:\n" +
+			"-      test_ref: " + oldSHA + refOld + "\n" +
+			"+      test_ref: " + newSHA + refNew}
+	}
+	spec := PinOnlySpec{Paths: []string{".github/workflows/*.yml"}, Kinds: []string{"action-sha", "action-sha-ref"}}
+	for _, tc := range []struct {
+		name                             string
+		usesOld, usesNew, refOld, refNew string
+		reason                           string // "" means accepted
+	}{
+		{"companion upgrade", " # v1", " # v1.1.0", " # v1", " # v2", "major version change v1 -> v2 is not a pin"},
+		{"companion downgrade", " # v3", " # v3.0.1", " # v3", " # v1", "major version change v3 -> v1 is not a pin"},
+		{"uses: upgrade with a same-major companion", " # v1", " # v2", " # v1", " # v1.1.0", "major version change v1 -> v2 is not a pin"},
+		{"both upgrade", " # v1", " # v2", " # v1", " # v2", "major version change v1 -> v2 is not a pin"},
+		{"companion same major", " # v1", " # v1.1.0", " # v1.0.0", " # v1.1.0", ""},
+		{"companion without a comment", " # v1", " # v1.1.0", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := file(tc.usesOld, tc.usesNew, tc.refOld, tc.refNew)
+			ok, why, pins := ClassifyPinOnlyActions([]ChangedFile{f}, []string{ci}, spec)
+			if tc.reason == "" {
+				if !ok || len(pins) != 1 || pins[0].SHA != newSHA {
+					t.Fatalf("got (%v, %q, %+v), want accepted with the uses: pin", ok, why, pins)
+				}
+				return
+			}
+			if want := ci + ": " + tc.reason; ok || why != want || pins != nil {
+				t.Fatalf("got (%v, %q, %+v), want refused with %q and no pins", ok, why, pins, want)
+			}
+		})
+	}
+}
+
+// projectbluefin/dakota-iso#337: Renovate moved actions/checkout from v4 to
+// v7 in two protected workflows, changing only the commit and the `# vN`
+// comment, and the hive merged it as a pin. It is a major upgrade and stays a
+// person's merge; the same diff within v4 is still a pin bump.
+func TestClassifyPinOnlyDakotaMajorUpgrade(t *testing.T) {
+	const (
+		oldSHA = "34e114876b0b11c390a56381ad16ebd13914f8d5"
+		newSHA = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+	)
+	diff := func(version string) []ChangedFile {
+		var files []ChangedFile
+		for _, name := range []string{".github/workflows/build.yml", ".github/workflows/release.yml"} {
+			files = append(files, ChangedFile{Filename: name, Status: "modified", Additions: 1, Deletions: 1, Patch: "@@ -20 +20 @@\n" +
+				"-        uses: actions/checkout@" + oldSHA + " # v4\n" +
+				"+        uses: actions/checkout@" + newSHA + " # " + version})
+		}
+		return files
+	}
+	matches := []string{".github/workflows/build.yml", ".github/workflows/release.yml"}
+	spec := PinOnlySpec{Paths: []string{".github/workflows/*.yml"}, Kinds: []string{"action-sha", "image-digest", "version-pin"}}
+	const want = ".github/workflows/build.yml: major version change v4 -> v7 is not a pin"
+
+	if ok, why := ClassifyPinOnly(diff("v7"), matches, spec); ok || why != want {
+		t.Fatalf("ClassifyPinOnly v4 -> v7: got (%v, %q), want refused with %q", ok, why, want)
+	}
+	if ok, why, pins := ClassifyPinOnlyActions(diff("v7"), matches, spec); ok || why != want || pins != nil {
+		t.Fatalf("ClassifyPinOnlyActions v4 -> v7: got (%v, %q, %+v), want refused with %q and no pins", ok, why, pins, want)
+	}
+	ok, why, pins := ClassifyPinOnlyActions(diff("v4.3.1"), matches, spec)
+	wantPins := []ActionPin{{Repo: "actions/checkout", SHA: newSHA, Version: "v4.3.1"}}
+	if !ok || !slices.Equal(pins, wantPins) {
+		t.Fatalf("v4 -> v4.3.1: got (%v, %q, %+v), want accepted with %+v", ok, why, pins, wantPins)
 	}
 }
