@@ -261,7 +261,7 @@ func sameHeadAcceptedFindingsBody(req ReviewRequest, kept []sameHeadStanding, pe
 				}
 			}
 			if summary := strings.TrimSpace(f.Summary); summary != "" {
-				b.WriteString(" — " + summary)
+				b.WriteString(": " + summary)
 			}
 		}
 	}
