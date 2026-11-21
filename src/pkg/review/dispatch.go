@@ -271,6 +271,12 @@ type DispatchOptions struct {
 	DeltaMaxAge       time.Duration
 	Agents            []AgentCapability
 	Now               time.Time
+	// RecordedReports are the perspective reports on disk for the planned
+	// PRs (RecordedReportsFor). A head with no aggregate yet treats the ones
+	// for its current head and body, received within the pending TTL, as
+	// delivered: the relay recorded them after this cycle's collect, and
+	// asking again would run a second review of a head already judged.
+	RecordedReports []RecordedReport
 
 	// AnsweredHeadsOnly plans the heads a trusted maintainer answered
 	// (PullRequest.HumanChangeRequest on the current head) even when review
@@ -458,6 +464,11 @@ type PendingReview struct {
 	// stamps it onto the verdict (ModelStamps) so the artifact says so.
 	DeltaPreviousHead string    `json:"delta_previous_head,omitempty"`
 	Dispatched        time.Time `json:"dispatched_at"`
+	// Delivered is when ConfirmDelivered saw this row's kick reach its
+	// agent; zero until then. The relay reads it (PendingDelivered) to tell
+	// the dispatch's own answer from a queue-mode review the agent ran
+	// before the kick arrived.
+	Delivered time.Time `json:"delivered_at,omitzero"`
 }
 
 type RecentReview struct {
@@ -756,6 +767,9 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		// FanOut, checked above). Author kind still decides what happens AFTER
 		// the verdict: fixPushAllowed and the merge lanes, not this loop.
 		revisiting := false
+		// recordedOnly: delivered holds only reports the relay recorded
+		// after this cycle's collect (recordedDelivered), not an aggregate.
+		recordedOnly := false
 		var delivered map[Perspective]Verdict
 		var deliveredHeads map[Perspective][]string
 		var awaiting *Aggregate
@@ -875,6 +889,13 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				plan.expireHeadPending(pr, opts, nil, now)
 			}
 			plan.expirePending(pr, opts, now)
+			// A verdict the relay recorded after this cycle's collect is a
+			// review of this head that already happened; only the
+			// perspectives it did not answer are owed.
+			if recorded := recordedDelivered(pr, opts, now); len(recorded) > 0 {
+				delivered = recorded
+				recordedOnly = true
+			}
 		}
 		// Delta re-review: a head whose PR was judged at an earlier head is
 		// reviewed against the diff from that head, and a trivial delta
@@ -883,11 +904,14 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		// not once this head already has dispatch entries (a review is in
 		// flight or partly delivered; the restamp would race it).
 		var delta *DeltaContext
-		if !revisiting && delivered == nil {
+		// Reports recorded after the collect keep the delta re-review for
+		// the perspectives still owed; like pending entries, they rule out
+		// the restamp, which would race them.
+		if !revisiting && (delivered == nil || recordedOnly) {
 			mode, ctx, prior := planDelta(pr, artifact, opts, now)
 			switch mode {
 			case deltaModeTrivial:
-				if !plan.hasPendingForHead(pr) {
+				if !plan.hasPendingForHead(pr) && !recordedOnly {
 					plan.DeltaRestamps = append(plan.DeltaRestamps, DeltaRestamp{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, PreviousHead: ctx.PreviousHead, Aggregate: restampAggregate(prior, pr, *ctx, now)})
 					continue
 				}
@@ -1921,7 +1945,11 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 			// first perspective alone would leave every other verdict in the
 			// array with nothing to bind to once its pending entry is gone.
 			for _, p := range kickPerspectives(k) {
-				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, Head: k.Head, Decision: k.Decision, AuthorAgent: k.AuthorAgent, HiveAuthored: k.HiveAuthored, AuthorModel: k.AuthorModel, ReviewModel: k.ReviewModel, DeltaPreviousHead: k.DeltaPreviousHead, Confirmed: now, Priority: k.Priority})
+				// Dispatched carries the pending row's planning time, so a
+				// verdict that binds this row after the pending one is gone
+				// (pending_ttl, a settled head) is still known as a review
+				// asked for at that time (review.KeepsPriorReport).
+				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, Head: k.Head, Decision: k.Decision, AuthorAgent: k.AuthorAgent, HiveAuthored: k.HiveAuthored, AuthorModel: k.AuthorModel, ReviewModel: k.ReviewModel, DeltaPreviousHead: k.DeltaPreviousHead, Dispatched: pendingDispatchedAt(state.Pending, k, p), Confirmed: now, Priority: k.Priority})
 			}
 		}
 	}
@@ -1950,6 +1978,14 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 	for _, p := range state.Pending {
 		k := DispatchKick{Kind: "review", Agent: p.Agent, Repo: p.Repo, Number: p.Number, HeadSHA: p.HeadSHA, Perspective: p.Perspective}
 		if !undelivered[dispatchKickKey(k)] {
+			if p.Delivered.IsZero() && pendingRowDelivered(p, delivered) {
+				// The row itself records that its kick reached the agent,
+				// so the relay can tell the dispatch's own answer from a
+				// queue-mode review for as long as the row lives, past the
+				// recent-dispatch row's 24-hour retention
+				// (review.PendingDelivered).
+				p.Delivered = now
+			}
 			pending = append(pending, p)
 		}
 	}
@@ -1967,6 +2003,41 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 	state.Fixes = fixes
 	state.Recent = pruneRecentReviews(state.Recent, now)
 	return state
+}
+
+// pendingRowDelivered reports whether pending row p belongs to one of the
+// delivered review kicks: same agent, PR head, review head and decision step,
+// and a perspective the kick covered.
+func pendingRowDelivered(p PendingReview, delivered []DispatchKick) bool {
+	for _, k := range delivered {
+		if k.Kind != "review" || k.Agent != p.Agent || k.Head != p.Head || k.Decision != p.Decision ||
+			!samePRHead(k.Repo, k.Number, k.HeadSHA, p.Repo, p.Number, p.HeadSHA) {
+			continue
+		}
+		for _, persp := range kickPerspectives(k) {
+			if persp == p.Perspective {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pendingDispatchedAt is when the pending row a delivered kick wrote for
+// perspective p was planned: the latest matching row's dispatched_at, zero
+// when none matches.
+func pendingDispatchedAt(pending []PendingReview, k DispatchKick, p Perspective) time.Time {
+	var at time.Time
+	for _, e := range pending {
+		if e.Agent != k.Agent || e.Perspective != p || e.Head != k.Head || e.Decision != k.Decision ||
+			!samePRHead(e.Repo, e.Number, e.HeadSHA, k.Repo, k.Number, k.HeadSHA) {
+			continue
+		}
+		if e.Dispatched.After(at) {
+			at = e.Dispatched
+		}
+	}
+	return at
 }
 
 // kickPerspectives is every perspective a kick covers: the combined list when

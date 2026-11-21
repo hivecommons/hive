@@ -478,6 +478,78 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 		req.Body = contributorCommentBody(req.Body)
 	}
 
+	// A stricter verdict for this head stands, and the relay will not record
+	// this review's less strict one for that perspective
+	// (review.KeepsPriorReport): an automatic second review of the head, not
+	// one the planner asked for in view of that verdict. Posting it as
+	// written would put, say, an approve on GitHub over the hive's own "needs
+	// a person" review and mark the head approved in review-links.json
+	// (projectbluefin/dakota-iso#376). When the perspectives the relay does
+	// accept carry findings, they are posted as a COMMENT (never an approve)
+	// that says the stricter verdict still stands; otherwise nothing is
+	// posted. The accepted perspectives are recorded either way.
+	sameHeadNote := ""
+	// verdictReq is the request as the reviewer wrote it: the verdict and the
+	// backlog are recorded from it, whatever body is posted, so a decision
+	// marker or remediation in the original body still counts.
+	verdictReq := req
+	if !recordOnly {
+		if kept := c.sameHeadStricterVerdicts(ctx, req, ""); len(kept) > 0 {
+			standing := make([]string, 0, len(kept))
+			for _, k := range kept {
+				standing = append(standing, k.String())
+			}
+			body, ok := sameHeadAcceptedFindingsBody(req, kept, c.perspectives)
+			if ok {
+				// The composed body is reviewer text too: it gets the same
+				// masked-quote refusal the original body got above. A
+				// refused one is not posted.
+				if refusal := redactedQuoteRefusal(body); refusal != "" {
+					c.logger.Warn("review-request watcher: accepted findings not posted: "+refusal,
+						slog.String("agent", req.Agent), slog.String("repo", req.Repo), slog.Int("number", req.Number))
+					ok = false
+				}
+			}
+			// A refused --revise posts nothing: the downgrade would edit the
+			// App's standing review in place (reviseReview) and could wipe
+			// the "needs a person" question it carries.
+			if ok && !req.Revise {
+				apiEvent, state, _ = reviewEventToAPI("comment")
+				req.Body = body
+				// Inline threads may anchor the refused perspectives'
+				// text; the body carries the accepted findings instead.
+				req.Comments = nil
+				sameHeadNote = sameHeadStricterVerdictCommentNote + " (" + strings.Join(standing, ", ") + ")"
+				c.logger.Warn("review-request watcher: review downgraded to COMMENT: a stricter verdict on this head stands",
+					slog.String("agent", req.Agent), slog.String("repo", req.Repo),
+					slog.Int("number", req.Number), slog.String("kept", strings.Join(standing, ", ")))
+			} else {
+				// Quiet mode folds only the accepted perspectives' findings,
+				// never the refused review's own text; none, nothing.
+				if c.notificationsQuiet() && ok {
+					if _, ferr := c.UpsertPRStatusSection(ctx, req.Repo, req.Number, prstatus.KeyReviewFindingsPrefix+verdictSlug(req.Agent), sameHeadFindingsSection(req.Agent, body)); ferr != nil {
+						c.logger.Warn("review-request watcher: could not fold findings into the status comment",
+							slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", ferr.Error()))
+					}
+				}
+				c.recordReviewEvidence(ctx, verdictReq, c.recordReviewVerdict(ctx, verdictReq, ""), nil, nowFn())
+				if err := c.fileOutOfScopeReviewBacklog(ctx, verdictReq, nowFn().UTC()); err != nil {
+					c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
+						slog.String("repo", req.Repo), slog.Int("number", req.Number),
+						slog.String("error", err.Error()))
+				}
+				c.writeReviewResult(path, ReviewResponse{OK: true, Number: req.Number, State: ReviewEventRecordVerdict,
+					Note: sameHeadStricterVerdictNote + " (" + strings.Join(standing, ", ") + ")", At: nowFn().UTC().Format(time.RFC3339)})
+				_ = os.Remove(path)
+				c.reviewRetries.clear(path)
+				c.logger.Warn("review-request watcher: review not posted: a stricter verdict on this head stands",
+					slog.String("agent", req.Agent), slog.String("repo", req.Repo),
+					slog.Int("number", req.Number), slog.String("kept", strings.Join(standing, ", ")))
+				return
+			}
+		}
+	}
+
 	// Per-head backstop. Everything above depends on the agent doing the
 	// right thing; this does not. A head that already carries as many hive
 	// reviews as it can legitimately receive (one in combined mode, one per
@@ -507,8 +579,8 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 						slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", ferr.Error()))
 				}
 			}
-			c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(ctx, req, ""), nil, nowFn())
-			if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
+			c.recordReviewEvidence(ctx, verdictReq, c.recordReviewVerdict(ctx, verdictReq, ""), nil, nowFn())
+			if err := c.fileOutOfScopeReviewBacklog(ctx, verdictReq, nowFn().UTC()); err != nil {
 				c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 					slog.String("repo", req.Repo), slog.Int("number", req.Number),
 					slog.String("error", err.Error()))
@@ -526,7 +598,10 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	// Authorized and well-formed, but nothing to post: record and finish
 	// without touching the GitHub API.
 	if recordOnly {
-		if noFindingsSuppressed {
+		// A clean review over a stricter verdict on the same head is refused
+		// by the relay (review.KeepsPriorReport): no "Reviewed — no findings"
+		// line goes into the status comment for it either.
+		if noFindingsSuppressed && len(c.sameHeadStricterVerdicts(ctx, req, "")) == 0 {
 			// The clean verdict lands in the status comment, edited in
 			// place, instead of a review submission of its own.
 			if _, ferr := c.UpsertPRStatusSection(ctx, req.Repo, req.Number, prstatus.KeyReviewFindingsPrefix+verdictSlug(req.Agent), reviewNoFindingsSection(req)); ferr != nil {
@@ -534,8 +609,8 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 					slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", ferr.Error()))
 			}
 		}
-		c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(ctx, req, ""), nil, nowFn())
-		if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
+		c.recordReviewEvidence(ctx, verdictReq, c.recordReviewVerdict(ctx, verdictReq, ""), nil, nowFn())
+		if err := c.fileOutOfScopeReviewBacklog(ctx, verdictReq, nowFn().UTC()); err != nil {
 			c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 				slog.String("repo", req.Repo), slog.Int("number", req.Number),
 				slog.String("error", err.Error()))
@@ -556,7 +631,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	meta := c.attributionMeta(req.Agent)
 	buildBody := func(text string) string {
 		b := leadWithDecisionQuestion(c.relayBody(req.Agent, text))
-		if c.confidenceScoreOn() {
+		// Not on a same-head COMMENT downgrade: the score would count the
+		// refused perspectives' verdicts the body leaves out.
+		if c.confidenceScoreOn() && sameHeadNote == "" {
 			b = appendConfidenceLine(b, req.Report, c.perspectives)
 		}
 		if c.attributionTrailerOn() {
@@ -732,6 +809,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	if decisionDeduped {
 		resp.Note = decisionDedupedNote
 	}
+	if sameHeadNote != "" {
+		resp.Note = sameHeadNote
+	}
 
 	// Record where the review landed so the queue views can link to it. A
 	// failure here is logged and swallowed: the review is already posted, and
@@ -758,8 +838,8 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	// artifacts are recorded together so a verdict can never be attributed to a
 	// review that never actually landed. The evidence bundle for the head
 	// records the same two things (review_evidence.go).
-	c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(ctx, req, ""), created, nowFn())
-	if err := c.fileReviewBacklog(ctx, req, nowFn().UTC(), created); err != nil {
+	c.recordReviewEvidence(ctx, verdictReq, c.recordReviewVerdict(ctx, verdictReq, ""), created, nowFn())
+	if err := c.fileReviewBacklog(ctx, verdictReq, nowFn().UTC(), created); err != nil {
 		c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 			slog.String("repo", req.Repo), slog.Int("number", req.Number),
 			slog.String("error", err.Error()))
@@ -1043,6 +1123,15 @@ func (c *Client) maxReviewsPerHead() int {
 	return c.perspectives.Len()
 }
 
+// sameHeadStricterVerdictNote is the result note for a review the watcher
+// did not post because a stricter verdict on the head stands.
+const sameHeadStricterVerdictNote = "review not posted: a stricter verdict on this head stands, and only a re-review the hive asks for after it, or a new head, replaces it"
+
+// sameHeadStricterVerdictCommentNote is the result note for a review the
+// watcher posted as a COMMENT carrying only the accepted perspectives'
+// findings, because a stricter verdict on the head stands for the others.
+const sameHeadStricterVerdictCommentNote = "posted as COMMENT: a stricter verdict on this head stands for some perspectives; the review carries the others' findings"
+
 // reviewNoFindingsSuppressedNote is the result-file note for a clean
 // acknowledgement the quiet mode recorded instead of submitting.
 const reviewNoFindingsSuppressedNote = "comment suppressed: no-findings acknowledgement recorded as a verdict (github.notifications.mode: quiet)"
@@ -1059,6 +1148,13 @@ func reviewNoFindingsSection(req ReviewRequest) string {
 		b.WriteString("\n\n</details>")
 	}
 	return b.String()
+}
+
+// sameHeadFindingsSection renders, for the status comment, the accepted
+// perspectives' findings of a review the watcher did not post because a
+// stricter verdict on the head stands (sameHeadAcceptedFindingsBody).
+func sameHeadFindingsSection(agent, body string) string {
+	return fmt.Sprintf("**Review findings** from `%s` (folded here because a stricter verdict on this head stands):\n\n%s", strings.TrimSpace(agent), strings.TrimSpace(body))
 }
 
 // reviewFindingsSection renders a perspective's findings for the status

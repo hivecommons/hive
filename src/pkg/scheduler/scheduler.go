@@ -52,6 +52,10 @@ type Scheduler struct {
 	maintainerNotes          MaintainerNotesLookup
 	customerContext          CustomerContextLookup
 	topicClaims              TopicClaimLookup
+	// reviewDispatch is the review planner's pending rows from the latest
+	// eval cycle, for the ${PR_LIST} dispatched mark (pr_annotations.go);
+	// atomic for the same reason as newReleases.
+	reviewDispatch atomic.Pointer[reviewDispatchHolder]
 	// newReleases feeds ${NEW_RELEASES} (new_releases.go); atomic because
 	// template substitution may run with s.mu held.
 	newReleases        atomic.Pointer[newReleasesHolder]

@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-21 (v6.55.0)
+
+### Added
+
+- **A separate, longer idle timer for trusted contributors' PRs (`governor.labels.stage.abandon_after_trusted`, off by default).** The stale contributor PR idle clock (`abandon_after`, [#19359](https://github.com/hivecommons/hive/pull/19359)) skipped every author it saw as trusted, so a contribution-lane PR by a contributor whose tier is `trusted` sat at 071 or at an adoption-stalled 085 forever. The exclusion is now split. Maintainers stay excluded as before: this hive's owners (`dashboard.authorized_users`, which the trusted-author and merger authorizers also read), `OWNER` / `MEMBER` / `COLLABORATOR` authors, trusted bots, the hive's own identities and the App. A trusted contributor (trusted only through `role/trusted` or a registry tier in `auto_merge.contributor_lane.require_tiers`, with none of those signals) now follows the same flag, notice, 24h grace and close path as any contributor PR, measured against `abandon_after_trusted` instead of `abandon_after`. Once that threshold has passed, and before it flags, warns or closes, the hive reads the author's repository permission (cached for ten minutes): an author whose `permission` or `role_name` is `write`, `maintain` or `admin` is treated as a maintainer and never flagged, which also covers PRs rebuilt from the forge-state cache without an author association; `read` or `triage` stays on the timer, and a failed read flags, warns and closes nothing until a later pass reads it. Adoption's maintainer check (admin or maintain) is unchanged. Unset or `0` keeps today's behavior (never flagged); it applies only while `abandon_after` is set and is never shorter than it (the dashboard and the admin MCP refuse a shorter value). The row of a PR flagged on this timer says "(trusted contributor timer)". Settings → Labels has the control next to `abandon_after`, and the admin MCP `governor.stage_labels` writes it, calling it widening when it turns on or shortens where `abandon_close_repos` lists repositories. Stage records from before this change keep their "seen as trusted" mark. A pass checks the maintainer signals before it picks a threshold, so a maintainer's old record is re-marked first and never flagged, and with the new setting unset nothing changes at all.
+
 ## 2026-11-21 (v6.54.3)
 
 ### Fixed
