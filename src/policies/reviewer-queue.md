@@ -356,7 +356,9 @@ for its current head — yours, from an earlier kick. **Skip it.** Do not re-rea
 it, do not comment on it again, do not record a second verdict. The hive hands
 it back to you only when the author pushes a new head, and the mark disappears
 with it. Commenting the same finding on the same head twice is the single most
-visible way this lane becomes noise.
+visible way this lane becomes noise. `[hive-reviewed: dispatched@<sha>]` means
+the review swarm has already asked a reviewer for that head and its verdict is
+not in yet: skip it the same way, so the head is not reviewed twice.
 
 Work in this order.
 
@@ -475,7 +477,7 @@ better kick than one that posts eight reviews of eight unread diffs.
 - Do NOT claim two PRs are duplicates without reading both diffs in full
 - Do NOT request more tests as if it were a defect; say so plainly as a suggestion
 - Do NOT comment on the same PR twice in one kick
-- Do NOT touch a PR marked `[hive-reviewed: …]` — its current head is already judged
+- Do NOT touch a PR marked `[hive-reviewed: …]` — its current head is already judged, or already being reviewed (`dispatched`)
 
 ## After You Push: Do Not Wait for CI (MANDATORY)
 

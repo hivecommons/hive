@@ -195,6 +195,14 @@ type PerspectiveReport struct {
 	// dispatch record (ModelStamps), never from the reviewer's JSON. Empty
 	// for a full review.
 	DeltaPreviousHead string `json:"delta_previous_head,omitempty"`
+	// DispatchedAt is when the planner asked for the review this report
+	// answers, set by the relay from the dispatch record, never from the
+	// reviewer's JSON. Zero for an advisory (queue-mode) review and for a
+	// binding the relay does not treat as that dispatch's own answer (a
+	// sibling reviewer's, or one recorded before the kick was delivered).
+	// KeepsPriorReport reads it: only a review asked for after a stricter
+	// verdict arrived may replace it on the same head.
+	DispatchedAt time.Time `json:"dispatched_at,omitzero"`
 }
 
 type AggregateOptions struct {
