@@ -107,14 +107,14 @@ func abandonThreshold(policy StageLabelPolicy, rec stagelabels.Record, contribut
 // abandonTrustedAuthorChecked is the guard the trusted contributor timer
 // pays once its threshold is crossed, before it flags, warns or closes: the
 // cached read of the author's permission on the repository
-// (authorRepoPermission). A PR rebuilt from the forge-state cache carries
+// (authorRepoAccess). A PR rebuilt from the forge-state cache carries
 // no author association, so a collaborator outside
 // dashboard.authorized_users who resolves role/trusted would otherwise read
 // as a trusted contributor. An author with write, maintain or admin is
 // marked (Record.AbandonMaintainerSeen) and any flag cleared; a failed read
 // defers to a later pass. It reports whether the caller may go on.
 func (c *Engine) abandonTrustedAuthorChecked(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, now time.Time) bool {
-	permission, role, err := c.authorRepoPermission(ctx, obs, now)
+	permission, role, err := c.authorRepoAccess(ctx, obs, now)
 	switch {
 	case err != nil:
 		c.warn("stage labels: could not read the author's repository permission; trusted contributor idle clock deferred", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "error", err)

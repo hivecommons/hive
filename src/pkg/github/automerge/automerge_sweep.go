@@ -376,7 +376,7 @@ type Engine struct {
 	mergerAuthz          MergerAuthorizer
 
 	// maintainerPerm caches a PR author's permission on the PR's
-	// repository (authorRepoPermission): adoption never takes over a
+	// repository (authorRepoAccess): adoption never takes over a
 	// maintainer's own PR, and the trusted contributor idle clock never
 	// flags a PR whose author can push to the repository.
 	maintainerPermMu sync.Mutex

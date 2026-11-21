@@ -2012,7 +2012,7 @@ func commitsAfterHeadByHive(commits []*gh.RepositoryCommit, complete bool, adopt
 	return true
 }
 
-// maintainerPermTTL is how long authorRepoPermission trusts a permission
+// maintainerPermTTL is how long authorRepoAccess trusts a permission
 // read: one GET per (repo, author) per sweep window, not per PR per sweep.
 const maintainerPermTTL = 10 * time.Minute
 
@@ -2046,7 +2046,7 @@ func repoWriteLevel(permission, role string) bool {
 // neither takes a PR over nor releases an existing adoption without
 // evidence.
 func (c *Engine) authorMaintainsRepo(ctx context.Context, obs stageObservation, now time.Time) (bool, error) {
-	permission, role, err := c.authorRepoPermission(ctx, obs, now)
+	permission, role, err := c.authorRepoAccess(ctx, obs, now)
 	if err != nil {
 		c.warn("stage labels: could not read the author's repository permission; adoption deferred", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "error", err)
 		return false, err
@@ -2054,11 +2054,11 @@ func (c *Engine) authorMaintainsRepo(ctx context.Context, obs stageObservation, 
 	return repoMaintainerLevel(permission, role), nil
 }
 
-// authorRepoPermission is the PR author's permission on the PR's repository
+// authorRepoAccess is the PR author's permission on the PR's repository
 // (`permission`, `role_name`), cached for maintainerPermTTL. A failed read
 // is not cached and returns its error; the caller logs it. The cache lock
 // covers map access only, never the API call.
-func (c *Engine) authorRepoPermission(ctx context.Context, obs stageObservation, now time.Time) (string, string, error) {
+func (c *Engine) authorRepoAccess(ctx context.Context, obs stageObservation, now time.Time) (string, string, error) {
 	if c == nil || c.gh == nil || obs.Author == "" || obs.Owner == "" || obs.Repo == "" {
 		return "", "", nil
 	}
