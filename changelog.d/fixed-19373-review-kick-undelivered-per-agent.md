@@ -1,1 +1,0 @@
-- One agent whose pane is not ready no longer logs a `review swarm kick not delivered` warning for every PR queued for it: the warning fires once per agent and cause, and the other PRs are logged at info and still audited, so the runtime self-report stops filing it as a repeated unclassified error ([#19373](https://github.com/hivecommons/hive/issues/19373)).
