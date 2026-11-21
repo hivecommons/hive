@@ -234,6 +234,16 @@ type Evidence struct {
 	// called ready (060 / 090) when nothing else sent it back. A decision
 	// still owed is asked first (hivecommons/hive#14607).
 	HeadDirty bool
+	// TrustedAuthorMerges is true when the trusted-author lane admitted
+	// this head's author and its review gate does not enforce
+	// (governor.review_gate.mode is shadow or off): a requires_human
+	// verdict does not stop that lane, so it merges the head once the
+	// checks are green. The 085 comment then says so, and names
+	// TrustedAuthorHoldLabel (the first auto_merge.trusted_authors
+	// exclude label; "hold" when empty) as what stops the merge, instead
+	// of saying the lane will not merge it (hivecommons/hive#19421).
+	TrustedAuthorMerges    bool
+	TrustedAuthorHoldLabel string
 }
 
 // Hard-stop tokens for a hive-authored superseding PR: the only reasons
@@ -397,6 +407,13 @@ type Route struct {
 	// changes_requested verdict: what the review asked for, for the
 	// author's nudge. Empty on every other route.
 	ReviewAsks []string
+	// TrustedAuthorMerges is set on a requires_human 085, or the 071 that
+	// asks a human author the reviewer's question, that the trusted-author
+	// lane merges anyway (Evidence.TrustedAuthorMerges, with nothing else
+	// listed that stops it): the comment or the author's note says the PR
+	// will still merge and that the TrustedAuthorHoldLabel label stops it.
+	TrustedAuthorMerges    bool
+	TrustedAuthorHoldLabel string
 }
 
 // Lane-vocabulary reasons RouteHuman emits for the fixing stages.
@@ -516,6 +533,37 @@ func ParseFixerExhausted(reason string) (attempts int, ok bool) {
 // decisionConsequenceReason is the 085 bullet for a lane rule that names no
 // specific cause; EntryCause leaves it out of the dedup digest.
 const decisionConsequenceReason = "the automerge lane will not merge this unattended"
+
+// trustedAuthorMergesReason replaces decisionConsequenceReason on a
+// requires_human 085 the trusted-author lane merges anyway
+// (Evidence.TrustedAuthorMerges): that lane holds on the verdict only when
+// its review gate enforces.
+const trustedAuthorMergesReason = "the trusted-author lane will merge this head once its checks are green, even with the reviewer's question open: its review gate does not enforce (`governor.review_gate.mode` is not `enforce`)"
+
+// TrustedAuthorHoldLabelOr is label, or "hold" when it is empty: the label
+// that keeps the trusted-author lane from merging a PR.
+func TrustedAuthorHoldLabelOr(label string) string {
+	if label = strings.TrimSpace(label); label != "" {
+		return label
+	}
+	return "hold"
+}
+
+// WithTrustedAuthorMerges marks r, a requires_human 085 route built without
+// Evidence (the same-head re-park), as one the trusted-author lane merges
+// anyway: it gets the bullet and wording RouteHuman gives such a head. A
+// route with an approver, a manual-merge rule or a hold-class label is
+// returned as it is; the caller rules out a sentinel alert and `blocked`.
+func WithTrustedAuthorMerges(r Route, holdLabel string) Route {
+	if r.Stage != NeedsDecision || r.Verdict != VerdictRequiresHuman || strings.TrimSpace(r.HumanApprover) != "" || r.ManualMerge || len(r.Holds) > 0 || r.Sentinel || len(r.Gates) > 0 {
+		return r
+	}
+	if !slices.Contains(r.Reasons, trustedAuthorMergesReason) {
+		r.Reasons = append(slices.Clone(r.Reasons), trustedAuthorMergesReason)
+	}
+	r.TrustedAuthorMerges, r.TrustedAuthorHoldLabel = true, TrustedAuthorHoldLabelOr(holdLabel)
+	return r
+}
 
 // RequiresHumanReasons are the 085 reasons for a reviewer `requires_human`
 // verdict on head: the verdict itself, the finding behind it, and the
@@ -691,7 +739,14 @@ func routeProgress(e Evidence) Route {
 				}
 			}
 		}
-		return Route{Stage: fixing, Reasons: reasons, LaneReason: LaneReasonReviewerQuestion, Summary: summary, Head: e.Head, Verdict: e.Verdict}
+		route := Route{Stage: fixing, Reasons: reasons, LaneReason: LaneReasonReviewerQuestion, Summary: summary, Head: e.Head, Verdict: e.Verdict}
+		if e.TrustedAuthorMerges && !e.ManualMerge && !e.HeadDirty && !e.Conflict && len(GateReasons(e)) == 0 {
+			// The trusted-author lane merges this head over the question
+			// (hivecommons/hive#19421): the author's note must not say the
+			// hive will not merge it.
+			route.TrustedAuthorMerges, route.TrustedAuthorHoldLabel = true, TrustedAuthorHoldLabelOr(e.TrustedAuthorHoldLabel)
+		}
+		return route
 	}
 	// A fresh head waits for its verdict — unless the reviewer has already
 	// answered requires_human for this very head, in which case the person
@@ -742,14 +797,27 @@ func routeProgress(e Evidence) Route {
 	// The approval on this head released the workflow-path fence: it is no
 	// longer a reason, and no "will not merge unattended" stands in for it.
 	fenceReleased := e.CauseAwaitsApproval && !e.ManualMergeRule && approver != ""
+	// The trusted-author lane merges an open requires_human head when its
+	// review gate does not enforce. With nothing else here that stops it (a
+	// dirty or conflicting head does: the lane cannot merge it as it stands),
+	// the comment says so whichever lane observed the PR, instead of
+	// promising it will not merge (hivecommons/hive#19421).
+	trustedMerges := e.TrustedAuthorMerges && e.Verdict == VerdictRequiresHuman && approver == "" && len(e.ForkGuard) == 0 && !e.ManualMerge &&
+		!e.HeadDirty && !e.Conflict && strings.TrimSpace(e.CauseReason) == "" && len(GateReasons(e)) == 0
 	if e.Cause == CauseDecision && strings.TrimSpace(e.CauseReason) != "" && !manualMergeApproved && !fenceReleased {
 		decide = append(decide, e.CauseReason)
+	} else if trustedMerges {
+		decide = append(decide, trustedAuthorMergesReason)
 	} else if e.Cause == CauseDecision && len(e.ForkGuard) == 0 && !manualMergeApproved && !fenceReleased {
 		decide = append(decide, decisionConsequenceReason)
 	}
 	if len(decide) > 0 {
-		return Route{Stage: NeedsDecision, Reasons: decide, LaneReason: decideReason, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict,
+		route := Route{Stage: NeedsDecision, Reasons: decide, LaneReason: decideReason, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict,
 			Holds: append([]string(nil), e.Holds...), Sentinel: e.Sentinel, ManualMerge: e.ManualMerge, ApprovalReleasesFence: e.ManualMerge && e.ApprovalReleasesFence, ApprovalReleasesPathHold: e.ManualMerge && e.ApprovalReleasesPathHold, HumanApprover: approver, Hold: e.Hold}
+		if trustedMerges {
+			route.TrustedAuthorMerges, route.TrustedAuthorHoldLabel = true, TrustedAuthorHoldLabelOr(e.TrustedAuthorHoldLabel)
+		}
+		return route
 	}
 	if e.HeadDirty {
 		// GitHub reports this very head `dirty`: it cannot merge, by the
@@ -1053,6 +1121,8 @@ func DecisionComment(r Route) string {
 	b.WriteString(DecisionCommentMarker)
 	if r.ManualMerge && !r.approvalReleases() {
 		b.WriteString("\nNeeds a manual merge decision")
+	} else if r.TrustedAuthorMerges {
+		b.WriteString("\nNeeds a decision, but the hive will still merge this PR")
 	} else {
 		b.WriteString("\nNeeds a decision, not a merge")
 	}
@@ -1174,6 +1244,9 @@ func BotAuthorFindingRoute(head, bot, base, summary string) Route {
 //   - `requires_human` on any other PR: a trusted merger's approving review
 //     on the head, or their `/hive approve` reply posted after the verdict,
 //     releases it; the hive does not push to a PR it did not open.
+//   - `requires_human` on a PR the trusted-author lane merges anyway
+//     (TrustedAuthorMerges): answer the question; the hold label is what
+//     stops the merge meanwhile.
 //   - A `hold`-class label or sentinel alert names the label a person must
 //     clear; `/hive approve` does not remove labels.
 func DecisionActions(r Route) string {
@@ -1212,6 +1285,11 @@ func DecisionActions(r Route) string {
 			settles = " and settles the reviewer's `requires_human` verdict"
 		}
 		steps = append(steps, "a trusted merger approves this head ("+head+") with a GitHub **Approve** review (or a `/hive decision approve` reply, typed here or from the dashboard), which releases the CI workflow-file fence"+settles+", and the hive merges the PR once the other gates clear; approval on an earlier head carries over only the hive's own merge of the base branch (diff unchanged), and a `/hive approve` reply does not release the fence")
+	} else if r.Verdict == VerdictRequiresHuman && r.TrustedAuthorMerges {
+		// The trusted-author lane does not hold on the verdict here, so an
+		// approval releases nothing: the answer decides the question, and
+		// only the hold label stops the merge (hivecommons/hive#19421).
+		steps = append(steps, "answer the reviewer's question on this PR (a reply, or a maintainer's decision). The hive does not wait for the answer: to stop the merge until it is answered, add the `"+TrustedAuthorHoldLabelOr(r.TrustedAuthorHoldLabel)+"` label")
 	} else if r.Verdict == VerdictRequiresHuman {
 		if r.SelfAuthored {
 			steps = append(steps, "approve this head ("+head+") to merge as-is — a GitHub **Approve** review, or a `/hive approve` reply posted after the verdict — or leave a *changes requested* review (or reply `/hive decision <what to change>`) and the hive will push the fix")

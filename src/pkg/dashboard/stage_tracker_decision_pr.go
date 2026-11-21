@@ -210,6 +210,11 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		approveOK, approveWhy = false, "The head still carries the reviewer's unresolved findings; approving does not fix them."
 	case reviewerDeferred:
 		d.Blocker = "The hive will not merge until a person decides."
+		if hold := strings.TrimSpace(it.TrustedAuthorMerges); hold != "" {
+			// The trusted-author lane's review gate does not enforce, so the
+			// open question does not stop its merge (hivecommons/hive#19421).
+			d.Blocker = "The trusted-author lane will still merge this once its checks are green; the open question does not stop it. Add the `" + hold + "` label to stop it until the question is answered."
+		}
 		if verdict != nil && strings.TrimSpace(verdict.DecisionFinding) != "" {
 			d.Blocker = "The review found: " + strings.TrimSpace(verdict.DecisionFinding) + ". " + d.Blocker
 		}

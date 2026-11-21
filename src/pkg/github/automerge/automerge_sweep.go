@@ -963,6 +963,10 @@ type TrustedAuthorPolicy struct {
 	RequireRole             string
 	RequireGitHubPermission bool
 	ExcludeLabels           map[string]bool
+	// HoldLabel is the first configured exclude label: the one the 085
+	// comment names as what stops this tier merging a PR whose reviewer
+	// question is still open ("" reads as `hold`).
+	HoldLabel string
 }
 
 type TrustedAuthorDecision struct {

@@ -111,6 +111,11 @@ type ContributorNudge struct {
 	// Attempt is, for a CI-failure nudge, how many red heads the same
 	// failing set has been seen on (1 for the first); 0 otherwise.
 	Attempt int
+	// TrustedAuthorMerges is, on a trusted human's 071 that only asks the
+	// reviewer's question, the label that stops the trusted-author lane:
+	// that lane merges the head anyway once green (its review gate does not
+	// enforce, hivecommons/hive#19421). "" on every other note.
+	TrustedAuthorMerges string
 }
 
 // ContributorNudgeOutcome is what the sink did with a nudge.
@@ -804,7 +809,14 @@ func TrustedHuman071Note(n ContributorNudge, stage stagelabels.Stage, mention bo
 	if !mention {
 		at = ""
 	}
-	fmt.Fprintf(&b, "%s%s this PR is held at `%s` and the hive will not merge it yet.\n\n", at, n.Author, stage.Label())
+	hold := strings.TrimSpace(n.TrustedAuthorMerges)
+	if hold != "" {
+		// The trusted-author lane merges this head over the reviewer's
+		// question (hivecommons/hive#19421): the note must not say it is held.
+		fmt.Fprintf(&b, "%s%s this PR is at `%s` with a question from the reviewer for you, but the hive will still merge it: the trusted-author lane merges this head once its checks are green. To stop that until you have answered, add the `%s` label.\n\n", at, n.Author, stage.Label(), hold)
+	} else {
+		fmt.Fprintf(&b, "%s%s this PR is held at `%s` and the hive will not merge it yet.\n\n", at, n.Author, stage.Label())
+	}
 	var d strings.Builder
 	if len(n.FailingChecks) > 0 {
 		d.WriteString("**Failing checks:**\n")
@@ -819,15 +831,55 @@ func TrustedHuman071Note(n ContributorNudge, stage stagelabels.Stage, mention bo
 		}
 	}
 	b.WriteString(advisory.NeutralizeMentions(d.String()))
+	if hold != "" {
+		b.WriteString("\nNext: answer the question here, or push a new head if the answer changes the code. The hive does not push to your branch.\n")
+		return b.String()
+	}
 	b.WriteString("\nNext: the hive does not push to your branch. Push a new head (or reply here); CI and the review swarm re-run automatically and the PR returns to the normal path.\n")
 	return b.String()
 }
 
+// trustedHuman071Merges reports whether obs's 071 note says the PR will
+// still merge: only the reviewer's question routed to the author does, and
+// only when the route carries the trusted-author lane's note. A conflict, red
+// check or requested change routes elsewhere and really does stop the merge.
+func trustedHuman071Merges(obs stageObservation) bool {
+	return obs.Reason == stagelabels.LaneReasonReviewerQuestion && obs.Route != nil && obs.Route.TrustedAuthorMerges
+}
+
+// rewordTrustedHuman071 rewrites the 071 note already on obs's head with n,
+// in place: the status section in quiet mode, the hive's own comment for the
+// head otherwise. An edit notifies nobody, so the author is not mentioned
+// anew. With no comment of the hive's to edit, nothing is posted. Either way
+// the record takes the new wording, so the next pass is quiet.
+func (c *Engine) rewordTrustedHuman071(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, n ContributorNudge) error {
+	body := TrustedHuman071Note(n, stagelabels.NeedsAuthor, !policy.QuietNotifications)
+	if policy.QuietNotifications {
+		if _, err := c.postStageNoteWith(ctx, policy, obs, prstatus.KeyHuman071Note, body, prstatus.Write); err != nil {
+			c.warn("stage labels: trusted human 071 note rewrite failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+			return err
+		}
+	} else if existing := c.findOwnEntryComment(ctx, obs, TrustedHuman071MarkerPrefix+" head="+obs.HeadSHA+" -->"); existing != nil {
+		if _, _, err := c.gh.Issues.EditComment(ctx, obs.Owner, obs.Repo, existing.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
+			c.warn("stage labels: trusted human 071 note rewrite failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+			return err
+		}
+	}
+	store.MarkHuman071TrustedMerges(key, n.TrustedAuthorMerges != "")
+	c.info("stage labels: trusted human 071 note reworded", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "trusted_author_merges", n.TrustedAuthorMerges != "")
+	return nil
+}
+
 // noteTrustedHuman071 posts TrustedHuman071Comment once per head for a
-// trusted human PR in 071. It returns the number of comments posted.
+// trusted human PR in 071, and rewrites it in place once when, on the same
+// head, whether the trusted-author lane will still merge the PR changes
+// (hivecommons/hive#19421). It returns the number of comments posted.
 func (c *Engine) noteTrustedHuman071(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) (int, error) {
 	rec, ok := store.Get(key)
-	if !ok || obs.Author == "" || obs.HeadSHA == "" || rec.NudgeHead == obs.HeadSHA {
+	if !ok || obs.Author == "" || obs.HeadSHA == "" {
+		return 0, nil
+	}
+	if rec.NudgeHead == obs.HeadSHA && rec.Human071TrustedMerges == trustedHuman071Merges(obs) {
 		return 0, nil
 	}
 	checks, asks, human := nudgeDiagnosisRouted(obs.Reason, obs.Detail, obs.Route)
@@ -838,6 +890,12 @@ func (c *Engine) noteTrustedHuman071(ctx context.Context, store *stagelabels.Sto
 		Owner: obs.Owner, Repo: obs.Repo, Display: obs.Display, Number: obs.Number,
 		HeadSHA: obs.HeadSHA, Title: obs.Title, URL: obs.URL, Author: obs.Author, OpenedAt: obs.OpenedAt,
 		Reason: obs.Reason, FailingChecks: checks, ReviewAsks: asks, HumanChangesRequested: human, Nudge: 1,
+	}
+	if trustedHuman071Merges(obs) {
+		n.TrustedAuthorMerges = stagelabels.TrustedAuthorHoldLabelOr(obs.Route.TrustedAuthorHoldLabel)
+	}
+	if rec.NudgeHead == obs.HeadSHA {
+		return 0, c.rewordTrustedHuman071(ctx, store, key, obs, policy, n)
 	}
 	// Normal mode: every head is a fresh comment with a mention. Quiet
 	// mode: one section of the status comment, rewritten per head, and the
@@ -851,6 +909,7 @@ func (c *Engine) noteTrustedHuman071(ctx context.Context, store *stagelabels.Sto
 		return 0, err
 	}
 	store.MarkNudged(key, obs.HeadSHA, 1, false, now)
+	store.MarkHuman071TrustedMerges(key, n.TrustedAuthorMerges != "")
 	if mention {
 		store.MarkMentioned(key, obs.Reason)
 	}

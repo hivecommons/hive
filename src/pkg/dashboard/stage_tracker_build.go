@@ -265,6 +265,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		it.HumanApprover = approver
 		it.ManualMerge = stageTrackerManualMergeReason(base)
+		if hasRec && stage == stagelabels.NeedsDecision {
+			it.TrustedAuthorMerges = rec.TrustedAuthorMergesOn(it.Head, now)
+		}
 		if stage == stagelabels.ReadyForHumanMerge {
 			it.HumanMergeReason, _, it.HumanMergeReasonText = stageTrackerHumanMergeReason(it.Reason)
 			// An untrusted author gets the specific why-and-how-to-fix

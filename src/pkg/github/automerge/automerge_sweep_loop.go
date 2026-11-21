@@ -428,6 +428,9 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 	policy := c.currentTrustedAuthorPolicy()
 	result := &AutoMergeSweepResult{}
 	if !policy.Enabled {
+		// The lane merges nothing now: what it said it would merge is void
+		// (hivecommons/hive#19421).
+		c.forgetStageTrustedAuthorMerges("")
 		return result, nil
 	}
 	maxMerges := opts.MaxMerges
@@ -441,10 +444,15 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			break
 		}
 		owner, repoName := c.transport.SplitRepo(displayRepo)
-		if !policy.repoAllowed(displayRepo) || !opts.Targets.selectsRepo(owner+"/"+repoName) {
+		if !policy.repoAllowed(displayRepo) {
+			c.forgetStageTrustedAuthorMerges(owner + "/" + repoName)
+			continue
+		}
+		if !opts.Targets.selectsRepo(owner + "/" + repoName) {
 			continue
 		}
 		if !c.repoAutoMergeAllowed(displayRepo) {
+			c.forgetStageTrustedAuthorMerges(owner + "/" + repoName)
 			c.info("trusted-author automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled && c.repoObservedOnly(displayRepo))
 			c.observeAutoMergeOffRepo(ctx, stageLaneTrusted, displayRepo, opts.Targets, func(ctx context.Context, oc *Engine, owner, repoName string, pr *gh.PullRequest) (string, error) {
 				login := hgithub.SafeGetLogin(pr.GetUser())
@@ -538,6 +546,9 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			if reason := c.prefilterTrustedAuthorPR(owner, repoName, pr, policy); reason != "" {
 				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", reason, "tier", "trusted-author")
 				result.Skipped++
+				// A hold or exclude label, or an author no longer trusted:
+				// this lane will not merge the head (hivecommons/hive#19421).
+				c.noteStageTrustedAuthorMerges(owner, repoName, number, "", "")
 				stage(reason, false, nil)
 				continue
 			}
@@ -805,6 +816,11 @@ func (c *Engine) sweepPass(ctx context.Context, maxMerges int, acmmAllowed bool,
 		remaining = DefaultAutoMergeSweepMaxMerges
 	}
 	remaining -= len(result.Merged)
+	if !c.currentTrustedAuthorPolicy().Enabled {
+		// The lane is not run at all: what it said it would merge is void
+		// (hivecommons/hive#19421).
+		c.forgetStageTrustedAuthorMerges("")
+	}
 	if remaining > 0 && c.currentTrustedAuthorPolicy().Enabled {
 		trustedResult, trustedErr := c.SweepTrustedAuthorAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: remaining, SelfAuthoredLaneActive: acmmAllowed, Targets: targets})
 		if trustedErr != nil {

@@ -1379,6 +1379,22 @@ func (t TrustedAuthorAutoMergeConfig) ExcludeLabelSet() map[string]bool {
 	return set
 }
 
+// HoldLabel is the first exclude label ("hold" by default): the one the
+// 085 comment names as what stops the tier merging a PR whose reviewer
+// question is still open. "" when the list is explicitly empty.
+func (t TrustedAuthorAutoMergeConfig) HoldLabel() string {
+	labels := t.ExcludeLabels
+	if labels == nil {
+		labels = DefaultTrustedAuthorExcludeLabels
+	}
+	for _, label := range labels {
+		if label = strings.TrimSpace(label); label != "" {
+			return label
+		}
+	}
+	return ""
+}
+
 func (t TrustedAuthorAutoMergeConfig) Validate() error {
 	if !t.Enabled {
 		return nil
