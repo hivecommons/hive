@@ -1656,6 +1656,94 @@ writes go through the write-back gate under the supersession kinds
 (`supersession_notice`, `supersession_close`). Human-merge paths
 (`auto_merge.human_merge_paths`) gate merges, not closes, so they do not apply.
 
+### A person's idle PR: the opt-in takeover timer
+
+The hive never takes over a person's PR on its own
+([#15202](https://github.com/hivecommons/hive/issues/15202)). A person's PR
+is one labelled `author/human`, or one whose author is one of this hive's
+owners (`dashboard.authorized_users`), even when the owner's own agent wrote
+it. It waits at `071-needs-author` or `072-returned-to-contributor` until its
+author pushes or an operator presses **Adopt now**. "Let hive decide" never
+adopts one either (`RefusalAdoptPersonAuthored`).
+
+An owner can switch on a timed exception, per repository
+([#19395](https://github.com/hivecommons/hive/issues/19395)). All four
+settings sit under `governor.labels.stage.adoption`:
+
+| Setting              | Default     | What it does                                                                                                |
+| -------------------- | ----------- | ----------------------------------------------------------------------------------------------------------- |
+| `person_after`       | unset (off) | How long a person's sent-back PR may sit idle before the hive posts a takeover notice. `0` or empty is off. |
+| `person_grace`       | `24h`       | How long the hive waits after the notice before it takes the PR over. `0`, empty or invalid means `24h`.    |
+| `person_repos`       | empty       | Repositories where the timer applies to owners' agent-written PRs (not labelled `author/human`).            |
+| `person_human_repos` | empty       | Repositories where the timer applies to hand-written `author/human` PRs, an owner's or anyone else's.       |
+
+Both lists take `owner/repo` or a bare repository name, matched without
+regard to case. The two lists are separate switches: an owner's offline agent
+is close to the contributor-offline case, a person's own PR is not. The timer
+works only at ACMM L6 (Autonomous), the level the abandoned-PR close needs,
+because it acts on a person's PR with no operator click. With
+`person_after` unset, nothing changes.
+
+The hive takes over a PR only when **all** of these hold:
+
+1. It is at 071 or 072 in a repository listed for its kind, and adoption is
+   on (`governor.labels.stage.adoption.enabled`).
+2. It has been idle for `person_after`. This is the same idle clock as
+   [`abandon_after`](#abandoned-contributor-prs-the-idle-clock): a head push
+   the hive did not make, a new comment or a new review by anyone but the
+   hive restarts it. The hive's own comments, label writes and CI results do
+   not. Leaving 071 / 072 ends the run; coming back starts a new one.
+3. Nothing says stop: no `hold`, `do-not-merge`, `needs-human` or
+   `hive/keep-open` label. The head is not on a fork: Adopt now makes a hive
+   copy, and a fork's code is never moved into one, so the timer never
+   promises a takeover it cannot make. No operator's Adopt now or reroute
+   to another clanker is pending.
+4. It is work the hive can do. The PR was sent back for a merge conflict, a
+   failed check, or a change request from the review swarm or a review bot.
+   A change request from a person (any reviewer who is not a bot and not the
+   hive) means a person is engaged, so the hive keeps waiting for the
+   author. So does a maintainer's `/hive decision`, a reviewer's question for
+   the author, a missing sign-off, and anything parked at 085.
+
+Then the hive:
+
+1. reads the PR's comments and reviews once, and posts one notice
+   (`<!-- hive:person-takeover-notice -->`) saying it will take the PR over
+   after `person_grace` unless someone pushes, comments or reviews, or adds
+   `hold`;
+2. waits `person_grace`;
+3. reads the comments and reviews again, and hands the PR to the same path as
+   an operator's **Adopt now**: the forced-adoption mark on the stage record,
+   recorded by the timer (`AdoptForcedBy` `hive:person-timer`) instead of an
+   operator's login. The adoption is a hive copy (supersession) that keeps the
+   author's commits and sign-off, exactly as Adopt now makes it. A person's original is closed
+   only under the existing rule for human originals: when the copy merges, or
+   earlier with the write-back opt-in label.
+
+Any push, comment or review after the notice cancels the countdown, and the
+idle clock starts again from it. A stop label added during the grace cancels
+it too; once the label is gone the hive posts a fresh notice and waits a full
+grace. The notice goes through the write-back gate under
+`supersession_notice`, like the abandoned-PR notice: below write-back `full`
+mode a PR without the opt-in label gets no notice, so it is never taken over.
+The gate is asked before any read, and a refusal is retried an hour later.
+`adoption.supersede.close_first` does not apply to the timer's copy: the
+person's original stays open until the copy merges. A PR whose diff touches
+workflow files is refused at the takeover like any Adopt now, and goes to 085.
+
+The record shows it was the timer: the adoption reason is `person-timer`, not
+`operator-forced`; the adoption comment's marker reads `by=<hive id>
+reason=person-timer`; the log lines carry `trigger=person-timer`; and the
+record keeps `person_takeover_at`. Everything an operator's Adopt now
+bypasses (presence, the nudge grace, `maintainer_policy`), the timer bypasses
+too, once its own conditions held. On the dashboard, a 071 / 072 row the timer
+applies to says when the hive will take the PR over instead of "the hive
+never rewrites a person's PR".
+
+Dashboard: Settings → Labels, next to `abandon_after`. Admin MCP:
+`governor.stage_labels` (`person_after`, `person_grace`, `person_repos`,
+`person_human_repos`).
+
 ### Supersession: closed issue, another merged PR
 
 When the supersession sweep finds an open PR whose closing claim (`Closes

@@ -79,6 +79,8 @@ func adoptionCloseFirstCause(reason string) string {
 		return "the author has no registered clanker here and is not a trusted author"
 	case AdoptReasonOperator:
 		return "an operator asked for it"
+	case AdoptReasonPersonTimer:
+		return "it stayed idle past this repository's takeover timer and nobody answered the notice"
 	case AdoptReasonDCORehome, AdoptReasonSignoffRehome:
 		return "its commits needed a sign-off only a hive-owned branch can carry"
 	case AdoptReasonInPlaceStalled, AdoptReasonRebaseRehome, AdoptReasonPushRehome:

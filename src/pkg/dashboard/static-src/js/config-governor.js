@@ -730,6 +730,36 @@
       markDirty('labels', 'stage_abandon_close_repos', repos);
     }
 
+    // Settings → Labels → person-PR takeover timer: stage the whole selection
+    // (governor.labels.stage.adoption.person_repos / person_human_repos);
+    // none clears the opt-in.
+    function markDirtyStagePersonRepos() {
+      const el = (this && this.selectedOptions) ? this : document.getElementById('cfg-stage-person-repos');
+      const repos = el ? Array.from(el.selectedOptions).map(o => o.value).filter(Boolean) : [];
+      markDirty('labels', 'stage_adoption_person_repos', repos);
+    }
+    function markDirtyStagePersonHumanRepos() {
+      const el = (this && this.selectedOptions) ? this : document.getElementById('cfg-stage-person-human-repos');
+      const repos = el ? Array.from(el.selectedOptions).map(o => o.value).filter(Boolean) : [];
+      markDirty('labels', 'stage_adoption_person_human_repos', repos);
+    }
+
+    // stageRepoSelectOptions renders project.repos as owner/repo options with
+    // the configured ones selected (owner/repo or a bare name), plus any
+    // configured entry outside project.repos, kept selected so a save never
+    // drops it silently.
+    function stageRepoSelectOptions(projectRepos, selectedList) {
+      const selected = new Set(selectedList.map(r => String(r).toLowerCase()));
+      const known = new Set(projectRepos.map(r => String(r).toLowerCase()));
+      return projectRepos.map(r => {
+        const full = String(r).toLowerCase();
+        const on = selected.has(full) || selected.has(full.slice(full.indexOf('/') + 1));
+        return `<option value="${esc(r)}"${on ? ' selected' : ''}>${esc(r)}</option>`;
+      }).join('') + selectedList
+        .filter(r => { const v = String(r).toLowerCase(); return !known.has(v) && !Array.from(known).some(k => k.slice(k.indexOf('/') + 1) === v); })
+        .map(r => `<option value="${esc(r)}" selected>${esc(r)}</option>`).join('');
+    }
+
     function renderGovLabels(labels, holdLabels, requireLabels) {
       const permanentLabels = (holdLabels || []).concat(['do-not-merge']);
       const staticList = permanentLabels.map(l =>
@@ -819,6 +849,17 @@
         .filter(r => { const v = String(r).toLowerCase(); return !stageAbandonKnown.has(v) && !Array.from(stageAbandonKnown).some(k => k.slice(k.indexOf('/') + 1) === v); })
         .map(r => `<option value="${esc(r)}" selected>${esc(r)}</option>`).join('');
       const stageAbandonRepoSize = Math.min(Math.max(stageAbandonProjectRepos.length || 3, 3), 8);
+      // governor.labels.stage.adoption.person_after / person_grace /
+      // person_repos / person_human_repos: the opt-in timer for a person's
+      // sent-back PR (hivecommons/hive#19395; ACMM L6 only).
+      const stagePersonDirty = (key, fallback) => (_configState.dirty.labels && _configState.dirty.labels[key] !== undefined)
+        ? _configState.dirty.labels[key] : fallback;
+      const stagePersonAfter = stagePersonDirty('stage_adoption_person_after', _configState.data.stageAdoptionPersonAfter || '');
+      const stagePersonGrace = stagePersonDirty('stage_adoption_person_grace', _configState.data.stageAdoptionPersonGrace || '');
+      const stagePersonRepos = stagePersonDirty('stage_adoption_person_repos', Array.isArray(_configState.data.stageAdoptionPersonRepos) ? _configState.data.stageAdoptionPersonRepos : []);
+      const stagePersonHumanRepos = stagePersonDirty('stage_adoption_person_human_repos', Array.isArray(_configState.data.stageAdoptionPersonHumanRepos) ? _configState.data.stageAdoptionPersonHumanRepos : []);
+      const stagePersonRepoOptions = stageRepoSelectOptions(stageAbandonProjectRepos, stagePersonRepos);
+      const stagePersonHumanRepoOptions = stageRepoSelectOptions(stageAbandonProjectRepos, stagePersonHumanRepos);
       return `
         ${renderOutsideBucketsPanel(labels, requireLabels)}
         <h4 style="margin:var(--sp-0) var(--sp-0) var(--sp-3)">Exempt labels (deny-list)</h4>
@@ -907,6 +948,26 @@
           <label for="cfg-stage-abandon-close-repos">Close abandoned PRs in ${yamlHint('governor.labels.stage.abandon_close_repos[]')} ${settingHelpMark('settings', 'labels', 'Close abandoned PRs', `Per-repository opt-in, off for every repository by default, and only at ACMM L6 (Autonomous), like supersession_sweep.close_contributor_prs. In a selected repository the hive posts one polite notice on an abandoned contributor PR, waits 24 hours, and closes it with a comment saying how to reopen — only if no one but the hive pushed, commented or reviewed since the notice, the PR carries no hold label and no hive/keep-open label. Either label added during the grace cancels the countdown; once removed, the hive warns again and waits a full grace. Needs the idle clock above set.`)}</label>
           <select id="cfg-stage-abandon-close-repos" multiple size="${stageAbandonRepoSize}" data-change-action="markDirtyStageAbandonCloseRepos">${stageAbandonRepoOptions}</select>
           <div class="config-help">Ctrl/Cmd-click to select. No selection = the hive never closes an abandoned PR. Only at ACMM L6.</div>
+        </div>
+        <div class="config-field">
+          <label for="cfg-stage-person-after">Take over a person's idle PR after ${yamlHint('governor.labels.stage.adoption.person_after')} ${settingHelpMark('settings', 'labels', 'Person PR takeover timer', `Opt-in timer for a person's sent-back PR: an owner's agent-written PR, or one labelled author/human, waiting on its author at stage/071-needs-author or stage/072-returned-to-contributor. Without it the hive never takes such a PR over on its own; only an operator's Adopt now does. With it set, in a repository selected below for the PR's kind (ACMM L6 only), a PR that has had no push, comment or review from anyone but the hive for this long, and was sent back for work the hive can do (a merge conflict, a failed check, or a change request from the review swarm or a review bot), gets one notice. When the grace below has passed with no push, comment or review, no hold, do-not-merge, needs-human or hive/keep-open label, and no change request from a person, the hive takes it over through the same path as Adopt now: a hive copy that keeps the author's commits and sign-off, with the original left open until the copy merges. A PR from a fork is never taken over. A person's change request means a person is engaged, so the hive keeps waiting. The hive's own comments, label changes and CI results do not restart the clock. Let hive decide never takes over a person's PR either way. Empty or 0 is off (the default).`)}</label>
+          <input type="text" id="cfg-stage-person-after" value="${esc(stagePersonAfter)}" placeholder="off (e.g. 24h)" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_adoption_person_after" data-arg-types="s,s,w">
+          <div class="config-help">Go duration such as <code>24h</code>; empty or <code>0</code> = off, nothing changes. Applies only in the repositories selected below.</div>
+        </div>
+        <div class="config-field">
+          <label for="cfg-stage-person-grace">Takeover grace after the notice ${yamlHint('governor.labels.stage.adoption.person_grace')} ${settingHelpMark('settings', 'labels', 'Person PR takeover grace', `How long the hive waits after posting its takeover notice on a person's idle PR before it takes the PR over. A push, comment or review in that time, or a hold, do-not-merge, needs-human or hive/keep-open label, cancels the countdown; once the PR is idle again the hive warns again and waits a full grace. Before the takeover the hive reads the PR's comments and reviews once more. Empty or 0 means the default, 24h: there is no takeover without a grace.`)}</label>
+          <input type="text" id="cfg-stage-person-grace" value="${esc(stagePersonGrace)}" placeholder="24h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_adoption_person_grace" data-arg-types="s,s,w">
+          <div class="config-help">Go duration; empty or <code>0</code> = 24h (the default).</div>
+        </div>
+        <div class="config-field">
+          <label for="cfg-stage-person-repos">Take over owners' agent PRs in ${yamlHint('governor.labels.stage.adoption.person_repos[]')} ${settingHelpMark('settings', 'labels', 'Take over owners agent PRs', `Repositories where the takeover timer above applies to the agent-written PRs of this hive's owners: PRs by an author in dashboard.authorized_users that are not labelled author/human. Off for every repository by default, and only at ACMM L6 (Autonomous). Needs the timer above set.`)}</label>
+          <select id="cfg-stage-person-repos" multiple size="${stageAbandonRepoSize}" data-change-action="markDirtyStagePersonRepos">${stagePersonRepoOptions}</select>
+          <div class="config-help">Ctrl/Cmd-click to select. No selection = the hive never takes over an owner's PR on its own. Only at ACMM L6.</div>
+        </div>
+        <div class="config-field">
+          <label for="cfg-stage-person-human-repos">Take over hand-written PRs in ${yamlHint('governor.labels.stage.adoption.person_human_repos[]')} ${settingHelpMark('settings', 'labels', 'Take over hand-written PRs', `Repositories where the takeover timer above applies to hand-written PRs labelled author/human, an owner's or anyone else's. A separate switch from the owners' agent PRs: a person's own PR is further from the offline-agent case. Off for every repository by default, and only at ACMM L6 (Autonomous). Needs the timer above set.`)}</label>
+          <select id="cfg-stage-person-human-repos" multiple size="${stageAbandonRepoSize}" data-change-action="markDirtyStagePersonHumanRepos">${stagePersonHumanRepoOptions}</select>
+          <div class="config-help">Ctrl/Cmd-click to select. No selection = the hive never takes over a hand-written PR on its own. Only at ACMM L6.</div>
         </div>
         ${renderReporterTrustBlock()}
         <h4>Writing guide</h4>

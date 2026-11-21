@@ -213,6 +213,10 @@
           "AutoMerge": null,
           "MaintainerPolicy": "",
           "CloseSuperseded": "",
+          "PersonAfter": "",
+          "PersonGrace": "",
+          "PersonRepos": null,
+          "PersonHumanRepos": null,
           "Supersede": {
             "CloseFirst": null
           }

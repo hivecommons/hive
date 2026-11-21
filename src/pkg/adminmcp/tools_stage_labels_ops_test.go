@@ -12,6 +12,10 @@ func stageGovernor() map[string]any {
 	g := surfaceGovernor()
 	g["stageAbandonAfter"] = ""
 	g["stageAbandonCloseRepos"] = []string{}
+	g["stageAdoptionPersonAfter"] = ""
+	g["stageAdoptionPersonGrace"] = ""
+	g["stageAdoptionPersonRepos"] = []string{}
+	g["stageAdoptionPersonHumanRepos"] = []string{}
 	g["repos"] = []string{"example/testrepo", "example/other"}
 	return g
 }
@@ -113,5 +117,113 @@ func TestStageLabelsOpNeedsTheCurrentSettings(t *testing.T) {
 	}
 	if _, err := (stageLabelsOp{}).PreviewWithProvider(context.Background(), map[string]any{"abandon_after": "1h"}, nil); err == nil {
 		t.Fatal("previewed without reading the settings")
+	}
+}
+
+// The person-PR takeover timer's four keys (hivecommons/hive#19395) are
+// refused when malformed, as the endpoint would.
+func TestStageLabelsOpRejectsBadPersonArgs(t *testing.T) {
+	h := surfaceHandler(&surfaceProvider{governor: stageGovernor()})
+	for name, args := range map[string]map[string]any{
+		"bad after":           {"person_after": "soon"},
+		"negative after":      {"person_after": "-1h"},
+		"after not a string":  {"person_after": 24},
+		"bad grace":           {"person_grace": "later"},
+		"negative grace":      {"person_grace": "-5m"},
+		"list not object":     {"person_repos": []any{"testrepo"}},
+		"unwatched repo":      {"person_repos": map[string]any{"add": []any{"elsewhere/unwatched"}}},
+		"unwatched human":     {"person_human_repos": map[string]any{"add": []any{"elsewhere/unwatched"}}},
+		"remove missing":      {"person_human_repos": map[string]any{"remove": []any{"testrepo"}}},
+		"already off":         {"person_after": "0"},
+		"grace already unset": {"person_grace": "0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := h.PreviewWrite(context.Background(), map[string]any{"operation": WriteOpGovernorStageLabels, "args": args}); err == nil {
+				t.Fatalf("args %v accepted", args)
+			}
+		})
+	}
+}
+
+// All four timer keys go to the Labels endpoint under their stage_adoption_*
+// names; bare repository names are sent as owner/repo; opting a repository
+// in is disclosed as widening.
+func TestStageLabelsOpWritesPersonTakeoverKeys(t *testing.T) {
+	provider := &surfaceProvider{governor: stageGovernor()}
+	h := surfaceHandler(provider)
+	p, id := capPreview(t, h, WriteOpGovernorStageLabels, map[string]any{
+		"person_after":       "24h",
+		"person_grace":       "12h",
+		"person_repos":       map[string]any{"add": []any{"testrepo"}},
+		"person_human_repos": map[string]any{"add": []any{"example/other"}},
+	})
+	if p.Request.Method != http.MethodPut || p.Request.Path != "/api/config/governor/labels" {
+		t.Fatalf("request = %s %s", p.Request.Method, p.Request.Path)
+	}
+	want := `{"stage_adoption_person_after":"24h","stage_adoption_person_grace":"12h","stage_adoption_person_human_repos":["example/other"],"stage_adoption_person_repos":["example/testrepo"]}`
+	if got := bodyJSON(t, p.Request.Body); got != want {
+		t.Fatalf("body = %s, want %s", got, want)
+	}
+	joined := strings.Join(p.Effects, "\n")
+	for _, line := range []string{
+		"person_after: off → 24h",
+		"person_grace: 24h (default) → 12h",
+		"person_repos: [none] → [example/testrepo]",
+		"person_human_repos: [none] → [example/other]",
+		"Let hive decide still never adopts a person's PR",
+	} {
+		if !strings.Contains(joined, line) {
+			t.Errorf("effects miss %q:\n%s", line, joined)
+		}
+	}
+	for _, part := range []string{"take over this hive's owners' agent-written PRs in example/testrepo", "take over hand-written author/human PRs in example/other"} {
+		if !isWidening(p) || !strings.Contains(p.WideningDisclosure, part) {
+			t.Fatalf("disclosure %q lacks %q", p.WideningDisclosure, part)
+		}
+	}
+	if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if len(provider.requests) != 1 || bodyJSON(t, provider.requests[0].Body) != want {
+		t.Fatalf("executed %+v", provider.requests)
+	}
+}
+
+// "0" turns the timer off and puts the grace back to its default; with no
+// repository listed, turning the timer on takes over nothing new.
+func TestStageLabelsOpPersonTimerOffAndDefault(t *testing.T) {
+	p, _ := capPreview(t, surfaceHandler(&surfaceProvider{governor: stageGovernor()}), WriteOpGovernorStageLabels, map[string]any{"person_after": "48h"})
+	if isWidening(p) || bodyJSON(t, p.Request.Body) != `{"stage_adoption_person_after":"48h"}` {
+		t.Fatalf("disclosure %q body %s", p.WideningDisclosure, bodyJSON(t, p.Request.Body))
+	}
+	g := stageGovernor()
+	g["stageAdoptionPersonAfter"] = "48h"
+	g["stageAdoptionPersonGrace"] = "6h"
+	g["stageAdoptionPersonRepos"] = []string{"example/testrepo"}
+	p, _ = capPreview(t, surfaceHandler(&surfaceProvider{governor: g}), WriteOpGovernorStageLabels, map[string]any{"person_after": "0", "person_grace": "0"})
+	if got := bodyJSON(t, p.Request.Body); got != `{"stage_adoption_person_after":"","stage_adoption_person_grace":""}` {
+		t.Fatalf("off body = %s", got)
+	}
+	if isWidening(p) {
+		t.Fatalf("turning the timer off read as widening: %q", p.WideningDisclosure)
+	}
+	// Shortening the timer or the grace where a repository is listed brings
+	// takeovers sooner.
+	p, _ = capPreview(t, surfaceHandler(&surfaceProvider{governor: g}), WriteOpGovernorStageLabels, map[string]any{"person_after": "12h"})
+	if !isWidening(p) || !strings.Contains(p.WideningDisclosure, "after 12h instead of 48h") {
+		t.Fatalf("shorter timer disclosure = %q", p.WideningDisclosure)
+	}
+	p, _ = capPreview(t, surfaceHandler(&surfaceProvider{governor: g}), WriteOpGovernorStageLabels, map[string]any{"person_grace": "1h"})
+	if !isWidening(p) || !strings.Contains(p.WideningDisclosure, "after 1h instead of 6h") {
+		t.Fatalf("shorter grace disclosure = %q", p.WideningDisclosure)
+	}
+}
+
+// A hive whose settings lack the timer keys is refused rather than guessed at.
+func TestStageLabelsOpNeedsThePersonTimerSettings(t *testing.T) {
+	g := stageGovernor()
+	delete(g, "stageAdoptionPersonRepos")
+	if _, err := surfaceHandler(&surfaceProvider{governor: g}).PreviewWrite(context.Background(), map[string]any{"operation": WriteOpGovernorStageLabels, "args": map[string]any{"person_after": "1h"}}); err == nil || !strings.Contains(err.Error(), "stageAdoptionPersonRepos") {
+		t.Fatalf("missing key: err = %v", err)
 	}
 }

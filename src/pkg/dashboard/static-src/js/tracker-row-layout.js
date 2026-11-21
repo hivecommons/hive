@@ -115,7 +115,8 @@
       'signoff-rehome': 'Hive re-homed this PR so its sign-off survives a squash. Original commits kept.',
       'rebase-rehome': 'Hive re-homed this PR onto its own branch to finish the rebase. Original commits kept.',
       'push-rehome': "Hive re-homed this PR because @AUTHOR's branch could no longer be pushed. Original commits kept.",
-      'in-place-stalled': 'Hive re-homed this PR after a review finding sat unaddressed. Original commits kept.'
+      'in-place-stalled': 'Hive re-homed this PR after a review finding sat unaddressed. Original commits kept.',
+      'person-timer': "Hive took this PR over after @AUTHOR left it idle past this repository's takeover timer and its notice. Original commits kept."
     };
     // Pure: the chip's visible words — "adopted from @thatguywob's #15226 · 6h".
     function stageTrackerLineageText(item, nowMs) {
