@@ -1031,6 +1031,12 @@ when self-reporting is enabled, as a `[selfreport]` issue.
   Read the sibling `.result.json` for the last error. A placeholder or
   malformed request (`repo: "owner/repo"`, title `t`) will never succeed: move
   it aside (`mv x.json x.failed`) and the condition clears on the next scan.
+  A request refused by the write-back gate (`writeback: unsolicited write
+  suppressed: ...` in its `.result.json`) is quarantined as `.failed` on the
+  first attempt and never raises this report: change the gate policy (for
+  example `writeback.unsolicited.backfill`) and re-submit instead of waiting
+  for a retry. A request for an operator-paused repo stays queued on backoff
+  until the pause lifts, without raising this report (#19400).
 - **`effect_ledger_op_stuck`** — the key is the op's logical ID in the
   mutation journal (`/data/convergence/mutation/journal.json` in the pod). Check whether the effect
   exists on GitHub; the owning call site reconciles it on its next pass, or
