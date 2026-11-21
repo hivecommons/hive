@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-21 (v5.345.6)
+
+### Fixed
+
+- issue-stage: treat an already-closed merged full-fix issue as closed (#19370)
+- **Issue-request relay no longer reports a write-back gate refusal as a stuck queue.** A request the unsolicited write-back gate refuses by policy (for example `writeback.unsolicited.backfill` off on a pre-existing issue) is now quarantined as `.failed` on the first attempt instead of being retried until it self-reports `issue_request_stuck`; an operator repo pause keeps the request on the retry path without raising the stuck report. (#19400)
+- Fleet self-report no longer files an unclassified repeated-error issue when the contributor-lane automerge sweep skips a PR because GitHub refused the native merge queue enqueue with "All comments must be resolved"; unresolved conversations are a normal not-ready state.
+
 ## 2026-11-21 (v5.345.5)
 
 ### Fixed
