@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -106,6 +107,38 @@ func TestLogUndeliveredReviewKickDedupesRepeats(t *testing.T) {
 	logUndeliveredReviewKick(logger, auditor, k, errors.New("different cause"))
 	if n := strings.Count(buf.String(), "review swarm kick not delivered"); n != 2 {
 		t.Fatalf("warn count after cause change = %d, want 2", n)
+	}
+}
+
+// hivecommons/hive#19373: one agent whose pane is not ready fails the review
+// kick of every PR queued for it. That is one agent-level fault, so it may
+// WARN once; the other PRs are still named (at info) and audited.
+func TestLogUndeliveredReviewKickWarnsOncePerAgentAcrossPRs(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	auditor := &recordingFixAuditor{}
+	cause := errors.New("agent across-prs-agent CLI did not reach input prompt")
+	for i := 0; i < 10; i++ {
+		k := review.DispatchKick{Kind: "review", Agent: "across-prs-agent", PRRef: fmt.Sprintf("hivecommons/hive#%d", 19360+i), HeadSHA: fmt.Sprintf("head%d", i)}
+		logUndeliveredReviewKick(logger, auditor, k, cause)
+	}
+	out := buf.String()
+	if n := strings.Count(out, "level=WARN"); n != 1 {
+		t.Fatalf("WARN count = %d, want 1: %s", n, out)
+	}
+	if n := strings.Count(out, "level=INFO"); n != 9 {
+		t.Fatalf("INFO count = %d, want 9: %s", n, out)
+	}
+	if !strings.Contains(out, "pr=hivecommons/hive#19369") {
+		t.Fatalf("later PR not named: %s", out)
+	}
+	if len(auditor.entries) != 10 {
+		t.Fatalf("audit entries = %d, want 10", len(auditor.entries))
+	}
+	// A different agent with the same kind of fault still warns.
+	logUndeliveredReviewKick(logger, auditor, review.DispatchKick{Kind: "review", Agent: "across-prs-other", PRRef: "hivecommons/hive#19370", HeadSHA: "h"}, errors.New("agent across-prs-other CLI did not reach input prompt"))
+	if n := strings.Count(buf.String(), "level=WARN"); n != 2 {
+		t.Fatalf("WARN count after other agent = %d, want 2", n)
 	}
 }
 
