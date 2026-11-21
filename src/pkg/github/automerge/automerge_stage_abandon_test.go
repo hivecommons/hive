@@ -35,6 +35,11 @@ type abandonAPI struct {
 	editFails bool
 	edits     int
 	url       string
+	// permission is what GET /collaborators/{user}/permission answers
+	// (default "read"); permFails answers it with a 500.
+	permission string
+	permFails  bool
+	permReads  int
 }
 
 func (a *abandonAPI) server(t *testing.T) *httptest.Server {
@@ -57,6 +62,18 @@ func (a *abandonAPI) server(t *testing.T) *httptest.Server {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(a.comments)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/collaborators/") && strings.HasSuffix(r.URL.Path, "/permission"):
+			a.permReads++
+			if a.permFails {
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]any{"message": "boom"})
+				return
+			}
+			perm := a.permission
+			if perm == "" {
+				perm = "read"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"permission": perm, "role_name": perm})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
 			a.reads++
 			_ = json.NewEncoder(w).Encode(a.reviews)
@@ -360,42 +377,74 @@ func TestCloseAbandonedCancelledByActivityAfterNotice(t *testing.T) {
 	})
 }
 
-// The clock applies to contributor PRs only: an owner's PR, a trusted
-// author's PR, the hive's own and the App's are never flagged or closed.
+// The clock applies to contributor PRs only: a maintainer's PR (an owner,
+// an author the trusted-author or merger authorizers admit, a trusted bot,
+// an OWNER / MEMBER / COLLABORATOR association), the hive's own and the
+// App's are never flagged or closed. An author trusted only through role/
+// trusted is a trusted contributor: a contributor, on abandon_after_trusted.
 func TestAbandonContributorScope(t *testing.T) {
 	f := newAbandonFixture(t)
+	f.e.trustedAuthorizer = func(login, _ string) TrustedAuthorDecision {
+		return TrustedAuthorDecision{Allowed: login == "authorized-author"}
+	}
+	f.e.SetMergerAuthorizer(func(login string) bool { return login == "authorized-merger" })
+	f.e.trustedBotAuthors = func() map[string]bool { return map[string]bool{"deps-bot[bot]": true} }
 	policy := f.policy()
+	policy.AbandonAfterTrusted = 2 * abandonAfterTest
 	policy.OwnerAuthor = func(login string) bool { return login == "owner" }
 	policy.HiveAuthor = func(login string) bool { return login == "hive-agent" }
 	for name, tc := range map[string]struct {
 		author string
 		assoc  string
 		kind   authorkind.Kind
-		role   stagelabels.Role
 		want   bool
 	}{
-		"contributor":             {"contributor", "CONTRIBUTOR", authorkind.Human, stagelabels.RoleContributor, true},
-		"untrusted":               {"newbie", "FIRST_TIME_CONTRIBUTOR", authorkind.Human, stagelabels.RoleUntrusted, true},
-		"clanker":                 {"someones-agent", "NONE", authorkind.Clanker, stagelabels.RoleContributor, true},
-		"owner":                   {"owner", "", authorkind.Human, stagelabels.RoleContributor, false},
-		"trusted author":          {"maintainer", "", authorkind.Human, stagelabels.RoleTrusted, false},
-		"collaborator, untrusted": {"maintainer", "COLLABORATOR", authorkind.Human, stagelabels.RoleUntrusted, false},
-		"org member, untrusted":   {"maintainer", "member", authorkind.Human, stagelabels.RoleUntrusted, false},
-		"repo owner, untrusted":   {"maintainer", "OWNER", authorkind.Human, stagelabels.RoleUntrusted, false},
-		"hive kind":               {"anyone", "", authorkind.Hive, stagelabels.RoleNone, false},
-		"hive identity":           {"hive-agent", "", authorkind.Human, stagelabels.RoleNone, false},
-		"the App":                 {testHiveAppBotLogin, "", authorkind.Unknown, stagelabels.RoleNone, false},
+		"contributor":             {"contributor", "CONTRIBUTOR", authorkind.Human, true},
+		"untrusted":               {"newbie", "FIRST_TIME_CONTRIBUTOR", authorkind.Human, true},
+		"clanker":                 {"someones-agent", "NONE", authorkind.Clanker, true},
+		"owner":                   {"owner", "", authorkind.Human, false},
+		"trusted-author lane":     {"authorized-author", "CONTRIBUTOR", authorkind.Human, false},
+		"merger authorizer":       {"authorized-merger", "CONTRIBUTOR", authorkind.Human, false},
+		"trusted bot":             {"deps-bot[bot]", "NONE", authorkind.Unknown, false},
+		"collaborator, untrusted": {"maintainer", "COLLABORATOR", authorkind.Human, false},
+		"org member, untrusted":   {"maintainer", "member", authorkind.Human, false},
+		"repo owner, untrusted":   {"maintainer", "OWNER", authorkind.Human, false},
+		"hive kind":               {"anyone", "", authorkind.Hive, false},
+		"hive identity":           {"hive-agent", "", authorkind.Human, false},
+		"the App":                 {testHiveAppBotLogin, "", authorkind.Unknown, false},
 	} {
 		obs := f.obs
 		obs.Author, obs.AuthorAssociation, obs.AuthorKind = tc.author, tc.assoc, tc.kind
-		if got := f.e.abandonContributor(obs, tc.role, policy, stagelabels.Record{}); got != tc.want {
+		if got := f.e.abandonContributor(obs, policy, stagelabels.Record{}); got != tc.want {
 			t.Errorf("%s: abandonContributor = %v, want %v", name, got, tc.want)
 		}
 	}
-	// Seen trusted once: never a contributor again, whatever a later pass
-	// resolves the role to.
-	if f.e.abandonContributor(f.obs, stagelabels.RoleUntrusted, policy, stagelabels.Record{AbandonTrustedSeen: true}) {
-		t.Error("a PR once seen trusted read as a contributor's")
+	// Seen as a maintainer once: never a contributor again, whatever a
+	// later pass sees.
+	if f.e.abandonContributor(f.obs, policy, stagelabels.Record{AbandonMaintainerSeen: true}) {
+		t.Error("a PR once seen as a maintainer's read as a contributor's")
+	}
+	// Seen as a trusted contributor: still a contributor, on the trusted
+	// threshold; a record from before the split reads the same way.
+	trusted := stagelabels.Record{AbandonTrustedSeen: true}
+	if !f.e.abandonContributor(f.obs, policy, trusted) {
+		t.Error("a trusted contributor's PR is not a contributor's")
+	}
+	for name, tc := range map[string]struct {
+		policy      StageLabelPolicy
+		rec         stagelabels.Record
+		contributor bool
+		want        time.Duration
+	}{
+		"contributor":                 {policy, stagelabels.Record{}, true, abandonAfterTest},
+		"trusted contributor":         {policy, trusted, true, 2 * abandonAfterTest},
+		"trusted timer off":           {f.policy(), trusted, true, 0},
+		"both marks: not the trusted": {policy, stagelabels.Record{AbandonTrustedSeen: true, AbandonMaintainerSeen: true}, true, abandonAfterTest},
+		"not a contributor":           {policy, trusted, false, 0},
+	} {
+		if got := abandonThreshold(tc.policy, tc.rec, tc.contributor); got != tc.want {
+			t.Errorf("%s: abandonThreshold = %v, want %v", name, got, tc.want)
+		}
 	}
 
 	// Not a contributor: a flag on record is cleared and nothing is
@@ -403,15 +452,15 @@ func TestAbandonContributorScope(t *testing.T) {
 	g := abandonFlagged(t)
 	g.e.reconcileAbandoned(context.Background(), g.store, g.key, g.obs, g.policy(), false, g.clock.now())
 	if g.rec(t).Abandoned() {
-		t.Fatal("an owner's or trusted author's PR kept the flag")
+		t.Fatal("a maintainer's PR kept the flag")
 	}
 	g.clock.advance(30 * 24 * time.Hour)
 	g.e.reconcileAbandoned(context.Background(), g.store, g.key, g.obs, g.policy(), false, g.clock.now())
 	if g.rec(t).Abandoned() {
-		t.Fatal("an owner's or trusted author's PR was flagged")
+		t.Fatal("a maintainer's PR was flagged")
 	}
 	if n, closed, _ := g.close(t, listedPolicy(g)); n != 0 || closed || len(g.api.posted) != 0 {
-		t.Fatalf("an owner's or trusted author's PR was noticed or closed: n=%d closed=%v", n, closed)
+		t.Fatalf("a maintainer's PR was noticed or closed: n=%d closed=%v", n, closed)
 	}
 }
 
@@ -613,10 +662,11 @@ func TestCloseAbandonedNoticeLostFromTheStoreIsNotRepeated(t *testing.T) {
 	})
 }
 
-// Wiring: a full ApplyStageLabels pass in a listed L6 repository flags,
-// warns about and never closes an owner's or a trusted author's PR parked
-// at 071 past the threshold, while a contributor's PR in the same pass is
-// flagged and warned (so the path is live).
+// Wiring: a full ApplyStageLabels pass in a listed L6 repository never
+// flags, warns about or closes an owner's PR, or a trusted contributor's
+// while abandon_after_trusted is off, parked at 071 past the threshold,
+// while a contributor's PR in the same pass is flagged and warned (so the
+// path is live).
 func TestApplyStageLabelsAbandonSkipsOwnerAndTrustedPRs(t *testing.T) {
 	api := &stageAPI{labels: map[string]string{}, statefulComments: true}
 	var closes []string
@@ -699,5 +749,364 @@ func TestApplyStageLabelsAbandonSkipsOwnerAndTrustedPRs(t *testing.T) {
 	control, _ := store.Get(stageKey("acme", "widget", 43))
 	if control.AbandonedAt.IsZero() || control.AbandonNoticeAt.IsZero() {
 		t.Fatalf("the contributor's PR was not flagged and warned, so the path did not run: %+v", control)
+	}
+}
+
+// abandon_after_trusted: a trusted contributor's PR (role/trusted, no
+// maintainer signal) is flagged on its own, longer clock, even on passes
+// whose role fell back, then warned and closed like anyone's; an owner's,
+// a MEMBER's and a COLLABORATOR's PR are never flagged with the setting
+// on, nor is a repository maintainer's PR rebuilt from the forge-state
+// cache without its association (the permission read catches it); and a
+// trusted contributor seen as a maintainer (a MEMBER association) stops the
+// countdown for good.
+func TestApplyStageLabelsAbandonTrustedContributorTimer(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}, statefulComments: true}
+	var closes []string
+	api.extra = func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/reviews"):
+			_, _ = w.Write([]byte("[]"))
+			return true
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
+			closes = append(closes, r.URL.Path)
+			_, _ = w.Write([]byte(`{"state":"closed"}`))
+			return true
+		}
+		return false
+	}
+	permReads := map[string]int{}
+	inner := api.extra
+	api.extra = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/collaborators/") {
+			login := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/collaborators/"), "/permission")
+			permReads[login]++
+			perm := "read"
+			if login == "repo-maintainer" {
+				perm = "write"
+			}
+			_, _ = fmt.Fprintf(w, `{"permission":%q,"role_name":%q}`, perm, perm)
+			return true
+		}
+		return inner(w, r)
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	const trustedAfter = 2 * abandonAfterTest
+	e.stageLabelPolicy = func() StageLabelPolicy {
+		return StageLabelPolicy{
+			Enabled: true, StalledRequireQuiet: true, AbandonAfter: abandonAfterTest, AbandonAfterTrusted: trustedAfter,
+			AbandonClose: func(string) bool { return true },
+			OwnerAuthor:  func(login string) bool { return login == "owner-login" },
+		}
+	}
+	prs := []struct {
+		number       int
+		login, assoc string
+	}{
+		{41, "trusted-contributor", "CONTRIBUTOR"},
+		{42, "owner-login", "CONTRIBUTOR"},
+		{43, "member-login", "MEMBER"},
+		{44, "collaborator-login", "COLLABORATOR"},
+		{45, "promoted-contributor", "CONTRIBUTOR"},
+		{46, "plain-contributor", "CONTRIBUTOR"},
+		// The forge-state cache's shape: no author association. The author
+		// can push to the repository (write) but is not in
+		// dashboard.authorized_users.
+		{47, "repo-maintainer", ""},
+	}
+	promoted := false
+	sweep := func(trustedRole stagelabels.Role) {
+		t.Helper()
+		for _, p := range prs {
+			pr := stagePR(p.number, "author/human")
+			pr.Head.SHA = gh.Ptr("aaa")
+			pr.User = &gh.User{Login: gh.Ptr(p.login)}
+			if p.assoc != "" {
+				pr.AuthorAssociation = gh.Ptr(p.assoc)
+			}
+			if p.number == 45 && promoted {
+				pr.AuthorAssociation = gh.Ptr("MEMBER")
+			}
+			e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, "conflicting", false, nil)
+			role := trustedRole
+			if p.number == 46 {
+				role = stagelabels.RoleContributor
+			}
+			e.noteStageRole("acme", "widget", p.number, role)
+		}
+		if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := func(n int) stagelabels.Record {
+		r, _ := store.Get(stageKey("acme", "widget", n))
+		return r
+	}
+
+	sweep(stagelabels.RoleTrusted)
+	for _, n := range []int{41, 45, 47} {
+		if r := rec(n); !r.AbandonTrustedSeen || r.AbandonMaintainerSeen {
+			t.Fatalf("#%d: want the trusted contributor mark only: %+v", n, r)
+		}
+	}
+	for _, n := range []int{42, 43, 44} {
+		if !rec(n).AbandonMaintainerSeen {
+			t.Fatalf("#%d: maintainer not marked", n)
+		}
+	}
+
+	// Past abandon_after, with the role fallen back: only the plain
+	// contributor's PR is flagged.
+	clock.advance(abandonAfterTest + time.Hour)
+	sweep(stagelabels.RoleUntrusted)
+	if r := rec(46); r.AbandonedAt.IsZero() || r.AbandonNoticeAt.IsZero() {
+		t.Fatalf("the contributor's PR was not flagged and warned: %+v", r)
+	}
+	for _, n := range []int{41, 45, 47} {
+		if !rec(n).AbandonedAt.IsZero() {
+			t.Fatalf("#%d flagged on abandon_after instead of abandon_after_trusted", n)
+		}
+	}
+	if len(permReads) != 0 {
+		t.Fatalf("permission read before the trusted threshold: %v", permReads)
+	}
+
+	// Past abandon_after_trusted: both trusted contributors' PRs are
+	// flagged and warned.
+	clock.advance(trustedAfter - abandonAfterTest)
+	sweep(stagelabels.RoleUntrusted)
+	for _, n := range []int{41, 45} {
+		if r := rec(n); r.AbandonedAt.IsZero() || r.AbandonNoticeAt.IsZero() {
+			t.Fatalf("#%d not flagged and warned past abandon_after_trusted: %+v", n, r)
+		}
+	}
+	// The cached-shape PR resolves role/trusted, but the permission read
+	// finds write access: never flagged, marked for good.
+	if r := rec(47); !r.AbandonedAt.IsZero() || !r.AbandonNoticeAt.IsZero() || !r.AbandonMaintainerSeen {
+		t.Fatalf("#47, a repository maintainer's PR, on the trusted timer: %+v", r)
+	}
+
+	// #45's author is now seen as a maintainer: the flag and the countdown
+	// go, while #41 is closed after the grace.
+	promoted = true
+	clock.advance(25 * time.Hour)
+	sweep(stagelabels.RoleUntrusted)
+	if r := rec(45); !r.AbandonMaintainerSeen || !r.AbandonedAt.IsZero() || !r.AbandonNoticeAt.IsZero() {
+		t.Fatalf("#45 kept its countdown after its author was seen as a maintainer: %+v", r)
+	}
+	closed := map[string]bool{}
+	for _, path := range closes {
+		closed[path] = true
+	}
+	if !closed["/repos/acme/widget/pulls/41"] || !closed["/repos/acme/widget/pulls/46"] || len(closed) != 2 {
+		t.Fatalf("closed %v, want #41 and #46 only", closes)
+	}
+	for _, n := range []int{42, 43, 44, 47} {
+		if r := rec(n); !r.AbandonedAt.IsZero() || !r.AbandonNoticeAt.IsZero() {
+			t.Fatalf("#%d was flagged or warned: %+v", n, r)
+		}
+		for _, c := range api.posted[n] {
+			if b, _ := c["body"].(string); strings.HasPrefix(b, AbandonNoticeMarker) || strings.HasPrefix(b, AbandonCloseMarker) {
+				t.Fatalf("#%d got an abandon comment: %q", n, b)
+			}
+		}
+	}
+}
+
+// The trusted contributor timer reads the author's repository permission
+// once its threshold is crossed, and only then: an author with write (or
+// maintain, admin) is marked and never flagged or warned; a read-only
+// author is flagged; a failed read defers.
+func TestAbandonTrustedTimerChecksTheRepoPermission(t *testing.T) {
+	policy := func(f *abandonFixture) StageLabelPolicy {
+		p := f.policy()
+		p.AbandonAfterTrusted = 2 * abandonAfterTest
+		return p
+	}
+	trusted := func(t *testing.T) *abandonFixture {
+		f := newAbandonFixture(t)
+		f.obs.Detail.CommentsKnown, f.obs.Detail.ReviewsKnown = true, true
+		f.store.MarkAbandonTrustedSeen(f.key)
+		return f
+	}
+
+	f := trusted(t)
+	f.api.permission = "write"
+	f.clock.advance(abandonAfterTest + time.Hour)
+	f.e.reconcileAbandoned(context.Background(), f.store, f.key, f.obs, policy(f), true, f.clock.now())
+	if f.rec(t).Abandoned() || f.api.permReads != 0 {
+		t.Fatalf("below the trusted threshold: flagged=%v reads=%d", f.rec(t).Abandoned(), f.api.permReads)
+	}
+	f.clock.advance(abandonAfterTest)
+	f.e.reconcileAbandoned(context.Background(), f.store, f.key, f.obs, policy(f), true, f.clock.now())
+	if r := f.rec(t); r.Abandoned() || !r.AbandonMaintainerSeen || f.api.permReads != 1 {
+		t.Fatalf("a write author on the trusted timer: %+v reads=%d", r, f.api.permReads)
+	}
+	if f.e.abandonContributor(f.obs, policy(f), f.rec(t)) {
+		t.Fatal("still a contributor after the maintainer mark")
+	}
+
+	// A failed read defers; the next good read, read-only access, flags.
+	g := trusted(t)
+	g.api.permFails = true
+	g.clock.advance(2*abandonAfterTest + time.Hour)
+	g.e.reconcileAbandoned(context.Background(), g.store, g.key, g.obs, policy(g), true, g.clock.now())
+	if r := g.rec(t); r.Abandoned() || r.AbandonMaintainerSeen {
+		t.Fatalf("flagged or marked on a failed read: %+v", r)
+	}
+	g.api.permFails = false
+	g.e.reconcileAbandoned(context.Background(), g.store, g.key, g.obs, policy(g), true, g.clock.now())
+	if !g.rec(t).Abandoned() {
+		t.Fatal("a read-only author was not flagged")
+	}
+
+	// Gained maintain after the flag (past the read's cache): no notice,
+	// the flag goes.
+	g.api.permission = "maintain"
+	g.clock.advance(time.Hour)
+	p := policy(g)
+	p.AbandonClose = func(repo string) bool { return repo == "acme/widget" }
+	if n, closed, _ := g.e.closeAbandonedIfDue(context.Background(), g.store, g.key, g.obs, p, g.rec(t).Stage, g.clock.now()); n != 0 || closed || len(g.api.posted) != 0 {
+		t.Fatalf("a maintainer's PR was warned or closed: n=%d closed=%v posted=%d", n, closed, len(g.api.posted))
+	}
+	if r := g.rec(t); r.Abandoned() || !r.AbandonMaintainerSeen {
+		t.Fatalf("after the notice check: %+v", r)
+	}
+}
+
+// noteAbandonTrust marks a trusted registry tier even when the pass's role
+// missed it, and marks the hive's own PRs as never the clock's.
+func TestNoteAbandonTrustRegistryTierAndHive(t *testing.T) {
+	f := newAbandonFixture(t)
+	f.e.contributorRegistryTier = func(login string) (string, bool) {
+		switch login {
+		case "registry-trusted":
+			return "trusted", true
+		case "registry-contributor":
+			return "contributor", true
+		}
+		return "", false
+	}
+	f.e.contributorLanePolicy = func() ContributorLanePolicy {
+		return ContributorLanePolicy{RequireTiers: map[string]bool{"trusted": true}}
+	}
+	policy := f.policy()
+	policy.HiveAuthor = func(login string) bool { return login == "hive-agent" }
+	for name, tc := range map[string]struct {
+		author                 string
+		kind                   authorkind.Kind
+		trusted, maintainerish bool
+	}{
+		"registry trusted":     {"registry-trusted", authorkind.Human, true, false},
+		"registry contributor": {"registry-contributor", authorkind.Human, false, false},
+		"no profile":           {"stranger", authorkind.Human, false, false},
+		"hive kind":            {"anyone", authorkind.Hive, false, true},
+		"hive identity":        {"hive-agent", authorkind.Human, false, true},
+		"the App":              {testHiveAppBotLogin, authorkind.Unknown, false, true},
+	} {
+		store := stagelabels.NewStore(filepath.Join(t.TempDir(), "s.json"), f.clock.now)
+		store.ObserveHead(f.key, "aaa", stagelabels.NeedsAuthor, "check-failing:unit")
+		obs := f.obs
+		obs.Author, obs.AuthorKind = tc.author, tc.kind
+		f.e.noteAbandonTrust(store, f.key, obs, stagelabels.RoleUntrusted, policy)
+		r, _ := store.Get(f.key)
+		if r.AbandonTrustedSeen != tc.trusted || r.AbandonMaintainerSeen != tc.maintainerish {
+			t.Errorf("%s: trusted=%v maintainer=%v, want %v / %v", name, r.AbandonTrustedSeen, r.AbandonMaintainerSeen, tc.trusted, tc.maintainerish)
+		}
+	}
+}
+
+// A record from before abandon_after_trusted (abandon_trusted_seen set, no
+// maintainer mark) for an OWNER or MEMBER author, already idle past the
+// trusted threshold when the setting is turned on: the pass marks the
+// maintainer before it picks a threshold, so the PR is never flagged.
+func TestApplyStageLabelsAbandonLegacyTrustedSeenMaintainer(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}, statefulComments: true}
+	api.extra = func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/reviews"):
+			_, _ = w.Write([]byte("[]"))
+			return true
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
+			t.Errorf("closed %s", r.URL.Path)
+			_, _ = w.Write([]byte(`{"state":"closed"}`))
+			return true
+		}
+		return false
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	on := false
+	e.stageLabelPolicy = func() StageLabelPolicy {
+		p := StageLabelPolicy{Enabled: true, StalledRequireQuiet: true}
+		if on {
+			p.AbandonAfter, p.AbandonAfterTrusted = abandonAfterTest, 2*abandonAfterTest
+			p.AbandonClose = func(string) bool { return true }
+		}
+		return p
+	}
+	prs := map[int]string{51: "OWNER", 52: "MEMBER"}
+	sweep := func() {
+		t.Helper()
+		for n, assoc := range prs {
+			pr := stagePR(n, "author/human")
+			pr.Head.SHA = gh.Ptr("aaa")
+			pr.User = &gh.User{Login: gh.Ptr("maintainer-" + assoc)}
+			pr.AuthorAssociation = gh.Ptr(assoc)
+			e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, "conflicting", false, nil)
+			e.noteStageRole("acme", "widget", n, stagelabels.RoleTrusted)
+		}
+		if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sweep()
+	for n := range prs {
+		key := stageKey("acme", "widget", n)
+		if r, _ := store.Get(key); r.AbandonTrustedSeen || r.AbandonMaintainerSeen {
+			t.Fatalf("#%d marked with the clock off: %+v", n, r)
+		}
+		store.MarkAbandonTrustedSeen(key) // the pre-split mark
+	}
+	clock.advance(3 * abandonAfterTest)
+	on = true
+	sweep()
+	for n := range prs {
+		r, _ := store.Get(stageKey("acme", "widget", n))
+		if !r.AbandonMaintainerSeen || !r.AbandonedAt.IsZero() || !r.AbandonNoticeAt.IsZero() {
+			t.Fatalf("#%d, a maintainer's legacy record: %+v", n, r)
+		}
+	}
+}
+
+// The abandon guard counts write, maintain and admin, from `permission` or
+// `role_name`; the adoption rule (repoMaintainerLevel) stays admin or
+// maintain only.
+func TestRepoWriteLevelLeavesTheAdoptionRuleAlone(t *testing.T) {
+	for _, tc := range []struct {
+		permission, role  string
+		write, maintainer bool
+	}{
+		{"admin", "admin", true, true},
+		{"write", "maintain", true, true},
+		{"write", "write", true, false},
+		{"write", "", true, false},
+		{"read", "write", true, false},
+		{"read", "triage", false, false},
+		{"read", "read", false, false},
+		{"none", "", false, false},
+		{"", "", false, false},
+	} {
+		if got := repoWriteLevel(tc.permission, tc.role); got != tc.write {
+			t.Errorf("repoWriteLevel(%q, %q) = %v, want %v", tc.permission, tc.role, got, tc.write)
+		}
+		if got := repoMaintainerLevel(tc.permission, tc.role); got != tc.maintainer {
+			t.Errorf("repoMaintainerLevel(%q, %q) = %v, want %v", tc.permission, tc.role, got, tc.maintainer)
+		}
 	}
 }

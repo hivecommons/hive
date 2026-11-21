@@ -179,6 +179,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		// that close abandoned PRs (ACMM L6 only).
 		"stageAbandonAfter":      cfg.Governor.Labels.Stage.AbandonAfter,
 		"stageAbandonCloseRepos": nonNilStrings(cfg.Governor.Labels.Stage.AbandonCloseRepos),
+		// governor.labels.stage.abandon_after_trusted: the same clock for
+		// a trusted contributor's PR ("" = never flagged).
+		"stageAbandonAfterTrusted": cfg.Governor.Labels.Stage.AbandonAfterTrusted,
 		// governor.labels.stage.adoption.enabled / contributor_grace_*: the
 		// stage-074 adoption of red contributor PRs.
 		"stageAdoptionEnabled": cfg.Governor.Labels.Stage.Adoption.IsEnabled(),
@@ -841,6 +844,10 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		// StageAbandonAfter is governor.labels.stage.abandon_after: a Go
 		// duration; "" or "0" turns the idle clock off.
 		StageAbandonAfter *string `json:"stage_abandon_after"`
+		// StageAbandonAfterTrusted is governor.labels.stage.
+		// abandon_after_trusted: a Go duration, at least abandon_after; ""
+		// or "0" never flags a trusted contributor's PR.
+		StageAbandonAfterTrusted *string `json:"stage_abandon_after_trusted"`
 		// StageAbandonCloseRepos is governor.labels.stage.abandon_close_repos:
 		// the repositories (in project.repos) that close abandoned
 		// contributor PRs at ACMM L6. The whole list; empty clears it.
@@ -979,6 +986,15 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	stageAbandonAfter, msg := normalizeStageAbandonAfter(body.StageAbandonAfter)
 	if msg != "" {
+		jsonError(w, msg, http.StatusBadRequest)
+		return
+	}
+	stageAbandonAfterTrusted, msg := normalizeStagePersonDuration("stage_abandon_after_trusted", body.StageAbandonAfterTrusted, "at least stage_abandon_after, or 0 to never flag a trusted contributor's PR")
+	if msg != "" {
+		jsonError(w, msg, http.StatusBadRequest)
+		return
+	}
+	if msg := stageAbandonTrustedBelowAfter(s.deps.Config.Governor.Labels.Stage, body.StageAbandonAfter, stageAbandonAfter, body.StageAbandonAfterTrusted, stageAbandonAfterTrusted); msg != "" {
 		jsonError(w, msg, http.StatusBadRequest)
 		return
 	}
@@ -1127,6 +1143,9 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.StageAbandonAfter != nil {
 		s.deps.Config.Governor.Labels.Stage.AbandonAfter = stageAbandonAfter
+	}
+	if body.StageAbandonAfterTrusted != nil {
+		s.deps.Config.Governor.Labels.Stage.AbandonAfterTrusted = stageAbandonAfterTrusted
 	}
 	if body.StageAbandonCloseRepos != nil {
 		s.deps.Config.Governor.Labels.Stage.AbandonCloseRepos = stageAbandonCloseRepos
@@ -3695,6 +3714,30 @@ func normalizeStageAbandonAfter(v *string) (string, string) {
 		return "", ""
 	}
 	return raw, ""
+}
+
+// stageAbandonTrustedBelowAfter refuses a save of either key that would
+// leave abandon_after_trusted set below abandon_after: a trusted
+// contributor's PR must never be flagged sooner than anyone else's. Each
+// value is the one sent (normalized), else the one configured; a save of
+// neither key is never refused for a hand-edited pair. A non-empty msg is
+// the 400 to return.
+func stageAbandonTrustedBelowAfter(stage config.StageLabelsConfig, sentAfter *string, after string, sentTrusted *string, trusted string) string {
+	if sentAfter == nil && sentTrusted == nil {
+		return ""
+	}
+	if sentAfter == nil {
+		after = stage.AbandonAfter
+	}
+	if sentTrusted == nil {
+		trusted = stage.AbandonAfterTrusted
+	}
+	stage.AbandonAfter, stage.AbandonAfterTrusted = after, trusted
+	a := stage.EffectiveAbandonAfter()
+	if tr, err := time.ParseDuration(strings.TrimSpace(trusted)); err == nil && tr > 0 && a > 0 && tr < a {
+		return "stage_abandon_after_trusted (" + trusted + ") must be at least stage_abandon_after (" + after + "), or 0 to never flag a trusted contributor's PR"
+	}
+	return ""
 }
 
 // normalizeStagePersonDuration validates a person-PR takeover timer duration

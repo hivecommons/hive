@@ -1229,6 +1229,10 @@ It is the first operation for any `governor.labels.stage.*` key:
 
 - `abandon_after` (`governor.labels.stage.abandon_after`), a Go duration
   such as `168h`; `"0"` or `""` turns the idle clock off.
+- `abandon_after_trusted` (`governor.labels.stage.abandon_after_trusted`), a
+  Go duration of at least `abandon_after`: the idle time for a trusted
+  contributor's PR (`role/trusted` with no maintainer signal); `"0"` or `""`
+  never flags one. A value below `abandon_after` is refused.
 - `abandon_close_repos` (`governor.labels.stage.abandon_close_repos`),
   `{add, remove, clear}`. A bare name is sent as `owner/repo`; a repository
   not in `project.repos` is refused.
@@ -1253,7 +1257,8 @@ close them:
 
 The preview calls a change widening when it lets the hive close PRs it could
 not close before: a repository added to `abandon_close_repos`, or a shorter
-`abandon_after` where repositories are listed. Closing still needs ACMM L6, a
+`abandon_after` or `abandon_after_trusted` (turning the trusted timer on
+counts as shorter than never) where repositories are listed. Closing still needs ACMM L6, a
 notice and a 24h grace with no activity (see
 [sweeps-and-operations.md](operator-reference/sweeps-and-operations.md#abandoned-contributor-prs-abandon_after-abandon_close_repos)).
 The timer keys are widening the same way: a repository added to

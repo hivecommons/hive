@@ -266,11 +266,12 @@ func (r Record) abandonedIdleFor(now time.Time) time.Duration {
 }
 
 // AbandonStep decides the idle clock's action for r at now. after is
-// governor.labels.stage.abandon_after (<= 0 is off); countsKnown says the
-// lane fetched the PR's comment and review counts this cycle, so the
-// activity on record is current. The caller passes after = 0 for a PR the
-// clock must never apply to (the hive's own, an owner's, a trusted
-// author's), which clears any flag.
+// governor.labels.stage.abandon_after, or abandon_after_trusted for a
+// trusted contributor's PR (<= 0 is off); countsKnown says the lane
+// fetched the PR's comment and review counts this cycle, so the activity
+// on record is current. The caller passes after = 0 for a PR the clock
+// must never apply to (the hive's own, a maintainer's), which clears any
+// flag.
 //
 // A flagged adoption-stalled PR that went back to 074 (the hive retried
 // the adoption) keeps its flag and its pending notice: the retry is part of
@@ -439,8 +440,8 @@ func (s *Store) MarkAbandonClosed(key string, now time.Time) {
 	s.dirty = true
 }
 
-// MarkAbandonTrustedSeen records that the PR's author was seen as trusted
-// (Record.AbandonTrustedSeen); sticky.
+// MarkAbandonTrustedSeen records that the PR's author was seen as a
+// trusted contributor (Record.AbandonTrustedSeen); sticky.
 func (s *Store) MarkAbandonTrustedSeen(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -451,6 +452,27 @@ func (s *Store) MarkAbandonTrustedSeen(key string) {
 	r.AbandonTrustedSeen = true
 	s.items[key] = r
 	s.dirty = true
+}
+
+// MarkAbandonMaintainerSeen records that the PR's author was seen as a
+// maintainer (Record.AbandonMaintainerSeen); sticky.
+func (s *Store) MarkAbandonMaintainerSeen(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AbandonMaintainerSeen {
+		return
+	}
+	r.AbandonMaintainerSeen = true
+	s.items[key] = r
+	s.dirty = true
+}
+
+// AbandonTrustedTimer reports whether the record's idle clock is
+// governor.labels.stage.abandon_after_trusted: its author was seen as a
+// trusted contributor and never as a maintainer.
+func (r Record) AbandonTrustedTimer() bool {
+	return r.AbandonTrustedSeen && !r.AbandonMaintainerSeen
 }
 
 // ResetAbandonNotice drops a pending notice and a refused close attempt

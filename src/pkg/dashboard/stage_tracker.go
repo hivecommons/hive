@@ -353,7 +353,8 @@ type StageTrackerItem struct {
 	Author        string                        `json:"author,omitempty"`
 	// Abandoned is the idle clock's reason for a contributor PR flagged
 	// abandoned (governor.labels.stage.abandon_after): "abandoned 9d:
-	// check-failing:unit". Reason keeps the recorded park reason; the
+	// check-failing:unit", with " (trusted contributor timer)" when
+	// abandon_after_trusted ran. Reason keeps the recorded park reason; the
 	// caption leads with this instead.
 	Abandoned string `json:"abandoned,omitempty"`
 	// Head is the PR head SHA the lane last evaluated ("" for issues), so

@@ -11,6 +11,7 @@ import (
 func stageGovernor() map[string]any {
 	g := surfaceGovernor()
 	g["stageAbandonAfter"] = ""
+	g["stageAbandonAfterTrusted"] = ""
 	g["stageAbandonCloseRepos"] = []string{}
 	g["stageAdoptionPersonAfter"] = ""
 	g["stageAdoptionPersonGrace"] = ""
@@ -117,6 +118,60 @@ func TestStageLabelsOpNeedsTheCurrentSettings(t *testing.T) {
 	}
 	if _, err := (stageLabelsOp{}).PreviewWithProvider(context.Background(), map[string]any{"abandon_after": "1h"}, nil); err == nil {
 		t.Fatal("previewed without reading the settings")
+	}
+}
+
+// abandon_after_trusted goes to the same endpoint; turning it on where
+// close repositories are listed is widening, it is refused below
+// abandon_after, and "0" turns it off.
+func TestStageLabelsOpWritesTheTrustedTimer(t *testing.T) {
+	g := stageGovernor()
+	g["stageAbandonAfter"] = "48h"
+	g["stageAbandonCloseRepos"] = []string{"example/testrepo"}
+	provider := &surfaceProvider{governor: g}
+	h := surfaceHandler(provider)
+	p, id := capPreview(t, h, WriteOpGovernorStageLabels, map[string]any{"abandon_after_trusted": "168h"})
+	want := `{"stage_abandon_after_trusted":"168h"}`
+	if got := bodyJSON(t, p.Request.Body); got != want {
+		t.Fatalf("body = %s, want %s", got, want)
+	}
+	if joined := strings.Join(p.Effects, "\n"); !strings.Contains(joined, "abandon_after_trusted: off → 168h") {
+		t.Errorf("effects miss the change:\n%s", joined)
+	}
+	if !isWidening(p) || !strings.Contains(p.WideningDisclosure, "trusted contributors' PRs in example/testrepo become closable after 168h idle instead of never") {
+		t.Fatalf("disclosure = %q", p.WideningDisclosure)
+	}
+	if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if len(provider.requests) != 1 || bodyJSON(t, provider.requests[0].Body) != want {
+		t.Fatalf("executed %+v", provider.requests)
+	}
+
+	for name, args := range map[string]map[string]any{
+		"below abandon_after":       {"abandon_after_trusted": "24h"},
+		"abandon_after raised past": {"abandon_after": "336h", "abandon_after_trusted": "200h"},
+		"bad duration":              {"abandon_after_trusted": "soon"},
+		"not a string":              {"abandon_after_trusted": 7},
+	} {
+		if _, err := h.PreviewWrite(context.Background(), map[string]any{"operation": WriteOpGovernorStageLabels, "args": args}); err == nil {
+			t.Errorf("%s: args %v accepted", name, args)
+		}
+	}
+
+	// No close repositories: turning it on flags only, not widening.
+	quiet := stageGovernor()
+	quiet["stageAbandonAfter"] = "48h"
+	p, _ = capPreview(t, surfaceHandler(&surfaceProvider{governor: quiet}), WriteOpGovernorStageLabels, map[string]any{"abandon_after_trusted": "168h"})
+	if isWidening(p) {
+		t.Fatalf("disclosure = %q", p.WideningDisclosure)
+	}
+	on := stageGovernor()
+	on["stageAbandonAfter"] = "48h"
+	on["stageAbandonAfterTrusted"] = "168h"
+	p, _ = capPreview(t, surfaceHandler(&surfaceProvider{governor: on}), WriteOpGovernorStageLabels, map[string]any{"abandon_after_trusted": "0"})
+	if got := bodyJSON(t, p.Request.Body); got != `{"stage_abandon_after_trusted":""}` {
+		t.Fatalf("off body = %s", got)
 	}
 }
 

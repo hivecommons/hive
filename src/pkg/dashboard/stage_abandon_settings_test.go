@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // governor.labels.stage.abandon_after and abandon_close_repos are edited on
@@ -72,6 +73,58 @@ func TestHandleGovernorLabels_AbandonRoundTrip(t *testing.T) {
 	}
 }
 
+// governor.labels.stage.abandon_after_trusted is saved through the same
+// endpoint, never below abandon_after.
+func TestHandleGovernorLabels_AbandonTrustedRoundTrip(t *testing.T) {
+	srv := newFullServer(t)
+	put := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		srv.handleGovernorLabels(w, ownerPUT(t, "/api/config/governor/labels", body))
+		return w
+	}
+	trusted := func() string { return srv.deps.Config.Governor.Labels.Stage.AbandonAfterTrusted }
+
+	if got := decodeGovernorConfigGet(t, srv); got["stageAbandonAfterTrusted"] != "" {
+		t.Fatalf("GET stageAbandonAfterTrusted = %#v, want \"\" (off)", got["stageAbandonAfterTrusted"])
+	}
+	if w := put(`{"stage_abandon_after":"48h","stage_abandon_after_trusted":" 168h "}`); w.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	if trusted() != "168h" || srv.deps.Config.Governor.Labels.Stage.EffectiveAbandonAfterTrusted() != 168*time.Hour {
+		t.Fatalf("saved abandon_after_trusted = %q", trusted())
+	}
+	if got := decodeGovernorConfigGet(t, srv); got["stageAbandonAfterTrusted"] != "168h" {
+		t.Fatalf("GET stageAbandonAfterTrusted = %v", got["stageAbandonAfterTrusted"])
+	}
+
+	for _, bad := range []string{
+		`{"stage_abandon_after_trusted":"soon"}`,
+		`{"stage_abandon_after_trusted":"-1h"}`,
+		`{"stage_abandon_after_trusted":"24h"}`,
+		`{"stage_abandon_after":"336h"}`,
+		`{"stage_abandon_after":"336h","stage_abandon_after_trusted":"200h"}`,
+	} {
+		if w := put(bad); w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: code = %d, want 400; body = %s", bad, w.Code, w.Body.String())
+		}
+	}
+	if trusted() != "168h" || srv.deps.Config.Governor.Labels.Stage.AbandonAfter != "48h" {
+		t.Fatalf("rejected saves mutated abandon_after=%q abandon_after_trusted=%q", srv.deps.Config.Governor.Labels.Stage.AbandonAfter, trusted())
+	}
+
+	// Equal to abandon_after is allowed; "0" turns it off; abandon_after
+	// may then rise freely.
+	if w := put(`{"stage_abandon_after_trusted":"48h"}`); w.Code != http.StatusOK {
+		t.Fatalf("equal: code = %d, body = %s", w.Code, w.Body.String())
+	}
+	if w := put(`{"stage_abandon_after_trusted":"0"}`); w.Code != http.StatusOK || trusted() != "" {
+		t.Fatalf("off: code = %d, saved %q", w.Code, trusted())
+	}
+	if w := put(`{"stage_abandon_after":"336h"}`); w.Code != http.StatusOK {
+		t.Fatalf("raise with the trusted timer off: code = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
 // The Labels tab carries both controls, with their YAML keys, and the
 // settings search finds them.
 func TestLabelsTabHasAbandonControls(t *testing.T) {
@@ -82,6 +135,8 @@ func TestLabelsTabHasAbandonControls(t *testing.T) {
 	js := string(src)
 	for _, want := range []string{
 		`data-arg1="stage_abandon_after"`,
+		`data-arg1="stage_abandon_after_trusted"`,
+		`yamlHint('governor.labels.stage.abandon_after_trusted')`,
 		`yamlHint('governor.labels.stage.abandon_after')`,
 		`markDirtyStageAbandonCloseRepos`,
 		`yamlHint('governor.labels.stage.abandon_close_repos[]')`,
