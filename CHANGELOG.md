@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-21 (v5.345.7)
+
+### Fixed
+
+- The dashboard top bar no longer shows an empty pill when no meeting is live. `.nav-chip { display: inline-flex }` outranks the browser's `[hidden]` rule, and the meeting indicator added with the Calendar section ([#18399](https://github.com/hivecommons/hive/pull/18399)) had no override of its own. One rule now hides every hidden top-bar chip, which also hides the Code activity chip where the Code activity view is off, as [#16609](https://github.com/hivecommons/hive/pull/16609) intended; before, it showed regardless.
+- On phones the dashboard top bar no longer cuts off its right-hand chips. The strip clipped its overflow while packed to the end, so chips past its start edge were drawn cut off ("Waiting on you · 17" showed as "u · 17") or hidden with no way to reach them, such as Report a bug and Settings. Below 768px the strip now drops the chips the menus already carry (Report a bug always, Settings while the account menu shows), the Waiting on you chip shows only its dot and count, and anything that still doesn't fit scrolls sideways, starting at the end so Help and the account menu stay in view.
+
 ## 2026-11-21 (v5.345.6)
 
 ### Fixed
