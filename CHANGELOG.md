@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-21 (v6.55.2)
+
+### Fixed
+
+- The trusted contributor idle clock (`governor.labels.stage.abandon_after_trusted`) now defers on a pass that does not know the PR's author or repository, instead of treating the missing permission answer as a read-only author and flagging the PR.
+
 ## 2026-11-21 (v6.55.1)
 
 ### Fixed
