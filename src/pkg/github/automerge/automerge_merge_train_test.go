@@ -730,6 +730,12 @@ func TestMergeTrainReadinessMemory(t *testing.T) {
 		prstage.AutoMergeReasonReviewGatePrefix + prstage.ReviewGateOutcomeAwaiting: mergeTrainReadinessUnready,
 		"not-mergeable":         mergeTrainReadinessUnknown,
 		"untrusted-author-role": mergeTrainReadinessUnknown,
+		// Waiting to ask GitHub again after an unexplained
+		// unresolved-conversations refusal: stage 100, but not a ready
+		// front, so the train does not wait on it; resolved threads merge
+		// on the next pass, so that head is ready.
+		prstage.AutoMergeReasonReviewThreadsPending:  mergeTrainReadinessUnready,
+		prstage.AutoMergeReasonReviewThreadsResolved: mergeTrainReadinessReady,
 	} {
 		if got := mergeTrainReadinessOf(reason); got != want {
 			t.Fatalf("mergeTrainReadinessOf(%q) = %d, want %d", reason, got, want)

@@ -380,7 +380,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			}
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, pr.GetBase().GetSHA(), "required-checks-expected", pr)
 		}
-		if refused := c.refusedMerge(attempt, err); refused != "" {
+		if refused := c.refusedMerge(ctx, attempt, err); refused != "" {
 			return AutoMergeSweepEvent{}, refused, nil
 		}
 		return AutoMergeSweepEvent{}, "merge-failed", err
@@ -860,7 +860,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		if c.requiredChecksExpected(attempt, err) {
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, pr.GetBase().GetSHA(), "required-checks-expected", pr)
 		}
-		if refused := c.refusedMerge(attempt, err); refused != "" {
+		if refused := c.refusedMerge(ctx, attempt, err); refused != "" {
 			return AutoMergeSweepEvent{}, refused, nil
 		}
 		return AutoMergeSweepEvent{}, "merge-failed", err

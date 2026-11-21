@@ -1,6 +1,7 @@
 package automerge
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/effects"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
@@ -79,11 +81,24 @@ func mergeRefusalReason(err error) string {
 	return ""
 }
 
+// unresolvedConversationsMergeError reports GitHub's 405 for a merge call on
+// a base that requires conversation resolution while a review thread is
+// unresolved ("Repository rule violations found ... All comments must be
+// resolved.").
+func unresolvedConversationsMergeError(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusMethodNotAllowed {
+		return false
+	}
+	return hgithub.IsUnresolvedConversationsError(err)
+}
+
 // isPermanentMergeRefusal reports whether reason is one of the classified
 // 405 refusals above.
 func isPermanentMergeRefusal(reason string) bool {
 	switch reason {
-	case autoMergeReasonMergeQueueRequired, autoMergeReasonMergeRefusedReview, autoMergeReasonMergeRefusedMethod:
+	case autoMergeReasonMergeQueueRequired, autoMergeReasonMergeRefusedReview, autoMergeReasonMergeRefusedMethod,
+		autoMergeReasonUnresolvedReviewThreads:
 		return true
 	}
 	return false
@@ -191,6 +206,9 @@ func (c *Engine) knownMergeRefusal(a mergeAttempt) string {
 	if c.mergeQueueBaseKnown(a.owner, a.repo, a.base) {
 		return autoMergeReasonMergeQueueRequired
 	}
+	if reason := c.knownUnresolvedThreads(a.owner+"/"+a.repo, a.number, a.head); reason != "" {
+		return reason
+	}
 	now := c.clock()
 	m := c.memory()
 	m.mergeRefusalsMu.Lock()
@@ -221,11 +239,16 @@ func (c *Engine) knownMergeRefusal(a mergeAttempt) string {
 
 // refusedMerge classifies a failed merge call as a permanent refusal,
 // remembers it for knownMergeRefusal, and returns the skip reason; "" leaves
-// the error to the caller's merge-failed path unchanged.
-func (c *Engine) refusedMerge(a mergeAttempt, err error) string {
+// the error to the caller's merge-failed path unchanged. An
+// unresolved-conversations refusal first gets the hive's own threads
+// resolved when they are the only ones open (unresolvedThreadsRefusal).
+func (c *Engine) refusedMerge(ctx context.Context, a mergeAttempt, err error) string {
 	if mergeQueueRequiredMergeError(err) {
 		c.noteMergeQueueBase(a.owner, a.repo, a.base)
 		return autoMergeReasonMergeQueueRequired
+	}
+	if unresolvedConversationsMergeError(err) {
+		return c.unresolvedThreadsRefusal(ctx, a.owner+"/"+a.repo, a.number, a.head)
 	}
 	if mergeConflictMergeError(err) {
 		// Not remembered: GitHub's mergeable_state says dirty on the next

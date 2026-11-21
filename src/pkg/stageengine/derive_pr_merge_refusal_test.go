@@ -28,6 +28,14 @@ func TestClassifyStagePermanentMergeRefusals(t *testing.T) {
 		{name: "native read failure", reason: "native-merge-queue-read", want: stagelabels.MergeQueue},
 		{name: "native queue method refused", reason: "native-merge-queue-method", want: stagelabels.NeedsDecision, wantHuman: true},
 		{name: "unclassified merge failure", reason: "merge-failed", want: stagelabels.MergeQueue},
+		// GitHub requires conversation resolution and a thread the hive may
+		// not resolve is open: a person's call, not merge-imminent.
+		{name: "unresolved review threads", reason: "unresolved-review-threads", want: stagelabels.NeedsDecision, wantHuman: true},
+		{name: "unresolved review threads but needs-rebase", reason: "unresolved-review-threads", labels: []string{"needs-rebase"}, want: stagelabels.Fixing},
+		// The hive resolved its own threads; the next pass merges.
+		{name: "own review threads resolved", reason: "review-threads-resolved", want: stagelabels.MergeQueue},
+		// A refusal nothing explained yet: retried by the hive, not a person's.
+		{name: "review threads pending", reason: "review-threads-pending", want: stagelabels.MergeQueue},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, lane := range []string{stageLaneSelf, stageLaneTrusted, stageLaneContributor} {

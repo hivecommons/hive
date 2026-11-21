@@ -104,6 +104,10 @@ type rawReviewThread struct {
 type rawReviewComment struct {
 	Author struct {
 		Login string `json:"login"`
+		// Typename is the GraphQL actor type (Bot, User, …): GraphQL names
+		// an App's bot without the REST "[bot]" suffix, so the hive's own
+		// threads are recognised by type plus login (isOwnThreadAuthor).
+		Typename string `json:"__typename"`
 	} `json:"author"`
 	Body       string `json:"body"`
 	DatabaseID int64  `json:"databaseId"`
@@ -257,7 +261,7 @@ const reviewThreadsQuery = `query($owner: String!, $repo: String!, $number: Int!
         pageInfo { hasNextPage endCursor }
         nodes {
           id isResolved isOutdated path line
-          comments(first: 50) { nodes { author { login } body databaseId } }
+          comments(first: 50) { nodes { author { __typename login } body databaseId } }
         }
       }
     }
