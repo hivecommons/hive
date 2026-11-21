@@ -1,0 +1,1 @@
+- Fleet self-report no longer files an unclassified repeated-error issue when the contributor-lane automerge sweep skips a PR because GitHub refused the native merge queue enqueue with "All comments must be resolved"; unresolved conversations are a normal not-ready state.
