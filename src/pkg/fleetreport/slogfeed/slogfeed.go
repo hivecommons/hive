@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || unresolvedConversationsSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -357,6 +357,28 @@ func automergeMergeGuardSkip(r slog.Record) bool {
 		return true
 	})
 	return reason == "base-refresh:merge-guard" && strings.Contains(err, "destination merge already in progress")
+}
+
+// unresolvedConversationsSkip reports whether r is the contributor-lane
+// automerge sweep skipping a PR because GitHub refused the native merge queue
+// enqueue with "All comments must be resolved". Unresolved conversations are a
+// normal not-ready state that clears when the author resolves them
+// (hivecommons/hive#19407). Any other skip stays reportable.
+func unresolvedConversationsSkip(r slog.Record) bool {
+	if strings.TrimSpace(r.Message) != "contributor-lane automerge sweep skipped PR" {
+		return false
+	}
+	reason, err := "", ""
+	r.Attrs(func(a slog.Attr) bool {
+		switch a.Key {
+		case "reason":
+			reason = a.Value.String()
+		case "error":
+			err = a.Value.String()
+		}
+		return true
+	})
+	return reason == "native-merge-queue-enqueue" && strings.Contains(err, "All comments must be resolved")
 }
 
 // failClosedStatus500 reports whether r is one of the callers that fail closed
