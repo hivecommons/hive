@@ -113,11 +113,15 @@ func abandonThreshold(policy StageLabelPolicy, rec stagelabels.Record, contribut
 // as a trusted contributor. An author with write, maintain or admin is
 // marked (Record.AbandonMaintainerSeen) and any flag cleared; a failed read
 // defers to a later pass. A pass that does not know the author or the
-// repository defers too: authorRepoAccess answers no permission for it
-// without asking, which would read as a read-only author. A [bot] author
+// repository, or an engine with no GitHub client, defers too:
+// authorRepoAccess answers no permission for them without asking, which
+// would read as a read-only author. A [bot] author
 // goes on: an App installation is never a collaborator, so it has no
 // permission to read. It reports whether the caller may go on.
 func (c *Engine) abandonTrustedAuthorChecked(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, now time.Time) bool {
+	if c == nil || c.gh == nil {
+		return false
+	}
 	if strings.TrimSpace(obs.Author) == "" || obs.Owner == "" || obs.Repo == "" {
 		c.debug("stage labels: trusted contributor idle clock deferred: the pass does not know the author", "repo", obs.Display, "pr", obs.Number)
 		return false
