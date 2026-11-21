@@ -11,6 +11,95 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-21 (v5.345.9)
+
+### Changed
+
+- images: bump pi 1.5.0 -> 1.6.0 (#19418)
+
+## 2026-11-21 (v5.345.8)
+
+### Fixed
+
+- The watchdog in observe mode now reports an unchanged "would restart dead agent" or "would escalate to pause" verdict once per hour per agent instead of on every sweep, and afresh once the agent is ready again and then dies; an agent flipping between dead classes no longer re-reports on every flip ([#19393](https://github.com/hivecommons/hive/issues/19393)). Observe mode takes no action, so a dead agent stays dead and every sweep reached the same verdict: one agent stuck on a modal overlay logged 79 WARNs and as many audit entries in 10 minutes and was self-reported fleet-wide as `agent_lifecycle_repeated`.
+
+## 2026-11-21 (v5.345.7)
+
+### Fixed
+
+- The dashboard top bar no longer shows an empty pill when no meeting is live. `.nav-chip { display: inline-flex }` outranks the browser's `[hidden]` rule, and the meeting indicator added with the Calendar section ([#18399](https://github.com/hivecommons/hive/pull/18399)) had no override of its own. One rule now hides every hidden top-bar chip, which also hides the Code activity chip where the Code activity view is off, as [#16609](https://github.com/hivecommons/hive/pull/16609) intended; before, it showed regardless.
+- On phones the dashboard top bar no longer cuts off its right-hand chips. The strip clipped its overflow while packed to the end, so chips past its start edge were drawn cut off ("Waiting on you · 17" showed as "u · 17") or hidden with no way to reach them, such as Report a bug and Settings. Below 768px the strip now drops the chips the menus already carry (Report a bug always, Settings while the account menu shows), the Waiting on you chip shows only its dot and count, and anything that still doesn't fit scrolls sideways, starting at the end so Help and the account menu stay in view.
+
+## 2026-11-21 (v5.345.6)
+
+### Fixed
+
+- issue-stage: treat an already-closed merged full-fix issue as closed (#19370)
+- **Issue-request relay no longer reports a write-back gate refusal as a stuck queue.** A request the unsolicited write-back gate refuses by policy (for example `writeback.unsolicited.backfill` off on a pre-existing issue) is now quarantined as `.failed` on the first attempt instead of being retried until it self-reports `issue_request_stuck`; an operator repo pause keeps the request on the retry path without raising the stuck report. (#19400)
+- Fleet self-report no longer files an unclassified repeated-error issue when the contributor-lane automerge sweep skips a PR because GitHub refused the native merge queue enqueue with "All comments must be resolved"; unresolved conversations are a normal not-ready state.
+
+## 2026-11-21 (v5.345.5)
+
+### Fixed
+
+- One agent stuck before its input prompt no longer files an `agent_pane_timeout` self-report on its own: every queued kick ran its own 120 s prompt wait and each one dumped the pane at WARN when they timed out together (292 in 10 minutes from a single `scanner`). The WARN pane dump now fires at most once per agent every 10 minutes; later timeouts log one INFO line, and the next dump reports how many were skipped in `suppressed_since_last_dump`. The stall itself is still self-reported through the kick-undeliverable path ([#19376](https://github.com/hivecommons/hive/issues/19376)).
+
+## 2026-11-21 (v5.345.4)
+
+### Fixed
+
+- The github-proxy no longer logs `proxy: CONNECT dial failed` at WARN when the CONNECT target hostname does not resolve (for example a placeholder host from an example config); it now logs at Debug, so a misconfigured host no longer triggers the fleet repeated-error self-report. Other CONNECT dial failures still warn.
+
+## 2026-11-20 (v5.345.3)
+
+### Fixed
+
+- **A single GitHub dial timeout during a token mint is no longer filed as a fleet self-report.** `forge_unreachable` used to qualify on its first observation, so one launch-time `context deadline exceeded` reached the fleet tracker within minutes, before the next token refresh (40m by default) could clear it. It now has to stay open for 1h. Token refreshes that still cannot reach the forge re-observe the condition, so a real egress outage is still reported and does not age out of the 24h evidence window ([#19403](https://github.com/hivecommons/hive/issues/19403)).
+
+## 2026-11-20 (v5.345.2)
+
+### Fixed
+
+- Automerge no longer logs a WARN when the native merge queue refuses an enqueue because required checks are failing; the PR is held and retried next sweep.
+
+## 2026-11-20 (v5.345.1)
+
+### Changed
+
+- images: bump codex 0.170.0 -> 0.171.0 (#19375)
+
+## 2026-11-20 (v5.345.0)
+
+### Added
+
+- **Dashboard: new Sandstone light theme** ([#19351](https://github.com/hivecommons/hive/issues/19351)). Settings → Appearance now offers `sandstone`, a warm paper-toned light preset with terracotta accents, available on both the dashboard and contributor profile surfaces. It is an additive built-in; existing theme ids and the default are unchanged.
+
+## 2026-11-20 (v5.344.3)
+
+### Fixed
+
+- The "task released on disconnect" warning is now logged only when a release survives the reconnect grace window, so resumed socket flaps no longer trip the repeated-error self-report (#19357).
+
+## 2026-11-19 (v5.344.2)
+
+### Fixed
+
+- A delegated decision ("Let hive decide") on a PR now takes the `needs-human` and `stage/085-needs-decision` labels off even when the decision itself used up its time budget. Before, the label lift ran on the already-expired request context, failed with `context deadline exceeded`, and the next pass parked the PR in 085 again (#19256).
+- **Hub: kubectl calls are bounded and a paused hub deployment no longer hangs self-upgrade** ([#19341](https://github.com/hivecommons/hive/issues/19341), [#19342](https://github.com/hivecommons/hive/issues/19342), [#19343](https://github.com/hivecommons/hive/issues/19343)). Every hub kubectl call now has a timeout and the per-cluster slot wait is deadline-bound, with a log line and counter when the pool is exhausted. The rollout readiness probe uses `--watch=false`, a paused hub deployment suspends self-upgrade with a dashboard warning, and only one rollout watcher runs at a time. The spoke auth-check reads the dashboard token with a 5 second timeout and serves the last good token for a bounded grace period when a refresh fails.
+
+## 2026-11-19 (v5.344.1)
+
+### Fixed
+
+- fix(config): warn once per model id rewrite, not on every reload (#19330)
+- Hub user record saves no longer race on a shared temp file, so concurrent saves stop failing with rename errors (#19346).
+
+## 2026-11-19 (v5.344.0)
+
+### Added
+
+- **Hub: final profile sharing disclosure, a "what was sent" view and admin consent counts** ([#19164](https://github.com/hivecommons/hive/issues/19164)). The Profile sharing page now states what is sent and to whom, that the hive owner and anyone with Customers access on that hive can see and export it, what is never sent, that withdrawal is immediate on the hub and reaches the hive at its next sync, and that the hub cannot recall an exported copy. The disclosure version moves to 2, so a consent given under the earlier "nothing is sent yet" text shares nothing until the person confirms again. Each hive card shows what was last sent and when, from the delivery stamps. Hub admins see consent counts per hive only, in Scale Controls and at `GET /api/saas/admin/profile-share/counts`, with no person, field choice or value. The Customers, telemetry and hub deployment docs now describe the opt-in hub import instead of saying nothing is read from the hub.
+
 ## 2026-11-19 (v5.343.1)
 
 ### Changed

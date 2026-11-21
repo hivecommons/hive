@@ -51,7 +51,7 @@ func TestCatalogValidAndLargeEnough(t *testing.T) {
 	if err := ValidateCatalog(); err != nil {
 		t.Fatalf("catalog validation failed: %v", err)
 	}
-	for _, id := range []string{"hive", "hive-dark", "hive-light", "star-wars", "dungeons-and-dragons", "star-trek", "cyberpunk", "terminal", "solarized-dark", "nord", "contributor-rank-metal", "contributor-verdant", "contributor-amber-rank", "contributor-violet-advisor", "contributor-minimal", "contributor-rose", "contributor-roomy-ranked"} {
+	for _, id := range []string{"hive", "hive-dark", "hive-light", "star-wars", "dungeons-and-dragons", "star-trek", "cyberpunk", "terminal", "solarized-dark", "nord", "sandstone", "contributor-rank-metal", "contributor-verdant", "contributor-amber-rank", "contributor-violet-advisor", "contributor-minimal", "contributor-rose", "contributor-roomy-ranked"} {
 		th, ok := Builtin(id)
 		if !ok {
 			t.Fatalf("missing built-in theme %q", id)

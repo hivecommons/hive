@@ -1,12 +1,14 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -147,6 +149,12 @@ func (c *Config) DegradeContradictingLaunchCmds() []LaunchCmdDegradation {
 	return degraded
 }
 
+// modelIDRewriteLogged remembers which (agent, from, to) rewrites were already
+// warned about. The rewrite is in memory only, so every config reload repeats
+// it; warning each time floods the log and trips the fleet self-report
+// (unclassified_error_repeated). Repeats log at debug.
+var modelIDRewriteLogged sync.Map
+
 // ModelIDNormalization records one agent whose stored model id the loader
 // rewrote to its backend's naming convention for the same Claude model.
 type ModelIDNormalization struct {
@@ -179,7 +187,11 @@ func (c *Config) NormalizeModelIDConventions() []ModelIDNormalization {
 			continue
 		}
 		fixed = append(fixed, ModelIDNormalization{Agent: name, Backend: agent.Backend, From: agent.Model, To: to})
-		slog.Default().Warn("config: rewrote a Claude model id to the naming convention of the agent's backend",
+		logLevel := slog.LevelDebug
+		if _, seen := modelIDRewriteLogged.LoadOrStore(name+"\x00"+agent.Model+"\x00"+to, struct{}{}); !seen {
+			logLevel = slog.LevelWarn
+		}
+		slog.Default().Log(context.Background(), logLevel, "config: rewrote a Claude model id to the naming convention of the agent's backend",
 			"hive_id", c.HiveID,
 			"agent", name,
 			"file", agent.SourceFile(),

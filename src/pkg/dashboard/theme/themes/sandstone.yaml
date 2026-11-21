@@ -1,0 +1,32 @@
+id: sandstone
+name: Sandstone
+description: Warm paper-toned light palette with earthy terracotta accents.
+author: Hive contributors
+scopes:
+- dashboard
+- contributor
+dark: false
+tokens:
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif
+  --font-mono: '''SF Mono'', ''Cascadia Code'', ''Fira Code'', monospace'
+  --surface-0: '#f6f0e4'
+  --surface-1: '#fbf7ee'
+  --surface-2: '#fffdf8'
+  --surface-3: '#ece3d1'
+  --surface-terminal: '#2a2118'
+  --line-subtle: '#e2d8c3'
+  --line-strong: '#c9bb9d'
+  --text: '#2b2118'
+  --text-muted: '#6b5d4d'
+  --brand: '#a4501a'
+  --accent: '#b4532a'
+  --status-ok: '#3f7d3a'
+  --status-warn: '#8f6a0c'
+  --status-attention: '#b45a14'
+  --status-error: '#b3372e'
+  --status-info: '#2f6690'
+  --acmm-level-2: '#2a7f86'
+  --acmm-level-5: '#7a4c9c'
+fonts:
+  ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif
+  mono: '''SF Mono'', ''Cascadia Code'', ''Fira Code'', monospace'

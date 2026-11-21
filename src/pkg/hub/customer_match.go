@@ -501,6 +501,8 @@ func stampCustomerDelivery(path, hiveID string, sent customerConsentFields, rev 
 		union.Country = union.Country || d.Country
 	}
 	c.DeliveredFields = &union
+	last := sent
+	c.LastDeliveredFields = &last
 	c.DeliveredRev = rev
 	records[hiveID] = c
 	return saveCustomerConsents(path, records)

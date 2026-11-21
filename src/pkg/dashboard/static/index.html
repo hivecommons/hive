@@ -487,7 +487,10 @@
     .oc-navbar-upgrade[hidden] { display: none; }
     /* `.nav-chip { display: inline-flex }` (components.css) outranks the UA
        `[hidden] { display: none }`, so a hidden status chip otherwise paints
-       as an empty outlined pill (#oc-providers when every provider is usable). */
+       as an empty outlined pill (#oc-providers when every provider is usable,
+       #oc-meeting-indicator when no meeting is live). The catch-all covers
+       every top-bar chip, so a new hidden-by-default chip can't regress. */
+    .oc-topbar .nav-chip[hidden] { display: none; }
     .oc-providers-chip[hidden] { display: none; }
     /* Opt-in plan usage chip: a compact fuel dial plus its percentage. */
     .subscription-gauge-chip[hidden] { display: none; }
@@ -7133,12 +7136,35 @@
         gap: var(--sp-2);
         overflow: hidden;
       }
+      /* The right strip scrolls sideways when its chips don't fit. Packed to
+         the end, the overflow would land past the start edge, which a scroll
+         box can't reach, so chips there were cut off for good. The strip
+         packs from the start instead, the ::before spacer keeps the chips
+         right-aligned while they fit, and topbar-strip.js keeps it scrolled
+         to the end (Help and the account menu) until the user scrolls it. */
       .oc-topbar-right {
-        justify-content: flex-end;
+        justify-content: flex-start;
         flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
       }
-      /* The right strip clips overflow so chips scroll instead of wrapping;
-         an absolutely-positioned dropdown inside it would be clipped away.
+      .oc-topbar-right::-webkit-scrollbar {
+        display: none;
+      }
+      .oc-topbar-right::before {
+        content: "";
+        flex: 1 0 0;
+      }
+      /* Both stay reachable: Feedback from the drawer and the account menu,
+         Settings from the account menu, so it only goes while that shows. */
+      #feedback-bug-btn,
+      .oc-topbar-right:has(#oc-gh-avatar-wrap:not([hidden])) #oc-settings-btn {
+        display: none;
+      }
+      /* Scrolling clips the strip like overflow: hidden did, so an
+         absolutely-positioned dropdown inside it would be clipped away.
          Pin the account menu to the viewport under the navbar instead and
          let it scroll when taller than the phone screen. */
       #oc-help-menu, #oc-gh-user-menu {
@@ -7180,6 +7206,15 @@
       #oc-settings-btn .nav-chip__label,
       #welcome-topbar-btn .nav-chip__label {
         display: none;
+      }
+      /* "Waiting on you · 17" alone is wider than the strip on a 390px phone,
+         so it shows its dot and count; the words stay in the aria-label and
+         the tooltip. */
+      .oc-waiting-on-you .nav-chip__label {
+        display: none;
+      }
+      .oc-waiting-on-you::after {
+        content: attr(data-count);
       }
       .oc-topbar .layout-toggle.nav-chip {
         display: none;
@@ -7651,11 +7686,26 @@
         flex-wrap: nowrap;
         overflow: hidden;
       }
+      /* Same sideways scroll as the portrait phone strip (see the 768px block). */
+      .oc-topbar-right {
+        justify-content: flex-start;
+        overflow-x: auto;
+        overflow-y: hidden;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+      }
+      .oc-topbar-right::-webkit-scrollbar {
+        display: none;
+      }
+      .oc-topbar-right::before {
+        content: "";
+        flex: 1 0 0;
+      }
       .oc-topbar-center {
         gap: var(--sp-2);
       }
-      /* The right strip clips overflow so chips scroll instead of wrapping;
-         an absolutely-positioned dropdown inside it would be clipped away.
+      /* Scrolling clips the strip like overflow: hidden did, so an
+         absolutely-positioned dropdown inside it would be clipped away.
          Pin the account menu to the viewport under the navbar instead and
          let it scroll when taller than the phone screen. */
       #oc-help-menu, #oc-gh-user-menu {
@@ -9437,7 +9487,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
       <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" title="AI providers: all usable" aria-label="AI providers: all usable" hidden></span>
       <button type="button" class="nav-chip nav-chip--status subscription-gauge-chip" id="oc-subscription-gauge" data-action="openSubscriptionGaugeOverview" data-status="neutral" aria-label="Plan usage left" hidden><span class="subscription-gauge-chip__dial" aria-hidden="true"></span><span class="nav-chip__label"></span></button>
-      <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
+      <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" data-count="0" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
       <button type="button" class="nav-chip nav-chip--status nav-chip--ok oc-meeting-indicator" id="oc-meeting-indicator" data-action="calendarIndicatorClick" data-target="" aria-label="Not in a meeting" hidden><span class="nav-chip__label"></span></button>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <!-- Help menu: mirrors the sidebar Help group (#help-nav-group) with the
@@ -31094,6 +31144,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         pill.hidden = !w.count;
         pill.title = title;
         pill.setAttribute('aria-label', w.count + ' waiting on you — show in the activity monitor');
+        // Phones show only the dot and this count (responsive.css).
+        pill.setAttribute('data-count', String(w.count));
         const label = pill.querySelector('.nav-chip__label');
         if (label) label.textContent = 'Waiting on you · ' + w.count;
       }
@@ -85945,6 +85997,29 @@ function burnAreaChart() {
       }
     }
 
+    /* ---- Top-bar right strip on phones -------------------------------------
+       Below 768px the strip scrolls sideways when its chips don't fit
+       (responsive.css). It starts scrolled to the end, so Help and the account
+       menu stay in view, and stays there as chips come and go, until the user
+       scrolls it; scrolling back to the end pins it again. On wider screens
+       the strip never overflows and this does nothing. */
+    const TOPBAR_STRIP_END_EPS = 2;
+    function topbarStripAtEnd(strip) {
+      return (strip.scrollLeft || 0) + (strip.clientWidth || 0) >= (strip.scrollWidth || 0) - TOPBAR_STRIP_END_EPS;
+    }
+    function initTopbarStripScroll() {
+      const strip = document.querySelector('.oc-topbar-right');
+      if (!strip || !strip.dataset || strip.dataset.stripScrollWired) return;
+      strip.dataset.stripScrollWired = '1';
+      let pinned = true;
+      const pin = () => { if (pinned) strip.scrollLeft = strip.scrollWidth; };
+      strip.addEventListener('scroll', () => { pinned = topbarStripAtEnd(strip); }, { passive: true });
+      if (typeof ResizeObserver === 'function') new ResizeObserver(pin).observe(strip);
+      if (typeof MutationObserver === 'function') new MutationObserver(pin).observe(strip, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
+      if (window.addEventListener) window.addEventListener('resize', pin, { passive: true });
+      pin();
+    }
+    initTopbarStripScroll();
     // ── NPS feedback survey, #9610 ───────────────────────────────────
     // An occasional "how is the hive working for you?" card with a 4-point
     // emoji scale, a category-specific follow-up and a dismiss. Timing and

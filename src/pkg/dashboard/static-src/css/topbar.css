@@ -96,7 +96,10 @@
     .oc-navbar-upgrade[hidden] { display: none; }
     /* `.nav-chip { display: inline-flex }` (components.css) outranks the UA
        `[hidden] { display: none }`, so a hidden status chip otherwise paints
-       as an empty outlined pill (#oc-providers when every provider is usable). */
+       as an empty outlined pill (#oc-providers when every provider is usable,
+       #oc-meeting-indicator when no meeting is live). The catch-all covers
+       every top-bar chip, so a new hidden-by-default chip can't regress. */
+    .oc-topbar .nav-chip[hidden] { display: none; }
     .oc-providers-chip[hidden] { display: none; }
     /* Opt-in plan usage chip: a compact fuel dial plus its percentage. */
     .subscription-gauge-chip[hidden] { display: none; }
