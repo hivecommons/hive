@@ -80,7 +80,7 @@ const (
 	// base moves), so the contributor lane stopped before it evaluated the
 	// PR; like the merge guard it says nothing about the stage.
 	StageReasonMergeableUnknown     = "mergeable-unknown"
-	StageReasonForkGuard            = "fork-guard:"
+	StageReasonForkGuard            = stagelabels.LaneReasonForkGuardPrefix
 	StageReasonOptionalCheckFailing = "optional-check-failing:"
 	StageReasonSharedCIIncident     = "shared-ci-incident:"
 	// StageReasonUnauthorizedPrefix: the lane's next step needs an API

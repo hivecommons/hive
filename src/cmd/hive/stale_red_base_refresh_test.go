@@ -132,6 +132,26 @@ func TestRefreshStaleRedBehindPRs_BaseMustClearEveryFailingCheck(t *testing.T) {
 	}
 }
 
+// projectbluefin/utah-packages#1258 (2026-11-21): the fork PR's only red
+// check, Canary, refuses fork PRs and is green on main because main is not a
+// fork. The pass read that as "the base fixed it" and merged main in at
+// 11:55:47Z, which discarded the head a maintainer's Canary run would prove.
+// A head red only on fork guards is not touched.
+func TestRefreshStaleRedBehindPRs_SkipsForkGuardOnlyHead(t *testing.T) {
+	resetStaleRedRefresh(t)
+	cfg := escalationTestConfig()
+	pr := staleRedPR(1258, "c40685e")
+	pr.FailingChecks = []string{"Canary"}
+	pr.CIFailureExcerpt = "Canary: a fork pull request cannot publish the canary image, and no maintainer-run Canary has passed on c40685e"
+	f := &fakeStaleRedRefresher{bases: map[string]github.StaleRedBaseState{"acme/widgets@main": {
+		SHA: "base1", Completed: map[string]bool{"Canary": true}, Red: map[string]bool{},
+	}}, out: github.StaleRedRefreshOutcome{Updated: true, Settled: true, BehindBy: 2}}
+	got := refreshStaleRedBehindPRs(context.Background(), cfg, f, actionableWith(pr), nil, discardLogger(), time.Now())
+	if len(f.calls) != 0 || len(got) != 0 {
+		t.Fatalf("refresh calls %d (keys %v), want none for a head red only on a fork guard", len(f.calls), got)
+	}
+}
+
 // Updates are capped per repository per pass; the rest wait for a later pass.
 func TestRefreshStaleRedBehindPRs_PerRepoCap(t *testing.T) {
 	resetStaleRedRefresh(t)
@@ -179,6 +199,17 @@ func TestStaleRedRefreshSkip(t *testing.T) {
 		{"CI still running", func(p *github.PullRequest) { p.CIChecksRunning = true }, "ci-running"},
 		{"open shared-CI incident", func(p *github.PullRequest) { p.SharedCIIncident = 12 }, "shared-ci-incident-open"},
 		{"red on the base too", func(p *github.PullRequest) { p.BaseRedChecks = []string{"pytest"} }, "base-red"},
+		// projectbluefin/utah-packages#1258: Canary refuses fork PRs, and
+		// it is green on the base only because the base is not a fork.
+		{"red only on a fork guard", func(p *github.PullRequest) {
+			p.FailingChecks = []string{"Canary"}
+			p.CIFailureExcerpt = "Canary: a fork pull request cannot publish the canary image"
+		}, "fork-guard"},
+		// A fork guard beside another failure is not what the PR waits on.
+		{"fork guard and another failure", func(p *github.PullRequest) {
+			p.FailingChecks = []string{"Canary", "pytest"}
+			p.CIFailureExcerpt = "Canary: a fork pull request cannot publish the canary image\npytest: FAILED test_widget"
+		}, ""},
 		{"no base ref", func(p *github.PullRequest) { p.BaseRef = "" }, "head-or-base-unknown"},
 		{"fork without maintainer edits", func(p *github.PullRequest) { p.MaintainerCanModify = false }, "fork-not-editable"},
 		{"dependency bot branch", func(p *github.PullRequest) { p.HeadRef = "renovate/actions"; p.Author = "app/mergeraptor" }, "dependency-bot-branch"},

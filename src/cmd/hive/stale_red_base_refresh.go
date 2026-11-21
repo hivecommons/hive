@@ -56,7 +56,8 @@ var staleRedRefresh = &staleRedRefreshState{}
 // auto-merge off.
 //
 // It leaves alone a PR that is a draft, held or exempt, still running CI,
-// deferred to an open shared-CI incident, red on the base as well, a fork
+// deferred to an open shared-CI incident, red on the base as well, red only
+// on fork guards (a maintainer's run proves the exact head), a fork
 // with "allow edits by maintainers" off, a dependency bot's branch (the bot
 // rebases it) or adopted by the hive (074, whose recovery owns it). A PR
 // returned to its contributor (072) is a candidate: the red is the base's,
@@ -198,6 +199,14 @@ func staleRedRefreshSkip(pr github.PullRequest) string {
 		return "shared-ci-incident-open"
 	case len(pr.BaseRedChecks) > 0:
 		return "base-red"
+	case len(pr.ForkGuardChecks()) > 0:
+		// Every failing check refuses the PR only because it is from a
+		// fork: the check is green on the base because the base is not a
+		// fork, not because the base fixed anything. A maintainer's run
+		// proves one exact head, and a merge of the base discards it
+		// (projectbluefin/utah-packages#1258: Canary, merged over at
+		// 6:55 AM EST on 2026-11-21).
+		return "fork-guard"
 	}
 	if skip := baseRefreshBranchOwnerSkip(pr); skip != "returned-to-contributor" {
 		return skip

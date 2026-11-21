@@ -183,6 +183,11 @@ func (c *Engine) latestCheckRunsOnHead(ctx context.Context, owner, repo, head st
 // parked the PR at 085. Such a head is now classified from its own check
 // annotations with the index's rule (hgithub.ForkGuardChecksFor), once per
 // head and red set.
+//
+// A lane that stops at a gate or fence before its CI step (sentinel-blocked,
+// workflow-path) names no red check, so foldForkGuard takes the red set from
+// the head's check digest instead (projectbluefin/utah-packages#1258,
+// #1263).
 
 // errForkGuardUnsettled: a red check's latest run is still in progress (a
 // re-run), so the head cannot be classified yet; nothing is remembered.
@@ -197,11 +202,11 @@ type forkGuardRead struct {
 // foldUnclassifiedForkGuard parks a fork PR head whose every red check is
 // a fork guard when neither the index nor the stage record knows the guard:
 // the observations for the head carry it (so the stage is 085, with no
-// nudge and no adoption) and the record keeps it for later heads.
+// nudge and no adoption) and the record keeps it for later heads. The red
+// set is the head's check digest's (headChecks, which the human route reads
+// for the same PR anyway), so a head read while another check was red
+// beside the guard is read again once only the guard is red.
 func (c *Engine) foldUnclassifiedForkGuard(ctx context.Context, tracker *StageTracker, store *stagelabels.Store, key string, list []stageObservation, o stageObservation, now time.Time) {
-	if tracker.knownNotForkGuard(key, o.HeadSHA) {
-		return
-	}
 	summary, known := c.headChecks(ctx, tracker, key, o, now)
 	if !known || len(summary.Red) == 0 {
 		return
@@ -220,15 +225,6 @@ func (c *Engine) foldUnclassifiedForkGuard(ctx context.Context, tracker *StageTr
 	if fresh {
 		c.info("stage labels: fork guard read from the head's check annotations; a maintainer's step, not the author's", "repo", o.Display, "pr", o.Number, "head", o.HeadSHA, "checks", guard)
 	}
-}
-
-// knownNotForkGuard reports a head already read and found red on something
-// other than a fork guard, so the stage pass need not read its digest again.
-func (t *StageTracker) knownNotForkGuard(key, head string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	entry, ok := t.forkGuards[key]
-	return ok && entry.head == head && len(entry.guard) == 0
 }
 
 // headForkGuard classifies head's red checks from their annotations, once

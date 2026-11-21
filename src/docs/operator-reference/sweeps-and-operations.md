@@ -472,8 +472,13 @@ in repositories with auto-merge off:
 - It merges the base in with `update-branch`, pinned to the evaluated head
   (the same merge commit the "Update branch" button makes). It posts nothing.
 - It skips drafts, held and exempt PRs, fork PRs with "allow edits by
-  maintainers" off, dependency-bot branches (the bot rebases them) and PRs at
-  `stage/074-adopted-by-hive` (the adoption recovery owns them). Repositories
+  maintainers" off, dependency-bot branches (the bot rebases them), PRs at
+  `stage/074-adopted-by-hive` (the adoption recovery owns them) and fork PRs
+  whose every failing check is a fork guard (skip reason `fork-guard`): such a
+  check is green on the base only because the base is not a fork, and the
+  maintainer's run that turns it green proves one exact head, which a merge
+  of the base would discard (projectbluefin/utah-packages#1258 was merged
+  over this way). Repositories
   in `auto_merge.require_current_base` are left to the automerge preparation
   front.
 - PRs at `stage/072-returned-to-contributor` are candidates. The update only
