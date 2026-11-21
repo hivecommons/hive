@@ -195,12 +195,23 @@ func TestNativeQueueUnresolvedConversationsUnexplainedRetriesThenParks(t *testin
 	}
 }
 
-// With review.resolve_own_threads off nothing will ever resolve the threads,
-// so the refusal parks at once rather than spending retries, and stays
-// parked across park expiries.
-func TestNativeQueueUnresolvedConversationsSettingOffParksAtOnce(t *testing.T) {
+// Nothing the hive may resolve: with review.severity.block_at: P3 (the
+// opt-out) every hive thread is blocking, and a repo paused meanwhile
+// resolves nothing either. The refusal parks at once rather than spending
+// retries, and stays parked across park expiries.
+func TestNativeQueueUnresolvedConversationsNothingResolvableParksAtOnce(t *testing.T) {
+	for name, outcome := range map[string]hgithub.OwnReviewThreadsOutcome{
+		"block_at P3": {Unresolved: 2, OwnBlocking: 2},
+		"paused":      {Skipped: "paused"},
+	} {
+		t.Run(name, func(t *testing.T) { parksAtOnce(t, outcome) })
+	}
+}
+
+func parksAtOnce(t *testing.T, outcome hgithub.OwnReviewThreadsOutcome) {
+	t.Helper()
 	now := time.Date(2026, 11, 21, 7, 0, 0, 0, time.UTC)
-	c, r, pr, claim, _ := threadResolverEngine(hgithub.OwnReviewThreadsOutcome{Skipped: "disabled"})
+	c, r, pr, claim, _ := threadResolverEngine(outcome)
 	c.now = func() time.Time { return now }
 	for cycle := 1; cycle <= 3; cycle++ {
 		reason, err := c.tryNativeQueue(context.Background(), pr, claim)

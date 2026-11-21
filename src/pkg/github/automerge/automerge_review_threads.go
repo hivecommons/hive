@@ -10,7 +10,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
-// Unresolved review conversations (review.resolve_own_threads).
+// Unresolved review conversations.
 //
 // A base whose branch protection or ruleset requires conversation
 // resolution refuses a merge, or a merge-queue enqueue, while any review
@@ -42,8 +42,11 @@ import (
 //     costs at most a few calls per head before a person is asked. When a
 //     park expires the head keeps its count at the limit, so a later
 //     unexplained refusal parks again at once: one merge call per 30
-//     minutes, no stage flapping. review.resolve_own_threads off parks at
-//     once too: nothing would ever resolve the threads.
+//     minutes, no stage flapping.
+//
+// A hive with review.severity.block_at: P3 (every finding blocks) has no
+// non-blocking hive threads, so every such refusal parks at 085: that is
+// the opt-out.
 
 const (
 	autoMergeReasonUnresolvedReviewThreads = prstage.AutoMergeReasonUnresolvedReviewThreads
@@ -158,10 +161,9 @@ func (c *Engine) unresolvedThreadsRefusal(ctx context.Context, repo string, numb
 			c.info("automerge resolved the hive's own review threads", "repo", repo, "pr", number, "head", head, "resolved", out.Resolved)
 			return autoMergeReasonReviewThreadsResolved
 		default:
-			// The setting is off (or the repo paused meanwhile): nothing will
-			// resolve the threads however often the lane retries, so a
-			// person is asked at once.
-			needsPerson = out.NeedsPerson() || out.Skipped == "disabled" || out.Skipped == "paused"
+			// A repo paused meanwhile resolves nothing however often the
+			// lane retries, so a person is asked at once.
+			needsPerson = out.NeedsPerson() || out.Skipped == "paused"
 			c.info("automerge: unresolved review threads hold the merge", "repo", repo, "pr", number, "head", head,
 				"unresolved", out.Unresolved, "others", out.Others, "own_answered", out.OwnAnswered,
 				"own_blocking", out.OwnBlocking, "resolved", out.Resolved, "failed", out.Failed, "skipped", out.Skipped)

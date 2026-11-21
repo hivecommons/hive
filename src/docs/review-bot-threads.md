@@ -284,13 +284,22 @@ merge-queue enqueue with "All comments must be resolved", and the lane retried
 on every sweep (projectbluefin/gutenprint-printer-app#254 and
 projectbluefin/ps-printer-app#221, 2026-11-20).
 
-`review.resolve_own_threads` (on by default; **Settings → Features → Review
-Gate → Resolve Hive's own review threads**; `PUT /api/config/review`
-`{"resolve_own_threads": false}`, or the admin MCP `review.settings` op)
-lets the hive resolve those threads at one point only: **when GitHub refuses
-a merge because review conversations are unresolved.** So it happens only on
-a repository that requires conversation resolution, after the merge lane's
-own gates passed. A reviewer's verdict never resolves anything by itself.
+The merge lanes now resolve the hive's own non-blocking notes themselves, at
+one point only: **after GitHub refuses a merge because review conversations
+are unresolved.** So it happens only on a repository that requires
+conversation resolution, after the merge lane's own gates passed. A
+reviewer's verdict never resolves anything by itself, and nothing else
+(a person's thread, a blocking finding) is ever resolved; see the limits
+below.
+
+**Opting out.** There is no separate switch. A hive that wants none of its
+own threads resolved sets `review.severity.block_at: P3` (every finding
+blocks): then no hive thread is non-blocking, and every such refusal parks
+the PR at `085-needs-decision` with `unresolved-review-threads` for a person.
+`block_at` is hive-wide and is not only about threads: at `P3` every info and
+low finding also blocks the hive's merges, and it lowers
+`classification.review_bots.min_priority` when that key is not set, so external
+bots' P3 findings are routed too.
 
 **Which merge paths.** The automerge sweep lanes — self-authored (including
 the trusted-bot lane), trusted-author, the `/lgtm` queued lane and the
@@ -322,11 +331,6 @@ handling, and on a merge-queue base it already reports
   parked head costs one merge call per 30 minutes and does not flap
   between stages. While waiting, `review-threads-pending` is not a ready
   merge-train front: the train merges the PRs behind it.
-
-**With the setting off.** The lanes still recognise the refusal, but resolve
-nothing: the first "All comments must be resolved" parks the PR at
-`085-needs-decision` with `unresolved-review-threads`, re-checked every 30
-minutes or on a new push, until a person resolves the threads.
 
 See [stage-labels.md](labels-and-control-signals/stage-labels.md).
 
@@ -361,7 +365,7 @@ with the blocking line:
 - with `review.severity.block_at` set, a finding is non-blocking when it is
   below the line, the same rule the review backlog uses
   (`ReviewFindingBelowLine`): `P1` leaves medium, low and info below it, `P2`
-  low and info, `P3` nothing;
+  low and info, `P3` nothing (the opt-out above);
 - with no `block_at` (the default, where the backlog rule puts nothing below
   the line), `info` and `low` count as non-blocking, the reviewer's own
   "non-blocking" tier;

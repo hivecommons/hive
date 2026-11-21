@@ -272,7 +272,8 @@ enqueues on the next pass (`review-threads-resolved`); when a thread only a
 person can clear is open the PR parks at `stage/085-needs-decision` with
 `unresolved-review-threads`, remembered per head for 30 minutes; and when
 nothing explains the refusal it retries after 5 minutes (`review-threads-pending`),
-parking after three tries. See
+parking after three tries. With `review.severity.block_at: P3` no hive
+thread is non-blocking, so such a refusal always parks. See
 [The hive's own review threads](review-bot-threads.md#the-hives-own-review-threads).
 
 Required workflows must subscribe to `merge_group` in addition to their PR

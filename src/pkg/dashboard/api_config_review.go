@@ -185,7 +185,6 @@ type reviewConfigPutBody struct {
 	FixerFallbackAfterUndeliverable *int      `json:"fixer_fallback_after_undeliverable"`
 	AllAuthors                      *bool     `json:"all_authors"`
 	FixHumanPRs                     *bool     `json:"fix_human_prs"`
-	ResolveOwnThreads               *bool     `json:"resolve_own_threads"`
 	ContributorPRs                  *struct {
 		BaseSync *bool `json:"base_sync"`
 	} `json:"contributor_prs"`
@@ -630,12 +629,6 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	if body.FixHumanPRs != nil {
 		enabled := *body.FixHumanPRs
 		cfg.Review.FixHumanPRs = &enabled
-	}
-	// review.resolve_own_threads is on when unset; the dashboard sends the
-	// switch's state, stored as given.
-	if body.ResolveOwnThreads != nil {
-		enabled := *body.ResolveOwnThreads
-		cfg.Review.ResolveOwnThreads = &enabled
 	}
 	if body.ContributorPRs != nil && body.ContributorPRs.BaseSync != nil {
 		cfg.Review.ContributorPRs.BaseSync = *body.ContributorPRs.BaseSync

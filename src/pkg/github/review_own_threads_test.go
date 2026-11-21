@@ -222,17 +222,46 @@ func TestResolveOwnReviewThreadsForMerge_LeavesOthersAlone(t *testing.T) {
 	}
 }
 
-func TestResolveOwnReviewThreadsDisabledOrPaused(t *testing.T) {
+func TestResolveOwnReviewThreadsPaused(t *testing.T) {
 	m := ownThreadsMock(&gqlThread{ID: "T-own", Comments: []gqlComment{{Author: "hive", AuthorType: "Bot", Body: ownBodyStyleInfo}}})
 	c := ownThreadsClient(t, m)
-	c.SetResolveOwnThreads(false)
-	if out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9); err != nil || out.Skipped != "disabled" || m.queryCount() != 0 {
-		t.Fatalf("disabled: %+v %v queries=%d", out, err, m.queryCount())
-	}
-	c.SetResolveOwnThreads(true)
 	c.SetRepoPausedFunc(func(string) bool { return true })
 	if out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9); err != nil || out.Skipped != "paused" || m.queryCount() != 0 {
 		t.Fatalf("paused: %+v %v queries=%d", out, err, m.queryCount())
+	}
+}
+
+// review.severity.block_at: P3 (every finding blocks) is the opt-out: no
+// hive thread is non-blocking, marked or prose-labelled, so nothing is
+// resolved and the outcome needs a person (the lane parks at 085). The same
+// threads under the default line are all resolved.
+func TestResolveOwnReviewThreadsForMerge_BlockAtP3ResolvesNothing(t *testing.T) {
+	threads := func() []*gqlThread {
+		return []*gqlThread{
+			{ID: "T-marked-info", Comments: []gqlComment{{Author: "hive", AuthorType: "Bot", Body: ownMarked("typo", "info")}}},
+			{ID: "T-marked-low", Comments: []gqlComment{{Author: "hive", AuthorType: "Bot", Body: ownMarked("rename", "low")}}},
+			{ID: "T-legacy", Comments: []gqlComment{{Author: "hive", AuthorType: "Bot", Body: ownBodyStyleInfo}}},
+		}
+	}
+	for _, blockAt := range []string{"P3", ""} {
+		m := ownThreadsMock(threads()...)
+		c := ownThreadsClient(t, m)
+		c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
+			return ReviewBacklogRouting{Severity: config.ReviewSeverityConfig{BlockAt: blockAt}}
+		})
+		out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if blockAt == "P3" {
+			if out.Resolved != 0 || len(m.resolved) != 0 || out.OwnBlocking != 3 || !out.NeedsPerson() || out.Cleared() {
+				t.Fatalf("block_at P3: outcome = %+v resolved=%v, want nothing resolved and a park", out, m.resolved)
+			}
+			continue
+		}
+		if !out.Cleared() || out.Resolved != 3 {
+			t.Fatalf("default line: outcome = %+v, want all three resolved", out)
+		}
 	}
 }
 
@@ -338,20 +367,5 @@ func TestReviewRequestWatcher_InlineCommentsCarrySeverityMarker(t *testing.T) {
 	body := s.posts[0].Comments[0].GetBody()
 	if !strings.HasPrefix(body, "anchored finding") || findingSeverityMarkerValue(body) != "low" {
 		t.Fatalf("inline comment body = %q, want the finding with a low severity marker", body)
-	}
-}
-
-func TestReviewConfigResolveOwnThreadsDefaultsOn(t *testing.T) {
-	var rc config.ReviewConfig
-	if !rc.ResolveOwnThreadsEnabled() {
-		t.Fatal("unset review.resolve_own_threads must be on")
-	}
-	off := false
-	rc.ResolveOwnThreads = &off
-	if rc.ResolveOwnThreadsEnabled() {
-		t.Fatal("explicit false must be off")
-	}
-	if !testClient(t, "http://unused.invalid").resolveOwnThreadsEnabled() {
-		t.Fatal("a client nobody configured must follow the config default (on)")
 	}
 }

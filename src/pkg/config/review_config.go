@@ -248,18 +248,6 @@ type ReviewConfig struct {
 	// false is never overwritten. Read via FixHumanPRsEnabled(), never
 	// dereferenced raw.
 	FixHumanPRs *bool `yaml:"fix_human_prs,omitempty" json:"fix_human_prs,omitempty"`
-	// ResolveOwnThreads lets the hive resolve its OWN inline review threads
-	// (the reviewer's line comments, hivecommons/hive#18531) when GitHub
-	// refuses an automerge lane's merge or merge-queue enqueue because
-	// conversations are unresolved: the threads it marked non-blocking
-	// (below the blocking line), and only when every unresolved thread on
-	// the PR is one of those. A person's thread, another bot's thread, a
-	// hive thread someone replied in, and a hive finding not marked
-	// non-blocking (outdated or not) are never resolved. Pointer so unset
-	// means on: these are the hive's own comments, and on a repository that
-	// requires conversation resolution leaving them open blocks the merge
-	// forever. Read via ResolveOwnThreadsEnabled().
-	ResolveOwnThreads *bool `yaml:"resolve_own_threads,omitempty" json:"resolve_own_threads,omitempty"`
 	// ContributorPRs gates owner-authorized maintenance actions on contributor
 	// PRs. Zero value is deliberately off: only an owner who opts in may let
 	// Hive ask GitHub to sync a fork PR branch with the base branch.
@@ -1569,12 +1557,6 @@ func (r ReviewConfig) EffectiveMaxParallelReviews() int {
 // mean no: pushing to someone else's branch is a power to grant deliberately.
 func (r ReviewConfig) FixHumanPRsEnabled() bool {
 	return r.FixHumanPRs != nil && *r.FixHumanPRs
-}
-
-// ResolveOwnThreadsEnabled reports review.resolve_own_threads; unset means
-// on.
-func (r ReviewConfig) ResolveOwnThreadsEnabled() bool {
-	return r.ResolveOwnThreads == nil || *r.ResolveOwnThreads
 }
 
 // reviewFixHumanPRsMigrationLogOnce keeps the upgrade notice to one line per

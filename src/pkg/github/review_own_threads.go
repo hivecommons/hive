@@ -14,7 +14,7 @@ import (
 	"github.com/hivecommons/hive/pkg/review"
 )
 
-// The hive's own review threads (review.resolve_own_threads).
+// The hive's own review threads.
 //
 // Since inline review comments (hivecommons/hive#18531) every reviewer
 // finding that points at a changed line is its own resolvable thread, opened
@@ -105,7 +105,7 @@ type OwnReviewThreadsOutcome struct {
 	Others int `json:"others"`
 	// Failed counts resolvable threads whose mutation failed.
 	Failed int `json:"failed"`
-	// Skipped names why nothing was attempted ("disabled", "paused",
+	// Skipped names why nothing was attempted ("paused",
 	// "not-every-thread-resolvable"); empty when the pass ran.
 	Skipped string `json:"skipped,omitempty"`
 }
@@ -220,7 +220,8 @@ func stripFindingSeverityMarkers(body string) string {
 // severityNonBlocking reports whether a finding of sev is below the
 // blocking line. With review.severity.block_at set it is
 // ReviewFindingBelowLine (P1: medium, low and info are below it; P2: low and
-// info; P3: nothing). With no block_at — the default, where
+// info; P3: nothing, which is how a hive opts out of the hive resolving
+// its own threads at all). With no block_at — the default, where
 // ReviewFindingBelowLine puts nothing below the line — info and low are
 // treated as below it, the reviewer's own "non-blocking" tier. Only the five
 // known severities qualify: ReviewFindingPriority files any other value
@@ -281,29 +282,6 @@ func freeTextNonBlocking(body string) bool {
 	return !freeTextBlockingRE.MatchString(freeTextNonBlockingRE.ReplaceAllString(lead, ""))
 }
 
-// SetResolveOwnThreads installs review.resolve_own_threads. Nil-receiver
-// safe and guarded like SetFixHumanPRs: config reload installs it while the
-// merge lanes read it.
-func (c *Client) SetResolveOwnThreads(enabled bool) {
-	if c == nil {
-		return
-	}
-	c.resolveOwnThreadsMu.Lock()
-	defer c.resolveOwnThreadsMu.Unlock()
-	c.resolveOwnThreadsOff = !enabled
-}
-
-// resolveOwnThreadsEnabled reports review.resolve_own_threads; a client
-// nobody configured has it on, the config default.
-func (c *Client) resolveOwnThreadsEnabled() bool {
-	if c == nil {
-		return false
-	}
-	c.resolveOwnThreadsMu.RLock()
-	defer c.resolveOwnThreadsMu.RUnlock()
-	return !c.resolveOwnThreadsOff
-}
-
 // reviewBlockAt is review.severity.block_at as the backlog routing has it.
 func (c *Client) reviewBlockAt() string {
 	routing, ok := c.reviewBacklogRoutingConfig()
@@ -324,10 +302,6 @@ func (c *Client) ResolveOwnReviewThreadsForMerge(ctx context.Context, repo strin
 	var out OwnReviewThreadsOutcome
 	if c == nil {
 		return out, ErrNoGitHubClient
-	}
-	if !c.resolveOwnThreadsEnabled() {
-		out.Skipped = "disabled"
-		return out, nil
 	}
 	if c.RepoIsPaused(repo) {
 		out.Skipped = "paused"

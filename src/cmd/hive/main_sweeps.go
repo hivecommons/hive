@@ -2177,8 +2177,7 @@ func reviewBacklogRouting(client *github.Client, cfg *config.Config, logger *slo
 // GitHub credentials runs with a nil client for the life of the process.
 // Also installs review.fix_human_prs (hivecommons/hive#9361), so the
 // review-thread reconciler follows PRs the hive did not open whenever the
-// fixer is already allowed to push to them, and review.resolve_own_threads
-// (the merge lanes resolving the hive's own non-blocking review threads).
+// fixer is already allowed to push to them.
 func installReviewBots(client *github.Client, cfg *config.Config, logger *slog.Logger) {
 	if client == nil || cfg == nil {
 		return
@@ -2189,7 +2188,6 @@ func installReviewBots(client *github.Client, cfg *config.Config, logger *slog.L
 	}
 	client.SetReviewBots(rb)
 	client.SetFixHumanPRs(cfg.Review.FixHumanPRsEnabled())
-	client.SetResolveOwnThreads(cfg.Review.ResolveOwnThreadsEnabled())
 	if logger != nil && rb.Enabled() {
 		logger.Info("review-thread reconciler enabled",
 			"review_bots", rb.Logins,

@@ -92,7 +92,6 @@ var reviewSettingsFields = []reviewSettingsField{
 	{key: "fixer_fallback_after_undeliverable", kind: rsInt},
 	{key: "all_authors", kind: rsBool},
 	{key: "fix_human_prs", kind: rsTriBool},
-	{key: "resolve_own_threads", kind: rsTriBool},
 	{key: "contributor_prs.base_sync", kind: rsBool},
 	{key: "acknowledge_no_findings", kind: rsBool},
 	{key: "human_decision_label", kind: rsString},
