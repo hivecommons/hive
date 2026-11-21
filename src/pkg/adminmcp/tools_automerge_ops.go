@@ -891,7 +891,7 @@ func autoMergeCheckPinOnlyGuarded(plan amPlan, current map[string]any) error {
 }
 
 // autoMergePinOnlyKindsHelp describes each kind in the operation's schema.
-const autoMergePinOnlyKindsHelp = "Which pin bumps qualify. action-sha: a uses: owner/repo@<40-hex> line. image-digest: a FROM or image: line pinned by @sha256 digest. version-pin: a literal version: or ARG *_VERSION= value. " + autoMergePinOnlySHARefHelp + ". Nothing is on unless listed."
+const autoMergePinOnlyKindsHelp = "Which pin bumps qualify. action-sha: a uses: owner/repo@<40-hex> line. image-digest: a FROM or image: line pinned by @sha256 digest. version-pin: a literal version: or ARG *_VERSION= value. " + autoMergePinOnlySHARefHelp + ". A change of major version (# v4 -> # v7, 1.2.3 -> 2.0.0) is never a pin. Nothing is on unless listed."
 
 // autoMergePinOnlySHARefHelp says what action-sha-ref admits, for the schema
 // and for the preview of a change that turns it on. It has no closing full

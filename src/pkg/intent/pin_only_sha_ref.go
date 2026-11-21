@@ -54,24 +54,32 @@ type pinSHARefCandidate struct {
 //
 // Both lines must match pinSHARefRE with a byte-identical key prefix
 // (indentation included). As for action-sha, an existing version comment may
-// change but may not appear or disappear. The commit itself must change:
-// a comment-only or letter-case-only edit is not a bump.
-func pinSHARefMove(old, next string, kinds map[string]bool) (pinSHAMove, bool) {
+// change within its major version but may not appear or disappear. The
+// commit itself must change: a comment-only or letter-case-only edit is not
+// a bump.
+//
+// A companion whose comment changes the major version is refused with that
+// reason as the second result, before any uses: pin is consulted, so a
+// matching uses: move never vouches for it.
+func pinSHARefMove(old, next string, kinds map[string]bool) (pinSHAMove, string, bool) {
 	if !kinds[pinKindActionSHARef] || old == next || unsafePinRE.MatchString(old) || unsafePinRE.MatchString(next) {
-		return pinSHAMove{}, false
+		return pinSHAMove{}, "", false
 	}
 	a, b := pinSHARefRE.FindStringSubmatch(old), pinSHARefRE.FindStringSubmatch(next)
 	if a == nil || b == nil || a[1] != b[1] {
-		return pinSHAMove{}, false
+		return pinSHAMove{}, "", false
 	}
 	if strings.Contains(a[3], "#") != strings.Contains(b[3], "#") {
-		return pinSHAMove{}, false
+		return pinSHAMove{}, "", false
 	}
 	move := pinSHAMove{old: strings.ToLower(a[2]), next: strings.ToLower(b[2])}
 	if move.old == move.next {
-		return pinSHAMove{}, false
+		return pinSHAMove{}, "", false
 	}
-	return move, true
+	if why := pinCommentMajorChange(a[3], b[3]); why != "" {
+		return pinSHAMove{}, why, false
+	}
+	return move, "", true
 }
 
 // pinSHARefsUnmatched returns "" when every candidate carries the move of an

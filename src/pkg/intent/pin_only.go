@@ -1,6 +1,7 @@
 package intent
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"regexp"
@@ -157,11 +158,19 @@ func classifyPinPatch(file ChangedFile, kinds map[string]bool) (*pinPatchResult,
 			return fmt.Errorf("unpaired addition/removal")
 		}
 		for i := range removed {
-			pin, oldSHA, ok := matchPinReplacement(removed[i], added[i], kinds)
+			pin, oldSHA, ok, why := matchPinReplacement(removed[i], added[i], kinds)
 			if !ok {
+				// A pair a line kind refused outright (a major version
+				// change) is never retried as a companion ref.
+				if why != "" {
+					return errors.New(why)
+				}
 				// Only a pair every line kind declined may be a companion
 				// ref, and it stays a candidate until a uses: pin vouches.
-				ref, isRef := pinSHARefMove(removed[i], added[i], kinds)
+				ref, refWhy, isRef := pinSHARefMove(removed[i], added[i], kinds)
+				if refWhy != "" {
+					return errors.New(refWhy)
+				}
 				if !isRef {
 					return fmt.Errorf("non-pin or unsafe replacement")
 				}
@@ -245,7 +254,7 @@ func classifyPinPatch(file ChangedFile, kinds map[string]bool) (*pinPatchResult,
 }
 
 func pinReplacement(old, next string, kinds map[string]bool) bool {
-	_, _, ok := matchPinReplacement(old, next, kinds)
+	_, _, ok, _ := matchPinReplacement(old, next, kinds)
 	return ok
 }
 
@@ -254,9 +263,16 @@ func pinReplacement(old, next string, kinds map[string]bool) bool {
 // lowercased commit it replaces. The old commit is returned beside the pin,
 // not in it: ActionPin is what callers resolve upstream, and it stays the new
 // commit only.
-func matchPinReplacement(old, next string, kinds map[string]bool) (*ActionPin, string, bool) {
+//
+// A pair that has the shape of an action-sha or version-pin replacement but
+// changes the major version is refused with the reason as the fourth result:
+// moving to another major version is an upgrade (or downgrade) that can
+// change behaviour, not a pin bump, however small the diff. The caller must
+// then refuse the pair outright and not try it as an action-sha-ref
+// companion. The reason is "" for every other refusal.
+func matchPinReplacement(old, next string, kinds map[string]bool) (*ActionPin, string, bool, string) {
 	if old == next || unsafePinRE.MatchString(old) || unsafePinRE.MatchString(next) {
-		return nil, "", false
+		return nil, "", false, ""
 	}
 	for _, kind := range pinLineKinds {
 		if !kinds[kind] {
@@ -279,7 +295,10 @@ func matchPinReplacement(old, next string, kinds map[string]bool) (*ActionPin, s
 			if strings.Contains(a[3], "#") != strings.Contains(b[3], "#") {
 				continue
 			}
-			return actionPinFrom(b), strings.ToLower(a[2]), true
+			if why := pinCommentMajorChange(a[3], b[3]); why != "" {
+				return nil, "", false, why
+			}
+			return actionPinFrom(b), strings.ToLower(a[2]), true, ""
 		}
 		if kind == pinKindVersionPin {
 			// Do not permit quote changes to alter YAML interpretation.
@@ -296,12 +315,62 @@ func matchPinReplacement(old, next string, kinds map[string]bool) (*ActionPin, s
 			if q == 0 && (strings.HasSuffix(a[2], "'") || strings.HasSuffix(a[2], "\"") || strings.HasSuffix(b[2], "'") || strings.HasSuffix(b[2], "\"")) {
 				continue
 			}
+			if why := pinMajorChange(strings.Trim(a[2], `"'`), strings.Trim(b[2], `"'`)); why != "" {
+				return nil, "", false, why
+			}
 		}
 		if a[3] == b[3] {
-			return nil, "", true
+			return nil, "", true, ""
 		}
 	}
-	return nil, "", false
+	return nil, "", false, ""
+}
+
+// pinVersionComment returns the version in an action pin's trailing
+// `# vN[.N[.N]]` group ("v4", "v4.1.2"), or "" when the line has none.
+func pinVersionComment(suffix string) string {
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(suffix), "#"))
+}
+
+// pinCommentMajorChange is pinMajorChange for the trailing version comments
+// of two action pin lines. A line without a comment carries no version, so
+// there is nothing to compare; the callers already refuse a comment that
+// appears or disappears.
+func pinCommentMajorChange(oldSuffix, nextSuffix string) string {
+	a, b := pinVersionComment(oldSuffix), pinVersionComment(nextSuffix)
+	if a == "" && b == "" {
+		return ""
+	}
+	return pinMajorChange(a, b)
+}
+
+// pinMajorChange returns why old -> next is not a pin when the two versions
+// ("v4", "v4.2.0", "1.2.3") have different major versions, the first number
+// after an optional leading "v", compared without leading zeros. It returns ""
+// when they share one. A version it cannot read is refused too (fail closed),
+// although the line grammars only ever hand it digits.
+func pinMajorChange(old, next string) string {
+	a, okA := pinVersionMajor(old)
+	b, okB := pinVersionMajor(next)
+	if !okA || !okB {
+		return "unreadable version " + old + " -> " + next + " is not a pin"
+	}
+	if a != b {
+		return "major version change " + old + " -> " + next + " is not a pin"
+	}
+	return ""
+}
+
+// pinVersionMajor returns the major version of v without leading zeros.
+func pinVersionMajor(v string) (string, bool) {
+	major, _, _ := strings.Cut(strings.TrimPrefix(v, "v"), ".")
+	if major == "" || strings.Trim(major, "0123456789") != "" {
+		return "", false
+	}
+	if trimmed := strings.TrimLeft(major, "0"); trimmed != "" {
+		return trimmed, true
+	}
+	return "0", true
 }
 
 // actionPinFrom builds the pin from an actionPinRE match of the new line.
@@ -313,6 +382,6 @@ func actionPinFrom(m []string) *ActionPin {
 	return &ActionPin{
 		Repo:    parts[0] + "/" + parts[1],
 		SHA:     strings.ToLower(m[2]),
-		Version: strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(m[3]), "#")),
+		Version: pinVersionComment(m[3]),
 	}
 }
