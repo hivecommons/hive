@@ -54,3 +54,22 @@ func TestObserveModeWouldRestartReportedOncePerWindow(t *testing.T) {
 		t.Fatalf("a death after recovery: %d WARNs, want 3", got)
 	}
 }
+
+// The relog window is half-open: a repeat strictly inside it is suppressed,
+// and one exactly observeDecisionRelogInterval later is reported again.
+func TestShouldReportObserveDecisionWindowBoundary(t *testing.T) {
+	rec := &agentRecord{}
+	t0 := time.Unix(1_700_000_000, 0)
+	if !shouldReportObserveDecisionLocked(rec, auditActionRestart, ClassStuckOverlay, t0) {
+		t.Fatal("first decision must be reported")
+	}
+	if shouldReportObserveDecisionLocked(rec, auditActionRestart, ClassStuckOverlay, t0.Add(observeDecisionRelogInterval-time.Nanosecond)) {
+		t.Fatal("a repeat just inside the window must not be reported")
+	}
+	if !shouldReportObserveDecisionLocked(rec, auditActionRestart, ClassStuckOverlay, t0.Add(observeDecisionRelogInterval)) {
+		t.Fatal("a repeat exactly one interval later must be reported")
+	}
+	if !shouldReportObserveDecisionLocked(rec, auditActionPause, ClassStuckOverlay, t0.Add(observeDecisionRelogInterval)) {
+		t.Fatal("a different action must be reported at once")
+	}
+}
