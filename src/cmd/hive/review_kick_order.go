@@ -105,17 +105,33 @@ func orderReviewFixKicksFirst(messages []scheduler.KickMessage, reviewKickByMess
 // while an agent's pane is not ready, so repeats are logged at debug (and
 // not re-audited) until the cause changes or undeliveredKickRewarnAfter
 // passes.
+//
+// The cause is usually the agent's, not the PR's ("agent reviewer-2 CLI did
+// not reach input prompt"): one agent whose pane is not ready fails every
+// review kick queued for it, one PR (and head) after another. Warning once
+// per PR turned a single not-ready agent into ten WARN lines in ten minutes,
+// which the runtime self-report counted as a repeated unclassified error
+// (hivecommons/hive#19373) on top of the kick-failure class that already
+// covers the agent. So the WARN fires once per agent and cause per
+// undeliveredKickRewarnAfter; each further PR the same cause starves is
+// still named, at info, and still audited.
 func logUndeliveredReviewKick(logger *slog.Logger, auditor reviewFixAuditor, k review.DispatchKick, err error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if !undeliveredKicks.shouldReport(k, err, time.Now()) {
+	now := time.Now()
+	if !undeliveredKicks.shouldReport(k, err, now) {
 		logger.Debug("review swarm kick still not delivered",
 			"kind", k.Kind, "agent", k.Agent, "pr", k.PRRef, "head", k.HeadSHA, "error", err)
 		return
 	}
-	logger.Warn("review swarm kick not delivered; re-planned next cycle",
-		"kind", k.Kind, "agent", k.Agent, "pr", k.PRRef, "head", k.HeadSHA, "error", err)
+	if undeliveredKickAgents.shouldReportKey(k.Agent, err, now) {
+		logger.Warn("review swarm kick not delivered; re-planned next cycle",
+			"kind", k.Kind, "agent", k.Agent, "pr", k.PRRef, "head", k.HeadSHA, "error", err)
+	} else {
+		logger.Info("review swarm kick not delivered for another PR (same agent and cause); re-planned next cycle",
+			"kind", k.Kind, "agent", k.Agent, "pr", k.PRRef, "head", k.HeadSHA, "error", err)
+	}
 	if auditor == nil {
 		return
 	}
@@ -138,10 +154,20 @@ type undeliveredKickTracker struct {
 	seen map[string]undeliveredKickReport
 }
 
-var undeliveredKicks = &undeliveredKickTracker{seen: map[string]undeliveredKickReport{}}
+var (
+	// undeliveredKicks dedupes per kick (kind, agent, PR, head);
+	// undeliveredKickAgents dedupes the WARN per agent across PRs.
+	undeliveredKicks      = &undeliveredKickTracker{seen: map[string]undeliveredKickReport{}}
+	undeliveredKickAgents = &undeliveredKickTracker{seen: map[string]undeliveredKickReport{}}
+)
 
 func (t *undeliveredKickTracker) shouldReport(k review.DispatchKick, err error, now time.Time) bool {
-	key := k.Kind + "\x00" + k.Agent + "\x00" + k.PRRef + "\x00" + k.HeadSHA
+	return t.shouldReportKey(k.Kind+"\x00"+k.Agent+"\x00"+k.PRRef+"\x00"+k.HeadSHA, err, now)
+}
+
+// shouldReportKey reports whether key is new, its cause changed, or its last
+// report is older than undeliveredKickRewarnAfter, and records this report.
+func (t *undeliveredKickTracker) shouldReportKey(key string, err error, now time.Time) bool {
 	cause := ""
 	if err != nil {
 		cause = err.Error()
