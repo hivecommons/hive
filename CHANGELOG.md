@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-21 (v6.54.0)
+
+### Added
+
+- **Opt-in timer for the hive to take over a person's idle, sent-back PR (`governor.labels.stage.adoption.person_after`, off by default).** The hive never takes over a person's PR (`author/human`, or a hive owner's agent-written PR) on its own, so on a busy hive the 071 / 072 columns filled with PRs waiting on nobody until someone pressed Adopt now. An owner can now opt repositories in: `person_repos` for owners' agent-written PRs and `person_human_repos` for hand-written `author/human` PRs, two separate switches, ACMM L6 only. In a listed repository a person's PR sent back for a merge conflict, a failed check or a change request from the review swarm or a review bot (never a person's change request, never an 085 decision) that sits idle for `person_after` on the `abandon_after` idle clock gets one notice; after `person_grace` (default `24h`, `0` or empty is the default) with no push, comment, review, `hold`, `do-not-merge`, `needs-human` or `hive/keep-open`, and a fresh read of comments and reviews, the hive takes it over through the existing Adopt now path: a hive copy that keeps the author's commits, with the original left open until the copy merges. A fork PR is never taken over, since a fork's code never goes into a hive copy. The adoption is recorded with reason `person-timer` and `by=<hive>`, not as an operator's, and "Let hive decide" still never adopts a person's PR. Settings → Labels has the four controls next to `abandon_after`, the admin MCP `governor.stage_labels` writes them, and a 071 / 072 row the timer applies to says when the hive will take it over. ([#19395](https://github.com/hivecommons/hive/issues/19395))
+
 ## 2026-11-20 (v6.53.5)
 
 ### Fixed
