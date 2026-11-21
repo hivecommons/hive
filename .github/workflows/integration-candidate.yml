@@ -600,6 +600,9 @@ jobs:
     - name: Contributor identity relocation (#4408)
       working-directory: .
       run: bash src/deploy/test_contribute_move.sh
+    - name: Hub manifest check (#19344,
+      working-directory: .
+      run: bash src/deploy/test_check_hub_manifest.sh
     - name: In-container attach hints name the real runtime (#5145)
       working-directory: .
       run: bash src/deploy/test_attach_hint_runtime.sh
