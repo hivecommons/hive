@@ -373,6 +373,10 @@ func TestDecisionCommentFollowsTrustedAuthorMergesOnOneHead(t *testing.T) {
 		clock.at = clock.at.Add(time.Minute)
 		pr := stagePR(41, append([]string{"role/trusted", "author/clanker"}, labels...)...)
 		pr.User = &gh.User{Login: gh.Ptr("Danathar")}
+		// A clanker PR (attribution trailer): the author/clanker label alone
+		// does not make it one, and a person's own requires_human routes to
+		// 071 instead (HumanAuthorOwesAnswer).
+		pr.Body = gh.Ptr("Fixes the widget.\n\n-- hive: backend=pi model=gpt-6\n")
 		head := ""
 		if merges {
 			head = pr.GetHead().GetSHA()
