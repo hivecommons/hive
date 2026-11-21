@@ -70,6 +70,12 @@ type StageLabelPolicy struct {
 	// (stagelabels.Record.AbandonStep; automerge_stage_abandon.go). 0 is
 	// off, the default: the pass does exactly what it did before.
 	AbandonAfter time.Duration
+	// AbandonAfterTrusted is governor.labels.stage.abandon_after_trusted:
+	// the same clock for a trusted contributor's PR (role/trusted with no
+	// maintainer signal; Record.AbandonTrustedTimer). 0 never flags one,
+	// the default; config.StageLabelsConfig.EffectiveAbandonAfterTrusted
+	// keeps it 0 while AbandonAfter is off and never below it.
+	AbandonAfterTrusted time.Duration
 	// AbandonClose reports whether the hive may close an abandoned
 	// contributor PR in "owner/repo" (governor.labels.stage.
 	// abandon_close_repos, ACMM L6 only: config.Config.AbandonCloseAllowed).
@@ -1594,15 +1600,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// The stale contributor PR idle clock (automerge_stage_abandon.go)
 			// runs for contributor PRs only, and keeps its own activity
 			// anchor only while it runs (Activity.TrackIdle).
-			if policy.AbandonAfter > 0 && c.abandonTrustedAuthor(obs, role, policy) {
-				store.MarkAbandonTrustedSeen(key)
-			}
+			c.noteAbandonTrust(store, key, obs, role, policy)
 			trustRec, _ := store.Get(key)
-			abandonEligible := c.abandonContributor(obs, role, policy, trustRec)
+			abandonEligible := c.abandonContributor(obs, policy, trustRec)
 			// The person-PR takeover timer (automerge_stage_person_takeover.go)
 			// reads the same anchor for a person's PR in a listed repository.
 			_, personTimed := personTakeoverApplies(obs, policy)
-			act.TrackIdle = (policy.AbandonAfter > 0 && abandonEligible) || personTimed
+			act.TrackIdle = abandonThreshold(policy, trustRec, abandonEligible) > 0 || personTimed
 			store.NoteActivity(key, act)
 			// A flag on the record only; the stage written below is unchanged.
 			c.reconcileAbandoned(ctx, store, key, obs, policy, abandonEligible, now)
@@ -1728,7 +1732,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			}
 		}
-		if abandonRec, _ := store.Get(key); err == nil && !out.Suppressed && c.abandonContributor(obs, role, policy, abandonRec) {
+		if abandonRec, _ := store.Get(key); err == nil && !out.Suppressed && c.abandonContributor(obs, policy, abandonRec) {
 			// abandon_close_repos: warn once, then close after the grace.
 			n, closed, aerr := c.closeAbandonedIfDue(ctx, store, key, obs, policy, out.Stage, now)
 			result.Comments += n

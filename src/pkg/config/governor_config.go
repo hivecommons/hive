@@ -467,6 +467,16 @@ type StageLabelsConfig struct {
 	// The stage is unchanged. Unset or "0" is off (the default): nothing
 	// changes.
 	AbandonAfter string `yaml:"abandon_after,omitempty"`
+	// AbandonAfterTrusted is the same idle clock for a trusted
+	// contributor: an author the hive trusts only through the contributor
+	// tier (role/trusted from the registry or a claim), with no maintainer
+	// signal (dashboard.authorized_users, an OWNER / MEMBER / COLLABORATOR
+	// association, the hive's own identities, the App, a trusted bot).
+	// Unset or "0" never flags such a PR (the default, as before). It
+	// applies only while abandon_after is on, and is never shorter than
+	// abandon_after: a lower value reads as abandon_after. Maintainers'
+	// PRs are never flagged either way.
+	AbandonAfterTrusted string `yaml:"abandon_after_trusted,omitempty"`
 	// AbandonCloseRepos opts repositories (owner/repo or bare name) into
 	// closing an abandoned contributor PR: a warning notice first, then a
 	// close with a "reopen if that's wrong" comment once
@@ -863,6 +873,19 @@ func (c ContributorNudgeConfig) EffectiveRenudgeInterval() time.Duration {
 // non-positive returns 0 (the idle clock is off).
 func (s StageLabelsConfig) EffectiveAbandonAfter() time.Duration {
 	return parseDurationOr(s.AbandonAfter, 0)
+}
+
+// EffectiveAbandonAfterTrusted parses AbandonAfterTrusted: 0 (a trusted
+// contributor's PR is never flagged) when it is unset, "0", invalid or
+// non-positive or when abandon_after is off, and never less than
+// abandon_after.
+func (s StageLabelsConfig) EffectiveAbandonAfterTrusted() time.Duration {
+	after := s.EffectiveAbandonAfter()
+	trusted := parseDurationOr(s.AbandonAfterTrusted, 0)
+	if after <= 0 || trusted <= 0 {
+		return 0
+	}
+	return max(trusted, after)
 }
 
 // AbandonCloseGrace is how long the hive waits after posting the abandoned

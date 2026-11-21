@@ -201,7 +201,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if hasRec && it.Kind == "pr" && rec.Abandoned() {
 			// The idle clock's flag: same stage, same recorded reason; the
 			// row says how long it has been stuck and on what.
-			it.Abandoned = rec.AbandonedReason(now)
+			it.Abandoned = abandonedRowReason(rec, now)
 			it.Caption = stageTrackerAbandonedCaption(it.Abandoned)
 		}
 		stageTrackerApplyTracking(it, stage)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -50,5 +51,50 @@ func TestStageTrackerAbandonedRow(t *testing.T) {
 	quiet := trackerItem(t, resp, "pr", 42)
 	if quiet.Abandoned != "" || strings.Contains(quiet.Caption, "Stale") {
 		t.Fatalf("unflagged row changed: abandoned=%q caption=%q", quiet.Abandoned, quiet.Caption)
+	}
+}
+
+// A trusted contributor's PR flagged on abandon_after_trusted says so on
+// its row, its caption and its inbox reason.
+func TestStageTrackerAbandonedRowNamesTheTrustedTimer(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	s := newTestServer()
+	clock := now.Add(-15*24*time.Hour - time.Hour)
+	store := stagelabels.NewStore("", func() time.Time { return clock })
+	s.stageStore = store
+	s.deps = &Dependencies{Config: &config.Config{}}
+	key := stagelabels.Key("example/testrepo", 43)
+	store.ObserveHead(key, "feed", stagelabels.NeedsAuthor, "check-failing:unit")
+	store.NoteActivity(key, stagelabels.Activity{Head: "feed", Comments: 1, Reviews: 0})
+	store.MarkAbandonTrustedSeen(key)
+	clock = now
+	store.MarkAbandoned(key, now)
+
+	status := minimalPayload()
+	status.HiveID = "hive"
+	pr := FrontendPR{PullRequest: github.PullRequest{Number: 43, Title: "trusted change", Author: "trusted-contributor", HeadSHA: "feed", Labels: []string{"stage/071-needs-author", "author/human", "role/trusted"}}}
+	status.Repos = []FrontendRepo{{Name: "testrepo", Full: "example/testrepo", OpenPrs: []any{pr}}}
+	s.UpdateStatus(status)
+
+	const want = "abandoned 15d: check-failing:unit (trusted contributor timer)"
+	row := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 43)
+	if row.Abandoned != want || !strings.Contains(row.Caption, want) {
+		t.Fatalf("abandoned = %q caption = %q", row.Abandoned, row.Caption)
+	}
+	rec, _ := store.Get(key)
+	if got := abandonedOwnershipText(abandonedRowReason(rec, now)); got != "Stale: close or take over — "+want {
+		t.Fatalf("inbox reason = %q", got)
+	}
+	// The delegate's abandoned-stale rule reads the same reason.
+	in := delegatedecision.Input{Repo: "example/testrepo", Number: 43, Kind: delegatedecision.KindPR}
+	s.gatherDelegatedRecordedPark("example/testrepo", 43, "feed", &in)
+	if !in.Abandoned || !strings.HasSuffix(in.AbandonedReason, ": check-failing:unit (trusted contributor timer)") {
+		t.Fatalf("delegate abandoned=%v reason=%q", in.Abandoned, in.AbandonedReason)
+	}
+	// Seen as a maintainer later: the row no longer names the trusted timer.
+	store.MarkAbandonMaintainerSeen(key)
+	rec, _ = store.Get(key)
+	if got := abandonedRowReason(rec, now); strings.Contains(got, "trusted") {
+		t.Fatalf("maintainer row = %q", got)
 	}
 }

@@ -1082,7 +1082,7 @@ func (s *Server) gatherDelegatedRecordedPark(repoFull string, number int, head s
 		// feeds the recommend-only abandoned-stale rule.
 		if !in.HiveAuthored && rec.Abandoned() {
 			in.Abandoned = true
-			in.AbandonedReason = rec.AbandonedReason(time.Now())
+			in.AbandonedReason = abandonedRowReason(rec, time.Now())
 		}
 	}
 	for _, r := range in.Reasons {

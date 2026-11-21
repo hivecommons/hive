@@ -523,11 +523,23 @@ type Record struct {
 	// clock runs for the PR (Activity.TrackIdle); seeded from LastActivityAt
 	// the first time.
 	AbandonActivityAt time.Time `json:"abandon_activity_at,omitzero"`
+	// AbandonMaintainerSeen is set once the stage pass saw the PR as the
+	// hive's own or its author as a maintainer (an owner, a trusted author
+	// or merger, a trusted bot, an OWNER / MEMBER / COLLABORATOR
+	// association, or write / maintain / admin on the repository when the
+	// trusted contributor timer reads it) while an idle clock was on. Sticky for the
+	// life of the record: a later pass that misses the signal never flags
+	// or closes the PR.
+	AbandonMaintainerSeen bool `json:"abandon_maintainer_seen,omitempty"`
 	// AbandonTrustedSeen is set once the stage pass saw the PR's author as
-	// trusted (role/trusted, an owner, a trusted author, an OWNER / MEMBER
-	// / COLLABORATOR association) while the idle clock was on. Sticky for
-	// the life of the record: a later pass whose role fell back to
-	// untrusted never flags or closes the PR.
+	// trusted: role/trusted or a trusted registry tier with no maintainer
+	// signal, a trusted contributor. Sticky: the PR stays on
+	// governor.labels.stage.abandon_after_trusted (AbandonTrustedTimer)
+	// when a later pass's role falls back. Records from before
+	// abandon_after_trusted have it set for maintainers too; the pass marks
+	// AbandonMaintainerSeen from the maintainer signals before it picks a
+	// threshold, and the trusted timer reads the repository permission
+	// before it flags.
 	AbandonTrustedSeen bool `json:"abandon_trusted_seen,omitempty"`
 	// AbandonCheckedAt is when the one confirming read (comments and
 	// reviews since the idle clock started) last ran for this PR, so a
