@@ -144,6 +144,12 @@ const (
 	kickFailureStreak = 3
 	// degradedMinDuration is how long model discovery must stay degraded.
 	degradedMinDuration = time.Hour
+	// forgeUnreachableSustained is how long a forge_unreachable condition must
+	// stay open before it is reportable (hivecommons/hive#19403). A single
+	// launch-time mint that timed out is an egress blip, cleared by the next
+	// successful mint — the token refresh tick runs every 40m by default — so
+	// only an outage that outlives a refresh is filed upstream.
+	forgeUnreachableSustained = time.Hour
 	// hub5xxStreak is how many consecutive 5xx answers from the hub (the
 	// condition is cleared on the next accepted request) make it reportable,
 	// so a single blip during a hub rollout is not filed upstream.
@@ -208,7 +214,7 @@ var Classes = map[string]ClassSpec{
 	ClassDataDiskPressure:            {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"disk full", "disk pressure", "no space left"}},
 	ClassGitHubAppTokenMintFailed:    {Component: "github-client", Severity: "high", MinCount: 1, Keywords: []string{"token mint failed", "installation token"}},
 	ClassGitHubAppNotInstalled:       {Component: "github-client", Severity: "medium", MinCount: 1, Keywords: []string{"github app installation id is unset", "github app has no installation"}},
-	ClassForgeUnreachable:            {Component: "network", Severity: "medium", MinCount: 1, Keywords: []string{"github host unreachable", "forge unreachable"}},
+	ClassForgeUnreachable:            {Component: "network", Severity: "medium", MinCount: 1, MinDuration: forgeUnreachableSustained, Keywords: []string{"github host unreachable", "forge unreachable"}},
 	ClassUnexpectedHub5xx:            {Component: "dashboard", Severity: "medium", MinCount: hub5xxStreak, Keywords: []string{"hub 5", "hub returned 5"}},
 	ClassUnclassifiedRepeated:        {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear},
 	ClassAgentStall:                  {Component: "agent-runtime", Severity: "medium", MinCount: AgentStallNudgeStreak, Keywords: []string{"agent stall", "stalled after kick", "continue nudge"}},

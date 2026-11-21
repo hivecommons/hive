@@ -11,6 +11,24 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-21 (v5.345.5)
+
+### Fixed
+
+- One agent stuck before its input prompt no longer files an `agent_pane_timeout` self-report on its own: every queued kick ran its own 120 s prompt wait and each one dumped the pane at WARN when they timed out together (292 in 10 minutes from a single `scanner`). The WARN pane dump now fires at most once per agent every 10 minutes; later timeouts log one INFO line, and the next dump reports how many were skipped in `suppressed_since_last_dump`. The stall itself is still self-reported through the kick-undeliverable path ([#19376](https://github.com/hivecommons/hive/issues/19376)).
+
+## 2026-11-21 (v5.345.4)
+
+### Fixed
+
+- The github-proxy no longer logs `proxy: CONNECT dial failed` at WARN when the CONNECT target hostname does not resolve (for example a placeholder host from an example config); it now logs at Debug, so a misconfigured host no longer triggers the fleet repeated-error self-report. Other CONNECT dial failures still warn.
+
+## 2026-11-20 (v5.345.3)
+
+### Fixed
+
+- **A single GitHub dial timeout during a token mint is no longer filed as a fleet self-report.** `forge_unreachable` used to qualify on its first observation, so one launch-time `context deadline exceeded` reached the fleet tracker within minutes, before the next token refresh (40m by default) could clear it. It now has to stay open for 1h. Token refreshes that still cannot reach the forge re-observe the condition, so a real egress outage is still reported and does not age out of the 24h evidence window ([#19403](https://github.com/hivecommons/hive/issues/19403)).
+
 ## 2026-11-20 (v5.345.2)
 
 ### Fixed
