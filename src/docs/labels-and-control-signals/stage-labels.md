@@ -1574,12 +1574,44 @@ one note there and, before this, nothing else ever happened.
 
 `governor.labels.stage.abandon_after` (a Go duration; unset or `0` is off,
 the default) turns on an idle clock for those two parks, on contributor PRs
-only. An owner's PR (`dashboard.authorized_users`), a trusted author's PR
-(`role/trusted`, the trusted-author or merger authorizers, or an `OWNER` /
-`MEMBER` / `COLLABORATOR` author association) and the hive's own PRs are
-never flagged or closed. Once a PR's author has been seen as trusted, the
-record remembers it, so a later pass whose role falls back to untrusted
-cannot flag it.
+only. A maintainer's PR and the hive's own PRs are never flagged or closed.
+A maintainer is one of this hive's owners (`dashboard.authorized_users`;
+the trusted-author and merger authorizers admit only people on that list),
+an author with an `OWNER` / `MEMBER` / `COLLABORATOR` association, or a
+trusted bot (`auto_merge.trusted_bot_authors`). Once a PR's author has been
+seen as a maintainer, the record remembers it, so a later pass that misses
+the signal cannot flag it.
+
+A **trusted contributor** is an author the hive trusts only through the
+contributor tier (`role/trusted` on the PR, or a registry tier listed in
+`auto_merge.contributor_lane.require_tiers`), with none of the maintainer
+signals above. Their PRs get their own, longer
+threshold, `governor.labels.stage.abandon_after_trusted` (a Go duration;
+unset or `0`, the default, never flags them, as before). It works only
+while `abandon_after` is set and is never shorter than it: Settings →
+Labels and the admin MCP refuse a shorter value, and a shorter one written
+in the YAML reads as `abandon_after`. Past it, a trusted contributor's PR
+takes the same path as any contributor's (flag, then in a listed repository
+notice, grace and close), and its row says "(trusted contributor timer)".
+Before it flags, warns or closes such a PR, the hive reads the author's
+permission on the repository (cached for ten minutes). An author whose
+`permission` or `role_name` is `write`, `maintain` or `admin` can push to
+the repository, so the PR is marked as a maintainer's and never flagged; an
+author with `read`, `triage` or no access stays on the timer. This catches
+a PR rebuilt from the forge-state cache, which carries no author
+association. If the read fails, nothing is flagged, warned or closed that
+pass, and the next pass reads again. The read is only made once the
+trusted threshold has passed. (Adoption's own maintainer check is
+unchanged: it counts `admin` and `maintain` only.)
+The record remembers a trusted contributor too, so a pass whose role falls
+back to untrusted does not move the PR to the shorter `abandon_after`. An
+author later seen as a maintainer leaves the clock for good: the flag and
+any countdown are cleared. Records written before `abandon_after_trusted`
+existed carry one "seen as trusted" mark for both kinds. On the next pass
+with a clock on, the hive checks the maintainer signals before it picks a
+threshold, so a maintainer's record is re-marked first and never flagged; a
+maintainer the signals miss is caught by the permission read above. The
+hive's own PRs get the same lasting mark.
 **Idle since** is the later of two times:
 
 1. **The last outside activity.** That is a head push the hive did not
@@ -1602,7 +1634,8 @@ back, or its blocker changed — the run starts at that last change.
 
 The hive's own comments and its stage-label writes never move the clock.
 
-When a PR has been idle for `abandon_after`, its stage record gets an
+When a PR has been idle for `abandon_after` (`abandon_after_trusted` for a
+trusted contributor's), its stage record gets an
 **abandoned flag**. Nothing else about the PR changes: the stage stays 071 or
 085 (no new stage, no 071 → 085 move), the stage label and the recorded
 reason stay as they were, and the `adoption-stalled:` prefix keeps meaning

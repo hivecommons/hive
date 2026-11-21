@@ -12,7 +12,8 @@ import (
 
 // governor.stage_labels: the stale contributor PR settings under
 // governor.labels.stage that Settings → Labels saves through PUT
-// /api/config/governor/labels — abandon_after (the idle clock) and
+// /api/config/governor/labels — abandon_after (the idle clock),
+// abandon_after_trusted (its longer twin for trusted contributors) and
 // abandon_close_repos (the repositories that close abandoned PRs at ACMM
 // L6) — and the person-PR takeover timer under
 // governor.labels.stage.adoption (hivecommons/hive#19395): person_after,
@@ -29,13 +30,14 @@ type stageLabelsOp struct{}
 // stageLabelsState is the stage settings as the preview read them; the
 // exported fields are what the confirm fingerprints.
 type stageLabelsState struct {
-	AbandonAfter      string   `json:"abandon_after"`
-	AbandonCloseRepos []string `json:"abandon_close_repos"`
-	PersonAfter       string   `json:"person_after"`
-	PersonGrace       string   `json:"person_grace"`
-	PersonRepos       []string `json:"person_repos"`
-	PersonHumanRepos  []string `json:"person_human_repos"`
-	projectRepos      []string
+	AbandonAfter        string   `json:"abandon_after"`
+	AbandonAfterTrusted string   `json:"abandon_after_trusted"`
+	AbandonCloseRepos   []string `json:"abandon_close_repos"`
+	PersonAfter         string   `json:"person_after"`
+	PersonGrace         string   `json:"person_grace"`
+	PersonRepos         []string `json:"person_repos"`
+	PersonHumanRepos    []string `json:"person_human_repos"`
+	projectRepos        []string
 }
 
 func readStageLabelsState(ctx context.Context, provider Provider) (stageLabelsState, error) {
@@ -63,7 +65,7 @@ func readStageLabelsState(ctx context.Context, provider Provider) (stageLabelsSt
 	for _, f := range []struct {
 		key string
 		dst *string
-	}{{"stageAdoptionPersonAfter", &st.PersonAfter}, {"stageAdoptionPersonGrace", &st.PersonGrace}} {
+	}{{"stageAbandonAfterTrusted", &st.AbandonAfterTrusted}, {"stageAdoptionPersonAfter", &st.PersonAfter}, {"stageAdoptionPersonGrace", &st.PersonGrace}} {
 		raw, present := m[f.key]
 		if !present {
 			return st, missingSetting(what, f.key)
@@ -88,6 +90,7 @@ func readStageLabelsState(ctx context.Context, provider Provider) (stageLabelsSt
 
 type stageLabelsRequest struct {
 	abandonAfter     *string
+	trustedAfter     *string
 	closeRepos       *listChange
 	personAfter      *string
 	personGrace      *string
@@ -98,7 +101,7 @@ type stageLabelsRequest struct {
 func parseStageLabelsArgs(args map[string]any) (stageLabelsRequest, error) {
 	const where = WriteOpGovernorStageLabels
 	var req stageLabelsRequest
-	if err := rejectUnknownKeys(args, where, "abandon_after", "abandon_close_repos", "person_after", "person_grace", "person_repos", "person_human_repos"); err != nil {
+	if err := rejectUnknownKeys(args, where, "abandon_after", "abandon_after_trusted", "abandon_close_repos", "person_after", "person_grace", "person_repos", "person_human_repos"); err != nil {
 		return req, err
 	}
 	if raw, present := args["abandon_after"]; present && raw != nil {
@@ -120,7 +123,7 @@ func parseStageLabelsArgs(args map[string]any) (stageLabelsRequest, error) {
 	for _, f := range []struct {
 		key, zero string
 		dst       **string
-	}{{"person_after", "for off", &req.personAfter}, {"person_grace", "for the 24h default", &req.personGrace}} {
+	}{{"abandon_after_trusted", "to never flag a trusted contributor's PR", &req.trustedAfter}, {"person_after", "for off", &req.personAfter}, {"person_grace", "for the 24h default", &req.personGrace}} {
 		raw, present := args[f.key]
 		if !present || raw == nil {
 			continue
@@ -145,8 +148,8 @@ func parseStageLabelsArgs(args map[string]any) (stageLabelsRequest, error) {
 	} else if ok {
 		req.personHumanRepos = &c
 	}
-	if req.abandonAfter == nil && req.closeRepos == nil && req.personAfter == nil && req.personGrace == nil && req.personRepos == nil && req.personHumanRepos == nil {
-		return req, fmt.Errorf("give at least one of abandon_after, abandon_close_repos, person_after, person_grace, person_repos or person_human_repos")
+	if req.abandonAfter == nil && req.trustedAfter == nil && req.closeRepos == nil && req.personAfter == nil && req.personGrace == nil && req.personRepos == nil && req.personHumanRepos == nil {
+		return req, fmt.Errorf("give at least one of abandon_after, abandon_after_trusted, abandon_close_repos, person_after, person_grace, person_repos or person_human_repos")
 	}
 	return req, nil
 }
@@ -168,10 +171,11 @@ func normalizeAbandonAfterArg(s string) (string, error) {
 	return s, nil
 }
 
-// normalizeStageDurationArg mirrors the endpoint for person_after and
-// person_grace: "" or a zero duration is stored as "" (person_after off,
-// person_grace the 24h default), anything else must be a positive Go
-// duration. zero says what "0" means, for the error.
+// normalizeStageDurationArg mirrors the endpoint for abandon_after_trusted,
+// person_after and person_grace: "" or a zero duration is stored as ""
+// (abandon_after_trusted and person_after off, person_grace the 24h
+// default), anything else must be a positive Go duration. zero says what
+// "0" means, for the error.
 func normalizeStageDurationArg(field, s, zero string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "0" {
@@ -234,6 +238,23 @@ func abandonAfterLabel(v string) string {
 	return v
 }
 
+// trustedBelowAbandonAfter mirrors the endpoint's refusal: both set and
+// abandon_after_trusted shorter than abandon_after.
+func trustedBelowAbandonAfter(after, trusted string) bool {
+	a, errA := time.ParseDuration(strings.TrimSpace(after))
+	tr, errT := time.ParseDuration(strings.TrimSpace(trusted))
+	return errA == nil && errT == nil && a > 0 && tr > 0 && tr < a
+}
+
+// trustedAfterLabel renders abandon_after_trusted for a disclosure, whose
+// empty value means a trusted contributor's PR is never closed.
+func trustedAfterLabel(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "never"
+	}
+	return v
+}
+
 // personGraceLabel renders person_grace, whose empty value is the default.
 func personGraceLabel(v string) string {
 	if strings.TrimSpace(v) == "" {
@@ -244,16 +265,17 @@ func personGraceLabel(v string) string {
 
 func (stageLabelsOp) Name() string { return WriteOpGovernorStageLabels }
 func (stageLabelsOp) Description() string {
-	return "Change the stale contributor PR settings under governor.labels.stage — abandon_after (the idle clock: a contributor PR parked at 071 needs-author or at an adoption-stalled 085 with no outside activity this long is flagged abandoned; \"0\" is off) and abandon_close_repos (repositories that close abandoned PRs after a notice and a 24h grace, at ACMM L6 only) — and the person-PR takeover timer under governor.labels.stage.adoption — person_after (how long a person's PR sent back to its author at 071 / 072 for work the hive can do may sit idle before the hive posts a takeover notice; \"0\" is off), person_grace (the wait after that notice before the hive takes the PR over through the Adopt now path; \"0\" or \"\" is the 24h default), person_repos (repositories where it applies to the agent-written PRs of this hive's owners) and person_human_repos (repositories where it applies to author/human PRs), ACMM L6 only — through PUT /api/config/governor/labels, the endpoint Settings → Labels saves through. Each repository list takes {add, remove, clear}: the preview reads the current values, shows each before → after and sends the merged list, and write_confirm is refused if they changed since the preview. Owner only: the endpoint refuses any other role."
+	return "Change the stale contributor PR settings under governor.labels.stage — abandon_after (the idle clock: a contributor PR parked at 071 needs-author or at an adoption-stalled 085 with no outside activity this long is flagged abandoned; \"0\" is off), abandon_after_trusted (the same clock for a trusted contributor's PR, role/trusted with no maintainer signal; at least abandon_after, applies only while abandon_after is on; \"0\" never flags one; maintainers' PRs are never flagged) and abandon_close_repos (repositories that close abandoned PRs after a notice and a 24h grace, at ACMM L6 only) — and the person-PR takeover timer under governor.labels.stage.adoption — person_after (how long a person's PR sent back to its author at 071 / 072 for work the hive can do may sit idle before the hive posts a takeover notice; \"0\" is off), person_grace (the wait after that notice before the hive takes the PR over through the Adopt now path; \"0\" or \"\" is the 24h default), person_repos (repositories where it applies to the agent-written PRs of this hive's owners) and person_human_repos (repositories where it applies to author/human PRs), ACMM L6 only — through PUT /api/config/governor/labels, the endpoint Settings → Labels saves through. Each repository list takes {add, remove, clear}: the preview reads the current values, shows each before → after and sends the merged list, and write_confirm is refused if they changed since the preview. Owner only: the endpoint refuses any other role."
 }
 func (stageLabelsOp) InputSchema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{
-		"abandon_after":       map[string]any{"type": "string", "description": "Go duration such as 168h after which an idle parked contributor PR is flagged abandoned; \"0\" or \"\" turns the idle clock off."},
-		"abandon_close_repos": listChangeSchema("Repositories (in project.repos, owner/repo or bare name) whose abandoned contributor PRs the hive closes after a notice and a 24h grace, at ACMM L6 only; an empty list closes nothing."),
-		"person_after":        map[string]any{"type": "string", "description": "Go duration such as 24h a person's PR sent back to its author may sit idle before the hive posts a takeover notice; \"0\" or \"\" turns the takeover timer off."},
-		"person_grace":        map[string]any{"type": "string", "description": "Go duration the hive waits after the takeover notice before it takes the PR over; \"0\" or \"\" is the 24h default."},
-		"person_repos":        listChangeSchema("Repositories (in project.repos, owner/repo or bare name) where the takeover timer applies to the agent-written PRs of this hive's owners, at ACMM L6 only; an empty list applies it nowhere."),
-		"person_human_repos":  listChangeSchema("Repositories (in project.repos, owner/repo or bare name) where the takeover timer applies to hand-written author/human PRs, at ACMM L6 only; an empty list applies it nowhere."),
+		"abandon_after":         map[string]any{"type": "string", "description": "Go duration such as 168h after which an idle parked contributor PR is flagged abandoned; \"0\" or \"\" turns the idle clock off."},
+		"abandon_after_trusted": map[string]any{"type": "string", "description": "Go duration, at least abandon_after, after which an idle parked trusted contributor's PR (role/trusted, not a maintainer) is flagged abandoned; \"0\" or \"\" never flags one (the default)."},
+		"abandon_close_repos":   listChangeSchema("Repositories (in project.repos, owner/repo or bare name) whose abandoned contributor PRs the hive closes after a notice and a 24h grace, at ACMM L6 only; an empty list closes nothing."),
+		"person_after":          map[string]any{"type": "string", "description": "Go duration such as 24h a person's PR sent back to its author may sit idle before the hive posts a takeover notice; \"0\" or \"\" turns the takeover timer off."},
+		"person_grace":          map[string]any{"type": "string", "description": "Go duration the hive waits after the takeover notice before it takes the PR over; \"0\" or \"\" is the 24h default."},
+		"person_repos":          listChangeSchema("Repositories (in project.repos, owner/repo or bare name) where the takeover timer applies to the agent-written PRs of this hive's owners, at ACMM L6 only; an empty list applies it nowhere."),
+		"person_human_repos":    listChangeSchema("Repositories (in project.repos, owner/repo or bare name) where the takeover timer applies to hand-written author/human PRs, at ACMM L6 only; an empty list applies it nowhere."),
 	}, "additionalProperties": false}
 }
 
@@ -295,6 +317,20 @@ func (stageLabelsOp) PreviewWithProvider(ctx context.Context, args map[string]an
 			}
 			changes = append(changes, c)
 		}
+	}
+	if req.trustedAfter != nil {
+		after.AbandonAfterTrusted = *req.trustedAfter
+		body["stage_abandon_after_trusted"] = after.AbandonAfterTrusted
+		if after.AbandonAfterTrusted != before.AbandonAfterTrusted {
+			c := settingChange{Field: "abandon_after_trusted", Before: abandonAfterLabel(before.AbandonAfterTrusted), After: abandonAfterLabel(after.AbandonAfterTrusted)}
+			if after.AbandonAfterTrusted == "" {
+				c.Note = "a trusted contributor's PR is never flagged abandoned or closed"
+			}
+			changes = append(changes, c)
+		}
+	}
+	if (req.abandonAfter != nil || req.trustedAfter != nil) && trustedBelowAbandonAfter(after.AbandonAfter, after.AbandonAfterTrusted) {
+		return WritePreview{}, fmt.Errorf("%s.abandon_after_trusted (%s) must be at least abandon_after (%s), or \"0\" to never flag a trusted contributor's PR", WriteOpGovernorStageLabels, after.AbandonAfterTrusted, after.AbandonAfter)
 	}
 	if req.closeRepos != nil {
 		list, err := mergeStageRepos("abandon_close_repos", *req.closeRepos, before.AbandonCloseRepos, before.projectRepos)
@@ -391,8 +427,9 @@ func (stageLabelsOp) PreviewWithProvider(ctx context.Context, args map[string]an
 }
 
 // stageLabelsDisclosure: adding a repository to abandon_close_repos lets the
-// hive close other people's PRs there; turning the idle clock on (or
-// shortening it) where repositories are listed brings those closes sooner.
+// hive close other people's PRs there; turning the idle clock or the
+// trusted contributor clock on (or shortening it) where repositories are
+// listed brings those closes sooner.
 func stageLabelsDisclosure(before, after stageLabelsState) string {
 	added, _ := listDiff(before.AbandonCloseRepos, after.AbandonCloseRepos, foldCase)
 	var widen []string
@@ -405,6 +442,14 @@ func stageLabelsDisclosure(before, after stageLabelsState) string {
 	}
 	if len(after.AbandonCloseRepos) > 0 && after.AbandonAfter != "" && abandonAfterShorter(before.AbandonAfter, after.AbandonAfter) {
 		widen = append(widen, "contributor PRs in "+listLabel(after.AbandonCloseRepos)+" become closable after "+after.AbandonAfter+" idle instead of "+abandonAfterLabel(before.AbandonAfter))
+	}
+	// The trusted timer runs only while abandon_after is on.
+	trustedBefore := before.AbandonAfterTrusted
+	if before.AbandonAfter == "" {
+		trustedBefore = ""
+	}
+	if len(after.AbandonCloseRepos) > 0 && after.AbandonAfter != "" && after.AbandonAfterTrusted != "" && abandonAfterShorter(trustedBefore, after.AbandonAfterTrusted) {
+		widen = append(widen, "trusted contributors' PRs in "+listLabel(after.AbandonCloseRepos)+" become closable after "+after.AbandonAfterTrusted+" idle instead of "+trustedAfterLabel(trustedBefore))
 	}
 	for _, l := range []struct {
 		before, after []string
