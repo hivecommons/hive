@@ -245,10 +245,29 @@ stays held for a person (#16326). Bump tooling that adds such files must open
 them in a separate PR. Every
 changed line must be a paired pin replacement. Supported forms are unquoted
 `uses: owner/repo[/path]@<40-hex>` (an existing simple `# vN[.N[.N]]`
-comment may change), `FROM image@sha256:<64-hex>` / `image: image@sha256:...`,
-and literal `version: 1.2.3` / `ARG TOOL_VERSION=1.2.3` updates. Other syntax,
+comment may change within its major version), `FROM image@sha256:<64-hex>` /
+`image: image@sha256:...`, and literal `version: 1.2.3` /
+`ARG TOOL_VERSION=1.2.3` updates within the same major version. Other syntax,
 missing patches, line-count mismatches, added/renamed files, owner files,
 permission/credential/signing text and non-pin edits fail closed.
+
+**A major version change is not a pin.** The major version is the first number
+of the version, after an optional leading `v`. When the version comment of a
+`uses:` line (or of an `action-sha-ref` line, below) moves to another major
+version, up or down, the pair is refused: `# v4` → `# v7` is an upgrade even
+when only the commit and the comment change. So is `version: 1.2.3` →
+`version: 2.0.0`, with or without a leading `v`. The same major version is
+still a pin (`# v4` → `# v4.2.0`, `# v4.1.2` → `# v4.2.0`,
+`version: 1.2.3` → `version: 1.9.0`), and a `uses:` line without a version
+comment on either side is judged as before: it carries no version to compare,
+so a commit move across major versions there is not detected (only the
+upstream-ancestry check applies). Such a pull request is held like
+any other non-pin change, and the reason the hive logs names both versions,
+for example `.github/workflows/build.yml: major version change v4 -> v7 is
+not a pin`. Before this rule, Renovate's `actions/checkout` and
+`actions/upload-artifact` v4 → v7 bumps were merged as pins
+([projectbluefin/dakota-iso#337](https://github.com/projectbluefin/dakota-iso/pull/337),
+[#342](https://github.com/projectbluefin/dakota-iso/pull/342)).
 
 **Bare SHA lines that follow a `uses:` pin (`action-sha-ref`).** A workflow
 that pins a reusable workflow by commit often passes the same commit on as an
@@ -278,8 +297,10 @@ of these hold:
   whitespace. A list item (`- key:`), a quoted value, a short SHA or any
   other text does not qualify.
 - The key and its indentation are byte-identical on both lines.
-- As for `action-sha`, an existing version comment may change, but a comment
-  may not appear or disappear.
+- As for `action-sha`, an existing version comment may change within its
+  major version, but a comment may not appear or disappear. A comment that
+  moves to another major version refuses the line even when a `uses:` pin
+  in the pull request carries the same commit move.
 - Neither line holds one of the words the classifier refuses everywhere
   (`with:`, `env`, `secrets.`, `permissions`, signing and credential words).
 - The commit really changes, and its old and new value (compared without
