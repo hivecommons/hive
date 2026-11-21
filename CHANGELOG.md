@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-21 (v6.54.1)
+
+### Fixed
+
+- A fork PR whose only red check is a fork guard (a check that refuses fork PRs, such as a Canary only a maintainer can run) now parks at `085-needs-decision` under `fork-guard:<checks>` even when the contributor lane stopped at a gate or fence before its CI step, such as `contributor-lane:sentinel-blocked` or `contributor-lane:workflow-path`. The fork guard was read only when a lane reason named a red check, so on [projectbluefin/utah-packages#1258](https://github.com/projectbluefin/utah-packages/pull/1258) and [#1263](https://github.com/projectbluefin/utah-packages/pull/1263) the red Canary went to the author as `072-returned-to-contributor` `check-failing:Canary` with a nudge, and earlier fork PRs were adopted on it ([#14273](https://github.com/hivecommons/hive/issues/14273)). The stage pass now reads such a head's red checks from its check digest, and the 085 note names the guard and keeps the gate or fence beside it; a real failure next to the guard still goes to the author. A head first read with another check red beside the guard is read again once only the guard is red. The stale-red base refresh also no longer merges the base into a fork head red only on fork guards: such a check is green on the base only because the base is not a fork, and the merge discarded the head a maintainer's run would prove (#1258 was merged over at 6:55 AM EST on 2026-11-21).
+
 ## 2026-11-21 (v6.54.0)
 
 ### Added
