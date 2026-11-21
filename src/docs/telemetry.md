@@ -16,7 +16,7 @@ Hive sends a small number of operational signals outside the running hive only t
 | Customers enrichment: gitdm snapshot | Nothing about any person. A download of the public cncf/gitdm affiliation files (the same files for every hive), with a generic User-Agent and no hive identity. Matching against confirmed customers runs on the hive. | `github.com` / `raw.githubusercontent.com`, public `cncf/gitdm` repository. | **Off by default** (`customers.enrichment.enabled` and `customers.enrichment.gitdm.enabled`, both needed). Refreshed every `customers.enrichment.gitdm.refresh_interval` (default 24h), with ETags so an unchanged file is not downloaded again. | The snapshot is cached in `/data/customers/colony-cache`; matches are kept in `/data/customers/enrichment.json` until the person is forgotten. | Leave either switch off, or set `HIVE_CUSTOMERS_ENRICHMENT_ENABLED=false`. | [Customers enrichment](customers-enrichment.md); `src/cmd/hive/customers_enrichment.go` (`runCustomersEnrichmentPass`); `src/pkg/customers/enrichment.go`; hivecommons/colony `gitdm`. |
 | Customers enrichment: devstats lookup | A confirmed customer's public GitHub login, never an email, name or id, with a generic User-Agent and no hive identity. | CNCF devstats (`devstats.cncf.io`). | **Off by default** (`customers.enrichment.enabled` and `customers.enrichment.devstats.enabled`). At most `customers.enrichment.devstats.hourly_limit` lookups an hour (default 30). Suggested people are never looked up, and a person without a confirmed GitHub login is never looked up. Sent as a POST to the public devstats API by the hivecommons/colony client (generic User-Agent, no redirects, rate limited). | Results are kept in `/data/customers/enrichment.json` until the person is forgotten. | Leave either switch off, or set `HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED=false`. | [Customers enrichment](customers-enrichment.md); `src/cmd/hive/customers_enrichment.go` (`runDevstatsStep`); hivecommons/colony `devstats`. |
 | Customers enrichment: crowd.dev lookup | A confirmed customer's public GitHub login, never an email, name or id, and the owner-supplied crowd.dev API token. | crowd.dev / LFX Insights API. | **Off by default** (`customers.enrichment.enabled` and `customers.enrichment.crowddev.enabled`) and inert without a token. Not active: LFX Insights has no usable public API (hivecommons/colony#5), so no request is made. | Results are kept in `/data/customers/enrichment.json` until the person is forgotten. | Leave either switch off, clear the token, or set `HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED=false`. | [Customers enrichment](customers-enrichment.md); `src/pkg/dashboard/api_customers_enrichment.go`. |
-| Customers hub import (optional) | From the hive: its hive ID and a bounded batch of salted HMAC-SHA-256 hashes of the GitHub logins of its **confirmed** customers (never a suggested person, never plaintext, never any other identifier or profile field). From the hub, back to the hive: for a person who consented for this hive, only the real name, organization and country they selected and entered themselves on the hub; for a person previously delivered and since withdrawn, only the names of the fields to clear. | The configured hub, `POST /api/customers/match`, authenticated with the per-hive heartbeat bearer. The hub compares hashes only against consenting people and never stores or logs a non-matching hash; for a match it learns that this hive has that person as a customer. Values received are visible to the hive owner and anyone with Customers access on that hive, who can export them. | Off by default at every layer: the hub switch `HIVE_HUB_CUSTOMERS_SHARE_ENABLED`, the hive switch `customers.hub_import.enabled` / `HIVE_CUSTOMERS_HUB_IMPORT_ENABLED` (Settings, Features), and per person, per hive, per field consent on the hub's Profile sharing page, with nothing pre-checked. With the hive switch off no request is made. | On the hive, a hub value not refreshed within 72 hours is cleared. On the hub, a consent record lives with the person (deleted with the hub user); a withdrawn record is kept at most 90 days while a clear may be owed. | Turn the hive switch off; the person withdraws on the hub (takes effect on the hive at its next hourly sync); or leave the hub switch off. | `src/pkg/customers/hub_import.go`; `src/cmd/hive/customers_hub_import.go`; `src/pkg/hub/customer_match.go`; `src/pkg/hub/customer_consent.go`; [design](design/customers-hub-consent.md). |
+| Customers hub import (optional) | From the hive: its hive ID and a bounded batch of salted HMAC-SHA-256 hashes of the GitHub logins of its **confirmed** customers (never a suggested person, never plaintext, never any other identifier or profile field). From the hub, back to the hive: for a person who consented for this hive, the real name they entered themselves on the hub and the fields they switched on; for a grant holder of this hive, a labeled public country and organization without a consent record (only when the hive sends the `X-Hive-Customer-Match-Labels: 1` header, which it always does); for a person previously delivered and since withdrawn, only the names of the fields to clear. | The configured hub, `POST /api/customers/match`, authenticated with the per-hive heartbeat bearer. The hub compares hashes only against consenting people and never stores or logs a non-matching hash; for a match it learns that this hive has that person as a customer. Values received are visible to the hive owner and anyone with Customers access on that hive, who can export them. | Off by default at every layer: the hub switch `HIVE_HUB_CUSTOMERS_SHARE_ENABLED`, the hive switch `customers.hub_import.enabled` / `HIVE_CUSTOMERS_HUB_IMPORT_ENABLED` (Settings, Features), and consent on the hub's Profile sharing page for the real name, per person, per hive, with nothing pre-checked. Country and organization are treated as public and need no per-person consent once both switches are on. With the hive switch off no request is made. | On the hive, a hub value not refreshed within 72 hours is cleared. On the hub, a consent record lives with the person (deleted with the hub user); a withdrawn record is kept at most 90 days while a clear may be owed. | Turn the hive switch off; the person withdraws on the hub (takes effect on the hive at its next hourly sync); or leave the hub switch off. | `src/pkg/customers/hub_import.go`; `src/cmd/hive/customers_hub_import.go`; `src/pkg/hub/customer_match.go`; `src/pkg/hub/customer_consent.go`; [design](design/customers-hub-consent.md). |
 | Crash/error reporting | No Sentry/PostHog/Segment/Plausible crash reporter was found in `src` during the onboarding audit. Errors are logged locally; selected log-safe health/error strings can appear in hub heartbeats as described above. | Local logs and, for selected operational state, the configured hub. | No third-party crash reporting by default. | Local log/PVC retention is deployment-specific. | N/A for third-party crash reporting; disable hub link for heartbeat-carried operational errors. | Audit search: `telemetry|analytics|metrics push|phone.?home|posthog|segment|plausible|gtag|googletagmanager|sentry` over Go/HTML/JS/Markdown. |
 
 ## Linux Foundation telemetry-policy status
@@ -114,19 +114,30 @@ every layer ([#19088](https://github.com/hivecommons/hive/issues/19088), design:
   derived from the hub secret and hive ID), never the heartbeat bearer. At most
   200 hashes per request and four requests per hourly pass, and once more when a
   customer is accepted. A suggested person is never asked about.
-- **Answer (hub to spoke).** Only for a person with an effective consent for
-  this hive: the fields they switched on, only values they entered themselves.
-  Administrator-entered and inferred values never cross. An unknown person and
-  an unconsented person get the same silence, so the answer cannot be used to
-  learn who is on the hub.
-- **Consent first.** The person sees what is sent, to whom, what is never sent,
-  how fast withdrawal takes effect and that exported copies cannot be recalled,
-  then confirms per hive. A material change to that text suspends sharing until
-  they confirm again.
-- **What the hub learns.** For a consenting person who matches, that this hive
-  has them as a customer. Non-matching hashes are dropped unlogged.
-- **Withdrawal.** Immediate on the hub; the hive clears the fields at its next
-  sync. A value someone edited by hand on the hive is left alone. A hive that
+- **Answer (hub to spoke).** The real name crosses only for a person with an
+  effective consent for this hive, and only if they entered it themselves.
+  Country and organization are treated as public
+  ([#19306](https://github.com/hivecommons/hive/issues/19306)): for a person who
+  holds a grant on this hive and is not blocked they cross without a consent
+  record, each labeled with its source (entered by the person, set by a hub
+  admin, inferred from browser language, derived from a listed organization
+  email domain, or not recorded). The hive shows the label as "from hub: ...".
+  An organization is derived from an email domain only for domains the hub
+  operator listed in `HIVE_HUB_CUSTOMERS_ORG_DOMAINS` (empty by default); the
+  email address and the domain never cross. Notes, email, Slack ids and
+  location never cross. A person who is not a grant holder, is blocked or is
+  unknown gets the same silence, so the answer cannot be used to learn who is on
+  the hub.
+- **Consent first (real name).** The person sees what is sent, to whom, what is
+  never sent, how fast withdrawal takes effect and that exported copies cannot
+  be recalled, then confirms per hive. A material change to that text suspends
+  sharing of the real name until they confirm again.
+- **What the hub learns.** For a person who matches (consenting, or a grant
+  holder answered with public fields), that this hive has them as a customer. Non-matching hashes are dropped unlogged.
+- **Withdrawal.** Immediate on the hub; the hive clears the real name at its
+  next sync. A public country or organization the hub stops sending (for example
+  because the person cleared it) is removed by the hive's 72 hour expiry, not at
+  once. A value someone edited by hand on the hive is left alone. A hive that
   cannot reach the hub clears hub values after 72 hours.
 - **Who sees what.** The person sees, per hive, what was last sent and when. A
   hub admin sees only consent counts per hive. The hive owner and anyone with
