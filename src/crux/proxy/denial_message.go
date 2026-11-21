@@ -22,6 +22,7 @@ const (
 	DenyReasonRepoNotInConfig      = "repo_not_in_config"
 	DenyReasonIssueShape           = "issue_shape"
 	DenyReasonCanaryEgress         = "canary_egress"
+	DenyReasonPushSignoff          = "push_signoff"
 	DenyReasonUnknown              = "denied"
 )
 

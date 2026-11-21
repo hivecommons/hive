@@ -58,6 +58,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		}
 
 		blocked := false
+		closeAfterBlock := false
 		blockReason := ""
 		// blockCode is the machine-readable reason (#12127) that rides on the
 		// one-line 403 body and the X-Hive-Proxy-Reason header. Each gate that
@@ -263,6 +264,15 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				}
 			}
 		}
+		if !blocked && !isLinear && agentName != internalCallerName {
+			// Apply the push broker's sign-off rules to in-pod pushes (#19297).
+			if reason, refused, closeConn := pushSignoffRefusal(req, agentName); refused {
+				closeAfterBlock = closeConn
+				blocked = true
+				blockReason = reason
+				blockCode = DenyReasonPushSignoff
+			}
+		}
 		if reason, deny, ok := p.inspectCanaryEgress(agentName, req); ok {
 			if deny {
 				blocked = true
@@ -328,12 +338,16 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			resp.Header.Set("Content-Type", contentType)
 			resp.Header.Set("X-Hive-Proxy-Blocked", "true")
 			resp.Header.Set(ProxyDenialHeader, blockCode)
+			resp.Close = closeAfterBlock
 			_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 			writeErr := resp.Write(client)
 			_ = client.SetWriteDeadline(time.Time{})
 			if writeErr != nil {
 				p.logTimeout("proxy blocked response write timed out", writeErr, "agent", agentName)
 				return
+			}
+			if closeAfterBlock {
+				return // unread upload bytes remain; do not parse them as a request
 			}
 
 			if req.Body != nil {
