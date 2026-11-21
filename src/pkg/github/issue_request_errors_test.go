@@ -75,6 +75,8 @@ func TestIssueRequestFailureClassification(t *testing.T) {
 		{"writeback backfill suppression", fmt.Errorf("%w: #26 was created 2026-10-09T13:10:11Z, before hive could write to o/r; writeback.unsolicited.backfill is off", writeback.ErrSuppressed), true, false},
 		{"writeback repo paused", fmt.Errorf("%w: %s", writeback.ErrSuppressed, writeback.ReasonRepoPaused), false, false},
 		{"repo paused error", &RepoPausedError{Repo: "o/r"}, false, false},
+		{"wrapped writeback repo paused", fmt.Errorf("issue attention o/r#3: %w: %s", writeback.ErrSuppressed, writeback.ReasonRepoPaused), false, false},
+		{"backfill on a repo named repo-paused", fmt.Errorf("issue attention o/repo-paused#3: %w: backfill: #3 was created before hive could write to o/repo-paused", writeback.ErrSuppressed), true, false},
 	} {
 		if got := issueRequestFailureIsPermanent(tc.err); got != tc.permanent {
 			t.Errorf("%s: issueRequestFailureIsPermanent = %v, want %v", tc.name, got, tc.permanent)

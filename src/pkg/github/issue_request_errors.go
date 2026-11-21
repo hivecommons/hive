@@ -210,5 +210,29 @@ func issueRequestPaused(err error) bool {
 	if errors.As(err, &paused) {
 		return true
 	}
-	return errors.Is(err, writeback.ErrSuppressed) && strings.Contains(err.Error(), writeback.ReasonRepoPaused)
+	if !errors.Is(err, writeback.ErrSuppressed) {
+		return false
+	}
+	// Gate refusals render as "<ErrSuppressed>: <reason>"; match the reason
+	// token right after the sentinel so a repo or detail that merely
+	// contains "repo-paused" is not read as a pause.
+	msg := err.Error()
+	marker := writeback.ErrSuppressed.Error() + ": " + writeback.ReasonRepoPaused
+	for i := strings.Index(msg, marker); i >= 0; {
+		end := i + len(marker)
+		if end == len(msg) || !issueRequestReasonByte(msg[end]) {
+			return true
+		}
+		next := strings.Index(msg[end:], marker)
+		if next < 0 {
+			break
+		}
+		i = end + next
+	}
+	return false
+}
+
+// issueRequestReasonByte reports whether b can continue a gate reason slug.
+func issueRequestReasonByte(b byte) bool {
+	return b == '-' || b == '_' || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
 }

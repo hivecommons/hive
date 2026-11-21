@@ -361,7 +361,8 @@ func (c *Client) issueBackoffAllows(path string, nowFn func() time.Time) bool {
 // when the request has exceeded a give-up horizon and should be quarantined:
 // the 24h age horizon for every kind; for a create also
 // issueRequestMaxIdenticalFailures consecutive identical errors and
-// issueReconcileMaxAttempts needs-reconciliation refusals.
+// issueReconcileMaxAttempts needs-reconciliation refusals. An operator repo
+// pause (issueRequestPaused) never gives up: it only schedules the backoff.
 func (c *Client) issueNoteFailure(path, kind string, nowFn func() time.Time, err error) string {
 	c.issueRetryMu.Lock()
 	defer c.issueRetryMu.Unlock()
@@ -397,6 +398,13 @@ func (c *Client) issueNoteFailure(path, kind string, nowFn func() time.Time, err
 		backoff = retryableGitHubDelay(err, now, backoff, issueRetryMax, issueRetryRateLimitMax)
 	}
 	st.nextTry = now.Add(backoff)
+	if issueRequestPaused(err) {
+		// An operator pause lifts on its own and repeats the identical
+		// error every tick; neither the age nor the identical-error
+		// horizon may quarantine a request that is only waiting
+		// (hivecommons/hive#19400).
+		return ""
+	}
 	switch {
 	case now.Sub(st.firstTry) > issueRequestMaxAge:
 		return "request exceeded retry horizon"

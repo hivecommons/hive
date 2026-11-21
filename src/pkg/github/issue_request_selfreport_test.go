@@ -120,12 +120,17 @@ func TestIssueRequestWritebackSuppressionIsNotStuck(t *testing.T) {
 		t.Fatal(err)
 	}
 	pause := &RepoPausedError{Repo: req.Repo}
-	for i := 0; i < issueRequestStuckAttempts+1; i++ {
+	// Past both the identical-error and the 24h give-up horizons: a pause
+	// only waits, it never quarantines the request.
+	for i := 0; i < issueRequestMaxIdenticalFailures+2; i++ {
 		c.failIssueRequest(paused, req, "issue", IssueResponse{Error: pause.Error()}, pause, clock)
-		now = now.Add(time.Minute)
+		now = now.Add(issueRequestMaxAge / time.Duration(issueRequestMaxIdenticalFailures))
 	}
 	if _, err := os.Stat(paused); err != nil {
 		t.Fatalf("paused request was moved aside: %v", err)
+	}
+	if _, err := os.Stat(paused + ".failed"); !os.IsNotExist(err) {
+		t.Fatalf("paused request quarantined: %v", err)
 	}
 	if ev := tr.Evidence(); len(ev) != 0 {
 		t.Fatalf("policy refusals reported as stuck: %+v", ev)
