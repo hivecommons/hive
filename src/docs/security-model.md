@@ -1034,6 +1034,14 @@ until code-owner review is required in branch protection.
   earlier passes. Session taint is designed for this
   ([design/session-taint.md](design/session-taint.md)); only its observe-only
   recorder exists, and it does not block anything.
+* **`ioscan` does not scan tool output.** Web fetches, MCP results and files
+  in cloned repositories reach the agent unscanned
+  ([ioscan.md](ioscan.md#scan-coverage)).
+* **MCP tool definitions are not pinned.** A server that changes a tool's
+  description is not held for review.
+* **A paraphrased injection can pass.** Text that avoids every rule and
+  fools the classifier reaches the agent. Containment is the control for it
+  ([prompt-injection-trentina-comparison.md](prompt-injection-trentina-comparison.md)).
 * **The proxy inspects GitHub API traffic only.** Other destinations are
   tunnelled. Use Kubernetes NetworkPolicies for full egress control.
 * **The L5 `hold` label is applied by agent policy.** The hard guarantee at
