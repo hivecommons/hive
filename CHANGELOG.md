@@ -11,6 +11,30 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-20 (v5.345.3)
+
+### Fixed
+
+- **A single GitHub dial timeout during a token mint is no longer filed as a fleet self-report.** `forge_unreachable` used to qualify on its first observation, so one launch-time `context deadline exceeded` reached the fleet tracker within minutes, before the next token refresh (40m by default) could clear it. It now has to stay open for 1h. Token refreshes that still cannot reach the forge re-observe the condition, so a real egress outage is still reported and does not age out of the 24h evidence window ([#19403](https://github.com/hivecommons/hive/issues/19403)).
+
+## 2026-11-20 (v5.345.2)
+
+### Fixed
+
+- Automerge no longer logs a WARN when the native merge queue refuses an enqueue because required checks are failing; the PR is held and retried next sweep.
+
+## 2026-11-20 (v5.345.1)
+
+### Changed
+
+- images: bump codex 0.170.0 -> 0.171.0 (#19375)
+
+## 2026-11-20 (v5.345.0)
+
+### Added
+
+- **Dashboard: new Sandstone light theme** ([#19351](https://github.com/hivecommons/hive/issues/19351)). Settings → Appearance now offers `sandstone`, a warm paper-toned light preset with terracotta accents, available on both the dashboard and contributor profile surfaces. It is an additive built-in; existing theme ids and the default are unchanged.
+
 ## 2026-11-20 (v5.344.3)
 
 ### Fixed
