@@ -1,0 +1,1 @@
+- The trusted contributor idle clock (`governor.labels.stage.abandon_after_trusted`) now defers on a pass that does not know the PR's author or repository, instead of treating the missing permission answer as a read-only author and flagging the PR.
