@@ -446,7 +446,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.329
+ARG CLAUDE_CODE_VERSION=2.1.330
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -636,7 +636,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # Tolerant of failure like the copilot/codex layers: agents configured for
 # backend: pi simply won't launch if this is absent, same degradation as
 # any other missing backend binary.
-ARG PI_VERSION=1.5.0
+ARG PI_VERSION=1.6.0
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     "@earendil-works/pi-coding-agent@${PI_VERSION}" && npm cache clean --force || \
     echo "WARN: pi CLI install failed — skipping"

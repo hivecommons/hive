@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-21 (v5.345.9)
+
+### Changed
+
+- images: bump pi 1.5.0 -> 1.6.0 (#19418)
+
 ## 2026-11-21 (v5.345.8)
 
 ### Fixed
