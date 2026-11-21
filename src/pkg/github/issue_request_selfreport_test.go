@@ -2,11 +2,16 @@ package github
 
 import (
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // The watcher feeds issue_request_stuck once a request has failed
@@ -81,5 +86,53 @@ func TestIssueRequestStuckNoopWithoutRetryState(t *testing.T) {
 	}
 	if cleared := tr.TakeCleared(); len(cleared) != 0 {
 		t.Fatalf("cleared = %+v", cleared)
+	}
+}
+
+// A write-back gate refusal is policy, not a transient failure: the request
+// is quarantined at once and never reported as a stuck queue
+// (hivecommons/hive#19400). An operator pause keeps the request on the retry
+// path but is not stuck either.
+func TestIssueRequestWritebackSuppressionIsNotStuck(t *testing.T) {
+	now := time.Date(2026, 11, 20, 20, 14, 53, 0, time.UTC)
+	clock := func() time.Time { return now }
+	tr := fleetreport.NewRuntimeTracker(clock)
+	fleetreport.SetDefaultTrackerForTest(t, tr)
+	c := &Client{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	dir := t.TempDir()
+	req := IssueRequest{Repo: "hanthor/matrix-server-migrator"}
+
+	suppressed := filepath.Join(dir, "strategist-1.json")
+	if err := os.WriteFile(suppressed, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backfill := fmt.Errorf("%w: #26 was created 2026-10-09T13:10:11Z, before hive could write to %s; writeback.unsolicited.backfill is off", writeback.ErrSuppressed, req.Repo)
+	c.failIssueRequest(suppressed, req, "issue", IssueResponse{Error: backfill.Error()}, backfill, clock)
+	if _, err := os.Stat(suppressed + ".failed"); err != nil {
+		t.Fatalf("suppressed request not quarantined: %v", err)
+	}
+	if attempts, _ := c.issueRetrySnapshot(suppressed); attempts != 0 {
+		t.Fatalf("suppressed request kept retry state: %d attempts", attempts)
+	}
+
+	paused := filepath.Join(dir, "strategist-2.json")
+	if err := os.WriteFile(paused, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pause := &RepoPausedError{Repo: req.Repo}
+	// Past both the identical-error and the 24h give-up horizons: a pause
+	// only waits, it never quarantines the request.
+	for i := 0; i < issueRequestMaxIdenticalFailures+2; i++ {
+		c.failIssueRequest(paused, req, "issue", IssueResponse{Error: pause.Error()}, pause, clock)
+		now = now.Add(issueRequestMaxAge / time.Duration(issueRequestMaxIdenticalFailures))
+	}
+	if _, err := os.Stat(paused); err != nil {
+		t.Fatalf("paused request was moved aside: %v", err)
+	}
+	if _, err := os.Stat(paused + ".failed"); !os.IsNotExist(err) {
+		t.Fatalf("paused request quarantined: %v", err)
+	}
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("policy refusals reported as stuck: %+v", ev)
 	}
 }
