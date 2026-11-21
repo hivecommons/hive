@@ -195,6 +195,7 @@ js/config-helpers.js
 js/linear-repos-save.js
 js/chat.js
 js/gh-auth.js
+js/topbar-strip.js
 js/nps.js
 js/welcome.js
 js/shimmy-handlers.js

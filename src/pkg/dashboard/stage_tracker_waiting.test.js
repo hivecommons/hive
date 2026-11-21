@@ -84,6 +84,7 @@ test('badge, pill and chip read the block; pill hides at zero', () => {
   assert.ok(!badge.hasAttribute('data-zero'));
   assert.strictEqual(pill.hidden, false);
   assert.strictEqual(pill.label.textContent, 'Waiting on you · 3');
+  assert.strictEqual(pill.attrs['data-count'], '3', 'phones show the count from data-count');
   assert.match(pill.title, /^3 waiting on you/);
   assert.match(pill.title, /r#15312 — needs your decision · 6h/);
   assert.match(pill.title, /r#41 — contributor offline — adopt or reroute \(@karibhou\)/);
