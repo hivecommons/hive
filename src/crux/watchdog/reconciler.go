@@ -566,7 +566,7 @@ func (r *Reconciler) updateReadyConditionLocked(rec *agentRecord, cls Classifica
 // CrashLoopBackOff analog: Failures clear only after a continuous ready
 // window, so a flapping agent cannot launder its counter with one good probe.
 func (r *Reconciler) updateHealthyWindowLocked(name string, rec *agentRecord, cls Classification, now time.Time) {
-	rec.observeDecision.resetUnlessDead(cls.Class)
+	rec.observeDecision.resetOnReady(cls.Class)
 	if cls.Class != ClassReady {
 		rec.HealthySince = time.Time{}
 		return

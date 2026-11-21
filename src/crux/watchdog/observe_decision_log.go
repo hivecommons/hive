@@ -14,12 +14,14 @@ import (
 // ring while staying below the self-report repeat threshold (5 in 10m).
 const observeDecisionRelogInterval = time.Hour
 
-// observeDecisionLog records the last observe-mode decision reported for an
-// agent. It is cleared once the agent is no longer dead, so a recovered agent
-// that dies again is reported afresh.
+// observeDecisionLog records when each observe-mode decision (action +
+// class) was last reported for an agent. It keeps one slot per decision, so
+// an agent flapping between dead classes (stuck-overlay, no-output, ...)
+// without ever recovering is still reported at most once per decision per
+// window rather than on every flip. It is cleared once the agent is ready
+// again, so a recovered agent that dies again is reported afresh.
 type observeDecisionLog struct {
-	key      string
-	loggedAt time.Time
+	loggedAt map[string]time.Time
 }
 
 // shouldReportObserveDecisionLocked reports whether an observe-mode decision
@@ -29,19 +31,24 @@ type observeDecisionLog struct {
 func shouldReportObserveDecisionLocked(rec *agentRecord, action string, cls PaneClass, now time.Time) bool {
 	key := action + "|" + string(cls)
 	log := &rec.observeDecision
-	if log.key == key && !log.loggedAt.IsZero() &&
-		now.Sub(log.loggedAt) < observeDecisionRelogInterval {
+	if at, ok := log.loggedAt[key]; ok && now.Sub(at) < observeDecisionRelogInterval {
 		return false
 	}
-	log.key, log.loggedAt = key, now
+	if log.loggedAt == nil {
+		log.loggedAt = make(map[string]time.Time)
+	}
+	log.loggedAt[key] = now
 	return true
 }
 
-// resetUnlessDead clears the record once the agent is no longer dead, so a
-// later death is news to observe mode (#19393).
-func (l *observeDecisionLog) resetUnlessDead(cls PaneClass) {
-	if !cls.Dead() {
-		*l = observeDecisionLog{}
+// resetOnReady clears the record once the agent is ready again, so a later
+// death is news to observe mode (#19393). Only a ready pane counts as a
+// recovery: a transient unknown or auth-required capture between two dead
+// sweeps must not reopen the window, or a flapping agent re-reports each cycle.
+// The map holds at most one entry per (action, dead class), so it stays tiny.
+func (l *observeDecisionLog) resetOnReady(cls PaneClass) {
+	if cls == ClassReady {
+		l.loggedAt = nil
 	}
 }
 

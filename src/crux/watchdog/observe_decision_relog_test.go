@@ -73,3 +73,44 @@ func TestShouldReportObserveDecisionWindowBoundary(t *testing.T) {
 		t.Fatal("a different action must be reported at once")
 	}
 }
+
+// An agent flapping between dead classes without recovering must not defeat
+// the limiter: each (action, class) decision has its own window, so flips
+// inside the window are not re-reported (review follow-up on #19394).
+func TestObserveDecisionFlappingDeadClassesReportedOncePerWindow(t *testing.T) {
+	rec := &agentRecord{}
+	t0 := time.Unix(1_700_000_000, 0)
+	reports := 0
+	for i := 0; i < 20; i++ {
+		cls := ClassStuckOverlay
+		if i%2 == 1 {
+			cls = ClassNoOutput
+		}
+		if shouldReportObserveDecisionLocked(rec, auditActionRestart, cls, t0.Add(time.Duration(i)*10*time.Second)) {
+			reports++
+		}
+	}
+	if reports != 2 {
+		t.Fatalf("20 sweeps flipping between two dead classes reported %d times, want 2 (one per class)", reports)
+	}
+}
+
+// Only a ready pane is a recovery. A transient unknown or auth-required
+// capture between dead sweeps must not reopen the window; a ready one does.
+func TestObserveDecisionResetOnlyOnReady(t *testing.T) {
+	rec := &agentRecord{}
+	t0 := time.Unix(1_700_000_000, 0)
+	if !shouldReportObserveDecisionLocked(rec, auditActionRestart, ClassStuckOverlay, t0) {
+		t.Fatal("first decision must be reported")
+	}
+	for _, cls := range []PaneClass{ClassUnknown, ClassAuthRequired, ClassNoOutput} {
+		rec.observeDecision.resetOnReady(cls)
+		if shouldReportObserveDecisionLocked(rec, auditActionRestart, ClassStuckOverlay, t0.Add(time.Second)) {
+			t.Fatalf("a %s capture must not reset the observe-decision window", cls)
+		}
+	}
+	rec.observeDecision.resetOnReady(ClassReady)
+	if !shouldReportObserveDecisionLocked(rec, auditActionRestart, ClassStuckOverlay, t0.Add(2*time.Second)) {
+		t.Fatal("a ready capture must reset the window so the next death is reported")
+	}
+}
