@@ -97,8 +97,11 @@ operator settings show the effective state. With the switch off, the page and
 its API return `404`; stored choices are not deleted.
 
 People can enter or clear their real name, organization, and country, then
-confirm or withdraw their own selections separately for each hive. Legacy,
-administrator-entered, and inferred values are not eligible for sharing. A
+confirm or withdraw their own selections separately for each hive. A real name
+is shared only with that consent, and only if the person entered it
+themselves. Country and organization are treated as public and are sent,
+labeled with their source, to the hives where the person holds a grant,
+without a consent record ([#19306](https://github.com/hivecommons/hive/issues/19306)). A
 material disclosure change requires reconfirmation: disclosure version 2, which
 replaced the version that said nothing was sent yet, suspends every earlier
 consent until the person confirms again.
@@ -108,9 +111,11 @@ A hive asks for these values only when its owner turns on
 [Customers hub import](telemetry.md#customers-hub-import)). The hive posts
 salted hashes of its confirmed customers' GitHub logins to
 `POST /api/customers/match` with its per-hive bearer. The hub answers only for
-people with an effective consent for that hive, with only the fields they
-selected and only values they entered themselves; an unknown and an
-unconsented person get the same empty answer. A withdrawal, a lost grant, a
+people with an effective consent for that hive (real name) and for grant
+holders of that hive (labeled public country and organization; set
+`HIVE_HUB_CUSTOMERS_ORG_DOMAINS` to let an organization be derived from a
+listed email domain); an unknown, blocked or non-grant-holder person gets the
+same empty answer. A withdrawal, a lost grant, a
 blocked account or a deleted hub user makes the next answer tell the hive to
 clear what it was sent.
 
