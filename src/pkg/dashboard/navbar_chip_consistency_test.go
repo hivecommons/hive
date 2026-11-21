@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -203,5 +204,32 @@ func TestNavbarRemovedChipSpecificMetricOverrides(t *testing.T) {
 		if !strings.Contains(componentsCSS, want) {
 			t.Errorf("shared navbar chip CSS is missing %q", want)
 		}
+	}
+}
+
+// `.nav-chip { display: inline-flex }` outranks the UA `[hidden]` rule, so a
+// top-bar chip hidden while it has nothing to say painted as an empty pill
+// unless it had its own `[hidden]` override. #oc-meeting-indicator had none
+// and showed as a blank chip whenever no meeting was live. One catch-all
+// covers every top-bar chip, including the ones that start hidden.
+func TestTopbarHiddenChipsNeverRenderEmpty(t *testing.T) {
+	if !strings.Contains(indexHTML(t), `.oc-topbar .nav-chip[hidden] { display: none; }`) {
+		t.Fatal("static dashboard is missing the top-bar `.nav-chip[hidden]` override")
+	}
+	topbar := dashboardTopbarHTML(t)
+	tagRE := regexp.MustCompile(`<[a-z]+\b[^>]*\bclass="[^"]*\bnav-chip\b[^"]*"[^>]*>`)
+	hiddenRE := regexp.MustCompile(`\shidden[\s>]`)
+	idRE := regexp.MustCompile(`\bid="([^"]+)"`)
+	var hidden []string
+	for _, tag := range tagRE.FindAllString(topbar, -1) {
+		if !hiddenRE.MatchString(tag) {
+			continue
+		}
+		if m := idRE.FindStringSubmatch(tag); m != nil {
+			hidden = append(hidden, m[1])
+		}
+	}
+	if !slices.Contains(hidden, "oc-meeting-indicator") {
+		t.Fatalf("#oc-meeting-indicator no longer starts hidden in the top bar; hidden chips: %v", hidden)
 	}
 }
