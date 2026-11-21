@@ -55,6 +55,26 @@ classifier is the control for that. Details and numbers:
 agent from merging code is the network proxy, which denies pull-request
 creation and merge calls for every agent, not `ioscan`.
 
+## Scan coverage
+
+| Where text comes from | What happens |
+|---|---|
+| Issue titles and bodies | Scanned |
+| Issue and PR comments | Scanned, one by one and as a joined thread |
+| PR bodies | Scanned |
+| PR reviews | Scanned |
+| Inbox items | Fenced in a nonce-tagged envelope |
+| Agent output | Checked for canaries |
+| Web fetches the agent makes | Not scanned |
+| MCP tool results | Not scanned |
+| Files in cloned repositories | Not scanned |
+| MCP tool definitions | Not scanned or pinned |
+
+The agent CLI reads the last four itself, so `ioscan` never sees them. The
+proxy and token tiers are the controls there. See
+[prompt-injection-trentina-comparison.md](prompt-injection-trentina-comparison.md)
+for the gaps this leaves.
+
 ## Configuration
 
 ```yaml
