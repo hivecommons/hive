@@ -1144,6 +1144,16 @@ func runEvalCycle(
 	agentsDue = sched.FilterFirstScanDeferredAgents(agentsDue)
 	agentsSkipped = append(agentsSkipped, firstScanDeferredSkips(dueBeforeDeferral, agentsDue)...)
 	reviewPlan := planReviewDispatchWith(ctx, cfg, actionable, agentMgr, beadStores, reviewPlannerGitHubFor(ghClient), logger)
+	// Before the cadence kicks are built: a queue-mode reviewer's ${PR_LIST}
+	// marks the heads the swarm has in flight, this cycle's kicks included,
+	// so the two never review the same head side by side. Only live rows of
+	// an active dispatch: with review dispatch off the planner leaves the
+	// state unpruned, so nothing is marked.
+	if contributorLaneReviewDispatched(cfg) {
+		sched.SetReviewDispatchPending(reviewPlan.LiveReviews(cfg.Review.PendingReviewTTL(), time.Now().UTC()), review.EffectivePendingReviewTTL(cfg.Review.PendingReviewTTL()))
+	} else {
+		sched.SetReviewDispatchPending(nil, 0)
+	}
 	emitReviewHumanEscalations(reviewPlan)
 	// Size the reviewer lane to what the planner just left waiting
 	// (hivecommons/hive#14685). A replica added here takes kicks from the

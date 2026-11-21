@@ -2718,7 +2718,14 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 	if reviewBots.Enabled() {
 		reviewBotLogins = reviewBots.Logins
 	}
+	// Reports the relay recorded after this cycle's verdict refresh: the
+	// planner counts them as delivered instead of asking the head again.
+	recordedTargets := make([]review.PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		recordedTargets = append(recordedTargets, review.PullRequest{Repo: fullRepoName(pr.Repo, cfg.Project.Org), Number: pr.Number})
+	}
 	plan := review.PlanDispatch(prs, artifact, state, review.DispatchOptions{
+		RecordedReports:      review.RecordedReportsFor("", recordedTargets),
 		RequireApproval:      cfg.Review.RequireApproval,
 		FanOut:               cfg.Review.FanOut,
 		AnsweredHeadsOnly:    answeredOnly,

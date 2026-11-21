@@ -18,6 +18,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 
+	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/review"
 )
 
@@ -149,6 +150,152 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 		c.notifyReviewVerdict(req.Repo, req.Number)
 	}
 	return recorded
+}
+
+// sameHeadStanding is one perspective of a review request whose verdict the
+// relay would refuse, with the stricter verdict that stands on the head.
+type sameHeadStanding struct {
+	Perspective review.Perspective
+	Verdict     review.Verdict
+}
+
+func (s sameHeadStanding) String() string { return fmt.Sprintf("%s: %s", s.Perspective, s.Verdict) }
+
+// sameHeadStricterVerdicts lists the perspectives of req's verdict the relay
+// would not record because a stricter verdict for the same head stands
+// (review.KeepsPriorReport), with that verdict. It records nothing. The
+// watcher calls it before it posts: a review whose verdict will be refused
+// must not land on GitHub as written, where an approve would sit over the
+// hive's own "needs a person" review and the posted-review ledger would mark
+// the head approved. Only perspectives with a stricter report already on
+// file pay for the binding, so a first review costs one directory read.
+func (c *Client) sameHeadStricterVerdicts(ctx context.Context, req ReviewRequest, dir string) []sameHeadStanding {
+	raw := strings.TrimSpace(req.Report)
+	if raw == "" {
+		return nil
+	}
+	dir = review.ReportDir(dir)
+	reports, err := review.ValidateReportsFor([]byte(raw), c.perspectives)
+	if err != nil {
+		return nil
+	}
+	stored := storedStricterPerspectives(dir, req.Repo, req.Number)
+	if len(stored) == 0 {
+		return nil
+	}
+	decisionRequested, decisionQuestion := reviewDecisionRequestFromBody(req.Body)
+	var prSnapshot func() reviewedPRSnapshot
+	var kept []sameHeadStanding
+	for _, report := range reports {
+		if decisionRequested {
+			report.DecisionRequested = true
+			report.DecisionQuestion = decisionQuestion
+			report.Verdict = review.VerdictRequiresHuman
+		}
+		if !stored[report.Perspective] {
+			continue
+		}
+		if _, unread := review.UnreadableReviewReason(report); unread {
+			continue
+		}
+		if _, stopped := c.capStoppedReview(req, report, time.Now().UTC()); stopped {
+			continue
+		}
+		if prSnapshot == nil {
+			prSnapshot = c.reviewedPRSnapshotFunc(ctx, req)
+		}
+		prepared, path, _, ok := c.prepareOneVerdict(ctx, req, report, dir, func() string { return prSnapshot().Head }, prSnapshot, true)
+		if !ok {
+			continue
+		}
+		if prior, priorAt, ok := review.ReadReportFile(path); ok && review.KeepsPriorReport(prior, priorAt, prepared) {
+			kept = append(kept, sameHeadStanding{Perspective: prepared.Perspective, Verdict: prior.Verdict})
+		}
+	}
+	return kept
+}
+
+// sameHeadAcceptedFindingsBody is the review body for a request some of whose
+// perspectives the relay refuses (sameHeadStricterVerdicts): one line saying
+// the stricter verdict on the head still stands, then the findings of the
+// perspectives it accepts. ok is false when those carry nothing to post (all
+// approve, no in-scope finding): then the review is not posted at all.
+func sameHeadAcceptedFindingsBody(req ReviewRequest, kept []sameHeadStanding, perspectives review.PerspectiveSet) (string, bool) {
+	reports, err := review.ValidateReportsFor([]byte(strings.TrimSpace(req.Report)), perspectives)
+	if err != nil {
+		return "", false
+	}
+	refused := map[review.Perspective]bool{}
+	standing := make([]string, 0, len(kept))
+	for _, k := range kept {
+		refused[k.Perspective] = true
+		standing = append(standing, k.String())
+	}
+	var b strings.Builder
+	carries := false
+	for _, r := range reports {
+		if refused[r.Perspective] {
+			continue
+		}
+		var inScope []outputschema.Finding
+		for _, f := range r.Findings {
+			if review.InScopeFinding(f) {
+				inScope = append(inScope, f)
+			}
+		}
+		if r.Verdict == review.VerdictApprove && len(inScope) == 0 {
+			continue
+		}
+		carries = true
+		fmt.Fprintf(&b, "\n\n**%s** (%s)", r.Perspective, r.Verdict)
+		if summary := strings.TrimSpace(r.Summary); summary != "" {
+			b.WriteString(": " + summary)
+		}
+		for _, f := range inScope {
+			fmt.Fprintf(&b, "\n- [%s] %s", f.Severity, strings.TrimSpace(f.Title))
+			if f.File != "" {
+				if f.Line > 0 {
+					fmt.Fprintf(&b, " (`%s:%d`)", f.File, f.Line)
+				} else {
+					fmt.Fprintf(&b, " (`%s`)", f.File)
+				}
+			}
+			if summary := strings.TrimSpace(f.Summary); summary != "" {
+				b.WriteString(": " + summary)
+			}
+		}
+	}
+	if !carries {
+		return "", false
+	}
+	return "The stricter verdict on this head still stands (" + strings.Join(standing, ", ") +
+		"); a later review of the same head does not replace it. This review carries only the other perspectives' findings." + b.String(), true
+}
+
+// storedStricterPerspectives is the perspectives that have a requires_human,
+// changes_requested or reject report on file for the PR, whatever its head.
+func storedStricterPerspectives(dir, repo string, number int) map[review.Perspective]bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	prefix := strings.ToLower(review.ReportFilePrefix(repo, number))
+	var out map[review.Perspective]bool
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(strings.ToLower(name), prefix) || !strings.HasSuffix(name, review.ReviewReportFileSuffix) {
+			continue
+		}
+		prior, _, ok := review.ReadReportFile(filepath.Join(dir, name))
+		if !ok || !review.SettledNonApprove(prior.Verdict) {
+			continue
+		}
+		if out == nil {
+			out = map[review.Perspective]bool{}
+		}
+		out[prior.Perspective] = true
+	}
+	return out
 }
 
 // canonicalVerdictHead returns the head SHA a verdict is stored under. The
@@ -433,24 +580,97 @@ func (c *Client) logVerdictDispatchRefusal(ctx context.Context, req ReviewReques
 // the report as stored, whether it was, and whether it was bound to a review
 // dispatch rather than admitted as advisory.
 func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report review.PerspectiveReport, dir string, prHead func() string, prSnapshot func() reviewedPRSnapshot) (review.PerspectiveReport, bool, bool) {
+	report, path, auth, ok := c.prepareOneVerdict(ctx, req, report, dir, prHead, prSnapshot, false)
+	if !ok {
+		return report, false, false
+	}
+
+	// The file is per perspective, not per run: a second automatic review
+	// of the same head would overwrite the first. A less strict verdict does
+	// not replace a requires_human, changes_requested or reject on the same
+	// head unless its review was dispatched after that verdict arrived
+	// (review.KeepsPriorReport; projectbluefin/dakota-iso#376 merged on the
+	// later approve).
+	if prior, priorAt, ok := review.ReadReportFile(path); ok && review.KeepsPriorReport(prior, priorAt, report) {
+		c.logger.Info("review-request watcher: verdict not recorded: a later automatic review of the same head does not replace a stricter verdict",
+			slog.String("repo", report.Repo), slog.Int("number", report.Number),
+			slog.String("perspective", string(report.Perspective)),
+			slog.String("head", report.HeadSHA),
+			slog.String("kept_verdict", string(prior.Verdict)),
+			slog.String("verdict", string(report.Verdict)),
+			slog.String("agent", req.Agent),
+			slog.Bool("dispatched", auth.Dispatched))
+		return report, false, false
+	}
+
+	// The arrival time travels inside the report (review.ReportArrival), so
+	// a copied or restored report dir, which rewrites modification times,
+	// cannot reorder it against a later dispatch.
+	report.ReceivedAt = time.Now().UTC()
+
+	// Re-marshalled from the validated struct rather than written through from
+	// the request. One array element is not a standalone document, and the
+	// collector reads each file as one report; re-marshalling also drops the
+	// descriptive extra keys models add, which ValidateReport tolerates but
+	// nothing downstream reads, and carries the bound head SHA above.
+	raw, err := json.Marshal(report)
+	if err != nil {
+		c.logger.Warn("review-request watcher: could not serialize verdict",
+			slog.String("perspective", string(report.Perspective)), slog.String("error", err.Error()))
+		return report, false, false
+	}
+
+	// Write-then-rename: review.Collect scans this dir on its own schedule and
+	// must never observe a half-written report.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+		c.logger.Warn("review-request watcher: could not write verdict",
+			slog.String("path", path), slog.String("error", err.Error()))
+		return report, false, false
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		c.logger.Warn("review-request watcher: could not commit verdict",
+			slog.String("path", path), slog.String("error", err.Error()))
+		return report, false, false
+	}
+	c.logger.Info("review-request watcher: verdict recorded",
+		slog.String("repo", report.Repo), slog.Int("number", report.Number),
+		slog.String("perspective", string(report.Perspective)),
+		slog.String("verdict", string(report.Verdict)),
+		slog.String("path", path))
+	return report, true, auth.Dispatched
+}
+
+// prepareOneVerdict binds one perspective's verdict to its dispatch and
+// stamps it the way the relay stores it (head, body digest, authorship,
+// review head, reporter, dispatch time), returning the report, the file it
+// is stored under, and the binding. ok is false when the verdict is refused.
+// dryRun binds without side effects or refusal logs: the watcher's check
+// before it posts a review (sameHeadStricterVerdicts).
+func (c *Client) prepareOneVerdict(ctx context.Context, req ReviewRequest, report review.PerspectiveReport, dir string, prHead func() string, prSnapshot func() reviewedPRSnapshot, dryRun bool) (review.PerspectiveReport, string, verdictAuthorization, bool) {
 	// The verdict must be about the PR that was actually reviewed. Without this
 	// an agent authorized to comment on one PR could record a binding
 	// requires_human/reject verdict against any other PR in the fleet.
 	if !strings.EqualFold(strings.TrimSpace(report.Repo), strings.TrimSpace(req.Repo)) || report.Number != req.Number {
-		c.logger.Warn("review-request watcher: verdict target does not match reviewed PR, discarded",
-			slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
-			slog.String("claimed", fmt.Sprintf("%s#%d", report.Repo, report.Number)),
-			slog.String("agent", req.Agent))
-		return report, false, false
+		if !dryRun {
+			c.logger.Warn("review-request watcher: verdict target does not match reviewed PR, discarded",
+				slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
+				slog.String("claimed", fmt.Sprintf("%s#%d", report.Repo, report.Number)),
+				slog.String("agent", req.Agent))
+		}
+		return report, "", verdictAuthorization{}, false
 	}
 	// Bind to a real dispatch record. A combined review answers one kick with
 	// several verdicts, so each element is checked on its own: the dispatch is
 	// recorded per perspective, and a perspective nothing dispatched is refused
 	// here exactly as it would be for a single-object verdict.
-	auth := c.verdictDispatchAuthorizedAt(ctx, report, req, prSnapshot)
+	auth := c.verdictDispatchAuthorizedFor(ctx, report, req, prSnapshot, dryRun)
 	if !auth.OK {
-		c.logVerdictDispatchRefusal(ctx, req, report, auth.Reason)
-		return report, false, false
+		if !dryRun {
+			c.logVerdictDispatchRefusal(ctx, req, report, auth.Reason)
+		}
+		return report, "", auth, false
 	}
 	// A dispatched verdict is stored under the head its dispatch record names,
 	// whatever the reviewer wrote: the match above already proved the two
@@ -527,17 +747,12 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 		report.BodyDigest = prSnapshot().BodyDigest
 	}
 
-	// Re-marshalled from the validated struct rather than written through from
-	// the request. One array element is not a standalone document, and the
-	// collector reads each file as one report; re-marshalling also drops the
-	// descriptive extra keys models add, which ValidateReport tolerates but
-	// nothing downstream reads, and carries the bound head SHA above.
-	raw, err := json.Marshal(report)
-	if err != nil {
-		c.logger.Warn("review-request watcher: could not serialize verdict",
-			slog.String("perspective", string(report.Perspective)), slog.String("error", err.Error()))
-		return report, false, false
-	}
+	// When the planner asked for this review, as the same-head guard may
+	// count it (verdictAuthorization.DispatchedAt), never the reviewer's own
+	// value. received_at is the relay's too: stamped as the file is written
+	// (writeOneVerdict), so whatever the reviewer put there is dropped.
+	report.DispatchedAt = auth.DispatchedAt
+	report.ReceivedAt = time.Time{}
 
 	// One file per perspective, and per review head when the perspective was
 	// dispatched to several heads, so each head's verdict is kept rather than
@@ -553,28 +768,7 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 		name += "-decided"
 	}
 	name += review.ReviewReportFileSuffix
-	path := filepath.Join(dir, name)
-
-	// Write-then-rename: review.Collect scans this dir on its own schedule and
-	// must never observe a half-written report.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
-		c.logger.Warn("review-request watcher: could not write verdict",
-			slog.String("path", path), slog.String("error", err.Error()))
-		return report, false, false
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		c.logger.Warn("review-request watcher: could not commit verdict",
-			slog.String("path", path), slog.String("error", err.Error()))
-		return report, false, false
-	}
-	c.logger.Info("review-request watcher: verdict recorded",
-		slog.String("repo", report.Repo), slog.Int("number", report.Number),
-		slog.String("perspective", string(report.Perspective)),
-		slog.String("verdict", string(report.Verdict)),
-		slog.String("path", path))
-	return report, true, auth.Dispatched
+	return report, filepath.Join(dir, name), auth, true
 }
 
 // verdictAuthorization is what admitting a verdict establishes about it:
@@ -601,6 +795,11 @@ type verdictAuthorization struct {
 	// earlier head (hivecommons/hive#15823); HeadSHA is then the head it
 	// was accepted for.
 	HeadMove *verdictHeadMove
+	// DispatchedAt is when the planner asked for the review the verdict
+	// bound to, counted only when the verdict is that dispatch's own answer
+	// (see verdictDispatchAuthorizedFor). Zero for an advisory admission, a
+	// sibling binding and a verdict recorded before the kick was delivered.
+	DispatchedAt time.Time
 }
 
 // dispatchRecordHiveAuthored is the authorship a dispatch record vouches
@@ -629,6 +828,22 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 // or a head carrying the same patch (verdictHeadMove). prSnapshot may be nil,
 // in which case no head move is resolved.
 func (c *Client) verdictDispatchAuthorizedAt(ctx context.Context, report review.PerspectiveReport, req ReviewRequest, prSnapshot func() reviewedPRSnapshot) verdictAuthorization {
+	return c.verdictDispatchAuthorizedFor(ctx, report, req, prSnapshot, false)
+}
+
+// verdictDispatchAuthorizedFor is verdictDispatchAuthorizedAt; dryRun binds
+// without rewriting a dispatch row across a head move and without the
+// advisory-fallback log, for the watcher's check before it posts.
+//
+// DispatchedAt on the result is the planning time only for the dispatched
+// agent's own answer: a row of the same agent (or the same agent across a
+// head move) whose kick was delivered (review.PendingDelivered), or a
+// recent-dispatch row, which exists only once delivered. A sibling
+// reviewer's binding and a verdict the agent recorded before its kick
+// reached it (a queue-mode review it ran on its own) bind as before but get
+// no planning time, so they never count as a deliberate re-review
+// (review.KeepsPriorReport).
+func (c *Client) verdictDispatchAuthorizedFor(ctx context.Context, report review.PerspectiveReport, req ReviewRequest, prSnapshot func() reviewedPRSnapshot, dryRun bool) verdictAuthorization {
 	state, err := review.LoadDispatchState("")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -655,7 +870,11 @@ func (c *Client) verdictDispatchAuthorizedAt(ctx context.Context, report review.
 		if c.sameVerdictAuthor(verdictAuthorAgent(p.AuthorAgent, report), req.Agent) {
 			return verdictRefused("author_self_approval")
 		}
-		consider(tier, verdictAuthorization{OK: true, Dispatched: true, HeadSHA: p.HeadSHA, BodyDigest: p.BodyDigest, HiveAuthored: dispatchRecordHiveAuthored(p.AuthorAgent, p.HiveAuthored), ReviewHead: strings.TrimSpace(p.Head), Decided: p.Decision, HeadMove: move})
+		var dispatchedAt time.Time
+		if (tier == rowTierExact || tier == rowTierHeadMove) && review.PendingDelivered(state, p) {
+			dispatchedAt = p.Dispatched
+		}
+		consider(tier, verdictAuthorization{OK: true, Dispatched: true, HeadSHA: p.HeadSHA, BodyDigest: p.BodyDigest, HiveAuthored: dispatchRecordHiveAuthored(p.AuthorAgent, p.HiveAuthored), ReviewHead: strings.TrimSpace(p.Head), Decided: p.Decision, HeadMove: move, DispatchedAt: dispatchedAt})
 	}
 	if bestTier < 0 {
 		cutoff := now.Add(-review.RecentDispatchTTL)
@@ -670,12 +889,20 @@ func (c *Client) verdictDispatchAuthorizedAt(ctx context.Context, report review.
 			if c.sameVerdictAuthor(verdictAuthorAgent(r.AuthorAgent, report), req.Agent) {
 				return verdictRefused("author_self_approval")
 			}
-			consider(tier, verdictAuthorization{OK: true, Dispatched: true, HeadSHA: r.HeadSHA, BodyDigest: r.BodyDigest, HiveAuthored: dispatchRecordHiveAuthored(r.AuthorAgent, r.HiveAuthored), ReviewHead: strings.TrimSpace(r.Head), Decided: r.Decision, HeadMove: move})
+			var dispatchedAt time.Time
+			if tier == rowTierExact || tier == rowTierHeadMove {
+				dispatchedAt = review.RecentDispatchedAt(r)
+			}
+			consider(tier, verdictAuthorization{OK: true, Dispatched: true, HeadSHA: r.HeadSHA, BodyDigest: r.BodyDigest, HiveAuthored: dispatchRecordHiveAuthored(r.AuthorAgent, r.HiveAuthored), ReviewHead: strings.TrimSpace(r.Head), Decided: r.Decision, HeadMove: move, DispatchedAt: dispatchedAt})
 		}
 	}
 	if bestTier >= 0 {
 		if best.HeadMove != nil {
-			best = c.acceptVerdictAcrossHeadMove(best, state, report, req)
+			if dryRun {
+				best.HeadSHA = best.HeadMove.To
+			} else {
+				best = c.acceptVerdictAcrossHeadMove(best, state, report, req)
+			}
 		}
 		return best
 	}
@@ -687,7 +914,9 @@ func (c *Client) verdictDispatchAuthorizedAt(ctx context.Context, report review.
 	// "awaiting review approval", and combined verdict arrays from the
 	// reviewer recorded only the one perspective whose dispatch happened to be
 	// assigned to that same agent.
-	c.logAdvisoryFallbackCandidates(state, report, req)
+	if !dryRun {
+		c.logAdvisoryFallbackCandidates(state, report, req)
+	}
 	return c.advisoryVerdictAuthorized(report, req)
 }
 

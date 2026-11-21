@@ -195,6 +195,21 @@ type PerspectiveReport struct {
 	// dispatch record (ModelStamps), never from the reviewer's JSON. Empty
 	// for a full review.
 	DeltaPreviousHead string `json:"delta_previous_head,omitempty"`
+	// DispatchedAt is when the planner asked for the review this report
+	// answers, set by the relay from the dispatch record, never from the
+	// reviewer's JSON. Zero for an advisory (queue-mode) review and for a
+	// binding the relay does not treat as that dispatch's own answer (a
+	// sibling reviewer's, or one recorded before the kick was delivered).
+	// KeepsPriorReport reads it: only a review asked for after a stricter
+	// verdict arrived may replace it on the same head.
+	DispatchedAt time.Time `json:"dispatched_at,omitzero"`
+	// ReceivedAt is when the relay recorded this report, stamped by the relay
+	// as it writes the file, never taken from the reviewer's JSON. It, not
+	// the file's modification time, orders a stored verdict against a later
+	// dispatch (ReportArrival): copying, rsyncing or restoring the report
+	// dir rewrites modification times. Zero on files written before it
+	// existed, which fall back to the modification time.
+	ReceivedAt time.Time `json:"received_at,omitzero"`
 }
 
 type AggregateOptions struct {
@@ -1520,7 +1535,7 @@ func collectForPRs(dir string, opts AggregateOptions, prs []PullRequest) (Artifa
 		key := reviewKey(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
 		groups[key] = append(groups[key], *report)
 		receipts[key] = append(receipts[key], ReportReceipt{Perspective: report.Perspective, Agent: report.ReporterAgent,
-			Head: report.Head, Decided: report.Decided, ReceivedAt: receivedAt})
+			Head: report.Head, Decided: report.Decided, ReceivedAt: ReportArrival(*report, receivedAt)})
 		stats.FilesRead++
 	}
 	groups = foldDigestlessReports(groups)
