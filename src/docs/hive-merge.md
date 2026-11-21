@@ -524,6 +524,11 @@ for changes; the perspective list only names who asked. The mode is
 to `enforce` by `review.require_approval` and to at least `shadow` by
 `review.shadow`; all three are re-read on every evaluation, so a config reload
 takes effect without a restart.
+Every engine that runs these lanes carries the gate, so `enforce` holds on all
+of them. Before [#19421](https://github.com/hivecommons/hive/pull/19421) the
+1-minute automerge job (the queued, trusted-author and contributor-lane sweeps
+in `runAutoMergeSweepIfDue`) built its engine without it: that was a bug, and
+its trusted-author passes merged heads an enforcing gate should have held.
 
 - **shadow** (default): the merge proceeds as before; the evidence bundle for
   the head (started on the spot when none exists) records
@@ -1067,7 +1072,14 @@ evaluated head, and the merge method follows `hive-merge` semantics (forward
 merges use merge commits; other PRs squash). It refuses excluded labels
 (`hold`, `do-not-merge`, and `needs-human` by default), existing hold/exempt
 labels, fork PRs whose author is not a repo member, and any PR with an
-outstanding `CHANGES_REQUESTED` review. Each merge records the tier as
+outstanding `CHANGES_REQUESTED` review. A reviewer's `requires_human` verdict
+holds this tier only through the [self-merge review gate](#self-merge-review-gate),
+so in `shadow` (the default) or `off` mode the tier merges the head once CI is
+green even while the question is open; the PR's `stage/085-needs-decision`
+comment (or, on a person's own PR that routes the question to them at
+`stage/071-needs-author`, the author's note) then says so and names the first
+`exclude_labels` entry (`hold` by default) as the label that stops the merge ([#19421](https://github.com/hivecommons/hive/pull/19421)).
+Each merge records the tier as
 `trusted-author` and records an audit note naming the author role, GitHub
 permission, and green head SHA: an `auto-merge` section of the PR's `hive:status`
 card in `quiet` notification mode (the default), a standalone comment in `normal`.

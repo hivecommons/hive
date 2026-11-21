@@ -57,6 +57,58 @@ func TestRenderPRReplyOptions(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#19421: the trusted-author lane merges a head its review
+// gate does not hold, so on such a PR the section does not say the review
+// holds it: it says the lane will still merge and names the label that stops
+// it, and `/hive approve` answers the question rather than releasing a hold.
+func TestRenderPRReplyOptionsTrustedAuthorMerges(t *testing.T) {
+	got := renderPRReplyOptions(prWait{Held: true, Parked: true, Verdict: "requires_human", HeadSHA: "4902cf73db2c", TrustedAuthorMerges: "hold"})
+	for _, want := range []string{
+		"**Your move:** the hive's review (`requires_human` on `" + shortSHA("4902cf73db2c") + "`) asks a person a question, but the trusted-author lane will still merge this pull request once its checks are green.",
+		"Add the `hold` label to stop it until the question is answered.",
+		"- `/hive approve` approves the current head and answers the question.",
+		"- `/hive decision approve <why>` approves the current head",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("trusted-author options miss %q:\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{"holds this pull request for a person", "releases the hold"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("trusted-author options still say %q:\n%s", bad, got)
+		}
+	}
+}
+
+// The verdict hold names the head the review was on, which need not be the
+// PR's current head. The trusted-author wording is read for the head the
+// stage record last saw (ActivityHead), so a note for the current head
+// shows even when the verdict is on an older one, and a note for an older
+// head does not.
+func TestPRReplyOptionsTrustedAuthorMergesReadsTheCurrentHead(t *testing.T) {
+	store := stagelabels.Shared()
+	key := stagelabels.Key("org/repo", replyOptionsPR)
+	t.Cleanup(func() { store.Forget(key) })
+	store.Observe(key, stagelabels.NeedsDecision, "reviewer-verdict:requires_human")
+	store.NoteActivity(key, stagelabels.Activity{Head: "currenthead1", Comments: -1, Reviews: -1})
+	store.NoteTrustedAuthorMerges(key, "currenthead1", "hold", time.Now())
+
+	s := &replyOptionsServer{}
+	s.set([]string{PRNeedsDecisionStageLabel}, true)
+	c := newReplyOptionsClient(t, s, true) // the verdict is on 300b432…, not the current head
+	sweepReplyOptions(t, c, true)
+	if got := s.section(); !strings.Contains(got, "the trusted-author lane will still merge this pull request") || strings.Contains(got, "holds this pull request for a person") {
+		t.Fatalf("section = %q", got)
+	}
+
+	// The note is for an older head than the one the record saw last.
+	store.NoteActivity(key, stagelabels.Activity{Head: "currenthead2", Comments: -1, Reviews: -1})
+	sweepReplyOptions(t, c, true)
+	if got := s.section(); strings.Contains(got, "will still merge") || !strings.Contains(got, "holds this pull request for a person") {
+		t.Fatalf("section for a head without the note = %q", got)
+	}
+}
+
 // replyOptionsServer is a small stateful GitHub for one PR: comments the
 // sweep posts become part of the listing, as the hive bot's, so a later
 // pass edits its own status comment; any other read answers an empty list.

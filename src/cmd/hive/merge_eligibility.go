@@ -73,6 +73,7 @@ func trustedAuthorPolicyFunc(cfg *config.Config) func() automerge.TrustedAuthorP
 			RequireRole:             p.EffectiveRequireRole(),
 			RequireGitHubPermission: p.EffectiveRequireGitHubPermission(),
 			ExcludeLabels:           excludeLabels,
+			HoldLabel:               p.HoldLabel(),
 		}
 	}
 }

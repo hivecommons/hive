@@ -250,6 +250,11 @@ edited in place, so it notifies nobody. It goes away once the wait ends: on the
 next pass after the release, when the PR moves to another stage, or when it
 closes.
 
+On a trusted author's PR that the trusted-author lane merges anyway (its
+review gate is not `enforce`), the section says the PR will still merge once
+its checks are green and names the label that stops it (the first
+`auto_merge.trusted_authors.exclude_labels` entry, `hold` by default).
+
 The verdict release does not touch labels, so a `needs-human` label still
 blocks the PR on every lane. On a **hive-authored** PR parked at
 `stage/085-needs-decision`, a trusted merger's `/hive approve` also lifts a

@@ -675,6 +675,17 @@ func (c *Engine) listQueuedPullRequestIssues(ctx context.Context, owner, repo, l
 }
 
 func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner, repo string, number int, policy TrustedAuthorPolicy) (AutoMergeSweepEvent, string, error) {
+	var admitted string
+	event, reason, err := c.trySweepTrustedAuthorPRAdmitting(ctx, displayRepo, owner, repo, number, policy, &admitted)
+	c.settleStageTrustedAuthorMerges(owner, repo, number, admitted, policy.HoldLabel, reason, err)
+	return event, reason, err
+}
+
+// trySweepTrustedAuthorPRAdmitting is trySweepTrustedAuthorPR's evaluation.
+// It sets *admitted to the head once the author is admitted for it, so the
+// caller can record from the outcome whether this lane merges that head
+// over a reviewer's requires_human verdict (hivecommons/hive#19421).
+func (c *Engine) trySweepTrustedAuthorPRAdmitting(ctx context.Context, displayRepo, owner, repo string, number int, policy TrustedAuthorPolicy, admitted *string) (AutoMergeSweepEvent, string, error) {
 	pr, ctx, unlock, err := c.guardedPR(ctx, owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
@@ -739,6 +750,10 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	} else if reason := standing.reason("changes-requested"); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
+	// The author is admitted. Unlike the self-authored lane, this one holds
+	// on a requires_human verdict only through mergeReviewGate, i.e. when
+	// the review gate enforces (hivecommons/hive#19421).
+	*admitted = pr.GetHead().GetSHA()
 	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
 	// See trySweepSelfAuthoredPR: the queue bypass is an explicit opt-in.
 	queueSkipsBase := sync.OnceValue(func() bool { return c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr) })

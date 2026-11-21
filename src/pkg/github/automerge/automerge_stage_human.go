@@ -648,6 +648,12 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		e.HumanApprover = humanMergeApprover
 	}
 	e.CauseAwaitsApproval = e.ApprovalReleasesFence && strings.HasSuffix(e.CauseReason, prstage.CauseWorkflowPathAwaitingApproval)
+	// The trusted-author lane's own word on this head, whichever lane this
+	// observation is from: it merges over a requires_human verdict unless
+	// its review gate enforces (hivecommons/hive#19421).
+	if hold, ok := stageTrustedAuthorMerges(tracker, key, obs.HeadSHA, now); ok {
+		e.TrustedAuthorMerges, e.TrustedAuthorHoldLabel = true, hold
+	}
 	sentinel := c.sentinelLabelName()
 	if sentinel == "" {
 		sentinel = defaultSentinelLabel
@@ -1010,6 +1016,27 @@ func sameHeadDecisionRoute(obs stageObservation) stagelabels.Route {
 	return route
 }
 
+// withTrustedAuthorMerges carries the trusted-author lane's note for obs's
+// head onto route, a same-head re-park built without Evidence: the lane
+// merges the head over the reviewer's question, so the comment must not lead
+// with "Needs a decision, not a merge" (hivecommons/hive#19421). A sentinel
+// alert, the `blocked` label or a dirty or conflicting head keeps the route
+// as it is, as in RouteHuman.
+func (c *Engine) withTrustedAuthorMerges(tracker *StageTracker, key string, obs stageObservation, route stagelabels.Route, now time.Time) stagelabels.Route {
+	hold, ok := stageTrustedAuthorMerges(tracker, key, obs.HeadSHA, now)
+	if !ok || humanConflict(obs) || c.stageHeadDirty(key, obs) {
+		return route
+	}
+	sentinel := c.sentinelLabelName()
+	if sentinel == "" {
+		sentinel = defaultSentinelLabel
+	}
+	if hasLabelFold(obs.Labels, sentinel) || hasLabelFold(obs.Labels, hgithub.BlockedLabel) {
+		return route
+	}
+	return stagelabels.WithTrustedAuthorMerges(route, hold)
+}
+
 // sameHeadApproved reports whether a trusted approval stands on obs's head
 // when the same-head 085 re-park is about to keep asking for one. A lane
 // that stopped before the review gate noted none this pass, so it is read
@@ -1056,13 +1083,21 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	// the comment is rewritten for each new head instead of naming one the
 	// run would no longer prove (projectbluefin/utah-packages#917).
 	headBound := forkGuardEntryStale(rec, obs, route)
-	if !headBound && rec.EntryCommentRepeatsDecision(decisionKey) {
+	// The 085 comment follows whether the trusted-author lane will still
+	// merge the PR (hivecommons/hive#19421). The causes already explained
+	// cannot tell "will still merge" from "will not merge" apart once both
+	// were posted on a head, so a wording that differs from the one last
+	// written is rewritten in place; the record then matches and the next
+	// pass is quiet.
+	reworded := route.Stage == stagelabels.NeedsDecision && rec.EntryCommentedStage == stagelabels.NeedsDecision &&
+		rec.EntryCommentedHead != "" && rec.EntryCommentedTrustedMerges != route.TrustedAuthorMerges
+	if !reworded && !headBound && rec.EntryCommentRepeatsDecision(decisionKey) {
 		// Same question, new head (hivecommons/hive#15499): the person
 		// has it already; the tracker shows the current wording.
 		store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
 		return 0, nil
 	}
-	if rec.EntryCommented && !headBound {
+	if rec.EntryCommented && !headBound && !reworded {
 		// A 085 or 090 comment is re-explained when its cause changes on
 		// the same head: at 090 a gate — sentinel alert, hold label — is
 		// lifted or set (hivecommons/hive#17327), and the "Held:" line must
@@ -1075,7 +1110,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 			store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
 			return 0, nil
 		}
-	} else if !rec.EntryCommented && obs.HeadSHA != "" && rec.EntryCommentExplains(obs.HeadSHA, cause) {
+	} else if !reworded && !rec.EntryCommented && obs.HeadSHA != "" && rec.EntryCommentExplains(obs.HeadSHA, cause) {
 		// Same stage, head and cause already explained on an earlier visit.
 		store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
 		return 0, nil
@@ -1124,6 +1159,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 			}
 			store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
 			store.MarkEntryCommentedDecisionKey(key, decisionKey)
+			store.MarkEntryCommentedTrustedMerges(key, route.TrustedAuthorMerges)
 			c.info("stage labels: ready entry folded into the status card", "repo", obs.Display, "pr", obs.Number)
 			return n, nil
 		}
@@ -1143,6 +1179,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 		}
 		store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
 		store.MarkEntryCommentedDecisionKey(key, decisionKey)
+		store.MarkEntryCommentedTrustedMerges(key, route.TrustedAuthorMerges)
 		c.info("stage labels: entry comment updated in place", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reasons", route.Reasons)
 		return 0, nil
 	}
@@ -1152,6 +1189,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	}
 	store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
 	store.MarkEntryCommentedDecisionKey(key, decisionKey)
+	store.MarkEntryCommentedTrustedMerges(key, route.TrustedAuthorMerges)
 	c.info("stage labels: entry comment posted", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reasons", route.Reasons)
 	return 1, nil
 }

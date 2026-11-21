@@ -349,6 +349,7 @@ func stageTrackerProjectDecided(it *StageTrackerItem, d *StageTrackerDecided, sw
 	t := d.At
 	it.StageSince = &t
 	it.HumanMergeReason, it.HumanMergeReasonText, it.ManualMerge, it.HumanApprover = "", "", false, ""
+	it.TrustedAuthorMerges = ""
 	it.DecisionNeeded = nil
 	it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsHuman || m == modNeedsDecision || m == modStalled })
 	it.Caption, it.Actor = d.Text, StageActorHive
