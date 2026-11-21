@@ -36,13 +36,42 @@ func recordSameHeadSecurityAs(t *testing.T, c *Client, dir, agent, verdict, head
 }
 
 // storeRequiresHumanAt records an advisory security requires_human for the
-// head and backdates its file to at.
+// head and backdates its arrival (received_at and the file time) to at.
 func storeRequiresHumanAt(t *testing.T, c *Client, dir string, at time.Time) {
+	t.Helper()
+	storeRequiresHuman(t, c, dir, at, at)
+}
+
+// storeRequiresHuman records an advisory security requires_human for the head,
+// then sets its received_at stamp to receivedAt (zero: a legacy file without
+// one) and its modification time to modTime, the way a copied or restored
+// report dir can leave them apart.
+func storeRequiresHuman(t *testing.T, c *Client, dir string, receivedAt, modTime time.Time) {
 	t.Helper()
 	withVerdictDispatchState(t, review.DispatchState{})
 	recordSameHeadSecurity(t, c, dir, "requires_human", sameHeadSHA)
 	_, path := storedSecurityReport(t, dir)
-	if err := os.Chtimes(path, at, at); err != nil {
+	setReportArrival(t, path, receivedAt, modTime)
+}
+
+func setReportArrival(t *testing.T, path string, receivedAt, modTime time.Time) {
+	t.Helper()
+	r, _, ok := review.ReadReportFile(path)
+	if !ok {
+		t.Fatalf("stored report %s unreadable", path)
+	}
+	r.ReceivedAt = receivedAt.UTC()
+	if receivedAt.IsZero() {
+		r.ReceivedAt = time.Time{}
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -112,9 +141,7 @@ func TestRecordReviewVerdictAdvisoryReviewDoesNotClearRequiresHuman(t *testing.T
 	recordSameHeadSecurity(t, c, reportDir, "requires_human", sameHeadSHA)
 	_, path := storedSecurityReport(t, reportDir)
 	old := time.Now().Add(-2 * time.Hour)
-	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatal(err)
-	}
+	setReportArrival(t, path, old, old)
 	recordSameHeadSecurity(t, c, reportDir, "approve", sameHeadSHA)
 	if r, _ := storedSecurityReport(t, reportDir); r.Verdict != review.VerdictRequiresHuman {
 		t.Fatalf("advisory approve replaced requires_human: %s", r.Verdict)
@@ -171,9 +198,7 @@ func TestRecordReviewVerdictDeliberateReReviewReplacesRequiresHuman(t *testing.T
 	recordSameHeadSecurity(t, c, dir, "requires_human", sameHeadSHA)
 	_, path := storedSecurityReport(t, dir)
 	recorded := time.Now().Add(-2 * time.Hour)
-	if err := os.Chtimes(path, recorded, recorded); err != nil {
-		t.Fatal(err)
-	}
+	setReportArrival(t, path, recorded, recorded)
 
 	// The revisit: planned an hour after the verdict arrived, and delivered.
 	revisit := sameHeadPending(sameHeadSHA, time.Now().UTC().Add(-time.Hour))
@@ -326,5 +351,58 @@ func TestRecordReviewVerdictDeliveredKickPlannedBeforeTheVerdictKeepsIt(t *testi
 	}
 	if got := collectedSecurity(t, dir); got != review.VerdictRequiresHuman {
 		t.Fatalf("aggregate security = %s, want requires_human", got)
+	}
+}
+
+// The relay stamps received_at as it writes the report, and drops any value
+// the reviewer put in its JSON.
+func TestRecordReviewVerdictStampsReceivedAt(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	withVerdictDispatchState(t, review.DispatchState{})
+	var report map[string]any
+	if err := json.Unmarshal([]byte(validVerdictJSONWithHead(t, "o/r", 376, "security", "requires_human", sameHeadSHA)), &report); err != nil {
+		t.Fatal(err)
+	}
+	report["received_at"] = "2020-01-01T00:00:00Z"
+	raw, _ := json.Marshal(report)
+	before := time.Now().UTC().Add(-time.Second)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 376, Agent: "reviewer", Report: string(raw)}, dir)
+	r, _ := storedSecurityReport(t, dir)
+	if r.ReceivedAt.Before(before) || r.ReceivedAt.After(time.Now().UTC().Add(time.Second)) {
+		t.Fatalf("received_at = %v, want the relay's write time", r.ReceivedAt)
+	}
+}
+
+// The arrival that orders a stored verdict against a later dispatch is the
+// received_at stamp, not the file time: a copied, rsynced or restored report
+// dir rewrites modification times. A legacy file without the stamp still
+// falls back to its modification time.
+func TestRecordReviewVerdictOrdersByReceivedAtNotFileTime(t *testing.T) {
+	now := time.Now().UTC()
+	revisit := sameHeadPending(sameHeadSHA, now.Add(-time.Hour))
+	revisit.Delivered = revisit.Dispatched.Add(time.Minute)
+	for name, tc := range map[string]struct {
+		receivedAt, modTime time.Time
+		want                review.Verdict
+	}{
+		// Copied dir: the old verdict's file looks new, its stamp does not.
+		"stamp before the revisit, file time after (copied dir)": {now.Add(-2 * time.Hour), now, review.VerdictApprove},
+		// Restored backup: the file looks old, the stamp shows the verdict
+		// arrived after the revisit was planned.
+		"stamp after the revisit, file time before (restore)": {now.Add(-10 * time.Minute), now.Add(-3 * time.Hour), review.VerdictRequiresHuman},
+		"legacy file, file time before the revisit":           {time.Time{}, now.Add(-2 * time.Hour), review.VerdictApprove},
+		"legacy file, file time after the revisit":            {time.Time{}, now.Add(-10 * time.Minute), review.VerdictRequiresHuman},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			c := &Client{logger: testLogger()}
+			storeRequiresHuman(t, c, dir, tc.receivedAt, tc.modTime)
+			withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{revisit}})
+			recordSameHeadSecurity(t, c, dir, "approve", sameHeadSHA)
+			if got := collectedSecurity(t, dir); got != tc.want {
+				t.Fatalf("aggregate security = %s, want %s", got, tc.want)
+			}
+		})
 	}
 }

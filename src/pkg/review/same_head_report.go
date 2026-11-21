@@ -33,10 +33,11 @@ import (
 // agent's row, or one the dispatched agent recorded before the kick reached
 // it. A new head always replaces: the restrictive verdict judged other code.
 
-// ReadReportFile reads one review report the relay stored, with the time the
-// file arrived. ok is false when the file is missing or unreadable.
+// ReadReportFile reads one review report the relay stored, with the time it
+// arrived (ReportArrival). ok is false when the file is missing or
+// unreadable.
 func ReadReportFile(path string) (PerspectiveReport, time.Time, bool) {
-	raw, receivedAt, err := readCollectedReport(path)
+	raw, modTime, err := readCollectedReport(path)
 	if err != nil {
 		return PerspectiveReport{}, time.Time{}, false
 	}
@@ -44,7 +45,20 @@ func ReadReportFile(path string) (PerspectiveReport, time.Time, bool) {
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return PerspectiveReport{}, time.Time{}, false
 	}
-	return r, receivedAt, true
+	return r, ReportArrival(r, modTime), true
+}
+
+// ReportArrival is when the relay recorded r: the received_at it stamped
+// into the report, or, for a file written before that field existed, the
+// file's modification time. The stamp is what orders a stored verdict
+// against a later dispatch; a copied, rsynced or restored report dir
+// rewrites modification times, and read from them an old verdict could look
+// newer than the re-review asked for after it, or the reverse.
+func ReportArrival(r PerspectiveReport, modTime time.Time) time.Time {
+	if !r.ReceivedAt.IsZero() {
+		return r.ReceivedAt.UTC()
+	}
+	return modTime
 }
 
 // KeepsPriorReport reports whether next must not replace prior, the report
@@ -187,7 +201,7 @@ func RecordedReportsFor(dir string, prs []PullRequest) []RecordedReport {
 		if !selected {
 			continue
 		}
-		r, receivedAt, ok := ReadReportFile(filepath.Join(dir, name))
+		r, receivedAt, ok := ReadReportFile(filepath.Join(dir, name)) // received_at, else mtime
 		if !ok || strings.TrimSpace(r.Head) != "" || r.Decided || strings.TrimSpace(r.HeadSHA) == "" {
 			continue
 		}

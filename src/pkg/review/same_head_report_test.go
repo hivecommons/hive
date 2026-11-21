@@ -315,3 +315,42 @@ func TestPlanDispatchRecordedReportsKeepDeltaReviewForTheRest(t *testing.T) {
 		}
 	}
 }
+
+// ReadReportFile reports the stamped received_at when the report has one,
+// whatever the file time says, and the file time for a legacy report.
+func TestReadReportFileArrivalPrefersTheStamp(t *testing.T) {
+	dir := t.TempDir()
+	stamped := time.Date(2026, 11, 21, 18, 43, 7, 0, time.UTC)
+	modTime := stamped.Add(3 * time.Hour)
+	r := sameHeadReport(VerdictRequiresHuman, sameHead)
+	r.ReceivedAt = stamped
+	path := writeRecordedReport(t, dir, "review-report-o-r-376-security.json", r)
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatal(err)
+	}
+	if _, at, ok := ReadReportFile(path); !ok || !at.Equal(stamped) {
+		t.Fatalf("arrival = %v, want the stamp %v", at, stamped)
+	}
+	legacy := sameHeadReport(VerdictRequiresHuman, sameHead)
+	path = writeRecordedReport(t, dir, "review-report-o-r-376-style.json", legacy)
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatal(err)
+	}
+	if _, at, ok := ReadReportFile(path); !ok || !at.Equal(modTime) {
+		t.Fatalf("legacy arrival = %v, want the file time %v", at, modTime)
+	}
+}
+
+// The planner's recorded reports use the same arrival: a copied report whose
+// stamp is older than the pending TTL no longer withholds the head, though
+// its file time is fresh.
+func TestRecordedReportsForUsesTheStampedArrival(t *testing.T) {
+	dir := t.TempDir()
+	stamped := time.Now().UTC().Add(-2 * time.Hour)
+	r := PerspectiveReport{Perspective: PerspectiveSecurity, Verdict: VerdictRequiresHuman, Repo: "acme/hive", Number: 7, HeadSHA: "sha1", ReceivedAt: stamped}
+	writeRecordedReport(t, dir, ReportFilePrefix("acme/hive", 7)+"security"+ReviewReportFileSuffix, r)
+	got := RecordedReportsFor(dir, []PullRequest{{Repo: "acme/hive", Number: 7}})
+	if len(got) != 1 || !got[0].ReceivedAt.Equal(stamped) {
+		t.Fatalf("RecordedReportsFor = %+v, want ReceivedAt %v", got, stamped)
+	}
+}

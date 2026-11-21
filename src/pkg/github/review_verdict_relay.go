@@ -603,6 +603,11 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 		return report, false, false
 	}
 
+	// The arrival time travels inside the report (review.ReportArrival), so
+	// a copied or restored report dir, which rewrites modification times,
+	// cannot reorder it against a later dispatch.
+	report.ReceivedAt = time.Now().UTC()
+
 	// Re-marshalled from the validated struct rather than written through from
 	// the request. One array element is not a standalone document, and the
 	// collector reads each file as one report; re-marshalling also drops the
@@ -744,8 +749,10 @@ func (c *Client) prepareOneVerdict(ctx context.Context, req ReviewRequest, repor
 
 	// When the planner asked for this review, as the same-head guard may
 	// count it (verdictAuthorization.DispatchedAt), never the reviewer's own
-	// value.
+	// value. received_at is the relay's too: stamped as the file is written
+	// (writeOneVerdict), so whatever the reviewer put there is dropped.
 	report.DispatchedAt = auth.DispatchedAt
+	report.ReceivedAt = time.Time{}
 
 	// One file per perspective, and per review head when the perspective was
 	// dispatched to several heads, so each head's verdict is kept rather than
