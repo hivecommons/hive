@@ -113,6 +113,27 @@ const (
 	RequiredCheckNeverReportedPrefix = "required-check-never-reported:"
 )
 
+// Review-conversation refusals: GitHub refused the merge or the merge-queue
+// enqueue because the base requires every review conversation resolved
+// ("All comments must be resolved").
+const (
+	// AutoMergeReasonUnresolvedReviewThreads: at least one unresolved
+	// thread is not one the hive may resolve itself (a person's or another
+	// bot's thread, a hive thread someone replied in, or a hive finding not
+	// marked non-blocking). A person resolves them; the lane tries again on
+	// a new head or after 30 minutes.
+	AutoMergeReasonUnresolvedReviewThreads = "unresolved-review-threads"
+	// AutoMergeReasonReviewThreadsResolved: every unresolved thread was the
+	// hive's own, marked non-blocking, and the lane resolved them; the next
+	// pass merges or enqueues the same head.
+	AutoMergeReasonReviewThreadsResolved = "review-threads-resolved"
+	// AutoMergeReasonReviewThreadsPending: nothing explained the refusal
+	// (the thread read failed, GitHub still counted a thread just resolved,
+	// or the resolve calls failed); the lane asks again in 5 minutes, and
+	// parks with unresolved-review-threads after 3 such refusals on a head.
+	AutoMergeReasonReviewThreadsPending = "review-threads-pending"
+)
+
 // Closing-link reasons (hivecommons/hive#15025): a closing keyword the
 // merge would act on names the wrong thing. The rest of each is `#N`.
 const (

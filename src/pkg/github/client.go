@@ -485,6 +485,13 @@ type Client struct {
 	// Set by SetFixHumanPRs.
 	fixHumanPRsMu sync.RWMutex
 	fixHumanPRs   bool
+	// resolveOwnThreadsOff mirrors review.resolve_own_threads, inverted so
+	// the zero value is the config default (on): a merge lane refused for
+	// unresolved conversations resolves the hive's own non-blocking review
+	// threads (review_own_threads.go). Guarded like fixHumanPRs. Set by
+	// SetResolveOwnThreads.
+	resolveOwnThreadsMu  sync.RWMutex
+	resolveOwnThreadsOff bool
 	// issueRetries tracks per-request-file retry backoff for the issue-request
 	// watcher (in-memory; reset on restart). Guarded by issueRetryMu.
 	issueRetryMu sync.Mutex

@@ -589,6 +589,14 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 		reviewReq.Body = gh.Ptr(body)
 	}
 	reviewReq.Comments = draftReviewComments(anchored, func(text string) string { return c.relayBody(req.Agent, text) })
+	if len(reviewReq.Comments) > 0 {
+		// Mark each thread with its finding's severity, so a merge lane
+		// refused for unresolved conversations can tell the hive's own
+		// non-blocking notes from blocking findings without reading prose
+		// (review_own_threads.go).
+		reports, _ := review.ValidateReportsFor([]byte(strings.TrimSpace(req.Report)), c.perspectives)
+		stampInlineCommentSeverity(reviewReq.Comments, anchored, reports)
+	}
 	resp := ReviewResponse{At: nowFn().UTC().Format(time.RFC3339)}
 	// Canary-gated like CreateIssue/CreatePR/CreateIssueComment
 	// (kubestellar/hive#4960): a PR review body is agent-supplied text posted

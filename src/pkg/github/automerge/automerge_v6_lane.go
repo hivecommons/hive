@@ -144,6 +144,9 @@ func (c *Engine) mergeThroughLane(ctx context.Context, gate hgithub.SerializedLa
 	if merged[passKey] {
 		return AutoMergeSweepEvent{}, "lane-branch-merged-this-pass", nil
 	}
+	if reason := c.knownUnresolvedThreads(fullRepo, event.Number, event.HeadSHA); reason != "" {
+		return AutoMergeSweepEvent{}, reason, nil
+	}
 	res, err := hgithub.RunSerializedLane(ctx, gate, hgithub.LaneMergeRequest{
 		Repo:      fullRepo,
 		Branch:    branch,
@@ -157,6 +160,10 @@ func (c *Engine) mergeThroughLane(ctx context.Context, gate hgithub.SerializedLa
 	}
 	switch {
 	case res.Merged():
+	case unresolvedConversationsMergeError(res.MergeError):
+		// GitHub refused the lane's merge because review conversations
+		// are unresolved; the front has already left the lane.
+		return AutoMergeSweepEvent{}, c.unresolvedThreadsRefusal(ctx, fullRepo, event.Number, event.HeadSHA), nil
 	case res.Outcome == hgithub.LaneOutcomeUpdated && path == hgithub.PRAuditPathSweep:
 		return AutoMergeSweepEvent{}, "updated-branch", nil
 	default:

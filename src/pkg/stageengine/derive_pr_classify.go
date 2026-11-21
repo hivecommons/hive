@@ -306,6 +306,9 @@ var stageNeedsHumanReasons = map[string]bool{
 	// is matched here, before the native-merge-queue prefix keeps the rest
 	// at 100.
 	prstage.AutoMergeReasonNativeQueueMethod: true,
+	// GitHub requires every review conversation resolved, and a thread the
+	// hive may not resolve itself is still open: a person's call.
+	prstage.AutoMergeReasonUnresolvedReviewThreads: true,
 }
 
 // stageHeldGateReasons are the lane reasons that are gates, not stages
@@ -332,6 +335,10 @@ var stageMergeQueueReasons = map[string]bool{
 	"head-changed-since-eval": true, "merge-failed": true, "merge-not-applied": true,
 	"required-checks-expected": true, "behind": true, "updated-branch": true, "update-branch": true,
 	autoMergeReasonBehindBudgetExhausted: true, autoMergeReasonMergeQueueRequired: true,
+	// The hive resolved its own threads after a conversation refusal, or
+	// is retrying one nothing explained; the same head merges or enqueues
+	// on a later pass.
+	prstage.AutoMergeReasonReviewThreadsResolved: true, prstage.AutoMergeReasonReviewThreadsPending: true,
 }
 
 // MergeQueueReason reports whether a lane reason means the head is at the

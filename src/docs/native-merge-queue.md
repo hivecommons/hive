@@ -265,6 +265,15 @@ not re-read every sweep; a new head or the recheck window reads it again.
 Read and enqueue failures (`native-merge-queue-read`, `-enqueue`) stay at
 `stage/100-merge-queue`; a failure to read the queue's merge method is a
 read failure too, not a refusal, and is reported as `native-merge-queue-read`.
+An enqueue GitHub refuses with "All comments must be resolved" (the base
+requires conversation resolution) is not an enqueue failure: when every open
+thread is the hive's own and marked non-blocking the hive resolves them and
+enqueues on the next pass (`review-threads-resolved`); when a thread only a
+person can clear is open the PR parks at `stage/085-needs-decision` with
+`unresolved-review-threads`, remembered per head for 30 minutes; and when
+nothing explains the refusal it retries after 5 minutes (`review-threads-pending`),
+parking after three tries. See
+[The hive's own review threads](review-bot-threads.md#the-hives-own-review-threads).
 
 Required workflows must subscribe to `merge_group` in addition to their PR
 triggers. `v2-ci.yml`, `v2-tests.yml` and `go-security-analysis.yml` subscribe

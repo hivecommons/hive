@@ -389,6 +389,12 @@ func humanizeStageReason(reason string) string {
 		return "fixing CI would undo this PR's change: the hive's push removed most of what the PR changes"
 	case "held":
 		return "held by a hold label"
+	case stageengineprstage.AutoMergeReasonUnresolvedReviewThreads:
+		return "GitHub requires every review conversation resolved, and the hive left the open ones for a person"
+	case stageengineprstage.AutoMergeReasonReviewThreadsResolved:
+		return "the hive resolved its own review threads; merging on the next pass"
+	case stageengineprstage.AutoMergeReasonReviewThreadsPending:
+		return "GitHub refused the merge for unresolved review conversations; retrying in a few minutes"
 	case "label:needs-rebase":
 		return "needs a rebase"
 	case "untrusted-author-role":
