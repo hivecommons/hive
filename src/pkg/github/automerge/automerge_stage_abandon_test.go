@@ -963,6 +963,15 @@ func TestAbandonTrustedTimerChecksTheRepoPermission(t *testing.T) {
 		t.Fatal("a read-only author was not flagged")
 	}
 
+	// A pass that does not know the author defers: no read, no flag.
+	u := trusted(t)
+	u.obs.Author = ""
+	u.clock.advance(2*abandonAfterTest + time.Hour)
+	u.e.reconcileAbandoned(context.Background(), u.store, u.key, u.obs, policy(u), true, u.clock.now())
+	if r := u.rec(t); r.Abandoned() || r.AbandonMaintainerSeen || u.api.permReads != 0 {
+		t.Fatalf("flagged or read with no author: %+v reads=%d", r, u.api.permReads)
+	}
+
 	// Gained maintain after the flag (past the read's cache): no notice,
 	// the flag goes.
 	g.api.permission = "maintain"
