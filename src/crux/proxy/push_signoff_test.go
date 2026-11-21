@@ -58,9 +58,10 @@ func pushReq(body []byte) *http.Request {
 }
 
 func TestPushSignoffRefusal(t *testing.T) {
-	lane := "scanner <scanner@hive.invalid>"
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	lane := "scanner <scanner@hive.kubestellar.io>"
 	person := "Andy <andy@example.com>"
-	signed := "msg\n\nSigned-off-by: scanner <scanner@hive.invalid>"
+	signed := "msg\n\nSigned-off-by: scanner <scanner@hive.kubestellar.io>"
 	cases := []struct {
 		name    string
 		commit  string
@@ -90,10 +91,11 @@ func TestPushSignoffRefusal(t *testing.T) {
 }
 
 func TestPushSignoffRefusalFailClosedAndSkips(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
 	if _, refused, _ := pushSignoffRefusal(pushReq([]byte("0000garbage")), "scanner"); !refused {
 		t.Fatal("unparseable push must be refused")
 	}
-	body := testPackBody(t, [2]any{1, testCommit("scanner <scanner@hive.invalid>", "scanner <scanner@hive.invalid>", "msg", 1)})
+	body := testPackBody(t, [2]any{1, testCommit("scanner <scanner@hive.kubestellar.io>", "scanner <scanner@hive.kubestellar.io>", "msg", 1)})
 	if _, refused, _ := pushSignoffRefusal(pushReq(body), ""); refused {
 		t.Fatal("unnamed agent must not be inspected")
 	}
@@ -165,8 +167,9 @@ func pktCmd(caps string) []byte {
 }
 
 func TestPushSignoffRefusalDeltifiedCommit(t *testing.T) {
-	lane := "scanner <scanner@hive.invalid>"
-	signed := "msg\n\nSigned-off-by: scanner <scanner@hive.invalid>"
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	lane := "scanner <scanner@hive.kubestellar.io>"
+	signed := "msg\n\nSigned-off-by: scanner <scanner@hive.kubestellar.io>"
 	base := testCommit(lane, lane, signed, 1)
 	bad := testCommit(lane, lane, "unsigned", 1)
 	good := testCommit(lane, lane, signed+"\n\nmore", 1)
@@ -194,7 +197,8 @@ func TestPushSignoffRefusalDeltifiedCommit(t *testing.T) {
 }
 
 func TestPushSignoffRefusalThinDeltaStartingCommit(t *testing.T) {
-	lane := "scanner <scanner@hive.invalid>"
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	lane := "scanner <scanner@hive.kubestellar.io>"
 	target := testCommit(lane, lane, "unsigned", 1)
 	deltaObj := packObjBytes(7, make([]byte, 20), insertOnlyDelta(10, target))
 	body := append(pktCmd(" report-status"), wrapPack(deltaObj)...)
@@ -209,8 +213,9 @@ func TestPushSignoffRefusalThinDeltaStartingCommit(t *testing.T) {
 }
 
 func TestPushSignoffRefusalPushOptions(t *testing.T) {
-	lane := "scanner <scanner@hive.invalid>"
-	pack := packObjBytes(1, nil, []byte(testCommit(lane, lane, "msg\n\nSigned-off-by: scanner <scanner@hive.invalid>", 1)))
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	lane := "scanner <scanner@hive.kubestellar.io>"
+	pack := packObjBytes(1, nil, []byte(testCommit(lane, lane, "msg\n\nSigned-off-by: scanner <scanner@hive.kubestellar.io>", 1)))
 	opt := "ci.skip"
 	body := append(pktCmd(" report-status push-options"), []byte(fmt.Sprintf("%04x%s0000", len(opt)+4, opt))...)
 	body = append(body, wrapPack(pack)...)
