@@ -375,9 +375,10 @@ type Engine struct {
 	humanReturnChecked   map[string]string
 	mergerAuthz          MergerAuthorizer
 
-	// maintainerPerm caches whether a PR author holds admin or maintain on
-	// the PR's repository (authorMaintainsRepo): adoption never takes over
-	// a maintainer's own PR.
+	// maintainerPerm caches a PR author's permission on the PR's
+	// repository (authorRepoAccess): adoption never takes over a
+	// maintainer's own PR, and the trusted contributor idle clock never
+	// flags a PR whose author can push to the repository.
 	maintainerPermMu sync.Mutex
 	maintainerPerm   map[string]maintainerPermEntry
 
@@ -963,6 +964,10 @@ type TrustedAuthorPolicy struct {
 	RequireRole             string
 	RequireGitHubPermission bool
 	ExcludeLabels           map[string]bool
+	// HoldLabel is the first configured exclude label: the one the 085
+	// comment names as what stops this tier merging a PR whose reviewer
+	// question is still open ("" reads as `hold`).
+	HoldLabel string
 }
 
 type TrustedAuthorDecision struct {

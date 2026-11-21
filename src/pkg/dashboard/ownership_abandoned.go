@@ -38,8 +38,19 @@ func abandonedPRFor(org string, now time.Time) func(pr github.PullRequest) (stri
 		if !ok || !rec.Abandoned() {
 			return "", false
 		}
-		return abandonedOwnershipText(rec.AbandonedReason(now)), true
+		return abandonedOwnershipText(abandonedRowReason(rec, now)), true
 	}
+}
+
+// abandonedRowReason is the record's abandoned reason as a row shows it,
+// naming the trusted contributor timer when that is the one that ran
+// (governor.labels.stage.abandon_after_trusted).
+func abandonedRowReason(rec stagelabels.Record, now time.Time) string {
+	reason := rec.AbandonedReason(now)
+	if reason != "" && rec.AbandonTrustedTimer() {
+		reason += " (trusted contributor timer)"
+	}
+	return reason
 }
 
 // abandonedOwnershipText is the row's reason: the group label, then the

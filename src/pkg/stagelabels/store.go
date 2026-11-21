@@ -370,6 +370,28 @@ type Record struct {
 	// makes it stale; HeadApprover checks the head.
 	ApprovedHead string `json:"approved_head,omitempty"`
 	ApprovedBy   string `json:"approved_by,omitempty"`
+	// TrustedAuthorMergesHead / TrustedAuthorHoldLabel record the head the
+	// stage pass routed as a requires_human 085 the trusted-author lane
+	// merges anyway (Route.TrustedAuthorMerges), and the label that stops
+	// it; TrustedAuthorMergesAt is the pass that last said so. Display
+	// evidence only, like ApprovedHead: the Activity monitor's decision
+	// popover and the PR's "Your move" section read it so they do not say
+	// the hive will not merge the PR (hivecommons/hive#19421). The pass
+	// clears it when its route for the head says otherwise; a new head, or
+	// no pass renewing it within TrustedAuthorMergesMaxAge, makes it stale
+	// (TrustedAuthorMergesOn).
+	TrustedAuthorMergesHead string    `json:"trusted_author_merges_head,omitempty"`
+	TrustedAuthorHoldLabel  string    `json:"trusted_author_hold_label,omitempty"`
+	TrustedAuthorMergesAt   time.Time `json:"trusted_author_merges_at,omitempty"`
+	// EntryCommentedTrustedMerges records whether the 085 entry comment
+	// was last rendered saying the trusted-author lane will still merge the
+	// PR (Route.TrustedAuthorMerges). The causes already explained do not
+	// tell the two wordings apart, so the comment is rewritten in place
+	// whenever the current route's wording differs (hivecommons/hive#19421).
+	EntryCommentedTrustedMerges bool `json:"entry_commented_trusted_merges,omitempty"`
+	// Human071TrustedMerges is the same for the trusted human's 071 note on
+	// NudgeHead: whether it was last written saying the PR will still merge.
+	Human071TrustedMerges bool `json:"human_071_trusted_merges,omitempty"`
 	// AdoptForcedBy / AdoptForcedAt record an operator's "Adopt now": the
 	// login that forced adoption and when. The next sweep adopts by
 	// supersession at once, regardless of the author's presence and of
@@ -523,11 +545,23 @@ type Record struct {
 	// clock runs for the PR (Activity.TrackIdle); seeded from LastActivityAt
 	// the first time.
 	AbandonActivityAt time.Time `json:"abandon_activity_at,omitzero"`
+	// AbandonMaintainerSeen is set once the stage pass saw the PR as the
+	// hive's own or its author as a maintainer (an owner, a trusted author
+	// or merger, a trusted bot, an OWNER / MEMBER / COLLABORATOR
+	// association, or write / maintain / admin on the repository when the
+	// trusted contributor timer reads it) while an idle clock was on. Sticky for the
+	// life of the record: a later pass that misses the signal never flags
+	// or closes the PR.
+	AbandonMaintainerSeen bool `json:"abandon_maintainer_seen,omitempty"`
 	// AbandonTrustedSeen is set once the stage pass saw the PR's author as
-	// trusted (role/trusted, an owner, a trusted author, an OWNER / MEMBER
-	// / COLLABORATOR association) while the idle clock was on. Sticky for
-	// the life of the record: a later pass whose role fell back to
-	// untrusted never flags or closes the PR.
+	// trusted: role/trusted or a trusted registry tier with no maintainer
+	// signal, a trusted contributor. Sticky: the PR stays on
+	// governor.labels.stage.abandon_after_trusted (AbandonTrustedTimer)
+	// when a later pass's role falls back. Records from before
+	// abandon_after_trusted have it set for maintainers too; the pass marks
+	// AbandonMaintainerSeen from the maintainer signals before it picks a
+	// threshold, and the trusted timer reads the repository permission
+	// before it flags.
 	AbandonTrustedSeen bool `json:"abandon_trusted_seen,omitempty"`
 	// AbandonCheckedAt is when the one confirming read (comments and
 	// reviews since the idle clock started) last ran for this PR, so a
@@ -3155,6 +3189,78 @@ func (r Record) HeadApprover(head string) string {
 		return ""
 	}
 	return r.ApprovedBy
+}
+
+// TrustedAuthorMergesMaxAge is how long a TrustedAuthorMergesHead note
+// stands without a stage pass renewing it. It matches the automerge
+// engine's stageOwnerAbsenceGrace, which bounds the trusted-author lane's
+// own note the pass reads.
+const TrustedAuthorMergesMaxAge = 30 * time.Minute
+
+// NoteTrustedAuthorMerges records on an existing record whether the stage
+// pass at `at` routed head as a requires_human 085 the trusted-author lane
+// merges anyway: holdLabel is the label that stops it, "" when the route
+// says nothing of the kind (which clears the note).
+func (s *Store) NoteTrustedAuthorMerges(key, head, holdLabel string, at time.Time) {
+	head, holdLabel = strings.TrimSpace(head), strings.TrimSpace(holdLabel)
+	if holdLabel == "" || head == "" {
+		head, holdLabel, at = "", "", time.Time{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	same := r.TrustedAuthorMergesHead == head && r.TrustedAuthorHoldLabel == holdLabel
+	// A renewal is written at most once a minute: the note only has to
+	// outlive TrustedAuthorMergesMaxAge between passes.
+	if same && (head == "" || at.Sub(r.TrustedAuthorMergesAt) < time.Minute) {
+		return
+	}
+	r.TrustedAuthorMergesHead, r.TrustedAuthorHoldLabel, r.TrustedAuthorMergesAt = head, holdLabel, at
+	s.items[key] = r
+	s.dirty = true
+}
+
+// TrustedAuthorMergesOn is the label that stops the trusted-author lane's
+// merge of head when a stage pass within TrustedAuthorMergesMaxAge of now
+// recorded head as a requires_human 085 that lane merges anyway
+// (NoteTrustedAuthorMerges), else "".
+func (r Record) TrustedAuthorMergesOn(head string, now time.Time) string {
+	head = strings.TrimSpace(head)
+	if head == "" || !strings.EqualFold(r.TrustedAuthorMergesHead, head) || now.Sub(r.TrustedAuthorMergesAt) > TrustedAuthorMergesMaxAge {
+		return ""
+	}
+	return r.TrustedAuthorHoldLabel
+}
+
+// MarkEntryCommentedTrustedMerges records whether the 085 entry comment
+// just written says the trusted-author lane will still merge the PR.
+func (s *Store) MarkEntryCommentedTrustedMerges(key string, on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.EntryCommentedTrustedMerges == on {
+		return
+	}
+	r.EntryCommentedTrustedMerges = on
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkHuman071TrustedMerges records whether the trusted human's 071 note
+// just written says the trusted-author lane will still merge the PR.
+func (s *Store) MarkHuman071TrustedMerges(key string, on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.Human071TrustedMerges == on {
+		return
+	}
+	r.Human071TrustedMerges = on
+	s.items[key] = r
+	s.dirty = true
 }
 
 // NoteSoak records the soak the lane holds an existing record's head for:

@@ -70,6 +70,12 @@ type StageLabelPolicy struct {
 	// (stagelabels.Record.AbandonStep; automerge_stage_abandon.go). 0 is
 	// off, the default: the pass does exactly what it did before.
 	AbandonAfter time.Duration
+	// AbandonAfterTrusted is governor.labels.stage.abandon_after_trusted:
+	// the same clock for a trusted contributor's PR (role/trusted with no
+	// maintainer signal; Record.AbandonTrustedTimer). 0 never flags one,
+	// the default; config.StageLabelsConfig.EffectiveAbandonAfterTrusted
+	// keeps it 0 while AbandonAfter is off and never below it.
+	AbandonAfterTrusted time.Duration
 	// AbandonClose reports whether the hive may close an abandoned
 	// contributor PR in "owner/repo" (governor.labels.stage.
 	// abandon_close_repos, ACMM L6 only: config.Config.AbandonCloseAllowed).
@@ -353,6 +359,11 @@ type StageTracker struct {
 	// read for a head no lane noted one on (headTrustedApproval); created
 	// on first use. Like humanMergePathFence it survives drain.
 	approvals map[string]humanApprovalEntry
+	// trustedAuthorMerges remembers, per key, the head the trusted-author
+	// lane last admitted while its review gate did not enforce
+	// (noteStageTrustedAuthorMerges); created on first use. It survives
+	// drain, so a pass the lane did not run in routes the PR the same way.
+	trustedAuthorMerges map[string]trustedAuthorMergesEntry
 }
 
 // stageOwner is the lane that set a PR's current stage, for which head, and
@@ -764,6 +775,132 @@ func (c *Engine) noteStageRole(owner, repo string, number int, r stagelabels.Rol
 		return
 	}
 	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) { d.Role = d.Role.Merge(r) })
+}
+
+// trustedAuthorMergesEntry is the trusted-author lane's last word on a PR:
+// it admitted head while its review gate did not enforce, so a reviewer's
+// requires_human verdict does not stop the merge. holdLabel is the label
+// that does (TrustedAuthorPolicy.HoldLabel).
+type trustedAuthorMergesEntry struct {
+	head      string
+	at        time.Time
+	holdLabel string
+}
+
+// noteStageTrustedAuthorMerges records that the trusted-author lane admitted
+// head and will merge it over a requires_human verdict: the lane holds on
+// the verdict only when its review gate enforces (mergeReviewGate), and an
+// observe-only pass merges nothing. An empty head, or a gate that enforces,
+// clears the note. The 085 comment reads it so it does not say the PR will
+// not merge unattended (hivecommons/hive#19421).
+func (c *Engine) noteStageTrustedAuthorMerges(owner, repo string, number int, head, holdLabel string) {
+	if !c.stagePolicy().Enabled {
+		return
+	}
+	head = strings.TrimSpace(head)
+	gate := c.currentReviewGate()
+	merges := head != "" && !c.observeOnly && (gate == nil || gate.effectiveMode() != ReviewGateModeEnforce)
+	at := time.Now()
+	if c.now != nil {
+		at = c.now()
+	}
+	t := c.stageTrackerOrShared()
+	key := stageKey(owner, repo, number)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !merges {
+		delete(t.trustedAuthorMerges, key)
+		return
+	}
+	if t.trustedAuthorMerges == nil {
+		t.trustedAuthorMerges = map[string]trustedAuthorMergesEntry{}
+	}
+	t.trustedAuthorMerges[key] = trustedAuthorMergesEntry{head: head, at: at, holdLabel: strings.TrimSpace(holdLabel)}
+}
+
+// stageTrustedAuthorMerges reads the note for head: ok when the lane's last
+// evaluation, within stageOwnerAbsenceGrace, admitted this very head, and
+// the label that stops the merge. A new head, or a lane that stopped
+// evaluating the PR (trusted_authors switched off), reads as no note.
+func stageTrustedAuthorMerges(t *StageTracker, key, head string, now time.Time) (string, bool) {
+	if t == nil || strings.TrimSpace(head) == "" {
+		return "", false
+	}
+	t.mu.Lock()
+	entry, ok := t.trustedAuthorMerges[key]
+	t.mu.Unlock()
+	if !ok || entry.head != strings.TrimSpace(head) || now.Sub(entry.at) > stageOwnerAbsenceGrace {
+		return "", false
+	}
+	return entry.holdLabel, true
+}
+
+// settleStageTrustedAuthorMerges writes the trusted-author lane's note once
+// per evaluation, from its outcome: admitted is the head the lane admitted
+// the author for ("" when it did not), and reason / err are what the
+// evaluation returned. The note says the lane merges the head only when the
+// evaluation merged it or stopped on a wait that still ends in its merge
+// (trustedAuthorMergeWait); any other stop clears it. A lookup error says
+// nothing new about the head, so the last note stands; so does a stop on a
+// state the lane could not read this pass (trustedAuthorMergeUnread).
+func (c *Engine) settleStageTrustedAuthorMerges(owner, repo string, number int, admitted, holdLabel, reason string, err error) {
+	if err != nil || trustedAuthorMergeUnread(reason) {
+		return
+	}
+	if reason != "" && !trustedAuthorMergeWait(reason) {
+		admitted = ""
+	}
+	c.noteStageTrustedAuthorMerges(owner, repo, number, admitted, holdLabel)
+}
+
+// trustedAuthorMergeWait reports whether a trusted-author evaluation that
+// stopped with reason still ends in the lane's merge of the head once the
+// wait clears: CI pending or a required check not reported yet, a branch
+// update (behind, base refresh), the native merge queue, a merge-train seat,
+// a head that moved under the evaluation, or an integration capture. A
+// conflict, red check, refused merge method or unsigned squash, release
+// hold, fence, human-merge path, linked issue, freshness gate, known merge
+// refusal or an enforcing review gate is not a wait: the lane will not merge
+// the head as it stands.
+func trustedAuthorMergeWait(reason string) bool {
+	switch reason {
+	case "behind", "check-pending", "status-pending", "head-changed-since-eval", integrationEligibilityCaptured:
+		return true
+	}
+	for _, prefix := range []string{"required-check-pending:", "required-check-missing:", "pending: ", basePreparationPrefix, prstage.AutoMergeReasonNativeQueued, prstage.MergeTrainReasonPrefix} {
+		if strings.HasPrefix(reason, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// trustedAuthorMergeUnread reports a stop on state the lane could not read
+// this pass (the forge-state snapshot stale or not ready, the current-base
+// check unanswered): like a lookup error it says nothing new about the head.
+func trustedAuthorMergeUnread(reason string) bool {
+	switch reason {
+	case autoMergeReasonForgeStateStale, autoMergeReasonForgeStateNotReady, autoMergeReasonCurrentBaseCheck:
+		return true
+	}
+	return false
+}
+
+// forgetStageTrustedAuthorMerges drops the trusted-author lane's notes for
+// repo (owner/name), or every note when repo is "": the lane stopped
+// evaluating those PRs (trusted_authors switched off, the repository left
+// its list, or auto-merge is off for it), so nothing it said still holds.
+func (c *Engine) forgetStageTrustedAuthorMerges(repo string) {
+	t := c.stageTrackerOrShared()
+	prefix := stagelabels.Key(repo, 0)
+	prefix = prefix[:strings.LastIndex(prefix, "#")+1]
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for key := range t.trustedAuthorMerges {
+		if repo == "" || strings.HasPrefix(key, prefix) {
+			delete(t.trustedAuthorMerges, key)
+		}
+	}
 }
 
 // noteStageRedChecks records the red non-required checks the CI gate
@@ -1553,7 +1690,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok && !c.sameHeadApproved(ctx, tracker, key, &obs, now) {
 					verdict = replacement
 					obs.Reason = replacement.Reason
-					route := sameHeadDecisionRoute(obs)
+					route := c.withTrustedAuthorMerges(tracker, key, obs, sameHeadDecisionRoute(obs), now)
 					obs.Route = &route
 				}
 			}
@@ -1574,6 +1711,14 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			if obs.Detail.HumanApprovalHead == obs.HeadSHA {
 				store.NoteHeadApproval(key, obs.HeadSHA, obs.Detail.HumanApprover)
 			}
+			// A requires_human 085 the trusted-author lane merges anyway, for
+			// the Activity monitor's popover and the "Your move" section
+			// (hivecommons/hive#19421); any other route clears it.
+			trustedHold := ""
+			if obs.Route != nil && obs.Route.Stage == stagelabels.NeedsDecision && obs.Route.TrustedAuthorMerges {
+				trustedHold = obs.Route.TrustedAuthorHoldLabel
+			}
+			store.NoteTrustedAuthorMerges(key, obs.HeadSHA, trustedHold, now)
 			soakFirstGreen, _ := c.contributorSoak.FirstGreen(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
 			noteSoak(store, key, obs.Reason, obs.HeadSHA, pass.Route, c.currentContributorLanePolicy().Soak, soakFirstGreen, now)
 			if dcoRead {
@@ -1594,15 +1739,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// The stale contributor PR idle clock (automerge_stage_abandon.go)
 			// runs for contributor PRs only, and keeps its own activity
 			// anchor only while it runs (Activity.TrackIdle).
-			if policy.AbandonAfter > 0 && c.abandonTrustedAuthor(obs, role, policy) {
-				store.MarkAbandonTrustedSeen(key)
-			}
+			c.noteAbandonTrust(store, key, obs, role, policy)
 			trustRec, _ := store.Get(key)
-			abandonEligible := c.abandonContributor(obs, role, policy, trustRec)
+			abandonEligible := c.abandonContributor(obs, policy, trustRec)
 			// The person-PR takeover timer (automerge_stage_person_takeover.go)
 			// reads the same anchor for a person's PR in a listed repository.
 			_, personTimed := personTakeoverApplies(obs, policy)
-			act.TrackIdle = (policy.AbandonAfter > 0 && abandonEligible) || personTimed
+			act.TrackIdle = abandonThreshold(policy, trustRec, abandonEligible) > 0 || personTimed
 			store.NoteActivity(key, act)
 			// A flag on the record only; the stage written below is unchanged.
 			c.reconcileAbandoned(ctx, store, key, obs, policy, abandonEligible, now)
@@ -1728,7 +1871,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			}
 		}
-		if abandonRec, _ := store.Get(key); err == nil && !out.Suppressed && c.abandonContributor(obs, role, policy, abandonRec) {
+		if abandonRec, _ := store.Get(key); err == nil && !out.Suppressed && c.abandonContributor(obs, policy, abandonRec) {
 			// abandon_close_repos: warn once, then close after the grace.
 			n, closed, aerr := c.closeAbandonedIfDue(ctx, store, key, obs, policy, out.Stage, now)
 			result.Comments += n

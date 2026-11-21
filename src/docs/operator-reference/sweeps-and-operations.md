@@ -280,13 +280,17 @@ first cycle after upgrade. Full table, state diagram and migration note:
 ### Abandoned contributor PRs (`abandon_after`, `abandon_close_repos`)
 
 With `governor.labels.stage.abandon_after` set (off by default), the stage
-pass runs an idle clock on contributor PRs (not owners' or trusted
-authors') parked at `071-needs-author` or at
+pass runs an idle clock on contributor PRs (not maintainers': owners,
+`OWNER` / `MEMBER` / `COLLABORATOR` authors, trusted bots) parked at
+`071-needs-author` or at
 an `adoption-stalled:` `085`. Past the threshold with no outside activity it
 flags the PR abandoned. The stage, the label and the recorded reason stay as
 they are. The flag shows as "abandoned Nd: <blocker>", puts the PR in the
 inbox's `CLOSE` group (`abandoned_recommended_close`), and gives the delegate
-a recommend-only rule (`abandoned-stale`). Details:
+a recommend-only rule (`abandoned-stale`). A trusted contributor's PR
+(`role/trusted` with no maintainer signal) is never flagged unless
+`governor.labels.stage.abandon_after_trusted` is set; then it follows the
+same path on that longer threshold. Details:
 [stage-labels.md](../labels-and-control-signals/stage-labels.md#abandoned-contributor-prs-the-idle-clock).
 
 Closing is a separate, per-repository opt-in. It mirrors
@@ -300,7 +304,7 @@ Closing is a separate, per-repository opt-in. It mirrors
 - before closing, one more read of comments and reviews. A comment or
   review by anyone but the hive, or a push it did not make, since the
   notice keeps the PR open and clears the flag;
-- never an owner's or a trusted author's PR, which the clock never flags;
+- never a maintainer's PR, which the clock never flags;
 - never with a hold label or `hive/keep-open` on the PR. Either one added
   after the notice cancels the countdown; once it is removed, a fresh
   notice and a full grace are needed;
@@ -315,6 +319,7 @@ re-implemented by the hive. It stays locked and is withheld as
 | Key | Default | Meaning |
 |---|---|---|
 | `governor.labels.stage.abandon_after` | unset (off) | Idle time after which a parked contributor PR is flagged abandoned. `0` or empty is off. |
+| `governor.labels.stage.abandon_after_trusted` | unset (never) | Idle time, at least `abandon_after`, after which a trusted contributor's parked PR is flagged abandoned. Needs `abandon_after`. `0` or empty never flags one. |
 | `governor.labels.stage.abandon_close_repos` | empty | Repositories that close abandoned contributor PRs after a notice and a 24h grace, at ACMM L6 only. |
 
 ### Central stage engine rollout

@@ -64,3 +64,24 @@ func TestAdminMCPStageLabelsOpWritesPersonTakeoverKeys(t *testing.T) {
 		t.Fatalf("person_repos=%v person_human_repos=%v, want [testorg/testrepo] each", a.PersonRepos, a.PersonHumanRepos)
 	}
 }
+
+// governor.stage_labels writes governor.labels.stage.abandon_after_trusted
+// through the same endpoint.
+func TestAdminMCPStageLabelsOpWritesTheTrustedTimer(t *testing.T) {
+	t.Setenv("HIVE_ADMIN_MCP_ENABLE_WRITES", "1")
+	t.Setenv("HIVE_ADMIN_MCP_PENDING_FILE", t.TempDir()+"/pending.json")
+	srv := newFullServer(t)
+	srv.authToken = "secret"
+	h := srv.authenticate(srv.roleEnforcement(srv.securityHeaders(srv.mux)))
+	owner := adminMCPAs(t, h, map[string]string{"Authorization": "Bearer secret"})
+	preview := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_preview","arguments":{"operation":"governor.stage_labels","args":{"abandon_after":"48h","abandon_after_trusted":"168h"}}}}`
+	confirm := func(id string) string {
+		return `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"write_confirm","arguments":{"confirmation_id":"` + id + `"}}}`
+	}
+	if got := owner(confirm(confirmationID(t, owner(preview)))); !strings.Contains(got, `"write_result"`) {
+		t.Fatalf("the owner's confirm = %s", got)
+	}
+	if st := srv.deps.Config.Governor.Labels.Stage; st.AbandonAfter != "48h" || st.AbandonAfterTrusted != "168h" {
+		t.Fatalf("abandon_after=%q abandon_after_trusted=%q, want 48h / 168h", st.AbandonAfter, st.AbandonAfterTrusted)
+	}
+}

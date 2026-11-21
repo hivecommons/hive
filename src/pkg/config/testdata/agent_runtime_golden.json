@@ -201,6 +201,7 @@
         "ContributorGraceOnline": "",
         "ContributorGraceOffline": "",
         "AbandonAfter": "",
+        "AbandonAfterTrusted": "",
         "AbandonCloseRepos": null,
         "Adoption": {
           "Enabled": null,

@@ -201,7 +201,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if hasRec && it.Kind == "pr" && rec.Abandoned() {
 			// The idle clock's flag: same stage, same recorded reason; the
 			// row says how long it has been stuck and on what.
-			it.Abandoned = rec.AbandonedReason(now)
+			it.Abandoned = abandonedRowReason(rec, now)
 			it.Caption = stageTrackerAbandonedCaption(it.Abandoned)
 		}
 		stageTrackerApplyTracking(it, stage)
@@ -265,6 +265,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		it.HumanApprover = approver
 		it.ManualMerge = stageTrackerManualMergeReason(base)
+		if hasRec && stage == stagelabels.NeedsDecision {
+			it.TrustedAuthorMerges = rec.TrustedAuthorMergesOn(it.Head, now)
+		}
 		if stage == stagelabels.ReadyForHumanMerge {
 			it.HumanMergeReason, _, it.HumanMergeReasonText = stageTrackerHumanMergeReason(it.Reason)
 			// An untrusted author gets the specific why-and-how-to-fix

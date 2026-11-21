@@ -72,6 +72,23 @@ func TestTrustedAuthorAutoMergeConfigDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+// The 085 comment names the first exclude label as what stops the tier
+// merging a PR whose reviewer question is open (hivecommons/hive#19421).
+func TestTrustedAuthorAutoMergeConfigHoldLabel(t *testing.T) {
+	for _, tc := range []struct {
+		labels []string
+		want   string
+	}{
+		{labels: nil, want: "hold"},
+		{labels: []string{" ", "do-not-merge", "hold"}, want: "do-not-merge"},
+		{labels: []string{}, want: ""},
+	} {
+		if got := (TrustedAuthorAutoMergeConfig{ExcludeLabels: tc.labels}).HoldLabel(); got != tc.want {
+			t.Fatalf("HoldLabel(%q) = %q, want %q", tc.labels, got, tc.want)
+		}
+	}
+}
+
 func TestContributorLaneAutoMergeConfigDefaultsAndValidation(t *testing.T) {
 	var cfg ContributorLaneAutoMergeConfig
 	if !cfg.IsEnabled() {

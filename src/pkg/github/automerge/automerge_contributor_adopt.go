@@ -2012,13 +2012,15 @@ func commitsAfterHeadByHive(commits []*gh.RepositoryCommit, complete bool, adopt
 	return true
 }
 
-// maintainerPermTTL is how long authorMaintainsRepo trusts a permission
+// maintainerPermTTL is how long authorRepoAccess trusts a permission
 // read: one GET per (repo, author) per sweep window, not per PR per sweep.
 const maintainerPermTTL = 10 * time.Minute
 
+// maintainerPermEntry is one cached permission answer: `permission` and the
+// finer `role_name`, as the API returned them.
 type maintainerPermEntry struct {
-	maintainer bool
-	at         time.Time
+	permission, role string
+	at               time.Time
 }
 
 // repoMaintainerLevel reports whether a collaborator permission answer
@@ -2028,6 +2030,13 @@ func repoMaintainerLevel(permission, role string) bool {
 	return permission == "admin" || role == "admin" || role == "maintain"
 }
 
+// repoWriteLevel reports whether a collaborator permission answer is write,
+// maintain or admin: someone who can push to the repository.
+func repoWriteLevel(permission, role string) bool {
+	permission, role = strings.ToLower(strings.TrimSpace(permission)), strings.ToLower(strings.TrimSpace(role))
+	return repoMaintainerLevel(permission, role) || permission == "write" || role == "write"
+}
+
 // authorMaintainsRepo reports whether the PR author holds admin or maintain
 // on the PR's repository. Adoption stands in for a contributor's relay that
 // went quiet; a maintainer owns the branch and merges it themselves, so the
@@ -2035,29 +2044,41 @@ func repoMaintainerLevel(permission, role string) bool {
 // as contributor-offline 16 minutes after its nudge and re-homed). A failed
 // read is not cached and returns its error: callers defer, so the hive
 // neither takes a PR over nor releases an existing adoption without
-// evidence. The cache lock covers map access only, never the API call.
+// evidence.
 func (c *Engine) authorMaintainsRepo(ctx context.Context, obs stageObservation, now time.Time) (bool, error) {
+	permission, role, err := c.authorRepoAccess(ctx, obs, now)
+	if err != nil {
+		c.warn("stage labels: could not read the author's repository permission; adoption deferred", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "error", err)
+		return false, err
+	}
+	return repoMaintainerLevel(permission, role), nil
+}
+
+// authorRepoAccess is the PR author's permission on the PR's repository
+// (`permission`, `role_name`), cached for maintainerPermTTL. A failed read
+// is not cached and returns its error; the caller logs it. The cache lock
+// covers map access only, never the API call.
+func (c *Engine) authorRepoAccess(ctx context.Context, obs stageObservation, now time.Time) (string, string, error) {
 	if c == nil || c.gh == nil || obs.Author == "" || obs.Owner == "" || obs.Repo == "" {
-		return false, nil
+		return "", "", nil
 	}
 	if strings.HasSuffix(strings.ToLower(obs.Author), "[bot]") {
 		// An App installation is never a collaborator: the permission
 		// read 404s forever and would defer adoption on every sweep.
-		return false, nil
+		return "", "", nil
 	}
 	key := strings.ToLower(obs.Owner + "/" + obs.Repo + "#" + obs.Author)
 	c.maintainerPermMu.Lock()
 	if e, ok := c.maintainerPerm[key]; ok && now.Sub(e.at) < maintainerPermTTL {
 		c.maintainerPermMu.Unlock()
-		return e.maintainer, nil
+		return e.permission, e.role, nil
 	}
 	c.maintainerPermMu.Unlock()
 	level, _, err := c.gh.Repositories.GetPermissionLevel(ctx, obs.Owner, obs.Repo, obs.Author)
 	if err != nil {
-		c.warn("stage labels: could not read the author's repository permission; adoption deferred", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "error", err)
-		return false, err
+		return "", "", err
 	}
-	maintainer := repoMaintainerLevel(level.GetPermission(), level.GetRoleName())
+	entry := maintainerPermEntry{permission: level.GetPermission(), role: level.GetRoleName(), at: now}
 	c.maintainerPermMu.Lock()
 	if c.maintainerPerm == nil {
 		c.maintainerPerm = map[string]maintainerPermEntry{}
@@ -2067,9 +2088,9 @@ func (c *Engine) authorMaintainsRepo(ctx context.Context, obs stageObservation, 
 			delete(c.maintainerPerm, k)
 		}
 	}
-	c.maintainerPerm[key] = maintainerPermEntry{maintainer: maintainer, at: now}
+	c.maintainerPerm[key] = entry
 	c.maintainerPermMu.Unlock()
-	return maintainer, nil
+	return entry.permission, entry.role, nil
 }
 
 // personAuthored: the PR was pushed by a person — author/human, or one of

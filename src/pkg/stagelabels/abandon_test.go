@@ -530,3 +530,44 @@ func TestAbandonTrustedSeenIsSticky(t *testing.T) {
 		t.Fatal("ClearAbandoned dropped the trusted mark")
 	}
 }
+
+// The trusted contributor timer (abandon_after_trusted) applies to a
+// record seen trusted and never seen as a maintainer; a maintainer mark,
+// sticky as well, wins over it.
+func TestAbandonTrustedTimerAndMaintainerMark(t *testing.T) {
+	f := newAbandonFixture(t, NeedsAuthor, "check-failing:unit")
+	if f.rec().AbandonTrustedTimer() {
+		t.Fatal("an unmarked record is on the trusted timer")
+	}
+	f.st.MarkAbandonTrustedSeen(f.key)
+	if !f.rec().AbandonTrustedTimer() {
+		t.Fatal("a trusted contributor's record is not on the trusted timer")
+	}
+	f.st.MarkAbandonMaintainerSeen(f.key)
+	f.st.MarkAbandoned(f.key, f.now)
+	f.st.ClearAbandoned(f.key)
+	r := f.rec()
+	if !r.AbandonMaintainerSeen || r.AbandonTrustedTimer() {
+		t.Fatalf("maintainer mark lost or not winning: %+v", r)
+	}
+}
+
+// A record saved before abandon_after_trusted, with abandon_trusted_seen
+// set, loads on the trusted timer: with the timer unset a pass never flags
+// it, as before.
+func TestAbandonLegacyTrustedSeenLoadsOnTheTrustedTimer(t *testing.T) {
+	var r Record
+	if err := json.Unmarshal([]byte(`{"abandon_trusted_seen":true}`), &r); err != nil {
+		t.Fatal(err)
+	}
+	if !r.AbandonTrustedSeen || r.AbandonMaintainerSeen || !r.AbandonTrustedTimer() {
+		t.Fatalf("legacy record = %+v", r)
+	}
+	data, err := json.Marshal(Record{Stage: NeedsAuthor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "abandon_maintainer_seen") || strings.Contains(string(data), "abandon_trusted_seen") {
+		t.Fatalf("unset marks were persisted: %s", data)
+	}
+}

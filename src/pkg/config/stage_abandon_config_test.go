@@ -18,6 +18,9 @@ func TestStageAbandonDefaultsOff(t *testing.T) {
 	if got := stage.EffectiveAbandonAfter(); got != 0 {
 		t.Errorf("abandon_after = %v, want 0 (off)", got)
 	}
+	if got := stage.EffectiveAbandonAfterTrusted(); got != 0 {
+		t.Errorf("abandon_after_trusted = %v, want 0 (a trusted contributor's PR is never flagged)", got)
+	}
 	if len(stage.AbandonCloseRepos) != 0 || stage.AbandonCloseListed("example/testrepo") {
 		t.Error("abandon_close_repos must default empty")
 	}
@@ -92,5 +95,41 @@ func TestStageAbandonCloseGates(t *testing.T) {
 	var nilCfg *Config
 	if nilCfg.AbandonCloseAllowed("example/testrepo") {
 		t.Error("nil config allowed")
+	}
+}
+
+// abandon_after_trusted parses, applies only while abandon_after is on,
+// and never reads shorter than abandon_after.
+func TestStageAbandonAfterTrusted(t *testing.T) {
+	src := `governor:
+  labels:
+    stage:
+      abandon_after: 48h
+      abandon_after_trusted: 168h
+`
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	stage := cfg.Governor.Labels.Stage
+	if got := stage.EffectiveAbandonAfterTrusted(); got != 168*time.Hour {
+		t.Fatalf("abandon_after_trusted = %v, want 168h", got)
+	}
+	for name, tc := range map[string]struct {
+		after, trusted string
+		want           time.Duration
+	}{
+		"unset":                  {"48h", "", 0},
+		"zero":                   {"48h", "0", 0},
+		"invalid":                {"48h", "soon", 0},
+		"abandon_after off":      {"", "168h", 0},
+		"below abandon_after":    {"48h", "24h", 48 * time.Hour},
+		"equal to abandon_after": {"48h", "48h", 48 * time.Hour},
+		"longer":                 {"48h", "336h", 336 * time.Hour},
+	} {
+		s := StageLabelsConfig{AbandonAfter: tc.after, AbandonAfterTrusted: tc.trusted}
+		if got := s.EffectiveAbandonAfterTrusted(); got != tc.want {
+			t.Errorf("%s: EffectiveAbandonAfterTrusted = %v, want %v", name, got, tc.want)
+		}
 	}
 }

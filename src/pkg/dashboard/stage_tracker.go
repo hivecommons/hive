@@ -353,7 +353,8 @@ type StageTrackerItem struct {
 	Author        string                        `json:"author,omitempty"`
 	// Abandoned is the idle clock's reason for a contributor PR flagged
 	// abandoned (governor.labels.stage.abandon_after): "abandoned 9d:
-	// check-failing:unit". Reason keeps the recorded park reason; the
+	// check-failing:unit", with " (trusted contributor timer)" when
+	// abandon_after_trusted ran. Reason keeps the recorded park reason; the
 	// caption leads with this instead.
 	Abandoned string `json:"abandoned,omitempty"`
 	// Head is the PR head SHA the lane last evaluated ("" for issues), so
@@ -555,6 +556,12 @@ type StageTrackerItem struct {
 	// the maintainer's merge click.
 	HumanApprover string `json:"human_approver,omitempty"`
 	ManualMerge   bool   `json:"manual_merge,omitempty"`
+	// TrustedAuthorMerges is, at 085, the label that stops the merge when
+	// the stage pass recorded the head as a requires_human park the
+	// trusted-author lane merges anyway once green (its review gate does not
+	// enforce, hivecommons/hive#19421); "" otherwise. The decision popover
+	// then does not say the hive will not merge it.
+	TrustedAuthorMerges string `json:"trusted_author_merges,omitempty"`
 	// HumanMergeReason is, at 090, the compact code naming why a person
 	// and not the hive merges this PR (prstage.HumanMergeReason*:
 	// "workflow-files", "untrusted-author", "branch-protection", …;

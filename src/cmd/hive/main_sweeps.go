@@ -898,6 +898,15 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		IntegrationAdmission:     dashSrv.IntegrationNativeAdmission,
 		IntegrationExecution:     dashSrv.IntegrationExecutionRoute,
 		IntegrationFilesObserved: dashSrv.IntegrationObserveFiles,
+		// Review gate (#12592): the gate the ticker engine gets (main.go).
+		// Without it this engine's trusted-author lane merged a head
+		// governor.review_gate.mode: enforce (or review.require_approval)
+		// should have held (hivecommons/hive#19421).
+		ReviewGate: selfMergeReviewGate(cfg, logger, func(e automerge.ReviewGateEvaluation) {
+			if dashSrv != nil {
+				dashSrv.AuditLogRecord("system", reviewEvaluatedAuditAction, reviewEvaluatedAuditDetail(e), "", e.Repo, e.Number)
+			}
+		}),
 	}
 	opts.ScanCommitClosingKeywords = true
 	syncStageEngineMode(cfg, ghClient, logger)

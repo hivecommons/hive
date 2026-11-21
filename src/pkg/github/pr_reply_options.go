@@ -5,10 +5,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/prstatus"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -97,6 +99,11 @@ type prWait struct {
 	// HiveAuthored: the hive opened the PR, so a `/hive decision <text>`
 	// reaches its agent as a change request.
 	HiveAuthored bool
+	// TrustedAuthorMerges is the label that stops the trusted-author lane
+	// when the stage pass recorded the held head as one that lane merges
+	// anyway (its review gate does not enforce, hivecommons/hive#19421);
+	// "" otherwise. The section then does not say the review holds the PR.
+	TrustedAuthorMerges string
 }
 
 // renderPRReplyOptions is the section text for w; "" when the PR waits on
@@ -116,6 +123,13 @@ func renderPRReplyOptions(w prWait) string {
 		b.WriteString("the hive's review (`" + verdict + "`")
 		if head := strings.TrimSpace(w.HeadSHA); head != "" {
 			b.WriteString(" on `" + shortSHA(head) + "`")
+		}
+		if hold := strings.TrimSpace(w.TrustedAuthorMerges); hold != "" {
+			// The trusted-author lane's review gate does not enforce, so the
+			// verdict does not stop its merge (hivecommons/hive#19421).
+			b.WriteString(") asks a person a question, but the trusted-author lane will still merge this pull request once its checks are green. Add the `" + hold + "` label to stop it until the question is answered.\n\nReply on this PR with one of these:\n\n")
+			b.WriteString("- `" + ReviewHoldReleaseCommand + "` approves the current head and answers the question.\n")
+			break
 		}
 		b.WriteString(") holds this pull request for a person")
 		if w.Parked {
@@ -165,6 +179,11 @@ func (c *Client) prWaitFor(ctx context.Context, owner, repo string, issue *gh.Is
 	}
 	if !released {
 		w.Held, w.Verdict, w.HeadSHA = true, hold.Verdict, hold.HeadSHA
+		// The verdict hold is not tied to the current head; the stage
+		// record's note is, so it is read for the head the record saw last.
+		if rec, ok := stagelabels.Shared().Get(stagelabels.Key(owner+"/"+repo, issue.GetNumber())); ok {
+			w.TrustedAuthorMerges = rec.TrustedAuthorMergesOn(rec.ActivityHead, time.Now())
+		}
 	}
 	return w, nil
 }
