@@ -358,8 +358,11 @@ matches the comment to the verdict report's finding on the same file and line
 finding's severity, for example `<!-- hive-finding-severity: low -->`. When
 several findings match, the most severe wins. A comment no finding matches
 (no report, a report that does not validate, a finding with no file or line,
-or no severity) is marked `unmatched`, which reads as blocking. A marker the
-agent wrote itself is stripped first. The marked severity is then compared
+or no severity) is marked `unmatched`, which reads as blocking. A comment a
+security-perspective finding is anchored on is marked `security`, whatever
+severity that finding was filed at, and also reads as blocking: a reviewer
+misled into rating a real security problem low cannot unblock the merge by
+it. A marker the agent wrote itself is stripped first. The marked severity is then compared
 with the blocking line:
 
 - with `review.severity.block_at` set, a finding is non-blocking when it is
@@ -369,8 +372,8 @@ with the blocking line:
 - with no `block_at` (the default, where the backlog rule puts nothing below
   the line), `info` and `low` count as non-blocking, the reviewer's own
   "non-blocking" tier;
-- only the five known severities qualify; `required`, `unmatched` or any
-  other value is blocking.
+- only the five known severities qualify; `required`, `unmatched`,
+  `security` or any other value is blocking.
 
 Threads posted before the marker existed carry only prose. For those the
 first line of the hive's comment is read (emphasis removed, at most 160

@@ -344,6 +344,19 @@ func TestStampInlineCommentSeverity(t *testing.T) {
 	if got := findingSeverityMarkerValue(drafts[0].GetBody()); got != reviewFindingSeverityUnmatched {
 		t.Errorf("blank severity: marker %q", got)
 	}
+	// A security-perspective finding is never non-blocking, even filed as
+	// info and even beside a low finding from another perspective.
+	sec := []review.PerspectiveReport{{}, {Perspective: review.PerspectiveSecurity}}
+	sec[0].Findings = []outputschema.Finding{{Title: "f", Severity: outputschema.SeverityLow, Summary: "s", File: "f.go", Line: 11}}
+	sec[1].Findings = []outputschema.Finding{{Title: "g", Severity: outputschema.SeverityInfo, Summary: "s", File: "f.go", Line: 11}}
+	drafts = draftReviewComments(comments[:1], nil)
+	stampInlineCommentSeverity(drafts, comments[:1], sec)
+	if got := findingSeverityMarkerValue(drafts[0].GetBody()); got != reviewFindingSeveritySecurity {
+		t.Errorf("security finding: marker %q, want %q", got, reviewFindingSeveritySecurity)
+	}
+	if ownFindingNonBlocking(drafts[0].GetBody(), "") {
+		t.Errorf("security finding reads as non-blocking:\n%s", drafts[0].GetBody())
+	}
 }
 
 // The relay marks each posted inline comment with its finding's severity.

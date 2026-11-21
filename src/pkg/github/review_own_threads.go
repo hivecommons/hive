@@ -53,6 +53,13 @@ const reviewFindingSeverityMarker = "<!-- hive-finding-severity:"
 // posted before the marker existed.
 const reviewFindingSeverityUnmatched = "unmatched"
 
+// reviewFindingSeveritySecurity is the marker value for an inline comment a
+// security-perspective finding is anchored on, whatever severity it was
+// filed at. It is read as blocking: a security note is never auto-resolved,
+// so a reviewer misled (or prompt-injected) into rating a real security
+// problem low cannot unblock the merge by it.
+const reviewFindingSeveritySecurity = "security"
+
 // ownThreadsAuditAgent is the actor named on the audit entries.
 const ownThreadsAuditAgent = "automerge"
 
@@ -394,7 +401,8 @@ func stampInlineCommentSeverity(drafts []*gh.DraftReviewComment, comments []Revi
 }
 
 // inlineCommentSeverity finds the most severe verdict finding anchored where
-// rc is (same file, a line inside rc's range).
+// rc is (same file, a line inside rc's range). A security-perspective
+// finding there wins outright as reviewFindingSeveritySecurity.
 func inlineCommentSeverity(rc ReviewInlineComment, reports []review.PerspectiveReport) (outputschema.Severity, bool) {
 	path := strings.TrimPrefix(strings.TrimSpace(rc.Path), "./")
 	start := rc.Line
@@ -407,6 +415,9 @@ func inlineCommentSeverity(rc ReviewInlineComment, reports []review.PerspectiveR
 		for _, f := range r.Findings {
 			if strings.TrimPrefix(strings.TrimSpace(f.File), "./") != path || f.Line < start || f.Line > rc.Line {
 				continue
+			}
+			if r.Perspective == review.PerspectiveSecurity {
+				return reviewFindingSeveritySecurity, true
 			}
 			sev := outputschema.Severity(strings.ToLower(strings.TrimSpace(string(f.Severity))))
 			if rank := inlineSeverityRank(sev); rank > bestRank {
