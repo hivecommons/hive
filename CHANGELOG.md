@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-21 (v5.345.12)
+
+### Fixed
+
+- Rotating a Model Gateways key now warns when `runtime: job` agents on that gateway take their model credential from their own `job.env_from_secrets` Secret, which hive never updates: the save and Test responses carry a `sandboxJobWarning` naming the agents, so a stale Job key is no longer found only after the old key is revoked. Hive-managed rotation of those Secrets is not yet implemented (#19337).
+
 ## 2026-11-21 (v5.345.11)
 
 ### Fixed
