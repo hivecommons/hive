@@ -336,6 +336,13 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 	if reason, err := c.nativeQueueChangesRequested(ctx, pr, claim); reason != "" || err != nil {
 		return reason, err
 	}
+	// GitHub already refused this head for unresolved review conversations
+	// (parked, or waiting out a retry): do not ask again every pass.
+	if !state.IsInMergeQueue {
+		if reason := c.knownUnresolvedThreads(claim.Repo, pr.GetNumber(), state.HeadRefOid); reason != "" {
+			return reason, nil
+		}
+	}
 	if !state.IsInMergeQueue {
 		if c.integrationAdmission != nil {
 			reason, err := c.integrationAdmission(ctx, claim.Repo, pr)
@@ -364,6 +371,11 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 		_, err = effects.ExecuteReconciling(ctx, c.mutation, claim, observe, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 			entry, err := t.EnqueueNativePullRequest(ctx, state.ID, state.HeadRefOid)
 			if err != nil {
+				if hgithub.IsUnresolvedConversationsError(err) {
+					// A definite refusal: nothing was queued, so the
+					// journal must not hold it as an uncertain outcome.
+					return effects.Result{}, effects.NotApplied(err)
+				}
 				return effects.Result{}, err
 			}
 			state.MergeQueueEntry = entry
@@ -374,6 +386,9 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 				// GitHub refuses the enqueue while required checks fail. That is
 				// a hold on the PR, not a sweep fault; the next tick retries.
 				return nativeQueueReasonChecksFailing, nil
+			}
+			if hgithub.IsUnresolvedConversationsError(err) {
+				return c.unresolvedThreadsRefusal(ctx, claim.Repo, pr.GetNumber(), state.HeadRefOid), nil
 			}
 			return nativeQueueReasonEnqueue, err
 		}

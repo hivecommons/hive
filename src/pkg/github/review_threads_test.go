@@ -41,6 +41,9 @@ type gqlThread struct {
 type gqlComment struct {
 	Author string
 	Body   string
+	// AuthorType, when set, is rendered as the author's __typename (Bot,
+	// User), the way GraphQL reports an App's bot without "[bot]".
+	AuthorType string
 }
 
 // gqlMock serves POST /graphql for the review-thread code paths and records
@@ -73,8 +76,12 @@ func (m *gqlMock) add(t *gqlThread) {
 func (m *gqlMock) renderThread(t *gqlThread) map[string]any {
 	comments := make([]map[string]any, 0, len(t.Comments))
 	for i, c := range t.Comments {
+		author := map[string]any{"login": c.Author}
+		if c.AuthorType != "" {
+			author["__typename"] = c.AuthorType
+		}
 		comments = append(comments, map[string]any{
-			"author":     map[string]any{"login": c.Author},
+			"author":     author,
 			"body":       c.Body,
 			"databaseId": t.DatabaseID + int64(i),
 		})

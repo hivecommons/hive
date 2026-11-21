@@ -615,6 +615,8 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 		return prstage.CauseApprovalDeskWithheld
 	case reason == autoMergeReasonMergeRefusedReview:
 		return "GitHub refused the merge: branch protection requires an approving review from someone with write access, and the Hive App cannot give it. A GitHub **Approve** review on this head (or an App bypass in the branch rules) lets the hive merge it; the hive retries once GitHub reports the PR unblocked, or within 30 minutes"
+	case reason == autoMergeReasonUnresolvedReviewThreads:
+		return "GitHub refused the merge: this repository requires every review conversation to be resolved, and the hive left the open threads for a person. The hive resolves its own non-blocking threads itself when nothing else is open; it never resolves a person's or another bot's thread, a hive thread someone has replied in, or a hive finding not marked non-blocking (with `review.severity.block_at: P3` every finding blocks, so it resolves none). It also parks here when GitHub refused three times although the hive saw nothing left it could resolve. Answer and resolve the remaining threads; the hive tries again within 30 minutes or on a new push"
 	case reason == autoMergeReasonMergeRefusedMethod:
 		return "GitHub refused the merge: the repository does not allow the merge method the hive chose for this PR. The hive does not switch methods on its own: a forward merge or a `" + stagelabels.MergeCommitLabel + "` PR must never be squashed. Merge it by hand with an allowed method, or allow the method in the repository settings and the hive retries within 30 minutes"
 	case reason == "":

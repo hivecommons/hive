@@ -199,7 +199,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		if c.requiredChecksExpected(attempt, err) {
 			return AutoMergeSweepEvent{}, autoMergeReasonChecksExpected, nil
 		}
-		if refused := c.refusedMerge(attempt, err); refused != "" {
+		if refused := c.refusedMerge(ctx, attempt, err); refused != "" {
 			return AutoMergeSweepEvent{}, refused, nil
 		}
 		return AutoMergeSweepEvent{}, "merge-failed", err
