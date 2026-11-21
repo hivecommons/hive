@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-21 (v5.345.10)
+
+### Changed
+
+- docs: Customers hub import disclosure and telemetry docs (#19416)
+
 ## 2026-11-21 (v5.345.9)
 
 ### Changed
