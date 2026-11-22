@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-22 (v6.55.4)
+
+### Fixed
+
+- Human-merge paths: the rule no longer applies `hold`, which froze the PR's fixer (no CI repair, no fix kick for a reviewer's or owner's change request, no base refresh) while the merge was already refused by the file check. It now applies `needs-owner-merge`, which every merge lane, the merge train and the serialized lane's front already stop on, which is never read as a hold, and which agents cannot set or lift through the label relay, so agents keep fixing, reviewing and updating the PR and only a person merges it. The stale-path, pin-only and owner-approval releases remove that label under the same provenance guards; a boot migration swaps a `hold` the rule applied earlier once (only when every `hold` event is the App's, exactly one on a hive without a `hive_id`, and nothing else holds the PR), or lifts it when the head no longer touches a listed path; a trusted maintainer's change request now reaches the fixer on a PR the human-merge rule stops (never past a person's `hold`) and survives the hive's own merge of the base into the branch, once per review; and a red PR skipped for a person's `hold` is logged once per head.
+
 ## 2026-11-22 (v6.55.3)
 
 ### Fixed
