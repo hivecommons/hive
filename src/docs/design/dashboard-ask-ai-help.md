@@ -505,9 +505,11 @@ Re-checked against `hivecommons/docs` main on 2026-11-18:
   `https://docs.hivecommons.dev` only; a customization scopes answers to Hive
   Commons help and politely refuses off-topic questions, and the widget uses it.
   Requested from the vendor: a higher per-team chat limit, GitHub Discussions as
-  a source, and a corrected name for the issues source. Still to do: the two
-  ingestion exclusions above, a regular look at coverage gaps and top questions,
-  and the Ask-specific telemetry and consent wording once phases 1 and 2 ship.
+  a source, and a corrected name for the issues source. The Ask-specific
+  telemetry and consent wording is published in the
+  [telemetry page](../telemetry.md) and the dashboard docs. Still to do, all
+  outside this repo: the two ingestion exclusions above and a regular look at
+  coverage gaps and top questions.
 
 ## Phases
 
