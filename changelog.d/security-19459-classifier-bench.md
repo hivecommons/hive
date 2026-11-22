@@ -1,0 +1,1 @@
+- Added an opt-in ioscan classifier benchmark: a labelled corpus under `src/pkg/ioscan/testdata/classifier-bench/` and a manually dispatched workflow that reports catch rate, false positives, errors and latency per classifier backend ([#19459](https://github.com/hivecommons/hive/issues/19459)).

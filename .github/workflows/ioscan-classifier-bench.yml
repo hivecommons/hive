@@ -1,0 +1,51 @@
+# ioscan classifier benchmark (#19459). Manually dispatched only: it spends real
+# model calls, so it never runs on push, PR or schedule. Runs the opt-in
+# TestClassifierBench per configured backend and posts the markdown table as a
+# job summary. Held-out rows are reported separately and must never be used to
+# tune thresholds or the classifier prompt.
+name: ioscan classifier bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli_backends:
+        description: 'Space-separated tool-less CLI backends to score (see ioscan.ToollessBackends)'
+        default: ''
+        type: string
+      openai_endpoint:
+        description: 'OpenAI-compatible endpoint for the LLM classifier (optional)'
+        default: ''
+        type: string
+      model:
+        description: 'Model override (optional)'
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ioscan-classifier-bench
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    if: github.repository == 'hivecommons/hive'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      IOSCAN_CLASSIFIER_BENCH: '1'
+      IOSCAN_CLASSIFIER_BENCH_BACKENDS: ${{ inputs.cli_backends }}
+      IOSCAN_CLASSIFIER_BENCH_OPENAI_ENDPOINT: ${{ inputs.openai_endpoint }}
+      IOSCAN_CLASSIFIER_BENCH_MODEL: ${{ inputs.model }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: |
+            src/go.sum
+      - name: Run classifier benchmark
+        working-directory: src
+        run: go test ./pkg/ioscan/ -run 'TestClassifierBench$' -count=1 -v
