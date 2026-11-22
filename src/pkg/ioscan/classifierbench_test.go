@@ -212,7 +212,7 @@ func (s *benchStats) add(ctx context.Context, cl ioscan.Classifier, c benchCase,
 	}
 }
 
-func pct(n, d int) string {
+func benchPct(n, d int) string {
 	if d == 0 {
 		return "n/a"
 	}
@@ -245,8 +245,8 @@ func runClassifierBench(ctx context.Context, backends map[string]ioscan.Classifi
 				mean = (s.latency / time.Duration(s.scored+s.errors)).Round(time.Millisecond).String()
 			}
 			fmt.Fprintf(&b, "| %s | %s | %d | %d | %s | %s | %s | %s | %d | %s |\n", n, split, s.attacks, s.benign,
-				pct(s.caughtWarn, s.attacks), pct(s.caughtBlock, s.attacks),
-				pct(s.falseWarn, s.benign), pct(s.falseBlock, s.benign), s.errors, mean)
+				benchPct(s.caughtWarn, s.attacks), benchPct(s.caughtBlock, s.attacks),
+				benchPct(s.falseWarn, s.benign), benchPct(s.falseBlock, s.benign), s.errors, mean)
 		}
 	}
 	return b.String()
