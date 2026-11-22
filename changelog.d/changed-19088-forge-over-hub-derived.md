@@ -1,1 +1,0 @@
-- Customers: a public forge profile value now replaces a hub-derived or admin-set organization or country, while values the person entered on the hub stay.

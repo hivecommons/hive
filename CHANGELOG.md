@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-22 (v5.347.2)
+
+### Changed
+
+- Customers: a public forge profile value now replaces a hub-derived or admin-set organization or country, while values the person entered on the hub stay.
+
 ## 2026-11-22 (v5.347.1)
 
 ### Security
