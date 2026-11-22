@@ -1,1 +1,0 @@
-- ioscan now raises phrase findings hidden in HTML comments, `<details>` and hidden-style elements to a blocking severity (`injection.hidden_markup`), and flags image and link URLs whose query strings carry data or fill-in placeholders (`dangerous.exfil_image_url`, `dangerous.link_fill_in`); existing rule ids are unchanged (#19444).
