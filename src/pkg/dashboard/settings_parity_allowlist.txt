@@ -708,6 +708,7 @@ shared_ci_rerun.enabled # TODO #11854
 swarm.themes.<key>.call_to_arms # TODO #11854
 swarm.themes.<key>.event_name # TODO #11854
 swarm.themes.<key>.leaderboard_title # TODO #11854
+tool_approval.pending_ttl_s # TODO #19446 (pending approval TTL; Settings control pending)
 tool_approval.rules[].action # TODO #11854
 tool_approval.rules[].expr # TODO #11854
 tool_approval.rules[].min_acmm_level # TODO #11854
