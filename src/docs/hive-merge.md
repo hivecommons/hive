@@ -181,13 +181,66 @@ refuses, and pending evidence still waits.
 **Paths a person must merge.** `auto_merge.human_merge_paths` is a per-repo map
 of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`),
 unset by default. When a merge request touches a listed path, `hive-merge`
-refuses it, adds `hold`, and posts one `<!-- hive-human-merge-path -->` comment
-naming the path(s); a person must merge it. The same key guards the automerge
-sweep lanes whatever the intent tier. If the changed-file list for a configured
-repo cannot be fetched completely, the merge is withheld (fail closed). Owners
-can edit the map from **Settings → Features → Auto-merge → Per-repository merge
-policy**, one comma-separated pattern list per repo in `project.repos`. See
+refuses it, adds the `needs-owner-merge` label, and posts one
+`<!-- hive-human-merge-path -->` comment naming the path(s); a person must
+merge it. The same key guards the automerge sweep lanes whatever the intent
+tier. If the changed-file list for a configured repo cannot be fetched
+completely, the merge is withheld (fail closed). Owners can edit the map from
+**Settings → Features → Auto-merge → Per-repository merge policy**, one
+comma-separated pattern list per repo in `project.repos`. See
 [operator-reference.md](operator-reference.md).
+
+**The label is not a hold.** The rule applied `hold` until it was found to
+freeze the PR's fixer: a held PR leaves the actionable list, so it got no CI
+repair, no fix kick for a reviewer's or owner's change request, and no base
+refresh, while the merge it was meant to stop was already refused by the file
+check (Danathar/goodreads-mcp#466, #469). The hive never applies `hold` itself
+([#18468](https://github.com/hivecommons/hive/issues/18468)); a `hold` a person
+adds still means hands-off. So the rule now applies `needs-owner-merge`, the
+default `auto_merge.human_merge_labels` label:
+
+- **Only a person merges.** Every merge lane, the merge train and the relay
+  refuse the PR on its changed files at every head, label or not; the label
+  also makes every lane skip the PR early, makes the serialized lane's front
+  leave (as a hold does, rather than wait for the front timeout), and routes
+  it to `090-ready-for-human-merge` under the human-merge-path rule. The label name
+  is fixed: an operator who drops it from `auto_merge.human_merge_labels` only
+  loses that early skip (the lanes then reach the file check on every pass).
+- **Agents keep working on it.** The PR stays in the actionable list: CI
+  repair and `FIX-BEFORE-NEW` pick it up when it is red, the base refreshes
+  for a stale red or a missing required check run, the reviewer swarm
+  reviews it, and a trusted maintainer's *changes
+  requested* review on its head is handed to the fixer even though the lane
+  stops on the label.
+- **A change request survives the hive's own base merge.** GitHub binds a
+  *changes requested* review to the commit it was left on. When the head
+  moved only because the App merged the base branch into it (a
+  GitHub-verified App merge commit whose parents are the reviewed head and a
+  base-branch commit, with the PR's diff unchanged), the review still stands
+  for the new head (it follows the head across every such merge) and the
+  fixer is kicked for it. A fix already kicked for the same request and
+  not yet recorded as an attempt is not kicked again; once its attempt is
+  recorded, the carried head is planned under the ordinary rules. The hive logs
+  `human change request carried over the hive's base merge` once. Any other
+  push ends it.
+- **Upgrading.** A boot migration swaps, once, a `hold` the rule applied
+  earlier for `needs-owner-merge`, and comments
+  `<!-- hive:hold-relabel-human-merge-path -->`. It acts only when the App's
+  notice from the `hold` days is on the PR, every `hold` event on the PR is
+  the App's, and nothing else holds it. On a hive without a `hive_id` the
+  dashboard Hold button and the admin MCP hold also write `hold` as the App,
+  so there the history must be the rule's single, never-removed `hold`; a
+  lifted and re-applied `hold` may be a person's and stays. When the PR's
+  current head no longer touches a listed path, the migration lifts the
+  `hold` instead, with the stale lift's
+  `<!-- hive:human-merge-path-lift <sha> -->` notice, and adds no label (a
+  head that already has a lift notice keeps its `hold`). A
+  `hold` a person set or touched through GitHub is never changed. Until the
+  migration reaches it, such a `hold` still reads as the human-merge-path
+  rule (a person's merge), as before.
+- **A held PR stays held.** When a person's `hold` keeps a red PR out of the
+  CI repair queue, the hive logs `fix candidate skipped: the PR is held` once
+  per PR and head.
 
 **Pin-only policy (enforced by the automerge sweep, `/approve`, and relay).**
 
@@ -195,7 +248,7 @@ policy**, one comma-separated pattern list per repo in `project.repos`. See
 classifier for #16242 / #16262. **The automerge sweep lanes and `/approve`
 (#16266) and the `hive-merge` relay (#16265) enforce it.** The native merge
 queue is entered only after a lane's human-merge-path gate, so queued PRs inherit the exception. A sweep lane
-does not hold a PR on its human-merge-path matches when the repo has an enabled
+does not refuse or label a PR on its human-merge-path matches when the repo has an enabled
 entry, the PR author is in `trusted_authors` (case-insensitive login match),
 GitHub's reported changed-file count is present and equals the fetched list,
 the classifier accepts the diff, and every commit behind the head is a
@@ -225,45 +278,49 @@ no such check. The diff check reuses the file list the
 path gate already fetches, so a PR the classifier refuses costs no extra API
 call; the commit list and upstream refs are read only once the diff qualifies. A repo without an
 enabled entry behaves exactly as before. `/hive approve` applies the same check, so its
-reply never contradicts the lane. Any other outcome holds the PR as before.
-The exception is also checked again on a held PR's later head. Every lane
-skips a PR that carries `hold` before it reaches the human-merge-path gate,
-so without this a pin bump the gate held (for example because the upstream
-floating tag moved before the bot's head caught up) stayed held after the bot
-pushed a head that qualifies, and a person had to merge it
+reply never contradicts the lane. Any other outcome leaves the PR to a person
+as before. The exception is also checked again on a labelled PR's later head.
+Every lane skips a PR that carries `needs-owner-merge` (an
+`auto_merge.human_merge_labels` label) before it reaches the human-merge-path
+gate, so without this a pin bump the gate labelled (for example because the
+upstream floating tag moved before the bot's head caught up) stayed a
+person's merge after the bot pushed a head that qualifies
 ([projectbluefin/bluefin-bling#197](https://github.com/projectbluefin/bluefin-bling/pull/197)).
 The stage-label pass now runs the same check, on the same complete
-changed-file list and matches, when the hold is the hive's own
-human-merge-path hold, the current head still touches a listed path, the
-repository has an enabled exception, and the hold was put on an earlier head.
-When the current head qualifies it removes `hold` and posts one
+changed-file list and matches, when the label is the hive's own (the App
+applied it last and its human-merge-path notice is on the PR), the current
+head still touches a listed path, the repository has an enabled exception,
+and the label was put on an earlier head. When the current head qualifies it
+removes `needs-owner-merge` and posts one
 `<!-- hive:human-merge-path-lift <sha> -->` notice saying the head qualifies
 for the pin-only exception; the lane then checks the exception again before
 it merges. The lift goes through the shared release API described below
 (the App's single, unedited, head-stamped notice for an older head, no lift
 notice yet for the current head, and a label history in which only the App
-ever added or removed `hold`), re-reads the head before the write, and is
-write-back kind `human_merge_path_release`. The head the gate's first
-notice names is never lifted this way.
+ever added or removed `needs-owner-merge`), re-reads the head before the
+write, and is write-back kind `human_merge_path_release`. The head the
+gate's first notice names is never lifted this way.
 
 When the lane's gate re-checks a lifted head and fails it (the tag moved
-again, or an API error), it puts `hold` back without a second notice, so
-the hive takes the newest lift notice's head to be the one re-held. That
-head keeps its hold: neither the pass nor the release API lifts a head that
+again, or an API error), it puts the label back without a second notice, so
+the hive takes the newest lift notice's head to be the one re-labelled. That
+head keeps its label: neither the pass nor the release API lifts a head that
 already has a lift notice. The bot's next head is judged again and lifted
 once more when it qualifies. If the bot pushes between a lift and the
-lane's next pass, the gate re-holds a head that has no lift notice yet, and
+lane's next pass, the gate re-labels a head that has no lift notice yet, and
 that head is judged and may be lifted once; the lane checks the exception
-again before it merges either way. Lifting again after a re-hold needs a
-`hive_id`: without one the dashboard Hold button and the admin MCP hold
-write the same `hold` label as the App, with no notice, so the hive cannot
-tell the gate's re-hold from a person's hold and lifts only the gate's
-first hold. A hold a person set, a hold a person removed or added at any
-point and a hold with another hold source stay for a person. A head that
-fails the exception is logged at info once, not on every pass. A
-repository without an enabled exception behaves as before.
-Do not remove `human_merge_paths` or manually clear a
-hold to simulate this feature. The YAML example, per-field contract and seed
+again before it merges either way. These cycles are accepted on every hive:
+only the gate, and the boot migration that swaps its old `hold`, write
+`needs-owner-merge` as the App (the dashboard Hold button and the admin MCP
+hold write `hold` or `hive-pause/<hive-id>`, and agents cannot set or lift
+the label through the label relay), so the `hive_id` condition the `hold`
+days needed is gone for the label. A label a person set,
+removed or added at any point, and a PR with another hold source, stay for a
+person; a `hold` is never removed. A head that fails the exception is logged
+at info once, not on every pass. A repository without an enabled exception
+behaves as before.
+Do not remove `human_merge_paths` or manually clear the
+label to simulate this feature. The YAML example, per-field contract and seed
 reload instructions live in the
 [operator reference](operator-reference/README.md#human-merge-pin-only-rollout);
 this section covers only the grammar and restrictions of the classifier.
@@ -389,26 +446,28 @@ projectbluefin/utah#1082 and #16242; projectbluefin/utah#1068 is not pre-authori
 for its configuration and deployment prerequisites. The schema/classifier
 (#16262), relay admission (#16265), and sweep admission (#16266) are
 separate, landed changes: this attribution change alone does **not** enable the exception.
-New path-hold comments retain `<!-- hive-human-merge-path -->` and append
-`<!-- hive-human-merge-path-head: <40-character SHA> -->` only when Hive
-observes that exact head without a pre-existing hold. Legacy comments and
-pre-existing holds are not retroactively attributed.
+New human-merge-path comments retain `<!-- hive-human-merge-path -->` and
+append `<!-- hive-human-merge-path-head: <40-character SHA> -->` only when
+Hive observes that exact head without a pre-existing `needs-owner-merge`
+label. Legacy comments and pre-existing labels are not retroactively
+attributed.
 
 The shared release API requires a later, qualifying exact head, the configured
 App identity, an unedited App marker, and complete label-event history proving
-an App-applied path hold immediately before the notice, every later removal and
-application the App's, and an application as the latest transition. Holds a
-person removed or added, ambiguous history, and timeline errors keep the hold.
-A head with a lift notice is refused. Lift and re-hold cycles are accepted
-only when the hive's own hold label is not `hold` (a `hive_id` is set);
-otherwise only the single hold is. Callers
-must supply their live write-back decision (a missing or refusing one leaves
-the hold intact) and call it only after pin-only qualification. The
+an App-applied `needs-owner-merge` immediately before the notice (or, for a
+label the boot migration swapped in for an old `hold`, immediately before the
+App's single migration comment), every later removal and application the
+App's, and an application as the latest transition. A label a person removed
+or added, ambiguous history, and timeline errors keep the label. A head with
+a lift notice is refused. Lift and re-label cycles are accepted on every
+hive. Callers must supply their live write-back decision (a missing or
+refusing one leaves the label intact) and call it only after pin-only
+qualification. The
 stage-label pass is the caller: it qualifies the current head with the lanes'
 own check and decides the write with `human_merge_path_release` (see above).
 This is not an authorization to clear labels manually. Required checks and
 their producer bindings, strict freshness, current reviews and substantive
-objections, other holds, and configured soak remain mandatory. Neither a
+objections, holds, and configured soak remain mandatory. Neither a
 pin-looking diff nor this API authorizes a merge.
 
 **Contributor PRs are held to the contributor-lane policy.** A merge request
@@ -459,16 +518,18 @@ auto_merge:
     - your-org/docs-only-repo
 ```
 
-### Owner approval releases the human-merge-path hold
+<a id="owner-approval-releases-the-human-merge-path-hold"></a>
+
+### Owner approval releases the human-merge-path label
 
 `auto_merge.human_merge_owner_approval` is an opt-in list of `owner/repo`
 names, empty by default. A repository not listed keeps the rule above: a pull
-request touching one of its `human_merge_paths` is held and a person merges
-it. In a listed repository a trusted merger's explicit approval of the pull
-request's current head releases that hold instead, and the merge lanes merge
-the pull request once every other gate passes. CI, required checks,
-freshness, soak, review verdicts, other holds and the sentinel all still
-apply: the approval is not a merge override.
+request touching one of its `human_merge_paths` gets `needs-owner-merge` and a
+person merges it. In a listed repository a trusted merger's explicit approval
+of the pull request's current head releases that label instead, and the merge
+lanes merge the pull request once every other gate passes. CI, required
+checks, freshness, soak, review verdicts, holds and the sentinel all still
+apply: the approval is not a merge override. (The rule applied `hold` before.)
 
 - **What counts as approval.** A trusted merger's GitHub **Approve** review
   on the current head, a `/hive decision approve` reply (typed on the PR or
@@ -478,22 +539,23 @@ apply: the approval is not a merge override.
   trusted merger cannot approve.
 - **Not the author.** The pull request author's own approval never counts,
   whatever form it takes, so one account cannot stand in for the second
-  person the hold exists to bring in.
+  person the rule exists to bring in.
 - **Bound to the head.** A new push needs a new approval. The one exception
   is the fence's: an Approve review or dashboard approval carries over the
   hive's own update from the base branch when the PR's diff is unchanged.
-- **What is released.** The stage-label pass removes only the `hold` the
-  human-merge-path gate put on for this refusal, through the shared release
-  API with its provenance checks: the App's single, unedited, head-stamped
-  notice, and every `hold` the PR was ever labelled with applied by the App.
-  A `hold` a person added or re-added is never removed, and neither is one
-  another hold source explains (a pause, the reporter-trust gate). The
-  release goes through the write-back gate (`human_merge_path_release`).
+- **What is released.** The stage-label pass removes only the
+  `needs-owner-merge` the human-merge-path gate put on for this refusal,
+  through the shared release API with its provenance checks: the App's
+  single, unedited, head-stamped notice, and every application of the label
+  the App's. A label a person added or re-added is never removed, a `hold` is
+  never removed, and the label stays while another hold source keeps the PR
+  (a person's `hold`, a pause, the reporter-trust gate). The release goes
+  through the write-back gate (`human_merge_path_release`).
 - **What is recorded.** One comment per head names who approved which head
   (`<!-- hive:human-merge-approval <sha> -->`), and the hive logs
-  `owner approval released human-merge-path hold`.
+  `owner approval released human-merge-path label`.
 - **What `/hive approve` replies.** In a listed repository the reply says
-  the hold is released for the head and that the hive merges the PR when the
+  the label is released for the head and that the hive merges the PR when the
   other gates clear, or, when no approval of the current head is recorded
   yet, which approvals do it. In other repositories the reply is unchanged.
 - **The PR's stage.** An unapproved head parks at `085` asking for the
@@ -1439,7 +1501,7 @@ A PR merges through this tier only when all of the following hold:
   `.github/actions/**` does. With `human_merge_paths`, only a workflow or
   action file that also matches the repository's
   `auto_merge.human_merge_paths` does, read with the same matcher as the
-  human-merge hold. Any other workflow edit, such as a pin bump or a
+  human-merge-path rule. Any other workflow edit, such as a pin bump or a
   tightened `permissions:` block, needs no owner approval: it goes through
   review, CI, soak and every other gate here like any other change. The
   scoped fence fails closed:
@@ -1451,7 +1513,7 @@ A PR merges through this tier only when all of the following hold:
     (`merge-workflow-path`) and stays fenced for a person's merge, as an
     owner-released head does.
 
-  A listed file still gets the human-merge hold as well, and a head that
+  A listed file still gets the human-merge-path label as well, and a head that
   touches any `human_merge_paths` file is a person's merge whatever is
   approved: the stage never asks for the owner approval on it, names the
   human-merge path instead, and parks it at `090-ready-for-human-merge`

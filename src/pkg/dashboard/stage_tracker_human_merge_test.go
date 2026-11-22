@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
+	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -68,7 +69,9 @@ func TestStageTrackerHumanMergeRequiredRow(t *testing.T) {
 			gate = &fresh.New.Gates[i]
 		}
 	}
-	if gate == nil || gate.Text != "breaking change — owner merges" {
+	// needs-owner-merge alone may be the human-merge-path rule's label, so
+	// the gate does not call it a breaking change.
+	if gate == nil || gate.Text != stageengineprstage.CauseHumanMergeLabel {
 		t.Fatalf("new.gates = %+v, want a human-merge gate", fresh.New.Gates)
 	}
 	if plain := trackerItem(t, resp, "pr", 103); plain.New != nil {

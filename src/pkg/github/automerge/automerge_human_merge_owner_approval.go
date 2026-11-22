@@ -1,10 +1,11 @@
 package automerge
 
-// Owner approval releases the human-merge-path hold (opt-in, per repository).
+// Owner approval releases the human-merge-path label (opt-in, per repository).
 //
 // auto_merge.human_merge_paths makes every App merge lane refuse a pull
-// request that touches a listed path: the lane adds `hold`, posts one marker
-// comment and leaves the merge to a person. On a repository listed in
+// request that touches a listed path: the lane adds needs-owner-merge
+// (hgithub.HumanMergePathLabel, never `hold`), posts one marker comment and
+// leaves the merge to a person. On a repository listed in
 // auto_merge.human_merge_owner_approval a trusted merger's explicit approval
 // of the PR's current head lifts that refusal instead, and the lane merges
 // the PR once CI, soak, review and every other gate pass
@@ -21,12 +22,13 @@ package automerge
 // approval. The PR author's own approval never counts
 // (humanMergeSelfApproval). A repository not listed keeps the rule absolute.
 //
-// The release reuses the human-merge-path hold's provenance check
-// (hgithub.ReleaseApprovedHumanMergePathHold): only a `hold` the App put on
+// The release reuses the human-merge-path label's provenance check
+// (hgithub.ReleaseApprovedHumanMergePathHold): only the label the App put on
 // for this refusal is ever removed, never one a person added or re-added,
-// and never while another hold source explains it. The gate itself
-// (humanMergePathGate) then lets the approved head through instead of
-// holding it again. One audit comment per head names the approver.
+// never while another hold source keeps the PR, and never a `hold`. The
+// gate itself (humanMergePathGate) then lets the approved head through
+// instead of labelling it again. One audit comment per head names the
+// approver.
 
 import (
 	"context"
@@ -141,7 +143,7 @@ func (c *Engine) humanMergeOwnerApprovalGate(ctx context.Context, displayRepo, o
 	number := pr.GetNumber()
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
-		c.warn("human-merge-path owner approval: could not read comments; hold kept", "repo", displayRepo, "pr", number, "error", err)
+		c.warn("human-merge-path owner approval: could not read comments; refusal kept", "repo", displayRepo, "pr", number, "error", err)
 		return false
 	}
 	approval, ok := c.humanMergeOwnerApprovalFor(ctx, owner, repo, pr, comments)
@@ -161,14 +163,14 @@ func (c *Engine) humanMergeOwnerApprovalGate(ctx context.Context, displayRepo, o
 }
 
 // releaseApprovedHumanMergePathHold is the stage pass's half: on a repository
-// listed in auto_merge.human_merge_owner_approval it removes the `hold` the
-// hive put on for the human-merge-path refusal once a trusted merger
-// explicitly approved the PR's current head, so the lanes reach the gate,
-// which lets the approved head through. It never removes a hold another
-// source explains (a person's, a pause, the reporter-trust gate), and the
-// label removal itself re-checks the hold's provenance
-// (hgithub.ReleaseApprovedHumanMergePathHold). Anything it cannot establish
-// keeps the hold.
+// listed in auto_merge.human_merge_owner_approval it removes the
+// needs-owner-merge label the hive put on for the human-merge-path refusal
+// once a trusted merger explicitly approved the PR's current head, so the
+// lanes reach the gate, which lets the approved head through. It never
+// removes the label while another source keeps the PR (a person's `hold`, a
+// pause, the reporter-trust gate), and the label removal itself re-checks
+// the label's provenance (hgithub.ReleaseApprovedHumanMergePathHold).
+// Anything it cannot establish keeps the label.
 func (c *Engine) releaseApprovedHumanMergePathHold(ctx context.Context, obs stageObservation, prov *stagelabels.HoldProvenance) (bool, error) {
 	if c == nil || c.gh == nil || c.transport == nil || !prov.SelfImposed() || !prov.HumanMergePath() {
 		return false, nil
@@ -199,14 +201,14 @@ func (c *Engine) releaseApprovedHumanMergePathHold(ctx context.Context, obs stag
 		return false, nil
 	}
 	if sources := others.OtherHoldSourcesForPR(repo, obs.Number, obs.Labels, comments); len(sources) > 0 {
-		c.info("stage labels: human-merge-path hold approved but another hold source keeps it", "repo", obs.Display, "pr", obs.Number, "head", head, "login", approval.Login, "sources", strings.Join(sources, ","))
+		c.info("stage labels: human-merge-path label approved but another hold source keeps it", "repo", obs.Display, "pr", obs.Number, "head", head, "login", approval.Login, "sources", strings.Join(sources, ","))
 		return false, nil
 	}
 	appBot := strings.TrimSpace(c.transport.AppBotLogin())
 	allowed := func(item writeback.Item) bool {
 		d := c.writebackAllowed(repo, item, writeback.KindHumanMergePathRelease, "")
 		if !d.Allowed {
-			c.info("stage labels: human-merge-path hold approved; release refused by the write-back gate", "repo", obs.Display, "pr", obs.Number, "head", head, "reason", d.Reason)
+			c.info("stage labels: human-merge-path label approved; release refused by the write-back gate", "repo", obs.Display, "pr", obs.Number, "head", head, "reason", d.Reason)
 		}
 		return d.Allowed
 	}
@@ -214,7 +216,7 @@ func (c *Engine) releaseApprovedHumanMergePathHold(ctx context.Context, obs stag
 	if err != nil || !released {
 		return false, err
 	}
-	c.info("stage labels: owner approval released human-merge-path hold", "repo", obs.Display, "pr", obs.Number, "head", head, "login", approval.Login, "config", humanMergeOwnerApprovalConfigKey)
+	c.info("stage labels: owner approval released human-merge-path label", "repo", obs.Display, "pr", obs.Number, "head", head, "login", approval.Login, "label", hgithub.HumanMergePathLabel, "config", humanMergeOwnerApprovalConfigKey)
 	if !hasCommentWithPrefix(comments, humanMergeApprovalMarker(head)) {
 		item := writebackItemForObservation(obs)
 		item.HiveAuthored = strings.EqualFold(normalizeBotLogin(obs.Author), normalizeBotLogin(appBot))
@@ -229,9 +231,9 @@ func humanMergeApprovalComment(head string, approval workflowApproval) string {
 	short := "`" + stagelabels.ShortSHA(head) + "`"
 	var b strings.Builder
 	b.WriteString(humanMergeApprovalMarker(head) + "\n")
-	fmt.Fprintf(&b, "Hold released for %s: `%s` approved this head, and `%s` lets a trusted merger's approval release this repository's human-merge paths (`%s`). ", short, approval.Login, humanMergeOwnerApprovalConfigKey, hgithub.HumanMergePathsConfigKey)
+	fmt.Fprintf(&b, "`%s` released for %s: `%s` approved this head, and `%s` lets a trusted merger's approval release this repository's human-merge paths (`%s`). ", hgithub.HumanMergePathLabel, short, approval.Login, humanMergeOwnerApprovalConfigKey, hgithub.HumanMergePathsConfigKey)
 	b.WriteString("The hive merges this PR once CI, review, soak and every other merge gate are clear; the approval is not a merge override. ")
-	b.WriteString("A new push puts the hold back until that head is approved, except the hive's own update from the base branch, which leaves the change as approved. A `hold` a person adds is never lifted this way.\n")
+	b.WriteString("A new push puts the label back until that head is approved, except the hive's own update from the base branch, which leaves the change as approved. A `hold` a person adds is never lifted this way.\n")
 	return b.String()
 }
 
@@ -273,7 +275,7 @@ func (c *Engine) headHumanMergeOwnerApproval(ctx context.Context, obs stageObser
 // touches a human-merge path in a repository listed in
 // auto_merge.human_merge_owner_approval: it says what happens to the hold,
 // never "cannot override". It is read-only like the rest of PRApproveReply;
-// the stage pass releases the hold and the lane merges.
+// the stage pass releases the label and the lane merges.
 func (c *Engine) humanMergeOwnerApprovalReply(ctx context.Context, owner, repo string, pr *gh.PullRequest, head string) (string, error) {
 	short := "`" + stagelabels.ShortSHA(head) + "`"
 	comments, err := c.listIssueComments(ctx, owner, repo, pr.GetNumber())
@@ -281,7 +283,7 @@ func (c *Engine) humanMergeOwnerApprovalReply(ctx context.Context, owner, repo s
 		return "", err
 	}
 	if approval, ok := c.humanMergeOwnerApprovalFor(ctx, owner, repo, pr, comments); ok {
-		return "`/hive approve` acknowledged: released for " + short + ". This PR changes a path a person must merge (`" + hgithub.HumanMergePathsConfigKey + "`), and on this repository (`" + humanMergeOwnerApprovalConfigKey + "`) `" + approval.Login + "`'s approval of this head releases the hive's hold: the hive takes it off on its next pass and merges the PR when CI, review, soak and the other merge gates clear. A new push needs a new approval. This reply does not mean the PR has merged.", nil
+		return "`/hive approve` acknowledged: released for " + short + ". This PR changes a path a person must merge (`" + hgithub.HumanMergePathsConfigKey + "`), and on this repository (`" + humanMergeOwnerApprovalConfigKey + "`) `" + approval.Login + "`'s approval of this head releases the hive's `" + hgithub.HumanMergePathLabel + "` label: the hive takes it off on its next pass and merges the PR when CI, review, soak and the other merge gates clear. A new push needs a new approval. This reply does not mean the PR has merged.", nil
 	}
-	return "`/hive approve` acknowledged, but no approval of the current head (" + short + ") is recorded yet. This PR changes a path a person must merge (`" + hgithub.HumanMergePathsConfigKey + "`); on this repository (`" + humanMergeOwnerApprovalConfigKey + "`) a trusted merger's GitHub **Approve** review on that head, a `/hive decision approve` reply, or a `/hive approve` reply posted after the head releases the hive's hold, and the hive then merges the PR once the other gates clear.", nil
+	return "`/hive approve` acknowledged, but no approval of the current head (" + short + ") is recorded yet. This PR changes a path a person must merge (`" + hgithub.HumanMergePathsConfigKey + "`); on this repository (`" + humanMergeOwnerApprovalConfigKey + "`) a trusted merger's GitHub **Approve** review on that head, a `/hive decision approve` reply, or a `/hive approve` reply posted after the head releases the hive's `" + hgithub.HumanMergePathLabel + "` label, and the hive then merges the PR once the other gates clear.", nil
 }

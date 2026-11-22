@@ -18,12 +18,12 @@ import (
 
 // A trusted bot's pin bump on a human-merge path fails
 // auto_merge.human_merge_pin_only at its first head (the upstream floating
-// tag moved before the bot caught up), so the gate adds `hold`. Every lane
-// skips a held PR before it reaches the gate, so the bot's corrected head was
-// never checked again and a person merged a bump the policy admits
-// (projectbluefin/bluefin-bling#197, projectbluefin/utah#1439). The
-// stage-label pass now re-runs the exception on a later head and lifts the
-// hive's own hold once, with a notice; a person's hold, a second hold
+// tag moved before the bot caught up), so the gate adds needs-owner-merge.
+// Every lane skips a PR wearing it before it reaches the gate, so the bot's
+// corrected head was never checked again and a person merged a bump the
+// policy admits (projectbluefin/bluefin-bling#197, projectbluefin/utah#1439).
+// The stage-label pass re-runs the exception on a later head and lifts the
+// hive's own label once, with a notice; a person's label, a second hold
 // source, a moved head, a write-back refusal and a repository without the
 // exception all keep it.
 
@@ -53,7 +53,7 @@ func pinOnlyLiftNoticeComment(head, at string) map[string]any {
 func pinOnlyLiftReheldEvents() []map[string]any {
 	app := map[string]string{"login": testHiveAppBotLogin, "type": "Bot"}
 	event := func(kind, at string) map[string]any {
-		return map[string]any{"event": kind, "label": map[string]string{"name": "hold"}, "actor": app, "created_at": at}
+		return map[string]any{"event": kind, "label": map[string]string{"name": hgithub.HumanMergePathLabel}, "actor": app, "created_at": at}
 	}
 	return []map[string]any{event("labeled", humanMergePathLiftHoldAt), event("unlabeled", "2026-11-10T16:30:00Z"), event("labeled", "2026-11-10T17:00:00Z")}
 }
@@ -102,7 +102,7 @@ func pinOnlyLiftStageAPI(t *testing.T, f pinOnlyLiftFixture) (*stageAPI, *pinOnl
 	}
 	app := map[string]string{"login": testHiveAppBotLogin, "type": "Bot"}
 	if f.events == nil {
-		f.events = []map[string]any{{"event": "labeled", "label": map[string]string{"name": "hold"}, "actor": app, "created_at": humanMergePathLiftHoldAt}}
+		f.events = []map[string]any{{"event": "labeled", "label": map[string]string{"name": hgithub.HumanMergePathLabel}, "actor": app, "created_at": humanMergePathLiftHoldAt}}
 	}
 	notice := map[string]any{
 		"id":         11,
@@ -113,7 +113,7 @@ func pinOnlyLiftStageAPI(t *testing.T, f pinOnlyLiftFixture) (*stageAPI, *pinOnl
 	}
 	comments := append(append(append([]map[string]any(nil), f.comments...), notice), f.laterComments...)
 	api := newHumanMergePathLiftAPI(t, 21, []string{pinOnlyLiftWorkflow}, comments, f.events)
-	labels := []map[string]string{{"name": "hold"}, {"name": "needs-human"}}
+	labels := []map[string]string{{"name": hgithub.HumanMergePathLabel}}
 	for _, l := range f.labels {
 		labels = append(labels, map[string]string{"name": l})
 	}
@@ -173,13 +173,14 @@ func newPinOnlyLiftEngine(t *testing.T, api *stageAPI, pinOnly bool) (*Engine, *
 	return e, store, &logs
 }
 
-// recordPinOnlyHeldPR records PR #21 at the bot's corrected head, held.
+// recordPinOnlyHeldPR records PR #21 at the bot's corrected head, wearing
+// the human-merge-path label the lanes stop on.
 func recordPinOnlyHeldPR(e *Engine, extra ...string) {
-	labels := append([]string{"hold", "needs-human", "author/human", "role/contributor", "stage/050-review-pending"}, extra...)
+	labels := append([]string{hgithub.HumanMergePathLabel, "author/human", "role/contributor", "stage/050-review-pending"}, extra...)
 	pr := stagePR(21, labels...)
 	pr.Head.SHA = gh.Ptr(pinOnlyLiftHead)
 	pr.User = &gh.User{Login: gh.Ptr("shared-pat-account")}
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, "excluded-label:hold", false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, autoMergeReasonHumanMergeRequired, false, nil)
 	e.noteStageRole("acme", "widget", 21, stagelabels.RoleContributor)
 }
 
@@ -195,12 +196,12 @@ func movedHeadServed(api *stageAPI, reads *pinOnlyLiftReads) bool {
 	return reads.moved
 }
 
-// assertPinOnlyHoldKept fails unless the pass left the hold on and posted no
-// lift notice.
+// assertPinOnlyHoldKept fails unless the pass left the label on, removed no
+// `hold`, and posted no lift notice.
 func assertPinOnlyHoldKept(t *testing.T, api *stageAPI) {
 	t.Helper()
-	if n := removedHold(api); n != 0 {
-		t.Fatalf("hold removed %d times (removed=%v), want it kept", n, api.removed)
+	if n, h := removedPathLabel(api), removedHold(api); n != 0 || h != 0 {
+		t.Fatalf("removed=%v, want the label kept and no hold touched", api.removed)
 	}
 	if notices := humanMergePathLiftNotices(api); len(notices) != 0 {
 		t.Fatalf("lift notices = %q, want none", notices)
@@ -216,13 +217,13 @@ func TestApplyStageLabels_PinOnlyLiftsHoldWhenALaterHeadQualifies(t *testing.T) 
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n := removedHold(api); n != 1 {
+	if n := removedPathLabel(api); n != 1 {
 		t.Fatalf("hold removed %d times (removed=%v), want once; log:\n%s", n, api.removed, logs.String())
 	}
 	notices := humanMergePathLiftNotices(api)
 	if len(notices) != 1 || !strings.HasPrefix(notices[0], humanMergePathLiftMarker+pinOnlyLiftHead+" -->\n") ||
 		!strings.Contains(notices[0], "the head at "+pinOnlyLiftHead+" qualifies for the pin-only exception in `"+humanMergePinOnlyConfigKey+"`") ||
-		!strings.Contains(notices[0], "A hold a person sets is never lifted this way.") {
+		!strings.Contains(notices[0], "A label a person sets, and any `hold`, is never removed this way.") {
 		t.Fatalf("lift notices = %q, want one naming the head and the pin-only exception", notices)
 	}
 	if upstreamReads(api, reads) == 0 {
@@ -245,13 +246,12 @@ func TestApplyStageLabels_PinOnlyLiftsHoldWhenALaterHeadQualifies(t *testing.T) 
 	assertPinOnlyHoldKept(t, api)
 }
 
-// The hive lifted the hold for an earlier head, the lane's gate re-checked
+// The hive lifted the label for an earlier head, the lane's gate re-checked
 // that head, failed it (the tag moved again, or an API error) and put the
-// hold back without a second notice. The bot's next head qualifies: on a
-// hive with a hive_id the hold comes off again, once, for that head. Without
-// a hive_id the dashboard and admin hold write the same `hold` as the App
-// with no notice, so the re-hold cannot be told from a person's hold and
-// stays.
+// label back without a second notice. The bot's next head qualifies: the
+// label comes off again, once, for that head, on every hive. Only the gate
+// writes needs-owner-merge as the App, so the hive_id rule the `hold` days
+// needed (the dashboard hold wrote `hold` as the App too) is gone.
 func TestApplyStageLabels_PinOnlyLiftsAgainForAHeadAfterAReHold(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -259,7 +259,7 @@ func TestApplyStageLabels_PinOnlyLiftsAgainForAHeadAfterAReHold(t *testing.T) {
 		lifted    bool
 	}{
 		{name: "hive with an id", holdLabel: "hive-pause/test", lifted: true},
-		{name: "hive without an id", holdLabel: ""},
+		{name: "hive without an id", holdLabel: "", lifted: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api, reads := pinOnlyLiftStageAPI(t, pinOnlyLiftFixture{
@@ -284,7 +284,7 @@ func TestApplyStageLabels_PinOnlyLiftsAgainForAHeadAfterAReHold(t *testing.T) {
 				}
 				return
 			}
-			if n := removedHold(api); n != 1 {
+			if n := removedPathLabel(api); n != 1 {
 				t.Fatalf("hold removed %d times (removed=%v), want once; log:\n%s", n, api.removed, logs.String())
 			}
 			notices := humanMergePathLiftNotices(api)
@@ -334,7 +334,7 @@ func TestApplyStageLabels_PinOnlyLiftLogsAFailingHeadOnce(t *testing.T) {
 
 func TestApplyStageLabels_PinOnlyLiftKeepsHold(t *testing.T) {
 	app := map[string]string{"login": testHiveAppBotLogin, "type": "Bot"}
-	appHold := map[string]any{"event": "labeled", "label": map[string]string{"name": "hold"}, "actor": app, "created_at": humanMergePathLiftHoldAt}
+	appHold := map[string]any{"event": "labeled", "label": map[string]string{"name": hgithub.HumanMergePathLabel}, "actor": app, "created_at": humanMergePathLiftHoldAt}
 	for _, tc := range []struct {
 		name    string
 		fixture pinOnlyLiftFixture
@@ -362,8 +362,8 @@ func TestApplyStageLabels_PinOnlyLiftKeepsHold(t *testing.T) {
 			name: "a person's hold",
 			fixture: pinOnlyLiftFixture{events: []map[string]any{
 				appHold,
-				holdEvent("unlabeled", "maintainer", "2026-11-10T17:00:00Z"),
-				holdEvent("labeled", "maintainer", "2026-11-10T17:00:05Z"),
+				pathLabelEvent("unlabeled", "maintainer", "2026-11-10T17:00:00Z"),
+				pathLabelEvent("labeled", "maintainer", "2026-11-10T17:00:05Z"),
 			}},
 		},
 		{
@@ -388,8 +388,8 @@ func TestApplyStageLabels_PinOnlyLiftKeepsHold(t *testing.T) {
 			holdLabel: "hive-pause/test",
 			fixture: pinOnlyLiftFixture{events: []map[string]any{
 				appHold,
-				holdEvent("unlabeled", "maintainer", "2026-11-10T17:00:00Z"),
-				{"event": "labeled", "label": map[string]string{"name": "hold"}, "actor": app, "created_at": "2026-11-10T17:30:00Z"},
+				pathLabelEvent("unlabeled", "maintainer", "2026-11-10T17:00:00Z"),
+				{"event": "labeled", "label": map[string]string{"name": hgithub.HumanMergePathLabel}, "actor": app, "created_at": "2026-11-10T17:30:00Z"},
 			}},
 			wantLog: "the pin-only release cannot lift it",
 		},
@@ -399,8 +399,8 @@ func TestApplyStageLabels_PinOnlyLiftKeepsHold(t *testing.T) {
 				laterComments: []map[string]any{pinOnlyLiftNoticeComment(pinOnlyLiftEarlierHead, "2026-11-10T16:30:00Z")},
 				events: []map[string]any{
 					appHold,
-					{"event": "unlabeled", "label": map[string]string{"name": "hold"}, "actor": app, "created_at": "2026-11-10T16:30:00Z"},
-					holdEvent("labeled", "maintainer", "2026-11-10T17:00:00Z"),
+					{"event": "unlabeled", "label": map[string]string{"name": hgithub.HumanMergePathLabel}, "actor": app, "created_at": "2026-11-10T16:30:00Z"},
+					pathLabelEvent("labeled", "maintainer", "2026-11-10T17:00:00Z"),
 				},
 			},
 		},
@@ -471,7 +471,7 @@ func TestApplyStageLabels_PinOnlyLiftHonoursTheWritebackGate(t *testing.T) {
 			if _, err := e.ApplyStageLabels(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if got := removedHold(api) == 1 && len(humanMergePathLiftNotices(api)) == 1; got != tc.lifted {
+			if got := removedPathLabel(api) == 1 && len(humanMergePathLiftNotices(api)) == 1; got != tc.lifted {
 				t.Fatalf("lifted = %v (removed=%v), want %v; log:\n%s", got, api.removed, tc.lifted, logs.String())
 			}
 			if refused := strings.Contains(logs.String(), "lift refused by the write-back gate"); refused == tc.lifted {

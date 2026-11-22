@@ -81,19 +81,33 @@ func (c *Engine) readHoldProvenance(ctx context.Context, owner, repo string, num
 	if notice != nil && !notice.PostedAt.Before(since.Add(-reporterTrustNoticeSlack)) {
 		return notice.Finding.HoldProvenance(since), notice, comments, nil
 	}
-	// The human-merge-path refusal posts its notice once per PR and re-adds
-	// the label on later heads, so its notice explains the hold whenever the
-	// App wrote it (projectbluefin/utah#1097: told "the lane merges on its
-	// next pass" while the notice said a person must merge it).
-	if humanMergePathNoticed(comments, appBot) {
+	// The human-merge-path rule now applies hgithub.HumanMergePathLabel,
+	// never `hold` (humanMergePathLabelProvenance). A `hold` the App wrote
+	// beside the notice from when the rule applied `hold` is that rule's
+	// until the boot migration swaps it, and reads as a person's merge
+	// (projectbluefin/utah#1097: told "the lane merges on its next pass"
+	// while the notice said a person must merge it). A newer notice explains
+	// no hold.
+	if strings.EqualFold(holdLabel, hgithub.LegacyHumanMergePathHoldLabel) && legacyHumanMergePathNoticed(comments, appBot) {
 		return &stagelabels.HoldProvenance{By: stagelabels.HoldByHive, Source: stagelabels.HoldSourceHumanMergePath,
 			Reason: "it changes " + stagelabels.HumanMergePathReason, Since: since}, notice, comments, nil
 	}
 	return &stagelabels.HoldProvenance{By: stagelabels.HoldByHive, Source: stagelabels.HoldSourceLabel, Since: since}, notice, comments, nil
 }
 
+// legacyHumanMergePathNoticed reports whether the App posted the
+// human-merge-path notice from when the rule applied `hold`.
+func legacyHumanMergePathNoticed(comments []*gh.IssueComment, appBot string) bool {
+	for _, cm := range comments {
+		if cm != nil && strings.EqualFold(hgithub.SafeGetLogin(cm.GetUser()), appBot) && hgithub.IsLegacyHumanMergePathHoldNotice(cm.GetBody()) {
+			return true
+		}
+	}
+	return false
+}
+
 // humanMergePathNoticed reports whether the App posted the human-merge-path
-// hold notice on the thread.
+// notice on the thread.
 func humanMergePathNoticed(comments []*gh.IssueComment, appBot string) bool {
 	for _, cm := range comments {
 		if cm != nil && strings.EqualFold(hgithub.SafeGetLogin(cm.GetUser()), appBot) && strings.Contains(cm.GetBody(), hgithub.HumanMergePathMarker) {
@@ -101,6 +115,38 @@ func humanMergePathNoticed(comments []*gh.IssueComment, appBot string) bool {
 		}
 	}
 	return false
+}
+
+// humanMergePathLabelProvenance reports whether the human-merge-path rule
+// put hgithub.HumanMergePathLabel on PR number: the App posted the rule's
+// notice on the thread and the newest labeled or unlabeled event for the
+// label is the App's application. The rule posts its notice once per PR and
+// re-adds the label on later heads, so the notice explains every App
+// application. A label a person added (or re-added) last is theirs: false.
+// It also returns the PR's complete comment list it read, for the lifts.
+func (c *Engine) humanMergePathLabelProvenance(ctx context.Context, owner, repo string, number int) (bool, []*gh.IssueComment, error) {
+	if c == nil || c.gh == nil || c.transport == nil {
+		return false, nil, nil
+	}
+	appBot := strings.TrimSpace(c.transport.AppBotLogin())
+	if appBot == "" {
+		return false, nil, nil
+	}
+	comments, err := c.listAllIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return false, nil, err
+	}
+	if !humanMergePathNoticed(comments, appBot) {
+		return false, comments, nil
+	}
+	latest, err := c.latestLabelEvent(ctx, owner, repo, number, hgithub.HumanMergePathLabel)
+	if err != nil {
+		return false, comments, err
+	}
+	if latest == nil || latest.GetEvent() != "labeled" {
+		return false, comments, nil
+	}
+	return strings.EqualFold(strings.TrimSpace(hgithub.SafeGetLogin(latest.GetActor())), appBot), comments, nil
 }
 
 // reporterTrustNoticeSlack is how far before the `hold` label event the

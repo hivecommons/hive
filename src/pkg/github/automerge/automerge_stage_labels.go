@@ -370,6 +370,11 @@ type StageTracker struct {
 	// on first use, dropped when the PR stops wearing a hold or is lifted,
 	// and capped at pinOnlyLiftLoggedCap entries.
 	pinOnlyLiftLogged map[string]string
+	// humanMergeNoChangeRequest remembers, per key, the head and updated_at
+	// at which the human-merge rule's change-request read found none
+	// (humanMergeRequiredUnlessHumanChangesRequested), capped at
+	// humanMergeNoChangeRequestCap entries.
+	humanMergeNoChangeRequest map[string]humanMergeNoChangeRequestSeen
 }
 
 // stageOwner is the lane that set a PR's current stage, for which head, and
@@ -1331,8 +1336,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			verdict = replacement
 			obs.Reason = replacement.Reason
 		}
-		if wornHoldLabel(obs.Labels) == "" {
-			// No hold any more: what the pin-only lift logged for it is moot.
+		if !hasLabelFold(obs.Labels, hgithub.HumanMergePathLabel) {
+			// No human-merge-path label any more: what the pin-only lift
+			// logged for it is moot.
 			tracker.forgetPinOnlyLiftLog(key)
 		}
 		if holdLabel := wornHoldLabel(obs.Labels); holdLabel != "" && !verdict.Terminal {
@@ -1342,7 +1348,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// Only the gate's own decision-needed label is ever lifted: a
 			// `hold` is a person's (or awaits the #18468 migration) and is
 			// never removed by the hive.
-			prov, notice, holdComments, err := c.holdProvenanceWithComments(ctx, obs.Owner, obs.Repo, obs.Number, holdLabel)
+			// The human-merge-path rule no longer holds a PR: it applies
+			// hgithub.HumanMergePathLabel, handled below.
+			prov, notice, _, err := c.holdProvenanceWithComments(ctx, obs.Owner, obs.Repo, obs.Number, holdLabel)
 			if err != nil {
 				c.debug("stage labels: hold provenance unreadable", "repo", obs.Display, "pr", obs.Number, "error", err)
 			}
@@ -1362,15 +1370,29 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					continue
 				}
 			}
-			// A human-merge-path hold whose PR no longer touches such a
-			// path at its current head is lifted, or, while something
-			// else keeps it, no longer described as one. So is one whose
-			// later head qualifies for the repository's pin-only exception
-			// (the lanes skip a held PR before their gate re-checks it).
-			if prov.SelfImposed() && prov.HumanMergePath() {
-				lifted, stale, err := c.liftStaleHumanMergePathHold(ctx, obs, prov, holdComments)
+			obs.Hold = prov
+		}
+		// The human-merge-path label (hivecommons/hive#18468: the rule no
+		// longer applies `hold`): every lane skips a PR wearing it
+		// (auto_merge.human_merge_labels) before its gate re-checks the
+		// files, so the label comes off here when the hive put it on and the
+		// current head no longer touches a listed path, qualifies for the
+		// pin-only exception, or carries a trusted merger's approval on a
+		// repository that lets one release it. While it stays, the route
+		// reads it as the human-merge-path rule rather than a breaking
+		// change. A label a person put on is theirs: it reads as the
+		// manual-merge rule it always was. A repository with no
+		// human_merge_paths costs no read: the rule cannot have applied it.
+		if hasLabelFold(obs.Labels, hgithub.HumanMergePathLabel) && !verdict.Terminal && len(c.currentHumanMergePaths(obs.Owner+"/"+obs.Repo)) > 0 {
+			proven, pathComments, err := c.humanMergePathLabelProvenance(ctx, obs.Owner, obs.Repo, obs.Number)
+			if err != nil {
+				c.debug("stage labels: human-merge-path label provenance unreadable", "repo", obs.Display, "pr", obs.Number, "error", err)
+			}
+			if proven {
+				prov := humanMergePathLabelHold()
+				lifted, stale, err := c.liftStaleHumanMergePathHold(ctx, obs, prov, pathComments)
 				if err != nil {
-					c.warn("stage labels: could not lift human-merge-path hold", "repo", obs.Display, "pr", obs.Number, "error", err)
+					c.warn("stage labels: could not remove human-merge-path label", "repo", obs.Display, "pr", obs.Number, "error", err)
 					if firstErr == nil {
 						firstErr = err
 					}
@@ -1378,19 +1400,16 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				if lifted {
 					result.Comments++
 					result.Skipped++
-					store.ClearHold(key)
 					continue
 				}
-				if stale {
-					prov = staleHumanMergePathHold(prov)
-				} else {
+				if !stale {
 					// The head still touches the path: on a repository
 					// that lets an owner's approval release it, an
-					// approved head's hold comes off here and the lanes
+					// approved head's label comes off here and the lanes
 					// take the PR from the gate.
 					released, err := c.releaseApprovedHumanMergePathHold(ctx, obs, prov)
 					if err != nil {
-						c.warn("stage labels: could not release approved human-merge-path hold", "repo", obs.Display, "pr", obs.Number, "error", err)
+						c.warn("stage labels: could not release approved human-merge-path label", "repo", obs.Display, "pr", obs.Number, "error", err)
 						if firstErr == nil {
 							firstErr = err
 						}
@@ -1398,12 +1417,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					if released {
 						result.Comments++
 						result.Skipped++
-						store.ClearHold(key)
 						continue
 					}
+					obs.HumanMergePathLabel = true
 				}
 			}
-			obs.Hold = prov
 		}
 		// Issue-closed beats the reviewer's verdict: a hive-authored PR
 		// whose work a merged PR already delivered is closed here, not

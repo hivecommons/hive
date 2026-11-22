@@ -14,7 +14,7 @@ import (
 // Skip reasons reported by the human-merge-path gate (#11038).
 const (
 	// autoMergeReasonHumanMergePath: the PR touches a path listed in
-	// auto_merge.human_merge_paths for its repo; it is held for a person.
+	// auto_merge.human_merge_paths for its repo; a person merges it.
 	autoMergeReasonHumanMergePath = prstage.AutoMergeReasonHumanMergePath
 	// autoMergeReasonHumanMergePathEvidence: the repo has human-merge paths
 	// but the complete changed-file list could not be fetched. Fails CLOSED.
@@ -161,8 +161,10 @@ func pinOnlyTrustedLogin(policy config.PinOnlyException, login string) bool {
 // It returns ("", nil) when the merge may proceed. An unconfigured repo costs
 // no API call. When the repo is configured and the complete changed-file list
 // cannot be fetched it fails closed with a non-nil error. On a match it adds
-// `hold`, posts the single marker-stamped comment (not reposted on later
-// ticks) and returns autoMergeReasonHumanMergePath, unless the repo's enabled
+// hgithub.HumanMergePathLabel (never `hold`: the PR's fixer, CI repair and
+// review keep working), posts the single marker-stamped comment (not
+// reposted on later ticks) and returns autoMergeReasonHumanMergePath, unless
+// the repo's enabled
 // auto_merge.human_merge_pin_only exception qualifies the PR (trusted author,
 // complete list, every changed line a pin replacement, every commit a
 // verified trusted-author commit, every action SHA anchored in its upstream
@@ -195,8 +197,8 @@ func (c *Engine) humanMergePathGate(ctx context.Context, displayRepo, owner, rep
 	if c.humanMergeOwnerApprovalGate(ctx, displayRepo, owner, repo, pr, matches) {
 		return "", nil
 	}
-	c.info("automerge sweep held PR touching human-merge paths", "repo", displayRepo, "pr", number, "paths", matches, "config", hgithub.HumanMergePathsConfigKey)
-	if err := hgithub.HoldForHumanMergePaths(ctx, c.gh, owner, repo, number, matches, pr.GetHead().GetSHA()); err != nil {
+	c.info("automerge sweep left PR touching human-merge paths for a person to merge", "repo", displayRepo, "pr", number, "paths", matches, "label", hgithub.HumanMergePathLabel, "config", hgithub.HumanMergePathsConfigKey)
+	if err := hgithub.LabelForHumanMergePaths(ctx, c.gh, owner, repo, number, matches, pr.GetHead().GetSHA()); err != nil {
 		return autoMergeReasonHumanMergePath, err
 	}
 	return autoMergeReasonHumanMergePath, nil

@@ -19,6 +19,15 @@ type HumanMergeRule struct {
 	Labels        []string
 }
 
+// HumanMergeLabelOnly reports whether the default rule holds a PR to a
+// person's merge only through the needs-owner-merge label (its title opens
+// with no breaking-change prefix): the label the human-merge-path rule
+// applies, so the wording must not call it a breaking change.
+func HumanMergeLabelOnly(title string, labels []string) bool {
+	ok, sub := HumanMergeRule{}.RequiresHumanMerge(title, labels)
+	return ok && strings.HasPrefix(sub, "label:")
+}
+
 // RequiresHumanMerge reports whether a PR with this title and these labels
 // must wait for a person, and the sub-reason: "title" when a configured
 // prefix opens the trimmed title, "label:<name>" when a configured label is

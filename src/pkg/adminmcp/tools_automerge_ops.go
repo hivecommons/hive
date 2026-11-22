@@ -854,8 +854,8 @@ func autoMergePinOnlyEntryArg(repo string, raw any) (autoMergePinOnlyEntry, erro
 
 // autoMergeCheckPinOnlyGuarded refuses an enabled pin-only exception the change adds
 // or alters for a repository that has no human_merge_paths after the change,
-// as the endpoint does: the exception only lifts a human-merge-path hold, so
-// there it would never apply.
+// as the endpoint does: the exception only lifts the human-merge-path
+// refusal, so there it would never apply.
 func autoMergeCheckPinOnlyGuarded(plan amPlan, current map[string]any) error {
 	var pin *amPlanned
 	for i := range plan.changes {

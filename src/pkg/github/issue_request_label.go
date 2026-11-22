@@ -40,6 +40,7 @@ var reservedExactLabels = []string{
 	"needs-direction",    // retired park label (hivecommons/hive#12683); never written again
 	"blocked",            // workflow skip marker
 	AutoMergeQueuedLabel, // lgtm: queues the merge
+	HumanMergePathLabel,  // needs-owner-merge: a person merges it; the human-merge-path gate (and its boot migration) writes it as the App
 	// Hive-managed verification state that no longer lives under hive/
 	// since the 🐝 spelling (#11888); it follows open-PR evidence.
 	CoveredByPRLabel,

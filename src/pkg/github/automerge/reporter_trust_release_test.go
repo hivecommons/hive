@@ -106,10 +106,20 @@ func TestHoldProvenance(t *testing.T) {
 			notice:   true,
 		},
 		{
-			// projectbluefin/utah#1097: the human-merge-path refusal's
-			// notice explains the hive's hold on any later head.
+			// The human-merge-path rule applies needs-owner-merge, never
+			// `hold` (hivecommons/hive#18468): its notice no longer
+			// explains a hold. An older build's App `hold` reads as the
+			// hive's hold with no named gate until the boot migration.
 			name:     "hive label plus the human-merge-path notice",
 			comments: []map[string]any{humanMergePathNoticeComment(testHiveAppBotLogin, "2026-10-19T09:00:00Z")},
+			events:   []map[string]any{holdEvent("labeled", testHiveAppBotLogin, labelAt)},
+			want:     &stagelabels.HoldProvenance{By: "hive", Source: "label", Since: time.Date(2026, 10, 20, 17, 14, 14, 0, time.UTC)},
+		},
+		{
+			// The notice from when the rule applied `hold` still explains
+			// the App's `hold` until the boot migration swaps it.
+			name:     "hive label plus the legacy human-merge-path notice",
+			comments: []map[string]any{legacyHumanMergePathNoticeComment(testHiveAppBotLogin, "2026-10-19T09:00:00Z")},
 			events:   []map[string]any{holdEvent("labeled", testHiveAppBotLogin, labelAt)},
 			want:     &stagelabels.HoldProvenance{By: "hive", Source: "human-merge-path", Reason: "it changes " + stagelabels.HumanMergePathReason, Since: time.Date(2026, 10, 20, 17, 14, 14, 0, time.UTC)},
 		},

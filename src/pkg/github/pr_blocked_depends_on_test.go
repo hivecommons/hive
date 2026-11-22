@@ -546,10 +546,11 @@ func TestIssueRequestWatcherBlockedOnPRCrossRepo(t *testing.T) {
 	}
 }
 
-// The human-merge-path `hold` (#17609, #17622) and the Depends-on `blocked`
-// are separate labels with separate lifts: a hive `blocked` and its marker
-// comment are not another source of the `hold`, so the hold still lifts when
-// its own reason goes, and the lanes keep refusing the PR on `blocked`.
+// The human-merge-path label (#17609, #17622; needs-owner-merge since the
+// rule stopped applying `hold`) and the Depends-on `blocked` are separate
+// labels with separate lifts: a hive `blocked` and its marker comment are not
+// another hold source, so the label still lifts when its own reason goes, and
+// the lanes keep refusing the PR on `blocked`.
 func TestOtherHoldSourcesForPRIgnoresDependsOnBlock(t *testing.T) {
 	app := &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
 	comments := []*gh.IssueComment{
@@ -557,7 +558,7 @@ func TestOtherHoldSourcesForPRIgnoresDependsOnBlock(t *testing.T) {
 		{Body: gh.Ptr(blockedPRDependsOnMarkerComment("acme/gadget", 5)), User: app},
 	}
 	_, c := newHoldSourceTest(t)
-	if got := c.OtherHoldSourcesForPR("acme/widget", 42, []string{"hold", BlockedLabel}, comments); len(got) != 0 {
+	if got := c.OtherHoldSourcesForPR("acme/widget", 42, []string{HumanMergePathLabel, BlockedLabel}, comments); len(got) != 0 {
 		t.Fatalf("other hold sources = %v, want none: `blocked` is not a hold source", got)
 	}
 }

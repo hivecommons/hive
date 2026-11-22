@@ -525,7 +525,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after auto-merge update", "error", err)
-		// A pin-only exception lets PRs past a human-merge hold, so one that
+		// A pin-only exception lets PRs past a human-merge path, so one that
 		// cannot be saved is not left running until the next restart drops it.
 		// A per-repository fence scope can let workflow edits past the fence,
 		// so it is rolled back the same way.
@@ -908,7 +908,7 @@ func (s *Server) autoMergeHumanMergePaths(paths map[string][]string) (map[string
 // the result must pass config.ValidateHumanMergePinOnly, the rule hive.yaml
 // loads under. An enabled entry the write adds or changes also needs
 // human_merge_paths for its repository (pathsAfter), because the exception
-// only ever lifts a human-merge-path hold: without one it would never apply.
+// only ever lifts the human-merge-path refusal: without one it would never apply.
 // A non-empty msg is the 400 to return.
 func (s *Server) autoMergeHumanMergePinOnly(in, current map[string]config.PinOnlyException, pathsAfter map[string][]string) (map[string]config.PinOnlyException, string) {
 	keys := make([]string, 0, len(in))

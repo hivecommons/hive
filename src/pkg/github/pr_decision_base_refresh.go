@@ -73,22 +73,35 @@ type BaseRefreshChecker struct {
 // head change — a content commit (even one that also merged the base), a
 // merge by anyone but the App, a rebase, a diff that differs — is false.
 // Lookup failures are false: the caller falls back to asking the person.
+// Only a definite answer is memoised: a failed commit or compare read is
+// asked again next time instead of standing as "not a refresh" for good.
 func (b *BaseRefreshChecker) HeadIsBaseRefreshOf(ctx context.Context, api BaseRefreshRepos, owner, repo string, number int, baseRef, oldHead, newHead, appBotLogin string) bool {
+	ok, _ := b.CheckBaseRefresh(ctx, api, owner, repo, number, baseRef, oldHead, newHead, appBotLogin)
+	return ok
+}
+
+// CheckBaseRefresh is HeadIsBaseRefreshOf that also reports whether the
+// answer is definite: false with definite false means a read failed, so the
+// caller cannot treat the answer as settled.
+func (b *BaseRefreshChecker) CheckBaseRefresh(ctx context.Context, api BaseRefreshRepos, owner, repo string, number int, baseRef, oldHead, newHead, appBotLogin string) (ok, definite bool) {
 	oldHead, newHead, baseRef = strings.TrimSpace(oldHead), strings.TrimSpace(newHead), strings.TrimSpace(baseRef)
 	if b == nil || api == nil || oldHead == "" || newHead == "" || baseRef == "" || oldHead == newHead || strings.TrimSpace(appBotLogin) == "" {
-		return false
+		return false, true
 	}
 	if got, seen := b.Known(owner, repo, number, oldHead, newHead); seen {
-		return got
+		return got, true
 	}
-	ok := headIsBaseRefreshChainOf(ctx, api, owner, repo, baseRef, oldHead, newHead, appBotLogin)
+	ok, definite = headIsBaseRefreshChainOf(ctx, api, owner, repo, baseRef, oldHead, newHead, appBotLogin)
+	if !definite {
+		return false, false
+	}
 	b.mu.Lock()
 	if b.cache == nil || len(b.cache) >= baseRefreshCacheLimit {
 		b.cache = map[string]bool{}
 	}
 	b.cache[baseRefreshKey(owner, repo, number, oldHead, newHead)] = ok
 	b.mu.Unlock()
-	return ok
+	return ok, true
 }
 
 // Known returns the memoised answer for (repo, pr, newHead, oldHead) and
@@ -113,41 +126,52 @@ func baseRefreshKey(owner, repo string, number int, oldHead, newHead string) str
 // once and must itself be a hive base refresh of its first parent
 // (App-authored merge, base parent on the base branch, diff unchanged); the
 // walk succeeds when a hop's non-base parent is oldHead. Each hop allows
-// oldHead in either parent position (per-hop tolerance).
-func headIsBaseRefreshChainOf(ctx context.Context, api BaseRefreshRepos, owner, repo, baseRef, oldHead, newHead, appBotLogin string) bool {
+// oldHead in either parent position (per-hop tolerance). definite is false
+// when a commit or compare read failed.
+func headIsBaseRefreshChainOf(ctx context.Context, api BaseRefreshRepos, owner, repo, baseRef, oldHead, newHead, appBotLogin string) (ok, definite bool) {
 	ctx = WithRESTCaller(ctx, "hive:decision_base_refresh")
 	cur := newHead
 	for hop := 0; hop < baseRefreshMaxHops; hop++ {
 		commit, _, err := api.GetCommit(ctx, owner, repo, cur, nil)
-		if err != nil || commit == nil || len(commit.Parents) != baseRefreshMergeParents {
-			return false
+		if err != nil {
+			return false, false
+		}
+		if commit == nil || len(commit.Parents) != baseRefreshMergeParents {
+			return false, true
 		}
 		first, second := strings.TrimSpace(commit.Parents[0].GetSHA()), strings.TrimSpace(commit.Parents[1].GetSHA())
 		prev := first
 		if oldHead == first || oldHead == second {
 			prev = oldHead
 		}
-		if prev == "" || prev == cur || !mergeIsBaseRefreshOf(ctx, api, owner, repo, baseRef, commit, prev, cur, appBotLogin) {
-			return false
+		if prev == "" || prev == cur {
+			return false, true
+		}
+		if refresh, sure := mergeIsBaseRefreshOf(ctx, api, owner, repo, baseRef, commit, prev, cur, appBotLogin); !refresh {
+			return false, sure
 		}
 		if prev == oldHead {
-			return true
+			return true, true
 		}
 		cur = prev
 	}
-	return false
+	return false, true
 }
 
 // mergeIsBaseRefreshOf is the single-hop check over an already-fetched
 // commit (the merge commit at newHead): authored by the App, oldHead is one
 // parent and the other parent is the merge-base with baseRef, and the
 // three-dot diff against baseRef is unchanged from oldHead's.
-func mergeIsBaseRefreshOf(ctx context.Context, api BaseRefreshRepos, owner, repo, baseRef string, commit *gh.RepositoryCommit, oldHead, newHead, appBotLogin string) bool {
+//
+// The second result reports whether a false answer is definite: a compare
+// read that failed (other than GitHub's 300-file cap, a standing verdict) is
+// not.
+func mergeIsBaseRefreshOf(ctx context.Context, api BaseRefreshRepos, owner, repo, baseRef string, commit *gh.RepositoryCommit, oldHead, newHead, appBotLogin string) (bool, bool) {
 	if commit == nil || len(commit.Parents) != baseRefreshMergeParents {
-		return false
+		return false, true
 	}
 	if !CommitIsVerifiedAppMerge(commit, appBotLogin) {
-		return false
+		return false, true
 	}
 	first, second := strings.TrimSpace(commit.Parents[0].GetSHA()), strings.TrimSpace(commit.Parents[1].GetSHA())
 	baseParent := ""
@@ -158,23 +182,26 @@ func mergeIsBaseRefreshOf(ctx context.Context, api BaseRefreshRepos, owner, repo
 		baseParent = first
 	}
 	if baseParent == "" || baseParent == oldHead {
-		return false
+		return false, true
 	}
 	newCmp, newFiles, err := compareAllFiles(ctx, api, owner, repo, baseRef, newHead)
-	if err != nil || newCmp == nil {
-		return false
+	if err != nil {
+		return false, errors.Is(err, ErrCompareFileCap)
+	}
+	if newCmp == nil {
+		return false, true
 	}
 	// The merge-base of the base branch and the new head is the base commit
 	// that was merged in: that is what makes the other parent "a commit on
 	// the base branch" rather than anything someone pushed.
 	if strings.TrimSpace(newCmp.GetMergeBaseCommit().GetSHA()) != baseParent {
-		return false
+		return false, true
 	}
 	_, oldFiles, err := compareAllFiles(ctx, api, owner, repo, baseRef, oldHead)
 	if err != nil {
-		return false
+		return false, errors.Is(err, ErrCompareFileCap)
 	}
-	return sameChangedFiles(oldFiles, newFiles)
+	return sameChangedFiles(oldFiles, newFiles), true
 }
 
 // BaseMergeParent reports the PR-side parent of commit (the commit at

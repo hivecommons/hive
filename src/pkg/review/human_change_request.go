@@ -81,11 +81,15 @@ type HumanChangeRequest struct {
 	CarriedFromHead string `json:"carried_from_head,omitempty"`
 }
 
-// CarriesOverBaseRefresh reports whether the request may follow the PR onto
-// a head that is a pure base refresh of the one it was recorded on. Only a
-// person's own instruction travels — a `/hive decision`, a dashboard Approve
-// or a hand-applied stage label. A GitHub review names one commit and is
-// never moved to another.
+// CarriesOverBaseRefresh reports whether the decision carrier
+// (github.DecisionCarrier) may move the request onto a head that is a pure
+// base refresh of the one it was recorded on: a person's own instruction, a
+// `/hive decision`, a dashboard Approve or a hand-applied stage label. The
+// carrier never moves a GitHub review. A trusted maintainer's
+// CHANGES_REQUESTED review is carried separately, by the automerge lanes'
+// change-request read, over the App's own base merge only and once per
+// review (automerge carriedTrustedHumanChangesRequested); that record names
+// the reviewed head in CarriedFromHead.
 func (r HumanChangeRequest) CarriesOverBaseRefresh() bool {
 	return r.Source != HumanChangeRequestSourceReview && strings.TrimSpace(r.Actor) != ""
 }

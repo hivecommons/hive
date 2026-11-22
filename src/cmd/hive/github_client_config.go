@@ -385,7 +385,13 @@ func (b *boot) serializedLaneGate(ctx context.Context, req github.LaneMergeReque
 			AutoMergeAllowed:           b.cfg.RepoAutoMergeEnabled,
 			Paused:                     b.cfg.IsRepoPaused,
 			ContributorBaseSyncAllowed: func(string) bool { return b.cfg.Review.ContributorPRs.BaseSync },
-			Logger:                     b.logger,
+			// The human-merge rule (needs-owner-merge from the
+			// human-merge-path rule, a breaking-change title) makes the
+			// front leave as a hold does, rather than stall to the timeout.
+			HumanMerge: func(_, title string, labels []string) string {
+				return mergelane.HumanMergeWithRule(b.cfg.AutoMerge.HumanMergeRule(), title, labels)
+			},
+			Logger: b.logger,
 		})
 		if b.mergeLaneErr != nil && b.logger != nil {
 			b.logger.Error("serialized lane unavailable: hive-serialized repos get no merge", "error", b.mergeLaneErr)

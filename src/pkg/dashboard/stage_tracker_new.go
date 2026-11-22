@@ -150,7 +150,13 @@ func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.Issue
 		// row knows the default rule only; the lanes apply the configured one.
 		if ok, _ := (stageengineprstage.HumanMergeRule{}).RequiresHumanMerge(it.Title, it.Labels); ok {
 			n.Gates[1] = StageTrackerGate{Name: "merge-gate", State: StageTrackerGateLater, Text: "reviews and checks park it at 090 Ready for human merge"}
-			n.Gates = append(n.Gates, StageTrackerGate{Name: StageTrackerGateHumanMerge, State: StageTrackerGateLater, Text: stageengineprstage.CauseHumanMergeRequired})
+			text := stageengineprstage.CauseHumanMergeRequired
+			if stageengineprstage.HumanMergeLabelOnly(it.Title, it.Labels) {
+				// needs-owner-merge alone: the human-merge-path rule's
+				// label, or a person's, so no breaking-change claim.
+				text = stageengineprstage.CauseHumanMergeLabel
+			}
+			n.Gates = append(n.Gates, StageTrackerGate{Name: StageTrackerGateHumanMerge, State: StageTrackerGateLater, Text: text})
 		}
 	default:
 		n.NextMover = StageTrackerMoverHive

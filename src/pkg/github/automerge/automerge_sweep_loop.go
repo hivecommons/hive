@@ -186,7 +186,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 		if !c.repoAutoMergeAllowed(repo) {
 			c.info("self-authored automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled && c.repoObservedOnly(repo))
 			c.observeAutoMergeOffRepo(ctx, stageLaneSelf, repo, opts.Targets, func(ctx context.Context, oc *Engine, owner, repoName string, pr *gh.PullRequest) (string, error) {
-				if reason := oc.prefilterSelfAuthoredPR(pr); reason != "" {
+				if reason := oc.humanMergeRequiredUnlessHumanChangesRequested(ctx, owner, repoName, pr, oc.prefilterSelfAuthoredPR(pr)); reason != "" {
 					return reason, nil
 				}
 				_, reason, err := oc.trySweepSelfAuthoredPR(mergeDecisionPriority(ctx), repo, owner, repoName, pr.GetNumber(), false)
@@ -318,7 +318,9 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				stage(reason, false, nil)
 				continue
 			}
-			if reason := c.prefilterSelfAuthoredPR(pr); reason != "" {
+			// A person's change request on a PR the human-merge rule stops
+			// still reaches the fixer (humanMergeRequiredUnlessHumanChangesRequested).
+			if reason := c.humanMergeRequiredUnlessHumanChangesRequested(ctx, owner, repoName, pr, c.prefilterSelfAuthoredPR(pr)); reason != "" {
 				c.rejectPrefilteredBeforeLane(ctx, repo, owner, repoName, number, pr, hgithub.PRAuditPathSweep, reason)
 				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				result.Skipped++

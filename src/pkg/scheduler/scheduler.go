@@ -25,9 +25,12 @@ type Scheduler struct {
 	primerCapLogged sync.Map // agent|cap_bytes -> omitted fact count last logged at INFO
 	primedSlugs     sync.Map // agent -> []string slugs the last kick's knowledge block rendered (#17052)
 	kickSummaries   sync.Map // agent -> KickSummary of the last primed kick (#17155)
-	kickSeq         atomic.Uint64
-	promptResolver  *promptsrc.Resolver
-	agentsMdFetcher AgentsMdFetcher
+	// heldFixSkipLogged is "kind repo#number" -> head last logged by
+	// logHeldFixSkip, so a held PR's skipped fix is logged once per head.
+	heldFixSkipLogged sync.Map
+	kickSeq           atomic.Uint64
+	promptResolver    *promptsrc.Resolver
+	agentsMdFetcher   AgentsMdFetcher
 	// remoteAgents caches the materialised AGENTS.md root per "owner/repo"
 	// for the GitHub fallback in remoteAgentsRepoRoot (#17090).
 	remoteAgents   map[string]remoteAgentsMd

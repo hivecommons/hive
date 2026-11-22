@@ -148,8 +148,13 @@ func assertHeldOnce(t *testing.T, f *humanPathFront, path string) {
 	t.Helper()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.labels) == 0 || f.labels[0] != "hold" {
-		t.Fatalf("labels added = %v, want hold", f.labels)
+	if len(f.labels) == 0 || f.labels[0] != hgithub.HumanMergePathLabel {
+		t.Fatalf("labels added = %v, want %s", f.labels, hgithub.HumanMergePathLabel)
+	}
+	for _, l := range f.labels {
+		if strings.EqualFold(l, "hold") {
+			t.Fatalf("labels added = %v: the human-merge-path rule never applies hold", f.labels)
+		}
 	}
 	if len(f.comments) != 1 {
 		t.Fatalf("comments posted = %d, want exactly 1", len(f.comments))

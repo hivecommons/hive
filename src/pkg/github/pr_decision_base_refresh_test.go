@@ -140,9 +140,11 @@ func TestDecisionCarrierRefusesOtherHeadChanges(t *testing.T) {
 		compares map[string]*gh.CommitsComparison
 	}{
 		{
+			// The walk reaches the content commit and reads it: only
+			// definite answers are memoised, so the fixture serves it.
 			name:     "content commit pushed, then base merged",
-			commits:  map[string]*gh.RepositoryCommit{newHead: refreshCommit(newHead, app, content, baseTip)},
-			compares: map[string]*gh.CommitsComparison{"v5..." + oldHead: refreshCompare("0ld", same...), "v5..." + newHead: refreshCompare(baseTip, changed...)},
+			commits:  map[string]*gh.RepositoryCommit{newHead: refreshCommit(newHead, app, content, baseTip), content: refreshCommit(content, app, oldHead)},
+			compares: map[string]*gh.CommitsComparison{"v5..." + oldHead: refreshCompare("0ld", same...), "v5..." + newHead: refreshCompare(baseTip, changed...), "v5..." + content: refreshCompare("0ld", changed...)},
 		},
 		{
 			name:     "base merged but the diff changed with it",
@@ -445,5 +447,24 @@ func TestSameChangedFilesToleratesShiftedHunksOutsideDotGitHub(t *testing.T) {
 		if sameChangedFiles(tc[0], tc[1]) {
 			t.Errorf("%s: a different blob must not compare equal here", name)
 		}
+	}
+}
+
+// A failed commit or compare read is not an answer: it is asked again on the
+// next call instead of standing as "not a refresh" for that head pair.
+func TestHeadIsBaseRefreshOfDoesNotMemoiseAFailedRead(t *testing.T) {
+	const oldHead, newHead, app = "aaaa", "bbbb", "kubestellar-hive[bot]"
+	api := &fakeBaseRefreshRepos{}
+	checker := &BaseRefreshChecker{}
+	if ok, definite := checker.CheckBaseRefresh(context.Background(), api, "hivecommons", "hive", 15649, "v5", oldHead, newHead, app); ok || definite {
+		t.Fatalf("CheckBaseRefresh = (%v, %v) on a failed read, want (false, false)", ok, definite)
+	}
+	if _, seen := checker.Known("hivecommons", "hive", 15649, oldHead, newHead); seen {
+		t.Fatal("a failed read was memoised")
+	}
+	calls := api.calls
+	checker.HeadIsBaseRefreshOf(context.Background(), api, "hivecommons", "hive", 15649, "v5", oldHead, newHead, app)
+	if api.calls == calls {
+		t.Fatal("the failed read was not asked again")
 	}
 }

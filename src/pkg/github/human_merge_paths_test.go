@@ -161,8 +161,8 @@ func TestMergeRequestHumanMergePathMatchRefusedTerminally(t *testing.T) {
 	if _, err := os.Stat(reqPath + ".denied"); err != nil {
 		t.Fatalf("request should be terminally refused (.denied): %v", err)
 	}
-	if len(f.labels) != 1 || f.labels[0] != HumanMergePathHoldLabel {
-		t.Fatalf("labels = %v, want [hold]", f.labels)
+	if len(f.labels) != 1 || f.labels[0] != HumanMergePathLabel {
+		t.Fatalf("labels = %v, want [needs-owner-merge]", f.labels)
 	}
 	if len(f.comments) != 1 || !strings.Contains(f.comments[0], HumanMergePathMarker) || !strings.Contains(f.comments[0], ".claude/settings.json") {
 		t.Fatalf("comments = %q, want one marker comment naming the path", f.comments)
@@ -258,8 +258,8 @@ func TestSetHumanMergePathsNormalizesKeys(t *testing.T) {
 
 func TestHumanMergePathHelpersGuardNilInputs(t *testing.T) {
 	ctx := context.Background()
-	if err := HoldForHumanMergePaths(ctx, nil, "o", "r", 1, []string{"x"}); err == nil {
-		t.Fatal("HoldForHumanMergePaths with nil client: err = nil, want error")
+	if err := LabelForHumanMergePaths(ctx, nil, "o", "r", 1, []string{"x"}); err == nil {
+		t.Fatal("LabelForHumanMergePaths with nil client: err = nil, want error")
 	}
 	if _, err := ListPRChangedFiles(ctx, nil, "o", "r", nil); err == nil {
 		t.Fatal("ListPRChangedFiles with nil inputs: err = nil, want error")

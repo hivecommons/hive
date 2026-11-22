@@ -265,6 +265,7 @@ func (g *RESTGitHub) PullRequest(ctx context.Context, repo string, number int) (
 		MergeableState: pr.GetMergeableState(),
 		Mergeable:      pr.Mergeable,
 		Labels:         ghub.ExtractPRLabels(pr.Labels),
+		Title:          pr.GetTitle(),
 	}, nil
 }
 

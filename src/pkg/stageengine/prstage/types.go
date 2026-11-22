@@ -196,6 +196,12 @@ type Observation struct {
 	// ApplyStageLabels from the label event and the hive's notice comment
 	// (hivecommons/hive#15020); nil when not held or unreadable.
 	Hold *stagelabels.HoldProvenance
+	// HumanMergePathLabel marks a PR wearing the needs-owner-merge label
+	// the human-merge-path rule put on (the App applied it last and its
+	// notice is on the thread), read by ApplyStageLabels. It is not a hold:
+	// the route reads the label as that rule, a person's merge, rather than
+	// as a breaking change.
+	HumanMergePathLabel bool
 }
 
 // Verdict is a lane's opinion about a PR's stage.

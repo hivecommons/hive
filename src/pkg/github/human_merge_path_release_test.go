@@ -54,7 +54,7 @@ func TestReleaseHumanMergePathHold(t *testing.T) {
 					if tc.changedHead {
 						currentHead = oldHead
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": currentHead}, "labels": []map[string]string{{"name": "hold"}}})
+					_ = json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": currentHead}, "labels": []map[string]string{{"name": HumanMergePathLabel}}})
 				case strings.HasSuffix(r.URL.Path, "/comments"):
 					body := HumanMergePathComment([]string{"Containerfile"})
 					if !tc.legacy {
@@ -70,12 +70,12 @@ func TestReleaseHumanMergePathHold(t *testing.T) {
 						w.WriteHeader(500)
 						return
 					}
-					events := []map[string]any{{"event": "labeled", "created_at": "2026-11-02T12:00:01Z", "label": map[string]string{"name": "hold"}, "actor": map[string]string{"login": tc.actor, "type": "Bot"}}}
+					events := []map[string]any{{"event": "labeled", "created_at": "2026-11-02T12:00:01Z", "label": map[string]string{"name": HumanMergePathLabel}, "actor": map[string]string{"login": tc.actor, "type": "Bot"}}}
 					if tc.extraEvent {
-						events = append(events, map[string]any{"event": "labeled", "created_at": "2026-11-02T12:00:03Z", "label": map[string]string{"name": "hold"}, "actor": map[string]string{"login": "person", "type": "User"}})
+						events = append(events, map[string]any{"event": "labeled", "created_at": "2026-11-02T12:00:03Z", "label": map[string]string{"name": HumanMergePathLabel}, "actor": map[string]string{"login": "person", "type": "User"}})
 					}
 					_ = json.NewEncoder(w).Encode(events)
-				case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/labels/hold"):
+				case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/labels/"+HumanMergePathLabel):
 					deletes++
 					w.WriteHeader(http.StatusNoContent)
 				default:
@@ -122,7 +122,7 @@ func TestReleaseHumanMergePathHold(t *testing.T) {
 func TestHumanMergeHoldHeadAttribution(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	for _, existingHold := range []bool{false, true} {
-		t.Run(map[bool]string{false: "new hold", true: "existing unrelated hold"}[existingHold], func(t *testing.T) {
+		t.Run(map[bool]string{false: "new label", true: "existing label"}[existingHold], func(t *testing.T) {
 			var posted string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -130,11 +130,14 @@ func TestHumanMergeHoldHeadAttribution(t *testing.T) {
 				case strings.HasSuffix(r.URL.Path, "/pulls/1"):
 					labels := []map[string]string{}
 					if existingHold {
-						labels = append(labels, map[string]string{"name": "hold"})
+						labels = append(labels, map[string]string{"name": HumanMergePathLabel})
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": head}, "labels": labels})
 				case strings.HasSuffix(r.URL.Path, "/labels"):
-					_, _ = w.Write([]byte(`[{"name":"hold"}]`))
+					if existingHold {
+						t.Error("a PR already wearing the label must not be labelled again")
+					}
+					_, _ = w.Write([]byte(`[{"name":"needs-owner-merge"}]`))
 				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
 					_, _ = w.Write([]byte(`[]`))
 				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
@@ -152,7 +155,7 @@ func TestHumanMergeHoldHeadAttribution(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := HoldForHumanMergePaths(context.Background(), client, "o", "r", 1, []string{"Containerfile"}, head); err != nil {
+			if err := LabelForHumanMergePaths(context.Background(), client, "o", "r", 1, []string{"Containerfile"}, head); err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(posted, HumanMergePathMarker) {
@@ -176,7 +179,7 @@ func TestReleaseApprovedHumanMergePathHold(t *testing.T) {
 	app := map[string]string{"login": "hive[bot]", "type": "Bot"}
 	person := map[string]string{"login": "person", "type": "User"}
 	event := func(kind, at string, actor map[string]string) map[string]any {
-		return map[string]any{"event": kind, "created_at": at, "label": map[string]string{"name": "hold"}, "actor": actor}
+		return map[string]any{"event": kind, "created_at": at, "label": map[string]string{"name": HumanMergePathLabel}, "actor": actor}
 	}
 	appHold := event("labeled", "2026-11-02T12:00:01Z", app)
 	for _, tc := range []struct {
@@ -201,13 +204,13 @@ func TestReleaseApprovedHumanMergePathHold(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
 				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/1"):
-					_ = json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": head}, "labels": []map[string]string{{"name": "hold"}}})
+					_ = json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": head}, "labels": []map[string]string{{"name": HumanMergePathLabel}}})
 				case strings.HasSuffix(r.URL.Path, "/comments"):
 					body := HumanMergePathComment([]string{"Containerfile"}) + HumanMergeHeadMarker(tc.noticeHead)
 					_ = json.NewEncoder(w).Encode([]map[string]any{{"body": body, "created_at": "2026-11-02T12:00:02Z", "updated_at": "2026-11-02T12:00:02Z", "user": app}})
 				case strings.HasSuffix(r.URL.Path, "/events"):
 					_ = json.NewEncoder(w).Encode(tc.events)
-				case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/labels/hold"):
+				case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/labels/"+HumanMergePathLabel):
 					deletes++
 					w.WriteHeader(http.StatusNoContent)
 				default:
@@ -243,30 +246,26 @@ func TestReleaseApprovedHumanMergePathHold(t *testing.T) {
 }
 
 // The pin-only release the stage-label pass uses once a later head qualifies
-// for auto_merge.human_merge_pin_only: it lifts the App's hold put on an
-// older head, including one the App lifted and put back since, through the
-// caller's write-back decision. Lift and re-hold cycles count only on a hive
-// whose own hold label is not `hold` (a hive_id is set): without one a
-// person's dashboard hold is the App's `hold` with no notice. The same head,
-// a head already lifted once, any transition by a person, a history that
-// ends removed and a refusal all keep it.
+// for auto_merge.human_merge_pin_only: it lifts the App's needs-owner-merge
+// put on an older head, including one the App lifted and put back since,
+// through the caller's write-back decision. Lift and re-label cycles count on
+// every hive: only the gate writes this label as the App (the hive_id rule
+// was for the `hold` the dashboard also writes). The same head, a head
+// already lifted once, any transition by a person, a history that ends
+// removed and a refusal all keep it.
 func TestReleasePinOnlyHumanMergePathHold(t *testing.T) {
-	const hiveHold = "hive-pause/test"
 	head := strings.Repeat("b", 40)
 	oldHead := strings.Repeat("a", 40)
 	app := map[string]string{"login": "hive[bot]", "type": "Bot"}
 	person := map[string]string{"login": "person", "type": "User"}
 	event := func(kind, at string, actor map[string]string) map[string]any {
-		return map[string]any{"event": kind, "created_at": at, "label": map[string]string{"name": "hold"}, "actor": actor}
+		return map[string]any{"event": kind, "created_at": at, "label": map[string]string{"name": HumanMergePathLabel}, "actor": actor}
 	}
 	appHold := event("labeled", "2026-11-02T12:00:01Z", app)
 	for _, tc := range []struct {
 		name       string
 		noticeHead string
 		events     []map[string]any
-		// holdLabel is the hive's own hold label (default hiveHold; "-"
-		// means none, a hive without an id).
-		holdLabel string
 		// liftedHead, when set, has a lift notice from the App.
 		liftedHead string
 		refuse     bool
@@ -275,9 +274,7 @@ func TestReleasePinOnlyHumanMergePathHold(t *testing.T) {
 		{name: "hold on an older head", noticeHead: oldHead, events: []map[string]any{appHold}, want: true},
 		{name: "hold on this head", noticeHead: head, events: []map[string]any{appHold}},
 		{name: "the App lifted the hold and put it back", noticeHead: oldHead, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app)}, want: true},
-		{name: "the App lifted the hold and put it back, hive without an id", noticeHead: oldHead, holdLabel: "-", events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app)}},
-		{name: "the App lifted the hold and put it back, hold label is hold", noticeHead: oldHead, holdLabel: "hold", events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app)}},
-		{name: "single hold, hive without an id", noticeHead: oldHead, holdLabel: "-", events: []map[string]any{appHold}, want: true},
+		{name: "the App lifted the label and put it back twice", noticeHead: oldHead, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app), event("unlabeled", "2026-11-04T09:00:00Z", app), event("labeled", "2026-11-04T10:00:00Z", app)}, want: true},
 		{name: "this head was lifted once and held again", noticeHead: oldHead, liftedHead: head, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app)}},
 		{name: "another head was lifted and held again", noticeHead: oldHead, liftedHead: strings.Repeat("c", 40), events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app)}, want: true},
 		{name: "a person removed the hold and the App put it back", noticeHead: oldHead, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", person), event("labeled", "2026-11-03T10:00:00Z", app)}},
@@ -287,14 +284,6 @@ func TestReleasePinOnlyHumanMergePathHold(t *testing.T) {
 		{name: "write-back gate refuses", noticeHead: oldHead, events: []map[string]any{appHold}, refuse: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			holdLabel := hiveHold
-			switch tc.holdLabel {
-			case "-":
-				holdLabel = ""
-			case "":
-			default:
-				holdLabel = tc.holdLabel
-			}
 			noticeBody := HumanMergePathComment([]string{".github/workflows/ci.yml"}) + HumanMergeHeadMarker(tc.noticeHead)
 			liftBody := ""
 			if tc.liftedHead != "" {
@@ -305,7 +294,7 @@ func TestReleasePinOnlyHumanMergePathHold(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
 				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/1"):
-					_ = json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": head}, "labels": []map[string]string{{"name": "hold"}}})
+					_ = json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": head}, "labels": []map[string]string{{"name": HumanMergePathLabel}}})
 				case strings.HasSuffix(r.URL.Path, "/comments"):
 					list := []map[string]any{{"body": noticeBody, "created_at": "2026-11-02T12:00:02Z", "updated_at": "2026-11-02T12:00:02Z", "user": app}}
 					if liftBody != "" {
@@ -314,7 +303,7 @@ func TestReleasePinOnlyHumanMergePathHold(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(list)
 				case strings.HasSuffix(r.URL.Path, "/events"):
 					_ = json.NewEncoder(w).Encode(tc.events)
-				case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/labels/hold"):
+				case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/labels/"+HumanMergePathLabel):
 					deletes++
 					w.WriteHeader(http.StatusNoContent)
 				default:
@@ -328,7 +317,7 @@ func TestReleasePinOnlyHumanMergePathHold(t *testing.T) {
 				t.Fatal(err)
 			}
 			allowed := func(writeback.Item) bool { decisions++; return !tc.refuse }
-			released, err := ReleasePinOnlyHumanMergePathHold(context.Background(), client, allowed, "o", "r", 1, "hive[bot]", head, holdLabel)
+			released, err := ReleasePinOnlyHumanMergePathHold(context.Background(), client, allowed, "o", "r", 1, "hive[bot]", head)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -349,7 +338,7 @@ func TestReleasePinOnlyHumanMergePathHold(t *testing.T) {
 			if liftBody != "" {
 				comments = append(comments, &gh.IssueComment{Body: gh.Ptr(liftBody), CreatedAt: at, UpdatedAt: at, User: &gh.User{Login: gh.Ptr("hive[bot]"), Type: gh.Ptr("Bot")}})
 			}
-			proven, err := PinOnlyHumanMergePathHoldReleasable(context.Background(), client, "o", "r", 1, "hive[bot]", head, holdLabel, comments)
+			proven, err := PinOnlyHumanMergePathHoldReleasable(context.Background(), client, "o", "r", 1, "hive[bot]", head, comments)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -359,7 +348,98 @@ func TestReleasePinOnlyHumanMergePathHold(t *testing.T) {
 		})
 	}
 
-	if released, err := ReleasePinOnlyHumanMergePathHold(context.Background(), gh.NewClient(nil), nil, "o", "r", 1, "hive[bot]", head, hiveHold); released || err != nil {
+	if released, err := ReleasePinOnlyHumanMergePathHold(context.Background(), gh.NewClient(nil), nil, "o", "r", 1, "hive[bot]", head); released || err != nil {
 		t.Fatalf("nil write-back decision: released=%v err=%v, want a refusal with no call", released, err)
+	}
+}
+
+// The boot migration swaps the rule's old `hold` for needs-owner-merge long
+// after the notice; the releases accept that first application only when the
+// App's single, unedited migration comment came within a minute after it.
+// A `hold` is never removed by them.
+func TestHumanMergePathReleaseAcceptsMigratedLabel(t *testing.T) {
+	head := strings.Repeat("b", 40)
+	oldHead := strings.Repeat("a", 40)
+	app := map[string]string{"login": "hive[bot]", "type": "Bot"}
+	person := map[string]string{"login": "person", "type": "User"}
+	legacyNotice := HumanMergePathMarker + "\nHive added the `hold` label. A maintainer should review and merge this PR by hand.\n" + HumanMergeHeadMarker(oldHead)
+	for _, tc := range []struct {
+		name      string
+		relabel   string // the migration comment's created_at; "" none
+		author    map[string]string
+		edited    bool
+		approved  bool
+		holdToo   bool
+		want      bool
+		wantHolds int
+	}{
+		{name: "pin-only lifts a migrated label", relabel: "2026-11-20T08:00:05Z", author: app, want: true},
+		{name: "owner approval releases a migrated label", relabel: "2026-11-20T08:00:05Z", author: app, approved: true, want: true},
+		{name: "no migration comment", author: app},
+		{name: "migration comment by someone else", relabel: "2026-11-20T08:00:05Z", author: person},
+		{name: "edited migration comment", relabel: "2026-11-20T08:00:05Z", author: app, edited: true},
+		{name: "migration comment too late", relabel: "2026-11-20T08:05:00Z", author: app},
+		{name: "a person's hold beside the label is not touched", relabel: "2026-11-20T08:00:05Z", author: app, holdToo: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deletes, holdDeletes := 0, 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/1"):
+					labels := []map[string]string{{"name": HumanMergePathLabel}}
+					if tc.holdToo {
+						labels = append(labels, map[string]string{"name": "hold"})
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": head}, "labels": labels})
+				case strings.HasSuffix(r.URL.Path, "/comments"):
+					list := []map[string]any{{"body": legacyNotice, "created_at": "2026-11-02T12:00:02Z", "updated_at": "2026-11-02T12:00:02Z", "user": app}}
+					if tc.relabel != "" {
+						updated := tc.relabel
+						if tc.edited {
+							updated = "2026-11-21T00:00:00Z"
+						}
+						list = append(list, map[string]any{"body": HumanMergePathRelabelMarker + "\nswapped", "created_at": tc.relabel, "updated_at": updated, "user": tc.author})
+					}
+					_ = json.NewEncoder(w).Encode(list)
+				case strings.HasSuffix(r.URL.Path, "/events"):
+					_ = json.NewEncoder(w).Encode([]map[string]any{
+						{"event": "labeled", "created_at": "2026-11-02T12:00:01Z", "label": map[string]string{"name": "hold"}, "actor": app},
+						{"event": "labeled", "created_at": "2026-11-20T08:00:03Z", "label": map[string]string{"name": HumanMergePathLabel}, "actor": app},
+						{"event": "unlabeled", "created_at": "2026-11-20T08:00:04Z", "label": map[string]string{"name": "hold"}, "actor": app},
+					})
+				case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/labels/"+HumanMergePathLabel):
+					deletes++
+					w.WriteHeader(http.StatusNoContent)
+				case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/labels/hold"):
+					holdDeletes++
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(404)
+				}
+			}))
+			defer srv.Close()
+			client, err := gh.NewClient(srv.Client()).WithEnterpriseURLs(srv.URL, srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			allowed := func(writeback.Item) bool { return true }
+			var released bool
+			if tc.approved {
+				released, err = ReleaseApprovedHumanMergePathHold(context.Background(), client, allowed, "o", "r", 1, "hive[bot]", head)
+			} else {
+				released, err = ReleasePinOnlyHumanMergePathHold(context.Background(), client, allowed, "o", "r", 1, "hive[bot]", head)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if released != tc.want || (deletes == 1) != tc.want {
+				t.Fatalf("released=%v deletes=%d, want %v", released, deletes, tc.want)
+			}
+			if holdDeletes != 0 {
+				t.Fatalf("hold deletes = %d: a release never removes hold", holdDeletes)
+			}
+		})
 	}
 }

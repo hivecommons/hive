@@ -937,8 +937,9 @@ resolved; with the approval desk disabled there are no approval rows.
 **Hold sources.** Every held issue or PR carries the set of sources currently
 requiring its hold (`hold_sources` in the payload): `level_gate` (the ACMM
 level gate), `outreach` (the outreach lane's hold), `self_authorization`,
-`reporter_trust`, `sha_hold`, `holdguard`, `human_merge_path` (a PR touching a
-path only a person may merge), `standby_donation`, `dashboard_pause` (the
+`reporter_trust`, `sha_hold`, `holdguard`, `human_merge_path` (a `hold` an
+older build applied to a PR touching a path only a person may merge; the rule
+now applies `needs-owner-merge`, which is not a hold), `standby_donation`, `dashboard_pause` (the
 dashboard's pause hold, label `hive-pause/<hive-id>`), `person` (a person
 applied or re-applied the hold) and `unknown` (Hive cannot establish who
 applied it). A hold can have several sources. For a PR, ownership follows the

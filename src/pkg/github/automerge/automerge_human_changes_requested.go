@@ -3,6 +3,7 @@ package automerge
 import (
 	"context"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
@@ -56,8 +57,15 @@ func (c *Engine) latestTrustedHumanReview(ctx context.Context, owner, repo strin
 // selecting, so an older approval never shadows a later change request or
 // dismissal. A read failure returns nothing.
 func (c *Engine) standingTrustedHumanReviews(ctx context.Context, owner, repo string, number int) []*gh.PullRequestReview {
+	out, _ := c.standingTrustedHumanReviewsRead(ctx, owner, repo, number)
+	return out
+}
+
+// standingTrustedHumanReviewsRead is standingTrustedHumanReviews that also
+// reports whether the review list was read: false means nothing is known.
+func (c *Engine) standingTrustedHumanReviewsRead(ctx context.Context, owner, repo string, number int) ([]*gh.PullRequestReview, bool) {
 	if c == nil || c.gh == nil {
-		return nil
+		return nil, false
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -69,7 +77,7 @@ func (c *Engine) standingTrustedHumanReviews(ctx context.Context, owner, repo st
 		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
 			c.warn("automerge self lane could not read PR reviews for human changes_requested", "owner", owner, "repo", repo, "pr", number, "error", err)
-			return nil
+			return nil, false
 		}
 		seen = append(seen, reviews...)
 		for _, rv := range reviews {
@@ -99,7 +107,7 @@ func (c *Engine) standingTrustedHumanReviews(ctx context.Context, owner, repo st
 		}
 		out = append(out, rv)
 	}
-	return out
+	return out, true
 }
 
 // newestReviewOnHead picks the most recently submitted review in state whose
@@ -128,57 +136,279 @@ func newestReviewOnHead(reviews []*gh.PullRequestReview, state, head string) *gh
 // (hivecommons/hive#14679). Either way the requester is noted on the stage
 // detail so the reviewer's decision-requested verdict on this head stops
 // deriving 085.
+//
+// A change request survives the hive's own base merge: when head is nothing
+// but the App's merge of the base branch into the head a trusted maintainer
+// asked for changes on (carriedTrustedHumanChangesRequested), the review
+// still stands for head, so the fixer is kicked for it. Any other push ends
+// it, as before.
 func (c *Engine) humanChangesRequestedForHead(ctx context.Context, owner, repo string, number int, head string) bool {
-	rv, ok := c.latestTrustedHumanChangesRequested(ctx, owner, repo, number, head)
-	if !ok {
-		if c.humanChangeRequests == nil || strings.TrimSpace(head) == "" {
-			return false
+	changed, _ := c.humanChangesRequestedForHeadRead(ctx, owner, repo, number, head)
+	return changed
+}
+
+// humanChangesRequestedForHeadRead is humanChangesRequestedForHead that also
+// reports whether a false answer is settled: every read behind it (the
+// review list, the PR, the base-refresh proof) succeeded. A caller memoises
+// "no change request" only then.
+func (c *Engine) humanChangesRequestedForHeadRead(ctx context.Context, owner, repo string, number int, head string) (bool, bool) {
+	head = strings.TrimSpace(head)
+	var reviews []*gh.PullRequestReview
+	readOK := false
+	if c != nil && c.gh != nil && head != "" {
+		reviews, readOK = c.standingTrustedHumanReviewsRead(ctx, owner, repo, number)
+	}
+	rv := newestReviewOnHead(reviews, "CHANGES_REQUESTED", head)
+	carriedFrom := ""
+	if rv == nil {
+		if c.humanChangeRequests == nil || head == "" {
+			return false, readOK
 		}
-		standing, found := c.reconcileReviewBackedApproval(ctx, owner, repo, number, strings.TrimSpace(head))
-		if !found || standing.IsApproval() {
-			return false
+		standing, found := c.reconcileReviewBackedApproval(ctx, owner, repo, number, head)
+		if found && standing.IsApproval() {
+			return false, readOK
 		}
-		// A later trusted approval on this same head can acknowledge a body-
-		// only fix. Persist it so the planner also stops scheduling a fix.
-		if approval, approved := c.latestTrustedHumanReview(ctx, owner, repo, number, head, "APPROVED"); approved && approval.GetSubmittedAt().After(standing.RecordedAt) {
-			req := review.HumanChangeRequest{
-				Repo: owner + "/" + repo, Number: number, HeadSHA: head,
-				Source: review.HumanChangeRequestSourceReview, SourceID: approval.GetID(),
-				Actor: hgithub.SafeGetLogin(approval.GetUser()), Body: approval.GetBody(), URL: approval.GetHTMLURL(),
-				Kind: review.HumanChangeRequestKindApprove, RecordedAt: approval.GetSubmittedAt().Time,
+		if found {
+			// A later trusted approval on this same head can acknowledge a body-
+			// only fix. Persist it so the planner also stops scheduling a fix.
+			if approval, approved := c.latestTrustedHumanReview(ctx, owner, repo, number, head, "APPROVED"); approved && approval.GetSubmittedAt().After(standing.RecordedAt) {
+				req := review.HumanChangeRequest{
+					Repo: owner + "/" + repo, Number: number, HeadSHA: head,
+					Source: review.HumanChangeRequestSourceReview, SourceID: approval.GetID(),
+					Actor: hgithub.SafeGetLogin(approval.GetUser()), Body: approval.GetBody(), URL: approval.GetHTMLURL(),
+					Kind: review.HumanChangeRequestKindApprove, RecordedAt: approval.GetSubmittedAt().Time,
+				}
+				if err := c.humanChangeRequests.Record(req); err == nil {
+					c.noteStageTrustedHumanApproval(owner, repo, number, head, req.Actor)
+					return false, readOK
+				} else {
+					c.warn("could not record approval clearing human change request", "pr", number, "error", err)
+				}
 			}
-			if err := c.humanChangeRequests.Record(req); err == nil {
-				c.noteStageTrustedHumanApproval(owner, repo, number, head, req.Actor)
-				return false
-			} else {
-				c.warn("could not record approval clearing human change request", "pr", number, "error", err)
-			}
+			c.noteStageHumanChangeRequest(owner, repo, number, head, standing.Actor)
+			return true, true
 		}
-		c.noteStageHumanChangeRequest(owner, repo, number, head, standing.Actor)
-		return true
+		if !readOK {
+			return false, false
+		}
+		carried, from, ok, definite := c.carriedTrustedHumanChangesRequested(ctx, owner, repo, number, head, reviews)
+		if !ok {
+			return false, definite
+		}
+		rv, carriedFrom = carried, from
 	}
 	c.noteStageHumanChangeRequest(owner, repo, number, head, hgithub.SafeGetLogin(rv.GetUser()))
 	if c.humanChangeRequests == nil {
-		return true
+		return true, true
 	}
 	req := review.HumanChangeRequest{
-		Repo:       owner + "/" + repo,
-		Number:     number,
-		HeadSHA:    strings.TrimSpace(head),
-		Source:     review.HumanChangeRequestSourceReview,
-		SourceID:   rv.GetID(),
-		Actor:      strings.TrimSpace(hgithub.SafeGetLogin(rv.GetUser())),
-		Body:       rv.GetBody(),
-		URL:        rv.GetHTMLURL(),
-		RecordedAt: rv.GetSubmittedAt().Time,
+		Repo:            owner + "/" + repo,
+		Number:          number,
+		HeadSHA:         head,
+		Source:          review.HumanChangeRequestSourceReview,
+		SourceID:        rv.GetID(),
+		Actor:           strings.TrimSpace(hgithub.SafeGetLogin(rv.GetUser())),
+		Body:            rv.GetBody(),
+		URL:             rv.GetHTMLURL(),
+		RecordedAt:      rv.GetSubmittedAt().Time,
+		CarriedFromHead: carriedFrom,
 	}
 	if existing, found := c.humanChangeRequests.For(req.Repo, number, req.HeadSHA); found && existing.Source == req.Source && existing.SourceID == req.SourceID {
-		return true
+		return true, true
 	}
 	if err := c.humanChangeRequests.Record(req); err != nil {
 		c.warn("automerge self lane could not record human changes_requested", "owner", owner, "repo", repo, "pr", number, "head", head, "error", err)
+		return true, true
 	}
-	return true
+	if carriedFrom != "" {
+		c.info(humanChangesRequestedCarriedMessage, "repo", owner+"/"+repo, "pr", number, "from_head", carriedFrom, "head", head, "by", req.Actor, "review", req.SourceID)
+	}
+	return true, true
+}
+
+// humanChangesRequestedCarriedMessage is the one INFO line logged when a
+// person's change request follows the PR over the hive's own base merge.
+const humanChangesRequestedCarriedMessage = "human change request carried over the hive's base merge"
+
+// carriedTrustedHumanChangesRequested returns a trusted maintainer's standing
+// CHANGES_REQUESTED review (among reviews, standingTrustedHumanReviews) on an
+// earlier head of which head is nothing but the hive's own base refresh, and
+// that earlier head. "Base refresh" is hgithub.BaseRefreshChecker's proof:
+// every commit from the reviewed head to head is a GitHub-verified merge
+// commit the App made, whose parents are the previous head and a commit on
+// the base branch, and the PR's diff against the base is unchanged (at most
+// a few such hops). A content push, a rebase, anyone else's merge or a
+// changed diff answers false, and the change request ends there as before.
+// The review must still be the reviewer's standing opinion: a later approval
+// or a dismissal already removed it from reviews. The newest qualifying
+// review wins. Read failures answer false.
+//
+// The request follows the head across every App base-merge hop (the proof
+// walks back to the reviewed head), so the stage keeps reading it as the
+// author's turn. The planner does not kick it again while the fix already
+// kicked for it has no recorded attempt (review.carriedRequestFixPending). The refresh proof is memoised
+// for definite answers (BaseRefreshChecker.Known), so a known refresh costs
+// no PR read. definite is false when a read failed (the PR, a commit or a
+// compare), so a false answer is not settled.
+func (c *Engine) carriedTrustedHumanChangesRequested(ctx context.Context, owner, repo string, number int, head string, reviews []*gh.PullRequestReview) (*gh.PullRequestReview, string, bool, bool) {
+	if c == nil || c.gh == nil || c.transport == nil || head == "" {
+		return nil, "", false, true
+	}
+	app := strings.TrimSpace(c.transport.AppBotLogin())
+	if app == "" {
+		return nil, "", false, true
+	}
+	newer := func(found, rv *gh.PullRequestReview) bool {
+		return found == nil || rv.GetSubmittedAt().After(found.GetSubmittedAt().Time)
+	}
+	var found *gh.PullRequestReview
+	var unknown []*gh.PullRequestReview
+	for _, rv := range reviews {
+		from := strings.TrimSpace(rv.GetCommitID())
+		if !strings.EqualFold(rv.GetState(), "CHANGES_REQUESTED") || from == "" || from == head {
+			continue
+		}
+		refresh, seen := c.baseRefresh.Known(owner, repo, number, from, head)
+		switch {
+		case seen && refresh:
+			if newer(found, rv) {
+				found = rv
+			}
+		case !seen:
+			unknown = append(unknown, rv)
+		}
+	}
+	definite := true
+	if found == nil && len(unknown) > 0 {
+		pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:decision_base_refresh"), owner, repo, number)
+		if err != nil {
+			return nil, "", false, false
+		}
+		if strings.TrimSpace(pr.GetHead().GetSHA()) != head {
+			// The head moved since the caller read it: nothing settled.
+			return nil, "", false, false
+		}
+		baseRef := pr.GetBase().GetRef()
+		for _, rv := range unknown {
+			refresh, sure := c.baseRefresh.CheckBaseRefresh(ctx, c.gh.Repositories, owner, repo, number, baseRef, rv.GetCommitID(), head, app)
+			if !sure {
+				definite = false
+			}
+			if refresh && newer(found, rv) {
+				found = rv
+			}
+		}
+	}
+	if found == nil {
+		return nil, "", false, definite
+	}
+	return found, strings.TrimSpace(found.GetCommitID()), true, true
+}
+
+// humanMergeRequiredUnlessHumanChangesRequested refines a lane's
+// human-merge-rule skip (a breaking-change title, or a
+// auto_merge.human_merge_labels label such as the needs-owner-merge the
+// human-merge-path rule applies) the way
+// sentinelBlockedUnlessHumanChangesRequested refines a sentinel block: the
+// lane stops before it reads the PR's reviews, so a trusted maintainer's
+// CHANGES_REQUESTED review on the current head (or carried over the hive's
+// own base merge) was never recorded and the fixer never kicked. With one,
+// the lane reason is human-changes-requested and the stage is the author's
+// fixing stage; only a person merges the PR either way. Any other reason is
+// returned unchanged.
+//
+// It reads nothing for a PR the cheaper checks already stop: a hold, a pause,
+// do-not-merge, needs-human, blocked or an exempt label is a person's (or a
+// gate's) stop, and a change request must not route the fixer past it. An
+// observe-only pass never refines (it would record a request the planner
+// acts on in a repository the hive does not merge). And a head whose PR has
+// not changed since a read found no change request is not read again
+// (StageTracker.humanMergeNoChangeRequest, keyed on the head and the PR's
+// updated_at, which a new review or a dismissal moves).
+func (c *Engine) humanMergeRequiredUnlessHumanChangesRequested(ctx context.Context, owner, repo string, pr *gh.PullRequest, reason string) string {
+	if reason != autoMergeReasonHumanMergeRequired || pr == nil || pr.GetHead() == nil || c == nil || c.observeOnly {
+		return reason
+	}
+	head := strings.TrimSpace(pr.GetHead().GetSHA())
+	if head == "" {
+		return reason
+	}
+	labels := labelNames(pr.Labels)
+	if c.labelBlockReason(labels, true) != "" || (c.transport != nil && c.transport.IsExemptLabels(labels)) {
+		return reason
+	}
+	tracker := c.stageTrackerOrShared()
+	key := stageKey(owner, repo, pr.GetNumber())
+	now := time.Now()
+	if c.now != nil {
+		now = c.now()
+	}
+	seen := ""
+	if pr.UpdatedAt != nil {
+		seen = head + "@" + pr.GetUpdatedAt().UTC().Format(time.RFC3339Nano)
+		if tracker.humanMergeNoChangeRequestKnown(key, seen, now) {
+			return reason
+		}
+	}
+	changed, settled := c.humanChangesRequestedForHeadRead(ctx, owner, repo, pr.GetNumber(), head)
+	if changed {
+		tracker.forgetHumanMergeNoChangeRequest(key)
+		return autoMergeReasonHumanChangesRequested
+	}
+	// Only a settled "none" is remembered: a failed read must not hide a
+	// review until updated_at moves.
+	if seen != "" && settled {
+		tracker.noteHumanMergeNoChangeRequest(key, seen, now)
+	} else {
+		tracker.forgetHumanMergeNoChangeRequest(key)
+	}
+	return reason
+}
+
+// humanMergeNoChangeRequestCap bounds StageTracker.humanMergeNoChangeRequest:
+// past it the memory starts over (each PR is read once more).
+const humanMergeNoChangeRequestCap = 2048
+
+// humanMergeNoChangeRequestTTL bounds how long a settled "no change
+// request" stands for an unchanged PR: a trusted-merger list change, or a
+// review that did not move updated_at, is read within it.
+const humanMergeNoChangeRequestTTL = 30 * time.Minute
+
+// humanMergeNoChangeRequestSeen is one remembered settled "none".
+type humanMergeNoChangeRequestSeen struct {
+	seen string
+	at   time.Time
+}
+
+func (t *StageTracker) humanMergeNoChangeRequestKnown(key, seen string, now time.Time) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	got, ok := t.humanMergeNoChangeRequest[key]
+	return ok && got.seen == seen && now.Sub(got.at) < humanMergeNoChangeRequestTTL
+}
+
+func (t *StageTracker) noteHumanMergeNoChangeRequest(key, seen string, now time.Time) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.humanMergeNoChangeRequest == nil || len(t.humanMergeNoChangeRequest) >= humanMergeNoChangeRequestCap {
+		t.humanMergeNoChangeRequest = map[string]humanMergeNoChangeRequestSeen{}
+	}
+	t.humanMergeNoChangeRequest[key] = humanMergeNoChangeRequestSeen{seen: seen, at: now}
+}
+
+func (t *StageTracker) forgetHumanMergeNoChangeRequest(key string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.humanMergeNoChangeRequest, key)
 }
 
 // reconcileReviewBackedApproval returns the decision standing against head
@@ -215,9 +445,14 @@ func (c *Engine) reconcileReviewBackedApproval(ctx context.Context, owner, repo 
 // stage (072 for a clanker's PR) instead of re-asserting 085 over it every
 // sweep (hivecommons/hive#15159). The review is read only for a sentinel-
 // blocked PR, and the standing request is noted on the stage detail and
-// recorded for the nudge like the self lane's. Any other reason is returned
-// unchanged; a new head without a review on it is blocked again.
+// recorded for the nudge like the self lane's. The human-merge-rule skip is
+// refined the same way (humanMergeRequiredUnlessHumanChangesRequested). Any
+// other reason is returned unchanged; a new head without a review on it is
+// blocked again.
 func (c *Engine) sentinelBlockedUnlessHumanChangesRequested(ctx context.Context, owner, repo string, pr *gh.PullRequest, reason string) string {
+	if reason == autoMergeReasonHumanMergeRequired {
+		return c.humanMergeRequiredUnlessHumanChangesRequested(ctx, owner, repo, pr, reason)
+	}
 	if reason != contributorLaneReasonSentinelBlocked || pr == nil || pr.GetHead() == nil {
 		return reason
 	}

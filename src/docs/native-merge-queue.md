@@ -186,7 +186,7 @@ close an issue. The stage observation carries the reason to the dashboard.
 When the owning lane rejects a PR because it lost merge eligibility — a hold
 or `do-not-merge`/`needs-human` label, a removed merger label, a missing,
 untrusted or stale queue approval, changes requested, a draft or closed PR, a
-release in progress on the repository, a human-merge-path hold, or a
+release in progress on the repository, a human-merge-path match, or a
 breaking-change title or `auto_merge.human_merge_labels` label (such as
 `needs-owner-merge`) — Hive rechecks the entry's enqueuer and withdraws it only if it belongs to
 this App (a `Bot` enqueuer whose login matches the App's slug). Every other
