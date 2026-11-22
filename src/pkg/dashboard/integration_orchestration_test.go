@@ -251,3 +251,20 @@ func TestIntegrationObserveFilesWarnsOncePerWindow(t *testing.T) {
 		t.Fatalf("warning logged %d times, want 1: %s", got, buf.String())
 	}
 }
+
+func TestAllowDurableErrOncePerWindowPerEvent(t *testing.T) {
+	s := orchestrationServer(t, config.IntegrationAdvisory)
+	now := time.Now()
+	if !s.allowDurableErr("pull_request_review", now) {
+		t.Fatal("first error must log")
+	}
+	if s.allowDurableErr("pull_request_review", now.Add(time.Minute)) {
+		t.Fatal("repeat within window must be suppressed")
+	}
+	if !s.allowDurableErr("push", now.Add(time.Minute)) {
+		t.Fatal("other event must log")
+	}
+	if !s.allowDurableErr("pull_request_review", now.Add(integrationDurableErrWindow)) {
+		t.Fatal("must log again after window")
+	}
+}

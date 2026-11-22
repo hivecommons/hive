@@ -34,6 +34,7 @@ type integrationRuntime struct {
 	reconcileScopeOffset          int
 	advice                        map[string]integrationDispatchObservation
 	observeWarnAt                 map[string]time.Time
+	durableWarnAt                 map[string]time.Time
 	executionOnce                 sync.Once
 	executionStore                *integration.Store
 	executionErr                  error
@@ -147,6 +148,24 @@ func (s *Server) allowObserveWarn(repo string, now time.Time) bool {
 		s.integration.observeWarnAt = map[string]time.Time{}
 	}
 	s.integration.observeWarnAt[repo] = now
+	return true
+}
+
+// integrationDurableErrWindow bounds how often the same "observation not
+// durable" error is logged per event type; a full journal fails every webhook
+// and each repeat would otherwise raise a fresh selfreport.
+const integrationDurableErrWindow = 10 * time.Minute
+
+func (s *Server) allowDurableErr(event string, now time.Time) bool {
+	s.integration.mu.Lock()
+	defer s.integration.mu.Unlock()
+	if last, ok := s.integration.durableWarnAt[event]; ok && now.Sub(last) < integrationDurableErrWindow {
+		return false
+	}
+	if s.integration.durableWarnAt == nil {
+		s.integration.durableWarnAt = map[string]time.Time{}
+	}
+	s.integration.durableWarnAt[event] = now
 	return true
 }
 
