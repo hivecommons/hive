@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-22 (v5.345.13)
+
+### Security
+
+- ioscan now raises phrase findings hidden in HTML comments, `<details>` and hidden-style elements to a blocking severity (`injection.hidden_markup`), and flags image and link URLs whose query strings carry data or fill-in placeholders (`dangerous.exfil_image_url`, `dangerous.link_fill_in`); existing rule ids are unchanged (#19444).
+
 ## 2026-11-21 (v5.345.12)
 
 ### Fixed
