@@ -144,6 +144,23 @@ func TestNewGiteaForgeBaseURL(t *testing.T) {
 	}
 }
 
+func TestGiteaErrorsKeepGiteaPrefix(t *testing.T) {
+	_, err := newGiteaForge("test-token", Options{})
+	if err == nil || err.Error() != "gitea: BaseURL is required (no public Gitea default)" {
+		t.Errorf("missing BaseURL error = %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	f := newTestGitea(t, srv.URL, "hivecommons")
+	_, err = f.GetRepo(context.Background(), "hivecommons/hive")
+	if err == nil || !strings.HasPrefix(err.Error(), "gitea: get repo hivecommons/hive: gitea API ") {
+		t.Errorf("GetRepo error = %v", err)
+	}
+}
+
 // --- Read path ---
 
 func TestGiteaGetRepo(t *testing.T) {
