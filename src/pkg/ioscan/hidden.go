@@ -32,10 +32,8 @@ var (
 	// bracketed parameter names (filter[key]=1) do not count. The your/insert/
 	// paste form needs a placeholder separator (YOUR_TOKEN, insert-here) so
 	// ordinary words (yourself, insertion, pasted) do not match (#19452).
-	fillInRe   = regexp.MustCompile(`(?i)(\{\{?\s*[a-z_][a-z0-9_ .-]*\}\}?|<[a-z_ -]{2,}>|\[[a-z_ -]{2,}\]|%7[bB][^%]*%7[dD]|\b(?:your|insert|paste)[_-][a-z]\w*)`)
-	tokenValRe = regexp.MustCompile(`^[A-Za-z0-9._~+/=:@-]*$`)
-	jwtValRe   = regexp.MustCompile(`^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$`)
-	exfilKeys  = map[string]bool{"data": true, "d": true, "q": true, "payload": true, "secret": true, "token": true, "key": true, "content": true, "text": true, "msg": true, "message": true}
+	fillInRe  = regexp.MustCompile(`(?i)(\{\{?\s*[a-z_][a-z0-9_ .-]*\}\}?|<[a-z_ -]{2,}>|\[[a-z_ -]{2,}\]|%7[bB][^%]*%7[dD]|\b(?:your|insert|paste)[_-][a-z]\w*)`)
+	exfilKeys = map[string]bool{"data": true, "d": true, "q": true, "payload": true, "secret": true, "token": true, "key": true, "content": true, "text": true, "msg": true, "message": true}
 )
 
 // scanHiddenMarkup returns findings for hidden-markup content and
@@ -143,14 +141,18 @@ type queryParam struct{ key, value string }
 
 // queryParams splits a raw query string into decoded key/value pairs. A part
 // that fails to decode is kept raw rather than dropped, so a malformed escape
-// cannot hide a value from the checks.
+// cannot hide a value from the checks. A part without "=" (?{{secrets}}) is
+// treated as a value, so the value-only checks still see it.
 func queryParams(q string) []queryParam {
 	var out []queryParam
 	for _, part := range strings.Split(q, "&") {
 		if part == "" {
 			continue
 		}
-		k, v, _ := strings.Cut(part, "=")
+		k, v, hasEq := strings.Cut(part, "=")
+		if !hasEq {
+			k, v = "", k
+		}
 		if dk, err := url.QueryUnescape(k); err == nil {
 			k = dk
 		}
@@ -171,36 +173,95 @@ func hasFillIn(params []queryParam) bool {
 	return false
 }
 
+// signingScheme is a URL-signing scheme whose parameters carry long values by
+// construction. shapes holds an exact value shape for every parameter that is
+// exempt from the length checks; any other parameter, and any value that does
+// not fit its shape, is counted as usual. A scheme only applies when its
+// signature parameter is present and itself well-formed. Shapes are bounded so
+// an attacker who forges the parameter names on their own host gains at most a
+// fixed-size channel, never one for arbitrary base64. Parameters that are free
+// data by design (x-amz-security-token, CloudFront Policy, Azure si) are not
+// exempt, so a URL that carries one stays flagged.
+type signingScheme struct {
+	sigKey string
+	shapes map[string]*regexp.Regexp
+}
+
 var (
-	azureSASKeys   = map[string]bool{"sig": true, "sv": true, "se": true, "st": true, "sp": true, "sr": true, "spr": true, "srt": true, "ss": true, "si": true, "sdd": true, "skoid": true, "sktid": true, "skt": true, "ske": true, "sks": true, "skv": true}
-	cloudFrontKeys = map[string]bool{"signature": true, "key-pair-id": true, "policy": true, "expires": true}
+	isoDateRe      = regexp.MustCompile(`^\d{8}T\d{6}Z$`)
+	smallIntRe     = regexp.MustCompile(`^\d{1,10}$`)
+	signedHdrsRe   = regexp.MustCompile(`^[a-z0-9-]{1,32}(?:;[a-z0-9-]{1,32}){0,7}$`)
+	azureDateRe    = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,7})?)?Z)?$`)
+	azureGUIDRe    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	signingSchemes = []signingScheme{
+		{"x-amz-signature", map[string]*regexp.Regexp{
+			"x-amz-signature":     regexp.MustCompile(`^[0-9a-f]{64}$`),
+			"x-amz-algorithm":     regexp.MustCompile(`^AWS4-HMAC-SHA256$`),
+			"x-amz-credential":    regexp.MustCompile(`^[A-Z0-9]{16,32}/\d{8}/[a-z0-9-]{2,20}/[a-z0-9-]{2,20}/aws4_request$`),
+			"x-amz-date":          isoDateRe,
+			"x-amz-expires":       smallIntRe,
+			"x-amz-signedheaders": signedHdrsRe,
+		}},
+		{"x-goog-signature", map[string]*regexp.Regexp{
+			"x-goog-signature":     regexp.MustCompile(`^(?:[0-9a-f]{64}|[0-9a-f]{512})$`),
+			"x-goog-algorithm":     regexp.MustCompile(`^GOOG4-(?:RSA|HMAC)-SHA256$`),
+			"x-goog-credential":    regexp.MustCompile(`^[a-z0-9.@_-]{1,96}/\d{8}/[a-z0-9-]{2,30}/storage/goog4_request$`),
+			"x-goog-date":          isoDateRe,
+			"x-goog-expires":       smallIntRe,
+			"x-goog-signedheaders": signedHdrsRe,
+		}},
+		{"signature", map[string]*regexp.Regexp{
+			// CloudFront: URL-safe base64 of a 1024- or 2048-bit RSA signature.
+			"signature":   regexp.MustCompile(`^(?:[A-Za-z0-9~_-]{172}|[A-Za-z0-9~_-]{344})$`),
+			"key-pair-id": regexp.MustCompile(`^(?:K[A-Z0-9]{12,20}|APKA[A-Z0-9]{16})$`),
+			"expires":     smallIntRe,
+		}},
+		{"sig", map[string]*regexp.Regexp{
+			// Azure SAS: base64 of an HMAC-SHA256.
+			"sig":   regexp.MustCompile(`^[A-Za-z0-9+/]{43}=$`),
+			"sv":    azureDateRe,
+			"st":    azureDateRe,
+			"se":    azureDateRe,
+			"skt":   azureDateRe,
+			"ske":   azureDateRe,
+			"skv":   azureDateRe,
+			"skoid": azureGUIDRe,
+			"sktid": azureGUIDRe,
+		}},
+	}
+	jwtValRe = regexp.MustCompile(`^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$`)
 )
 
-// signingParam returns a predicate for parameters that belong to a
-// recognised URL-signing scheme (AWS SigV4, GCS V4, CloudFront, Azure SAS, or
-// a JWT access token such as GitHub's private-user-images). Their values are
-// long by construction, so the length checks skip them. A scheme is only
-// recognised when its signature parameter is present, and a value is only
-// skipped when it is token-shaped, so prose smuggled under a signing key name
-// is still caught.
-func signingParam(params []queryParam) func(queryParam) bool {
-	has := map[string]bool{}
-	for _, p := range params {
-		has[strings.ToLower(p.key)] = true
+// jwtHosts are hosts whose image URLs carry a JWT access token (GitHub's
+// private-user-images). The jwt exemption is tied to the host, not the value
+// shape, because any base64url data can be dressed as a JWT; a request to a
+// host the attacker does not control exfiltrates nothing.
+var jwtHosts = map[string]bool{"private-user-images.githubusercontent.com": true}
+
+// signingParam returns a predicate for parameters whose values are exempt
+// from the length checks because a recognised URL-signing scheme produces
+// them (#19452). See signingScheme for the bounds that keep this from opening
+// an exfil channel.
+func signingParam(host string, params []queryParam) func(queryParam) bool {
+	var active []signingScheme
+	for _, s := range signingSchemes {
+		for _, p := range params {
+			if strings.ToLower(p.key) == s.sigKey && s.shapes[s.sigKey].MatchString(p.value) {
+				active = append(active, s)
+				break
+			}
+		}
 	}
-	amz, goog := has["x-amz-signature"], has["x-goog-signature"]
-	cf := has["signature"] && has["key-pair-id"]
-	sas := has["sig"] && has["sv"]
+	jwtHost := jwtHosts[strings.ToLower(host)]
 	return func(p queryParam) bool {
 		k := strings.ToLower(p.key)
-		switch {
-		case amz && strings.HasPrefix(k, "x-amz-"),
-			goog && strings.HasPrefix(k, "x-goog-"),
-			cf && cloudFrontKeys[k],
-			sas && azureSASKeys[k]:
-			return tokenValRe.MatchString(p.value)
-		case k == "jwt":
-			return jwtValRe.MatchString(p.value)
+		if k == "jwt" {
+			return jwtHost && jwtValRe.MatchString(p.value)
+		}
+		for _, s := range active {
+			if re, ok := s.shapes[k]; ok && re.MatchString(p.value) {
+				return true
+			}
 		}
 		return false
 	}
@@ -217,7 +278,11 @@ func carriesData(raw string) bool {
 	if hasFillIn(params) {
 		return true
 	}
-	signing := signingParam(params)
+	var host string
+	if u, err := url.Parse(raw); err == nil {
+		host = u.Hostname()
+	}
+	signing := signingParam(host, params)
 	for _, p := range params {
 		if signing(p) {
 			continue
