@@ -72,6 +72,28 @@ func (a prGateBackstopAPI) HeadStatuses(ctx context.Context, repo, sha string) (
 	return a.c.ReadPRGateHeadStatuses(ctx, repo, sha)
 }
 
+// HeadHasContext reports whether sha carries a commit status or a check run
+// named name; the sweep reads it to tell whether a missing grant stalls merges.
+func (a prGateBackstopAPI) HeadHasContext(ctx context.Context, repo, sha, name string) (bool, error) {
+	if a.c == nil {
+		return false, ErrNoGitHubClient
+	}
+	have, err := a.c.ReadPRGateHeadStatuses(ctx, repo, sha)
+	if err != nil {
+		return false, err
+	}
+	if _, ok := have[name]; ok {
+		return true, nil
+	}
+	owner, repoName := a.c.splitRepo(repo)
+	runs, _, err := a.c.client.Checks.ListCheckRunsForRef(WithRESTCaller(ctx, "hive:pr_gate_backstop_checks"), owner, repoName, sha,
+		&gh.ListCheckRunsOptions{CheckName: gh.Ptr(name), ListOptions: gh.ListOptions{PerPage: 1}})
+	if err != nil {
+		return false, err
+	}
+	return runs != nil && runs.GetTotal() > 0, nil
+}
+
 // Sweep runs the gate's backstop over repos with c's reads: it posts the gate
 // on every open, non-draft head that does not carry it yet.
 func (p *PRGate) Sweep(ctx context.Context, c *Client, repos []string) prgate.SweepResult {
