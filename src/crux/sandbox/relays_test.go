@@ -68,7 +68,13 @@ func TestRelayPreflightRunsAndFails(t *testing.T) {
 		args[4] = relayDir
 		c := exec.Command(args[0], args[1:]...)
 		c.Env = []string{"PATH=" + path}
-		out, err := c.CombinedOutput()
+		var stdout, stderr strings.Builder
+		c.Stdout, c.Stderr = &stdout, &stderr
+		err := c.Run()
+		out := stdout.String()
+		if code := RelayPreflightExitCode; errors.As(err, new(*exec.ExitError)) && err.(*exec.ExitError).ExitCode() == code {
+			out += stderr.String()
+		}
 		code := 0
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -76,7 +82,7 @@ func TestRelayPreflightRunsAndFails(t *testing.T) {
 		} else if err != nil {
 			t.Fatal(err)
 		}
-		return string(out), code
+		return out, code
 	}
 	out, code := run(bin, "/bin/sh", "-c", `printf '%s' "$PATH"`)
 	if code != 0 || !strings.HasPrefix(out, relayDir+":") {

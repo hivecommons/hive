@@ -61,9 +61,10 @@ for tool in %s; do
 done
 gaps=0
 if [ -r /proc/self/status ]; then
-  nnp=$(sed -n 's/^NoNewPrivs:[[:space:]]*//p' /proc/self/status)
-  cap=$(sed -n 's/^CapEff:[[:space:]]*//p' /proc/self/status)
-  sec=$(sed -n 's/^Seccomp:[[:space:]]*//p' /proc/self/status)
+  nnp=; cap=; sec=
+  while read -r key val; do
+    case "$key" in NoNewPrivs:) nnp=$val;; CapEff:) cap=$val;; Seccomp:) sec=$val;; esac
+  done < /proc/self/status
   [ "$nnp" = 1 ] || { echo 'hive: sandbox containment gap: no_new_privs is not set' >&2; gaps=1; }
   case "$cap" in *[!0]*|"") echo "hive: sandbox containment gap: capabilities not dropped (CapEff=$cap)" >&2; gaps=1;; esac
   [ -n "$sec" ] && [ "$sec" != 0 ] || { echo 'hive: sandbox containment gap: no seccomp filter' >&2; gaps=1; }
