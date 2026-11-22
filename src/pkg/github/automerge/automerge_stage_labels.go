@@ -364,6 +364,12 @@ type StageTracker struct {
 	// (noteStageTrustedAuthorMerges); created on first use. It survives
 	// drain, so a pass the lane did not run in routes the PR the same way.
 	trustedAuthorMerges map[string]trustedAuthorMergesEntry
+	// pinOnlyLiftLogged remembers, per key, the head and verdict the
+	// pin-only hold lift last logged at info (logPinOnlyLiftOnce), so a held
+	// PR logs each verdict once per head across passes and engines; created
+	// on first use, dropped when the PR stops wearing a hold or is lifted,
+	// and capped at pinOnlyLiftLoggedCap entries.
+	pinOnlyLiftLogged map[string]string
 }
 
 // stageOwner is the lane that set a PR's current stage, for which head, and
@@ -1325,6 +1331,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			verdict = replacement
 			obs.Reason = replacement.Reason
 		}
+		if wornHoldLabel(obs.Labels) == "" {
+			// No hold any more: what the pin-only lift logged for it is moot.
+			tracker.forgetPinOnlyLiftLog(key)
+		}
 		if holdLabel := wornHoldLabel(obs.Labels); holdLabel != "" && !verdict.Terminal {
 			// Who held it and why rides the row (hivecommons/hive#15020);
 			// a reporter-trust hold the hive put on its own PR is lifted
@@ -1332,7 +1342,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// Only the gate's own decision-needed label is ever lifted: a
 			// `hold` is a person's (or awaits the #18468 migration) and is
 			// never removed by the hive.
-			prov, notice, err := c.holdProvenance(ctx, obs.Owner, obs.Repo, obs.Number, holdLabel)
+			prov, notice, holdComments, err := c.holdProvenanceWithComments(ctx, obs.Owner, obs.Repo, obs.Number, holdLabel)
 			if err != nil {
 				c.debug("stage labels: hold provenance unreadable", "repo", obs.Display, "pr", obs.Number, "error", err)
 			}
@@ -1354,11 +1364,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 			// A human-merge-path hold whose PR no longer touches such a
 			// path at its current head is lifted, or, while something
-			// else keeps it, no longer described as one.
+			// else keeps it, no longer described as one. So is one whose
+			// later head qualifies for the repository's pin-only exception
+			// (the lanes skip a held PR before their gate re-checks it).
 			if prov.SelfImposed() && prov.HumanMergePath() {
-				lifted, stale, err := c.liftStaleHumanMergePathHold(ctx, obs, prov)
+				lifted, stale, err := c.liftStaleHumanMergePathHold(ctx, obs, prov, holdComments)
 				if err != nil {
-					c.warn("stage labels: could not lift stale human-merge-path hold", "repo", obs.Display, "pr", obs.Number, "error", err)
+					c.warn("stage labels: could not lift human-merge-path hold", "repo", obs.Display, "pr", obs.Number, "error", err)
 					if firstErr == nil {
 						firstErr = err
 					}
