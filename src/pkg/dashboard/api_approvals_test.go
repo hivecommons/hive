@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/toolapprove"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // approvalServer wires a dashboard server with an enabled desk over a temp
@@ -199,7 +200,7 @@ func TestApprovalResolveExpiredIsGone(t *testing.T) {
 	}
 
 	inbox.SetPendingTTL(time.Nanosecond)
-	time.Sleep(time.Millisecond)
+	testutil.Eventually(t, 5*time.Second, func() bool { return inbox.Count() == 0 }, "item never expired")
 
 	rec = doOwnerPost(s, "/api/approvals/resolve", map[string]any{"id": id, "approved": true})
 	if rec.Code != http.StatusGone {
