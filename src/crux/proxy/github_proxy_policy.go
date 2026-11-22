@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 // injectLinearCredential replaces the Authorization header of an agent's
@@ -392,6 +393,13 @@ func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (
 		}
 		p.logger.Warn("ioscan canary leak detected", "agent", leak.Agent, "source", leak.Source)
 		return "ioscan canary leak", p.canaryFailClosed, true
+	}
+	// Bodies hive relays are scrubbed with logscrub; bodies an agent writes
+	// through the proxy are not, so a real token pasted into a comment would be
+	// published (#19445). Deny on a secret shape, naming only the category.
+	if category, found := logscrub.FindSecret(text); found {
+		p.logger.Warn("credential shape in GitHub write body - denying", "agent", agentName, "source", source, "category", category)
+		return "credential shape in write body: " + category, true, true
 	}
 	return "", false, false
 }

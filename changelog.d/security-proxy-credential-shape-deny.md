@@ -1,0 +1,1 @@
+- GitHub writes an agent sends through the proxy are now scanned with the logscrub secret-shape matcher, and a body carrying a credential shape (GitHub token, cloud key, private key and the like) is denied with only the shape category in the reason, so a real token pasted into a comment is no longer published. Closes #19445.

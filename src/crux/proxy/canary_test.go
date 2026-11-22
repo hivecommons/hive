@@ -209,3 +209,22 @@ func TestInspectCanaryEgressCoversGitCommitRESTAndBlocksOpaquePush(t *testing.T)
 		t.Fatalf("git push got detected=%v deny=%v reason=%q, want fail-closed block", detected, deny, reason)
 	}
 }
+
+// A real credential an agent pastes into a comment must not be published
+// (#19445). The fixture is assembled at runtime so it never resembles a real
+// token to repository scanners.
+func TestInspectCanaryEgressDeniesCredentialShape(t *testing.T) {
+	r := newFakeCanaryScanner()
+	r.plant("scanner")
+	p := &GitHubProxy{logger: slog.Default()}
+	p.SetCanaryScanner(true, true, r, nil)
+	secret := "gh" + "p_abcdefghijklmnopqrstuvwxyz"
+	req, _ := http.NewRequest(http.MethodPost, "https://api.github.com/repos/org/repo/issues/1/comments", strings.NewReader(`{"body":"token `+secret+`"}`))
+	reason, deny, detected := p.inspectCanaryEgress("scanner", req)
+	if !deny || !detected || !strings.Contains(reason, "github-token") {
+		t.Fatalf("got reason=%q deny=%v detected=%v, want deny for github-token", reason, deny, detected)
+	}
+	if strings.Contains(reason, secret) {
+		t.Fatalf("reason leaks the secret: %q", reason)
+	}
+}
