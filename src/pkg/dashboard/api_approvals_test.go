@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/crux/toolapprove"
 )
@@ -179,6 +180,36 @@ func TestApprovalResolveSingle(t *testing.T) {
 	rec = doOwnerPost(s, "/api/approvals/resolve", map[string]any{"id": id, "approved": true})
 	if rec.Code != http.StatusConflict {
 		t.Errorf("re-resolve = %d, want 409 — a replayed grant must not double-execute", rec.Code)
+	}
+}
+
+// TestApprovalResolveExpiredIsGone pins #19446: a grant on an item past the
+// inbox TTL is refused with 410 and the item leaves the queue unresolved.
+func TestApprovalResolveExpiredIsGone(t *testing.T) {
+	s, inbox := approvalServer(t, 1)
+	id := inbox.List()[0].ID
+
+	rec := doOwnerGet(s, "/api/approvals")
+	var resp ApprovalsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].ExpiresAt == "" {
+		t.Fatalf("list row does not carry expires_at: %+v", resp.Items)
+	}
+
+	inbox.SetPendingTTL(time.Nanosecond)
+	time.Sleep(time.Millisecond)
+
+	rec = doOwnerPost(s, "/api/approvals/resolve", map[string]any{"id": id, "approved": true})
+	if rec.Code != http.StatusGone {
+		t.Fatalf("resolve of an expired item = %d, want 410 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if _, ok := inbox.ResolvedRecordFor(id); ok {
+		t.Error("an expired item was journaled as resolved")
+	}
+	if got := inbox.Count(); got != 0 {
+		t.Errorf("expired item still pending: count %d", got)
 	}
 }
 

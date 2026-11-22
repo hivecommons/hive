@@ -6,6 +6,7 @@ package toolapprove
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/hivecommons/hive/crux/config"
 )
@@ -46,5 +47,20 @@ func DeskFromConfig(tc config.ToolApprovalConfig, scanner SecurityScanner, logge
 		return nil, nil, err
 	}
 
-	return NewDesk(engine, scanner), NewInbox(tc.InboxPath), nil
+	inbox := NewInbox(tc.InboxPath)
+	inbox.SetPendingTTL(pendingTTL(tc.PendingTTLSeconds))
+	return NewDesk(engine, scanner), inbox, nil
+}
+
+// pendingTTL maps tool_approval.pending_ttl_s to an inbox TTL: zero is the
+// default, negative disables expiry, positive is that many seconds.
+func pendingTTL(seconds int) time.Duration {
+	switch {
+	case seconds == 0:
+		return DefaultPendingTTL
+	case seconds < 0:
+		return 0
+	default:
+		return time.Duration(seconds) * time.Second
+	}
 }

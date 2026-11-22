@@ -181,6 +181,13 @@ upgrade-pause kill switch and the contribute ledger:
 - A missing or corrupt file degrades to "empty" rather than wedging the hive.
 - Growth is bounded (`maxInboxEntries`, `maxJournalEntries`, 30-day journal
   retention).
+- Pending items **expire** (#19446): 24 hours after `QueuedAt` by default,
+  `tool_approval.pending_ttl_s` to change it, a negative value to disable.
+  Reads never return an expired item and `Enqueue` sweeps them. `Resolve`
+  refuses one with `ErrExpired` (the API answers `410 Gone`) and drops it
+  without journaling, so a late grant cannot release a request made in a
+  context nobody remembers, and a fresh delivery of the same request queues
+  again for a fresh decision.
 
 `TestInboxSurvivesRestart` constructs a **second, independent** `Inbox` over the
 same path — which is exactly what a spoke roll looks like from the inbox's point
