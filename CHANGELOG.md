@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-22 (v5.349.1)
+
+### Fixed
+
+- Repeated \integration scope drift unavailable\ warnings from a degraded integration journal are now logged at most once per repo per 10 minutes.
+
 ## 2026-11-22 (v5.349.0)
 
 ### Added
