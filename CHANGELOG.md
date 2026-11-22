@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-22 (v5.348.0)
+
+### Added
+
+- **Dashboard: light-mode theme token overrides** ([#19361](https://github.com/hivecommons/hive/issues/19361)). `dashboard.theme_overrides.light_tokens` and a new **Light-mode token overrides** field in Settings → Appearance set allowlisted CSS tokens for light mode only. They layer on the preset's own light palette, or on the palette a dark preset or `custom` derives for light mode. Before this, `tokens` overrides of surfaces, lines and text on those themes changed dark mode only, and light mode is the default view. Existing configs render the same CSS.
+
 ## 2026-11-22 (v5.347.2)
 
 ### Changed
