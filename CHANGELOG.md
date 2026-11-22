@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-22 (v5.345.14)
+
+### Security
+
+- ioscan now remembers sources that tripped the injection scanner ([#19440](https://github.com/hivecommons/hive/issues/19440)). After untrusted text is withheld for a high or critical injection finding, its author and its issue or pull request are flagged for `ioscan.source_memory_days` (default 30, `0` turns it off). Until then their text is always sent to the classifier, past the per-pass budget, and is withheld when the classifier cannot answer or none is installed, whatever `classifier.fail_mode` says, so an attacker can no longer edit a withheld comment slightly and retry until one variant is scored as safe.
+
 ## 2026-11-22 (v5.345.13)
 
 ### Security
