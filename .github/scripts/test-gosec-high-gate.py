@@ -30,9 +30,12 @@ def issue(severity, rule="G204", **extra):
 
 
 class GosecHighGate(unittest.TestCase):
-    def run_gate(self, *reports):
+    def run_gate(self, *reports, baseline=None, extra=()):
         paths = []
         with tempfile.TemporaryDirectory() as tmp:
+            base = os.path.join(tmp, "baseline.json")
+            with open(base, "w", encoding="utf-8") as f:
+                json.dump(baseline if baseline is not None else {"findings": []}, f)
             for i, report in enumerate(reports):
                 path = os.path.join(tmp, f"r{i}.json")
                 with open(path, "w", encoding="utf-8") as f:
@@ -43,7 +46,7 @@ class GosecHighGate(unittest.TestCase):
                 paths.append(path)
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                code = gate.main(paths)
+                code = gate.main(["--baseline", base, *extra, *paths])
         return code, out.getvalue()
 
     def test_high_finding_blocks_and_is_annotated(self):
@@ -79,7 +82,63 @@ class GosecHighGate(unittest.TestCase):
         self.assertIn("missing or unreadable", out)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(gate.main(["/nonexistent/gosec.json"]), 1)
+            self.assertEqual(gate.main(["--baseline", "", "/nonexistent/gosec.json"]), 1)
+
+    def test_baselined_high_does_not_block(self):
+        os.environ["GITHUB_WORKSPACE"] = "/work/hive"
+        found = issue("HIGH", code="41: a\n42: \tcmd := exec.Command(x)\n43: b\n")
+        baseline = {"findings": [{"file": "src/pkg/x/x.go", "rule_id": "G204",
+                                  "code": "cmd := exec.Command(x)"}]}
+        code, out = self.run_gate({"Issues": [found]}, baseline=baseline)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("::error", out)
+
+    def test_baseline_survives_a_line_shift(self):
+        os.environ["GITHUB_WORKSPACE"] = "/work/hive"
+        shifted = issue("HIGH", line="90", code="90: cmd := exec.Command(x)\n")
+        baseline = {"findings": [{"file": "src/pkg/x/x.go", "rule_id": "G204",
+                                  "code": "cmd := exec.Command(x)"}]}
+        self.assertEqual(self.run_gate({"Issues": [shifted]}, baseline=baseline)[0], 0)
+
+    def test_new_high_beyond_baseline_count_blocks(self):
+        os.environ["GITHUB_WORKSPACE"] = "/work/hive"
+        a = issue("HIGH", code="42: cmd := exec.Command(x)\n")
+        b = issue("HIGH", line="50", code="50: cmd := exec.Command(x)\n")
+        baseline = {"findings": [{"file": "src/pkg/x/x.go", "rule_id": "G204",
+                                  "code": "cmd := exec.Command(x)"}]}
+        code, out = self.run_gate({"Issues": [a, b]}, baseline=baseline)
+        self.assertEqual(code, 1)
+        self.assertIn("1 new", out)
+
+    def test_edited_baselined_line_blocks(self):
+        os.environ["GITHUB_WORKSPACE"] = "/work/hive"
+        found = issue("HIGH", code="42: cmd := exec.Command(y)\n")
+        baseline = {"findings": [{"file": "src/pkg/x/x.go", "rule_id": "G204",
+                                  "code": "cmd := exec.Command(x)"}]}
+        self.assertEqual(self.run_gate({"Issues": [found]}, baseline=baseline)[0], 1)
+
+    def test_unreadable_baseline_fails_closed(self):
+        code, out = self.run_gate({"Issues": []}, baseline="not a baseline")
+        self.assertEqual(code, 1)
+        self.assertIn("baseline", out)
+
+    def test_write_baseline_round_trips(self):
+        os.environ["GITHUB_WORKSPACE"] = "/work/hive"
+        found = [issue("HIGH", code="42: cmd := exec.Command(x)\n"),
+                 issue("HIGH", line="50", code="50: cmd := exec.Command(x)\n")]
+        with tempfile.TemporaryDirectory() as tmp:
+            base = os.path.join(tmp, "b.json")
+            rep = os.path.join(tmp, "r.json")
+            with open(rep, "w", encoding="utf-8") as f:
+                json.dump({"Issues": found}, f)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(gate.main(["--baseline", base, "--write-baseline", rep]), 0)
+                self.assertEqual(gate.main(["--baseline", base, rep]), 0)
+            with open(base, encoding="utf-8") as f:
+                self.assertEqual(json.load(f)["findings"][0]["count"], 2)
+
+    def test_repo_baseline_is_readable(self):
+        self.assertTrue(gate.load_baseline(gate.DEFAULT_BASELINE))
 
     def test_line_range_uses_first_line(self):
         line = gate.annotation(issue("HIGH", line="10-12"), "")

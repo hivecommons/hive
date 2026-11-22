@@ -252,14 +252,15 @@ jobs:
       # BLOCKING ON HIGH SEVERITY (#19443). The scan itself never fails
       # (-no-fail): it prints the full text report, every severity, to the
       # log and writes a JSON copy. The "Fail on HIGH-severity findings" step
-      # below reads both module reports and fails the job on any HIGH finding.
-      # MEDIUM and LOW findings stay visible and do not block. gosec rates
-      # G115 (integer-overflow conversion) HIGH; each existing G115 site
-      # carries a line-level #nosec naming the bound that makes it safe
-      # (#4903 backlog). A HIGH finding that is
-      # not exploitable is suppressed at the line with
-      # `#nosec <rule> -- <reason>`, not by weakening this gate. A scan that
-      # crashes before writing its report fails closed in the gate.
+      # below reads both module reports and fails the job on any HIGH finding
+      # that is not in .github/gosec-high-baseline.json — a ratchet, like the
+      # Semgrep --baseline-commit run in static-security.yml. The baseline
+      # holds the ~230 HIGH findings already in the tree when the gate landed
+      # (#4903 backlog) and only shrinks. MEDIUM and LOW findings stay visible
+      # and do not block. A new HIGH finding that is not exploitable is
+      # suppressed at the line with `#nosec <rule> -- <reason>`, not by adding
+      # it to the baseline or weakening this gate. A scan that crashes before
+      # writing its report fails closed in the gate.
       #
       # -concurrency 4: gosec defaults to runtime.NumCPU(), which in a runner
       # pod is the NODE's 32 vCPUs, not the pod's 6-CPU limit
