@@ -116,7 +116,7 @@ func newHivesReposCommand(env *commandEnv) *cobra.Command {
 	cmd.Flags().StringVar(&exclude, "exclude", "", "personally exclude owner/name or a canonical repository ID")
 	cmd.Flags().StringVar(&toggle, "toggle-exclude", "", "toggle a personal exclusion (same as x in the Hives overlay)")
 	cmd.Flags().StringVar(&clear, "clear", "", "clear personal inclusion and exclusion for a repository")
-	cmd.Flags().StringVar(&forge, "forge", "github", "forge for owner/name: github, gitlab, or gitea")
+	cmd.Flags().StringVar(&forge, "forge", "github", "forge for owner/name: github, gitlab, gitea, or forgejo")
 	cmd.Flags().StringVar(&host, "host", "github.com", "forge host for owner/name")
 	cmd.Flags().BoolVar(&deselectCurrent, "deselect-current", false, "clear current membership and personal inclusions, retaining exclusions and follow policy")
 	cmd.Flags().BoolVar(&follow, "follow-new-repos", false, "follow additions on supported refresh; use =false to stop following without changing membership")

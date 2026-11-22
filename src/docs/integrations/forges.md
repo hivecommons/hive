@@ -11,16 +11,16 @@ This page is for teams whose code lives on GitLab, Gitea or Forgejo and who want
 | Setting | Chooses | Values | Page |
 | --- | --- | --- | --- |
 | `governor.work_source.type` | Where the governor reads work items | `github` (default), `github_projects`, `linear`, `jira` | [Work sources](../work-sources.md) |
-| `project.forge` | Which forge adapter the hive's repositories use | `github` (default), `gitlab`, `gitea` | This page |
+| `project.forge` | Which forge adapter the hive's repositories use | `github` (default), `gitlab`, `gitea`, `forgejo` | This page |
 | `project.repo_policies[].forge`, `forge_url` | A different forge for one repository | same values; `forge_url` is a bare instance root | This page |
 
-`project.forge` sets the forge for every repository in `project.repos`. A `project.repo_policies[]` entry can move one repository to another forge with `forge`, and to another instance with `forge_url`, which defaults to `gitlab.gitlab_url` / `gitea.gitea_url`. Unlike `project.forge`, the per-repo keys are validated at load. See [the setup page](../forge-app-setup.md#the-configuration-surface-that-exists). Gitea and Forgejo share one adapter (`gitea`) because they share one REST API. Do not confuse it with `github.forge`, which names a GitHub host for the GitHub App; see [the setup page](../forge-app-setup.md#do-not-confuse-projectforge-with-githubforge).
+`project.forge` sets the forge for every repository in `project.repos`. A `project.repo_policies[]` entry can move one repository to another forge with `forge`, and to another instance with `forge_url`, which defaults to `gitlab.gitlab_url` / `gitea.gitea_url` / `forgejo.forgejo_url`. Unlike `project.forge`, the per-repo keys are validated at load. See [the setup page](../forge-app-setup.md#the-configuration-surface-that-exists). `gitea` and `forgejo` are separate kinds with separate config blocks. They share one REST client today because the two APIs match for the calls Hive makes, and a call that differs can change in one kind without touching the other, as [#19493](https://github.com/hivecommons/hive/issues/19493) describes. The `forgejo` kind adds naming only. It is no further along than `gitea`. Do not confuse it with `github.forge`, which names a GitHub host for the GitHub App; see [the setup page](../forge-app-setup.md#do-not-confuse-projectforge-with-githubforge).
 
 ## Configuration
 
 ```yaml
 project:
-  forge: gitlab        # "github" (default) | "gitlab" | "gitea"
+  forge: gitlab        # "github" (default) | "gitlab" | "gitea" | "forgejo"
 
 gitlab:
   gitlab_url: https://gitlab.example.com   # default https://gitlab.com
@@ -29,6 +29,10 @@ gitlab:
 gitea:
   gitea_url: https://codeberg.org          # no default; required for Gitea/Forgejo
   token_env: GITEA_TOKEN                   # env var NAME, never the token
+
+forgejo:
+  forgejo_url: https://codeberg.org        # no default; required for Forgejo
+  token_env: FORGEJO_TOKEN                 # env var NAME, never the token
 ```
 
 One repository on a different forge from the rest:
@@ -47,8 +51,10 @@ project:
 | `gitlab.token_env` | `GITLAB_TOKEN` | Sent as the `PRIVATE-TOKEN` header. |
 | `gitea.gitea_url` | none | Instance root. The adapter appends `/api/v1`. Without it the adapter cannot be built and the governor falls back to the GitHub client with a warning. |
 | `gitea.token_env` | `GITEA_TOKEN` | Sent as `Authorization: token <TOKEN>`. |
+| `forgejo.forgejo_url` | none | Instance root. The adapter appends `/api/v1`. Same fallback as Gitea when unset. |
+| `forgejo.token_env` | `FORGEJO_TOKEN` | Sent as `Authorization: token <TOKEN>`. |
 
-The keys and defaults come from `GitLabConfig` and `GiteaConfig` in `src/pkg/config/config.go`. The adapter is built per governor cycle in `src/cmd/hive/forgewire.go`, so a config reload takes effect on the next tick. An unknown `project.forge` value also falls back to the GitHub client and logs a warning.
+The keys and defaults come from `GitLabConfig`, `GiteaConfig` and `ForgejoConfig` in `src/pkg/config/config.go`. The adapter is built per governor cycle in `src/cmd/hive/forgewire.go`, so a config reload takes effect on the next tick. An unknown `project.forge` value also falls back to the GitHub client and logs a warning.
 
 ## Supported operations
 

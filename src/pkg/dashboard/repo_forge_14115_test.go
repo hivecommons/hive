@@ -31,6 +31,10 @@ func TestBuildReposForge14115(t *testing.T) {
 			c.Project.Forge = "gitea"
 			c.Gitea.URL = "https://codeberg.org"
 		}, "gitea", "https://codeberg.org"},
+		{"forgejo", func(c *config.Config) {
+			c.Project.Forge = "forgejo"
+			c.Forgejo.URL = "https://codeberg.org"
+		}, "forgejo", "https://codeberg.org"},
 		{"gitea without url", func(c *config.Config) { c.Project.Forge = "gitea" }, "gitea", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

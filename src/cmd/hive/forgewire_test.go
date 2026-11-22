@@ -84,6 +84,17 @@ func TestGovernorForgeSelectsAdapters(t *testing.T) {
 		}
 	})
 
+	t.Run("forgejo uses the configured instance", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Project.Org = "acme"
+		cfg.Project.Forge = config.ForgeForgejo
+		cfg.Forgejo.URL = "https://forgejo.example.com"
+
+		if got := forgeKindOf(t, governorForge(cfg, gh, discardLogger())); got != forge.KindForgejo {
+			t.Fatalf("want the Forgejo adapter, got kind %q", got)
+		}
+	})
+
 	t.Run("gitea uses the configured instance", func(t *testing.T) {
 		cfg := &config.Config{}
 		cfg.Project.Org = "acme"
@@ -129,7 +140,7 @@ func TestGovernorForgeFallsBackOnUnusableConfig(t *testing.T) {
 // config's forge names and pkg/forge.Kind: config cannot import pkg/forge, so
 // a rename on either side must fail here rather than silently fall back.
 func TestConfigForgeKindsMatchForgeKinds(t *testing.T) {
-	want := []forge.Kind{forge.KindGitHub, forge.KindGitLab, forge.KindGitea}
+	want := []forge.Kind{forge.KindGitHub, forge.KindGitLab, forge.KindGitea, forge.KindForgejo}
 	if len(config.KnownForgeKinds) != len(want) {
 		t.Fatalf("config.KnownForgeKinds = %v, want %v", config.KnownForgeKinds, want)
 	}

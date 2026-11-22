@@ -869,7 +869,7 @@ type FrontendPlatform struct {
 }
 
 // FrontendForge describes the configured source forge. Kind is one of
-// "github" | "gitlab" | "gitea". InstanceURL is set only for a non-default
+// "github" | "gitlab" | "gitea" | "forgejo". InstanceURL is set only for a non-default
 // self-managed instance (empty for github.com / gitlab.com defaults).
 type FrontendForge struct {
 	Kind        string   `json:"kind"`

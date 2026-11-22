@@ -39085,6 +39085,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (kind === 'gitlab' && base) {
         return { kind, icon: '🦊', name: 'GitLab', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/-/issues', changesPath: '/-/merge_requests', changePath: '/-/merge_requests' };
       }
+      if (kind === 'forgejo' && base) {
+        return { kind, icon: '🍵', name: 'Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
+      }
       if (kind === 'gitea' && base) {
         return { kind, icon: '🍵', name: 'Gitea/Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
       }
@@ -42076,7 +42079,8 @@ function burnAreaChart() {
       const FORGE_META = {
         github: { icon: '🐙', name: 'GitHub' },
         gitlab: { icon: '🦊', name: 'GitLab' },
-        gitea:  { icon: '🍵', name: 'Gitea' }
+        gitea:  { icon: '🍵', name: 'Gitea' },
+        forgejo: { icon: '🍵', name: 'Forgejo' }
       };
       const fm = FORGE_META[forgeKind] || { icon: '🔀', name: forgeKind || 'Forge' };
       const repoCount = Number(forge.repoCount) || 0;

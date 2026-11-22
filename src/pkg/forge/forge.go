@@ -28,6 +28,9 @@ const (
 	KindGitLab Kind = "gitlab"
 	// KindGitea selects the Gitea/Forgejo adapter (REST API v1 over net/http).
 	KindGitea Kind = "gitea"
+	// KindForgejo selects the Forgejo adapter. It shares the Gitea REST client
+	// but is its own kind.
+	KindForgejo Kind = "forgejo"
 )
 
 const (
@@ -289,8 +292,10 @@ func NewForge(kind Kind, token string, opts Options) (Forge, error) {
 		return newGitLabForge(token, opts)
 	case KindGitea:
 		return newGiteaForge(token, opts)
+	case KindForgejo:
+		return newForgejoForge(token, opts)
 	default:
-		return nil, fmt.Errorf("unknown forge kind %q (want %q, %q or %q)", kind, KindGitHub, KindGitLab, KindGitea)
+		return nil, fmt.Errorf("unknown forge kind %q (want %q, %q, %q or %q)", kind, KindGitHub, KindGitLab, KindGitea, KindForgejo)
 	}
 }
 
