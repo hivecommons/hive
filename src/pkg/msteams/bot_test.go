@@ -697,9 +697,33 @@ func TestListenBackoffStopsOnContext(t *testing.T) {
 	fg := newFakeGraph(t)
 	b := testBackend(t, fg)
 	fg.set("/teams/team/channels/chan/messages/delta", http.StatusInternalServerError, "boom")
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	// Cancel from inside the backoff sleep rather than via a wall-clock
+	// timeout: a real timeout can fire while a request is in flight, and the
+	// fake server then fails the test from its handler goroutine.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var delays []time.Duration
+	b.ctxSleep = func(ctx context.Context, d time.Duration) bool {
+		delays = append(delays, d)
+		if len(delays) == 3 {
+			cancel()
+			return false
+		}
+		return true
+	}
 	b.Listen(ctx, func(chat.Message) { t.Fatalf("unexpected delivery") })
+	want := []time.Duration{pollBackoffBase, 2 * pollBackoffBase, 4 * pollBackoffBase}
+	if len(delays) != len(want) {
+		t.Fatalf("backoff delays = %v, want %v", delays, want)
+	}
+	for i := range want {
+		if delays[i] != want[i] {
+			t.Fatalf("backoff delays = %v, want %v", delays, want)
+		}
+	}
+	if got := fg.calls("/teams/team/channels/chan/messages/delta"); got != len(want) {
+		t.Fatalf("delta polls = %d, want %d", got, len(want))
+	}
 }
 
 func TestCallGraphReturnsRateLimitRetryAfter(t *testing.T) {
