@@ -31,6 +31,9 @@ type pathMigrationItem struct {
 	// head and files are served for GET pulls/N and pulls/N/files.
 	head  string
 	files []string
+	// liftOnly marks an item whose stale `hold` is lifted with no label
+	// added, so removing it first is expected.
+	liftOnly bool
 }
 
 type pathMigrationFake struct {
@@ -116,7 +119,7 @@ func (f *pathMigrationFake) serve(t *testing.T) *httptest.Server {
 			f.added[n] = append(f.added[n], labels...)
 			_ = json.NewEncoder(w).Encode([]map[string]string{})
 		case r.Method == http.MethodDelete && strings.HasPrefix(tail, "labels/"):
-			if len(f.added[n]) == 0 {
+			if len(f.added[n]) == 0 && !item.liftOnly {
 				t.Errorf("#%d: hold removed before the label was added", n)
 			}
 			f.removed[n] = append(f.removed[n], strings.TrimPrefix(tail, "labels/"))
@@ -260,7 +263,7 @@ func TestMigrateHumanMergePathHoldLiftsAStaleHold(t *testing.T) {
 	legacy := legacyHumanMergePathNotice(".github/workflows/ci.yml")
 	appOnly := []map[string]any{pathMigrationEvent("labeled", testHiveAppBotLogin, "2026-11-01T12:00:00Z")}
 	f := &pathMigrationFake{items: map[int]pathMigrationItem{
-		1: {events: appOnly, comments: []map[string]any{appComment(legacy)}, head: head, files: []string{"package.json"}},
+		1: {events: appOnly, comments: []map[string]any{appComment(legacy)}, head: head, files: []string{"package.json"}, liftOnly: true},
 		2: {events: appOnly, comments: []map[string]any{appComment(legacy)}, head: head, files: []string{".github/workflows/ci.yml"}},
 		// Lifted once at this head and held again: stays, as in the stage lift.
 		3: {events: appOnly, comments: []map[string]any{appComment(legacy), appComment(HumanMergePathLiftMarker + head + " -->\nHold lifted.")}, head: head, files: []string{"package.json"}},
