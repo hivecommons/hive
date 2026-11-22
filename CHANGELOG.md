@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-22 (v5.346.0)
+
+### Added
+
+- The PR gate now files a missing Commit statuses grant once it stalls merges ([#19038](https://github.com/hivecommons/hive/issues/19038)). From 2026-12-02, when the Hive App installation still lacks the grant and the required `verify PR contents` context is absent on a repository's recent open heads, the backstop sweep logs a warning that the fleet report raises as `github_app_statuses_permission_missing`, so the gap is filed instead of only shown on the banner. Nothing is posted, and a repository whose workflow still supplies the context raises nothing.
+
 ## 2026-11-22 (v5.345.15)
 
 ### Security
