@@ -410,6 +410,7 @@ func (s *Scanner) collect(text string) []Finding {
 	findings = append(findings, normalized.findings...)
 	findings = append(findings, scanBase64Instructions(scanText)...)
 	findings = append(findings, scanObfuscated(scanText)...)
+	findings = append(findings, scanHiddenMarkup(scanText)...)
 	findings = append(findings, scanGenericSecrets(scanText)...)
 	return findings
 }
