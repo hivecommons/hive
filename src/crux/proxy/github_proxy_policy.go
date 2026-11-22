@@ -345,10 +345,13 @@ func injectsGitHubAuthForHost(host string) bool {
 }
 
 func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (reason string, deny bool, detected bool) {
-	if p == nil || !p.canariesEnabled || p.canaryRegistry == nil || req == nil || req.Body == nil {
+	if p == nil || req == nil || req.Body == nil {
 		return "", false, false
 	}
-	if isGitReceivePack(req.URL.Path) && p.canaryFailClosed {
+	// The credential-shape deny below does not depend on canaries: hives with
+	// ioscan or canaries off must still refuse to publish agent-written tokens.
+	canaryActive := p.canariesEnabled && p.canaryRegistry != nil
+	if canaryActive && isGitReceivePack(req.URL.Path) && p.canaryFailClosed {
 		return "ioscan canary scan unavailable for git push", true, true
 	}
 	if !writeMethods[req.Method] || isGitPath(req.URL.Path) || !githubWriteBodyMayLeak(req.Method, req.URL.Path) {
@@ -372,27 +375,30 @@ func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (
 	}
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.ContentLength = int64(len(body))
-	type scanResult struct {
-		leak  crux.CanaryLeak
-		found bool
-	}
-	scanner, text, source := p.canaryRegistry, string(body), "github:"+req.Method+" "+req.URL.Path
-	res, scanned := callPolicySeam(p, "ioscan canary scan", canaryScanTimeout, func() scanResult {
-		leak, found := scanner.Scan(agentName, text, source)
-		return scanResult{leak, found}
-	})
-	if !scanned {
-		// Fail closed (#19224), whatever canaryFailClosed says: a scan that
-		// panicked or did not finish is a body we could not scan, the same
-		// answer as a body we could not read.
-		return "ioscan canary scan failed", true, true
-	}
-	if leak, ok := res.leak, res.found; ok {
-		if p.canaryLeakFunc != nil {
-			p.canaryLeakFunc(leak)
+	text, source := string(body), "github:"+req.Method+" "+req.URL.Path
+	if canaryActive {
+		type scanResult struct {
+			leak  crux.CanaryLeak
+			found bool
 		}
-		p.logger.Warn("ioscan canary leak detected", "agent", leak.Agent, "source", leak.Source)
-		return "ioscan canary leak", p.canaryFailClosed, true
+		scanner := p.canaryRegistry
+		res, scanned := callPolicySeam(p, "ioscan canary scan", canaryScanTimeout, func() scanResult {
+			leak, found := scanner.Scan(agentName, text, source)
+			return scanResult{leak, found}
+		})
+		if !scanned {
+			// Fail closed (#19224), whatever canaryFailClosed says: a scan that
+			// panicked or did not finish is a body we could not scan, the same
+			// answer as a body we could not read.
+			return "ioscan canary scan failed", true, true
+		}
+		if leak, ok := res.leak, res.found; ok {
+			if p.canaryLeakFunc != nil {
+				p.canaryLeakFunc(leak)
+			}
+			p.logger.Warn("ioscan canary leak detected", "agent", leak.Agent, "source", leak.Source)
+			return "ioscan canary leak", p.canaryFailClosed, true
+		}
 	}
 	// Bodies hive relays are scrubbed with logscrub; bodies an agent writes
 	// through the proxy are not, so a real token pasted into a comment would be

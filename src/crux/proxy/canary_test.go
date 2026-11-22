@@ -228,3 +228,23 @@ func TestInspectCanaryEgressDeniesCredentialShape(t *testing.T) {
 		t.Fatalf("reason leaks the secret: %q", reason)
 	}
 }
+
+// The credential-shape deny must hold when canaries are disabled or no
+// registry is wired (#19445).
+func TestInspectCanaryEgressDeniesCredentialShapeWithCanariesOff(t *testing.T) {
+	secret := "gh" + "p_abcdefghijklmnopqrstuvwxyz"
+	for name, p := range map[string]*GitHubProxy{
+		"zero": {logger: slog.Default()},
+		"disabled": func() *GitHubProxy {
+			p := &GitHubProxy{logger: slog.Default()}
+			p.SetCanaryScanner(false, true, newFakeCanaryScanner(), nil)
+			return p
+		}(),
+	} {
+		req, _ := http.NewRequest(http.MethodPost, "https://api.github.com/repos/org/repo/issues/1/comments", strings.NewReader(`{"body":"token `+secret+`"}`))
+		reason, deny, detected := p.inspectCanaryEgress("scanner", req)
+		if !deny || !detected || !strings.Contains(reason, "github-token") {
+			t.Fatalf("%s: got reason=%q deny=%v detected=%v, want deny", name, reason, deny, detected)
+		}
+	}
+}
