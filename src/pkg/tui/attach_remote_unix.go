@@ -27,7 +27,7 @@ const pumpPollIntervalMs = 100
 // resumed Bubble Tea program for the operator's next keystroke, swallowing
 // it.
 func pumpFile(done <-chan struct{}, f *os.File, send func([]byte) error) {
-	fd := int32(f.Fd())
+	fd := int32(f.Fd()) // #nosec G115 -- file descriptors are small non-negative ints that fit in int32 (poll(2) pollfd.fd)
 	buf := make([]byte, 4096)
 	for {
 		select {

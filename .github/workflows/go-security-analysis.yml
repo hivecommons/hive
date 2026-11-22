@@ -253,8 +253,10 @@ jobs:
       # (-no-fail): it prints the full text report, every severity, to the
       # log and writes a JSON copy. The "Fail on HIGH-severity findings" step
       # below reads both module reports and fails the job on any HIGH finding.
-      # MEDIUM and LOW findings stay visible and do not block; the G115 and
-      # similar backlog triaged under #4903 sits there. A HIGH finding that is
+      # MEDIUM and LOW findings stay visible and do not block. gosec rates
+      # G115 (integer-overflow conversion) HIGH; each existing G115 site
+      # carries a line-level #nosec naming the bound that makes it safe
+      # (#4903 backlog). A HIGH finding that is
       # not exploitable is suppressed at the line with
       # `#nosec <rule> -- <reason>`, not by weakening this gate. A scan that
       # crashes before writing its report fails closed in the gate.
