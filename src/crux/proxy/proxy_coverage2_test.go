@@ -519,9 +519,9 @@ func TestInferenceTransport(t *testing.T) {
 }
 
 func TestInferenceHTTPClient(t *testing.T) {
-	// No CA bundle → default client.
+	// No CA bundle → default transport.
 	c, err := inferenceHTTPClient(&InferenceRoute{})
-	if err != nil || c != http.DefaultClient {
+	if err != nil || c.Transport != http.DefaultTransport {
 		t.Fatalf("expected default client, got %v err=%v", c, err)
 	}
 
@@ -540,7 +540,7 @@ func TestInferenceHTTPClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c2 == http.DefaultClient {
+	if c2.Transport == http.DefaultTransport {
 		t.Fatal("valid CA bundle must yield a non-default client")
 	}
 }

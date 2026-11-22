@@ -13,12 +13,16 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	hivegithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 const (
 	liteDefaultACMMLevel      = 2
 	liteMaxACMMLevel          = 2
 	liteRepoAccessHTTPTimeout = 10 * time.Second
+	// liteRepoAccessMaxRedirects bounds the repo-access redirect chain. Existing
+	// GHE redirect tests pin it; shrinking it is follow-up work (#19222).
+	liteRepoAccessMaxRedirects = 10
 )
 
 type LiteEnrollmentConfig struct {
@@ -526,12 +530,16 @@ func liteRepoAccessHTTPClient() *http.Client {
 		Timeout:   liteRepoAccessHTTPTimeout,
 		Transport: liteRepoAccessRoundTripper(),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
+			if len(via) >= liteRepoAccessMaxRedirects {
 				return fmt.Errorf("stopped after %d redirects", len(via))
 			}
 			if isPrivateURL(req.Context(), req.URL.String()) {
 				return fmt.Errorf("redirect to private/internal github_host blocked")
 			}
+			// The request carries the enrolling user's GitHub token: never let
+			// it follow a hop off the original host or down to plain http
+			// (hivecommons/hive#19222).
+			knowledge.StripCredentialsOnCrossHostRedirect(req, via)
 			return nil
 		},
 	}

@@ -127,9 +127,10 @@ func TestInferenceResilience_DefaultsUnchanged(t *testing.T) {
 		t.Fatalf("absent block must resolve to all off, got %+v ignored %v", res, ignored)
 	}
 
-	// The client is the very same default client as before.
+	// The client uses the very same default transport as before (only the
+	// redirect policy is the egress one, hivecommons/hive#19222).
 	c, err := inferenceHTTPClient(&InferenceRoute{})
-	if err != nil || c != http.DefaultClient {
+	if err != nil || c.Transport != http.DefaultTransport || c.Timeout != 0 {
 		t.Fatalf("default client changed: %v %v", c, err)
 	}
 
