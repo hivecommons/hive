@@ -458,6 +458,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassGitHubAppRepoNotCovered, message: "github app recheck: installation does not cover every configured repo"},
 		{class: ClassGitHubAppAlertsPermission, message: "scoped token mint with vulnerability_alerts:read failed; retrying without it"},
 		{class: ClassGitHubAppStatusesPermission, message: "could not set the prow/lgtm commit status: the GitHub App lacks the statuses: write permission"},
+		{class: ClassGitHubAppStatusesPermission, message: "pr-gate: verify PR contents is missing on recent heads: the GitHub App lacks the statuses: write permission"},
 		{class: ClassHubHeartbeatUnprovisioned, message: "hub heartbeat rejected: hive id is not provisioned on the hub (403); backing off"},
 		{class: ClassGitHubAppNotInstalled, message: "github app installation id is unset — per-agent scoped token NOT delivered"},
 		{class: ClassProxyConnectDialFailed, message: "proxy: CONNECT dial failed"},
