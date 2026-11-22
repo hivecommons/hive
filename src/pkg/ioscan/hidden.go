@@ -176,14 +176,21 @@ func hasFillIn(params []queryParam) bool {
 // signingScheme is a URL-signing scheme whose parameters carry long values by
 // construction. shapes holds an exact value shape for every parameter that is
 // exempt from the length checks; any other parameter, and any value that does
-// not fit its shape, is counted as usual. A scheme only applies when its
-// signature parameter is present and itself well-formed. Shapes are bounded so
-// an attacker who forges the parameter names on their own host gains at most a
-// fixed-size channel, never one for arbitrary base64. Parameters that are free
-// data by design (x-amz-security-token, CloudFront Policy, Azure si) are not
-// exempt, so a URL that carries one stays flagged.
+// not fit its shape, is counted as usual. A scheme only applies on a host of
+// the provider that issues it (hosts), and only when its signature parameter
+// is present and itself well-formed. A shape such as a CloudFront signature
+// can hold arbitrary base64url, so the host binding is what keeps a forged
+// signature on an attacker's host from becoming an exfil channel: a request to
+// a provider host the attacker does not control delivers nothing to them. Each
+// exempt key is exempt at most once per URL, so repeating it cannot widen the
+// channel. Parameters that are free data by design (x-amz-security-token,
+// CloudFront Policy, Azure si) are not exempt, so a URL that carries one stays
+// flagged. Custom domains in front of these providers stay flagged; that is
+// the safe direction.
 type signingScheme struct {
 	sigKey string
+	// hosts lists exact hostnames, or suffixes when they start with ".".
+	hosts  []string
 	shapes map[string]*regexp.Regexp
 }
 
@@ -194,7 +201,7 @@ var (
 	azureDateRe    = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,7})?)?Z)?$`)
 	azureGUIDRe    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	signingSchemes = []signingScheme{
-		{"x-amz-signature", map[string]*regexp.Regexp{
+		{"x-amz-signature", []string{".amazonaws.com", ".amazonaws.com.cn"}, map[string]*regexp.Regexp{
 			"x-amz-signature":     regexp.MustCompile(`^[0-9a-f]{64}$`),
 			"x-amz-algorithm":     regexp.MustCompile(`^AWS4-HMAC-SHA256$`),
 			"x-amz-credential":    regexp.MustCompile(`^[A-Z0-9]{16,32}/\d{8}/[a-z0-9-]{2,20}/[a-z0-9-]{2,20}/aws4_request$`),
@@ -202,7 +209,7 @@ var (
 			"x-amz-expires":       smallIntRe,
 			"x-amz-signedheaders": signedHdrsRe,
 		}},
-		{"x-goog-signature", map[string]*regexp.Regexp{
+		{"x-goog-signature", []string{"storage.googleapis.com", ".storage.googleapis.com"}, map[string]*regexp.Regexp{
 			"x-goog-signature":     regexp.MustCompile(`^(?:[0-9a-f]{64}|[0-9a-f]{512})$`),
 			"x-goog-algorithm":     regexp.MustCompile(`^GOOG4-(?:RSA|HMAC)-SHA256$`),
 			"x-goog-credential":    regexp.MustCompile(`^[a-z0-9.@_-]{1,96}/\d{8}/[a-z0-9-]{2,30}/storage/goog4_request$`),
@@ -210,13 +217,13 @@ var (
 			"x-goog-expires":       smallIntRe,
 			"x-goog-signedheaders": signedHdrsRe,
 		}},
-		{"signature", map[string]*regexp.Regexp{
+		{"signature", []string{".cloudfront.net"}, map[string]*regexp.Regexp{
 			// CloudFront: URL-safe base64 of a 1024- or 2048-bit RSA signature.
 			"signature":   regexp.MustCompile(`^(?:[A-Za-z0-9~_-]{172}|[A-Za-z0-9~_-]{344})$`),
 			"key-pair-id": regexp.MustCompile(`^(?:K[A-Z0-9]{12,20}|APKA[A-Z0-9]{16})$`),
 			"expires":     smallIntRe,
 		}},
-		{"sig", map[string]*regexp.Regexp{
+		{"sig", []string{".blob.core.windows.net", ".dfs.core.windows.net"}, map[string]*regexp.Regexp{
 			// Azure SAS: base64 of an HMAC-SHA256.
 			"sig":   regexp.MustCompile(`^[A-Za-z0-9+/]{43}=$`),
 			"sv":    azureDateRe,
@@ -240,11 +247,16 @@ var jwtHosts = map[string]bool{"private-user-images.githubusercontent.com": true
 
 // signingParam returns a predicate for parameters whose values are exempt
 // from the length checks because a recognised URL-signing scheme produces
-// them (#19452). See signingScheme for the bounds that keep this from opening
-// an exfil channel.
+// them (#19452). See signingScheme for the host and shape bounds that keep
+// this from opening an exfil channel. The predicate is stateful: it exempts
+// each key at most once, so call it once per parameter, in order.
 func signingParam(host string, params []queryParam) func(queryParam) bool {
+	host = strings.ToLower(host)
 	var active []signingScheme
 	for _, s := range signingSchemes {
+		if !hostMatches(host, s.hosts) {
+			continue
+		}
 		for _, p := range params {
 			if strings.ToLower(p.key) == s.sigKey && s.shapes[s.sigKey].MatchString(p.value) {
 				active = append(active, s)
@@ -252,19 +264,40 @@ func signingParam(host string, params []queryParam) func(queryParam) bool {
 			}
 		}
 	}
-	jwtHost := jwtHosts[strings.ToLower(host)]
+	jwtHost := jwtHosts[host]
+	seen := map[string]bool{}
 	return func(p queryParam) bool {
 		k := strings.ToLower(p.key)
-		if k == "jwt" {
-			return jwtHost && jwtValRe.MatchString(p.value)
+		if seen[k] {
+			return false
 		}
-		for _, s := range active {
-			if re, ok := s.shapes[k]; ok && re.MatchString(p.value) {
-				return true
+		exempt := false
+		if k == "jwt" {
+			exempt = jwtHost && jwtValRe.MatchString(p.value)
+		} else {
+			for _, s := range active {
+				if re, ok := s.shapes[k]; ok && re.MatchString(p.value) {
+					exempt = true
+					break
+				}
 			}
 		}
-		return false
+		if exempt {
+			seen[k] = true
+		}
+		return exempt
 	}
+}
+
+// hostMatches reports whether host equals an entry of hosts, or ends with an
+// entry that starts with ".". host must already be lower-case.
+func hostMatches(host string, hosts []string) bool {
+	for _, h := range hosts {
+		if host == h || (strings.HasPrefix(h, ".") && strings.HasSuffix(host, h)) {
+			return true
+		}
+	}
+	return false
 }
 
 // carriesData reports whether an image URL's query string looks like it

