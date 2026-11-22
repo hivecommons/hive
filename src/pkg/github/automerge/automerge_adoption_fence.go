@@ -44,8 +44,9 @@ import (
 
 // CarriedFenceMarkerPrefix opens the HTML comment the superseding App PR's
 // body carries when the adopted head tripped a contributor-lane diff fence.
-// The merge lanes read it back with carriedFenceReason.
-const CarriedFenceMarkerPrefix = "<!-- hive:carried-fence"
+// The merge lanes read it back with carriedFenceReason, and the edit_pr relay
+// re-adds it when a body rewrite drops it (hivecommons/hive#19401).
+const CarriedFenceMarkerPrefix = hgithub.CarriedFenceMarkerPrefix
 
 const (
 	// carriedFenceRESTCaller tags the adopting PR's file re-read.

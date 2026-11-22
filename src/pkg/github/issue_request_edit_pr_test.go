@@ -25,6 +25,12 @@ type editPRPatch struct {
 // and merged state and records every PATCH of the same path.
 func newEditPRMockServer(t *testing.T, authorLogin, authorType string, merged bool, patches *[]editPRPatch) *httptest.Server {
 	t.Helper()
+	return newEditPRMockServerWithBody(t, authorLogin, authorType, merged, "", patches)
+}
+
+// newEditPRMockServerWithBody is newEditPRMockServer with the PR's current body.
+func newEditPRMockServerWithBody(t *testing.T, authorLogin, authorType string, merged bool, currentBody string, patches *[]editPRPatch) *httptest.Server {
+	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rest, ok := strings.CutPrefix(r.URL.Path, "/repos/o/r/pulls/")
 		n, err := strconv.Atoi(rest)
@@ -40,6 +46,7 @@ func newEditPRMockServer(t *testing.T, authorLogin, authorType string, merged bo
 				"state":  "open",
 				"merged": merged,
 				"user":   map[string]any{"login": authorLogin, "type": authorType},
+				"body":   currentBody,
 			}
 			_ = json.NewEncoder(w).Encode(pr)
 		case http.MethodPatch:
@@ -137,6 +144,85 @@ func TestIssueRequestWatcher_EditPRBodyOnlyLeavesTitle(t *testing.T) {
 	}
 	if resp := readIssueResultFile(t, reqPath); !resp.OK || strings.Join(resp.Edited, ",") != "body" {
 		t.Errorf("result = %+v, want ok with edited=[body]", resp)
+	}
+}
+
+// A body rewrite that drops the carried-fence marker gets it back: the marker
+// is the only thing keeping an adopted contributor PR out of unattended merge
+// (hivecommons/hive#19401 review). The audit entry records the body digest.
+func TestIssueRequestWatcher_EditPRKeepsCarriedFenceMarker(t *testing.T) {
+	const marker = "<!-- hive:carried-fence reason=tests-removed from=#123 -->"
+	current := "Supersedes #123.\n\n" + marker + "\n\n**Merge stays manual**: tests removed.\n"
+	var patches []editPRPatch
+	srv := newEditPRMockServerWithBody(t, editPRTestBot, "Bot", false, current, &patches)
+	defer srv.Close()
+	c := editPRTestClient(t, srv.URL)
+	recs := captureAudit(c)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "edit_pr", Repo: "o/r", Number: 5, Agent: "review-fix",
+		Body: "Refreshed description.\n\nFixes #99\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if len(patches) != 1 || patches[0].Body == nil {
+		t.Fatalf("PATCH calls = %+v, want one with a body", patches)
+	}
+	got := *patches[0].Body
+	if !strings.Contains(got, marker) {
+		t.Fatalf("body sent dropped the carried-fence marker:\n%s", got)
+	}
+	if !strings.Contains(got, "Refreshed description.") {
+		t.Errorf("body sent lost the requested text:\n%s", got)
+	}
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
+	}
+	rec, ok := findAudit(*recs, AuditActionAgentPREdited)
+	if !ok {
+		t.Fatalf("edit was not audited; records: %+v", *recs)
+	}
+	if want := "body_sha256=" + editPRBodyDigest(got); !strings.Contains(rec.Detail, want) {
+		t.Errorf("audit detail = %q, want %q", rec.Detail, want)
+	}
+
+	// A rewrite that kept the marker passes through the relay filter intact
+	// and is not given a second copy.
+	if _, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "edit_pr", Repo: "o/r", Number: 5, Agent: "review-fix",
+		Body: "Second refresh.\n\n" + marker + "\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+	if len(patches) != 2 || patches[1].Body == nil {
+		t.Fatalf("PATCH calls = %d, want 2", len(patches))
+	}
+	if n := strings.Count(*patches[1].Body, marker); n != 1 {
+		t.Errorf("marker appears %d times, want exactly 1:\n%s", n, *patches[1].Body)
+	}
+}
+
+func TestPreserveCarriedFenceMarkers(t *testing.T) {
+	const m1 = "<!-- hive:carried-fence reason=tests-removed from=#1 -->"
+	const m2 = "<!-- hive:carried-fence reason=workflow-path -->"
+	cases := map[string]struct{ current, next, want string }{
+		"no marker":        {"old body", "new body", "new body"},
+		"kept":             {"a\n" + m1, "b\n" + m1 + "\nc", "b\n" + m1 + "\nc"},
+		"dropped":          {"a\n" + m1 + "\n", "b\n", "b\n\n" + m1 + "\n"},
+		"two, one dropped": {m1 + "\n" + m2, "x " + m2, "x " + m2 + "\n\n" + m1 + "\n"},
+		"duplicate":        {m1 + "\n" + m1, "x", "x\n\n" + m1 + "\n"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := preserveCarriedFenceMarkers(tc.current, tc.next); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

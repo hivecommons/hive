@@ -726,6 +726,7 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 		}
 	}
 	closedPR := false
+	editPRBodySHA := "" // edit_pr: digest of the body written, for the audit entry
 	switch kind {
 	case "claim":
 		var reason string
@@ -931,9 +932,9 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 		// Authorship gate (#19399): only a PR one of this hive's accounts
 		// opened, and not a merged one. A failed lookup takes the retry
 		// path; it is never read as permission to edit.
-		var reason string
+		var currentBody, reason string
 		var refused bool
-		reason, refused, err = c.editPRRefusal(ctx, req.Repo, req.Number)
+		currentBody, reason, refused, err = c.editPRRefusal(ctx, req.Repo, req.Number)
 		if err != nil {
 			break
 		}
@@ -950,6 +951,10 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 		if strings.TrimSpace(req.Body) != "" {
 			// body is the relay-filtered text plus the attribution trailer
 			// (AppendTrailer is a no-op when the agent kept the PR's own).
+			// A carried-fence marker the current body holds is re-added
+			// when the rewrite dropped it: it is the only thing keeping an
+			// adopted contributor PR out of unattended merge.
+			body = preserveCarriedFenceMarkers(currentBody, body)
 			bodyPtr = &body
 			edited = append(edited, "body")
 		}
@@ -958,6 +963,9 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 			resp.OK = true
 			resp.Number = req.Number
 			resp.Edited = edited
+			if bodyPtr != nil {
+				editPRBodySHA = editPRBodyDigest(*bodyPtr)
+			}
 		}
 	case "close":
 		closedPR, err = c.closeIssue(ctx, req.Repo, req.Number, IssueCloseOptions{OverrideReason: req.OverrideReason})
@@ -1126,6 +1134,9 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 	}
 	if kind == "edit_pr" {
 		extra = []string{"edited", strings.Join(resp.Edited, " ")}
+		if editPRBodySHA != "" {
+			extra = append(extra, "body_sha256", editPRBodySHA)
+		}
 	}
 	if closedPR {
 		// The number was a pull request: this is the hive closing a PR
