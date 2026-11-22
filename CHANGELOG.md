@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-22 (v5.349.0)
+
+### Added
+
+- Added an opt-in, locally run ioscan classifier benchmark that scores the labelled corpus under `src/pkg/ioscan/testdata/classifier-bench/` plus the in-house red-team corpus through `Classifier.Score`, and reports catch rate at the warn and block thresholds, false-positive rate, errors, latency and metered token and dollar cost per backend. Dev and heldout splits are reported separately, and a hard token ceiling bounds spend. It does not run in the default test run and has no CI workflow, so no repository secret is involved ([#19459](https://github.com/hivecommons/hive/issues/19459)).
+
+### Fixed
+
+- **Outbound HTTP clients no longer carry credentials across a redirect to another host.** The egress proxy's inference forwarding, model discovery, LiteLLM entitlement probe and reference_repos lookups now follow at most 3 redirects (was net/http's 10) and drop `Authorization`, `Cookie`, `X-IBM-Project-ID` and the route's extra headers on any hop that leaves the original host (port included) or downgrades https to http; net/http kept the bearer key on same-domain, other-port and subdomain hops and never stripped custom headers. The knowledge clients (llm-wiki, Context7, every connector) and the hub's lite-enrollment repo-access check apply the same stripping. Same-host redirects keep working with credentials intact. ([#19222](https://github.com/hivecommons/hive/issues/19222))
+
 ## 2026-11-22 (v5.348.0)
 
 ### Added
