@@ -77,6 +77,9 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 		// it is queued (hivecommons/hive#15442): the merge-now click is the
 		// one path, so queueing is offered greyed with the reason.
 		queue.Enabled, queue.ReasonIfDisabled = false, "Hive never merges a breaking change; merge it now as maintainer"
+		if stageengineprstage.HumanMergeLabelOnly(it.Title, it.Labels) {
+			queue.ReasonIfDisabled = "Hive never merges a PR with the needs-owner-merge label; merge it now as maintainer"
+		}
 	}
 	if it.DCOUnsigned > 0 {
 		mergeNow.Consequence += "; " + decisionDCOConsequence(it)

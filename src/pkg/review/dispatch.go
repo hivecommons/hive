@@ -497,6 +497,13 @@ type PendingFix struct {
 	Agent      string    `json:"agent"`
 	Attempts   int       `json:"attempts"`
 	Dispatched time.Time `json:"dispatched_at"`
+	// RequestSource and RequestID name the maintainer request the fix was
+	// kicked for (HumanChangeRequest Source and SourceID), when there was
+	// one: a request carried over the hive's own base merge onto a later
+	// head is the same request and gets no second kick while this fix is
+	// pending (carriedRequestFixPending).
+	RequestSource string `json:"request_source,omitempty"`
+	RequestID     int64  `json:"request_id,omitempty"`
 }
 
 type FixAttempt struct {
@@ -1720,6 +1727,12 @@ func answeredHead(pr PullRequest) bool {
 func (p *DispatchPlan) answerHead(pr PullRequest, artifact Artifact, opts DispatchOptions, now time.Time) {
 	p.State.Pending = removePendingForHead(p.State.Pending, pr)
 	p.State.Human = removeHumanForHead(p.State.Human, pr)
+	if f, ok := carriedRequestFixPending(p.State.Fixes, p.State.FixAttempts, pr, opts, now); ok {
+		// One fix kick per maintainer request: the hive only merged the
+		// base into the branch since the fixer was kicked for it.
+		p.recordFixExclusion(pr, FixDispatchExcludedPending, f.Attempts)
+		return
+	}
 	agg, _ := artifact.AggregateForBody(pr.Repo, pr.Number, pr.HeadSHA, pr.BodyDigest)
 	if fixPushAllowed(pr, opts) {
 		p.dispatchFix(pr, agg, opts, now)
@@ -1842,7 +1855,38 @@ func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchO
 	attempts++
 	msg := BuildFixPrompt(pr, agg, attempts, escalation.MaxReEngagements)
 	p.FixKicks = append(p.FixKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "fix", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA})
-	p.State.Fixes = append(p.State.Fixes, PendingFix{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Agent: agent, Attempts: attempts, Dispatched: now})
+	fix := PendingFix{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Agent: agent, Attempts: attempts, Dispatched: now}
+	if req := pr.HumanChangeRequest; req != nil && SameHeadSHA(req.HeadSHA, pr.HeadSHA) {
+		fix.RequestSource, fix.RequestID = req.Source, req.SourceID
+	}
+	p.State.Fixes = append(p.State.Fixes, fix)
+}
+
+// carriedRequestFixPending returns the fix already kicked for pr's
+// maintainer request when that request was carried onto pr's head over the
+// hive's own base merge (CarriedFromHead set) and that fix is still open:
+// same PR, same request source and ID, at another head, no FixAttempt
+// recorded for it yet, and not past PendingFixTTL. Once its FixAttempt is
+// recorded (attempts) the carried head is planned under the ordinary rules,
+// as before carried requests were deduplicated.
+func carriedRequestFixPending(fixes []PendingFix, attempts []FixAttempt, pr PullRequest, opts DispatchOptions, now time.Time) (PendingFix, bool) {
+	req := pr.HumanChangeRequest
+	if req == nil || strings.TrimSpace(req.CarriedFromHead) == "" || req.SourceID == 0 {
+		return PendingFix{}, false
+	}
+	for _, f := range fixes {
+		if f.Number != pr.Number || !strings.EqualFold(f.Repo, pr.Repo) || SameHeadSHA(f.HeadSHA, pr.HeadSHA) {
+			continue
+		}
+		if f.RequestSource != req.Source || f.RequestID != req.SourceID {
+			continue
+		}
+		if hasFixAttempt(attempts, f) || pendingFixExpired(f, opts, now) {
+			continue
+		}
+		return f, true
+	}
+	return PendingFix{}, false
 }
 
 func (p *DispatchPlan) addHuman(pr PullRequest, reason string, now time.Time) {

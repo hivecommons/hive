@@ -1267,13 +1267,13 @@ func DecisionActions(r Route) string {
 		steps = append(steps, "nothing more to approve: @"+approver+" approved this head ("+head+"); resolve the other reasons listed above")
 	} else if r.ManualMerge && r.ApprovalReleasesPathHold {
 		// auto_merge.human_merge_owner_approval: an explicit approval of the
-		// head releases the hive's human-merge-path hold; `/hive approve`
+		// head releases the hive's human-merge-path label; `/hive approve`
 		// counts here, unlike for the workflow-path fence.
 		settles := ""
 		if r.Verdict == VerdictRequiresHuman {
 			settles = " (a GitHub **Approve** review or `/hive decision approve` also settles the reviewer's `requires_human` verdict)"
 		}
-		steps = append(steps, "a trusted merger approves this head ("+head+") with a GitHub **Approve** review, a `/hive decision approve` reply (typed here or from the dashboard) or a `/hive approve` reply; that releases the hive's hold for this repository's human-merge paths"+settles+", and the hive merges the PR once the other gates clear. A new push needs a new approval, except the hive's own update from the base branch")
+		steps = append(steps, "a trusted merger approves this head ("+head+") with a GitHub **Approve** review, a `/hive decision approve` reply (typed here or from the dashboard) or a `/hive approve` reply; that releases the hive's `needs-owner-merge` label for this repository's human-merge paths"+settles+", and the hive merges the PR once the other gates clear. A new push needs a new approval, except the hive's own update from the base branch")
 	} else if r.ManualMerge {
 		// Only `/hive decision approve` (typed or from the dashboard) and
 		// an Approve review release the fence; `/hive approve` never does

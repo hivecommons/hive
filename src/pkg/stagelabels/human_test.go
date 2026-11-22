@@ -1075,7 +1075,7 @@ func TestDecisionActionsHumanMergePathOwnerApproval(t *testing.T) {
 	for _, want := range []string{
 		"Needs a decision, not a merge",
 		"a trusted merger approves this head (`abc1234`) with a GitHub **Approve** review, a `/hive decision approve` reply",
-		"or a `/hive approve` reply; that releases the hive's hold for this repository's human-merge paths",
+		"or a `/hive approve` reply; that releases the hive's `needs-owner-merge` label for this repository's human-merge paths",
 		"the hive merges the PR once the other gates clear",
 		"A new push needs a new approval",
 	} {

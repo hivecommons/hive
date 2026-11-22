@@ -16,8 +16,8 @@ import (
 
 // auto_merge.human_merge_owner_approval (Danathar/goodreads-mcp#463): on a
 // listed repository a trusted merger's explicit approval of the current head
-// releases the hive's human-merge-path hold; everywhere else, and for any
-// approval that is not bound to the head, the hold stays.
+// releases the hive's human-merge-path label; everywhere else, and for any
+// approval that is not bound to the head, the label stays.
 
 var ownerApprovalHead = strings.Repeat("d", 40)
 
@@ -74,11 +74,11 @@ func TestHumanMergeApprovalCommentNamesApproverAndHead(t *testing.T) {
 	body := humanMergeApprovalComment(ownerApprovalHead, workflowApproval{Login: "owner"})
 	for _, want := range []string{
 		humanMergeApprovalMarker(ownerApprovalHead),
-		"Hold released for `ddddddd`:",
+		"`needs-owner-merge` released for `ddddddd`:",
 		"`owner` approved this head",
 		humanMergeOwnerApprovalConfigKey,
 		"not a merge override",
-		"A new push puts the hold back",
+		"A new push puts the label back",
 		"A `hold` a person adds is never lifted",
 	} {
 		if !strings.Contains(body, want) {
@@ -101,7 +101,7 @@ func ownerApprovalStageAPI(t *testing.T, reviews, events []map[string]any) *stag
 		"updated_at": "2026-11-10T16:00:03Z",
 	}
 	if events == nil {
-		events = []map[string]any{{"event": "labeled", "label": map[string]string{"name": "hold"}, "actor": app, "created_at": humanMergePathLiftHoldAt}}
+		events = []map[string]any{{"event": "labeled", "label": map[string]string{"name": hgithub.HumanMergePathLabel}, "actor": app, "created_at": humanMergePathLiftHoldAt}}
 	}
 	files := append([]string{".github/workflows/release.yml"}, humanMergePathLiftCleanFiles...)
 	api := newHumanMergePathLiftAPI(t, 21, files, []map[string]any{notice}, events)
@@ -111,7 +111,7 @@ func ownerApprovalStageAPI(t *testing.T, reviews, events []map[string]any) *stag
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"number": 21, "head": map[string]string{"sha": ownerApprovalHead}, "base": map[string]string{"ref": "main"},
 				"user": map[string]string{"login": "shared-pat-account", "type": "User"}, "changed_files": len(files),
-				"labels": []map[string]string{{"name": "hold"}, {"name": "needs-human"}},
+				"labels": []map[string]string{{"name": hgithub.HumanMergePathLabel}},
 			})
 			return true
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/21/reviews":
@@ -144,7 +144,7 @@ func ownerApprovalNotices(api *stageAPI) []string {
 
 func TestApplyStageLabels_OwnerApprovalReleasesHumanMergePathHold(t *testing.T) {
 	app := map[string]string{"login": testHiveAppBotLogin, "type": "Bot"}
-	appHold := map[string]any{"event": "labeled", "label": map[string]string{"name": "hold"}, "actor": app, "created_at": humanMergePathLiftHoldAt}
+	appHold := map[string]any{"event": "labeled", "label": map[string]string{"name": hgithub.HumanMergePathLabel}, "actor": app, "created_at": humanMergePathLiftHoldAt}
 	for _, tc := range []struct {
 		name     string
 		unlisted bool
@@ -157,10 +157,10 @@ func TestApplyStageLabels_OwnerApprovalReleasesHumanMergePathHold(t *testing.T) 
 		{name: "no approval", reviews: nil},
 		{name: "approval by someone who is not a trusted merger", reviews: []map[string]any{ownerApprovalReview("passerby", ownerApprovalHead)}},
 		{name: "approval of an older head", reviews: []map[string]any{ownerApprovalReview("maintainer", strings.Repeat("e", 40))}},
-		{name: "a person re-added the hold", reviews: []map[string]any{ownerApprovalReview("maintainer", ownerApprovalHead)}, events: []map[string]any{
+		{name: "a person re-added the label", reviews: []map[string]any{ownerApprovalReview("maintainer", ownerApprovalHead)}, events: []map[string]any{
 			appHold,
-			holdEvent("unlabeled", "maintainer", "2026-11-10T17:00:00Z"),
-			holdEvent("labeled", "maintainer", "2026-11-10T17:00:05Z"),
+			pathLabelEvent("unlabeled", "maintainer", "2026-11-10T17:00:00Z"),
+			pathLabelEvent("labeled", "maintainer", "2026-11-10T17:00:05Z"),
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,24 +169,27 @@ func TestApplyStageLabels_OwnerApprovalReleasesHumanMergePathHold(t *testing.T) 
 			e.SetMergerAuthorizer(func(login string) bool { return login == "maintainer" })
 			e.humanMergeOwnerApproval = func(repo string) bool { return !tc.unlisted && strings.EqualFold(repo, "acme/widget") }
 
-			pr := stagePR(21, "hold", "needs-human", "author/human", "role/contributor", "stage/050-review-pending")
+			pr := stagePR(21, hgithub.HumanMergePathLabel, "author/human", "role/contributor", "stage/050-review-pending")
 			pr.Head.SHA = gh.Ptr(ownerApprovalHead)
 			pr.User = &gh.User{Login: gh.Ptr("shared-pat-account")}
-			e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, "excluded-label:hold", false, nil)
+			e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, autoMergeReasonHumanMergeRequired, false, nil)
 			e.noteStageRole("acme", "widget", 21, stagelabels.RoleContributor)
 			if _, err := e.ApplyStageLabels(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			removed := removedHold(api)
+			removed := removedPathLabel(api)
 			notices := ownerApprovalNotices(api)
+			if h := removedHold(api); h != 0 {
+				t.Fatalf("hold removed %d times: the release never touches hold", h)
+			}
 			if !tc.released {
 				if removed != 0 || len(notices) != 0 {
-					t.Fatalf("hold removed %d times, audit comments %q; want the hold kept", removed, notices)
+					t.Fatalf("label removed %d times, audit comments %q; want the label kept", removed, notices)
 				}
 				return
 			}
 			if removed != 1 {
-				t.Fatalf("hold removed %d times (removed=%v), want once", removed, api.removed)
+				t.Fatalf("label removed %d times (removed=%v), want once", removed, api.removed)
 			}
 			if len(notices) != 1 || !strings.HasPrefix(notices[0], humanMergeApprovalMarker(ownerApprovalHead)) || !strings.Contains(notices[0], "`maintainer` approved this head") {
 				t.Fatalf("audit comments = %q, want one naming the approver and head", notices)

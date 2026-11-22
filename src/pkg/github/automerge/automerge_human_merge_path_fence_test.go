@@ -8,6 +8,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -166,12 +167,25 @@ func TestHumanMergePathFenceLeavesUnlistedWorkflowAwaitingApproval(t *testing.T)
 // its head approved and green, and returns the stage record and comments.
 func humanMergePathFenceHoldSweep(t *testing.T, patterns, files []string, comments, events []map[string]any) (stagelabels.Record, []string) {
 	t.Helper()
+	return humanMergePathFenceSweep(t, patterns, files, comments, events, "label:hold", "hold")
+}
+
+// humanMergePathFenceLabelSweep is humanMergePathFenceHoldSweep for PR 21
+// wearing the human-merge-path label, which the lanes stop on as a
+// human-merge label.
+func humanMergePathFenceLabelSweep(t *testing.T, patterns, files []string, comments, events []map[string]any) (stagelabels.Record, []string) {
+	t.Helper()
+	return humanMergePathFenceSweep(t, patterns, files, comments, events, autoMergeReasonHumanMergeRequired, hgithub.HumanMergePathLabel)
+}
+
+func humanMergePathFenceSweep(t *testing.T, patterns, files []string, comments, events []map[string]any, reason, label string) (stagelabels.Record, []string) {
+	t.Helper()
 	api := newHumanMergePathLiftAPI(t, 21, files, comments, events)
 	clock := &contributorLaneClock{at: time.Date(2026, 11, 10, 18, 0, 0, 0, time.UTC)}
 	verdict := humanMergePathFenceApproved
 	e, store := humanStageEngine(t, api.url, clock, &verdict, 0)
 	e.SetHumanMergePaths(func(string) []string { return patterns })
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(21, "hold", "role/trusted", "author/clanker", "stage/050-review-pending"), "label:hold", false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(21, label, "role/trusted", "author/clanker", "stage/050-review-pending"), reason, false, nil)
 	e.noteStageVerdict("acme", "widget", 21, verdict)
 	e.noteStageRole("acme", "widget", 21, stagelabels.RoleTrusted)
 	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
@@ -195,11 +209,11 @@ func humanMergePathFenceReadyComment(comments []string) string {
 	return ""
 }
 
-// The hive's own human-merge-path hold on a reviewed, green head is 090 for a
-// person's merge under the human-merge-path reason, whether the path is a
-// workflow or not. On v6 tip it is a generic held 090 ("label:hold") that
-// tells the person to lift the hold and approve.
-func TestHumanMergePathFenceHiveHoldRoutesTo090WithTheHumanMergePathReason(t *testing.T) {
+// The hive's own human-merge-path label on a reviewed, green head is 090 for
+// a person's merge under the human-merge-path reason, whether the path is a
+// workflow or not: not a held 090, and not the breaking-change wording the
+// label's human_merge_labels rule would otherwise give it.
+func TestHumanMergePathFenceHiveLabelRoutesTo090WithTheHumanMergePathReason(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		patterns []string
@@ -209,21 +223,23 @@ func TestHumanMergePathFenceHiveHoldRoutesTo090WithTheHumanMergePathReason(t *te
 		{name: "other file", patterns: []string{"deploy/**"}, files: []string{"deploy/prod.yaml"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec, comments := humanMergePathFenceHoldSweep(t, tc.patterns, tc.files, appHumanMergePathNotice(), appHumanMergePathHold())
-			if !rec.Hold.SelfImposed() || !rec.Hold.HumanMergePath() {
-				t.Fatalf("hold = %+v, want the hive's human-merge-path hold", rec.Hold)
+			rec, comments := humanMergePathFenceLabelSweep(t, tc.patterns, tc.files, appHumanMergePathNotice(), appHumanMergePathLabel())
+			if rec.Hold != nil {
+				t.Fatalf("hold = %+v, want none: the label is not a hold", rec.Hold)
 			}
 			if prstage.HumanMergeReason(rec.Reason) != prstage.HumanMergeReasonManualMergePolicy {
 				t.Fatalf("090 reason = %q, want the human-merge-path reason", rec.Reason)
 			}
 			ready := humanMergePathFenceReadyComment(comments)
-			for _, want := range []string{"The PR touches a human-merge path (auto_merge.human_merge_paths).", "Held: the `hold` label was set by the hive itself", "click **Merge**"} {
+			for _, want := range []string{"The PR touches a human-merge path (auto_merge.human_merge_paths).", "click **Merge**"} {
 				if !strings.Contains(ready, want) {
 					t.Fatalf("090 comment missing %q:\n%s", want, ready)
 				}
 			}
-			if strings.Contains(ready, "lift the hold") || strings.Contains(ready, "approves this head") {
-				t.Fatalf("090 comment hands the PR back to the lane:\n%s", ready)
+			for _, unwanted := range []string{"Held:", "lift the hold", "approves this head", prstage.CauseHumanMergeRequired} {
+				if strings.Contains(ready, unwanted) {
+					t.Fatalf("090 comment says %q:\n%s", unwanted, ready)
+				}
 			}
 		})
 	}
@@ -243,6 +259,76 @@ func TestHumanMergePathFencePersonHoldRoutesAsBefore(t *testing.T) {
 	ready := humanMergePathFenceReadyComment(comments)
 	if !strings.Contains(ready, "Held: the `hold` label was set by @maintainer") || !strings.Contains(ready, "lift the hold") || strings.Contains(ready, prstage.CauseHumanMergePath) {
 		t.Fatalf("090 comment = %q", ready)
+	}
+}
+
+// A `hold` the rule applied before it used its own label (legacy notice, not
+// yet migrated) still reads as the rule: 090 for a person's merge under the
+// human-merge-path reason, not a generic held 090 that hands it back.
+func TestHumanMergePathFenceLegacyHiveHoldRoutesTo090WithTheHumanMergePathReason(t *testing.T) {
+	notice := []map[string]any{legacyHumanMergePathNoticeComment(testHiveAppBotLogin, "2026-11-10T16:00:03Z")}
+	rec, comments := humanMergePathFenceHoldSweep(t, []string{".github/workflows/**"}, []string{".github/workflows/release.yml"}, notice, appHumanMergePathHold())
+	if !rec.Hold.SelfImposed() || !rec.Hold.HumanMergePath() {
+		t.Fatalf("hold = %+v, want the rule's legacy hold", rec.Hold)
+	}
+	if prstage.HumanMergeReason(rec.Reason) != prstage.HumanMergeReasonManualMergePolicy {
+		t.Fatalf("090 reason = %q, want the human-merge-path reason", rec.Reason)
+	}
+	ready := humanMergePathFenceReadyComment(comments)
+	if !strings.Contains(ready, "The PR touches a human-merge path (auto_merge.human_merge_paths).") || strings.Contains(ready, "lift the hold") {
+		t.Fatalf("090 comment = %q", ready)
+	}
+}
+
+// A needs-owner-merge a person put on (a breaking change) keeps the
+// manual-merge rule's own wording: only the hive's label means the
+// human-merge path.
+func TestHumanMergePathFencePersonLabelKeepsTheBreakingChangeRoute(t *testing.T) {
+	events := []map[string]any{pathLabelEvent("labeled", "maintainer", humanMergePathLiftHoldAt)}
+	rec, _ := humanMergePathFenceLabelSweep(t, []string{"deploy/**"}, []string{"src/widget.go"}, nil, events)
+	if rec.Hold != nil {
+		t.Fatalf("hold = %+v, want none", rec.Hold)
+	}
+	if got := prstage.HumanMergeReason(rec.Reason); got != prstage.HumanMergeReasonBreakingChange {
+		t.Fatalf("090 reason = %q (%q), want the breaking-change rule", rec.Reason, got)
+	}
+}
+
+// The route reads the hive's own label as the human-merge-path rule; the
+// same lane reason without it, or beside a person's hold, keeps its route.
+func TestHumanMergePathFenceEvidenceFollowsTheHiveLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		label     bool
+		holds     []string
+		wantPath  bool
+		wantCause string
+	}{
+		{name: "the hive's label", label: true, wantPath: true, wantCause: prstage.CauseHumanMergePath},
+		{name: "a person's label", wantCause: prstage.CauseHumanMergeRequired},
+		{name: "the hive's label beside a person's hold", label: true, holds: []string{"hold"}, wantCause: prstage.CauseHumanMergeRequired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api, closeAPI := seededStageAPI(t)
+			defer closeAPI()
+			api.prFiles = map[int][]string{9: {"src/widget.go"}}
+			clock := &contributorLaneClock{at: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}
+			verdict := humanMergePathFenceApproved
+			e, _ := humanStageEngine(t, api.url, clock, &verdict, 0)
+			e.SetHumanMergePaths(humanPathsFor("acme/widget", testReleaseWorkflow))
+			labels := append([]string{hgithub.HumanMergePathLabel}, tc.holds...)
+			obs := stageObservation{Lane: stageLaneSelf, Display: "acme/widget", Owner: "acme", Repo: "widget", Number: 9, HeadSHA: "sha", Labels: labels, Reason: autoMergeReasonHumanMergeRequired, HumanMergePathLabel: tc.label}
+			ev := e.humanEvidence(context.Background(), e.stageTrackerOrShared(), stageKey("acme", "widget", 9), obs, stagelabels.CauseTrust, clock.now())
+			if ev.CauseReason != tc.wantCause {
+				t.Fatalf("cause = %q, want %q", ev.CauseReason, tc.wantCause)
+			}
+			if got := ev.LaneReason == autoMergeReasonHumanMergePath; got != tc.wantPath {
+				t.Fatalf("lane reason = %q, want human-merge-path = %v", ev.LaneReason, tc.wantPath)
+			}
+			if !ev.ManualMergeRule {
+				t.Fatalf("manual-merge rule = false; a person merges either way")
+			}
+		})
 	}
 }
 

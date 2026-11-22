@@ -223,7 +223,7 @@ that only merges by hand (CI workflow / action files edited, tests removed,
 an `auto_merge.human_merge_paths` match, except in a repository listed in
 `auto_merge.human_merge_owner_approval`, where a trusted merger's Approve
 review, `/hive decision approve` or `/hive approve` on the current head
-releases the hive's human-merge-path hold and the lanes merge the PR once
+releases the hive's human-merge-path `needs-owner-merge` label and the lanes merge the PR once
 every other gate passes; see
 [hive-merge.md](hive-merge.md#owner-approval-releases-the-human-merge-path-hold)):
 the `stage/085-needs-decision`

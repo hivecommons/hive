@@ -21,6 +21,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	ghub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
 // DefaultFrontTimeout is the hive-wide front timeout (the relay's existing
@@ -71,6 +72,8 @@ type PullRequest struct {
 	MergeableState string
 	Mergeable      *bool
 	Labels         []string
+	// Title is read for the human-merge rule's breaking-change prefix.
+	Title string
 }
 
 // CheckRun is one check result on a head, keyed by its required-check name.
@@ -157,9 +160,17 @@ type Options struct {
 	// Blocked returns a reason when hold, do-not-merge, exempt or pause
 	// labels are present; nil uses the shared hold/exempt label helpers.
 	Blocked func(repo string, labels []string) string
-	Audit   func(Event)
-	Alert   func(Alert)
-	Logger  *slog.Logger
+	// HumanMerge returns a reason when the human-merge rule applies to a
+	// PR (an auto_merge.human_merge_labels label such as the
+	// needs-owner-merge the human-merge-path rule applies, or an
+	// auto_merge.human_merge_title_prefixes title): a person merges it, so
+	// it leaves the front like a held PR. nil applies the default rule.
+	// The human-merge-path label always counts, whatever the configured
+	// list says.
+	HumanMerge func(repo, title string, labels []string) string
+	Audit      func(Event)
+	Alert      func(Alert)
+	Logger     *slog.Logger
 }
 
 // Outcome is what a gate call did.
@@ -522,7 +533,8 @@ func (l *Lane) strategyProblem(repo string) string {
 }
 
 // policyProblem re-reads the live repo policy and labels.
-func (l *Lane) policyProblem(repo string, labels []string) string {
+func (l *Lane) policyProblem(repo string, p PullRequest) string {
+	labels := p.Labels
 	if reason := l.strategyProblem(repo); reason != "" {
 		return reason
 	}
@@ -532,10 +544,43 @@ func (l *Lane) policyProblem(repo string, labels []string) string {
 	if l.opts.AutoMergeAllowed == nil || !l.opts.AutoMergeAllowed(repo) {
 		return "auto-merge is not allowed for the repository"
 	}
+	blocked := ""
 	if l.opts.Blocked != nil {
-		return l.opts.Blocked(repo, labels)
+		blocked = l.opts.Blocked(repo, labels)
+	} else {
+		blocked = defaultBlocked(labels)
 	}
-	return defaultBlocked(labels)
+	if blocked != "" {
+		return blocked
+	}
+	if l.opts.HumanMerge != nil {
+		return l.opts.HumanMerge(repo, p.Title, labels)
+	}
+	return DefaultHumanMerge(p.Title, labels)
+}
+
+// HumanMergeReason is the lane's reason for a PR the human-merge rule
+// leaves to a person.
+const HumanMergeReason = "a human-merge label or breaking-change title is present: a person merges it"
+
+// DefaultHumanMerge applies the default human-merge rule (prstage
+// defaults) plus the fixed human-merge-path label.
+func DefaultHumanMerge(title string, labels []string) string {
+	return HumanMergeWithRule(prstage.HumanMergeRule{}, title, labels)
+}
+
+// HumanMergeWithRule is the lane's human-merge check under rule: the rule's
+// title prefixes and labels, and the human-merge-path label always.
+func HumanMergeWithRule(rule prstage.HumanMergeRule, title string, labels []string) string {
+	if ok, _ := rule.RequiresHumanMerge(title, labels); ok {
+		return HumanMergeReason
+	}
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), ghub.HumanMergePathLabel) {
+			return HumanMergeReason
+		}
+	}
+	return ""
 }
 
 func defaultBlocked(labels []string) string {
@@ -677,7 +722,7 @@ func (r *round) run() (Decision, error) {
 	if reason := prShape(p, r.branch); reason != "" {
 		return r.leave(p.Head, "", reason)
 	}
-	if reason := r.l.policyProblem(r.repo, p.Labels); reason != "" {
+	if reason := r.l.policyProblem(r.repo, p); reason != "" {
 		return r.leave(p.Head, "", reason)
 	}
 	if r.front.PinnedHead != "" {
@@ -754,7 +799,7 @@ func (r *round) finalCheck(head, tip string) (string, bool) {
 	if reason := prShape(q, r.branch); reason != "" {
 		return reason, true
 	}
-	if reason := r.l.policyProblem(r.repo, q.Labels); reason != "" {
+	if reason := r.l.policyProblem(r.repo, q); reason != "" {
 		return reason, true
 	}
 	now, err := gh.BranchTip(r.ctx, r.repo, r.branch)

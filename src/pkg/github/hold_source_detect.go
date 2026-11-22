@@ -393,9 +393,9 @@ func (c *Client) checkHeldPRHoldSources(ctx context.Context, owner, repo string,
 		return holdSourceCheck{}, err
 	}
 	set := c.holdNoticeSources(comments)
-	// The human-merge-path notice stays on the thread for good, but the
-	// source applies only while the current head still touches such a path:
-	// a dependency bot that regroups its update can drop the file.
+	// The legacy human-merge-path notice stays on the thread for good, but
+	// the source applies only while the current head still touches such a
+	// path: a dependency bot that regroups its update can drop the file.
 	if set[HoldSourceHumanMergePath] && c.humanMergePathNoLongerApplies(ctx, owner, repo, number) {
 		delete(set, HoldSourceHumanMergePath)
 	}
@@ -424,7 +424,10 @@ func (c *Client) holdNoticeSources(comments []*gh.IssueComment) map[string]bool 
 			if strings.Contains(body, SelfAuthorizationNoticeMarker) {
 				set[HoldSourceSelfAuthorization] = true
 			}
-			if strings.Contains(body, HumanMergePathMarker) {
+			// Only the notice from when the rule applied `hold` explains a
+			// hold: the rule now applies HumanMergePathLabel, which is not
+			// one, so a `hold` beside a newer notice is a person's.
+			if IsLegacyHumanMergePathHoldNotice(body) {
 				set[HoldSourceHumanMergePath] = true
 			}
 		}

@@ -4128,6 +4128,19 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 		if IsHiveGateLabel(label) {
 			return true
 		}
+		// The human-merge-path label says "a person merges this PR"; a
+		// substring hold pattern (an operator's "owner", say) never makes
+		// it a hold, which would freeze the PR's fixer as well as its merge.
+		// Only an operator who lists the label itself as a hold label gets
+		// one.
+		if strings.EqualFold(strings.TrimSpace(label), HumanMergePathLabel) {
+			for _, extra := range extraHoldLabels {
+				if strings.EqualFold(strings.TrimSpace(extra), HumanMergePathLabel) {
+					return true
+				}
+			}
+			continue
+		}
 		// Provenance labels (hive/<id>) are never hold labels, whatever the
 		// hive ID happens to contain. The substring rule below otherwise
 		// reads hive/hosted-...-placeHOLDer-r05x as "hold" and parks every

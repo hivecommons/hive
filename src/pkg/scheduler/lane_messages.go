@@ -679,6 +679,7 @@ func (s *Scheduler) buildCIFailingListForAgent(agent string, keep func(repo stri
 	for _, pr := range payload.Items {
 		if pr.Held {
 			held++
+			s.logHeldFixSkip("ci-repair", pr.Repo, pr.Number, pr.HeadSHA)
 			continue
 		}
 		if pr.DeferredIncident > 0 {

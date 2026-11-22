@@ -60,7 +60,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// The refetched PR is the one that merges: a title or label edited
 	// since listing re-applies the human-merge rule (hivecommons/hive#15442).
 	if reason := c.humanMergeRequiredReason(pr.GetTitle(), selfLabels); reason != "" {
-		return reject(reason)
+		return reject(c.humanMergeRequiredUnlessHumanChangesRequested(ctx, owner, repo, pr, reason))
 	}
 	blocked := c.labelBlockReason(selfLabels, true)
 	// A conflicting head — GitHub's mergeable_state or the needs-rebase

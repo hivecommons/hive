@@ -20,10 +20,14 @@ const (
 	// CauseHumanMergePathAwaitingApproval: the same refusal on a repository
 	// listed in auto_merge.human_merge_owner_approval, where a trusted
 	// merger's approval of the current head releases it.
-	CauseHumanMergePathAwaitingApproval = "the PR touches a human-merge path (auto_merge.human_merge_paths): awaiting a trusted merger's approval of the current head, which on this repository (auto_merge.human_merge_owner_approval) releases the hive's hold so it merges the PR once the other gates clear"
+	CauseHumanMergePathAwaitingApproval = "the PR touches a human-merge path (auto_merge.human_merge_paths): awaiting a trusted merger's approval of the current head, which on this repository (auto_merge.human_merge_owner_approval) releases the hive's needs-owner-merge label so it merges the PR once the other gates clear"
 	// CauseHumanMergeRequired: the breaking-change title or the
 	// needs-owner-merge label; the words the 090 chip and gate reuse.
-	CauseHumanMergeRequired   = "breaking change — owner merges"
+	CauseHumanMergeRequired = "breaking change — owner merges"
+	// CauseHumanMergeLabel: the same rule met on the needs-owner-merge label
+	// alone, where nothing says which rule put it on (the human-merge-path
+	// rule applies it, and a person may for a breaking change).
+	CauseHumanMergeLabel      = "a person merges it: needs-owner-merge marks a human-merge path or a breaking change"
 	CauseIntentUnauthorized   = "the merge intent could not be authorized"
 	CauseApprovalDeskWithheld = "the approval desk withheld this merge"
 	// CauseReviewOff: the contributor lane wants a reviewer verdict the hive

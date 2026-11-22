@@ -189,11 +189,30 @@ func TestHoldSources_SelfAuthorizationNotice(t *testing.T) {
 	assertHoldSources(t, detectPRHoldSources(t, c, 14, holdSourceT0, "hold"), HoldSourceSelfAuthorization)
 }
 
+// legacyHumanMergePathNotice is the notice the human-merge-path rule posted
+// while it applied `hold` (before needs-owner-merge).
+func legacyHumanMergePathNotice(paths ...string) string {
+	body := HumanMergePathMarker + "\nHive will not merge this PR: it changes path(s) listed in `" + HumanMergePathsConfigKey + "` for this repo, so a person must merge it.\n\n"
+	for _, p := range paths {
+		body += "- `" + p + "`\n"
+	}
+	return body + "\nHive added the `hold` label. A maintainer should review and merge this PR by hand.\n"
+}
+
 func TestHoldSources_HumanMergePathNotice(t *testing.T) {
 	f, c := newHoldSourceTest(t)
-	f.comments[15] = []map[string]any{holdSourceComment(testHiveAppBotLogin, HumanMergePathComment([]string{".github/workflows/ci.yml"}))}
+	f.comments[15] = []map[string]any{holdSourceComment(testHiveAppBotLogin, legacyHumanMergePathNotice(".github/workflows/ci.yml"))}
 	appHeld(f, 15)
 	assertHoldSources(t, detectPRHoldSources(t, c, 15, holdSourceT0, "hold"), HoldSourceHumanMergePath)
+}
+
+// The rule now applies needs-owner-merge, never `hold`: its current notice
+// explains no hold, so a `hold` beside it is not a human-merge-path hold.
+func TestHoldSources_HumanMergePathLabelNoticeExplainsNoHold(t *testing.T) {
+	f, c := newHoldSourceTest(t)
+	f.comments[18] = []map[string]any{holdSourceComment(testHiveAppBotLogin, HumanMergePathComment([]string{".github/workflows/ci.yml"}))}
+	appHeld(f, 18)
+	assertHoldSources(t, detectPRHoldSources(t, c, 18, holdSourceT0, "hold"), HoldSourceUnknown)
 }
 
 // The human-merge-path notice stays on the thread for good; the source holds
@@ -215,7 +234,7 @@ func TestHoldSources_HumanMergePathNoticeFollowsTheCurrentHead(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f, c := newHoldSourceTest(t)
 			c.SetHumanMergePaths(tc.paths)
-			f.comments[40] = []map[string]any{holdSourceComment(testHiveAppBotLogin, HumanMergePathComment([]string{".github/workflows/release.yml"}))}
+			f.comments[40] = []map[string]any{holdSourceComment(testHiveAppBotLogin, legacyHumanMergePathNotice(".github/workflows/release.yml"))}
 			if tc.files != nil {
 				f.files[40] = tc.files
 			}
@@ -230,15 +249,17 @@ func TestOtherHoldSourcesForPR(t *testing.T) {
 	reporterTrustNotice := &gh.IssueComment{Body: gh.Ptr(ReporterTrustNoticeMarker + "\nHeld for maintainer sign-off."), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}}
 
 	_, c := newHoldSourceTest(t)
-	if got := c.OtherHoldSourcesForPR("acme/widget", 41, []string{"hold"}, []*gh.IssueComment{humanMergeNotice}); len(got) != 0 {
-		t.Fatalf("human-merge-path hold alone: other sources = %v, want none", got)
+	if got := c.OtherHoldSourcesForPR("acme/widget", 41, []string{HumanMergePathLabel}, []*gh.IssueComment{humanMergeNotice}); len(got) != 0 {
+		t.Fatalf("human-merge-path label alone: other sources = %v, want none", got)
 	}
-	assertHoldSources(t, c.OtherHoldSourcesForPR("acme/widget", 41, []string{"hold"}, []*gh.IssueComment{humanMergeNotice, reporterTrustNotice}), HoldSourceReporterTrust)
-	assertHoldSources(t, c.OtherHoldSourcesForPR("acme/widget", 41, []string{"hold", "on-hold"}, []*gh.IssueComment{humanMergeNotice}), HoldSourceUnknown)
+	// The rule never applies `hold`: one beside the label is a person's.
+	assertHoldSources(t, c.OtherHoldSourcesForPR("acme/widget", 41, []string{HumanMergePathLabel, "hold"}, []*gh.IssueComment{humanMergeNotice}), HoldSourceUnknown)
+	assertHoldSources(t, c.OtherHoldSourcesForPR("acme/widget", 41, []string{HumanMergePathLabel}, []*gh.IssueComment{humanMergeNotice, reporterTrustNotice}), HoldSourceReporterTrust)
+	assertHoldSources(t, c.OtherHoldSourcesForPR("acme/widget", 41, []string{HumanMergePathLabel, "on-hold"}, []*gh.IssueComment{humanMergeNotice}), HoldSourceUnknown)
 	if err := RecordHoldSource(HoldKindPR, "acme/widget", 41, HoldSourceHoldguard); err != nil {
 		t.Fatal(err)
 	}
-	assertHoldSources(t, c.OtherHoldSourcesForPR("acme/widget", 41, []string{"hold"}, []*gh.IssueComment{humanMergeNotice}), HoldSourceHoldguard)
+	assertHoldSources(t, c.OtherHoldSourcesForPR("acme/widget", 41, []string{HumanMergePathLabel}, []*gh.IssueComment{humanMergeNotice}), HoldSourceHoldguard)
 
 	var nilClient *Client
 	assertHoldSources(t, nilClient.OtherHoldSourcesForPR("acme/widget", 41, []string{"hold"}, nil), HoldSourceUnknown)

@@ -249,7 +249,7 @@ func decisionPlainReason(base string) string {
 	case stageengineprstage.AutoMergeReasonHumanMergePath, stageengineprstage.AutoMergeReasonHumanMergePathEvidence:
 		return "it touches files a person must merge"
 	case stageengineprstage.AutoMergeReasonHumanMergeRequired:
-		return "it is a breaking change (⚠️ title or needs-owner-merge label) — the owner merges it"
+		return "it has a breaking-change title or the needs-owner-merge label (a breaking change or a human-merge path), so the owner merges it"
 	case stageengineprstage.AutoMergeReasonIntentUnauthorized, stageengineprstage.AutoMergeReasonIntentEvidence:
 		return "the hive could not confirm the author's merge intent"
 	case stageengineprstage.AutoMergeReasonMergeRefusedReview:

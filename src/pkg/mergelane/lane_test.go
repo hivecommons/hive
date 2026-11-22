@@ -14,6 +14,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
 const (
@@ -626,6 +627,30 @@ func TestDefaultBlocked(t *testing.T) {
 		if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
 			t.Errorf("defaultBlocked(%v) = %q, want %q", tc.labels, got, tc.want)
 		}
+	}
+}
+
+// The lane's human-merge check: the configured rule's labels and title
+// prefixes, and the human-merge-path label whatever the configured list.
+func TestHumanMergeWithRule(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rule   prstage.HumanMergeRule
+		title  string
+		labels []string
+		want   bool
+	}{
+		{name: "plain PR", title: "fix a thing"},
+		{name: "default label", labels: []string{"needs-owner-merge"}, want: true},
+		{name: "breaking title", title: "\u26a0\ufe0f drop it", want: true},
+		{name: "path label with the label list emptied", rule: prstage.HumanMergeRule{Labels: []string{}}, labels: []string{"Needs-Owner-Merge"}, want: true},
+		{name: "custom label", rule: prstage.HumanMergeRule{Labels: []string{"owner-merges"}}, labels: []string{"owner-merges"}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HumanMergeWithRule(tc.rule, tc.title, tc.labels) != ""; got != tc.want {
+				t.Fatalf("HumanMergeWithRule = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

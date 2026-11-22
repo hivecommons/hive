@@ -202,6 +202,22 @@ Every gate posts its existing notice comment saying why. Agents cannot add or re
 
 **Configuration and implementation.** `governor.labels.ready_for_review` (default `ready-for-review`), `governor.labels.decision_needed` (default `decision-needed`); blank or `hold` keeps the default (`src/pkg/github/hive_gate_labels.go`).
 
+#### `needs-owner-merge` (human-merge-path rule)
+
+**Applies to:** PRs. **Kind:** Merge-only gate, not a hold.
+
+The label the human-merge-path rule (`auto_merge.human_merge_paths`) applies when a PR touches a path a person must merge, beside its one `<!-- hive-human-merge-path -->` notice. It is the default `auto_merge.human_merge_labels` label, so every merge lane and the merge train skip the PR and the stage routes it to `090-ready-for-human-merge` under the human-merge-path rule; a person may also apply it by hand to mark a breaking change. It is never a hold by default (`HasHoldLabelWith` skips it even when an extra hold label matches it as a substring, such as `owner`; only an operator who lists `needs-owner-merge` itself as a hold label makes it one, and then it holds like `hold`): the PR stays in the actionable list, so CI repair, `FIX-BEFORE-NEW`, the stale-red and missing-check base refreshes, review, and the fix kick for a trusted maintainer's *changes requested* review all keep working. The rule used `hold` before, which froze the fixer (Danathar/goodreads-mcp#466, #469).
+
+**Who applies it:** Hive App (the human-merge-path gate in every merge lane and the merge-request relay, and its boot migration), or a person. Agents cannot add or remove it through the label relay.
+
+**Checked by:** Every merge lane and the merge train (as a human-merge label), the stage engine. The lanes and the relay also refuse the PR on its changed files at every head, label or not.
+
+**Release or override.** A person merges the PR. The stage-label pass removes the hive's own label (App applied it last, its notice is on the PR, nothing else holds the PR) when the current head no longer touches a listed path, qualifies for `auto_merge.human_merge_pin_only`, or carries a trusted merger's approval on a repository in `auto_merge.human_merge_owner_approval` (write-back kind `human_merge_path_release`; see [hive-merge.md](../hive-merge.md)). A label a person put on is never removed.
+
+**Migration.** On boot the gate-label migration also swaps, once, a `hold` the rule applied before for `needs-owner-merge`, but only when the App's notice from the `hold` days is on the PR, every `hold` event on it is the App's, and no other hold source explains it. On a hive without a `hive_id` (where the dashboard and admin MCP holds also write `hold` as the App) the history must be the rule's single, never-removed `hold`. It adds the label before removing `hold` and leaves one `<!-- hive:hold-relabel-human-merge-path -->` comment (write-back kind `human_merge_path_release`); when the PR's current head no longer touches a listed path it lifts the `hold` instead, with the stale lift's notice (a head that already has a lift notice keeps its `hold`, as in the stage lift). A `hold` a person set or touched through GitHub is never changed.
+
+**Configuration and implementation.** The name is fixed (`github.HumanMergePathLabel`); dropping it from `auto_merge.human_merge_labels` only drops the lanes' early skip, never the refusal (`src/pkg/github/human_merge_paths.go`, `src/pkg/github/hive_gate_label_migration.go`).
+
 #### `ready-for-review` from ACMM level gate
 
 **Applies to:** PRs. **Kind:** Hard merge gate.
@@ -244,7 +260,7 @@ A hive-filed issue (`[selfreport]`, app or AI author) counts as trusted. The gat
 
 **Release or override.** A human removes `decision-needed` on a contributor PR; Hive never auto-releases it there. On a **hive-authored** PR still wearing a hive-set reporter-trust `decision-needed` (newest event for it labeled by the App bot with the notice at or after it — a person's `hold` is left alone), the stage-label pass releases `decision-needed` (and `needs-human` when the notice says the gate added it), posts one `<!-- hive:reporter-trust-release -->` comment and logs `stage labels: releasing self-imposed reporter-trust hold`.
 
-The pass also records the hold's provenance (`by`, `source`, `reason`, `since`) on the stage store, so the tracker pill reads *Held by hive · reporter trust (issue #N by @X, contributor)* and the stage entry comment names who set the hold and why (a hold is a gate on the PR's real stage, not a stage of its own — [#17327](https://github.com/hivecommons/hive/issues/17327)). `source` is `reporter-trust`, `human-merge-path` (the App's `<!-- hive-human-merge-path -->` notice is on the PR) or `label`. Holdguard re-holds on a new head SHA.
+The pass also records the hold's provenance (`by`, `source`, `reason`, `since`) on the stage store, so the tracker pill reads *Held by hive · reporter trust (issue #N by @X, contributor)* and the stage entry comment names who set the hold and why (a hold is a gate on the PR's real stage, not a stage of its own — [#17327](https://github.com/hivecommons/hive/issues/17327)). `source` is `reporter-trust` or `label`. The human-merge-path rule no longer holds a PR: it applies [`needs-owner-merge`](#needs-owner-merge-human-merge-path-rule), which is not a hold, so a `hold` beside its notice is a person's (a `hold` an older build applied for it is migrated at boot). Holdguard re-holds on a new head SHA.
 
 **Configuration and implementation.** `github.reporter_trust_hold` (nil follows `reporter_trust.enabled`), per-repo `project.repo_policies[].reporter_trust_hold`, `HIVE_REPORTER_TRUST_HOLD` (`src/pkg/github/pr_reporter_trust.go`, `src/pkg/github/pr_level_hold.go`, `src/pkg/github/automerge/reporter_trust_release.go`)
 

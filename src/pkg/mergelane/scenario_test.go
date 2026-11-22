@@ -312,6 +312,10 @@ func TestHoldAddedDuringValidationStopsTheMerge(t *testing.T) {
 		{"on-hold", func(_ *harness, p *PullRequest) { p.Labels = []string{"on-hold"} }, "hold label"},
 		{"do-not-merge", func(_ *harness, p *PullRequest) { p.Labels = []string{"do-not-merge"} }, "do-not-merge"},
 		{"pause label", func(_ *harness, p *PullRequest) { p.Labels = []string{"hive-pause/hive-1"} }, "pause label"},
+		// The human-merge-path rule applies needs-owner-merge, not hold: the
+		// front still leaves rather than stall to the front timeout.
+		{"needs-owner-merge", func(_ *harness, p *PullRequest) { p.Labels = []string{"needs-owner-merge"} }, "a person merges it"},
+		{"breaking-change title", func(_ *harness, p *PullRequest) { p.Title = "\u26a0\ufe0f drop the v1 API" }, "a person merges it"},
 		{"exempt", func(h *harness, p *PullRequest) {
 			p.Labels = []string{"keep-open"}
 			h.blocked = func(_ string, labels []string) string {

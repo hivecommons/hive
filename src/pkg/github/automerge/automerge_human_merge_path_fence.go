@@ -6,16 +6,18 @@ package automerge
 // the 085 note on a workflow-path PR says a trusted merger's Approve review
 // releases the fence and the hive merges it. That is false for a head that
 // also touches auto_merge.human_merge_paths: once the approval releases the
-// fence the lane reaches its human-merge-path gate, which adds `hold` and
-// never merges. Under workflow_fence_scope "human_merge_paths" every fenced
+// fence the lane reaches its human-merge-path gate, which adds
+// needs-owner-merge and never merges. Under workflow_fence_scope "human_merge_paths" every fenced
 // workflow edit is such a head. The person was asked for an approval that
 // could never lead to a merge, and the PR then sat at 085 with no step left.
 //
 // The human routing therefore treats a head that touches a human-merge path
 // (and is not one the pin-only exception might admit) as a person's merge
 // from the start: no approval ask, the human-merge-path cause, and 090 once
-// the reviewer approved it, CI is green and the soak is over. A hold the hive
-// set for the human-merge-path refusal reads the same way. The rule itself
+// the reviewer approved it, CI is green and the soak is over. The label the
+// hive set for the human-merge-path refusal reads the same way (lanes stop
+// on it as auto_merge.human_merge_labels, a breaking-change reason, before
+// their gate re-checks the files). The rule itself
 // (humanMergePathGate), the pin-only exception and Sentinel are unchanged:
 // this only changes what the stage says.
 //
@@ -23,9 +25,9 @@ package automerge
 // already lists every head's complete changed-file list for its diff fence
 // and records the match here (noteHumanMergePathFenceHead); the stage pass's
 // own diff-fence read (headDiffFence) records it the same way when the lane
-// stopped earlier (a label, a sentinel alert). The hive-set hold's provenance
-// (which the hold-lift pass keeps current with the head) and the lane's own
-// human-merge-path reason need no files at all. Every match uses
+// stopped earlier (a label, a sentinel alert). The hive-set label's
+// provenance (which the lift pass keeps current with the head) and the
+// lane's own human-merge-path reason need no files at all. Every match uses
 // intent.HumanMergePathMatches, the matcher the gate uses.
 
 import (
@@ -118,8 +120,9 @@ func (c *Engine) humanMergePathFenceHead(tracker *StageTracker, key string, obs 
 
 // humanMergePathFencePersonMerge reports whether obs's head is one only a
 // person merges because it touches auto_merge.human_merge_paths: the hive
-// set `hold` for that refusal (a provenance the hold-lift pass drops once the
-// head no longer touches the path), a lane refused it for that reason, or the
+// set its needs-owner-merge label for that refusal (obs.HumanMergePathLabel,
+// which the lift pass drops once the head no longer touches the path), a
+// lane refused it for that reason, or the
 // contributor lane's diff for this head matches a path the pin-only exception
 // cannot admit. A contributor head whose files no pass has recorded yet is
 // read once, through the cached diff-fence read. Anything it cannot establish
@@ -128,7 +131,7 @@ func (c *Engine) humanMergePathFencePersonMerge(ctx context.Context, tracker *St
 	if c == nil || strings.TrimSpace(obs.HeadSHA) == "" {
 		return false
 	}
-	if obs.Hold.SelfImposed() && obs.Hold.HumanMergePath() {
+	if obs.HumanMergePathLabel || (obs.Hold.SelfImposed() && obs.Hold.HumanMergePath()) {
 		return true
 	}
 	if obs.Reason == autoMergeReasonHumanMergePath || obs.LaneReason == autoMergeReasonHumanMergePath {
@@ -151,15 +154,18 @@ func (c *Engine) humanMergePathFencePersonMerge(ctx context.Context, tracker *St
 // humanMergePathFencePersonMerge established as a person's merge. No
 // approval releases anything, so the 085 actions never ask for one.
 //
-// A hold-class label the hive's human-merge-path hold does not explain (a
-// person's `hold`, `do-not-merge/*`, a hold whose source is unknown) is
-// that person's to lift: the route stays as it was, without the approval ask.
+// A hold-class label (a person's `hold`, `do-not-merge/*`, a hold whose
+// source is unknown) is that person's to lift: the route stays as it was,
+// without the approval ask. The human-merge-path rule no longer holds a PR;
+// a `hold` it applied before (with its legacy notice, not yet migrated)
+// still reads as the rule.
 //
 // Otherwise the head is a manual merge. Where the hand-off is about the
-// workflow fence, the human-merge path itself, or a gate riding the head's
-// real progress (the hive's own hold, a sentinel alert), the cause is the
-// human-merge path, a rule no approval overrides, and the PR is routed like
-// a breaking-change PR: no decision is owed, so once the head is reviewed,
+// workflow fence, the human-merge path itself (the lane's reason, or the
+// breaking-change reason the hive's own needs-owner-merge label stopped it
+// with), or a gate riding the head's real progress (a sentinel alert), the
+// cause is the human-merge path, a rule no approval overrides, and the PR is
+// routed like a breaking-change PR: no decision is owed, so once the head is reviewed,
 // green and soaked it is at 090 for a person's merge. A requires_human
 // verdict nobody has answered still asks for its decision at 085. A
 // hand-off for another decision (a sentinel alert with a requires_human
@@ -173,19 +179,28 @@ func (c *Engine) humanMergePathFencePersonMerge(ctx context.Context, tracker *St
 // 085 (ApprovalReleasesPathHold).
 func applyHumanMergePathFenceRoute(e *stagelabels.Evidence, obs stageObservation, ownerApproval bool) {
 	e.ApprovalReleasesFence = false
-	hiveHold := obs.Hold.SelfImposed() && obs.Hold.HumanMergePath()
+	// Only a legacy `hold` the rule applied (before the boot migration
+	// swaps it) reads as the rule; any other hold-class label is a person's.
+	legacyHold := obs.Hold.SelfImposed() && obs.Hold.HumanMergePath()
 	for _, h := range e.Holds {
-		if h != "hold" || !hiveHold {
+		if h != "hold" || !legacyHold {
 			return
 		}
 	}
 	e.ManualMerge = true
 	switch e.CauseReason {
 	case "", prstage.CauseWorkflowPathManual, prstage.CauseWorkflowPathAwaitingApproval, prstage.CauseHumanMergePath:
+	case prstage.CauseHumanMergeRequired:
+		// The lane stopped on needs-owner-merge; the hive's own label
+		// means the human-merge path, not a breaking change.
+		if !obs.HumanMergePathLabel {
+			return
+		}
 	default:
 		return
 	}
-	owns := obs.Reason == contributorLaneReasonWorkflowPath || obs.Reason == autoMergeReasonHumanMergePath
+	owns := obs.Reason == contributorLaneReasonWorkflowPath || obs.Reason == autoMergeReasonHumanMergePath ||
+		(obs.HumanMergePathLabel && obs.Reason == autoMergeReasonHumanMergeRequired)
 	if e.Cause == stagelabels.CauseDecision && !owns {
 		return
 	}

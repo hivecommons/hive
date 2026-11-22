@@ -106,14 +106,16 @@ const (
 	// the hive never pushes to it. Used only on a PR whose bot has stopped
 	// rebasing (see cmd/hive/dependency_bot_rebase_request.go).
 	KindBotRebaseRequest Kind = "bot_rebase_request"
-	// KindHumanMergePathRelease removes the `hold` the hive itself set for
-	// auto_merge.human_merge_paths, and leaves one notice per head, once the
-	// PR's current head touches none of those paths (a dependency bot moved
-	// the file to another PR, a contributor dropped the change), once a
-	// later head qualifies for auto_merge.human_merge_pin_only, or once a
-	// trusted merger approved the head on a repository listed in
-	// auto_merge.human_merge_owner_approval. A hold a person set, or one with
-	// another hold source, is never removed.
+	// KindHumanMergePathRelease removes the needs-owner-merge label the hive
+	// itself set for auto_merge.human_merge_paths, and leaves one notice per
+	// head, once the PR's current head touches none of those paths (a
+	// dependency bot moved the file to another PR, a contributor dropped the
+	// change), once a later head qualifies for auto_merge.human_merge_pin_only,
+	// or once a trusted merger approved the head on a repository listed in
+	// auto_merge.human_merge_owner_approval. It also covers the boot
+	// migration that swaps the `hold` the rule applied before it used that
+	// label. A label a person set, a `hold` a person set, or a PR with another
+	// hold source is never touched.
 	KindHumanMergePathRelease Kind = "human_merge_path_release"
 	// KindBlockedRepair turns a `blocked` label the hive itself applied, with
 	// nothing naming what the issue waits on, into a needs-human ask: it

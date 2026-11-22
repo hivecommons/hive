@@ -12,18 +12,45 @@ import (
 
 // Human-merge paths (#11027): auto_merge.human_merge_paths lists, per repo,
 // paths a person must merge. Every App merge path (the automerge sweep lanes
-// and the merge-request relay) refuses a PR that touches one, adds `hold`,
-// and leaves one marker-stamped comment naming the path(s), unless the
-// configured pin-only exception is proven.
+// and the merge-request relay) refuses a PR that touches one, adds
+// HumanMergePathLabel, and leaves one marker-stamped comment naming the
+// path(s), unless the configured pin-only exception is proven.
+//
+// The refusal itself is the file check every lane and the relay repeat on
+// each head; the label is the visible signal. It is not a hold: the hive
+// never applies `hold` itself (hivecommons/hive#18468), and a hold would
+// freeze the PR's fixer, CI repair, base refreshes and review along with the
+// merge. needs-owner-merge is the default auto_merge.human_merge_labels
+// label, so every lane and the merge train already skip a PR that wears it,
+// it routes to 090 for a person's merge, and HasHoldLabelWith never reads it
+// as a hold. The name is fixed, whatever auto_merge.human_merge_labels says:
+// an operator who drops it from that list only loses the cheap lane skip,
+// never the refusal.
 const (
 	// HumanMergePathsConfigKey is the config key named in every refusal.
 	HumanMergePathsConfigKey = "auto_merge.human_merge_paths"
-	// HumanMergePathMarker stamps the single hold comment so later ticks
+	// HumanMergePathMarker stamps the single notice comment so later ticks
 	// find it and do not repost.
 	HumanMergePathMarker = "<!-- hive-human-merge-path -->"
-	// HumanMergePathHoldLabel is the label applied on a match.
-	HumanMergePathHoldLabel = "hold"
+	// HumanMergePathLabel is the label applied on a match: "a person
+	// merges this PR", never a hold.
+	HumanMergePathLabel = "needs-owner-merge"
+	// LegacyHumanMergePathHoldLabel is the `hold` the rule applied before
+	// it used HumanMergePathLabel. The hive never writes it again; the boot
+	// migration (MigrateHiveAppliedHolds) swaps the ones it can prove it
+	// applied for HumanMergePathLabel.
+	LegacyHumanMergePathHoldLabel = LegacyHiveHoldLabel
+	// legacyHumanMergePathHoldSentence is the sentence the notice carried
+	// while the rule applied `hold`: only such a notice explains a `hold`.
+	legacyHumanMergePathHoldSentence = "Hive added the `hold` label."
 )
+
+// IsLegacyHumanMergePathHoldNotice reports whether body is the notice the
+// rule posted while it applied `hold` (before HumanMergePathLabel). A newer
+// notice explains the label, never a `hold`.
+func IsLegacyHumanMergePathHoldNotice(body string) bool {
+	return strings.Contains(body, HumanMergePathMarker) && strings.Contains(body, legacyHumanMergePathHoldSentence)
+}
 
 // ErrIncompletePRFileList is wrapped by ListPRChangedFiles when GitHub
 // reported more changed files than its files API returned (the API lists at
@@ -82,7 +109,7 @@ func HumanMergePathReason(matches []string) string {
 	return fmt.Sprintf("PR touches %s, listed in %s for this repo; a person must merge it", quotedPaths(matches), HumanMergePathsConfigKey)
 }
 
-// HumanMergePathComment is the body of the single hold comment.
+// HumanMergePathComment is the body of the single notice comment.
 func HumanMergePathComment(matches []string) string {
 	var b strings.Builder
 	b.WriteString(HumanMergePathMarker + "\n")
@@ -90,37 +117,43 @@ func HumanMergePathComment(matches []string) string {
 	for _, p := range matches {
 		fmt.Fprintf(&b, "- `%s`\n", p)
 	}
-	fmt.Fprintf(&b, "\nHive added the `%s` label. A maintainer should review and merge this PR by hand.\n", HumanMergePathHoldLabel)
+	fmt.Fprintf(&b, "\nHive added the `%s` label. It is not a hold: the hive's agents still fix, review and update this PR, and only a person merges it. A maintainer should review and merge this PR by hand.\n", HumanMergePathLabel)
 	return b.String()
 }
 
-// HoldForHumanMergePaths adds the `hold` label to PR number and posts the
-// marker-stamped comment naming matches, unless a comment carrying
+// LabelForHumanMergePaths adds HumanMergePathLabel to PR number and posts
+// the marker-stamped comment naming matches, unless a comment carrying
 // HumanMergePathMarker already exists. Shared by the sweep lanes and the
-// merge-request relay so both leave exactly one comment.
-func HoldForHumanMergePaths(ctx context.Context, client *gh.Client, owner, repo string, number int, matches []string, head ...string) error {
+// merge-request relay so both leave exactly one comment. A PR that already
+// wears the label is not labelled again (the lanes reach the gate on every
+// head when an operator dropped the label from auto_merge.human_merge_labels).
+func LabelForHumanMergePaths(ctx context.Context, client *gh.Client, owner, repo string, number int, matches []string, head ...string) error {
 	if client == nil {
-		return fmt.Errorf("human-merge-path hold: no client")
+		return fmt.Errorf("human-merge-path label: no client")
 	}
-	// Never attribute an existing hold to this policy. Older callers without an
-	// exact head retain the legacy, non-releasable marker.
+	// Never attribute an existing label to this policy (a person may have
+	// put it on for a breaking change). Older callers without an exact head
+	// retain the legacy, non-releasable marker.
 	attributedHead := ""
+	labelled := false
 	if len(head) == 1 && validHumanMergeHead(head[0]) {
 		pr, _, err := client.PullRequests.Get(ctx, owner, repo, number)
 		if err != nil {
 			return fmt.Errorf("fetching human-merge-path head: %w", err)
 		}
-		if pr.GetHead().GetSHA() == head[0] {
-			attributedHead = head[0]
-			for _, label := range pr.Labels {
-				if strings.EqualFold(label.GetName(), HumanMergePathHoldLabel) {
-					attributedHead = ""
-				}
+		for _, label := range pr.Labels {
+			if strings.EqualFold(label.GetName(), HumanMergePathLabel) {
+				labelled = true
 			}
 		}
+		if pr.GetHead().GetSHA() == head[0] && !labelled {
+			attributedHead = head[0]
+		}
 	}
-	if _, _, err := client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{HumanMergePathHoldLabel}); err != nil {
-		return fmt.Errorf("adding %s label: %w", HumanMergePathHoldLabel, err)
+	if !labelled {
+		if _, _, err := client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{HumanMergePathLabel}); err != nil {
+			return fmt.Errorf("adding %s label: %w", HumanMergePathLabel, err)
+		}
 	}
 	posted, err := hasHumanMergePathComment(ctx, client, owner, repo, number)
 	if err != nil {
@@ -250,8 +283,8 @@ func (c *Client) humanMergePinOnlyFor(repo string) PinOnlySpec {
 
 // mergeRequestHumanMergePathRefusal checks a merge request against the
 // repo's human-merge paths. It returns a non-empty refusal (terminal) when
-// the PR touches one without a proven pin-only exception — after adding
-// `hold` and the single marker comment —
+// the PR touches one without a proven pin-only exception, after adding
+// HumanMergePathLabel and the single marker comment,
 // and an error when the repo has paths configured but the complete
 // changed-file list cannot be established (fail closed). An unconfigured
 // repo costs no API call.
@@ -279,8 +312,8 @@ func (c *Client) mergeRequestHumanMergePathRefusal(ctx context.Context, req Merg
 		}
 		c.warn("merge-request watcher: pin-only exception rejected", "repo", req.Repo, "pr", req.Number, "reason", reason)
 	}
-	if err := HoldForHumanMergePaths(ctx, c.client, owner, name, req.Number, matches, pr.GetHead().GetSHA()); err != nil {
-		c.warn("merge-request watcher: human-merge-path hold failed", "repo", req.Repo, "pr", req.Number, "error", err)
+	if err := LabelForHumanMergePaths(ctx, c.client, owner, name, req.Number, matches, pr.GetHead().GetSHA()); err != nil {
+		c.warn("merge-request watcher: human-merge-path label failed", "repo", req.Repo, "pr", req.Number, "error", err)
 	}
 	return HumanMergePathReason(matches), nil
 }
@@ -310,7 +343,7 @@ func (c *Client) humanMergePinOnlyRejection(ctx context.Context, owner, name str
 // HumanMergePathHeld reports whether PR number of repo, at headSHA, touches
 // one of the repo's auto_merge.human_merge_paths without the repo's
 // pin-only exception admitting it: the same files, matcher and exception the
-// merge-request relay applies, read-only (no hold label, no comment). An
+// merge-request relay applies, read-only (no label, no comment). An
 // unconfigured repo answers false with no API call. A PR that cannot be read,
 // an incomplete changed-file list or a head other than headSHA answers
 // (true, err) or true, so a caller deciding whether the hive may act on the
