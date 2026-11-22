@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -233,5 +234,20 @@ func TestIntegrationFailedLedgerCannotPreventDisabling(t *testing.T) {
 	server.handleIntegrationConfigPut(response, request)
 	if response.Code != http.StatusOK || server.integrationConfig().Mode != config.IntegrationOff {
 		t.Fatalf("%d %s", response.Code, response.Body)
+	}
+}
+
+func TestIntegrationObserveFilesWarnsOncePerWindow(t *testing.T) {
+	server := orchestrationServer(t, config.IntegrationAdvisory)
+	if err := os.WriteFile(server.integration.path, []byte("corrupt\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	server.logger = slog.New(slog.NewTextHandler(&buf, nil))
+	for i := 0; i < 5; i++ {
+		server.IntegrationObserveFiles("o/r", "abc", []string{"a.go"})
+	}
+	if got := strings.Count(buf.String(), "integration scope drift unavailable"); got != 1 {
+		t.Fatalf("warning logged %d times, want 1: %s", got, buf.String())
 	}
 }

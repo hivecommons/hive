@@ -1,0 +1,1 @@
+- Repeated \integration scope drift unavailable\ warnings from a degraded integration journal are now logged at most once per repo per 10 minutes.

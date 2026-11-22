@@ -33,6 +33,7 @@ type integrationRuntime struct {
 	lastReconcile                 time.Time
 	reconcileScopeOffset          int
 	advice                        map[string]integrationDispatchObservation
+	observeWarnAt                 map[string]time.Time
 	executionOnce                 sync.Once
 	executionStore                *integration.Store
 	executionErr                  error
@@ -126,8 +127,27 @@ func (s *Server) IntegrationObserveFiles(repo, head string, files []string) {
 		err = store.ObserveFiles(repo, head, files, time.Now())
 	}
 	if err != nil {
-		s.webhookLogger().Warn("integration scope drift unavailable; overlap planner unaffected", "repo", repo, "error", err)
+		if s.allowObserveWarn(repo, time.Now()) {
+			s.webhookLogger().Warn("integration scope drift unavailable; overlap planner unaffected", "repo", repo, "error", err)
+		}
 	}
+}
+
+// integrationObserveWarnWindow bounds how often the same degraded-ledger
+// warning is logged per repo; the condition persists across every webhook.
+const integrationObserveWarnWindow = 10 * time.Minute
+
+func (s *Server) allowObserveWarn(repo string, now time.Time) bool {
+	s.integration.mu.Lock()
+	defer s.integration.mu.Unlock()
+	if last, ok := s.integration.observeWarnAt[repo]; ok && now.Sub(last) < integrationObserveWarnWindow {
+		return false
+	}
+	if s.integration.observeWarnAt == nil {
+		s.integration.observeWarnAt = map[string]time.Time{}
+	}
+	s.integration.observeWarnAt[repo] = now
+	return true
 }
 
 func (s *Server) integrationConfig() config.IntegrationOrchestrationConfig {
