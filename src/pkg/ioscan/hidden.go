@@ -28,12 +28,19 @@ var (
 	mdImageRe     = regexp.MustCompile(`!\[[^\]]*\]\(\s*<?([^)\s>]+)`)
 	imgTagRe      = regexp.MustCompile(`(?i)<img\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)`)
 	mdLinkRe      = regexp.MustCompile(`(?:^|[^!])\[[^\]]*\]\(\s*<?([^)\s>]+)`)
-	// fillInRe is matched against decoded query values only, never keys, so
-	// bracketed parameter names (filter[key]=1) do not count. The your/insert/
+	// fillInRe is matched against decoded query values only; keys use the
+	// narrower keyFillInRe, so bracketed parameter names (filter[key]=1) do
+	// not count. The your/insert/
 	// paste form needs a placeholder separator (YOUR_TOKEN, insert-here) so
 	// ordinary words (yourself, insertion, pasted) do not match (#19452).
-	fillInRe  = regexp.MustCompile(`(?i)(\{\{?\s*[a-z_][a-z0-9_ .-]*\}\}?|<[a-z_ -]{2,}>|\[[a-z_ -]{2,}\]|%7[bB][^%]*%7[dD]|\b(?:your|insert|paste)[_-][a-z]\w*)`)
-	exfilKeys = map[string]bool{"data": true, "d": true, "q": true, "payload": true, "secret": true, "token": true, "key": true, "content": true, "text": true, "msg": true, "message": true}
+	fillInRe = regexp.MustCompile(`(?i)(\{\{?\s*[a-z_][a-z0-9_ .-]*\}\}?|<[a-z_ -]{2,}>|\[[a-z_ -]{2,}\]|%7[bB][^%]*%7[dD]|\b(?:your|insert|paste)[_-][a-z]\w*)`)
+	// keyFillInRe is matched against decoded query keys. It keeps only the
+	// forms that are unambiguous in a key: templates ({{secrets.TOKEN}}),
+	// angle placeholders (<your_data>) and upper-case YOUR_/INSERT_/PASTE_
+	// names. Bracket names (filter[key]) and lower-case words are left out
+	// because ordinary APIs use them as keys.
+	keyFillInRe = regexp.MustCompile(`(?i:\{\{?\s*[a-z_][a-z0-9_ .-]*\}\}?|<[a-z_ -]{2,}>|%7[bB][^%]*%7[dD])|\b(?:YOUR|INSERT|PASTE)[_-][A-Z][A-Z0-9_]*\b`)
+	exfilKeys   = map[string]bool{"data": true, "d": true, "q": true, "payload": true, "secret": true, "token": true, "key": true, "content": true, "text": true, "msg": true, "message": true}
 )
 
 // scanHiddenMarkup returns findings for hidden-markup content and
@@ -110,11 +117,21 @@ func scanExfilURLs(text string) []Finding {
 			imgs = append(imgs, m[1])
 		}
 	}
+	// Report the most severe image only: High for plain data, Medium for a
+	// signed provider URL whose only long values are its signing parameters.
+	var worst *Finding
 	for _, u := range imgs {
-		if carriesData(u) {
-			out = append(out, Finding{Kind: KindDangerous, Severity: SeverityHigh, Rule: ruleImageExfil, Snippet: snippet(u)})
+		sev, ok := carriesData(u)
+		if !ok || (worst != nil && sev <= worst.Severity) {
+			continue
+		}
+		worst = &Finding{Kind: KindDangerous, Severity: sev, Rule: ruleImageExfil, Snippet: snippet(u)}
+		if sev >= SeverityHigh {
 			break
 		}
+	}
+	if worst != nil {
+		out = append(out, *worst)
 	}
 	for _, m := range mdLinkRe.FindAllStringSubmatch(text, -1) {
 		if hasFillIn(queryParams(queryOf(m[1]))) {
@@ -166,7 +183,7 @@ func queryParams(q string) []queryParam {
 
 func hasFillIn(params []queryParam) bool {
 	for _, p := range params {
-		if fillInRe.MatchString(p.value) {
+		if fillInRe.MatchString(p.value) || keyFillInRe.MatchString(p.key) {
 			return true
 		}
 	}
@@ -175,18 +192,22 @@ func hasFillIn(params []queryParam) bool {
 
 // signingScheme is a URL-signing scheme whose parameters carry long values by
 // construction. shapes holds an exact value shape for every parameter that is
-// exempt from the length checks; any other parameter, and any value that does
+// recognised as signing data; any other parameter, and any value that does
 // not fit its shape, is counted as usual. A scheme only applies on a host of
 // the provider that issues it (hosts), and only when its signature parameter
-// is present and itself well-formed. A shape such as a CloudFront signature
-// can hold arbitrary base64url, so the host binding is what keeps a forged
-// signature on an attacker's host from becoming an exfil channel: a request to
-// a provider host the attacker does not control delivers nothing to them. Each
-// exempt key is exempt at most once per URL, so repeating it cannot widen the
-// channel. Parameters that are free data by design (x-amz-security-token,
-// CloudFront Policy, Azure si) are not exempt, so a URL that carries one stays
-// flagged. Custom domains in front of these providers stay flagged; that is
-// the safe direction.
+// is present and itself well-formed. Each key is recognised at most once per
+// URL, so repeating it cannot widen the channel. Parameters that are free data
+// by design (x-amz-security-token, CloudFront Policy, Azure si) are never
+// recognised, so a URL that carries one stays High. Custom domains in front of
+// these providers stay High; that is the safe direction.
+//
+// Recognised signing values are not a free pass: anyone can create a bucket,
+// distribution or storage account on these hosts and read the query strings
+// of requests from its access logs, and a shape such as a CloudFront
+// signature holds about 129 bytes of arbitrary base64url. So a long signing
+// value lowers the image finding to Medium rather than dropping it. Output
+// blocks only at High, so an agent can post a signed screenshot link, while
+// untrusted input still blocks at the default Medium line.
 type signingScheme struct {
 	sigKey string
 	// hosts lists exact hostnames, or suffixes when they start with ".".
@@ -241,16 +262,26 @@ var (
 
 // jwtHosts are hosts whose image URLs carry a JWT access token (GitHub's
 // private-user-images). The jwt exemption is tied to the host, not the value
-// shape, because any base64url data can be dressed as a JWT; a request to a
-// host the attacker does not control exfiltrates nothing.
+// shape, because any base64url data can be dressed as a JWT. Unlike the
+// signing providers, no third party can serve or log requests on these hosts,
+// so a request there exfiltrates nothing and the jwt is fully exempt.
 var jwtHosts = map[string]bool{"private-user-images.githubusercontent.com": true}
 
-// signingParam returns a predicate for parameters whose values are exempt
-// from the length checks because a recognised URL-signing scheme produces
-// them (#19452). See signingScheme for the host and shape bounds that keep
-// this from opening an exfil channel. The predicate is stateful: it exempts
-// each key at most once, so call it once per parameter, in order.
-func signingParam(host string, params []queryParam) func(queryParam) bool {
+// paramClass is how signingParam classifies one query parameter.
+type paramClass int
+
+const (
+	paramData    paramClass = iota // counted by the length checks as usual
+	paramSigning                   // a recognised signing value; long ones lower the finding to Medium
+	paramExempt                    // a jwt on a GitHub-owned host; never counted
+)
+
+// signingParam returns a classifier for parameters whose long values come
+// from a recognised URL-signing scheme (#19452). See signingScheme for the
+// host and shape bounds and for why these values still count at Medium. The
+// classifier is stateful: it recognises each key at most once, so call it
+// once per parameter, in order.
+func signingParam(host string, params []queryParam) func(queryParam) paramClass {
 	host = strings.ToLower(host)
 	var active []signingScheme
 	for _, s := range signingSchemes {
@@ -266,26 +297,28 @@ func signingParam(host string, params []queryParam) func(queryParam) bool {
 	}
 	jwtHost := jwtHosts[host]
 	seen := map[string]bool{}
-	return func(p queryParam) bool {
+	return func(p queryParam) paramClass {
 		k := strings.ToLower(p.key)
 		if seen[k] {
-			return false
+			return paramData
 		}
-		exempt := false
+		class := paramData
 		if k == "jwt" {
-			exempt = jwtHost && jwtValRe.MatchString(p.value)
+			if jwtHost && jwtValRe.MatchString(p.value) {
+				class = paramExempt
+			}
 		} else {
 			for _, s := range active {
 				if re, ok := s.shapes[k]; ok && re.MatchString(p.value) {
-					exempt = true
+					class = paramSigning
 					break
 				}
 			}
 		}
-		if exempt {
+		if class != paramData {
 			seen[k] = true
 		}
-		return exempt
+		return class
 	}
 }
 
@@ -301,28 +334,37 @@ func hostMatches(host string, hosts []string) bool {
 }
 
 // carriesData reports whether an image URL's query string looks like it
-// transports data: a long value, a well-known data key, or a fill-in marker.
-// Values of recognised URL-signing parameters are not counted as long.
-func carriesData(raw string) bool {
+// transports data (a long value, a well-known data key, or a fill-in marker)
+// and at what severity. It is High unless the only long values are recognised
+// URL-signing parameters, which give Medium; see signingScheme.
+func carriesData(raw string) (Severity, bool) {
 	params := queryParams(queryOf(raw))
 	if len(params) == 0 {
-		return false
+		return 0, false
 	}
 	if hasFillIn(params) {
-		return true
+		return SeverityHigh, true
 	}
 	var host string
 	if u, err := url.Parse(raw); err == nil {
 		host = u.Hostname()
 	}
-	signing := signingParam(host, params)
+	classify := signingParam(host, params)
+	signed := false
 	for _, p := range params {
-		if signing(p) {
+		switch classify(p) {
+		case paramExempt:
+			continue
+		case paramSigning:
+			signed = signed || len(p.value) >= exfilValueMinLen
 			continue
 		}
 		if len(p.value) >= exfilValueMinLen || (exfilKeys[strings.ToLower(p.key)] && len(p.value) >= exfilKeyedMinLen) {
-			return true
+			return SeverityHigh, true
 		}
 	}
-	return false
+	if signed {
+		return SeverityMedium, true
+	}
+	return 0, false
 }
