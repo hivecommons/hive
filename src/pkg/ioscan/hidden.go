@@ -30,16 +30,18 @@ var (
 	mdLinkRe      = regexp.MustCompile(`(?:^|[^!])\[[^\]]*\]\(\s*<?([^)\s>]+)`)
 	// fillInRe is matched against decoded query values only; keys use the
 	// narrower keyFillInRe, so bracketed parameter names (filter[key]=1) do
-	// not count. The your/insert/
-	// paste form needs a placeholder separator (YOUR_TOKEN, insert-here) so
+	// not count. A {{...}} template must start like a name or a template
+	// expression ({{secrets.TOKEN}}, {{.Token}}, {{$secret}},
+	// {{secrets['TOKEN']}}) and is bounded in length. The your/insert/paste
+	// form needs a placeholder separator (YOUR_TOKEN, insert-here) so
 	// ordinary words (yourself, insertion, pasted) do not match (#19452).
-	fillInRe = regexp.MustCompile(`(?i)(\{\{?\s*[a-z_][a-z0-9_ .-]*\}\}?|<[a-z_ -]{2,}>|\[[a-z_ -]{2,}\]|%7[bB][^%]*%7[dD]|\b(?:your|insert|paste)[_-][a-z]\w*)`)
+	fillInRe = regexp.MustCompile(`(?i)(\{\{?\s*[.$a-z_][^}]{0,64}\}\}?|<[a-z_ -]{2,}>|\[[a-z_ -]{2,}\]|%7[bB][^%]*%7[dD]|\b(?:your|insert|paste)[_-][a-z]\w*)`)
 	// keyFillInRe is matched against decoded query keys. It keeps only the
 	// forms that are unambiguous in a key: templates ({{secrets.TOKEN}}),
 	// angle placeholders (<your_data>) and upper-case YOUR_/INSERT_/PASTE_
 	// names. Bracket names (filter[key]) and lower-case words are left out
 	// because ordinary APIs use them as keys.
-	keyFillInRe = regexp.MustCompile(`(?i:\{\{?\s*[a-z_][a-z0-9_ .-]*\}\}?|<[a-z_ -]{2,}>|%7[bB][^%]*%7[dD])|\b(?:YOUR|INSERT|PASTE)[_-][A-Z][A-Z0-9_]*\b`)
+	keyFillInRe = regexp.MustCompile(`(?i:\{\{?\s*[.$a-z_][^}]{0,64}\}\}?|<[a-z_ -]{2,}>|%7[bB][^%]*%7[dD])|\b(?:YOUR|INSERT|PASTE)[_-][A-Z][A-Z0-9_]*\b`)
 	exfilKeys   = map[string]bool{"data": true, "d": true, "q": true, "payload": true, "secret": true, "token": true, "key": true, "content": true, "text": true, "msg": true, "message": true}
 )
 
