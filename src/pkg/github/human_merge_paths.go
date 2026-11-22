@@ -40,6 +40,12 @@ const (
 	// migration (MigrateHiveAppliedHolds) swaps the ones it can prove it
 	// applied for HumanMergePathLabel.
 	LegacyHumanMergePathHoldLabel = LegacyHiveHoldLabel
+	// HumanMergePathHoldLabel is the old name of the label the rule applied.
+	//
+	// Deprecated: the rule applies HumanMergePathLabel; this keeps the old
+	// exported name (and its `hold` value, now LegacyHumanMergePathHoldLabel)
+	// working for existing callers.
+	HumanMergePathHoldLabel = LegacyHumanMergePathHoldLabel
 	// legacyHumanMergePathHoldSentence is the sentence the notice carried
 	// while the rule applied `hold`: only such a notice explains a `hold`.
 	legacyHumanMergePathHoldSentence = "Hive added the `hold` label."
@@ -119,6 +125,14 @@ func HumanMergePathComment(matches []string) string {
 	}
 	fmt.Fprintf(&b, "\nHive added the `%s` label. It is not a hold: the hive's agents still fix, review and update this PR, and only a person merges it. A maintainer should review and merge this PR by hand.\n", HumanMergePathLabel)
 	return b.String()
+}
+
+// HoldForHumanMergePaths is the old name of LabelForHumanMergePaths.
+//
+// Deprecated: use LabelForHumanMergePaths. It applies HumanMergePathLabel,
+// not `hold`.
+func HoldForHumanMergePaths(ctx context.Context, client *gh.Client, owner, repo string, number int, matches []string, head ...string) error {
+	return LabelForHumanMergePaths(ctx, client, owner, repo, number, matches, head...)
 }
 
 // LabelForHumanMergePaths adds HumanMergePathLabel to PR number and posts
