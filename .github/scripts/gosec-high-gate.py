@@ -14,7 +14,13 @@ in the baseline does. Same shape as the Semgrep --baseline-commit ratchet in
 static-security.yml. A finding is keyed by (file, rule, the text of the
 flagged source line), not by line number, so unrelated edits that shift
 lines do not break the gate, while editing a baselined line re-opens it for
-review. Burning down the baseline is the #4903 backlog: fix the site, or
+review.
+
+gosec's taint rules (G703 path traversal, G704 SSRF) are not deterministic:
+the same tree scanned twice can report a site once and miss it the next time.
+The baseline is therefore the UNION of several scans (--keep-existing merges a
+new scan into the file, taking the larger count per site); a baselined site a
+run misses only prints a note. Burning down the baseline is the #4903 backlog: fix the site, or
 suppress it with `#nosec <rule> -- <reason>`, then regenerate.
 
 A finding suppressed in the source (`#nosec G204 -- <reason>`) is not in the
@@ -30,7 +36,10 @@ baseline fails closed too.
 
 Usage:
   gosec-high-gate.py [--baseline FILE] REPORT.json [REPORT.json ...]
-  gosec-high-gate.py [--baseline FILE] --write-baseline REPORT.json [...]
+  gosec-high-gate.py [--baseline FILE] --write-baseline [--keep-existing] REPORT.json [...]
+
+To regenerate: scan both modules, --write-baseline; then rescan a few times
+and add each run with --write-baseline --keep-existing.
 """
 import collections
 import json
@@ -148,6 +157,7 @@ def write_baseline(path, counts):
 def main(argv):
     baseline_path = str(DEFAULT_BASELINE)
     write = False
+    keep = False
     args = []
     it = iter(argv)
     for a in it:
@@ -155,6 +165,8 @@ def main(argv):
             baseline_path = next(it, "")
         elif a == "--write-baseline":
             write = True
+        elif a == "--keep-existing":
+            keep = True
         else:
             args.append(a)
     if not args:
@@ -176,6 +188,8 @@ def main(argv):
 
     if write:
         counts = collections.Counter(fingerprint(i, workspace) for i in found)
+        if keep and os.path.exists(baseline_path):
+            counts |= load_baseline(baseline_path)
         write_baseline(baseline_path, counts)
         print(f"wrote {sum(counts.values())} finding(s) to {baseline_path}")
         return 0

@@ -137,6 +137,22 @@ class GosecHighGate(unittest.TestCase):
             with open(base, encoding="utf-8") as f:
                 self.assertEqual(json.load(f)["findings"][0]["count"], 2)
 
+    def test_keep_existing_takes_the_union(self):
+        os.environ["GITHUB_WORKSPACE"] = "/work/hive"
+        a = issue("HIGH", code="42: cmd := exec.Command(x)\n")
+        b = issue("HIGH", rule="G703", line="7", code="7: os.ReadFile(p)\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            base = os.path.join(tmp, "b.json")
+            ra, rb = os.path.join(tmp, "a.json"), os.path.join(tmp, "b2.json")
+            for path, found in ((ra, [a, a]), (rb, [a, b])):
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump({"Issues": found}, f)
+            with contextlib.redirect_stdout(io.StringIO()):
+                gate.main(["--baseline", base, "--write-baseline", ra])
+                gate.main(["--baseline", base, "--write-baseline", "--keep-existing", rb])
+            counts = gate.load_baseline(base)
+        self.assertEqual(sorted(counts.values()), [1, 2])
+
     def test_repo_baseline_is_readable(self):
         self.assertTrue(gate.load_baseline(gate.DEFAULT_BASELINE))
 
