@@ -244,6 +244,9 @@ jobs:
           GOBIN: ${{ runner.temp }}/hive-ci-tools
         run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
 
+      - name: Gosec HIGH gate self-test
+        run: python3 .github/scripts/test-gosec-high-gate.py
+
       # -exclude-generated: generated files are not hand-maintained, so a
       # finding there is not actionable by a reviewer.
       # Test files are IN scope deliberately: a test that shells out on
@@ -270,9 +273,6 @@ jobs:
       # "runner lost communication" failures of #16040, not a proven OOM
       # diagnosis. Keep this at or below the runner CPU limit
       # (test-native-queue-workflows.py enforces it).
-      - name: Gosec HIGH gate self-test
-        run: python3 .github/scripts/test-gosec-high-gate.py
-
       - name: Scan
         working-directory: src
         # The nested src/crux module is not loaded from here; it has its own

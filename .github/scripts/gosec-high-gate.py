@@ -20,8 +20,9 @@ gosec's taint rules (G703 path traversal, G704 SSRF) are not deterministic:
 the same tree scanned twice can report a site once and miss it the next time.
 The baseline is therefore the UNION of several scans (--keep-existing merges a
 new scan into the file, taking the larger count per site); a baselined site a
-run misses only prints a note. Burning down the baseline is the #4903 backlog: fix the site, or
-suppress it with `#nosec <rule> -- <reason>`, then regenerate.
+run misses only prints a note. Burning down the baseline is the #4903
+backlog: fix the site, or suppress it with `#nosec <rule> -- <reason>`, then
+regenerate.
 
 A finding suppressed in the source (`#nosec G204 -- <reason>`) is not in the
 report's Issues list, or carries a non-empty `suppressions` list when gosec
