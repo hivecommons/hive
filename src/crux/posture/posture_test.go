@@ -1,6 +1,8 @@
 package posture
 
 import (
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -36,8 +38,10 @@ func TestMissingFieldsAreGaps(t *testing.T) {
 }
 
 func TestParseStatusRejectsGarbage(t *testing.T) {
-	if _, err := ParseStatus(strings.NewReader("CapEff:\tzz\n")); err == nil {
-		t.Fatal("want error")
+	for _, in := range []string{"CapEff:\tzz\n", "NoNewPrivs:\tx\n", "Seccomp:\tx\n"} {
+		if _, err := ParseStatus(strings.NewReader(in)); err == nil {
+			t.Fatalf("%q: want error", in)
+		}
 	}
 }
 
@@ -46,5 +50,25 @@ func TestRequireHardened(t *testing.T) {
 		if got := RequireHardened(func(string) string { return v }); got != want {
 			t.Fatalf("%q = %v", v, got)
 		}
+	}
+}
+
+func TestBootWarnsAndFailsOnlyWhenRequired(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gaps := Check()
+	if err := Boot(logger, func(string) string { return "" }); err != nil {
+		t.Fatalf("Boot without %s = %v, want nil", RequireHardenedEnv, err)
+	}
+	err := Boot(logger, func(k string) string {
+		if k == RequireHardenedEnv {
+			return "1"
+		}
+		return ""
+	})
+	if (err != nil) != (len(gaps) > 0) {
+		t.Fatalf("Boot required err = %v with %d gaps", err, len(gaps))
+	}
+	if err != nil && !strings.Contains(err.Error(), RequireHardenedEnv) {
+		t.Fatalf("error %q does not name %s", err, RequireHardenedEnv)
 	}
 }
