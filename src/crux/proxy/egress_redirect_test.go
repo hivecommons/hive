@@ -111,6 +111,9 @@ func TestEgressCheckRedirectKeepsCredentialsSameHost(t *testing.T) {
 }
 
 func TestEgressCheckRedirectUnit(t *testing.T) {
+	// The cross-host hop is resolved by the private-target guard; answer
+	// without DNS so the guard sees a public address.
+	stubEgressResolver(t, map[string]string{"api.example": "93.184.216.34", "evil.api.example": "93.184.216.35"})
 	mk := func(raw string) *http.Request {
 		u, _ := url.Parse(raw)
 		r := &http.Request{URL: u, Header: http.Header{}}
