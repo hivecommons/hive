@@ -9,9 +9,10 @@ import (
 // TestNavAvatarMenuOpensOnMobile guards two regressions that together made the
 // account menu unreachable on phones: iOS Safari does not synthesise a click
 // from a tap on a bare <img> that only has a delegated document handler, so
-// the avatar must live inside a real <button>; and the phone topbar strip is
-// overflow:hidden so the dropdown must leave the strip (position: fixed) in
-// every media block that clips .oc-topbar-right.
+// the avatar must live inside a real <button>; and the phone topbar strip
+// clips (overflow: hidden, or auto now that it scrolls) so the dropdown must
+// leave the strip (position: fixed) in every media block that clips
+// .oc-topbar-right.
 func TestNavAvatarMenuOpensOnMobile(t *testing.T) {
 	topbar := dashboardTopbarHTML(t)
 	btnRE := regexp.MustCompile(`<button[^>]*id="oc-gh-avatar-btn"[^>]*>\s*<img[^>]*id="oc-gh-avatar"`)
@@ -31,7 +32,7 @@ func TestNavAvatarMenuOpensOnMobile(t *testing.T) {
 
 	html := indexHTML(t)
 	fixedRE := regexp.MustCompile(`#oc-gh-user-menu\s*\{\s*position:\s*fixed;`)
-	clipRE := regexp.MustCompile(`\.oc-topbar-right\s*\{[^}]*overflow:\s*hidden;`)
+	clipRE := regexp.MustCompile(`\.oc-topbar-right\s*\{[^}]*overflow(?:-x)?:\s*(?:hidden|auto);`)
 	for _, media := range []string{
 		`@media (max-width: 768px) {`,
 		`@media (max-width: 1024px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {`,

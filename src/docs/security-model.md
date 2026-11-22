@@ -263,8 +263,9 @@ The Customers section keeps one profile per person. It lives in two files on the
 hive's own volume and nothing in it leaves the hive. It is not sent to the hub,
 written to GitHub or put in a heartbeat. The one exception is the opt-in
 Customers hub import (`customers.hub_import.enabled`, default off): it sends the
-hub only salted hashes of confirmed customers' GitHub logins, and receives only
-fields a person consented to share with this hive
+hub only salted hashes of confirmed customers' GitHub logins, and receives the real name only
+if a person consented to share it with this hive, plus a grant holder's labeled
+public country and organization
 ([telemetry](telemetry.md#customers-hub-import)). The design is in
 [customers](design/customers.md).
 
@@ -1033,6 +1034,14 @@ until code-owner review is required in branch protection.
   earlier passes. Session taint is designed for this
   ([design/session-taint.md](design/session-taint.md)); only its observe-only
   recorder exists, and it does not block anything.
+* **`ioscan` does not scan tool output.** Web fetches, MCP results and files
+  in cloned repositories reach the agent unscanned
+  ([ioscan.md](ioscan.md#scan-coverage)).
+* **MCP tool definitions are not pinned.** A server that changes a tool's
+  description is not held for review.
+* **A paraphrased injection can pass.** Text that avoids every rule and
+  fools the classifier reaches the agent. Containment is the control for it
+  ([prompt-injection-trentina-comparison.md](prompt-injection-trentina-comparison.md)).
 * **The proxy inspects GitHub API traffic only.** Other destinations are
   tunnelled. Use Kubernetes NetworkPolicies for full egress control.
 * **The L5 `hold` label is applied by agent policy.** The hard guarantee at

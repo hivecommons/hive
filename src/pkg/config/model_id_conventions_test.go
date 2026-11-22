@@ -1,6 +1,11 @@
 package config
 
-import "testing"
+import (
+	"bytes"
+	"log/slog"
+	"strings"
+	"testing"
+)
 
 // An agent switched between the claude and copilot backends keeps the other
 // CLI's spelling of its Claude model, which its own CLI rejects. The loader
@@ -55,5 +60,23 @@ func TestNormalizeModelIDConventions(t *testing.T) {
 
 	if again := c.NormalizeModelIDConventions(); len(again) != 0 {
 		t.Errorf("second pass rewrote again: %+v", again)
+	}
+}
+
+func TestNormalizeModelIDConventionsWarnsOncePerRewrite(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(old)
+	for i := 0; i < 3; i++ {
+		c := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{
+			"warn-once-agent": {Backend: "copilot", Model: "claude-sonnet-4-6"},
+		}}}
+		if got := c.NormalizeModelIDConventions(); len(got) != 1 {
+			t.Fatalf("reload %d: want 1 rewrite recorded, got %d", i, len(got))
+		}
+	}
+	if n := strings.Count(buf.String(), "rewrote a Claude model id"); n != 1 {
+		t.Fatalf("want 1 warning across reloads, got %d:\n%s", n, buf.String())
 	}
 }

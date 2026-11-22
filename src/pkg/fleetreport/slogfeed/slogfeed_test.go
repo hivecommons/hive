@@ -1367,3 +1367,28 @@ func TestGHCRTokenTimeoutStaysInLog(t *testing.T) {
 		t.Fatalf("non-timeout GHCR failure must stay reportable, observed %+v", *seen)
 	}
 }
+
+// #19407: an unresolved-conversation refusal of the native enqueue is a normal not-ready state.
+func TestUnresolvedConversationsSkipLogsWithoutFleetReport(t *testing.T) {
+	const refusal = "effect outcome uncertain, reconciliation required: graphql: UNPROCESSABLE: Pull request All comments must be resolved."
+	cases := []struct {
+		name string
+		args []any
+		want int
+	}{
+		{"unresolved comments", []any{"repo", "ps-printer-app", "pr", 221, "reason", "native-merge-queue-enqueue", "error", refusal}, 0},
+		{"other enqueue error", []any{"repo", "ps-printer-app", "pr", 221, "reason", "native-merge-queue-enqueue", "error", "graphql: boom"}, 8},
+		{"other reason", []any{"repo", "ps-printer-app", "pr", 221, "reason", "status-check", "error", refusal}, 8},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, seen, _ := newFeed(t)
+			for i := 0; i < 8; i++ {
+				logger.Warn("contributor-lane automerge sweep skipped PR", tc.args...)
+			}
+			if len(*seen) != tc.want {
+				t.Fatalf("observations = %d, want %d: %+v", len(*seen), tc.want, *seen)
+			}
+		})
+	}
+}

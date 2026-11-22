@@ -92,6 +92,11 @@ func (p Policy) String() string {
 type Source struct {
 	Surface       Surface
 	TrustedAuthor bool
+	// Author is the login that wrote the text and Thread the issue or PR it
+	// sits on ("owner/repo#N"). Both are optional; when set, a High or
+	// Critical injection block flags them in the SourceMemory.
+	Author string
+	Thread string
 }
 
 // ParseSeverity converts a config string ("low", "medium", "high",

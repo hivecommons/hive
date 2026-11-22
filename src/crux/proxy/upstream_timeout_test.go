@@ -236,3 +236,24 @@ func TestLogTimeoutWarnWindowReArmsPerMessage(t *testing.T) {
 		t.Fatalf("repeat right after re-arm must be DEBUG:\n%s", buf.String())
 	}
 }
+
+func TestLogConnectDialFailedLevels(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"no such host", &net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host", Name: "prom.example.com", IsNotFound: true}}, "level=DEBUG"},
+		{"refused", errors.New("connection refused"), "level=WARN"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			p := &GitHubProxy{logger: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+			p.logConnectDialFailed("prom.example.com:9090", tc.err)
+			if !strings.Contains(buf.String(), tc.want) {
+				t.Errorf("want %s, got %q", tc.want, buf.String())
+			}
+		})
+	}
+}

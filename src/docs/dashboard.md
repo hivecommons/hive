@@ -124,7 +124,7 @@ On the v5 line the standalone Platform section is not part of the default dashbo
 
 The light dashboard topbar keeps high-signal operational state only: project name, fleet controls, health, auth, and a compact ACMM autonomy chip such as `L5 · Semi-Autonomous`. The chip is display-only and navigates to the ACMM Eval section; changing levels remains in the existing ACMM dialog/sidebar controls.
 
-Build/version details live in the bottom-left sidebar chip. The collapsed chip shows the short SHA, release channel, and an orange `↑` marker only when an upgrade is available. Open the chip for the full commit link, channel/tracking state, compare/release-notes links, last upgrade status when reported, copy-version, and the manual upgrade action. On small screens the sidebar is reachable through the hamburger drawer, so the version menu remains available without returning the long version strip to the topbar. On the narrowest phones (≤360px wide) the topbar also drops the 🐛 feedback and ⚙ Settings chips so the row never overflows; both stay reachable from the account (avatar) menu, and feedback from the drawer as well.
+Build/version details live in the bottom-left sidebar chip. The collapsed chip shows the short SHA, release channel, and an orange `↑` marker only when an upgrade is available. Open the chip for the full commit link, channel/tracking state, compare/release-notes links, last upgrade status when reported, copy-version, and the manual upgrade action. On small screens the sidebar is reachable through the hamburger drawer, so the version menu remains available without returning the long version strip to the topbar. On phones (≤768px wide) the topbar drops the 🐛 feedback chip, which stays reachable from the drawer and the account (avatar) menu, and the ⚙ Settings chip while the account menu is shown, since it carries Settings too; on the narrowest phones (≤360px) Settings goes regardless. The Waiting on you chip shows only its dot and count (the words stay in its tooltip). If the right-hand chips still don't fit, for example while an upgrade and a provider warning both show, the strip scrolls sideways: it starts at the end, so Help and the account menu stay in view, and keeps that place as chips come and go until you swipe it.
 
 ## Übersicht widget
 
@@ -905,6 +905,8 @@ dashboard:
   theme_overrides:
     tokens:
       "--accent": "#e0a33a"
+    light_tokens:       # applied in light mode only
+      "--surface-0": "#fdfaf3"
     background:
       image: https://example.org/bg.svg  # https or data: URI only
       opacity: 0.08
@@ -913,12 +915,20 @@ dashboard:
       .panel { border-radius: 2px; }
 ```
 
-Built-ins are loaded from one YAML file per theme under `src/pkg/dashboard/theme/themes/`. Initial themes include `hive`, `hive-dark`, `hive-light`, `star-wars`, `dungeons-and-dragons`, `star-trek`, `cyberpunk`, `terminal`, `solarized-dark`, `nord`, and migrated contributor profile skins such as `contributor-violet-advisor`. Theme files can set `scopes: [dashboard, contributor]` so the same catalog drives dashboard Appearance and contributor profile styling. Tokens are
+Built-ins are loaded from one YAML file per theme under `src/pkg/dashboard/theme/themes/`. Initial themes include `hive`, `hive-dark`, `hive-light`, `star-wars`, `dungeons-and-dragons`, `star-trek`, `cyberpunk`, `terminal`, `solarized-dark`, `nord`, `sandstone`, and migrated contributor profile skins such as `contributor-violet-advisor`. Theme files can set `scopes: [dashboard, contributor]` so the same catalog drives dashboard Appearance and contributor profile styling. Tokens are
 validated against the dashboard's `:root` CSS custom properties so typos fail
 fast. Custom CSS is capped at 32 KiB, strips HTML/style-breakout characters, and
 only permits `https:` or bounded `data:` URLs; inlined backgrounds are capped at
 256 KiB. `/api/theme.css` serves the effective theme with an ETag and is linked
 from the document head so the themed stylesheet is available before first paint.
+
+A dark preset (and `custom`) without its own `light_tokens` derives its
+light-mode surfaces, lines, text, scrim and shadows rather than reusing its
+dark values, so a `tokens` override of one of those changes dark mode only,
+while light mode is the dashboard's default view. `light_tokens` takes the same
+allowlisted tokens and applies them in light mode only, after `tokens`: on top
+of the preset's own `light_tokens` when it has them, otherwise on top of the
+derived palette, so tokens you do not list keep their light-mode values.
 
 ### Settings → Appearance
 
@@ -926,7 +936,8 @@ The **Appearance** tab in Settings renders the built-in preset gallery with
 swatches for background, panel, accent, and text colors. Hovering a card previews
 it, **Apply** persists the preset, **Reset to preset** removes overrides, and
 **Apply background/CSS** saves the background URL, opacity, honeycomb watermark,
-and custom CSS textarea (with byte counter). The existing dark/light button asks
+fonts, the CSS token and light-mode token overrides, and the custom CSS textarea
+(with byte counter). The existing dark/light button asks
 the theme API for the closest light or dark built-in variant and refreshes
 `/api/theme.css` without reloading the dashboard.
 
