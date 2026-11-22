@@ -88,12 +88,17 @@ func CarriedFenceMarker(reason string, supersedes int) string {
 }
 
 // carriedFenceReason returns the diff-fence reason a PR body carries, or "".
+// Every marker is read, not only the first: a body is editable, so an
+// unrecognized marker placed ahead of the real one (a decoy such as
+// `reason=none`) never lifts the fence (hivecommons/hive#19401 review). The
+// first marker with a recognized reason wins.
 func carriedFenceReason(body string) string {
-	m := carriedFencePattern.FindStringSubmatch(body)
-	if len(m) != 2 || !carriedFenceReasons[m[1]] {
-		return ""
+	for _, m := range carriedFencePattern.FindAllStringSubmatch(body, -1) {
+		if len(m) == 2 && carriedFenceReasons[m[1]] {
+			return m[1]
+		}
 	}
-	return m[1]
+	return ""
 }
 
 // carriedFenceGate refuses to merge a PR whose body carries a diff fence

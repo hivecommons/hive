@@ -130,7 +130,11 @@ when the agent dropped it, the attribution trailer, like every relay body.
 A body rewrite never drops a `<!-- hive:carried-fence … -->` marker: that
 marker is what keeps an adopted contributor PR out of unattended merge, so
 the relay re-appends every marker the current body carries and the new body
-lacks. The `agent_pr_edited` audit entry names the fields edited and, for a
+lacks. Only the hive's adoption path writes these markers, so a new body that
+carries one the current body does not (a decoy such as `reason=none`, or any
+unterminated `<!-- hive:carried-fence` text) is refused. The merge lanes read
+every marker in a body, not only the first, so an unrecognized marker ahead of
+the real one never lifts the fence. The `agent_pr_edited` audit entry names the fields edited and, for a
 body edit, `body_sha256` (a short digest of the body written, not its text).
 A refusal is a policy denial (`.denied`, a result file with the reason).
 

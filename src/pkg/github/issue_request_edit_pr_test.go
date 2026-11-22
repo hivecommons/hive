@@ -226,6 +226,73 @@ func TestPreserveCarriedFenceMarkers(t *testing.T) {
 	}
 }
 
+// A body edit that introduces a carried-fence marker the current body does not
+// carry is refused: a decoy placed ahead of the real marker could otherwise
+// make the merge lanes read the PR as unfenced (hivecommons/hive#19401 review).
+func TestIssueRequestWatcher_EditPRRefusesNewCarriedFenceMarker(t *testing.T) {
+	const fenced = "<!-- hive:carried-fence reason=contributor-lane:tests-removed from=#123 -->"
+	for name, tc := range map[string]struct{ current, body string }{
+		"decoy ahead of a dropped real marker": {"Supersedes #123.\n\n" + fenced + "\n", "<!-- hive:carried-fence reason=none -->\nRefreshed.\n"},
+		"decoy ahead of a kept real marker":    {"Supersedes #123.\n\n" + fenced + "\n", "<!-- hive:carried-fence reason=none -->\nRefreshed.\n\n" + fenced + "\n"},
+		"marker on an unfenced PR":             {"Plain body.\n", "Refreshed.\n\n" + fenced + "\n"},
+		"unterminated marker":                  {"Plain body.\n", "Refreshed.\n<!-- hive:carried-fence reason=none\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var patches []editPRPatch
+			srv := newEditPRMockServerWithBody(t, editPRTestBot, "Bot", false, tc.current, &patches)
+			defer srv.Close()
+			c := editPRTestClient(t, srv.URL)
+			recs := captureAudit(c)
+			dir := withIssueDir(t)
+
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{
+				Kind: "edit_pr", Repo: "o/r", Number: 5, Agent: "review-fix", Body: tc.body,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.ProcessIssueRequestsOnce(context.Background())
+
+			if len(patches) != 0 {
+				t.Fatalf("PR was edited (%+v); a new carried-fence marker must be refused", patches)
+			}
+			if _, err := os.Stat(reqPath + ".denied"); err != nil {
+				t.Errorf("refused request was not quarantined as .denied: %v", err)
+			}
+			if resp := readIssueResultFile(t, reqPath); resp.OK || !strings.Contains(resp.Error, "only the hive's adoption path writes") {
+				t.Errorf("result = %+v, want the new-marker refusal", resp)
+			}
+			if _, ok := findAudit(*recs, AuditActionAgentPREdited); ok {
+				t.Error("a refused edit was audited as an edit")
+			}
+		})
+	}
+}
+
+func TestIntroducesCarriedFenceMarker(t *testing.T) {
+	const m1 = "<!-- hive:carried-fence reason=contributor-lane:tests-removed from=#1 -->"
+	const decoy = "<!-- hive:carried-fence reason=none -->"
+	for name, tc := range map[string]struct {
+		current, next string
+		want          bool
+	}{
+		"no markers":          {"a", "b", false},
+		"kept verbatim":       {"a\n" + m1, "b\n" + m1, false},
+		"dropped":             {"a\n" + m1, "b", false},
+		"kept twice":          {m1, m1 + "\n" + m1, false},
+		"decoy added":         {m1, decoy + "\n" + m1, true},
+		"marker on unfenced":  {"a", m1, true},
+		"reason changed":      {m1, strings.Replace(m1, "from=#1", "from=#2", 1), true},
+		"unterminated prefix": {m1, m1 + "\n<!-- hive:carried-fence reason=none", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := introducesCarriedFenceMarker(tc.current, tc.next); got != tc.want {
+				t.Errorf("introducesCarriedFenceMarker(%q, %q) = %v, want %v", tc.current, tc.next, got, tc.want)
+			}
+		})
+	}
+}
+
 // The authorship gate: the relay never edits a PR that is not positively one
 // of this hive's own, whoever's it is, and never a merged one. Each refusal is
 // a policy denial that reaches GitHub only for the read.
