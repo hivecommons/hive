@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-22 (v5.347.0)
+
+### Added
+
+- ioscan: vendor pinned garak latent-injection corpus (#19465)
+
 ## 2026-11-22 (v5.346.0)
 
 ### Added
