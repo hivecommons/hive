@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/writeback"
@@ -57,7 +58,7 @@ func TestReleaseHumanMergePathHold(t *testing.T) {
 				case strings.HasSuffix(r.URL.Path, "/comments"):
 					body := HumanMergePathComment([]string{"Containerfile"})
 					if !tc.legacy {
-						body += humanMergeHeadMarker(oldHead)
+						body += HumanMergeHeadMarker(oldHead)
 					}
 					updated := "2026-11-02T12:00:02Z"
 					if tc.edited {
@@ -157,7 +158,7 @@ func TestHumanMergeHoldHeadAttribution(t *testing.T) {
 			if !strings.Contains(posted, HumanMergePathMarker) {
 				t.Fatal("legacy marker must remain matchable")
 			}
-			if strings.Contains(posted, humanMergeHeadMarker(head)) == existingHold {
+			if strings.Contains(posted, HumanMergeHeadMarker(head)) == existingHold {
 				t.Fatalf("wrong attribution: %s", posted)
 			}
 		})
@@ -202,7 +203,7 @@ func TestReleaseApprovedHumanMergePathHold(t *testing.T) {
 				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/1"):
 					_ = json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": head}, "labels": []map[string]string{{"name": "hold"}}})
 				case strings.HasSuffix(r.URL.Path, "/comments"):
-					body := HumanMergePathComment([]string{"Containerfile"}) + humanMergeHeadMarker(tc.noticeHead)
+					body := HumanMergePathComment([]string{"Containerfile"}) + HumanMergeHeadMarker(tc.noticeHead)
 					_ = json.NewEncoder(w).Encode([]map[string]any{{"body": body, "created_at": "2026-11-02T12:00:02Z", "updated_at": "2026-11-02T12:00:02Z", "user": app}})
 				case strings.HasSuffix(r.URL.Path, "/events"):
 					_ = json.NewEncoder(w).Encode(tc.events)
@@ -237,6 +238,128 @@ func TestReleaseApprovedHumanMergePathHold(t *testing.T) {
 	}
 
 	if released, err := ReleaseApprovedHumanMergePathHold(context.Background(), gh.NewClient(nil), nil, "o", "r", 1, "hive[bot]", head); released || err != nil {
+		t.Fatalf("nil write-back decision: released=%v err=%v, want a refusal with no call", released, err)
+	}
+}
+
+// The pin-only release the stage-label pass uses once a later head qualifies
+// for auto_merge.human_merge_pin_only: it lifts the App's hold put on an
+// older head, including one the App lifted and put back since, through the
+// caller's write-back decision. Lift and re-hold cycles count only on a hive
+// whose own hold label is not `hold` (a hive_id is set): without one a
+// person's dashboard hold is the App's `hold` with no notice. The same head,
+// a head already lifted once, any transition by a person, a history that
+// ends removed and a refusal all keep it.
+func TestReleasePinOnlyHumanMergePathHold(t *testing.T) {
+	const hiveHold = "hive-pause/test"
+	head := strings.Repeat("b", 40)
+	oldHead := strings.Repeat("a", 40)
+	app := map[string]string{"login": "hive[bot]", "type": "Bot"}
+	person := map[string]string{"login": "person", "type": "User"}
+	event := func(kind, at string, actor map[string]string) map[string]any {
+		return map[string]any{"event": kind, "created_at": at, "label": map[string]string{"name": "hold"}, "actor": actor}
+	}
+	appHold := event("labeled", "2026-11-02T12:00:01Z", app)
+	for _, tc := range []struct {
+		name       string
+		noticeHead string
+		events     []map[string]any
+		// holdLabel is the hive's own hold label (default hiveHold; "-"
+		// means none, a hive without an id).
+		holdLabel string
+		// liftedHead, when set, has a lift notice from the App.
+		liftedHead string
+		refuse     bool
+		want       bool
+	}{
+		{name: "hold on an older head", noticeHead: oldHead, events: []map[string]any{appHold}, want: true},
+		{name: "hold on this head", noticeHead: head, events: []map[string]any{appHold}},
+		{name: "the App lifted the hold and put it back", noticeHead: oldHead, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app)}, want: true},
+		{name: "the App lifted the hold and put it back, hive without an id", noticeHead: oldHead, holdLabel: "-", events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app)}},
+		{name: "the App lifted the hold and put it back, hold label is hold", noticeHead: oldHead, holdLabel: "hold", events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app)}},
+		{name: "single hold, hive without an id", noticeHead: oldHead, holdLabel: "-", events: []map[string]any{appHold}, want: true},
+		{name: "this head was lifted once and held again", noticeHead: oldHead, liftedHead: head, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app)}},
+		{name: "another head was lifted and held again", noticeHead: oldHead, liftedHead: strings.Repeat("c", 40), events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", app)}, want: true},
+		{name: "a person removed the hold and the App put it back", noticeHead: oldHead, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", person), event("labeled", "2026-11-03T10:00:00Z", app)}},
+		{name: "the App lifted the hold and a person put it back", noticeHead: oldHead, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app), event("labeled", "2026-11-03T10:00:00Z", person)}},
+		{name: "the App lifted the hold and it stayed off", noticeHead: oldHead, events: []map[string]any{appHold, event("unlabeled", "2026-11-03T09:00:00Z", app)}},
+		{name: "person's hold", noticeHead: oldHead, events: []map[string]any{event("labeled", "2026-11-02T12:00:01Z", person)}},
+		{name: "write-back gate refuses", noticeHead: oldHead, events: []map[string]any{appHold}, refuse: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			holdLabel := hiveHold
+			switch tc.holdLabel {
+			case "-":
+				holdLabel = ""
+			case "":
+			default:
+				holdLabel = tc.holdLabel
+			}
+			noticeBody := HumanMergePathComment([]string{".github/workflows/ci.yml"}) + HumanMergeHeadMarker(tc.noticeHead)
+			liftBody := ""
+			if tc.liftedHead != "" {
+				liftBody = HumanMergePathLiftMarker + tc.liftedHead + " -->\nHold lifted."
+			}
+			deletes, decisions := 0, 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/1"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": head}, "labels": []map[string]string{{"name": "hold"}}})
+				case strings.HasSuffix(r.URL.Path, "/comments"):
+					list := []map[string]any{{"body": noticeBody, "created_at": "2026-11-02T12:00:02Z", "updated_at": "2026-11-02T12:00:02Z", "user": app}}
+					if liftBody != "" {
+						list = append(list, map[string]any{"body": liftBody, "created_at": "2026-11-03T09:00:01Z", "updated_at": "2026-11-03T09:00:01Z", "user": app})
+					}
+					_ = json.NewEncoder(w).Encode(list)
+				case strings.HasSuffix(r.URL.Path, "/events"):
+					_ = json.NewEncoder(w).Encode(tc.events)
+				case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/labels/hold"):
+					deletes++
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(404)
+				}
+			}))
+			defer srv.Close()
+			client, err := gh.NewClient(srv.Client()).WithEnterpriseURLs(srv.URL, srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			allowed := func(writeback.Item) bool { decisions++; return !tc.refuse }
+			released, err := ReleasePinOnlyHumanMergePathHold(context.Background(), client, allowed, "o", "r", 1, "hive[bot]", head, holdLabel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if released != tc.want || (deletes == 1) != tc.want {
+				t.Fatalf("released=%v deletes=%d, want %v", released, deletes, tc.want)
+			}
+			if tc.refuse && decisions != 1 {
+				t.Fatalf("write-back decisions = %d, want the refusal consulted once", decisions)
+			}
+			// The read-only pre-check applies the same provenance rules
+			// (a write-back refusal is not provenance).
+			at := &gh.Timestamp{Time: time.Date(2026, 11, 2, 12, 0, 2, 0, time.UTC)}
+			comments := []*gh.IssueComment{{
+				Body:      gh.Ptr(noticeBody),
+				CreatedAt: at, UpdatedAt: at,
+				User: &gh.User{Login: gh.Ptr("hive[bot]"), Type: gh.Ptr("Bot")},
+			}}
+			if liftBody != "" {
+				comments = append(comments, &gh.IssueComment{Body: gh.Ptr(liftBody), CreatedAt: at, UpdatedAt: at, User: &gh.User{Login: gh.Ptr("hive[bot]"), Type: gh.Ptr("Bot")}})
+			}
+			proven, err := PinOnlyHumanMergePathHoldReleasable(context.Background(), client, "o", "r", 1, "hive[bot]", head, holdLabel, comments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := tc.want || tc.refuse; proven != want {
+				t.Fatalf("releasable = %v, want %v", proven, want)
+			}
+		})
+	}
+
+	if released, err := ReleasePinOnlyHumanMergePathHold(context.Background(), gh.NewClient(nil), nil, "o", "r", 1, "hive[bot]", head, hiveHold); released || err != nil {
 		t.Fatalf("nil write-back decision: released=%v err=%v, want a refusal with no call", released, err)
 	}
 }

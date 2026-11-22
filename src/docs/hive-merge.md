@@ -226,8 +226,42 @@ path gate already fetches, so a PR the classifier refuses costs no extra API
 call; the commit list and upstream refs are read only once the diff qualifies. A repo without an
 enabled entry behaves exactly as before. `/hive approve` applies the same check, so its
 reply never contradicts the lane. Any other outcome holds the PR as before.
-The exception only prevents a new path hold: a PR that already carries `hold`
-stays held until a person (or the #16269 release integration) clears it.
+The exception is also checked again on a held PR's later head. Every lane
+skips a PR that carries `hold` before it reaches the human-merge-path gate,
+so without this a pin bump the gate held (for example because the upstream
+floating tag moved before the bot's head caught up) stayed held after the bot
+pushed a head that qualifies, and a person had to merge it
+([projectbluefin/bluefin-bling#197](https://github.com/projectbluefin/bluefin-bling/pull/197)).
+The stage-label pass now runs the same check, on the same complete
+changed-file list and matches, when the hold is the hive's own
+human-merge-path hold, the current head still touches a listed path, the
+repository has an enabled exception, and the hold was put on an earlier head.
+When the current head qualifies it removes `hold` and posts one
+`<!-- hive:human-merge-path-lift <sha> -->` notice saying the head qualifies
+for the pin-only exception; the lane then checks the exception again before
+it merges. The lift goes through the shared release API described below
+(the App's single, unedited, head-stamped notice for an older head, no lift
+notice yet for the current head, and a label history in which only the App
+ever added or removed `hold`), re-reads the head before the write, and is
+write-back kind `human_merge_path_release`. The head the gate's first
+notice names is never lifted this way.
+
+When the lane's gate re-checks a lifted head and fails it (the tag moved
+again, or an API error), it puts `hold` back without a second notice, so
+the hive takes the newest lift notice's head to be the one re-held. That
+head keeps its hold: neither the pass nor the release API lifts a head that
+already has a lift notice. The bot's next head is judged again and lifted
+once more when it qualifies. If the bot pushes between a lift and the
+lane's next pass, the gate re-holds a head that has no lift notice yet, and
+that head is judged and may be lifted once; the lane checks the exception
+again before it merges either way. Lifting again after a re-hold needs a
+`hive_id`: without one the dashboard Hold button and the admin MCP hold
+write the same `hold` label as the App, with no notice, so the hive cannot
+tell the gate's re-hold from a person's hold and lifts only the gate's
+first hold. A hold a person set, a hold a person removed or added at any
+point and a hold with another hold source stay for a person. A head that
+fails the exception is logged at info once, not on every pass. A
+repository without an enabled exception behaves as before.
 Do not remove `human_merge_paths` or manually clear a
 hold to simulate this feature. The YAML example, per-field contract and seed
 reload instructions live in the
@@ -362,15 +396,20 @@ pre-existing holds are not retroactively attributed.
 
 The shared release API requires a later, qualifying exact head, the configured
 App identity, an unedited App marker, and complete label-event history proving
-one App-applied path hold immediately before the notice. Human-applied or
-re-added holds, ambiguous history, and timeline errors keep the hold. Admission
-callers must supply their live writeback gate (a missing gate or denied
-hold-gate notice leaves the hold intact), wire that API after pin-only
-qualification, and re-read labels;
-that wiring remains part of the rollout, not an authorization to clear labels
-manually. Required checks and their producer bindings, strict freshness,
-current reviews and substantive objections, other holds, and configured soak
-remain mandatory. Neither a pin-looking diff nor this API authorizes a merge.
+an App-applied path hold immediately before the notice, every later removal and
+application the App's, and an application as the latest transition. Holds a
+person removed or added, ambiguous history, and timeline errors keep the hold.
+A head with a lift notice is refused. Lift and re-hold cycles are accepted
+only when the hive's own hold label is not `hold` (a `hive_id` is set);
+otherwise only the single hold is. Callers
+must supply their live write-back decision (a missing or refusing one leaves
+the hold intact) and call it only after pin-only qualification. The
+stage-label pass is the caller: it qualifies the current head with the lanes'
+own check and decides the write with `human_merge_path_release` (see above).
+This is not an authorization to clear labels manually. Required checks and
+their producer bindings, strict freshness, current reviews and substantive
+objections, other holds, and configured soak remain mandatory. Neither a
+pin-looking diff nor this API authorizes a merge.
 
 **Contributor PRs are held to the contributor-lane policy.** A merge request
 for a PR whose author is not the hive App, a configured trusted bot, or a

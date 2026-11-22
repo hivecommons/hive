@@ -119,6 +119,10 @@ type Client struct {
 	exemptLabels  []string
 	holdLabelsMu  sync.RWMutex
 	holdLabels    []string
+	// canonicalHoldLabel is the hive's own hold label
+	// (CanonicalHiveHoldLabel of hive_id; SetCanonicalHoldLabel), guarded by
+	// holdLabelsMu. "" until set, which the pin-only release reads as `hold`.
+	canonicalHoldLabel string
 	// neverClaimLabels is governor.claims.never_claim_labels as resolved by
 	// the config (nil = package default; see SetNeverClaimLabels).
 	neverClaimMu     sync.RWMutex

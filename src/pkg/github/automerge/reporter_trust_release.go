@@ -26,21 +26,29 @@ const reporterTrustReleaseMarker = "<!-- hive:reporter-trust-release -->"
 // cleared it. The second result is the gate's notice when one was read.
 // nil, nil when nothing about the hold could be read.
 func (c *Engine) holdProvenance(ctx context.Context, owner, repo string, number int, holdLabel string) (*stagelabels.HoldProvenance, *hgithub.ReporterTrustHoldNotice, error) {
-	prov, notice, err := c.readHoldProvenance(ctx, owner, repo, number, holdLabel)
-	if prov != nil && !strings.EqualFold(holdLabel, hgithub.LegacyHiveHoldLabel) {
-		prov.Label = holdLabel
-	}
+	prov, notice, _, err := c.holdProvenanceWithComments(ctx, owner, repo, number, holdLabel)
 	return prov, notice, err
 }
 
-func (c *Engine) readHoldProvenance(ctx context.Context, owner, repo string, number int, holdLabel string) (*stagelabels.HoldProvenance, *hgithub.ReporterTrustHoldNotice, error) {
+// holdProvenanceWithComments is holdProvenance that also returns the PR's
+// complete comment list it read (nil when it could not), so the stage pass's
+// human-merge-path lifts do not list the comments a second time.
+func (c *Engine) holdProvenanceWithComments(ctx context.Context, owner, repo string, number int, holdLabel string) (*stagelabels.HoldProvenance, *hgithub.ReporterTrustHoldNotice, []*gh.IssueComment, error) {
+	prov, notice, comments, err := c.readHoldProvenance(ctx, owner, repo, number, holdLabel)
+	if prov != nil && !strings.EqualFold(holdLabel, hgithub.LegacyHiveHoldLabel) {
+		prov.Label = holdLabel
+	}
+	return prov, notice, comments, err
+}
+
+func (c *Engine) readHoldProvenance(ctx context.Context, owner, repo string, number int, holdLabel string) (*stagelabels.HoldProvenance, *hgithub.ReporterTrustHoldNotice, []*gh.IssueComment, error) {
 	if c == nil || c.gh == nil || c.transport == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	appBot := strings.TrimSpace(c.transport.AppBotLogin())
 	comments, err := c.listAllIssueComments(ctx, owner, repo, number)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var notice *hgithub.ReporterTrustHoldNotice
 	if n, ok := hgithub.ReporterTrustNoticeFromComments(comments, appBot); ok {
@@ -48,30 +56,30 @@ func (c *Engine) readHoldProvenance(ctx context.Context, owner, repo string, num
 	}
 	latest, err := c.latestLabelEvent(ctx, owner, repo, number, holdLabel)
 	if err != nil {
-		return nil, notice, err
+		return nil, notice, comments, err
 	}
 	if latest != nil && latest.GetEvent() == "unlabeled" {
 		// The current label, if any, postdates what the events show; say
 		// nothing rather than attribute it to a stale actor.
-		return nil, notice, nil
+		return nil, notice, comments, nil
 	}
 	if latest == nil {
 		if notice == nil {
-			return nil, nil, nil
+			return nil, nil, comments, nil
 		}
 		prov := notice.Finding.HoldProvenance(notice.PostedAt)
-		return prov, notice, nil
+		return prov, notice, comments, nil
 	}
 	actor := strings.ToLower(strings.TrimSpace(hgithub.SafeGetLogin(latest.GetActor())))
 	since := latest.GetCreatedAt().Time
 	if actor == "" || !strings.EqualFold(actor, appBot) {
-		return &stagelabels.HoldProvenance{By: actor, Source: stagelabels.HoldSourceLabel, Since: since}, notice, nil
+		return &stagelabels.HoldProvenance{By: actor, Source: stagelabels.HoldSourceLabel, Since: since}, notice, comments, nil
 	}
 	// The hive set it. The reporter-trust notice explains it when it is the
 	// hive's reason on record (posted around the label, never before an
 	// intervening unlabel — latestLabelEvent already ruled that out).
 	if notice != nil && !notice.PostedAt.Before(since.Add(-reporterTrustNoticeSlack)) {
-		return notice.Finding.HoldProvenance(since), notice, nil
+		return notice.Finding.HoldProvenance(since), notice, comments, nil
 	}
 	// The human-merge-path refusal posts its notice once per PR and re-adds
 	// the label on later heads, so its notice explains the hold whenever the
@@ -79,9 +87,9 @@ func (c *Engine) readHoldProvenance(ctx context.Context, owner, repo string, num
 	// next pass" while the notice said a person must merge it).
 	if humanMergePathNoticed(comments, appBot) {
 		return &stagelabels.HoldProvenance{By: stagelabels.HoldByHive, Source: stagelabels.HoldSourceHumanMergePath,
-			Reason: "it changes " + stagelabels.HumanMergePathReason, Since: since}, notice, nil
+			Reason: "it changes " + stagelabels.HumanMergePathReason, Since: since}, notice, comments, nil
 	}
-	return &stagelabels.HoldProvenance{By: stagelabels.HoldByHive, Source: stagelabels.HoldSourceLabel, Since: since}, notice, nil
+	return &stagelabels.HoldProvenance{By: stagelabels.HoldByHive, Source: stagelabels.HoldSourceLabel, Since: since}, notice, comments, nil
 }
 
 // humanMergePathNoticed reports whether the App posted the human-merge-path

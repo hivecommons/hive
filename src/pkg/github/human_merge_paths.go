@@ -131,7 +131,7 @@ func HoldForHumanMergePaths(ctx context.Context, client *gh.Client, owner, repo 
 	}
 	body := HumanMergePathComment(matches)
 	if attributedHead != "" {
-		body += humanMergeHeadMarker(attributedHead) + "\n"
+		body += HumanMergeHeadMarker(attributedHead) + "\n"
 	}
 	if _, _, err := client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		return fmt.Errorf("posting human-merge-path comment: %w", err)
