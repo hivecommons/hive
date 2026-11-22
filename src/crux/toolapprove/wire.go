@@ -6,6 +6,7 @@ package toolapprove
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/hivecommons/hive/crux/config"
 )
@@ -46,5 +47,9 @@ func DeskFromConfig(tc config.ToolApprovalConfig, scanner SecurityScanner, logge
 		return nil, nil, err
 	}
 
-	return NewDesk(engine, scanner), NewInbox(tc.InboxPath), nil
+	inbox := NewInbox(tc.InboxPath)
+	if tc.PendingTTLSeconds > 0 {
+		inbox.SetPendingTTL(time.Duration(tc.PendingTTLSeconds) * time.Second)
+	}
+	return NewDesk(engine, scanner), inbox, nil
 }

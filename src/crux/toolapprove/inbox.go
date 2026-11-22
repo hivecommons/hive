@@ -68,8 +68,16 @@ const maxJournalEntries = 10000
 // realistic replay window, without growing the file unboundedly.
 const journalRetention = 30 * 24 * time.Hour
 
+// DefaultPendingTTL is how long a pending approval stays approvable. An
+// approval granted long after the request was made would release an action in
+// a context nobody remembers, so an entry older than this can never be approved.
+const DefaultPendingTTL = 900 * time.Second
+
 // Errors returned by the inbox.
 var (
+	// ErrExpired is returned when resolving a pending approval that outlived
+	// its TTL. The entry is dropped; the requester must ask again.
+	ErrExpired = errors.New("pending approval expired")
 	// ErrNotOperatorLane is returned by Enqueue for any verdict that is not
 	// operator-approve. This is the structural guard behind the L6 throughput
 	// contract: auto-approve can never enter the queue.
@@ -129,6 +137,45 @@ type Inbox struct {
 	state  inboxState
 	// now is injectable so tests can exercise retention pruning deterministically.
 	now func() time.Time
+	// ttl is how long a pending item stays approvable. Zero or negative uses
+	// DefaultPendingTTL.
+	ttl time.Duration
+}
+
+// SetPendingTTL sets how long pending items stay approvable. A value <= 0
+// restores DefaultPendingTTL.
+func (i *Inbox) SetPendingTTL(d time.Duration) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.ttl = d
+}
+
+func (i *Inbox) ttlLocked() time.Duration {
+	if i.ttl <= 0 {
+		return DefaultPendingTTL
+	}
+	return i.ttl
+}
+
+// expiredLocked reports whether p has outlived the TTL. Callers must hold i.mu.
+func (i *Inbox) expiredLocked(p PendingItem) bool {
+	return !i.now().UTC().Before(p.QueuedAt.Add(i.ttlLocked()))
+}
+
+// sweepExpiredLocked drops expired pending items and persists when any were
+// dropped. Callers must hold i.mu and have loaded state.
+func (i *Inbox) sweepExpiredLocked() {
+	kept := i.state.Pending[:0]
+	for _, p := range i.state.Pending {
+		if !i.expiredLocked(p) {
+			kept = append(kept, p)
+		}
+	}
+	if len(kept) == len(i.state.Pending) {
+		return
+	}
+	i.state.Pending = kept
+	_ = i.persistLocked()
 }
 
 // NewInbox returns an inbox backed by path. An empty path uses
@@ -251,6 +298,7 @@ func (i *Inbox) Enqueue(req Request, v Verdict) (string, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.ensureLoadedLocked()
+	i.sweepExpiredLocked()
 
 	id := DeriveIdempotencyKey(req)
 
@@ -302,6 +350,7 @@ func (i *Inbox) List() []PendingItem {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.ensureLoadedLocked()
+	i.sweepExpiredLocked()
 	return append([]PendingItem(nil), i.state.Pending...)
 }
 
@@ -310,6 +359,7 @@ func (i *Inbox) Count() int {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.ensureLoadedLocked()
+	i.sweepExpiredLocked()
 	return len(i.state.Pending)
 }
 
@@ -318,6 +368,7 @@ func (i *Inbox) Get(id string) (PendingItem, bool) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.ensureLoadedLocked()
+	i.sweepExpiredLocked()
 	for _, p := range i.state.Pending {
 		if p.ID == id {
 			return p, true
@@ -353,6 +404,12 @@ func (i *Inbox) Resolve(id string, approved bool, operator, rationale string) (R
 	}
 	if idx < 0 {
 		return ResolvedRecord{}, fmt.Errorf("%w: %s", ErrNotFound, id)
+	}
+	if i.expiredLocked(i.state.Pending[idx]) {
+		// Refuse, and drop the entry: an expired request is never approvable.
+		i.state.Pending = append(i.state.Pending[:idx], i.state.Pending[idx+1:]...)
+		_ = i.persistLocked()
+		return ResolvedRecord{}, fmt.Errorf("%w: %s", ErrExpired, id)
 	}
 
 	rec := ResolvedRecord{

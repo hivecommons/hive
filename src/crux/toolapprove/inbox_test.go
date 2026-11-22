@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // writeFileHelper seeds a file, creating parent directories as needed.
@@ -265,5 +266,42 @@ func TestDeskAutoApproveNeverReachesInboxViaResolve(t *testing.T) {
 	}
 	if _, err := inbox.Enqueue(req, v); err == nil {
 		t.Fatal("auto-approve verdict entered the inbox")
+	}
+}
+
+// TestInboxPendingExpiry pins the TTL: an entry older than the TTL is swept and
+// can never be approved.
+func TestInboxPendingExpiry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "inbox.json")
+	in := NewInbox(path)
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	in.now = func() time.Time { return clock }
+	in.SetPendingTTL(10 * time.Minute)
+
+	id, err := in.Enqueue(pendingRequest(1), operatorVerdict())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(9 * time.Minute)
+	if in.Count() != 1 {
+		t.Fatalf("fresh entry swept early")
+	}
+
+	clock = clock.Add(2 * time.Minute)
+	if _, err := in.Resolve(id, true, "op", ""); !errors.Is(err, ErrExpired) {
+		t.Fatalf("Resolve expired = %v, want ErrExpired", err)
+	}
+	if in.Count() != 0 {
+		t.Fatalf("expired entry not removed")
+	}
+	if _, ok := in.ResolvedRecordFor(id); ok {
+		t.Fatalf("expired entry must not be journaled as resolved")
+	}
+
+	// Sweep without resolve.
+	id2, _ := in.Enqueue(pendingRequest(2), operatorVerdict())
+	clock = clock.Add(time.Hour)
+	if _, ok := in.Get(id2); ok || in.Count() != 0 {
+		t.Fatalf("expired entry survived sweep")
 	}
 }

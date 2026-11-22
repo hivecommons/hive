@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -201,6 +202,10 @@ func (s *Server) handleApprovalResolve(w http.ResponseWriter, r *http.Request) {
 				"executed":    rec.Executed,
 				"resolved_at": rec.ResolvedAt,
 			})
+			return
+		}
+		if errors.Is(err, toolapprove.ErrExpired) {
+			jsonError(w, err.Error(), http.StatusGone)
 			return
 		}
 		jsonError(w, err.Error(), http.StatusNotFound)
