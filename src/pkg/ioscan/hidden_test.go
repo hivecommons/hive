@@ -152,6 +152,12 @@ func TestDataCarryingURLs(t *testing.T) {
 	if f := findingRules(ScanInput(mixed))[ruleImageExfil]; f.Severity != SeverityHigh {
 		t.Errorf("mixed images: want high, got %+v", f)
 	}
+	// Between images of equal severity, the first one is reported.
+	first := "https://d111.cloudfront.net/a.png?Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F"
+	twoMedium := "![a](" + first + ") ![b](https://d222.cloudfront.net/b.png?Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F)"
+	if f := findingRules(ScanInput(twoMedium))[ruleImageExfil]; f.Snippet != snippet(first) {
+		t.Errorf("equal severity: want first image reported, got %q", f.Snippet)
+	}
 	for _, text := range []string{
 		"![badge](https://img.shields.io/badge/a-b.svg?style=flat)",
 		"![x](https://example.com/a.png?v=2)",

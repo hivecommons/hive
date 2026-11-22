@@ -126,9 +126,6 @@ func scanExfilURLs(text string) []Finding {
 			continue
 		}
 		worst = &Finding{Kind: KindDangerous, Severity: sev, Rule: ruleImageExfil, Snippet: snippet(u)}
-		if sev >= SeverityHigh {
-			break
-		}
 	}
 	if worst != nil {
 		out = append(out, *worst)
@@ -272,7 +269,7 @@ type paramClass int
 
 const (
 	paramData    paramClass = iota // counted by the length checks as usual
-	paramSigning                   // a recognised signing value; long ones lower the finding to Medium
+	paramSigning                   // a recognised signing value; lowers the finding to Medium
 	paramExempt                    // a jwt on a GitHub-owned host; never counted
 )
 
@@ -356,7 +353,10 @@ func carriesData(raw string) (Severity, bool) {
 		case paramExempt:
 			continue
 		case paramSigning:
-			signed = signed || len(p.value) >= exfilValueMinLen
+			// A scheme is active only once its signature is present and
+			// well-formed, and every signature shape is long, so a signing
+			// value always lowers the finding to Medium.
+			signed = true
 			continue
 		}
 		if len(p.value) >= exfilValueMinLen || (exfilKeys[strings.ToLower(p.key)] && len(p.value) >= exfilKeyedMinLen) {
