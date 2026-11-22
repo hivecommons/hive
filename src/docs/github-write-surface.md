@@ -49,7 +49,7 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 | `close_issue` | `issue_request_watcher.go` kind `close` | `hive-open-issue close` | `agent_issue_closed` (`pr_closed` when the number is a PR) | yes | yes / issue or PR number |
 | `label` | `issue_request_watcher.go` kind `label` (`.../issue-requests`) | `hive-open-issue label` (also reached by `gh issue edit --add-label`/`--remove-label` and `gh pr edit --add-label`/`--remove-label`, which the `gh` wrapper translates into this relay) | `agent_label_applied` | yes | yes / issue or PR number |
 | `request_review` | `issue_request_watcher.go` kind `request_review` (`.../issue-requests`) | `hive-open-issue request-review` (also reached by `gh pr edit --add-reviewer`, which the `gh` wrapper translates into this relay) | `agent_review_requested` | yes | yes / PR number |
-| `edit_pr` | `issue_request_watcher.go` kind `edit_pr` (`.../issue-requests`), gated in `issue_request_edit_pr.go` | `hive-open-issue edit-pr` (also reached by `gh pr edit --title`/`--body`/`--body-file` from a lane under `write_surface.enforce`, which the `gh` wrapper translates into this relay) | `agent_pr_edited` (the detail names the fields edited) | yes | yes / PR number |
+| `edit_pr` | `issue_request_watcher.go` kind `edit_pr` (`.../issue-requests`), gated in `issue_request_edit_pr.go` | `hive-open-issue edit-pr` (also reached by `gh pr edit --title`/`--body`/`--body-file` from a lane under `write_surface.enforce`, which the `gh` wrapper translates into this relay) | `agent_pr_edited` (the detail names the fields edited and the written body's digest) | yes | yes / PR number |
 | `review` | `review_request_watcher.go` events `approve`, `request_changes`, `comment`, `record_verdict`, and thread replies (`.../review-requests`, plus sandbox review spools via `review_request_sandbox_spool.go`, #14986) | `hive-review` | `agent_pr_reviewed` | yes | yes / PR number |
 | `resolve_thread` | `review_request_watcher.go` event `resolve_thread` | `hive-review` | `agent_pr_reviewed` (`state=thread_resolved`) | yes | yes / PR number |
 | `merge_pr` | `merge_request_watcher.go` (`.../merge-requests`) | `hive-merge` | `pr_merged` (`path=relay`, via `MergePR`) | yes | yes / PR number |
@@ -114,8 +114,9 @@ opened the PR, and a lane under `write_surface.enforce` has no direct
 `PATCH /pulls/{n}`. A field left out is left as it is on GitHub; the body
 replaces the whole description. Its own gates, before any write:
 
-- the PR's author must be **one of this hive's accounts** (the App bot login
-  or `project.ai_author`). A person's PR, another bot's PR, and a PR whose
+- the PR's author must be **one of this hive's accounts** (the App bot login,
+  any additional configured bot login, the hive's own `GET /user` login, or
+  `project.ai_author`). A person's PR, another bot's PR, and a PR whose
   author cannot be read are refused: the hive never edits a human-authored PR
   body. A hive with neither identity configured refuses every edit, because
   it cannot tell its own PRs from anyone else's;
@@ -126,6 +127,11 @@ replaces the whole description. Its own gates, before any write:
 
 The body gets the outbound prose filter, the lane's mention sanitizing and,
 when the agent dropped it, the attribution trailer, like every relay body.
+A body rewrite never drops a `<!-- hive:carried-fence … -->` marker: that
+marker is what keeps an adopted contributor PR out of unattended merge, so
+the relay re-appends every marker the current body carries and the new body
+lacks. The `agent_pr_edited` audit entry names the fields edited and, for a
+body edit, `body_sha256` (a short digest of the body written, not its text).
 A refusal is a policy denial (`.denied`, a result file with the reason).
 
 ### `push_branch` publishes topic branches only

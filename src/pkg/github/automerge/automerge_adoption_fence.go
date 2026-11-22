@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
 // Adoption is not a merge. The contributor lane's diff fences (CI workflow /
@@ -41,8 +42,9 @@ import (
 
 // CarriedFenceMarkerPrefix opens the HTML comment the superseding App PR's
 // body carries when the adopted head tripped a contributor-lane diff fence.
-// The merge lanes read it back with carriedFenceReason.
-const CarriedFenceMarkerPrefix = "<!-- hive:carried-fence"
+// The merge lanes read it back with carriedFenceReason, and the edit_pr relay
+// re-adds it when a body rewrite drops it (hivecommons/hive#19401).
+const CarriedFenceMarkerPrefix = hgithub.CarriedFenceMarkerPrefix
 
 var carriedFencePattern = regexp.MustCompile(regexp.QuoteMeta(CarriedFenceMarkerPrefix) + `\s+reason=(\S+)`)
 
