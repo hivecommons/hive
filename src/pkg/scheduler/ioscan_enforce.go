@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -169,7 +170,18 @@ func issueSource(issue github.Issue) ioscan.Source {
 	return ioscan.Source{
 		Surface:       ioscan.SurfaceIssueBody,
 		TrustedAuthor: issue.Author != "" && !issue.AuthorIsHuman,
+		Author:        issue.Author,
+		Thread:        threadKey(issue.Repo, issue.Number),
 	}
+}
+
+// threadKey names an issue or PR for the source memory; empty when the repo
+// or number is unknown.
+func threadKey(repo string, number int) string {
+	if repo == "" || number <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s#%d", repo, number)
 }
 
 // prSource tags a PR's title/author/annotation for the policy. Trusted means
@@ -177,7 +189,12 @@ func issueSource(issue github.Issue) ioscan.Source {
 // or member; everyone else, including collaborators and contributors, is
 // untrusted.
 func prSource(pr github.PullRequest) ioscan.Source {
-	return ioscan.Source{Surface: ioscan.SurfacePRBody, TrustedAuthor: trustedPRAuthor(pr)}
+	return ioscan.Source{
+		Surface:       ioscan.SurfacePRBody,
+		TrustedAuthor: trustedPRAuthor(pr),
+		Author:        pr.Author,
+		Thread:        threadKey(pr.Repo, pr.Number),
+	}
 }
 
 func trustedPRAuthor(pr github.PullRequest) bool {
@@ -222,14 +239,24 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 		return text, ioscan.Verdict{}
 	}
 	sanitized, v := ioscan.EnforceInputFrom(text, src, s.ioscanPolicy())
+	// Read the flag before this text can set it: a source flagged by an
+	// earlier block takes the strict path below (#19440).
+	flagged := s.sourceFlagged(src)
 	if v.Blocked {
 		s.recordIoscanBlock(v)
+		s.flagSource(src, v)
 	}
 	if s.ioscanFailClosed() && v.HasCriticalInjection() {
 		s.recordIoscanFailClosed(v)
 	}
+	if v.Blocked {
+		return sanitized, v
+	}
 	classifier, thresholds, ok := s.classifierSettings()
-	if !ok || v.Blocked {
+	if !ok {
+		if flagged {
+			return s.withholdFlagged(src, "no_classifier")
+		}
 		return sanitized, v
 	}
 	// A classifier that could not be constructed never makes a model call, so
@@ -237,14 +264,23 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 	// are withheld and every later one passes on as "budget_exhausted",
 	// turning fail-closed into a render-order lottery.
 	if u, isUnavailable := classifier.(ioscan.UnavailableClassifier); isUnavailable {
+		if flagged && !s.classifierFailClosed() {
+			return s.withholdFlagged(src, "classifier_unavailable")
+		}
 		return s.classifierErrored(sanitized, v, u.Err)
 	}
-	if !s.consumeClassifierBudget() {
+	// A flagged source is always classified: an exhausted per-pass budget
+	// must not let the next variant through unscored.
+	if !s.consumeClassifierBudget() && !flagged {
 		s.recordClassifierSkip("budget_exhausted")
 		return sanitized, v
 	}
 	score, err := classifier.Score(context.Background(), sanitized)
 	var quotaErr *ioscan.DailyQuotaExhaustedError
+	if flagged && err != nil && (errors.As(err, &quotaErr) || !s.classifierFailClosed()) {
+		// Fail closed for a flagged source whatever fail_mode says.
+		return s.withholdFlagged(src, "classifier_error")
+	}
 	if errors.As(err, &quotaErr) {
 		// Same path as an exhausted per-pass budget: the text passes on in
 		// either fail mode.
@@ -268,16 +304,56 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 		cv := ioscan.SemanticVerdict(score, true)
 		s.recordIoscanFailClosed(cv)
 		s.recordClassifierAdvisory(score, action)
+		s.flagSource(src, cv)
 		return "", cv
 	case ioscan.ClassifierActionRedact:
 		cv := ioscan.SemanticVerdict(score, true)
 		s.recordIoscanBlock(cv)
+		s.flagSource(src, cv)
 		s.recordClassifierAdvisory(score, action)
 		return ioscan.SemanticRedactionMarker(score), cv
 	case ioscan.ClassifierActionWarn:
 		s.recordClassifierAdvisory(score, action)
 	}
 	return sanitized, v
+}
+
+// sourceMemoryStore returns the scheduler's source memory, built on first use
+// from ioscan.source_memory_days; nil when the memory is off.
+func (s *Scheduler) sourceMemoryStore() *ioscan.SourceMemory {
+	s.sourceMemoryOnce.Do(func() {
+		days := ioscan.DefaultSourceMemoryDays
+		if s.cfg != nil {
+			days = s.cfg.Ioscan.SourceMemoryDaysOrDefault()
+		}
+		s.sourceMemory = ioscan.NewSourceMemory(time.Duration(days) * 24 * time.Hour)
+	})
+	return s.sourceMemory
+}
+
+func (s *Scheduler) sourceFlagged(src ioscan.Source) bool {
+	return s.sourceMemoryStore().Flagged(src)
+}
+
+// flagSource remembers src's author and thread when v is a High or Critical
+// injection block, so slight edits of the withheld text are not scored fresh
+// until one variant passes (#19440).
+func (s *Scheduler) flagSource(src ioscan.Source, v ioscan.Verdict) {
+	if !ioscan.ShouldFlagSource(v) {
+		return
+	}
+	s.sourceMemoryStore().Flag(src)
+}
+
+// withholdFlagged withholds text from a flagged source that no classifier
+// answer cleared, and records why.
+func (s *Scheduler) withholdFlagged(src ioscan.Source, reason string) (string, ioscan.Verdict) {
+	cv := ioscan.SourceFlaggedVerdict(reason)
+	s.recordIoscanBlock(cv)
+	s.warnOnce("source-flagged:"+reason, "ioscan withheld text from a source flagged by an earlier injection block",
+		"reason", reason, "author", src.Author, "thread", src.Thread,
+		"fix", "configure the ioscan classifier, or set ioscan.source_memory_days: 0 to turn the source memory off")
+	return ioscan.SourceFlaggedRedactionMarker(reason), cv
 }
 
 const classifierFixHint = "check the ioscan classifier model/endpoint is served by the inference gateway (governor.trajectory/litellm, ioscan.classifier.model), or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open"
@@ -384,6 +460,7 @@ func (s *Scheduler) enforceThread(segments []string, src ioscan.Source) ([]strin
 	for _, v := range tv.Segments {
 		if v.Blocked {
 			s.recordIoscanBlock(v)
+			s.flagSource(src, v)
 		}
 		if s.ioscanFailClosed() && v.HasCriticalInjection() {
 			s.recordIoscanFailClosed(v)
@@ -404,6 +481,9 @@ func (s *Scheduler) enforceLabelsWithPolicy(labels []string, src ioscan.Source) 
 	if !s.ioscanEnabled() || len(labels) == 0 {
 		return labels, false
 	}
+	// Labels are applied by triagers, not by the issue or PR author, so they
+	// neither flag the source nor are held because it is flagged.
+	src.Author, src.Thread = "", ""
 	out := make([]string, len(labels))
 	failClosed := false
 	for i, l := range labels {

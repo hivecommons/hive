@@ -16,6 +16,16 @@ const (
 	// MaxBackstopPostsPerSweep bounds the heads one sweep hands to the
 	// poster across all repositories; the rest wait for the next sweep.
 	MaxBackstopPostsPerSweep = 25
+	// MaxEscalationHeads bounds the recent open heads one sweep reads, per
+	// repository, to decide whether a missing grant has started to stall merges.
+	MaxEscalationHeads = 3
+
+	// GrantMissingEscalationMsg is the WARN the sweep logs after Cutoff when
+	// the grant is still missing and the required `verify PR contents` context
+	// is absent on the recent heads of a repository. Its text carries the
+	// github_app_statuses_permission_missing self-report keyword
+	// (pkg/fleetreport/runtime.go), so the condition is filed, not just shown.
+	GrantMissingEscalationMsg = "pr-gate: verify PR contents is missing on recent heads: the GitHub App lacks the statuses: write permission"
 )
 
 // OpenPR is one open pull request as the backstop lists it.
@@ -36,6 +46,13 @@ type BackstopAPI interface {
 	HeadStatuses(ctx context.Context, repo, sha string) (map[string]Status, error)
 }
 
+// RequiredContextReader is optionally implemented by a BackstopAPI: it reports
+// whether sha carries a check run or a commit status named name. Without it
+// the sweep never escalates a missing grant.
+type RequiredContextReader interface {
+	HeadHasContext(ctx context.Context, repo, sha, name string) (bool, error)
+}
+
 // SweepResult counts one backstop sweep.
 type SweepResult struct {
 	Repos int
@@ -50,6 +67,9 @@ type SweepResult struct {
 	// Deferred heads were left for the next sweep by the per-sweep bound.
 	Deferred int
 	Errors   int
+	// Escalated repositories had the grant missing after Cutoff and no
+	// required gate context on their recent heads.
+	Escalated int
 }
 
 // Sweep posts the gate on every open, non-draft head of repos that does not
@@ -73,6 +93,9 @@ func (g *Gate) Sweep(ctx context.Context, b BackstopAPI, repos []string) SweepRe
 		g.RefreshGrant(ctx)
 		mode := g.mode(repo)
 		if mode == ModeOff {
+			if g.GrantMissing() && !g.Now().Before(Cutoff) && g.escalateMissingGrant(ctx, b, repo) {
+				res.Escalated++
+			}
 			continue
 		}
 		res.Repos++
@@ -130,6 +153,49 @@ func (g *Gate) Sweep(ctx context.Context, b BackstopAPI, repos []string) SweepRe
 		g.Log.Info("pr-gate: backstop sweep", "repos", res.Repos, "listed", res.Listed, "missed", res.Missed, "posted", res.Posted, "deferred", res.Deferred, "errors", res.Errors)
 	}
 	return res
+}
+
+// escalateMissingGrant reads the most recent open, non-draft heads of repo and
+// logs GrantMissingEscalationMsg when none of them carries the required
+// `verify PR contents` context: the workflow no longer supplies it (blocked
+// since Cutoff) and the hive cannot post it, so merges stall. A head that still
+// carries it (a repository whose Actions policy allows pull_request_target)
+// means nothing depends on the gate yet. It reports whether it escalated.
+func (g *Gate) escalateMissingGrant(ctx context.Context, b BackstopAPI, repo string) bool {
+	reader, ok := b.(RequiredContextReader)
+	if !ok {
+		return false
+	}
+	prs, err := b.ListOpenPRs(ctx, repo, MaxBackstopPRsPerRepo)
+	if err != nil {
+		g.Log.Warn("pr-gate: backstop could not list open PRs", "repo", repo, "error", err)
+		return false
+	}
+	var missing []string
+	for _, pr := range prs {
+		if len(missing) == MaxEscalationHeads {
+			break
+		}
+		if pr.Draft || !headSHARe.MatchString(pr.HeadSHA) {
+			continue
+		}
+		has, err := reader.HeadHasContext(ctx, repo, pr.HeadSHA, ContextVerify)
+		if err != nil {
+			g.Log.Warn("pr-gate: backstop could not read the head's checks", "repo", repo, "number", pr.Number, "head", pr.HeadSHA, "error", err)
+			return false
+		}
+		if has {
+			return false
+		}
+		missing = append(missing, pr.HeadSHA)
+	}
+	if len(missing) == 0 {
+		return false
+	}
+	h := g.HealthFor([]string{repo})
+	g.Log.Warn(GrantMissingEscalationMsg, "repo", repo, "installation", h.Installation, "granted", h.Granted,
+		"heads", strings.Join(missing, ","), "hint", MissingGrantHint)
+	return true
 }
 
 func sentKey(repo, sha, statusContext string) string {

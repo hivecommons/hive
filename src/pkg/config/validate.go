@@ -58,6 +58,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Ioscan.Classifier.ValidateCLI(); err != nil {
 		return err
 	}
+	if d := c.Ioscan.SourceMemoryDays; d != nil && *d < 0 {
+		return fmt.Errorf("ioscan.source_memory_days: %d is negative", *d)
+	}
 	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists
 	// precisely so a hive awaiting its real App can satisfy this check and boot
 	// into dashboard-only mode. Everywhere else, use HasApp().
