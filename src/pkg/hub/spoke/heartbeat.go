@@ -728,6 +728,13 @@ type HeartbeatPayload struct {
 	// multi-hive users resolve to the newest action anywhere. Non-secret:
 	// usernames and timestamps only. omitempty/optional for old spokes.
 	UserLastActions map[string]string `json:"user_last_actions,omitempty"`
+	// AuditChainSeq and AuditChainHead are the seq and row_hash of the newest
+	// row in this hive's hash-chained audit log (hivecommons/hive#19439). The
+	// hub keeps the copy a writer on the spoke's data volume cannot reach, so
+	// a chain that was truncated or rebuilt shows up as the seq going
+	// backwards. Zero/omitted when the spoke has no on-disk audit log.
+	AuditChainSeq  int64  `json:"audit_chain_seq,omitempty"`
+	AuditChainHead string `json:"audit_chain_head,omitempty"`
 	// StartedAt is the spoke process start time (RFC3339). The hub renders it
 	// as an uptime pill so a hive that is quietly crash-looping — 1/1 Running
 	// but restarted 35 times — is visible in My Hives instead of looking

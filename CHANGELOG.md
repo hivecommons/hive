@@ -11,6 +11,42 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-22 (v5.347.2)
+
+### Changed
+
+- Customers: a public forge profile value now replaces a hub-derived or admin-set organization or country, while values the person entered on the hub stay.
+
+## 2026-11-22 (v5.347.1)
+
+### Security
+
+- The audit log (`/data/audit.jsonl`) is now tamper-evident: every row carries `seq`, `prev_hash` and an RFC 8785 `row_hash`, `hive audit-verify` checks the chain across rotated files, and each heartbeat sends the chain head to the hub, which records an `audit_chain_regressed` timeline event when the head goes backwards (#19439).
+
+## 2026-11-22 (v5.347.0)
+
+### Added
+
+- ioscan: vendor pinned garak latent-injection corpus (#19465)
+
+## 2026-11-22 (v5.346.0)
+
+### Added
+
+- The PR gate now files a missing Commit statuses grant once it stalls merges ([#19038](https://github.com/hivecommons/hive/issues/19038)). From 2026-12-02, when the Hive App installation still lacks the grant and the required `verify PR contents` context is absent on a repository's recent open heads, the backstop sweep logs a warning that the fleet report raises as `github_app_statuses_permission_missing`, so the gap is filed instead of only shown on the banner. Nothing is posted, and a repository whose workflow still supplies the context raises nothing.
+
+## 2026-11-22 (v5.345.15)
+
+### Security
+
+- Pending tool approvals now expire ([#19446](https://github.com/hivecommons/hive/issues/19446)). Before this, an operator-lane item stayed in the approval inbox forever, so a grant clicked days later still released a request made in a context nobody remembered. Items now expire 24 hours after they are queued. `tool_approval.pending_ttl_s` changes that limit, and a negative value turns expiry off. An expired item drops out of the queue and the dashboard list. It can never be approved (`POST /api/approvals/resolve` answers `410 Gone`), and it is not journaled, so a fresh delivery of the same request queues again and gets a fresh decision. Each list row now carries `expires_at`.
+
+## 2026-11-22 (v5.345.14)
+
+### Security
+
+- ioscan now remembers sources that tripped the injection scanner ([#19440](https://github.com/hivecommons/hive/issues/19440)). After untrusted text is withheld for a high or critical injection finding, its author and its issue or pull request are flagged for `ioscan.source_memory_days` (default 30, `0` turns it off). Until then their text is always sent to the classifier, past the per-pass budget, and is withheld when the classifier cannot answer or none is installed, whatever `classifier.fail_mode` says, so an attacker can no longer edit a withheld comment slightly and retry until one variant is scored as safe.
+
 ## 2026-11-22 (v5.345.13)
 
 ### Security
