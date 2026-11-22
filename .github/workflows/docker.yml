@@ -628,6 +628,10 @@ jobs:
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [gate, build]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing
     steps:
       - name: Checkout tag publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -663,6 +667,19 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/hive /tmp/digests \
             "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
             v5 true candidate
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # Keyless signature of each pushed per-arch digest. cosign stores it as a
+      # separate sha256-<digest>.sig object, so the image manifest stays
+      # untouched (#3760). Verify: src/docs/releases.md.
+      - name: Sign pushed digests with cosign
+        run: |
+          set -euo pipefail
+          for f in /tmp/digests/*; do
+            cosign sign --yes "ghcr.io/${{ github.repository_owner }}/hive@sha256:$(basename "$f")"
+          done
 
       # ---- Cross-org mirror (kubestellar <-> hivecommons dual-publish) ----
       # Copy the tags just published above into the other org's GHCR
@@ -869,6 +886,10 @@ jobs:
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [gate, build-contributor]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing
     steps:
       - name: Checkout tag publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -904,6 +925,19 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/hive-contributor /tmp/contrib-digests \
             "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
             v5 true candidate
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # Keyless signature of each pushed per-arch digest. cosign stores it as a
+      # separate sha256-<digest>.sig object, so the image manifest stays
+      # untouched (#3760). Verify: src/docs/releases.md.
+      - name: Sign pushed digests with cosign
+        run: |
+          set -euo pipefail
+          for f in /tmp/contrib-digests/*; do
+            cosign sign --yes "ghcr.io/${{ github.repository_owner }}/hive-contributor@sha256:$(basename "$f")"
+          done
 
       # Cross-org mirror — same mechanics, same missing-secret asymmetry, and
       # same "one credential per registry host" ordering constraint as the
@@ -1096,6 +1130,10 @@ jobs:
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [gate, build-hub]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing
     steps:
       - name: Checkout tag publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1131,6 +1169,19 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/hive-hub /tmp/hub-digests \
             "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
             v5 true candidate
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # Keyless signature of each pushed per-arch digest. cosign stores it as a
+      # separate sha256-<digest>.sig object, so the image manifest stays
+      # untouched (#3760). Verify: src/docs/releases.md.
+      - name: Sign pushed digests with cosign
+        run: |
+          set -euo pipefail
+          for f in /tmp/hub-digests/*; do
+            cosign sign --yes "ghcr.io/${{ github.repository_owner }}/hive-hub@sha256:$(basename "$f")"
+          done
 
       # Cross-org mirror — same mechanics, same missing-secret asymmetry, and
       # same "one credential per registry host" ordering constraint as the
@@ -1325,6 +1376,10 @@ jobs:
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [gate, build-mx]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing
     steps:
       - name: Checkout tag publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1360,6 +1415,19 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/hive-mx /tmp/mx-digests \
             "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
             v5 true candidate
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # Keyless signature of each pushed per-arch digest. cosign stores it as a
+      # separate sha256-<digest>.sig object, so the image manifest stays
+      # untouched (#3760). Verify: src/docs/releases.md.
+      - name: Sign pushed digests with cosign
+        run: |
+          set -euo pipefail
+          for f in /tmp/mx-digests/*; do
+            cosign sign --yes "ghcr.io/${{ github.repository_owner }}/hive-mx@sha256:$(basename "$f")"
+          done
 
       # Cross-org mirror — same mechanics, same missing-secret asymmetry, and
       # same "one credential per registry host" ordering constraint as the

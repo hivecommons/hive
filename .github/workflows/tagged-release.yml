@@ -531,6 +531,7 @@ jobs:
       pull-requests: write
       statuses: write
       issues: write
+      id-token: write # keyless cosign signing
     env:
       VERSION: ${{ needs.decide.outputs.version }}
       SHA: ${{ needs.decide.outputs.sha }}
@@ -698,6 +699,18 @@ jobs:
             dst="ghcr.io/${CROSS_ORG}/${image}:v${VERSION}"
             echo "Mirroring ${dst} <- ${native}@${digest}"
             docker buildx imagetools create -t "$dst" "${native}@${digest}"
+          done
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: Sign release images with cosign
+        run: |
+          set -euo pipefail
+          for image in hive hive-contributor hive-hub; do
+            native="ghcr.io/${NATIVE_ORG}/${image}"
+            digest="$(docker buildx imagetools inspect "${native}:v${VERSION}" --format '{{.Manifest.Digest}}')"
+            cosign sign --yes "${native}@${digest}"
           done
 
       # NOT stable/candidate/edge. Channel promotion is deliberate, separate
