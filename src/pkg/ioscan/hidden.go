@@ -214,10 +214,15 @@ type signingScheme struct {
 	shapes map[string]*regexp.Regexp
 }
 
+// signedHdr is one header name a signed GET URL may list in SignedHeaders.
+const signedHdr = `(?:host|range|content-(?:type|md5|length|disposition|encoding)|x-(?:amz|goog)-(?:content-sha256|date|security-token|user-agent))`
+
 var (
-	isoDateRe      = regexp.MustCompile(`^\d{8}T\d{6}Z$`)
-	smallIntRe     = regexp.MustCompile(`^\d{1,10}$`)
-	signedHdrsRe   = regexp.MustCompile(`^[a-z0-9-]{1,32}(?:;[a-z0-9-]{1,32}){0,7}$`)
+	isoDateRe  = regexp.MustCompile(`^\d{8}T\d{6}Z$`)
+	smallIntRe = regexp.MustCompile(`^\d{1,10}$`)
+	// signedHdrsRe allows only header names that signed GET URLs actually
+	// sign, so the list itself cannot carry free text.
+	signedHdrsRe   = regexp.MustCompile(`^` + signedHdr + `(?:;` + signedHdr + `){0,7}$`)
 	azureDateRe    = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,7})?)?Z)?$`)
 	azureGUIDRe    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	signingSchemes = []signingScheme{
