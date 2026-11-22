@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-22 (v5.347.1)
+
+### Security
+
+- The audit log (`/data/audit.jsonl`) is now tamper-evident: every row carries `seq`, `prev_hash` and an RFC 8785 `row_hash`, `hive audit-verify` checks the chain across rotated files, and each heartbeat sends the chain head to the hub, which records an `audit_chain_regressed` timeline event when the head goes backwards (#19439).
+
 ## 2026-11-22 (v5.347.0)
 
 ### Added
