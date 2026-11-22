@@ -1,1 +1,0 @@
-- Repeated `integration observation not durable` webhook errors from a full integration journal are now logged at most once per event type per 10 minutes.
