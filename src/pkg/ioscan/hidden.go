@@ -24,7 +24,7 @@ const (
 var (
 	htmlCommentRe = regexp.MustCompile(`(?s)<!--(.*?)-->`)
 	detailsRe     = regexp.MustCompile(`(?is)<details\b[^>]*>(.*?)</details>`)
-	hiddenStyleRe = regexp.MustCompile(`(?is)<(\w+)\b[^>]*(?:\bhidden\b|style\s*=\s*"[^"]*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0)[^"]*")[^>]*>(.*?)</\1\s*>`)
+	hiddenStyleRe = regexp.MustCompile(`(?is)<(\w+)\b[^>]*(?:\bhidden\b|style\s*=\s*"[^"]*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0)[^"]*")[^>]*>`)
 	mdImageRe     = regexp.MustCompile(`!\[[^\]]*\]\(\s*<?([^)\s>]+)`)
 	imgTagRe      = regexp.MustCompile(`(?i)<img\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)`)
 	mdLinkRe      = regexp.MustCompile(`(?:^|[^!])\[[^\]]*\]\(\s*<?([^)\s>]+)`)
@@ -48,8 +48,13 @@ func hiddenRegions(text string) []string {
 			regions = append(regions, m[1])
 		}
 	}
-	for _, m := range hiddenStyleRe.FindAllStringSubmatch(text, -1) {
-		regions = append(regions, m[2])
+	// RE2 has no backreferences, so the matching close tag is found by hand.
+	for _, loc := range hiddenStyleRe.FindAllStringSubmatchIndex(text, -1) {
+		rest := text[loc[1]:]
+		closeTag := "</" + strings.ToLower(text[loc[2]:loc[3]])
+		if end := strings.Index(strings.ToLower(rest), closeTag); end >= 0 {
+			regions = append(regions, rest[:end])
+		}
 	}
 	return regions
 }
