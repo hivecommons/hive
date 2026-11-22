@@ -118,3 +118,36 @@ func TestDecodeHubMatchReplyLabels(t *testing.T) {
 		}
 	}
 }
+
+// A forge profile fill that runs after the hub import replaces a hub derived
+// or admin-set value, but never one the person entered or a manual one (#19088).
+func TestApplyAutoProfileHubYield(t *testing.T) {
+	x := newHubFixture(t)
+	a := mustAdd(t, x.store, "a", Identity{Kind: KindGitHub, Value: "yield-a"})
+	b := mustAdd(t, x.store, "b", Identity{Kind: KindGitHub, Value: "yield-b"})
+	x.hub.byLogin["yield-a"] = HubMatchEntry{Organization: "Derived Org", Country: "GB",
+		Rules: map[string]string{FieldOrganization: ProfileSourceHubEmailDomain, FieldCountry: ProfileSourceHubAdmin}}
+	x.hub.byLogin["yield-b"] = HubMatchEntry{Organization: "Person Org", Country: "GB",
+		Rules: map[string]string{FieldOrganization: ProfileSourceHubPerson, FieldCountry: ProfileSourceHubPerson}}
+	x.imp.Run(context.Background(), "")
+	vals := map[string]string{FieldOrganization: "Forge Org", FieldLocation: "Berlin, Germany"}
+	for _, id := range []string{a.ID, b.ID} {
+		if _, _, err := x.store.ApplyAutoProfile(id, vals); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := x.get(t, a.ID)
+	if f := p.Profile.Organization; f.Value != "Forge Org" || f.Source != SourceAuto {
+		t.Fatalf("forge org must replace a hub-derived one: %+v", f)
+	}
+	if f := p.Profile.Country; f.Value != "DE" || f.Source != SourceAuto {
+		t.Fatalf("forge country must replace a hub admin one: %+v", f)
+	}
+	p = x.get(t, b.ID)
+	if f := p.Profile.Organization; f.Value != "Person Org" || f.Source != SourceHub {
+		t.Fatalf("person-entered hub org must stand: %+v", f)
+	}
+	if f := p.Profile.Country; f.Value != "GB" || f.Source != SourceHub {
+		t.Fatalf("person-entered hub country must stand: %+v", f)
+	}
+}

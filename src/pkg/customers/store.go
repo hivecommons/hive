@@ -570,14 +570,19 @@ func (s *Store) ResetProfileField(id, field string) (Person, error) {
 // deriveAutoCountry keeps an automatic country in step with the location: it
 // fills or updates it from DeriveCountry, and drops one the location no longer
 // supports. A country a person set or cleared, or one from the hub, is never
-// touched. It reports
+// touched, except that a location-derived country replaces a hub derived or
+// admin-set one (forge public > hub derived, #19306). It reports
 // whether anything changed.
 func deriveAutoCountry(p *Person, now time.Time) bool {
 	c := &p.Profile.Country
-	if c.Source == SourceManual || c.Source == SourceHub {
+	if c.Source == SourceManual || (c.Source == SourceHub && !HubValueYieldsToForge(*c)) {
 		return false
 	}
 	code := DeriveCountry(p.Profile.Location.Value)
+	if c.Source == SourceHub && code == "" {
+		// A hub derived or admin-set country is not the location's to drop.
+		return false
+	}
 	if code == c.Value {
 		return false
 	}
@@ -623,7 +628,7 @@ func (s *Store) ApplyAutoProfile(id string, values map[string]string) (Person, b
 		for _, name := range ProfileFields {
 			f := p.Profile.Field(name)
 			v, err := cleanText(values[name], MaxProfileFieldLen, false)
-			if err != nil || v == "" || f.Source == SourceManual || f.Source == SourceHub || f.Value == v {
+			if err != nil || v == "" || f.Source == SourceManual || (f.Source == SourceHub && !HubValueYieldsToForge(*f)) || f.Value == v {
 				continue
 			}
 			*f = ProfileField{Value: v, Source: SourceAuto, Rule: ProfileSourceGitHub, At: s.now()}
