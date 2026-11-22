@@ -594,3 +594,9 @@ Beyond the credential-free sandbox above, Hive's isolation model is defense in d
 - Prefer the least-capable ACMM level that matches the project phase.
 - Keep privileged delegated roles (`ci-maintainer`, `sec-check`, `architect`) behind explicit grants.
 - Use the docs in this index for concrete setup: [ACMM policy matrix](acmm-policy-matrix.md), [Agent configuration](agent-configuration.md), and [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md).
+
+## Containment posture (#19457, #19458)
+
+Podman sandbox runs always pass `--cap-drop=all`, `--security-opt=no-new-privileges` and `--pids-limit` (default 4096, set `LaunchSpec.PidsLimit` to change it).
+
+Hive checks `/proc/self/status` (`NoNewPrivs`, `CapEff`, `Seccomp`) and the root filesystem at boot, and the sandbox entry point (the relay preflight) checks the same status fields inside the sandbox. Every gap is logged as a warning. Set `HIVE_REQUIRE_HARDENED=1` to make any gap fatal: hive refuses to start, and a sandboxed kick exits with status 78. A read-only root filesystem is only checked for hive itself, because `--read-only` is optional for sandboxes.
