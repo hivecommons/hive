@@ -1142,7 +1142,9 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      carrying that marker once it is green, with the carried
      `contributor-lane:*` reason, so it routes to 085 like a contributor PR
      with the same diff; `/hive approve` says so too. The hive's own
-     pushes to the superseding branch do not lift it. A second takeover
+     pushes to the superseding branch do not lift it, and the lanes read
+     every marker in the body, so an unrecognized marker placed ahead of
+     the real one does not lift it either. A second takeover
      no longer releases the adoption back to 072 over the fence.
    Only a verdict the fence could not reach still defers adoption, with no
    attempt recorded, so the next sweep re-reads: the fence reads the PR

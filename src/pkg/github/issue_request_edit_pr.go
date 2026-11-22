@@ -31,7 +31,8 @@ import (
 // refused too: its description is the record of what landed. A body rewrite
 // never drops a `<!-- hive:carried-fence … -->` marker the current body
 // carries: the relay re-appends any the new body lacks, because that marker is
-// what keeps an adopted contributor PR out of unattended merge.
+// what keeps an adopted contributor PR out of unattended merge. A rewrite that
+// adds a carried-fence marker the current body lacks is refused outright.
 
 // editPRShapeError returns why an edit_pr request can never succeed, or ""
 // when it is well formed. The body checks are the comment relay's: a body
@@ -86,6 +87,27 @@ func preserveCarriedFenceMarkers(currentBody, newBody string) string {
 		out += "\n\n" + m
 	}
 	return out + "\n"
+}
+
+// introducesCarriedFenceMarker reports whether newBody carries a carried-fence
+// marker that currentBody does not. Only the hive's adoption path writes these
+// markers, so a body edit that adds one (a decoy such as `reason=none`, or a
+// copy with a different reason or origin) is refused rather than written
+// (hivecommons/hive#19401 review). Any occurrence of the marker prefix counts,
+// including one that is not a well-formed comment: a newBody occurrence passes
+// only when it opens a whole marker identical to one of currentBody's.
+func introducesCarriedFenceMarker(currentBody, newBody string) bool {
+	existing := carriedFenceMarkerPattern.FindAllString(currentBody, -1)
+	whole := carriedFenceMarkerPattern.FindAllString(newBody, -1)
+	if strings.Count(newBody, CarriedFenceMarkerPrefix) != len(whole) {
+		return true
+	}
+	for _, m := range whole {
+		if !slices.Contains(existing, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // editPRBodyDigest is the short SHA-256 of a body written through edit_pr,

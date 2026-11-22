@@ -19,6 +19,8 @@ func TestCarriedFenceMarkerRoundTrip(t *testing.T) {
 		{name: "unknown reason ignored", body: CarriedFenceMarker("contributor-lane:no-claim", 7), want: ""},
 		{name: "deferral verdict is not a fence", body: CarriedFenceMarker(adoptionReasonHeadChanged, 7), want: ""},
 		{name: "empty body", body: "", want: ""},
+		{name: "decoy marker before the real one", body: "<!-- hive:carried-fence reason=none -->\nrefreshed\n\n" + CarriedFenceMarker(contributorLaneReasonTestsRemoved, 13212), want: contributorLaneReasonTestsRemoved},
+		{name: "deferral verdict before the real one", body: CarriedFenceMarker(adoptionReasonHeadChanged, 7) + "\n" + CarriedFenceMarker(contributorLaneReasonWorkflowPath, 7), want: contributorLaneReasonWorkflowPath},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := carriedFenceReason(tc.body); got != tc.want {

@@ -945,7 +945,14 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 			// (AppendTrailer is a no-op when the agent kept the PR's own).
 			// A carried-fence marker the current body holds is re-added
 			// when the rewrite dropped it: it is the only thing keeping an
-			// adopted contributor PR out of unattended merge.
+			// adopted contributor PR out of unattended merge. A rewrite that
+			// adds a marker the current body lacks is refused: only the
+			// adoption path writes them, and a decoy placed ahead of the
+			// real one must never reach the merge lanes.
+			if introducesCarriedFenceMarker(currentBody, body) {
+				c.denyIssueRequest(path, req, fmt.Sprintf("edit_pr refused: the new body of %s#%d carries a `%s` marker the current body does not; only the hive's adoption path writes these markers. Keep the existing markers verbatim and add none", req.Repo, req.Number, CarriedFenceMarkerPrefix), nowFn)
+				return
+			}
 			body = preserveCarriedFenceMarkers(currentBody, body)
 			bodyPtr = &body
 			edited = append(edited, "body")
