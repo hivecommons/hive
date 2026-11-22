@@ -202,8 +202,9 @@ func hasFillIn(params []queryParam) bool {
 //
 // Recognised signing values are not a free pass: anyone can create a bucket,
 // distribution or storage account on these hosts and read the query strings
-// of requests from its access logs, and a shape such as a CloudFront
-// signature holds about 129 bytes of arbitrary base64url. So a long signing
+// of requests from its access logs, and the accepted signature shapes hold up
+// to about 256 to 340 bytes of arbitrary data per image (a 512-hex GCS or a
+// 344-char base64url CloudFront signature). So a long signing
 // value lowers the image finding to Medium rather than dropping it. Output
 // blocks only at High, so an agent can post a signed screenshot link, while
 // untrusted input still blocks at the default Medium line.
