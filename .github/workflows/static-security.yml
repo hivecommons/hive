@@ -181,6 +181,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           # zizmor's online audits (impostor commits, known-vulnerable
           # actions, ref confusion) read the API with this read-only token.
           GH_TOKEN: ${{ github.token }}
@@ -188,7 +189,11 @@ jobs:
           set -euo pipefail
           # gh-aw's compiled *.lock.yml files are generated; their source is
           # what a reviewer edits.
-          mapfile -t changed < <(git diff --name-only --diff-filter=AMR "$BASE_SHA" HEAD -- \
+          # Three-dot: only what the PR head changed since its merge base, the
+          # same list as the PR's Files tab. A two-dot diff against the base
+          # also lists workflows the base changed after the branch last merged
+          # it, and blocks the PR on findings it did not introduce.
+          mapfile -t changed < <(git diff --name-only --diff-filter=AMR "$BASE_SHA...$HEAD_SHA" -- \
             '.github/workflows/*.yml' '.github/workflows/*.yaml' | grep -v '\.lock\.yml$' || true)
           if [ "${#changed[@]}" -eq 0 ]; then
             echo "No workflow file changed."
