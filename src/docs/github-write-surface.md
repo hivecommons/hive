@@ -518,5 +518,8 @@ of them may reduce what an L6 hive can do by default.
 - **Routing the `gh` wrapper's label and reviewer edits through the relays**
   has landed (hivecommons/hive#9773): the wrapper translates a pure
   `gh issue edit --add-label`/`--remove-label` or `gh pr edit --add-reviewer`
-  into a `label` / `request_review` relay request; edits the relays cannot
-  express still fall through to the direct path. See the inventory above.
+  into a `label` / `request_review` relay request, and, for a lane under
+  `write_surface.enforce`, a `gh pr edit --title`/`--body`/`--body-file` into
+  an `edit_pr` relay request (hivecommons/hive#19399). On an unenforced lane,
+  edits the relays cannot express still fall through to the direct path; on
+  an enforced lane that fall-through is refused. See the inventory above.
