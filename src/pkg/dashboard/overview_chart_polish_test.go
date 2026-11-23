@@ -34,7 +34,7 @@ func TestOverviewChartPolish(t *testing.T) {
 		// The Overview card legend: bold subtotal rows, indented parts, and
 		// dimmed zero bands (group rows never take the zero class).
 		".overview-chart-legend-group { font-weight: 700;",
-		".overview-chart-legend-part { padding-left: calc(var(--sp-1) + 20px); }",
+		".overview-chart-legend-part { padding-left: calc(var(--sp-1) + var(--sp-7)); }",
 		".overview-chart-legend-zero { opacity: 0.55; }",
 		"if (!head && !count && !s.keep) classes.push('overview-chart-legend-zero');",
 		"OVERVIEW_TRANSITION_DURATION_MS = { fast: 1000, normal: 2000, slow: 3600 }",

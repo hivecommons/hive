@@ -75,6 +75,19 @@
       --band-in-review: #facc15;
       --band-open: #a78bfa;
       --band-draft: #94a3b8;
+      /* Overview card bands the shared band palette above does not cover
+         (the approved card mock-up's palette). */
+      --card-band-unexplained: #e879f9;
+      --card-band-covered-by-pr: #cbd5e1;
+      --card-band-waiting-on-item: #94a3b8;
+      --card-band-human-hold: #7c8a9c;
+      --card-band-reporter-confirm: #5f6d7e;
+      --card-band-bot-rebase: #fca5a5;
+      --card-band-will-merge: #4ade80;
+      --card-band-not-work: #4b5a6b;
+      --card-band-draft: #3b4757;
+      --card-band-held: #c9a27a;
+      --card-band-waiting-group: #a8b3c2;
       --anim-chart-slow: 1200ms;
       --anim-band-grow: 900ms;
       --anim-kpi-count: 800ms;
@@ -180,6 +193,17 @@
       --band-in-review: #a16207;
       --band-open: #6d28d9;
       --band-draft: #475569;
+      --card-band-unexplained: #c026d3;
+      --card-band-covered-by-pr: #334155;
+      --card-band-waiting-on-item: #475569;
+      --card-band-human-hold: #64748b;
+      --card-band-reporter-confirm: #94a3b8;
+      --card-band-bot-rebase: #ef4444;
+      --card-band-will-merge: var(--band-merge-eligible);
+      --card-band-not-work: #a8a29e;
+      --card-band-draft: #d6d3d1;
+      --card-band-held: #a16207;
+      --card-band-waiting-group: #57534e;
       background: var(--bg); color: var(--text);
     }
     body.light-mode .connection { display: none; }
