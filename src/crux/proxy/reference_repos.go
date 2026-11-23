@@ -332,7 +332,7 @@ func referenceAPIBase(req *http.Request) string {
 type referenceLookupFunc func(url, token string) ([]byte, error)
 
 func defaultReferenceLookup(url, token string) ([]byte, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: egressCheckRedirect()}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
