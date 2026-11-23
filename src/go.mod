@@ -19,7 +19,7 @@ require (
 	github.com/google/cel-go v0.31.0
 	github.com/google/go-github/v72 v72.0.0
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
+	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4
 	github.com/graph-gophers/graphql-go v1.11.1
 	github.com/hivecommons/colony v0.2.0
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
