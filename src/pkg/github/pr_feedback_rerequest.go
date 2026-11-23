@@ -92,7 +92,9 @@ type AddressedPoint struct {
 // when a hive comment's feedback-handled marker names it, or, for an inline
 // comment, its thread is resolved or the hive replied in it afterwards. At
 // least one point must be named by a feedback-handled marker, so a review
-// nobody answered never qualifies. head is the PR's current head; the
+// nobody answered never qualifies. isHive must accept only the hive's own
+// identity, never a body-based test (FetchPRFeedback passes
+// isHiveIdentityComment). head is the PR's current head; the
 // result's Rerequested says whether the sweep already acted on it.
 func AddressedChangeRequests(raw rawPRConversation, head string, isHuman func(*rawPRCommentAuthor) bool, isHive func(*rawPRCommentAuthor, string) bool) []AddressedChangeRequest {
 	head = strings.ToLower(strings.TrimSpace(head))
@@ -238,6 +240,16 @@ func rerequestExcerpt(body string) string {
 		line = strings.TrimSpace(string(r[:rerequestNoteExcerptMax-1])) + "…"
 	}
 	return line
+}
+
+// isHiveIdentityComment reports whether a comment was written by the hive's
+// own identity (the App bot or the AI author). Unlike isAgentCommentAuthor
+// it ignores the attribution trailer: the trailer prefix ("-- hive:") also
+// occurs inside every hidden hive marker, so anyone who pastes a
+// feedback-handled marker would otherwise pass as the hive and could
+// trigger a re-request.
+func (c *Client) isHiveIdentityComment(author *rawPRCommentAuthor, _ string) bool {
+	return c.isHiveAuthor(author)
 }
 
 // ReviewRerequestedMarker renders the once-per-(reviewer, head) marker.

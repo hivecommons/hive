@@ -199,7 +199,7 @@ func (c *Client) FetchPRFeedback(ctx context.Context, repo string, number int) (
 		HiveReplies:             HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
 		AgentReplies:            HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
 		RuleCandidates:          RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
-		AddressedChangeRequests: AddressedChangeRequests(raw.rawPRConversation, raw.HeadRefOid, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor),
+		AddressedChangeRequests: AddressedChangeRequests(raw.rawPRConversation, raw.HeadRefOid, c.isHumanFeedbackAuthor, c.isHiveIdentityComment),
 	}, nil
 }
 

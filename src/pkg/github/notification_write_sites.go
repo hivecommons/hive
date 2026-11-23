@@ -116,6 +116,8 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	// required_review: a review submission or request a merge depends on.
 	"github.(*Client).QueuePRAutoMergeWithNoteResultAtHead": {Class: NotificationClassRequiredReview},
 	"github.(*Client).handleOneReviewRequest":               {Class: NotificationClassRequiredReview},
+	"github.(*Client).RerequestReview":                      {Class: NotificationClassRequiredReview},
+	"main.reviewFeedbackSweep.rerequestAddressedReviews":    {Class: NotificationClassRequiredReview},
 
 	// protocol_command: machine-consumed comments.
 	"dashboard.postClaimComment":                         {Class: NotificationClassProtocolCommand},

@@ -11,7 +11,7 @@ type rawThreadComments = struct {
 }
 
 func addressed(c *Client, raw rawPRConversation, head string) []AddressedChangeRequest {
-	return AddressedChangeRequests(raw, head, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor)
+	return AddressedChangeRequests(raw, head, c.isHumanFeedbackAuthor, c.isHiveIdentityComment)
 }
 
 func reviewerNames(acrs []AddressedChangeRequest) string {
