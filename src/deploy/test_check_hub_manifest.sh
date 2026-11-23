@@ -52,6 +52,37 @@ expect "literal NPS pull secret fails" 1 "$TMP/lit1.yaml" "HIVE_NPS_RELAY_PULL_S
 sed 's/valueFrom.*/value: x/' "$TMP/good.yaml" > "$TMP/lit2.yaml"
 expect "literal OAuth secret fails" 1 "$TMP/lit2.yaml" "HIVE_HUB_OAUTH_CLIENT_SECRET"
 
+sed 's/secretKeyRef: {name: hive-hub-secrets, key: oauth}/configMapKeyRef: {name: cm, key: oauth}/' "$TMP/good.yaml" > "$TMP/cm.yaml"
+expect "configMapKeyRef for a secret fails" 1 "$TMP/cm.yaml" "without valueFrom.secretKeyRef"
+
+mk "$TMP/nosrc.yaml" "" "        - name: HIVE_NPS_RELAY_PULL_SECRET"
+expect "secret env with no source fails" 1 "$TMP/nosrc.yaml" "HIVE_NPS_RELAY_PULL_SECRET"
+
+cat > "$TMP/init.yaml" <<'YAML'
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: hive-hub}
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: init
+        env: [{name: HIVE_HUB_OAUTH_CLIENT_SECRET, value: x}]
+      containers: [{name: hub}]
+YAML
+expect "literal secret in initContainer fails" 1 "$TMP/init.yaml" "'init'"
+
+cat > "$TMP/list.yaml" <<'YAML'
+apiVersion: v1
+kind: List
+items:
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata: {name: hive-hub}
+  spec: {template: {spec: {containers: [{name: hub}, {name: hive-hub}]}}}
+YAML
+expect "stray container inside a List fails" 1 "$TMP/list.yaml" "unexpected container"
+
 cat > "$TMP/other.yaml" <<'YAML'
 apiVersion: apps/v1
 kind: Deployment
