@@ -424,6 +424,9 @@
       if (kind === 'gitlab' && base) {
         return { kind, icon: '🦊', name: 'GitLab', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/-/issues', changesPath: '/-/merge_requests', changePath: '/-/merge_requests' };
       }
+      if (kind === 'forgejo' && base) {
+        return { kind, icon: '🍵', name: 'Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
+      }
       if (kind === 'gitea' && base) {
         return { kind, icon: '🍵', name: 'Gitea/Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
       }

@@ -13,7 +13,7 @@ import (
 )
 
 // featuresPlatformBody is the part of the Features PUT that covers the small
-// platform blocks data.*, deployment.*, evidence.*, gitea.*, gitlab.*, mint.*,
+// platform blocks data.*, deployment.*, evidence.*, forgejo.*, gitea.*, gitlab.*, mint.*,
 // supersession_sweep.*, compliance.posture_checks.*, planning.*,
 // swarm.* and tool_approval.inbox_path. Every field is a pointer so an absent
 // key leaves the config untouched.
@@ -39,10 +39,12 @@ type featuresPlatformBody struct {
 	BenchmarksPublish     *bool `json:"benchmarksPublish"`
 	BenchmarksRepoConsent *bool `json:"benchmarksRepoConsent"`
 
-	GiteaURL       *string `json:"giteaUrl"`
-	GiteaTokenEnv  *string `json:"giteaTokenEnv"`
-	GitLabURL      *string `json:"gitlabUrl"`
-	GitLabTokenEnv *string `json:"gitlabTokenEnv"`
+	ForgejoURL      *string `json:"forgejoUrl"`
+	ForgejoTokenEnv *string `json:"forgejoTokenEnv"`
+	GiteaURL        *string `json:"giteaUrl"`
+	GiteaTokenEnv   *string `json:"giteaTokenEnv"`
+	GitLabURL       *string `json:"gitlabUrl"`
+	GitLabTokenEnv  *string `json:"gitlabTokenEnv"`
 
 	MintMaxTTLSeconds *int `json:"mintMaxTtlSeconds"`
 
@@ -191,6 +193,7 @@ func (b featuresPlatformBody) prepare() (func(*config.Config), error) {
 		name string
 		dst  func(*config.Config) *string
 	}{
+		{b.ForgejoURL, "forgejo forgejo_url", func(c *config.Config) *string { return &c.Forgejo.URL }},
 		{b.GiteaURL, "gitea gitea_url", func(c *config.Config) *string { return &c.Gitea.URL }},
 		{b.GitLabURL, "gitlab gitlab_url", func(c *config.Config) *string { return &c.GitLab.URL }},
 	} {
@@ -209,6 +212,7 @@ func (b featuresPlatformBody) prepare() (func(*config.Config), error) {
 		name string
 		dst  func(*config.Config) *string
 	}{
+		{b.ForgejoTokenEnv, "forgejo token_env", func(c *config.Config) *string { return &c.Forgejo.TokenEnv }},
 		{b.GiteaTokenEnv, "gitea token_env", func(c *config.Config) *string { return &c.Gitea.TokenEnv }},
 		{b.GitLabTokenEnv, "gitlab token_env", func(c *config.Config) *string { return &c.GitLab.TokenEnv }},
 	} {
@@ -401,10 +405,12 @@ func featuresPlatformResponse(cfg *config.Config) map[string]interface{} {
 		"evidenceEnabled":        cfg.Evidence.IsEnabled(),
 		"evidenceSigningKeyFile": cfg.Evidence.SigningKeyPath(),
 
-		"giteaUrl":       cfg.Gitea.URL,
-		"giteaTokenEnv":  cfg.Gitea.TokenEnv,
-		"gitlabUrl":      cfg.GitLab.URL,
-		"gitlabTokenEnv": cfg.GitLab.TokenEnv,
+		"forgejoUrl":      cfg.Forgejo.URL,
+		"forgejoTokenEnv": cfg.Forgejo.TokenEnv,
+		"giteaUrl":        cfg.Gitea.URL,
+		"giteaTokenEnv":   cfg.Gitea.TokenEnv,
+		"gitlabUrl":       cfg.GitLab.URL,
+		"gitlabTokenEnv":  cfg.GitLab.TokenEnv,
 
 		"mintKeyPath":       cfg.Mint.KeyPath,
 		"mintMaxTtlSeconds": cfg.Mint.MaxTTLSeconds,
@@ -439,6 +445,7 @@ func featuresPlatformResponse(cfg *config.Config) map[string]interface{} {
 			"writebackBackfill":            false,
 			"writebackKindMatrix":          writeback.Config{}.EffectiveKinds(),
 			"dataSessionRetentionDays":     config.DefaultSessionRetentionDays,
+			"forgejoTokenEnv":              config.DefaultForgejoTokenEnv,
 			"giteaTokenEnv":                config.DefaultGiteaTokenEnv,
 			"gitlabUrl":                    config.DefaultGitLabURL,
 			"gitlabTokenEnv":               config.DefaultGitLabTokenEnv,
