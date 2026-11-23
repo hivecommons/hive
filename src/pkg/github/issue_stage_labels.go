@@ -6,14 +6,17 @@ package github
 // decided about each one — no extra GitHub reads:
 //
 //   - still in the actionable set            → stage/010-actionable, or
-//     stage/015-triage-needed when the #9665 reporter gate is holding it:
-//     it carries the reporter-trust awaiting label (needs-triage) or sits
-//     in the gate's reporter_triage bucket (issueUntriaged). Issues the
-//     hive or an agent files, and issues from trusted humans, are triaged
-//     by construction and stay 010 — 015 is never derived from who filed
-//     it. 015 is a tracking state, not a gate: the gate withholds the
-//     issue; the scanner claims from 015 exactly as from 010 once it lets
-//     go.
+//     stage/015-triage-needed when it awaits a person's first look: an
+//     untrusted author's issue carrying the reporter-trust awaiting label
+//     (needs-triage), or one in the #9665 gate's reporter_triage bucket
+//     (issueUntriaged). Owner decision (hivecommons/hive#13298): triage-
+//     needed is not a stage for hive agents and not for trusted humans, so
+//     issues this hive's own accounts file, and issues from authors the
+//     reporter-trust predicate trusts, stay 010 even when a triage bot (Prow's needs-triage) labels
+//     every new issue (issue_author_trust.go). An unknown author is not
+//     trusted: the label holds its issue at 015. 015 is a tracking state,
+//     not a gate: the gate withholds the issue; the scanner claims from
+//     015 exactly as from 010 once it lets go.
 //   - withheld by a live issue claim or by the in-progress sweep (a live
 //     kind=agent start mark)                 → stage/020-claimed, or
 //     stage/030-pr-in-progress only when the claim carries PR evidence
@@ -207,8 +210,14 @@ type IssueStageInput struct {
 	// AuthorKind is who filed the issue, as the enumeration judged it
 	// (issueAuthorKind: Human, Hive, or Unknown when no login was seen).
 	// Carried through to the stage engine's AuthorFacts; the 010/015
-	// derivation does not read it.
+	// derivation reads AuthorTrusted, not this.
 	AuthorKind authorkind.Kind
+	// AuthorTrusted is the enumeration's Issue.AuthorTrusted
+	// (issueAuthorTrusted): filed by one of this hive's own accounts, or by
+	// an author the reporter-trust predicate trusts. A trusted author's issue carrying the
+	// reporter-trust awaiting label derives 010, not 015 (issueUntriaged).
+	// False for an unknown author.
+	AuthorTrusted bool
 	// UpdatedAt and Assignees are the enumeration's Issue fields of the same
 	// name (zero for a held item): the claim read keys its comment cache on
 	// UpdatedAt and infers an assignee claim from Assignees.
@@ -217,12 +226,16 @@ type IssueStageInput struct {
 }
 
 // issueUntriaged reports whether an actionable issue derives
-// 015-triage-needed instead of 010: it carries the reporter-trust awaiting
-// label or sits in the gate's reporter_triage bucket. Who filed the issue
-// is deliberately not consulted — hive-, agent- and trusted-human-filed
-// issues are 010 (owner decision, hivecommons/hive#13287 follow-up).
+// 015-triage-needed instead of 010: an untrusted author's issue carries the
+// reporter-trust awaiting label, or the issue sits in the gate's
+// reporter_triage bucket (only untrusted reporters land there). The label
+// counts only when the author is not trusted: issues this hive's own
+// accounts file and issues from trusted reporters are 010 (owner decision,
+// hivecommons/hive#13298), even when a triage bot such as Prow puts the
+// label on every new issue. An unknown author is not trusted, so the label
+// still holds that issue.
 func issueUntriaged(in IssueStageInput) (untriaged bool, why string) {
-	if issueHasLabel(in.Labels, triageAwaitingLabel) {
+	if !in.AuthorTrusted && issueHasLabel(in.Labels, triageAwaitingLabel) {
 		return true, "carries " + triageAwaitingLabel
 	}
 	if in.Bucket == workBucketReporterTriage {
@@ -485,7 +498,7 @@ func forgeIssueLabels(labels []string, claim *IssueClaimContext) []string {
 
 // issueStageInputFrom is the stage input for one actionable issue.
 func issueStageInputFrom(issue Issue) IssueStageInput {
-	return IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), Title: issue.Title, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), SpekUmbrella: spekmarker.IsUmbrella(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees}
+	return IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), Title: issue.Title, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), AuthorTrusted: issue.AuthorTrusted, DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), SpekUmbrella: spekmarker.IsUmbrella(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees}
 }
 
 // IssueStageInputs flattens an enumeration result into one row per open
@@ -519,7 +532,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 			if row.Number <= 0 {
 				continue
 			}
-			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: forgeIssueLabels(row.Labels, row.ClaimContext), Title: row.Title, Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children, UpdatedAt: row.UpdatedAt, Assignees: row.Assignees})
+			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: forgeIssueLabels(row.Labels, row.ClaimContext), Title: row.Title, Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children, AuthorTrusted: row.AuthorTrusted, UpdatedAt: row.UpdatedAt, Assignees: row.Assignees})
 		}
 	}
 	return out

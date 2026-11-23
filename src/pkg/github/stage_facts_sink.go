@@ -194,6 +194,11 @@ func (c *Client) enrichStageFacts(ctx context.Context, f stageengine.Facts) (sta
 		}
 	}
 	if f.Issue != nil {
+		// Who filed it, from the same fresh read: an out-of-cycle fact
+		// carries no author, and a trusted author's issue a triage bot
+		// labelled must re-derive 010, not 015, exactly as the sweep does
+		// (issueAuthorTrusted, hivecommons/hive#13298).
+		f.Issue.AuthorTrusted = c.issueAuthorTrusted(issue)
 		resolveIssueLabelFacts(issueInputFrom(f), &f)
 		f.Issue.Stalled = issueHasLabel(f.Labels, stagelabels.StalledLabel)
 	}
@@ -201,8 +206,8 @@ func (c *Client) enrichStageFacts(ctx context.Context, f stageengine.Facts) (sta
 		f.Author.Login = issue.GetUser().GetLogin()
 	}
 	// An out-of-cycle fact (claim release, un-park) carries no author
-	// kind; without it a hive-filed issue would re-derive 010 instead of
-	// 015-triage-needed until the next sweep.
+	// kind; resolve it from the fresh read so the Facts the reconciler
+	// books name who filed the issue as the sweep's do.
 	if f.Author.Kind == authorkind.Unknown && f.Issue != nil {
 		switch {
 		case c.isHumanAuthor(issue.GetUser()):

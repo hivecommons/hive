@@ -49,7 +49,7 @@ func (s *Server) ConvergenceKickProjectionDetailed(issues []ghpkg.Issue) (admitt
 	coverage = hub.admissionCoverageFromSweep(sweep)
 	for _, issue := range issues {
 		candidate := kickAdmissionCandidate(issue)
-		if label, ok := s.contributeSkipLabel(candidate.labels); ok {
+		if label, ok := s.contributeSkipLabel(candidate.labels, candidate.authorTrusted); ok {
 			decision := labelSkippedAdmissionDecision(label)
 			if strings.EqualFold(strings.TrimSpace(label), blockedWorkflowLabel) {
 				decision = blockedWorkflowAdmissionDecision(label)
@@ -96,8 +96,9 @@ func kickAdmissionCandidate(issue ghpkg.Issue) contributorAdmissionCandidate {
 			Number:     issue.Number,
 			URL:        issue.URL,
 		},
-		labels:    issue.Labels,
-		dependsOn: issue.DependsOn,
-		createdAt: issue.CreatedAt,
+		labels:        issue.Labels,
+		dependsOn:     issue.DependsOn,
+		createdAt:     issue.CreatedAt,
+		authorTrusted: issue.AuthorTrusted,
 	}
 }

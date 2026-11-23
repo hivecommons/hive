@@ -969,6 +969,9 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				issueClaim: issueClaim,
 				claimed:    claimed,
 				createdAt:  issueCreatedAtFromMap(issue),
+				// author_trusted rides on the enumerated envelope
+				// (github.Issue.AuthorTrusted); absent reads as untrusted.
+				authorTrusted: issueAuthorTrustedFromMap(issue),
 			})
 			// An unchanged refusal was already logged on an earlier pass.
 			if !decision.admitted && !h.admissionSkipChanged(itemKey, decision) {
@@ -1096,7 +1099,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			// first, then any full-repo override.
 			if h.server.deps != nil && h.server.deps.Config != nil {
 				hub := h.server.deps.Config.Hub
-				if !hub.EvaluateContributeFilters(repo.Full, title, author, labels).Admitted() {
+				if !hub.EvaluateContributeFiltersFor(repo.Full, title, author, labels, issueAuthorTrustedFromMap(issue)).Admitted() {
 					return
 				}
 				// #2357: optionally skip issues already assigned to someone else.

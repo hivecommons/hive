@@ -313,10 +313,11 @@ func unclaimedIssueStage(is *IssueFacts, reason string) (stagelabels.Stage, stri
 }
 
 // actionableIssueStage is 010-actionable or, for an untriaged issue, 015.
-// Who filed the issue is deliberately not consulted — hive-, agent- and
-// trusted-human-filed issues are 010 (owner decision, hivecommons/hive#13287
-// follow-up); the enumeration's IssueFacts.TriageAwaiting names why the
-// reporter-trust gate holds it when it does.
+// The deriver reads only the enumeration's IssueFacts.TriageAwaiting, which
+// names why the issue awaits a person's first look when it does; issues
+// the hive's own accounts file and issues from trusted reporters are 010
+// even when a triage bot labelled them (owner decision, hivecommons/hive#13298): pkg/github
+// resolves TriageAwaiting with IssueFacts.AuthorTrusted.
 func actionableIssueStage(is *IssueFacts, reason string) (stagelabels.Stage, string) {
 	if is.TriageAwaiting != "" {
 		return stagelabels.TriageNeeded, "triage needed: " + is.TriageAwaiting

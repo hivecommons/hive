@@ -64,9 +64,13 @@ type issueStageGoldenInput struct {
 	// CoveringPRStage is what prStage returns for any (repo, number);
 	// CoveringPRLookup records the (repo, number) it was asked for.
 	CoveringPRStage string `json:"covering_pr_stage,omitempty"`
-	// AuthorKind mirrors IssueStageInput.AuthorKind ("" = Unknown, read
-	// as human-filed) for the 015-triage-needed derivation.
+	// AuthorKind mirrors IssueStageInput.AuthorKind ("" = Unknown). The
+	// 015 derivation does not read it; it is kept to show who filed it.
 	AuthorKind string `json:"author_kind,omitempty"`
+	// AuthorTrusted mirrors IssueStageInput.AuthorTrusted: a trusted
+	// author's issue carrying the reporter-trust awaiting label derives 010,
+	// not 015 (hivecommons/hive#13298).
+	AuthorTrusted bool `json:"author_trusted,omitempty"`
 }
 
 type issueStageGoldenWant struct {
@@ -85,7 +89,7 @@ type issueStageGoldenCase struct {
 }
 
 func (in issueStageGoldenInput) toInput() IssueStageInput {
-	out := IssueStageInput{Repo: in.Repo, Number: in.Number, Labels: in.Labels, Title: in.Title, Bucket: in.Bucket, Reason: in.Reason, ClaimKind: in.ClaimKind, ClaimedBy: in.ClaimedBy, PRStarted: in.PRStarted, AuthorKind: authorkind.Kind(in.AuthorKind)}
+	out := IssueStageInput{Repo: in.Repo, Number: in.Number, Labels: in.Labels, Title: in.Title, Bucket: in.Bucket, Reason: in.Reason, ClaimKind: in.ClaimKind, ClaimedBy: in.ClaimedBy, PRStarted: in.PRStarted, AuthorKind: authorkind.Kind(in.AuthorKind), AuthorTrusted: in.AuthorTrusted}
 	if in.ClaimPresent {
 		out.Claim = &IssueClaimContext{PRNumber: in.ClaimPR, PRRepo: in.ClaimPRRepo}
 	}
@@ -367,8 +371,11 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 		add("regressions.json", c)
 	}
 
-	// 015-triage-needed: every author kind × triage-evidence label set ×
-	// the buckets that reach the actionable rule (hivecommons/hive#13268).
+	// 015-triage-needed: every author kind × author trust × triage-evidence
+	// label set × the buckets that reach the actionable rule
+	// (hivecommons/hive#13268). Trust only exists for a known author: an
+	// unknown one is never trusted (issueAuthorTrusted), and a trusted
+	// author's needs-triage no longer derives 015 (hivecommons/hive#13298).
 	triageLabels := map[string][]string{
 		"nolabel":               nil,
 		"needs-triage":          {triageAwaitingLabel},
@@ -385,24 +392,32 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 	}
 	sort.Strings(triageLabelNames)
 	for _, kind := range []authorkind.Kind{authorkind.Unknown, authorkind.Human, authorkind.Hive, authorkind.Clanker} {
-		kname := string(kind)
-		if kname == "" {
-			kname = "unknown"
-		}
-		for _, bucket := range []string{"", workBucketReporterTriage, workBucketClaimed} {
-			bname := bucket
-			if bname == "" {
-				bname = "actionable"
+		for _, trusted := range []bool{false, true} {
+			if trusted && kind == authorkind.Unknown {
+				continue
 			}
-			ck := ""
-			if bucket == workBucketClaimed {
-				ck = string(claims.KindAgent)
+			kname := string(kind)
+			if kname == "" {
+				kname = "unknown"
 			}
-			for _, ln := range triageLabelNames {
-				add("triage.json", issueStageGoldenCase{
-					Name:  "triage/" + kname + "/" + bname + "/" + ln,
-					Input: issueStageGoldenInput{Repo: repo, Number: 1, Labels: triageLabels[ln], Bucket: bucket, ClaimKind: ck, AuthorKind: string(kind)},
-				})
+			if trusted {
+				kname += "-trusted"
+			}
+			for _, bucket := range []string{"", workBucketReporterTriage, workBucketClaimed} {
+				bname := bucket
+				if bname == "" {
+					bname = "actionable"
+				}
+				ck := ""
+				if bucket == workBucketClaimed {
+					ck = string(claims.KindAgent)
+				}
+				for _, ln := range triageLabelNames {
+					add("triage.json", issueStageGoldenCase{
+						Name:  "triage/" + kname + "/" + bname + "/" + ln,
+						Input: issueStageGoldenInput{Repo: repo, Number: 1, Labels: triageLabels[ln], Bucket: bucket, ClaimKind: ck, AuthorKind: string(kind), AuthorTrusted: trusted},
+					})
+				}
 			}
 		}
 	}
@@ -410,6 +425,21 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 		Name:  "triage/13262-hive-filed-review-backlog-stays-010",
 		Note:  "hivecommons/hive#13262 (a hive-filed 'Review backlog (security)' issue): hive agents do not need triage, so who filed it never derives 015; it is 010.",
 		Input: issueStageGoldenInput{Repo: repo, Number: 13262, Labels: []string{"kind/review-backlog", stagelabels.Actionable.Label()}, AuthorKind: string(authorkind.Hive)},
+	})
+	add("triage.json", issueStageGoldenCase{
+		Name:  "triage/prow-member-filed-needs-triage-is-010",
+		Note:  "A repository running Prow labels every new issue needs-triage; a MEMBER's issue sat in 015 and the contributor skip list until a person removed the label. A trusted author's issue is 010 (hivecommons/hive#13298).",
+		Input: issueStageGoldenInput{Repo: repo, Number: 1404, Labels: []string{"kind/bug", triageAwaitingLabel}, AuthorKind: string(authorkind.Human), AuthorTrusted: true},
+	})
+	add("triage.json", issueStageGoldenCase{
+		Name:  "triage/prow-hive-filed-needs-triage-is-010",
+		Note:  "An issue the hive's App filed wore Prow's needs-triage: hive-filed issues are 010.",
+		Input: issueStageGoldenInput{Repo: repo, Number: 1440, Labels: []string{triageAwaitingLabel}, AuthorKind: string(authorkind.Hive), AuthorTrusted: true},
+	})
+	add("triage.json", issueStageGoldenCase{
+		Name:  "triage/prow-untrusted-needs-triage-is-015",
+		Note:  "An untrusted reporter's issue with Prow's needs-triage still awaits a person's first look: 015.",
+		Input: issueStageGoldenInput{Repo: repo, Number: 1441, Labels: []string{"kind/bug", triageAwaitingLabel}, AuthorKind: string(authorkind.Human)},
 	})
 	add("triage.json", issueStageGoldenCase{
 		Name:  "triage/12999-human-epic-with-verified-open-stays-010",

@@ -692,7 +692,7 @@ func insertFrontendRepoItem(repo *FrontendRepo, snap github.WebhookItemSnapshot)
 		repo.NonActionableIssues = append(append([]any(nil), repo.NonActionableIssues...), *p.WorkIssue)
 	default:
 		repo.NonActionableIssues = append(append([]any(nil), repo.NonActionableIssues...), github.RepoWorkIssue{
-			Repo: full, Number: snap.Number, Title: snap.Title, Author: snap.Author,
+			Repo: full, Number: snap.Number, Title: snap.Title, Author: snap.Author, AuthorTrusted: snap.AuthorTrusted,
 			Labels: append([]string(nil), snap.Labels...), UpdatedAt: snap.UpdatedAt, URL: snap.URL,
 			Bucket: "other", Reason: webhookUnclassifiedReason,
 		})

@@ -51,6 +51,10 @@ type WebhookItemSnapshot struct {
 	URL            string    `json:"url,omitempty"`
 	AppAuthored    bool      `json:"app_authored,omitempty"`
 	HiveAttributed bool      `json:"hive_attributed,omitempty"`
+	// AuthorTrusted is issueAuthorTrusted's verdict for an issue (always
+	// false for a PR), so a row rebuilt from the snapshot alone does not
+	// ask for triage on a trusted author's issue (hivecommons/hive#13298).
+	AuthorTrusted bool `json:"author_trusted,omitempty"`
 	// HeadSHA is the PR's head commit at the time of the read (PRs only).
 	HeadSHA string `json:"head_sha,omitempty"`
 	// FetchedAt is when the GET returned; ApplyWebhookItem records it so an
@@ -140,6 +144,7 @@ func (c *Client) FetchWebhookItemSnapshot(ctx context.Context, repo string, numb
 	}
 	snap.Title = issue.GetTitle()
 	snap.Author = safeGetLogin(issue.GetUser())
+	snap.AuthorTrusted = !snap.IsPR && c.issueAuthorTrusted(issue)
 	labels := append([]string{}, extractLabels(issue.Labels)...)
 	snap.Labels = labels
 	snap.State = issue.GetState()

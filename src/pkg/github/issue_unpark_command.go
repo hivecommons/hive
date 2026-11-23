@@ -938,7 +938,7 @@ func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owne
 	// The engine re-derives the stage from the labels left behind, so a kept
 	// park label (a person's or a lifecycle bot's `needs-human`) re-parks the
 	// issue at the same stage (hivecommons/hive#12715).
-	stayingStage := unparkStageThatStays(displayRepo, number, labels, removed, stageLabels, acknowledge)
+	stayingStage := unparkStageThatStays(displayRepo, number, labels, removed, stageLabels, acknowledge, c.issueAuthorTrusted(issue))
 	if acknowledge && !labelPresent(labels, HumanAckLabel) {
 		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{HumanAckLabel}); err != nil {
 			return false, fmt.Errorf("adding %s to %s/%s#%d: %w", HumanAckLabel, owner, repo, number, err)
@@ -983,8 +983,10 @@ func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owne
 // `needs-human` withholds it, and the engine reads a plain `needs-human`
 // as a 045 park but a `needs-human` beside the ack as held human work
 // (hivecommons/hive#16579), so seeding the ack unconditionally would
-// misreport a kept park as lifted.
-func unparkStageThatStays(displayRepo string, number int, labels, removed, stageLabels []string, acknowledge bool) string {
+// misreport a kept park as lifted. authorTrusted is issueAuthorTrusted for
+// the issue, so the prediction derives 010/015 as the sweep will
+// (hivecommons/hive#13298).
+func unparkStageThatStays(displayRepo string, number int, labels, removed, stageLabels []string, acknowledge, authorTrusted bool) string {
 	if len(stageLabels) == 0 {
 		return ""
 	}
@@ -997,7 +999,7 @@ func unparkStageThatStays(displayRepo string, number int, labels, removed, stage
 			after = append(after, label)
 		}
 	}
-	stage, _, _ := IssueStageFor(IssueStageInput{Repo: displayRepo, Number: number, Labels: after}, nil)
+	stage, _, _ := IssueStageFor(IssueStageInput{Repo: displayRepo, Number: number, Labels: after, AuthorTrusted: authorTrusted}, nil)
 	if stage == stagelabels.None {
 		return ""
 	}

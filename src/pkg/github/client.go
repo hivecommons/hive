@@ -938,10 +938,17 @@ type Issue struct {
 	Body   string `json:"body,omitempty"`
 	// OwnerStep is trusted typed owner-step metadata resolved from a
 	// Hive-authored issue body or comment.
-	OwnerStep         *IssueOwnerStep `json:"owner_step,omitempty"`
-	Author            string          `json:"author"`
-	AuthorIsHuman     bool            `json:"author_is_human,omitempty"`
-	HumanAcknowledged bool            `json:"human_acknowledged,omitempty"`
+	OwnerStep     *IssueOwnerStep `json:"owner_step,omitempty"`
+	Author        string          `json:"author"`
+	AuthorIsHuman bool            `json:"author_is_human,omitempty"`
+	// AuthorTrusted is issueAuthorTrusted's verdict at enumeration: the
+	// author is one of this hive's own accounts, or an author the
+	// reporter-trust predicate trusts (another bot only by trusted_logins).
+	// Only a trusted author's issue is released from the
+	// reporter-trust awaiting label a triage bot may have put on it (stage
+	// 015 and the contributor skip list). False when the author is unknown.
+	AuthorTrusted     bool `json:"author_trusted,omitempty"`
+	HumanAcknowledged bool `json:"human_acknowledged,omitempty"`
 	// AckSource names where a hive-filed issue's acknowledgement came from
 	// when it was not given on the issue itself: "parent #N" for a child the
 	// relay split out of a human-filed or human-acknowledged parent
@@ -2303,6 +2310,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			OwnerStep:         c.issueOwnerStepForSnapshot(repo, issue),
 			Author:            safeGetLogin(issue.GetUser()),
 			AuthorIsHuman:     authorIsHuman,
+			AuthorTrusted:     c.issueAuthorTrusted(issue),
 			HumanAcknowledged: acknowledged,
 			AckSource:         ackSource,
 			Labels:            labels,
@@ -5440,7 +5448,9 @@ type RepoWorkIssue struct {
 	OwnerStep *IssueOwnerStep `json:"owner_step,omitempty"`
 	Author    string          `json:"author,omitempty"`
 	// AuthorIsHuman carries the same reporter classification as Issue.
-	AuthorIsHuman bool     `json:"author_is_human,omitempty"`
+	AuthorIsHuman bool `json:"author_is_human,omitempty"`
+	// AuthorTrusted mirrors Issue.AuthorTrusted.
+	AuthorTrusted bool     `json:"author_trusted,omitempty"`
 	Labels        []string `json:"labels,omitempty"`
 	Assignees     []string `json:"assignees,omitempty"`
 	// HumanAcknowledged carries the issue's human acknowledgement so the
@@ -5515,6 +5525,7 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		OwnerStep:         issue.OwnerStep,
 		Author:            issue.Author,
 		AuthorIsHuman:     issue.AuthorIsHuman,
+		AuthorTrusted:     issue.AuthorTrusted,
 		Labels:            append([]string(nil), issue.Labels...),
 		Assignees:         append([]string(nil), issue.Assignees...),
 		HumanAcknowledged: issue.HumanAcknowledged,
@@ -5579,6 +5590,7 @@ func (c *Client) repoWorkIssue(repo string, issue *gh.Issue, labels []string, bu
 		Title:           issue.GetTitle(),
 		OwnerStep:       c.issueOwnerStepForSnapshot(repo, issue),
 		Author:          safeGetLogin(issue.GetUser()),
+		AuthorTrusted:   c.issueAuthorTrusted(issue),
 		Labels:          append([]string(nil), labels...),
 		Assignees:       extractAssignees(issue.Assignees),
 		CreatedAt:       issue.GetCreatedAt().Time,

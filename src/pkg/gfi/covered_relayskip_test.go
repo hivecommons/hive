@@ -8,11 +8,16 @@ import (
 
 // relaySkipNeedsTriage stands in for hub.contribute_skip_labels with the
 // labels the default set shares with the GFI gates (`blocked`, `tracking`)
-// plus `needs-triage`.
-func relaySkipNeedsTriage(labels []string) (string, bool) {
+// plus `needs-triage`, which (like config.HubConfig
+// .MatchContributeSkipLabelFor) does not skip a trusted author's issue.
+func relaySkipNeedsTriage(labels []string, authorTrusted bool) (string, bool) {
 	for _, l := range labels {
 		switch strings.ToLower(strings.TrimSpace(l)) {
-		case "needs-triage", "blocked", "tracking":
+		case "needs-triage":
+			if !authorTrusted {
+				return l, true
+			}
+		case "blocked", "tracking":
 			return l, true
 		}
 	}
@@ -31,6 +36,14 @@ func TestScoreRelaySkip(t *testing.T) {
 	}
 	if d := Score(good(), p, now); !d.Eligible {
 		t.Fatalf("control: %+v", d)
+	}
+	// The relay hands a trusted author's issue out despite needs-triage
+	// (hivecommons/hive#13298), so it may be advertised too.
+	c = good()
+	c.Labels = append(c.Labels, "needs-triage")
+	c.AuthorTrusted = true
+	if d := Score(c, p, now); !d.Eligible {
+		t.Fatalf("trusted author with needs-triage: %+v", d)
 	}
 	// The withdrawable gates still come first: `blocked` is in the relay's
 	// default skip set too, and must keep withdrawing.

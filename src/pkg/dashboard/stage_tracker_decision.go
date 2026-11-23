@@ -230,7 +230,9 @@ func stageTrackerDecisionNeededWith(it StageTrackerItem, verdict *review.Aggrega
 		return nil
 	case it.Kind == "issue" && (it.Stage == stagelabels.IssueNeedsDecision.Number() || slices.Contains(it.Modifiers, modNeedsDecision)):
 		return decisionForIssue(it, held)
-	case it.Kind == "issue" && (it.Stage == stagelabels.TriageNeeded.Number() || slices.Contains(it.Modifiers, modNeedsTriage)):
+	case it.Kind == "issue" && !it.authorTrusted && (it.Stage == stagelabels.TriageNeeded.Number() || slices.Contains(it.Modifiers, modNeedsTriage)):
+		// A trusted author's issue is never asked about triage, even on a
+		// 015 the engine has not re-derived yet (hivecommons/hive#13298).
 		return decisionForTriage(it, held)
 	case slices.Contains(it.Modifiers, modNeedsHuman):
 		return decisionForNeedsHuman(it, held)

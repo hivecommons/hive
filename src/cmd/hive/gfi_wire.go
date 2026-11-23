@@ -103,7 +103,7 @@ func gfiSweepOptions(cfg *config.Config, dashSrv *dashboard.Server, logger *slog
 	gc := cfg.GoodFirstIssue
 	policy := gc.Policy(github.HardSuppressIssueLabels())
 	// Never advertise what the contributor relay refuses to hand out.
-	policy.RelaySkip = cfg.Hub.MatchContributeSkipLabel
+	policy.RelaySkip = cfg.Hub.MatchContributeSkipLabelFor
 	opts := gfi.SweepOptions{
 		Policy:   policy,
 		Links:    gfi.Links{Origin: gfiPublicOrigin(cfg), HiveID: cfg.HiveID, DocsBase: gc.DocsURL},
@@ -148,6 +148,7 @@ func gfiCandidates(org string, result *github.ActionableResult, allowed func(str
 		c := gfi.Candidate{
 			Repo: repo, Number: is.Number, Title: is.Title, Body: is.Body, URL: is.URL,
 			Labels: is.Labels, Assignees: is.Assignees, CreatedAt: is.CreatedAt,
+			AuthorTrusted: is.AuthorTrusted,
 		}
 		if is.State != "" && !strings.EqualFold(is.State, "open") {
 			continue
@@ -172,7 +173,7 @@ func gfiCandidates(org string, result *github.ActionableResult, allowed func(str
 			if allowed != nil && !allowed(full) {
 				continue
 			}
-			c := gfi.Candidate{Repo: full, Number: row.Number, Title: row.Title, URL: row.URL, Labels: row.Labels, Assignees: row.Assignees, CreatedAt: row.CreatedAt}
+			c := gfi.Candidate{Repo: full, Number: row.Number, Title: row.Title, URL: row.URL, Labels: row.Labels, Assignees: row.Assignees, CreatedAt: row.CreatedAt, AuthorTrusted: row.AuthorTrusted}
 			if row.Reason == gfi.SkipTracking {
 				// The row has no body; carry the enumeration's verdict as the
 				// marker so Score skips it as tracking and the sweep withdraws

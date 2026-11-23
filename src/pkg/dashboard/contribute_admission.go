@@ -34,21 +34,26 @@ func labelSkippedAdmissionDecision(label string) contributorAdmissionDecision {
 	}
 }
 
-func (h *ContributeWSHub) contributeSkipLabel(labels []string) (string, bool) {
+// contributeSkipLabel matches the contribute skip-label set for one
+// candidate. authorTrusted is the enumeration's verdict on who filed it
+// (github.Issue.AuthorTrusted, false when unknown): a trusted author's issue
+// is not skipped for the reporter-trust awaiting label alone
+// (config.HubConfig.MatchContributeSkipLabelFor, hivecommons/hive#13298).
+func (h *ContributeWSHub) contributeSkipLabel(labels []string, authorTrusted bool) (string, bool) {
 	if h != nil && h.server != nil && h.server.deps != nil && h.server.deps.Config != nil {
-		return h.server.deps.Config.Hub.MatchContributeSkipLabel(labels)
+		return h.server.deps.Config.Hub.MatchContributeSkipLabelFor(labels, authorTrusted)
 	}
-	return (config.HubConfig{}).MatchContributeSkipLabel(labels)
+	return (config.HubConfig{}).MatchContributeSkipLabelFor(labels, authorTrusted)
 }
 
-func (s *Server) contributeSkipLabel(labels []string) (string, bool) {
+func (s *Server) contributeSkipLabel(labels []string, authorTrusted bool) (string, bool) {
 	if s != nil && s.deps != nil && s.deps.Config != nil {
-		return s.deps.Config.Hub.MatchContributeSkipLabel(labels)
+		return s.deps.Config.Hub.MatchContributeSkipLabelFor(labels, authorTrusted)
 	}
 	if s != nil && s.contributeHub != nil {
-		return s.contributeHub.contributeSkipLabel(labels)
+		return s.contributeHub.contributeSkipLabel(labels, authorTrusted)
 	}
-	return (config.HubConfig{}).MatchContributeSkipLabel(labels)
+	return (config.HubConfig{}).MatchContributeSkipLabelFor(labels, authorTrusted)
 }
 
 type contributorAdmissionCandidate struct {
@@ -80,6 +85,12 @@ type contributorAdmissionCandidate struct {
 	// zero when unknown. The owner-grace hold (Dependencies.ContributorHold)
 	// uses it to skip the forge read for an old issue.
 	createdAt time.Time
+	// authorTrusted is the enumerated envelope's author_trusted
+	// (github.Issue.AuthorTrusted): filed by one of the hive's own
+	// accounts, or by an author the reporter-trust predicate trusts. Only the skip-label gate reads
+	// it, to pass over the reporter-trust awaiting label a triage bot put
+	// on a trusted author's issue. False when absent (unknown author).
+	authorTrusted bool
 }
 
 // isGitHubBacked reports whether this candidate may be handed to the two
@@ -206,7 +217,7 @@ func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributor
 			return contributorAdmissionDecision{reason: "integration_orchestration: " + d.Reason}
 		}
 	}
-	if label, ok := h.contributeSkipLabel(candidate.labels); ok {
+	if label, ok := h.contributeSkipLabel(candidate.labels, candidate.authorTrusted); ok {
 		if strings.EqualFold(strings.TrimSpace(label), blockedWorkflowLabel) {
 			return blockedWorkflowAdmissionDecision(label)
 		}

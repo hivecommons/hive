@@ -193,6 +193,12 @@ type Candidate struct {
 	ClaimedBy string
 	// HasLinkedPR says an open PR already references the issue.
 	HasLinkedPR bool
+	// AuthorTrusted is the enumeration's verdict that the issue's author is
+	// trusted (one of the hive's own accounts, or an author the
+	// reporter-trust predicate trusts; false when unknown). Policy.RelaySkip receives it so
+	// the relay's skip set treats the reporter-trust awaiting label the
+	// same way the relay itself does.
+	AuthorTrusted bool
 }
 
 // Key is the owner/name#number identity.
@@ -222,9 +228,10 @@ type Policy struct {
 	// HardSuppressLabels are the hive's escalation labels; always excluded.
 	HardSuppressLabels []string
 	// RelaySkip, when set, reports the first label the contributor relay
-	// refuses to hand out (hub.contribute_skip_labels). Such an issue is
+	// refuses to hand out (hub.contribute_skip_labels) for an issue whose
+	// author is trusted or not (Candidate.AuthorTrusted). Such an issue is
 	// never advertised: its welcome comment's claim link would lead nowhere.
-	RelaySkip func(labels []string) (string, bool)
+	RelaySkip func(labels []string, authorTrusted bool) (string, bool)
 }
 
 // Normalized fills zero fields with the defaults.
@@ -324,7 +331,7 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 	// After every withdrawable gate: the relay's default skip set also lists
 	// `blocked` and `tracking`, and those must still withdraw.
 	if p.RelaySkip != nil {
-		if l, ok := p.RelaySkip(c.Labels); ok {
+		if l, ok := p.RelaySkip(c.Labels, c.AuthorTrusted); ok {
 			return skip(d, SkipRelaySkip+":"+l)
 		}
 	}

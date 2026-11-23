@@ -424,6 +424,6 @@ func mergedClaimStaleDetail(claim ghpkg.IssueClaim, now time.Time) string {
 // rejects this candidate, or "" when all three pass. Short-circuit order and
 // outcome are identical to the single boolean expression it replaces — the only
 // thing it adds is the name of the filter that said no.
-func rejectingContributorFilter(hub config.HubConfig, repo, title, author string, labels []string) config.ContributeFilterDecision {
-	return hub.EvaluateContributeFilters(repo, title, author, labels)
+func rejectingContributorFilter(hub config.HubConfig, repo, title, author string, labels []string, authorTrusted bool) config.ContributeFilterDecision {
+	return hub.EvaluateContributeFiltersFor(repo, title, author, labels, authorTrusted)
 }

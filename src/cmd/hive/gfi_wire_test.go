@@ -175,11 +175,19 @@ func TestGFISweepOptionsCarryRelaySkip(t *testing.T) {
 	if opts.Policy.RelaySkip == nil {
 		t.Fatal("RelaySkip not wired")
 	}
-	if l, ok := opts.Policy.RelaySkip([]string{"kind/bug", "needs-triage"}); !ok || l != "needs-triage" {
+	if l, ok := opts.Policy.RelaySkip([]string{"kind/bug", "needs-triage"}, false); !ok || l != "needs-triage" {
 		t.Fatalf("needs-triage not matched: %q %v", l, ok)
 	}
-	if _, ok := opts.Policy.RelaySkip([]string{"kind/bug", "size/S"}); ok {
+	if _, ok := opts.Policy.RelaySkip([]string{"kind/bug", "size/S"}, false); ok {
 		t.Fatal("plain labels matched")
+	}
+	// A trusted author's issue is not skipped for needs-triage alone
+	// (hivecommons/hive#13298); any other skip label still matches.
+	if l, ok := opts.Policy.RelaySkip([]string{"kind/bug", "needs-triage"}, true); ok {
+		t.Fatalf("trusted author's needs-triage matched: %q", l)
+	}
+	if l, ok := opts.Policy.RelaySkip([]string{"needs-triage", "question"}, true); !ok || l != "question" {
+		t.Fatalf("trusted author's question not matched: %q %v", l, ok)
 	}
 }
 

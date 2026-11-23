@@ -514,10 +514,11 @@ func TestIssueStageFor(t *testing.T) {
 
 // TestIssueStageFor_TriageNeeded pins the 015 rule (hivecommons/hive#13268):
 // an actionable issue is 015-triage-needed when it carries needs-triage (or
-// sits in the reporter_triage bucket), or when the hive / an agent filed it
-// and no maintainer label (triage/accepted, hive/verified-open,
-// approved-direction) is on it. Human-filed issues stay 010, and 015 never
-// outranks a claim, a covering PR or a park.
+// sits in the reporter_triage bucket); who filed it never derives 015 on its
+// own, and 015 never outranks a claim, a covering PR or a park. Every input
+// here leaves AuthorTrusted false (an untrusted or unknown author), so
+// needs-triage still holds it; since hivecommons/hive#13298 a trusted
+// author's needs-triage derives 010 (TestIssueStageFor_NeedsTriageByAuthorTrust).
 func TestIssueStageFor_TriageNeeded(t *testing.T) {
 	const (
 		accepted = "triage/accepted"
