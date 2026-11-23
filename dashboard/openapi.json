@@ -21108,6 +21108,23 @@
                     "arms_scope": {
                       "type": "string"
                     },
+                    "coverage": {
+                      "type": "object",
+                      "properties": {
+                        "closed_beads": {
+                          "type": "integer"
+                        },
+                        "with_closed_pr": {
+                          "type": "integer"
+                        },
+                        "no_ref": {
+                          "type": "integer"
+                        },
+                        "no_decision": {
+                          "type": "integer"
+                        }
+                      }
+                    },
                     "cost": {
                       "type": "object",
                       "properties": {

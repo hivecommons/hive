@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -144,33 +143,11 @@ func (s *AdvisorDecisionStore) Record(rec AdvisorDecisionRecord) {
 	}
 }
 
-// AdvisorDecisions returns the decisions whose kick primed issueRef. A stored
-// ref without an owner ("repo#N") matches the issue ref's repo name.
+// AdvisorDecisions returns the decisions whose kick primed issueRef. Refs are
+// normalized and matched symmetrically: an owner-less ref ("repo#N") on
+// either side matches the qualified one (see AdvisorDecisionsForRefs).
 func (s *AdvisorDecisionStore) AdvisorDecisions(issueRef string) []AdvisorDecision {
-	if s == nil {
-		return nil
-	}
-	want := strings.ToLower(strings.TrimSpace(issueRef))
-	if want == "" {
-		return nil
-	}
-	short := want
-	if i := strings.Index(want, "/"); i >= 0 {
-		short = want[i+1:]
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []AdvisorDecision
-	for _, rec := range s.ring {
-		for _, ref := range rec.Refs {
-			ref = strings.ToLower(ref)
-			if ref == want || ref == short {
-				out = append(out, AdvisorDecision{Kick: rec.Kick, Mode: rec.Mode, Outcome: rec.Outcome})
-				break
-			}
-		}
-	}
-	return out
+	return s.AdvisorDecisionsForRefs(issueRef)
 }
 
 // Close flushes and closes the backing file.

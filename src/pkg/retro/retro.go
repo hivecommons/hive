@@ -158,6 +158,7 @@ type Lane struct {
 	timeline      *timeline.Store
 	attempts      AttemptReader
 	advisor       AdvisorDecisionReader
+	attribution   *AdvisorAttribution
 	analyzer      *Analyzer
 	knowledge     KnowledgeSink
 	logger        *slog.Logger
@@ -190,6 +191,7 @@ func NewLane(stores map[string]*beads.Store, advisoryStore *beads.Store, tl *tim
 		interval:      time.Duration(intervalS) * time.Second,
 		thresholds:    thresholdsFromConfig(cfg),
 		recentWindow:  time.Duration(cfg.RecentClosedWindowS) * time.Second,
+		attribution:   NewAdvisorAttribution(stores, advisoryStore, tl, attempts, logger),
 	}
 }
 
@@ -203,6 +205,7 @@ func (l *Lane) SetKnowledgeSink(sink KnowledgeSink) {
 
 func (l *Lane) SetAdvisorDecisions(reader AdvisorDecisionReader) {
 	l.advisor = reader
+	l.attribution.SetAdvisorDecisions(reader)
 }
 
 func (l *Lane) SetAutonomyPolicy(engine *AutonomyPolicyEngine) {
@@ -553,12 +556,16 @@ const AdvisorOutcomeRateLimited = "rate-limited"
 // except rate-limited ones, which are counted and excluded; kicks in more than
 // one arm make the bead mixed.
 func ApplyAdvisorDecisions(r *RetroRecord, reader AdvisorDecisionReader) {
+	applyAdvisorDecisionRefs(r, reader, r.IssueRef, r.PRRef)
+}
+
+// applyAdvisorDecisionRefs is ApplyAdvisorDecisions over an explicit set of
+// the bead's refs: its issue and its PR, since a kick may prime either.
+func applyAdvisorDecisionRefs(r *RetroRecord, reader AdvisorDecisionReader, refs ...string) {
 	r.AdvisorArm = AdvisorArmNone
-	if reader == nil || r.IssueRef == "" {
-		return
-	}
+	r.AdvisorDecisions, r.AdvisorDelivered, r.AdvisorHeldOut, r.AdvisorRateLimited = 0, 0, 0, 0
 	arms := map[string]bool{}
-	for _, d := range reader.AdvisorDecisions(r.IssueRef) {
+	for _, d := range advisorDecisionsFor(reader, refs) {
 		r.AdvisorDecisions++
 		switch d.Outcome {
 		case AdvisorOutcomeRateLimited:
@@ -630,24 +637,15 @@ func SummarizeArms(records []RetroRecord) []ArmSummary {
 	return out
 }
 
-// AdvisorArmSummary reports the per-arm comparison over every closed bead with
-// an associated closed PR, with zero model calls.
+// AdvisorArmSummary reports the per-arm comparison over every closed work
+// bead, with zero model calls.
 func (l *Lane) AdvisorArmSummary() []ArmSummary {
-	var records []RetroRecord
-	for _, store := range l.stores {
-		if store == nil || store == l.advisoryStore {
-			continue
-		}
-		for _, b := range store.AllClosed() {
-			record := Reconstruct(b, l.timeline, l.attempts)
-			if !record.HasAssociatedClosedPR() {
-				continue
-			}
-			ApplyAdvisorDecisions(&record, l.advisor)
-			records = append(records, record)
-		}
-	}
-	return SummarizeArms(records)
+	return l.AdvisorArmReport().Arms
+}
+
+// AdvisorArmReport is AdvisorArmSummary plus the coverage counters.
+func (l *Lane) AdvisorArmReport() AdvisorArmReport {
+	return l.attribution.Report()
 }
 
 func (r RetroRecord) HasAssociatedClosedPR() bool {
