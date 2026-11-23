@@ -881,7 +881,7 @@ printf '\n'
 HUB_POD=$(kubectl --context <hub-reachable-cluster> -n hive-hub get pods -l app=hive-hub \
   --no-headers | grep Running | awk '{print $1}' | head -1)
 
-kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -- curl -s -X POST \
+kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -c hub -- curl -s -X POST \
   -H "Authorization: Bearer ${HUB_API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -1578,7 +1578,7 @@ cat > /tmp/meta.json <<JSON
 }
 JSON
 
-kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -- \
+kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -c hub -- \
   sh -c "mkdir -p /data/saas/hives/${ID}"
 kubectl --context <hub-reachable-cluster> -n hive-hub cp /tmp/meta.json \
   hive-hub/"$HUB_POD":/data/saas/hives/${ID}/meta.json
@@ -1727,7 +1727,7 @@ Only when every eligible pool is empty does Auto-pick return
 > exist — against both the hub meta dirs and the target cluster's namespaces:
 >
 > ```bash
-> kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -- ls /data/saas/hives/   # existing hive IDs
+> kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -c hub -- ls /data/saas/hives/   # existing hive IDs
 > kubectl --context <heartbeat-only-cluster> get ns | grep hive-hosted-hosted-available-<cluster>  # existing namespaces
 > ```
 
@@ -1802,7 +1802,7 @@ kubectl --context <heartbeat-only-cluster> -n $NS get pod $POD -o jsonpath='{.st
 kubectl --context <heartbeat-only-cluster> -n $NS exec $POD -c hive -- curl -s -o /dev/null -w '%{http_code}' localhost:3002/api/livez  # must be 200
 kubectl --context <heartbeat-only-cluster> -n $NS get rolebinding hive-anyuid -o jsonpath='{.subjects[0].namespace}'  # must equal $NS
 kubectl --context <heartbeat-only-cluster> -n $NS get pvc hive-data -o jsonpath='{.status.phase}'         # must be Bound
-kubectl --context <hub-reachable-cluster> -n hive-hub exec $HUB_POD -- test -f /data/saas/hives/$ID/meta.json  # must exist
+kubectl --context <hub-reachable-cluster> -n hive-hub exec $HUB_POD -c hub -- test -f /data/saas/hives/$ID/meta.json  # must exist
 ```
 
 > **The `hive-anyuid` subject-namespace check is still load-bearing at apply
@@ -1953,7 +1953,7 @@ hive owner doesn't need `kubectl` at all to find it:
 # delete the workload namespace
 kubectl --context "$CTX" delete ns "$NS"
 # remove the hub SaaS record
-kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -- \
+kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -c hub -- \
   rm -rf /data/saas/hives/"$ID"
 # if it ever heartbeated, also drop its registry entry (see the placeholder gotcha)
 ```

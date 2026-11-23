@@ -153,7 +153,7 @@ has consented; nothing here needs a production change beyond the switch.
 
 1. **Hub, off first.** With `HIVE_ASK_ENABLED` unset, `GET /api/ask/status` and
    `GET /ask-panel.js` on the hub answer `404`, the dashboard has no **Ask**
-   button, and `kubectl logs` for the hub shows no `ask:` line.
+   button, and `kubectl -n hive-hub logs deploy/hive-hub -c hub` shows no `ask:` line.
 2. **Hub, on.** Set the env and the Secret ([hub
    steps](hub-deployment.md#ask-ai-help)), restart, and check the log for
    `ask: enabled` (and no `ask: requested but staying off`). Open My Hives, click
