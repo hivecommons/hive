@@ -11,6 +11,32 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v5.352.1)
+
+### Fixed
+
+- **A diff fence carried onto a superseding PR is now re-checked against that PR's own diff on every head** ([#19537](https://github.com/hivecommons/hive/issues/19537)). The `hive:carried-fence` marker records what the superseded contributor PR's diff did, and every App merge lane used to refuse the superseding PR on the marker alone, so a PR whose fixes had dropped the workflow edit still sat at `stage/085-needs-decision` saying it edits CI workflow files (#19252). The lanes now hold a carried `workflow-path` fence only while a changed file (or a renamed file's old path) is under `.github/workflows/` or `.github/actions/`, and a carried `tests-removed` fence only while the diff still removes tests. A reason that no longer applies is dropped for that head and logged once; a later push that trips it re-arms it, and an unreadable or incomplete file list keeps the fence.
+- Add a hub Deployment manifest check that rejects unexpected containers and literal OAuth/NPS relay secret env values, and document `-c hub` for container-scoped kubectl.
+- **A docs-only push that answers review feedback now gets re-reviewed.** The delta re-review's trivial rule re-stamped the previous verdict onto any new head whose delta was under `review.delta_trivial_lines` and touched no file a finding named. A docs or changelog edit answering a `changes_requested` or `requires_human` verdict fits that rule almost every time, so the old verdict was carried forward, no reviewer read the answer, and the PR sat at *review not started*. A non-approve verdict is now re-stamped only onto an identical tree (or a PR with no diff against its base); any other new head gets a delta re-review. When the delta is documentation and changelog files only, the prompt scopes the reviewer to `docs-currency` and `intent-alignment` and has the other perspectives only confirm no code changed (`review.DeltaDocsOnlyFocusPerspectives`), so the re-review stays one short delta read. A prior `approve` keeps its re-stamp.
+
+## 2026-11-23 (v5.352.0)
+
+### Added
+
+- Added a non-blocking weekly `ioscan classifier bench` workflow. It runs the ioscan classifier benchmark against GitHub Models backends with the job's own `GITHUB_TOKEN`, so no repository secret or paid key is involved, and publishes catch rate, false-positive rate, errors, latency, tokens and list-price cost per backend and split to the job summary. The benchmark also gains `IOSCAN_CLASSIFIER_BENCH_MIN_INTERVAL` call spacing, a stable `IOSCAN_CLASSIFIER_BENCH_MAX_PER_CLASS` sample cap, and support for an endpoint given as an exact `/chat/completions` URL ([#19516](https://github.com/hivecommons/hive/issues/19516)).
+
+## 2026-11-23 (v5.351.0)
+
+### Added
+
+- ioscan: vendor pinned injection and held-out benign corpora (#19517)
+
+## 2026-11-23 (v5.350.1)
+
+### Security
+
+- The token-access audit log (`/var/run/hive-metrics/token-access.jsonl`) is now hash-chained like `/data/audit.jsonl`: every ingested row carries `seq`, `prev_hash` and `row_hash`, chain fields an agent writes into its own event are overwritten, and `hive audit-verify --token-access` reports edited, dropped, inserted or reordered rows. Rows from before the upgrade are reported as legacy rows outside the chain ([#19439](https://github.com/hivecommons/hive/issues/19439)).
+
 ## 2026-11-23 (v5.350.0)
 
 ### Added

@@ -209,6 +209,10 @@ type Config struct {
 	// Customers gates the Customers section and its people store (default
 	// on). Nothing it stores leaves the hive.
 	Customers CustomersConfig `yaml:"customers,omitempty" json:"customers,omitempty"`
+	// Ask is the optional Ask AI help panel (#19177): docs questions answered
+	// server side by Kapa.ai, directly or through the hub relay. Default off
+	// and inert when unconfigured. See src/docs/design/dashboard-ask-ai-help.md.
+	Ask AskConfig `yaml:"ask,omitempty" json:"ask,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.
@@ -8835,9 +8839,11 @@ type ReviewConfig struct {
 	DeltaRereview *bool `yaml:"delta_rereview,omitempty" json:"delta_rereview,omitempty"`
 	// DeltaTrivialLines is the delta size (added plus deleted lines) under
 	// which a re-review skips the model call: when the diff between the
-	// reviewed head and the new head is empty, or touches only files the
-	// previous verdict had no finding in and is smaller than this, the
-	// previous verdict is re-stamped onto the new head with a note. 0 means
+	// reviewed head and the new head is empty, or the previous verdict was
+	// approve and the diff touches only files it had no finding in and is
+	// smaller than this, the previous verdict is re-stamped onto the new head
+	// with a note. A changes_requested or requires_human verdict is
+	// re-stamped only onto an identical tree. 0 means
 	// DefaultReviewDeltaTrivialLines; negative disables the skip.
 	DeltaTrivialLines int `yaml:"delta_trivial_lines,omitempty" json:"delta_trivial_lines,omitempty"`
 	// DeltaMaxAge is how old a `changes_requested` verdict with findings may

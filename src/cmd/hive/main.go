@@ -19,6 +19,7 @@ import (
 	"time"
 
 	cruxconfig "github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/posture"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 
 	gh "github.com/google/go-github/v72/github"
@@ -543,6 +544,14 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	// fleetreport.ClassUnclassifiedRepeated).
 	b.logger = slog.New(slogfeed.New(logscrub.NewHandler(slog.NewJSONHandler(deps.stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))))
 	slog.SetDefault(b.logger)
+
+	// Containment posture (#19458): warn on every gap; HIVE_REQUIRE_HARDENED
+	// turns any gap into a startup failure.
+	if err := posture.Boot(b.logger, deps.getenv); err != nil {
+		b.logger.Error("refusing to start without required containment", "error", err.Error())
+		deps.exit(1)
+		return false
+	}
 
 	// Process singleton: refuse to become a second hive process in this
 	// container (#2453, #2496). Two concurrent processes beat as the same pod,
@@ -2006,6 +2015,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	archiveOnShutdown := func() { b.agentMgr.ArchiveAllKickLogs("shutdown") }
 	b.preShutdownHooks.add("archive-kick-logs", archiveOnShutdown)
 	b.agentMgr.SetSandboxConfig(b.cfg.AgentSandbox)
+	syncForgeCredentialEnv(b.cfg)
 	// #7421: the governor records a kick when it is dispatched; the manager
 	// tells it afterwards how the turn ENDED, so a kick that produced a
 	// clarifying question or a policy stand-down is not counted like one that
@@ -3945,6 +3955,10 @@ func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 // allowlist and sets the dashboard's auth providers.
 func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 
+func syncForgeCredentialEnv(cfg *config.Config) {
+	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName())
+}
+
 // bootWatchersWith is bootWatchers with its long-lived effects injected; see
 // bootWatchersDeps.
 func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
@@ -4026,6 +4040,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		// threshold — re-sync it alongside the repo list above.
 		b.gov.SetRepoCount(b.cfg.Project.RepoCount())
 		b.agentMgr.SetSandboxConfig(b.cfg.AgentSandbox)
+		syncForgeCredentialEnv(b.cfg)
 		// Re-run the posture check on reload, not only at boot: flipping the
 		// Security tab's sandbox toggle writes the config and lands here, which
 		// is the exact moment an operator forms the belief that they are now

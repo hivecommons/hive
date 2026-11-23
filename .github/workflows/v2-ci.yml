@@ -1174,6 +1174,11 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_contribute_move.sh
 
+      # #19344/#19345: hub Deployment container set and secret env check.
+      - name: "Hub manifest check (#19344, #19345)"
+        working-directory: .
+        run: bash src/deploy/test_check_hub_manifest.sh
+
       # #5145: container mode resolves docker OR podman, but both hints printed
       # from INSIDE the container hardcoded docker — a container cannot see its
       # own launcher. On a podman run the recipe's host-side hint and the

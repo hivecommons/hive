@@ -140,7 +140,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 
 	// Human-merge paths (#11038): a merger queuing the PR is not the same as
 	// a person merging it, so the queued lane honors the list too.
-	if fence := carriedFenceGate(displayRepo, pr, c.info); fence != "" {
+	if fence := c.carriedFenceGate(ctx, displayRepo, owner, repo, pr); fence != "" {
 		return AutoMergeSweepEvent{}, fence, nil
 	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {

@@ -68,7 +68,13 @@ func TestRelayPreflightRunsAndFails(t *testing.T) {
 		args[4] = relayDir
 		c := exec.Command(args[0], args[1:]...)
 		c.Env = []string{"PATH=" + path}
-		out, err := c.CombinedOutput()
+		var stdout, stderr strings.Builder
+		c.Stdout, c.Stderr = &stdout, &stderr
+		err := c.Run()
+		out := stdout.String()
+		if code := RelayPreflightExitCode; errors.As(err, new(*exec.ExitError)) && err.(*exec.ExitError).ExitCode() == code {
+			out += stderr.String()
+		}
 		code := 0
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -76,7 +82,7 @@ func TestRelayPreflightRunsAndFails(t *testing.T) {
 		} else if err != nil {
 			t.Fatal(err)
 		}
-		return string(out), code
+		return out, code
 	}
 	out, code := run(bin, "/bin/sh", "-c", `printf '%s' "$PATH"`)
 	if code != 0 || !strings.HasPrefix(out, relayDir+":") {
@@ -88,6 +94,62 @@ func TestRelayPreflightRunsAndFails(t *testing.T) {
 	out, code = run(bin, "/bin/sh", "-c", "echo should-not-run")
 	if code != RelayPreflightExitCode || !strings.Contains(out, "no python3 on PATH") || strings.Contains(out, "should-not-run") {
 		t.Errorf("without python3: exit %d, output %q, want exit %d and a clear message", code, out, RelayPreflightExitCode)
+	}
+}
+
+// TestRelayPreflightUnreadableStatusFailsClosed checks the posture probe: a
+// /proc/self/status the preflight cannot read is a containment gap, so strict
+// mode (HIVE_REQUIRE_HARDENED) refuses the kick instead of passing it unchecked.
+// The script is run with the status path swapped for a test file, since the
+// real one is always readable on a Linux runner.
+func TestRelayPreflightUnreadableStatusFailsClosed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell only")
+	}
+	const statusPath = "/proc/self/status"
+	if !strings.Contains(relayPreflightScript, statusPath) {
+		t.Fatalf("preflight script no longer reads %s:\n%s", statusPath, relayPreflightScript)
+	}
+	relayDir := writeRelaySource(t)
+	bin := t.TempDir()
+	for _, tool := range RelayRequirements {
+		if err := os.WriteFile(filepath.Join(bin, tool), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hardened := filepath.Join(t.TempDir(), "status")
+	if err := os.WriteFile(hardened, []byte("NoNewPrivs:\t1\nCapEff:\t0000000000000000\nSeccomp:\t2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(t.TempDir(), "missing-status")
+	run := func(status, strict string) (string, string, int) {
+		script := strings.ReplaceAll(relayPreflightScript, statusPath, status)
+		c := exec.Command(relayShell, "-c", script, relayPreflightName, relayDir, "/bin/sh", "-c", "echo kick-ran")
+		c.Env = []string{"PATH=" + bin, "HIVE_REQUIRE_HARDENED=" + strict}
+		var stdout, stderr strings.Builder
+		c.Stdout, c.Stderr = &stdout, &stderr
+		err := c.Run()
+		code := 0
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			code = exitErr.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		return stdout.String(), stderr.String(), code
+	}
+
+	out, errOut, code := run(missing, "1")
+	if code != RelayPreflightExitCode || strings.Contains(out, "kick-ran") || !strings.Contains(errOut, "unreadable") {
+		t.Errorf("strict mode, unreadable status: exit %d, stdout %q, stderr %q, want exit %d, no kick and an unreadable-status gap", code, out, errOut, RelayPreflightExitCode)
+	}
+	out, errOut, code = run(missing, "")
+	if code != 0 || !strings.Contains(out, "kick-ran") || !strings.Contains(errOut, "unreadable") {
+		t.Errorf("warn mode, unreadable status: exit %d, stdout %q, stderr %q, want the kick to run with a warning", code, out, errOut)
+	}
+	out, errOut, code = run(hardened, "1")
+	if code != 0 || !strings.Contains(out, "kick-ran") || errOut != "" {
+		t.Errorf("strict mode, hardened status: exit %d, stdout %q, stderr %q, want the kick to run with no gaps", code, out, errOut)
 	}
 }
 
