@@ -96,6 +96,47 @@ var vendorFamilies = map[string]string{
 	"muse": "meta",
 }
 
+// cliAliasFamilies maps the bare model aliases a CLI accepts to the family of
+// the models they resolve to: Claude Code's opus/sonnet/haiku/fable and the
+// Gemini CLI's pro/flash/flash-lite. The CLI picks the concrete model, so the
+// alias names no single id, but its family is fixed. Only an exact alias
+// matches: a real id that merely contains the word ("gemini-2.5-pro",
+// "gpt-5-pro") keeps its own family. "auto" is not here: it is ambiguous
+// across backends and stays Unknown.
+var cliAliasFamilies = map[string]string{
+	"opus": BucketClaude, "sonnet": BucketClaude, "haiku": BucketClaude, "fable": BucketClaude,
+	"pro": BucketGemini, "flash": BucketGemini, "flash-lite": BucketGemini,
+}
+
+// cliAliasFamily returns the family of a bare CLI alias (see cliAliasFamilies).
+// A prefixed spelling counts only when the prefix is a CLI or gateway, or
+// names the alias's own family or vendor ("anthropic/opus"); "acme/flash"
+// is some other vendor's model and is left alone.
+func cliAliasFamily(model string) (string, bool) {
+	m := Normalize(model)
+	if m == Unknown {
+		return "", false
+	}
+	prefix := ""
+	if i := strings.Index(m, "/"); i >= 0 {
+		prefix = m[:i]
+	}
+	return aliasFamilyFor(canonicalID(m), prefix)
+}
+
+// aliasFamilyFor is cliAliasFamily on an already-canonical id and its
+// provider prefix ("" when none).
+func aliasFamilyFor(id, prefix string) (string, bool) {
+	f, ok := cliAliasFamilies[id]
+	if !ok {
+		return "", false
+	}
+	if prefix != "" && !gateways[prefix] && prefix != f && prefix != vendorFamilies[f] {
+		return "", false
+	}
+	return f, true
+}
+
 // canonicalOverrides are ids that do not follow the generic rules.
 var canonicalOverrides = map[string]string{
 	"sonnet": "claude-sonnet", "opus": "claude-opus", "haiku": "claude-haiku", "default": Auto,
@@ -148,6 +189,8 @@ func Resolve(model, reportedProvider string) Resolved {
 	}
 	if v, ok := vendorFamilies[family]; ok {
 		vendor = v
+	} else if f, ok := aliasFamilyFor(id, prefix); ok {
+		vendor = vendorFamilies[f]
 	} else if prefix != "" && !gateways[prefix] {
 		vendor = prefix
 	} else if p := strings.TrimSpace(strings.ToLower(reportedProvider)); p != "" && p != Unknown && !gateways[p] {
@@ -215,11 +258,18 @@ func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 // claude, gpt, gemini, grok, ... A provider or gateway path and a ":variant"
 // suffix are dropped first, so "anthropic/claude-opus-5-5" and
 // "openai-codex/gpt-6.1-sol:high" read as claude and gpt, like their bare
-// spellings. Unknown stays Unknown.
+// spellings. A bare CLI alias reads as the family it resolves to ("opus" →
+// claude, "flash" → gemini; see cliAliasFamilies), so independence checks
+// and review-model exclusion see an aliased author as its real family.
+// Canonical is unchanged: per-model statistics keep the alias as its own id.
+// Unknown stays Unknown.
 func Family(model string) string {
 	m := Canonical(model)
 	if m == Unknown {
 		return Unknown
+	}
+	if f, ok := cliAliasFamily(model); ok {
+		return f
 	}
 	if i := strings.Index(m, "-"); i >= 0 {
 		return m[:i]

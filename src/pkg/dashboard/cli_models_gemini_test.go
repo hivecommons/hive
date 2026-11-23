@@ -77,13 +77,15 @@ func TestDiscoverGeminiModels_LiveSuccess(t *testing.T) {
 		t.Errorf("pageSize query param = %q, want 200", gotPageSize)
 	}
 
-	// Also verify end-to-end queryCLIModels returns the live discovered models
+	// Also verify end-to-end queryCLIModels returns the live discovered models,
+	// followed by the always-offered Gemini CLI aliases.
 	res := s.queryCLIModels("gemini")
 	if res.fallback {
 		t.Fatal("queryCLIModels must report fallback=false when discovery succeeds")
 	}
-	if !equalStrings(res.models, wantModels) {
-		t.Fatalf("queryCLIModels returned %v, want %v", res.models, wantModels)
+	wantServed := append(append([]string(nil), wantModels...), geminiAlwaysIncludeModels...)
+	if !equalStrings(res.models, wantServed) {
+		t.Fatalf("queryCLIModels returned %v, want %v", res.models, wantServed)
 	}
 }
 
@@ -249,5 +251,105 @@ func TestFetchGeminiModels_NetworkError(t *testing.T) {
 	}
 	if len(models) != 0 {
 		t.Fatalf("expected nil or empty models on error, got %v", models)
+	}
+}
+
+// --- Gemini CLI aliases (auto, pro, flash, flash-lite) ---
+//
+// The Gemini CLI defines its own aliases, like Claude's opus/sonnet/haiku/fable.
+// The Google models API never lists them, so without geminiAlwaysIncludeModels
+// a hive with a Gemini API key would serve a list without them and the
+// dashboard's auto-heal would move an agent off an alias.
+
+func TestGeminiAliasesAreTheCLIAliases(t *testing.T) {
+	want := []string{"auto", "pro", "flash", "flash-lite"}
+	if !equalStrings(geminiAlwaysIncludeModels, want) {
+		t.Fatalf("geminiAlwaysIncludeModels = %v, want %v", geminiAlwaysIncludeModels, want)
+	}
+	for _, alias := range geminiAlwaysIncludeModels {
+		if !contains(geminiStaticModels, alias) {
+			t.Errorf("geminiStaticModels is missing alias %q: %v", alias, geminiStaticModels)
+		}
+		if !contains(geminiPinnedCLIModels, alias) {
+			t.Errorf("geminiPinnedCLIModels is missing alias %q: %v", alias, geminiPinnedCLIModels)
+		}
+	}
+}
+
+func TestGeminiAliasesSurvivePinnedFilter(t *testing.T) {
+	got := filterPinnedCLIModels("gemini", geminiAlwaysIncludeModels)
+	if !equalStrings(got, geminiAlwaysIncludeModels) {
+		t.Fatalf("filterPinnedCLIModels dropped Gemini aliases: got %v, want %v", got, geminiAlwaysIncludeModels)
+	}
+	got = filterPinnedCLIModels("gemini", geminiStaticModels)
+	if !equalStrings(got, geminiStaticModels) {
+		t.Fatalf("filterPinnedCLIModels changed the Gemini static list: got %v, want %v", got, geminiStaticModels)
+	}
+}
+
+func TestQueryCLIModels_GeminiAliasesOnLivePath(t *testing.T) {
+	clearGeminiEnv(t)
+	t.Setenv("GEMINI_API_KEY", "test-gemini-secret-key")
+	respBody := `{
+		"models": [
+			{"name": "models/gemini-2.5-pro", "supportedGenerationMethods": ["generateContent"]},
+			{"name": "models/gemini-3.6-flash", "supportedGenerationMethods": ["generateContent"]},
+			{"name": "models/gemini-3-flash-preview", "supportedGenerationMethods": ["generateContent"]}
+		]
+	}`
+	ts := geminiModelsTestServer(t, http.StatusOK, respBody, nil)
+	redirectGeminiEndpoint(t, ts.URL)
+
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.queryCLIModels("gemini")
+	if r.fallback {
+		t.Fatalf("live probe must not be fallback: %+v", r)
+	}
+	want := append([]string{"gemini-2.5-pro", "gemini-3-flash-preview"}, geminiAlwaysIncludeModels...)
+	if !equalStrings(r.models, want) {
+		t.Fatalf("served gemini list = %v, want %v (pinned filter still drops gemini-3.6-flash, aliases appended after it)", r.models, want)
+	}
+	// The cached authoritative list is what validation and the dashboard's
+	// auto-heal read; the aliases are in it, so an agent on an alias is never
+	// seen as "missing from discovery" and healed away.
+	ids := s.modelIDsForBackend("gemini")
+	for _, alias := range geminiAlwaysIncludeModels {
+		if !contains(ids, alias) {
+			t.Fatalf("alias %q missing from the authoritative gemini ids: %v", alias, ids)
+		}
+	}
+	for _, alias := range geminiAlwaysIncludeModels {
+		if w := s.unknownModelIDWarning("gemini", alias); w != "" {
+			t.Errorf("unknownModelIDWarning(gemini, %q) = %q, want no warning", alias, w)
+		}
+	}
+}
+
+func TestQueryCLIModels_GeminiAliasesOnFallbackPath(t *testing.T) {
+	clearGeminiEnv(t)
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.queryCLIModels("gemini")
+	if !r.fallback {
+		t.Fatalf("gemini with no key must be a fallback, got %+v", r)
+	}
+	for _, alias := range geminiAlwaysIncludeModels {
+		if !contains(r.models, alias) {
+			t.Fatalf("alias %q missing from the gemini fallback list: %v", alias, r.models)
+		}
+	}
+	for _, alias := range geminiAlwaysIncludeModels {
+		if w := s.unknownModelIDWarning("gemini", alias); w != "" {
+			t.Errorf("unknownModelIDWarning(gemini, %q) = %q, want no warning", alias, w)
+		}
+	}
+}
+
+func TestStaticCLIModelResult_GeminiAliases(t *testing.T) {
+	s := &Server{logger: testLogger()}
+	r := s.staticCLIModelResult("gemini")
+	for _, alias := range geminiAlwaysIncludeModels {
+		if !contains(r.models, alias) {
+			t.Fatalf("alias %q missing from the boot gemini list: %v", alias, r.models)
+		}
 	}
 }

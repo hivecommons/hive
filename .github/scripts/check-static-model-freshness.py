@@ -59,7 +59,9 @@ GO_LISTS = {
     "geminiStaticModels": "google",
 }
 
-ALIASES = {"opus", "sonnet", "haiku", "auto", "default"}
+# Bare CLI aliases, never compared against a catalogue: Claude's
+# opus/sonnet/haiku/fable and the Gemini CLI's auto/pro/flash/flash-lite.
+ALIASES = {"opus", "sonnet", "haiku", "fable", "auto", "default", "pro", "flash", "flash-lite"}
 
 
 def fetch_json(url):
