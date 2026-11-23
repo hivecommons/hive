@@ -9,9 +9,9 @@ package hub
 // registering again.
 //
 // Invariants (in addition to selfservice_v1_api.go's):
-//   - The hub session owner is the only caller. The registration key is not a
-//     credential here, and a hub admin who does not own the hive gets 404, the
-//     same answer as for a missing hive.
+//   - The ordinary edit requires the hub session owner. A hub admin who does
+//     not own the hive gets 404, the same answer as for a missing hive. The
+//     separately gated sync-repos operation uses the registration key.
 //   - If-Match is required (428 when absent, 412 when stale). The precondition
 //     is checked before any GitHub call and again inside the store lock.
 //   - Only repos the edit ADDS are proven (the same read-only
@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -306,6 +307,11 @@ func (s *HubServer) handleHubV1Patch(w http.ResponseWriter, r *http.Request) {
 		}
 		n.Repos = plan.repos
 		n.RepoProofs = selfServiceProofTimes(n.RepoProofs, plan.repos, n.OwnershipCheckedAt, now, plan.added)
+		if len(n.PendingProof) > 0 && (len(plan.added) > 0 || len(plan.removed) > 0) {
+			n.PendingProof = slices.DeleteFunc(n.PendingProof, func(repo string) bool {
+				return hubV1ContainsFold(plan.added, repo) || hubV1ContainsFold(plan.removed, repo)
+			})
+		}
 		n.DashboardURL = plan.dashboardURL
 		return nil
 	})
