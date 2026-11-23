@@ -43,6 +43,9 @@ const (
 // stageTrackerSummaryKeys are the fields a summary row keeps: what the
 // monitor's row shows (stage, wait, decision, links, blocker) without the
 // activity strips, history and Sentinel detail. view=full keeps every field.
+// sentinel_notice rides with sentinel_alert: without it a trusted author's
+// informational notice (no label, not a merge gate) reads as a blocking alert
+// whose label is missing.
 var stageTrackerSummaryKeys = []string{
 	"repo", "number", "kind", "title", "url", "author", "author_kind",
 	"stage", "stage_slug", "stage_label", "stage_since", "reason", "caption",
@@ -50,7 +53,7 @@ var stageTrackerSummaryKeys = []string{
 	"needs_human", "on_hold", "hold", "waiting_on_you", "wait_kind", "human_attention",
 	"blocked_on", "blocked_on_pr", "blocker", "decision_needed",
 	"linked_prs", "linked_issues", "nested_under", "superseded_by",
-	"sentinel_alert", "sentinel_reason", "merge_gate", "soak_remaining_seconds",
+	"sentinel_alert", "sentinel_notice", "sentinel_reason", "merge_gate", "soak_remaining_seconds",
 	"regressed_from", "regressed_to", "regressed_reason",
 	"last_operator_action", "decided", "updated_at",
 }

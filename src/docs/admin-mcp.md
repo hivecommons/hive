@@ -414,7 +414,10 @@ capped at 256 KiB.
    last contributor relay ended with no pull request and no verdict carries
    `last_idle` (`text`, `reason`, `contributor`, `at`) while the completion
    cooldown that task booked is still running: the clause the dashboard row's
-   tooltip shows.
+   tooltip shows. A PR row the Sentinel flagged carries `sentinel_alert` and
+   `sentinel_reason`; `sentinel_notice` is also true when the finding is an
+   informational notice for a trusted author (no alert label, not a merge
+   gate), so a blocking alert and a notice can be told apart in both views.
    - Filters (all optional): `repo`, `kind`, `number`, `q` (the monitor's search
      box), `stage`, `needs_human`, `on_hold`, `waiting_on_you`.
    - `view` is `summary` or `full`; `recent` adds the items merged or closed in
