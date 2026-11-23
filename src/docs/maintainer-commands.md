@@ -75,7 +75,12 @@ feedback](#pr-approval-command-feedback)). When the swarm has not approved
 the current head because it returned `requires_human`, a human who is
 trusted to queue merges can submit a normal GitHub **Approve** review on
 that exact head SHA to clear `stage/085-needs-decision` for any author
-kind/lane. No special review body is required; the queued human-merge
+kind/lane. Approving the head from the Hive dashboard does the same: the
+App's `/approve` comment carries a `hive:pr-approval head=<sha> by=<login>`
+marker, which the gate consumes only when the comment is App-authored and
+unedited, the marker names the current head, and the named login is a
+trusted merger ([#19536](https://github.com/hivecommons/hive/issues/19536)).
+No special review body is required; the queued human-merge
 lane's `Approved by @... for Hive auto-merge on green CI.` body remains
 specific to that queue flow. A swarm `changes_requested` or `reject` verdict
 is not overridden by a human approval; the head must be fixed or merged
