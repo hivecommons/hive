@@ -222,6 +222,78 @@ test('hive scheduling edits stage agentSandbox keys and refuse an incomplete rel
   assert.ok(!t.state.dirty.security || !('agentSandboxJobGithubReadProxy' in t.state.dirty.security));
 });
 
+// sandbox.setup (#19574) shares the renderer and the stager.
+test('setup block renders next to the preflight with full YAML paths and the effective row', () => {
+  const { api } = load();
+  const f = {
+    sandboxJob: {},
+    sandboxSetup: null,
+    sandboxSetupDefaults: { timeoutS: 900, totalTimeoutS: 1800, maxCommands: 32 },
+    sandboxEffective: {
+      job: {}, sources: {}, hiddenDefaults: [],
+      preflight: { commands: [] }, preflightSource: '',
+      setup: { commands: ['./install.sh'], healthCommands: ['smoke', 'smoke2'], timeoutS: 900, totalTimeoutS: 1800 },
+      setupSource: 'agent_sandbox',
+    },
+  };
+  const html = api.sandboxSchedulingHtml('agent', f);
+  for (const id of ['setupOverride', 'setupCommands', 'setupHealthCommands', 'setupTimeoutS', 'setupTotalTimeoutS']) {
+    assert.ok(html.includes(`id="sbx-agent-${id}"`), id);
+  }
+  for (const yaml of ['agents.<key>.sandbox.setup.commands[]', 'agents.<key>.sandbox.setup.health_commands[]', 'agents.<key>.sandbox.setup.timeout_s', 'agents.<key>.sandbox.setup.total_timeout_s']) {
+    assert.ok(html.includes(yaml), yaml);
+  }
+  assert.ok(html.indexOf('Node preflight') < html.indexOf('Workspace setup'), 'setup follows the preflight');
+  assert.ok(html.includes('setup_failed'));
+  // Without an override the inputs show the hive-wide lists, locked.
+  assert.match(html, /id="sbx-agent-setupCommands"[^>]*disabled/);
+  assert.ok(html.includes('./install.sh'));
+  const eff = api.agentSandboxSettingsHtml({ sandboxFields: Object.assign({}, f, { sandboxEffective: Object.assign({}, f.sandboxEffective) }) });
+  assert.ok(eff.includes('data-effective-field="setup"'));
+  assert.ok(eff.includes('1 setup command, 2 health checks'));
+  const hive = api.sandboxSchedulingHtml('hive', { agentSandboxSetup: { commands: ['./install.sh'], healthCommands: [] } });
+  for (const yaml of ['agent_sandbox.setup.commands[]', 'agent_sandbox.setup.health_commands[]', 'agent_sandbox.setup.timeout_s', 'agent_sandbox.setup.total_timeout_s']) {
+    assert.ok(hive.includes(yaml), yaml);
+  }
+  assert.ok(!hive.includes('setupOverride'));
+  assert.doesNotMatch(hive, /id="sbx-hive-setupCommands"[^>]*disabled/);
+});
+
+test('setup edits stage sandboxSetup and agentSandboxSetup; no override stages null; an error is left out', () => {
+  let t = load({ inputs: {
+    'sbx-agent-setupOverride': { type: 'checkbox', checked: true },
+    'sbx-agent-setupCommands': './install.sh\n\n',
+    'sbx-agent-setupHealthCommands': 'python -c smoke',
+    'sbx-agent-setupTimeoutS': '600',
+    'sbx-agent-setupTotalTimeoutS': '',
+  } });
+  t.api.markSandboxScheduling('agent');
+  assert.deepStrictEqual(t.state.dirty.general.sandboxSetup, { commands: ['./install.sh'], healthCommands: ['python -c smoke'], timeoutS: 600, totalTimeoutS: 0 });
+  t = load({ inputs: {
+    'sbx-agent-setupOverride': { type: 'checkbox', checked: false },
+    'sbx-agent-setupCommands': './install.sh',
+    'sbx-agent-setupHealthCommands': '',
+  } });
+  t.api.markSandboxScheduling('agent');
+  assert.strictEqual(t.state.dirty.general.sandboxSetup, null);
+  t = load({ inputs: {
+    'sbx-agent-setupOverride': { type: 'checkbox', checked: true },
+    'sbx-agent-setupCommands': 'true',
+    'sbx-agent-setupHealthCommands': '',
+    'sbx-agent-setupTimeoutS': '-3',
+  } });
+  t.api.markSandboxScheduling('agent');
+  assert.ok(!('sandboxSetup' in t.state.dirty.general), 'a bad timeout keeps the block out of the save');
+  t = load({ inputs: {
+    'sbx-hive-setupCommands': './install.sh',
+    'sbx-hive-setupHealthCommands': 'smoke',
+    'sbx-hive-setupTimeoutS': '',
+    'sbx-hive-setupTotalTimeoutS': '1200',
+  } });
+  t.api.markSandboxScheduling('hive');
+  assert.deepStrictEqual(t.state.dirty.security.agentSandboxSetup, { commands: ['./install.sh'], healthCommands: ['smoke'], timeoutS: 0, totalTimeoutS: 1200 });
+});
+
 test('shipped index.html carries the scheduling controls in both places', () => {
   const html = fs.readFileSync(path.join(__dirname, 'static', 'index.html'), 'utf8');
   assert.ok(html.includes("${sandboxSchedulingHtml('agent', f)}"));

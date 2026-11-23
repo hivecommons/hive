@@ -61,9 +61,10 @@ type Result struct {
 	// Node is the node the run's pod was scheduled on, when the launcher can
 	// tell (the Job runtime); empty otherwise.
 	Node string
-	// FailReason is set when the run failed for a reason that is the
-	// infrastructure's, not the agent's: FailReasonNodeUnhealthy or
-	// FailReasonWaitingForNode. Empty for every other outcome.
+	// FailReason is set when the run failed before the agent ran:
+	// FailReasonNodeUnhealthy or FailReasonWaitingForNode (the
+	// infrastructure's reason), or FailReasonSetupFailed (sandbox.setup).
+	// Empty for every other outcome.
 	FailReason string
 }
 

@@ -60,6 +60,7 @@ type (
 type (
 	SandboxJobAffinity                = cruxconfig.SandboxJobAffinity
 	SandboxPreflightConfig            = cruxconfig.SandboxPreflightConfig
+	SandboxSetupConfig                = cruxconfig.SandboxSetupConfig
 	SandboxJobNodeAffinity            = cruxconfig.SandboxJobNodeAffinity
 	SandboxJobNodeSelector            = cruxconfig.SandboxJobNodeSelector
 	SandboxJobNodeSelectorTerm        = cruxconfig.SandboxJobNodeSelectorTerm
@@ -255,6 +256,13 @@ const (
 	DefaultSandboxPreflightTimeoutS      = cruxconfig.DefaultSandboxPreflightTimeoutS
 	DefaultSandboxPreflightTotalTimeoutS = cruxconfig.DefaultSandboxPreflightTotalTimeoutS
 	DefaultSandboxScheduleTimeoutS       = cruxconfig.DefaultSandboxScheduleTimeoutS
+	// Sandbox setup step bounds (hivecommons/hive#19574).
+	MaxSandboxSetupCommands          = cruxconfig.MaxSandboxSetupCommands
+	DefaultSandboxSetupTimeoutS      = cruxconfig.DefaultSandboxSetupTimeoutS
+	DefaultSandboxSetupTotalTimeoutS = cruxconfig.DefaultSandboxSetupTotalTimeoutS
 )
 
-var ValidateSandboxPreflight = cruxconfig.ValidateSandboxPreflight
+var (
+	ValidateSandboxPreflight = cruxconfig.ValidateSandboxPreflight
+	ValidateSandboxSetup     = cruxconfig.ValidateSandboxSetup
+)
