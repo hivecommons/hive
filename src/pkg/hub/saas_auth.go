@@ -460,8 +460,34 @@ func sessionCookieParentDomain() string {
 			slog.Error("HIVE_HUB_SESSION_COOKIE_DOMAIN ignored; scoping the hub session cookie to the hub host",
 				"value", raw, "hub_host", host, "error", err)
 		}
+	} else if spoke := hubSpokeDomain(); strings.TrimSpace(raw) != "" && sessionCookieExcludesSpokes(domain, spoke) {
+		key := domain + "|" + spoke
+		if _, logged := spokeExclusionLogged.LoadOrStore(key, true); !logged {
+			slog.Warn("HIVE_HUB_SESSION_COOKIE_DOMAIN excludes the spoke domain; hosted spokes will not receive the hub session cookie",
+				"value", domain, "spoke_domain", spoke, "spoke_hosts", "<id>."+spoke,
+				"fix", "set HIVE_HUB_SESSION_COOKIE_DOMAIN to "+spoke+" or a parent of it, or set HIVE_HUB_SPOKE_DOMAIN under "+domain)
+		}
 	}
 	return domain
+}
+
+// spokeExclusionLogged keeps the spoke-exclusion warning to one log line per
+// (override, spoke domain) pair instead of one per request.
+var spokeExclusionLogged sync.Map
+
+// sessionCookieExcludesSpokes reports whether a cookie scoped to override
+// would not reach hosted spokes at <id>.spokeDomain. An empty override means
+// the default scope, which is never checked here. Case and surrounding dots
+// are ignored.
+func sessionCookieExcludesSpokes(override, spokeDomain string) bool {
+	trim := func(s string) string {
+		return strings.Trim(strings.ToLower(strings.TrimSpace(s)), ".")
+	}
+	override, spokeDomain = trim(override), trim(spokeDomain)
+	if override == "" || spokeDomain == "" {
+		return false
+	}
+	return spokeDomain != override && !strings.HasSuffix(spokeDomain, "."+override)
 }
 
 // invalidSessionCookieDomainLogged keeps an invalid override to one log line

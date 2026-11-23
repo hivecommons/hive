@@ -1,6 +1,8 @@
 package hub
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -138,5 +140,62 @@ func TestSetSessionCookiesExpiresWideCopyWhenOverrideNarrows(t *testing.T) {
 				t.Errorf("expired cookie domains = %v, want %v", expired, tc.wantExpired)
 			}
 		})
+	}
+}
+
+func TestSessionCookieExcludesSpokes(t *testing.T) {
+	cases := []struct {
+		name     string
+		override string
+		spoke    string
+		want     bool
+	}{
+		{name: "equal", override: "hive.example.org", spoke: "hive.example.org", want: false},
+		{name: "spoke under override", override: "example.org", spoke: "hive.example.org", want: false},
+		{name: "unrelated", override: "hive.example.org", spoke: "spokes.example.com", want: true},
+		{name: "sibling under same parent", override: "hub.example.org", spoke: "spokes.example.org", want: true},
+		{name: "suffix off a label boundary", override: "ive.example.org", spoke: "hive.example.org", want: true},
+		{name: "spoke is parent of override", override: "hive.example.org", spoke: "example.org", want: true},
+		{name: "case differs", override: "HIVE.Example.ORG", spoke: "hive.example.org", want: false},
+		{name: "trailing dots", override: "hive.example.org.", spoke: "x.hive.example.org.", want: false},
+		{name: "leading dot", override: ".example.org", spoke: "hive.example.org", want: false},
+		{name: "override empty", override: "", spoke: "hive.example.org", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sessionCookieExcludesSpokes(tc.override, tc.spoke); got != tc.want {
+				t.Fatalf("sessionCookieExcludesSpokes(%q, %q) = %v, want %v", tc.override, tc.spoke, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSessionCookieParentDomainWarnsOncePerPairWhenSpokesExcluded(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	spokeExclusionLogged.Clear()
+
+	t.Setenv("HIVE_HUB_PUBLIC_URL", "https://hive.example.org")
+	t.Setenv("HIVE_HUB_SESSION_COOKIE_DOMAIN", "hive.example.org")
+	t.Setenv("HIVE_HUB_SPOKE_DOMAIN", "spokes.example.org")
+	for range 3 {
+		if got := sessionCookieParentDomain(); got != "hive.example.org" {
+			t.Fatalf("cookie domain = %q, want hive.example.org", got)
+		}
+	}
+	if n := strings.Count(buf.String(), "level=WARN"); n != 1 {
+		t.Fatalf("warnings = %d, want 1:\n%s", n, buf.String())
+	}
+	if !strings.Contains(buf.String(), "spokes.example.org") || !strings.Contains(buf.String(), "hive.example.org") {
+		t.Fatalf("warning must name both values:\n%s", buf.String())
+	}
+
+	buf.Reset()
+	t.Setenv("HIVE_HUB_SPOKE_DOMAIN", "x.hive.example.org")
+	sessionCookieParentDomain()
+	if buf.Len() != 0 {
+		t.Fatalf("unexpected log when spokes are covered:\n%s", buf.String())
 	}
 }
