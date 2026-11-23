@@ -23,6 +23,7 @@ const (
 	DenyReasonIssueShape           = "issue_shape"
 	DenyReasonCanaryEgress         = "canary_egress"
 	DenyReasonPushSignoff          = "push_signoff"
+	DenyReasonCredentialShape      = "credential_shape" // #nosec G101 -- a reason-code label, not a credential
 	DenyReasonUnknown              = "denied"
 )
 
