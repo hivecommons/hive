@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v5.351.0)
+
+### Added
+
+- ioscan: vendor pinned injection and held-out benign corpora (#19517)
+
 ## 2026-11-23 (v5.350.1)
 
 ### Security
