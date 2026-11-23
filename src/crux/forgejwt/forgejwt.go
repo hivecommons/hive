@@ -83,6 +83,9 @@ func (s Signer) Mint(aud Audience, subject string) (string, error) {
 	if subject == "" {
 		return "", errors.New("forgejwt: subject is empty")
 	}
+	if _, err := ParseIssuer(string(s.Issuer)); err != nil {
+		return "", fmt.Errorf("forgejwt: issuer is not a valid https origin: %w", err)
+	}
 	key, err := readKey(s.KeyFile)
 	if err != nil {
 		return "", err
