@@ -30,6 +30,7 @@ agent_sandbox.openshell.tolerations[].operator # TODO #17645 (OpenShell runtime;
 agent_sandbox.openshell.tolerations[].value # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.openshell.workspace_claim # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.openshell.workspace_claim_mount # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.pids_limit # TODO #11854 (#19479 added the key; Settings control pending)
 agent_sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
 agent_sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
 agents.<key>.acmm_levels[] # TODO #11854

@@ -214,6 +214,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 		Runtime:       runtime,
 		EnvAllowlist:  agent.Config.SandboxEnvAllowlist(m.sandboxConfig),
 		NetworkMode:   agent.Config.SandboxNetworkMode(m.sandboxConfig),
+		PidsLimit:     m.sandboxConfig.PidsLimit,
 		Timeout:       time.Duration(agent.Config.SandboxTimeoutS(m.sandboxConfig)) * time.Second,
 		PublishVerify: agent.Config.SandboxPublishVerify(m.sandboxConfig),
 		VerifyTimeout: time.Duration(agent.Config.SandboxPublishVerifyTimeoutS(m.sandboxConfig)) * time.Second,

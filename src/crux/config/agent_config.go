@@ -510,6 +510,7 @@ type AgentSandboxConfig struct {
 	// Preflight is the node health check run before the agent starts on the
 	// job runtime; see SandboxPreflightConfig.
 	Preflight *SandboxPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
+	PidsLimit int                     `yaml:"pids_limit,omitempty" json:"pids_limit,omitempty"` // Podman --pids-limit; <=0 keeps the 4096 default (#19479)
 }
 
 // SandboxPublishConfig is the deterministic preflight hive runs before it
