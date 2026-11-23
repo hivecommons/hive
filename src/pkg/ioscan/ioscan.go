@@ -509,7 +509,7 @@ func normalizeUnicodeSteganography(text string) unicodeNormalization {
 			suspicious = true
 			continue
 		}
-		if folded, ok := confusableASCII(r); ok && hasASCII {
+		if folded, ok := confusableASCII(r); ok && hasASCII && touchesASCII(runes, i) {
 			suspicious = true
 			b.WriteRune(folded)
 			continue
@@ -562,6 +562,16 @@ func isSuspiciousVariationSelector(runes []rune, i, total int) bool {
 		return true
 	}
 	return i+1 < len(runes) && isASCIIAlphaNum(runes[i+1])
+}
+
+// touchesASCII reports whether the rune at i sits directly against an ASCII
+// letter or digit. A confusable only disguises a word when it is mixed into
+// ASCII ("\u0456gnore"); inside a word spelled in its own script ("получает")
+// it is ordinary prose, and folding it would withhold every Russian or
+// Ukrainian issue that also carries a Latin command or URL.
+func touchesASCII(runes []rune, i int) bool {
+	return (i > 0 && isASCIIAlphaNum(runes[i-1])) ||
+		(i+1 < len(runes) && isASCIIAlphaNum(runes[i+1]))
 }
 
 func isASCIIAlphaNum(r rune) bool {
