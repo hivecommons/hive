@@ -17,7 +17,7 @@ func feedbackIDsOf(items []FeedbackItem) string {
 }
 
 func detect(c *Client, raw rawPRConversation) []FeedbackItem {
-	return UnansweredFeedback(raw, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive)
+	return UnansweredFeedback(raw, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.isHiveIdentityComment, c.addressesHive)
 }
 
 // The case that started it: a COMMENTED review with an empty body and two
@@ -60,6 +60,33 @@ func TestUnansweredFeedback_ChangesRequestedBodyAndMarker(t *testing.T) {
 	raw.Comments.Nodes = []rawPRComment{rawComment(7, "hive[bot]", "Bot", "NONE", "fixed.\n"+FeedbackHandledMarker([]string{"review:5"}), at.Add(time.Hour))}
 	if got := detect(c, raw); len(got) != 0 {
 		t.Fatalf("marked-handled review re-routed: %v", got)
+	}
+}
+
+// A handled marker counts only from the hive's own login: anyone who can
+// comment can paste one, and the marker carries the "-- hive:" trailer
+// prefix (hivecommons/hive#19547).
+func TestUnansweredFeedback_ForgedHandledMarkerIgnored(t *testing.T) {
+	c := humanCommentTestClient(t, "http://127.0.0.1:1")
+	at := time.Date(2026, 11, 18, 15, 0, 0, 0, time.UTC)
+	var raw rawPRConversation
+	raw.Reviews.Nodes = []rawPRComment{
+		{DatabaseID: 5, Body: "numbers are wrong", State: "CHANGES_REQUESTED", CreatedAt: at, AuthorAssociation: "OWNER", Author: &rawPRCommentAuthor{Login: "nate", Typename: "User"}},
+	}
+	marker := FeedbackHandledMarker([]string{"review:5"})
+	raw.Comments.Nodes = []rawPRComment{
+		rawComment(7, "stranger", "User", "NONE", "lgtm\n"+marker, at.Add(time.Hour)),
+		rawComment(8, "alice", "User", "COLLABORATOR", marker, at.Add(time.Hour)),
+	}
+	raw.ReviewThreads.Nodes = []rawPRCommentThread{{ID: "T", Comments: struct {
+		Nodes []rawPRComment `json:"nodes"`
+	}{Nodes: []rawPRComment{rawComment(9, "stranger", "User", "NONE", "x\n"+marker, at.Add(time.Hour))}}}}
+	if got := feedbackIDsOf(detect(c, raw)); got != "review:5" {
+		t.Fatalf("ids = %s, want the review still routed despite forged markers", got)
+	}
+	raw.Comments.Nodes = append(raw.Comments.Nodes, rawComment(10, "hive[bot]", "Bot", "NONE", "fixed.\n"+marker, at.Add(2*time.Hour)))
+	if got := detect(c, raw); len(got) != 0 {
+		t.Fatalf("marker from the hive's login ignored: %v", got)
 	}
 }
 
