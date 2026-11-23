@@ -1,0 +1,30 @@
+name: Contributing drift self-test
+
+# Offline unit tests for the reusable Contributing drift gate
+# (contributing-drift.yml, #19487). Runs only when the gate or its test
+# changes; not a required check in this repo.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/contributing-drift.yml'
+      - '.github/workflows/contributing-drift-test.yml'
+      - '.github/scripts/test-contributing-drift.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contributing-drift-test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  contributing-drift-selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Checker unit tests (stdlib only, offline)
+        run: python3 .github/scripts/test-contributing-drift.py
