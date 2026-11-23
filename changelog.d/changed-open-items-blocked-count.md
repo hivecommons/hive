@@ -1,0 +1,1 @@
+- `openItems.buckets.blocked` in `/api/status` (and so the `fleet_status` MCP tool and the "Blocked" count in the meeting and chat status line) now reads the PR equation's `blocked` term. It had been reading a term name that no longer exists, so it always said 0.

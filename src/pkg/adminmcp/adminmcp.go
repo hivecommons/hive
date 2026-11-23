@@ -381,8 +381,8 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolHiveAdvisor, "Read hive advisor recommendations."},
 		{ToolAdvisorRecords, "Read what the advisor lane flagged: advisor review records (severity, text, interjection, cost, skip reason) for one agent or the whole fleet over a time window (since/until or hours). Read-only; the advisor has no write tool."},
 		{ToolAgentNudgeStatus, "Read the asynchronous delivery outcome for the latest nudge sent to one agent."},
-		{ToolIssuesByBand, "Read issues grouped by their Overview band (ready, in-progress, agent-filed, waiting, done), e.g. band=done for issues an agent has labelled hive/already-done, hive/covered-by-pr or hive/likely-done that a human has not verified and closed yet. hive/covered-by-pr only means an agent found an open PR that references the issue — check that the PR merged before closing."},
-		{ToolPrsByBand, "Read PRs grouped by their Overview band (waiting, eligible, blocked, in-review, open, draft)."},
+		{ToolIssuesByBand, "Read issues grouped by their Overview band (ready, in-progress, agent-filed, waiting, done), e.g. band=done for issues an agent has labelled hive/already-done, hive/covered-by-pr or hive/likely-done that a human has not verified and closed yet. hive/covered-by-pr only means an agent found an open PR that references the issue — check that the PR merged before closing. Each row also carries its Overview card band, group and reason (card_band, card_group, card_reason, card_reason_code); card_band and card_group filter by them, and card_bands[] and card_groups[] count them."},
+		{ToolPrsByBand, "Read PRs grouped by their Overview band (waiting, eligible, blocked, in-review, open, draft). Each row also carries its Overview card band, group and reason (card_band, card_group, card_reason, card_reason_code); card_band and card_group filter by them, and card_bands[] and card_groups[] count them."},
 		{ToolStageTrackerRead, "Read the Activity monitor: every open item on the board with its stage, what it waits on, its decision question and options, linked PRs and issues, blocker, hold and needs-human state, plus stages[] with a count per stage. Filter with repo, kind, number, q (the monitor's search box: a number matches the item or a linked item), stage, needs_human, on_hold and waiting_on_you; view=full adds history and activity; recent=true adds recently merged and closed. Page with offset/next_offset. Read-only; its row actions are the repository.item_* write operations."},
 		{ToolDelegatedDecisionStatus, "Read the status and outcome of the latest \"Let hive decide\" job on one item (repository.item_delegate runs in the background)."},
 		{ToolContributorQueue, "Read the contributor ready-work queue exactly as the Operations card (Contribute → Operations → Contributor Queue) shows it, through GET /api/contribute/queue: pinned issues first in pinned order, then the default order, held issues last with held_reason. Each row carries its position. withheld=true adds the candidates the queue keeps out, each with the gate that refused it. Page with offset/next_offset. Read-only; change the queue with the contributor_queue.order, contributor_queue.hold and contributor_queue.hold_clear write operations."},
@@ -469,12 +469,16 @@ func inputSchema(name string) map[string]any {
 		props["stale"] = map[string]any{"type": "boolean"}
 		props["held"] = map[string]any{"type": "boolean", "description": "Filter rows to held (held=true) or unheld (held=false) issues before the limit cap, so held rows are not silently dropped by it; unlike `repo`, this does not change bands[] counts."}
 		props["offset"] = map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page past the limit cap."}
+		props["card_band"] = map[string]any{"type": "string", "enum": issueCardBandKeys, "description": "An Overview card band key from card_bands[]; filters rows before the limit cap without changing card_bands[] counts."}
+		props["card_group"] = map[string]any{"type": "string", "enum": cardGroupKeys, "description": "An Overview card group (tile) key from card_groups[]; filters rows before the limit cap without changing card_groups[] counts."}
 	case ToolPrsByBand:
 		props["repo"] = map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."}
 		props["band"] = map[string]any{"type": "string", "enum": prBandKeys}
 		props["stale"] = map[string]any{"type": "boolean"}
 		props["held"] = map[string]any{"type": "boolean", "description": "Filter rows to held (held=true) or unheld (held=false) PRs before the limit cap, so held rows are not silently dropped by it; unlike `repo`, this does not change bands[] counts."}
 		props["offset"] = map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page past the limit cap."}
+		props["card_band"] = map[string]any{"type": "string", "enum": prCardBandKeys, "description": "An Overview card band key from card_bands[]; filters rows before the limit cap without changing card_bands[] counts."}
+		props["card_group"] = map[string]any{"type": "string", "enum": cardGroupKeys, "description": "An Overview card group (tile) key from card_groups[]; filters rows before the limit cap without changing card_groups[] counts."}
 	case ToolReviewQueue:
 		props = reviewQueueSchema()
 	case ToolContributorQueue:

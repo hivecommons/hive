@@ -385,7 +385,7 @@ func openItemsSummary(status *StatusPayload) FrontendOpenItems {
 	term := overviewTermCount
 	out.Buckets.Actionable = FrontendOpenItemKinds{Issues: an.Issues, PRs: an.PRs}
 	out.Buckets.Held = FrontendOpenItemKinds{Issues: term(an.IssueEquation, "held"), PRs: term(an.PREquation, "held")}
-	out.Buckets.Blocked = FrontendOpenItemKinds{Issues: term(an.IssueEquation, "blocked_needs_human"), PRs: term(an.PREquation, "blocked_needs_human")}
+	out.Buckets.Blocked = FrontendOpenItemKinds{Issues: term(an.IssueEquation, overviewTermBlocked), PRs: term(an.PREquation, overviewTermBlocked)}
 	out.Buckets.Outside = FrontendOpenItemKinds{Issues: term(an.IssueEquation, "outside"), PRs: term(an.PREquation, "outside")}
 	return out
 }
