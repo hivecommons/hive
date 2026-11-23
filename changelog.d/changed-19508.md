@@ -1,0 +1,1 @@
+- build(deps): Bump github.com/nats-io/nats.go from 1.55.0 to 1.56.0 in /src (#19508)
