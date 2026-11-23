@@ -2602,9 +2602,9 @@ SOFTWARE.
 -----------------------------------------------------------------------------
 
 Package:  github.com/nats-io/nats.go
-Version:  v1.55.0
+Version:  v1.56.0
 License:  Apache-2.0
-Source:   https://github.com/nats-io/nats.go/blob/v1.55.0/LICENSE
+Source:   https://github.com/nats-io/nats.go/blob/v1.56.0/LICENSE
 
                                  Apache License
                            Version 2.0, January 2004
