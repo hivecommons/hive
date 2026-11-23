@@ -5225,6 +5225,8 @@ func (s *Server) zeroTokenHealth(ts *tokens.AggregateSummary) (status, detail st
 		return "warn", "zero consumed — Copilot token parser error: " + diag.LastCopilotScanError
 	} else if diag.LastBobScanError != "" {
 		return "warn", "zero consumed — Bob token parser error: " + diag.LastBobScanError
+	} else if diag.LastGeminiScanError != "" {
+		return "warn", "zero consumed - Gemini token parser error: " + diag.LastGeminiScanError
 	} else if diag.LiveCaptureEnabled && ts != nil && ts.SessionCount > 0 {
 		return "warn", "zero consumed — sessions still open or live-capture has not accounted usage yet"
 	}

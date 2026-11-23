@@ -189,6 +189,7 @@ type Diagnostics struct {
 	LastClaudeScanError  string `json:"last_claude_scan_error,omitempty"`
 	LastCopilotScanError string `json:"last_copilot_scan_error,omitempty"`
 	LastBobScanError     string `json:"last_bob_scan_error,omitempty"`
+	LastGeminiScanError  string `json:"last_gemini_scan_error,omitempty"`
 	LastSandboxScanError string `json:"last_sandbox_scan_error,omitempty"`
 	LiveCaptureEnabled   bool   `json:"live_capture_enabled,omitempty"`
 }
@@ -207,6 +208,7 @@ type Collector struct {
 	claudeSessionsDir         string
 	copilotSessionsDir        string
 	bobSessionsDir            string
+	geminiSessionsDir         string
 	clineHomesRoot            string
 	sandboxRunHistoryPath     string
 	copilotLiveCaptureSinceMs int64
@@ -224,6 +226,10 @@ type Collector struct {
 	// launchLog, when attached, records which issue/PR/head SHA each delivered
 	// kick was launched for (see launch.go). Attribution only — never a gate.
 	launchLog *LaunchLog
+
+	// geminiCache keeps parsed Gemini recordings between scans, keyed on
+	// (path, size, mtime); only the scan goroutine uses it.
+	geminiCache *geminiScanCache
 
 	// loadOnce guards the one-time restore of the persisted snapshot. The
 	// load is deferred until first read (see Summary) instead of happening in
@@ -277,6 +283,17 @@ func (c *Collector) SetSandboxRunHistoryPath(path string) {
 
 func (c *Collector) SetBobSessionsDir(dir string) {
 	c.bobSessionsDir = dir
+}
+
+// SetGeminiSessionsDir points the collector at the shared Gemini CLI home
+// (typically /data/home/.gemini). Its tmp/*/chats recordings, and those under
+// every per-agent <home>/agents/<name>/.gemini beside it, are scanned for
+// per-message token usage.
+func (c *Collector) SetGeminiSessionsDir(dir string) {
+	c.geminiSessionsDir = dir
+	if c.geminiCache == nil {
+		c.geminiCache = newGeminiScanCache()
+	}
 }
 
 // SetCopilotLiveCapture tells the collector that the MITM proxy began recording
@@ -397,6 +414,21 @@ func (c *Collector) scan() {
 		c.mu.Lock()
 		c.errorStreaks = streaks
 		c.mu.Unlock()
+	}
+
+	if c.geminiSessionsDir != "" {
+		c.geminiCache.begin()
+		for _, tree := range GeminiSessionTrees(c.geminiSessionsDir) {
+			geminiAgg, err := scanGeminiSessionTree(tree.Dir, tree.Agent, c.logger, c.geminiCache)
+			if err != nil {
+				c.logger.Warn("gemini session scan failed", "dir", tree.Dir, "error", err)
+				diag.LastGeminiScanError = err.Error()
+			} else if geminiAgg != nil && geminiAgg.SessionCount > 0 {
+				MergeAggregates(agg, geminiAgg)
+			}
+		}
+		// Forget files no tree listed this scan (deleted, aged out, moved).
+		c.geminiCache.prune()
 	}
 
 	if c.sandboxRunHistoryPath != "" {
