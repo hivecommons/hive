@@ -95,10 +95,22 @@ func decodeObfuscations(text string) []decodedLayer {
 // High injection finding naming the first layer that carried a hit. The
 // plain text has already been scanned, so only the hidden layers are new.
 func scanObfuscated(text string) []Finding {
-	for _, layer := range decodeObfuscations(text) {
+	layers := decodeObfuscations(text)
+	if len(layers) == 0 {
+		return nil
+	}
+	// A hit that the plain text already produced (same rule, same snippet) is
+	// not hidden by the layer; the layer only carries it along. Counting it
+	// would promote a Medium phrase such as a "New Rule:" issue title to High
+	// whenever the same text also holds a kebab-case slug.
+	plain := map[string]bool{}
+	for _, f := range append(matchRules(text, injectionRules), matchRules(text, dangerousRules)...) {
+		plain[f.Rule+"\x00"+f.Snippet] = true
+	}
+	for _, layer := range layers {
 		nested := append(matchRules(layer.text, injectionRules), matchRules(layer.text, dangerousRules)...)
 		for _, f := range nested {
-			if strings.HasSuffix(f.Rule, QuotedRuleSuffix) {
+			if strings.HasSuffix(f.Rule, QuotedRuleSuffix) || plain[f.Rule+"\x00"+f.Snippet] {
 				continue
 			}
 			return []Finding{{

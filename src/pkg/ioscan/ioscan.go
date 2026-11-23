@@ -137,6 +137,11 @@ type rule struct {
 	kind     Kind
 	severity Severity
 	re       *regexp.Regexp
+	// titleOnly, when set, exempts a match whose line from the match start
+	// is only that shape (an issue-title label such as "New Rule: `slug`"),
+	// so the label is not read as an instruction. Anything else on the line
+	// after the match still fires the rule.
+	titleOnly *regexp.Regexp
 }
 
 // injectionRules detect prompt-injection / instruction-override attempts.
@@ -166,6 +171,8 @@ var injectionRules = []rule{
 		kind:     KindInjection,
 		severity: SeverityMedium,
 		re:       regexp.MustCompile(`(?i)(new\s+(system\s+)?prompt|new\s+instructions?|new\s+rules?)\s*[:\-]`),
+		// "New Rule: `prefer-temporal`" is the ESLint rule-proposal title.
+		titleOnly: regexp.MustCompile("(?i)^new\\s+rules?\\s*:\\s*`[\\w@/.-]{1,64}`\\s*$"),
 	},
 	{
 		name:     "injection.pretend_act_as",
@@ -417,12 +424,34 @@ func (s *Scanner) collect(text string) []Finding {
 
 // matchRules applies a rule table to text and returns one finding per rule that
 // fires (deduplicated per rule; a rule reports at most once).
+// withoutTitleLabels drops the matches whose line, from the match start to
+// the end of the line, is entirely the titleOnly shape.
+func withoutTitleLabels(text string, locs [][]int, titleOnly *regexp.Regexp) [][]int {
+	kept := locs[:0:0]
+	for _, loc := range locs {
+		line := text[loc[0]:]
+		if i := strings.IndexByte(line, '\n'); i >= 0 {
+			line = line[:i]
+		}
+		if !titleOnly.MatchString(line) {
+			kept = append(kept, loc)
+		}
+	}
+	return kept
+}
+
 func matchRules(text string, rules []rule) []Finding {
 	var out []Finding
 	for _, r := range rules {
 		locs := r.re.FindAllStringIndex(text, -1)
 		if len(locs) == 0 {
 			continue
+		}
+		if r.titleOnly != nil {
+			locs = withoutTitleLabels(text, locs, r.titleOnly)
+			if len(locs) == 0 {
+				continue
+			}
 		}
 		f := Finding{Kind: r.kind, Severity: r.severity, Rule: r.name}
 		// A match that only ever appears inside a quoted mention ("issues
@@ -500,6 +529,7 @@ func normalizeUnicodeSteganography(text string) unicodeNormalization {
 
 	var b strings.Builder
 	suspicious := false
+	foldedFullwidth := false
 	for i, r := range runes {
 		if isInvisibleControl(r) || isTagCharacter(r) {
 			suspicious = true
@@ -509,7 +539,20 @@ func normalizeUnicodeSteganography(text string) unicodeNormalization {
 			suspicious = true
 			continue
 		}
-		if folded, ok := confusableASCII(r); ok && hasASCII {
+		// Fullwidth forms are always folded for matching, because an
+		// all-fullwidth directive has no ASCII neighbour for the context gate
+		// below to find. They only count as steganography when they touch
+		// ASCII or the folded text trips a rule (checked after the loop):
+		// fullwidth letters and digits are ordinary in CJK prose.
+		if folded, ok := fullwidthASCII(r); ok {
+			foldedFullwidth = true
+			if touchesASCII(runes, i) {
+				suspicious = true
+			}
+			b.WriteRune(folded)
+			continue
+		}
+		if folded, ok := confusableASCII(r); ok && hasASCII && touchesASCII(runes, i) {
 			suspicious = true
 			b.WriteRune(folded)
 			continue
@@ -517,6 +560,10 @@ func normalizeUnicodeSteganography(text string) unicodeNormalization {
 		b.WriteRune(r)
 	}
 
+	if !suspicious && foldedFullwidth {
+		folded := b.String()
+		suspicious = len(matchRules(folded, injectionRules)) > 0 || len(matchRules(folded, dangerousRules)) > 0
+	}
 	if !suspicious {
 		return unicodeNormalization{scanText: text}
 	}
@@ -562,6 +609,16 @@ func isSuspiciousVariationSelector(runes []rune, i, total int) bool {
 		return true
 	}
 	return i+1 < len(runes) && isASCIIAlphaNum(runes[i+1])
+}
+
+// touchesASCII reports whether the rune at i sits directly against an ASCII
+// letter or digit. A confusable only disguises a word when it is mixed into
+// ASCII ("\u0456gnore"); inside a word spelled in its own script ("получает")
+// it is ordinary prose, and folding it would withhold every Russian or
+// Ukrainian issue that also carries a Latin command or URL.
+func touchesASCII(runes []rune, i int) bool {
+	return (i > 0 && isASCIIAlphaNum(runes[i-1])) ||
+		(i+1 < len(runes) && isASCIIAlphaNum(runes[i+1]))
 }
 
 func isASCIIAlphaNum(r rune) bool {
