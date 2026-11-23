@@ -34,7 +34,8 @@ func TestIssueStageFor_NeedsTriageByAuthorTrust(t *testing.T) {
 		{"trusted + Needs-Triage (case) is 010", IssueStageInput{AuthorKind: authorkind.Human, AuthorTrusted: true, Labels: []string{"Needs-Triage"}}, stagelabels.Actionable, ""},
 		{"untrusted human + needs-triage is 015", IssueStageInput{AuthorKind: authorkind.Human, Labels: []string{triageAwaitingLabel}}, stagelabels.TriageNeeded, "carries needs-triage"},
 		{"unknown author + needs-triage is 015", IssueStageInput{Labels: []string{triageAwaitingLabel}}, stagelabels.TriageNeeded, "carries needs-triage"},
-		{"reporter_triage bucket is 015", IssueStageInput{AuthorKind: authorkind.Human, Bucket: workBucketReporterTriage, Labels: []string{triageAwaitingLabel}}, stagelabels.TriageNeeded, "reporter-trust gate"},
+		{"reporter_triage bucket + label is 015 (label named first)", IssueStageInput{AuthorKind: authorkind.Human, Bucket: workBucketReporterTriage, Labels: []string{triageAwaitingLabel}}, stagelabels.TriageNeeded, "carries needs-triage"},
+		{"reporter_triage bucket is 015", IssueStageInput{AuthorKind: authorkind.Human, Bucket: workBucketReporterTriage}, stagelabels.TriageNeeded, "reporter-trust gate"},
 		{"reporter_triage bucket is 015 even if marked trusted", IssueStageInput{AuthorKind: authorkind.Human, AuthorTrusted: true, Bucket: workBucketReporterTriage}, stagelabels.TriageNeeded, "reporter-trust gate"},
 	}
 	for _, tc := range cases {
