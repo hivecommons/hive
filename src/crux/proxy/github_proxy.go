@@ -146,6 +146,13 @@ type GitHubProxy struct {
 	writeSurfaceEnforced func(agent string) bool
 	writeRefusedAudit    func(agent, kind, method, path, repo string)
 
+	// appBotIdentity returns the App bot's user id and login for the in-pod
+	// push sign-off check (#19297): lanes on App-authored hives commit as the
+	// bot's noreply address. Nil means lanes only commit as
+	// <lane>@HIVE_GIT_BOT_EMAIL_DOMAIN.
+	appBotIdentityMu sync.RWMutex
+	appBotIdentity   pushAppBotIdentity
+
 	// proxyAdvisoryOK mirrors entrypoint.sh's HIVE_PROXY_ADVISORY_OK — the SAME
 	// explicit, operator-set escape hatch that already governs whether a failed
 	// forced-egress iptables redirect is fatal. Read once at construction (it

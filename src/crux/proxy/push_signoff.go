@@ -29,11 +29,22 @@ import (
 //     author and commit is a forged sign-off (DCO remediation belongs to the
 //     author).
 //
+// A commit is the lane's when its name is the lane and its email is either
+// identity the pod can be given (agentGitIdentity in crux/agent/manager_env.go):
+// "<lane>@<HIVE_GIT_BOT_EMAIL_DOMAIN>", or on App-authored hives the App bot's
+// noreply address "<botUserID>+<botLogin>@users.noreply.github.com".
+//
 // Whole commit objects are parsed directly. A deltified object is resolved
 // when its base is in the same pack and is a commit; a delta against a base
 // outside the pack (thin pack) cannot be resolved, so it is refused if it
 // visibly begins a commit ("tree " literal). Tag, tree and blob objects are
 // hashed while streamed, never held in memory.
+//
+// Limits: this is a best-effort guard against accidental sign-off mistakes,
+// not the enforcement point. A crafted thin delta that starts with a copy op
+// instead of a "tree " literal is not inspected, and neither are commits made
+// through the REST git/commits API or GraphQL createCommitOnBranch. GitHub-side
+// DCO remains the enforcement.
 
 // maxPushSignoffBody bounds the push body buffered for inspection. A larger
 // push is refused (fail closed) rather than forwarded uninspected.
@@ -407,29 +418,70 @@ func splitPushIdent(s string) (name, email string) {
 	return strings.TrimSpace(s[:lt]), strings.TrimSpace(s[lt+1 : gt])
 }
 
-func samePushIdent(name, email, wantName, wantEmail string) bool {
-	return strings.EqualFold(strings.TrimSpace(name), wantName) && strings.EqualFold(strings.TrimSpace(email), wantEmail)
+// pushLaneIdentity is a lane's commit name and every email the pod can be
+// given for it.
+type pushLaneIdentity struct {
+	name   string
+	emails []string
+}
+
+// matches reports whether name/email is one of the lane's identities.
+func (l pushLaneIdentity) matches(name, email string) bool {
+	if !strings.EqualFold(strings.TrimSpace(name), l.name) {
+		return false
+	}
+	email = strings.TrimSpace(email)
+	for _, want := range l.emails {
+		if strings.EqualFold(email, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// pushAppBotIdentity returns the App bot's GitHub user id and login, or a
+// zero id when the hive has no App bot (or it is not resolvable yet).
+type pushAppBotIdentity func() (userID int64, login string)
+
+// lanePushIdentity resolves the identities agentName may commit as: always
+// the HIVE_GIT_BOT_EMAIL_DOMAIN address, plus the App bot noreply address
+// when appBot resolves one. ok is false when the lane has no git identity.
+func lanePushIdentity(agentName string, appBot pushAppBotIdentity) (pushLaneIdentity, bool) {
+	name, email, ok := gitidentity.AgentIdentity(agentName)
+	if !ok {
+		return pushLaneIdentity{}, false
+	}
+	lane := pushLaneIdentity{name: name, emails: []string{email}}
+	if appBot != nil {
+		if userID, login := appBot(); userID > 0 {
+			if _, appEmail, ok := gitidentity.AppLinkedAgentIdentity(agentName, userID, login); ok && !strings.EqualFold(appEmail, email) {
+				lane.emails = append(lane.emails, appEmail)
+			}
+		}
+	}
+	return lane, true
 }
 
 // pushSignoffViolation applies the broker's sign-off rules to commits for the
-// lane (laneName, laneEmail). It returns an agent-facing reason, or "".
-func pushSignoffViolation(laneName, laneEmail string, commits []pushCommit) string {
+// lane. It returns an agent-facing reason, or "".
+func pushSignoffViolation(lane pushLaneIdentity, commits []pushCommit) string {
 	for _, c := range commits {
 		if c.merge {
 			continue // DCO App and Prow skip merge commits, as does the broker
 		}
-		authored := samePushIdent(c.authorName, c.authorEmail, laneName, laneEmail)
-		committed := samePushIdent(c.committerName, c.committerEmail, laneName, laneEmail)
+		authored := lane.matches(c.authorName, c.authorEmail)
+		committed := lane.matches(c.committerName, c.committerEmail)
 		signed := false
 		for _, m := range pushSignedOffByRE.FindAllStringSubmatch(c.message, -1) {
-			if samePushIdent(m[1], m[2], laneName, laneEmail) {
+			if lane.matches(m[1], m[2]) {
 				signed = true
 				break
 			}
 		}
+		laneName := lane.name
 		switch {
 		case authored && committed && !signed:
-			return fmt.Sprintf("push refused: a commit authored and committed by %s <%s> has no %s Signed-off-by trailer; amend it with git commit -s --amend before pushing", laneName, laneEmail, laneName)
+			return fmt.Sprintf("push refused: a commit authored and committed by %s <%s> has no %s Signed-off-by trailer; amend it with git commit -s --amend before pushing", c.committerName, c.committerEmail, laneName)
 		case signed && !(authored && committed):
 			return fmt.Sprintf("push refused: a commit authored by %s <%s> and committed by %s <%s> carries %s's Signed-off-by; leave DCO remediation to the author", c.authorName, c.authorEmail, c.committerName, c.committerEmail, laneName)
 		}
@@ -440,12 +492,13 @@ func pushSignoffViolation(laneName, laneEmail string, commits []pushCommit) stri
 // pushSignoffRefusal inspects a git-receive-pack request from an in-pod lane.
 // The body is buffered and restored so it forwards unchanged. It fails closed
 // on a body it cannot read, but never refuses a non-push request or a lane
-// with no derivable git identity.
-func pushSignoffRefusal(req *http.Request, agentName string) (reason string, refused, closeConn bool) {
+// with no derivable git identity. appBot (may be nil) supplies the App bot
+// identity lanes commit as on App-authored hives.
+func pushSignoffRefusal(req *http.Request, agentName string, appBot pushAppBotIdentity) (reason string, refused, closeConn bool) {
 	if req == nil || req.Method != http.MethodPost || !isGitReceivePack(req.URL.Path) || req.Body == nil {
 		return "", false, false
 	}
-	laneName, laneEmail, ok := gitidentity.AgentIdentity(agentName)
+	lane, ok := lanePushIdentity(agentName, appBot)
 	if !ok {
 		return "", false, false
 	}
@@ -465,7 +518,7 @@ func pushSignoffRefusal(req *http.Request, agentName string) (reason string, ref
 	if err != nil {
 		return "push refused: could not read the pushed commits to check sign-off (" + err.Error() + ")", true, false
 	}
-	if reason := pushSignoffViolation(laneName, laneEmail, commits); reason != "" {
+	if reason := pushSignoffViolation(lane, commits); reason != "" {
 		return reason, true, false
 	}
 	return "", false, false

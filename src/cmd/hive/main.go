@@ -4314,6 +4314,18 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 			rec := github.DirectWriteRefusedAuditRecord(agentName, kind, method, path, repo)
 			b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
 		})
+		// In-pod push sign-off check (#19297): on App-authored hives lanes
+		// commit as the App bot's noreply address (agentGitIdentity), so the
+		// proxy accepts it as the lane's identity alongside the
+		// HIVE_GIT_BOT_EMAIL_DOMAIN one. Read per call: cfg reloads.
+		if botUserID := b.appBotUserIDResolver(); botUserID != nil {
+			b.githubProxy.SetAppBotIdentityFunc(func() (int64, string) {
+				if !b.cfg.GitHub.AppAuthoredPRsEnabled() {
+					return 0, ""
+				}
+				return botUserID(), b.cfg.GitHub.BotLogin()
+			})
+		}
 		// #1861: the proxy resolves an identified agent to its hub-held scoped
 		// token via the package-level registry WriteAgentToken feeds (NOT via
 		// the appAuth instance, which is replaced on key rotation — a closure

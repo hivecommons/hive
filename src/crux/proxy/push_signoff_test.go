@@ -78,7 +78,7 @@ func TestPushSignoffRefusal(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body := testPackBody(t, [2]any{1, tc.commit}, [2]any{3, "blob data"})
 			req := pushReq(body)
-			_, refused, _ := pushSignoffRefusal(req, "scanner")
+			_, refused, _ := pushSignoffRefusal(req, "scanner", nil)
 			if refused != tc.refused {
 				t.Fatalf("refused = %v, want %v", refused, tc.refused)
 			}
@@ -92,15 +92,15 @@ func TestPushSignoffRefusal(t *testing.T) {
 
 func TestPushSignoffRefusalFailClosedAndSkips(t *testing.T) {
 	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
-	if _, refused, _ := pushSignoffRefusal(pushReq([]byte("0000garbage")), "scanner"); !refused {
+	if _, refused, _ := pushSignoffRefusal(pushReq([]byte("0000garbage")), "scanner", nil); !refused {
 		t.Fatal("unparseable push must be refused")
 	}
 	body := testPackBody(t, [2]any{1, testCommit("scanner <scanner@hive.kubestellar.io>", "scanner <scanner@hive.kubestellar.io>", "msg", 1)})
-	if _, refused, _ := pushSignoffRefusal(pushReq(body), ""); refused {
+	if _, refused, _ := pushSignoffRefusal(pushReq(body), "", nil); refused {
 		t.Fatal("unnamed agent must not be inspected")
 	}
 	get, _ := http.NewRequest(http.MethodGet, "https://github.com/o/r.git/info/refs", nil)
-	if _, refused, _ := pushSignoffRefusal(get, "scanner"); refused {
+	if _, refused, _ := pushSignoffRefusal(get, "scanner", nil); refused {
 		t.Fatal("non-push must pass")
 	}
 }
@@ -189,7 +189,7 @@ func TestPushSignoffRefusalDeltifiedCommit(t *testing.T) {
 			}
 			deltaObj := packObjBytes(6, off, insertOnlyDelta(len(base), tc.target))
 			body := append(pktCmd(" report-status"), wrapPack(baseObj, deltaObj)...)
-			if _, refused, _ := pushSignoffRefusal(pushReq(body), "scanner"); refused != tc.refused {
+			if _, refused, _ := pushSignoffRefusal(pushReq(body), "scanner", nil); refused != tc.refused {
 				t.Fatalf("refused = %v, want %v", refused, tc.refused)
 			}
 		})
@@ -202,12 +202,12 @@ func TestPushSignoffRefusalThinDeltaStartingCommit(t *testing.T) {
 	target := testCommit(lane, lane, "unsigned", 1)
 	deltaObj := packObjBytes(7, make([]byte, 20), insertOnlyDelta(10, target))
 	body := append(pktCmd(" report-status"), wrapPack(deltaObj)...)
-	if _, refused, _ := pushSignoffRefusal(pushReq(body), "scanner"); !refused {
+	if _, refused, _ := pushSignoffRefusal(pushReq(body), "scanner", nil); !refused {
 		t.Fatal("thin delta that inserts a commit header must be refused")
 	}
 	blob := packObjBytes(7, make([]byte, 20), insertOnlyDelta(10, "plain file text"))
 	body = append(pktCmd(" report-status"), wrapPack(blob)...)
-	if _, refused, _ := pushSignoffRefusal(pushReq(body), "scanner"); refused {
+	if _, refused, _ := pushSignoffRefusal(pushReq(body), "scanner", nil); refused {
 		t.Fatal("thin blob delta must pass")
 	}
 }
@@ -219,15 +219,66 @@ func TestPushSignoffRefusalPushOptions(t *testing.T) {
 	opt := "ci.skip"
 	body := append(pktCmd(" report-status push-options"), []byte(fmt.Sprintf("%04x%s0000", len(opt)+4, opt))...)
 	body = append(body, wrapPack(pack)...)
-	if reason, refused, _ := pushSignoffRefusal(pushReq(body), "scanner"); refused {
+	if reason, refused, _ := pushSignoffRefusal(pushReq(body), "scanner", nil); refused {
 		t.Fatalf("push with push-options must be inspected, not refused: %s", reason)
 	}
 }
 
 func TestPushSignoffRefusalOversizeClosesConnection(t *testing.T) {
 	body := append(pktCmd(" report-status"), make([]byte, maxPushSignoffBody+1)...)
-	_, refused, closeConn := pushSignoffRefusal(pushReq(body), "scanner")
+	_, refused, closeConn := pushSignoffRefusal(pushReq(body), "scanner", nil)
 	if !refused || !closeConn {
 		t.Fatalf("oversize push: refused=%v closeConn=%v, want both true", refused, closeConn)
+	}
+}
+
+// Lanes on App-authored hives commit as the App bot's noreply address
+// (agentGitIdentity), not <lane>@HIVE_GIT_BOT_EMAIL_DOMAIN; the check must
+// treat both as the lane's own identity.
+func TestPushSignoffRefusalAcceptsBothLaneIdentities(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	appBot := func() (int64, string) { return 280983584, "hivecommons-hive[bot]" }
+	domainLane := "scanner <scanner@hive.kubestellar.io>"
+	appLane := "scanner <280983584+hivecommons-hive[bot]@users.noreply.github.com>"
+	person := "Andy <andy@example.com>"
+	signedBy := func(ident string) string { return "msg\n\nSigned-off-by: " + ident }
+	cases := []struct {
+		name    string
+		appBot  pushAppBotIdentity
+		commit  string
+		refused bool
+	}{
+		{"domain identity signed", appBot, testCommit(domainLane, domainLane, signedBy(domainLane), 1), false},
+		{"domain identity unsigned", appBot, testCommit(domainLane, domainLane, "msg", 1), true},
+		// Shaped like db007d0: author, committer and sign-off are the App noreply.
+		{"app identity signed", appBot, testCommit(appLane, appLane, signedBy(appLane), 1), false},
+		{"app identity unsigned", appBot, testCommit(appLane, appLane, "msg", 1), true},
+		{"app identity forged on person commit", appBot, testCommit(person, appLane, signedBy(appLane), 1), true},
+		{"app identity unsigned without app bot", nil, testCommit(appLane, appLane, "msg", 1), false},
+		{"app identity unsigned with unresolved app bot", func() (int64, string) { return 0, "" }, testCommit(appLane, appLane, "msg", 1), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := testPackBody(t, [2]any{1, tc.commit})
+			reason, refused, _ := pushSignoffRefusal(pushReq(body), "scanner", tc.appBot)
+			if refused != tc.refused {
+				t.Fatalf("refused = %v (%s), want %v", refused, reason, tc.refused)
+			}
+		})
+	}
+}
+
+func TestGitHubProxyAppBotIdentityFunc(t *testing.T) {
+	p := &GitHubProxy{}
+	if p.pushAppBotIdentity() != nil {
+		t.Fatal("no App bot identity is installed by default")
+	}
+	p.SetAppBotIdentityFunc(func() (int64, string) { return 7, "bot[bot]" })
+	if id, login := p.pushAppBotIdentity()(); id != 7 || login != "bot[bot]" {
+		t.Fatalf("pushAppBotIdentity = %d, %q", id, login)
+	}
+	p.SetAppBotIdentityFunc(nil)
+	if p.pushAppBotIdentity() != nil {
+		t.Fatal("nil must clear the App bot identity")
 	}
 }

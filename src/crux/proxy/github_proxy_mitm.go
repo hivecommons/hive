@@ -266,7 +266,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		}
 		if !blocked && !isLinear && agentName != internalCallerName {
 			// Apply the push broker's sign-off rules to in-pod pushes (#19297).
-			if reason, refused, closeConn := pushSignoffRefusal(req, agentName); refused {
+			if reason, refused, closeConn := pushSignoffRefusal(req, agentName, p.pushAppBotIdentity()); refused {
 				closeAfterBlock = closeConn
 				blocked = true
 				blockReason = reason
