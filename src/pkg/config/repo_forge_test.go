@@ -130,3 +130,52 @@ func TestValidateRepoForges(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckForgeTokenHost(t *testing.T) {
+	cases := []struct {
+		name    string
+		kind    string
+		blockAt string
+		policy  string
+		wantErr bool
+	}{
+		{name: "gitea same host", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "https://git.example.com/", wantErr: false},
+		{name: "gitea host case and scheme differ", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "http://GIT.example.com", wantErr: false},
+		{name: "gitea other host", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "https://evil.example.net", wantErr: true},
+		{name: "gitea other port", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "https://git.example.com:8443", wantErr: true},
+		{name: "gitea block has no url", kind: ForgeGitea, blockAt: "", policy: "https://codeberg.org", wantErr: false},
+		{name: "forgejo same host", kind: ForgeForgejo, blockAt: "https://git.example.com", policy: "https://git.example.com", wantErr: false},
+		{name: "forgejo other host", kind: ForgeForgejo, blockAt: "https://git.example.com", policy: "https://evil.example.net", wantErr: true},
+		{name: "gitlab other host", kind: ForgeGitLab, blockAt: "https://gitlab.example.com", policy: "https://evil.example.net", wantErr: true},
+		{name: "gitlab default block names no host", kind: ForgeGitLab, blockAt: "", policy: "https://gitlab.self.example", wantErr: false},
+		{name: "no policy url", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "", wantErr: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{}
+			cfg.Project.Org = "acme"
+			cfg.Gitea.URL, cfg.Forgejo.URL, cfg.GitLab.URL = "", "", ""
+			switch tc.kind {
+			case ForgeGitea:
+				cfg.Gitea.URL = tc.blockAt
+			case ForgeForgejo:
+				cfg.Forgejo.URL = tc.blockAt
+			case ForgeGitLab:
+				cfg.GitLab.URL = tc.blockAt
+			}
+			cfg.Project.RepoPolicies = []RepoPolicy{{Repo: "app", Forge: tc.kind, ForgeURL: tc.policy}}
+
+			if err := cfg.CheckForgeTokenHost("acme/app"); (err != nil) != tc.wantErr {
+				t.Fatalf("CheckForgeTokenHost err = %v, wantErr %v", err, tc.wantErr)
+			}
+			// Load-time validation agrees, and its message names the field.
+			err := cfg.validateRepoForges()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateRepoForges err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "project.repo_policies[0].forge_url") {
+				t.Fatalf("error %q does not name the field", err)
+			}
+		})
+	}
+}

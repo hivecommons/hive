@@ -75,6 +75,49 @@ func (c *Config) ForgeURLForRepo(repo string) string {
 	}
 }
 
+// CheckForgeTokenHost returns an error when repo's forge token would go to a
+// different host than the one its forge block configures. The token comes from
+// the block of repo's kind (gitlab, gitea or forgejo), so a
+// repo_policies[].forge_url on another host would send it there. A block with
+// no URL of its own (gitea and forgejo have no default, gitlab defaults to
+// gitlab.com) names no host to protect, so nothing is compared.
+func (c *Config) CheckForgeTokenHost(repo string) error {
+	if c == nil {
+		return nil
+	}
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok || strings.TrimSpace(rp.ForgeURL) == "" {
+		return nil
+	}
+	kind := c.ForgeKindForRepo(repo)
+	var blockKey, blockURL string
+	switch kind {
+	case ForgeGitLab:
+		blockKey, blockURL = "gitlab.gitlab_url", c.GitLab.URL
+	case ForgeGitea:
+		blockKey, blockURL = "gitea.gitea_url", c.Gitea.URL
+	case ForgeForgejo:
+		blockKey, blockURL = "forgejo.forgejo_url", c.Forgejo.URL
+	default:
+		return nil
+	}
+	if strings.TrimSpace(blockURL) == "" {
+		return nil
+	}
+	want, err := url.Parse(strings.TrimSpace(blockURL))
+	if err != nil || want.Host == "" {
+		return nil
+	}
+	got, err := url.Parse(strings.TrimSpace(rp.ForgeURL))
+	if err != nil || got.Host == "" {
+		return nil
+	}
+	if !strings.EqualFold(got.Host, want.Host) {
+		return fmt.Errorf("repo %q: forge_url host %q differs from %s host %q; the %s token is only sent to its own block's host", repo, got.Host, blockKey, want.Host, kind)
+	}
+	return nil
+}
+
 // HasRepoForgeOverrides reports whether any repo_policies entry sets forge or
 // forge_url. When false every repo resolves to project.forge, so callers can
 // keep their single project-wide forge path unchanged.
@@ -111,6 +154,9 @@ func (c *Config) validateRepoForges() error {
 			if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 				return fmt.Errorf("%s.forge_url: %q must be a bare instance root (no credentials, query or fragment)", field, rp.ForgeURL)
 			}
+		}
+		if err := c.CheckForgeTokenHost(rp.Repo); err != nil {
+			return fmt.Errorf("%s.forge_url: %w", field, err)
 		}
 		// Only an entry that names a forge itself is held to having a URL: a
 		// policy kept for another reason (acmm_level, label_driven) on a
