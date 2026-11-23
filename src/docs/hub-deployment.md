@@ -410,3 +410,13 @@ Matching is deliberate about what counts as the same repo, because two spokes ar
 | a repo with no owner (no `org` recorded) | ignored — inventing an owner would invent conflicts between unrelated repos that share a name |
 
 This is **read-side only**: it is derived per request from data the registry already holds, adds nothing to the heartbeat protocol, and is not persisted. It reports and does not refuse — an overlap is a warning, not a bar. A repo two subject areas legitimately share (a docs repo is the common case) is real, so the alert is acknowledgeable like any other; whether overlap should ever *block* assignment, and how such a repo would be allowlisted, is still open on the RFC.
+
+## Verifying the hub Deployment
+
+The hub's own container is named `hub` and it is the only container in the Deployment. Always scope container-level kubectl commands with `-c hub` (for example `kubectl -n hive-hub logs deploy/hive-hub -c hub`); `kubectl set env` without `-c hub` writes to every container. `HIVE_HUB_OAUTH_CLIENT_SECRET` and `HIVE_NPS_RELAY_PULL_SECRET` must come from a Secret via `valueFrom.secretKeyRef`, never a literal `value:`. Check a live or rendered Deployment with:
+
+```sh
+kubectl -n hive-hub get deploy hive-hub -o yaml | python3 src/deploy/check-hub-manifest.py -
+```
+
+Cluster-side cleanup that cannot be done from the repo: remove any stray `hive-hub` container from the running Deployment, move the two secrets into a Secret, and rotate both values.
