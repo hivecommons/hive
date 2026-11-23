@@ -1348,8 +1348,9 @@ const (
 	ForgeGitHub = "github"
 	// ForgeGitLab selects the GitLab forge (gitlab.com or self-managed).
 	ForgeGitLab = "gitlab"
-	// ForgeGitea selects the Gitea/Forgejo forge (self-managed or Codeberg).
-	ForgeGitea   = "gitea"
+	// ForgeGitea selects the Gitea forge (self-managed).
+	ForgeGitea = "gitea"
+	// ForgeForgejo selects the Forgejo forge (self-managed or Codeberg).
 	ForgeForgejo = "forgejo"
 )
 
@@ -4244,7 +4245,7 @@ func (g GitLabConfig) TokenEnvName() string {
 	return g.TokenEnv
 }
 
-// GiteaConfig configures the Gitea/Forgejo forge (used when project.forge ==
+// GiteaConfig configures the Gitea forge (used when project.forge ==
 // "gitea"). Like GitLabConfig it is entirely additive: a config that never
 // mentions gitea is unaffected.
 //
@@ -4253,8 +4254,7 @@ func (g GitLabConfig) TokenEnvName() string {
 // the token itself is NOT stored here: TokenEnv names the environment variable
 // to read the Gitea access token from at runtime (default GITEA_TOKEN).
 type GiteaConfig struct {
-	// URL is the Gitea/Forgejo instance root, e.g. "https://codeberg.org" or a
-	// self-managed "https://gitea.example.com". The "/api/v1" path is appended by
+	// URL is the Gitea instance root, e.g. "https://gitea.example.com". The "/api/v1" path is appended by
 	// the client. There is no default; it must be supplied for the Gitea forge.
 	URL string `yaml:"gitea_url,omitempty"`
 	// TokenEnv is the environment variable holding the Gitea access token.
@@ -4299,7 +4299,8 @@ type ForgejoConfig struct {
 }
 
 const (
-	DefaultForgejoTokenEnv = "FORGEJO_TOKEN"
+	// DefaultForgejoTokenEnv is the default env var name for the Forgejo token.
+	DefaultForgejoTokenEnv = "FORGEJO_TOKEN" // #nosec G101 -- the env var name, not a credential.
 )
 
 // InstanceURL returns the configured Forgejo instance root (possibly empty).

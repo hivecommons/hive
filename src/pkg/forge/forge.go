@@ -6,7 +6,7 @@
 //
 // The read path (enumerate open issues / merge requests, get a repo) and the
 // core write path (comment on an issue/CR, add/remove labels, set a hold gate)
-// are implemented and tested for GitHub, GitLab and Gitea/Forgejo. The optional
+// are implemented and tested for GitHub, GitLab, Gitea and Forgejo. The optional
 // Merger extension interface defines the merge primitive; concrete adapters
 // implement it as their forge-specific merge semantics are integrated.
 package forge
@@ -26,7 +26,7 @@ const (
 	KindGitHub Kind = "github"
 	// KindGitLab selects the GitLab adapter (REST API v4 over net/http).
 	KindGitLab Kind = "gitlab"
-	// KindGitea selects the Gitea/Forgejo adapter (REST API v1 over net/http).
+	// KindGitea selects the Gitea adapter (REST API v1 over net/http).
 	KindGitea Kind = "gitea"
 	// KindForgejo selects the Forgejo adapter. It shares the Gitea REST client
 	// but is its own kind.

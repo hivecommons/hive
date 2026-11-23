@@ -11,7 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
-// Every repo card carries its forge, so a GitLab or Gitea/Forgejo hive's
+// Every repo card carries its forge, so a GitLab, Gitea or Forgejo hive's
 // Projects cards stop claiming github.com (hivecommons/hive#14115).
 func TestBuildReposForge14115(t *testing.T) {
 	for _, tc := range []struct {
@@ -157,7 +157,9 @@ const pick = f => ({kind: f.kind, name: f.name, host: f.host, base: f.base, issu
 assert.deepEqual(pick(repoForgeWeb({forge: 'gitlab', forgeUrl: 'https://gitlab.example.com/'}, 'ghe.example.com')),
   {kind: 'gitlab', name: 'GitLab', host: 'gitlab.example.com', base: 'https://gitlab.example.com', issues: '/-/issues', changes: '/-/merge_requests', change: '/-/merge_requests'});
 assert.deepEqual(pick(repoForgeWeb({forge: 'gitea', forgeUrl: 'https://codeberg.org'}, 'ghe.example.com')),
-  {kind: 'gitea', name: 'Gitea/Forgejo', host: 'codeberg.org', base: 'https://codeberg.org', issues: '/issues', changes: '/pulls', change: '/pulls'});
+  {kind: 'gitea', name: 'Gitea', host: 'codeberg.org', base: 'https://codeberg.org', issues: '/issues', changes: '/pulls', change: '/pulls'});
+assert.deepEqual(pick(repoForgeWeb({forge: 'forgejo', forgeUrl: 'https://codeberg.org'}, 'ghe.example.com')),
+  {kind: 'forgejo', name: 'Forgejo', host: 'codeberg.org', base: 'https://codeberg.org', issues: '/issues', changes: '/pulls', change: '/pulls'});
 for (const r of [undefined, {}, {forge: 'github'}, {forge: 'gitea'}]) {
   assert.deepEqual(pick(repoForgeWeb(r, 'ghe.example.com')),
     {kind: 'github', name: 'GitHub', host: 'ghe.example.com', base: 'https://ghe.example.com', issues: '/issues', changes: '/pulls', change: '/pull'});

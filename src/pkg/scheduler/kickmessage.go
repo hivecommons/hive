@@ -286,7 +286,7 @@ func (s *Scheduler) buildAgentListAndRoles() (list, roles string) {
 type KickMessage struct {
 	Agent string
 	Repo  string
-	// Forge is the forge kind ("github", "gitlab", "gitea") the kick's repo
+	// Forge is the forge kind ("github", "gitlab", "gitea", "forgejo") the kick's repo
 	// lives on: Repo's repo_policies[].forge override, else project.forge
 	// (hivecommons/hive#14112). A kick with no Repo carries project.forge.
 	Forge     string

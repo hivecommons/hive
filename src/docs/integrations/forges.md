@@ -4,7 +4,7 @@
 
 This page is for teams whose code lives on GitLab, Gitea or Forgejo and who want to know what Hive does with those forges today. It sits next to the [work source providers](work-source-providers.md) page: a **work source** (tracker) tells Hive what work exists; a **forge** is where the repositories, branches and change requests live. It is written from v5 code.
 
-**Short answer:** GitHub.com and GitHub Enterprise are the only forges a hive can run against. The GitLab and Gitea/Forgejo adapters are built and tested, and two governor writes already go through them, but the governor cycle that would reach those writes still starts from GitHub. Setup and the full list of reasons are on [Forge setup: GitLab, Gitea, and Forgejo](../forge-app-setup.md); the work to finish it is tracked in [#14096](https://github.com/hivecommons/hive/issues/14096).
+**Short answer:** GitHub.com and GitHub Enterprise are the only forges a hive can run against. The GitLab, Gitea and Forgejo adapters are built and tested, and two governor writes already go through them, but the governor cycle that would reach those writes still starts from GitHub. Setup and the full list of reasons are on [Forge setup: GitLab, Gitea, and Forgejo](../forge-app-setup.md); the work to finish it is tracked in [#14096](https://github.com/hivecommons/hive/issues/14096).
 
 ## Trackers and forges are separate settings
 
@@ -27,7 +27,7 @@ gitlab:
   token_env: GITLAB_TOKEN                  # env var NAME, never the token
 
 gitea:
-  gitea_url: https://codeberg.org          # no default; required for Gitea/Forgejo
+  gitea_url: https://gitea.example.com        # no default; required for Gitea
   token_env: GITEA_TOKEN                   # env var NAME, never the token
 
 forgejo:
@@ -91,7 +91,7 @@ Each adapter has unit tests against a fake HTTP server (`src/pkg/forge/*_test.go
 ## Gaps
 
 - Enumeration, the stage engine and the merge gate are GitHub-only ([#14113](https://github.com/hivecommons/hive/issues/14113), [#14096](https://github.com/hivecommons/hive/issues/14096)).
-- Gitea/Forgejo has no merge yet. No adapter can open a change request.
+- Gitea and Forgejo have no merge yet. No adapter can open a change request.
 - There is no GitLab or Gitea webhook receiver, dashboard login provider or egress-proxy rule table.
 
 The complete list is in [What full support would require](../forge-app-setup.md#what-full-support-would-require).

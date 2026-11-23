@@ -55,11 +55,14 @@ func newGiteaForge(token string, opts Options) (*giteaForge, error) {
 	return newGiteaFamilyForge(KindGitea, token, opts)
 }
 
+// newGiteaFamilyForge builds the REST client shared by the gitea and forgejo
+// kinds. kind names the adapter in error messages and display text.
 func newGiteaFamilyForge(kind Kind, token string, opts Options) (*giteaForge, error) {
 	label := string(kind)
+	display := strings.ToUpper(label[:1]) + label[1:]
 	base := strings.TrimRight(opts.BaseURL, "/")
 	if base == "" {
-		return nil, fmt.Errorf("%s: BaseURL is required (no public %s default)", label, strings.ToUpper(label[:1])+label[1:])
+		return nil, fmt.Errorf("%s: BaseURL is required (no public %s default)", label, display)
 	}
 	u, err := url.Parse(base)
 	if err != nil {

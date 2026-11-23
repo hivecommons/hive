@@ -28,7 +28,7 @@
       const isPublic = hostLabel === 'github.com';
       // Each card carries its own forge (#14115), and repo_policies[].forge can
       // put one repo on a different forge from the rest. The badge names the
-      // hive's forge only when every card agrees; a GitLab or Gitea/Forgejo
+      // hive's forge only when every card agrees; a GitLab, Gitea or Forgejo
       // hive gets its own host here instead of the GitHub host the badge would
       // otherwise claim, and a mixed hive says so instead of claiming one host.
       const repoForges = (repos || []).map(r => repoForgeWeb(r, hostLabel));
@@ -416,7 +416,7 @@
      * Where a repo card points and what it calls its host (#14115). r.forge is
      * the repo's forge kind from /api/status; GitHub (and an older hive that
      * reports no kind) keeps the GitHub host from /api/config, while GitLab and
-     * Gitea/Forgejo use r.forgeUrl and their own issue and change-request paths.
+     * Gitea and Forgejo use r.forgeUrl and their own issue and change-request paths.
      */
     function repoForgeWeb(r, githubHost) {
       const kind = String((r && r.forge) || 'github').toLowerCase();
@@ -428,7 +428,7 @@
         return { kind, icon: '🍵', name: 'Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
       }
       if (kind === 'gitea' && base) {
-        return { kind, icon: '🍵', name: 'Gitea/Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
+        return { kind, icon: '🍵', name: 'Gitea', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
       }
       return { kind: 'github', icon: '🐙', name: 'GitHub', host: githubHost, base: window._githubBaseUrl || 'https://github.com', issuesPath: '/issues', changesPath: '/pulls', changePath: '/pull' };
     }
