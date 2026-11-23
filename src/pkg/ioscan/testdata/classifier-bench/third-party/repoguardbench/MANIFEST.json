@@ -1,0 +1,32 @@
+{
+  "upstream": "https://github.com/DaoyuanLi2816/RepoGuardBench",
+  "commit": "49d6e51b5189f1f49a948bf360ed73d9487548a3",
+  "license": "MIT (code), CC-BY-4.0 (data)",
+  "notice": "repoguardbench_real.upstream.txt is data/repoguardbench_real.jsonl renamed so the bench loader does not read it as a corpus; bytes are unchanged",
+  "upstream_files": {
+    "carriers.py": {
+      "path": "repoguard/attacks/carriers.py",
+      "sha256": "1129ef8533264ded5bce12a120a77eecfbdabe100ff365f19c2244ba2fae227b"
+    },
+    "repoguardbench_real.upstream.txt": {
+      "path": "data/repoguardbench_real.jsonl",
+      "sha256": "dcc47416f94e54f71a9e2fe7536f7a69fa6300db263fd3d89cd229444600897c"
+    },
+    "LICENSE": {
+      "path": "LICENSE",
+      "sha256": "6ff94969cafec607c90ec1f6f939d0c8ff16dc53e0c7cc5a77e9badac63508ac"
+    },
+    "LICENSE-DATA": {
+      "path": "LICENSE-DATA",
+      "sha256": "3a460c85614f59675300cac572e3c09f8e8f1ed26225f8ebba6c269d5c2c25a1"
+    }
+  },
+  "derived_files": {
+    "repoguardbench-attacks.jsonl": {
+      "sha256": "77e2c755b0151e902a43e57c06549001d94b99821a94bc404ae262abb7b63d1d"
+    },
+    "convert.py": {
+      "sha256": "a098c6657b5ab3022f22a236347bacb3d873fb30380148ab1b96a12aab5551d9"
+    }
+  }
+}

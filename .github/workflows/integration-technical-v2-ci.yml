@@ -99,7 +99,7 @@ jobs:
         python3 .github/scripts/test-generate-integration-ci.py
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         cache: false
         go-version-file: src/go.mod

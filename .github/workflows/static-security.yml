@@ -1,0 +1,210 @@
+name: Static security analysis
+
+# Hive's own security rules, each tied to an obligation the code already
+# states, each with a fixture that proves it fires (#19443):
+#
+#   semgrep        .semgrep/rules/*.yaml. Four rules: a scan or classifier
+#                  error that returns a benign verdict; an outbound fetch or
+#                  dial on a user-chosen address outside netguard; a shell
+#                  running a script built at run time; GitHub-authored text
+#                  written into agent task text without ioscan. `semgrep
+#                  --test` runs every rule against its fixture (the .go file
+#                  beside it) first, so a rule that stops matching fails here
+#                  before it silently stops guarding src/.
+#   codeql         .github/codeql/hive-queries. A taint query for the last of
+#                  those flows across functions: untrusted GitHub text reaching
+#                  a KickMessage without ioscan.EnforceInputFrom. Tested on
+#                  .github/codeql/fixtures on every PR; run on src/ on pushes
+#                  and weekly as a report.
+#   zizmor         GitHub Actions workflow audit (template injection, excessive
+#                  permissions, credential persistence, unpinned actions, ...).
+#                  About 20 workflows here run on pull_request_target or
+#                  workflow_run with secrets in reach.
+#
+# RATCHET, NOT A FLAG DAY. Each scan blocks only what a PR adds:
+#   * semgrep scans src/ with --baseline-commit set to the PR base, so only a
+#     finding the PR introduces fails it; on push and schedule it reports.
+#   * zizmor blocks a PR on high-severity, high-confidence findings in the
+#     workflow files the PR adds or changes; the whole directory is reported.
+#   * the CodeQL run on src/ reports (warning annotations) while the existing
+#     flows are triaged; the fixture test blocks.
+# A finding that is not exploitable is suppressed at the line with a reason a
+# reviewer can check (`// nosemgrep: <id> -- <reason>`,
+# `# zizmor: ignore[<audit>] - <reason>`), never by loosening a rule.
+#
+# gosec's blocking-on-HIGH gate lives with the rest of the Go scanners in
+# go-security-analysis.yml.
+#
+# Nothing here is a required context yet: once the ratchets have run clean on
+# v5 for a while, making them required is a branch-protection change for a
+# maintainer.
+
+on:
+  pull_request:
+    branches: [v5, v6]
+  push:
+    branches: [v5, v6]
+  schedule:
+    # Weekly, so the src/ CodeQL report and the full zizmor audit see a
+    # newly-published zizmor audit or a drifted action even with no push.
+    - cron: '41 6 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  semgrep:
+    name: semgrep (hive rules)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # --baseline-commit diffs against the PR base, which must be local.
+          fetch-depth: 0
+
+      # Installed by exact version into a venv: the runner's system Python is
+      # externally managed, and a pinned tool is one supply-chain hop shorter
+      # than a marketplace action.
+      - name: Install semgrep
+        run: |
+          python3 -m venv "$RUNNER_TEMP/semgrep"
+          "$RUNNER_TEMP/semgrep/bin/pip" install --quiet --disable-pip-version-check semgrep==1.183.0
+
+      - name: Rule fixtures
+        run: '"$RUNNER_TEMP/semgrep/bin/semgrep" --test --metrics=off --disable-version-check .semgrep/rules'
+
+      - name: Scan src (a PR fails on the findings it adds)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          args=(scan --config .semgrep/rules --metrics=off --disable-version-check
+                --exclude '*_test.go' --exclude 'src/test/**')
+          if [ "$EVENT_NAME" = pull_request ]; then
+            args+=(--error --baseline-commit "$BASE_SHA")
+          fi
+          "$RUNNER_TEMP/semgrep/bin/semgrep" "${args[@]}" src
+
+  codeql-fixture:
+    name: codeql (hive query fixture)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          cache: false
+          go-version-file: src/go.mod
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: go
+          build-mode: manual
+          source-root: .github/codeql/fixtures/untrusted-text-to-kick
+          queries: ./.github/codeql/hive-queries/UntrustedGitHubTextReachesKick.ql
+          config: |
+            disable-default-queries: true
+      - name: Build the fixture under the CodeQL tracer
+        working-directory: .github/codeql/fixtures/untrusted-text-to-kick
+        run: go build ./...
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          upload: never
+          output: ${{ runner.temp }}/codeql-fixture
+          category: hive-queries-fixture
+      - name: Compare alerts with the fixture's `// $ Alert` lines
+        run: python3 .github/codeql/check-fixture-alerts.py "$RUNNER_TEMP/codeql-fixture" .github/codeql/fixtures/untrusted-text-to-kick hive/go/untrusted-github-text-to-kick
+
+  codeql-src:
+    name: codeql (hive query on src, report)
+    # Building and analysing the whole module takes long enough that it runs
+    # after merge and weekly, not on every PR; the fixture job above is the
+    # per-PR test of the query itself.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          cache: false
+          go-version-file: src/go.mod
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: go
+          build-mode: manual
+          source-root: src
+          queries: ./.github/codeql/hive-queries/UntrustedGitHubTextReachesKick.ql
+          config: |
+            disable-default-queries: true
+      - name: Build src under the CodeQL tracer
+        working-directory: src
+        # src/go.work: ./... is the root module; the nested Crux module is
+        # ./crux/... from here (same addressing as golangci-lint).
+        run: go build ./... ./crux/...
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          upload: never
+          output: ${{ runner.temp }}/codeql-src
+          category: hive-queries-src
+      - name: Report results
+        run: python3 .github/codeql/check-fixture-alerts.py --report "$RUNNER_TEMP/codeql-src" hive/go/untrusted-github-text-to-kick
+
+  zizmor:
+    name: zizmor (workflow audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The changed-file list diffs against the PR base.
+          fetch-depth: 0
+
+      - name: Install zizmor
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zizmor"
+          "$RUNNER_TEMP/zizmor/bin/pip" install --quiet --disable-pip-version-check zizmor==1.31.1
+
+      - name: Audit the workflows this PR adds or changes (blocking)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # zizmor's online audits (impostor commits, known-vulnerable
+          # actions, ref confusion) read the API with this read-only token.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # gh-aw's compiled *.lock.yml files are generated; their source is
+          # what a reviewer edits.
+          # Three-dot: only what the PR head changed since its merge base, the
+          # same list as the PR's Files tab. A two-dot diff against the base
+          # also lists workflows the base changed after the branch last merged
+          # it, and blocks the PR on findings it did not introduce.
+          mapfile -t changed < <(git diff --name-only --diff-filter=AMR "$BASE_SHA...$HEAD_SHA" -- \
+            '.github/workflows/*.yml' '.github/workflows/*.yaml' | grep -v '\.lock\.yml$' || true)
+          if [ "${#changed[@]}" -eq 0 ]; then
+            echo "No workflow file changed."
+            exit 0
+          fi
+          printf 'Auditing %s\n' "${changed[@]}"
+          "$RUNNER_TEMP/zizmor/bin/zizmor" --format github --min-severity high --min-confidence high "${changed[@]}"
+
+      - name: Audit every workflow (report)
+        if: ${{ !cancelled() }}
+        # --offline: the full sweep would spend the token's rate limit on
+        # online audits for ~90 files; the blocking step above runs them on
+        # what a PR changes.
+        run: '"$RUNNER_TEMP/zizmor/bin/zizmor" --offline --no-exit-codes .github/workflows'

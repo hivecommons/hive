@@ -51,7 +51,7 @@ jobs:
           WORKFLOW_PATH: .github/workflows/mutation-advisory.yml
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/refresh-only-head.sh
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         if: steps.refresh.outputs.refresh_only != 'true'
         with:
           cache: false

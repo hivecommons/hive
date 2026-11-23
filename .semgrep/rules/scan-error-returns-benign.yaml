@@ -1,0 +1,64 @@
+rules:
+  - id: hive-scan-error-returns-benign
+    languages: [go]
+    severity: ERROR
+    message: >-
+      This error branch returns a benign verdict and drops the error. A
+      classifier, scanner or gate that could not decide must say so: return
+      the error (InjectionScore{}, err) or a verdict that withholds the text
+      (ioscan.UnavailableVerdict), and let the caller apply the fail mode
+      (see Scheduler.classifierErrored). Returning "benign", Blocked: false
+      or a zero verdict with a nil error turns an outage into a pass.
+    metadata:
+      category: security
+      cwe: "CWE-636: Not Failing Securely ('Failing Open')"
+      obligation: >-
+        ioscan fail mode: a scan or classifier error is never reported as a
+        clean result (src/pkg/scheduler/ioscan_enforce.go classifierErrored).
+      references:
+        - https://github.com/hivecommons/hive/issues/19443
+    patterns:
+      - pattern-inside: |
+          if $ERR != nil {
+            ...
+          }
+      # Returning the error alongside the value is ordinary Go: the caller
+      # must check it. Only a branch that swallows the error is flagged.
+      - pattern-not: return ..., $ERR
+      - pattern-either:
+          # A zero verdict or score with a nil error reads as "scanned, clean".
+          - patterns:
+              - pattern-either:
+                  - pattern: return $T{}, nil
+                  - pattern: return $X, $T{}
+                  - pattern: return $X, $T{}, nil
+              - metavariable-regex:
+                  metavariable: $T
+                  regex: ^(\w+\.)?(Verdict|ThreadVerdict|InjectionScore|ScanResult|Classification)$
+          # A verdict that names the benign category.
+          - patterns:
+              - pattern-either:
+                  - pattern: 'return $T{..., Category: $C, ...}'
+                  - pattern: 'return $T{..., Category: $C, ...}, ...'
+                  - pattern: 'return $X, $T{..., Category: $C, ...}, ...'
+              - metavariable-regex:
+                  metavariable: $C
+                  regex: (?i)^("benign"|\w*benign\w*)$
+          # A verdict that says "not blocked" / "not malicious".
+          - patterns:
+              - pattern-either:
+                  - pattern: 'return $T{..., $F: false, ...}'
+                  - pattern: 'return $T{..., $F: false, ...}, ...'
+                  - pattern: 'return $X, $T{..., $F: false, ...}, ...'
+              - metavariable-regex:
+                  metavariable: $F
+                  regex: ^(Blocked|Block|Malicious|Injection|Flagged|Unsafe)$
+          # A verdict that says "safe" / "clean".
+          - patterns:
+              - pattern-either:
+                  - pattern: 'return $T{..., $F: true, ...}'
+                  - pattern: 'return $T{..., $F: true, ...}, ...'
+                  - pattern: 'return $X, $T{..., $F: true, ...}, ...'
+              - metavariable-regex:
+                  metavariable: $F
+                  regex: ^(Safe|Benign|Clean)$

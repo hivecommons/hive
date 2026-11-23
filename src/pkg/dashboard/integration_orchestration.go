@@ -33,6 +33,8 @@ type integrationRuntime struct {
 	lastReconcile                 time.Time
 	reconcileScopeOffset          int
 	advice                        map[string]integrationDispatchObservation
+	observeWarnAt                 map[string]time.Time
+	durableWarnAt                 map[string]time.Time
 	executionOnce                 sync.Once
 	executionStore                *integration.Store
 	executionErr                  error
@@ -126,8 +128,45 @@ func (s *Server) IntegrationObserveFiles(repo, head string, files []string) {
 		err = store.ObserveFiles(repo, head, files, time.Now())
 	}
 	if err != nil {
-		s.webhookLogger().Warn("integration scope drift unavailable; overlap planner unaffected", "repo", repo, "error", err)
+		if s.allowObserveWarn(repo, time.Now()) {
+			s.webhookLogger().Warn("integration scope drift unavailable; overlap planner unaffected", "repo", repo, "error", err)
+		}
 	}
+}
+
+// integrationObserveWarnWindow bounds how often the same degraded-ledger
+// warning is logged per repo; the condition persists across every webhook.
+const integrationObserveWarnWindow = 10 * time.Minute
+
+func (s *Server) allowObserveWarn(repo string, now time.Time) bool {
+	s.integration.mu.Lock()
+	defer s.integration.mu.Unlock()
+	if last, ok := s.integration.observeWarnAt[repo]; ok && now.Sub(last) < integrationObserveWarnWindow {
+		return false
+	}
+	if s.integration.observeWarnAt == nil {
+		s.integration.observeWarnAt = map[string]time.Time{}
+	}
+	s.integration.observeWarnAt[repo] = now
+	return true
+}
+
+// integrationDurableErrWindow bounds how often the same "observation not
+// durable" error is logged per event type; a full journal fails every webhook
+// and each repeat would otherwise raise a fresh selfreport.
+const integrationDurableErrWindow = 10 * time.Minute
+
+func (s *Server) allowDurableErr(event string, now time.Time) bool {
+	s.integration.mu.Lock()
+	defer s.integration.mu.Unlock()
+	if last, ok := s.integration.durableWarnAt[event]; ok && now.Sub(last) < integrationDurableErrWindow {
+		return false
+	}
+	if s.integration.durableWarnAt == nil {
+		s.integration.durableWarnAt = map[string]time.Time{}
+	}
+	s.integration.durableWarnAt[event] = now
+	return true
 }
 
 func (s *Server) integrationConfig() config.IntegrationOrchestrationConfig {

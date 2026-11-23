@@ -3,7 +3,7 @@ module github.com/hivecommons/hive/crux
 go 1.26.11
 
 require (
-	github.com/ai-openshell/sdk-go v0.1.8
+	github.com/ai-openshell/sdk-go v0.1.9
 	github.com/google/cel-go v0.31.0
 	github.com/nats-io/nats-server/v2 v2.15.3
 	github.com/nats-io/nats.go v1.55.0
