@@ -1,0 +1,64 @@
+rules:
+  - id: hive-outbound-fetch-outside-netguard
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    message: >-
+      An outbound request or dial goes to an address a user or a remote
+      party chose (an HTTP request parameter or body, or GitHub issue or
+      comment text) without netguard. That is server-side request forgery:
+      the address can be loopback, the cloud metadata service, the cluster
+      network or a name that rebinds to one. Check it with
+      netguard.IsPrivateURL before the request AND send the request through
+      a client whose Transport is netguard.PinnedDialer{...}.Transport(), so
+      the dial is checked against the address actually connected to. See
+      src/pkg/netguard and src/pkg/inbox/link_fetch.go.
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+      obligation: >-
+        netguard is the one address classifier for server-side fetches of a
+        URL a user or remote party influences (src/pkg/netguard/netguard.go,
+        egress audit #18986).
+      references:
+        - https://github.com/hivecommons/hive/issues/19443
+    pattern-sources:
+      - pattern: '($R : *http.Request).FormValue(...)'
+      - pattern: '($R : *http.Request).PostFormValue(...)'
+      - pattern: '($R : *http.Request).PathValue(...)'
+      - pattern: '($R : *http.Request).URL.Query()'
+      - pattern: '($R : *http.Request).Header.Get(...)'
+      - by-side-effect: true
+        patterns:
+          - pattern: 'json.NewDecoder(($R : *http.Request).Body).Decode(&$V)'
+          - focus-metavariable: $V
+      - pattern: '($I : github.Issue).Body'
+      - pattern: '($I : *github.Issue).Body'
+      - pattern: '($C : github.ThreadComment).Body'
+      - pattern: '($C : github.PRComment).Body'
+      - pattern: '($P : github.PullRequest).Body'
+    pattern-sanitizers:
+      # A URL that has been through the classifier is treated as checked from
+      # then on; the caller still has to act on the answer.
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: netguard.IsPrivateURL($CTX, $U, ...)
+              - pattern: netguard.HostDenyReason($U)
+          - focus-metavariable: $U
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: http.Get($U)
+              - pattern: http.Head($U)
+              - pattern: http.Post($U, ...)
+              - pattern: http.PostForm($U, ...)
+              - pattern: http.NewRequest($M, $U, ...)
+              - pattern: http.NewRequestWithContext($CTX, $M, $U, ...)
+              - pattern: net.Dial($N, $U)
+              - pattern: net.DialTimeout($N, $U, ...)
+              - pattern: '($D : *net.Dialer).Dial($N, $U)'
+              - pattern: '($D : *net.Dialer).DialContext($CTX, $N, $U)'
+              - pattern: '($D : net.Dialer).Dial($N, $U)'
+              - pattern: '($D : net.Dialer).DialContext($CTX, $N, $U)'
+          - focus-metavariable: $U

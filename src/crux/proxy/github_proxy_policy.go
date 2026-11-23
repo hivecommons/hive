@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 // injectLinearCredential replaces the Authorization header of an agent's
@@ -344,14 +345,25 @@ func injectsGitHubAuthForHost(host string) bool {
 }
 
 func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (reason string, deny bool, detected bool) {
-	if p == nil || !p.canariesEnabled || p.canaryRegistry == nil || req == nil || req.Body == nil {
-		return "", false, false
+	reason, _, deny, detected = p.inspectGitHubWriteEgress(agentName, req)
+	return reason, deny, detected
+}
+
+// inspectGitHubWriteEgress is inspectCanaryEgress plus the DenyReason code the
+// caller should report: DenyReasonCredentialShape for a secret-shaped body,
+// DenyReasonCanaryEgress for every other denial.
+func (p *GitHubProxy) inspectGitHubWriteEgress(agentName string, req *http.Request) (reason, code string, deny bool, detected bool) {
+	if p == nil || req == nil || req.Body == nil {
+		return "", "", false, false
 	}
-	if isGitReceivePack(req.URL.Path) && p.canaryFailClosed {
-		return "ioscan canary scan unavailable for git push", true, true
+	// The credential-shape deny below does not depend on canaries: hives with
+	// ioscan or canaries off must still refuse to publish agent-written tokens.
+	canaryActive := p.canariesEnabled && p.canaryRegistry != nil
+	if canaryActive && isGitReceivePack(req.URL.Path) && p.canaryFailClosed {
+		return "ioscan canary scan unavailable for git push", DenyReasonCanaryEgress, true, true
 	}
 	if !writeMethods[req.Method] || isGitPath(req.URL.Path) || !githubWriteBodyMayLeak(req.Method, req.URL.Path) {
-		return "", false, false
+		return "", "", false, false
 	}
 	body, err := io.ReadAll(io.LimitReader(req.Body, maxGitHubWriteBodyScan+1))
 	if req.Body != nil {
@@ -364,36 +376,52 @@ func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		req.ContentLength = int64(len(body))
 		p.logger.Warn("ioscan canary scan: request body read failed — denying", "agent", agentName, "path", req.URL.Path)
-		return "ioscan canary scan body unreadable", true, true
+		return "ioscan canary scan body unreadable", DenyReasonCanaryEgress, true, true
 	}
 	if len(body) > maxGitHubWriteBodyScan {
-		return "ioscan canary scan body too large", true, true
+		return "ioscan canary scan body too large", DenyReasonCanaryEgress, true, true
 	}
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.ContentLength = int64(len(body))
-	type scanResult struct {
-		leak  crux.CanaryLeak
-		found bool
-	}
-	scanner, text, source := p.canaryRegistry, string(body), "github:"+req.Method+" "+req.URL.Path
-	res, scanned := callPolicySeam(p, "ioscan canary scan", canaryScanTimeout, func() scanResult {
-		leak, found := scanner.Scan(agentName, text, source)
-		return scanResult{leak, found}
-	})
-	if !scanned {
-		// Fail closed (#19224), whatever canaryFailClosed says: a scan that
-		// panicked or did not finish is a body we could not scan, the same
-		// answer as a body we could not read.
-		return "ioscan canary scan failed", true, true
-	}
-	if leak, ok := res.leak, res.found; ok {
-		if p.canaryLeakFunc != nil {
-			p.canaryLeakFunc(leak)
+	text, source := string(body), "github:"+req.Method+" "+req.URL.Path
+	canaryLeak := false
+	if canaryActive {
+		type scanResult struct {
+			leak  crux.CanaryLeak
+			found bool
 		}
-		p.logger.Warn("ioscan canary leak detected", "agent", leak.Agent, "source", leak.Source)
-		return "ioscan canary leak", p.canaryFailClosed, true
+		scanner := p.canaryRegistry
+		res, scanned := callPolicySeam(p, "ioscan canary scan", canaryScanTimeout, func() scanResult {
+			leak, found := scanner.Scan(agentName, text, source)
+			return scanResult{leak, found}
+		})
+		if !scanned {
+			// Fail closed (#19224), whatever canaryFailClosed says: a scan that
+			// panicked or did not finish is a body we could not scan, the same
+			// answer as a body we could not read.
+			return "ioscan canary scan failed", DenyReasonCanaryEgress, true, true
+		}
+		if leak, ok := res.leak, res.found; ok {
+			if p.canaryLeakFunc != nil {
+				p.canaryLeakFunc(leak)
+			}
+			p.logger.Warn("ioscan canary leak detected", "agent", leak.Agent, "source", leak.Source)
+			// Do not return yet: in warn mode (canaryFailClosed=false) the
+			// body would otherwise be published without the shape scan.
+			canaryLeak = true
+		}
 	}
-	return "", false, false
+	// Bodies hive relays are scrubbed with logscrub; bodies an agent writes
+	// through the proxy are not, so a real token pasted into a comment would be
+	// published (#19445). Deny on a secret shape, naming only the category.
+	if category, found := logscrub.FindSecret(text); found {
+		p.logger.Warn("credential shape in GitHub write body - denying", "agent", agentName, "source", source, "category", category)
+		return "credential shape in write body: " + category, DenyReasonCredentialShape, true, true
+	}
+	if canaryLeak {
+		return "ioscan canary leak", DenyReasonCanaryEgress, p.canaryFailClosed, true
+	}
+	return "", "", false, false
 }
 
 // enforceLinear applies ACMM to one request on a MITM'd api.linear.app

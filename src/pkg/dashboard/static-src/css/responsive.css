@@ -65,15 +65,38 @@
         gap: var(--sp-2);
         overflow: hidden;
       }
+      /* The right strip scrolls sideways when its chips don't fit. Packed to
+         the end, the overflow would land past the start edge, which a scroll
+         box can't reach, so chips there were cut off for good. The strip
+         packs from the start instead, the ::before spacer keeps the chips
+         right-aligned while they fit, and topbar-strip.js keeps it scrolled
+         to the end (Help and the account menu) until the user scrolls it. */
       .oc-topbar-right {
-        justify-content: flex-end;
+        justify-content: flex-start;
         flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
       }
-      /* The right strip clips overflow so chips scroll instead of wrapping;
-         an absolutely-positioned dropdown inside it would be clipped away.
+      .oc-topbar-right::-webkit-scrollbar {
+        display: none;
+      }
+      .oc-topbar-right::before {
+        content: "";
+        flex: 1 0 0;
+      }
+      /* Both stay reachable: Feedback from the drawer and the account menu,
+         Settings from the account menu, so it only goes while that shows. */
+      #feedback-bug-btn,
+      .oc-topbar-right:has(#oc-gh-avatar-wrap:not([hidden])) #oc-settings-btn {
+        display: none;
+      }
+      /* Scrolling clips the strip like overflow: hidden did, so an
+         absolutely-positioned dropdown inside it would be clipped away.
          Pin the account menu to the viewport under the navbar instead and
          let it scroll when taller than the phone screen. */
-      #oc-gh-user-menu {
+      #oc-help-menu, #oc-gh-user-menu {
         position: fixed;
         top: calc(var(--navbar-sticky-height) + env(safe-area-inset-top, 0px) + var(--sp-2));
         right: max(var(--sp-5), env(safe-area-inset-right, 0px));
@@ -112,6 +135,15 @@
       #oc-settings-btn .nav-chip__label,
       #welcome-topbar-btn .nav-chip__label {
         display: none;
+      }
+      /* "Waiting on you · 17" alone is wider than the strip on a 390px phone,
+         so it shows its dot and count; the words stay in the aria-label and
+         the tooltip. */
+      .oc-waiting-on-you .nav-chip__label {
+        display: none;
+      }
+      .oc-waiting-on-you::after {
+        content: attr(data-count);
       }
       .oc-topbar .layout-toggle.nav-chip {
         display: none;
@@ -583,14 +615,29 @@
         flex-wrap: nowrap;
         overflow: hidden;
       }
+      /* Same sideways scroll as the portrait phone strip (see the 768px block). */
+      .oc-topbar-right {
+        justify-content: flex-start;
+        overflow-x: auto;
+        overflow-y: hidden;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+      }
+      .oc-topbar-right::-webkit-scrollbar {
+        display: none;
+      }
+      .oc-topbar-right::before {
+        content: "";
+        flex: 1 0 0;
+      }
       .oc-topbar-center {
         gap: var(--sp-2);
       }
-      /* The right strip clips overflow so chips scroll instead of wrapping;
-         an absolutely-positioned dropdown inside it would be clipped away.
+      /* Scrolling clips the strip like overflow: hidden did, so an
+         absolutely-positioned dropdown inside it would be clipped away.
          Pin the account menu to the viewport under the navbar instead and
          let it scroll when taller than the phone screen. */
-      #oc-gh-user-menu {
+      #oc-help-menu, #oc-gh-user-menu {
         position: fixed;
         top: calc(var(--navbar-sticky-height) + env(safe-area-inset-top, 0px) + var(--sp-2));
         right: max(var(--sp-5), env(safe-area-inset-right, 0px));

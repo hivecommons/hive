@@ -68,6 +68,9 @@ type issueStageServer struct {
 	// default); timelineGets counts the reads.
 	timelines    map[int][]map[string]any
 	timelineGets int
+	// pullRequests marks numbers GET /issues/N reports as pull requests,
+	// with their merged_at ("" = not merged), for the verified-close sweep.
+	pullRequests map[int]string
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
@@ -184,7 +187,15 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 			if _, done := s.closed[n]; done {
 				state = "closed"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels, "state": state, "body": s.bodies[n], "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+			resp := map[string]any{"number": n, "labels": labels, "state": state, "body": s.bodies[n], "user": map[string]any{"login": "hive[bot]", "type": "Bot"}}
+			if mergedAt, ok := s.pullRequests[n]; ok {
+				link := map[string]any{"url": "https://api.example/pulls"}
+				if mergedAt != "" {
+					link["merged_at"] = mergedAt
+				}
+				resp["pull_request"] = link
+			}
+			_ = json.NewEncoder(w).Encode(resp)
 		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/timeline"):
 			var n int
 			_, _ = sscanIssue(rest, &n)
@@ -1037,6 +1048,9 @@ func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
 		name          string
 		priorComments []string
 		closeFails    bool
+		// alreadyClosed makes GitHub report the issue closed before the
+		// sweep closes it (its own closing keyword won the race).
+		alreadyClosed bool
 		wantClosed    int
 		wantComments  int
 		wantBodies    int
@@ -1044,6 +1058,9 @@ func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
 		{name: "first pass comments once and closes", wantClosed: 1, wantComments: 1, wantBodies: 1},
 		{name: "close failure keeps the single comment", closeFails: true, wantClosed: 0, wantComments: 1, wantBodies: 1},
 		{name: "retry after a failed close does not comment again", priorComments: []string{marker + "\nFixed by #67 (merged)."}, wantClosed: 1, wantComments: 0, wantBodies: 1},
+		// hivecommons/hive#19369: an issue GitHub already closed is the close
+		// this lane wanted, not a failure to retry and warn about every pass.
+		{name: "issue already closed upstream counts as closed", priorComments: []string{marker + "\nFixed by #67 (merged)."}, alreadyClosed: true, wantClosed: 1, wantComments: 0, wantBodies: 1},
 		{name: "another PR's marker does not suppress the note", priorComments: []string{"<!-- hive:closed-by-merged-pr pr=12 -->\nFixed by #12 (merged)."}, wantClosed: 1, wantComments: 1, wantBodies: 2},
 	}
 	for _, tt := range tests {
@@ -1051,6 +1068,9 @@ func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
 			fake := newIssueStageServer(t)
 			fake.commentBodies[64] = append([]string(nil), tt.priorComments...)
 			fake.closeFails[64] = tt.closeFails
+			if tt.alreadyClosed {
+				fake.closed[64] = IssueStateReasonCompleted
+			}
 			c := issueStageTestClient(t, fake.srv, true)
 			store := stagelabels.NewStore("", stageNow)
 			result := &ActionableResult{}

@@ -30,7 +30,7 @@ func NewClient(baseURL string, logger *slog.Logger) *Client {
 		baseURL: baseURL,
 		httpClient: &http.Client{
 			Timeout:       defaultTimeout,
-			CheckRedirect: knowledgeNoRedirectToPrivate,
+			CheckRedirect: knowledgeRedirectPolicy,
 		},
 		logger: logger,
 	}

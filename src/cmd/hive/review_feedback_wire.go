@@ -153,10 +153,12 @@ type reviewFeedbackSweep struct {
 	Route        func(owner string) reviewFeedbackRoute
 	WritingGuide string
 	Limits       reviewfeedback.Limits
-	MaxPRs       int
-	Cursor       int
-	Now          time.Time
-	Logger       *slog.Logger
+	// Retry re-routes feedback a kicked agent left stranded (#19320).
+	Retry  reviewfeedback.RetryPolicy
+	MaxPRs int
+	Cursor int
+	Now    time.Time
+	Logger *slog.Logger
 	// Rules captures reviewer-stated rules into the hive's knowledge
 	// (hivecommons/hive#19046). Nil turns capture off; the sweep is
 	// otherwise unchanged.
@@ -172,6 +174,7 @@ type reviewFeedbackResult struct {
 	Checked, Kicked, Debounced, CapReached, NeedsHuman, Errors int
 	RulesCaptured, RulesQueued, RulesMerged                    int
 	ReplyMissingRules                                          int
+	Retried, Stranded                                          int
 	NextCursor                                                 int
 }
 
@@ -223,6 +226,22 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 		if drafts := s.Store.BlockedDraftsDue(key, s.Now, s.Limits.Window); len(drafts) > 0 {
 			s.needsHuman(ctx, key, repo, number, "the hive's proxy refused the reply, so it was not posted", nil, drafts, &res)
 		}
+		// A kick whose agent neither pushed nor replied is re-routed, then
+		// handed to a person (#19320).
+		sc, err := s.Store.CheckStranded(key, fb.HeadSHA, fb.LastHiveReplyAt, fb.Items, s.Now, s.Retry)
+		if err != nil {
+			s.Logger.Warn("review feedback: could not persist the stranded-feedback check", "repo", repo, "pr", number, "error", err)
+		}
+		switch sc.Verdict {
+		case reviewfeedback.StrandedRetry:
+			res.Retried++
+			s.Logger.Info("review feedback: last kick ended with no push and no reply, routing again", "repo", repo, "pr", number,
+				"comments", len(sc.IDs), "retry", sc.Retries+1, "max_retries", s.Retry.MaxRetries)
+		case reviewfeedback.StrandedExhausted:
+			res.Stranded++
+			s.needsHuman(ctx, key, repo, number, reviewfeedback.StrandedReason(sc.Retries+1), reviewfeedback.ItemsByID(fb.Items, sc.IDs), nil, &res)
+			continue
+		}
 		if len(fb.Items) == 0 {
 			continue
 		}
@@ -249,7 +268,7 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 				s.Logger.Log(ctx, level, "review feedback: kick undeliverable, retrying next pass", "repo", repo, "pr", number, "agent", route.Agent, "error", err)
 				continue
 			}
-			if err := s.Store.RecordKick(key, d.Items, s.Now); err != nil {
+			if err := s.Store.RecordKickHead(key, d.Items, fb.HeadSHA, s.Now); err != nil {
 				s.Logger.Warn("review feedback: could not persist handled ids; a later pass may re-kick", "repo", repo, "pr", number, "error", err)
 			}
 			if len(recorded) > 0 {
@@ -514,6 +533,22 @@ func parseReviewFeedbackKey(key string) (string, int, bool) {
 	return key[:i], n, true
 }
 
+// reviewRetryPolicy is the stranded-feedback retry policy: a value the owner
+// saved in Settings (review_feedback.retry.*) wins; an unsaved one keeps its
+// env value or the default. An unparsable saved backoff keeps the env/default
+// value (the dashboard refuses one on save).
+func reviewRetryPolicy(cfg *config.Config) reviewfeedback.RetryPolicy {
+	p := reviewfeedback.RetryPolicyFromEnv()
+	set := cfg.ReviewRetrySettingsSnapshot()
+	if set.MaxRetries != nil {
+		p.MaxRetries = *set.MaxRetries
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(set.Backoff)); err == nil && d > 0 {
+		p.Backoff = d
+	}
+	return p.Normalized()
+}
+
 // sweepReviewFeedback is the eval-tick entry point.
 func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github.Client, agentMgr crux.Runtime, logger *slog.Logger) {
 	if cfg == nil || client == nil || !reviewfeedback.Enabled() {
@@ -548,6 +583,7 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		Kicker:       agentKicker{mgr: agentMgr},
 		WritingGuide: cfg.Project.WritingGuideSection(),
 		Limits:       reviewfeedback.LimitsFromEnv(),
+		Retry:        reviewRetryPolicy(cfg),
 		MaxPRs:       reviewFeedbackMaxPRsPerPass,
 		Cursor:       reviewFeedbackCursor,
 		Now:          now,
@@ -573,8 +609,8 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 	}
 	res := sweep.run(ctx, parseReviewFeedbackKey)
 	reviewFeedbackCursor = res.NextCursor
-	if res.Kicked+res.NeedsHuman+res.Debounced+res.CapReached+res.Errors > 0 {
-		logger.Info("review feedback pass", "checked", res.Checked, "kicked", res.Kicked, "debounced", res.Debounced,
+	if res.Kicked+res.NeedsHuman+res.Debounced+res.CapReached+res.Errors+res.Retried > 0 {
+		logger.Info("review feedback pass", "checked", res.Checked, "kicked", res.Kicked, "retried", res.Retried, "stranded", res.Stranded, "debounced", res.Debounced,
 			"cap_reached", res.CapReached, "needs_human", res.NeedsHuman, "errors", res.Errors,
 			"rules_captured", res.RulesCaptured, "rules_queued", res.RulesQueued, "rules_merged", res.RulesMerged)
 	}

@@ -62,7 +62,7 @@ func (p *Prober) Probe(now time.Time) Resources {
 		res.MemLimitMB = limitMB
 	}
 	if cur, ok := p.readUint(memCurrentFile); ok {
-		res.MemUsedMB = int(cur / mibBytes)
+		res.MemUsedMB = int(cur / mibBytes) // #nosec G115 -- a byte count divided by MiB fits in int on every supported platform
 	}
 	return res
 }

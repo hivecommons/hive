@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -427,7 +428,46 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 			"skipped": "no key submitted — endpoint not probed with the stored credential; use the gateway test action to verify",
 		}
 	}
+	if submittedKey != "" {
+		if w2 := jobAgentsWithOwnModelSecret(s.deps.Config, name, kind); w2 != "" {
+			resp["sandboxJobWarning"] = w2
+		}
+	}
 	jsonResponse(w, resp)
+}
+
+// jobAgentsWithOwnModelSecret returns a warning when agents on the named
+// gateway run as `runtime: job` and carry operator-named env_from_secrets.
+// The Job cannot reach hive's in-pod inference proxy, so a rotated gateway key
+// never reaches the model credential inside those Secrets (#19337). Empty when
+// no agent is affected. Never contains a key value.
+func jobAgentsWithOwnModelSecret(cfg *config.Config, names ...string) string {
+	if cfg == nil {
+		return ""
+	}
+	var affected []string
+	for agentName, agent := range cfg.Agents {
+		match := false
+		for _, n := range names {
+			if n != "" && strings.EqualFold(agent.Backend, n) {
+				match = true
+			}
+		}
+		if !match || agent.SandboxRuntime(cfg.AgentSandbox) != config.SandboxRuntimeJob {
+			continue
+		}
+		if len(agent.SandboxJob(cfg.AgentSandbox).EnvFromSecrets) == 0 {
+			continue
+		}
+		affected = append(affected, agentName)
+	}
+	if len(affected) == 0 {
+		return ""
+	}
+	sort.Strings(affected)
+	return fmt.Sprintf("sandboxed Job agent(s) %s use this gateway but get their model credential from their own "+
+		"job.env_from_secrets Secret, which hive does not update: update the key in that Secret too, or the Job "+
+		"keeps the old key until it is revoked", strings.Join(affected, ", "))
 }
 
 // handleGovernorGatewaysDelete removes a gateway by name. It refuses (409) to
@@ -670,7 +710,11 @@ func (s *Server) handleGovernorGatewaysTest(w http.ResponseWriter, r *http.Reque
 		jsonError(w, "gateway has no endpoint configured", http.StatusBadRequest)
 		return
 	}
-	jsonResponse(w, map[string]interface{}{"ok": true, "probe": probe})
+	resp := map[string]interface{}{"ok": true, "probe": probe}
+	if warn := jobAgentsWithOwnModelSecret(s.deps.Config, gw.Name, gw.Kind); warn != "" {
+		resp["sandboxJobWarning"] = warn
+	}
+	jsonResponse(w, resp)
 }
 
 // gatewayProbeResult runs the shared live /v1/models probe (probeLiteLLMModels)

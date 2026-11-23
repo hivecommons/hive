@@ -202,7 +202,8 @@ func TestCustomerMatchAnswersOnlyForConsent(t *testing.T) {
 	// Delivery stamps on the record.
 	ac := readMatchConsent(t, alice, "one")
 	if ac.FirstDeliveredAt == nil || ac.LastDeliveredAt == nil || ac.DeliveredFields == nil ||
-		*ac.DeliveredFields != name || ac.DeliveredRev != a.Rev {
+		*ac.DeliveredFields != name || ac.DeliveredRev != a.Rev ||
+		ac.LastDeliveredFields == nil || *ac.LastDeliveredFields != name {
 		t.Fatalf("alice delivery stamp = %+v", ac)
 	}
 	firstDelivered := *ac.FirstDeliveredAt
@@ -216,7 +217,8 @@ func TestCustomerMatchAnswersOnlyForConsent(t *testing.T) {
 		t.Fatalf("user country not delivered with a new rev: %+v", resp.Matches)
 	}
 	if ac = readMatchConsent(t, alice, "one"); !ac.FirstDeliveredAt.Equal(firstDelivered) ||
-		*ac.DeliveredFields != (customerConsentFields{RealName: true, Country: true}) {
+		*ac.DeliveredFields != (customerConsentFields{RealName: true, Country: true}) ||
+		*ac.LastDeliveredFields != (customerConsentFields{RealName: true, Country: true}) {
 		t.Fatalf("restamp = %+v", ac)
 	}
 
@@ -242,6 +244,12 @@ func TestCustomerMatchAnswersOnlyForConsent(t *testing.T) {
 	}
 	if cc := readMatchConsent(t, carol, "one"); cc.WithdrawnAt == nil || cc.FirstDeliveredAt == nil {
 		t.Fatalf("withdrawn carol record must be retained while a clear is owed: %+v", cc)
+	}
+	// The person's view: the last answer carried only the country, while the
+	// union still names the cleared real name.
+	if ac = readMatchConsent(t, alice, "one"); *ac.LastDeliveredFields != (customerConsentFields{Country: true}) ||
+		*ac.DeliveredFields != (customerConsentFields{RealName: true, Country: true}) {
+		t.Fatalf("last delivered after provenance loss = %+v", ac)
 	}
 
 	// One hive cannot read another hive's consent, with either hive's key.

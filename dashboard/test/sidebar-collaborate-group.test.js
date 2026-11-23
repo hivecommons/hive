@@ -178,7 +178,7 @@ for (const sessionsEnabled of [true, false]) {
   });
 }
 
-test('sidebar group order is Dashboard, Collaborate, Agents, Resources, Intelligence, Admin, Help', () => {
+test('sidebar group order is Dashboard, Collaborate, Agents, Resources, Intelligence, Pull requests, Usage, Troubleshooting, Help, Community', () => {
   const ctx = makeContext({ saved: null, sessionsEnabled: true });
   vm.runInContext('dashboardSortSidebar()', ctx);
   const groups = ctx.sidebar.children;
@@ -189,7 +189,19 @@ test('sidebar group order is Dashboard, Collaborate, Agents, Resources, Intellig
   assert.equal(collab, dash + 1, 'Collaborate comes right after Dashboard');
   assert.equal(agents, collab + 1, 'Agents comes right after Collaborate');
   assert.deepEqual(groups.map((g) => g.label).filter((l) => l !== 'Filters'),
-    ['Dashboard', 'Collaborate', 'Agents', 'Resources', 'Intelligence', 'Admin', 'Help']);
+    ['Dashboard', 'Collaborate', 'Agents', 'Resources', 'Intelligence', 'Pull requests', 'Usage', 'Troubleshooting', 'Help', 'Community']);
+});
+
+test('Control panel and Activity stay in the Agents group after the sidebar sort', () => {
+  for (const saved of [null, SAVED_COLLABORATE_FIRST]) {
+    const ctx = makeContext({ saved, sessionsEnabled: true });
+    vm.runInContext('dashboardSortSidebar()', ctx);
+    const agents = ctx.document.getElementById(AGENT_GROUP_ID);
+    assert.equal(agents.label, 'Agents', 'the group heading is still Agents');
+    assert.deepEqual(agents.querySelectorAll('.oc-nav-item').map((e) => e.getAttribute('data-section')),
+      ['agents-section', 'agent-activity-section']);
+    assert.deepEqual(linkTexts(agents), ['Control panel', 'Activity']);
+  }
 });
 
 test('reordering Dashboard links from the sidebar keeps Collaborate sections where the layout had them', () => {

@@ -335,6 +335,7 @@ func (s *Server) autoDecideReviewQuestion(ctx context.Context, c reviewQuestionC
 	if lookup != nil {
 		if agg, ok := lookup(c.Repo, c.Number, c.Head, true); ok {
 			in.UnresolvedFindings = reviewQuestionUnresolvedFindings(agg)
+			in.SecurityRequiresPerson = agg.SecurityRequiresPerson()
 			if agg.HiveAuthoredKnown {
 				in.HiveAuthored = in.HiveAuthored || agg.HiveAuthored
 			}

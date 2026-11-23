@@ -6,17 +6,17 @@ import (
 	"testing"
 )
 
-func TestDashboardHelpGroupHasDiscordLink(t *testing.T) {
+func TestDashboardCommunityGroupHasDiscordLink(t *testing.T) {
 	html := indexHTML(t)
-	want := `<a class="oc-nav-item" href="https://hivecommons.dev/discord" target="_blank" rel="noopener"><span class="oc-nav-emoji">💬</span><span class="oc-nav-text">Join our Discord</span></a>`
+	want := `<a class="oc-nav-item" href="https://hivecommons.dev/discord" target="_blank" rel="noopener"><span class="oc-nav-emoji">💬</span><span class="oc-nav-text">Discord</span></a>`
 	if !strings.Contains(html, want) {
-		t.Fatalf("dashboard Help group missing Discord link with safe external-link attributes")
+		t.Fatalf("dashboard Community group missing Discord link with safe external-link attributes")
 	}
-	guide := strings.Index(html, `<span class="oc-nav-text">Getting Started Guide</span>`)
+	community := strings.Index(html, `<div class="oc-nav-label">Community</div>`)
 	discord := strings.Index(html, want)
-	issue := strings.Index(html, `<span class="oc-nav-text">Report an Issue</span>`)
-	if guide == -1 || discord == -1 || issue == -1 || !(guide < discord && discord < issue) {
-		t.Fatalf("Discord help link should appear after Getting Started Guide and before Report an Issue")
+	twitch := strings.Index(html, `<span class="oc-nav-text">Live on Twitch</span>`)
+	if community == -1 || discord == -1 || twitch == -1 || !(community < discord && discord < twitch) {
+		t.Fatalf("Discord should be the first Community link, before Live on Twitch")
 	}
 }
 

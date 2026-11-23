@@ -487,7 +487,10 @@
     .oc-navbar-upgrade[hidden] { display: none; }
     /* `.nav-chip { display: inline-flex }` (components.css) outranks the UA
        `[hidden] { display: none }`, so a hidden status chip otherwise paints
-       as an empty outlined pill (#oc-providers when every provider is usable). */
+       as an empty outlined pill (#oc-providers when every provider is usable,
+       #oc-meeting-indicator when no meeting is live). The catch-all covers
+       every top-bar chip, so a new hidden-by-default chip can't regress. */
+    .oc-topbar .nav-chip[hidden] { display: none; }
     .oc-providers-chip[hidden] { display: none; }
     /* Opt-in plan usage chip: a compact fuel dial plus its percentage. */
     .subscription-gauge-chip[hidden] { display: none; }
@@ -536,8 +539,9 @@
     .oc-waiting-on-you[hidden] { display: none; }
     #oc-settings-btn { flex: 0 0 auto; }
     .oc-topbar .git-version { color: var(--muted); }
-    .oc-health-badge, #welcome-topbar-btn, #oc-gh-avatar-wrap { flex: 0 0 auto; }
-    #oc-gh-avatar-wrap { position: relative; }
+    .oc-health-badge, #welcome-topbar-btn, #oc-help-menu-wrap, #oc-gh-avatar-wrap { flex: 0 0 auto; }
+    #oc-gh-avatar-wrap, #oc-help-menu-wrap { position: relative; }
+    #welcome-topbar-btn .nav-chip__caret { font-size: var(--fs-2xs); opacity: 0.8; }
     #oc-gh-avatar-wrap.layout-unsaved::after { content: ''; position: absolute; top: calc(-1 * var(--sp-1)); right: calc(-1 * var(--sp-1)); width: var(--sp-3); height: var(--sp-3); border-radius: var(--r-pill); background: var(--amber); border: var(--line-width) solid var(--panel); box-shadow: var(--shadow-soft); }
     #oc-gh-avatar { object-fit: cover; cursor: pointer; border-color: var(--green); vertical-align: middle; }
     .oc-gh-avatar-btn { display: inline-flex; flex: 0 0 auto; align-items: center; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: 0; cursor: pointer; border-radius: var(--r-pill); }
@@ -605,7 +609,7 @@
       .oc-topbar-center { justify-content: center; }
       #oc-project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #acmm-badge, #fleet-breaker-wrap, .oc-topbar-center, .oc-health-badge,
-      #welcome-topbar-btn, .widget-dl, #oc-gh-avatar-wrap { flex: 0 0 auto; }
+      #welcome-topbar-btn, #oc-help-menu-wrap, .widget-dl, #oc-gh-avatar-wrap { flex: 0 0 auto; }
       .oc-topbar-right { justify-content: flex-end; flex-wrap: nowrap; overflow: visible; }
       .oc-topbar-right .widget-dl { margin-left: var(--sp-0); margin-right: var(--sp-0); }
     }
@@ -731,17 +735,20 @@
       display: flex; gap: var(--sp-4); margin-bottom: var(--sp-6); flex-wrap: wrap;
     }
 
-    /* Sidebar agent tree */
+    /* Sidebar agent tree: "All agents (n)" is a row inside the Agents group,
+       on the same gutter as the Control panel and Activity links above it
+       (#19282), not a second group heading. */
     .oc-tree-toggle {
-      /* .section-label convention */
-      display: flex; align-items: center; gap: var(--sp-4);
-      padding: 10px 20px 6px; font-size: var(--fs-xs); color: var(--amber);
+      display: flex; align-items: center; gap: var(--oc-nav-item-gap);
+      padding: 5px var(--oc-nav-item-pad-x) 5px calc(var(--oc-nav-item-pad-x) + var(--oc-nav-child-inset));
+      margin: 1px 8px; min-height: 28px; border-radius: var(--r);
+      font-size: var(--fs-base); color: var(--muted);
       cursor: pointer; user-select: none;
-      text-transform: uppercase; letter-spacing: 0.12em; font-weight: 800;
     }
-    .oc-tree-toggle:hover { color: var(--text); }
+    .oc-tree-toggle:hover { color: var(--text); background: var(--surface-2); }
     .oc-tree-arrow { font-size: var(--fs-2xs); transition: transform 0.15s; }
     .oc-tree-toggle.collapsed .oc-tree-arrow { transform: rotate(-90deg); }
+    .oc-tree-count { color: var(--muted); font-variant-numeric: tabular-nums; }
     .oc-tree-children { padding-left: var(--sp-2); }
     .oc-tree-children.collapsed { display: none; }
     .oc-nav-item .oc-agent-dot {
@@ -7129,15 +7136,38 @@
         gap: var(--sp-2);
         overflow: hidden;
       }
+      /* The right strip scrolls sideways when its chips don't fit. Packed to
+         the end, the overflow would land past the start edge, which a scroll
+         box can't reach, so chips there were cut off for good. The strip
+         packs from the start instead, the ::before spacer keeps the chips
+         right-aligned while they fit, and topbar-strip.js keeps it scrolled
+         to the end (Help and the account menu) until the user scrolls it. */
       .oc-topbar-right {
-        justify-content: flex-end;
+        justify-content: flex-start;
         flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
       }
-      /* The right strip clips overflow so chips scroll instead of wrapping;
-         an absolutely-positioned dropdown inside it would be clipped away.
+      .oc-topbar-right::-webkit-scrollbar {
+        display: none;
+      }
+      .oc-topbar-right::before {
+        content: "";
+        flex: 1 0 0;
+      }
+      /* Both stay reachable: Feedback from the drawer and the account menu,
+         Settings from the account menu, so it only goes while that shows. */
+      #feedback-bug-btn,
+      .oc-topbar-right:has(#oc-gh-avatar-wrap:not([hidden])) #oc-settings-btn {
+        display: none;
+      }
+      /* Scrolling clips the strip like overflow: hidden did, so an
+         absolutely-positioned dropdown inside it would be clipped away.
          Pin the account menu to the viewport under the navbar instead and
          let it scroll when taller than the phone screen. */
-      #oc-gh-user-menu {
+      #oc-help-menu, #oc-gh-user-menu {
         position: fixed;
         top: calc(var(--navbar-sticky-height) + env(safe-area-inset-top, 0px) + var(--sp-2));
         right: max(var(--sp-5), env(safe-area-inset-right, 0px));
@@ -7176,6 +7206,15 @@
       #oc-settings-btn .nav-chip__label,
       #welcome-topbar-btn .nav-chip__label {
         display: none;
+      }
+      /* "Waiting on you · 17" alone is wider than the strip on a 390px phone,
+         so it shows its dot and count; the words stay in the aria-label and
+         the tooltip. */
+      .oc-waiting-on-you .nav-chip__label {
+        display: none;
+      }
+      .oc-waiting-on-you::after {
+        content: attr(data-count);
       }
       .oc-topbar .layout-toggle.nav-chip {
         display: none;
@@ -7647,14 +7686,29 @@
         flex-wrap: nowrap;
         overflow: hidden;
       }
+      /* Same sideways scroll as the portrait phone strip (see the 768px block). */
+      .oc-topbar-right {
+        justify-content: flex-start;
+        overflow-x: auto;
+        overflow-y: hidden;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+      }
+      .oc-topbar-right::-webkit-scrollbar {
+        display: none;
+      }
+      .oc-topbar-right::before {
+        content: "";
+        flex: 1 0 0;
+      }
       .oc-topbar-center {
         gap: var(--sp-2);
       }
-      /* The right strip clips overflow so chips scroll instead of wrapping;
-         an absolutely-positioned dropdown inside it would be clipped away.
+      /* Scrolling clips the strip like overflow: hidden did, so an
+         absolutely-positioned dropdown inside it would be clipped away.
          Pin the account menu to the viewport under the navbar instead and
          let it scroll when taller than the phone screen. */
-      #oc-gh-user-menu {
+      #oc-help-menu, #oc-gh-user-menu {
         position: fixed;
         top: calc(var(--navbar-sticky-height) + env(safe-area-inset-top, 0px) + var(--sp-2));
         right: max(var(--sp-5), env(safe-area-inset-right, 0px));
@@ -9269,7 +9323,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     <div class="config-body welcome-body modal-scroll" id="welcome-body"></div>
     <div class="config-footer welcome-footer">
       <button class="hv-btn btn-secondary hive-dialog-btn" data-action="closeWelcomeDialog" title="Close for now — the checklist opens again on the next dashboard load">Remind me next time</button>
-      <button class="hv-btn btn-primary hive-dialog-btn primary" data-action="dismissWelcomeDialog" title="Stop opening this checklist on load — reopen it any time from Getting Started in the sidebar or the Guide button in the top bar">Don't show on load</button>
+      <button class="hv-btn btn-primary hive-dialog-btn primary" data-action="dismissWelcomeDialog" title="Stop opening this checklist on load — reopen it any time from Getting started in the sidebar Help group or the top bar ? Help menu">Don't show on load</button>
     </div>
   </div>
 </div>
@@ -9299,8 +9353,13 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
     </div>
     <div class="oc-nav-group" id="oc-agent-nav-group">
+      <div class="oc-nav-label">Agents</div>
+      <!-- The control panel and activity links sit outside the collapsible
+           tree body, so collapsing "All agents" keeps them visible. -->
+      <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🎛</span><span class="oc-nav-text">Control panel</span></a>
+      <a class="oc-nav-item" data-section="agent-activity-section" data-action="ocNavigate" data-arg0="agent-activity-section"><span class="oc-nav-emoji">📡</span><span class="oc-nav-text">Activity</span></a>
       <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
-        <span class="oc-tree-arrow">▼</span> <span>Agents</span>
+        <span class="oc-tree-arrow" aria-hidden="true">▼</span> <span class="oc-tree-label">All agents <span id="oc-agent-tree-count" class="oc-tree-count">(0)</span></span>
       </div>
       <div class="oc-tree-children" id="oc-agent-tree-body">
         <div id="oc-agent-tree">
@@ -9324,26 +9383,35 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
     </div>
-    <div class="oc-nav-group">
-      <div class="oc-nav-label">Admin</div>
+    <div class="oc-nav-group" id="pull-requests-nav-group">
+      <div class="oc-nav-label">Pull requests</div>
+      <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review</span></a>
+      <a class="oc-nav-item" data-section="lifecycle-section" data-action="ocNavigate" data-arg0="lifecycle-section"><span class="oc-nav-emoji">🔀</span><span class="oc-nav-text">PR timeline</span></a>
+    </div>
+    <div class="oc-nav-group" id="usage-nav-group">
+      <div class="oc-nav-label">Usage</div>
       <a class="oc-nav-item" data-section="token-panel" data-action="ocNavigate" data-arg0="token-panel"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
       <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
-      <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review</span></a>
-      <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span></a>
-      <a class="oc-nav-item" data-section="agent-activity-section" data-action="ocNavigate" data-arg0="agent-activity-section"><span class="oc-nav-emoji">📡</span><span class="oc-nav-text">Agent activity</span></a>
-      <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📜</span><span class="oc-nav-text">Audit Log</span></a>
-      <a class="oc-nav-item" data-section="lifecycle-section" data-action="ocNavigate" data-arg0="lifecycle-section"><span class="oc-nav-emoji">🔀</span><span class="oc-nav-text">Lifecycle Timeline</span></a>
-      <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🩺</span><span class="oc-nav-text">Diagnostics</span></a>
     </div>
-    <div class="oc-nav-group">
+    <div class="oc-nav-group" id="troubleshooting-nav-group">
+      <div class="oc-nav-label">Troubleshooting</div>
+      <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🩺</span><span class="oc-nav-text">Diagnostics</span></a>
+      <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📜</span><span class="oc-nav-text">Audit log</span></a>
+    </div>
+    <!-- Help mirrors the top bar "? Help" menu (#oc-help-menu): same labels,
+         same targets. A future Ask AI entry goes right after Getting started. -->
+    <div class="oc-nav-group" id="help-nav-group">
       <div class="oc-nav-label">Help</div>
+      <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting started checklist: one-time setup steps for a new hive, with a link to the full guide"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting started</span></a>
       <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Short answers to the questions people ask once a hive is running: levels and holds, the Evidence card, release channels, the Model Gateway, pausing, cost, and where to get help"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
-      <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
-      <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
-      <a class="oc-nav-item" href="https://docs.hivecommons.dev/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" title="Zero to Automation: the beginner guide to running your hive, level by level"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Getting Started Guide</span></a>
-      <a class="oc-nav-item" href="https://hivecommons.dev/discord" target="_blank" rel="noopener"><span class="oc-nav-emoji">💬</span><span class="oc-nav-text">Join our Discord</span></a>
-      <a class="oc-nav-item" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener" title="Live stream of the hosted hive's Activity Monitor"><span class="oc-nav-emoji">📺</span><span class="oc-nav-text">Watch live on Twitch</span></a>
-      <a class="oc-nav-item" data-action="openFeedbackModal" data-arg0="bug" data-prevent="1"><span class="oc-nav-emoji">🐛</span><span class="oc-nav-text">Report an Issue</span></a>
+      <a class="oc-nav-item" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer" title="The Hive documentation, including the Getting Started guide"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Docs</span></a>
+      <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">🔌</span><span class="oc-nav-text">API reference</span></a>
+      <a class="oc-nav-item" data-action="openFeedbackModal" data-arg0="bug" data-prevent="1"><span class="oc-nav-emoji">🐛</span><span class="oc-nav-text">Report an issue</span></a>
+    </div>
+    <div class="oc-nav-group" id="community-nav-group">
+      <div class="oc-nav-label">Community</div>
+      <a class="oc-nav-item" href="https://hivecommons.dev/discord" target="_blank" rel="noopener"><span class="oc-nav-emoji">💬</span><span class="oc-nav-text">Discord</span></a>
+      <a class="oc-nav-item" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener" title="Live stream of the hosted hive's Activity Monitor"><span class="oc-nav-emoji">📺</span><span class="oc-nav-text">Live on Twitch</span></a>
     </div>
     <!-- Pinned label filters (#12172): one entry per pinned saved filter /
          preset with a live count across every project. Rendered by hfRenderPinned(). -->
@@ -9419,10 +9487,21 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
       <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" title="AI providers: all usable" aria-label="AI providers: all usable" hidden></span>
       <button type="button" class="nav-chip nav-chip--status subscription-gauge-chip" id="oc-subscription-gauge" data-action="openSubscriptionGaugeOverview" data-status="neutral" aria-label="Plan usage left" hidden><span class="subscription-gauge-chip__dial" aria-hidden="true"></span><span class="nav-chip__label"></span></button>
-      <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
+      <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" data-count="0" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
       <button type="button" class="nav-chip nav-chip--status nav-chip--ok oc-meeting-indicator" id="oc-meeting-indicator" data-action="calendarIndicatorClick" data-target="" aria-label="Not in a meeting" hidden><span class="nav-chip__label"></span></button>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
-      <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
+      <!-- Help menu: mirrors the sidebar Help group (#help-nav-group) with the
+           same labels and targets. It reuses the account menu's .avatar-menu
+           dropdown. A future Ask AI item goes right after Getting started. -->
+      <div id="oc-help-menu-wrap">
+        <button type="button" class="nav-chip nav-chip--primary" id="welcome-topbar-btn" data-action="toggleHelpMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-help-menu" title="Help: Getting started, Docs, FAQ, Report an issue" aria-label="Help menu"><span class="nav-chip__icon" aria-hidden="true">?</span><span class="nav-chip__label">Help</span><span class="nav-chip__caret" aria-hidden="true">▾</span></button>
+        <div id="oc-help-menu" class="avatar-menu" role="menu" aria-label="Help" hidden>
+          <button type="button" class="avatar-menu-item" role="menuitem" id="welcome-help-menu-item" style="display:none" data-action="openWelcomeDialog">🚀 Getting started</button>
+          <a class="avatar-menu-item" role="menuitem" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer">📖 Docs</a>
+          <button type="button" class="avatar-menu-item" role="menuitem" data-action="ocNavigate" data-arg0="faq-section">❓ FAQ</button>
+          <button type="button" class="avatar-menu-item" role="menuitem" data-action="openFeedbackModal" data-arg0="bug">🐛 Report an issue</button>
+        </div>
+      </div>
       <div id="oc-gh-avatar-wrap" hidden>
         <!-- The avatar sits inside a real <button>: iOS Safari only synthesises
              a click from a tap on interactive elements, so a bare <img> with a
@@ -9565,7 +9644,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     </div>
 
     <div id="lifecycle-section" class="advisory-subsection" style="display: none;">
-      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="lifecycle-section"><span class="section-chevron">▼</span> 🔀 Lifecycle Timeline</h2>
+      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="lifecycle-section"><span class="section-chevron">▼</span> 🔀 PR timeline</h2>
       <div class="section-body">
         <div id="lifecycle-card" class="advisory-subsection-card"></div>
       </div>
@@ -9671,7 +9750,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   </div>
 
   <div class="mt-6 mb-8" id="audit-section" data-dashboard-section="audit-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="audit-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Audit Log section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📜 Audit Log</h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="audit-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Audit log section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📜 Audit log</h2>
     <div class="section-body">
       <div class="audit-controls-row" style="margin-bottom:5px;padding:3px;display:flex;align-items:center;gap:var(--sp-4)">
         <div class="audit-search-field">
@@ -9818,7 +9897,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   <div id="oc-agent-detail" class="oc-agent-detail"></div>
   <div id="agents-section" data-dashboard-section="agents-section">
     <div style="display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-4)">
-      <button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agents section" aria-pressed="false">⠿</button><h2 style="margin:var(--sp-0); cursor:pointer" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="agents-section"><span class="section-chevron">▼</span> Agents</h2>
+      <button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Control panel section" aria-pressed="false">⠿</button><h2 style="margin:var(--sp-0); cursor:pointer" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="agents-section"><span class="section-chevron">▼</span> 🎛 Control panel</h2>
       <button class="hv-btn btn-secondary btn-sm" id="agents-add-btn" data-action="openAddAgentDialog" data-stop="1" title="Add a new agent from a template or from scratch">＋ Add agent</button>
       <button class="hv-btn btn-danger btn-sm" id="agents-compact-all-btn" data-action="toggleAllAgentsCompact" data-stop="1" title="Toggle all agent cards between compact and expanded view"></button>
       <button class="hv-btn btn-secondary btn-sm" id="agents-reset-layout-btn" data-action="resetAgentCardLayout" data-stop="1" title="Reset agent card order and sizes to the default layout (this browser only)" hidden>↔️ Reset layout</button>
@@ -9897,7 +9976,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   </div>
 
   <div class="mt-6 mb-8" id="agent-activity-section" data-dashboard-section="agent-activity-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="agent-activity-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agent activity section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📡 Agent activity</h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="agent-activity-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Activity section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📡 Activity</h2>
     <div class="section-body">
       <div id="agent-activity-panel"></div>
     </div>
@@ -10111,7 +10190,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 
         <details class="faq-q" id="faq-audit">
           <summary>Where is the audit log, and how do I find out who did something?</summary>
-          <p>The <strong>Audit Log</strong> section of this dashboard reads <code>/data/audit.jsonl</code>, one JSON line per action, newest first, with a search box (words are OR'd; <code>/regex/</code> works) and a <strong>Sensitive only</strong> filter. Each entry's <code>user</code> is who performed it — a GitHub login, or a pseudo-user such as <code>system</code> for automated paths — and GitHub writes also carry <code>repo</code> and <code>target</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-log.md" target="_blank" rel="noopener noreferrer">audit log format</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#audit-log" target="_blank" rel="noopener noreferrer">the Audit Log section</a>.</p>
+          <p>The <strong>Audit log</strong> section of this dashboard reads <code>/data/audit.jsonl</code>, one JSON line per action, newest first, with a search box (words are OR'd; <code>/regex/</code> works) and a <strong>Sensitive only</strong> filter. Each entry's <code>user</code> is who performed it — a GitHub login, or a pseudo-user such as <code>system</code> for automated paths — and GitHub writes also carry <code>repo</code> and <code>target</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-log.md" target="_blank" rel="noopener noreferrer">audit log format</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#audit-log" target="_blank" rel="noopener noreferrer">the Audit log section</a>.</p>
         </details>
         </section>
 
@@ -11144,7 +11223,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     // Beginner-friendly defaults (#12014): a browser with NO prior dashboard
     // state starts with these non-critical cards collapsed so a new operator
     // first sees the cards that say whether the hive is alive and merging
-    // (Overview, Governor, Projects, Review, Approvals, Agents, Agent activity).
+    // (Overview, Governor, Projects, Review, Approvals, Control panel, Activity).
     // The per-card value under SECTION_LS_PREFIX is '1' (collapsed) or '0'
     // (explicitly expanded); a missing key falls back to this default. The
     // marker key records whether the browser predates the defaults ('legacy',
@@ -11258,14 +11337,14 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'hive-advice-section': { title: '🧭 Hive Advice', summary: '0 recommendations', badgeHtml: '<span class="dash-card-badge">weekly</span>' },
       'fleet-report-section': { title: '📡 Fleet Report Preview', summary: '0 reports', badgeHtml: '<span class="dash-card-badge">dry-run</span>' },
       'acmm-reco-section': { title: '⬆️ Ready to level up?', summary: 'L— · stay', badgeHtml: '<span class="dash-card-badge">advisory</span>' },
-      'lifecycle-section': { title: '🔀 Lifecycle Timeline', summary: '0 in flight · 0 merged' },
+      'lifecycle-section': { title: '🔀 PR timeline', summary: '0 in flight · 0 merged' },
       'pr-throughput-section': { title: '📈 Throughput', summary: '0 merged · 0 opened (24h)', subtitleHtml: 'pull/merge requests across tracked forges' },
       'token-panel': { title: '🪙 Tokens', summary: '0 sessions' },
       'cost-panel': { title: '💵 Cost', summary: '$0' },
       'repos-section': { title: '📦 Projects', summary: '0 repos', settingsHtml: sectionSettingsGear('Projects', 'gh1', 'Manage monitored projects') },
       'acmm-eval-section': { title: '🎯 ACMM Eval', summary: 'L—' },
       'approvals-section': { title: '✋ Approvals', summary: '0 pending' },
-      'audit-section': { title: '📜 Audit Log', summary: '0 events today' },
+      'audit-section': { title: '📜 Audit log', summary: '0 events today' },
       'review-queue-section': { title: '🔎 Review', summary: '0 PRs' },
       'review-pipeline-subsection': { title: 'Pipeline', summary: '—' },
       'review-queue-subsection': { title: 'Queue', summary: '—' },
@@ -11279,8 +11358,8 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
-      'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
-      'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },
+      'agents-section': { title: '🎛 Control panel', summary: '0 running / 0 total' },
+      'agent-activity-section': { title: '📡 Activity', summary: '0 working / 0 total' },
       'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') + STAGE_TRACKER_HEADER_TOOLS_HTML, countHtml: STAGE_TRACKER_HEADER_COUNT_HTML },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
@@ -11300,14 +11379,14 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'hive-advice-section': { heading: 'Hive Advice', help: 'A short weekly list of things Hive recommends you do to keep work moving on your projects.' },
       'fleet-report-section': { heading: 'Fleet Report Preview', help: 'Problems Hive has noticed in itself that it would report to the Hive maintainers, and problems that have since gone away.' },
       'acmm-reco-section': { heading: 'Ready to level up?', help: 'Whether Hive thinks you could safely let it do more on its own, and what still has to be true first.' },
-      'lifecycle-section': { heading: 'Lifecycle Timeline', help: 'A timeline of recent pull requests, from when they were opened to when they were merged or got stuck.' },
+      'lifecycle-section': { heading: 'PR timeline', help: 'A timeline of recent pull requests, from when they were opened to when they were merged or got stuck.' },
       'pr-throughput-section': { heading: 'Throughput', help: 'How many pull requests were opened, merged and closed over a chosen time window, and who did the work.' },
       'token-panel': { heading: 'Tokens', help: 'How much text the AI models read and wrote for Hive recently, broken down by model and by worker.' },
       'cost-panel': { heading: 'Cost', help: "What Hive's use of AI models would cost at public per-token list prices; an estimate, not a bill." },
       'repos-section': { heading: 'Projects', help: 'One card per repository Hive looks after, listing its open issues and pull requests grouped by what each one needs next.' },
       'acmm-eval-section': { heading: 'ACMM Eval', help: 'How ready your repositories are for Hive to work on them alone, scored against a published checklist.' },
       'approvals-section': { heading: 'Approvals', help: 'Actions Hive wants to take that are waiting for you to approve or reject them.' },
-      'audit-section': { heading: 'Audit Log', help: 'A searchable record of everything Hive has done, newest first. The collapsed “sensitive” badge opens a 24h sensitive-only view, matching the server-side risk count.' },
+      'audit-section': { heading: 'Audit log', help: 'A searchable record of everything Hive has done, newest first. The collapsed “sensitive” badge opens a 24h sensitive-only view, matching the server-side risk count.' },
       'review-queue-section': { heading: 'Review', help: "Review Pipeline shows pull requests by stage first; Review Queue lists the same open pull requests in Hive's suggested review order." },
       'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.' },
       'review-queue-subsection': { heading: 'Queue', help: 'Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.' },
@@ -11321,8 +11400,8 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
-      'agents-section': { heading: 'Agents', help: 'Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.' },
-      'agent-activity-section': { heading: 'Agent activity', help: 'One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.' },
+      'agents-section': { heading: 'Control panel', help: 'One card per worker with its status and buttons to pause, restart or configure it.' },
+      'agent-activity-section': { heading: 'Activity', help: 'One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.' },
       'activity-monitor-section': { heading: 'Hive activity monitor', help: 'A progress strip per open issue and pull request showing which step of the pipeline it is on and who must act next.' },
       'faq-section': { heading: 'FAQ', help: 'Short answers to the questions people ask once a hive is running, each linking to the guide that explains it fully.' },
     });
@@ -14701,6 +14780,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const tree = document.getElementById('oc-agent-tree');
       if (!tree) return;
       const agents = _sidebarAgents();
+      // "All agents (n)": the live count beside the collapsible agent list.
+      const count = document.getElementById('oc-agent-tree-count');
+      if (count) count.textContent = '(' + agents.length + ')';
       const agentMap = {};
       agents.forEach(a => { agentMap[a.name] = a; });
       const groups = _sidebarBuildGroups(agents);
@@ -25289,6 +25371,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "owner-only": {"kind": "rule", "plain": "only the hive owner can do this", "detail": "This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you."},
       "owner_only": {"kind": "rule", "plain": "only the hive owner can do this", "detail": "This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you."},
       "park-label-stuck": {"kind": "reason", "plain": "stage/045-needs-decision is still on the issue; the scanner skips it until that label clears", "detail": "The hive approved the issue and applied approved-direction, but the stage/045-needs-decision park label was never removed, so the scanner still skips the issue. Lift the park (it removes the label through the hive's audited label path) or re-evaluate the issue so the stage engine re-reads it."},
+      "person-only": {"kind": "rule", "plain": "only a person can answer this; the hive keeps it parked for the owner", "detail": "The ask is a person's alone: a security review routed the change to a person, or the issue carries the human-only marker or label. A default approve would hand it to an agent that cannot act on it, so the hive labels it needs-owner and leaves it parked until a person decides or closes it."},
       "prefer-contributor": {"kind": "rule", "plain": "a contributor's PR and a hive PR do the same work", "detail": "A contributor's PR and a hive-authored PR cover the same work; the hive prefers the contributor's when it is mergeable and current."},
       "proposal-approve-evidence": {"kind": "rule", "plain": "a proposal backed by an incident or a repeated class; approved", "detail": "The hive-filed proposal names an incident it would have prevented, or prior instances of the same class fixed one at a time, so its cost is justified and it is approved as proposed."},
       "proposal-not-now": {"kind": "rule", "plain": "a hive-filed proposal with no incident or recurrence behind it; declined for now", "detail": "The proposal shows neither an incident it would have prevented nor a repeated class it would end, so its value is speculative. The hive declines it for now and closes it as not planned; re-propose with evidence."},
@@ -31061,6 +31144,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         pill.hidden = !w.count;
         pill.title = title;
         pill.setAttribute('aria-label', w.count + ' waiting on you — show in the activity monitor');
+        // Phones show only the dot and this count (responsive.css).
+        pill.setAttribute('data-count', String(w.count));
         const label = pill.querySelector('.nav-chip__label');
         if (label) label.textContent = 'Waiting on you · ' + w.count;
       }
@@ -33681,7 +33766,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function onboardingGuideTipHtml(stepId, extra) {
       var step = ONBOARDING_GUIDE_STEP_TITLES[stepId] ? stepId : 'github-app';
       var what = step === 'github-app' ? ' for the install URL and permissions checklist' : '';
-      return 'New hive? <a class="onboarding-guide-link" role="button" tabindex="0" data-action="openWelcomeDialog" data-arg0="' + esc(step) + '" data-keydown-action="openWelcomeDialog" data-keys="Enter, ">Open the 🧭 Guide</a> (top navbar) → step ‘' + esc(ONBOARDING_GUIDE_STEP_TITLES[step]) + '’' + what + '.'
+      return 'New hive? <a class="onboarding-guide-link" role="button" tabindex="0" data-action="openWelcomeDialog" data-arg0="' + esc(step) + '" data-keydown-action="openWelcomeDialog" data-keys="Enter, ">Open 🚀 Getting started</a> (top bar ? Help menu) → step ‘' + esc(ONBOARDING_GUIDE_STEP_TITLES[step]) + '’' + what + '.'
         + (extra ? ' ' + extra : '');
     }
     function onboardingGuideTipFill(id, stepId, extra) {
@@ -33703,6 +33788,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (topBtn && topBtn.style.display === 'none') topBtn.style.display = '';
       var navItem = document.getElementById('welcome-nav-item');
       if (navItem && navItem.style.display === 'none') navItem.style.display = '';
+      var helpItem = document.getElementById('welcome-help-menu-item');
+      if (helpItem && helpItem.style.display === 'none') helpItem.style.display = '';
     }
 
     function renderGitHubAppBanner(data) {
@@ -39966,7 +40053,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       { value: 'gpt-5.2', label: 'GPT-5.2' },
     ];
     const GEMINI_CLI_MODELS = [
+      { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
       { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
+      { value: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+      { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
       { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
       { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
       { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
@@ -54589,13 +54679,28 @@ function burnAreaChart() {
       return typeof f.value === 'string' ? f.value : '';
     }
 
+    // CUSTOMERS_HUB_LABELS: where a hub value came from, by its rule
+    // (pkg/customers HubLabel, #19306). A hub value without a known rule was
+    // shared with consent.
+    const CUSTOMERS_HUB_LABELS = {
+      hub_consent: 'from hub: entered by the person, shared with consent',
+      hub_person: 'from hub: entered by the person',
+      hub_admin: 'from hub: set by a hub admin',
+      hub_email_domain: 'from hub: derived from an organization email domain',
+      hub_browser_language: 'from hub: inferred from browser language',
+      hub_unrecorded: 'from hub: source not recorded'
+    };
+    function customersHubLabel(f) {
+      return CUSTOMERS_HUB_LABELS[(f && f.rule) || ''] || CUSTOMERS_HUB_LABELS.hub_consent;
+    }
+
     // customersOrgPill: the organization as one small pill, with where it came
     // from in its tooltip. Nothing is shown when there is none.
     function customersOrgPill(p) {
       const v = customersProfileValue(p, 'organization');
       if (!v) return '';
       const f = p.profile.organization;
-      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub: the person shared it with this hive' : customersFieldProvenance(f));
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : customersFieldProvenance(f));
       const src = f.source === 'manual' || f.source === 'hub' ? f.source : 'auto';
       return '<span class="kc-pill customers-pill customers-org" data-source="' + src + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
@@ -54954,9 +55059,9 @@ function burnAreaChart() {
       const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
         const cur = (p.profile && p.profile[f.key]) || {};
         const manual = cur.source === 'manual';
-        // A hub value is one the person shared from the hub (#19163);
-        // editing it here makes it manual.
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? 'from the hub' : (cur.rule === 'location' ? 'from location' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub')))) : (manual ? 'cleared by hand' : 'not known');
+        // A hub value carries its hub label (#19163, #19306); editing it
+        // here makes it manual.
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub')))) : (manual ? 'cleared by hand' : 'not known');
         const tip = cur.value && cur.source === 'auto' ? ' title="' + escapeHtml(customersFieldProvenance(cur)) + '"' : '';
         return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs"' + tip + '>(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
@@ -57807,7 +57912,7 @@ function burnAreaChart() {
       for (const c of deepChecks) {
         let line = c.detail ? `${c.name}: ${c.detail}` : c.name;
         if (c.docs_url) line += ' — what this means: ' + c.docs_url;
-        if (c.onboarding) line += ' — new hive? open the 🧭 Guide (top navbar) → step ‘' + (ONBOARDING_GUIDE_STEP_TITLES[c.guideStep] || ONBOARDING_GUIDE_STEP_TITLES['github-app']) + '’';
+        if (c.onboarding) line += ' — new hive? open 🚀 Getting started (top bar ? Help menu) → step ‘' + (ONBOARDING_GUIDE_STEP_TITLES[c.guideStep] || ONBOARDING_GUIDE_STEP_TITLES['github-app']) + '’';
         if (c.status === 'fail') { deepFailNames.push(c.name); failing.push(line); }
         else if (c.status === 'warn') warning.push(line);
         else passing.push(line);
@@ -63665,8 +63770,8 @@ function burnAreaChart() {
       if (st.completedAt) return '✅ Upgraded to ' + target + (elapsed ? ' · ' + elapsed : '');
       const mu = v && v.manualUpgrade;
       const um = v && v.upgradeMarker;
-      if ((mu && mu.state === 'failed') || (um && um.failed)) return '⚠ upgrade failed — check Audit Log';
-      if (st.overdue) return '⚠ upgrade taking longer than expected — <a href="#audit-section" data-action="ocNavigate" data-arg0="audit-section">check Audit Log</a>' + (elapsed ? ' · ' + escapeHtml(elapsed) : '');
+      if ((mu && mu.state === 'failed') || (um && um.failed)) return '⚠ upgrade failed — check Audit log';
+      if (st.overdue) return '⚠ upgrade taking longer than expected — <a href="#audit-section" data-action="ocNavigate" data-arg0="audit-section">check Audit log</a>' + (elapsed ? ' · ' + escapeHtml(elapsed) : '');
       let phase = 'queued';
       if (v && v.stableV4ImageReady === false) phase = 'building';
       else if (um && !um.failed) phase = 'restarting';
@@ -65735,6 +65840,7 @@ function burnAreaChart() {
       add(versionMenu, function() { closeVersionMenu(); const chip = document.getElementById('oc-version-chip'); if (chip) chip.focus(); }, 30000);
       const avatarMenu = document.getElementById('oc-gh-user-menu');
       add(avatarMenu, hiveCloseGHUserMenu, 30000);
+      add(document.getElementById('oc-help-menu'), function() { if (typeof closeHelpMenu === 'function') closeHelpMenu(true); }, 30000);
       add(document.getElementById('nps-survey-card'), dismissNPSSurvey, 30000);
       add(document.getElementById('hiveChatShortcuts'), function() { document.getElementById('hiveChatShortcuts').classList.remove('open'); }, 20001);
       document.querySelectorAll('.hive-dialog-overlay').forEach(function(el) { add(el, function() { if (typeof el.hiveDialogClose === 'function') el.hiveDialogClose(); else el.remove(); }, 20000); });
@@ -67292,6 +67398,7 @@ function burnAreaChart() {
       const bg = overrides.background || {};
       const fonts = overrides.fonts || {};
       const tokens = overrides.tokens || {};
+      const lightTokens = overrides.light_tokens || {};
       const customCSS = overrides.custom_css || '';
       const honeyOn = bg.image === HONEYCOMB_WATERMARK;
       const bgScope = bg.scope || 'page';
@@ -67324,6 +67431,7 @@ function burnAreaChart() {
         + '<div class="config-field-row"><div class="config-field"><label>UI font ' + yamlHint('dashboard.theme_overrides.fonts.ui') + '</label><input id="theme-font-ui" type="text" value="' + esc(fonts.ui || '') + '" placeholder="Inter, system-ui, sans-serif"></div>'
         + '<div class="config-field"><label>Mono font ' + yamlHint('dashboard.theme_overrides.fonts.mono') + '</label><input id="theme-font-mono" type="text" value="' + esc(fonts.mono || '') + '" placeholder="JetBrains Mono, monospace"></div></div>'
         + '<div class="config-field"><label>CSS token overrides ' + yamlHint('dashboard.theme_overrides.tokens.<key>') + '</label><textarea id="theme-token-overrides" rows="5" placeholder="--accent=#e0a33a">' + esc(settingsMapText(tokens)) + '</textarea><div class="config-help">One allowlisted CSS token per line as <code>--token=value</code>.</div></div>'
+        + '<div class="config-field"><label>Light-mode token overrides ' + yamlHint('dashboard.theme_overrides.light_tokens.<key>') + '</label><textarea id="theme-light-token-overrides" rows="5" placeholder="--surface-0=#fdfaf3">' + esc(settingsMapText(lightTokens)) + '</textarea><div class="config-help">Applied in light mode only, on top of the light palette of the selected preset. Dark presets derive light-mode surfaces, lines and text, so set those here.</div></div>'
         + '<div class="config-field"><label>Custom CSS ' + yamlHint('dashboard.theme_overrides.custom_css') + '</label><textarea id="theme-custom-css" rows="10" data-input-action="updateThemeByteCount" placeholder=".panel { border-radius: 2px; }">' + esc(customCSS) + '</textarea><div class="theme-byte-count"><span id="theme-css-bytes">' + utf8Bytes(customCSS) + '</span> / 32768 bytes</div></div>'
         + '<div id="theme-save-status" style="font-size:.76rem;color:var(--muted)"></div></div>';
     }
@@ -67355,9 +67463,11 @@ function burnAreaChart() {
       const fontUI = ((document.getElementById('theme-font-ui') || {}).value || '').trim();
       const fontMono = ((document.getElementById('theme-font-mono') || {}).value || '').trim();
       const tokens = parseSettingsMap((document.getElementById('theme-token-overrides') || {}).value || '');
+      const lightTokens = parseSettingsMap((document.getElementById('theme-light-token-overrides') || {}).value || '');
       const css = (document.getElementById('theme-custom-css') || {}).value || '';
       const overrides = { custom_css: css };
       if (Object.keys(tokens).length) overrides.tokens = tokens;
+      if (Object.keys(lightTokens).length) overrides.light_tokens = lightTokens;
       if (fontUI || fontMono) overrides.fonts = { ui: fontUI, mono: fontMono };
       if (bgURL.trim()) overrides.background = { image: bgURL.trim(), scope: scope, opacity: Number.isFinite(opacity) ? opacity : 0.08, position: position, size: size, attachment: attachment || 'fixed' };
       return overrides;
@@ -74293,6 +74403,151 @@ function burnAreaChart() {
         }
       });
     }
+    /* Stranded review-feedback retry editor (#19320):
+       review_feedback.retry.max_retries and review_feedback.retry.backoff,
+       loaded from the owner-only /api/config/review-feedback/retry endpoint
+       and saved back to it. Rendered with DOM nodes and textContent only. The
+       server validates and applies the values on the sweep's next pass; its
+       error message is shown as-is and nothing is saved on an error. */
+    const REVIEW_RETRY_HOST_ID = 'cfg-review-retry-host';
+
+    function reviewRetryNode(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    async function loadReviewRetrySettings() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/review-feedback/retry');
+        host = document.getElementById(REVIEW_RETRY_HOST_ID);
+        if (!host) return;
+        if (r.status === 403) {
+          host.textContent = '';
+          host.appendChild(reviewRetryNode('div', 'fs-sm text-muted', 'Only the hive owner can view and edit stranded-feedback retry settings.'));
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderReviewRetryPanel(host, await r.json());
+      } catch (e) {
+        host = host || document.getElementById(REVIEW_RETRY_HOST_ID);
+        if (!host) return;
+        host.textContent = '';
+        host.appendChild(reviewRetryNode('div', 'fs-sm text-danger', 'Failed to load stranded-feedback retry settings: ' + e.message));
+      }
+    }
+
+    /* reviewRetrySourceText says where an effective value comes from. */
+    function reviewRetrySourceText(field) {
+      if (!field) return '';
+      if (field.source === 'settings') return 'saved here';
+      if (field.source === 'env') return 'from ' + (field.env_var || 'the environment');
+      return 'default';
+    }
+
+    /* renderReviewRetryPanel paints the two preferences, each with a one-line
+       explanation, its default and where the current value comes from. A
+       blank input falls back to the env var, then the default. */
+    function renderReviewRetryPanel(host, data) {
+      if (!host) return;
+      data = data || {};
+      const maxR = data.max_retries || {};
+      const back = data.backoff || {};
+      const state = {
+        maxRetries: maxR.saved === null || maxR.saved === undefined ? '' : String(maxR.saved),
+        backoff: back.saved === null || back.saved === undefined ? '' : String(back.saved),
+      };
+
+      host.textContent = '';
+      host.appendChild(reviewRetryNode('p', 'config-help',
+        'When review feedback on one of the hive\'s PRs is routed to its agent and the run ends with no push and no reply on the PR, ' +
+        'the hive routes the same comments again after a wait that doubles each time, then posts a needs-human note on the PR saying why. ' +
+        'Saving applies on the next sweep pass without a restart.'));
+
+      const statusEl = reviewRetryNode('div', 'fs-sm');
+      const setStatus = (msg, cls) => { statusEl.textContent = msg; statusEl.className = 'fs-sm ' + (cls || 'text-muted'); };
+      const saveBtn = reviewRetryNode('button', 'hv-btn btn-primary btn-sm', 'Save retry settings');
+      const dirty = () => { saveBtn.disabled = false; setStatus(''); };
+
+      const field = (label, help, yamlKey, now) => {
+        const box = reviewRetryNode('div', 'config-field mt-3');
+        const l = reviewRetryNode('label', '', label + ' ');
+        const hint = reviewRetryNode('span', 'settings-yaml-hint', 'YAML ');
+        hint.appendChild(reviewRetryNode('code', '', yamlKey));
+        l.appendChild(hint);
+        box.appendChild(l);
+        box.appendChild(reviewRetryNode('div', 'config-help', help));
+        box.appendChild(reviewRetryNode('div', 'rt-inherit', now));
+        host.appendChild(box);
+        return box;
+      };
+
+      const mrBox = field('Retries before asking a person',
+        'How many times stranded feedback is routed to the agent again. 0 asks a person after the first wait. ' +
+        'At most ' + (data.max_max_retries || 10) + '. Blank uses ' + (maxR.env_var || 'the env var') + ', else ' + maxR.default + '.',
+        'review_feedback.retry.max_retries',
+        'now: ' + maxR.effective + ' (' + reviewRetrySourceText(maxR) + ')');
+      const mrInput = document.createElement('input');
+      mrInput.type = 'number';
+      mrInput.min = '0';
+      mrInput.max = String(data.max_max_retries || 10);
+      mrInput.title = 'Retries before asking a person';
+      mrInput.value = state.maxRetries;
+      mrInput.placeholder = String(maxR.default);
+      mrInput.addEventListener('input', () => { state.maxRetries = mrInput.value; dirty(); });
+      mrBox.appendChild(mrInput);
+
+      const bkBox = field('First wait',
+        'How long after a kick the hive waits before judging it stranded; each retry doubles it. A duration such as 45m or 2h, at least ' +
+        (data.min_backoff || '10m') + '. Blank uses ' + (back.env_var || 'the env var') + ', else ' + back.default + '.',
+        'review_feedback.retry.backoff',
+        'now: ' + back.effective + ' (' + reviewRetrySourceText(back) + ')');
+      const bkInput = document.createElement('input');
+      bkInput.type = 'text';
+      bkInput.title = 'First wait';
+      bkInput.value = state.backoff;
+      bkInput.placeholder = String(back.default);
+      bkInput.addEventListener('input', () => { state.backoff = bkInput.value; dirty(); });
+      bkBox.appendChild(bkInput);
+
+      const actions = reviewRetryNode('div', 'config-list-add');
+      actions.appendChild(saveBtn);
+      actions.appendChild(statusEl);
+      host.appendChild(actions);
+      saveBtn.disabled = true;
+
+      saveBtn.addEventListener('click', async () => {
+        const body = {};
+        const mr = String(state.maxRetries).trim();
+        if (mr !== '') {
+          const n = Number(mr);
+          if (!Number.isInteger(n)) {
+            setStatus('Retries must be a whole number', 'text-danger');
+            return;
+          }
+          body.max_retries = n;
+        }
+        const bk = String(state.backoff).trim();
+        if (bk !== '') body.backoff = bk;
+        saveBtn.disabled = true;
+        setStatus('Saving…');
+        try {
+          const res = await fetch('/api/config/review-feedback/retry', {
+            method: 'PUT',
+            headers: _inceptionAuthHeaders(),
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) throw new Error(await saveErrorMessage(res));
+          renderReviewRetryPanel(host, await res.json());
+          showToast('Retry settings saved', 'success');
+        } catch (e) {
+          saveBtn.disabled = false;
+          setStatus(e.message, 'text-danger');
+        }
+      });
+    }
     // Workflow-model bindings (hivecommons/hive#17620, RFC phase 2).
     //
     // Each repo row on Settings → Repos carries a "Workflow" select: hive-default
@@ -79517,6 +79772,8 @@ function burnAreaChart() {
       setTimeout(() => { if (rotationOn) loadRotationHeadroom(); }, 0);
       /* Reviewer-stated rules (#19135): painted from their own owner-only endpoint. */
       setTimeout(() => { if (typeof loadReviewRulesSettings === 'function') loadReviewRulesSettings(); }, 0);
+      /* Stranded review-feedback retry (#19320): its own owner-only endpoint. */
+      setTimeout(() => { if (typeof loadReviewRetrySettings === 'function') loadReviewRetrySettings(); }, 0);
       // Status line: distinguish ON+running from ON+not-configured from OFF.
       let trajStatus, trajStatusColor;
       if (!trajOn) { trajStatus = 'Off'; trajStatusColor = 'var(--muted)'; }
@@ -79867,6 +80124,10 @@ function burnAreaChart() {
         <div class="settings-subsection">
           <div class="settings-subsection-title">Reviewer-stated rules ${yamlHint('review_feedback.rules')} ${settingHelpMark('settings', 'features', 'Reviewer-stated rules', `When a person reviewing one of the hive's own PRs states a rule or a source of truth, the hive records it in its knowledge (the review-rules channel), replies on the PR with the rule id, and gives it to the authoring agent on its next run. Choose which phrases count and whose rules are recorded at once; others are queued for you.`)}</div>
           <div id="cfg-review-rules-host"><div class="fs-sm text-muted">Loading…</div></div>
+        </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Stranded review feedback ${yamlHint('review_feedback.retry')} ${settingHelpMark('settings', 'features', 'Stranded review feedback', `When review feedback on one of the hive's own PRs is routed to its agent and the run ends with no push and no reply on the PR, the hive routes the same comments again after a wait that doubles each time. After the last retry it posts a needs-human note on the PR with the reason.`)}</div>
+          <div id="cfg-review-retry-host"><div class="fs-sm text-muted">Loading…</div></div>
         </div>
         <div class="settings-subsection">
           <div class="settings-subsection-title">Merge Recommendations ${settingHelpMark('settings', 'features', 'Merge Recommendations', `A digest of what is worth merging next, written into one issue per repository and rewritten in place each cycle. It is separate from the review gate above: the gate decides whether a PR may merge, while this only reports what already can. It never merges, approves, closes or labels anything.`)}</div>
@@ -84942,6 +85203,77 @@ function burnAreaChart() {
       hiveSyncGHUserMenuTrigger();
     }
 
+    /* Top bar "? Help" menu. Same .avatar-menu dropdown as the account menu;
+       its items mirror the sidebar Help group. Enter/Space on the trigger
+       toggle it (native button click), ArrowDown/ArrowUp open it on the first
+       or last item and move between items, Home/End jump, Escape closes it and
+       returns focus to the trigger (the capture-phase hiveDismissTopOverlay
+       handler), and Tab, a click outside or a click on an item closes it. */
+    function hiveHelpMenuItems() {
+      const menu = document.getElementById('oc-help-menu');
+      if (!menu) return [];
+      return Array.from(menu.querySelectorAll('[role="menuitem"]')).filter(el => el.style.display !== 'none' && !el.hidden);
+    }
+    function hiveSyncHelpMenuTrigger() {
+      const menu = document.getElementById('oc-help-menu');
+      const btn = document.getElementById('welcome-topbar-btn');
+      if (menu && btn) btn.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
+    }
+    function openHelpMenu(focusWhich) {
+      const menu = document.getElementById('oc-help-menu');
+      if (!menu) return;
+      menu.hidden = false;
+      hiveSyncHelpMenuTrigger();
+      const items = hiveHelpMenuItems();
+      if (focusWhich && items.length) (focusWhich === 'last' ? items[items.length - 1] : items[0]).focus();
+    }
+    function closeHelpMenu(returnFocus) {
+      const menu = document.getElementById('oc-help-menu');
+      if (!menu || menu.hidden) return;
+      menu.hidden = true;
+      hiveSyncHelpMenuTrigger();
+      if (returnFocus) {
+        const btn = document.getElementById('welcome-topbar-btn');
+        if (btn) btn.focus();
+      }
+    }
+    function toggleHelpMenu() {
+      const menu = document.getElementById('oc-help-menu');
+      if (!menu) return;
+      if (menu.hidden) openHelpMenu(null); else closeHelpMenu(false);
+    }
+    document.addEventListener('click', function(e) {
+      const wrap = document.getElementById('oc-help-menu-wrap');
+      const menu = document.getElementById('oc-help-menu');
+      if (!wrap || !menu || menu.hidden) return;
+      if (!wrap.contains(e.target)) { closeHelpMenu(false); return; }
+      // Choosing an item runs its action (delegated handler) and closes the menu.
+      if (e.target.closest && e.target.closest('#oc-help-menu [role="menuitem"]')) closeHelpMenu(false);
+    });
+    document.addEventListener('keydown', function(e) {
+      const menu = document.getElementById('oc-help-menu');
+      const btn = document.getElementById('welcome-topbar-btn');
+      if (!menu || !btn) return;
+      if (e.target === btn && menu.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        openHelpMenu(e.key === 'ArrowUp' ? 'last' : 'first');
+        return;
+      }
+      if (menu.hidden || (!menu.contains(document.activeElement) && document.activeElement !== btn)) return;
+      if (e.key === 'Tab') { closeHelpMenu(false); return; }
+      const items = hiveHelpMenuItems();
+      if (!items.length) return;
+      const idx = items.indexOf(document.activeElement);
+      let next = -1;
+      if (e.key === 'ArrowDown') next = (idx + 1) % items.length;
+      else if (e.key === 'ArrowUp') next = idx <= 0 ? items.length - 1 : idx - 1;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = items.length - 1;
+      if (next < 0) return;
+      e.preventDefault();
+      items[next].focus();
+    });
+
     document.addEventListener('click', function(e) {
       const wrap = document.getElementById('oc-gh-avatar-wrap');
       if (wrap && !wrap.contains(e.target)) {
@@ -85737,6 +86069,29 @@ function burnAreaChart() {
       }
     }
 
+    /* ---- Top-bar right strip on phones -------------------------------------
+       Below 768px the strip scrolls sideways when its chips don't fit
+       (responsive.css). It starts scrolled to the end, so Help and the account
+       menu stay in view, and stays there as chips come and go, until the user
+       scrolls it; scrolling back to the end pins it again. On wider screens
+       the strip never overflows and this does nothing. */
+    const TOPBAR_STRIP_END_EPS = 2;
+    function topbarStripAtEnd(strip) {
+      return (strip.scrollLeft || 0) + (strip.clientWidth || 0) >= (strip.scrollWidth || 0) - TOPBAR_STRIP_END_EPS;
+    }
+    function initTopbarStripScroll() {
+      const strip = document.querySelector('.oc-topbar-right');
+      if (!strip || !strip.dataset || strip.dataset.stripScrollWired) return;
+      strip.dataset.stripScrollWired = '1';
+      let pinned = true;
+      const pin = () => { if (pinned) strip.scrollLeft = strip.scrollWidth; };
+      strip.addEventListener('scroll', () => { pinned = topbarStripAtEnd(strip); }, { passive: true });
+      if (typeof ResizeObserver === 'function') new ResizeObserver(pin).observe(strip);
+      if (typeof MutationObserver === 'function') new MutationObserver(pin).observe(strip, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
+      if (window.addEventListener) window.addEventListener('resize', pin, { passive: true });
+      pin();
+    }
+    initTopbarStripScroll();
     // ── NPS feedback survey, #9610 ───────────────────────────────────
     // An occasional "how is the hive working for you?" card with a 4-point
     // emoji scale, a category-specific follow-up and a dismiss. Timing and
@@ -86122,6 +86477,8 @@ function burnAreaChart() {
       if (navItem) navItem.style.display = '';
       const topBtn = document.getElementById('welcome-topbar-btn');
       if (topBtn) topBtn.style.display = '';
+      const helpItem = document.getElementById('welcome-help-menu-item');
+      if (helpItem) helpItem.style.display = '';
       // Kiosk displays (#15594) are unattended: nothing can dismiss a dialog.
       // A pop-out (#15829) is the tracker alone; the welcome tour belongs to the main window.
       if (window.hivePopoutMode && window.hivePopoutMode()) return;

@@ -20,6 +20,10 @@ const (
 	nativeQueueReasonMethod  = prstage.AutoMergeReasonNativeQueueMethod
 	nativeQueueReasonPaused  = "repo-paused-or-disabled"
 
+	// nativeQueueReasonChecksFailing is the skip reason when GitHub refuses an
+	// enqueue because required status checks are failing.
+	nativeQueueReasonChecksFailing = prstage.AutoMergeReasonNativeQueuePrefix + "-checks-failing"
+
 	// Lanes passed to reconcileNativeQueueGate by callers outside the three
 	// authoring lanes.
 	nativeQueueLaneQueued   = "queued"
@@ -331,6 +335,11 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 			return effects.Result{Provenance: entry.ID}, nil
 		})
 		if err != nil {
+			if nativeQueueChecksFailing(err) {
+				// GitHub refuses the enqueue while required checks fail. That is
+				// a hold on the PR, not a sweep fault; the next tick retries.
+				return nativeQueueReasonChecksFailing, nil
+			}
 			return nativeQueueReasonEnqueue, err
 		}
 	}
@@ -449,4 +458,15 @@ func (c *Engine) inactiveQueueDue(repo string) bool {
 	}
 	c.inactiveQueueLast[repo] = now
 	return true
+}
+
+// nativeQueueChecksFailing reports whether an enqueue error is GitHub's
+// UNPROCESSABLE refusal for failing required statuses.
+func nativeQueueChecksFailing(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unprocessable") &&
+		(strings.Contains(msg, "failing required statuses") || strings.Contains(msg, "required status check"))
 }

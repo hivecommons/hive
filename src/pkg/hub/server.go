@@ -188,6 +188,12 @@ type RegistryEntry struct {
 	// StartedAt is the spoke process start time, reported over the heartbeat.
 	// Rendered as an uptime pill in My Hives so a crash-looping hive is visible.
 	StartedAt string `json:"startedAt,omitempty"`
+	// AuditChainSeq and AuditChainHead are the newest row of the spoke's
+	// hash-chained audit log as of its last heartbeat (#19439). Carried
+	// forward across a beat that omits them; a seq that goes backwards is
+	// recorded on the timeline (TimelineAuditChainRegressed).
+	AuditChainSeq  int64  `json:"auditChainSeq,omitempty"`
+	AuditChainHead string `json:"auditChainHead,omitempty"`
 	// AdvisoryLastPostedAt is when the spoke last SUCCESSFULLY posted its
 	// advisory digest (RFC3339), reported over the heartbeat. Empty means the
 	// hive has never posted one — not-advisory-mode or an old spoke — which the
@@ -1100,7 +1106,9 @@ type HubServer struct {
 	// dashboard instead of only in `kubectl describe` — the `target1` incident
 	// left the hub serving stale code for ~20 minutes with nothing surfaced.
 	hubUpgradeFault string
-	hubUpgradeMu    sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget + hubUpgradeFault
+	hubUpgradeMu    sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget + hubUpgradeFault + hubWatcherRunning
+	// hubWatcherRunning is true while a watchHubRollout goroutine is alive.
+	hubWatcherRunning bool
 	// Admin upgrade kill switch (upgrade_pause.go). Lazily loaded from its
 	// durable JSON file on first use so the state survives the hub's own
 	// frequent auto-rolls; guarded by its own mutex because it is consulted on
@@ -2048,6 +2056,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AIAuthor:          sanitizeField(payload.AIAuthor),
 		AIAuthorEffective: sanitizeField(payload.AIAuthorEffective),
 		StartedAt:         sanitizeHeartbeatTime(payload.StartedAt),
+		AuditChainSeq:     clampInt64(payload.AuditChainSeq, 0, math.MaxInt64),
+		AuditChainHead:    sanitizeAuditChainHead(payload.AuditChainHead),
 		// Duplicate-instance detection. noteReporter returns "" until two
 		// distinct reporters have ALTERNATED (A→B→A), so a normal rollout
 		// (A→B, B stays) never trips it.
@@ -2421,6 +2431,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			entry.RegisteredAt = h.RegisteredAt
 			if entry.SnapshotURL == "" {
 				entry.SnapshotURL = h.SnapshotURL
+			}
+			// A beat without the audit chain head (old spoke, minimal
+			// liveness beat) keeps the last one reported, so the next full
+			// beat is compared against it rather than against zero.
+			if entry.AuditChainSeq == 0 {
+				entry.AuditChainSeq, entry.AuditChainHead = h.AuditChainSeq, h.AuditChainHead
 			}
 			// Project-identity carry-forward for DEGRADED beats. Three beat
 			// classes legitimately omit project fields: the pre-restart
@@ -5350,6 +5366,20 @@ func sanitizeHeartbeatTime(s string) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+// sanitizeAuditChainHead keeps a heartbeat's audit_chain_head only when it is
+// what the spoke writes, a lowercase hex SHA-256, and drops anything else.
+func sanitizeAuditChainHead(s string) string {
+	if len(s) != 64 {
+		return ""
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return ""
+		}
+	}
+	return s
 }
 
 func clampInt64(v, min, max int64) int64 {

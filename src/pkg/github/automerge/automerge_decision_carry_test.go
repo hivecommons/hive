@@ -60,6 +60,11 @@ func (a *baseRefreshAPI) handler(t *testing.T) http.Handler {
 				"commit": map[string]any{"verification": map[string]any{"verified": true}}, "parents": []map[string]any{{"sha": a.oldHead}, {"sha": a.baseTip}}})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/reviews"):
 			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/issues/15649/comments"):
+			// The requires_human release also reads the dashboard's
+			// approval comment (hivecommons/hive#19536); none here.
+			a.calls["comments"]++
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/15649"):
 			a.calls["pull"]++
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 15649, "head": map[string]any{"sha": a.newHead}, "base": map[string]any{"ref": "v5"}})

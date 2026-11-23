@@ -32,7 +32,9 @@ Goals:
 Non-goals (this series):
 
 - Any outbound path. Nothing is published, written to GitHub, sent to a hub or
-  added to a heartbeat.
+  added to a heartbeat. The one later exception is the opt-in, consent-first
+  hub import in [customers-hub-consent.md](customers-hub-consent.md), off by
+  default.
 - An agent-callable query tool. Agents cannot query Hive's stores
   ([security-model.md](../security-model.md) section 4,
   [ADR-0011](../adr/0011-knowledge-system.md)); a query tool is a later RFC.
@@ -92,7 +94,8 @@ contributor is one of several sources of identity for a person.
 | `goals` | See section 8. |
 | `satisfaction` | See section 8. |
 | `notes` | Free text, written by people only. |
-| `profile` | Optional `real_name`, `organization`, `location` and `country`, each `{value, source, rule, at, by, login}`. `source` is `auto` (the person's own public forge profile name, company and location, read by the profile fill, `rule` naming the source and `login` the login it was read for; the country derived offline from the location, rule `location`) or `manual` (a person typed it or cleared it; neither the fetch nor the location changes it; `auto` hands it back). `country` is an ISO 3166 alpha-2 code. Also `fetched` (the last profile-fill lookup: `at`, `outcome`, `sources`) and `dismissed_affiliations`, the suggested organizations a person refused (at most 20). Nothing here comes from the hub. |
+| `profile` | Optional `real_name`, `organization`, `location` and `country`, each `{value, source, rule, at, by, login}`. `source` is `auto` (the person's own public forge profile name, company and location, read by the profile fill, `rule` naming the source and `login` the login it was read for; the country derived offline from the location, rule `location`) or `manual` (a person typed it or cleared it; neither the fetch nor the location changes it; `auto` hands it back). `country` is an ISO 3166 alpha-2 code. Also `fetched` (the last profile-fill lookup: `at`, `outcome`, `sources`) and `dismissed_affiliations`, the suggested organizations a person refused (at most 20). Nothing here comes from the hub, except a `real_name`, `organization` or `country` the person entered on the hub and consented to share with this hive, when `customers.hub_import.enabled` is on ([customers-hub-consent.md](customers-hub-consent.md)). |
+
 | `merged_from` | Merge history, so a merge can be undone. |
 
 **Identity** `{kind, value, source, confidence, manual, at, by}`. Kinds:
@@ -323,8 +326,10 @@ Profile fields are filled by the profile fill (below, #19302), which has its own
 switch and budget; step E no longer reads the public profile. A suggested person
 has no profile fields until accepted. Forget deletes the fields with the person
 and export includes them. The hub's own records of the same people
-(name, company, country, notes, inferred affiliation) are not read or copied: that
-is the open question in section 15 and needs a consent decision first.
+(name, company, country, notes, inferred affiliation) are not read or copied,
+except, when the hub import is on, the name, organization and country a person
+entered on the hub and consented to share with this hive. Notes and affiliation
+never cross. See [customers-hub-consent.md](customers-hub-consent.md).
 
 Country and likely affiliation add no request of their own. The country is derived
 from the location text by a bundled table (country names and aliases, ISO codes, US

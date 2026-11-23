@@ -43,6 +43,9 @@ SCRUBBED_VARS=(
   COPILOT_GITHUB_TOKEN
   GITHUB_COPILOT_TOKEN
   HIVE_GITHUB_TOKEN
+  GITLAB_TOKEN
+  GITEA_TOKEN
+  FORGEJO_TOKEN
 )
 
 # probe_child <BASH_ENV-value or ""> <extra env assignments...>
@@ -52,7 +55,7 @@ SCRUBBED_VARS=(
 # name=present|absent.
 probe_child() {
   local bash_env="$1"; shift
-  local probe='out=""; for v in GITHUB_TOKEN GH_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN COPILOT_GITHUB_TOKEN GITHUB_COPILOT_TOKEN HIVE_GITHUB_TOKEN; do if [ -n "$(eval "printf %s \"\${$v:-}\"")" ]; then out="$out $v=present"; else out="$out $v=absent"; fi; done; printf "%s" "$out"'
+  local probe='out=""; for v in GITHUB_TOKEN GH_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN COPILOT_GITHUB_TOKEN GITHUB_COPILOT_TOKEN HIVE_GITHUB_TOKEN GITLAB_TOKEN GITEA_TOKEN FORGEJO_TOKEN; do if [ -n "$(eval "printf %s \"\${$v:-}\"")" ]; then out="$out $v=present"; else out="$out $v=absent"; fi; done; printf "%s" "$out"'
   if [ -n "$bash_env" ]; then
     env "$@" BASH_ENV="$bash_env" bash -c "$probe"
   else
@@ -70,6 +73,9 @@ FAKE_ENV=(
   COPILOT_GITHUB_TOKEN="fake-copilot-token-for-test"
   GITHUB_COPILOT_TOKEN="fake-copilot2-token-for-test"
   HIVE_GITHUB_TOKEN="fake-hive-token-for-test"
+  GITLAB_TOKEN="fake-gitlab-token-for-test"
+  GITEA_TOKEN="fake-gitea-token-for-test"
+  FORGEJO_TOKEN="fake-forgejo-token-for-test"
 )
 
 echo "=== #4045: backend-exported tokens must not survive into agent tool shells ==="

@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // FeedbackRulesMarker is the substring that marks a hive reply as carrying a
@@ -48,4 +49,42 @@ func hiveComments(raw rawPRConversation, isHive func(*rawPRCommentAuthor) bool, 
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out
+}
+
+// sweepNoteMarkers mark comments the review-feedback sweep itself posts under
+// the hive's identity: they are not a kicked agent acting on feedback.
+// "<!-- hive:review-rule-" covers pkg/reviewrules' ack and home notices.
+var sweepNoteMarkers = []string{FeedbackNeedsHumanMarker, "<!-- hive:review-rule-"}
+
+// LastHiveReplyAt returns when the hive's identity last posted anything on
+// the PR (conversation comment, review, or review-thread reply), ignoring the
+// sweep's own notes. The sweep reads it to tell a kicked agent that replied
+// from one that did nothing (#19320). Zero when the hive never posted.
+func LastHiveReplyAt(raw rawPRConversation, isHive func(*rawPRCommentAuthor) bool) time.Time {
+	var last time.Time
+	consider := func(rc rawPRComment) {
+		if rc.Author == nil || isHive == nil || !isHive(rc.Author) {
+			return
+		}
+		for _, m := range sweepNoteMarkers {
+			if strings.Contains(rc.Body, m) {
+				return
+			}
+		}
+		if rc.CreatedAt.After(last) {
+			last = rc.CreatedAt
+		}
+	}
+	for _, rc := range raw.Comments.Nodes {
+		consider(rc)
+	}
+	for _, rc := range raw.Reviews.Nodes {
+		consider(rc)
+	}
+	for _, th := range raw.ReviewThreads.Nodes {
+		for _, rc := range th.Comments.Nodes {
+			consider(rc)
+		}
+	}
+	return last
 }

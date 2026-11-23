@@ -38,13 +38,20 @@ type selfSweepFixture struct {
 	mergeHTTPCode    int  // non-zero: merge endpoint returns this HTTP status
 	mergeApplied     bool // "merged" field in merge response; default true via fixture setup
 
-	// Intent tier gate inputs (#6258). Only consulted when the Engine under
-	// test installs an IntentGate; the files route is otherwise never hit.
-	body          string   // PR body (linked-issue evidence)
-	files         []string // changed-file names returned by the files API
-	changedFiles  int      // PR "changed_files" count; 0 defaults to len(files)
-	filesHTTPCode int      // non-zero: files endpoint returns this HTTP status
-	mergeCalls    *int     // incremented on every PUT .../merge
+	// Intent tier gate inputs (#6258). Consulted when the Engine under test
+	// installs an IntentGate, or when body carries a diff fence the lane
+	// re-checks against the files (hivecommons/hive#19537).
+	body  string   // PR body (linked-issue evidence)
+	files []string // changed-file names returned by the files API
+	// removedFiles are changed files the files API reports as removed,
+	// served after files.
+	removedFiles []string
+	// renamedFrom maps a changed file in files to the path it was renamed
+	// from; the files API then reports it as renamed.
+	renamedFrom   map[string]string
+	changedFiles  int  // PR "changed_files" count; 0 defaults to len(files)
+	filesHTTPCode int  // non-zero: files endpoint returns this HTTP status
+	mergeCalls    *int // incremented on every PUT .../merge
 	// reviews is the PR review list; nil serves an empty list.
 	reviews []map[string]any
 	// Issue-author credit (hivecommons/hive#14581): issueAuthor is who the
@@ -79,7 +86,7 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 		fx.recheckHeadSHA = fx.headSHA
 	}
 	if fx.changedFiles == 0 {
-		fx.changedFiles = len(fx.files)
+		fx.changedFiles = len(fx.files) + len(fx.removedFiles)
 	}
 	fetches := 0
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -132,12 +139,23 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 			}
 			var files []map[string]any
 			for _, name := range fx.files {
-				files = append(files, map[string]any{"filename": name, "status": "modified", "additions": 1, "deletions": 0})
+				file := map[string]any{"filename": name, "status": "modified", "additions": 1, "deletions": 0}
+				if prev, ok := fx.renamedFrom[name]; ok {
+					file["status"], file["previous_filename"] = "renamed", prev
+				}
+				files = append(files, file)
+			}
+			for _, name := range fx.removedFiles {
+				files = append(files, map[string]any{"filename": name, "status": "removed", "additions": 0, "deletions": 40})
 			}
 			json.NewEncoder(w).Encode(files)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/timeline":
 			// The superseded rule looks for a merged PR declaring
 			// `Supersedes #7`; this fixture has none.
+			json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			// The requires_human release reads the dashboard's head-bound
+			// approval comment (hivecommons/hive#19536); none here.
 			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
 			reviews := fx.reviews

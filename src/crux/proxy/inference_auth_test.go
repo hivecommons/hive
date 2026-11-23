@@ -42,7 +42,10 @@ func TestInferenceHTTPClient_DefaultWithoutCABundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client != http.DefaultClient {
-		t.Error("expected http.DefaultClient when no CA bundle is set")
+	if client.Transport != http.DefaultTransport {
+		t.Error("expected the default transport when no CA bundle is set")
+	}
+	if client.CheckRedirect == nil {
+		t.Error("expected the egress redirect policy, not net/http's default")
 	}
 }

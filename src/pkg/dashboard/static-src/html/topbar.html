@@ -32,10 +32,21 @@
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
       <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" title="AI providers: all usable" aria-label="AI providers: all usable" hidden></span>
       <button type="button" class="nav-chip nav-chip--status subscription-gauge-chip" id="oc-subscription-gauge" data-action="openSubscriptionGaugeOverview" data-status="neutral" aria-label="Plan usage left" hidden><span class="subscription-gauge-chip__dial" aria-hidden="true"></span><span class="nav-chip__label"></span></button>
-      <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
+      <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" data-count="0" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
       <button type="button" class="nav-chip nav-chip--status nav-chip--ok oc-meeting-indicator" id="oc-meeting-indicator" data-action="calendarIndicatorClick" data-target="" aria-label="Not in a meeting" hidden><span class="nav-chip__label"></span></button>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
-      <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
+      <!-- Help menu: mirrors the sidebar Help group (#help-nav-group) with the
+           same labels and targets. It reuses the account menu's .avatar-menu
+           dropdown. A future Ask AI item goes right after Getting started. -->
+      <div id="oc-help-menu-wrap">
+        <button type="button" class="nav-chip nav-chip--primary" id="welcome-topbar-btn" data-action="toggleHelpMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-help-menu" title="Help: Getting started, Docs, FAQ, Report an issue" aria-label="Help menu"><span class="nav-chip__icon" aria-hidden="true">?</span><span class="nav-chip__label">Help</span><span class="nav-chip__caret" aria-hidden="true">▾</span></button>
+        <div id="oc-help-menu" class="avatar-menu" role="menu" aria-label="Help" hidden>
+          <button type="button" class="avatar-menu-item" role="menuitem" id="welcome-help-menu-item" style="display:none" data-action="openWelcomeDialog">🚀 Getting started</button>
+          <a class="avatar-menu-item" role="menuitem" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer">📖 Docs</a>
+          <button type="button" class="avatar-menu-item" role="menuitem" data-action="ocNavigate" data-arg0="faq-section">❓ FAQ</button>
+          <button type="button" class="avatar-menu-item" role="menuitem" data-action="openFeedbackModal" data-arg0="bug">🐛 Report an issue</button>
+        </div>
+      </div>
       <div id="oc-gh-avatar-wrap" hidden>
         <!-- The avatar sits inside a real <button>: iOS Safari only synthesises
              a click from a tap on interactive elements, so a bare <img> with a

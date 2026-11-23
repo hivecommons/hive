@@ -198,11 +198,50 @@ func TestDashboardThemeAPIRoundTripAndOwnerGate(t *testing.T) {
 	}
 }
 
+func TestDashboardThemeAPIPersistsLightTokenOverrides(t *testing.T) {
+	s := govServer(t)
+	put := doPut(s, "/api/config/dashboard/theme", map[string]any{
+		"theme": "hive",
+		"theme_overrides": map[string]any{
+			"tokens":       map[string]string{"--surface-0": "#101010"},
+			"light_tokens": map[string]string{"--surface-0": "#fdfaf3"},
+		},
+	})
+	if put.Code != http.StatusOK {
+		t.Fatalf("PUT = %d: %s", put.Code, put.Body.String())
+	}
+	if got := s.deps.Config.Dashboard.ThemeOverrides.LightTokens["--surface-0"]; got != "#fdfaf3" {
+		t.Fatalf("light token override not persisted: %q", got)
+	}
+	var payload struct {
+		Effective dashboardtheme.Theme `json:"effective"`
+	}
+	if err := json.Unmarshal(put.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.Effective.LightTokens["--surface-0"] != "#fdfaf3" || payload.Effective.Tokens["--surface-0"] != "#101010" {
+		t.Fatalf("effective theme did not split the overrides by mode: tokens=%v light=%v", payload.Effective.Tokens, payload.Effective.LightTokens)
+	}
+	rec := doGet(s, "/api/theme.css")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/theme.css = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	lightAt := strings.Index(body, "body.light-mode{")
+	if lightAt < 0 {
+		t.Fatalf("theme css has no light-mode block: %s", body)
+	}
+	if !strings.Contains(body[:lightAt], "--surface-0: #101010;") || !strings.Contains(body[lightAt:], "--surface-0: #fdfaf3;") {
+		t.Fatalf("theme css did not apply each override to its own mode: %s", body)
+	}
+}
+
 func TestDashboardThemeAPIRejectsUnsafeCSSAndTokens(t *testing.T) {
 	s := govServer(t)
 	for _, body := range []map[string]any{
 		{"theme": "missing"},
 		{"theme": "hive", "theme_overrides": map[string]any{"tokens": map[string]string{"--typo": "red"}}},
+		{"theme": "hive", "theme_overrides": map[string]any{"light_tokens": map[string]string{"--typo": "red"}}},
 		{"theme": "hive", "theme_overrides": map[string]any{"custom_css": ".x{background:url(http://example.org/x.png)}"}},
 	} {
 		rec := doPut(s, "/api/config/dashboard/theme", body)

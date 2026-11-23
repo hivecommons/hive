@@ -1098,9 +1098,10 @@ dashboard:
   #   autostart: true                   # answer the CLI's startup screens (first-run notice, folder trust) so the first request runs unattended; never permission prompts or sign-in (env HIVE_SESSIONS_AUTOSTART)
   # stage_tracker:
   #   cache_ttl_s: 300                    # Hive activity monitor payload cache; default = governor.eval_interval_s
-  # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord); or custom
+  # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord, sandstone); or custom
   # theme_overrides:
   #   tokens: { "--accent": "#e0a33a" } # CSS variables from the dashboard :root allow-list
+  #   light_tokens: { "--surface-0": "#fdfaf3" } # same allow-list, light mode only (layered on the preset's light palette)
   #   background:
   #     image: https://example.org/bg.svg # https or data: URI (inlined data capped at 256 KiB)
   #     opacity: 0.08

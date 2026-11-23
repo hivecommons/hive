@@ -4,9 +4,12 @@ package hub
 // src/docs/design/customers-hub-consent.md).
 //
 // A hive posts salted hashes of the GitHub logins of its confirmed customers
-// and the hub answers only for people who consented to share fields with that
-// hive. Unknown, unconsented and never-delivered people are the same silence,
-// so the reply is not an oracle for who exists on the hub. A cleared entry is
+// and the hub answers for people who consented to share fields with that
+// hive and, when the hive asks for labels, with the labeled public country
+// and organization of that hive's grant holders (#19306,
+// customer_match_public.go). Unknown, unconsented, non-grant-holder and
+// never-delivered people are the same silence, so the reply is not an oracle
+// for who exists on the hub. A cleared entry is
 // the only statement about a past consent, and only to a hive that already
 // received that person's data.
 
@@ -184,6 +187,27 @@ func (s *HubServer) customerMatchIndexFor(hiveID string, keys []string, now time
 		}
 	}
 
+	// Grant holders answer with labeled public fields without a consent
+	// record (#19306). Whether they answer at all is decided per request:
+	// a hive that did not ask for labels still hears only consented people.
+	for _, u := range listAllSaaSUsers() {
+		if u.Blocked || u.Hives[hiveID] == "" {
+			continue
+		}
+		path, err := customerConsentPath(&u)
+		if err != nil {
+			continue
+		}
+		login := customerMatchLogin(&u)
+		for _, key := range keys {
+			if h := customerMatchHash(key, login); h != "" {
+				if _, held := paths[h]; !held {
+					paths[h] = path
+				}
+			}
+		}
+	}
+
 	st.mu.Lock()
 	if st.indexes == nil {
 		st.indexes = make(map[string]customerMatchIndex)
@@ -205,6 +229,9 @@ type customerMatchEntry struct {
 	Organization string   `json:"organization,omitempty"`
 	Country      string   `json:"country,omitempty"`
 	Cleared      []string `json:"cleared,omitempty"`
+	// Sources labels each value by who put it on the hub record
+	// (customerMatchSource*). Sent only to a hive that asked for labels.
+	Sources map[string]string `json:"sources,omitempty"`
 }
 
 type customerMatchResponse struct {
@@ -246,7 +273,15 @@ func customerMatchShareable(c customerConsent, user *SaaSUser) (customerMatchEnt
 }
 
 func customerMatchRev(e customerMatchEntry) string {
-	sum := sha256.Sum256([]byte("real_name\x00" + e.RealName + "\x00organization\x00" + e.Organization + "\x00country\x00" + e.Country))
+	material := "real_name\x00" + e.RealName + "\x00organization\x00" + e.Organization + "\x00country\x00" + e.Country
+	// Labels change the rev only when present, so a consent-only answer keeps
+	// the rev it always had.
+	for _, name := range []string{"real_name", "organization", "country"} {
+		if src := e.Sources[name]; src != "" {
+			material += "\x00source:" + name + "\x00" + src
+		}
+	}
+	sum := sha256.Sum256([]byte(material))
 	return hex.EncodeToString(sum[:])[:customerMatchRevLen]
 }
 
@@ -266,7 +301,11 @@ func validCustomerMatchHash(h string) bool {
 type pendingCustomerMatch struct {
 	entry customerMatchEntry
 	path  string
-	sent  customerConsentFields
+	// sent is what crossed under consent and is stamped on the consent
+	// record; public is what crossed as a labeled public field, logged as a
+	// count only and never stamped (there may be no consent record).
+	sent   customerConsentFields
+	public customerConsentFields
 }
 
 // fitCustomerMatches keeps entries, in order, while the encoded response
@@ -353,6 +392,12 @@ func (s *HubServer) handleCustomerMatch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	labels := customerMatchWantsLabels(r)
+	var orgDomains map[string]string
+	if labels {
+		orgDomains = customerOrgDomains()
+	}
+
 	customerConsentMu.Lock()
 	defer customerConsentMu.Unlock()
 	now := time.Now().UTC()
@@ -369,41 +414,47 @@ func (s *HubServer) handleCustomerMatch(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			continue
 		}
-		c, ok := records[hiveID]
-		if !ok {
+		c, hasConsent := records[hiveID]
+		if !hasConsent && !labels {
 			continue
 		}
 		user := loadSaaSUser(strings.TrimSuffix(filepath.Base(path), ".json"))
 		var entry customerMatchEntry
-		var sent customerConsentFields
-		if customerMatchEffective(c, user, hiveID) {
+		var sent, public customerConsentFields
+		if hasConsent && customerMatchEffective(c, user, hiveID) {
 			entry, sent = customerMatchShareable(c, user)
 		}
+		if labels {
+			entry, public = customerMatchPublic(entry, user, hiveID, orgDomains, sent)
+		}
 		// cleared: fields this hive was sent before that do not cross now.
-		if d := c.DeliveredFields; d != nil {
+		if d := c.DeliveredFields; hasConsent && d != nil {
 			entry.Cleared = customerConsentFields{
 				RealName:     d.RealName && !sent.RealName,
-				Organization: d.Organization && !sent.Organization,
-				Country:      d.Country && !sent.Country,
+				Organization: d.Organization && !sent.Organization && !public.Organization,
+				Country:      d.Country && !sent.Country && !public.Country,
 			}.names()
 		}
-		if sent == (customerConsentFields{}) && len(entry.Cleared) == 0 {
+		if sent == (customerConsentFields{}) && public == (customerConsentFields{}) && len(entry.Cleared) == 0 {
 			continue // silent, like an unknown person
 		}
 		entry.MatchHash = h
-		if sent != (customerConsentFields{}) {
+		if sent != (customerConsentFields{}) || public != (customerConsentFields{}) {
 			entry.Rev = customerMatchRev(entry)
 		}
-		pending = append(pending, pendingCustomerMatch{entry: entry, path: path, sent: sent})
+		pending = append(pending, pendingCustomerMatch{entry: entry, path: path, sent: sent, public: public})
 	}
 	pending, truncated := fitCustomerMatches(pending, maxCustomerMatchResponse)
 
 	resp := customerMatchResponse{Matches: make([]customerMatchEntry, 0, len(pending)), Truncated: truncated}
-	delivered, cleared := 0, 0
+	delivered, cleared, public := 0, 0, 0
 	for _, p := range pending {
 		resp.Matches = append(resp.Matches, p.entry)
 		if len(p.entry.Cleared) > 0 {
 			cleared++
+		}
+		if p.public != (customerConsentFields{}) {
+			public++
 		}
 		if p.sent == (customerConsentFields{}) {
 			continue
@@ -420,7 +471,7 @@ func (s *HubServer) handleCustomerMatch(w http.ResponseWriter, r *http.Request) 
 	}
 	// Per request: hive id and counts only. Per delivery: the record stamp.
 	s.logger.Info("audit: customer match", "hive", hiveID, "requested", len(hashes),
-		"delivered", delivered, "cleared", cleared, "truncated", truncated)
+		"delivered", delivered, "public", public, "cleared", cleared, "labels", labels, "truncated", truncated)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(buf.Bytes())
 }
@@ -450,6 +501,8 @@ func stampCustomerDelivery(path, hiveID string, sent customerConsentFields, rev 
 		union.Country = union.Country || d.Country
 	}
 	c.DeliveredFields = &union
+	last := sent
+	c.LastDeliveredFields = &last
 	c.DeliveredRev = rev
 	records[hiveID] = c
 	return saveCustomerConsents(path, records)

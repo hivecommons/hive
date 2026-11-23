@@ -783,9 +783,10 @@ there. `GET /api/status` carries the same picture as
 
 #### Onboarding errors point to the Getting Started guide
 
-Every setup problem the dashboard's **🧭 Guide** (top navbar; also *Getting
-Started* in the sidebar) has a step for is classified server-side and rendered
-with a tip — *New hive? Open the 🧭 Guide → step ‘Install the Forge App
+Every setup problem the dashboard's **🚀 Getting started** checklist (top bar
+**? Help** menu; also *Getting started* in the sidebar Help group) has a step
+for is classified server-side and rendered with a tip — *New hive? Open 🚀
+Getting started → step ‘Install the Forge App
 (GitHub App)’ for the install URL and permissions checklist* — whose link opens
 the guide at that step. The classification rides the status payload as
 `onboardingIssues: [{kind, guideStep, message}]`, on system alerts as
@@ -795,7 +796,7 @@ the guide at that step. The classification rides the status payload as
 `github-app-permissions`, `github-app-credentials`, `github-base-url`
 (→ step `github-app`), `repo-target`, `no-repos` (→ `repos`), `no-agents`
 (→ `add-agent`), `proxy-token` (→ `welcome`). Error text is unchanged; the tip
-is appended. While any onboarding issue is active the Guide chip stays visible
+is appended. While any onboarding issue is active the Getting started entries stay visible
 even if the checklist was dismissed earlier. The guide's GitHub App step shows
 the concrete install URL for the configured forge host (`githubAppInstallURL`,
 GHES-aware; on an enterprise host with no `github_app_slug` it says what to

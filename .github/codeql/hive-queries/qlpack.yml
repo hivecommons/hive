@@ -1,0 +1,8 @@
+name: hivecommons/hive-queries
+version: 0.0.1
+library: false
+# Run by .github/workflows/static-security.yml: against the fixture module in
+# .github/codeql/fixtures/ on every PR that touches it (the test), and against
+# src/ on pushes and weekly (the report). See .github/codeql/README.md.
+dependencies:
+  codeql/go-all: "*"

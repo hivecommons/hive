@@ -688,7 +688,8 @@ func (s *HubServer) handleSelfServiceRotate(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	rawKey, err := s.selfService.rotate(h.ID)
+	policy := currentSelfServiceKeyRotationPolicy()
+	rawKey, rotation, err := s.selfService.rotateWithPolicy(h.ID, "", policy)
 	if err != nil {
 		if errors.Is(err, errSelfServiceNotFound) {
 			writeJSONError(w, http.StatusNotFound, "self-hosted hive not found")
@@ -698,14 +699,14 @@ func (s *HubServer) handleSelfServiceRotate(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusInternalServerError, "could not persist the new key")
 		return
 	}
-	s.logger.Info("audit: selfservice_hive_rotated", "user", login, "hive", h.ID, "overlap", selfServiceKeyRotationOverlap.String())
+	s.auditSelfServiceRotated(login, h.ID, policy, rotation)
 	hubURL := hubPublicURL()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id":       h.ID,
 		"key":      rawKey,
 		"hub_url":  hubURL,
-		"overlap":  selfServiceKeyRotationOverlap.String(),
+		"overlap":  policy.window.String(),
 		"snippets": selfServiceSnippets(hubURL, h.ID, rawKey),
 	})
 }

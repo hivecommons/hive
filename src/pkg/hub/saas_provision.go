@@ -404,15 +404,18 @@ func clusterDefaultForge(c *ClusterConfig) string {
 	return publicForgeHost
 }
 
-// kubectlForCluster builds a bounded kubectl command that targets a specific
+// kubectlForCluster builds a kubectl command bounded by kubectlDefaultTimeout that targets a specific
 // cluster. For in-cluster configs (InCluster == true) it runs plain kubectl;
 // for remote clusters it injects --kubeconfig and --context flags. Execution
 // (Output/CombinedOutput/Run) acquires a per-cluster concurrency slot — see
 // kubectl_executor.go.
 func kubectlForCluster(cluster *ClusterConfig, args ...string) *kubectlCmd {
+	ctx, cancel := context.WithTimeout(context.Background(), kubectlDefaultTimeout)
 	return &kubectlCmd{
-		Cmd:       exec.Command("kubectl", kubectlArgsForCluster(cluster, args...)...),
+		Cmd:       exec.CommandContext(ctx, "kubectl", kubectlArgsForCluster(cluster, args...)...),
 		clusterID: cluster.ID,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
 
@@ -422,6 +425,7 @@ func kubectlForClusterContext(ctx context.Context, cluster *ClusterConfig, args 
 	return &kubectlCmd{
 		Cmd:       exec.CommandContext(ctx, "kubectl", kubectlArgsForCluster(cluster, args...)...),
 		clusterID: cluster.ID,
+		ctx:       ctx,
 	}
 }
 
