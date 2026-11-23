@@ -89,6 +89,60 @@ type DeltaContext struct {
 	// (hivecommons/hive#15499); the delta is trivial whatever the compare
 	// from the previous head shows.
 	BaseDiffEmpty bool `json:"base_diff_empty,omitempty"`
+	// DocsOnly is set when the known delta touches documentation and
+	// changelog files only: the prompt points the reviewer at the
+	// perspectives such a change can move (DeltaDocsOnlyFocusPerspectives).
+	DocsOnly bool `json:"docs_only,omitempty"`
+}
+
+// DeltaDocsOnlyFocusPerspectives are the perspectives a docs-only delta can
+// change: whether the docs are current, and whether the PR still does what
+// it says. The others re-check only that the delta touches no code, so a
+// docs-only answer to review feedback costs one short delta read, not a
+// fresh review of the PR.
+var DeltaDocsOnlyFocusPerspectives = []Perspective{PerspectiveDocsCurrency, PerspectiveIntentAlignment}
+
+// Path signals for a docs-only delta: a documentation extension, or a
+// documentation or changelog-fragment directory anywhere in the path.
+var (
+	deltaDocsExtensions = []string{".md", ".mdx", ".rst", ".adoc"}
+	deltaDocsDirs       = []string{"docs", "doc", "changelog.d"}
+)
+
+// deltaDocsOnly reports a non-empty file list in which every path is
+// documentation or a changelog fragment.
+func deltaDocsOnly(files []DeltaFile) bool {
+	if len(files) == 0 {
+		return false
+	}
+	for _, f := range files {
+		if !deltaDocsPath(f.Path) {
+			return false
+		}
+	}
+	return true
+}
+
+func deltaDocsPath(path string) bool {
+	p := strings.ToLower(strings.TrimSpace(path))
+	if p == "" {
+		return false
+	}
+	segments := strings.Split(p, "/")
+	base := segments[len(segments)-1]
+	for _, ext := range deltaDocsExtensions {
+		if strings.HasSuffix(base, ext) {
+			return true
+		}
+	}
+	for _, dir := range segments[:len(segments)-1] {
+		for _, want := range deltaDocsDirs {
+			if dir == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // DeltaReviewInfo is recorded on an aggregate produced by a delta re-review,
@@ -173,9 +227,13 @@ func (o DispatchOptions) effectiveDeltaMaxAge() time.Duration {
 //   - a prior changes_requested with findings older than delta_max_age:
 //     full review. The flagged code has had time to move on and the
 //     reviewer's record of it is stale.
-//   - otherwise delta. With a known compare that is empty, or under
-//     delta_trivial_lines and touching no file the prior verdict flagged, the
-//     prior verdict is re-stamped instead of asked again.
+//   - otherwise delta. With a known compare that is empty the prior verdict
+//     is re-stamped instead of asked again; so is a prior approve when the
+//     delta is under delta_trivial_lines and touches no file it flagged.
+//     A prior changes_requested or requires_human is never re-stamped onto
+//     a head that changed: that push is the author's answer to the verdict
+//     (often a docs or changelog edit in a file no finding named), and
+//     re-stamping it left the PR parked on a review nobody re-ran.
 func planDelta(pr PullRequest, artifact Artifact, opts DispatchOptions, now time.Time) (deltaMode, *DeltaContext, Aggregate) {
 	if !opts.DeltaRereview {
 		return deltaModeFull, nil, Aggregate{}
@@ -218,7 +276,8 @@ func planDelta(pr PullRequest, artifact Artifact, opts DispatchOptions, now time
 		ctx.Files = append(ctx.Files, f.Path)
 	}
 	sort.Strings(ctx.Files)
-	if deltaTrivial(*diff, prior, opts.effectiveDeltaTrivialLines()) {
+	ctx.DocsOnly = deltaDocsOnly(diff.Files)
+	if deltaTrivial(*diff, prior, opts.effectiveDeltaTrivialLines()) && (diff.Identical() || prior.Verdict == VerdictApprove) {
 		return deltaModeTrivial, ctx, prior
 	}
 	return deltaModeDelta, ctx, prior
@@ -319,6 +378,13 @@ func deltaSection(pr PullRequest, ctx *DeltaContext) string {
 		b.WriteString(".\n")
 	}
 	b.WriteString("Read the new code in those hunks and enough of their surroundings to judge them. Code outside the delta was judged at the previous head and stands unless the delta changes what it does.\n")
+	if ctx.DocsOnly {
+		focus := make([]string, 0, len(DeltaDocsOnlyFocusPerspectives))
+		for _, p := range DeltaDocsOnlyFocusPerspectives {
+			focus = append(focus, string(p))
+		}
+		fmt.Fprintf(&b, "The delta touches documentation and changelog files only. Judge it for %s; for any other perspective confirm the delta changes no code and re-check that perspective's previous findings against the new text, without re-reading the rest of the PR.\n", strings.Join(focus, " and "))
+	}
 	if len(ctx.PreviousFindings) > 0 {
 		b.WriteString("Re-check each finding from the previous review at the new head and say whether it is fixed, still present, or no longer applies:\n")
 		for _, f := range ctx.PreviousFindings {

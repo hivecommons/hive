@@ -455,6 +455,7 @@ hub.tier_limits.<key>.max_per_day # TODO #11854
 hub.tier_limits.<key>.max_per_hour # TODO #11854
 ioscan.block_at.<key> # per-surface block thresholds; yaml-only (#6685)
 ioscan.classifier.fail_mode # classifier fail mode; yaml-only (#6685)
+ioscan.source_memory_days # flagged-source memory window; yaml-only (#19440)
 issues.hard_suppress_reconcile_interval # TODO #11854
 issues.lift_hive_hard_suppress # TODO #11854
 issues.rfc_existing_check.enabled # triage existing-coverage check; yaml-only (#13575)
@@ -707,6 +708,7 @@ shared_ci_rerun.enabled # TODO #11854
 swarm.themes.<key>.call_to_arms # TODO #11854
 swarm.themes.<key>.event_name # TODO #11854
 swarm.themes.<key>.leaderboard_title # TODO #11854
+tool_approval.pending_ttl_s # TODO #19446 (pending approval TTL; Settings control pending)
 tool_approval.rules[].action # TODO #11854
 tool_approval.rules[].expr # TODO #11854
 tool_approval.rules[].min_acmm_level # TODO #11854

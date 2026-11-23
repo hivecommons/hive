@@ -36,6 +36,8 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 	socket := fmt.Sprintf("hleak%d", os.Getpid())
 	const session = "hive-leak"
 	dir := t.TempDir()
+	const customForgeTokenEnv = "CUSTOM_FORGE_PAT"
+	config.AddExtraCredentialEnvVars(customForgeTokenEnv)
 
 	// A dedicated server, so ITS global environment is exactly this process
 	// env plus the planted credentials — the package-wide test server was
@@ -63,6 +65,10 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 		"HIVE_UPSTREAM_PROXY_NO_PROXY=10.0.0.0/8",
 		"HIVE_NO_PROXY=10.0.0.0/8",
 		"HIVE_CLAUDE_OAUTH_TOKEN=sk-ant-oat01-operator_leaked",
+		"GITLAB_TOKEN=gitlab_default_leaked",
+		"GITEA_TOKEN=gitea_default_leaked",
+		"FORGEJO_TOKEN=forgejo_default_leaked",
+		customForgeTokenEnv+"=custom_forge_leaked",
 	)
 	if out, err := start.CombinedOutput(); err != nil {
 		t.Fatalf("starting tmux server: %v: %s", err, out)
@@ -102,6 +108,9 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 	if before["LINEAR_API_KEY"] != "lin_api_leaked" || before["LINEAR_CLIENT_SECRET"] != "client_secret_leaked" {
 		t.Fatalf("control: expected the planted credentials in a fresh pane, got LINEAR_API_KEY=%q LINEAR_CLIENT_SECRET=%q", before["LINEAR_API_KEY"], before["LINEAR_CLIENT_SECRET"])
 	}
+	if before["GITLAB_TOKEN"] != "gitlab_default_leaked" || before["GITEA_TOKEN"] != "gitea_default_leaked" || before["FORGEJO_TOKEN"] != "forgejo_default_leaked" || before[customForgeTokenEnv] != "custom_forge_leaked" {
+		t.Fatalf("control: expected the planted forge tokens in a fresh pane, got GITLAB_TOKEN=%q GITEA_TOKEN=%q FORGEJO_TOKEN=%q %s=%q", before["GITLAB_TOKEN"], before["GITEA_TOKEN"], before["FORGEJO_TOKEN"], customForgeTokenEnv, before[customForgeTokenEnv])
+	}
 	if before["DASHBOARD_AUTH_TOKEN"] != "dash_auth_leaked" || before["HIVE_TERMINAL_KEY"] != "terminal_key_leaked" {
 		t.Fatalf("control: expected the planted hub secrets in a fresh pane, got DASHBOARD_AUTH_TOKEN=%q HIVE_TERMINAL_KEY=%q", before["DASHBOARD_AUTH_TOKEN"], before["HIVE_TERMINAL_KEY"])
 	}
@@ -128,6 +137,7 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 		"DASHBOARD_AUTH_TOKEN", "HIVE_DASHBOARD_TOKEN", "HIVE_TERMINAL_KEY", "HIVE_INVITE_KEY", "HIVE_HEARTBEAT_KEY",
 		"HIVE_HUB_SECRET", "HIVE_TTYD_CREDENTIAL", "HIVE_UPSTREAM_PROXY_URL", "HIVE_UPSTREAM_PROXY_HOSTS",
 		"HIVE_UPSTREAM_PROXY_NO_PROXY", "HIVE_NO_PROXY", "HIVE_CLAUDE_OAUTH_TOKEN",
+		"GITLAB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", customForgeTokenEnv,
 	} {
 		if v, ok := after[k]; ok {
 			t.Errorf("%s=%q still reaches a pane after applySessionEnv — the inherited credential was not removed", k, v)

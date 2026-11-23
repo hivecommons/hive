@@ -110,6 +110,7 @@ const staleDropStarvationThreshold = 5
 
 type Server struct {
 	nativeQueueTracker  nativeQueueTrackerRuntime
+	ask                 askRuntime // Ask AI help asker, built on first use (#19183)
 	integration         integrationRuntime
 	webhookNoSecretOnce sync.Once               // warn once per process about a missing webhook secret (#13666)
 	prGateOnce          sync.Once               // builds the PR gate on first use (#19038)

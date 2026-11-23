@@ -488,7 +488,8 @@ func (c *Engine) routeHuman(ctx context.Context, tracker *StageTracker, key stri
 // cause (hivecommons/hive#13087). A review approval never overrides a
 // manual-only path rule or label, and on this release line the lanes do not
 // consume `/hive approve` on a PR: the release lever for `requires_human` is
-// a trusted merger's GitHub Approve review on the current head.
+// a trusted merger's GitHub Approve review on the current head, or their
+// dashboard approval bound to it (dashboardApprovalForHead).
 func decisionActions(obs stageObservation, e stagelabels.Evidence) ([]string, bool) {
 	if e.ManualMergeRule {
 		action := "The hive never merges this change itself: a maintainer must click **Merge** on GitHub (or comment `/lgtm` + `/approve` for tide). A GitHub Approve review records the decision but does not merge, and `/hive approve` cannot override this lane's manual-merge rule."
@@ -505,7 +506,7 @@ func decisionActions(obs stageObservation, e stagelabels.Evidence) ([]string, bo
 		actions = append(actions, "A maintainer must push this branch to the repository (or approve the guarded run as the repository requires); the contributor cannot clear a fork guard by pushing to the fork, and the hive does not adopt it.")
 	}
 	if e.Verdict == stagelabels.VerdictRequiresHuman {
-		action := "After reading the verdict, a trusted merger can submit a GitHub **Approve** review for the current head and the lane clears the hold on its next pass; `/hive approve` replies on a PR are acknowledged but not consumed."
+		action := "After reading the verdict, a trusted merger can submit a GitHub **Approve** review for the current head (or approve this head from the Hive dashboard) and the lane clears the hold on its next pass; typed `/hive approve` replies on a PR are acknowledged but not consumed."
 		if obs.Lane == stageLaneContributor {
 			action += " An ordinary contributor cannot release their own PR."
 		}

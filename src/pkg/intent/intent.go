@@ -104,6 +104,9 @@ type ChangedFile struct {
 	Deletions int
 	// Patch is the unified diff from the files API; empty means unavailable.
 	Patch string
+	// PreviousFilename is a renamed file's path before the rename; empty
+	// for any other status.
+	PreviousFilename string
 }
 
 type PR struct {

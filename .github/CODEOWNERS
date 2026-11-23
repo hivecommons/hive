@@ -17,6 +17,12 @@ src/scripts/check-suid-contract.sh   @clubanderson @hanthor @Danathar
 # CI/CD workflows (GITHUB_TOKEN write access, release, and security gates)
 .github/workflows/**                 @clubanderson @hanthor @Danathar
 
+# gosec HIGH gate: the baseline is its allowlist, read from the PR head, so
+# adding an entry (or loosening the script) would turn the blocking gate green
+.github/gosec-high-baseline.json         @clubanderson @hanthor @Danathar
+.github/scripts/gosec-high-gate.py       @clubanderson @hanthor @Danathar
+.github/scripts/test-gosec-high-gate.py  @clubanderson @hanthor @Danathar
+
 # Kubernetes deployment, RBAC, and secret manifests
 src/deploy/**                        @clubanderson @hanthor @Danathar
 

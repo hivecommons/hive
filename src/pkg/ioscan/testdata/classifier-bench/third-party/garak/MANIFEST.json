@@ -1,0 +1,28 @@
+{
+  "upstream": "https://github.com/NVIDIA/garak",
+  "commit": "725160beb8137a8294c79b1f78c68a756367f861",
+  "license": "Apache-2.0",
+  "notice": "upstream has no NOTICE file at this commit",
+  "upstream_files": {
+    "latentinjection.py": {
+      "path": "garak/probes/latentinjection.py",
+      "sha256": "723cbdd24a2503866cf4d2e8e815a16090afdff73c65a02b246793fc605aa3c2"
+    },
+    "domains_latentinjection.json": {
+      "path": "garak/data/payloads/domains_latentinjection.json",
+      "sha256": "2b179b6ab31284419d44cd96e50ce54dee6b55e0bf10095607ea693b9f22addf"
+    },
+    "LICENSE": {
+      "path": "LICENSE",
+      "sha256": "f12c175308d657ab393ca79f063063501273d43c14200d3ba7b214ca8e50523e"
+    }
+  },
+  "derived_files": {
+    "garak-latent.jsonl": {
+      "sha256": "d452dd291d360c54dd856f15b86a59067e51ede70f587fc56e7de6b138dbedc6"
+    },
+    "convert.py": {
+      "sha256": "f19db6e5b1a8d549f8a591726a29b4d1caba7d4da816b7872ce585e456865920"
+    }
+  }
+}

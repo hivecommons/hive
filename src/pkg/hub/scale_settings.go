@@ -188,6 +188,8 @@ func (s *HubServer) handleGetScaleSettings(w http.ResponseWriter, r *http.Reques
 			// the same number the operator typed. 0 = debouncing disabled.
 			"upgrade_debounce_seconds": int(autoUpgradeDebounceInterval() / time.Second),
 			"customers_share_enabled":  customersShareEnabled(),
+			// Ask AI help (#19181): on only when switched on AND configured.
+			"ask_enabled": s.ask != nil,
 		},
 		Clusters: rows,
 		Defaults: map[string]int{

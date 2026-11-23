@@ -11,6 +11,106 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v5.352.0)
+
+### Added
+
+- Added a non-blocking weekly `ioscan classifier bench` workflow. It runs the ioscan classifier benchmark against GitHub Models backends with the job's own `GITHUB_TOKEN`, so no repository secret or paid key is involved, and publishes catch rate, false-positive rate, errors, latency, tokens and list-price cost per backend and split to the job summary. The benchmark also gains `IOSCAN_CLASSIFIER_BENCH_MIN_INTERVAL` call spacing, a stable `IOSCAN_CLASSIFIER_BENCH_MAX_PER_CLASS` sample cap, and support for an endpoint given as an exact `/chat/completions` URL ([#19516](https://github.com/hivecommons/hive/issues/19516)).
+
+## 2026-11-23 (v5.351.0)
+
+### Added
+
+- ioscan: vendor pinned injection and held-out benign corpora (#19517)
+
+## 2026-11-23 (v5.350.1)
+
+### Security
+
+- The token-access audit log (`/var/run/hive-metrics/token-access.jsonl`) is now hash-chained like `/data/audit.jsonl`: every ingested row carries `seq`, `prev_hash` and `row_hash`, chain fields an agent writes into its own event are overwritten, and `hive audit-verify --token-access` reports edited, dropped, inserted or reordered rows. Rows from before the upgrade are reported as legacy rows outside the chain ([#19439](https://github.com/hivecommons/hive/issues/19439)).
+
+## 2026-11-23 (v5.350.0)
+
+### Added
+
+- ci: tested Semgrep rules, a CodeQL taint query, zizmor, and gosec blocking on HIGH (#19462)
+
+## 2026-11-23 (v5.349.3)
+
+### Security
+
+- ioscan's hidden-markup and data-carrying-URL rules no longer flag ordinary content ([#19452](https://github.com/hivecommons/hive/issues/19452)). Fill-in markers are matched against decoded query values, so bracketed parameter names such as `filter[key]=1` and words such as `yourself` or `insertion` no longer count, while placeholders such as `YOUR_TOKEN` or `{{secrets}}` still do; keys are checked for the unambiguous forms only (`{{secrets.TOKEN}}=1`, `<your_data>=1`, `YOUR_API_KEY=1`). A signed AWS, GCS, CloudFront or Azure SAS image URL whose only long values are its signing parameters is now reported as a Medium `dangerous.exfil_image_url` instead of High. This applies only when the URL is on the provider's own host, carries a well-formed signature, and each signing parameter has its scheme's exact shape and appears once; `SignedHeaders` may list only known header names. Medium does not block agent output, but untrusted input still blocks at the default Medium line, because anyone can own a bucket or distribution on these hosts and read its access logs. Free-data parameters such as `X-Amz-Security-Token` or CloudFront `Policy`, and any other data in the URL, still give High. A `jwt` value is fully exempt, but only on GitHub's private-user-images host. A Medium phrase inside a `<details>` section stays Medium; only HTML comments and CSS-hidden elements still raise it to a blocking High.
+
+## 2026-11-22 (v5.349.2)
+
+### Fixed
+
+- Repeated `integration observation not durable` webhook errors from a full integration journal are now logged at most once per event type per 10 minutes.
+
+## 2026-11-22 (v5.349.1)
+
+### Fixed
+
+- Repeated \integration scope drift unavailable\ warnings from a degraded integration journal are now logged at most once per repo per 10 minutes.
+
+## 2026-11-22 (v5.349.0)
+
+### Added
+
+- Added an opt-in, locally run ioscan classifier benchmark that scores the labelled corpus under `src/pkg/ioscan/testdata/classifier-bench/` plus the in-house red-team corpus through `Classifier.Score`, and reports catch rate at the warn and block thresholds, false-positive rate, errors, latency and metered token and dollar cost per backend. Dev and heldout splits are reported separately, and a hard token ceiling bounds spend. It does not run in the default test run and has no CI workflow, so no repository secret is involved ([#19459](https://github.com/hivecommons/hive/issues/19459)).
+
+### Fixed
+
+- **Outbound HTTP clients no longer carry credentials across a redirect to another host.** The egress proxy's inference forwarding, model discovery, LiteLLM entitlement probe and reference_repos lookups now follow at most 3 redirects (was net/http's 10) and drop `Authorization`, `Cookie`, `X-IBM-Project-ID` and the route's extra headers on any hop that leaves the original host (port included) or downgrades https to http; net/http kept the bearer key on same-domain, other-port and subdomain hops and never stripped custom headers. The knowledge clients (llm-wiki, Context7, every connector) and the hub's lite-enrollment repo-access check apply the same stripping. Same-host redirects keep working with credentials intact. ([#19222](https://github.com/hivecommons/hive/issues/19222))
+
+## 2026-11-22 (v5.348.0)
+
+### Added
+
+- **Dashboard: light-mode theme token overrides** ([#19361](https://github.com/hivecommons/hive/issues/19361)). `dashboard.theme_overrides.light_tokens` and a new **Light-mode token overrides** field in Settings → Appearance set allowlisted CSS tokens for light mode only. They layer on the preset's own light palette, or on the palette a dark preset or `custom` derives for light mode. Before this, `tokens` overrides of surfaces, lines and text on those themes changed dark mode only, and light mode is the default view. Existing configs render the same CSS.
+
+## 2026-11-22 (v5.347.2)
+
+### Changed
+
+- Customers: a public forge profile value now replaces a hub-derived or admin-set organization or country, while values the person entered on the hub stay.
+
+## 2026-11-22 (v5.347.1)
+
+### Security
+
+- The audit log (`/data/audit.jsonl`) is now tamper-evident: every row carries `seq`, `prev_hash` and an RFC 8785 `row_hash`, `hive audit-verify` checks the chain across rotated files, and each heartbeat sends the chain head to the hub, which records an `audit_chain_regressed` timeline event when the head goes backwards (#19439).
+
+## 2026-11-22 (v5.347.0)
+
+### Added
+
+- ioscan: vendor pinned garak latent-injection corpus (#19465)
+
+## 2026-11-22 (v5.346.0)
+
+### Added
+
+- The PR gate now files a missing Commit statuses grant once it stalls merges ([#19038](https://github.com/hivecommons/hive/issues/19038)). From 2026-12-02, when the Hive App installation still lacks the grant and the required `verify PR contents` context is absent on a repository's recent open heads, the backstop sweep logs a warning that the fleet report raises as `github_app_statuses_permission_missing`, so the gap is filed instead of only shown on the banner. Nothing is posted, and a repository whose workflow still supplies the context raises nothing.
+
+## 2026-11-22 (v5.345.15)
+
+### Security
+
+- Pending tool approvals now expire ([#19446](https://github.com/hivecommons/hive/issues/19446)). Before this, an operator-lane item stayed in the approval inbox forever, so a grant clicked days later still released a request made in a context nobody remembered. Items now expire 24 hours after they are queued. `tool_approval.pending_ttl_s` changes that limit, and a negative value turns expiry off. An expired item drops out of the queue and the dashboard list. It can never be approved (`POST /api/approvals/resolve` answers `410 Gone`), and it is not journaled, so a fresh delivery of the same request queues again and gets a fresh decision. Each list row now carries `expires_at`.
+
+## 2026-11-22 (v5.345.14)
+
+### Security
+
+- ioscan now remembers sources that tripped the injection scanner ([#19440](https://github.com/hivecommons/hive/issues/19440)). After untrusted text is withheld for a high or critical injection finding, its author and its issue or pull request are flagged for `ioscan.source_memory_days` (default 30, `0` turns it off). Until then their text is always sent to the classifier, past the per-pass budget, and is withheld when the classifier cannot answer or none is installed, whatever `classifier.fail_mode` says, so an attacker can no longer edit a withheld comment slightly and retry until one variant is scored as safe.
+
+## 2026-11-22 (v5.345.13)
+
+### Security
+
+- ioscan now raises phrase findings hidden in HTML comments, `<details>` and hidden-style elements to a blocking severity (`injection.hidden_markup`), and flags image and link URLs whose query strings carry data or fill-in placeholders (`dangerous.exfil_image_url`, `dangerous.link_fill_in`); existing rule ids are unchanged (#19444).
+
 ## 2026-11-21 (v5.345.12)
 
 ### Fixed
