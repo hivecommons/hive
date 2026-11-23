@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/config"
 )
 
 const (
@@ -242,6 +243,28 @@ func TestUserSessionForbiddenCoversEveryKnownCredentialVar(t *testing.T) {
 		if !strip[name] {
 			t.Errorf("%s is not in the set-environment -r strip list", name)
 		}
+	}
+}
+
+func TestUserSessionStripsConfiguredForgeTokenEnv(t *testing.T) {
+	const custom = "CUSTOM_FORGE_PAT"
+	config.SetExtraCredentialEnvVars(custom)
+	t.Cleanup(func() { config.SetExtraCredentialEnvVars() })
+	strip := map[string]bool{}
+	for _, n := range userSessionStripNames() {
+		strip[n] = true
+	}
+	for _, name := range []string{"GITLAB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", custom} {
+		if !sessionEnvForbidden(name) {
+			t.Errorf("%s is not forbidden in sessions", name)
+		}
+		if !strip[name] {
+			t.Errorf("%s is not in the set-environment -r strip list", name)
+		}
+	}
+	env := strings.Join(userSessionBaseEnv([]string{"GITLAB_TOKEN=x", "GITEA_TOKEN=x", "FORGEJO_TOKEN=x", custom + "=y"}, "GITLAB_TOKEN,GITEA_TOKEN,FORGEJO_TOKEN,"+custom), "\n")
+	if strings.Contains(env, "GITLAB_TOKEN") || strings.Contains(env, "GITEA_TOKEN") || strings.Contains(env, "FORGEJO_TOKEN") || strings.Contains(env, custom) {
+		t.Errorf("a forge token reached the session env: %q", env)
 	}
 }
 

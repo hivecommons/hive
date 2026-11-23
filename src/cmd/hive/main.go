@@ -2006,6 +2006,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	archiveOnShutdown := func() { b.agentMgr.ArchiveAllKickLogs("shutdown") }
 	b.preShutdownHooks.add("archive-kick-logs", archiveOnShutdown)
 	b.agentMgr.SetSandboxConfig(b.cfg.AgentSandbox)
+	syncForgeCredentialEnv(b.cfg)
 	// #7421: the governor records a kick when it is dispatched; the manager
 	// tells it afterwards how the turn ENDED, so a kick that produced a
 	// clarifying question or a policy stand-down is not counted like one that
@@ -3945,6 +3946,10 @@ func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 // allowlist and sets the dashboard's auth providers.
 func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 
+func syncForgeCredentialEnv(cfg *config.Config) {
+	cruxconfig.SetExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName())
+}
+
 // bootWatchersWith is bootWatchers with its long-lived effects injected; see
 // bootWatchersDeps.
 func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
@@ -4026,6 +4031,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		// threshold — re-sync it alongside the repo list above.
 		b.gov.SetRepoCount(b.cfg.Project.RepoCount())
 		b.agentMgr.SetSandboxConfig(b.cfg.AgentSandbox)
+		syncForgeCredentialEnv(b.cfg)
 		// Re-run the posture check on reload, not only at boot: flipping the
 		// Security tab's sandbox toggle writes the config and lands here, which
 		// is the exact moment an operator forms the belief that they are now
