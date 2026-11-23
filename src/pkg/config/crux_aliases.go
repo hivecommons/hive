@@ -247,3 +247,14 @@ var (
 // CanonicalizeModelForBackend is the one mapping between the Claude CLI and
 // Copilot CLI spellings of the same Claude model (see crux/config).
 var CanonicalizeModelForBackend = cruxconfig.CanonicalizeModelForBackend
+
+// Sandbox preflight and Job scheduling bounds the dashboard's Settings
+// controls validate against (hivecommons/hive#19553).
+const (
+	MaxSandboxPreflightCommands          = cruxconfig.MaxSandboxPreflightCommands
+	DefaultSandboxPreflightTimeoutS      = cruxconfig.DefaultSandboxPreflightTimeoutS
+	DefaultSandboxPreflightTotalTimeoutS = cruxconfig.DefaultSandboxPreflightTotalTimeoutS
+	DefaultSandboxScheduleTimeoutS       = cruxconfig.DefaultSandboxScheduleTimeoutS
+)
+
+var ValidateSandboxPreflight = cruxconfig.ValidateSandboxPreflight

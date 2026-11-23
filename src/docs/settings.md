@@ -79,6 +79,8 @@ Where rolling log files are written, when they rotate, how long rotated files ar
 
 Input/output scanning, the agent sandbox runner, and suspicious-activity alerts. See [ioscan](ioscan.md), [Credential-free sandbox isolation](sandbox-isolation.md), [Suspicious-activity alerts](operator-reference.md#suspicious-activity-alerts-sentinel), and the [Security Model](security-model.md).
 
+"Advanced sandbox: default image and Job settings", then "Job scheduling, resources, preflight and GitHub read relay", holds the hive-wide Kubernetes Job defaults: node selector, resource limits and requests (including device resources such as `ibm.com/spyre_pf`), tolerations, image pull secret names, schedule timeout, the node preflight commands and timeouts (`agent_sandbox.preflight`), and the opt-in GitHub read relay (`agent_sandbox.job.github_read_proxy`, applied when hive restarts). Maps take one `key=value` per line and tolerations one taint per line. See [Setting up a sandbox from the dashboard](sandbox-isolation.md#setting-up-a-sandbox-from-the-dashboard).
+
 ## Features
 
 Optional capabilities, each off or inert until you turn it on. Where a feature has its own guide, its **?** mark opens that guide:
@@ -180,6 +182,8 @@ How your configuration maps to SOC 2, FedRAMP, and ISO 27001 controls. See [The 
 ## Agent: General
 
 One agent's identity, engine, model, and behaviour: name, role, kick template, operating mode, sandbox, CLI pin, caveman, Jev, and explain modes, and the repos and keywords it works on. See [Agent Configuration](agent-configuration.md#anatomy-of-an-agent).
+
+"Sandbox settings: image, runtime and Job" also has the agent's own Job scheduling (node selector, resource limits and requests, tolerations, image pull secrets, schedule timeout) and "Node preflight" with an override switch: off inherits `agent_sandbox.preflight`, on uses this agent's list, and an empty list turns preflight off for it. "In effect for this agent" shows each resolved value and whether it comes from this agent or from `agent_sandbox` defaults, and warns when the agent's own Job block hides hive-wide scheduling fields. See [Setting up a sandbox from the dashboard](sandbox-isolation.md#setting-up-a-sandbox-from-the-dashboard).
 
 ## Agent: Pipeline
 
