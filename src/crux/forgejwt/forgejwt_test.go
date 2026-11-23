@@ -313,3 +313,52 @@ func TestParseIssuer(t *testing.T) {
 		}
 	}
 }
+
+func TestParseIssuerRejectsUnparsableURL(t *testing.T) {
+	if _, err := ParseIssuer("https://keys .example.org"); err == nil {
+		t.Error("an issuer with a space in the host was accepted")
+	}
+}
+
+func TestKeyFileAccessErrors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "absent.pem")
+	if _, err := PublicKey(missing); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("missing file: err = %v, want os.ErrNotExist", err)
+	}
+	if _, err := (Signer{Issuer: testIssuer, KeyFile: missing}).Mint("u:7:3f0c", "hive:advisor"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Mint with missing file: err = %v, want os.ErrNotExist", err)
+	}
+	if _, err := PublicKey(dir); err == nil {
+		t.Error("a directory loaded as a key")
+	}
+}
+
+func TestOversizedKeyFileIsRefused(t *testing.T) {
+	junk := strings.Repeat("#\n", maxKeyBytes)
+	f := writeFile(t, append([]byte(junk), pemBytes(t, testKeys()[0])...), 0o600)
+	if _, err := PublicKey(f); err == nil {
+		t.Error("a key past the size limit loaded")
+	}
+}
+
+func TestPKCS1KeyLoads(t *testing.T) {
+	key := testKeys()[0]
+	data := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	pub, err := PublicKey(writeFile(t, data, 0o600))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pub.Equal(&key.PublicKey) {
+		t.Error("PKCS #1 key loaded as a different public key")
+	}
+}
+
+func TestSignRejectsUnencodableClaims(t *testing.T) {
+	if _, err := sign(testKeys()[0], func() {}); err == nil {
+		t.Error("claims that cannot be encoded were signed")
+	}
+}
