@@ -11,6 +11,36 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v5.352.0)
+
+### Added
+
+- Added a non-blocking weekly `ioscan classifier bench` workflow. It runs the ioscan classifier benchmark against GitHub Models backends with the job's own `GITHUB_TOKEN`, so no repository secret or paid key is involved, and publishes catch rate, false-positive rate, errors, latency, tokens and list-price cost per backend and split to the job summary. The benchmark also gains `IOSCAN_CLASSIFIER_BENCH_MIN_INTERVAL` call spacing, a stable `IOSCAN_CLASSIFIER_BENCH_MAX_PER_CLASS` sample cap, and support for an endpoint given as an exact `/chat/completions` URL ([#19516](https://github.com/hivecommons/hive/issues/19516)).
+
+## 2026-11-23 (v5.351.0)
+
+### Added
+
+- ioscan: vendor pinned injection and held-out benign corpora (#19517)
+
+## 2026-11-23 (v5.350.1)
+
+### Security
+
+- The token-access audit log (`/var/run/hive-metrics/token-access.jsonl`) is now hash-chained like `/data/audit.jsonl`: every ingested row carries `seq`, `prev_hash` and `row_hash`, chain fields an agent writes into its own event are overwritten, and `hive audit-verify --token-access` reports edited, dropped, inserted or reordered rows. Rows from before the upgrade are reported as legacy rows outside the chain ([#19439](https://github.com/hivecommons/hive/issues/19439)).
+
+## 2026-11-23 (v5.350.0)
+
+### Added
+
+- ci: tested Semgrep rules, a CodeQL taint query, zizmor, and gosec blocking on HIGH (#19462)
+
+## 2026-11-23 (v5.349.3)
+
+### Security
+
+- ioscan's hidden-markup and data-carrying-URL rules no longer flag ordinary content ([#19452](https://github.com/hivecommons/hive/issues/19452)). Fill-in markers are matched against decoded query values, so bracketed parameter names such as `filter[key]=1` and words such as `yourself` or `insertion` no longer count, while placeholders such as `YOUR_TOKEN` or `{{secrets}}` still do; keys are checked for the unambiguous forms only (`{{secrets.TOKEN}}=1`, `<your_data>=1`, `YOUR_API_KEY=1`). A signed AWS, GCS, CloudFront or Azure SAS image URL whose only long values are its signing parameters is now reported as a Medium `dangerous.exfil_image_url` instead of High. This applies only when the URL is on the provider's own host, carries a well-formed signature, and each signing parameter has its scheme's exact shape and appears once; `SignedHeaders` may list only known header names. Medium does not block agent output, but untrusted input still blocks at the default Medium line, because anyone can own a bucket or distribution on these hosts and read its access logs. Free-data parameters such as `X-Amz-Security-Token` or CloudFront `Policy`, and any other data in the URL, still give High. A `jwt` value is fully exempt, but only on GitHub's private-user-images host. A Medium phrase inside a `<details>` section stays Medium; only HTML comments and CSS-hidden elements still raise it to a blocking High.
+
 ## 2026-11-22 (v5.349.2)
 
 ### Fixed

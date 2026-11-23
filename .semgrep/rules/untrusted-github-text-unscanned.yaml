@@ -1,0 +1,60 @@
+rules:
+  - id: hive-untrusted-github-text-unscanned
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    message: >-
+      GitHub-authored text (an issue, pull request or comment title or body)
+      is written into agent task text without passing ioscan. Anyone can
+      write that text, so a prompt injection in it would reach the agent's
+      instructions unscanned. Route it through Scheduler.enforceTextFrom
+      (or enforceThread / enforceLabelsWithPolicy), which applies
+      ioscan.EnforceInputFrom under the policy for its source, and write the
+      sanitized result instead. This is the syntactic net for one function;
+      the CodeQL query hive/go/untrusted-github-text-to-kick follows the
+      same flow across functions.
+    metadata:
+      category: security
+      cwe: "CWE-77: Improper Neutralization of Special Elements used in a Command ('Command Injection')"
+      obligation: >-
+        Untrusted GitHub text reaches a kick only through ioscan
+        (src/pkg/scheduler/ioscan_enforce.go, F11).
+      references:
+        - https://github.com/hivecommons/hive/issues/19443
+    pattern-sources:
+      - pattern: '($I : github.Issue).Title'
+      - pattern: '($I : github.Issue).Body'
+      - pattern: '($I : *github.Issue).Title'
+      - pattern: '($I : *github.Issue).Body'
+      - pattern: '($P : github.PullRequest).Title'
+      - pattern: '($P : github.PullRequest).Body'
+      - pattern: '($P : *github.PullRequest).Title'
+      - pattern: '($P : *github.PullRequest).Body'
+      - pattern: '($C : github.PRComment).Body'
+      - pattern: '($C : github.ThreadComment).Body'
+    pattern-sanitizers:
+      - pattern: ioscan.EnforceInputFrom(...)
+      - pattern: ioscan.EnforceInput(...)
+      - pattern: ioscan.EnforceThreadFrom(...)
+      - pattern: ioscan.EnforceThread(...)
+      - pattern: $S.enforceTextFrom(...)
+      - pattern: $S.enforceIssueTextVerdict(...)
+      - pattern: $S.enforceThread(...)
+      - pattern: $S.enforceLabelsWithPolicy(...)
+    pattern-sinks:
+      # The kick message itself.
+      - patterns:
+          - pattern: 'KickMessage{..., Message: $X, ...}'
+          - focus-metavariable: $X
+      # Text appended to a message the scheduler is building.
+      - patterns:
+          - pattern-inside: |
+              func ($S *Scheduler) $F(...) {
+                ...
+              }
+          - pattern-either:
+              - patterns:
+                  - pattern: $B.WriteString($X)
+                  - focus-metavariable: $X
+              - pattern: fmt.Fprintf($W, ...)
+              - pattern: fmt.Fprintln($W, ...)

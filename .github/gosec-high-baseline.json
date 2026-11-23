@@ -1,0 +1,1135 @@
+{
+ "_comment": "Pre-existing gosec HIGH findings the gate in .github/scripts/gosec-high-gate.py tolerates (#19443). This list only shrinks: fix or #nosec a site, then regenerate with --write-baseline. Never add a new finding here.",
+ "findings": [
+  {
+   "file": "src/cmd/bd/kb.go",
+   "rule_id": "G704",
+   "code": "resp, err := http.Get(url)"
+  },
+  {
+   "file": "src/cmd/hive/boot_knowledge_connectors.go",
+   "rule_id": "G703",
+   "code": "if err := os.MkdirAll(dir, 0o755); err != nil {"
+  },
+  {
+   "file": "src/cmd/hive/knowledge_adviser_llm.go",
+   "rule_id": "G404",
+   "code": "wait = knowledgeAdviserLLMRetryBackoff + rand.N(knowledgeAdviserLLMRetryBackoff)"
+  },
+  {
+   "file": "src/cmd/hive/main.go",
+   "rule_id": "G101",
+   "code": "const tokenPath = \"/data/gh-user-token\""
+  },
+  {
+   "file": "src/cmd/hive/main.go",
+   "rule_id": "G101",
+   "code": "const tokenSparklinePath = \"/data/token-sparkline-history.json\""
+  },
+  {
+   "file": "src/cmd/hive/main.go",
+   "rule_id": "G101",
+   "code": "return persistPaths{"
+  },
+  {
+   "file": "src/cmd/hive/main.go",
+   "rule_id": "G703",
+   "code": "if err := os.WriteFile(hiveIDFilePath, []byte(envID+\"\\n\"), 0o644); err == nil {"
+  },
+  {
+   "file": "src/cmd/workflow-survey/main.go",
+   "rule_id": "G122",
+   "code": "data, err := os.ReadFile(path)"
+  },
+  {
+   "file": "src/crux/agent/copilot_cache_janitor.go",
+   "rule_id": "G115",
+   "code": "pct := int((used * 100) / total)"
+  },
+  {
+   "file": "src/crux/agent/credentials_watchdog.go",
+   "rule_id": "G101",
+   "code": "CredentialWatchdogIntervalEnv = \"HIVE_CREDENTIAL_WATCHDOG_INTERVAL\""
+  },
+  {
+   "file": "src/crux/agent/manager_credentials.go",
+   "rule_id": "G101",
+   "code": "sharedClaudeCredentialPath = \"/data/home/.claude/.credentials.json\""
+  },
+  {
+   "file": "src/crux/agent/manager_homes.go",
+   "rule_id": "G122",
+   "code": "_ = os.Chmod(path, 0o666)"
+  },
+  {
+   "file": "src/crux/agent/manager_homes.go",
+   "rule_id": "G122",
+   "code": "_ = os.Chmod(path, 0o777)"
+  },
+  {
+   "file": "src/crux/agent/manager_tokens.go",
+   "rule_id": "G101",
+   "code": "AgentTokenRefreshIntervalEnv = \"HIVE_AGENT_TOKEN_REFRESH_INTERVAL\""
+  },
+  {
+   "file": "src/crux/agent/manager_tokens.go",
+   "rule_id": "G101",
+   "code": "const copilotTokenEnvVar = \"COPILOT_GITHUB_TOKEN\""
+  },
+  {
+   "file": "src/crux/agent/manager_tokens.go",
+   "rule_id": "G101",
+   "code": "linearAPIKeyEnvVar = \"LINEAR_API_KEY\""
+  },
+  {
+   "file": "src/crux/agent/manager_tokens.go",
+   "rule_id": "G101",
+   "code": "var agentTokenCacheDir = \"/var/run/hive-metrics/agent-tokens\""
+  },
+  {
+   "file": "src/crux/agent/panesignal/panesignal.go",
+   "rule_id": "G115",
+   "code": "id = int32(len(table))"
+  },
+  {
+   "file": "src/crux/agent/permissions_bobstate_eperm.go",
+   "rule_id": "G115",
+   "code": "return euid != 0 && uint32(euid) != ownerUID"
+  },
+  {
+   "file": "src/crux/agent/permissions_entry.go",
+   "rule_id": "G115",
+   "code": "if !ok || stat.Uid != uint32(os.Getuid()) {"
+  },
+  {
+   "file": "src/crux/agent/permissions_unownable.go",
+   "rule_id": "G115",
+   "code": "return euid != 0 && uint32(euid) != ownerUID"
+  },
+  {
+   "file": "src/crux/agent/permissions_watcher.go",
+   "rule_id": "G115",
+   "code": "if newUID != DevUID && stat.Uid != uint32(DevUID) {"
+  },
+  {
+   "file": "src/crux/agent/permissions_watcher.go",
+   "rule_id": "G115",
+   "code": "if stat.Gid != uint32(NodeGID) {"
+  },
+  {
+   "file": "src/crux/agent/sandbox_run.go",
+   "rule_id": "G703",
+   "code": "if err := os.WriteFile(tmp, []byte(strings.Join(lines[len(lines)-keep:], \"\")), 0o660); err != nil {"
+  },
+  {
+   "file": "src/crux/agent/usersession.go",
+   "rule_id": "G703",
+   "code": "if st, err := os.Stat(p); err == nil && !st.IsDir() {"
+  },
+  {
+   "file": "src/crux/agent/usersession_env.go",
+   "rule_id": "G101",
+   "code": "userSessionEnvPassthroughEnv = \"HIVE_SESSIONS_ENV_PASSTHROUGH\""
+  },
+  {
+   "file": "src/crux/agent/usersession_workspace.go",
+   "rule_id": "G101",
+   "code": "userSessionWorkspaceCredPrefix = \".hive-git-credentials-\""
+  },
+  {
+   "file": "src/crux/api/callback/callback.go",
+   "rule_id": "G101",
+   "code": "TokenEnvVar = \"CRUX_HIVE_TOKEN\""
+  },
+  {
+   "file": "src/crux/api/runtime.go",
+   "rule_id": "G101",
+   "code": "hostViaBobCredential = \"GET /v1/bob/credential\""
+  },
+  {
+   "file": "src/crux/api/runtime.go",
+   "rule_id": "G101",
+   "code": "hostViaTokens = \"POST /v1/tokens\""
+  },
+  {
+   "file": "src/crux/checkout/checkout.go",
+   "rule_id": "G101",
+   "code": "tokenEnvVar = \"CRUX_CHECKOUT_GIT_TOKEN\""
+  },
+  {
+   "file": "src/crux/claude/oauth.go",
+   "rule_id": "G101",
+   "code": "CredentialsPath = \"/data/home/.claude/.credentials.json\""
+  },
+  {
+   "file": "src/crux/claude/oauth.go",
+   "rule_id": "G101",
+   "code": "TokenURL = \"https://platform.claude.com/v1/oauth/token\""
+  },
+  {
+   "file": "src/crux/claude/operator_token.go",
+   "rule_id": "G101",
+   "code": "OperatorTokenEnvVar = \"HIVE_CLAUDE_OAUTH_TOKEN\""
+  },
+  {
+   "file": "src/crux/claude/operator_token.go",
+   "rule_id": "G101",
+   "code": "OperatorTokenFileEnvVar = \"HIVE_CLAUDE_OAUTH_TOKEN_FILE\""
+  },
+  {
+   "file": "src/crux/claude/operator_token.go",
+   "rule_id": "G703",
+   "code": "data, err := os.ReadFile(path)"
+  },
+  {
+   "file": "src/crux/cline/provider_file.go",
+   "rule_id": "G115",
+   "code": "if !ok || stat.Uid != uint32(os.Getuid()) || os.Geteuid() != os.Getuid() {",
+   "count": 2
+  },
+  {
+   "file": "src/crux/cline/provider_secret.go",
+   "rule_id": "G101",
+   "code": "ProviderSecretEnv = \"HIVE_CLINE_PROVIDERS_B64\""
+  },
+  {
+   "file": "src/crux/conditions.go",
+   "rule_id": "G101",
+   "code": "ClassGitHubAppTokenMintFailed = \"github_app_token_mint_failed\""
+  },
+  {
+   "file": "src/crux/config/agent_runtime.go",
+   "rule_id": "G101",
+   "code": "BobAPIKeyEnvVar = \"BOBSHELL_API_KEY\""
+  },
+  {
+   "file": "src/crux/config/agent_runtime.go",
+   "rule_id": "G101",
+   "code": "BobV2APIKeyEnvVar = \"BOB_API_KEY\""
+  },
+  {
+   "file": "src/crux/config/agent_runtime.go",
+   "rule_id": "G101",
+   "code": "DefaultBobAPIKeyEnv = \"HIVE_BOB_API_KEY\""
+  },
+  {
+   "file": "src/crux/config/agent_runtime.go",
+   "rule_id": "G101",
+   "code": "DefaultLiteLLMAPIKeyEnv = \"HIVE_LITELLM_API_KEY\""
+  },
+  {
+   "file": "src/crux/host.go",
+   "rule_id": "G101",
+   "code": "const DefaultAgentTokenCacheDir = \"/var/run/hive-metrics/agent-tokens\""
+  },
+  {
+   "file": "src/crux/kubejob/kubejob.go",
+   "rule_id": "G101",
+   "code": "DefaultTokenPath = \"/var/run/secrets/kubernetes.io/serviceaccount/token\""
+  },
+  {
+   "file": "src/crux/lanes/broker.go",
+   "rule_id": "G115",
+   "code": "MaxMsgSize: int32(base64.StdEncoding.EncodedLen(b.cfg.MaxPayload) + envelopeOverhead), Replicas: b.cfg.Replicas,"
+  },
+  {
+   "file": "src/crux/logscrub/handler.go",
+   "rule_id": "G101",
+   "code": "apiKeyPattern = `(^|[^A-Za-z0-9._-])(sk-[A-Za-z0-9._\\-]{6,})`"
+  },
+  {
+   "file": "src/crux/logscrub/handler.go",
+   "rule_id": "G101",
+   "code": "bearerPlaceholderPattern = `(?i)^\\bBearer\\s+(?:%[A-Za-z]|\\$[A-Za-z_][A-Za-z0-9_]*|\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}|\\{\\{[^\\n]*\\}\\})$`"
+  },
+  {
+   "file": "src/crux/logscrub/handler.go",
+   "rule_id": "G101",
+   "code": "bearerTokenPattern = `(?i)\\bBearer\\s+(?:[A-Za-z0-9._~+/=-]{16,}\\b|%[A-Za-z]|\\$[A-Za-z_][A-Za-z0-9_]*|\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}|\\{\\{[^\\n]*\\}\\})`"
+  },
+  {
+   "file": "src/crux/logscrub/handler.go",
+   "rule_id": "G101",
+   "code": "githubTokenPattern = `(ghs_|ghp_|gho_|ghu_|ghr_|github_pat_)[A-Za-z0-9_]{10,}`"
+  },
+  {
+   "file": "src/crux/logscrub/handler.go",
+   "rule_id": "G101",
+   "code": "slackAppTokenPattern = `xapp-[A-Za-z0-9-]{10,}`"
+  },
+  {
+   "file": "src/crux/logscrub/handler.go",
+   "rule_id": "G101",
+   "code": "slackTokenPattern = `xox[abpors]-[A-Za-z0-9-]{10,}`"
+  },
+  {
+   "file": "src/crux/observation.go",
+   "rule_id": "G101",
+   "code": "CopilotTokenSourceCLIConfig = \"an in-agent /login promoted from the shared Copilot CLI config\""
+  },
+  {
+   "file": "src/crux/observation.go",
+   "rule_id": "G101",
+   "code": "const CopilotUserTokenPath = \"/data/copilot-user-token\""
+  },
+  {
+   "file": "src/crux/process_types.go",
+   "rule_id": "G101",
+   "code": "StartFailureCredentialMissing StartFailureClass = \"credential-missing\""
+  },
+  {
+   "file": "src/crux/process_types.go",
+   "rule_id": "G101",
+   "code": "StartFailureCredentialRejected StartFailureClass = \"credential-rejected\""
+  },
+  {
+   "file": "src/crux/proxy/inference_resilience.go",
+   "rule_id": "G404",
+   "code": "return time.Duration(rand.Int64N(int64(n) + 1))"
+  },
+  {
+   "file": "src/crux/proxy/reference_repos.go",
+   "rule_id": "G704",
+   "code": "req, err := http.NewRequest(http.MethodGet, url, nil)"
+  },
+  {
+   "file": "src/crux/proxy/reference_repos.go",
+   "rule_id": "G704",
+   "code": "resp, err := client.Do(req)"
+  },
+  {
+   "file": "src/crux/pushbroker/pushbroker.go",
+   "rule_id": "G101",
+   "code": "const pushTokenEnvVar = \"HIVE_PUSH_TOKEN\""
+  },
+  {
+   "file": "src/crux/ringbuffer.go",
+   "rule_id": "G115",
+   "code": "n := int(r.total - seq)"
+  },
+  {
+   "file": "src/crux/ringbuffer.go",
+   "rule_id": "G115",
+   "code": "oldest := r.total - uint64(r.count)"
+  },
+  {
+   "file": "src/crux/runs/service.go",
+   "rule_id": "G118",
+   "code": "go s.execute(ctx, rec.ID, p, a)"
+  },
+  {
+   "file": "src/crux/sandbox/relays.go",
+   "rule_id": "G703",
+   "code": "return os.WriteFile(dst, data, relayFileMode)"
+  },
+  {
+   "file": "src/crux/sandbox/substrate.go",
+   "rule_id": "G101",
+   "code": "SubstrateDefaultTokenFile = \"/var/run/secrets/ate/token\""
+  },
+  {
+   "file": "src/crux/sandbox/substrate_client.go",
+   "rule_id": "G402",
+   "code": "cfg := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: o.InsecureTLS} //nolint:gosec // operator opt-in"
+  },
+  {
+   "file": "src/crux/sandbox/substrate_client.go",
+   "rule_id": "G402",
+   "code": "cfg := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: host, InsecureSkipVerify: o.InsecureTLS} //nolint:gosec // operator opt-in"
+  },
+  {
+   "file": "src/crux/sandbox/substrate_preflight_cluster.go",
+   "rule_id": "G101",
+   "code": "var substrateKubeTokenPath = \"/var/run/secrets/kubernetes.io/serviceaccount/token\""
+  },
+  {
+   "file": "src/crux/sandbox/substrate_spec.go",
+   "rule_id": "G115",
+   "code": "add(host, int32(port))"
+  },
+  {
+   "file": "src/crux/sandbox/substratebridge/bridge.go",
+   "rule_id": "G115",
+   "code": "f, err := root.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&os.ModePerm|0o600)"
+  },
+  {
+   "file": "src/crux/sandbox/substratebridge/bridge.go",
+   "rule_id": "G115",
+   "code": "return root.MkdirAll(rel, os.FileMode(hdr.Mode)&os.ModePerm|0o700)"
+  },
+  {
+   "file": "src/crux/sandbox/substratebridge/bridge.go",
+   "rule_id": "G122",
+   "code": "f, err := os.Open(path)"
+  },
+  {
+   "file": "src/crux/sandbox/substratebridge/bridge.go",
+   "rule_id": "G702",
+   "code": "cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...)"
+  },
+  {
+   "file": "src/crux/serve/metrics.go",
+   "rule_id": "G101",
+   "code": "rejectNoTokenConfigured = \"no_token_configured\""
+  },
+  {
+   "file": "src/crux/sessiontaint/taint.go",
+   "rule_id": "G101",
+   "code": "LabelCredentialedResponse Label = \"credentialed-response\""
+  },
+  {
+   "file": "src/crux/sessiontaint/taint.go",
+   "rule_id": "G101",
+   "code": "RuleCredPublicWrite = \"taint.cred.public-write\""
+  },
+  {
+   "file": "src/crux/toolapprove/shellbrace.go",
+   "rule_id": "G115",
+   "code": "s = string(rune(v))"
+  },
+  {
+   "file": "src/crux/toolapprove/shellbrace.go",
+   "rule_id": "G115",
+   "code": "span = uint64(from) - uint64(to)",
+   "count": 2
+  },
+  {
+   "file": "src/crux/toolapprove/shellbrace.go",
+   "rule_id": "G115",
+   "code": "span = uint64(to) - uint64(from)",
+   "count": 2
+  },
+  {
+   "file": "src/crux/toolapprove/shellrm.go",
+   "rule_id": "G115",
+   "code": "emit(byte(v))",
+   "count": 2
+  },
+  {
+   "file": "src/crux/toolapprove/shellrm.go",
+   "rule_id": "G115",
+   "code": "for _, b := range buf[:utf8.EncodeRune(buf[:], rune(v))] {"
+  },
+  {
+   "file": "src/crux/watsonx/iam.go",
+   "rule_id": "G101",
+   "code": "IAMTokenURL = \"https://iam.cloud.ibm.com/identity/token\""
+  },
+  {
+   "file": "src/crux/watsonx/iam.go",
+   "rule_id": "G101",
+   "code": "iamAPIKeyGrantType = \"urn:ibm:params:oauth:grant-type:apikey\""
+  },
+  {
+   "file": "src/internal/tools/pricetable/add.go",
+   "rule_id": "G703",
+   "code": "if err := os.WriteFile(opts.pricing, out, 0o644); err != nil {"
+  },
+  {
+   "file": "src/pkg/config/ask.go",
+   "rule_id": "G101",
+   "code": "EnvAskKapaAPIKeyFile = \"HIVE_ASK_KAPA_API_KEY_FILE\""
+  },
+  {
+   "file": "src/pkg/config/config.go",
+   "rule_id": "G101",
+   "code": "BobTokensPerCoinEnvVar = \"HIVE_BOB_TOKENS_PER_COIN\""
+  },
+  {
+   "file": "src/pkg/config/config.go",
+   "rule_id": "G101",
+   "code": "DefaultLLMDAPIKeyEnv = \"HIVE_LLMD_API_KEY\""
+  },
+  {
+   "file": "src/pkg/config/config.go",
+   "rule_id": "G101",
+   "code": "DefaultVLLMAPIKeyEnv = \"HIVE_VLLM_API_KEY\""
+  },
+  {
+   "file": "src/pkg/config/config.go",
+   "rule_id": "G101",
+   "code": "var dashboardAuthTokenFile = \"/secrets/dashboard-token\""
+  },
+  {
+   "file": "src/pkg/config/config.go",
+   "rule_id": "G101",
+   "code": "var saTokenFile = \"/var/run/secrets/kubernetes.io/serviceaccount/token\""
+  },
+  {
+   "file": "src/pkg/config/config.go",
+   "rule_id": "G703",
+   "code": "data, err := os.ReadFile(path)"
+  },
+  {
+   "file": "src/pkg/config/jev.go",
+   "rule_id": "G101",
+   "code": "JevDefaultAPIKeyEnv = \"JEV_API_KEY\""
+  },
+  {
+   "file": "src/pkg/config/meetings_config.go",
+   "rule_id": "G101",
+   "code": "MeetingsLLMAPIKeyEnv = \"HIVE_MEETINGS_LLM_API_KEY\""
+  },
+  {
+   "file": "src/pkg/config/meetings_config.go",
+   "rule_id": "G101",
+   "code": "MeetingsLLMAPIKeyFileEnv = \"HIVE_MEETINGS_LLM_API_KEY_FILE\""
+  },
+  {
+   "file": "src/pkg/config/meetings_config.go",
+   "rule_id": "G101",
+   "code": "MeetingsTTSTokenEnv = \"HIVE_MEETINGS_TTS_TOKEN\""
+  },
+  {
+   "file": "src/pkg/config/meetings_config.go",
+   "rule_id": "G101",
+   "code": "MeetingsTTSTokenFileEnv = \"HIVE_MEETINGS_TTS_TOKEN_FILE\""
+  },
+  {
+   "file": "src/pkg/config/meetings_config.go",
+   "rule_id": "G101",
+   "code": "MeetingsTranscribeTokenEnv = \"HIVE_MEETINGS_TRANSCRIBE_TOKEN\""
+  },
+  {
+   "file": "src/pkg/config/meetings_config.go",
+   "rule_id": "G101",
+   "code": "MeetingsTranscribeTokenFileEnv = \"HIVE_MEETINGS_TRANSCRIBE_TOKEN_FILE\""
+  },
+  {
+   "file": "src/pkg/config/meetings_config.go",
+   "rule_id": "G101",
+   "code": "MeetingsVexaAPIKeyEnv = \"HIVE_MEETINGS_VEXA_API_KEY\""
+  },
+  {
+   "file": "src/pkg/config/meetings_config.go",
+   "rule_id": "G101",
+   "code": "MeetingsVexaAPIKeyFileEnv = \"HIVE_MEETINGS_VEXA_API_KEY_FILE\""
+  },
+  {
+   "file": "src/pkg/config/nps_config.go",
+   "rule_id": "G101",
+   "code": "NPSRelayPullSecretEnvVar = \"HIVE_NPS_RELAY_PULL_SECRET\""
+  },
+  {
+   "file": "src/pkg/cruxhost/host.go",
+   "rule_id": "G118",
+   "code": "go b.run(id, p, claim, started)"
+  },
+  {
+   "file": "src/pkg/customers/gql/resolvers.go",
+   "rule_id": "G115",
+   "code": "out = append(out, &countResolver{predicate: k, count: int32(r.p.Counts[k])})"
+  },
+  {
+   "file": "src/pkg/dashboard/api.go",
+   "rule_id": "G101",
+   "code": "var tokenAccessLogPath = \"/var/run/hive-metrics/token-access.jsonl\""
+  },
+  {
+   "file": "src/pkg/dashboard/api_auth.go",
+   "rule_id": "G101",
+   "code": "ssoErrBadToken = \"SSO_TOKEN_REJECTED\""
+  },
+  {
+   "file": "src/pkg/dashboard/api_auth.go",
+   "rule_id": "G101",
+   "code": "ssoErrMissingToken = \"SSO_MISSING_TOKEN\""
+  },
+  {
+   "file": "src/pkg/dashboard/api_auth.go",
+   "rule_id": "G101",
+   "code": "ssoErrNoSecret = \"SSO_NO_HUB_SECRET\""
+  },
+  {
+   "file": "src/pkg/dashboard/api_auth.go",
+   "rule_id": "G101",
+   "code": "var userTokenPath = \"/data/gh-user-token\""
+  },
+  {
+   "file": "src/pkg/dashboard/api_github_webhook_setup.go",
+   "rule_id": "G101",
+   "code": "auditWebhookSecretGenerated = \"github_webhook_secret_generated\""
+  },
+  {
+   "file": "src/pkg/dashboard/api_meetings_persona_preview.go",
+   "rule_id": "G101",
+   "code": "meetingsTTSAPIKeyHeader = \"X-API-Key\""
+  },
+  {
+   "file": "src/pkg/dashboard/cli_models.go",
+   "rule_id": "G101",
+   "code": "const copilotCredentialStoredCLI = \"the Copilot CLI's own stored login (hive holds no token)\""
+  },
+  {
+   "file": "src/pkg/dashboard/cli_models.go",
+   "rule_id": "G101",
+   "code": "copilotCredentialMissingState = \"credential_missing\""
+  },
+  {
+   "file": "src/pkg/dashboard/collect/fleet_stats_collector.go",
+   "rule_id": "G404",
+   "code": "return time.Duration(rand.Int63n(int64(fleetStatsStartupJitterMax)))"
+  },
+  {
+   "file": "src/pkg/dashboard/contribute_protocol.go",
+   "rule_id": "G101",
+   "code": "capCredentialAfterAccept = \"credential_after_accept\""
+  },
+  {
+   "file": "src/pkg/dashboard/contribute_select.go",
+   "rule_id": "G101",
+   "code": "taskUnavailableTokenMintFailed = \"token_mint_failed\""
+  },
+  {
+   "file": "src/pkg/dashboard/copilot_auth.go",
+   "rule_id": "G101",
+   "code": "copilotAccessTokenURL = \"https://github.com/login/oauth/access_token\""
+  },
+  {
+   "file": "src/pkg/dashboard/deployment_upgrade.go",
+   "rule_id": "G101",
+   "code": "kubernetesServiceAccountTokenPath = \"/var/run/secrets/kubernetes.io/serviceaccount/token\""
+  },
+  {
+   "file": "src/pkg/dashboard/litellm_key_store.go",
+   "rule_id": "G101",
+   "code": "litellmSecretDataKey = \"litellm_api_key\""
+  },
+  {
+   "file": "src/pkg/dashboard/onboarding.go",
+   "rule_id": "G101",
+   "code": "OnboardingKindGitHubAppCredentials = \"github-app-credentials\""
+  },
+  {
+   "file": "src/pkg/dashboard/onboarding.go",
+   "rule_id": "G101",
+   "code": "OnboardingKindGitHubAppWrongInstallation = \"github-app-wrong-installation\""
+  },
+  {
+   "file": "src/pkg/dashboard/widget_token.go",
+   "rule_id": "G101",
+   "code": "var widgetTokenPath = \"/data/widget-token.json\""
+  },
+  {
+   "file": "src/pkg/dashboard/widget_token.go",
+   "rule_id": "G101",
+   "code": "widgetTokenHeader = \"X-Hive-Widget-Token\""
+  },
+  {
+   "file": "src/pkg/extwork/managedagents/adapter.go",
+   "rule_id": "G101",
+   "code": "SettingAPIKeyEnv = \"api_key_env\""
+  },
+  {
+   "file": "src/pkg/extwork/managedagents/adapter.go",
+   "rule_id": "G101",
+   "code": "SettingAPIKeyFile = \"api_key_file\""
+  },
+  {
+   "file": "src/pkg/github/app.go",
+   "rule_id": "G101",
+   "code": "DocsTokenCachePath = \"/var/run/hive-metrics/gh-app-token-docs.cache\""
+  },
+  {
+   "file": "src/pkg/github/app.go",
+   "rule_id": "G101",
+   "code": "TokenCachePath = \"/var/run/hive-metrics/gh-app-token.cache\""
+  },
+  {
+   "file": "src/pkg/github/deviceflow.go",
+   "rule_id": "G101",
+   "code": "defaultTokenURL = \"https://github.com/login/oauth/access_token\""
+  },
+  {
+   "file": "src/pkg/github/merge_credit.go",
+   "rule_id": "G101",
+   "code": "const mergeCreditCaller = \"hive:merge_credit\""
+  },
+  {
+   "file": "src/pkg/github/merge_credit.go",
+   "rule_id": "G101",
+   "code": "const mergeCreditNoreplyDomain = \"users.noreply.github.com\""
+  },
+  {
+   "file": "src/pkg/github/proxy_token_source.go",
+   "rule_id": "G101",
+   "code": "const agentDummyTokenPrefix = \"hive-proxy-injected-\""
+  },
+  {
+   "file": "src/pkg/github/slowstart.go",
+   "rule_id": "G404",
+   "code": "gap := st.gap + time.Duration(rand.Int63n(int64(st.jitter)+1))"
+  },
+  {
+   "file": "src/pkg/github/token_access_audit.go",
+   "rule_id": "G101",
+   "code": "const TokenAccessLogPath = \"/var/run/hive-metrics/token-access.jsonl\""
+  },
+  {
+   "file": "src/pkg/github/token_access_audit.go",
+   "rule_id": "G101",
+   "code": "const TokenAccessSpoolDir = \"/var/run/hive-metrics/token-access-events\""
+  },
+  {
+   "file": "src/pkg/github/tokenidentity.go",
+   "rule_id": "G101",
+   "code": "tokenIdentityNegativeTTLEnv = \"HIVE_GITHUB_TOKEN_IDENTITY_NEGATIVE_TTL\""
+  },
+  {
+   "file": "src/pkg/github/tokenidentity.go",
+   "rule_id": "G101",
+   "code": "tokenIdentityTTLEnv = \"HIVE_GITHUB_TOKEN_IDENTITY_TTL\""
+  },
+  {
+   "file": "src/pkg/github/webhook_relay_key.go",
+   "rule_id": "G101",
+   "code": "const WebhookSecretEnvVar = \"GITHUB_WEBHOOK_SECRET\""
+  },
+  {
+   "file": "src/pkg/github/webhook_secret.go",
+   "rule_id": "G101",
+   "code": "const defaultWebhookSecretPath = \"/data/github-webhook-secret.key\""
+  },
+  {
+   "file": "src/pkg/hivectl/commands/evidence_backfill.go",
+   "rule_id": "G101",
+   "code": "evidenceBackfillTokenEnv = \"GITHUB_TOKEN\""
+  },
+  {
+   "file": "src/pkg/hivectl/commands/evidence_benchmark.go",
+   "rule_id": "G703",
+   "code": "if err := os.WriteFile(readme, []byte(updated), 0o644); err != nil {"
+  },
+  {
+   "file": "src/pkg/hub/alerts.go",
+   "rule_id": "G101",
+   "code": "AlertTypeAppCredsUndelivered = \"app-creds-undelivered\""
+  },
+  {
+   "file": "src/pkg/hub/auth_audit.go",
+   "rule_id": "G704",
+   "code": "req, err := http.NewRequest(http.MethodPost, server+\"/\"+topic, strings.NewReader(message))"
+  },
+  {
+   "file": "src/pkg/hub/auth_audit.go",
+   "rule_id": "G704",
+   "code": "resp, err := client.Do(req)"
+  },
+  {
+   "file": "src/pkg/hub/drift.go",
+   "rule_id": "G101",
+   "code": "DriftKindAppCredsOperator = \"app-creds-operator\""
+  },
+  {
+   "file": "src/pkg/hub/github_api_auth.go",
+   "rule_id": "G101",
+   "code": "const hubGitHubTokenEnv = \"HIVE_HUB_GITHUB_TOKEN\""
+  },
+  {
+   "file": "src/pkg/hub/hosted_namespace_identity.go",
+   "rule_id": "G404",
+   "code": "b[i] = chars[rand.Intn(len(chars))]"
+  },
+  {
+   "file": "src/pkg/hub/identity_canonical.go",
+   "rule_id": "G115",
+   "code": "b.WriteByte(byte(hi<<4 | lo))"
+  },
+  {
+   "file": "src/pkg/hub/mail_relay.go",
+   "rule_id": "G101",
+   "code": "envHubMailToken = \"HIVE_HUB_MAIL_TOKEN\""
+  },
+  {
+   "file": "src/pkg/hub/mail_relay.go",
+   "rule_id": "G703",
+   "code": "_ = os.Remove(f.Name())"
+  },
+  {
+   "file": "src/pkg/hub/mail_reply_ledger.go",
+   "rule_id": "G703",
+   "code": "if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {"
+  },
+  {
+   "file": "src/pkg/hub/marketplace_refresh.go",
+   "rule_id": "G704",
+   "code": "req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+\"/repos/\"+owner+\"/\"+name+\"/tarball/\"+meta.DefaultBranch, nil)"
+  },
+  {
+   "file": "src/pkg/hub/marketplace_refresh.go",
+   "rule_id": "G704",
+   "code": "req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)"
+  },
+  {
+   "file": "src/pkg/hub/marketplace_refresh.go",
+   "rule_id": "G704",
+   "code": "resp, err := client.Do(req)",
+   "count": 2
+  },
+  {
+   "file": "src/pkg/hub/marketplace_store.go",
+   "rule_id": "G703",
+   "code": "data, err := os.ReadFile(filepath.Join(st.refreshDir(), marketplaceRepoSlug(repo)+\".json\"))"
+  },
+  {
+   "file": "src/pkg/hub/oauth.go",
+   "rule_id": "G101",
+   "code": "defaultGHTokenURL = \"https://github.com/login/oauth/access_token\""
+  },
+  {
+   "file": "src/pkg/hub/perhive_env_reconcile.go",
+   "rule_id": "G101",
+   "code": "envHubSecretMaster = \"HIVE_HUB_SECRET\""
+  },
+  {
+   "file": "src/pkg/hub/placeholder_health.go",
+   "rule_id": "G101",
+   "code": "const placeholderTokensNote = \"Unassigned \u2014 no workload by design\""
+  },
+  {
+   "file": "src/pkg/hub/pool_replenisher.go",
+   "rule_id": "G404",
+   "code": "b[i] = chars[rand.Intn(len(chars))]"
+  },
+  {
+   "file": "src/pkg/hub/quadrant_curve.go",
+   "rule_id": "G101",
+   "code": "critTokensPerDay = \"tokens_per_day\""
+  },
+  {
+   "file": "src/pkg/hub/quadrant_curve.go",
+   "rule_id": "G101",
+   "code": "critTokensPerPR = \"tokens_per_merge\""
+  },
+  {
+   "file": "src/pkg/hub/saas_auth.go",
+   "rule_id": "G101",
+   "code": "ghTokenValidateCaller = \"agent:hub-bearer-validate\""
+  },
+  {
+   "file": "src/pkg/hub/saas_provision.go",
+   "rule_id": "G404",
+   "code": "suffix[i] = chars[rand.Intn(len(chars))]"
+  },
+  {
+   "file": "src/pkg/hub/saas_users_admin.go",
+   "rule_id": "G703",
+   "code": "cleanup := func() { _ = os.Remove(tmpPath) }"
+  },
+  {
+   "file": "src/pkg/hub/saas_users_admin.go",
+   "rule_id": "G703",
+   "code": "if err := os.Rename(tmpPath, path); err != nil {"
+  },
+  {
+   "file": "src/pkg/hub/selfservice_api.go",
+   "rule_id": "G101",
+   "code": "selfServiceRefusedNoToken = \"no_github_token\""
+  },
+  {
+   "file": "src/pkg/hub/selfservice_v1_api.go",
+   "rule_id": "G101",
+   "code": "hubV1ProofHubSessionToken = \"hub-session-token\""
+  },
+  {
+   "file": "src/pkg/hub/selfservice_v1_proof.go",
+   "rule_id": "G101",
+   "code": "hubV1ProofGitHubUserToken = \"github-user-token\""
+  },
+  {
+   "file": "src/pkg/hub/selfservice_v1_proof.go",
+   "rule_id": "G101",
+   "code": "hubV1ProofGitHubUserTokenEnv = \"HIVE_HUB_PROOF_GITHUB_USER_TOKEN\""
+  },
+  {
+   "file": "src/pkg/hub/selfservice_v1_proof.go",
+   "rule_id": "G101",
+   "code": "hubV1ProofReasonTokenUser = \"token_user_mismatch\""
+  },
+  {
+   "file": "src/pkg/hub/selfservice_v1_proof.go",
+   "rule_id": "G101",
+   "code": "hubV1ProofTokenHeader = \"X-Hive-Proof-Token\""
+  },
+  {
+   "file": "src/pkg/hub/selfservice_v1_proof.go",
+   "rule_id": "G101",
+   "code": "selfServiceRefusedProofTokenFail = \"proof_token_refused\""
+  },
+  {
+   "file": "src/pkg/hub/server.go",
+   "rule_id": "G101",
+   "code": "var hubSecretPath = \"/data/saas/hub-secret.key\""
+  },
+  {
+   "file": "src/pkg/hub/slack.go",
+   "rule_id": "G101",
+   "code": "slackTokenEnvVar = \"HIVE_HUB_SLACK_BOT_TOKEN\""
+  },
+  {
+   "file": "src/pkg/hub/spoke/cluster_metrics.go",
+   "rule_id": "G101",
+   "code": "k8sTokenPath = \"/var/run/secrets/kubernetes.io/serviceaccount/token\""
+  },
+  {
+   "file": "src/pkg/hub/spoke/sso.go",
+   "rule_id": "G101",
+   "code": "ssoTokenVersion = \"hive-sso-v2\""
+  },
+  {
+   "file": "src/pkg/hub/spoke/terminal_assertion.go",
+   "rule_id": "G101",
+   "code": "envHubSecret = \"HIVE_HUB_SECRET\""
+  },
+  {
+   "file": "src/pkg/hub/webhook.go",
+   "rule_id": "G101",
+   "code": "const sharedKeySecretName = \"hive-app-key\""
+  },
+  {
+   "file": "src/pkg/hub/webhook.go",
+   "rule_id": "G101",
+   "code": "webhookSecretEnvVar = \"GITHUB_WEBHOOK_SECRET\""
+  },
+  {
+   "file": "src/pkg/hub/webhook.go",
+   "rule_id": "G101",
+   "code": "webhookSecretPath = \"/data/saas/webhook-secret.key\""
+  },
+  {
+   "file": "src/pkg/hubbackup/backup.go",
+   "rule_id": "G122",
+   "code": "content, readErr := os.ReadFile(path)"
+  },
+  {
+   "file": "src/pkg/hubbackup/builder_export.go",
+   "rule_id": "G122",
+   "code": "content, readErr := os.ReadFile(path)"
+  },
+  {
+   "file": "src/pkg/hubbackup/objectstore.go",
+   "rule_id": "G704",
+   "code": "req, err := http.NewRequest(method, url, rdr)"
+  },
+  {
+   "file": "src/pkg/hubbackup/objectstore.go",
+   "rule_id": "G704",
+   "code": "resp, err := o.client.Do(req)"
+  },
+  {
+   "file": "src/pkg/jev/cli.go",
+   "rule_id": "G704",
+   "code": "hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(endpoint, \"/\")+DecidePath, bytes.NewReader(body))"
+  },
+  {
+   "file": "src/pkg/jev/cli.go",
+   "rule_id": "G704",
+   "code": "resp, err := client.Do(hreq)"
+  },
+  {
+   "file": "src/pkg/keystore/openbao/openbao.go",
+   "rule_id": "G101",
+   "code": "EnvToken = \"HIVE_OPENBAO_TOKEN\""
+  },
+  {
+   "file": "src/pkg/keystore/openbao/openbao.go",
+   "rule_id": "G101",
+   "code": "EnvTokenFile = \"HIVE_OPENBAO_TOKEN_FILE\""
+  },
+  {
+   "file": "src/pkg/knowledge/climemory/drain.go",
+   "rule_id": "G703",
+   "code": "if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {"
+  },
+  {
+   "file": "src/pkg/knowledge/connector/context7.go",
+   "rule_id": "G101",
+   "code": "const Context7APIKeyEnv = \"CONTEXT7_API_KEY\""
+  },
+  {
+   "file": "src/pkg/knowledge/connector/factwriter.go",
+   "rule_id": "G703",
+   "code": "if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {"
+  },
+  {
+   "file": "src/pkg/knowledge/connector/githubwiki.go",
+   "rule_id": "G122",
+   "code": "data, err := os.ReadFile(path)"
+  },
+  {
+   "file": "src/pkg/knowledge/connector/googlemeet.go",
+   "rule_id": "G101",
+   "code": "googleMeetJWTBearerGrant = \"urn:ietf:params:oauth:grant-type:jwt-bearer\""
+  },
+  {
+   "file": "src/pkg/knowledge/connector/googlemeet.go",
+   "rule_id": "G101",
+   "code": "googleTokenURL = \"https://oauth2.googleapis.com/token\""
+  },
+  {
+   "file": "src/pkg/knowledge/connector/plaud_auth_complete.go",
+   "rule_id": "G101",
+   "code": "plaudTokenFile = \".plaud/tokens-mcp.json\""
+  },
+  {
+   "file": "src/pkg/knowledge/connector/publish.go",
+   "rule_id": "G122",
+   "code": "data, err := os.ReadFile(path)"
+  },
+  {
+   "file": "src/pkg/knowledge/connector/repowiki.go",
+   "rule_id": "G122",
+   "code": "data, err := os.ReadFile(p)"
+  },
+  {
+   "file": "src/pkg/knowledge/connector/webex.go",
+   "rule_id": "G101",
+   "code": "webexTokenFile = \".webex/tokens.json\""
+  },
+  {
+   "file": "src/pkg/knowledge/connector/zoom.go",
+   "rule_id": "G101",
+   "code": "zoomTokenFile = \".zoom/tokens.json\""
+  },
+  {
+   "file": "src/pkg/knowledge/docsource.go",
+   "rule_id": "G703",
+   "code": "if err := os.WriteFile(artifactPath, content, 0o644); err != nil {"
+  },
+  {
+   "file": "src/pkg/knowledge/embedding.go",
+   "rule_id": "G115",
+   "code": "idx := h % uint64(e.dim)"
+  },
+  {
+   "file": "src/pkg/knowledge/filestore.go",
+   "rule_id": "G122",
+   "code": "data, err := os.ReadFile(path)"
+  },
+  {
+   "file": "src/pkg/knowledge/gitsync.go",
+   "rule_id": "G703",
+   "code": "if err := os.WriteFile(dst, data, 0o644); err != nil {"
+  },
+  {
+   "file": "src/pkg/knowledge/lifecycle.go",
+   "rule_id": "G703",
+   "code": "if err := os.WriteFile(tmpPath, []byte(updated), 0o644); err != nil {"
+  },
+  {
+   "file": "src/pkg/knowledge/suggestion.go",
+   "rule_id": "G122",
+   "code": "data, err := os.ReadFile(p)"
+  },
+  {
+   "file": "src/pkg/knowledge/suggestion.go",
+   "rule_id": "G703",
+   "code": "if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {"
+  },
+  {
+   "file": "src/pkg/linearagent/oauth.go",
+   "rule_id": "G101",
+   "code": "TokenURL = \"https://api.linear.app/oauth/token\""
+  },
+  {
+   "file": "src/pkg/linearagent/oauth.go",
+   "rule_id": "G101",
+   "code": "clientSecretEnv = \"LINEAR_CLIENT_SECRET\""
+  },
+  {
+   "file": "src/pkg/linearagent/webhook.go",
+   "rule_id": "G101",
+   "code": "webhookSecretEnv = \"LINEAR_WEBHOOK_SECRET\""
+  },
+  {
+   "file": "src/pkg/mailin/config.go",
+   "rule_id": "G101",
+   "code": "DefaultHubTokenFile = \"/var/run/secrets/hive-mx/token\""
+  },
+  {
+   "file": "src/pkg/mailin/config.go",
+   "rule_id": "G101",
+   "code": "EnvHubTokenFile = \"HIVE_MX_HUB_TOKEN_FILE\""
+  },
+  {
+   "file": "src/pkg/meetings/meetllm/cli.go",
+   "rule_id": "G101",
+   "code": "EnvClaudeOAuthToken = \"CLAUDE_CODE_OAUTH_TOKEN\""
+  },
+  {
+   "file": "src/pkg/meetings/meetllm/cli.go",
+   "rule_id": "G101",
+   "code": "EnvCopilotToken = \"COPILOT_GITHUB_TOKEN\""
+  },
+  {
+   "file": "src/pkg/meetings/meetllm/meetllm.go",
+   "rule_id": "G101",
+   "code": "EnvAPIKey = \"HIVE_MEETING_LLM_API_KEY\""
+  },
+  {
+   "file": "src/pkg/meetings/meetllm/meetllm.go",
+   "rule_id": "G101",
+   "code": "EnvMaxTokens = \"HIVE_MEETING_LLM_MAX_TOKENS\""
+  },
+  {
+   "file": "src/pkg/outcomebench/bench.go",
+   "rule_id": "G122",
+   "code": "data, rerr := os.ReadFile(path)"
+  },
+  {
+   "file": "src/pkg/outcomebench/raster.go",
+   "rule_id": "G115",
+   "code": "chunk = binary.BigEndian.AppendUint32(chunk, uint32(len(payload)))"
+  },
+  {
+   "file": "src/pkg/releasesentinel/git_retagger.go",
+   "rule_id": "G101",
+   "code": "retagTokenEnvVar = \"HIVE_RELEASE_SENTINEL_TOKEN\""
+  },
+  {
+   "file": "src/pkg/rotation/copilot_display.go",
+   "rule_id": "G101",
+   "code": "var copilotUserTokenPath = \"/data/copilot-user-token\""
+  },
+  {
+   "file": "src/pkg/terminalassert/terminal_assertion.go",
+   "rule_id": "G101",
+   "code": "envHubSecret = \"HIVE_HUB_SECRET\""
+  },
+  {
+   "file": "src/pkg/tracing/reach.go",
+   "rule_id": "G115",
+   "code": "if codes.Code(s.status.Load()) != codes.Ok {"
+  },
+  {
+   "file": "src/pkg/tracing/reach.go",
+   "rule_id": "G115",
+   "code": "if s.ended.CompareAndSwap(false, true) && codes.Code(s.status.Load()) == codes.Error {"
+  },
+  {
+   "file": "src/pkg/tracing/semconv.go",
+   "rule_id": "G101",
+   "code": "AttrGenAIUsageInputTokens = \"gen_ai.usage.input_tokens\""
+  },
+  {
+   "file": "src/pkg/tracing/semconv.go",
+   "rule_id": "G101",
+   "code": "AttrGenAIUsageOutputTokens = \"gen_ai.usage.output_tokens\""
+  },
+  {
+   "file": "src/pkg/tui/client/terminal.go",
+   "rule_id": "G101",
+   "code": "TtydCredentialEnv = \"HIVE_TTYD_CREDENTIAL\""
+  },
+  {
+   "file": "src/pkg/workflowmodel/ingest/cluster/kubectl.go",
+   "rule_id": "G101",
+   "code": "const inClusterTokenPath = \"/var/run/secrets/kubernetes.io/serviceaccount/token\""
+  },
+  {
+   "file": "src/pkg/workflowmodel/tekton/observe.go",
+   "rule_id": "G101",
+   "code": "inClusterTokenPath = \"/var/run/secrets/kubernetes.io/serviceaccount/token\""
+  }
+ ]
+}

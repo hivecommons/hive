@@ -8,33 +8,43 @@ import (
 
 	"github.com/hivecommons/hive/pkg/auditchain"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // auditVerifySubcommand checks the audit log's hash chain (#19439):
 //
-//	hive audit-verify [--json] [path]
+//	hive audit-verify [--json] [--token-access] [path]
 //
-// path defaults to /data/audit.jsonl; its rotated backups are read too. Exit
+// path defaults to /data/audit.jsonl; its rotated backups are read too.
+// --token-access checks the token-access log instead. Exit
 // status 0 means every chained row verified, 1 that a problem was found, 2
 // that the log could not be read.
 const auditVerifySubcommand = "audit-verify"
+
+// tokenAccessVerifyPath is the log --token-access checks; a var for tests.
+var tokenAccessVerifyPath = github.TokenAccessLogPath
 
 func runAuditVerify(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet(auditVerifySubcommand, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print the report as JSON")
+	tokenAccess := fs.Bool("token-access", false, "verify the token-access log ("+github.TokenAccessLogPath+") instead of the audit log")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: hive audit-verify [--json] [path]")
+		fmt.Fprintln(stderr, "usage: hive audit-verify [--json] [--token-access] [path]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if fs.NArg() > 1 {
+	if fs.NArg() > 1 || (*tokenAccess && fs.NArg() > 0) {
 		fs.Usage()
 		return 2
 	}
-	report, err := dashboard.VerifyAuditLog(fs.Arg(0))
+	path := fs.Arg(0)
+	if *tokenAccess {
+		path = tokenAccessVerifyPath
+	}
+	report, err := dashboard.VerifyAuditLog(path)
 	if err != nil {
 		fmt.Fprintf(stderr, "audit-verify: %v\n", err)
 		return 2
@@ -57,7 +67,13 @@ func runAuditVerify(args []string, stdout, stderr io.Writer) int {
 		for _, p := range report.Problems {
 			fmt.Fprintf(stdout, "PROBLEM %s\n", p)
 		}
-		if report.OK() {
+		switch {
+		case !report.OK():
+		case *tokenAccess:
+			// The hub holds no copy of this head yet, so a cut-off tail or a
+			// rebuilt chain is not visible from here.
+			fmt.Fprintln(stdout, "OK: chain intact.")
+		default:
 			fmt.Fprintln(stdout, "OK: chain intact. Compare the head with the hub's audit_chain_seq/audit_chain_head to rule out a truncated or rebuilt chain.")
 		}
 	}

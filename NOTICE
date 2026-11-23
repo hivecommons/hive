@@ -273,9 +273,9 @@ Source:   https://github.com/cel-expr/cel-spec/blob/v0.25.3/LICENSE
 -----------------------------------------------------------------------------
 
 Package:  github.com/ai-openshell/sdk-go
-Version:  v0.1.8
+Version:  v0.1.9
 License:  Apache-2.0
-Source:   https://github.com/ai-openshell/sdk-go/blob/v0.1.8/LICENSE
+Source:   https://github.com/ai-openshell/sdk-go/blob/v0.1.9/LICENSE
 
 Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 

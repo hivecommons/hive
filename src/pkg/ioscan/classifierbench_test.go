@@ -16,8 +16,10 @@ package ioscan_test
 // corpus from redteam_test.go, converted in memory so the two cannot drift.
 //
 // The benchmark spends real model calls, so it never runs in the default test
-// run and there is deliberately no CI workflow for it: a maintainer runs it
-// locally with their own key. Enable it with IOSCAN_CLASSIFIER_BENCH=1:
+// run. A maintainer runs it locally with their own key, and the non-blocking
+// .github/workflows/ioscan-classifier-bench.yml job (hivecommons/hive#19516)
+// runs it against GitHub Models with the job's own GITHUB_TOKEN, so no
+// repository secret is involved. Enable it with IOSCAN_CLASSIFIER_BENCH=1:
 //
 //	IOSCAN_CLASSIFIER_BENCH=1 \
 //	IOSCAN_CLASSIFIER_BENCH_OPENAI_ENDPOINT=https://api.openai.com \
@@ -75,6 +77,8 @@ const (
 	benchEnvWarn      = "IOSCAN_CLASSIFIER_BENCH_WARN_THRESHOLD"
 	benchEnvBlock     = "IOSCAN_CLASSIFIER_BENCH_BLOCK_THRESHOLD"
 	benchEnvReport    = "IOSCAN_CLASSIFIER_BENCH_REPORT"
+	benchEnvInterval  = "IOSCAN_CLASSIFIER_BENCH_MIN_INTERVAL"
+	benchEnvPerClass  = "IOSCAN_CLASSIFIER_BENCH_MAX_PER_CLASS"
 
 	defaultBenchMaxTokens = 250_000
 	defaultBenchMaxCalls  = ioscan.DefaultCLIClassifierDailyQuota
@@ -323,8 +327,80 @@ func TestClassifierBenchCorpusLoads(t *testing.T) {
 	}
 }
 
+// sampleBenchCases keeps at most perClass rows of each (split, label) class,
+// choosing by ascending sha256(id) so the sample is stable across runs and
+// corpus order. perClass <= 0 keeps everything. Input order is preserved.
+func sampleBenchCases(cases []benchCase, perClass int) []benchCase {
+	if perClass <= 0 {
+		return cases
+	}
+	byClass := map[string][]benchCase{}
+	for _, c := range cases {
+		k := c.Split + "/" + c.Label
+		byClass[k] = append(byClass[k], c)
+	}
+	keep := map[string]bool{}
+	for _, cs := range byClass {
+		sort.Slice(cs, func(i, j int) bool {
+			hi, hj := sha256.Sum256([]byte(cs[i].ID)), sha256.Sum256([]byte(cs[j].ID))
+			return bytes.Compare(hi[:], hj[:]) < 0
+		})
+		for i := 0; i < len(cs) && i < perClass; i++ {
+			keep[cs[i].ID] = true
+		}
+	}
+	out := make([]benchCase, 0, len(keep))
+	for _, c := range cases {
+		if keep[c.ID] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestSampleBenchCasesIsStablePerClass(t *testing.T) {
+	var cases []benchCase
+	for i := 0; i < 20; i++ {
+		for _, split := range []string{"dev", "heldout"} {
+			for _, label := range []string{"attack", "benign"} {
+				cases = append(cases, benchCase{ID: fmt.Sprintf("%s-%s-%d", split, label, i), Label: label, Split: split, Source: "s", Text: "x"})
+			}
+		}
+	}
+	got := sampleBenchCases(cases, 3)
+	if len(got) != 12 {
+		t.Fatalf("got %d rows, want 3 per class across 4 classes", len(got))
+	}
+	counts := map[string]int{}
+	ids := map[string]bool{}
+	for _, c := range got {
+		counts[c.Split+"/"+c.Label]++
+		ids[c.ID] = true
+	}
+	for k, n := range counts {
+		if n != 3 {
+			t.Errorf("class %s kept %d rows, want 3", k, n)
+		}
+	}
+	reversed := make([]benchCase, len(cases))
+	for i, c := range cases {
+		reversed[len(cases)-1-i] = c
+	}
+	for _, c := range sampleBenchCases(reversed, 3) {
+		if !ids[c.ID] {
+			t.Errorf("sample depends on corpus order: %s", c.ID)
+		}
+	}
+	if len(sampleBenchCases(cases, 0)) != len(cases) {
+		t.Error("perClass 0 must keep every row")
+	}
+}
+
 // usageMeter is a local reverse proxy in front of an OpenAI-compatible
-// endpoint. It sums the `usage` block of each completion and refuses to
+// endpoint. A target URL whose path ends in /chat/completions (GitHub Models'
+// https://models.github.ai/inference/chat/completions) is used as the exact
+// completions URL; any other target is a base URL that the classifier's
+// /v1/chat/completions path is joined onto. It sums the `usage` block of each completion and refuses to
 // forward once maxTokens is spent, so a run has a hard spend ceiling no
 // matter how many cases or retries it makes.
 type usageMeter struct {
@@ -334,6 +410,11 @@ type usageMeter struct {
 	reported   int64 // responses that carried a usage block
 	refused    int64
 	maxTokens  int64
+	// minInterval spaces forwarded requests, retries included, so a run stays
+	// under a per-minute rate limit such as GitHub Models' free tier.
+	minInterval time.Duration
+	paceMu      sync.Mutex
+	lastForward time.Time
 }
 
 type benchUsage struct {
@@ -352,8 +433,12 @@ func (m *usageMeter) snapshot() benchUsage {
 func (m *usageMeter) handler(target *url.URL) http.Handler {
 	rp := httputil.NewSingleHostReverseProxy(target)
 	base := rp.Director
+	exact := strings.HasSuffix(strings.TrimRight(target.Path, "/"), "/chat/completions")
 	rp.Director = func(r *http.Request) {
 		base(r)
+		if exact {
+			r.URL.Path, r.URL.RawPath = target.Path, ""
+		}
 		r.Host = target.Host
 		// Ask for an identity body so ModifyResponse can read the usage block.
 		r.Header.Del("Accept-Encoding")
@@ -395,8 +480,27 @@ func (m *usageMeter) handler(target *url.URL) http.Handler {
 			http.Error(w, "classifier bench token budget spent", http.StatusPaymentRequired)
 			return
 		}
+		m.pace(r.Context())
 		rp.ServeHTTP(w, r)
 	})
+}
+
+// pace blocks until minInterval has passed since the previous forward.
+func (m *usageMeter) pace(ctx context.Context) {
+	if m.minInterval <= 0 {
+		return
+	}
+	m.paceMu.Lock()
+	defer m.paceMu.Unlock()
+	if wait := time.Until(m.lastForward.Add(m.minInterval)); wait > 0 {
+		t := time.NewTimer(wait)
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+		}
+	}
+	m.lastForward = time.Now()
 }
 
 // benchBackend is one classifier under test; meter is nil when the backend
@@ -612,6 +716,49 @@ func TestClassifierBenchMetersUsageAndEnforcesBudget(t *testing.T) {
 	}
 }
 
+func TestClassifierBenchMeterExactCompletionsURLAndPacing(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		verdict, _ := json.Marshal(map[string]any{"score": 0.1, "category": "benign", "rationale": "stub"})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": string(verdict)}}},
+			"usage":   map[string]int{"prompt_tokens": 1, "completion_tokens": 1},
+		})
+	}))
+	t.Cleanup(upstream.Close)
+	target, _ := url.Parse(upstream.URL + "/inference/chat/completions")
+	meter := &usageMeter{minInterval: 50 * time.Millisecond}
+	proxy := httptest.NewServer(meter.handler(target))
+	t.Cleanup(proxy.Close)
+	cl, err := ioscan.NewLLMClassifier(ioscan.LLMClassifierConfig{Endpoint: proxy.URL, Model: "stub"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	for _, text := range []string{"one", "two", "three"} {
+		if _, err := cl.Score(context.Background(), text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if el := time.Since(start); el < 100*time.Millisecond {
+		t.Errorf("three paced calls took %v, want at least two 50ms intervals", el)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paths) != 3 {
+		t.Errorf("upstream saw %d calls, want 3", len(paths))
+	}
+	for _, p := range paths {
+		if p != "/inference/chat/completions" {
+			t.Errorf("forwarded to %q, want the exact completions path", p)
+		}
+	}
+}
+
 func benchEnvFloat(t *testing.T, name string) float64 {
 	t.Helper()
 	raw := strings.TrimSpace(os.Getenv(name))
@@ -660,6 +807,7 @@ func TestClassifierBench(t *testing.T) {
 		}
 		cases = kept
 	}
+	cases = sampleBenchCases(cases, benchEnvInt(t, benchEnvPerClass, 0))
 	model := strings.TrimSpace(os.Getenv(benchEnvModel))
 	backends := map[string]benchBackend{}
 	if ep := strings.TrimRight(strings.TrimSpace(os.Getenv(benchEnvOpenAI)), "/"); ep != "" {
@@ -668,13 +816,24 @@ func TestClassifierBench(t *testing.T) {
 			t.Fatalf("%s=%q: want an absolute URL", benchEnvOpenAI, ep)
 		}
 		meter := &usageMeter{maxTokens: int64(benchEnvInt(t, benchEnvMaxTokens, defaultBenchMaxTokens))}
+		if raw := strings.TrimSpace(os.Getenv(benchEnvInterval)); raw != "" {
+			d, err := time.ParseDuration(raw)
+			if err != nil || d < 0 {
+				t.Fatalf("%s=%q: want a non-negative duration such as 5s", benchEnvInterval, raw)
+			}
+			meter.minInterval = d
+		}
 		proxy := httptest.NewServer(meter.handler(target))
 		t.Cleanup(proxy.Close)
 		cl, err := ioscan.NewLLMClassifier(ioscan.LLMClassifierConfig{Endpoint: proxy.URL, APIKey: os.Getenv(benchEnvAPIKey), Model: model})
 		if err != nil {
 			t.Fatal(err)
 		}
-		backends["openai-compatible"] = benchBackend{classifier: cl, meter: meter}
+		name := "openai-compatible"
+		if model != "" {
+			name += ":" + model
+		}
+		backends[name] = benchBackend{classifier: cl, meter: meter}
 	}
 	maxCalls := benchEnvInt(t, benchEnvMaxCalls, defaultBenchMaxCalls)
 	for _, name := range strings.Fields(os.Getenv(benchEnvBackends)) {

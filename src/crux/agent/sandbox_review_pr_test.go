@@ -244,7 +244,7 @@ func TestSandboxReviewKickChecksOutForkPRAndWritesFile(t *testing.T) {
 	if !strings.HasPrefix(prompt, sandboxReviewPromptMarker) {
 		t.Fatalf("prompt does not open with the review section: %q", prompt)
 	}
-	for _, want := range []string{".hive/pr/7.json", "local branch pr-7", "refs/pull/7/head", "UNTRUSTED DATA", "review-only", "Review PR o/r#7."} {
+	for _, want := range []string{".hive/pr/7.json", "local branch pr-7", "refs/pull/7/head", "UNTRUSTED DATA", "review-only", "Review PR o/r#7.", `PR description (the "body" field)`, "never report it as unavailable", sandboxReviewNoGHNotice} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q:\n%s", want, prompt)
 		}
@@ -304,7 +304,7 @@ func TestSandboxReviewKickReaderErrors(t *testing.T) {
 
 func TestSandboxReviewKickWithoutReaderStillChecksOut(t *testing.T) {
 	runner := &reviewRunner{}
-	res, _, _, err := runReviewKick(t, runner, nil, 7)
+	res, prompt, _, err := runReviewKick(t, runner, nil, 7)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -314,6 +314,16 @@ func TestSandboxReviewKickWithoutReaderStillChecksOut(t *testing.T) {
 	}
 	if !strings.Contains(runner.fetches[1], "+refs/heads/main:refs/remotes/origin/main") {
 		t.Fatalf("fetch = %q, want the kick's base", runner.fetches[1])
+	}
+	// Without metadata the prompt must say hive did not provide the
+	// description, so the reviewer neither claims one nor blames a rate limit.
+	for _, want := range []string{"holds the checkout only", "commits on pr-7", "do not attribute it to a GitHub rate limit", sandboxReviewNoGHNotice} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "never report it as unavailable") {
+		t.Errorf("prompt claims a description the PR file does not carry:\n%s", prompt)
 	}
 }
 

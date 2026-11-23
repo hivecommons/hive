@@ -569,7 +569,7 @@ func Extract(key, sealed []byte, destDir string) (*Manifest, error) {
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(out, content, os.FileMode(hdr.Mode)&restoreFileMode); err != nil {
+		if err := os.WriteFile(out, content, os.FileMode(hdr.Mode)&restoreFileMode); err != nil { // #nosec G115 -- only the low permission bits survive the restoreFileMode mask, so truncating the tar mode cannot widen it
 			return nil, err
 		}
 		if hdr.Name == manifestName {

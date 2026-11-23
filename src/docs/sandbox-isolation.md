@@ -594,3 +594,14 @@ Beyond the credential-free sandbox above, Hive's isolation model is defense in d
 - Prefer the least-capable ACMM level that matches the project phase.
 - Keep privileged delegated roles (`ci-maintainer`, `sec-check`, `architect`) behind explicit grants.
 - Use the docs in this index for concrete setup: [ACMM policy matrix](acmm-policy-matrix.md), [Agent configuration](agent-configuration.md), and [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md).
+
+## Containment posture (#19457, #19458)
+
+Podman sandbox runs always pass `--cap-drop=all`, `--security-opt=no-new-privileges` and `--pids-limit` (default 4096, set `LaunchSpec.PidsLimit` to change it).
+
+Hive checks `/proc/self/status` (`NoNewPrivs`, `CapEff`, `Seccomp`) and the root filesystem at boot, and the sandbox entry point (the relay preflight) checks the same status fields inside the sandbox. A status file either check cannot read counts as a gap, so strict mode fails closed when containment cannot be verified. Every gap is logged as a warning. Set `HIVE_REQUIRE_HARDENED=1` to make any gap fatal. Hive itself then refuses to start, and a Podman agent kick that goes through the relay preflight exits with status 78. Strict mode is not enforced everywhere:
+
+- Kubernetes job pods (kubejob) already drop all capabilities, disallow privilege escalation and use the `RuntimeDefault` seccomp profile, but `HIVE_REQUIRE_HARDENED` is not propagated into them, so gaps there are warnings only.
+- OpenShell runs and relay-less Podman runs, such as `publish.verify`, get the variable (Podman) or nothing (OpenShell) but never run the preflight, so a gap does not fail them.
+
+Strict mode for hive itself needs `--read-only` and an empty effective capability set, so no ambient `NET_ADMIN` or any other capability. A read-only root filesystem is only checked for hive itself, because `--read-only` is optional for sandboxes.

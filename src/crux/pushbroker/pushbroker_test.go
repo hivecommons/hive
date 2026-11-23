@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/crux/config"
 )
 
 type fakeMinter struct{ token string }
@@ -705,6 +707,14 @@ func TestParseGitIdent(t *testing.T) {
 					tc.ident, name, email, ok, tc.wantName, tc.wantEmail, tc.wantOK)
 			}
 		})
+	}
+}
+
+func TestPushEnvDropsForgeTokens(t *testing.T) {
+	config.AddExtraCredentialEnvVars("CUSTOM_FORGE_PAT")
+	got := PushEnv([]string{"GITLAB_TOKEN=x", "GITEA_TOKEN=x", "FORGEJO_TOKEN=x", "CUSTOM_FORGE_PAT=y", "CUSTOM_FORGE_PAT_OTHER=keep", "PATH=/bin"})
+	if want := []string{"CUSTOM_FORGE_PAT_OTHER=keep", "PATH=/bin"}; !slices.Equal(got, want) {
+		t.Fatalf("PushEnv = %v, want %v", got, want)
 	}
 }
 

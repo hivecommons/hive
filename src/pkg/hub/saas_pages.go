@@ -50,10 +50,11 @@ func (s *HubServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if webstatic.WriteCacheHeaders(w, r, dashboardHTMLETag) {
+	doc, etag := s.dashboardDocument()
+	if webstatic.WriteCacheHeaders(w, r, etag) {
 		return
 	}
-	_, _ = fmt.Fprint(w, dashboardHTML)
+	_, _ = fmt.Fprint(w, doc)
 }
 
 func (s *HubServer) handleAccessDenied(w http.ResponseWriter, r *http.Request) {

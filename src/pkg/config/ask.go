@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -115,14 +116,17 @@ type AskConfig struct {
 	SendSectionLabel *bool `yaml:"send_section_label,omitempty" json:"send_section_label,omitempty"`
 	// Limits overrides the named defaults. Zero keeps the default.
 	Limits AskLimitsConfig `yaml:"limits,omitempty" json:"limits,omitempty"`
-	// Relay is read by the hub only.
-	Relay AskRelayConfig `yaml:"relay,omitempty" json:"relay,omitempty"`
+	// Relay is read by the hub only, from env (HIVE_ASK_RELAY_*); the hub has
+	// no hive.yaml, so it is not a hive.yaml key.
+	Relay AskRelayConfig `yaml:"-" json:"-"`
 }
 
 // AskKapaConfig is ask.kapa.
 type AskKapaConfig struct {
-	ProjectID     string `yaml:"project_id,omitempty" json:"project_id,omitempty"`
-	IntegrationID string `yaml:"integration_id,omitempty" json:"integration_id,omitempty"`
+	// ProjectID and IntegrationID are never serialised to JSON, so no API
+	// that encodes the config can return them.
+	ProjectID     string `yaml:"project_id,omitempty" json:"-"`
+	IntegrationID string `yaml:"integration_id,omitempty" json:"-"`
 	// APIKeyFile is a path under the allowed secret dirs, mounted from a
 	// Secret. There is no inline key.
 	APIKeyFile string `yaml:"api_key_file,omitempty" json:"api_key_file,omitempty"`
@@ -176,6 +180,14 @@ type AskSettings struct {
 	// Problem says, without values, why the feature is off although it was
 	// requested. Empty when Enabled or when not requested.
 	Problem string
+}
+
+// AskSettings resolves the hive's ask block with the process env.
+func (c *Config) AskSettings() AskSettings {
+	if c == nil {
+		return ResolveAsk(AskConfig{}, os.Getenv, false)
+	}
+	return ResolveAsk(c.Ask, os.Getenv, false)
 }
 
 // ResolveAsk applies env overrides (env wins over hive.yaml, as for the other

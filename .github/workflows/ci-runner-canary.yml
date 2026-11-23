@@ -69,7 +69,7 @@ jobs:
       # #10234). Never fails the job.
       - name: Warm shared Go tool cache (serialize the cold-cache population)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6.3.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v6.3.0
         with:
           go-version-file: src/go.mod
           cache: false

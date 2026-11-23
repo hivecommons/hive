@@ -572,7 +572,7 @@ func MP4TopLevelBoxes(r io.ReadSeeker) ([]string, error) {
 			if _, err := io.ReadFull(r, hdr[mp4BoxHeader:mp4LargeBoxHeader]); err != nil {
 				return types, err
 			}
-			size = int64(binary.BigEndian.Uint64(hdr[mp4BoxHeader:mp4LargeBoxHeader]))
+			size = int64(binary.BigEndian.Uint64(hdr[mp4BoxHeader:mp4LargeBoxHeader])) // #nosec G115 -- a size that wraps negative is rejected by the size < mp4LargeBoxHeader check below
 			if size < mp4LargeBoxHeader {
 				return types, fmt.Errorf("mp4: box %q has an invalid size", typ)
 			}
