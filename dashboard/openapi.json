@@ -12130,6 +12130,122 @@
                   "sandboxEnabled": {
                     "type": "boolean"
                   },
+                  "sandboxJob": {
+                    "type": "object",
+                    "description": "The agent's own sandbox.job fields; keys left out are unchanged",
+                    "properties": {
+                      "workspaceClaim": {
+                        "type": "string"
+                      },
+                      "workspaceClaimMount": {
+                        "type": "string"
+                      },
+                      "serviceAccount": {
+                        "type": "string"
+                      },
+                      "schedulerName": {
+                        "type": "string"
+                      },
+                      "ttlSeconds": {
+                        "type": "integer"
+                      },
+                      "envFromSecrets": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Kubernetes Secret names only, never values"
+                      },
+                      "imagePullSecrets": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Kubernetes Secret names only, never values"
+                      },
+                      "nodeSelector": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "resources": {
+                        "type": "object",
+                        "description": "limits and requests maps of resource name to Kubernetes quantity; a key left out is unchanged, null clears both",
+                        "properties": {
+                          "limits": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "requests": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "tolerations": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "operator": {
+                              "type": "string",
+                              "enum": [
+                                "",
+                                "Equal",
+                                "Exists"
+                              ]
+                            },
+                            "value": {
+                              "type": "string"
+                            },
+                            "effect": {
+                              "type": "string",
+                              "enum": [
+                                "",
+                                "NoSchedule",
+                                "PreferNoSchedule",
+                                "NoExecute"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "scheduleTimeoutS": {
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "sandboxPreflight": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job before the agent; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      },
+                      "retryDelayS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "The agent's own sandbox.preflight; null inherits agent_sandbox.preflight, an empty commands list turns it off for this agent"
+                  },
                   "cavemanMode": {
                     "type": "string",
                     "enum": [
@@ -16780,6 +16896,118 @@
                   },
                   "agentSandboxEnabled": {
                     "type": "boolean"
+                  },
+                  "agentSandboxJobNodeSelector": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "agent_sandbox.job.node_selector: Kubernetes node labels"
+                  },
+                  "agentSandboxJobResources": {
+                    "type": "object",
+                    "description": "limits and requests maps of resource name to Kubernetes quantity; a key left out is unchanged, null clears both",
+                    "properties": {
+                      "limits": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "requests": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "agentSandboxJobTolerations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "operator": {
+                          "type": "string",
+                          "enum": [
+                            "",
+                            "Equal",
+                            "Exists"
+                          ]
+                        },
+                        "value": {
+                          "type": "string"
+                        },
+                        "effect": {
+                          "type": "string",
+                          "enum": [
+                            "",
+                            "NoSchedule",
+                            "PreferNoSchedule",
+                            "NoExecute"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "agentSandboxJobImagePullSecrets": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Kubernetes Secret names only, never values"
+                  },
+                  "agentSandboxJobScheduleTimeoutS": {
+                    "type": "integer",
+                    "description": "agent_sandbox.job.schedule_timeout_s; 0 uses the default"
+                  },
+                  "agentSandboxPreflight": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job before the agent; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      },
+                      "retryDelayS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "agent_sandbox.preflight; an empty commands list or null removes it"
+                  },
+                  "agentSandboxJobGithubReadProxy": {
+                    "type": "object",
+                    "description": "agent_sandbox.job.github_read_proxy; takes effect when hive restarts",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "listenAddr": {
+                        "type": "string"
+                      },
+                      "endpoint": {
+                        "type": "string",
+                        "description": "https://host:port with no credentials"
+                      },
+                      "noProxy": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
                   }
                 }
               }

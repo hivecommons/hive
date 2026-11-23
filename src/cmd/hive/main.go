@@ -19,6 +19,7 @@ import (
 	"time"
 
 	cruxconfig "github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/posture"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 
 	gh "github.com/google/go-github/v72/github"
@@ -543,6 +544,14 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	// fleetreport.ClassUnclassifiedRepeated).
 	b.logger = slog.New(slogfeed.New(logscrub.NewHandler(slog.NewJSONHandler(deps.stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))))
 	slog.SetDefault(b.logger)
+
+	// Containment posture (#19458): warn on every gap; HIVE_REQUIRE_HARDENED
+	// turns any gap into a startup failure.
+	if err := posture.Boot(b.logger, deps.getenv); err != nil {
+		b.logger.Error("refusing to start without required containment", "error", err.Error())
+		deps.exit(1)
+		return false
+	}
 
 	// Process singleton: refuse to become a second hive process in this
 	// container (#2453, #2496). Two concurrent processes beat as the same pod,

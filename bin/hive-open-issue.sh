@@ -22,6 +22,7 @@
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
 #   hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
 #   hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
+#   hive-open-issue edit-pr --repo <owner/repo> <number|url> [--title "<t>"] [--body "<b>"|--body-file f]
 #
 # --parent <n> links the new issue as a GitHub sub-issue of issue <n> in the
 # same repo (hivecommons/hive#9435), so the parent shows it in a native
@@ -128,6 +129,15 @@
 # (hivecommons/hive#9587) instead of a direct `gh pr edit --add-reviewer`.
 # The watcher audits it as agent_review_requested.
 #
+# "edit-pr" replaces the title (--title) and/or body (--body/--body-file) of a
+# PR through the audited write surface (hivecommons/hive#19399) instead of a
+# direct `gh pr edit --title/--body`. Use it to keep a hive PR's description
+# true after a follow-up commit changes what the PR does, whichever lane
+# opened it. The watcher edits only PRs one of this hive's accounts opened,
+# never a human's or a merged one, and audits it as agent_pr_edited. The body
+# replaces the whole description: start from the current one
+# (`gh pr view <n> --json body -q .body`) and change only the stale parts.
+#
 # "close" routes manual issue closes through the same opt-in
 # reporter-confirmation gate as merge closes. Human-filed bug-family issues
 # close by default; issues carrying `hive: needs-confirmation` (or hives with
@@ -163,6 +173,7 @@ case "${1:-}" in
   close) KIND="close"; shift;;
   label) KIND="label"; shift;;
   request-review|request_review) KIND="request_review"; shift;;
+  edit-pr|edit_pr) KIND="edit_pr"; shift;;
 esac
 
 REPO=""; TITLE=""; BODY=""; BODY_FILE=""; NUMBER=""
@@ -236,7 +247,7 @@ while [ $# -gt 0 ]; do
       exit 2;;
     *)
       # A bare positional for a comment/claim is the issue/PR number or URL.
-      if { [ "$KIND" = "comment" ] || [ "$KIND" = "claim" ] || [ "$KIND" = "close" ] || [ "$KIND" = "label" ] || [ "$KIND" = "request_review" ]; } && [ -z "$NUMBER" ]; then
+      if { [ "$KIND" = "comment" ] || [ "$KIND" = "claim" ] || [ "$KIND" = "close" ] || [ "$KIND" = "label" ] || [ "$KIND" = "request_review" ] || [ "$KIND" = "edit_pr" ]; } && [ -z "$NUMBER" ]; then
         case "$1" in
           http://*|https://*) NUMBER="$(printf '%s' "$1" | sed -n 's#.*/\(issues\|pull\)/\([0-9][0-9]*\).*#\2#p')";;
           [0-9]*) NUMBER="$1";;
@@ -327,6 +338,17 @@ elif [ "$KIND" = "request_review" ]; then
   fi
   if [ ${#REVIEWERS[@]} -eq 0 ] && [ ${#TEAM_REVIEWERS[@]} -eq 0 ]; then
     echo "hive-open-issue: request-review requires at least one --reviewer or --team-reviewer" >&2
+    exit 2
+  fi
+elif [ "$KIND" = "edit_pr" ]; then
+  # An edit needs the PR and something to write; an empty body cannot be
+  # written through the relay (the watcher would quarantine it).
+  if [ -z "$REPO" ] || [ -z "$NUMBER" ]; then
+    echo "hive-open-issue: edit-pr requires --repo and a PR number (or URL)" >&2
+    exit 2
+  fi
+  if [ -z "${TITLE//[[:space:]]/}" ] && [ -z "${BODY//[[:space:]]/}" ]; then
+    echo "hive-open-issue: edit-pr requires a non-empty --title or --body/--body-file; nothing was written." >&2
     exit 2
   fi
 elif [ "$KIND" = "claim" ] || [ "$KIND" = "close" ]; then
@@ -446,6 +468,14 @@ elif kind == "request_review":
         req["reviewers"] = reviewers
     if team_reviewers:
         req["team_reviewers"] = team_reviewers
+elif kind == "edit_pr":
+    # Replace a hive-authored PR's title and/or body (hivecommons/hive#19399).
+    # An omitted field is left as it is on GitHub.
+    req["number"] = int(number)
+    if title.strip():
+        req["title"] = title
+    if body.strip():
+        req["body"] = body
 elif kind == "close":
     req["number"] = int(number)
     if body:
@@ -547,6 +577,8 @@ elif [ "$KIND" = "label" ]; then
   echo "hive-open-issue: requested label change on $REPO#$NUMBER as the App bot"
 elif [ "$KIND" = "request_review" ]; then
   echo "hive-open-issue: requested reviewers on $REPO#$NUMBER as the App bot"
+elif [ "$KIND" = "edit_pr" ]; then
+  echo "hive-open-issue: requested title/body edit of $REPO#$NUMBER as the App bot (refused unless one of this hive's accounts opened the PR)"
 else
   echo "hive-open-issue: requested issue on $REPO as the App bot: $TITLE"
   if [ -n "$PARENT" ] && [ "$PARENT" != "0" ]; then

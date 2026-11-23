@@ -1152,8 +1152,10 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      (logged once per head as `carried diff fence dropped`) and the PR
      goes through the other gates; a later head that trips it again is
      fenced again, and an unreadable or incomplete file list keeps the
-     fence. A second takeover no longer releases the adoption back to 072
-     over the fence.
+     fence. The hive's own pushes to the superseding branch do not lift it,
+     and the lanes read every marker in the body, so an unrecognized marker
+     placed ahead of the real one does not lift it either. A second takeover
+     no longer releases the adoption back to 072 over the fence.
    Only a verdict the fence could not reach still defers adoption, with no
    attempt recorded, so the next sweep re-reads: the fence reads the PR
    itself and judges only the head the lane recorded, so a head that moved
