@@ -5,7 +5,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 
 `GET /api/stage-tracker` adds independent PR `ci_activity`, `review_activity`
 and `code_activity` observations, also copied to `linked_prs[]`. Each is
-`{head, state, caption, detail?, actor?, source, observed_at?, since?, blocker?, url?, active?, checks_passed?, checks_total?, checks_failed?, checks_failing?, checks_pending?, checks_stuck?, stuck_since?, perspectives_done?, perspectives_total?, perspectives?}`.
+`{head, state, caption, detail?, actor?, source, observed_at?, since?, blocker?, url?, active?, checks_passed?, checks_total?, checks_failed?, checks_failing?, checks_pending?, checks_skipped?, checks_stuck?, stuck_since?, perspectives_done?, perspectives_total?, perspectives?}`.
 These are display evidence, **not merge authorization**. An absent timestamp
 means unknown freshness; a different head invalidates the observation.
 `detail?` is the longer, plain-language sentence behind caption. `checks_failing?`
@@ -15,6 +15,10 @@ that have been queued or in progress longer than `HIVE_TRACKER_CHECK_STUCK_AFTER
 (default `2h`) and `stuck_since?` is when the oldest of them started: such a
 check is not running in any useful sense, and when every pending check is stuck
 the caption reads `CI stuck · …` and `active` is false.
+`checks_skipped?` names the counted checks that finished as `skipped` or
+`neutral` (a job left out by its own `if:` condition, such as a Pages deploy
+that runs only on push): the merge gate does not block on them, so they count in
+`checks_passed`, never in `checks_pending`, and are never called stuck.
 
 Every open issue and PR row (and each `linked_prs[]` entry that mirrors a listed
 PR) also carries `human_gate`: `{reasons, actions, answered?, answered_by?, answered_via?, waiting_on?}`.
