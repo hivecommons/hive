@@ -4160,6 +4160,10 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	b.configWatcher = deps.newConfigWatcher(b.configPath, b.submitConfigReload, b.logger)
 	config.SetSaveObserver(b.configWatcher.SkipNext)
 	b.dashSrv.SetSkipReloadFunc(b.configWatcher.SkipNext)
+	// A save that refuses to overwrite a file edited on disk asks for a
+	// reload, so the edit reaches memory even if no watch event arrived
+	// (hivecommons/hive#19561).
+	config.SetExternalChangeObserver(func(string) { b.configWatcher.Trigger() })
 	deps.startConfigWatcher(b.ctx, b.configWatcher)
 
 	// Persist operator pause/resume into the on-disk config so it survives
