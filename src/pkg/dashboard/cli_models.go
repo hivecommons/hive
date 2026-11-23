@@ -445,9 +445,18 @@ var codexStaticModels = []string{
 }
 
 // geminiStaticModels is the fallback when no Gemini API key is configured (or
-// discovery fails). Keep CURRENT.
+// discovery fails). Keep CURRENT. Every id is in VALID_GEMINI_MODELS of
+// @google/gemini-cli 0.70.0 (packages/core/src/config/models.ts, checked
+// 2026-11-23, #19520): gemini-3.1-pro-preview is its Gemini 3.1 preview,
+// gemini-3.5-flash its default Flash and gemini-3.8-flash its latest Flash.
+// gemini-3.6-flash and gemini-3.7-flash are on OpenRouter but not in that
+// set, so they are not offered. Keep in sync with GEMINI_CLI_MODELS in
+// static/index.html.
 var geminiStaticModels = []string{
+	"gemini-3.1-pro-preview",
 	"gemini-3-pro-preview",
+	"gemini-3.8-flash",
+	"gemini-3.5-flash",
 	"gemini-3-flash-preview",
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",
@@ -486,9 +495,14 @@ var claudePinnedCLIModels = []string{
 // geminiPinnedCLIModels is the conservative Gemini CLI allowlist used to bound
 // the Google models API inventory. The API is account/provider-facing; the
 // installed CLI accepts the stable Gemini Code Assist ids below, not every
-// generateContent model the API may return.
+// generateContent model the API may return. No Gemini CLI is pinned in the
+// images, so the ids are checked by hand against VALID_GEMINI_MODELS of the
+// latest @google/gemini-cli (0.70.0, #19520; see geminiStaticModels).
 var geminiPinnedCLIModels = []string{
+	"gemini-3.1-pro-preview",
 	"gemini-3-pro-preview",
+	"gemini-3.8-flash",
+	"gemini-3.5-flash",
 	"gemini-3-flash-preview",
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",
