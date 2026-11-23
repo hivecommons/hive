@@ -1,0 +1,1 @@
+- A hidden feedback-handled marker now counts only when the hive's own login posted it, so a pasted marker can no longer stop feedback routing (#19547).
