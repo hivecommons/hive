@@ -402,8 +402,9 @@ whole board: `repo`, `kind`, `number` (the item itself), `q` (the monitor's sear
 number matches the item or a linked pull request or issue by number, other text matches
 titles, as `tracker-filter.js` does), `stage`, `needs_human`, `on_hold` and `waiting_on_you`.
 `view=summary` (the default) keeps the fields a row shows — stage, reason and caption, wait
-kind, decision question and options, linked items, blocker, hold, Sentinel state, merge gate,
-last operator action; `view=full` keeps every field, history and activity strips included.
+kind, decision question and options, linked items, blocker, hold, Sentinel state
+(`sentinel_alert`, `sentinel_notice`, `sentinel_reason`), merge gate, last operator action;
+`view=full` keeps every field, history and activity strips included.
 `recent=true` adds `recently_merged` and `recently_closed`, capped by `limit`. Pages are
 `limit` items from `offset`, with `next_offset` and `_admin_mcp.total` on a capped page. Before
 the board's first snapshot the endpoint answers `{"status":"initializing"}`, and the tool

@@ -564,3 +564,49 @@ func TestStageTrackerReadSummaryKeepsLastIdle(t *testing.T) {
 		}
 	}
 }
+
+// The summary view keeps sentinel_notice beside sentinel_alert: a trusted
+// author's informational notice sets sentinel_alert with no label, and a
+// summary reader needs the notice flag to tell it from a blocking alert.
+func TestStageTrackerReadSummaryKeepsSentinelNotice(t *testing.T) {
+	raw := `{
+	  "generated_at": "2026-11-23T20:00:00Z", "source": "fresh",
+	  "items": [
+	    {"repo": "acme/widgets", "number": 7, "kind": "pr", "title": "Bump action", "stage": 70, "history": [{"number": 50}],
+	     "sentinel_alert": true, "sentinel_notice": true, "sentinel_reason": "sensitive path", "sentinel_findings": 1,
+	     "sentinel_details": [{"rule": "sensitive_path"}]},
+	    {"repo": "acme/widgets", "number": 8, "kind": "pr", "title": "Labelled", "stage": 70,
+	     "sentinel_alert": true, "sentinel_reason": "sensitive path", "labels": ["sentinel-alert"]}
+	  ]
+	}`
+	var board map[string]any
+	if err := json.Unmarshal([]byte(raw), &board); err != nil {
+		t.Fatal(err)
+	}
+	got, err := StageTrackerReadResult(board, map[string]any{"view": stageTrackerViewSummary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v", got)
+	}
+	items := out["items"].([]any)
+	notice := items[0].(map[string]any)
+	if notice["sentinel_alert"] != true || notice["sentinel_notice"] != true || notice["sentinel_reason"] != "sensitive path" {
+		t.Fatalf("summary drops the sentinel notice: %#v", notice)
+	}
+	if _, ok := notice["sentinel_details"]; ok {
+		t.Fatalf("summary keeps Sentinel detail: %#v", notice)
+	}
+	if _, ok := notice["history"]; ok {
+		t.Fatalf("summary keeps history: %#v", notice)
+	}
+	alert := items[1].(map[string]any)
+	if alert["sentinel_alert"] != true {
+		t.Fatalf("summary drops sentinel_alert: %#v", alert)
+	}
+	if _, ok := alert["sentinel_notice"]; ok {
+		t.Fatalf("a labelled alert gains sentinel_notice: %#v", alert)
+	}
+}
