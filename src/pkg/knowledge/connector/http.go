@@ -90,10 +90,16 @@ func NewHTTPClient(opts HTTPOptions) *HTTPClient {
 	return c
 }
 
-func capRedirects(_ *http.Request, via []*http.Request) error {
+// capRedirects is the AllowPrivate policy: bounded hops, scheme limited to
+// http(s), and credentials stripped off-host like CheckRedirectNoPrivate.
+func capRedirects(req *http.Request, via []*http.Request) error {
 	if len(via) >= 3 {
 		return fmt.Errorf("stopped after %d redirects", len(via))
 	}
+	if scheme := strings.ToLower(req.URL.Scheme); scheme != "http" && scheme != "https" {
+		return fmt.Errorf("redirect to non-http(s) scheme blocked: %s", req.URL.Scheme)
+	}
+	knowledge.StripCredentialsOnCrossHostRedirect(req, via)
 	return nil
 }
 

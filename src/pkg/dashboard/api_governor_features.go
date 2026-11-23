@@ -168,6 +168,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		featuresOpsBody
 		featuresPlatformBody
 		featuresRunsBody
+		featuresAskBody
 		featuresEnrichmentBody
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -297,6 +298,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	applyAsk, err := body.featuresAskBody.prepare()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	applyEnrichment, err := body.featuresEnrichmentBody.prepare()
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -307,6 +313,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	cfg := s.deps.Config
 	applyOps(cfg)
 	applyPlatform(cfg)
+	applyAsk(cfg)
 	applyRuns(cfg)
 	applyEnrichment(cfg)
 	if body.IoscanEnabled != nil {
@@ -651,6 +658,9 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		out[k] = v
 	}
 	for k, v := range featuresRunsResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresAskResponse(cfg) {
 		out[k] = v
 	}
 	for k, v := range featuresEnrichmentResponse(cfg) {

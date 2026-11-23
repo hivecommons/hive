@@ -263,6 +263,7 @@ func TestIssue9804DropdownModelsPriced(t *testing.T) {
 		{"claude 5.x", []string{"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5", "claude-fable-5.1"}},
 		{"codex gpt-6", []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"}},
 		{"gemini 3 previews", []string{"gemini-3-pro-preview", "gemini-3-flash-preview"}},
+		{"gemini 3.x fallback (#19520)", []string{"gemini-3.1-pro-preview", "gemini-3.8-flash", "gemini-3.5-flash"}},
 		{"copilot fallback", []string{"gpt-4.1", "gpt-4o", "o3", "o4-mini", "gemini-2.5-pro"}},
 		{"agy and omp selectors", []string{"gemini-3.7-flash-high", "gemini-3.6-flash-low", "gemini-3.1-pro-high", "claude-opus-4-6-thinking", "gpt-oss-120b-medium", "anthropic/claude-sonnet-5-5"}},
 	}

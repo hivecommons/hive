@@ -62,6 +62,9 @@ One JSON object per line (JSONL), append-only. Written by
 | `agent` | `Agent` | no (`omitempty`) | The agent the action concerns, when it concerns one. |
 | `repo` | `Repo` | no (`omitempty`) | Repository a hive-mediated GitHub write went to. Set on write entries since [#9587](https://github.com/hivecommons/hive/issues/9587); see [GitHub write surface](github-write-surface.md). |
 | `target` | `Target` | no (`omitempty`) | Issue or PR number that write went to, when it has one. |
+| `seq` | `Seq` | on chained rows | Position in the hash chain: 1 for the chain's first row, then +1 per row. See [Hash chain](#hash-chain). |
+| `prev_hash` | `PrevHash` | on chained rows after the first | `row_hash` of the row before. |
+| `row_hash` | `RowHash` | on chained rows | Hex SHA-256 over this row's RFC 8785 canonical JSON with `row_hash` removed. |
 | `user_name` | `UserName` | **API responses only** (`omitempty`) | Display name for an opaque OIDC actor key. Stamped at serve time by `GET /api/audit` — **never written to the file or the ring**. See below. |
 | `sensitive` | `Sensitive` | **API responses only** (`omitempty`) | `true` when the entry's action is in the dashboard sensitive-action vocabulary used by the collapsed Audit Log risk count. Stamped at serve time by `GET /api/audit` — **never written to the file or the ring**. |
 
@@ -80,6 +83,63 @@ display-name changes. Consequences:
   **API** may. Do not treat its absence in the file as data loss.
 - `user_name` is cosmetic. Correlate entries by `user` (the stable key), never
   by `user_name`.
+
+## Hash chain
+
+Since [#19439](https://github.com/hivecommons/hive/issues/19439) every row
+written to the file is chained to the one before it, so anyone with write
+access to `/data` can no longer edit, drop, insert or reorder rows without
+leaving a trace. The format is implemented in `pkg/auditchain`:
+
+- `row_hash` is the lowercase hex SHA-256 of the row's
+  [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) (JCS) canonical JSON,
+  computed over the parsed row with `row_hash` removed. It covers every field,
+  `seq` and `prev_hash` included. Because it is computed over the parsed
+  object, field order and JSON escaping in the file do not matter.
+- `prev_hash` is the previous row's `row_hash`; `seq` is the previous row's
+  `seq` + 1. The chain runs across lumberjack rotation: the first row of the
+  current file links to the last row of the newest backup.
+- The first boot that finds no chained row on disk (the upgrade that adds the
+  chain, or a fresh volume) writes an `audit_chain_genesis` row (`user`
+  `system`, `seq` 1, no `prev_hash`). Older rows stay as they are and are
+  reported as legacy rows, outside the chain. A later boot resumes from the
+  newest chained row and writes no new genesis row.
+- A hive with no `/data` volume keeps only the in-memory ring and writes no
+  chain fields.
+
+The same three fields appear on rows served by `GET /api/audit`.
+
+### Verifying
+
+```sh
+hive audit-verify [--json] [path]   # path defaults to /data/audit.jsonl
+```
+
+It reads the file and its rotated backups oldest first and reports edited rows
+(`row_hash` mismatch), removed, inserted or reordered rows (`prev_hash` or
+`seq` does not follow), unchained rows inside the chain, a chain that starts
+again from scratch, and malformed lines. Exit status: 0 intact, 1 problems
+found, 2 the log could not be read. When retention has deleted the oldest
+backup, the oldest remaining row links to a hash that is no longer on disk;
+the verifier reports it as the `anchor` and takes it on trust.
+
+### What the hub holds
+
+A chain on its own cannot show that its newest rows were cut off, or that
+someone rewrote the whole file with a fresh chain. So each heartbeat carries
+`audit_chain_seq` and `audit_chain_head` (the newest row's `seq` and
+`row_hash`), and the hub keeps them on the hive's registry entry
+(`auditChainSeq`, `auditChainHead`). When a heartbeat reports a lower `seq`
+than the hub holds, or the same `seq` with a different hash, the hub records
+an `audit_chain_regressed` event on the hive's timeline. A replaced `/data`
+volume shows up the same way, which is right: the history the hub saw is gone.
+To check a spoke against the hub, compare `hive audit-verify`'s head with the
+registry entry: the spoke's head must be at or after the hub's `seq`, and
+equal to it when no row has been written since the last beat.
+
+The [token-access audit log](token-access-log.md#hash-chain) uses the same
+chain (`hive audit-verify --token-access`), without a hub copy of its head.
+Not yet chained: the approvals journal.
 
 ## Parsing `detail`
 

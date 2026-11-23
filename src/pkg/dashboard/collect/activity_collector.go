@@ -40,6 +40,14 @@ type AuditEntry struct {
 	// both.
 	Repo   string `json:"repo,omitempty"`
 	Target int    `json:"target,omitempty"`
+	// Seq, PrevHash and RowHash chain each on-disk row to the one before it
+	// so an edited, dropped or reordered row is detectable
+	// (hivecommons/hive#19439; see pkg/auditchain and docs/audit-log.md).
+	// Absent on rows written before the chain existed and on a hive with no
+	// /data volume.
+	Seq      int64  `json:"seq,omitempty"`
+	PrevHash string `json:"prev_hash,omitempty"`
+	RowHash  string `json:"row_hash,omitempty"`
 	// UserName is the hub-delivered display name when User is an opaque OIDC
 	// identity key. Stamped at SERVE time only (handleAuditLog) — the ring and
 	// the on-disk log keep the raw key, so history survives name changes.

@@ -10,6 +10,7 @@
 # workflowmodel: /api/workflows handlers compile lifecycle models (Compile, Profile diagnostics) and the tracker emits per-repo workflow columns; the store and bindings already route through Dependencies (hivecommons/hive#17620 P2).
 # egressmark: deployment_upgrade.go dials the in-cluster Kubernetes API for the hive's own rollout; the dial must carry the forced-egress SO_MARK or nodes without xt_owner redirect it into the MITM proxy (hivecommons/hive#17817).
 # agentsmd: the /api/status repo entries carry each repo's last AGENTS.md injection status (size, effective cap, dropped sections) from agentsmd.StatusFor, the read side of the registry the scheduler records into (hivecommons/hive#18495).
+# askai: the Ask AI help routes (/api/ask*) and the shared panel assets run the same consent, limits, credential-shape refusal, source filtering and hub-relay client the hub uses, so the hub and hive cannot drift (hivecommons/hive#19183).
 # buildcontains: GET /api/version/contains answers "does the running build contain PR #N" through the same dependency-free ancestry resolver the hub uses (yes/no/unknown, never a guess); a leaf package importing only the standard library (hivecommons/hive#18915).
 github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agentsmd
@@ -25,6 +26,9 @@ github.com/hivecommons/hive/crux/watchdog
 github.com/hivecommons/hive/pkg/acmmadvisor
 github.com/hivecommons/hive/pkg/advisory
 github.com/hivecommons/hive/pkg/agentaudit
+github.com/hivecommons/hive/pkg/askai
+# auditchain: the dependency-free RFC 8785 hash-chain leaf the /data/audit.jsonl writer seals each row with, shared with `hive audit-verify` so writer and verifier hash identically (hivecommons/hive#19439).
+github.com/hivecommons/hive/pkg/auditchain
 github.com/hivecommons/hive/pkg/beads
 github.com/hivecommons/hive/pkg/blocker
 github.com/hivecommons/hive/pkg/buildcontains

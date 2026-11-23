@@ -264,6 +264,8 @@ type HeartbeatPayload struct {
 	EngagedSessionUsers          []string                        `json:"engaged_session_users,omitempty"`
 	DashboardTokenHash           string                          `json:"dashboard_token_hash,omitempty"`
 	UserLastActions              map[string]string               `json:"user_last_actions,omitempty"`
+	AuditChainSeq                int64                           `json:"audit_chain_seq,omitempty"`
+	AuditChainHead               string                          `json:"audit_chain_head,omitempty"`
 	StartedAt                    string                          `json:"started_at,omitempty"`
 	OpenFDs                      int                             `json:"open_fds,omitempty"`
 	FDSoftLimit                  uint64                          `json:"fd_soft_limit,omitempty"`

@@ -280,6 +280,19 @@ write to one. See the
 [operator reference](operator-reference/README.md#configuration-blocks) and
 [Writing to repos you do not manage](agent-configuration.md#writing-to-repos-you-do-not-manage-the-two-lanes).
 
+## Review re-requests on the hive's own PRs
+
+When the hive has addressed every point of a person's standing
+CHANGES_REQUESTED review on a PR its own agent opened, the review-feedback
+sweep re-requests that reviewer's review
+(`POST /repos/{o}/{r}/pulls/{n}/requested_reviewers`, one reviewer, once per
+reviewer and head) and posts one note listing what changed
+([#19538](https://github.com/hivecommons/hive/issues/19538),
+`src/pkg/github/pr_feedback_rerequest.go`). Both writes are solicited by the
+reviewer's own change request. The note names the reviewer in code rather than
+@-mentioning them, since the re-request is the notification. The sweep never
+dismisses a human review.
+
 ## Review-thread replies on the hive's own PRs
 
 When a person reviews a PR the hive's own agent opened, the review-feedback

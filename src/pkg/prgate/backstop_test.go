@@ -1,11 +1,14 @@
 package prgate
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 // sweepAPI is a fake GitHub with several open PRs: the gate's API (per-PR
@@ -256,5 +259,77 @@ func TestSweepOnANilGateOrWithoutAnAPIIsANoop(t *testing.T) {
 	}
 	if res := newSweepGate(newSweepAPI(), ModeShadow).Sweep(context.Background(), nil, []string{"o/r"}); res != (SweepResult{}) {
 		t.Errorf("nil API swept: %+v", res)
+	}
+}
+
+// contextSweepAPI adds the check-run and status read the escalation needs.
+type contextSweepAPI struct {
+	*sweepAPI
+	has          map[string]bool // head -> carries verify PR contents
+	contextReads int
+}
+
+func (c *contextSweepAPI) HeadHasContext(_ context.Context, _, sha, name string) (bool, error) {
+	c.contextReads++
+	if name != ContextVerify {
+		return false, fmt.Errorf("asked for %q", name)
+	}
+	return c.has[sha], nil
+}
+
+// After the cutoff, a missing grant with the required context absent on the
+// recent heads is logged with the github_app_statuses_permission_missing
+// keyword so the fleet report files it; before the cutoff, or while the
+// workflow still supplies the context, nothing is raised. Nothing is posted.
+func TestSweepEscalatesAMissingGrantAfterTheCutoff(t *testing.T) {
+	cases := []struct {
+		name        string
+		now         time.Time
+		carried     bool
+		wantEscal   bool
+		wantListing bool
+	}{
+		{name: "before the cutoff", now: Cutoff.Add(-time.Hour)},
+		{name: "after the cutoff, context absent", now: Cutoff.Add(time.Hour), wantEscal: true, wantListing: true},
+		{name: "after the cutoff, workflow still supplies it", now: Cutoff.Add(time.Hour), carried: true, wantListing: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &contextSweepAPI{sweepAPI: newSweepAPI(), has: map[string]bool{}}
+			api.addPR("o/r", OpenPR{Number: 1, HeadSHA: sweepHead(1), Title: "✨ draft", Draft: true})
+			for n := 2; n <= 2+MaxEscalationHeads; n++ {
+				api.addPR("o/r", OpenPR{Number: n, HeadSHA: sweepHead(n), Title: "✨ x"})
+				api.has[sweepHead(n)] = tc.carried
+			}
+			var logs bytes.Buffer
+			g := New(api, func(string) Mode { return ModeShadow }, slog.New(slog.NewTextHandler(&logs, nil)))
+			g.Now = func() time.Time { return tc.now }
+			g.Grant = func(context.Context) (GrantInfo, error) { return grantNoneFixture, nil }
+
+			res := g.Sweep(context.Background(), api, []string{"o/r"})
+			if got := res.Escalated == 1; got != tc.wantEscal {
+				t.Fatalf("escalated = %d, want %t (result %+v)", res.Escalated, tc.wantEscal, res)
+			}
+			if got := strings.Contains(logs.String(), GrantMissingEscalationMsg); got != tc.wantEscal {
+				t.Errorf("escalation log present = %t, want %t:\n%s", got, tc.wantEscal, logs.String())
+			}
+			if (api.lists > 0) != tc.wantListing {
+				t.Errorf("lists = %d, want listing %t", api.lists, tc.wantListing)
+			}
+			if api.contextReads > MaxEscalationHeads {
+				t.Errorf("context reads = %d, want at most %d", api.contextReads, MaxEscalationHeads)
+			}
+			if len(api.posts) != 0 || api.reads != 0 {
+				t.Errorf("a missing grant posted %v (re-reads %d)", api.posts, api.reads)
+			}
+		})
+	}
+}
+
+// The escalation message is the fleet report's keyword for the class, so a
+// renamed message cannot silently stop the filing.
+func TestGrantMissingEscalationMsgNamesTheStatusesPermission(t *testing.T) {
+	if !strings.Contains(strings.ToLower(GrantMissingEscalationMsg), "the github app lacks the statuses: write permission") {
+		t.Fatalf("message %q lost the permission wording", GrantMissingEscalationMsg)
 	}
 }
