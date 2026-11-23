@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v5.355.1)
+
+### Fixed
+
+- **Hand edits to the config file are no longer reverted by the running hive** ([#19561](https://github.com/hivecommons/hive/issues/19561)). On Kubernetes an edit to `/data/hive.yaml.runtime` (or `/data/hive.yaml.dashboard`) was lost: the file watcher watched the file's inode, so the first save after boot (an atomic rename) silently ended the watch and later edits were never reloaded, and its "skip the next event" flag could swallow an edit made just after a save; the next governor tick, heartbeat or shutdown persist then wrote the in-memory config over the edit. The watcher now watches the files' directories, sees in-place rewrites and renames, and tells its own saves from other writers by content. Every save also records a content hash of each config file it loaded or wrote, and refuses to overwrite a file that changed since (`config persist skipped: ... changed on disk`), asking for a reload instead; the tick and shutdown persists reload a changed file before saving (`reloading it before the persist`), and leave an edit that does not load untouched.
+
+### Security
+
+- **Strict containment mode (`HIVE_REQUIRE_HARDENED`) now reaches Kubernetes job pods and fails closed on an uninspectable root filesystem** ([#19479](https://github.com/hivecommons/hive/issues/19479)). Hive in strict mode sets `HIVE_REQUIRE_HARDENED=1` in every sandbox Job pod, so a containment gap there fails the kick as it already did for Podman instead of only warning. A boot-time `statfs` of `/` that fails is now reported as a gap, so strict mode refuses to start rather than treating an unknown root filesystem as read-only. The Podman `--pids-limit` (default 4096) is now configurable with `agent_sandbox.pids_limit`.
+
 ## 2026-11-23 (v5.355.0)
 
 ### Added
