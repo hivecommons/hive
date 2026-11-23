@@ -23,7 +23,11 @@ func TestStageTrackerActivityRequiredCI(t *testing.T) {
 		{"queued retry", "queued", "", "queued", true},
 		{"failure", "completed", "failure", "failing", true},
 		{"success", "completed", "success", "passing", true},
-		{"conditional skip", "completed", "skipped", "skipped", true},
+		// The merge gate does not block on a skipped required check, so
+		// neither does the CI track (hivecommons/benchmarks deploy job).
+		{"conditional skip", "completed", "skipped", "passing", true},
+		{"neutral", "completed", "neutral", "passing", true},
+		{"cancelled", "completed", "cancelled", "failing", true},
 		// A queued neighbour keeps an ambiguous-required ring in motion
 		// (hivecommons/hive#16631).
 		{"unknown required set", "completed", "failure", "running", false},
@@ -416,7 +420,7 @@ func TestStageTrackerActivityCICaptionsReadInPlainLanguage(t *testing.T) {
 		{"running counts", ci(done("build"), chk("lint", "in_progress", ""), chk("test", "in_progress", "")), "running", `CI running · 'lint', 'test' pending`, "1 of the 3 required checks"},
 		{"queued", ci(done("build"), done("lint"), chk("test", "queued", "")), "queued", `CI queued · 'test' waiting for a runner`, "not started"},
 		{"failing", ci(done("build"), chk("lint", "completed", "failure"), done("test")), "failing", `CI failing · 'lint' red`, `'lint' finished without success`},
-		{"skipped", ci(done("build"), done("lint"), chk("test", "completed", "skipped")), "skipped", `CI skipped · check 'test' skipped`, "does not count as a pass"},
+		{"skipped", ci(done("build"), done("lint"), chk("test", "completed", "skipped")), "passing", "CI green · all 3 required checks passed", "'test' finished as skipped or neutral"},
 		{"ambiguous", ci(done("build"), done("lint"), done("test"), chk("test", "completed", "failure")), "unknown", `CI unknown · 'test' reported but with no conclusion`, "several runs share the name"},
 		{"green", ci(done("build"), done("lint"), done("test")), "passing", "CI green · all 3 required checks passed", "reported success"},
 	}

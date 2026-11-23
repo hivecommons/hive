@@ -620,7 +620,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			if requiredKnown && required[name] {
 				requiredSuccess[name] = true
 			}
-		case "neutral", "skipped":
+		case CheckConclusionNeutral, CheckConclusionSkipped: // non-blocking; the CI track reads CheckConclusionNonBlocking
 		default:
 			if requiredKnown {
 				block("required-check-failing:" + name)

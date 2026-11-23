@@ -530,7 +530,7 @@ _write_surface_refuse_direct() {
 }
 
 # The relays, for a refusal that is not tied to one operation.
-WRITE_SURFACE_RELAYS="hive-open-pr (open a PR), hive-open-issue (issue, comment, claim, label, close, request-review), hive-review, hive-merge, hive-push-branch (push a branch)"
+WRITE_SURFACE_RELAYS="hive-open-pr (open a PR), hive-open-issue (issue, comment, claim, label, close, request-review, edit-pr), hive-review, hive-merge, hive-push-branch (push a branch)"
 
 # ── Helpers: author validation for the list gate ──
 
@@ -1666,8 +1666,9 @@ if [[ -n "$AGENT_NAME" ]]; then
       # refusal and redacted audit entry as every other relay write
       # (hivecommons/hive#9773). The relay shim prints the request path and
       # where the .result.json will appear, so the caller sees the outcome.
-      # An edit that mixes in anything the relays cannot express (--title,
-      # --body, --milestone, --remove-reviewer, assignees, projects, …) falls
+      # An edit that mixes in anything the relays cannot express (--title or
+      # --body outside an enforced lane's `pr edit`, --milestone,
+      # --remove-reviewer, assignees, projects, …) falls
       # through to the direct path UNCHANGED, as does an edit with no explicit
       # number/URL or no resolvable repo — routing must not reduce what an
       # ACMM L6 hive can do by default (same contract as hive-open-pr: this
@@ -1678,6 +1679,13 @@ if [[ -n "$AGENT_NAME" ]]; then
         _re_add=""; _re_remove=""; _re_reviewers=""
         _re_num=""; _re_repo=""; _re_other=false
         _re_expect=""; _re_pos=0
+        # Title/body edits (hivecommons/hive#19399) go to the `edit_pr` relay,
+        # which edits only PRs one of this hive's accounts opened. An
+        # unenforced lane keeps its direct path for them (a description
+        # touch-up on a contributor's PR, #12545, is a direct write the relay
+        # would refuse), so they are relayed only for a lane under
+        # write_surface.enforce, whose direct write is refused anyway.
+        _re_text=false; _re_title=""; _re_body=""; _re_body_file=""
         for a in "${args[@]}"; do
           if [ -n "$_re_expect" ]; then
             case "$_re_expect" in
@@ -1685,12 +1693,21 @@ if [[ -n "$AGENT_NAME" ]]; then
               remove)   _re_remove="${_re_remove:+${_re_remove},}$a" ;;
               reviewer) _re_reviewers="${_re_reviewers:+${_re_reviewers},}$a" ;;
               repo)     _re_repo="$a" ;;
+              title)    _re_title="$a" ;;
+              body)     _re_body="$a"; _re_body_file="" ;;
+              bodyfile) _re_body_file="$a"; _re_body="" ;;
               other)    : ;;
             esac
             _re_expect=""
             continue
           fi
           case "$a" in
+            --title|-t)        _re_text=true; _re_expect=title ;;
+            --title=*)         _re_text=true; _re_title="${a#*=}" ;;
+            --body|-b)         _re_text=true; _re_expect=body ;;
+            --body=*)          _re_text=true; _re_body="${a#*=}"; _re_body_file="" ;;
+            --body-file|-F)    _re_text=true; _re_expect=bodyfile ;;
+            --body-file=*)     _re_text=true; _re_body_file="${a#*=}"; _re_body="" ;;
             --add-label)       _re_expect=add ;;
             --add-label=*)     _re_add="${_re_add:+${_re_add},}${a#*=}" ;;
             --remove-label)    _re_expect=remove ;;
@@ -1722,8 +1739,17 @@ if [[ -n "$AGENT_NAME" ]]; then
         if [ "$subcmd" = "issue" ] && [ -n "$_re_reviewers" ]; then
           _re_other=true
         fi
+        # A title/body edit is relayed only on `pr edit`, only for an enforced
+        # lane, and only when it writes something (the relay cannot set an
+        # empty body); otherwise the whole edit takes the direct path.
+        if $_re_text; then
+          if [ "$subcmd" != "pr" ] || ! _write_surface_enforced || \
+             { [ -z "${_re_title//[[:space:]]/}" ] && [ -z "${_re_body//[[:space:]]/}" ] && [ -z "$_re_body_file" ]; }; then
+            _re_other=true
+          fi
+        fi
         if ! $_re_other && [ -n "$_re_num" ] && \
-           { [ -n "$_re_add" ] || [ -n "$_re_remove" ] || [ -n "$_re_reviewers" ]; }; then
+           { [ -n "$_re_add" ] || [ -n "$_re_remove" ] || [ -n "$_re_reviewers" ] || $_re_text; }; then
           if [ -z "$_re_repo" ]; then
             # gh infers the repo from the checkout; the relay request needs it
             # spelled out. Same inference, from the origin remote.
@@ -1752,6 +1778,16 @@ if [[ -n "$AGENT_NAME" ]]; then
             if [ -n "$_re_reviewers" ]; then
               hive-open-issue request-review --repo "$_re_repo" "$_re_num" --reviewer "$_re_reviewers" || _re_rc=$?
             fi
+            if $_re_text; then
+              _re_text_args=()
+              [ -n "${_re_title//[[:space:]]/}" ] && _re_text_args+=(--title "$_re_title")
+              if [ -n "$_re_body_file" ]; then
+                _re_text_args+=(--body-file "$_re_body_file")
+              elif [ -n "${_re_body//[[:space:]]/}" ]; then
+                _re_text_args+=(--body "$_re_body")
+              fi
+              hive-open-issue edit-pr --repo "$_re_repo" "$_re_num" "${_re_text_args[@]}" || _re_rc=$?
+            fi
             exit $_re_rc
           fi
         fi
@@ -1759,7 +1795,7 @@ if [[ -n "$AGENT_NAME" ]]; then
       # An edit the relays cannot express still reaches GitHub directly, which
       # is exactly what an enforced lane may not do (#9587). Express it as a
       # label / reviewer request the relays can perform, or leave it to a human.
-      _write_surface_refuse_direct "gh ${subcmd} edit" "hive-open-issue label (labels), hive-open-issue request-review (reviewers)"
+      _write_surface_refuse_direct "gh ${subcmd} edit" "hive-open-issue label (labels), hive-open-issue request-review (reviewers), hive-open-issue edit-pr (title/body of a hive-authored PR)"
       # Issues: every hive-touched issue carries the lane's routing label.
       # PRs: only the hive's OWN PRs do (#12545) — editing a contributor's PR
       # (review-fix on fix_human_prs, a description touch-up) must not re-route

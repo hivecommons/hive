@@ -9478,6 +9478,8 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <span id="agent-navbar-upnext" class="agent-navbar-upnext" hidden aria-label="Upcoming agent run order" title="Upcoming agent run order"></span>
     </div>
     <div class="oc-topbar-right">
+      <!-- Ask AI help opener (#19184): stays empty unless /api/config says ask is on. -->
+      <span id="hive-ask-slot"></span>
       <button type="button" class="nav-chip nav-chip--icon nav-chip--action feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="submit" title="Report a bug or request a feature" aria-label="Report a bug or request a feature"><span class="nav-chip__icon" aria-hidden="true">🐛</span><span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
       <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
       <a class="nav-chip nav-chip--action" id="oc-matrix-tab" href="?kiosk=1&amp;view=reader" target="_blank" rel="noopener" title="Code activity — published pushed changes as readable paragraphs (opens in a new tab)" aria-label="Code activity" hidden><span class="nav-chip__label">Code activity</span></a>
@@ -38689,7 +38691,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const isPublic = hostLabel === 'github.com';
       // Each card carries its own forge (#14115), and repo_policies[].forge can
       // put one repo on a different forge from the rest. The badge names the
-      // hive's forge only when every card agrees; a GitLab or Gitea/Forgejo
+      // hive's forge only when every card agrees; a GitLab, Gitea or Forgejo
       // hive gets its own host here instead of the GitHub host the badge would
       // otherwise claim, and a mixed hive says so instead of claiming one host.
       const repoForges = (repos || []).map(r => repoForgeWeb(r, hostLabel));
@@ -39077,7 +39079,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
      * Where a repo card points and what it calls its host (#14115). r.forge is
      * the repo's forge kind from /api/status; GitHub (and an older hive that
      * reports no kind) keeps the GitHub host from /api/config, while GitLab and
-     * Gitea/Forgejo use r.forgeUrl and their own issue and change-request paths.
+     * Gitea and Forgejo use r.forgeUrl and their own issue and change-request paths.
      */
     function repoForgeWeb(r, githubHost) {
       const kind = String((r && r.forge) || 'github').toLowerCase();
@@ -39085,8 +39087,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (kind === 'gitlab' && base) {
         return { kind, icon: '🦊', name: 'GitLab', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/-/issues', changesPath: '/-/merge_requests', changePath: '/-/merge_requests' };
       }
+      if (kind === 'forgejo' && base) {
+        return { kind, icon: '🍵', name: 'Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
+      }
       if (kind === 'gitea' && base) {
-        return { kind, icon: '🍵', name: 'Gitea/Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
+        return { kind, icon: '🍵', name: 'Gitea', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
       }
       return { kind: 'github', icon: '🐙', name: 'GitHub', host: githubHost, base: window._githubBaseUrl || 'https://github.com', issuesPath: '/issues', changesPath: '/pulls', changePath: '/pull' };
     }
@@ -42079,7 +42084,8 @@ function burnAreaChart() {
       const FORGE_META = {
         github: { icon: '🐙', name: 'GitHub' },
         gitlab: { icon: '🦊', name: 'GitLab' },
-        gitea:  { icon: '🍵', name: 'Gitea' }
+        gitea:  { icon: '🍵', name: 'Gitea' },
+        forgejo: { icon: '🍵', name: 'Forgejo' }
       };
       const fm = FORGE_META[forgeKind] || { icon: '🔀', name: forgeKind || 'Forge' };
       const repoCount = Number(forge.repoCount) || 0;
@@ -54648,6 +54654,32 @@ function burnAreaChart() {
       { key: 'country', label: 'Country (code or name)', max: 120 }
     ];
 
+    // CUSTOMERS_REFRESH_RELOAD_MS: how long after "Refresh from profiles" for
+    // everyone the list is read again, so the first pass shows.
+    const CUSTOMERS_REFRESH_RELOAD_MS = 5000;
+
+    // CUSTOMERS_PROFILE_SOURCES: the forge a profile-fill value was read
+    // from, by the rule it carries (#19302).
+    const CUSTOMERS_PROFILE_SOURCES = { github_profile: 'GitHub', ghe_profile: 'GitHub Enterprise', gitlab_profile: 'GitLab', gitea_profile: 'Gitea', linear_profile: 'Linear' };
+
+    // customersFieldSourceLabel: the forge an automatic field came from, or
+    // '' for anything else.
+    function customersFieldSourceLabel(f) {
+      return (f && Object.prototype.hasOwnProperty.call(CUSTOMERS_PROFILE_SOURCES, f.rule)) ? CUSTOMERS_PROFILE_SOURCES[f.rule] : '';
+    }
+
+    // customersFieldProvenance: where an automatic field came from, for its
+    // tooltip: the source, the login it was read for and when.
+    function customersFieldProvenance(f) {
+      if (f && f.rule === 'location') return 'Derived from the location';
+      const label = customersFieldSourceLabel(f) || 'GitHub';
+      let t = 'From the public ' + label + ' profile';
+      if (f && f.login) t += ' of ' + f.login;
+      if (f && f.rule) t += ' (source=' + f.rule + ')';
+      if (f && typeof f.at === 'string' && f.at) t += ', fetched ' + f.at.slice(0, 10);
+      return t;
+    }
+
     function customersProfileValue(p, key) {
       const f = (p && p.profile && p.profile[key]) || {};
       return typeof f.value === 'string' ? f.value : '';
@@ -54674,7 +54706,7 @@ function burnAreaChart() {
       const v = customersProfileValue(p, 'organization');
       if (!v) return '';
       const f = p.profile.organization;
-      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : 'From the public GitHub profile');
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : customersFieldProvenance(f));
       const src = f.source === 'manual' || f.source === 'hub' ? f.source : 'auto';
       return '<span class="kc-pill customers-pill customers-org" data-source="' + src + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
@@ -54703,7 +54735,9 @@ function burnAreaChart() {
       const code = customersProfileValue(p, 'country');
       if (!/^[A-Z]{2}$/.test(code)) return '';
       const name = customersCountryName(code);
-      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name) + '">' +
+      const f = p.profile.country;
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub' : customersFieldProvenance(f));
+      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name + ' - ' + why) + '">' +
         '<span aria-hidden="true">' + customersFlagEmoji(code) + '</span> ' + escapeHtml(code) + '</span>';
     }
 
@@ -54892,6 +54926,7 @@ function burnAreaChart() {
       const people = data.people || [];
       const suggestions = data.suggestions || [];
       out += customersAddFormHtml();
+      out += '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshAllProfiles" title="Look every customer up again on their public forge profile, a few at a time">Refresh from profiles</button></div>';
       out += '<div class="customers-block"><div class="section-label m-0">Customers</div><div class="customers-list">' +
         (people.length ? people.map(p => customersRowHtml(p, false)).join('') : '<p class="empty-dashed">No other customers yet. Add one, or accept a suggestion.</p>') + '</div></div>';
       out += '<details class="customers-block customers-suggested" data-ui-key="suggested"' + (_customersUi.open.suggested ? ' open' : '') + '><summary class="customers-summary">Suggested (' + suggestions.length + ')</summary>' +
@@ -55032,16 +55067,19 @@ function burnAreaChart() {
         const manual = cur.source === 'manual';
         // A hub value carries its hub label (#19163, #19306); editing it
         // here makes it manual.
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from GitHub'))) : (manual ? 'cleared by hand' : 'not known');
-        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub')))) : (manual ? 'cleared by hand' : 'not known');
+        const tip = cur.value && cur.source === 'auto' ? ' title="' + escapeHtml(customersFieldProvenance(cur)) + '"' : '';
+        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs"' + tip + '>(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
-          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let the public profile fill this in again">Auto</button>' : '');
       }).join('');
       const cc = customersProfileValue(p, 'country');
       const ccLine = /^[A-Z]{2}$/.test(cc) ? '<div class="muted-xs" data-customers-field="country-line"><span aria-hidden="true">' + customersFlagEmoji(cc) + '</span> ' + escapeHtml(cc) + ' ' + escapeHtml(customersCountryName(cc)) + '</div>' : '';
       return '<div class="customers-block"><div class="section-label m-0">Details</div>' + ccLine +
         '<div class="customers-inline">' + rows + '</div>' + customersAffiliationHtml(p) +
-        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button>' +
+        (customersIsFull() ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshProfile" title="Read this person\'s public forge profile now and fill the fields nobody set by hand">Refresh from profiles</button>' : '') +
+        '</div></div>' +
         customersPublicContributionsHtml(p);
     }
 
@@ -55536,7 +55574,34 @@ function burnAreaChart() {
       if (saved) showToast('Details saved', 'success');
     }
 
-    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
+    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to the public profile'); }
+
+    // customersRefreshProfile: "Refresh from profiles" on the open profile
+    // (#19302). The hive reads the public forge profile now and fills the
+    // fields nobody set by hand.
+    async function customersRefreshProfile() {
+      if (!_customersOpen) return;
+      const id = _customersOpen.me ? 'me' : _customersOpen.id;
+      try {
+        const out = await customersRequest('POST', '/api/customers/' + encodeURIComponent(id) + '/refresh-profile', {});
+        if (out.customer) _customersOpen = out.customer;
+        customersShow();
+        const fill = out.fill || {};
+        if (fill.skipped) showToast('Not refreshed: ' + String(fill.skipped).replace(/_/g, ' '), 'warning');
+        else showToast(fill.filled ? 'Details filled from public profiles' : 'Public profiles checked: nothing new', 'success');
+        fetchCustomers();
+      } catch (e) { customersProfileError(e.message); }
+    }
+
+    // customersRefreshAllProfiles: "Refresh from profiles" for everyone. The
+    // hive looks every customer up again in the background, a few per pass.
+    async function customersRefreshAllProfiles() {
+      try {
+        await customersRequest('POST', '/api/customers/refresh-profiles', {});
+        showToast('Refreshing every customer from public profiles, a few at a time', 'success');
+        setTimeout(fetchCustomers, CUSTOMERS_REFRESH_RELOAD_MS);
+      } catch (e) { showToast(e.message, 'error'); }
+    }
 
     function customersAffiliationAccept(value) { customersEdit({ op: 'profile', field: 'organization', value: value }, 'Organization set'); }
 
@@ -65018,6 +65083,8 @@ function burnAreaChart() {
       // standalone hive, which keeps the entry hidden.
       window._myHivesURL = cfg.my_hives_url || '';
       renderMyHivesMenuItem();
+      // Ask AI help (#19184): load the panel only when this hive has it on.
+      if (typeof loadAskPanel === 'function') loadAskPanel(cfg);
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
         ? cfg.org + '/' + cfg.primaryRepo
         : (cfg.primaryRepo || '');
@@ -65089,6 +65156,67 @@ function burnAreaChart() {
       return fetch('/api/timeline').then(r => r.json()).then(d => { window._timelineData = d; }).catch(() => {});
     }
     const TIMELINE_REFRESH_MS = 60000;
+    // ── Ask AI help (#19184) ─────────────────────────────────────────
+    // Loads the shared panel component (pkg/askai/web, served from 'self'
+    // at /ask-panel.js) only when /api/config says ask is on. With ask off
+    // the page adds nothing and requests nothing. The panel sends only the
+    // question and an id from the closed section vocabulary to this hive's
+    // own /api/ask; the backend decides what, if anything, leaves.
+    const ASK_PANEL_SCRIPT = '/ask-panel.js';
+    const ASK_PANEL_STYLE = '/ask-panel.css';
+    const ASK_SLOT_ID = 'hive-ask-slot';
+    // A section counts as "current" once its top is above this fraction of
+    // the viewport height.
+    const ASK_SECTION_VIEWPORT_FRACTION = 3;
+    let askPanelRequested = false;
+
+    // askCurrentSection names where the person is, from our own ids only:
+    // the Settings tab when the dialog is open, else the dashboard section
+    // nearest the top of the viewport.
+    function askCurrentSection() {
+      const overlay = document.getElementById('config-overlay');
+      if (overlay && !overlay.classList.contains('hidden')) {
+        return (typeof _configState !== 'undefined' && _configState && _configState.tab === 'features') ? 'settings-features' : 'settings';
+      }
+      let best = '';
+      let bestTop = -Infinity;
+      const limit = window.innerHeight / ASK_SECTION_VIEWPORT_FRACTION;
+      Object.keys(DASHBOARD_SECTION_HELP).forEach(id => {
+        const el = document.getElementById(id);
+        if (!el || !el.offsetParent) return;
+        const top = el.getBoundingClientRect().top;
+        if (top <= limit && top > bestTop) { best = id; bestTop = top; }
+      });
+      return best;
+    }
+
+    // askCurrentDocsHref is the docs-link fallback for where the person is,
+    // built by the same function as every "?" help mark.
+    function askCurrentDocsHref() {
+      const section = askCurrentSection();
+      if (section === 'settings-features') return dashboardDocsHref('settings', 'features');
+      if (section === 'settings') return dashboardDocsHref('settings', '');
+      const entry = DASHBOARD_SECTION_HELP[section];
+      return dashboardDocsHref(DASHBOARD_HELP_PAGE, entry ? dashboardSectionHelpAnchor(entry.heading) : '');
+    }
+
+    function loadAskPanel(cfg) {
+      if (!cfg || cfg.ask_enabled !== true || askPanelRequested) return;
+      if (!document.getElementById(ASK_SLOT_ID)) return;
+      askPanelRequested = true;
+      const style = document.createElement('link');
+      style.rel = 'stylesheet';
+      style.href = ASK_PANEL_STYLE;
+      document.head.appendChild(style);
+      const script = document.createElement('script');
+      script.src = ASK_PANEL_SCRIPT;
+      script.addEventListener('load', () => {
+        if (window.HiveAsk && typeof window.HiveAsk.mount === 'function') {
+          window.HiveAsk.mount({ slot: ASK_SLOT_ID, base: '/api/ask', section: askCurrentSection, docsHref: askCurrentDocsHref });
+        }
+      });
+      document.head.appendChild(script);
+    }
     // ── Configuration Dialog ──────────────────────────────────────────
     let _configState = { type: null, agent: null, tab: null, data: {}, dirty: {} };
     const _configTabMemory = {};
@@ -65206,6 +65334,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer goal and satisfaction suggestions', key: 'customers.inference.enabled', text: 'customers inference infer suggest goals satisfaction model confirm HIVE_CUSTOMERS_INFERENCE_ENABLED customers.inference.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer avatars', key: 'customers.avatars.enabled', text: 'customers avatars avatar pictures photos github profile picture privacy HIVE_CUSTOMERS_AVATARS_ENABLED customers.avatars.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer hub import', key: 'customers.hub_import.enabled', text: 'customers hub import consent shared real name organization country from the hub privacy HIVE_CUSTOMERS_HUB_IMPORT_ENABLED customers.hub_import.enabled' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer profile fill', key: 'customers.profile_fill.enabled', text: 'customers profile fill public profile github gitlab gitea forgejo enterprise ghe linear real name organization company location country flag backfill refresh HIVE_CUSTOMERS_PROFILE_FILL_ENABLED customers.profile_fill.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer GitHub search on accept', key: 'customers.mention_search.enabled', text: 'customers github search accept mention mentions comments history quota budget suggested person HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED customers.mention_search.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment', key: 'customers.enrichment.enabled', text: 'customers enrichment public affiliation activity employer company organization cncf colony HIVE_CUSTOMERS_ENRICHMENT_ENABLED customers.enrichment.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment: gitdm', key: 'customers.enrichment.gitdm.enabled', text: 'customers enrichment gitdm cncf affiliation affiliations employer company dates snapshot refresh interval HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED HIVE_CUSTOMERS_ENRICHMENT_GITDM_REFRESH_INTERVAL customers.enrichment.gitdm.enabled customers.enrichment.gitdm.refresh_interval' },
@@ -65217,7 +65346,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Review gate', label: 'Review gate: comments, dispatch and out-of-scope findings', key: 'review.post_comments', text: 'review swarm post comments fan out parallel perspectives combined all authors fix human prs acknowledge no findings confidence score priority labels fixer agent human decision label self authored decision policy reviews per head revise verdicts webhook event driven debounce pending ttl redispatch out of scope backlog issues recommendations review.post_comments review.self_authored_decision_policy review.event_driven review.event_debounce_s review.pending_ttl review.max_redispatch review.head_max_retries review.max_reviews_per_head review.revise_verdicts_before review.out_of_scope_backlog_disabled review.max_out_of_scope_backlog_issues review.recommendations.enabled review.recommendations.min_ready_to_open' },
       { tab: 'Features', section: 'Review gate', label: 'Review evidence bundles', key: 'evidence.enabled', text: 'review evidence bundles audit signing key ed25519 evidence.enabled evidence.signing_key_file' },
       { tab: 'Features', section: 'Review gate', label: 'Benchmarks', key: 'benchmarks.publish', text: 'benchmarks leaderboard publish anonymized hive hash repo consent benchmarks.publish benchmarks.repo_consent hivecommons.dev/benchmarks' },
-      { tab: 'Features', section: 'Integrations & observability', label: 'GitLab and Gitea forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env gitlab.gitlab_url gitlab.token_env gitea.gitea_url gitea.token_env' },
+      { tab: 'Features', section: 'Integrations & observability', label: 'GitLab, Gitea and Forgejo forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env gitlab.gitlab_url gitlab.token_env gitea.gitea_url gitea.token_env forgejo.forgejo_url forgejo.token_env' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Token mint key and TTL', key: 'mint.max_ttl_seconds', text: 'token mint signing key path max ttl lifetime jwt mint.key_path mint.max_ttl_seconds' },
       { tab: 'Features', section: 'Autonomy & ACMM', label: 'Design-first planning', key: 'planning.design_approved_label', text: 'planning design approved label architect revisions concurrent designs plan from label planning.design_approved_label planning.max_concurrent_designs planning.max_design_revisions planning.plan_from_label' },
       { tab: 'Features', section: 'Autonomy & ACMM', label: 'Write-back containment', key: 'writeback.unsolicited.min_level', text: 'write-back writeback containment unsolicited comments labels sentinel hold-gate stage labels opt-in label backfill per repo mode suppressed acmm level duplicate dedupe burst rate cap hourly writeback.unsolicited.min_level writeback.unsolicited.require_labels writeback.unsolicited.backfill writeback.per_repo writeback.kinds writeback.dedupe.enabled writeback.dedupe.same_item_ttl writeback.dedupe.burst_items writeback.dedupe.burst_window writeback.dedupe.hourly_cap' },
@@ -78949,6 +79078,9 @@ function burnAreaChart() {
         <div class="config-field"><label>Job secrets (names) ${yamlHint('agent_sandbox.job.env_from_secrets[]')} ${settingHelpMark('settings', 'security-and-access', 'Job secrets', `Names of Kubernetes Secrets whose keys become environment variables in the sandbox Job. One name per line. Names only: never paste a secret value here.`)}</label><textarea rows="2" class="mono" placeholder="one Secret name per line" data-change-action="markSecurityLines" data-arg0="agentSandboxJobEnvFromSecrets" data-arg-types="s,v">${esc((sec.agentSandboxJobEnvFromSecrets || []).join('\n'))}</textarea></div>
         <div class="config-field"><label>Job workspace claim ${yamlHint('agent_sandbox.job.workspace_claim')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim', `PVC holding the workspace for the job runtime. Required for runtime job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaim || '')}" placeholder="PersistentVolumeClaim name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaim" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job workspace claim mount ${yamlHint('agent_sandbox.job.workspace_claim_mount')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim mount', `Where the workspace claim is mounted in the Job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaimMount || '')}" placeholder="mount path" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaimMount" data-arg-types="s,s,v"></div>
+        <details class="settings-subsection-details" id="gov-sandbox-job-scheduling"><summary class="settings-subsection-summary">Job scheduling, resources, preflight and GitHub read relay</summary>
+        ${sandboxSchedulingHtml('hive', sec)}
+        </details>
         <details class="settings-subsection-details"><summary class="settings-subsection-summary">Substrate sandbox</summary>
         ${substrateSandboxFields('security', sec.agentSandboxSubstrate)}
         </details>
@@ -80348,6 +80480,11 @@ function burnAreaChart() {
           </div>
           ${f.customersSearchEffective !== f.customersSearch ? `<p class="config-help">HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED (or turning Customers off) overrides this setting: the search is currently <b>${f.customersSearchEffective ? 'on' : 'off'}</b>.</p>` : ''}
           <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersProfileFill ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersProfileFillEnabled"></div>
+            <span class="config-toggle-label">Fill customer details from public profiles ${yamlHint('customers.profile_fill.enabled')} ${settingHelpMark('settings', 'features', 'Customer profile fill', `OFF by default. When on, the hive reads each confirmed customer's own public profile on this hive's forge (GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo) by their login, and, when a Linear workspace is connected, their workspace member name by an email address the profile already holds. It fills the real name, organization (the company field, a GitHub @org shown by its public name) and location, and the country is derived from the location. Only empty fields are filled, plus fields an earlier fill wrote: a value set by hand or shared from the hub is never changed. Each field shows where it came from. Suggested people are never looked up. Existing customers are filled within a few passes after it is turned on, then refreshed about weekly; "Refresh from profiles" on the Customers section runs it now. It spends at most customers.profile_fill.max_requests_per_hour requests an hour (default 60), stands down while the shared GitHub quota is low and backs off when a forge rate-limits it. Needs Customers on. Independent of the GitHub search on accept. HIVE_CUSTOMERS_PROFILE_FILL_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersProfileFillEffective !== f.customersProfileFill ? `<p class="config-help">HIVE_CUSTOMERS_PROFILE_FILL_ENABLED (or turning Customers off) overrides this setting: the profile fill is currently <b>${f.customersProfileFillEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
             <div class="config-toggle-switch ${f.customersEnrichmentEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentEnabled"></div>
             <span class="config-toggle-label">Public affiliation and activity (enrichment) ${yamlHint('customers.enrichment.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment', `OFF by default. The master switch for adding public facts about confirmed customers from CNCF sources: who they work for (cncf/gitdm, crowd.dev) and their public contributions (devstats). Each source below has its own switch and stays off until you turn it on too. Suggested people are never looked up, and nothing found ever replaces an organization a person set by hand or shared from the hub: an affiliation only appears as a suggestion you accept or dismiss. Forgetting a person deletes what was found for them. Needs Customers on. HIVE_CUSTOMERS_ENRICHMENT_ENABLED overrides it. See src/docs/customers-enrichment.md.`)}</span>
           </div>
@@ -80374,6 +80511,19 @@ function burnAreaChart() {
               <div class="config-field"><label>crowd.dev API token ${yamlHint('customers.enrichment.crowddev.token_file')} ${settingHelpMark('settings', 'features', 'crowd.dev API token', `Saved straight away, owner only, sealed in the keystore at customers.enrichment.crowddev.token_file. It is never shown again; this field only says whether one is set. Clear removes it. HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN, when set, wins over the saved token.`)}</label><input type="password" id="customers-crowddev-token" autocomplete="new-password" placeholder="${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set' : 'No token set'}"><div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-3)"><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="save">Save token</button><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="clear">Clear</button></div><div class="config-help" id="customers-crowddev-token-status">${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set.' : 'No token set.'}</div></div>
             </div>
           </details>
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.askEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askEnabled"></div>
+            <span class="config-toggle-label">Ask AI help ${yamlHint('ask.enabled')} ${settingHelpMark('settings', 'features', 'Ask AI help', `OFF by default. Shows an Ask panel that answers questions about using this dashboard from the Hive docs. What is sent: the question a person types, and the label of the dashboard section they are in (from a fixed list, never anything on screen), to Kapa.ai, an AI service; the project's Kapa administrators can read questions in their analytics. Nothing else leaves: no login, email, page content, URL, repo, hive or agent name. Each person confirms a notice before their first question and can withdraw. Questions that look like a password, token or key are refused and not sent. Answers show their sources and an "AI generated, may be wrong" label. Needs a mode: hub (hosted hives, through the hub relay; no key on this hive) or direct (this hive calls Kapa.ai with its own key, set as ask.kapa.project_id, ask.kapa.integration_id and ask.kapa.api_key_file in hive.yaml or HIVE_ASK_* env). Limits: ask.limits.person_per_minute, ask.limits.person_per_hour, ask.limits.hive_per_hour, ask.limits.global_per_minute, ask.limits.in_flight, ask.limits.daily. HIVE_ASK_ENABLED overrides the switch. See src/docs/design/dashboard-ask-ai-help.md.`)}</span>
+          </div>
+          ${f.askEnabled && !f.askEffective ? `<p class="config-help">Ask stays off: ${esc(f.askProblem || 'HIVE_ASK_ENABLED overrides this setting')}.</p>` : ''}
+          ${!f.askEnabled && f.askEffective ? `<p class="config-help">HIVE_ASK_ENABLED overrides this setting: Ask is currently <b>on</b>.</p>` : ''}
+          <div class="config-field"><label>Ask mode ${yamlHint('ask.mode')} ${settingHelpMark('settings', 'features', 'Ask mode', `off does nothing. hub (hosted hives) asks through the hub relay with this hive's existing hub credential, so no Kapa key is kept here. direct calls Kapa.ai with this hive's own key file. HIVE_ASK_MODE overrides it.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="askMode" data-arg-types="s,s,v">${['off', 'hub', 'direct'].map(m => `<option value="${esc(m)}"${(f.askMode || 'off') === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.askSendSectionLabel ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askSendSectionLabel"></div>
+            <span class="config-toggle-label">Send the section label with questions ${yamlHint('ask.send_section_label')} ${settingHelpMark('settings', 'features', 'Ask section label', `ON by default. Adds the name of the dashboard section the person is in, taken from a fixed list of section names, so "where is this button" finds the right page. Off sends the question alone. HIVE_ASK_SEND_SECTION_LABEL overrides it.`)}</span>
+          </div>
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">
@@ -80588,7 +80738,7 @@ function burnAreaChart() {
         ${renderGovFleetReportSection((_configState.data || {}).fleet_report || {})}
 
         <div class="settings-subsection">
-          <div class="settings-subsection-title">GitLab and Gitea forges ${settingHelpMark('settings', 'features', 'GitLab and Gitea forges', `Used only when the project forge is set to gitlab or gitea. Tokens are never stored in config: each forge names the environment variable that holds its token.`)}</div>
+          <div class="settings-subsection-title">GitLab, Gitea and Forgejo forges ${settingHelpMark('settings', 'features', 'GitLab, Gitea and Forgejo forges', `Used only when the project forge is set to gitlab, gitea or forgejo. Tokens are never stored in config: each forge names the environment variable that holds its token.`)}</div>
           <div class="config-field-row">
             <div class="config-field"><label>GitLab URL ${yamlHint('gitlab.gitlab_url')} ${settingHelpMark('settings', 'features', 'GitLab URL', `GitLab instance root, e.g. https://gitlab.example.com. Empty uses ${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}.`)}</label><input type="text" value="${esc(f.gitlabUrl || '')}" placeholder="${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>GitLab token env var ${yamlHint('gitlab.token_env')} ${settingHelpMark('settings', 'features', 'GitLab token env var', `The NAME of the environment variable holding the GitLab token, never the token itself.`)}</label><input type="text" value="${esc(f.gitlabTokenEnv || '')}" placeholder="${esc(platformDefaults.gitlabTokenEnv || 'GITLAB_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabTokenEnv" data-arg-types="s,s,w"></div>
@@ -80596,6 +80746,10 @@ function burnAreaChart() {
           <div class="config-field-row">
             <div class="config-field"><label>Gitea URL ${yamlHint('gitea.gitea_url')} ${settingHelpMark('settings', 'features', 'Gitea URL', `Gitea or Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Gitea forge.`)}</label><input type="text" value="${esc(f.giteaUrl || '')}" placeholder="https://gitea.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="giteaUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>Gitea token env var ${yamlHint('gitea.token_env')} ${settingHelpMark('settings', 'features', 'Gitea token env var', `The NAME of the environment variable holding the Gitea token, never the token itself.`)}</label><input type="text" value="${esc(f.giteaTokenEnv || '')}" placeholder="${esc(platformDefaults.giteaTokenEnv || 'GITEA_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="giteaTokenEnv" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Forgejo URL ${yamlHint('forgejo.forgejo_url')} ${settingHelpMark('settings', 'features', 'Forgejo URL', `Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Forgejo forge.`)}</label><input type="text" value="${esc(f.forgejoUrl || '')}" placeholder="https://forgejo.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoUrl" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Forgejo token env var ${yamlHint('forgejo.token_env')} ${settingHelpMark('settings', 'features', 'Forgejo token env var', `The NAME of the environment variable holding the Forgejo token, never the token itself.`)}</label><input type="text" value="${esc(f.forgejoTokenEnv || '')}" placeholder="${esc(platformDefaults.forgejoTokenEnv || 'FORGEJO_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoTokenEnv" data-arg-types="s,s,w"></div>
           </div>
           <div class="config-help">Requires restart: the forge client is built at boot.</div>
         </div>
@@ -80944,6 +81098,7 @@ function burnAreaChart() {
           <div class="config-field"><label for="cfg-agent-sandbox-job-envFromSecrets">Job secrets (names) ${yamlHint('sandbox.job.env_from_secrets[]')}</label>
             <textarea id="cfg-agent-sandbox-job-envFromSecrets" rows="2" class="mono" placeholder="one Secret name per line" data-change-action="markDirtySandboxJob" data-arg0="envFromSecrets" data-arg-types="s,v">${esc((job.envFromSecrets || []).join('\n'))}</textarea>
             <div class="config-field-hint">Secret names only. Never paste a value.</div></div>
+          ${sandboxSchedulingHtml('agent', f)}
         </details>`;
     }
 
@@ -80974,6 +81129,376 @@ function burnAreaChart() {
         renderConfigTab('General');
       } catch (err) {
         showToast('Failed to copy sandbox settings: ' + err.message, 'error');
+      }
+    }
+
+    // ── Sandbox Job scheduling, resources, preflight, read relay (#19553) ──
+    // One renderer and one stager for both places these live: the hive-wide
+    // agent_sandbox block (Settings, Security, scope 'hive') and one agent's
+    // sandbox block (agent General tab, scope 'agent'). The server validates
+    // every value again (api_sandbox_job_scheduling.go); the checks here only
+    // explain a mistake before Save. A field with an error is left out of the
+    // save, so a typo never saves half a map.
+
+    const SANDBOX_TAINT_EFFECTS = ['NoSchedule', 'PreferNoSchedule', 'NoExecute'];
+    const SANDBOX_K8S_NAME_MAX = 63;
+    const SANDBOX_K8S_PREFIX_MAX = 253;
+    const SANDBOX_MAP_MAX_ENTRIES = 64;
+    const SANDBOX_TOLERATIONS_MAX = 32;
+    const SANDBOX_PULL_SECRETS_MAX = 32;
+    const SANDBOX_PREFLIGHT_COMMANDS_MAX = 32;
+    const SANDBOX_PREFLIGHT_COMMAND_BYTES_MAX = 4096;
+    const SANDBOX_K8S_NAME_RE = /^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$/;
+    const SANDBOX_DNS_NAME_RE = /^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/;
+    const SANDBOX_QUANTITY_RE = /^([0-9]+(\.[0-9]*)?|\.[0-9]+)([KMGTPE]i|[numkMGTPE]|[eE][+-]?[0-9]+)?$/;
+    const SANDBOX_SOURCE_LABELS = { agent: "this agent's override", agent_sandbox: 'from agent_sandbox defaults', '': 'not set' };
+    const SANDBOX_PREFLIGHT_FIELDS = ['preflightCommands', 'preflightTimeoutS', 'preflightTotalTimeoutS', 'preflightRetryDelayS'];
+
+    /* The hive.yaml path behind each control, spelled out in full so the
+       settings parity guard (settings_parity_test.go) finds every leaf. */
+    const SANDBOX_SCHED_YAML = {
+      hive: {
+        nodeSelector: 'agent_sandbox.job.node_selector.<key>',
+        limits: 'agent_sandbox.job.resources.limits.<key>',
+        requests: 'agent_sandbox.job.resources.requests.<key>',
+        tolerations: 'agent_sandbox.job.tolerations[].key',
+        tolerationParts: ['agent_sandbox.job.tolerations[].operator', 'agent_sandbox.job.tolerations[].value', 'agent_sandbox.job.tolerations[].effect'],
+        imagePullSecrets: 'agent_sandbox.job.image_pull_secrets[]',
+        scheduleTimeoutS: 'agent_sandbox.job.schedule_timeout_s',
+        preflightCommands: 'agent_sandbox.preflight.commands[]',
+        preflightTimeoutS: 'agent_sandbox.preflight.timeout_s',
+        preflightTotalTimeoutS: 'agent_sandbox.preflight.total_timeout_s',
+        preflightRetryDelayS: 'agent_sandbox.preflight.retry_delay_s',
+      },
+      agent: {
+        nodeSelector: 'agents.<key>.sandbox.job.node_selector.<key>',
+        limits: 'agents.<key>.sandbox.job.resources.limits.<key>',
+        requests: 'agents.<key>.sandbox.job.resources.requests.<key>',
+        tolerations: 'agents.<key>.sandbox.job.tolerations[].key',
+        tolerationParts: ['agents.<key>.sandbox.job.tolerations[].operator', 'agents.<key>.sandbox.job.tolerations[].value', 'agents.<key>.sandbox.job.tolerations[].effect'],
+        imagePullSecrets: 'agents.<key>.sandbox.job.image_pull_secrets[]',
+        scheduleTimeoutS: 'agents.<key>.sandbox.job.schedule_timeout_s',
+        preflightCommands: 'agents.<key>.sandbox.preflight.commands[]',
+        preflightTimeoutS: 'agents.<key>.sandbox.preflight.timeout_s',
+        preflightTotalTimeoutS: 'agents.<key>.sandbox.preflight.total_timeout_s',
+        preflightRetryDelayS: 'agents.<key>.sandbox.preflight.retry_delay_s',
+      },
+    };
+
+    function sandboxQualifiedNameError(s) {
+      const slash = s.lastIndexOf('/');
+      const name = slash >= 0 ? s.slice(slash + 1) : s;
+      if (slash >= 0) {
+        const prefix = s.slice(0, slash);
+        if (!prefix || prefix.length > SANDBOX_K8S_PREFIX_MAX || !SANDBOX_DNS_NAME_RE.test(prefix)) return `"${s}" has an invalid prefix (a lowercase DNS name such as example.com)`;
+      }
+      if (!name || name.length > SANDBOX_K8S_NAME_MAX || !SANDBOX_K8S_NAME_RE.test(name)) return `"${s}" is not a valid Kubernetes name`;
+      return '';
+    }
+
+    /* key=value lines into a map. kind 'label' takes label values (may be
+       empty), kind 'quantity' takes resource quantities like 2, 500m, 16Gi. */
+    function sandboxParseMapLines(text, kind) {
+      const value = {};
+      const errors = [];
+      String(text || '').split(/\r?\n/).forEach((raw, i) => {
+        const line = raw.trim();
+        if (!line) return;
+        const idx = line.indexOf('=');
+        if (idx <= 0) { errors.push(`line ${i + 1}: write key=value`); return; }
+        const k = line.slice(0, idx).trim();
+        const v = line.slice(idx + 1).trim();
+        const keyErr = sandboxQualifiedNameError(k);
+        if (keyErr) { errors.push(`line ${i + 1}: ${keyErr}`); return; }
+        if (kind === 'quantity' && !SANDBOX_QUANTITY_RE.test(v)) { errors.push(`line ${i + 1}: "${v}" is not a quantity (for example 2, 500m, 16Gi)`); return; }
+        if (kind !== 'quantity' && v && (v.length > SANDBOX_K8S_NAME_MAX || !SANDBOX_K8S_NAME_RE.test(v))) { errors.push(`line ${i + 1}: "${v}" is not a valid label value`); return; }
+        value[k] = v;
+      });
+      if (Object.keys(value).length > SANDBOX_MAP_MAX_ENTRIES) errors.push(`at most ${SANDBOX_MAP_MAX_ENTRIES} entries`);
+      return { value, errors };
+    }
+
+    function sandboxMapText(map) {
+      return Object.keys(map || {}).sort().map(k => k + '=' + map[k]).join('\n');
+    }
+
+    /* Toleration lines in taint syntax: key=value:Effect (operator Equal),
+       key:Effect or key (operator Exists), * or *:Effect (every taint). An
+       omitted effect matches every effect. */
+    function sandboxParseTolerationLines(text) {
+      const value = [];
+      const errors = [];
+      String(text || '').split(/\r?\n/).forEach((raw, i) => {
+        const line = raw.trim();
+        if (!line) return;
+        let spec = line;
+        let effect = '';
+        const colon = line.lastIndexOf(':');
+        if (colon >= 0) {
+          effect = line.slice(colon + 1).trim();
+          spec = line.slice(0, colon).trim();
+          if (!SANDBOX_TAINT_EFFECTS.includes(effect)) { errors.push(`line ${i + 1}: effect must be ${SANDBOX_TAINT_EFFECTS.join(', ')} or left out`); return; }
+        }
+        if (spec === '*') { value.push({ key: '', operator: 'Exists', value: '', effect }); return; }
+        const eq = spec.indexOf('=');
+        const key = (eq >= 0 ? spec.slice(0, eq) : spec).trim();
+        const val = eq >= 0 ? spec.slice(eq + 1).trim() : '';
+        const keyErr = sandboxQualifiedNameError(key);
+        if (keyErr) { errors.push(`line ${i + 1}: ${keyErr}`); return; }
+        if (val && (val.length > SANDBOX_K8S_NAME_MAX || !SANDBOX_K8S_NAME_RE.test(val))) { errors.push(`line ${i + 1}: "${val}" is not a valid taint value`); return; }
+        value.push({ key, operator: eq >= 0 ? 'Equal' : 'Exists', value: val, effect });
+      });
+      if (value.length > SANDBOX_TOLERATIONS_MAX) errors.push(`at most ${SANDBOX_TOLERATIONS_MAX} tolerations`);
+      return { value, errors };
+    }
+
+    function sandboxTolerationText(list) {
+      return (list || []).map(t => {
+        const op = t.operator || (t.value ? 'Equal' : '');
+        let spec = t.key || '';
+        if (!spec && op === 'Exists') spec = '*';
+        else if (op !== 'Exists') spec += '=' + (t.value || '');
+        return spec + (t.effect ? ':' + t.effect : '');
+      }).join('\n');
+    }
+
+    function sandboxParseNameLines(text) {
+      const value = [];
+      const errors = [];
+      String(text || '').split(/\r?\n/).forEach((raw, i) => {
+        const s = raw.trim();
+        if (!s) return;
+        if (s.length > SANDBOX_K8S_PREFIX_MAX || !SANDBOX_DNS_NAME_RE.test(s)) { errors.push(`line ${i + 1}: "${s}" is not a Secret name. Names only, never a value`); return; }
+        value.push(s);
+      });
+      if (value.length > SANDBOX_PULL_SECRETS_MAX) errors.push(`at most ${SANDBOX_PULL_SECRETS_MAX} names`);
+      return { value, errors };
+    }
+
+    function sandboxParseCommandLines(text) {
+      const value = String(text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      const errors = [];
+      if (value.length > SANDBOX_PREFLIGHT_COMMANDS_MAX) errors.push(`at most ${SANDBOX_PREFLIGHT_COMMANDS_MAX} commands`);
+      value.forEach((c, i) => { if (c.length > SANDBOX_PREFLIGHT_COMMAND_BYTES_MAX) errors.push(`command ${i + 1} is longer than ${SANDBOX_PREFLIGHT_COMMAND_BYTES_MAX} characters`); });
+      return { value, errors };
+    }
+
+    function sandboxParseSeconds(text) {
+      const s = String(text == null ? '' : text).trim();
+      if (!s) return { value: 0, errors: [] };
+      const n = Number(s);
+      if (!Number.isInteger(n) || n < 0) return { value: 0, errors: ['a whole number of seconds, 0 or more'] };
+      return { value: n, errors: [] };
+    }
+
+    function sandboxParseListenAddr(text) {
+      const s = String(text || '').trim();
+      if (s && !/^(\[[0-9A-Fa-f:.]+\]|[^:\s]*):[0-9]+$/.test(s)) return { value: s, errors: ['host:port, for example :8443'] };
+      return { value: s, errors: [] };
+    }
+
+    function sandboxParseEndpoint(text) {
+      const s = String(text || '').trim();
+      if (!s) return { value: s, errors: [] };
+      if (!/^https:\/\/[^\s/@]+(\/.*)?$/.test(s)) return { value: s, errors: ['an https://host:port URL with no user or password'] };
+      return { value: s, errors: [] };
+    }
+
+    function sandboxSchedId(scope, field) { return 'sbx-' + scope + '-' + field; }
+
+    function sandboxSchedInputValue(scope, field) {
+      const el = document.getElementById(sandboxSchedId(scope, field));
+      if (!el) return null;
+      return el.type === 'checkbox' ? !!el.checked : el.value;
+    }
+
+    function sandboxSchedShowErrors(scope, field, errors) {
+      const el = document.getElementById(sandboxSchedId(scope, field) + '-error');
+      if (el) el.textContent = errors.length ? 'Not saved until fixed: ' + errors.join('; ') : '';
+    }
+
+    function sandboxSchedTextarea(scope, field, label, yaml, text, placeholder, help, rows, disabled) {
+      const id = sandboxSchedId(scope, field);
+      return `<div class="config-field" data-setting-key="${esc(yaml)}"><label for="${id}">${label} ${yamlHint(yaml)}</label>`
+        + `<textarea id="${id}" rows="${rows || 2}" class="mono" spellcheck="false" placeholder="${esc(placeholder)}"${disabled ? ' disabled' : ''} data-change-action="markSandboxScheduling" data-arg0="${scope}" data-arg-types="s">${esc(text)}</textarea>`
+        + `<div class="config-field-hint">${help}</div>`
+        + `<div class="config-field-hint" id="${id}-error" role="alert" style="color:var(--red)"></div></div>`;
+    }
+
+    function sandboxSchedInput(scope, field, label, yaml, value, placeholder, help, type, disabled) {
+      const id = sandboxSchedId(scope, field);
+      const t = type || 'text';
+      const extra = (t === 'number' ? ' min="0" step="1"' : ' spellcheck="false" autocomplete="off"') + (disabled ? ' disabled' : '');
+      return `<div class="config-field" data-setting-key="${esc(yaml)}"><label for="${id}">${label} ${yamlHint(yaml)}</label>`
+        + `<input type="${t}" id="${id}"${extra} value="${esc(value == null ? '' : String(value))}" placeholder="${esc(placeholder)}" data-change-action="markSandboxScheduling" data-arg0="${scope}" data-arg-types="s">`
+        + `<div class="config-field-hint">${help}</div>`
+        + `<div class="config-field-hint" id="${id}-error" role="alert" style="color:var(--red)"></div></div>`;
+    }
+
+    function sandboxSchedCheckbox(scope, field, label, yaml, checked, help) {
+      const id = sandboxSchedId(scope, field);
+      return `<div class="config-field" data-setting-key="${esc(yaml)}"><label for="${id}"><input type="checkbox" id="${id}"${checked ? ' checked' : ''} data-change-action="markSandboxScheduling" data-arg0="${scope}" data-arg-types="s"> ${label} ${yamlHint(yaml)}</label>`
+        + `<div class="config-field-hint">${help}</div>`
+        + `<div class="config-field-hint" id="${id}-error" role="alert" style="color:var(--red)"></div></div>`;
+    }
+
+    function sandboxEffectiveText(field, v) {
+      if (field === 'nodeSelector') return sandboxMapText(v).split('\n').filter(Boolean).join(', ');
+      if (field === 'resources') {
+        const parts = [];
+        const lim = sandboxMapText((v || {}).limits).split('\n').filter(Boolean).join(', ');
+        const req = sandboxMapText((v || {}).requests).split('\n').filter(Boolean).join(', ');
+        if (lim) parts.push('limits ' + lim);
+        if (req) parts.push('requests ' + req);
+        return parts.join('; ');
+      }
+      if (field === 'tolerations') return sandboxTolerationText(v).split('\n').filter(Boolean).join(', ');
+      if (Array.isArray(v)) return v.join(', ');
+      if (field === 'ttlSeconds' || field === 'scheduleTimeoutS') return v ? String(v) + ' s' : '';
+      return v == null ? '' : String(v);
+    }
+
+    /* "In effect for this agent": the resolved value of every Job field and
+       where it comes from, plus a warning when the agent's own job block hides
+       hive-wide pod-template settings (a per-agent block replaces them whole). */
+    function sandboxEffectiveHtml(f) {
+      const eff = f.sandboxEffective || {};
+      const job = eff.job || {};
+      const src = eff.sources || {};
+      const rows = [
+        ['Node selector', 'nodeSelector'], ['Resources', 'resources'], ['Tolerations', 'tolerations'],
+        ['Service account', 'serviceAccount'], ['Scheduler name', 'schedulerName'], ['Image pull secrets', 'imagePullSecrets'],
+        ['Job TTL', 'ttlSeconds'], ['Schedule timeout', 'scheduleTimeoutS'],
+      ].map(([label, key]) => {
+        const text = sandboxEffectiveText(key, job[key]);
+        const from = key === 'scheduleTimeoutS' && !src[key] ? 'built-in default' : (SANDBOX_SOURCE_LABELS[src[key] || ''] || src[key]);
+        return `<li data-effective-field="${key}"><strong>${label}:</strong> ${text ? `<code>${esc(text)}</code>` : 'none'} <span class="config-field-hint">(${esc(from)})</span></li>`;
+      });
+      const pre = eff.preflight || {};
+      const cmds = (pre.commands || []).length;
+      const preFrom = SANDBOX_SOURCE_LABELS[eff.preflightSource || ''] || eff.preflightSource;
+      rows.push(`<li data-effective-field="preflight"><strong>Node preflight:</strong> ${cmds ? `${cmds} command${cmds === 1 ? '' : 's'}, ${Number(pre.timeoutS || 0)} s each, ${Number(pre.totalTimeoutS || 0)} s total` : 'off'} <span class="config-field-hint">(${esc(preFrom)})</span></li>`);
+      const hidden = Array.isArray(eff.hiddenDefaults) ? eff.hiddenDefaults : [];
+      const hiddenHtml = hidden.length
+        ? `<div class="config-field-hint" id="cfg-agent-sandbox-hidden-defaults" role="status" style="color:var(--yellow)">&#9888; This agent has its own Job block, so these hive-wide settings do not apply to it: ${hidden.map(h => `<code>agent_sandbox.job.${esc(h)}</code>`).join(', ')}. Set them below if this agent needs them.</div>`
+        : '';
+      return `<div class="config-field" id="cfg-agent-sandbox-effective"><label>In effect for this agent</label><ul class="config-help">${rows.join('')}</ul>${hiddenHtml}</div>`;
+    }
+
+    /* The Job scheduling, resources, pull secrets and preflight fields, plus
+       (hive scope only) the GitHub read relay. scope 'hive' reads the Security
+       section (agentSandbox* keys); scope 'agent' reads the General tab's
+       sandboxFields. */
+    function sandboxSchedulingHtml(scope, d) {
+      d = d || {};
+      const agent = scope === 'agent';
+      const y = SANDBOX_SCHED_YAML[agent ? 'agent' : 'hive'];
+      const own = agent ? (d.sandboxJob || {}) : {
+        nodeSelector: d.agentSandboxJobNodeSelector, resources: d.agentSandboxJobResources, tolerations: d.agentSandboxJobTolerations,
+        imagePullSecrets: d.agentSandboxJobImagePullSecrets, scheduleTimeoutS: d.agentSandboxJobScheduleTimeoutS,
+      };
+      const defaults = (agent ? d.sandboxPreflightDefaults : d.agentSandboxPreflightDefaults) || {};
+      const eff = agent ? ((d.sandboxEffective || {}).job || {}) : {};
+      const src = agent ? ((d.sandboxEffective || {}).sources || {}) : {};
+      const inherited = (key, text) => (agent && src[key] === 'agent_sandbox' && text ? 'inherits ' + text.split('\n').join(', ') : '');
+      const res = own.resources || {};
+      const effRes = eff.resources || {};
+      const pre = agent ? d.sandboxPreflight : d.agentSandboxPreflight;
+      const preOverride = agent && pre != null;
+      const preShown = pre || (agent ? (d.sandboxEffective || {}).preflight : null) || {};
+      const preLocked = agent && !preOverride;
+      const wholesaleNote = agent
+        ? "An agent with any Job setting of its own uses its own node selector, resources, tolerations and service account instead of the hive-wide ones."
+        : 'An agent with its own Job block uses its own node selector, resources, tolerations and service account instead of these.';
+      let html = `<div class="settings-subsection-title mt-4">Job scheduling and resources</div>
+          <p class="config-help">Where the sandbox Job may run and what it asks the cluster for (runtime <code>job</code> only). ${wholesaleNote}</p>
+          ${agent ? sandboxEffectiveHtml(d) : ''}
+          ${sandboxSchedTextarea(scope, 'nodeSelector', 'Node selector', y.nodeSelector, sandboxMapText(own.nodeSelector), inherited('nodeSelector', sandboxMapText(eff.nodeSelector)) || 'accelerator=spyre', 'One Kubernetes node label per line, <code>key=value</code>. The Job only runs on nodes carrying every label. Avoid <code>kubernetes.io/hostname</code>: it pins one node and defeats the preflight retry.', 3)}
+          ${sandboxSchedTextarea(scope, 'limits', 'Resource limits', y.limits, sandboxMapText(res.limits), inherited('resources', sandboxMapText(effRes.limits)) || 'ibm.com/spyre_pf=1\nmemory=32Gi', 'One <code>resource=quantity</code> per line, for example <code>cpu=4</code>, <code>memory=32Gi</code>, or a device such as <code>ibm.com/spyre_pf=1</code>. Device (extended) resources are requested through limits.', 3)}
+          ${sandboxSchedTextarea(scope, 'requests', 'Resource requests', y.requests, sandboxMapText(res.requests), inherited('resources', sandboxMapText(effRes.requests)) || 'cpu=500m', 'One <code>resource=quantity</code> per line. Leave empty to request what the limits say.', 2)}
+          ${sandboxSchedTextarea(scope, 'tolerations', 'Tolerations', y.tolerations, sandboxTolerationText(own.tolerations), inherited('tolerations', sandboxTolerationText(eff.tolerations)) || 'accelerator:NoSchedule', 'One per line in taint syntax: <code>key=value:Effect</code> (operator Equal), <code>key:Effect</code> or <code>key</code> (operator Exists), <code>*</code> for every taint. Effect is NoSchedule, PreferNoSchedule or NoExecute; leave it out to match all. Also sets ' + y.tolerationParts.map(k => '<code>' + esc(k) + '</code>').join(', ') + '.', 2)}
+          ${sandboxSchedTextarea(scope, 'imagePullSecrets', 'Image pull secrets (names)', y.imagePullSecrets, (own.imagePullSecrets || []).join('\n'), inherited('imagePullSecrets', (eff.imagePullSecrets || []).join('\n')) || 'one Secret name per line', 'Names of <code>kubernetes.io/dockerconfigjson</code> Secrets in the hive namespace, for a private registry. Names only, never a value.' + (agent ? ' Empty inherits the hive-wide list.' : ''), 2)}
+          ${sandboxSchedInput(scope, 'scheduleTimeoutS', 'Schedule timeout (seconds)', y.scheduleTimeoutS, own.scheduleTimeoutS || '', agent && eff.scheduleTimeoutS ? 'in effect: ' + eff.scheduleTimeoutS : String(defaults.scheduleTimeoutS || ''), 'How long the pod may stay Unschedulable before the kick fails as <code>waiting_for_node</code>. 0 or empty ' + (agent ? 'inherits the hive-wide value, then ' : 'uses ') + 'the default of ' + Number(defaults.scheduleTimeoutS || 0) + ' s.', 'number')}
+          <div class="settings-subsection-title mt-4">Node preflight</div>
+          <p class="config-help">Shell commands run in the Job before the agent starts, each as <code>sh -lc</code> in the same image and workspace. A failing command marks the node <code>node_unhealthy</code> and hive retries the kick once on another node. They are written to the Job manifest and the pod log, so never put a credential on a command line.</p>`;
+      if (agent) {
+        html += sandboxSchedCheckbox(scope, 'preflightOverride', 'Use this agent\'s own preflight', y.preflightCommands, preOverride,
+          'Off: this agent uses the hive-wide <code>agent_sandbox.preflight</code>. On: it uses the list below instead; an empty list turns preflight off for this agent.');
+      }
+      html += sandboxSchedTextarea(scope, 'preflightCommands', 'Preflight commands', y.preflightCommands, (preShown.commands || []).join('\n'), "python -c 'import torch; torch.ones(1).to(\"spyre\")'", 'One command per line, at most ' + Number(defaults.maxCommands || SANDBOX_PREFLIGHT_COMMANDS_MAX) + '.' + (agent && !preOverride ? ' Showing the hive-wide list; turn on the override above to edit it for this agent.' : ''), 3, preLocked);
+      html += sandboxSchedInput(scope, 'preflightTimeoutS', 'Per-command timeout (seconds)', y.preflightTimeoutS, (pre || {}).timeoutS || '', String(defaults.timeoutS || ''), '0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(defaults.timeoutS || 0) + ' s.', 'number', preLocked);
+      html += sandboxSchedInput(scope, 'preflightTotalTimeoutS', 'Total timeout (seconds)', y.preflightTotalTimeoutS, (pre || {}).totalTimeoutS || '', String(defaults.totalTimeoutS || ''), 'Bounds all commands together. 0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(defaults.totalTimeoutS || 0) + ' s.', 'number', preLocked);
+      html += sandboxSchedInput(scope, 'preflightRetryDelayS', 'Retry delay (seconds)', y.preflightRetryDelayS, (pre || {}).retryDelayS || '', '0', 'Wait before re-creating the Job on another node after <code>node_unhealthy</code>. 0 retries at once.', 'number', preLocked);
+      if (!agent) {
+        const rp = d.agentSandboxJobGithubReadProxy || {};
+        html += `<div class="settings-subsection-title mt-4">GitHub read relay</div>
+          <p class="config-help">Off by default. When on, hive serves a TLS relay that adds a read-only, repo-scoped GitHub token to each Job's GitHub reads; writes are refused and the token never enters the Job. Hive-wide only: an agent's Job block cannot change it. Takes effect when hive restarts. You expose the listener to the Job pods yourself (a Service and a NetworkPolicy).</p>
+          ${sandboxSchedCheckbox(scope, 'rpEnabled', 'Enable the GitHub read relay', 'agent_sandbox.job.github_read_proxy.enabled', !!rp.enabled, 'Needs a listen address and an https endpoint.')}
+          ${sandboxSchedInput(scope, 'rpListenAddr', 'Listen address', 'agent_sandbox.job.github_read_proxy.listen_addr', rp.listenAddr || '', ':8443', 'The host:port hive binds. There is no default, so hive never opens a port you did not name.')}
+          ${sandboxSchedInput(scope, 'rpEndpoint', 'Endpoint', 'agent_sandbox.job.github_read_proxy.endpoint', rp.endpoint || '', 'https://hive-read-relay:8443', 'The <code>https://host:port</code> Job pods use to reach the relay, for example the in-namespace Service. No user or password: hive adds a per-kick key itself.')}
+          ${sandboxSchedTextarea(scope, 'rpNoProxy', 'Bypass hosts', 'agent_sandbox.job.github_read_proxy.no_proxy[]', (rp.noProxy || []).join('\n'), 'registry.internal', 'Extra hosts or domains a Job reaches directly, one per line, on top of localhost, .svc and .cluster.local.', 2)}`;
+      }
+      return html;
+    }
+
+    /* Reads every scheduling input of the scope and stages the valid ones.
+       An input with an error shows it and is left out of the save. */
+    function markSandboxScheduling(scope) {
+      const agent = scope === 'agent';
+      const staged = {};
+      const take = (field, parsed, put) => {
+        sandboxSchedShowErrors(scope, field, parsed.errors);
+        if (!parsed.errors.length) put(parsed.value);
+        return parsed.errors.length === 0;
+      };
+      const read = field => sandboxSchedInputValue(scope, field);
+      if (read('nodeSelector') != null) take('nodeSelector', sandboxParseMapLines(read('nodeSelector'), 'label'), v => { staged.nodeSelector = v; });
+      const resources = {};
+      if (read('limits') != null) take('limits', sandboxParseMapLines(read('limits'), 'quantity'), v => { resources.limits = v; });
+      if (read('requests') != null) take('requests', sandboxParseMapLines(read('requests'), 'quantity'), v => { resources.requests = v; });
+      if (Object.keys(resources).length) staged.resources = resources;
+      if (read('tolerations') != null) take('tolerations', sandboxParseTolerationLines(read('tolerations')), v => { staged.tolerations = v; });
+      if (read('imagePullSecrets') != null) take('imagePullSecrets', sandboxParseNameLines(read('imagePullSecrets')), v => { staged.imagePullSecrets = v; });
+      if (read('scheduleTimeoutS') != null) take('scheduleTimeoutS', sandboxParseSeconds(read('scheduleTimeoutS')), v => { staged.scheduleTimeoutS = v; });
+
+      let preflight;
+      let preflightOk = true;
+      const override = agent ? read('preflightOverride') : true;
+      if (agent) {
+        SANDBOX_PREFLIGHT_FIELDS.forEach(field => {
+          const el = document.getElementById(sandboxSchedId(scope, field));
+          if (el) el.disabled = !override;
+        });
+      }
+      if (read('preflightCommands') != null) {
+        const block = {};
+        preflightOk = take('preflightCommands', sandboxParseCommandLines(read('preflightCommands')), v => { block.commands = v; });
+        [['preflightTimeoutS', 'timeoutS'], ['preflightTotalTimeoutS', 'totalTimeoutS'], ['preflightRetryDelayS', 'retryDelayS']].forEach(([field, key]) => {
+          if (read(field) == null) return;
+          if (!take(field, sandboxParseSeconds(read(field)), v => { block[key] = v; })) preflightOk = false;
+        });
+        preflight = override ? block : null;
+      }
+
+      if (agent) {
+        const prev = (_configState.dirty.general || {}).sandboxJob || {};
+        markDirty('general', 'sandboxJob', Object.assign({}, prev, staged));
+        if (preflight !== undefined && preflightOk) markDirty('general', 'sandboxPreflight', preflight);
+        return;
+      }
+      const keys = { nodeSelector: 'agentSandboxJobNodeSelector', resources: 'agentSandboxJobResources', tolerations: 'agentSandboxJobTolerations', imagePullSecrets: 'agentSandboxJobImagePullSecrets', scheduleTimeoutS: 'agentSandboxJobScheduleTimeoutS' };
+      Object.keys(staged).forEach(k => markDirty('security', keys[k], staged[k]));
+      if (preflight !== undefined && preflightOk) markDirty('security', 'agentSandboxPreflight', preflight);
+      if (read('rpEnabled') != null) {
+        const rp = { enabled: !!read('rpEnabled') };
+        let ok = take('rpListenAddr', sandboxParseListenAddr(read('rpListenAddr')), v => { rp.listenAddr = v; });
+        ok = take('rpEndpoint', sandboxParseEndpoint(read('rpEndpoint')), v => { rp.endpoint = v; }) && ok;
+        ok = take('rpNoProxy', { value: String(read('rpNoProxy') || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean), errors: [] }, v => { rp.noProxy = v; }) && ok;
+        if (rp.enabled && (!rp.listenAddr || !rp.endpoint)) {
+          sandboxSchedShowErrors(scope, 'rpEnabled', ['the relay needs a listen address and an endpoint']);
+          ok = false;
+        }
+        if (ok) markDirty('security', 'agentSandboxJobGithubReadProxy', rp);
       }
     }
     async function prepareIntegrationExecutionIdentity() {

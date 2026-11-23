@@ -256,8 +256,10 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 		{"dataSessionRetentionDays": "a week"},
 		{"deploymentPodmanMode": "sometimes"},
 		{"deploymentUpgradeRequestDir": "requests"},
+		{"forgejoUrl": "ftp://forgejo.example"},
 		{"giteaUrl": "ftp://gitea.example"},
 		{"gitlabUrl": "gitlab.example.com"},
+		{"forgejoTokenEnv": "glpat-not-a-name"},
 		{"giteaTokenEnv": "glpat-not-a-name"},
 		{"gitlabTokenEnv": "has space"},
 		{"mintMaxTtlSeconds": -1},
@@ -296,10 +298,12 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 		"evidenceEnabled":        false,
 		"evidenceSigningKeyFile": "/elsewhere/other.key",
 
-		"giteaUrl":       "https://codeberg.org/",
-		"giteaTokenEnv":  "MY_GITEA_TOKEN",
-		"gitlabUrl":      "https://gitlab.example.com",
-		"gitlabTokenEnv": "MY_GITLAB_TOKEN",
+		"forgejoUrl":      "https://codeberg.org/",
+		"forgejoTokenEnv": "MY_FORGEJO_TOKEN",
+		"giteaUrl":        "https://codeberg.org/",
+		"giteaTokenEnv":   "MY_GITEA_TOKEN",
+		"gitlabUrl":       "https://gitlab.example.com",
+		"gitlabTokenEnv":  "MY_GITLAB_TOKEN",
 
 		"mintKeyPath":       "/elsewhere/other.pem",
 		"mintMaxTtlSeconds": 1800,
@@ -334,6 +338,9 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 	}
 	if c.Evidence.IsEnabled() || c.Evidence.SigningKeyFile != "/keys/evidence.key" {
 		t.Fatalf("evidence not applied (or signing_key_file written): %+v", c.Evidence)
+	}
+	if c.Forgejo != (config.ForgejoConfig{URL: "https://codeberg.org", TokenEnv: "MY_FORGEJO_TOKEN"}) {
+		t.Fatalf("forgejo not applied: %+v", c.Forgejo)
 	}
 	if c.Gitea != (config.GiteaConfig{URL: "https://codeberg.org", TokenEnv: "MY_GITEA_TOKEN"}) ||
 		c.GitLab != (config.GitLabConfig{URL: "https://gitlab.example.com", TokenEnv: "MY_GITLAB_TOKEN"}) {
@@ -391,6 +398,8 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 			DeploymentUpgradeHelper      string         `json:"deploymentUpgradeHelper"`
 			EvidenceEnabled              bool           `json:"evidenceEnabled"`
 			EvidenceSigningKeyFile       string         `json:"evidenceSigningKeyFile"`
+			ForgejoURL                   string         `json:"forgejoUrl"`
+			ForgejoTokenEnv              string         `json:"forgejoTokenEnv"`
 			GiteaURL                     string         `json:"giteaUrl"`
 			GiteaTokenEnv                string         `json:"giteaTokenEnv"`
 			GitLabURL                    string         `json:"gitlabUrl"`
@@ -422,6 +431,9 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 	}
 	if f.EvidenceEnabled || f.EvidenceSigningKeyFile != "/keys/evidence.key" || f.MintKeyPath != "/keys/mint.pem" || f.MintMaxTTLSeconds != 0 {
 		t.Fatalf("evidence/mint payload = %+v", f)
+	}
+	if f.ForgejoURL != "https://codeberg.org" || f.ForgejoTokenEnv != "MY_FORGEJO_TOKEN" {
+		t.Fatalf("forgejo payload = %+v", f)
 	}
 	if f.GiteaURL != "https://codeberg.org" || f.GiteaTokenEnv != "MY_GITEA_TOKEN" || f.GitLabURL != "" || f.GitLabTokenEnv != "MY_GITLAB_TOKEN" {
 		t.Fatalf("forge payload = %+v", f)
@@ -460,6 +472,8 @@ func TestPlatformSettingsRenderEveryKey(t *testing.T) {
 		{"renderGovFeatures", "deployment.upgrade_helper", `value="${esc(f.deploymentUpgradeHelper || '')}"`},
 		{"renderGovFeatures", "evidence.enabled", `data-section="features" data-key="evidenceEnabled"`},
 		{"renderGovFeatures", "evidence.signing_key_file", `value="${esc(f.evidenceSigningKeyFile || '')}"`},
+		{"renderGovFeatures", "forgejo.forgejo_url", `data-arg0="features" data-arg1="forgejoUrl" data-arg-types="s,s,w"`},
+		{"renderGovFeatures", "forgejo.token_env", `data-arg0="features" data-arg1="forgejoTokenEnv" data-arg-types="s,s,w"`},
 		{"renderGovFeatures", "gitea.gitea_url", `data-arg0="features" data-arg1="giteaUrl" data-arg-types="s,s,w"`},
 		{"renderGovFeatures", "gitea.token_env", `data-arg0="features" data-arg1="giteaTokenEnv" data-arg-types="s,s,w"`},
 		{"renderGovFeatures", "gitlab.gitlab_url", `data-arg0="features" data-arg1="gitlabUrl" data-arg-types="s,s,w"`},

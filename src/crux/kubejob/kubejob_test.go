@@ -806,6 +806,32 @@ func TestManifestCopiesAllowlistedEnv(t *testing.T) {
 	}
 }
 
+// TestManifestPropagatesRequireHardened checks strict containment mode reaches
+// the Job pod (#19479), so the relay preflight there fails the kick on a gap
+// instead of only warning, and that the pod gets nothing when hive is not strict.
+func TestManifestPropagatesRequireHardened(t *testing.T) {
+	const want = `{"name":"HIVE_REQUIRE_HARDENED","value":"1"}`
+	for _, tc := range []struct {
+		env    string
+		strict bool
+	}{{"1", true}, {"true", true}, {"", false}, {"0", false}} {
+		t.Setenv("HIVE_REQUIRE_HARDENED", tc.env)
+		api := newFakeAPI()
+		api.statuses = []string{statusComplete}
+		srv := httptest.NewServer(api.handler(t))
+		l := newLauncher(srv, Options{})
+		if _, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123")); err != nil {
+			srv.Close()
+			t.Fatalf("HIVE_REQUIRE_HARDENED=%q: Run: %v", tc.env, err)
+		}
+		srv.Close()
+		raw, _ := json.Marshal(api.created)
+		if got := strings.Contains(string(raw), want); got != tc.strict {
+			t.Errorf("HIVE_REQUIRE_HARDENED=%q: manifest has %s = %v, want %v\n%s", tc.env, want, got, tc.strict, raw)
+		}
+	}
+}
+
 func TestNetworkNoneWrapsTheJobInADenyAllPolicy(t *testing.T) {
 	api := newFakeAPI()
 	api.statuses = []string{statusPending, statusComplete}

@@ -151,6 +151,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		// #18884: customers.mention_search.enabled, the budgeted GitHub
 		// search made when a suggested person is accepted. Default off.
 		CustomersSearchEnabled *bool `json:"customersSearchEnabled"`
+		// #19302: customers.profile_fill.enabled, filling profile fields
+		// from public forge profiles. Default off.
+		CustomersProfileFillEnabled *bool `json:"customersProfileFillEnabled"`
 
 		AutonomyAutoPromote  *bool   `json:"autonomyAutoPromote"`
 		AutonomyAutoDemote   *bool   `json:"autonomyAutoDemote"`
@@ -168,6 +171,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		featuresOpsBody
 		featuresPlatformBody
 		featuresRunsBody
+		featuresAskBody
 		featuresEnrichmentBody
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -297,6 +301,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	applyAsk, err := body.featuresAskBody.prepare()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	applyEnrichment, err := body.featuresEnrichmentBody.prepare()
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -307,6 +316,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	cfg := s.deps.Config
 	applyOps(cfg)
 	applyPlatform(cfg)
+	applyAsk(cfg)
 	applyRuns(cfg)
 	applyEnrichment(cfg)
 	if body.IoscanEnabled != nil {
@@ -394,6 +404,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.CustomersHubImportEnabled != nil {
 		on := *body.CustomersHubImportEnabled
 		cfg.Customers.HubImport.Enabled = &on
+	}
+	if body.CustomersProfileFillEnabled != nil {
+		on := *body.CustomersProfileFillEnabled
+		cfg.Customers.ProfileFill.Enabled = &on
 	}
 	if body.CustomersSearchEnabled != nil {
 		on := *body.CustomersSearchEnabled
@@ -565,73 +579,75 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	acmmLevel := cfg.ACMMLevelOrZero()
 	rotationCfg := cfg.Governor.Rotation
 	out := map[string]interface{}{
-		"ioscanEnabled":               cfg.Ioscan.IsEnabled(),
-		"tracingEnabled":              otelCfg.Enabled,
-		"tracingEndpoint":             otelCfg.Endpoint,
-		"tracingSampleRatio":          otelCfg.SampleRatio,
-		"otelEnabled":                 otelCfg.Enabled,
-		"otelEndpoint":                otelCfg.Endpoint,
-		"otelServiceName":             otelCfg.ServiceName,
-		"otelInsecure":                otelCfg.Insecure,
-		"otelSampleRatio":             otelCfg.SampleRatio,
-		"otelHasHeaders":              len(otelCfg.Headers) > 0,
-		"retroEnabled":                cfg.Retro.Enabled,
-		"retroAnalysisModel":          cfg.Retro.AnalysisModel,
-		"retroScanIntervalS":          cfg.Retro.ScanIntervalS,
-		"retroMaxFixAttempts":         cfg.Retro.MaxFixAttempts,
-		"retroMaxKicks":               cfg.Retro.MaxKicks,
-		"retroLongStallDays":          cfg.Retro.LongStallDays,
-		"retroRecentClosedWindowS":    cfg.Retro.RecentClosedWindowS,
-		"mintEnabled":                 cfg.Mint.Enabled,
-		"mintIssuer":                  cfg.Mint.Issuer,
-		"planFromLabel":               planFromLabel,
-		"formalEnabled":               cfg.Quality.Formal,
-		"planMatchEnabled":            cfg.Review.PlanMatch.Enabled,
-		"extFlueEnabled":              cfg.Runs.External.Flue.Enabled,
-		"extFlueMode":                 cfg.FlueBindingMode(),
-		"extFlueModes":                config.FlueBindingModes(),
-		"extFlueEndpointSet":          strings.TrimSpace(cfg.Runs.External.Flue.Endpoint) != "",
-		"extOmpEnabled":               cfg.Runs.External.OMP.Enabled,
-		"extOmpMode":                  cfg.OMPBindingMode(),
-		"extOmpModes":                 config.ExternalBindingModes(),
-		"extOmpVersionSet":            strings.TrimSpace(cfg.Runs.External.OMP.WorkflowVersion) != "",
-		"formalAvailable":             acmmLevel >= config.FormalQualityMinACMMLevel,
-		"formalMinACMMLevel":          config.FormalQualityMinACMMLevel,
-		"claimsEnabled":               cfg.Governor.Claims.Enabled,
-		"claimsTtlS":                  int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
-		"prFollowUpEnabled":           cfg.Turn.PRFollowUp.Enabled,
-		"prFollowUpEffective":         cfg.PRFollowUpResumeEnabled(),
-		"customersEnabled":            cfg.Customers.IsEnabled(),
-		"customersEffective":          cfg.CustomersEnabled(),
-		"customersInference":          cfg.Customers.Inference.IsEnabled(),
-		"customersInferenceEffective": cfg.CustomersInferenceEnabled(),
-		"customersAvatars":            cfg.Customers.Avatars.IsEnabled(),
-		"customersAvatarsEffective":   cfg.CustomersAvatarsEnabled(),
-		"customersHubImport":          cfg.Customers.HubImport.IsEnabled(),
-		"customersHubImportEffective": cfg.CustomersHubImportEnabled(),
-		"customersSearch":             cfg.Customers.MentionSearch.IsEnabled(),
-		"customersSearchEffective":    cfg.CustomersMentionSearchEnabled(),
-		"publicationEnabled":          cfg.Publication.Enabled,
-		"publicationPrivateChannel":   cfg.Publication.PrivateChannel,
-		"publicationOwner":            cfg.Publication.Owner,
-		"publicationAvailable":        acmmLevel >= config.PublicationMinACMMLevel,
-		"publicationMinACMMLevel":     config.PublicationMinACMMLevel,
-		"acmmLevel":                   acmmLevel,
-		"spektacularEnabled":          cfg.Runs.Spektacular.Enabled,
-		"spektacularBinary":           cfg.Runs.Spektacular.Binary,
-		"spektacularPollS":            int(cfg.Runs.Spektacular.PollInterval().Seconds()),
-		"maxStageRetries":             cfg.Runs.MaxStageRetriesOrDefault(),
-		"autonomyAutoPromote":         cfg.Autonomy.AutoPromote,
-		"autonomyAutoDemote":          cfg.Autonomy.AutoDemote,
-		"autonomyPromoteAfter":        cfg.Autonomy.EffectivePromoteAfter(),
-		"autonomyDemoteOn":            cfg.Autonomy.EffectiveDemoteOn(),
-		"autonomyMaxLevel":            cfg.Autonomy.EffectiveMaxLevel(config.MaxACMMLevel),
-		"autonomyCooldownDays":        cfg.Autonomy.EffectiveCooldownDays(),
-		"rotationEnabled":             rotationCfg.Enabled,
-		"rotationThresholdPct":        rotationCfg.EffectiveThreshold(),
-		"rotationHighVolumeCadenceS":  rotationCfg.EffectiveHighVolumeCadenceS(),
-		"rotationProviders":           rotationCfg.Providers,
-		"rotationAgents":              rotationCfg.AgentTiers,
+		"ioscanEnabled":                 cfg.Ioscan.IsEnabled(),
+		"tracingEnabled":                otelCfg.Enabled,
+		"tracingEndpoint":               otelCfg.Endpoint,
+		"tracingSampleRatio":            otelCfg.SampleRatio,
+		"otelEnabled":                   otelCfg.Enabled,
+		"otelEndpoint":                  otelCfg.Endpoint,
+		"otelServiceName":               otelCfg.ServiceName,
+		"otelInsecure":                  otelCfg.Insecure,
+		"otelSampleRatio":               otelCfg.SampleRatio,
+		"otelHasHeaders":                len(otelCfg.Headers) > 0,
+		"retroEnabled":                  cfg.Retro.Enabled,
+		"retroAnalysisModel":            cfg.Retro.AnalysisModel,
+		"retroScanIntervalS":            cfg.Retro.ScanIntervalS,
+		"retroMaxFixAttempts":           cfg.Retro.MaxFixAttempts,
+		"retroMaxKicks":                 cfg.Retro.MaxKicks,
+		"retroLongStallDays":            cfg.Retro.LongStallDays,
+		"retroRecentClosedWindowS":      cfg.Retro.RecentClosedWindowS,
+		"mintEnabled":                   cfg.Mint.Enabled,
+		"mintIssuer":                    cfg.Mint.Issuer,
+		"planFromLabel":                 planFromLabel,
+		"formalEnabled":                 cfg.Quality.Formal,
+		"planMatchEnabled":              cfg.Review.PlanMatch.Enabled,
+		"extFlueEnabled":                cfg.Runs.External.Flue.Enabled,
+		"extFlueMode":                   cfg.FlueBindingMode(),
+		"extFlueModes":                  config.FlueBindingModes(),
+		"extFlueEndpointSet":            strings.TrimSpace(cfg.Runs.External.Flue.Endpoint) != "",
+		"extOmpEnabled":                 cfg.Runs.External.OMP.Enabled,
+		"extOmpMode":                    cfg.OMPBindingMode(),
+		"extOmpModes":                   config.ExternalBindingModes(),
+		"extOmpVersionSet":              strings.TrimSpace(cfg.Runs.External.OMP.WorkflowVersion) != "",
+		"formalAvailable":               acmmLevel >= config.FormalQualityMinACMMLevel,
+		"formalMinACMMLevel":            config.FormalQualityMinACMMLevel,
+		"claimsEnabled":                 cfg.Governor.Claims.Enabled,
+		"claimsTtlS":                    int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
+		"prFollowUpEnabled":             cfg.Turn.PRFollowUp.Enabled,
+		"prFollowUpEffective":           cfg.PRFollowUpResumeEnabled(),
+		"customersEnabled":              cfg.Customers.IsEnabled(),
+		"customersEffective":            cfg.CustomersEnabled(),
+		"customersInference":            cfg.Customers.Inference.IsEnabled(),
+		"customersInferenceEffective":   cfg.CustomersInferenceEnabled(),
+		"customersAvatars":              cfg.Customers.Avatars.IsEnabled(),
+		"customersAvatarsEffective":     cfg.CustomersAvatarsEnabled(),
+		"customersHubImport":            cfg.Customers.HubImport.IsEnabled(),
+		"customersHubImportEffective":   cfg.CustomersHubImportEnabled(),
+		"customersProfileFill":          cfg.Customers.ProfileFill.IsEnabled(),
+		"customersProfileFillEffective": cfg.CustomersProfileFillEnabled(),
+		"customersSearch":               cfg.Customers.MentionSearch.IsEnabled(),
+		"customersSearchEffective":      cfg.CustomersMentionSearchEnabled(),
+		"publicationEnabled":            cfg.Publication.Enabled,
+		"publicationPrivateChannel":     cfg.Publication.PrivateChannel,
+		"publicationOwner":              cfg.Publication.Owner,
+		"publicationAvailable":          acmmLevel >= config.PublicationMinACMMLevel,
+		"publicationMinACMMLevel":       config.PublicationMinACMMLevel,
+		"acmmLevel":                     acmmLevel,
+		"spektacularEnabled":            cfg.Runs.Spektacular.Enabled,
+		"spektacularBinary":             cfg.Runs.Spektacular.Binary,
+		"spektacularPollS":              int(cfg.Runs.Spektacular.PollInterval().Seconds()),
+		"maxStageRetries":               cfg.Runs.MaxStageRetriesOrDefault(),
+		"autonomyAutoPromote":           cfg.Autonomy.AutoPromote,
+		"autonomyAutoDemote":            cfg.Autonomy.AutoDemote,
+		"autonomyPromoteAfter":          cfg.Autonomy.EffectivePromoteAfter(),
+		"autonomyDemoteOn":              cfg.Autonomy.EffectiveDemoteOn(),
+		"autonomyMaxLevel":              cfg.Autonomy.EffectiveMaxLevel(config.MaxACMMLevel),
+		"autonomyCooldownDays":          cfg.Autonomy.EffectiveCooldownDays(),
+		"rotationEnabled":               rotationCfg.Enabled,
+		"rotationThresholdPct":          rotationCfg.EffectiveThreshold(),
+		"rotationHighVolumeCadenceS":    rotationCfg.EffectiveHighVolumeCadenceS(),
+		"rotationProviders":             rotationCfg.Providers,
+		"rotationAgents":                rotationCfg.AgentTiers,
 	}
 	for k, v := range claimsTTLsResponse(cfg.Governor.Claims) {
 		out[k] = v
@@ -651,6 +667,9 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		out[k] = v
 	}
 	for k, v := range featuresRunsResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresAskResponse(cfg) {
 		out[k] = v
 	}
 	for k, v := range featuresEnrichmentResponse(cfg) {

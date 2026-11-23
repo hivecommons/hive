@@ -70,9 +70,10 @@ entry can override for one repository:
 | --- | --- | --- | --- |
 | `github` (default) | `github.base_url` / `github.api_url` | GitHub App | Supported |
 | `gitlab` | `gitlab.gitlab_url` (default `https://gitlab.com`) | env var named by `gitlab.token_env` (default `GITLAB_TOKEN`) | Adapter only |
-| `gitea` (Gitea and Forgejo) | `gitea.gitea_url` (required) | env var named by `gitea.token_env` (default `GITEA_TOKEN`) | Adapter only |
+| `gitea` | `gitea.gitea_url` (required) | env var named by `gitea.token_env` (default `GITEA_TOKEN`) | Adapter only |
+| `forgejo` | `forgejo.forgejo_url` (required) | env var named by `forgejo.token_env` (default `FORGEJO_TOKEN`) | Adapter only |
 
-The GitLab and Gitea/Forgejo adapters read repos, issues and change requests,
+The GitLab, Gitea and Forgejo adapters read repos, issues and change requests,
 and can comment, label and set the `hold` gate; GitLab can also merge. A hive
 still cannot run on them, because enumeration, the merge gate and the agents'
 `gh` path are GitHub-only. Every work source above therefore still targets a

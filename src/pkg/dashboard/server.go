@@ -110,6 +110,7 @@ const staleDropStarvationThreshold = 5
 
 type Server struct {
 	nativeQueueTracker  nativeQueueTrackerRuntime
+	ask                 askRuntime // Ask AI help asker, built on first use (#19183)
 	integration         integrationRuntime
 	webhookNoSecretOnce sync.Once               // warn once per process about a missing webhook secret (#13666)
 	prGateOnce          sync.Once               // builds the PR gate on first use (#19038)
@@ -869,7 +870,7 @@ type FrontendPlatform struct {
 }
 
 // FrontendForge describes the configured source forge. Kind is one of
-// "github" | "gitlab" | "gitea". InstanceURL is set only for a non-default
+// "github" | "gitlab" | "gitea" | "forgejo". InstanceURL is set only for a non-default
 // self-managed instance (empty for github.com / gitlab.com defaults).
 type FrontendForge struct {
 	Kind        string   `json:"kind"`

@@ -548,6 +548,13 @@ type StageTrackerItem struct {
 	// the maintainer's merge click.
 	HumanApprover string `json:"human_approver,omitempty"`
 	ManualMerge   bool   `json:"manual_merge,omitempty"`
+	// ChangesAddressedBy names the people whose CHANGES_REQUESTED review
+	// still stands on GitHub although their review was re-requested (the
+	// hive re-requests it once it has addressed every point,
+	// hivecommons/hive#19538): the row reads "changes addressed,
+	// re-approve" instead of a bare "needs decision", and an owner can
+	// approve the head.
+	ChangesAddressedBy []string `json:"changes_addressed_by,omitempty"`
 	// HumanMergeReason is, at 090, the compact code naming why a person
 	// and not the hive merges this PR (prstage.HumanMergeReason*:
 	// "workflow-files", "untrusted-author", "branch-protection", …;

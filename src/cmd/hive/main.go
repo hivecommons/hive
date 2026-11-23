@@ -19,6 +19,7 @@ import (
 	"time"
 
 	cruxconfig "github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/posture"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 
 	gh "github.com/google/go-github/v72/github"
@@ -543,6 +544,14 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	// fleetreport.ClassUnclassifiedRepeated).
 	b.logger = slog.New(slogfeed.New(logscrub.NewHandler(slog.NewJSONHandler(deps.stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))))
 	slog.SetDefault(b.logger)
+
+	// Containment posture (#19458): warn on every gap; HIVE_REQUIRE_HARDENED
+	// turns any gap into a startup failure.
+	if err := posture.Boot(b.logger, deps.getenv); err != nil {
+		b.logger.Error("refusing to start without required containment", "error", err.Error())
+		deps.exit(1)
+		return false
+	}
 
 	// Process singleton: refuse to become a second hive process in this
 	// container (#2453, #2496). Two concurrent processes beat as the same pod,
@@ -3666,6 +3675,17 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		svc.hubImport = func(ctx context.Context, person string) {
 			b.runCustomersHubImport(ctx, b.customersMentionConfig(), person)
 		}
+		// #19302: fill profile fields from each customer's public forge
+		// profile (backfill, periodic refresh, on accept and on demand).
+		// Off unless customers.profile_fill.enabled.
+		svc.profileFill = newCustomersProfileFill(svc.svc.Store(), customersProfileFillDeps{
+			cfg:         b.customersMentionConfig,
+			client:      b.currentGitHubClient,
+			linearToken: b.dashSrv.LinearAgentAccessToken,
+			orgs:        newCustomersOrgNames(),
+			logger:      b.logger,
+		})
+		b.cleanup.push(svc.startCustomersProfileFill(b.ctx))
 		// Customers enrichment: public affiliation from cncf/gitdm, off
 		// unless customers.enrichment and its gitdm switch are on.
 		wireCustomersEnrichment(svc.svc, customersDataDir, b.customersMentionConfig, b.logger)
@@ -3947,7 +3967,7 @@ func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 
 func syncForgeCredentialEnv(cfg *config.Config) {
-	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName())
+	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName(), cfg.Forgejo.TokenEnvName())
 }
 
 // bootWatchersWith is bootWatchers with its long-lived effects injected; see
@@ -4140,6 +4160,10 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	b.configWatcher = deps.newConfigWatcher(b.configPath, b.submitConfigReload, b.logger)
 	config.SetSaveObserver(b.configWatcher.SkipNext)
 	b.dashSrv.SetSkipReloadFunc(b.configWatcher.SkipNext)
+	// A save that refuses to overwrite a file edited on disk asks for a
+	// reload, so the edit reaches memory even if no watch event arrived
+	// (hivecommons/hive#19561).
+	config.SetExternalChangeObserver(func(string) { b.configWatcher.Trigger() })
 	deps.startConfigWatcher(b.ctx, b.configWatcher)
 
 	// Persist operator pause/resume into the on-disk config so it survives

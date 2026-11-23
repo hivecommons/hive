@@ -99,6 +99,7 @@ type Config struct {
 	GitHub             GitHubConfig        `yaml:"github"`
 	GitLab             GitLabConfig        `yaml:"gitlab,omitempty"`
 	Gitea              GiteaConfig         `yaml:"gitea,omitempty"`
+	Forgejo            ForgejoConfig       `yaml:"forgejo,omitempty"`
 	Notifications      NotificationsConfig `yaml:"notifications"`
 	Dashboard          DashboardConfig     `yaml:"dashboard"`
 	Data               DataConfig          `yaml:"data"`
@@ -209,6 +210,10 @@ type Config struct {
 	// Customers gates the Customers section and its people store (default
 	// on). Nothing it stores leaves the hive.
 	Customers CustomersConfig `yaml:"customers,omitempty" json:"customers,omitempty"`
+	// Ask is the optional Ask AI help panel (#19177): docs questions answered
+	// server side by Kapa.ai, directly or through the hub relay. Default off
+	// and inert when unconfigured. See src/docs/design/dashboard-ask-ai-help.md.
+	Ask AskConfig `yaml:"ask,omitempty" json:"ask,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.
@@ -290,6 +295,10 @@ type Config struct {
 	RemovedAgents []string `yaml:"removed_agents,omitempty" json:"removed_agents,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+	// disk is the content hash of each layer file this config was loaded
+	// from or last saved to; Save refuses to overwrite a file whose content
+	// changed since (hivecommons/hive#19561). See disk_state.go.
+	disk *diskLayers
 	// LaunchCmdDegradations lists the base-config agents whose launch_cmd the
 	// loader dropped because it contradicted the agent's backend, so the
 	// dashboard can raise a banner for each. Runtime-only; see
@@ -1347,8 +1356,10 @@ const (
 	ForgeGitHub = "github"
 	// ForgeGitLab selects the GitLab forge (gitlab.com or self-managed).
 	ForgeGitLab = "gitlab"
-	// ForgeGitea selects the Gitea/Forgejo forge (self-managed or Codeberg).
+	// ForgeGitea selects the Gitea forge (self-managed).
 	ForgeGitea = "gitea"
+	// ForgeForgejo selects the Forgejo forge (self-managed or Codeberg).
+	ForgeForgejo = "forgejo"
 )
 
 // ForgeKind returns the configured forge kind, defaulting to ForgeGitHub when
@@ -4242,7 +4253,7 @@ func (g GitLabConfig) TokenEnvName() string {
 	return g.TokenEnv
 }
 
-// GiteaConfig configures the Gitea/Forgejo forge (used when project.forge ==
+// GiteaConfig configures the Gitea forge (used when project.forge ==
 // "gitea"). Like GitLabConfig it is entirely additive: a config that never
 // mentions gitea is unaffected.
 //
@@ -4251,8 +4262,7 @@ func (g GitLabConfig) TokenEnvName() string {
 // the token itself is NOT stored here: TokenEnv names the environment variable
 // to read the Gitea access token from at runtime (default GITEA_TOKEN).
 type GiteaConfig struct {
-	// URL is the Gitea/Forgejo instance root, e.g. "https://codeberg.org" or a
-	// self-managed "https://gitea.example.com". The "/api/v1" path is appended by
+	// URL is the Gitea instance root, e.g. "https://gitea.example.com". The "/api/v1" path is appended by
 	// the client. There is no default; it must be supplied for the Gitea forge.
 	URL string `yaml:"gitea_url,omitempty"`
 	// TokenEnv is the environment variable holding the Gitea access token.
@@ -4279,6 +4289,38 @@ func (g GiteaConfig) InstanceURL() string {
 func (g GiteaConfig) TokenEnvName() string {
 	if g.TokenEnv == "" {
 		return DefaultGiteaTokenEnv
+	}
+	return g.TokenEnv
+}
+
+// ForgejoConfig configures the Forgejo forge (used when project.forge ==
+// "forgejo"). It mirrors GiteaConfig: URL has no default, and the token itself
+// is never stored here, only the name of the environment variable that holds it
+// (default FORGEJO_TOKEN).
+type ForgejoConfig struct {
+	// URL is the Forgejo instance root, e.g. "https://codeberg.org". The
+	// "/api/v1" path is appended by the client. There is no default.
+	URL string `yaml:"forgejo_url,omitempty"`
+	// TokenEnv is the environment variable holding the Forgejo access token.
+	// Defaults to DefaultForgejoTokenEnv.
+	TokenEnv string `yaml:"token_env,omitempty"`
+}
+
+const (
+	// DefaultForgejoTokenEnv is the default env var name for the Forgejo token.
+	DefaultForgejoTokenEnv = "FORGEJO_TOKEN" // #nosec G101 -- the env var name, not a credential.
+)
+
+// InstanceURL returns the configured Forgejo instance root (possibly empty).
+func (g ForgejoConfig) InstanceURL() string {
+	return g.URL
+}
+
+// TokenEnvName returns the env var name to read the Forgejo token from,
+// defaulting to DefaultForgejoTokenEnv when unset.
+func (g ForgejoConfig) TokenEnvName() string {
+	if g.TokenEnv == "" {
+		return DefaultForgejoTokenEnv
 	}
 	return g.TokenEnv
 }
@@ -6207,6 +6249,7 @@ func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Con
 	}
 
 	cfg.SourcePath = path
+	cfg.recordLayerSum(path, sumBytes(data))
 	cfg.applyBootstrapEnv()
 	cfg.applyDefaults()
 
@@ -6281,6 +6324,10 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 		// No overlay (or unreadable) — the seed is authoritative, as at boot.
 		return cfg, nil
 	}
+	// The overlay's agents and blocks win over the config file below, so a
+	// hand edit to it must be protected from the next save the same way as
+	// an edit to the config file (hivecommons/hive#19561).
+	cfg.recordLayerSum(DashboardOverlayFile, sumBytes(data))
 	var overlay Config
 	if err := yaml.Unmarshal([]byte(expandEnvVars(string(data))), &overlay); err != nil {
 		return cfg, nil // malformed overlay: fall back to seed, don't fail the reload
@@ -8044,6 +8091,13 @@ func (c *Config) saveLocked() error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
+	// hivecommons/hive#19561: a layer file someone else rewrote since this
+	// config last loaded or saved it holds an edit memory does not have yet.
+	// Writing now would revert it, so write nothing and let the reload win.
+	if err := c.refuseSaveIfChangedLocked(); err != nil {
+		return err
+	}
+
 	saveSeq.Add(1)
 	notifySaveObserver()
 
@@ -8077,9 +8131,16 @@ func (c *Config) saveLocked() error {
 	// K8s first-boot/reprovision merge input). Record the source failure, keep
 	// writing the runtime layer, and report success iff the state will actually
 	// survive a restart.
+	//
+	// The process write is recorded before the write so the watcher, which
+	// may see the rename before this returns, knows it for our own.
+	dataSum := sumBytes(data)
+	recordProcessWrite(c.SourcePath, dataSum)
 	var srcErr error
 	if err := writeFileAtomic(c.SourcePath, data, sourceConfigMode(c.SourcePath)); err != nil {
 		srcErr = fmt.Errorf("writing config: %w", err)
+	} else {
+		c.recordLayerSum(c.SourcePath, dataSum)
 	}
 
 	// Persist the runtime config to the PVC. In K8s this is the boot input
@@ -8100,6 +8161,7 @@ func (c *Config) saveLocked() error {
 	// github.token in PAT mode), and /data is world-traversable on hive
 	// hosts, so a group/world-readable runtime config hands the dashboard
 	// owner credential to every unprivileged agent user (#5331).
+	recordProcessWrite(runtimePath, dataSum)
 	if guardLivePVCPathUnderTest(runtimePath, defaultRuntimeConfigFile, "RuntimeConfigFile") {
 		// Not written, so not persisted: keep the primary-path error visible.
 		runtimeErr = errLivePVCPathGuarded
@@ -8345,10 +8407,13 @@ func (c *Config) saveDashboardOverlay() error {
 		log.Printf("[config] warning: failed to close dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
 		return err
 	}
+	overlaySum := sumBytes(data)
+	recordProcessWrite(DashboardOverlayFile, overlaySum)
 	if err := os.Rename(tmpPath, DashboardOverlayFile); err != nil {
 		log.Printf("[config] warning: failed to rename dashboard overlay into place %s (dashboard saves will not survive pod restarts): %v", DashboardOverlayFile, err)
 		return err
 	}
+	c.recordLayerSum(DashboardOverlayFile, overlaySum)
 	log.Printf("[config] dashboard overlay written to %s (merged over the ConfigMap seed at next boot)", DashboardOverlayFile)
 	return nil
 }
