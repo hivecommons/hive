@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v6.57.0)
+
+### Added
+
+- The stale-red base refresh no longer skips a dependency bot's branch. Where it would merge the base into a red PR whose failing checks are green on the base tip, it now asks the bot to rebase instead, through the existing `bot_rebase_request` write-back (it ticks Renovate's rebase/retry box), at most once per head and base tip and within the pass's caps. It never updates a bot's branch itself, never asks over a commit that is not the bot's (the regeneration would drop it), and spends no API call where the write-back gate would refuse; Dependabot, which refuses commands from apps, is skipped as before. A failing check that runs only on pull requests is asked about once per head, when its failing run is older than `governor.dependency_bot_rebase_after_s` (4 hours) and the base tip was committed after it. When the bot's rebased head fails the same checks again, the bump breaks them: the pass does not ask again and the red-CI hand-off runs as before, so such a bump costs one extra CI run. Renovate with `rebaseWhen: "conflicted"` never rebases a branch that is merely behind, so these PRs stayed red until a person merged the base by hand, which also stopped Renovate maintaining the branch ([projectbluefin/actions#775](https://github.com/projectbluefin/actions/pull/775) sat red at 070 for 33 hours, [projectbluefin/utah#1471](https://github.com/projectbluefin/utah/pull/1471) for 40). Each request is logged as `stale-red refresh: asked dependency bot to rebase` and recorded, so a head that has neither moved nor gone green one window later is handed to a person by the dependency-bot sweep (one comment plus `needs-human`, reason `stale-red-bot-did-not-rebase`).
+
 ## 2026-11-23 (v6.56.0)
 
 ### Added
