@@ -185,7 +185,7 @@ func TestDecideIssueCardIssueFilterRows(t *testing.T) {
 	}
 }
 
-// The SHA-hold label is this hive's issues.sha_hold_trusted_label.
+// The SHA-hold label is this hive's configured one (Issues.EffectiveSHAHoldTrustedLabel).
 func TestDecideIssueCardConfiguredSHAHoldLabel(t *testing.T) {
 	label := "awaiting-sha"
 	cfg := &config.Config{}

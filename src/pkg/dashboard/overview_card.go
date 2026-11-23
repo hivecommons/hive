@@ -9,7 +9,6 @@ import (
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence"
-	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
@@ -524,7 +523,7 @@ func cardIssueWaitingBand(row cardIssueRow, o *Ownership, in cardInputs) Overvie
 // insertFrontendRepoItem) that pkg/github keeps unexported.
 const (
 	cardFilteredExempt         = "Exempt label"
-	cardFilteredTracking       = gfi.SkipTracking
+	cardFilteredTracking       = "tracking" // gfi.SkipTracking, pinned by TestCardFilteredTrackingMatchesGFI
 	cardBucketInProgress       = "in_progress"
 	cardBucketClaimed          = "claimed"
 	cardBucketActionable       = "actionable"
@@ -624,7 +623,7 @@ func cardIssueFilterBand(row cardIssueRow, code string) OverviewCardBand {
 }
 
 // cardSHAHoldReason reports the SHA-hold label a filtered row's reason
-// names: this hive's issues.sha_hold_trusted_label, or the default.
+// names: this hive's configured SHA-hold label (Issues.EffectiveSHAHoldTrustedLabel).
 func cardSHAHoldReason(reason string, cfg *config.Config) bool {
 	want := []string{config.DefaultSHAHoldTrustedLabel}
 	if cfg != nil {
