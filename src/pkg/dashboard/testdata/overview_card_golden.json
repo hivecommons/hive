@@ -1,0 +1,73 @@
+{
+  "issues": {
+    "your-turn": 5,
+    "to-close": 1,
+    "covered-by-pr": 1,
+    "waiting-on-item": 2,
+    "human-hold": 1,
+    "reporter-confirm": 1,
+    "queued": 1,
+    "working": 2,
+    "held": 1,
+    "not-work": 1,
+    "unexplained": 1
+  },
+  "prs": {
+    "your-turn": 1,
+    "to-close": 0,
+    "human-hold": 0,
+    "author-update": 1,
+    "bot-rebase": 1,
+    "working": 1,
+    "will-merge": 1,
+    "held": 1,
+    "draft": 3,
+    "unexplained": 1
+  },
+  "groups": {
+    "your-turn": {
+      "issues": 7,
+      "prs": 2
+    },
+    "waiting-elsewhere": {
+      "issues": 5,
+      "prs": 0
+    },
+    "held": {
+      "issues": 1,
+      "prs": 1
+    },
+    "blocked": {
+      "issues": 0,
+      "prs": 2
+    },
+    "actionable-now": {
+      "issues": 3,
+      "prs": 2
+    },
+    "outside": {
+      "issues": 1,
+      "prs": 3
+    }
+  },
+  "tiles": {
+    "your-turn": 9,
+    "waiting-elsewhere": 5,
+    "held": 2,
+    "blocked": 2,
+    "actionable-now": 5,
+    "outside": 10
+  },
+  "your_turn_not_in_inbox": {
+    "issues": 3,
+    "prs": 0
+  },
+  "unexplained": {
+    "issues": 1,
+    "prs": 1
+  },
+  "remainder": {
+    "issues": 3,
+    "prs": 3
+  }
+}

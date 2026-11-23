@@ -674,6 +674,9 @@ type Server struct {
 	writebackMu      sync.RWMutex
 	writebackGate    *writeback.Gate
 	sentinelFindings sentinelFindings
+
+	overviewCardCaches // the Overview card's leaf-locked caches (overview_card_stash.go)
+
 	// hotspotSource is the merge-hotspot advisor's store (api_hotspots.go).
 	hotspotMu     sync.RWMutex
 	hotspotSource HotspotSource
@@ -709,6 +712,7 @@ type StatusPayload struct {
 	// OverviewSlices is the Overview charts' slice taxonomy; each issue and
 	// PR row carries its slice as chart_slice (hivecommons/hive#11507).
 	OverviewSlices *OverviewSlices        `json:"overview_slices,omitempty"`
+	OverviewCard   *OverviewCard          `json:"overview_card,omitempty"` // served copy only (overview_card.go)
 	OverviewTotals FrontendOverviewTotals `json:"overviewTotals"`
 	ActionableNow  FrontendActionableNow  `json:"actionableNow"`
 	// OpenItems is the canonical open-items set the Overview tile, its
@@ -1809,6 +1813,9 @@ type TrendHistoryEntry struct {
 	OverviewOutside    int  `json:"overviewOutside,omitempty"`
 	OverviewCoverageOK bool `json:"overviewCoverageOK,omitempty"`
 	OverviewCoverage   int  `json:"overviewCoverage,omitempty"`
+
+	OverviewCardSamples // the Overview card's six tiles (overview_card.go)
+
 	// Beads worker/supervisor counts.
 	BeadsWorkers    int `json:"beadsWorkers"`
 	BeadsSupervisor int `json:"beadsSupervisor"`
@@ -3143,13 +3150,28 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 			status.RepoTargetIssue = ""
 		}
 	}
+	// The Overview card's stash for this snapshot (overview_card_stash.go),
+	// built here, before the status lock, and stored with the snapshot only
+	// if it is published.
+	cardNext := s.buildCardStash(status)
 	attachSuppressedStages(status.Repos, s.stageStoreOrShared())
+	cardNext.addStages(status, s.stageStoreOrShared())
 	status.ContributorPool = s.BuildContributorPoolStatus()
 	status.Inception = s.buildFrontendInception()
 	if s.contributeHub != nil {
 		// Use the admission queue that standby dispatch reads, so qualification
 		// counts cannot include work assigned to another lane or held from dispatch.
-		queue := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, withheldNone).queue
+		// withheldAll keeps the pass's refusals for the Overview card; the
+		// queue is built by the same ladder in the same order either way.
+		s.statusMu.RLock()
+		var admissionSeq int64
+		if s.status != nil {
+			admissionSeq = int64(s.status.StatusSeq)
+		}
+		s.statusMu.RUnlock()
+		snap := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, withheldAll)
+		cardNext.addAdmission(snap, admissionSeq, time.Now())
+		queue := snap.queue
 		status.Governor.QualifiedStandbys = s.contributeHub.QualifiedStandbyCounts(
 			status.Governor.SuppressedLanes,
 			standbyLaneItems(status.Governor.SuppressedLanes, queue))
@@ -3284,6 +3306,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		status.TimeZone = dashboardTimeZoneName()
 	}
 	s.status = status
+	s.storeCardStash(cardNext)
 	s.lastFullBroadcast = time.Now()
 	s.statusMu.Unlock()
 
@@ -3308,7 +3331,9 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	s.ObserveBudgetWindow(status)
 
 	// Hold statusMu through the snapshot: hold moves mutate the published
-	// status under the write lock.
+	// status under the write lock. The Overview card's dispatch cache may
+	// read a file, so it is refreshed first, outside the lock.
+	s.cardFixDispatch(time.Now().UTC())
 	s.statusMu.RLock()
 	data, err := json.Marshal(s.statusWithOverviewBands(status, time.Now().UTC()))
 	s.statusMu.RUnlock()
@@ -4297,6 +4322,9 @@ func (s *Server) inHealthGrace() (bool, time.Duration) {
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.RecordStdioFromRequest(r)
+	// The Overview card's dispatch cache may read a file: refresh it before
+	// the lock.
+	s.cardFixDispatch(time.Now().UTC())
 	// Build the snapshot under statusMu: hold moves mutate the published
 	// status (including repo.Ownership) under the write lock.
 	s.statusMu.RLock()
@@ -4556,6 +4584,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher.Flush()
 
+	s.cardFixDispatch(time.Now().UTC())
 	s.statusMu.RLock()
 	if s.status != nil {
 		data, _ := json.Marshal(s.statusWithOverviewBands(s.status, time.Now().UTC()))
@@ -4887,7 +4916,7 @@ func overviewKPISnapshotComplete(status *StatusPayload) bool {
 	return true
 }
 
-func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, _ time.Time) {
+func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, now time.Time) {
 	if e == nil || status == nil {
 		return
 	}
@@ -4905,6 +4934,7 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 	e.OverviewHeld = part.issues.held + part.prs.held
 	e.OverviewBlocked = part.prs.blocked
 	e.OverviewOutside = max(0, e.OverviewOpenIssues+e.OverviewOpenPRs-e.OverviewActionable-e.OverviewYourTurn-e.OverviewWaiting-e.OverviewHeld-e.OverviewBlocked)
+	e.OverviewCardSamples = s.overviewCardSamples(status, now)
 	if status.OverviewCoverage != nil {
 		e.OverviewCoverageOK = true
 		e.OverviewCoverage = status.OverviewCoverage.Coverage
@@ -4934,6 +4964,8 @@ type OverviewKPIHistoryEntry struct {
 	OverviewBlocked    *int  `json:"overviewBlocked,omitempty"`
 	OverviewOutside    *int  `json:"overviewOutside,omitempty"`
 	OverviewCoverage   *int  `json:"overviewCoverage,omitempty"`
+
+	OverviewCardSamples // the Overview card's tiles; absent before the card
 }
 
 // OverviewKPIHistory returns the recent overview KPI samples downsampled to a
@@ -4959,6 +4991,7 @@ func overviewKPIHistoryPayload(entries []TrendHistoryEntry) []OverviewKPIHistory
 		if e.OverviewCoverageOK {
 			row.OverviewCoverage = intPtr(e.OverviewCoverage)
 		}
+		row.OverviewCardSamples = e.OverviewCardSamples
 		out = append(out, row)
 	}
 	return out
