@@ -162,6 +162,22 @@ func TestMintRejectsEmptyInputs(t *testing.T) {
 	}
 }
 
+func TestMintRejectsInvalidIssuer(t *testing.T) {
+	keyFile := writeFile(t, pemBytes(t, testKeys()[0]), 0o600)
+	for _, iss := range []Issuer{"", "http://x", "https://x/path", "https://user@x", "https://x?q=1", "https://x#f"} {
+		token, err := Signer{Issuer: iss, KeyFile: keyFile}.Mint("u:7:3f0c", "hive:advisor")
+		if err == nil {
+			t.Errorf("Mint with issuer %q: err = nil, want error", iss)
+		}
+		if token != "" {
+			t.Errorf("Mint with issuer %q: token = %q, want none", iss, token)
+		}
+	}
+	if token, err := (Signer{Issuer: "https://x", KeyFile: keyFile}).Mint("u:7:3f0c", "hive:advisor"); err != nil || token == "" {
+		t.Errorf("Mint with valid issuer: token = %q, err = %v", token, err)
+	}
+}
+
 func TestMintVerifiesAgainstKeyList(t *testing.T) {
 	keys := testKeys()
 	oldFile := writeFile(t, pemBytes(t, keys[0]), 0o600)
