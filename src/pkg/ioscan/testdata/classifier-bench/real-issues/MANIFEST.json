@@ -3,10 +3,10 @@
   "fetched": "2026-11-23",
   "derived_files": {
     "github-issues.jsonl": {
-      "sha256": "3494742ca669cb7eccf6d490e2e55bc86819a7398b71faaaaa94f1b3d402b36e"
+      "sha256": "22f92ec7b655f9a8e9bf9b6d1e71ead40c7bc8f51820db4b5a0a2146bbf3cfd9"
     },
     "fetch.py": {
-      "sha256": "5b0de7c2a01c404dfa877427c307ef5da85b824b23ef7806a5b21877d2f273a2"
+      "sha256": "64072990a7993ccaa670069aa6f50389aa4c6de7f20c0947c243207d68f1e2b2"
     }
   }
 }

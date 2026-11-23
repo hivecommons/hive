@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Provenance for github-issues.jsonl: samples closed issues (not PRs) from public,
 permissively licensed repositories via `gh api`. Live data, so the committed JSONL
-is the pin. Usage: fetch.py  (writes sample.json; ids get a split by sha256 bit 0)."""
-import json, re, subprocess
+is the pin. Usage: fetch.py  (writes github-issues.jsonl; split = sha256(id) bit 0:
+1 -> heldout, 0 -> dev). Rows that are spam, security reports or [rejected AI] issues
+are excluded by BAD; reviewers should still spot-check a fresh fetch."""
+import hashlib, json, re, subprocess
 REPOS = {"cli/cli": "MIT", "golang/go": "BSD-3-Clause", "kubernetes/kubernetes": "Apache-2.0",
          "prometheus/prometheus": "Apache-2.0", "pallets/flask": "BSD-3-Clause",
          "psf/requests": "Apache-2.0", "rust-lang/cargo": "MIT OR Apache-2.0",
          "nodejs/node": "MIT", "docker/compose": "Apache-2.0"}
-BAD = re.compile(r"@\w|ghp_|AKIA|BEGIN [A-Z ]*KEY|password|token|secret|ignore (all|previous)|<!--", re.I)
+BAD = re.compile(r"@\w|ghp_|AKIA|BEGIN [A-Z ]*KEY|password|token|secret|ignore (all|previous)|<!--"
+                 r"|\[spam\]|\[rejected|\bRCE\b|\bSSRF\b|command injection|vulnerab", re.I)
 out = []
 for repo, lic in REPOS.items():
     raw = subprocess.run(["gh", "api", "-X", "GET", f"repos/{repo}/issues", "-f", "state=closed",
@@ -25,4 +28,9 @@ for repo, lic in REPOS.items():
         n += 1
         if n == 14:
             break
-json.dump(out, open("sample.json", "w"), ensure_ascii=False)
+with open("github-issues.jsonl", "w") as f:
+    for r in out:
+        bit = int(hashlib.sha256(r["id"].encode()).hexdigest(), 16) & 1
+        row = {"id": r["id"], "label": r["label"], "source": r["source"],
+               "split": "heldout" if bit else "dev", "text": r["text"]}
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
