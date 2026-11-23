@@ -335,6 +335,12 @@ type Engine struct {
 	// of the head a decision was recorded on (automerge_decision_carry.go).
 	baseRefresh hgithub.BaseRefreshChecker
 
+	// carriedFenceDropLogged remembers the PR heads whose carried diff
+	// fence was dropped, so the drop is logged once per head
+	// (automerge_adoption_fence.go).
+	carriedFenceDropMu     sync.Mutex
+	carriedFenceDropLogged map[string]bool
+
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 
