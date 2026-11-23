@@ -107,6 +107,10 @@ type boot struct {
 	// tests replace them.
 	configSaveSeq func() uint64
 	saveConfig    func() error
+	// loadConfigForReload reads the config from disk for a reload the
+	// persist path runs itself (hivecommons/hive#19561); nil means
+	// config.LoadWithDashboardOverlay(configPath). Tests replace it.
+	loadConfigForReload func() (*config.Config, error)
 	// sweepConfig is an immutable copy published outside long-running eval IO.
 	sweepConfig atomic.Pointer[config.Config]
 
