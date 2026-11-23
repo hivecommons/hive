@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v5.355.0)
+
+### Added
+
+- **Job-runtime agents are told which hardware hive requested for the run** ([#19549](https://github.com/hivecommons/hive/issues/19549)). A `sandbox.runtime: job` kick whose Job requests extended resources (for example `vendor.com/device: 2`) now opens its prompt with a hive-written `[hive:sandbox-environment]` section naming the runtime and those resources, whether the configured `sandbox.preflight` passed on the node, and an instruction to report a device that a test cannot see as an environment failure instead of describing the host as card-free and skipping device tests. The text comes from config only and carries resource names and counts, never a Secret or service-account name. Podman and other runtimes, and Jobs without extended resources, are unchanged.
+- Hubs can opt in to spoke repository sync: a registration key updates only its own repo list, at least one proven repo must remain active, and new repos stay pending until their owner proves them ([#19236](https://github.com/hivecommons/hive/issues/19236)).
+
+### Fixed
+
+- **A pasted feedback-handled marker no longer silences review feedback** ([#19547](https://github.com/hivecommons/hive/issues/19547)). The unanswered-feedback check accepted a hidden `hive:feedback-handled` marker from any comment carrying the `-- hive:` trailer prefix, which every marker contains, so anyone who could comment could mark a reviewer's feedback answered and stop it being routed. A handled marker now counts only when the hive's own login (the App bot or the AI author) posted it.
+
 ## 2026-11-23 (v5.354.0)
 
 ### Added

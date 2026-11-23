@@ -1,1 +1,0 @@
-- Hubs can opt in to spoke repository sync: a registration key updates only its own repo list, at least one proven repo must remain active, and new repos stay pending until their owner proves them ([#19236](https://github.com/hivecommons/hive/issues/19236)).
