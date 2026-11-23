@@ -6222,12 +6222,17 @@ func (b *boot) bootLanes() {
 	}
 	if b.dashSrv != nil {
 		// Read-only rank-versus-holdout summary route (#18897). The arm
-		// comparison needs the retro lane; the decision counts do not.
-		var armSummary func() []retro.ArmSummary
+		// attribution makes no model call, so it runs whether or not the
+		// retro findings lane is enabled (#19577).
+		var armReport func() retro.AdvisorArmReport
 		if b.retroLane != nil {
-			armSummary = b.retroLane.AdvisorArmSummary
+			armReport = b.retroLane.AdvisorArmReport
+		} else if len(b.beadStores) > 0 {
+			attribution := retro.NewAdvisorAttribution(b.beadStores, b.beadStores[retro.Actor], b.dashSrv.LifecycleTimeline(), getEscalationStore(), b.logger)
+			attribution.SetAdvisorDecisions(b.knowledgeAdvisorDecisions())
+			armReport = attribution.Report
 		}
-		b.dashSrv.SetKnowledgeAdvisorSummary(b.knowledgeAdvisorDecisions(), armSummary)
+		b.dashSrv.SetKnowledgeAdvisorSummary(b.knowledgeAdvisorDecisions(), armReport)
 	}
 }
 

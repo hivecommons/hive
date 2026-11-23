@@ -90,15 +90,7 @@ done
 exec "$@"`)
 
 // preflightCommands returns the configured commands, blanks dropped.
-func (o Options) preflightCommands() []string {
-	var out []string
-	for _, c := range o.Preflight {
-		if c = strings.TrimSpace(c); c != "" {
-			out = append(out, c)
-		}
-	}
-	return out
-}
+func (o Options) preflightCommands() []string { return trimmedCommands(o.Preflight) }
 
 // preflightCommand wraps the agent command so the preflight runs first. With no
 // preflight configured, or no command to wrap, it returns command unchanged, so
@@ -157,23 +149,25 @@ func (o Options) validatePreflight() error {
 	return nil
 }
 
-// preflightFailure reports whether a failed run is a failed node preflight, and
-// the failure line it printed. The exit code alone is not enough: the agent may
-// exit 75 for its own reasons, so the marker the script prints must be there too.
+// preflightFailure reports whether a failed run failed a node check: the
+// preflight, or a sandbox.setup health command (#19574), which takes the same
+// node_unhealthy path. It returns the failure line printed. The exit code alone
+// is not enough: the agent may exit 75 for its own reasons, so the marker the
+// script prints must be there too. With both markers present the later wins.
 func (o Options) preflightFailure(res sandbox.Result) (string, bool) {
-	if len(o.preflightCommands()) == 0 || res.ExitCode != ExitCodeNodeUnhealthy {
+	if res.ExitCode != ExitCodeNodeUnhealthy {
 		return "", false
 	}
-	i := strings.LastIndex(res.Stdout, preflightMarker)
-	if i < 0 {
-		return "", false
+	line, at := "", -1
+	if len(o.preflightCommands()) > 0 {
+		line, at = markedFailureLine(res.Stdout, preflightMarker)
 	}
-	line, _, _ := strings.Cut(res.Stdout[i:], "\n")
-	line = strings.TrimSpace(line)
-	if r := []rune(line); len(r) > preflightMessageMax {
-		line = string(r[:preflightMessageMax]) + "..."
+	if len(trimmedCommands(o.SetupHealth)) > 0 {
+		if l, i := markedFailureLine(res.Stdout, setupHealthMarker); i > at {
+			line, at = l, i
+		}
 	}
-	return line, true
+	return line, at >= 0
 }
 
 // avoidNodes makes the Job's pod template refuse the given nodes: a NotIn on the

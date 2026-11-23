@@ -24,6 +24,9 @@ import (
 //	sandboxPreflight object  the agent's own sandbox.preflight; null inherits
 //	                         agent_sandbox.preflight, an empty commands list
 //	                         turns preflight off for this agent
+//	sandboxSetup    object   the agent's own sandbox.setup (#19574); null inherits
+//	                         agent_sandbox.setup, empty commands and
+//	                         healthCommands lists turn setup off for this agent
 //	sandboxCopyFrom string   copy another agent's complete block (see CopiedSandboxBlock)
 //
 // Affinity, volumes and the relay image are carried by the copy action and
@@ -36,8 +39,12 @@ const sandboxJobBodyKey = "sandboxJob"
 // own preflight block.
 const sandboxPreflightBodyKey = "sandboxPreflight"
 
+// sandboxSetupBodyKey is the General-tab body key carrying the agent's own
+// setup block.
+const sandboxSetupBodyKey = "sandboxSetup"
+
 // sandboxEditKeys are the body keys that change an agent's sandbox block.
-var sandboxEditKeys = []string{"sandboxImage", "sandboxRuntime", sandboxJobBodyKey, sandboxPreflightBodyKey}
+var sandboxEditKeys = []string{"sandboxImage", "sandboxRuntime", sandboxJobBodyKey, sandboxPreflightBodyKey, sandboxSetupBodyKey}
 
 // secretNameRE is a Kubernetes object name (DNS-1123 subdomain). env_from_secrets
 // holds names only, so anything else, a KEY=value pair most of all, is refused.
@@ -89,6 +96,8 @@ func agentSandboxFieldsView(a config.AgentConfig, global config.AgentSandboxConf
 		"sandboxPreflight":         preflightView(own.Preflight),
 		"sandboxEffective":         agentSandboxEffectiveView(a, global),
 		"sandboxPreflightDefaults": sandboxPreflightDefaults(),
+		"sandboxSetup":             setupView(own.Setup),
+		"sandboxSetupDefaults":     sandboxSetupDefaults(),
 	}
 }
 
@@ -145,6 +154,13 @@ func applySandboxEdits(agentCfg *config.AgentConfig, body map[string]interface{}
 			return err
 		}
 		next.Preflight = pre
+	}
+	if v, ok := body[sandboxSetupBodyKey]; ok {
+		setup, err := setupFromBody("sandbox.setup", v)
+		if err != nil {
+			return err
+		}
+		next.Setup = setup
 	}
 	agentCfg.Sandbox = next
 	return nil

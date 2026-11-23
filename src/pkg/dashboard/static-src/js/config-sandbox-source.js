@@ -162,6 +162,7 @@
     }
 
     // ── Sandbox Job scheduling, resources, preflight, read relay (#19553) ──
+    // Workspace setup (sandbox.setup, #19574) shares the renderer and stager.
     // One renderer and one stager for both places these live: the hive-wide
     // agent_sandbox block (Settings, Security, scope 'hive') and one agent's
     // sandbox block (agent General tab, scope 'agent'). The server validates
@@ -182,6 +183,7 @@
     const SANDBOX_QUANTITY_RE = /^([0-9]+(\.[0-9]*)?|\.[0-9]+)([KMGTPE]i|[numkMGTPE]|[eE][+-]?[0-9]+)?$/;
     const SANDBOX_SOURCE_LABELS = { agent: "this agent's override", agent_sandbox: 'from agent_sandbox defaults', '': 'not set' };
     const SANDBOX_PREFLIGHT_FIELDS = ['preflightCommands', 'preflightTimeoutS', 'preflightTotalTimeoutS', 'preflightRetryDelayS'];
+    const SANDBOX_SETUP_FIELDS = ['setupCommands', 'setupHealthCommands', 'setupTimeoutS', 'setupTotalTimeoutS'];
 
     /* The hive.yaml path behind each control, spelled out in full so the
        settings parity guard (settings_parity_test.go) finds every leaf. */
@@ -198,6 +200,10 @@
         preflightTimeoutS: 'agent_sandbox.preflight.timeout_s',
         preflightTotalTimeoutS: 'agent_sandbox.preflight.total_timeout_s',
         preflightRetryDelayS: 'agent_sandbox.preflight.retry_delay_s',
+        setupCommands: 'agent_sandbox.setup.commands[]',
+        setupHealthCommands: 'agent_sandbox.setup.health_commands[]',
+        setupTimeoutS: 'agent_sandbox.setup.timeout_s',
+        setupTotalTimeoutS: 'agent_sandbox.setup.total_timeout_s',
       },
       agent: {
         nodeSelector: 'agents.<key>.sandbox.job.node_selector.<key>',
@@ -211,6 +217,10 @@
         preflightTimeoutS: 'agents.<key>.sandbox.preflight.timeout_s',
         preflightTotalTimeoutS: 'agents.<key>.sandbox.preflight.total_timeout_s',
         preflightRetryDelayS: 'agents.<key>.sandbox.preflight.retry_delay_s',
+        setupCommands: 'agents.<key>.sandbox.setup.commands[]',
+        setupHealthCommands: 'agents.<key>.sandbox.setup.health_commands[]',
+        setupTimeoutS: 'agents.<key>.sandbox.setup.timeout_s',
+        setupTotalTimeoutS: 'agents.<key>.sandbox.setup.total_timeout_s',
       },
     };
 
@@ -407,6 +417,12 @@
       const cmds = (pre.commands || []).length;
       const preFrom = SANDBOX_SOURCE_LABELS[eff.preflightSource || ''] || eff.preflightSource;
       rows.push(`<li data-effective-field="preflight"><strong>Node preflight:</strong> ${cmds ? `${cmds} command${cmds === 1 ? '' : 's'}, ${Number(pre.timeoutS || 0)} s each, ${Number(pre.totalTimeoutS || 0)} s total` : 'off'} <span class="config-field-hint">(${esc(preFrom)})</span></li>`);
+      const setup = eff.setup || {};
+      const setupCmds = (setup.commands || []).length;
+      const setupHealth = (setup.healthCommands || []).length;
+      const setupFrom = SANDBOX_SOURCE_LABELS[eff.setupSource || ''] || eff.setupSource;
+      const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+      rows.push(`<li data-effective-field="setup"><strong>Workspace setup:</strong> ${setupCmds || setupHealth ? `${plural(setupCmds, 'setup command')}, ${plural(setupHealth, 'health check')}, ${Number(setup.timeoutS || 0)} s each, ${Number(setup.totalTimeoutS || 0)} s total` : 'off'} <span class="config-field-hint">(${esc(setupFrom)})</span></li>`);
       const hidden = Array.isArray(eff.hiddenDefaults) ? eff.hiddenDefaults : [];
       const hiddenHtml = hidden.length
         ? `<div class="config-field-hint" id="cfg-agent-sandbox-hidden-defaults" role="status" style="color:var(--yellow)">&#9888; This agent has its own Job block, so these hive-wide settings do not apply to it: ${hidden.map(h => `<code>agent_sandbox.job.${esc(h)}</code>`).join(', ')}. Set them below if this agent needs them.</div>`
@@ -436,6 +452,11 @@
       const preOverride = agent && pre != null;
       const preShown = pre || (agent ? (d.sandboxEffective || {}).preflight : null) || {};
       const preLocked = agent && !preOverride;
+      const setupDefaults = (agent ? d.sandboxSetupDefaults : d.agentSandboxSetupDefaults) || {};
+      const setup = agent ? d.sandboxSetup : d.agentSandboxSetup;
+      const setupOverride = agent && setup != null;
+      const setupShown = setup || (agent ? (d.sandboxEffective || {}).setup : null) || {};
+      const setupLocked = agent && !setupOverride;
       const wholesaleNote = agent
         ? "An agent with any Job setting of its own uses its own node selector, resources, tolerations and service account instead of the hive-wide ones."
         : 'An agent with its own Job block uses its own node selector, resources, tolerations and service account instead of these.';
@@ -458,6 +479,18 @@
       html += sandboxSchedInput(scope, 'preflightTimeoutS', 'Per-command timeout (seconds)', y.preflightTimeoutS, (pre || {}).timeoutS || '', String(defaults.timeoutS || ''), '0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(defaults.timeoutS || 0) + ' s.', 'number', preLocked);
       html += sandboxSchedInput(scope, 'preflightTotalTimeoutS', 'Total timeout (seconds)', y.preflightTotalTimeoutS, (pre || {}).totalTimeoutS || '', String(defaults.totalTimeoutS || ''), 'Bounds all commands together. 0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(defaults.totalTimeoutS || 0) + ' s.', 'number', preLocked);
       html += sandboxSchedInput(scope, 'preflightRetryDelayS', 'Retry delay (seconds)', y.preflightRetryDelayS, (pre || {}).retryDelayS || '', '0', 'Wait before re-creating the Job on another node after <code>node_unhealthy</code>. 0 retries at once.', 'number', preLocked);
+      html += `<div class="settings-subsection-title mt-4">Workspace setup</div>
+          <p class="config-help">Shell commands run in the Job after the node preflight and before the agent, each as <code>sh -lc</code> in the checked-out workspace with the agent's own environment, for example a repo script that installs a pinned toolchain from a package mirror. A failing setup command fails the kick as <code>setup_failed</code>, with no retry. A failing health check marks the node <code>node_unhealthy</code> and hive retries the kick once on another node, after the preflight retry delay, running setup again. Setup time counts toward the kick timeout. Commands are written to the Job manifest and the pod log, so never put a credential on a command line.</p>`;
+      if (agent) {
+        html += sandboxSchedCheckbox(scope, 'setupOverride', 'Use this agent\'s own setup', y.setupCommands, setupOverride,
+          'Off: this agent uses the hive-wide <code>agent_sandbox.setup</code>. On: it uses the lists below instead; empty lists turn setup off for this agent.');
+      }
+      const setupMax = Number(setupDefaults.maxCommands || SANDBOX_PREFLIGHT_COMMANDS_MAX);
+      const setupLockedNote = agent && !setupOverride ? ' Showing the hive-wide list; turn on the override above to edit it for this agent.' : '';
+      html += sandboxSchedTextarea(scope, 'setupCommands', 'Setup commands', y.setupCommands, (setupShown.commands || []).join('\n'), './scripts/install-toolchain.sh', 'One command per line, run in order, at most ' + setupMax + '. Each must be safe to run again: a node retry repeats the whole step on the same workspace.' + setupLockedNote, 3, setupLocked);
+      html += sandboxSchedTextarea(scope, 'setupHealthCommands', 'Health checks', y.setupHealthCommands, (setupShown.healthCommands || []).join('\n'), "python -c 'import torch; torch.ones(1)'", 'One command per line, run after the setup commands, at most ' + setupMax + '. A failure means the node cannot run what was installed.' + setupLockedNote, 2, setupLocked);
+      html += sandboxSchedInput(scope, 'setupTimeoutS', 'Per-command timeout (seconds)', y.setupTimeoutS, (setup || {}).timeoutS || '', String(setupDefaults.timeoutS || ''), '0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(setupDefaults.timeoutS || 0) + ' s.', 'number', setupLocked);
+      html += sandboxSchedInput(scope, 'setupTotalTimeoutS', 'Total timeout (seconds)', y.setupTotalTimeoutS, (setup || {}).totalTimeoutS || '', String(setupDefaults.totalTimeoutS || ''), 'Bounds setup commands and health checks together. 0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(setupDefaults.totalTimeoutS || 0) + ' s.', 'number', setupLocked);
       if (!agent) {
         const rp = d.agentSandboxJobGithubReadProxy || {};
         html += `<div class="settings-subsection-title mt-4">GitHub read relay</div>
@@ -509,15 +542,37 @@
         preflight = override ? block : null;
       }
 
+      let setup;
+      let setupOk = true;
+      const setupOverride = agent ? read('setupOverride') : true;
+      if (agent) {
+        SANDBOX_SETUP_FIELDS.forEach(field => {
+          const el = document.getElementById(sandboxSchedId(scope, field));
+          if (el) el.disabled = !setupOverride;
+        });
+      }
+      if (read('setupCommands') != null) {
+        const block = {};
+        setupOk = take('setupCommands', sandboxParseCommandLines(read('setupCommands')), v => { block.commands = v; });
+        if (read('setupHealthCommands') != null && !take('setupHealthCommands', sandboxParseCommandLines(read('setupHealthCommands')), v => { block.healthCommands = v; })) setupOk = false;
+        [['setupTimeoutS', 'timeoutS'], ['setupTotalTimeoutS', 'totalTimeoutS']].forEach(([field, key]) => {
+          if (read(field) == null) return;
+          if (!take(field, sandboxParseSeconds(read(field)), v => { block[key] = v; })) setupOk = false;
+        });
+        setup = setupOverride ? block : null;
+      }
+
       if (agent) {
         const prev = (_configState.dirty.general || {}).sandboxJob || {};
         markDirty('general', 'sandboxJob', Object.assign({}, prev, staged));
         if (preflight !== undefined && preflightOk) markDirty('general', 'sandboxPreflight', preflight);
+        if (setup !== undefined && setupOk) markDirty('general', 'sandboxSetup', setup);
         return;
       }
       const keys = { nodeSelector: 'agentSandboxJobNodeSelector', resources: 'agentSandboxJobResources', tolerations: 'agentSandboxJobTolerations', imagePullSecrets: 'agentSandboxJobImagePullSecrets', scheduleTimeoutS: 'agentSandboxJobScheduleTimeoutS' };
       Object.keys(staged).forEach(k => markDirty('security', keys[k], staged[k]));
       if (preflight !== undefined && preflightOk) markDirty('security', 'agentSandboxPreflight', preflight);
+      if (setup !== undefined && setupOk) markDirty('security', 'agentSandboxSetup', setup);
       if (read('rpEnabled') != null) {
         const rp = { enabled: !!read('rpEnabled') };
         let ok = take('rpListenAddr', sandboxParseListenAddr(read('rpListenAddr')), v => { rp.listenAddr = v; });

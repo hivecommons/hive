@@ -32850,7 +32850,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sr = agentSandboxRun(a);
       if (!sr) return '';
       if (sr.health === 'node_unhealthy') return 'node unhealthy';
-      if (sr.health === 'failed') return sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.timedOut ? 'last run timed out' : 'last run failed');
+      if (sr.health === 'failed') return sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.failReason === 'setup_failed' ? 'setup failed' : (sr.timedOut ? 'last run timed out' : 'last run failed'));
       if (sr.health === 'overdue') return 'run overdue';
       return '';
     }
@@ -32859,7 +32859,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!sr || !sr.lastRunAt) return '';
       const ago = agentNowAgo((hiveNowMs || Date.now()) - Date.parse(sr.lastRunAt));
       const dur = sr.durationS >= 60 ? Math.round(sr.durationS / 60) + ' min' : (sr.durationS || 0) + ' s';
-      let text = (sr.succeeded ? 'last run succeeded' : (sr.failReason === 'node_unhealthy' ? 'node unhealthy' : (sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.timedOut ? 'last run timed out' : 'last run failed')))) + (sr.node ? ' on ' + sr.node : '') + ' \u00b7 ' + ago + ' \u00b7 ' + dur;
+      let text = (sr.succeeded ? 'last run succeeded' : (sr.failReason === 'node_unhealthy' ? 'node unhealthy' : (sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.failReason === 'setup_failed' ? 'setup failed' : (sr.timedOut ? 'last run timed out' : 'last run failed'))))) + (sr.node ? ' on ' + sr.node : '') + ' \u00b7 ' + ago + ' \u00b7 ' + dur;
       if (sr.commitCount) text += ' \u00b7 ' + sr.commitCount + (sr.commitCount === 1 ? ' commit' : ' commits');
       return text;
     }
@@ -32891,7 +32891,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const rt = sandboxRun.runtime === 'job' ? 'Job' : 'sandbox';
         if (sandboxRun.health === 'running') { session = rt + ' running'; sessionCls = 'ab-ok'; sessionTip = 'A sandboxed kick is in flight.'; }
         else if (sandboxRun.health === 'waiting_for_node') { session = rt + ' waiting for a node'; sessionCls = 'ab-warn'; sessionTip = 'The Job is created but its pod is Pending and Unschedulable' + (sandboxRun.waitDetail ? ': ' + sandboxRun.waitDetail : '.'); }
-        else if (sandboxRun.health === 'node_unhealthy') { session = 'node unhealthy'; sessionCls = 'ab-bad'; sessionTip = 'The node preflight failed' + (sandboxRun.node ? ' on ' + sandboxRun.node : '') + ', also on the retry: ' + (sandboxRun.error || 'see the full log.'); }
+        else if (sandboxRun.health === 'node_unhealthy') { session = 'node unhealthy'; sessionCls = 'ab-bad'; sessionTip = 'The node preflight or a setup health check failed' + (sandboxRun.node ? ' on ' + sandboxRun.node : '') + ', also on the retry: ' + (sandboxRun.error || 'see the full log.'); }
         else if (sandboxRun.health === 'failed') { session = agentSandboxDownLabel(a); sessionCls = 'ab-bad'; sessionTip = 'The last sandboxed run failed: ' + (sandboxRun.error || 'see the full log.'); }
         else if (sandboxRun.health === 'overdue') { session = 'run overdue'; sessionCls = 'ab-bad'; sessionTip = 'A scheduled kick was due' + (sandboxRun.dueAt ? ' at ' + sandboxRun.dueAt : '') + ' and no run has started.'; }
         else { session = sandboxRun.lastRunAt ? rt + ' ok' : rt + ' ready'; sessionCls = 'ab-ok'; sessionTip = 'Sandboxed agent: each kick runs in its own container, so there is no session between kicks. ' + (agentSandboxRunText(a) || 'No run yet.'); }
@@ -79078,7 +79078,7 @@ function burnAreaChart() {
         <div class="config-field"><label>Job secrets (names) ${yamlHint('agent_sandbox.job.env_from_secrets[]')} ${settingHelpMark('settings', 'security-and-access', 'Job secrets', `Names of Kubernetes Secrets whose keys become environment variables in the sandbox Job. One name per line. Names only: never paste a secret value here.`)}</label><textarea rows="2" class="mono" placeholder="one Secret name per line" data-change-action="markSecurityLines" data-arg0="agentSandboxJobEnvFromSecrets" data-arg-types="s,v">${esc((sec.agentSandboxJobEnvFromSecrets || []).join('\n'))}</textarea></div>
         <div class="config-field"><label>Job workspace claim ${yamlHint('agent_sandbox.job.workspace_claim')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim', `PVC holding the workspace for the job runtime. Required for runtime job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaim || '')}" placeholder="PersistentVolumeClaim name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaim" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job workspace claim mount ${yamlHint('agent_sandbox.job.workspace_claim_mount')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim mount', `Where the workspace claim is mounted in the Job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaimMount || '')}" placeholder="mount path" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaimMount" data-arg-types="s,s,v"></div>
-        <details class="settings-subsection-details" id="gov-sandbox-job-scheduling"><summary class="settings-subsection-summary">Job scheduling, resources, preflight and GitHub read relay</summary>
+        <details class="settings-subsection-details" id="gov-sandbox-job-scheduling"><summary class="settings-subsection-summary">Job scheduling, resources, preflight, setup and GitHub read relay</summary>
         ${sandboxSchedulingHtml('hive', sec)}
         </details>
         <details class="settings-subsection-details"><summary class="settings-subsection-summary">Substrate sandbox</summary>
@@ -81133,6 +81133,7 @@ function burnAreaChart() {
     }
 
     // ── Sandbox Job scheduling, resources, preflight, read relay (#19553) ──
+    // Workspace setup (sandbox.setup, #19574) shares the renderer and stager.
     // One renderer and one stager for both places these live: the hive-wide
     // agent_sandbox block (Settings, Security, scope 'hive') and one agent's
     // sandbox block (agent General tab, scope 'agent'). The server validates
@@ -81153,6 +81154,7 @@ function burnAreaChart() {
     const SANDBOX_QUANTITY_RE = /^([0-9]+(\.[0-9]*)?|\.[0-9]+)([KMGTPE]i|[numkMGTPE]|[eE][+-]?[0-9]+)?$/;
     const SANDBOX_SOURCE_LABELS = { agent: "this agent's override", agent_sandbox: 'from agent_sandbox defaults', '': 'not set' };
     const SANDBOX_PREFLIGHT_FIELDS = ['preflightCommands', 'preflightTimeoutS', 'preflightTotalTimeoutS', 'preflightRetryDelayS'];
+    const SANDBOX_SETUP_FIELDS = ['setupCommands', 'setupHealthCommands', 'setupTimeoutS', 'setupTotalTimeoutS'];
 
     /* The hive.yaml path behind each control, spelled out in full so the
        settings parity guard (settings_parity_test.go) finds every leaf. */
@@ -81169,6 +81171,10 @@ function burnAreaChart() {
         preflightTimeoutS: 'agent_sandbox.preflight.timeout_s',
         preflightTotalTimeoutS: 'agent_sandbox.preflight.total_timeout_s',
         preflightRetryDelayS: 'agent_sandbox.preflight.retry_delay_s',
+        setupCommands: 'agent_sandbox.setup.commands[]',
+        setupHealthCommands: 'agent_sandbox.setup.health_commands[]',
+        setupTimeoutS: 'agent_sandbox.setup.timeout_s',
+        setupTotalTimeoutS: 'agent_sandbox.setup.total_timeout_s',
       },
       agent: {
         nodeSelector: 'agents.<key>.sandbox.job.node_selector.<key>',
@@ -81182,6 +81188,10 @@ function burnAreaChart() {
         preflightTimeoutS: 'agents.<key>.sandbox.preflight.timeout_s',
         preflightTotalTimeoutS: 'agents.<key>.sandbox.preflight.total_timeout_s',
         preflightRetryDelayS: 'agents.<key>.sandbox.preflight.retry_delay_s',
+        setupCommands: 'agents.<key>.sandbox.setup.commands[]',
+        setupHealthCommands: 'agents.<key>.sandbox.setup.health_commands[]',
+        setupTimeoutS: 'agents.<key>.sandbox.setup.timeout_s',
+        setupTotalTimeoutS: 'agents.<key>.sandbox.setup.total_timeout_s',
       },
     };
 
@@ -81378,6 +81388,12 @@ function burnAreaChart() {
       const cmds = (pre.commands || []).length;
       const preFrom = SANDBOX_SOURCE_LABELS[eff.preflightSource || ''] || eff.preflightSource;
       rows.push(`<li data-effective-field="preflight"><strong>Node preflight:</strong> ${cmds ? `${cmds} command${cmds === 1 ? '' : 's'}, ${Number(pre.timeoutS || 0)} s each, ${Number(pre.totalTimeoutS || 0)} s total` : 'off'} <span class="config-field-hint">(${esc(preFrom)})</span></li>`);
+      const setup = eff.setup || {};
+      const setupCmds = (setup.commands || []).length;
+      const setupHealth = (setup.healthCommands || []).length;
+      const setupFrom = SANDBOX_SOURCE_LABELS[eff.setupSource || ''] || eff.setupSource;
+      const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+      rows.push(`<li data-effective-field="setup"><strong>Workspace setup:</strong> ${setupCmds || setupHealth ? `${plural(setupCmds, 'setup command')}, ${plural(setupHealth, 'health check')}, ${Number(setup.timeoutS || 0)} s each, ${Number(setup.totalTimeoutS || 0)} s total` : 'off'} <span class="config-field-hint">(${esc(setupFrom)})</span></li>`);
       const hidden = Array.isArray(eff.hiddenDefaults) ? eff.hiddenDefaults : [];
       const hiddenHtml = hidden.length
         ? `<div class="config-field-hint" id="cfg-agent-sandbox-hidden-defaults" role="status" style="color:var(--yellow)">&#9888; This agent has its own Job block, so these hive-wide settings do not apply to it: ${hidden.map(h => `<code>agent_sandbox.job.${esc(h)}</code>`).join(', ')}. Set them below if this agent needs them.</div>`
@@ -81407,6 +81423,11 @@ function burnAreaChart() {
       const preOverride = agent && pre != null;
       const preShown = pre || (agent ? (d.sandboxEffective || {}).preflight : null) || {};
       const preLocked = agent && !preOverride;
+      const setupDefaults = (agent ? d.sandboxSetupDefaults : d.agentSandboxSetupDefaults) || {};
+      const setup = agent ? d.sandboxSetup : d.agentSandboxSetup;
+      const setupOverride = agent && setup != null;
+      const setupShown = setup || (agent ? (d.sandboxEffective || {}).setup : null) || {};
+      const setupLocked = agent && !setupOverride;
       const wholesaleNote = agent
         ? "An agent with any Job setting of its own uses its own node selector, resources, tolerations and service account instead of the hive-wide ones."
         : 'An agent with its own Job block uses its own node selector, resources, tolerations and service account instead of these.';
@@ -81429,6 +81450,18 @@ function burnAreaChart() {
       html += sandboxSchedInput(scope, 'preflightTimeoutS', 'Per-command timeout (seconds)', y.preflightTimeoutS, (pre || {}).timeoutS || '', String(defaults.timeoutS || ''), '0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(defaults.timeoutS || 0) + ' s.', 'number', preLocked);
       html += sandboxSchedInput(scope, 'preflightTotalTimeoutS', 'Total timeout (seconds)', y.preflightTotalTimeoutS, (pre || {}).totalTimeoutS || '', String(defaults.totalTimeoutS || ''), 'Bounds all commands together. 0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(defaults.totalTimeoutS || 0) + ' s.', 'number', preLocked);
       html += sandboxSchedInput(scope, 'preflightRetryDelayS', 'Retry delay (seconds)', y.preflightRetryDelayS, (pre || {}).retryDelayS || '', '0', 'Wait before re-creating the Job on another node after <code>node_unhealthy</code>. 0 retries at once.', 'number', preLocked);
+      html += `<div class="settings-subsection-title mt-4">Workspace setup</div>
+          <p class="config-help">Shell commands run in the Job after the node preflight and before the agent, each as <code>sh -lc</code> in the checked-out workspace with the agent's own environment, for example a repo script that installs a pinned toolchain from a package mirror. A failing setup command fails the kick as <code>setup_failed</code>, with no retry. A failing health check marks the node <code>node_unhealthy</code> and hive retries the kick once on another node, after the preflight retry delay, running setup again. Setup time counts toward the kick timeout. Commands are written to the Job manifest and the pod log, so never put a credential on a command line.</p>`;
+      if (agent) {
+        html += sandboxSchedCheckbox(scope, 'setupOverride', 'Use this agent\'s own setup', y.setupCommands, setupOverride,
+          'Off: this agent uses the hive-wide <code>agent_sandbox.setup</code>. On: it uses the lists below instead; empty lists turn setup off for this agent.');
+      }
+      const setupMax = Number(setupDefaults.maxCommands || SANDBOX_PREFLIGHT_COMMANDS_MAX);
+      const setupLockedNote = agent && !setupOverride ? ' Showing the hive-wide list; turn on the override above to edit it for this agent.' : '';
+      html += sandboxSchedTextarea(scope, 'setupCommands', 'Setup commands', y.setupCommands, (setupShown.commands || []).join('\n'), './scripts/install-toolchain.sh', 'One command per line, run in order, at most ' + setupMax + '. Each must be safe to run again: a node retry repeats the whole step on the same workspace.' + setupLockedNote, 3, setupLocked);
+      html += sandboxSchedTextarea(scope, 'setupHealthCommands', 'Health checks', y.setupHealthCommands, (setupShown.healthCommands || []).join('\n'), "python -c 'import torch; torch.ones(1)'", 'One command per line, run after the setup commands, at most ' + setupMax + '. A failure means the node cannot run what was installed.' + setupLockedNote, 2, setupLocked);
+      html += sandboxSchedInput(scope, 'setupTimeoutS', 'Per-command timeout (seconds)', y.setupTimeoutS, (setup || {}).timeoutS || '', String(setupDefaults.timeoutS || ''), '0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(setupDefaults.timeoutS || 0) + ' s.', 'number', setupLocked);
+      html += sandboxSchedInput(scope, 'setupTotalTimeoutS', 'Total timeout (seconds)', y.setupTotalTimeoutS, (setup || {}).totalTimeoutS || '', String(setupDefaults.totalTimeoutS || ''), 'Bounds setup commands and health checks together. 0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(setupDefaults.totalTimeoutS || 0) + ' s.', 'number', setupLocked);
       if (!agent) {
         const rp = d.agentSandboxJobGithubReadProxy || {};
         html += `<div class="settings-subsection-title mt-4">GitHub read relay</div>
@@ -81480,15 +81513,37 @@ function burnAreaChart() {
         preflight = override ? block : null;
       }
 
+      let setup;
+      let setupOk = true;
+      const setupOverride = agent ? read('setupOverride') : true;
+      if (agent) {
+        SANDBOX_SETUP_FIELDS.forEach(field => {
+          const el = document.getElementById(sandboxSchedId(scope, field));
+          if (el) el.disabled = !setupOverride;
+        });
+      }
+      if (read('setupCommands') != null) {
+        const block = {};
+        setupOk = take('setupCommands', sandboxParseCommandLines(read('setupCommands')), v => { block.commands = v; });
+        if (read('setupHealthCommands') != null && !take('setupHealthCommands', sandboxParseCommandLines(read('setupHealthCommands')), v => { block.healthCommands = v; })) setupOk = false;
+        [['setupTimeoutS', 'timeoutS'], ['setupTotalTimeoutS', 'totalTimeoutS']].forEach(([field, key]) => {
+          if (read(field) == null) return;
+          if (!take(field, sandboxParseSeconds(read(field)), v => { block[key] = v; })) setupOk = false;
+        });
+        setup = setupOverride ? block : null;
+      }
+
       if (agent) {
         const prev = (_configState.dirty.general || {}).sandboxJob || {};
         markDirty('general', 'sandboxJob', Object.assign({}, prev, staged));
         if (preflight !== undefined && preflightOk) markDirty('general', 'sandboxPreflight', preflight);
+        if (setup !== undefined && setupOk) markDirty('general', 'sandboxSetup', setup);
         return;
       }
       const keys = { nodeSelector: 'agentSandboxJobNodeSelector', resources: 'agentSandboxJobResources', tolerations: 'agentSandboxJobTolerations', imagePullSecrets: 'agentSandboxJobImagePullSecrets', scheduleTimeoutS: 'agentSandboxJobScheduleTimeoutS' };
       Object.keys(staged).forEach(k => markDirty('security', keys[k], staged[k]));
       if (preflight !== undefined && preflightOk) markDirty('security', 'agentSandboxPreflight', preflight);
+      if (setup !== undefined && setupOk) markDirty('security', 'agentSandboxSetup', setup);
       if (read('rpEnabled') != null) {
         const rp = { enabled: !!read('rpEnabled') };
         let ok = take('rpListenAddr', sandboxParseListenAddr(read('rpListenAddr')), v => { rp.listenAddr = v; });

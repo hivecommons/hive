@@ -12339,6 +12339,33 @@
                     },
                     "description": "The agent's own sandbox.preflight; null inherits agent_sandbox.preflight, an empty commands list turns it off for this agent"
                   },
+                  "sandboxSetup": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job after the node preflight and before the agent, in the workspace; a failure fails the kick as setup_failed; at most 32"
+                      },
+                      "healthCommands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run after commands; a failure marks the node node_unhealthy and retries once on another node; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "The agent's own sandbox.setup; null inherits agent_sandbox.setup, empty commands and healthCommands lists turn it off for this agent"
+                  },
                   "cavemanMode": {
                     "type": "string",
                     "enum": [
@@ -17080,6 +17107,33 @@
                     },
                     "description": "agent_sandbox.preflight; an empty commands list or null removes it"
                   },
+                  "agentSandboxSetup": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job after the node preflight and before the agent, in the workspace; a failure fails the kick as setup_failed; at most 32"
+                      },
+                      "healthCommands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run after commands; a failure marks the node node_unhealthy and retries once on another node; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "agent_sandbox.setup; empty lists or null remove it"
+                  },
                   "agentSandboxJobGithubReadProxy": {
                     "type": "object",
                     "description": "agent_sandbox.job.github_read_proxy; takes effect when hive restarts",
@@ -21107,6 +21161,23 @@
                     },
                     "arms_scope": {
                       "type": "string"
+                    },
+                    "coverage": {
+                      "type": "object",
+                      "properties": {
+                        "closed_beads": {
+                          "type": "integer"
+                        },
+                        "with_closed_pr": {
+                          "type": "integer"
+                        },
+                        "no_ref": {
+                          "type": "integer"
+                        },
+                        "no_decision": {
+                          "type": "integer"
+                        }
+                      }
                     },
                     "cost": {
                       "type": "object",
