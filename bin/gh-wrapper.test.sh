@@ -1071,6 +1071,15 @@ cat >"${RELAY_BIN}/hive-open-issue" <<'STUB'
 # Record each relay invocation as one line of shell-quoted argv, so the
 # assertions can compare the exact request shape the wrapper built.
 python3 -c 'import shlex, sys; print(" ".join(shlex.quote(a) for a in sys.argv[1:]))' "$@" >>"$HIVE_OPEN_ISSUE_LOG"
+# `--body-file -` reads the body from stdin, as the real shim does; record
+# what arrived so a test can check the wrapper passed stdin through.
+_prev=""
+for _a in "$@"; do
+  if [[ "$_prev" == "--body-file" && "$_a" == "-" ]]; then
+    cat >"${HIVE_OPEN_ISSUE_LOG}.stdin"
+  fi
+  _prev="$_a"
+done
 if [[ -n "${HIVE_OPEN_ISSUE_FAIL:-}" ]]; then
   exit "$HIVE_OPEN_ISSUE_FAIL"
 fi
@@ -1221,6 +1230,21 @@ _expect_relayed "enforced pr edit --body-file with a label issues both relay req
 _relay_run agent pr edit 7 --repo test/repo --body=Updated
 _expect_relayed "enforced pr edit --body=VALUE relays the body" pr \
   'edit-pr --repo test/repo 7 --body Updated'
+
+# `-F -` (body on stdin): relayed as `--body-file -`, and the shim, which
+# reads stdin for `-`, receives the body the caller piped in.
+rm -f "${RELAY_LOG}.stdin"
+printf 'Body from stdin\n' | _relay_run agent pr edit 7 --repo test/repo -F -
+_expect_relayed "enforced pr edit -F - relays --body-file - to edit-pr" pr \
+  'edit-pr --repo test/repo 7 --body-file -'
+if [[ "$(cat "${RELAY_LOG}.stdin" 2>/dev/null)" == "Body from stdin" ]]; then
+  echo "PASS: enforced pr edit -F - passes the piped body through to edit-pr"
+  PASSED=$((PASSED + 1))
+else
+  _relay_fail "enforced pr edit -F - passes the piped body through to edit-pr" \
+    "shim stdin: $(cat "${RELAY_LOG}.stdin" 2>/dev/null || echo '<none>')"
+fi
+rm -f "${RELAY_LOG}.stdin"
 
 # `issue edit --title` has no relay: an enforced lane is refused, not relayed.
 _relay_run agent issue edit 42 --repo test/repo --title Renamed
