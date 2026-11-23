@@ -47578,6 +47578,17 @@ function burnAreaChart() {
         + '</ul></div>';
     }
 
+    // Why model calls got no answer (#17054): error classes and the most
+    // frequent redacted reasons (HTTP status, provider code, message).
+    function kbAdvisorErrorsHTML(errors) {
+      const e = errors || {};
+      const top = Array.isArray(e.top_reasons) ? e.top_reasons : [];
+      if (!top.length) return '';
+      return '<div class="section-label m-0" style="margin-top:var(--sp-4)">Top error reasons</div><ul class="kb-effective-list">'
+        + top.map(r => '<li class="kb-effective-item"><span>' + escapeHtml(String(r.class || 'unknown')) + ': ' + escapeHtml(String(r.reason || '')) + '</span><span class="kb-effective-meta">' + escapeHtml(String(r.count)) + '</span></li>').join('')
+        + '</ul>';
+    }
+
     function kbAdvisorArmRowHTML(a, note) {
       return '<tr><td>' + escapeHtml(a.arm) + (note ? ' <span class="kb-effective-meta">' + escapeHtml(note) + '</span>' : '') + '</td><td>' + escapeHtml(String(a.beads)) + '</td><td>'
         + kbAdvisorNum(a.mean_fix_attempts, 2) + '</td><td>' + kbAdvisorNum(a.mean_ci_failure_count, 2) + '</td><td>' + kbAdvisorNum(a.mean_kicks_received, 2) + '</td></tr>';
@@ -47598,6 +47609,7 @@ function burnAreaChart() {
         + ' · budget ' + escapeHtml(String(st.max_calls_per_day == null ? '–' : st.max_calls_per_day)) + '/day, '
         + escapeHtml(String(st.max_calls_per_agent_hour == null ? '–' : st.max_calls_per_agent_hour)) + '/agent/hour'
         + (st.enabled ? '' : ' · advisor is turned off') + '</div>';
+      if (st.problem) html += '<div class="kb-notice">Advisor misconfigured: ' + escapeHtml(String(st.problem)) + '</div>';
       html += '<div class="kb-effective-scope">' + escapeHtml(String(w.decisions || 0)) + ' decisions'
         + (w.first_decision ? ' from ' + escapeHtml(w.first_decision) + ' to ' + escapeHtml(w.last_decision || '') : '')
         + (w.rank_mode_start ? ' · rank mode since ' + escapeHtml(w.rank_mode_start) : '') + '</div>';
@@ -47606,6 +47618,7 @@ function burnAreaChart() {
         + kbAdvisorCountsHTML('Decisions by mode', counts.by_mode)
         + kbAdvisorCountsHTML('Decisions by arm', counts.by_arm)
         + kbAdvisorCountsHTML('Decisions by outcome', counts.by_outcome) + '</div>';
+      html += kbAdvisorErrorsHTML(d.errors);
       const arms = d.arms || [];
       html += '<div class="section-label m-0" style="margin-top:var(--sp-4)">Closed beads by arm</div>';
       if (!arms.length && !d.mixed && !d.none) {
