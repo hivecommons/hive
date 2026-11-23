@@ -137,6 +137,11 @@ type rule struct {
 	kind     Kind
 	severity Severity
 	re       *regexp.Regexp
+	// titleOnly, when set, exempts a match whose line from the match start
+	// is only that shape (an issue-title label such as "New Rule: `slug`"),
+	// so the label is not read as an instruction. Anything else on the line
+	// after the match still fires the rule.
+	titleOnly *regexp.Regexp
 }
 
 // injectionRules detect prompt-injection / instruction-override attempts.
@@ -166,6 +171,8 @@ var injectionRules = []rule{
 		kind:     KindInjection,
 		severity: SeverityMedium,
 		re:       regexp.MustCompile(`(?i)(new\s+(system\s+)?prompt|new\s+instructions?|new\s+rules?)\s*[:\-]`),
+		// "New Rule: `prefer-temporal`" is the ESLint rule-proposal title.
+		titleOnly: regexp.MustCompile("(?i)^new\\s+rules?\\s*:\\s*`[\\w@/.-]{1,64}`\\s*$"),
 	},
 	{
 		name:     "injection.pretend_act_as",
@@ -417,12 +424,34 @@ func (s *Scanner) collect(text string) []Finding {
 
 // matchRules applies a rule table to text and returns one finding per rule that
 // fires (deduplicated per rule; a rule reports at most once).
+// withoutTitleLabels drops the matches whose line, from the match start to
+// the end of the line, is entirely the titleOnly shape.
+func withoutTitleLabels(text string, locs [][]int, titleOnly *regexp.Regexp) [][]int {
+	kept := locs[:0:0]
+	for _, loc := range locs {
+		line := text[loc[0]:]
+		if i := strings.IndexByte(line, '\n'); i >= 0 {
+			line = line[:i]
+		}
+		if !titleOnly.MatchString(line) {
+			kept = append(kept, loc)
+		}
+	}
+	return kept
+}
+
 func matchRules(text string, rules []rule) []Finding {
 	var out []Finding
 	for _, r := range rules {
 		locs := r.re.FindAllStringIndex(text, -1)
 		if len(locs) == 0 {
 			continue
+		}
+		if r.titleOnly != nil {
+			locs = withoutTitleLabels(text, locs, r.titleOnly)
+			if len(locs) == 0 {
+				continue
+			}
 		}
 		f := Finding{Kind: r.kind, Severity: r.severity, Rule: r.name}
 		// A match that only ever appears inside a quoted mention ("issues
