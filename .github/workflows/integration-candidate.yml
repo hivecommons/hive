@@ -233,7 +233,7 @@ jobs:
         python3 .github/scripts/test-generate-integration-ci.py
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         cache: false
         go-version-file: src/go.mod
@@ -902,7 +902,7 @@ jobs:
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       if: steps.select.outputs.run == 'true'
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       if: steps.select.outputs.run == 'true'
       with:
         cache: false
@@ -1084,7 +1084,7 @@ jobs:
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       if: steps.select.outputs.run == 'true'
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       if: steps.select.outputs.run == 'true'
       with:
         cache: false
@@ -1237,7 +1237,7 @@ jobs:
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       if: steps.select.outputs.run == 'true'
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       if: steps.select.outputs.run == 'true'
       with:
         cache: false
@@ -1357,7 +1357,7 @@ jobs:
         fetch-depth: 2
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         cache: false
         go-version-file: src/go.mod
@@ -1453,7 +1453,7 @@ jobs:
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       if: steps.select.outputs.run == 'true'
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       if: steps.select.outputs.run == 'true'
       with:
         cache: false
@@ -1601,7 +1601,7 @@ jobs:
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       if: steps.select.outputs.run == 'true'
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       if: steps.select.outputs.run == 'true'
       with:
         cache: false
@@ -1791,7 +1791,7 @@ jobs:
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       if: ${{ steps.cov-scope.outputs.score == 'true' }}
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       if: ${{ steps.cov-scope.outputs.score == 'true' }}
       with:
         cache: false
@@ -1922,7 +1922,7 @@ jobs:
         persist-credentials: false
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         cache: false
         go-version-file: src/go.mod
@@ -1951,7 +1951,7 @@ jobs:
         persist-credentials: false
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         cache: false
         go-version-file: src/go.mod
@@ -1996,7 +1996,7 @@ jobs:
         persist-credentials: false
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         cache: false
         go-version-file: src/go.mod
@@ -2050,7 +2050,7 @@ jobs:
       run: src/scripts/test-validate-generated-notice.sh
     - name: Warm shared Go tool cache (serialize the cold-cache population)
       run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         cache: false
         go-version-file: src/go.mod
