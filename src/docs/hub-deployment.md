@@ -504,4 +504,4 @@ The hub's own container is named `hub` and it is the only container in the Deplo
 kubectl -n hive-hub get deploy hive-hub -o yaml | python3 src/deploy/check-hub-manifest.py -
 ```
 
-Cluster-side cleanup that cannot be done from the repo: remove any stray `hive-hub` container from the running Deployment, move the two secrets into a Secret, and rotate both values.
+Cluster-side cleanup that cannot be done from the repo: remove any stray `hive-hub` container from the running Deployment, move the two secrets into a Secret, and rotate both values. The check also rejects a secret env fed from a ConfigMap or field and looks at initContainers.

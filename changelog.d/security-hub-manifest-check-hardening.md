@@ -1,0 +1,1 @@
+- The hub Deployment check now also rejects secret env names fed from a ConfigMap or field reference, checks initContainers, and reads `kind: List` manifests (#19344, #19345).
