@@ -103,6 +103,9 @@ type SelfServiceHive struct {
 	// removes. Records from before the field have no entries; their repos
 	// were all proven at OwnershipCheckedAt.
 	RepoProofs map[string]time.Time `json:"repo_proofs,omitempty"`
+	// PendingProof is the spoke's requested but unproven repos. Only Repos
+	// grants registry visibility; pending entries are kept for owner review.
+	PendingProof []string `json:"pending_proof,omitempty"`
 	// LastAcceptedHeartbeatAt is the last heartbeat that passed the bearer
 	// check. Zero until the first one; the expiry sweep (selfservice_expiry.go)
 	// counts the window from here, or from CreatedAt while it is zero.
@@ -371,6 +374,7 @@ func (st *selfServiceStore) update(id, ifMatch string, mutate func(*SelfServiceH
 	before := *h
 	next := *h
 	next.Repos = append([]string(nil), h.Repos...)
+	next.PendingProof = append([]string(nil), h.PendingProof...)
 	next.RepoProofs = make(map[string]time.Time, len(h.RepoProofs))
 	for k, v := range h.RepoProofs {
 		next.RepoProofs[k] = v
@@ -434,7 +438,12 @@ func (st *selfServiceStore) verify(id, presented string) bool {
 	if !ok {
 		return false
 	}
-	hash := hashSelfServiceKey(presented)
+	return st.matchesKey(*h, hashSelfServiceKey(presented))
+}
+
+// matchesKey applies the heartbeat key policy to a record already loaded
+// under the store lock. Mutations must check the credential under that lock.
+func (st *selfServiceStore) matchesKey(h SelfServiceHive, hash string) bool {
 	if h.KeyHash != "" && secureCompareHub(hash, h.KeyHash) {
 		return true
 	}
