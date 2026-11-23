@@ -3101,6 +3101,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.tokenCollector.SetClaudeSessionsDir(b.cfg.Data.ClaudeSessionsDir)
 	b.tokenCollector.SetCopilotSessionsDir(b.cfg.Data.CopilotSessionsDir)
 	b.tokenCollector.SetBobSessionsDir(b.cfg.Data.BobSessionsDir)
+	b.tokenCollector.SetGeminiSessionsDir(tokens.GeminiHomeBesideClaude(b.cfg.Data.ClaudeSessionsDir))
 	b.tokenCollector.SetClineHomesRoot("/data/home")
 	b.tokenCollector.SetSandboxRunHistoryPath(crux.SandboxRunHistoryPath(crux.WorkDir()))
 	tokenStop := make(chan struct{})
