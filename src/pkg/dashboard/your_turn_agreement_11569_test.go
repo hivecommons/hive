@@ -293,6 +293,11 @@ const inbox = (strip.match(/<div class="yt-inbox-row">.*?<\/div>/gs) || []).map(
 });
 const header = (strip.match(/id="yt-inbox-head">([^<]*)</) || [])[1] || '';
 const sliceItems = slices => Object.fromEntries(slices.map(s => [s.key, s.items.map(e => e.repo + '#' + e.number)]));
+// The ownership slices are the page's chart without the Overview card. The
+// card's Your turn is wider than the inbox by design (it also counts items the
+// hive holds for a person that ownership does not), so it is not one of the
+// surfaces that must agree here.
+delete window._lastStatus.overview_card;
 process.stdout.write(JSON.stringify({
   markers: markerAttrs, inbox, header, counter: els['repos-needs-human'].textContent,
   slices: { issues: sliceItems(overviewIssueBandSlices(window._lastStatus.repos)), prs: sliceItems(overviewPRBandSlices(window._lastStatus.repos)) }

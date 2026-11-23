@@ -173,6 +173,44 @@
     .overview-pr-in-review { --slice-c: var(--band-in-review); }
     .overview-pr-open { --slice-c: var(--band-open); }
     .overview-pr-draft { --slice-c: var(--band-draft); }
+    /* Overview card legend: a headed group is a bold subtotal row with its
+       bands indented under it; a zero band dims, a group row never does. */
+    .overview-chart-legend-group { font-weight: 700; background: color-mix(in srgb, var(--muted) 10%, transparent); }
+    .overview-chart-legend-part { padding-left: calc(var(--sp-1) + 20px); }
+    .overview-chart-legend-zero { opacity: 0.55; }
+    .overview-partition-tooltip .overview-partition-title { display: block; margin-bottom: var(--sp-1); font-weight: 700; }
+    .overview-partition-tooltip .overview-partition-title + .overview-partition-summary { font-weight: 400; white-space: normal; }
+    .overview-partition-tooltip .overview-partition-label .overview-chart-swatch { display: inline-block; vertical-align: middle; margin-right: var(--sp-2); border-radius: 2px; }
+    /* Overview card bands and groups: the approved mock-up's palette. */
+    .overview-card-issue-your-turn, .overview-card-pr-your-turn { --slice-c: var(--band-needs-human); }
+    .overview-card-issue-to-close, .overview-card-pr-to-close { --slice-c: var(--band-confirm-close); }
+    .overview-card-issue-unexplained, .overview-card-pr-unexplained { --slice-c: #e879f9; }
+    .overview-card-issue-covered-by-pr, .overview-card-pr-covered-by-pr { --slice-c: #cbd5e1; }
+    .overview-card-issue-waiting-on-item, .overview-card-pr-waiting-on-item { --slice-c: #94a3b8; }
+    .overview-card-issue-human-hold, .overview-card-pr-human-hold { --slice-c: #7c8a9c; }
+    .overview-card-issue-reporter-confirm, .overview-card-pr-reporter-confirm { --slice-c: #5f6d7e; }
+    .overview-card-issue-author-update, .overview-card-pr-author-update { --slice-c: var(--band-blocked); }
+    .overview-card-issue-bot-rebase, .overview-card-pr-bot-rebase { --slice-c: #fca5a5; }
+    .overview-card-issue-queued, .overview-card-pr-queued { --slice-c: var(--band-unclaimed); }
+    .overview-card-issue-working, .overview-card-pr-working { --slice-c: var(--band-claimed); }
+    .overview-card-issue-will-merge, .overview-card-pr-will-merge { --slice-c: #4ade80; }
+    .overview-card-issue-not-work, .overview-card-pr-not-work { --slice-c: #4b5a6b; }
+    .overview-card-issue-draft, .overview-card-pr-draft { --slice-c: #3b4757; }
+    .overview-card-issue-held, .overview-card-pr-held { --slice-c: #c9a27a; }
+    .overview-card-group-waiting-elsewhere { --slice-c: #a8b3c2; }
+    .overview-card-group-blocked { --slice-c: var(--band-blocked); }
+    .overview-card-group-actionable-now { --slice-c: var(--band-unclaimed); }
+    body.light-mode .overview-card-issue-unexplained, body.light-mode .overview-card-pr-unexplained { --slice-c: #c026d3; }
+    body.light-mode .overview-card-issue-covered-by-pr, body.light-mode .overview-card-pr-covered-by-pr { --slice-c: #334155; }
+    body.light-mode .overview-card-issue-waiting-on-item, body.light-mode .overview-card-pr-waiting-on-item { --slice-c: #475569; }
+    body.light-mode .overview-card-issue-human-hold, body.light-mode .overview-card-pr-human-hold { --slice-c: #64748b; }
+    body.light-mode .overview-card-issue-reporter-confirm, body.light-mode .overview-card-pr-reporter-confirm { --slice-c: #94a3b8; }
+    body.light-mode .overview-card-issue-bot-rebase, body.light-mode .overview-card-pr-bot-rebase { --slice-c: #ef4444; }
+    body.light-mode .overview-card-issue-will-merge, body.light-mode .overview-card-pr-will-merge { --slice-c: var(--band-merge-eligible); }
+    body.light-mode .overview-card-issue-not-work, body.light-mode .overview-card-pr-not-work { --slice-c: #a8a29e; }
+    body.light-mode .overview-card-issue-draft, body.light-mode .overview-card-pr-draft { --slice-c: #d6d3d1; }
+    body.light-mode .overview-card-issue-held, body.light-mode .overview-card-pr-held { --slice-c: #a16207; }
+    body.light-mode .overview-card-group-waiting-elsewhere { --slice-c: #57534e; }
 
     /* Plan usage gauge: Overview block, one row per provider, fuel dials. */
     .overview-usage-gauge { display: flex; flex-direction: column; gap: var(--sp-3); margin: var(--sp-0) var(--sp-0) var(--sp-4); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
