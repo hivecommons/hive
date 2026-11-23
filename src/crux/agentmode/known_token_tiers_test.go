@@ -31,7 +31,7 @@ func TestLessPrivilegedTokenTier(t *testing.T) {
 		{"advisor", "", false},
 		{"newcomer", "", false},
 		{"contributor", "", false},
-		{"contributer", "", false},
+		{"Contributor", "", false},
 		{"", "", false},
 	}
 	for _, tt := range tests {
