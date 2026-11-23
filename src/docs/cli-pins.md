@@ -125,6 +125,25 @@ A pin change can leave Hive's model lists behind. Two layers cover it:
   nor `src/Dockerfile.contributor` installs a Gemini CLI, so there is no
   pinned binary to check ids against. The weekly
   `static-model-freshness.yml` report still flags drift for it.
+- Gemini aliases: the dashboard also offers the Gemini CLI's own aliases
+  `auto`, `pro`, `flash` and `flash-lite` (`geminiAlwaysIncludeModels`), like
+  Claude's `opus`, `sonnet`, `haiku` and `fable`. The CLI defines them, not
+  hive: they follow whatever model the installed CLI maps them to, so the
+  mapping can change with a CLI update or the account's access. As of
+  `@google/gemini-cli-core` 0.70.0 (`dist/src/config/models.js`):
+  - `auto` routes each turn between a Pro and a Flash model, so one session
+    can use both.
+  - `pro` gives `gemini-3-pro-preview` (or `gemini-3.1-pro-preview` behind a
+    flag), and `gemini-2.5-pro` without preview access.
+  - `flash` depends on the account's preview and latest-Flash access:
+    `gemini-3.8-flash` only with latest-Flash access, otherwise
+    `gemini-3-flash-preview` with preview access, otherwise
+    `gemini-3.5-flash`. It is not always the newest Flash.
+  - `flash-lite` gives `gemini-3.1-flash-lite`, or `gemini-3.5-flash-lite`
+    with latest access.
+
+  The aliases are never priced. Cost must follow the concrete model the CLI
+  used.
 - Goose: out of scope. Its models depend on whichever provider an operator
   configures, so there is no single list to keep fresh; the dashboard's ACP
   probe asks the configured provider at run time.

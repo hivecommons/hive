@@ -404,6 +404,21 @@ var claudeAlwaysIncludeModels = []string{
 	"fable",
 }
 
+// geminiAlwaysIncludeModels are the Gemini CLI's own model aliases, always
+// offered in the gemini dropdown (mirrors claudeAlwaysIncludeModels). The
+// Google models API never returns them, but they are valid `gemini --model`
+// values that follow whatever concrete model the installed CLI maps them to
+// (see src/docs/cli-pins.md), so they are appended to every served gemini
+// list: live discovery with an API key and the static fallback alike. That
+// keeps the dashboard's model auto-heal from moving an agent off an alias.
+// They are never priced: the hive must cost the concrete model the CLI used.
+var geminiAlwaysIncludeModels = []string{
+	"auto",
+	"pro",
+	"flash",
+	"flash-lite",
+}
+
 // bobStaticModels is bob's complete model list: exactly one entry, the auto
 // sentinel. bob has no model catalog to discover and no usable --model flag
 // (see bobAutoModel), so offering anything else would invite a selection that
@@ -443,12 +458,19 @@ var codexStaticModels = []string{
 }
 
 // geminiStaticModels is the fallback when no Gemini API key is configured (or
-// discovery fails). Keep CURRENT.
+// discovery fails). Keep CURRENT. Keep it in sync with GEMINI_CLI_MODELS in
+// static-src/js/backends-tokens.js. Both the concrete ids AND the bare
+// aliases the Gemini CLI accepts are included.
 var geminiStaticModels = []string{
 	"gemini-3-pro-preview",
 	"gemini-3-flash-preview",
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",
+	// Bare aliases the Gemini CLI also accepts (see geminiAlwaysIncludeModels).
+	"auto",
+	"pro",
+	"flash",
+	"flash-lite",
 }
 
 // claudePinnedCLIModels is the closed model set accepted by the Claude Code
@@ -484,12 +506,17 @@ var claudePinnedCLIModels = []string{
 // geminiPinnedCLIModels is the conservative Gemini CLI allowlist used to bound
 // the Google models API inventory. The API is account/provider-facing; the
 // installed CLI accepts the stable Gemini Code Assist ids below, not every
-// generateContent model the API may return.
+// generateContent model the API may return. The bare aliases are CLI-defined
+// and are listed so the static fallback passes filterPinnedCLIModels.
 var geminiPinnedCLIModels = []string{
 	"gemini-3-pro-preview",
 	"gemini-3-flash-preview",
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",
+	"auto",
+	"pro",
+	"flash",
+	"flash-lite",
 }
 
 // gooseProviderStaticModels maps a configured goose provider to a sensible
@@ -1017,12 +1044,16 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 	s.auditDiscoveryTransition(backend, r)
 	// Applied after stabilization/fallback so the pinned ids survive BOTH
 	// paths: a live sample that omits a rollout-gated id and the static
-	// fallback list (see copilotAlwaysIncludeModels / claudeAlwaysIncludeModels).
+	// fallback list (see copilotAlwaysIncludeModels / claudeAlwaysIncludeModels
+	// / geminiAlwaysIncludeModels).
 	if backend == "copilot" {
 		r.models = dedupeModels(append(r.models, copilotAlwaysIncludeModels...))
 	}
 	if backend == "claude" {
 		r.models = dedupeModels(append(r.models, claudeAlwaysIncludeModels...))
+	}
+	if backend == "gemini" {
+		r.models = dedupeModels(append(r.models, geminiAlwaysIncludeModels...))
 	}
 	if s.cliModels != nil {
 		s.cliModels.set(backend, r)
@@ -1074,6 +1105,9 @@ func (s *Server) staticCLIModelResult(backend string) cliModelResult {
 		}
 		if backend == "claude" {
 			models = dedupeModels(append(models, claudeAlwaysIncludeModels...))
+		}
+		if backend == "gemini" {
+			models = dedupeModels(append(models, geminiAlwaysIncludeModels...))
 		}
 		return cliModelResult{models: models, fallback: true, discoveryErr: "discovery refresh running in background"}
 	}
