@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v5.352.0)
+
+### Added
+
+- Added a non-blocking weekly `ioscan classifier bench` workflow. It runs the ioscan classifier benchmark against GitHub Models backends with the job's own `GITHUB_TOKEN`, so no repository secret or paid key is involved, and publishes catch rate, false-positive rate, errors, latency, tokens and list-price cost per backend and split to the job summary. The benchmark also gains `IOSCAN_CLASSIFIER_BENCH_MIN_INTERVAL` call spacing, a stable `IOSCAN_CLASSIFIER_BENCH_MAX_PER_CLASS` sample cap, and support for an endpoint given as an exact `/chat/completions` URL ([#19516](https://github.com/hivecommons/hive/issues/19516)).
+
 ## 2026-11-23 (v5.351.0)
 
 ### Added
