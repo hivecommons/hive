@@ -201,6 +201,91 @@ minutes. Audit lines (`audit: ask request`, `audit: ask consent grant`,
 budget spent`) carry outcomes and counts, never text. Hub admins can read the
 counters at `GET /api/ask/stats`.
 
+### Ask AI help
+
+Ask AI help is an optional docs-help backend for the hub dashboard (design:
+[Dashboard Ask AI help](design/dashboard-ask-ai-help.md)). It is off by
+default. With it off, or switched on but missing a value, the hub registers no
+Ask route, reads no key and sends nothing. The hub calls the Kapa.ai Chat API
+itself, server side; the browser only ever talks to the hub, and no
+third-party script or Content-Security-Policy change is involved.
+
+To wire it once a Kapa API key exists:
+
+1. In the Kapa project, create an HTTP API integration and an API key. Keep
+   both out of the repository.
+2. Store the key in a Kubernetes Secret and mount it under one of the allowed
+   secret dirs (`/secrets` or `/data/secrets`), for example:
+
+   ```sh
+   kubectl -n <hub-namespace> create secret generic hive-ask-kapa \
+     --from-file=api-key=<path-to-key-file>
+   ```
+
+   and add a volume plus `volumeMounts: [{name: hive-ask-kapa, mountPath: /secrets/kapa, readOnly: true}]`
+   to the hub Deployment.
+3. Set the hub environment:
+
+   ```yaml
+   env:
+     - name: HIVE_ASK_ENABLED
+       value: "true"
+     - name: HIVE_ASK_KAPA_PROJECT_ID
+       value: <project id>
+     - name: HIVE_ASK_KAPA_INTEGRATION_ID
+       value: <integration id>
+     - name: HIVE_ASK_KAPA_API_KEY_FILE
+       value: /secrets/kapa/api-key
+   ```
+
+   The project id and integration id may also come from the same Secret
+   through `valueFrom.secretKeyRef`. There is no env var that holds the key
+   itself.
+4. Restart the hub. It logs `ask: enabled` with the effective limits, or one
+   `ask: requested but staying off` line with the reason. Neither line, nor any
+   API response, carries the key, the project id or the integration id.
+
+With it on, the hub dashboard shows an **Ask** button in the header. It opens a
+panel docked to the side (a bottom sheet on a phone) that first shows the
+disclosure and a single confirm; after that the person can ask, read the answer
+with its **Sources** and the "AI generated, may be wrong" label, and withdraw
+with **Stop sending my questions**. Every state keeps a plain docs link: no
+consent, Kapa.ai unreachable or busy, or no cited answer. The panel is our own
+same-origin script and stylesheet (`/ask-panel.js`, `/ask-panel.css`); with Ask
+off the hub serves neither and the dashboard document is unchanged. Hub
+operators see the effective switch under **Scale controls**.
+
+What leaves the hub per question: the question text (refused, not sent, when
+it looks like a password, token or key), the label of the dashboard section
+from a closed list of ids in `pkg/askai/sections.go` (set
+`HIVE_ASK_SEND_SECTION_LABEL=false` to drop it), the integration id and, for a
+follow-up, the vendor's thread id. No login, email, page content, URL, hive or
+repo name is sent. Each person confirms a disclosure before their first
+question and can withdraw; the record lives under `/data/saas/ask-consents/`
+and is deleted with the user. Answers without an allowlisted source
+(`docs.hivecommons.dev` or the GitHub docs path under `hivecommons/hive`) are
+shown as "no cited answer" with a docs link.
+
+Hosted hives ask through the hub: with Ask on, the hub also serves
+`POST /api/hub/ask/relay`, authenticated with each hive's per-hive heartbeat
+bearer, so the key stays on the hub. It serves hosted hives only in this round
+(`HIVE_ASK_RELAY_HIVES`, default `hosted`; `none` turns the relay off;
+`registered` is accepted and treated as `hosted` until self-hosted hives are
+approved), refuses hives listed in `HIVE_ASK_RELAY_DISABLED_HIVES`, and charges
+each hive at most 60 relayed questions an hour (`HIVE_ASK_LIMIT_HIVE_PER_HOUR`)
+inside the hub-wide limits. See [Ask AI help](ask-ai-help.md) for the hive
+side.
+
+Limits (env overrides in [Environment variables](env-vars.md)): per person 3 a
+minute, 20 an hour and one in flight; hub-wide 4 a minute (a fifth of the
+vendor's 20 a minute per-team limit, and never more than half of it), 2 in
+flight and 500 a day. A vendor `429` backs every caller off for its
+`Retry-After`; three upstream failures in a row open a circuit breaker for five
+minutes. Audit lines (`audit: ask request`, `audit: ask consent grant`,
+`audit: ask consent withdraw`, `audit: ask breaker opened`, `audit: ask daily
+budget spent`) carry outcomes and counts, never text. Hub admins can read the
+counters at `GET /api/ask/stats`.
+
 ### Reserved `byo-` hive IDs (credential fence)
 
 Hive IDs that start with `byo-` are reserved for hives that their owners run and register themselves ([#18060](https://github.com/hivecommons/hive/issues/18060)). A hub lists such a hive as directory metadata only, so its heartbeat response never carries hub-held credentials or management actions, whatever key the spoke authenticated with. The hub withholds these fields: the GitHub App config (including cluster, secondary and webhook relay keys), the pending gateway, the claimed project config, the cluster ID, the authorized-user list, visibility, upgrade and branch-switch instructions, the upgrade announcement and policy, spoke restarts, agent-restart resets, fleet-breaker instructions, and self-experiment flags. Display-only data such as admin banners still flows. When the fence withholds a field, the hub logs `heartbeat: credential fence withheld fields from self-service hive` with the field names, never the values. Do not give an operator-provisioned hive a `byo-` ID.

@@ -1,0 +1,153 @@
+/* Ask AI help panel (#19177). Uses the host dashboard's tokens with plain
+   fallbacks, docks to the side instead of floating over data (#7160), and
+   uses no motion effects, so reduced motion needs no special case. */
+:root {
+  --hive-ask-width: 380px;
+}
+.hive-ask-opener {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #d0d7de);
+  background: var(--surface, #ffffff);
+  color: var(--text, #1f2328);
+  cursor: pointer;
+}
+.hive-ask-opener:focus-visible,
+.hive-ask-panel button:focus-visible,
+.hive-ask-panel a:focus-visible,
+.hive-ask-panel textarea:focus-visible {
+  outline: 2px solid var(--focus, var(--amber, #0969da));
+  outline-offset: 2px;
+}
+.hive-ask-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--hive-ask-width);
+  max-width: 100vw;
+  box-sizing: border-box;
+  overflow-y: auto;
+  z-index: 1000;
+  padding: 16px;
+  background: var(--surface, #ffffff);
+  color: var(--text, #1f2328);
+  border-left: 1px solid var(--border, #d0d7de);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+.hive-ask-panel[hidden] {
+  display: none;
+}
+@media (min-width: 900px) {
+  html.hive-ask-open body {
+    margin-right: var(--hive-ask-width);
+  }
+}
+@media (max-width: 899px) {
+  .hive-ask-panel {
+    top: auto;
+    left: 0;
+    width: 100vw;
+    height: 70vh;
+    border-left: 0;
+    border-top: 1px solid var(--border, #d0d7de);
+  }
+}
+.hive-ask-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hive-ask-head h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+.hive-ask-close {
+  font: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.hive-ask-label,
+.hive-ask-ai,
+.hive-ask-hint {
+  color: var(--muted, #59636e);
+  font-size: 0.8rem;
+}
+.hive-ask-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.hive-ask-entry {
+  margin: 12px 0;
+}
+.hive-ask-q {
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.hive-ask-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0 0 4px;
+}
+.hive-ask-a {
+  border-left: 3px solid var(--border, #d0d7de);
+  padding-left: 8px;
+}
+.hive-ask-notice {
+  border-left-color: var(--warn, #9a6700);
+}
+.hive-ask-sources {
+  margin: 0;
+  padding-left: 18px;
+}
+.hive-ask-sources-title {
+  font-weight: 600;
+  margin: 4px 0 0;
+}
+.hive-ask-form label {
+  display: block;
+  font-weight: 600;
+  margin-top: 8px;
+}
+.hive-ask-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  margin-top: 4px;
+  background: var(--bg, #ffffff);
+  color: inherit;
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: 6px;
+  padding: 6px;
+}
+.hive-ask-send,
+.hive-ask-confirm,
+.hive-ask-withdraw {
+  font: inherit;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #d0d7de);
+  background: var(--surface, #ffffff);
+  color: inherit;
+  cursor: pointer;
+}
+.hive-ask-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+.hive-ask-docs {
+  color: var(--link, var(--amber, #0969da));
+}
