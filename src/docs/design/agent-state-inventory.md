@@ -70,6 +70,8 @@ Each backend records its own transcript, in its own format, in its own home:
   (`src/pkg/tokens/copilot_scanner.go`, `ScanCopilotSessions`)
 - bob: `~/.bob/tmp/<uuid>/chats/<session-id>.json`
   (`src/pkg/tokens/bob_scanner.go`)
+- Gemini CLI: `~/.gemini/tmp/<project-id>/chats/session-*.jsonl`
+  (`src/pkg/tokens/gemini_scanner.go`)
 
 Hive reads these files today — but only for **token accounting**
 (`src/pkg/tokens/collector.go`), never for resume. A subtle and important

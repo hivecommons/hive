@@ -1,0 +1,14 @@
+{"sessionId":"5d1c0f6e-1111-4222-8333-944455556666","projectHash":"repo","startTime":"2026-11-20T10:00:00.000Z","lastUpdated":"2026-11-20T10:00:00.000Z","kind":"main"}
+{"id":"u1","timestamp":"2026-11-20T10:00:01.000Z","type":"user","content":[{"text":"fix the failing test"}]}
+{"$set":{"lastUpdated":"2026-11-20T10:00:01.000Z"}}
+{"id":"g1","timestamp":"2026-11-20T10:00:05.000Z","type":"gemini","content":"","thoughts":[],"model":"gemini-2.5-pro"}
+{"id":"g1","timestamp":"2026-11-20T10:00:05.000Z","type":"gemini","content":"","thoughts":[],"model":"gemini-2.5-pro","tokens":{"input":10000,"output":200,"cached":8000,"thoughts":300,"tool":0,"total":10500}}
+{"$set":{"lastUpdated":"2026-11-20T10:00:05.000Z"}}
+{"id":"g1","timestamp":"2026-11-20T10:00:05.000Z","type":"gemini","content":"","thoughts":[],"model":"gemini-2.5-pro","tokens":{"input":10000,"output":200,"cached":8000,"thoughts":300,"tool":0,"total":10500},"toolCalls":[{"id":"t1","name":"read_file","args":{"path":"a.go"},"status":"executing","timestamp":"2026-11-20T10:00:05.100Z"}]}
+{"$patch":{"id":"g1","toolCalls":[{"id":"t1","result":[{"text":"package a"}]}]}}
+{"id":"u2","timestamp":"2026-11-20T10:00:06.000Z","type":"user","content":[{"text":"continue"}]}
+{"id":"g2","timestamp":"2026-11-20T10:00:09.000Z","type":"gemini","content":"Looking at the test.","thoughts":[],"model":"gemini-2.5-flash","tokens":{"input":12000,"output":100,"cached":11000,"thoughts":0,"tool":50,"total":12150}}
+{"id":"g3","timestamp":"2026-11-20T10:00:20.000Z","type":"gemini","content":"Fixed.","thoughts":[{"subject":"Plan","description":"edit a.go","timestamp":"2026-11-20T10:00:15.000Z"}],"model":"gemini-2.5-pro","tokens":{"input":15000,"output":400,"cached":0,"thoughts":1000,"tool":0,"total":16400}}
+{"$set":{"lastUpdated":"2026-11-20T10:00:20.000Z"}}
+{"id":"i1","timestamp":"2026-11-20T10:00:21.000Z","type":"info","content":"Request cancelled."}
+{"$rewindTo":"g3"}

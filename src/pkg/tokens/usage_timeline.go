@@ -18,6 +18,10 @@ const (
 	// but the parser does not currently read per-message timestamps, and
 	// sessions without explicit usage fall back to character estimates.
 	BackendBob = "bob"
+	// BackendGemini is the Gemini CLI. Its chat recordings carry per-message
+	// usage, a per-message timestamp and the concrete serving model, so it
+	// yields a UsageEvent timeline (the repo-cost join does not consume it yet).
+	BackendGemini = "gemini"
 	// BackendInference is the MITM/inference sink path (bare-mode agents).
 	BackendInference = "inference"
 )
