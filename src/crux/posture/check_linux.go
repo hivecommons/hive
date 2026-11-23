@@ -21,7 +21,7 @@ func Check() []string {
 	var fs syscall.Statfs_t
 	writable := false
 	if syscall.Statfs("/", &fs) == nil {
-		writable = uint64(fs.Flags)&1 == 0 // ST_RDONLY
+		writable = fs.Flags&1 == 0 // ST_RDONLY
 	}
 	return Gaps(st, true, writable)
 }
