@@ -1580,7 +1580,7 @@ JSON
 
 kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -c hub -- \
   sh -c "mkdir -p /data/saas/hives/${ID}"
-kubectl --context <hub-reachable-cluster> -n hive-hub cp /tmp/meta.json \
+kubectl --context <hub-reachable-cluster> -n hive-hub cp -c hub /tmp/meta.json \
   hive-hub/"$HUB_POD":/data/saas/hives/${ID}/meta.json
 ```
 
