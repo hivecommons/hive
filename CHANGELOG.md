@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v6.57.3)
+
+### Fixed
+
+- A PR whose stage label the write-back gate kept off GitHub (no opt-in label, or the backfill guard) now gets the your-turn decision its recorded stage calls for. A refused `stage/085-needs-decision` park is *Parked until a maintainer decides*, as the policy matrix already said. The snapshot build decided ownership before the recorded stage was attached, and it was attached only when the snapshot was published, so in production ownership read the PR's GitHub labels: such a PR was in nobody's inbox while the Overview bands showed it waiting. The covering test attached the stage first and passed. `BuildFrontendStatus` now attaches it before the your-turn decision, from the same stage store the publish reads. A suppressed PR that is already your turn for another reason keeps its turn, but its reason gains "(the hive holds it at stage/085-needs-decision; the write-back gate kept the label off GitHub)" (on projectbluefin today: [actions#740](https://github.com/projectbluefin/actions/pull/740) and [#731](https://github.com/projectbluefin/actions/pull/731)). For such PRs the change reaches the your-turn inbox and `review_queue`, the `issues_by_band` / `prs_by_band` your-turn fields, the Activity monitor's `finisher` / `finisher_reason`, the advice block in the Hive Advisory Report comment, `ownership_transition` audit entries, and the your-turn counts in the KPI history and the phone widget. Agents, queues, sweeps, reviews, the fixer and merges do not read ownership and are unchanged.
+- The Activity monitor no longer lists a PR that waits on its own author as waiting on you. A 071 or 072 PR whose human author is still inside their grace has a *Needs human* state ("waiting on the PR author"), and the fallback meant for filed-for-help, level-gate and hive-hold waits promoted every such state to the operator as `other-human-wait`, so [projectbluefin/server#594](https://github.com/projectbluefin/server/pull/594) and [#701](https://github.com/projectbluefin/server/pull/701) counted in the orange badge, the **Waiting on you** pill and filter while the inbox said they were not your turn. The fallback now skips an author wait unless the your-turn decision puts the row on you (a sentinel flag, or a stale PR to close or take over, keeps it listed); once the author's grace runs out the row is listed as `returned-to-contributor-offline` as before. In `stage_tracker_read` this changes `waiting_on_you` and `wait_kind` on those rows, `waiting_on_human.count` and `.items`, and the `waiting_on_you` filter; the row's *Needs human* chip is unchanged.
+
 ## 2026-11-23 (v6.57.2)
 
 ### Fixed
