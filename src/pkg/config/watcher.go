@@ -47,6 +47,11 @@ type Watcher struct {
 	mu      sync.Mutex
 	timer   *time.Timer
 	stopped bool
+
+	// ready is closed once Start has registered its directory watches (or
+	// given up), so tests can write without guessing a start-up delay.
+	ready     chan struct{}
+	readyOnce sync.Once
 }
 
 // SkipNext is kept for callers that still announce programmatic saves. It
@@ -62,8 +67,11 @@ func NewWatcher(path string, onChange func(*Config), logger *slog.Logger) *Watch
 		path:     path,
 		onChange: onChange,
 		logger:   logger,
+		ready:    make(chan struct{}),
 	}
 }
+
+func (w *Watcher) markReady() { w.readyOnce.Do(func() { close(w.ready) }) }
 
 // AlsoWatch adds a file whose changes also trigger a reload of the config.
 // Call before Start. Start adds the dashboard overlay itself on Kubernetes.
@@ -116,6 +124,7 @@ func (w *Watcher) relevant(name string) bool {
 // cancelled or a fatal watcher error occurs. Callers should run
 // this in a goroutine.
 func (w *Watcher) Start(ctx context.Context) {
+	defer w.markReady()
 	if IsKubernetesPod() {
 		w.AlsoWatch(DashboardOverlayFile)
 	}
@@ -126,23 +135,27 @@ func (w *Watcher) Start(ctx context.Context) {
 	}
 	defer func() { _ = fsw.Close() }() // best-effort; process/goroutine is tearing down either way
 
-	dirs := map[string]bool{}
-	for _, p := range w.watchedFiles() {
-		dirs[filepath.Dir(p)] = true
+	// The config file's own directory is required; the others (a symlink
+	// target's, the overlay's) are best-effort.
+	primaryDir := filepath.Dir(filepath.Clean(w.path))
+	if err := fsw.Add(primaryDir); err != nil {
+		w.logger.Error("failed to watch config file", "path", w.path, "dir", primaryDir, "error", err)
+		return
 	}
-	watching := 0
-	for dir := range dirs {
-		if err := fsw.Add(dir); err != nil {
-			w.logger.Error("failed to watch config directory", "path", w.path, "dir", dir, "error", err)
+	dirs := map[string]bool{primaryDir: true}
+	for _, p := range w.watchedFiles() {
+		dir := filepath.Dir(p)
+		if dirs[dir] {
 			continue
 		}
-		watching++
-	}
-	if watching == 0 {
-		return
+		dirs[dir] = true
+		if err := fsw.Add(dir); err != nil {
+			w.logger.Warn("failed to watch config layer directory", "path", p, "dir", dir, "error", err)
+		}
 	}
 
 	w.logger.Info("config file watcher started", "path", w.path, "files", w.watchedFiles())
+	w.markReady()
 
 	for {
 		select {

@@ -186,15 +186,9 @@ func startTestWatcher(t *testing.T, path string) <-chan string {
 	w := NewWatcher(path, func(cfg *Config) { reloaded <- cfg.Project.Org }, logger)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	started := make(chan struct{})
-	go func() {
-		close(started)
-		w.Start(ctx)
-	}()
-	<-started
-	// Let fsnotify register the directory watch before the test writes.
-	const watcherStartGrace = 200 * time.Millisecond
-	time.Sleep(watcherStartGrace)
+	go w.Start(ctx)
+	// Write only once the directory watch is registered.
+	<-w.ready
 	return reloaded
 }
 
@@ -323,8 +317,7 @@ func TestWatcherSeesEditToAlsoWatchedFile(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go w.Start(ctx)
-	const watcherStartGrace = 200 * time.Millisecond
-	time.Sleep(watcherStartGrace)
+	<-w.ready
 
 	// The test is outside Kubernetes, so the overlay's content is not
 	// merged; the edit only has to trigger a reload of the config.
