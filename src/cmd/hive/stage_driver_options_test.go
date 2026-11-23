@@ -217,7 +217,7 @@ func TestStageDriversSeeTheSameExhaustedFixer(t *testing.T) {
 		for _, field := range sortedFieldNames(helper) {
 			fv := v.FieldByName(field)
 			switch fv.Kind() {
-			case reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr:
+			case reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer:
 				if fv.IsNil() {
 					t.Errorf("%s: automerge.Options.%s is nil", name, field)
 				}
