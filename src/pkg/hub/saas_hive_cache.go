@@ -51,8 +51,12 @@ var (
 
 // readHiveMeta returns the current contents of the meta.json at path, serving
 // from the cache when the file is unchanged since it was last read.
+//
+// path comes only from loadSaaSHive, which joins saasHivesDir with an id it
+// has already rejected if it holds "..", "/" or "\", so path stays inside
+// saasHivesDir.
 func readHiveMeta(path string) ([]byte, bool) {
-	fi, err := os.Stat(path)
+	fi, err := os.Stat(path) // #nosec G703 -- path is saasHivesDir/<id>/meta.json, id rejected by loadSaaSHive if it holds "..", "/" or "\"
 	if err != nil {
 		evictHiveMeta(path)
 		return nil, false
@@ -63,7 +67,7 @@ func readHiveMeta(path string) ([]byte, bool) {
 	if ok && e.size == fi.Size() && e.mtime.Equal(fi.ModTime()) {
 		return e.data, true
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G703 -- same path as the Stat above, confined to saasHivesDir by loadSaaSHive
 	if err != nil {
 		evictHiveMeta(path)
 		return nil, false

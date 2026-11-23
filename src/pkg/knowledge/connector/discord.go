@@ -413,7 +413,7 @@ func discordSnowflakeAt(t time.Time) string {
 	if ms < 0 {
 		ms = 0
 	}
-	return strconv.FormatUint(uint64(ms)<<discordSnowflakeTimeShift, 10)
+	return strconv.FormatUint(uint64(ms)<<discordSnowflakeTimeShift, 10) // #nosec G115 -- ms is clamped to >= 0 above, so the int64 -> uint64 conversion cannot wrap
 }
 
 // discordSnowflakeLess orders two snowflakes numerically.

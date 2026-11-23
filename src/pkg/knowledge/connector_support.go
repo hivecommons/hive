@@ -16,10 +16,11 @@ import (
 // knowledge.git_sources and knowledge.documents instead of growing copies.
 
 // CheckRedirectNoPrivate is the http.Client CheckRedirect policy used for
-// document fetches: at most 3 redirects, http(s) only, and never to a host
-// that resolves to a private/internal address.
+// document fetches: at most 3 redirects, http(s) only, never to a host
+// that resolves to a private/internal address, and credentials stripped on a
+// hop that leaves the original host (StripCredentialsOnCrossHostRedirect).
 func CheckRedirectNoPrivate(req *http.Request, via []*http.Request) error {
-	return knowledgeNoRedirectToPrivate(req, via)
+	return knowledgeRedirectPolicy(req, via)
 }
 
 // HostIsPrivate reports whether host is (or resolves to) a loopback, private,
