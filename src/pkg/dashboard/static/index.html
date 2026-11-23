@@ -9478,6 +9478,8 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <span id="agent-navbar-upnext" class="agent-navbar-upnext" hidden aria-label="Upcoming agent run order" title="Upcoming agent run order"></span>
     </div>
     <div class="oc-topbar-right">
+      <!-- Ask AI help opener (#19184): stays empty unless /api/config says ask is on. -->
+      <span id="hive-ask-slot"></span>
       <button type="button" class="nav-chip nav-chip--icon nav-chip--action feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="submit" title="Report a bug or request a feature" aria-label="Report a bug or request a feature"><span class="nav-chip__icon" aria-hidden="true">🐛</span><span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
       <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
       <a class="nav-chip nav-chip--action" id="oc-matrix-tab" href="?kiosk=1&amp;view=reader" target="_blank" rel="noopener" title="Code activity — published pushed changes as readable paragraphs (opens in a new tab)" aria-label="Code activity" hidden><span class="nav-chip__label">Code activity</span></a>
@@ -65018,6 +65020,8 @@ function burnAreaChart() {
       // standalone hive, which keeps the entry hidden.
       window._myHivesURL = cfg.my_hives_url || '';
       renderMyHivesMenuItem();
+      // Ask AI help (#19184): load the panel only when this hive has it on.
+      if (typeof loadAskPanel === 'function') loadAskPanel(cfg);
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
         ? cfg.org + '/' + cfg.primaryRepo
         : (cfg.primaryRepo || '');
@@ -65089,6 +65093,67 @@ function burnAreaChart() {
       return fetch('/api/timeline').then(r => r.json()).then(d => { window._timelineData = d; }).catch(() => {});
     }
     const TIMELINE_REFRESH_MS = 60000;
+    // ── Ask AI help (#19184) ─────────────────────────────────────────
+    // Loads the shared panel component (pkg/askai/web, served from 'self'
+    // at /ask-panel.js) only when /api/config says ask is on. With ask off
+    // the page adds nothing and requests nothing. The panel sends only the
+    // question and an id from the closed section vocabulary to this hive's
+    // own /api/ask; the backend decides what, if anything, leaves.
+    const ASK_PANEL_SCRIPT = '/ask-panel.js';
+    const ASK_PANEL_STYLE = '/ask-panel.css';
+    const ASK_SLOT_ID = 'hive-ask-slot';
+    // A section counts as "current" once its top is above this fraction of
+    // the viewport height.
+    const ASK_SECTION_VIEWPORT_FRACTION = 3;
+    let askPanelRequested = false;
+
+    // askCurrentSection names where the person is, from our own ids only:
+    // the Settings tab when the dialog is open, else the dashboard section
+    // nearest the top of the viewport.
+    function askCurrentSection() {
+      const overlay = document.getElementById('config-overlay');
+      if (overlay && !overlay.classList.contains('hidden')) {
+        return (typeof _configState !== 'undefined' && _configState && _configState.tab === 'features') ? 'settings-features' : 'settings';
+      }
+      let best = '';
+      let bestTop = -Infinity;
+      const limit = window.innerHeight / ASK_SECTION_VIEWPORT_FRACTION;
+      Object.keys(DASHBOARD_SECTION_HELP).forEach(id => {
+        const el = document.getElementById(id);
+        if (!el || !el.offsetParent) return;
+        const top = el.getBoundingClientRect().top;
+        if (top <= limit && top > bestTop) { best = id; bestTop = top; }
+      });
+      return best;
+    }
+
+    // askCurrentDocsHref is the docs-link fallback for where the person is,
+    // built by the same function as every "?" help mark.
+    function askCurrentDocsHref() {
+      const section = askCurrentSection();
+      if (section === 'settings-features') return dashboardDocsHref('settings', 'features');
+      if (section === 'settings') return dashboardDocsHref('settings', '');
+      const entry = DASHBOARD_SECTION_HELP[section];
+      return dashboardDocsHref(DASHBOARD_HELP_PAGE, entry ? dashboardSectionHelpAnchor(entry.heading) : '');
+    }
+
+    function loadAskPanel(cfg) {
+      if (!cfg || cfg.ask_enabled !== true || askPanelRequested) return;
+      if (!document.getElementById(ASK_SLOT_ID)) return;
+      askPanelRequested = true;
+      const style = document.createElement('link');
+      style.rel = 'stylesheet';
+      style.href = ASK_PANEL_STYLE;
+      document.head.appendChild(style);
+      const script = document.createElement('script');
+      script.src = ASK_PANEL_SCRIPT;
+      script.addEventListener('load', () => {
+        if (window.HiveAsk && typeof window.HiveAsk.mount === 'function') {
+          window.HiveAsk.mount({ slot: ASK_SLOT_ID, base: '/api/ask', section: askCurrentSection, docsHref: askCurrentDocsHref });
+        }
+      });
+      document.head.appendChild(script);
+    }
     // ── Configuration Dialog ──────────────────────────────────────────
     let _configState = { type: null, agent: null, tab: null, data: {}, dirty: {} };
     const _configTabMemory = {};
@@ -80374,6 +80439,19 @@ function burnAreaChart() {
               <div class="config-field"><label>crowd.dev API token ${yamlHint('customers.enrichment.crowddev.token_file')} ${settingHelpMark('settings', 'features', 'crowd.dev API token', `Saved straight away, owner only, sealed in the keystore at customers.enrichment.crowddev.token_file. It is never shown again; this field only says whether one is set. Clear removes it. HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN, when set, wins over the saved token.`)}</label><input type="password" id="customers-crowddev-token" autocomplete="new-password" placeholder="${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set' : 'No token set'}"><div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-3)"><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="save">Save token</button><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="clear">Clear</button></div><div class="config-help" id="customers-crowddev-token-status">${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set.' : 'No token set.'}</div></div>
             </div>
           </details>
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.askEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askEnabled"></div>
+            <span class="config-toggle-label">Ask AI help ${yamlHint('ask.enabled')} ${settingHelpMark('settings', 'features', 'Ask AI help', `OFF by default. Shows an Ask panel that answers questions about using this dashboard from the Hive docs. What is sent: the question a person types, and the label of the dashboard section they are in (from a fixed list, never anything on screen), to Kapa.ai, an AI service; the project's Kapa administrators can read questions in their analytics. Nothing else leaves: no login, email, page content, URL, repo, hive or agent name. Each person confirms a notice before their first question and can withdraw. Questions that look like a password, token or key are refused and not sent. Answers show their sources and an "AI generated, may be wrong" label. Needs a mode: hub (hosted hives, through the hub relay; no key on this hive) or direct (this hive calls Kapa.ai with its own key, set as ask.kapa.project_id, ask.kapa.integration_id and ask.kapa.api_key_file in hive.yaml or HIVE_ASK_* env). Limits: ask.limits.person_per_minute, ask.limits.person_per_hour, ask.limits.hive_per_hour, ask.limits.global_per_minute, ask.limits.in_flight, ask.limits.daily. HIVE_ASK_ENABLED overrides the switch. See src/docs/design/dashboard-ask-ai-help.md.`)}</span>
+          </div>
+          ${f.askEnabled && !f.askEffective ? `<p class="config-help">Ask stays off: ${esc(f.askProblem || 'HIVE_ASK_ENABLED overrides this setting')}.</p>` : ''}
+          ${!f.askEnabled && f.askEffective ? `<p class="config-help">HIVE_ASK_ENABLED overrides this setting: Ask is currently <b>on</b>.</p>` : ''}
+          <div class="config-field"><label>Ask mode ${yamlHint('ask.mode')} ${settingHelpMark('settings', 'features', 'Ask mode', `off does nothing. hub (hosted hives) asks through the hub relay with this hive's existing hub credential, so no Kapa key is kept here. direct calls Kapa.ai with this hive's own key file. HIVE_ASK_MODE overrides it.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="askMode" data-arg-types="s,s,v">${['off', 'hub', 'direct'].map(m => `<option value="${esc(m)}"${(f.askMode || 'off') === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.askSendSectionLabel ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askSendSectionLabel"></div>
+            <span class="config-toggle-label">Send the section label with questions ${yamlHint('ask.send_section_label')} ${settingHelpMark('settings', 'features', 'Ask section label', `ON by default. Adds the name of the dashboard section the person is in, taken from a fixed list of section names, so "where is this button" finds the right page. Off sends the question alone. HIVE_ASK_SEND_SECTION_LABEL overrides it.`)}</span>
+          </div>
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">

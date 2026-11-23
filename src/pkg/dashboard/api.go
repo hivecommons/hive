@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/askai"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
@@ -78,6 +79,13 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// response to the hub over the spoke's authenticated hub link. See nps.go.
 	s.mux.HandleFunc("GET /api/feedback/nps/status", s.handleNPSStatus)
 	s.mux.HandleFunc("POST /api/feedback/nps", s.handleNPSSubmit)
+	// Ask AI help (#19183): 404 unless ask is on and configured.
+	s.mux.HandleFunc("GET /api/ask/status", s.handleAskStatus)
+	s.mux.HandleFunc("PUT /api/ask/consent", s.handleAskConsent)
+	s.mux.HandleFunc("DELETE /api/ask/consent", s.handleAskConsent)
+	s.mux.HandleFunc("POST /api/ask", s.handleAsk)
+	s.mux.HandleFunc("GET /ask-panel.js", s.handleAskPanelAsset("text/javascript; charset=utf-8", askai.PanelJS))
+	s.mux.HandleFunc("GET /ask-panel.css", s.handleAskPanelAsset("text/css; charset=utf-8", askai.PanelCSS))
 	s.mux.HandleFunc("GET /api/feedback/status", s.handleFeedbackStatus)
 	s.mux.HandleFunc("POST /api/feedback/report", s.handleFeedbackReport)
 	s.mux.HandleFunc("GET /api/feedback/mine", s.handleFeedbackMine)

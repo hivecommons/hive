@@ -13,6 +13,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/askai"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 )
 
 // Ask AI help on the hub (phase 1 of #19177, design
@@ -25,6 +26,13 @@ const (
 	askConsentPath = "/api/ask/consent"
 	askPath        = "/api/ask"
 	askStatsPath   = "/api/ask/stats"
+	// The panel component (#19181), served from 'self' only when on.
+	askPanelJSPath  = "/ask-panel.js"
+	askPanelCSSPath = "/ask-panel.css"
+	// askPanelMarker is where the dashboard document gets the panel tags.
+	askPanelMarker = "<!-- hive-ask-panel -->"
+	// askHubSection is the closed-vocabulary id of the hub dashboard.
+	askHubSection = "hub-my-hives"
 	// maxAskBody caps a question or consent request body.
 	maxAskBody = 8 << 10
 	// askConsentDirName is the per-person consent directory, a sibling of
@@ -125,6 +133,42 @@ func (s *HubServer) registerAskRoutes() {
 	s.mux.HandleFunc("DELETE "+askConsentPath, s.requireAskSession(s.handleAskConsent))
 	s.mux.HandleFunc("POST "+askPath, s.requireAskSession(s.handleAsk))
 	s.mux.HandleFunc("GET "+askStatsPath, s.requireAdmin(s.handleAskStats))
+	s.mux.HandleFunc("GET "+askPanelJSPath, serveAskAsset("text/javascript; charset=utf-8", askai.PanelJS))
+	s.mux.HandleFunc("GET "+askPanelCSSPath, serveAskAsset("text/css; charset=utf-8", askai.PanelCSS))
+	// Hub relay for hosted hives (#19183): per-hive heartbeat bearer, no
+	// session.
+	s.mux.HandleFunc("POST "+askai.RelayPath, s.handleAskRelay)
+}
+
+// askPanelTags are the only additions the panel makes to the dashboard
+// document: a stylesheet and a script, both same-origin. No inline script,
+// no third-party host, so no Content-Security-Policy change.
+const askPanelTags = `<link rel="stylesheet" href="` + askPanelCSSPath + `">
+<script src="` + askPanelJSPath + `" defer data-ask-slot="hive-ask-slot" data-ask-base="/api/ask" data-ask-section="` + askHubSection + `"></script>`
+
+var (
+	dashboardHTMLWithAsk     = strings.Replace(dashboardHTML, askPanelMarker, askPanelTags, 1)
+	dashboardHTMLWithAskETag = webstatic.ETagFor([]byte(dashboardHTMLWithAsk))
+)
+
+// dashboardDocument returns the dashboard bytes and ETag for this hub: the
+// panel tags only when Ask is on, the unchanged document otherwise.
+func (s *HubServer) dashboardDocument() (string, string) {
+	if s.ask != nil {
+		return dashboardHTMLWithAsk, dashboardHTMLWithAskETag
+	}
+	return dashboardHTML, dashboardHTMLETag
+}
+
+func serveAskAsset(contentType string, data []byte) http.HandlerFunc {
+	etag := webstatic.ETagFor(data)
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", contentType)
+		if webstatic.WriteCacheHeaders(w, r, etag) {
+			return
+		}
+		_, _ = w.Write(data)
+	}
 }
 
 // requireAskSession admits the person's signed browser session only: no API
