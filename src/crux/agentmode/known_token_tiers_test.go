@@ -45,7 +45,7 @@ func TestLessPrivilegedTokenTier(t *testing.T) {
 func TestLessPrivilegedTokenTier_NeverEscalatesAndEndsInKnownTier(t *testing.T) {
 	for _, start := range KnownTokenTiers {
 		tier := start
-		startMode, _ := ModeForTokenTier(start)
+		startMode, startKnown := ModeForTokenTier(start)
 		for steps := 0; ; steps++ {
 			if steps > len(KnownTokenTiers) {
 				t.Fatalf("chain from %q does not terminate", start)
@@ -57,7 +57,11 @@ func TestLessPrivilegedTokenTier_NeverEscalatesAndEndsInKnownTier(t *testing.T) 
 			if !slices.Contains(KnownTokenTiers, next) {
 				t.Errorf("chain from %q reaches unknown tier %q", start, next)
 			}
-			if m, _ := ModeForTokenTier(next); m > startMode {
+			if !startKnown {
+				if next != "advisor" {
+					t.Errorf("chain from %q, which ModeForTokenTier does not know, goes to %q, want advisor", start, next)
+				}
+			} else if m, _ := ModeForTokenTier(next); m > startMode {
 				t.Errorf("chain from %q escalates to %q", start, next)
 			}
 			tier = next
