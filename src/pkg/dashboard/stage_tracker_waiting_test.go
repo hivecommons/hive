@@ -138,3 +138,51 @@ func TestStageTrackerWaitingOnHuman_SkipsStandingMetaIssues(t *testing.T) {
 		}
 	}
 }
+
+// A 071 / 072 PR whose human author is inside their grace has a Needs human
+// state (source author, "waiting on the PR author"), and the fallback for
+// filed-for-help, level-gate and hive-hold waits promoted it to the
+// operator: projectbluefin/server#594 and #701 (071, waiting on their
+// author) sat in Waiting on you as other-human-wait while ownership said
+// not your turn. A row ownership does put on the operator stays. The rows
+// go through stageTrackerHumanCounts first, as in the tracker build.
+func TestStageTrackerWaitingOnHuman_AuthorWaitIsNotTheOperators(t *testing.T) {
+	items := []StageTrackerItem{
+		{Repo: "projectbluefin/server", Number: 701, Kind: "pr", Stage: stagelabels.NeedsAuthor.Number(), Author: "jeefy", AuthorKind: authorKindHuman},
+		{Repo: "projectbluefin/server", Number: 594, Kind: "pr", Stage: stagelabels.NeedsAuthor.Number(), Author: "jeefy", AuthorKind: authorKindHuman, Presence: &StageTrackerPresence{Login: "jeefy", Next: presenceNextWait}},
+		// 072 is an author wait too.
+		{Repo: "o/r", Number: 40, Kind: "pr", Stage: stagelabels.ReturnedToContributor.Number(), Author: "karibhou", AuthorKind: authorKindHuman},
+		// control: ownership puts it on the operator (#704 is sentinel
+		// flagged), so it stays listed.
+		{Repo: "projectbluefin/server", Number: 704, Kind: "pr", Stage: stagelabels.NeedsAuthor.Number(), Author: "jeefy", AuthorKind: authorKindHuman, Finisher: finisherPerson},
+		// control: the grace ran out, so the operator is the fallback.
+		{Repo: "projectbluefin/server", Number: 702, Kind: "pr", Stage: stagelabels.NeedsAuthor.Number(), Author: "jeefy", AuthorKind: authorKindHuman, Takeover: &StageTrackerTakeover{GraceElapsed: true}},
+		// control: a filed-for-help issue still reaches the operator through the fallback.
+		{Repo: "projectbluefin/server", Number: 9, Kind: "issue", FiledForHelp: "outreach"},
+	}
+	stageTrackerHumanCounts(items)
+	for _, i := range []int{0, 1, 2, 3} {
+		if why := items[i].NeedsHumanWhy; why == nil || why.Source != needsHumanSourceAuthor {
+			t.Fatalf("fixture: #%d needs_human_why = %+v, want source %q", items[i].Number, why, needsHumanSourceAuthor)
+		}
+	}
+	got := stageTrackerWaitingOnHuman(items)
+	want := map[int][2]string{
+		704: {waitKindOther, waitWhoOperator},
+		702: {waitKindReturnedOffline, "jeefy"},
+		9:   {waitKindOther, waitWhoOperator},
+	}
+	if got.Count != len(want) {
+		t.Fatalf("count = %d (%+v), want %d", got.Count, got.Items, len(want))
+	}
+	for _, w := range got.Items {
+		if exp, ok := want[w.Number]; !ok || w.Kind != exp[0] || w.Who != exp[1] {
+			t.Errorf("#%d: kind/who = %s/%s, want %v (listed %v)", w.Number, w.Kind, w.Who, exp, ok)
+		}
+	}
+	for _, it := range items {
+		if _, flagged := want[it.Number]; it.WaitingOnYou != flagged {
+			t.Errorf("#%d: waiting_on_you = %v, want %v (wait_kind %q)", it.Number, it.WaitingOnYou, flagged, it.WaitKind)
+		}
+	}
+}
