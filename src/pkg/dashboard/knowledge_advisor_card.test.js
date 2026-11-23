@@ -50,3 +50,21 @@ test('empty summary, error and loading states do not throw', () => {
   assert.match(h.kbAdvisorCardHTML(null, 'boom <x>', false), /boom &lt;x&gt;/);
   assert.match(h.kbAdvisorCardHTML(null, '', true), /Loading/);
 });
+
+test('top error reasons and a misconfiguration are shown, escaped (#17054)', () => {
+  const withErrors = Object.assign({}, payload, {
+    caveat: '',
+    settings: Object.assign({}, payload.settings, { problem: 'knowledge.advisor_llm.api_key_file: <unreadable>' }),
+    errors: { by_class: { rejected: 2 }, top_reasons: [{ class: 'rejected', reason: 'HTTP 400: Authorization <header> is badly formatted', count: 2 }] },
+  });
+  const out = h.kbAdvisorCardHTML(withErrors, '', false);
+  assert.match(out, /Top error reasons/);
+  assert.match(out, /rejected: HTTP 400: Authorization &lt;header&gt; is badly formatted<\/span><span class="kb-effective-meta">2</);
+  assert.match(out, /Advisor misconfigured: knowledge\.advisor_llm\.api_key_file: &lt;unreadable&gt;/);
+});
+
+test('no error section when the summary carries no reasons', () => {
+  const out = h.kbAdvisorCardHTML(Object.assign({}, payload, { errors: { by_class: {}, top_reasons: [] } }), '', false);
+  assert.doesNotMatch(out, /Top error reasons/);
+  assert.doesNotMatch(out, /misconfigured/);
+});
