@@ -167,6 +167,91 @@ type reviewFeedbackSweep struct {
 	Lane func(owner string) string
 	// Managed says whether the hive manages a repo (owner/name).
 	Managed func(repo string) bool
+	// Rerequests remembers the (PR, reviewer, head) re-requests this
+	// process already made, on top of the marker the note leaves on the PR
+	// (hivecommons/hive#19538). Nil keeps only the marker.
+	Rerequests *reviewRerequestMemory
+}
+
+// reviewRerequester is the write the sweep needs to re-request a reviewer
+// whose change request the hive addressed. A source without it skips the
+// step.
+type reviewRerequester interface {
+	RerequestReview(ctx context.Context, repo string, number int, reviewer, head string) error
+}
+
+// reviewRerequestMemory is the set of (PR, reviewer, head) keys the sweep
+// already re-requested in this process.
+type reviewRerequestMemory struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+// reviewRerequestMemoryCap bounds the in-process memory; it is reset when
+// full, after which the on-PR marker still prevents a repeat.
+const reviewRerequestMemoryCap = 4096
+
+func reviewRerequestKey(repo string, number int, reviewer, head string) string {
+	return strings.ToLower(reviewfeedback.Key(repo, number) + "|" + strings.TrimSpace(reviewer) + "|" + strings.TrimSpace(head))
+}
+
+func (m *reviewRerequestMemory) has(key string) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.seen[key]
+}
+
+func (m *reviewRerequestMemory) add(key string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.seen == nil || len(m.seen) >= reviewRerequestMemoryCap {
+		m.seen = map[string]bool{}
+	}
+	m.seen[key] = true
+}
+
+// reviewRerequests is the process-wide memory the eval-tick sweep uses.
+var reviewRerequests = &reviewRerequestMemory{}
+
+// rerequestAddressedReviews re-requests the review of each person whose
+// standing CHANGES_REQUESTED review the hive has fully addressed
+// (github.AddressedChangeRequests), once per (reviewer, head), and posts one
+// short note listing what changed. A failed re-request is retried on the
+// next pass; the note's marker is what makes the step once per head across
+// restarts. The human review is never dismissed.
+func (s reviewFeedbackSweep) rerequestAddressedReviews(ctx context.Context, repo string, number int, fb github.PRFeedback, res *reviewFeedbackResult) {
+	head := strings.TrimSpace(fb.HeadSHA)
+	if head == "" || len(fb.AddressedChangeRequests) == 0 {
+		return
+	}
+	rr, ok := s.Source.(reviewRerequester)
+	if !ok {
+		return
+	}
+	for _, acr := range fb.AddressedChangeRequests {
+		key := reviewRerequestKey(repo, number, acr.Reviewer, head)
+		if acr.Rerequested || s.Rerequests.has(key) {
+			continue
+		}
+		if err := rr.RerequestReview(ctx, repo, number, acr.Reviewer, head); err != nil {
+			res.Errors++
+			s.Logger.Warn("review feedback: could not re-request an addressed reviewer, retrying next pass", "repo", repo, "pr", number, "reviewer", acr.Reviewer, "head", head, "error", err)
+			continue
+		}
+		if err := s.Source.CreateIssueComment(ctx, repo, number, github.ReviewRerequestedNote(acr, head)); err != nil { // writeback:solicited the reviewer's own change request on this hive-authored PR, now addressed
+			s.Logger.Warn("review feedback: re-requested an addressed reviewer but the note was not posted, retrying next pass", "repo", repo, "pr", number, "reviewer", acr.Reviewer, "head", head, "error", err)
+			continue
+		}
+		s.Rerequests.add(key)
+		res.Rerequested++
+		s.Logger.Info("review feedback: change request addressed, reviewer re-requested", "repo", repo, "pr", number, "reviewer", acr.Reviewer, "head", head, "review", acr.ReviewID, "points", len(acr.Points))
+	}
 }
 
 // reviewFeedbackResult counts one pass, for tests and the summary line.
@@ -175,6 +260,7 @@ type reviewFeedbackResult struct {
 	RulesCaptured, RulesQueued, RulesMerged                    int
 	ReplyMissingRules                                          int
 	Retried, Stranded                                          int
+	Rerequested                                                int
 	NextCursor                                                 int
 }
 
@@ -215,6 +301,7 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 		if !fb.Open() {
 			continue
 		}
+		s.rerequestAddressedReviews(ctx, repo, number, fb, &res)
 		if s.Rules != nil {
 			s.applyRuleReplies(repo, number, fb.HiveReplies)
 			s.postRuleNotices(ctx, repo, number)
@@ -591,6 +678,7 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		Rules:        activeRuleStore(reviewRuleStore, rulesOn),
 		Lane:         cfg.BaseAgentName,
 		Managed:      cfg.IsManagedRepo,
+		Rerequests:   reviewRerequests,
 		Route: func(owner string) reviewFeedbackRoute {
 			if ac, ok := cfg.Agents[owner]; (agentMgr != nil && agentMgr.IsPaused(owner)) || (ok && ac.Paused) {
 				return reviewFeedbackRoute{Paused: true}
@@ -609,8 +697,8 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 	}
 	res := sweep.run(ctx, parseReviewFeedbackKey)
 	reviewFeedbackCursor = res.NextCursor
-	if res.Kicked+res.NeedsHuman+res.Debounced+res.CapReached+res.Errors+res.Retried > 0 {
-		logger.Info("review feedback pass", "checked", res.Checked, "kicked", res.Kicked, "retried", res.Retried, "stranded", res.Stranded, "debounced", res.Debounced,
+	if res.Kicked+res.NeedsHuman+res.Debounced+res.CapReached+res.Errors+res.Retried+res.Rerequested > 0 {
+		logger.Info("review feedback pass", "checked", res.Checked, "kicked", res.Kicked, "retried", res.Retried, "stranded", res.Stranded, "rerequested", res.Rerequested, "debounced", res.Debounced,
 			"cap_reached", res.CapReached, "needs_human", res.NeedsHuman, "errors", res.Errors,
 			"rules_captured", res.RulesCaptured, "rules_queued", res.RulesQueued, "rules_merged", res.RulesMerged)
 	}

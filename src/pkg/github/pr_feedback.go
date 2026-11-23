@@ -115,6 +115,10 @@ type PRFeedback struct {
 	// resolved or addressed state, oldest first. Rule capture reads these
 	// (hivecommons/hive#19136); kick routing reads Items.
 	RuleCandidates []FeedbackItem
+	// AddressedChangeRequests are the people's standing CHANGES_REQUESTED
+	// reviews whose every point the hive has handled
+	// (hivecommons/hive#19538): the sweep re-requests those reviewers.
+	AddressedChangeRequests []AddressedChangeRequest
 }
 
 // Open reports whether the PR can still take a revision.
@@ -185,16 +189,17 @@ func (c *Client) FetchPRFeedback(ctx context.Context, repo string, number int) (
 		state = "closed"
 	}
 	return PRFeedback{
-		State:           state,
-		Draft:           raw.IsDraft,
-		HeadRef:         raw.HeadRefName,
-		HeadSHA:         raw.HeadRefOid,
-		LastHiveReplyAt: LastHiveReplyAt(raw.rawPRConversation, c.isHiveAuthor),
-		Items:           UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
-		Source:          source,
-		HiveReplies:     HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
-		AgentReplies:    HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
-		RuleCandidates:  RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
+		State:                   state,
+		Draft:                   raw.IsDraft,
+		HeadRef:                 raw.HeadRefName,
+		HeadSHA:                 raw.HeadRefOid,
+		LastHiveReplyAt:         LastHiveReplyAt(raw.rawPRConversation, c.isHiveAuthor),
+		Items:                   UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
+		Source:                  source,
+		HiveReplies:             HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
+		AgentReplies:            HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
+		RuleCandidates:          RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
+		AddressedChangeRequests: AddressedChangeRequests(raw.rawPRConversation, raw.HeadRefOid, c.isHumanFeedbackAuthor, c.isHiveIdentityComment),
 	}, nil
 }
 

@@ -551,7 +551,9 @@ without a class. Review submissions and review requests are always counted as
 | `scheduler.(*Scheduler).postTriageClarifyComment` | `attention` |  |
 | `github.(*Client).QueuePRAutoMergeWithNoteResultAtHead` | `required_review` |  |
 | `github.(*Client).RequestReviewers` | `required_review` | passthrough wrapper; attributed to its caller |
+| `github.(*Client).RerequestReview` | `required_review` | re-requests a reviewer whose change request the hive addressed ([#19538](https://github.com/hivecommons/hive/issues/19538)) |
 | `github.(*Client).handleOneReviewRequest` | `required_review` |  |
+| `main.reviewFeedbackSweep.rerequestAddressedReviews` | `required_review` | the note listing what changed, posted with the re-request ([#19538](https://github.com/hivecommons/hive/issues/19538)) |
 | `dashboard.postClaimComment` | `protocol_command` |  |
 | `github.(*Client).PostClaimNote` | `protocol_command` |  |
 | `github.(*Client).reportOperatorPullRequestApproval` | `protocol_command` |  |
