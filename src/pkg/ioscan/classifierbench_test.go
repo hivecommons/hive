@@ -723,7 +723,7 @@ func TestClassifierBenchMeterExactCompletionsURLAndPacing(t *testing.T) {
 		mu.Lock()
 		paths = append(paths, r.URL.Path)
 		mu.Unlock()
-		verdict, _ := json.Marshal(map[string]any{"score": 0.1, "category": "none", "rationale": "stub"})
+		verdict, _ := json.Marshal(map[string]any{"score": 0.1, "category": "benign", "rationale": "stub"})
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{"message": map[string]string{"content": string(verdict)}}},
 			"usage":   map[string]int{"prompt_tokens": 1, "completion_tokens": 1},
