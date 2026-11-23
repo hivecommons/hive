@@ -297,6 +297,9 @@ func doGraphQL(ctx context.Context, hc *http.Client, graphqlURL, accessToken, qu
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)
 	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("linear graphql status %d: %w", resp.StatusCode, ErrRateLimited)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("linear graphql status %d", resp.StatusCode)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -46,6 +47,19 @@ type MentionHit struct {
 // normal, the secondary-limit caution window is engaged, or the core or
 // search bucket is low. The reasons are fixed words, safe to log.
 func (c *Client) OptionalSearchStandDown() string {
+	if reason := c.OptionalRESTStandDown(); reason != "" {
+		return reason
+	}
+	if remaining, _, ok := RateLimitBudget("search"); ok && remaining <= mentionSearchLowRemaining {
+		return "search_low"
+	}
+	return ""
+}
+
+// OptionalRESTStandDown is OptionalSearchStandDown without the search bucket:
+// the gate for optional REST work such as the Customers profile fill
+// (#19302). It returns a short fixed reason, safe to log, or "".
+func (c *Client) OptionalRESTStandDown() string {
 	if c == nil {
 		return "no_client"
 	}
@@ -57,9 +71,6 @@ func (c *Client) OptionalSearchStandDown() string {
 	}
 	if !LowValueRESTWorkAllowed() {
 		return "core_low"
-	}
-	if remaining, _, ok := RateLimitBudget("search"); ok && remaining <= mentionSearchLowRemaining {
-		return "search_low"
 	}
 	return ""
 }
@@ -162,6 +173,9 @@ func classifyMentionSearchError(ctx context.Context, err error) error {
 	}
 	var ghErr *gh.ErrorResponse
 	if errors.As(err, &ghErr) && ghErr.Response != nil {
+		if ghErr.Response.StatusCode == http.StatusNotFound {
+			return ErrProfileNotFound
+		}
 		return fmt.Errorf("mention search failed: HTTP %d", ghErr.Response.StatusCode)
 	}
 	return errors.New("mention search failed")
@@ -171,12 +185,15 @@ func classifyMentionSearchError(ctx context.Context, err error) error {
 const profileLookupCaller = "customers_profile_lookup"
 
 // PublicProfile is the part of a person's public GitHub profile a Customers
-// profile keeps: the name, company and location they chose to publish. The
-// bio, email and everything else are dropped.
+// profile reads: the name, company, location, website and avatar they chose
+// to publish. The bio, email and everything else are dropped.
 type PublicProfile struct {
-	Name     string
-	Company  string
-	Location string
+	Login     string
+	Name      string
+	Company   string
+	Location  string
+	Blog      string
+	AvatarURL string
 }
 
 // GetPublicProfile makes ONE request for the public profile of a login. Like
@@ -195,5 +212,31 @@ func (c *Client) GetPublicProfile(ctx context.Context, login string) (PublicProf
 	if err != nil {
 		return PublicProfile{}, classifyMentionSearchError(ctx, err)
 	}
-	return PublicProfile{Name: u.GetName(), Company: u.GetCompany(), Location: u.GetLocation()}, nil
+	return PublicProfile{Login: u.GetLogin(), Name: u.GetName(), Company: u.GetCompany(), Location: u.GetLocation(),
+		Blog: u.GetBlog(), AvatarURL: u.GetAvatarURL()}, nil
+}
+
+// ErrProfileNotFound is returned by GetPublicProfile and GetPublicOrgName
+// when GitHub has no such user or organization.
+var ErrProfileNotFound = errors.New("profile lookup: not found")
+
+// GetPublicOrgName makes ONE request for an organization's public display
+// name (GET /orgs/{org}), so a company field of "@acme" can be shown as the
+// organization's own name. It returns "" with no error when the organization
+// publishes no display name, and ErrProfileNotFound when the handle is not an
+// organization (a user handle, or nothing).
+func (c *Client) GetPublicOrgName(ctx context.Context, org string) (string, error) {
+	if c == nil || c.client == nil {
+		return "", ErrNoGitHubClient
+	}
+	org = strings.TrimPrefix(strings.TrimSpace(org), "@")
+	if org == "" || strings.ContainsAny(org, " \t\r\n:/") {
+		return "", fmt.Errorf("org lookup: invalid handle")
+	}
+	ctx = WithPacingClass(WithRESTCaller(ctx, profileLookupCaller), PacingLow)
+	o, _, err := c.client.Organizations.Get(ctx, org)
+	if err != nil {
+		return "", classifyMentionSearchError(ctx, err)
+	}
+	return o.GetName(), nil
 }

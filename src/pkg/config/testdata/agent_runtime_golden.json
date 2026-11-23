@@ -792,6 +792,7 @@
     "inference": {},
     "avatars": {},
     "hub_import": {},
+    "profile_fill": {},
     "enrichment": {
       "gitdm": {},
       "devstats": {},
