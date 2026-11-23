@@ -325,6 +325,11 @@ func TestNormalizeModelName(t *testing.T) {
 		{"gpt-4o-preview", "copilot", "gpt-4o-preview"},   // non-digit suffix unchanged
 		{"nohyphen", "copilot", "nohyphen"},               // no hyphen
 		{"trailing-", "copilot", "trailing-"},             // trailing hyphen
+		// Gemini CLI aliases go to `gemini --model` verbatim: no dot rewrite.
+		{"auto", "gemini", "auto"},
+		{"pro", "gemini", "pro"},
+		{"flash", "gemini", "flash"},
+		{"flash-lite", "gemini", "flash-lite"},
 	}
 	for _, c := range cases {
 		if got := normalizeModelNameForBackend(c.model, c.backend, IsInferenceBackend(c.backend)); got != c.want {

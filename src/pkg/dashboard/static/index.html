@@ -42063,6 +42063,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
       { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
       { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+      // Gemini CLI aliases: they follow whatever model the installed CLI maps
+      // them to (see geminiAlwaysIncludeModels in cli_models.go and the
+      // Gemini note in docs/cli-pins.md). `auto` routes each turn between a
+      // Pro and a Flash model.
+      { value: 'auto', label: 'Auto (Gemini picks)' },
+      { value: 'pro', label: 'Pro (alias)' },
+      { value: 'flash', label: 'Flash (alias)' },
+      { value: 'flash-lite', label: 'Flash Lite (alias)' },
     ];
     // Codex (OpenAI CLI) exposes its own OpenAI-only models. Claude models are
     // rejected by Codex with a ChatGPT account ("model is not supported when

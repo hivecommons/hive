@@ -60,6 +60,13 @@ func TestCheckIndependent(t *testing.T) {
 		{"pinned model equal to author's is refused", IndependenceModel, author, Agent{Name: "reviewer", Model: "gpt-6.1-sol"}, "claude-opus-4-6", false},
 		{"pinned same-family model refused at family level", IndependenceFamily, author, Agent{Name: "reviewer", Model: "gpt-6.1-sol"}, "claude-fable-5", false},
 		{"no agent author accepts any reviewer", IndependenceFamily, Agent{}, Agent{Name: "reviewer", Model: "claude-opus-4-6"}, "", true},
+		// CLI aliases are their real family: Gemini on Gemini and Claude on
+		// Claude are refused even when the author ran a bare alias.
+		{"gemini flash alias author refuses a gemini reviewer", IndependenceFamily, Agent{Name: "quality", Model: "flash"}, Agent{Name: "reviewer", Model: "gemini-2.5-flash"}, "", false},
+		{"gemini pro alias author refuses a gemini reviewer", IndependenceFamily, Agent{Name: "quality", Model: "pro"}, Agent{Name: "reviewer", Model: "gemini-2.5-pro"}, "", false},
+		{"claude opus alias author refuses a claude reviewer", IndependenceFamily, Agent{Name: "quality", Model: "opus"}, Agent{Name: "reviewer", Model: "claude-opus-5-5"}, "", false},
+		{"gemini alias author accepts a claude reviewer", IndependenceFamily, Agent{Name: "quality", Model: "flash"}, Agent{Name: "reviewer", Model: "claude-opus-5-5"}, "", true},
+		{"auto author still refused at family level", IndependenceFamily, Agent{Name: "quality", Model: "auto"}, Agent{Name: "reviewer", Model: "claude-opus-5-5"}, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

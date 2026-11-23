@@ -68,6 +68,28 @@ func TestReviewModelsSelect(t *testing.T) {
 			t.Fatalf("selection = %+v", got)
 		}
 	})
+	t.Run("exclude author family treats CLI aliases as their real family", func(t *testing.T) {
+		mixed := []ReviewModelPoolEntry{
+			{Backend: "gemini", Model: "gemini-2.5-flash"},
+			{Backend: "claude", Model: "claude-opus-5-5"},
+			{Backend: "codex", Model: "gpt-6.1-sol"},
+		}
+		cfg := ReviewModelsConfig{Pool: mixed, ExcludeAuthorFamily: true}
+		if got := SelectReviewModel(cfg, "flash", "claude", "pinned"); got.Model != "claude-opus-5-5" || got.Fallback {
+			t.Fatalf("flash author must skip the gemini reviewer: %+v", got)
+		}
+		if got := SelectReviewModel(cfg, "pro", "claude", "pinned"); got.Model != "claude-opus-5-5" || got.Fallback {
+			t.Fatalf("pro author must skip the gemini reviewer: %+v", got)
+		}
+		claudeFirst := ReviewModelsConfig{Pool: []ReviewModelPoolEntry{mixed[1], mixed[2]}, ExcludeAuthorFamily: true}
+		if got := SelectReviewModel(claudeFirst, "opus", "claude", "pinned"); got.Model != "gpt-6.1-sol" || got.Fallback {
+			t.Fatalf("opus author must skip the claude reviewer: %+v", got)
+		}
+		// auto is unchanged: its family is unknown, so nothing is excluded.
+		if got := SelectReviewModel(cfg, "auto", "claude", "pinned"); got.Model != "gemini-2.5-flash" || got.Fallback {
+			t.Fatalf("auto author selection changed: %+v", got)
+		}
+	})
 	t.Run("WithPool keeps exclusions and fallback", func(t *testing.T) {
 		base := ReviewModelsConfig{Pool: pool, ExcludeAuthorFamily: true, Fallback: ReviewModelsFallbackSkip}
 		got := SelectReviewModel(base.WithPool([]ReviewModelPoolEntry{{Backend: "copilot", Model: "claude-opus-4-6"}}), "claude-fable-5.1", "copilot", "pinned")

@@ -153,3 +153,79 @@ func TestResolveFoldsRuntimeSpellings(t *testing.T) {
 		}
 	}
 }
+
+// CLI aliases read as the family of the models they resolve to, so a review
+// of an aliased author's PR by the same vendor is still "same family".
+// Canonical keeps the alias as its own id, and auto stays Unknown.
+func TestCLIAliasFamilies(t *testing.T) {
+	cases := []struct{ in, family, bucket, canonical string }{
+		{"opus", "claude", BucketClaude, "opus"},
+		{"Sonnet", "claude", BucketClaude, "sonnet"},
+		{"haiku", "claude", BucketClaude, "haiku"},
+		{"fable", "claude", BucketClaude, "fable"},
+		{"pro", "gemini", BucketGemini, "pro"},
+		{"flash", "gemini", BucketGemini, "flash"},
+		{"flash-lite", "gemini", BucketGemini, "flash-lite"},
+		{"opus:high", "claude", BucketClaude, "opus"},
+		{"anthropic/opus", "claude", BucketClaude, "opus"},
+		{"google/flash", "gemini", BucketGemini, "flash"},
+		{"pi-claude-code-provider/sonnet", "claude", BucketClaude, "sonnet"},
+		// Another vendor's model that happens to be named like an alias.
+		{"acme/flash", "flash", BucketOther, "flash"},
+		// Real ids that contain an alias word keep their own family.
+		{"gemini-2.5-pro", "gemini", BucketGemini, "gemini-2.5-pro"},
+		{"gpt-5-pro", "gpt", BucketGPT, "gpt-5-pro"},
+		{"flash-2", "flash", BucketOther, "flash-2"},
+		{"opus-x", "opus", BucketOther, "opus-x"},
+		// auto is ambiguous across backends and stays Unknown.
+		{"auto", Unknown, Unknown, Unknown},
+	}
+	for _, c := range cases {
+		if got := Family(c.in); got != c.family {
+			t.Errorf("Family(%q)=%q want %q", c.in, got, c.family)
+		}
+		if got := Bucket(c.in); got != c.bucket {
+			t.Errorf("Bucket(%q)=%q want %q", c.in, got, c.bucket)
+		}
+		if got := Canonical(c.in); got != c.canonical {
+			t.Errorf("Canonical(%q)=%q want %q (the stats bucket key must not change)", c.in, got, c.canonical)
+		}
+	}
+	for _, p := range []struct{ alias, id string }{
+		{"flash", "gemini-2.5-flash"},
+		{"pro", "gemini-3-pro-preview"},
+		{"flash-lite", "gemini-3.1-flash-lite"},
+		{"opus", "claude-opus-5-5"},
+		{"fable", "claude-fable-5"},
+	} {
+		if same, known := SameFamily(p.alias, p.id); !same || !known {
+			t.Errorf("SameFamily(%q, %q): same=%v known=%v, want same family", p.alias, p.id, same, known)
+		}
+	}
+	if same, known := SameFamily("flash", "claude-opus-5-5"); same || !known {
+		t.Errorf("SameFamily(flash, claude-opus-5-5): same=%v known=%v, want cross family", same, known)
+	}
+	if _, known := SameFamily("auto", "gemini-2.5-flash"); known {
+		t.Error("SameFamily(auto, ...) must stay unknown")
+	}
+}
+
+func TestResolveCLIAliasVendor(t *testing.T) {
+	cases := []struct {
+		in   string
+		want Resolved
+	}{
+		{"fable", Resolved{Canonical: "fable", Vendor: "anthropic"}},
+		{"pro", Resolved{Canonical: "pro", Vendor: "google"}},
+		{"flash", Resolved{Canonical: "flash", Vendor: "google"}},
+		{"flash-lite", Resolved{Canonical: "flash-lite", Vendor: "google"}},
+		{"flash:high", Resolved{Canonical: "flash", Vendor: "google", Effort: "high"}},
+		{"acme/flash", Resolved{Canonical: "flash", Vendor: "acme"}},
+		{"auto", Resolved{Canonical: Auto, Vendor: Auto}},
+	}
+	for _, c := range cases {
+		if got := Resolve(c.in, ""); got != c.want {
+			t.Errorf("Resolve(%q)=%+v want %+v", c.in, got, c.want)
+		}
+	}
+}

@@ -244,7 +244,10 @@ agents:
 `exclude_author_model` defaults to true. `exclude_author_family` compares the
 normalized vendor prefix before the first dash (`claude`, `gpt`, `gemini`,
 `grok`, ...), after dropping a provider path and `:variant` suffix, so
-`anthropic/claude-opus-5-5` and `claude-sonnet-5` are the same family. If no pool entry is eligible, `fallback` is `pinned` (use the
+`anthropic/claude-opus-5-5` and `claude-sonnet-5` are the same family. A bare
+CLI alias counts as the family it resolves to: `opus`, `sonnet`, `haiku` and
+`fable` are `claude`, and `pro`, `flash` and `flash-lite` are `gemini`; `auto`
+has no known family. If no pool entry is eligible, `fallback` is `pinned` (use the
 agent's configured `model`), `skip` (omit the PR from that kick), or
 `requires_human` (keep the PR visible with a human-review marker). Reviewers
 record the delegated sub-agent's model as `review_model` in the verdict artifact,
