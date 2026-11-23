@@ -30,6 +30,7 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
 )
@@ -386,6 +387,18 @@ func WithMergeLaneTakesAuthor(takes func(repo, author string) bool) StatusOption
 	return func(o *statusOptions) { o.mergeLaneTakesAuthor = takes }
 }
 
+// stageStore is the store BuildFrontendStatus stamps suppressed stages from:
+// the hub's server's (Server.stageStoreOrShared), not the hub's own injected
+// store, so the build and the publish (UpdateStatusIfFresh) stamp from one
+// store. Without a hub it is the process-wide stagelabels.Shared().
+func (o statusOptions) stageStore() *stagelabels.Store {
+	var s *Server
+	if o.hub != nil {
+		s = o.hub.server
+	}
+	return s.stageStoreOrShared()
+}
+
 // ownershipEnvAdjust hands the options the your-turn decision reads to its
 // environment.
 func (o statusOptions) ownershipEnvAdjust(env *ownershipEnv) {
@@ -434,6 +447,9 @@ func BuildFrontendStatus(
 	repos := buildReposWithForge(cfg, actionable, govState, forge)
 	generatedAt := time.Now().UTC()
 	attachRepoMergeVerdicts(repos, options.mergeVerdicts)
+	// Before the your-turn decision: it reads the stage the write-back gate
+	// kept off GitHub (frontendPullRequest), as the card and bands do.
+	attachSuppressedStages(repos, options.stageStore())
 	applyOwnershipDecisions(cfg, repos, agentStatuses, strings.ToLower(string(govState.Mode)), generatedAt, options.hub, options.ownershipEnvAdjust)
 	yourTurn := computeCriticalPath(repos)
 	payload := &StatusPayload{

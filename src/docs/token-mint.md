@@ -156,7 +156,7 @@ turning `mint.enabled: true` on:
    agent's sandbox cannot read. Never commit it, never log it, never put it
    in a ConfigMap — this repo's own dashboard code deliberately omits
    `KeyPath` from every operator-facing status payload for exactly this
-   reason (`status_builder.go:438-447`, `api_governor_features.go:27-29`
+   reason (`status_builder.go:810-815`, `api_governor_features.go:27-29`
    comment: "the dashboard overlay is deliberately secret-free").
 4. **What "leaked" costs you**: bounded blast radius by design (ADR-0007
    Consequences) — a leaked minted token expires within the hour at the
@@ -177,7 +177,7 @@ An owner can toggle `mint.enabled` and `mint.issuer` from the Governor
 config dialog (`POST` handled by `handleGovernorFeatures`,
 `api_governor_features.go:136-139`) — but **not** `key_path`, by design; the
 signing key never appears in any dashboard payload. Status reporting
-(`status_builder.go:505-514`) exposes only `enabled`, `issuer`, and a
+(`status_builder.go:847-856`) exposes only `enabled`, `issuer`, and a
 boolean `keyPresent` (whether the file at `key_path` currently exists) —
 never the key material or the path itself in a form that leaks key location
 semantics beyond presence.
