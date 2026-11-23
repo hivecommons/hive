@@ -248,3 +248,24 @@ func TestInspectCanaryEgressDeniesCredentialShapeWithCanariesOff(t *testing.T) {
 		}
 	}
 }
+
+// A body holding both a canary and a real token must be denied for the token
+// even in warn mode (canaryFailClosed=false), and reported under its own code.
+func TestInspectGitHubWriteEgressCanaryAndCredentialWarnMode(t *testing.T) {
+	r := newFakeCanaryScanner()
+	canary := r.plant("scanner")
+	secret := "gh" + "p_abcdefghijklmnopqrstuvwxyz"
+	p := &GitHubProxy{logger: slog.Default()}
+	p.SetCanaryScanner(true, false, r, nil)
+	req, _ := http.NewRequest(http.MethodPost, "https://api.github.com/repos/org/repo/issues/1/comments", strings.NewReader(`{"body":"`+canary+` `+secret+`"}`))
+	reason, code, deny, detected := p.inspectGitHubWriteEgress("scanner", req)
+	if !deny || !detected || code != DenyReasonCredentialShape || !strings.Contains(reason, "github-token") {
+		t.Fatalf("got reason=%q code=%q deny=%v detected=%v, want credential deny", reason, code, deny, detected)
+	}
+	// Canary alone in warn mode stays detected-but-allowed, under the canary code.
+	req, _ = http.NewRequest(http.MethodPost, "https://api.github.com/repos/org/repo/issues/1/comments", strings.NewReader(`{"body":"`+canary+`"}`))
+	_, code, deny, detected = p.inspectGitHubWriteEgress("scanner", req)
+	if deny || !detected || code != DenyReasonCanaryEgress {
+		t.Fatalf("canary only: code=%q deny=%v detected=%v, want detected, not denied", code, deny, detected)
+	}
+}
