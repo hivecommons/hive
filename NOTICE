@@ -1801,9 +1801,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  github.com/gorilla/websocket
-Version:  v1.5.3
+Version:  v1.5.4-0.20240701034025-d67f41855da4
 License:  BSD-2-Clause
-Source:   https://github.com/gorilla/websocket/blob/v1.5.3/LICENSE
+Source:   https://github.com/gorilla/websocket/blob/v1.5.4-0.20240701034025-d67f41855da4/LICENSE
 
 Copyright (c) 2013 The Gorilla WebSocket Authors. All rights reserved.
 
