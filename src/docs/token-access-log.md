@@ -83,6 +83,35 @@ or noise up a `gh` call or a git fetch). Consequences:
   recent-activity window, not an archive. The durable accountability record is
   [`/data/audit.jsonl`](audit-log.md).
 
+## Hash chain
+
+Since [#19439](https://github.com/hivecommons/hive/issues/19439) the hive
+seals every row it ingests with the same hash chain as
+[`/data/audit.jsonl`](audit-log.md#hash-chain): each row gains `seq`,
+`prev_hash` and `row_hash` (SHA-256 over the row's RFC 8785 canonical JSON,
+`row_hash` removed). Rows are written in that canonical form, so key order
+in the file is sorted. Chain fields an agent puts in its own event are
+overwritten; an agent cannot choose its place in the chain.
+
+- Rows from before the upgrade carry no chain fields and are reported as
+  legacy rows. The first row the hive ingests afterwards starts the chain
+  (`seq` 1, no `prev_hash`) and is its genesis checkpoint.
+- The hive reads the head from the file once per process and then keeps it in
+  memory. If the file is rewritten while the hive runs, the next row still
+  links to the head the hive remembers, so the rewrite shows up as a break.
+- The log is lost when the container is recreated (see below); the chain then
+  starts again at `seq` 1 on the new file.
+
+Verify it with:
+
+```sh
+hive audit-verify --token-access [--json]
+```
+
+Exit status: 0 intact, 1 problems found, 2 the log could not be read. Unlike
+the audit log, the hub holds no copy of this chain's head yet, so a cut-off
+tail or a fully rebuilt chain is not visible to the verifier.
+
 ## What it does NOT capture
 
 - **Contributor-mode `gh` calls** - the gh-wrapper append runs only on the
