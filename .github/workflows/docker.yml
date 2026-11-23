@@ -790,7 +790,7 @@ jobs:
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Mirror publish-image-tags.sh's positional args in the publish step
           # above — keep in lockstep with that call.
-          INCLUDE_LATEST: "true"
+          SIGN_LATEST_TAG: "true"
           RELEASE_BRANCH: "v5"
           CHANNELS: "candidate"
         run: |
@@ -803,7 +803,7 @@ jobs:
           fi
           branch_tag="${BRANCH//\//-}"
           tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
-          if [ "$INCLUDE_LATEST" = "true" ]; then tags+=("latest"); fi
+          if [ "$SIGN_LATEST_TAG" = "true" ]; then tags+=("latest"); fi
           if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
             IFS=, read -ra channel_tags <<<"$CHANNELS"
             for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
@@ -1072,7 +1072,7 @@ jobs:
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Mirror publish-image-tags.sh's positional args in the publish step
           # above — keep in lockstep with that call.
-          INCLUDE_LATEST: "true"
+          SIGN_LATEST_TAG: "true"
           RELEASE_BRANCH: "v5"
           CHANNELS: "candidate"
         run: |
@@ -1085,7 +1085,7 @@ jobs:
           fi
           branch_tag="${BRANCH//\//-}"
           tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
-          if [ "$INCLUDE_LATEST" = "true" ]; then tags+=("latest"); fi
+          if [ "$SIGN_LATEST_TAG" = "true" ]; then tags+=("latest"); fi
           if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
             IFS=, read -ra channel_tags <<<"$CHANNELS"
             for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
@@ -1368,7 +1368,7 @@ jobs:
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Mirror publish-image-tags.sh's positional args in the publish step
           # above — keep in lockstep with that call.
-          INCLUDE_LATEST: "true"
+          SIGN_LATEST_TAG: "true"
           RELEASE_BRANCH: "v5"
           CHANNELS: "candidate"
         run: |
@@ -1381,7 +1381,7 @@ jobs:
           fi
           branch_tag="${BRANCH//\//-}"
           tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
-          if [ "$INCLUDE_LATEST" = "true" ]; then tags+=("latest"); fi
+          if [ "$SIGN_LATEST_TAG" = "true" ]; then tags+=("latest"); fi
           if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
             IFS=, read -ra channel_tags <<<"$CHANNELS"
             for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
@@ -1666,7 +1666,7 @@ jobs:
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Mirror publish-image-tags.sh's positional args in the publish step
           # above — keep in lockstep with that call.
-          INCLUDE_LATEST: "true"
+          SIGN_LATEST_TAG: "true"
           RELEASE_BRANCH: "v5"
           CHANNELS: "candidate"
         run: |
@@ -1679,7 +1679,7 @@ jobs:
           fi
           branch_tag="${BRANCH//\//-}"
           tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
-          if [ "$INCLUDE_LATEST" = "true" ]; then tags+=("latest"); fi
+          if [ "$SIGN_LATEST_TAG" = "true" ]; then tags+=("latest"); fi
           if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
             IFS=, read -ra channel_tags <<<"$CHANNELS"
             for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
