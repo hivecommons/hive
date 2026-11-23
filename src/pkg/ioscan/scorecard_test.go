@@ -46,6 +46,13 @@ type scorecardBaseline struct {
 	// withheld even though they are ordinary issue text.
 	BenignTotal          int `json:"benign_total"`
 	BenignFalsePositives int `json:"benign_false_positives"`
+	// RealIssueDevTotal and RealIssueDevFalsePositives are the dev split of the
+	// real-issue benign corpus (scorecard_realissues_test.go). Only the dev
+	// split is gated and recorded; RealIssueHeldoutTotal pins the held-out
+	// corpus size, and its false-positive count is reported, never recorded.
+	RealIssueDevTotal          int `json:"real_issue_dev_total"`
+	RealIssueDevFalsePositives int `json:"real_issue_dev_false_positives"`
+	RealIssueHeldoutTotal      int `json:"real_issue_heldout_total"`
 }
 
 type scorecardRow struct {
@@ -60,6 +67,7 @@ type scorecard struct {
 	attacks  scorecardRow
 	benign   scorecardRow
 	benignFP []string
+	real     realIssueScore
 }
 
 func (s scorecard) blockRatePct() float64 {
@@ -71,11 +79,14 @@ func (s scorecard) blockRatePct() float64 {
 
 func (s scorecard) baseline() scorecardBaseline {
 	return scorecardBaseline{
-		AttackTotal:          s.attacks.total,
-		AttackBlocked:        s.attacks.blocked,
-		BlockRatePct:         math.Round(s.blockRatePct()*10) / 10,
-		BenignTotal:          s.benign.total,
-		BenignFalsePositives: len(s.benignFP),
+		AttackTotal:                s.attacks.total,
+		AttackBlocked:              s.attacks.blocked,
+		BlockRatePct:               math.Round(s.blockRatePct()*10) / 10,
+		BenignTotal:                s.benign.total,
+		BenignFalsePositives:       len(s.benignFP),
+		RealIssueDevTotal:          s.real.dev.total,
+		RealIssueDevFalsePositives: s.real.dev.blocked,
+		RealIssueHeldoutTotal:      s.real.heldout.total,
 	}
 }
 
@@ -138,6 +149,9 @@ func (s scorecard) markdown() string {
 		fmt.Fprintf(&b, ": %s", strings.Join(s.benignFP, ", "))
 	}
 	b.WriteString("\n")
+	if s.real.dev.total+s.real.heldout.total > 0 {
+		b.WriteString(s.real.markdown())
+	}
 	return b.String()
 }
 
@@ -173,10 +187,12 @@ func writeScorecardBaseline(t *testing.T, b scorecardBaseline) {
 }
 
 // TestScorecardRatchet is the CI gate: the block rate may only go up and the
-// benign false-positive count may only go down. It always prints the table so
+// benign false-positive counts (hand-written controls and the dev split of the
+// real-issue corpus) may only go down. The held-out split is printed, not gated. It always prints the table so
 // a PR author can paste before/after numbers from the job log.
 func TestScorecardRatchet(t *testing.T) {
 	sc := runScorecard(redTeamCorpus)
+	sc.real = scoreRealIssues(loadRealIssueRows(t))
 	t.Logf("\n%s", sc.markdown())
 	got := sc.baseline()
 
@@ -197,10 +213,17 @@ func TestScorecardRatchet(t *testing.T) {
 			"Ordinary issue text is now being withheld from agents. Narrow the rule; do not raise the baseline.",
 			got.BenignFalsePositives, got.BenignTotal, strings.Join(sc.benignFP, ", "), want.BenignFalsePositives)
 	}
-	if got.BlockRatePct > want.BlockRatePct+scorecardRateTolerancePct || got.BenignFalsePositives < want.BenignFalsePositives {
-		t.Errorf("scorecard IMPROVED (block rate %.1f%% vs %.1f%%, false positives %d vs %d) but the baseline was not re-recorded.\n"+
+	if got.RealIssueDevFalsePositives > want.RealIssueDevFalsePositives {
+		t.Errorf("real-issue dev false positives ROSE: %d of %d (%s) vs committed baseline %d.\n"+
+			"Ordinary issue text is now being withheld from agents. Narrow the rule; do not raise the baseline.",
+			got.RealIssueDevFalsePositives, got.RealIssueDevTotal, strings.Join(sc.real.dev.blockedIDs, ", "), want.RealIssueDevFalsePositives)
+	}
+	if got.BlockRatePct > want.BlockRatePct+scorecardRateTolerancePct || got.BenignFalsePositives < want.BenignFalsePositives ||
+		got.RealIssueDevFalsePositives < want.RealIssueDevFalsePositives {
+		t.Errorf("scorecard IMPROVED (block rate %.1f%% vs %.1f%%, false positives %d vs %d, real-issue dev false positives %d vs %d) but the baseline was not re-recorded.\n"+
 			"Run: %s=1 go test ./pkg/ioscan/ -run TestScorecardRatchet and commit %s so the gate ratchets up.",
-			got.BlockRatePct, want.BlockRatePct, got.BenignFalsePositives, want.BenignFalsePositives, scorecardUpdateEnv, scorecardBaselinePath)
+			got.BlockRatePct, want.BlockRatePct, got.BenignFalsePositives, want.BenignFalsePositives,
+			got.RealIssueDevFalsePositives, want.RealIssueDevFalsePositives, scorecardUpdateEnv, scorecardBaselinePath)
 	}
 }
 
@@ -216,6 +239,18 @@ func TestScorecardBaselineMatchesCorpusSize(t *testing.T) {
 	if sc.attacks.total != want.AttackTotal || sc.benign.total != want.BenignTotal {
 		t.Errorf("corpus size changed (attacks %d, benign %d) but %s still records (attacks %d, benign %d); re-record it",
 			sc.attacks.total, sc.benign.total, scorecardBaselinePath, want.AttackTotal, want.BenignTotal)
+	}
+	dev, held := 0, 0
+	for _, r := range loadRealIssueRows(t) {
+		if r.Split == "heldout" {
+			held++
+		} else {
+			dev++
+		}
+	}
+	if dev != want.RealIssueDevTotal || held != want.RealIssueHeldoutTotal {
+		t.Errorf("real-issue corpus size changed (dev %d, heldout %d) but %s still records (dev %d, heldout %d); re-record it",
+			dev, held, scorecardBaselinePath, want.RealIssueDevTotal, want.RealIssueHeldoutTotal)
 	}
 }
 

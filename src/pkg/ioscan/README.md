@@ -43,7 +43,9 @@ memory. Each JSONL row carries exactly `id`, `label` (`attack` or `benign`),
 `split` (`dev` or `heldout`), `source` and `text`, and ids are unique across the
 whole corpus. New rows use the split rule from `benchSplitFor`: bit 0 of
 `sha256(id)` set means `heldout`. **Heldout rows are reported separately and
-must never be used to tune thresholds or the classifier prompt.**
+must never be used to tune thresholds or the classifier prompt.** The benign
+rows of real issue text, and how they were sampled, are described in
+`testdata/classifier-bench/real-issues/README.md`.
 
 ```sh
 cd src
