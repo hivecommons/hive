@@ -6,7 +6,7 @@ require (
 	blitiri.com.ar/go/spf v1.6.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/charmbracelet/x/ansi v0.11.10
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260823001701-96af6d2cb5f6
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/emersion/go-ical v0.0.0-20261112170022-46c5b53a1723
@@ -52,6 +52,7 @@ require (
 	github.com/nats-io/nats.go v1.55.0 // indirect
 	github.com/nats-io/nkeys v0.4.17 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
+	github.com/vektah/gqlparser/v2 v2.5.30 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
