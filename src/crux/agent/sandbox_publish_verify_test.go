@@ -273,6 +273,32 @@ func TestManagerSandboxKickRunsConfiguredPublishVerify(t *testing.T) {
 	}
 }
 
+// TestManagerSandboxKickPassesConfiguredPidsLimit checks agent_sandbox.pids_limit
+// reaches every launch the kick makes, the agent run and publish.verify alike
+// (#19479); PodmanArgs turns it into --pids-limit.
+func TestManagerSandboxKickPassesConfiguredPidsLimit(t *testing.T) {
+	yes := true
+	m, rec := verifyManager(t,
+		&config.AgentSandboxOverride{Enabled: &yes, Runtime: config.SandboxRuntimeJob},
+		config.AgentSandboxConfig{Enabled: true, Image: "dev-image", PidsLimit: 1024,
+			Job:     &config.SandboxJobConfig{WorkspaceClaim: "hive-data"},
+			Publish: &config.SandboxPublishConfig{Verify: []string{"make check"}}})
+	if err := m.SendKick("quality", "add tests"); err != nil {
+		t.Fatalf("SendKick: %v", err)
+	}
+	waitIdle(t, m, "quality")
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.specs) < 2 {
+		t.Fatalf("launches = %d, want the agent run and one verify", len(rec.specs))
+	}
+	for _, s := range rec.specs {
+		if s.PidsLimit != 1024 {
+			t.Errorf("launch %q PidsLimit = %d, want 1024", s.Name, s.PidsLimit)
+		}
+	}
+}
+
 // TestManagerSandboxKickMessageDirectiveIsIgnored pins that a directive
 // inside the kick message never replaces the configured verify list: the
 // message carries issue titles, so a block assembled from two titles (the

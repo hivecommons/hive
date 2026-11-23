@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/posture"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
 
@@ -414,6 +415,11 @@ func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec
 		if k, v, ok := strings.Cut(entry, "="); ok {
 			merged[k] = v
 		}
+	}
+	if posture.RequireHardened(os.Getenv) {
+		// As in PodmanArgs: the relay preflight in the pod then fails the kick
+		// on any containment gap instead of only warning (#19479).
+		merged[posture.RequireHardenedEnv] = "1"
 	}
 	env := make([]map[string]string, 0, len(merged))
 	for _, k := range sortedKeys(merged) {
