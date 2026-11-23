@@ -12,8 +12,8 @@ import (
 // hivecommons/hive#19421: the 1-minute automerge job built its engine with
 // no review gate, so its trusted-author lane merged a head an enforcing
 // governor.review_gate.mode (or review.require_approval) should have held.
-// The job's options must carry the same selfMergeReviewGate the ticker
-// engine gets.
+// The job's options (built by governorAutoMergeOptions) must carry the same
+// selfMergeReviewGate the ticker engine gets.
 func TestRunAutoMergeSweepIfDueOptionsCarryTheReviewGate(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main_sweeps.go", nil, 0)
@@ -22,12 +22,12 @@ func TestRunAutoMergeSweepIfDueOptionsCarryTheReviewGate(t *testing.T) {
 	}
 	var fn *ast.FuncDecl
 	for _, d := range file.Decls {
-		if f, ok := d.(*ast.FuncDecl); ok && f.Name.Name == "runAutoMergeSweepIfDue" {
+		if f, ok := d.(*ast.FuncDecl); ok && f.Name.Name == "governorAutoMergeOptions" {
 			fn = f
 		}
 	}
 	if fn == nil {
-		t.Fatal("runAutoMergeSweepIfDue not found")
+		t.Fatal("governorAutoMergeOptions not found")
 	}
 	found := false
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -56,7 +56,7 @@ func TestRunAutoMergeSweepIfDueOptionsCarryTheReviewGate(t *testing.T) {
 		return true
 	})
 	if !found {
-		t.Fatal("runAutoMergeSweepIfDue's automerge.Options has no ReviewGate: selfMergeReviewGate(…)")
+		t.Fatal("governorAutoMergeOptions' automerge.Options has no ReviewGate: selfMergeReviewGate(…)")
 	}
 }
 

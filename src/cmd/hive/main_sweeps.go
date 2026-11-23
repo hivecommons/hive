@@ -881,73 +881,8 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	// governor.eval_cycle rather than a child.
 	ctx, sweepSpan := tracing.StartSpan(ctx, "governor.automerge")
 	defer sweepSpan.End()
-	opts := automerge.Options{
-		Logger:                   logger,
-		MergerAuthorizer:         trustedMergerFunc(cfg),
-		HumanChangeRequests:      review.DefaultHumanChangeRequests(),
-		TrustedAuthorizer:        trustedAuthorFunc(cfg),
-		TrustedAuthorPolicy:      trustedAuthorPolicyFunc(cfg),
-		ContributorLanePolicy:    contributorLanePolicyFunc(cfg),
-		ContributorLaneVerdict:   contributorLaneVerdictFunc(cfg, logger),
-		ContributorRegistryTier:  contributorRegistryTierFunc(),
-		ReviewVerdictHold:        reviewVerdictHoldFunc(logger),
-		RecordReviewHoldRelease:  reviewHoldReleaseRecorder(logger),
-		StageLabelPolicy:         stageLabelPolicyFunc(cfg),
-		StageEngine:              stageEngineOptions(cfg, logger),
-		MergeQueueBases:          hiveMergeQueueBases,
-		IntegrationAdmission:     dashSrv.IntegrationNativeAdmission,
-		IntegrationExecution:     dashSrv.IntegrationExecutionRoute,
-		IntegrationFilesObserved: dashSrv.IntegrationObserveFiles,
-		// Review gate (#12592): the gate the ticker engine gets (main.go).
-		// Without it this engine's trusted-author lane merged a head
-		// governor.review_gate.mode: enforce (or review.require_approval)
-		// should have held (hivecommons/hive#19421).
-		ReviewGate: selfMergeReviewGate(cfg, logger, func(e automerge.ReviewGateEvaluation) {
-			if dashSrv != nil {
-				dashSrv.AuditLogRecord("system", reviewEvaluatedAuditAction, reviewEvaluatedAuditDetail(e), "", e.Repo, e.Number)
-			}
-		}),
-	}
-	opts.ScanCommitClosingKeywords = true
+	opts := governorAutoMergeOptions(cfg, dashSrv, logger)
 	syncStageEngineMode(cfg, ghClient, logger)
-	// hivecommons/hive#12436: the contribute hub is the stage-072 nudge sink
-	// (relay fix-pr tasks). Guarded so a nil hub never becomes a typed-nil
-	// interface.
-	if hub := dashSrv.ContributeHub(); hub != nil {
-		opts.ContributorNudge = hub
-	}
-	if cfg != nil {
-		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
-		opts.HiveSupersedingAutoMerge = func() bool { return cfg.AutoMerge.HiveSuperseding.AutoMergeEnabled() }
-		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
-			opts.RequiredChecks = set
-		}
-		opts.RequiredChecksForRepo = cfg.AutoMerge.RequiredCheckSetForRepo
-		opts.MinHeadAge = cfg.AutoMerge.EffectiveMinHeadAge()
-		opts.RepoAutoMergeEnabled = func(repo string) bool { return cfg.RepoAutoMergeEnabled(repo) }
-		opts.RepoAutoMergeSwitchedOff = func(repo string) bool { return cfg.RepoAutoMergeSwitchedOff(repo) }
-		opts.QueueOnApproveAndUnhold = func(repo string) bool {
-			return cfg.AutoMerge.QueueOnApproveAndUnholdAllowed(repo, cfg.ACMMLevel)
-		}
-		opts.RepoOnGitHub = func(repo string) bool { return cfg.RepoOnGitHub(repo) }
-		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
-		opts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(cfg, repo) }
-		opts.HumanMergeOwnerApproval = func(repo string) bool { return cfg.AutoMerge.HumanMergeOwnerApprovalFor(repo) }
-		opts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
-		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
-		opts.RequireCurrentBaseStrict = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseStrictFor(repo) }
-		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
-		opts.MergeTrain = func() automerge.MergeTrainPolicy {
-			return automerge.MergeTrainPolicy{Enabled: cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
-		}
-		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
-		opts.ReviewBotAuthors = func() []string { return cfg.Review.EffectiveBotAuthors() }
-		opts.TrustedBotSkipReview = func() bool { return cfg.AutoMerge.TrustedBotSkipsReview() }
-		opts.NativeMergeQueue = func() automerge.NativeMergeQueuePolicy {
-			q := cfg.AutoMerge.NativeMergeQueue
-			return automerge.NativeMergeQueuePolicy{Enabled: q.Enabled, Repos: q.RepoSet(), Bases: q.BaseSet(), SkipCurrentBaseGate: q.SkipCurrentBaseGate, ProbeTTL: q.EffectiveProbeTTL()}
-		}
-	}
 	audit := func(event automerge.AutoMergeSweepEvent) {
 		if dashSrv == nil {
 			return
@@ -1022,6 +957,58 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 			"skipped": strconv.Itoa(result.Skipped),
 		},
 	})
+}
+
+// governorAutoMergeOptions builds the governor automerge sweep's engine
+// options: its queued, trusted-author and contributor lanes, and the
+// stage-label pass that follows them. The stage pass's inputs come from
+// applyStageDriverOptions, the helper the engine loop (bootAgentsWith)
+// uses too, so both drivers route a PR to the same stage
+// (TestStageDriversShareStageOptions).
+func governorAutoMergeOptions(cfg *config.Config, dashSrv *dashboard.Server, logger *slog.Logger) automerge.Options {
+	opts := automerge.Options{
+		Logger:                   logger,
+		ReviewVerdictHold:        reviewVerdictHoldFunc(logger),
+		RecordReviewHoldRelease:  reviewHoldReleaseRecorder(logger),
+		MergeQueueBases:          hiveMergeQueueBases,
+		IntegrationAdmission:     dashSrv.IntegrationNativeAdmission,
+		IntegrationExecution:     dashSrv.IntegrationExecutionRoute,
+		IntegrationFilesObserved: dashSrv.IntegrationObserveFiles,
+		// Review gate (#12592): the gate the ticker engine gets (main.go).
+		// Without it this engine's trusted-author lane merged a head
+		// governor.review_gate.mode: enforce (or review.require_approval)
+		// should have held (hivecommons/hive#19421).
+		ReviewGate: selfMergeReviewGate(cfg, logger, func(e automerge.ReviewGateEvaluation) {
+			if dashSrv != nil {
+				dashSrv.AuditLogRecord("system", reviewEvaluatedAuditAction, reviewEvaluatedAuditDetail(e), "", e.Repo, e.Number)
+			}
+		}),
+	}
+	applyStageDriverOptions(&opts, cfg, logger)
+	opts.ScanCommitClosingKeywords = true
+	// hivecommons/hive#12436: the contribute hub is the stage-072 nudge sink
+	// (relay fix-pr tasks). Guarded so a nil hub never becomes a typed-nil
+	// interface.
+	if hub := dashSrv.ContributeHub(); hub != nil {
+		opts.ContributorNudge = hub
+	}
+	if cfg != nil {
+		opts.QueueOnApproveAndUnhold = func(repo string) bool {
+			return cfg.AutoMerge.QueueOnApproveAndUnholdAllowed(repo, cfg.ACMMLevel)
+		}
+		opts.RepoOnGitHub = func(repo string) bool { return cfg.RepoOnGitHub(repo) }
+		opts.RequireCurrentBaseStrict = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseStrictFor(repo) }
+		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
+		opts.MergeTrain = func() automerge.MergeTrainPolicy {
+			return automerge.MergeTrainPolicy{Enabled: cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
+		}
+		opts.TrustedBotSkipReview = func() bool { return cfg.AutoMerge.TrustedBotSkipsReview() }
+		opts.NativeMergeQueue = func() automerge.NativeMergeQueuePolicy {
+			q := cfg.AutoMerge.NativeMergeQueue
+			return automerge.NativeMergeQueuePolicy{Enabled: q.Enabled, Repos: q.RepoSet(), Bases: q.BaseSet(), SkipCurrentBaseGate: q.SkipCurrentBaseGate, ProbeTTL: q.EffectiveProbeTTL()}
+		}
+	}
+	return opts
 }
 
 // legacyFleetReportSweepInterval is how often the hive that watches the
