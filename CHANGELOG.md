@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v5.350.0)
+
+### Added
+
+- ci: tested Semgrep rules, a CodeQL taint query, zizmor, and gosec blocking on HIGH (#19462)
+
 ## 2026-11-23 (v5.349.3)
 
 ### Security
