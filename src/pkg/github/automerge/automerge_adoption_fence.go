@@ -1,11 +1,14 @@
 package automerge
 
 import (
+	"context"
 	"regexp"
 	"strconv"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/intent"
 )
 
 // Adoption is not a merge. The contributor lane's diff fences (CI workflow /
@@ -43,6 +46,14 @@ import (
 // body carries when the adopted head tripped a contributor-lane diff fence.
 // The merge lanes read it back with carriedFenceReason.
 const CarriedFenceMarkerPrefix = "<!-- hive:carried-fence"
+
+const (
+	// carriedFenceRESTCaller tags the adopting PR's file re-read.
+	carriedFenceRESTCaller = "hive:carried_fence_recheck"
+	// carriedFenceDropLogCap bounds the once-per-head drop log memory; the
+	// map is reset when it fills, which at worst repeats a log line.
+	carriedFenceDropLogCap = 4096
+)
 
 var carriedFencePattern = regexp.MustCompile(regexp.QuoteMeta(CarriedFenceMarkerPrefix) + `\s+reason=(\S+)`)
 
@@ -88,15 +99,94 @@ func carriedFenceReason(body string) string {
 // from the contributor PR it superseded: the fence travelled with the diff,
 // so the App lanes hand the merge to a person (stage 085) as the contributor
 // lane would have. It returns the carried contributor-lane reason, or "".
-func carriedFenceGate(displayRepo string, pr *gh.PullRequest, info func(string, ...any)) string {
+//
+// The marker records what the superseded PR's diff did, not what the
+// adopting PR's diff does now: the hive's own fixes may have dropped the
+// workflow edit or restored the tests (hivecommons/hive#19252 carried
+// workflow-path from #19243 while touching no workflow file). So the
+// carried reason is re-evaluated against the adopting PR's current diff on
+// every head (carriedFenceStillApplies) and dropped for a head whose diff
+// no longer trips it, with one log line per head. Re-evaluation per head
+// means a later push that trips the fence again re-arms it. A file list
+// that cannot be read, or is incomplete, keeps the fence (fail closed).
+func (c *Engine) carriedFenceGate(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest) string {
 	reason := carriedFenceReason(pr.GetBody())
 	if reason == "" {
 		return ""
 	}
-	if info != nil {
-		info("automerge sweep held PR carrying a contributor-lane diff fence; merge stays manual", "repo", displayRepo, "pr", pr.GetNumber(), "fence", reason)
+	if c.carriedFenceDropped(ctx, displayRepo, owner, repo, pr, reason) {
+		return ""
 	}
+	c.info("automerge sweep held PR carrying a contributor-lane diff fence; merge stays manual", "repo", displayRepo, "pr", pr.GetNumber(), "fence", reason)
 	return reason
+}
+
+// carriedFenceDropped reports whether the carried fence reason no longer
+// applies to the adopting PR's current diff. Any read failure, an
+// incomplete file list or a missing client keeps the fence.
+func (c *Engine) carriedFenceDropped(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, reason string) bool {
+	if c == nil || c.gh == nil || pr == nil {
+		return false
+	}
+	head := strings.TrimSpace(pr.GetHead().GetSHA())
+	if head == "" {
+		return false
+	}
+	files, err := ListChangedFiles(hgithub.WithRESTCaller(ctx, carriedFenceRESTCaller), c.gh, owner, repo, pr)
+	if err != nil {
+		c.warn("carried diff fence: could not re-read the adopting PR's files; fence kept", "repo", displayRepo, "pr", pr.GetNumber(), "head", head, "fence", reason, "error", err)
+		return false
+	}
+	if carriedFenceStillApplies(reason, files) {
+		return false
+	}
+	if c.noteCarriedFenceDrop(owner, repo, pr.GetNumber(), head) {
+		c.info("carried diff fence dropped: the adopting PR's current diff no longer trips it", "repo", displayRepo, "pr", pr.GetNumber(), "head", head, "fence", reason)
+	}
+	return true
+}
+
+// carriedFenceStillApplies re-runs the contributor lane's check for reason
+// against files. workflow-path holds while any changed file, or a renamed
+// file's previous path, is under the workflow / action directories;
+// tests-removed holds while the diff still trips the tests-removed fence.
+// An unknown reason always applies.
+func carriedFenceStillApplies(reason string, files []intent.ChangedFile) bool {
+	switch reason {
+	case contributorLaneReasonWorkflowPath:
+		for _, f := range files {
+			if intent.PathMatchesAny(f.Filename, contributorLaneWorkflowPaths) {
+				return true
+			}
+			if prev := strings.TrimSpace(f.PreviousFilename); prev != "" && intent.PathMatchesAny(prev, contributorLaneWorkflowPaths) {
+				return true
+			}
+		}
+		return false
+	case contributorLaneReasonTestsRemoved:
+		return contributorLaneTestsRemovedReason(files) != ""
+	}
+	return true
+}
+
+// noteCarriedFenceDrop records that the carried fence was dropped for head
+// and reports whether this is the first time, so the drop is logged once
+// per head rather than every sweep.
+func (c *Engine) noteCarriedFenceDrop(owner, repo string, number int, head string) bool {
+	key := owner + "/" + repo + "#" + strconv.Itoa(number) + "@" + strings.ToLower(head)
+	c.carriedFenceDropMu.Lock()
+	defer c.carriedFenceDropMu.Unlock()
+	if c.carriedFenceDropLogged == nil {
+		c.carriedFenceDropLogged = map[string]bool{}
+	}
+	if c.carriedFenceDropLogged[key] {
+		return false
+	}
+	if len(c.carriedFenceDropLogged) >= carriedFenceDropLogCap {
+		c.carriedFenceDropLogged = map[string]bool{}
+	}
+	c.carriedFenceDropLogged[key] = true
+	return true
 }
 
 // adoptionFenceNote is the sentence the adoption comments add when the
