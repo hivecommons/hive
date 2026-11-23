@@ -125,6 +125,19 @@ func grantLabel(level string) string {
 // invalidateGrantLocked makes the next RefreshGrant read again. g.mu is held.
 func (g *Gate) invalidateGrantLocked() { g.grant.checked = false }
 
+// enforceGrantedLocked reports whether the last grant check positively
+// confirmed Commit statuses write on an App installation: the only answer
+// that lets `enforce` post the real required names. A credential with no
+// installation grants to read, a read that never succeeded and a grant
+// invalidated by a 403 all leave enforce running as shadow. g.mu is held.
+func (g *Gate) enforceGrantedLocked() bool {
+	if g.Grant == nil || !g.grant.checked {
+		return false
+	}
+	i := g.grant.info
+	return i.Applicable && (i.Level == GrantWrite || i.Level == GrantAdmin)
+}
+
 // GrantStale reports whether a grant read is due: a provider is set and the
 // last read is missing, invalidated or older than GrantTTL, and none is in flight.
 func (g *Gate) GrantStale() bool {
@@ -207,8 +220,11 @@ func (g *Gate) HealthFor(repos []string) Health {
 		}
 	}
 	h.Effective = Effective(h.Configured)
-	if h.GrantMissing {
+	switch {
+	case h.GrantMissing:
 		h.Effective = ModeOff
+	case h.Effective == ModeEnforce && !g.enforceGrantedLocked():
+		h.Effective = ModeShadow
 	}
 	h.CannotPost = h.Configured != ModeOff && (h.GrantMissing || len(h.ForbiddenRepos) > 0)
 	return h
@@ -217,8 +233,9 @@ func (g *Gate) HealthFor(repos []string) Health {
 // HoldReason returns the `unauthorized:<step>` reason a PR must show instead
 // of a bare required-check-missing when its required gate context cannot be
 // posted by the hive: the repository is in enforce mode (as configured, so a
-// grant check that forced the gate off does not hide it) and either the grant
-// is missing or the last write was refused. Empty means nothing to add.
+// grant check that forced the gate off does not hide it) and the grant is
+// missing, not yet confirmed (enforce then runs as shadow), or the last write
+// was refused. Empty means nothing to add.
 func (g *Gate) HoldReason(repo, statusContext string) string {
 	if g == nil || !isGateRequiredContext(statusContext) {
 		return ""
@@ -228,7 +245,7 @@ func (g *Gate) HoldReason(repo, statusContext string) string {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.grant.info.Missing() || g.repoForbiddenLocked(repo) {
+	if g.grant.info.Missing() || g.repoForbiddenLocked(repo) || !g.enforceGrantedLocked() {
 		return "unauthorized:" + StepPostStatus
 	}
 	return ""

@@ -229,6 +229,12 @@ In `observe` mode the same decisions are recorded with an `-observed` suffix
 paused" for "paused". Sweeps and probes write nothing — only actions and
 transitions — because the in-memory ring is small and per-sweep noise would
 evict the entries that matter. Entries carry the reasoning, never pane content.
+An agent that stays dead in `observe` reaches the same verdict on every sweep,
+so an unchanged would-restart or would-pause verdict is logged and audited at
+most once per hour per (action, class), even when the agent flips between
+dead classes. It is reported again straight away after the agent is ready
+again and then dies. The Watchdog activity counts therefore
+measure reported verdicts, not sweeps.
 
 The `watchdog` user is deliberately not one of the audit log's pseudo-users:
 its actions must be auditable, but they must not count as *human* engagement in

@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 )
 
 // The human gate's one source of truth (hivecommons/hive#18769).
@@ -52,6 +54,16 @@ const (
 	gateWaitMergeQueue    = "merge-queue"
 )
 
+// How an answered sign-off ask was answered (human_gate.answered_via). The
+// SPA's STAGE_TRACKER_ANSWERED_VIA_* mirror them: only a GitHub Approve
+// review reads "signed off"; a dashboard approval names its login; the
+// owner-delegate policy reads "answered by policy".
+const (
+	gateAnsweredViaReview    = "review"
+	gateAnsweredViaDashboard = "dashboard"
+	gateAnsweredViaPolicy    = "policy"
+)
+
 // stageTrackerHumanGateDelegateAllMin mirrors the SPA's
 // STAGE_TRACKER_DELEGATE_ALL_MIN: an issue row with this many open PRs
 // delegates all of them.
@@ -94,9 +106,12 @@ type StageTrackerHumanGate struct {
 	Actions []string `json:"actions"`
 	// Answered is true when the reviewer asked for a person's sign-off on
 	// this head and the hive no longer parks the PR on it; AnsweredBy is
-	// the approver when the lane recorded one.
-	Answered   bool   `json:"answered,omitempty"`
-	AnsweredBy string `json:"answered_by,omitempty"`
+	// the person who answered when one is known. AnsweredVia is how: a
+	// GitHub Approve review (review), a dashboard approval (dashboard) or
+	// the owner-delegate policy (policy); empty when the row does not say.
+	Answered    bool   `json:"answered,omitempty"`
+	AnsweredBy  string `json:"answered_by,omitempty"`
+	AnsweredVia string `json:"answered_via,omitempty"`
 	// WaitingOn names what the item actually waits on when no decision is
 	// pending.
 	WaitingOn *StageTrackerHumanGateWait `json:"waiting_on,omitempty"`
@@ -249,12 +264,42 @@ func stageTrackerHumanGateFor(it StageTrackerItem, now time.Time) *StageTrackerH
 		return g
 	}
 	if stageTrackerHumanGateOnHead(it.ReviewActivity, it.Head) && it.ReviewActivity.State == "human_decision" && !slices.Contains(reasons, gateReasonReview) {
-		g.Answered, g.AnsweredBy = true, strings.TrimPrefix(strings.TrimSpace(it.HumanApprover), "@")
+		g.Answered = true
+		g.AnsweredBy, g.AnsweredVia = stageTrackerHumanGateAnswerer(it)
 	}
 	if len(reasons) == 0 {
 		g.WaitingOn = stageTrackerHumanGateWaitingOn(it, now)
 	}
 	return g
+}
+
+// stageTrackerHumanGateAnswerer names who answered a sign-off ask on the
+// row's head and how. The `:human-approved@login` suffix (a GitHub Approve
+// review) wins; otherwise the newest applied operator action on this head:
+// a dashboard approve / queue-merge / merge-now credits its actor, and an
+// approving let-hive-decide is the owner-delegate policy
+// (delegatedecision.PolicyName), which has no person to credit. Both are
+// empty when nothing on the row says.
+func stageTrackerHumanGateAnswerer(it StageTrackerItem) (by, via string) {
+	if approver := strings.TrimPrefix(strings.TrimSpace(it.HumanApprover), "@"); approver != "" {
+		return approver, gateAnsweredViaReview
+	}
+	a := it.LastOperatorAction
+	if a == nil || a.Outcome != operatorActionOutcomeApplied {
+		return "", ""
+	}
+	if head := strings.TrimSpace(a.HeadSHA); head != "" && it.Head != "" && !strings.EqualFold(head, it.Head) {
+		return "", ""
+	}
+	switch a.Action {
+	case operatorActionApprove, operatorActionQueueMerge, operatorActionMergeNow:
+		return strings.TrimPrefix(strings.TrimSpace(a.Actor), "@"), gateAnsweredViaDashboard
+	case operatorActionLetHiveDecide:
+		if a.Verdict == string(delegatedecision.VerdictApprove) {
+			return "", gateAnsweredViaPolicy
+		}
+	}
+	return "", ""
 }
 
 // stageTrackerHumanGateWaitingOn names what a PR nobody owes a decision on is

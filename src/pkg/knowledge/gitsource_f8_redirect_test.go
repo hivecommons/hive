@@ -176,7 +176,7 @@ func TestF8GitPullRefusesRedirect(t *testing.T) {
 	defer cancel()
 
 	// The pull is expected to fail; what matters is WHERE it did not go.
-	_ = gitSourcePull(ctx, repo)
+	_ = gitSourcePull(ctx, repo, remote)
 
 	if *frontHits == 0 {
 		t.Fatal("test never reached the validated remote — no redirect was exercised")

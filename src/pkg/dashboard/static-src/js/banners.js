@@ -223,7 +223,7 @@
     function onboardingGuideTipHtml(stepId, extra) {
       var step = ONBOARDING_GUIDE_STEP_TITLES[stepId] ? stepId : 'github-app';
       var what = step === 'github-app' ? ' for the install URL and permissions checklist' : '';
-      return 'New hive? <a class="onboarding-guide-link" role="button" tabindex="0" data-action="openWelcomeDialog" data-arg0="' + esc(step) + '" data-keydown-action="openWelcomeDialog" data-keys="Enter, ">Open the 🧭 Guide</a> (top navbar) → step ‘' + esc(ONBOARDING_GUIDE_STEP_TITLES[step]) + '’' + what + '.'
+      return 'New hive? <a class="onboarding-guide-link" role="button" tabindex="0" data-action="openWelcomeDialog" data-arg0="' + esc(step) + '" data-keydown-action="openWelcomeDialog" data-keys="Enter, ">Open 🚀 Getting started</a> (top bar ? Help menu) → step ‘' + esc(ONBOARDING_GUIDE_STEP_TITLES[step]) + '’' + what + '.'
         + (extra ? ' ' + extra : '');
     }
     function onboardingGuideTipFill(id, stepId, extra) {
@@ -245,6 +245,8 @@
       if (topBtn && topBtn.style.display === 'none') topBtn.style.display = '';
       var navItem = document.getElementById('welcome-nav-item');
       if (navItem && navItem.style.display === 'none') navItem.style.display = '';
+      var helpItem = document.getElementById('welcome-help-menu-item');
+      if (helpItem && helpItem.style.display === 'none') helpItem.style.display = '';
     }
 
     function renderGitHubAppBanner(data) {

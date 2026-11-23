@@ -17,14 +17,17 @@ check is not running in any useful sense, and when every pending check is stuck
 the caption reads `CI stuck · …` and `active` is false.
 
 Every open issue and PR row (and each `linked_prs[]` entry that mirrors a listed
-PR) also carries `human_gate`: `{reasons, actions, answered?, answered_by?, waiting_on?}`.
+PR) also carries `human_gate`: `{reasons, actions, answered?, answered_by?, answered_via?, waiting_on?}`.
 `reasons` are the things a person is owed right now (`review`, `decision`,
 `sentinel`, `hold`; empty when nothing is); `actions` are the gate verbs that
 would act on the row (`decide:approve`, `gate:request-changes`, `decide:delegate`,
 `gate:decide`, `gate:confirm-sentinel`, `release`) — a verb absent from the list
 has nothing to act on and is never drawn. `answered` is true when the reviewer
 asked for a person's sign-off on this head and the hive no longer parks the PR
-on it, with `answered_by` the approver when the lane recorded one. `waiting_on`
+on it, with `answered_by` the person who answered when one is known and
+`answered_via` how: `review` (a GitHub Approve review on the head), `dashboard`
+(a dashboard approval by `answered_by`) or `policy` (the owner-delegate policy;
+no `answered_by`). Both are omitted when the row does not say. `waiting_on`
 is `{kind, text, checks?}` on a PR with no reasons: what it actually waits on
 (`conflict`, `author`, `fixing`, `checks-failing`, `checks-stuck`,
 `checks-missing`, `ci-running`, `review-pending`, `merge-queue`). CI is classified against the resolved

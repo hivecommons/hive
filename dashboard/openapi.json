@@ -2437,6 +2437,100 @@
         }
       }
     },
+    "/api/customers/enrichment/settings": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Get customers enrichment secret settings",
+        "description": "Whether the crowd.dev API token used by customers enrichment is set (never its value). The enrichment switches and limits are on GET /api/config/governor (Features). Owner only.",
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "crowddev_token_set": {
+                      "type": "boolean",
+                      "description": "Whether a crowd.dev API token resolves (never its value)"
+                    },
+                    "crowddev_token_env_override": {
+                      "type": "boolean",
+                      "description": "HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN supplies the token"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Set the customers enrichment crowd.dev token",
+        "description": "Seals the crowd.dev API token into customers.enrichment.crowddev.token_file through the keystore; an empty string clears it and an absent field leaves it alone. Audited as customers_enrichment_settings with whether the token changed, never its value. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "crowddev_token": {
+                    "type": "string",
+                    "description": "crowd.dev API token (write-only); empty clears it"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "crowddev_token_set": {
+                      "type": "boolean",
+                      "description": "Whether a crowd.dev API token resolves (never its value)"
+                    },
+                    "crowddev_token_env_override": {
+                      "type": "boolean",
+                      "description": "HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN supplies the token"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          },
+          "400": {
+            "description": "Invalid request body"
+          },
+          "500": {
+            "description": "The token could not be saved"
+          }
+        }
+      }
+    },
     "/api/customers/{id}/export": {
       "get": {
         "tags": [
@@ -8421,6 +8515,80 @@
           },
           "500": {
             "description": "The config file could not be written; the previous value is restored"
+          }
+        }
+      }
+    },
+    "/api/config/review-feedback/retry": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Stranded review-feedback retry settings",
+        "description": "Returns review_feedback.retry.* (max_retries, backoff): for each, the saved value, the effective value, its source (settings, env or default), the default, its env var and YAML key; plus max_max_retries and min_backoff. Feedback routed to an agent whose run ends with no push and no reply on the PR is routed again after the backoff (doubling each retry), up to max_retries, then handed to a person. Owner only.",
+        "responses": {
+          "200": {
+            "description": "Current stranded-feedback retry settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "max_retries": {
+                      "type": "object"
+                    },
+                    "backoff": {
+                      "type": "object"
+                    },
+                    "max_max_retries": {
+                      "type": "integer"
+                    },
+                    "min_backoff": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set stranded review-feedback retry settings",
+        "description": "Replaces the saved review_feedback.retry.* values. An absent or null field clears that saved value, falling back to its env var, then the default. 400 with nothing changed for max_retries outside 0..10 or a backoff that is not a duration of at least 10m. Applies on the review-feedback sweep's next pass. Audited as config_review_feedback_retry. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "max_retries": {
+                    "type": "integer"
+                  },
+                  "backoff": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved; the GET body"
+          },
+          "400": {
+            "description": "Invalid value; nothing changed"
+          },
+          "403": {
+            "description": "Not the hive owner"
+          },
+          "500": {
+            "description": "Config could not be written; previous values restored"
           }
         }
       }

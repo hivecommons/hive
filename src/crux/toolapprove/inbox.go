@@ -68,6 +68,13 @@ const maxJournalEntries = 10000
 // realistic replay window, without growing the file unboundedly.
 const journalRetention = 30 * 24 * time.Hour
 
+// DefaultPendingTTL is how long a pending item stays approvable when
+// tool_approval.pending_ttl_s is unset. An approval granted long after the
+// request was made releases an action whose context nobody remembers (#19446),
+// so pending items expire. A day still covers "an approval that waits
+// overnight", the case the durable inbox exists for.
+const DefaultPendingTTL = 24 * time.Hour
+
 // Errors returned by the inbox.
 var (
 	// ErrNotOperatorLane is returned by Enqueue for any verdict that is not
@@ -79,6 +86,11 @@ var (
 	// ErrAlreadyResolved is returned when resolving an approval that a prior,
 	// identical delivery already resolved. It carries the earlier outcome.
 	ErrAlreadyResolved = errors.New("approval already resolved")
+	// ErrExpired is returned when resolving a pending item older than the
+	// inbox's TTL. An expired item can never be approved: it is dropped from
+	// the queue without journaling, so a fresh delivery of the same request
+	// queues again and gets a fresh decision.
+	ErrExpired = errors.New("pending approval expired")
 )
 
 // PendingItem is one request parked in the operator lane.
@@ -129,16 +141,102 @@ type Inbox struct {
 	state  inboxState
 	// now is injectable so tests can exercise retention pruning deterministically.
 	now func() time.Time
+	// ttl is how long a pending item stays approvable. Zero or negative means
+	// pending items never expire.
+	ttl time.Duration
 }
 
 // NewInbox returns an inbox backed by path. An empty path uses
 // DefaultInboxPath. The file is not touched until first use — construction is
 // free, so wiring an inbox into a hive that never queues anything costs nothing.
+// Pending items expire after DefaultPendingTTL; SetPendingTTL changes that.
 func NewInbox(path string) *Inbox {
 	if path == "" {
 		path = DefaultInboxPath
 	}
-	return &Inbox{path: path, now: time.Now}
+	return &Inbox{path: path, now: time.Now, ttl: DefaultPendingTTL}
+}
+
+// SetPendingTTL sets how long a pending item stays approvable. A zero or
+// negative ttl disables expiry. The TTL is measured from each item's QueuedAt,
+// so a changed TTL applies to items already in the queue.
+func (i *Inbox) SetPendingTTL(ttl time.Duration) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.ttl = ttl
+}
+
+// PendingTTL reports the inbox's pending-item TTL (zero or negative: none).
+func (i *Inbox) PendingTTL() time.Duration {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.ttl
+}
+
+// ExpiresAt reports when a pending item stops being approvable. ok is false
+// when the inbox has no TTL.
+func (i *Inbox) ExpiresAt(p PendingItem) (time.Time, bool) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.ttl <= 0 {
+		return time.Time{}, false
+	}
+	return p.QueuedAt.Add(i.ttl), true
+}
+
+// expiredLocked reports whether p is past the TTL. Callers must hold i.mu.
+func (i *Inbox) expiredLocked(p PendingItem) bool {
+	if i.ttl <= 0 {
+		return false
+	}
+	return !i.now().Before(p.QueuedAt.Add(i.ttl))
+}
+
+// sweepLocked drops expired pending items from memory and reports how many it
+// dropped. Expired items are not journaled. Callers must hold i.mu and persist
+// when the count is non-zero.
+func (i *Inbox) sweepLocked() int {
+	if i.ttl <= 0 {
+		return 0
+	}
+	kept := i.state.Pending[:0]
+	dropped := 0
+	for _, p := range i.state.Pending {
+		if i.expiredLocked(p) {
+			dropped++
+			continue
+		}
+		kept = append(kept, p)
+	}
+	i.state.Pending = kept
+	return dropped
+}
+
+// livePendingLocked returns a copy of the pending items that have not expired,
+// without changing state. Callers must hold i.mu.
+func (i *Inbox) livePendingLocked() []PendingItem {
+	out := make([]PendingItem, 0, len(i.state.Pending))
+	for _, p := range i.state.Pending {
+		if !i.expiredLocked(p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Sweep drops every expired pending item and persists the result. It returns
+// how many items it dropped. Enqueue sweeps on every call and reads never
+// return expired items, so a caller only needs Sweep to reclaim disk on a
+// schedule.
+func (i *Inbox) Sweep() (int, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.ensureLoadedLocked()
+	n := i.sweepLocked()
+	if n == 0 {
+		return 0, nil
+	}
+	return n, i.persistLocked()
 }
 
 // DeriveIdempotencyKey computes a stable key for a request. Two deliveries of
@@ -254,16 +352,27 @@ func (i *Inbox) Enqueue(req Request, v Verdict) (string, error) {
 
 	id := DeriveIdempotencyKey(req)
 
+	// Drop expired items first, so a re-delivery of a request whose earlier
+	// row expired queues afresh with a new QueuedAt instead of reviving the
+	// old one. The persist below writes the sweep along with the new row.
+	swept := i.sweepLocked()
+
 	// Already resolved? Do not re-queue — that is the double-execution the
 	// journal exists to prevent.
 	for _, r := range i.state.Resolved {
 		if r.ID == id {
+			if swept > 0 {
+				_ = i.persistLocked()
+			}
 			return id, fmt.Errorf("%w: %s at %s", ErrAlreadyResolved, verdictWord(r.Approved), r.ResolvedAt.UTC().Format(time.RFC3339))
 		}
 	}
 	// Already pending? Return the existing row.
 	for _, p := range i.state.Pending {
 		if p.ID == id {
+			if swept > 0 {
+				return id, i.persistLocked()
+			}
 			return id, nil
 		}
 	}
@@ -296,30 +405,40 @@ func verdictWord(approved bool) string {
 	return "rejected"
 }
 
-// List returns the pending items, newest last (queue order). The returned slice
-// is a copy: callers cannot mutate inbox state.
+// List returns the pending items that have not expired, newest last (queue
+// order). The returned slice is a copy: callers cannot mutate inbox state.
 func (i *Inbox) List() []PendingItem {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.ensureLoadedLocked()
-	return append([]PendingItem(nil), i.state.Pending...)
+	return i.livePendingLocked()
 }
 
-// Count returns the number of pending items — the dashboard's badge value.
+// Count returns the number of unexpired pending items — the dashboard's badge
+// value.
 func (i *Inbox) Count() int {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.ensureLoadedLocked()
-	return len(i.state.Pending)
+	n := 0
+	for _, p := range i.state.Pending {
+		if !i.expiredLocked(p) {
+			n++
+		}
+	}
+	return n
 }
 
-// Get returns one pending item by ID.
+// Get returns one unexpired pending item by ID.
 func (i *Inbox) Get(id string) (PendingItem, bool) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.ensureLoadedLocked()
 	for _, p := range i.state.Pending {
 		if p.ID == id {
+			if i.expiredLocked(p) {
+				return PendingItem{}, false
+			}
 			return p, true
 		}
 	}
@@ -333,6 +452,10 @@ func (i *Inbox) Get(id string) (PendingItem, bool) {
 // ErrAlreadyResolved along with the ORIGINAL record, and does not journal a
 // second time. A granted verdict re-delivered therefore cannot double-execute —
 // the caller sees the error, reads Executed on the returned record, and skips.
+//
+// Expiry: an item older than the inbox's TTL cannot be resolved. Resolve drops
+// it (and any other expired item) without journaling and returns ErrExpired,
+// so a late grant never releases the request.
 func (i *Inbox) Resolve(id string, approved bool, operator, rationale string) (ResolvedRecord, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -353,6 +476,24 @@ func (i *Inbox) Resolve(id string, approved bool, operator, rationale string) (R
 	}
 	if idx < 0 {
 		return ResolvedRecord{}, fmt.Errorf("%w: %s", ErrNotFound, id)
+	}
+	if p := i.state.Pending[idx]; i.expiredLocked(p) {
+		expiredAt := p.QueuedAt.Add(i.ttl).UTC().Format(time.RFC3339)
+		i.sweepLocked()
+		if err := i.persistLocked(); err != nil {
+			return ResolvedRecord{}, fmt.Errorf("%w: %s at %s (sweep: %v)", ErrExpired, id, expiredAt, err)
+		}
+		return ResolvedRecord{}, fmt.Errorf("%w: %s at %s", ErrExpired, id, expiredAt)
+	}
+	// Sweep other expired items now that the queue is being rewritten anyway.
+	// The target survived the check above, so idx is recomputed after.
+	if i.sweepLocked() > 0 {
+		for n, p := range i.state.Pending {
+			if p.ID == id {
+				idx = n
+				break
+			}
+		}
 	}
 
 	rec := ResolvedRecord{

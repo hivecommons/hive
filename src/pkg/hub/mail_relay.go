@@ -90,10 +90,16 @@ func mailChunkBytes() int64 {
 var mailDeliveryIDRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // mailRelayClient never follows redirects, for the reason documented on
-// spokeWebhookRelayClient.
+// spokeWebhookRelayClient. Like that client, it dials only an address
+// spokeWebhookRelayGuard passed, so a self-reported DashboardURL whose name
+// rebinds between the guard in handleMailInbound and the dial is refused
+// instead of reached (#19221).
 var mailRelayClient = &http.Client{
 	Timeout:       mailRelayTimeout,
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	Transport: pinnedFetchTransport(func(ctx context.Context, rawURL string) bool {
+		return spokeWebhookRelayGuard(ctx, rawURL)
+	}),
 }
 
 func (s *HubServer) registerMailRoutes() {

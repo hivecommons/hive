@@ -261,7 +261,12 @@ authoritative list is the switch and the `specialPurposePrefixes` table in
 
 The Customers section keeps one profile per person. It lives in two files on the
 hive's own volume and nothing in it leaves the hive. It is not sent to the hub,
-written to GitHub or put in a heartbeat. The design is in
+written to GitHub or put in a heartbeat. The one exception is the opt-in
+Customers hub import (`customers.hub_import.enabled`, default off): it sends the
+hub only salted hashes of confirmed customers' GitHub logins, and receives the real name only
+if a person consented to share it with this hive, plus a grant holder's labeled
+public country and organization
+([telemetry](telemetry.md#customers-hub-import)). The design is in
 [customers](design/customers.md).
 
 Some of these people never signed up. They are issue authors, meeting guests and
@@ -427,6 +432,23 @@ there. Operator-configured gateway endpoints and the fixed-host `/api/style`
 fetch are not pinned: a gateway may legitimately sit on a private address, and
 redirects off either are still checked.
 
+The hub's contribute proxies, lite-enrollment repo access checks and mail
+relay to a spoke's dashboard, and the dashboard's GitHub token check, dial
+through the same pinned transport. The
+token check refuses every barred class for public `api.github.com`; for a
+configured API URL, which is intentionally chosen and may be private, it still
+pins every dial but refuses only link-local (cloud metadata), multicast and
+unspecified answers, and it refuses any cross-host redirect so that allowance
+never reaches another host. Git knowledge sources run `git` as a subprocess, so
+they pin through git instead: each clone, `ls-remote` and pull resolves the
+host once, refuses the fetch when any answer is barred or the lookup fails or
+comes back empty, and passes the checked addresses to git as
+`-c http.curloptResolve=host:port:addr`, so git connects to them and never
+looks the name up itself (git 2.37 or later; redirects are already refused with
+`http.followRedirects=false`). `HIVE_ALLOW_PRIVATE_GIT_SOURCE=true` allows a
+private or loopback Git server; link-local, multicast and unspecified answers
+stay refused even then.
+
 **Proxy decisions fail closed.** The egress audit
 ([#18986](https://github.com/hivecommons/hive/issues/18986), item 5) walked
 every branch of the proxy's per-request decision path that can fail and
@@ -572,7 +594,14 @@ sensitive paths, owner self-nomination, permission escalation in workflows,
 secret exposure, CI gate weakening, test removal, security policy edits, and
 remote code execution patterns. A match applies `sentinel-alert`, posts one
 comment and writes an audit entry. The label blocks Hive approval and every
-automerge lane until a maintainer removes it.
+automerge lane until a maintainer removes it, or until a later head matches
+no rule. Findings are head-scoped: every new head is evaluated again, and
+when the current head is clean Hive removes the label only if Hive itself
+added it for an earlier head's finding (its own alert comment names that
+head, and the newest label event is Hive's own, made no later than that
+comment). A label a person added stays. The earlier finding is kept in the
+audit log (`sentinel-alert-cleared` records the removal), `/api/sentinel`
+and that head's review evidence bundle.
 Whether that label and comment reach GitHub is decided by the **write-back
 containment gate** (`pkg/writeback`): on a PR Hive did not open, sentinel
 writes need ACMM L5 plus the review opt-in label (L6 without it), the repo
@@ -1005,6 +1034,14 @@ until code-owner review is required in branch protection.
   earlier passes. Session taint is designed for this
   ([design/session-taint.md](design/session-taint.md)); only its observe-only
   recorder exists, and it does not block anything.
+* **`ioscan` does not scan tool output.** Web fetches, MCP results and files
+  in cloned repositories reach the agent unscanned
+  ([ioscan.md](ioscan.md#scan-coverage)).
+* **MCP tool definitions are not pinned.** A server that changes a tool's
+  description is not held for review.
+* **A paraphrased injection can pass.** Text that avoids every rule and
+  fools the classifier reaches the agent. Containment is the control for it
+  ([prompt-injection-trentina-comparison.md](prompt-injection-trentina-comparison.md)).
 * **The proxy inspects GitHub API traffic only.** Other destinations are
   tunnelled. Use Kubernetes NetworkPolicies for full egress control.
 * **The L5 `hold` label is applied by agent policy.** The hard guarantee at

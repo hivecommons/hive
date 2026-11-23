@@ -122,10 +122,10 @@ func TestAgentActivitySectionWiring(t *testing.T) {
 	for _, want := range []string{
 		`id="agent-activity-section" data-dashboard-section="agent-activity-section"`,
 		`data-action="toggleSection" data-arg0="agent-activity-section"`,
-		`aria-label="Move Agent activity section"`,
+		`aria-label="Move Activity section"`,
 		`data-section="agent-activity-section" data-action="ocNavigate"`,
-		`'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },`,
-		`'agent-activity-section': { heading: 'Agent activity', help: `,
+		`'agent-activity-section': { title: '📡 Activity', summary: '0 working / 0 total' },`,
+		`'agent-activity-section': { heading: 'Activity', help: `,
 		`'agents-section', 'agent-activity-section', 'faq-section'`,
 		`'agents-section','agent-activity-section','faq-section'`,
 	} {

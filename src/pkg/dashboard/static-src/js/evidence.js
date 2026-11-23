@@ -6,6 +6,17 @@
     const EV_PALETTE_SIZE = 6;
     let evLast = null;
     let evConfidenceSeries = 'self-reported';
+    // Load state (#19310). evLast is only drawn when it answers the current
+    // window and repo (evLoadedKey). Until then the card shows a loading or
+    // error state, never zero cards, so "no ... in this window" only ever
+    // follows a successful response.
+    // Longer than the hosted ingress's 60 s read timeout, so a gateway 504
+    // normally arrives first and names the real cause.
+    const EV_FETCH_TIMEOUT_MS = 90000;
+    const EV_MS_PER_SECOND = 1000;
+    let evLoadedKey = '';
+    let evFetch = null;      // { key, controller, timedOut } while a fetch is in flight
+    let evFetchError = null; // { key, message } after the last fetch for key failed
 
     function evCalibrationSeries(dto) {
       const rows = evConfidenceSeries === 'derived' ? dto.reviewer_calibration_derived : dto.reviewer_calibration;
@@ -13,7 +24,7 @@
     }
     function evSelectConfidence(series) {
       evConfidenceSeries = series === 'derived' ? 'derived' : 'self-reported';
-      if (evLast) renderEvidenceSummary(evLast);
+      evRender();
     }
     function evCalibrationControls() {
       return `<div class="lc-window" role="group" aria-label="Confidence series">${['self-reported', 'derived'].map((series) => `<button type="button" class="${evConfidenceSeries === series ? 'active' : ''}" aria-pressed="${evConfidenceSeries === series}" data-action="evSelectConfidence" data-arg0="${series}" data-stop="1">${series === 'derived' ? 'Derived' : 'Self-reported'}</button>`).join('')}</div>`;
@@ -65,13 +76,13 @@
       evCustomOpen = false;
       evCustomError = '';
       evSaveWindow();
-      renderEvidenceSummary(evLast);
+      evRender();
       return fetchEvidenceSummary();
     }
     function toggleEvidenceCustomRange() {
       evCustomOpen = !evCustomOpen;
       evCustomError = '';
-      renderEvidenceSummary(evLast);
+      evRender();
       const input = document.querySelector('#evidence-card .ev-custom-range input[name="from"]');
       if (evCustomOpen && input) input.focus();
     }
@@ -83,10 +94,10 @@
       else if (to < from) evCustomError = '"To" must not be before "from".';
       else if ((Date.parse(to) - Date.parse(from)) / 86400000 > EV_CUSTOM_MAX_DAYS) evCustomError = `Range must be ${EV_CUSTOM_MAX_DAYS} days or less.`;
       else evCustomError = '';
-      if (evCustomError) { renderEvidenceSummary(evLast); return; }
+      if (evCustomError) { evRender(); return; }
       evWindow = { from, to };
       evSaveWindow();
-      renderEvidenceSummary(evLast);
+      evRender();
       return fetchEvidenceSummary();
     }
     function evWindowControls() {
@@ -1177,7 +1188,9 @@
       const opensMerges = dto.issue_opens_pr_merges && typeof dto.issue_opens_pr_merges === 'object' ? dto.issue_opens_pr_merges : {};
       const scope = evWindowLabel() + (dto.repo ? ` · ${dto.repo}` : '');
       const windowHint = Number(dto.n) > 0 ? '' : evWindowHint(dto);
+      card.setAttribute('aria-busy', evFetch ? 'true' : 'false');
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
+        + evStatusHtml(true)
         + (windowHint ? `<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>` : '')
         + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes) + evOutcomesByModelHtml(dto.outcomes_by_author_model) + evControlArmHtml(dto.control_arm),
           `PRs are placed in the window by their open time, never by when a record was written. Undone counts two change-failure signals, each within 14 d of merge: reverted means a reverted_by link from a later merged PR whose title or body named this PR or its commit (Reverts #N, Revert "…", This reverts commit <sha>) — a revert that names nothing is missed; re-opened means an issue this PR closed was re-opened by a person after the merge, as seen by the issues webhook or the issue listing — an issue closed by hand rather than by a closing keyword is not tracked. A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead${outcomeLedger ? ` (${outcomeLedger} PR(s) in this window)` : ''}: ${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open. A PR the ledger never saw${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''} is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
@@ -1200,18 +1213,84 @@
           'Shadow mode only records; no merge was held or blocked. Closed-without-merge is known only from backfilled records and the review-outcome ledger; a PR with no recorded outcome is shown as unknown rather than as open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
     }
 
+    // The selection a response answers: window query plus repo filter.
+    function evSelectionKey() {
+      return evWindowQuery() + '|' + (prtRepo || '');
+    }
+    // Draws the current selection's data when it has loaded, otherwise the
+    // loading or error state. Every re-render outside a fetch goes through here.
+    function evRender() {
+      if (evLast && evLoadedKey && evLoadedKey === evSelectionKey()) renderEvidenceSummary(evLast);
+      else renderEvidenceStatus();
+    }
+    function evFetchStatusText(status) {
+      if (status === 504) return 'HTTP 504: the server took too long to answer';
+      if (status === 401 || status === 403) return `HTTP ${status}: this login cannot read evidence`;
+      return `HTTP ${status}`;
+    }
+    // Status line for the card: loading / refreshing while a fetch for the
+    // current selection is in flight, an error with Retry after it failed,
+    // nothing once it loaded. haveData says whether cards are drawn below it.
+    function evStatusHtml(haveData) {
+      const key = evSelectionKey();
+      const spinner = '<span class="ev-spinner" aria-hidden="true"></span>';
+      if (evFetch && evFetch.key === key) {
+        return haveData
+          ? `<div class="ev-status ev-status-refreshing" role="status">${spinner}Refreshing evidence…</div>`
+          : `<div class="ev-status ev-status-loading" role="status">${spinner}Loading evidence for this window…</div>`;
+      }
+      if (evFetchError && evFetchError.key === key) {
+        const lead = haveData ? 'Could not refresh evidence' : 'Could not load evidence';
+        const tail = haveData ? ' Showing the last data that loaded.' : ' Cards are hidden rather than shown as zero.';
+        return `<div class="ev-status ev-status-error" role="alert">${lead}: ${escapeHtml(evFetchError.message)}.${tail} <button type="button" class="hv-btn btn-secondary btn-sm" data-action="retryEvidenceSummary" data-stop="1">Retry</button></div>`;
+      }
+      return '';
+    }
+    // The card before the current selection has loaded: header, window
+    // controls and the loading or error state, no panels.
+    function renderEvidenceStatus() {
+      const card = document.getElementById('evidence-card');
+      if (!card) return;
+      const scope = evWindowLabel() + (prtRepo ? ` · ${prtRepo}` : '');
+      card.setAttribute('aria-busy', evFetch ? 'true' : 'false');
+      card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}</div>${evWindowControls()}</div>`
+        + (evStatusHtml(false) || `<div class="ev-status ev-status-loading" role="status"><span class="ev-spinner" aria-hidden="true"></span>Loading evidence for this window…</div>`);
+    }
+    function retryEvidenceSummary() {
+      evFetchError = null;
+      return fetchEvidenceSummary();
+    }
+    window.retryEvidenceSummary = retryEvidenceSummary;
+
     async function fetchEvidenceSummary() {
       const query = evWindowQuery();
       const repo = prtRepo;
+      const key = evSelectionKey();
+      if (evFetch && evFetch.key === key) return; // this selection is already loading: do not stack requests
+      if (evFetch && evFetch.controller) evFetch.controller.abort();
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const call = { key, controller, timedOut: false };
+      evFetch = call;
+      const timer = controller ? setTimeout(() => { call.timedOut = true; controller.abort(); }, EV_FETCH_TIMEOUT_MS) : null;
+      evRender();
       try {
         let url = `/api/evidence/summary?${query}`;
         if (repo) url += `&repo=${encodeURIComponent(repo)}`;
-        const r = await fetch(url);
-        if (query !== evWindowQuery() || repo !== prtRepo) return; // a newer selection is in flight
-        if (!r.ok) { evLast = null; renderEvidenceSummary(null); return; } // 403/5xx: show n=0, never throw
+        const r = await fetch(url, controller ? { signal: controller.signal } : undefined);
+        if (evFetch !== call) return; // a newer selection is in flight
+        if (!r.ok) throw new Error(evFetchStatusText(r.status));
         const dto = await r.json();
-        if (query !== evWindowQuery() || repo !== prtRepo) return;
-        evLast = dto;
+        if (evFetch !== call) return;
+        evFetch = null;
+        evFetchError = null;
+        evLoadedKey = key;
         renderEvidenceSummary(dto);
-      } catch (e) { if (!evLast) renderEvidenceSummary(null); }
+      } catch (e) {
+        if (evFetch !== call) return; // superseded (and aborted) by a newer selection
+        evFetch = null;
+        evFetchError = { key, message: call.timedOut ? `no answer after ${EV_FETCH_TIMEOUT_MS / EV_MS_PER_SECOND} s` : String((e && e.message) || 'network error') };
+        evRender();
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     }

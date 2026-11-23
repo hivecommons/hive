@@ -2006,6 +2006,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	archiveOnShutdown := func() { b.agentMgr.ArchiveAllKickLogs("shutdown") }
 	b.preShutdownHooks.add("archive-kick-logs", archiveOnShutdown)
 	b.agentMgr.SetSandboxConfig(b.cfg.AgentSandbox)
+	syncForgeCredentialEnv(b.cfg)
 	// #7421: the governor records a kick when it is dispatched; the manager
 	// tells it afterwards how the turn ENDED, so a kick that produced a
 	// clarifying question or a policy stand-down is not counted like one that
@@ -3557,6 +3558,9 @@ func (b *boot) bootSupervision() {
 	// the PR rows of the FIX-BEFORE-NEW and held-PR blocks. Read b.beadStores
 	// at call time, not at wire time.
 	b.sched.SetTopicClaimLookup(func() []scheduler.TopicClaim { return topicClaimLookup(b.beadStores)() })
+	// #19325: the audit trail's PR-to-agent attribution tags each held PR an
+	// agent opened as its own, whatever its lane topic or labels.
+	b.sched.SetPRAuthorLookup(cachedPRAuthorLookup(b.cfg.Project.Org, auditPRAgents, time.Now))
 	// #9584: close answered question issues unless the author objects (default off).
 	b.questionAutoclose.Store(wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger))
 	// The pr-request watcher's PR-opened hook (Linear session narration, the
@@ -3662,6 +3666,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		svc.hubImport = func(ctx context.Context, person string) {
 			b.runCustomersHubImport(ctx, b.customersMentionConfig(), person)
 		}
+		// Customers enrichment: public affiliation from cncf/gitdm, off
+		// unless customers.enrichment and its gitdm switch are on.
+		wireCustomersEnrichment(svc.svc, customersDataDir, b.customersMentionConfig, b.logger)
 		b.dashSrv.SetCustomersService(svc)
 		if b.sched != nil {
 			installCustomersAgentContext(svc, b.sched.SetCustomerContextLookup)
@@ -3939,6 +3946,10 @@ func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 // allowlist and sets the dashboard's auth providers.
 func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 
+func syncForgeCredentialEnv(cfg *config.Config) {
+	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName())
+}
+
 // bootWatchersWith is bootWatchers with its long-lived effects injected; see
 // bootWatchersDeps.
 func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
@@ -4020,6 +4031,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		// threshold — re-sync it alongside the repo list above.
 		b.gov.SetRepoCount(b.cfg.Project.RepoCount())
 		b.agentMgr.SetSandboxConfig(b.cfg.AgentSandbox)
+		syncForgeCredentialEnv(b.cfg)
 		// Re-run the posture check on reload, not only at boot: flipping the
 		// Security tab's sandbox toggle writes the config and lands here, which
 		// is the exact moment an operator forms the belief that they are now
@@ -4839,6 +4851,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			agentErrorStreaks := spoke.TimedSection("agent_error_streaks", b.tokenCollector.AgentErrorStreaks)
 			consentWedged := spoke.TimedSection("consent_wedged", b.agentMgr.ConsentWedgedAgents)
 			noCadenceAgents := spoke.TimedSection("no_cadence_agents", b.gov.NoCadenceAgents)
+			// Head of the hash-chained audit log (#19439), held by the hub out
+			// of reach of a writer on /data. One read so seq and hash agree.
+			auditChainHead := b.dashSrv.AuditChainHead()
 
 			return &spoke.HeartbeatPayload{
 				AgentsWithModel:      &agentsWithModel,
@@ -4981,6 +4996,8 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// Per-user last audit-logged real action, so the hub can tell
 				// users who DO things from users who merely stay logged in.
 				UserLastActions: spoke.TimedSection("user_last_actions", b.dashSrv.UserLastActions),
+				AuditChainSeq:   auditChainHead.Seq,
+				AuditChainHead:  auditChainHead.Hash,
 				Owner:           spoke.TimedSection("owner", b.ownerForHeartbeat),
 				// Report the API URL we are actually running against so the hub
 				// can see whether a GitHub Enterprise API URL it delivered has
@@ -7478,6 +7495,9 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run by Spektacular live mode for one model call per prompt; see
 		// pkg/meetings/meetllm. Reads its endpoint and key from the env.
 		return true, meetllm.Run(args[1:], os.Stdin, stdout, stderr, os.Getenv)
+	case auditVerifySubcommand:
+		// Checks the audit log's hash chain; see audit_verify_cmd.go.
+		return true, runAuditVerify(args[1:], stdout, stderr)
 	case memoryDrainSubcommand:
 		// Run as the agent by the Claude Code memory hooks Hive seeds; see
 		// memory_drain_cmd.go. Always exits 0.

@@ -68,6 +68,8 @@ func TestDesiredPerHiveEnvMatchesProvisioningTemplate(t *testing.T) {
 		envSessionPublicKey: provisionSessionPublicKey(),
 		EnvTerminalKey:      provisionTerminalKey(hiveID),
 		EnvInviteKey:        provisionInviteKey(hiveID),
+		// Issue #19246: the injected key equals customerMatchKey(currentMaster, hive).
+		EnvCustomerMatchKey: customerMatchKey(provisionCurrentSecret(), hiveID),
 	}
 	for name, v := range expect {
 		if v == "" {
@@ -92,6 +94,9 @@ func TestDesiredPerHiveEnvMatchesProvisioningTemplate(t *testing.T) {
 	}
 	if other[EnvInviteKey] == want[EnvInviteKey] {
 		t.Error("invite key is identical across hives — not per-hive")
+	}
+	if other[EnvCustomerMatchKey] == want[EnvCustomerMatchKey] {
+		t.Error("customer match key is identical across hives — not per-hive")
 	}
 }
 

@@ -148,6 +148,10 @@ type IssueStageResult struct {
 	// issue and PR they reference is finished (trackers_too,
 	// hivecommons/hive#19071).
 	TrackersClosed int
+	// VerifiedClosed counts issues closed because the scanner's
+	// verification marker said complete and every guard held
+	// (closeVerifiedComplete).
+	VerifiedClosed int
 }
 
 // issueStageRESTCaller tags the writes for /api/gh-rate-limits.
@@ -608,6 +612,12 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			res.Comments++
 			continue
 		}
+		if !awaitingChildren && client.closeVerifiedComplete(ctx, in, store, key, now, logger) {
+			res.VerifiedClosed++
+			res.Writes++
+			res.Comments++
+			continue
+		}
 		if closed, commented := handleMergedPRIssueStage(ctx, client, in, logger); closed {
 			res.MergedPRIssuesClosed++
 			res.Writes++
@@ -889,6 +899,17 @@ func handleMergedPRIssueStage(ctx context.Context, client *Client, in IssueStage
 		commented = true
 	}
 	if err := client.CloseIssue(ctx, in.Repo, in.Number, IssueCloseOptions{OverrideReason: fmt.Sprintf("merged Hive-authored PR #%d is the full fix", in.Claim.PRNumber), SuppressOverrideComment: true, StateReason: IssueStateReasonCompleted}); err != nil {
+		if errors.Is(err, ErrItemNotOpen) {
+			// The confirming re-read found the issue already closed — most
+			// often GitHub's own closing keyword beat this sweep to it. The
+			// close this lane wanted has happened; report it as done so the
+			// sweep stops retrying and warning every pass
+			// (hivecommons/hive#19369).
+			if logger != nil {
+				logger.Debug("issue stage labels: merged full-fix PR issue already closed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber)
+			}
+			return true, commented
+		}
 		if logger != nil {
 			logger.Warn("issue stage labels: merged full-fix PR issue close failed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
 		}

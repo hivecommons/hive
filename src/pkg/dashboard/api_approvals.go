@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -60,6 +61,9 @@ type ApprovalRow struct {
 	Title     string `json:"title,omitempty"`
 	Rationale string `json:"rationale"`
 	QueuedAt  string `json:"queued_at"`
+	// ExpiresAt is when the item stops being approvable; empty when the inbox
+	// has no TTL. An expired item leaves the queue and cannot be approved.
+	ExpiresAt string `json:"expires_at,omitempty"`
 	ACMMLevel int    `json:"acmm_level"`
 	// Rule is the operator rule that WOULD resolve this item, re-evaluated live
 	// against the current rule set rather than replayed from the enqueue-time
@@ -122,6 +126,9 @@ func (s *Server) handleApprovalsList(w http.ResponseWriter, r *http.Request) {
 			Rationale: p.Verdict.Rationale,
 			QueuedAt:  p.QueuedAt.UTC().Format("2006-01-02T15:04:05Z"),
 			ACMMLevel: p.ACMMLevel,
+		}
+		if exp, ok := inbox.ExpiresAt(p); ok {
+			row.ExpiresAt = exp.UTC().Format("2006-01-02T15:04:05Z")
 		}
 		// Re-evaluate which rule would resolve this item against the CURRENT
 		// rule set, so the panel reflects live policy rather than a snapshot.
@@ -201,6 +208,12 @@ func (s *Server) handleApprovalResolve(w http.ResponseWriter, r *http.Request) {
 				"executed":    rec.Executed,
 				"resolved_at": rec.ResolvedAt,
 			})
+			return
+		}
+		// An expired item is gone for good: 410 tells the client the
+		// request aged out rather than never existing.
+		if errors.Is(err, toolapprove.ErrExpired) {
+			jsonError(w, err.Error(), http.StatusGone)
 			return
 		}
 		jsonError(w, err.Error(), http.StatusNotFound)

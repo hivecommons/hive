@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/auditchain"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/github"
@@ -186,6 +187,10 @@ type AuditLog struct {
 	// duplicates having been dropped by notePRThroughput. The merged ledger
 	// (merged_ledger.go) is its consumer.
 	onPRMerged func(AuditEntry)
+	// chain is the head of the on-disk hash chain (#19439): the seq and
+	// row_hash of the newest row written. Zero until the first chained row;
+	// only advanced when a write succeeds. Meaningless when writer is nil.
+	chain auditchain.Link
 }
 
 // SetPRMergedHook installs the pr_merged observer; nil removes it.
@@ -212,6 +217,7 @@ func newAuditLog() *AuditLog {
 		}
 		a.loadFromDisk()
 		a.loadPRThroughputCounters(prThroughputCountersPath, auditLogPath)
+		a.startChain(auditLogPath)
 	}
 
 	return a
@@ -284,14 +290,18 @@ func (a *AuditLog) logRecordAt(timestamp, user, action, detail, agent, repo stri
 		a.mu.Unlock()
 		return
 	}
+	var data []byte
+	if a.writer != nil {
+		data = a.chainEntryLocked(&entry)
+	}
 	a.ring = append(a.ring, entry)
 	a.noteUserAction(entry.User, entry.Timestamp)
 
-	if a.writer != nil {
-		if data, err := json.Marshal(entry); err == nil {
-			if _, err := a.writer.Write(append(data, '\n')); err != nil {
-				slog.Error("audit log write failed", "error", err)
-			}
+	if data != nil {
+		if _, err := a.writer.Write(append(data, '\n')); err != nil {
+			slog.Error("audit log write failed", "error", err)
+		} else if entry.RowHash != "" {
+			a.chain = auditchain.Link{Seq: entry.Seq, Hash: entry.RowHash}
 		}
 	}
 	onMerged := a.onPRMerged

@@ -491,6 +491,8 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).PostInformationalIssueNote` | `status` | passthrough wrapper (issue status card in quiet mode or under `attention_pilot`, for notes nobody acts on); attributed to its caller |
 | `github.(*Client).closeDecomposedParent` | `status` |  |
 | `github.(*Client).closeDoneTracker` | `status` |  |
+| `github.(*Client).closeVerified` | `status` |  |
+| `github.(*Client).parkVerifiedForClose` | `status` |  |
 | `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
 | `github.(*Client).closeSupersededPRDecision` | `status` |  |
 | `github.(*Client).fileReviewBacklog` | `status` |  |
@@ -714,6 +716,16 @@ only one of them asks a person to do anything
 In `normal` mode the informational notice is still its own comment, as
 before. Either way the finding is recorded for audit, the dashboard
 Security tab and `/api/sentinel`.
+
+Both kinds are judged per head (hivecommons/hive#19262,
+`pkg/github/sentinel_head_scope.go`). Every new head is evaluated, including
+on a PR that already carries the label. When the current head matches no
+rule, a card section naming an earlier head is rewritten to say the current
+head is clean (no card is ever created for that), and a `sentinel-alert`
+label the hive added for an earlier head's finding is removed, with the
+hive's sentinel comment rewritten as a clean record that keeps the earlier
+alert in a collapsed block. A finding on the new head keeps the label and
+rewrites the alert for that head.
 
 ### Hive-maintained Actions workflows that defer to the card
 

@@ -1,1 +1,0 @@
-- Parsed agent HTTP relays now remove proxy credentials, forwarding metadata, internal Hive headers, and other hop-by-hop metadata before sending requests upstream.

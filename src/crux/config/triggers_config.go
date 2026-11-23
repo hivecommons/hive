@@ -20,6 +20,11 @@ type ToolApprovalConfig struct {
 	// InboxPath overrides where pending operator approvals persist. Empty uses
 	// the package default (/data/approvals/inbox.json) on the durable PVC.
 	InboxPath string `yaml:"inbox_path,omitempty" json:"inbox_path,omitempty"`
+	// PendingTTLSeconds is how long a pending operator approval stays
+	// approvable, in seconds. An expired item is dropped from the inbox and can
+	// never be approved; a fresh delivery of the same request queues again.
+	// Zero uses the package default (24h); a negative value disables expiry.
+	PendingTTLSeconds int `yaml:"pending_ttl_s,omitempty" json:"pending_ttl_s,omitempty"`
 }
 
 // ToolApprovalRule is one declarative approval rule. Mirrors TriggerRule's

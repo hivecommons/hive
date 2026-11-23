@@ -37,12 +37,15 @@ func ParseMode(s string) (Mode, bool) {
 	return ModeOff, false
 }
 
-// EnforceAvailable is false until the grant check and the visible failure
-// paths land. While false, a configured `enforce` runs as `shadow`: it never
-// posts the real required names.
-const EnforceAvailable = false
+// EnforceAvailable reports that `enforce` is built: a configured `enforce`
+// posts the real required names, but only while the installation's grant
+// check has positively confirmed Commit statuses write (see Gate.mode). Any
+// other answer runs it as `shadow` or, with the grant known missing, posts
+// nothing at all.
+const EnforceAvailable = true
 
-// Effective returns the mode the gate actually runs in for a configured one.
+// Effective returns the mode the gate runs in for a configured one, before the
+// grant check is applied.
 func Effective(m Mode) Mode {
 	if m == ModeEnforce && !EnforceAvailable {
 		return ModeShadow
@@ -94,9 +97,11 @@ type Status struct {
 // Plan returns the statuses a mode posts for a title. Off posts nothing.
 // Shadow posts only the shadow-named context, whose description carries both
 // verdicts so the operator can read them without a second status. Enforce
-// posts the real required names: the wrapper is green by design (it fails
-// only when a verdict cannot be recorded) and PR Type / PR Issue carry the
-// verdicts.
+// posts the real required names in the order pr-verifier.yml settles them:
+// PR Type and PR Issue carry the verdicts, then the wrapper `verify PR
+// contents`, which is green by design. HandleEvent turns the wrapper red only
+// when a verdict could not be recorded, exactly as the workflow job fails
+// only then.
 func Plan(mode Mode, title string) []Status {
 	typeV, issueV := PRTypeVerdict(title), PRIssueVerdict(title)
 	switch mode {
@@ -104,12 +109,20 @@ func Plan(mode Mode, title string) []Status {
 		return []Status{{ContextVerifyShadow, StateSuccess, clip(fmt.Sprintf("PR Type: %s; PR Issue: %s", typeV.Conclusion, issueV.Conclusion))}}
 	case ModeEnforce:
 		return []Status{
-			{ContextVerify, StateSuccess, clip("PR contents verified by the hive: " + typeV.Conclusion + " / " + issueV.Conclusion)},
 			{ContextPRType, stateOf(typeV), clip(typeV.Summary)},
 			{ContextPRIssue, stateOf(issueV), clip(issueV.Summary)},
+			{ContextVerify, StateSuccess, clip("PR contents verified by the hive: " + typeV.Conclusion + " / " + issueV.Conclusion)},
 		}
 	}
 	return nil
+}
+
+// unrecordedWrapper is the wrapper status posted in place of the green one
+// when a verdict could not be recorded on the head: a recording failure, not
+// a verdict on the PR. Any later event or the backstop retries it.
+func unrecordedWrapper(names []string) Status {
+	return Status{ContextVerify, StateFailure, clip("The hive could not record " + strings.Join(names, " and ") +
+		" on this head; add or remove a label to retry. Not a verdict on the PR.")}
 }
 
 func stateOf(v Verdict) string {
@@ -211,15 +224,25 @@ func New(api API, modeOf func(string) Mode, log *slog.Logger) *Gate {
 }
 
 // mode is the mode the gate actually runs in for repo: the configured one,
-// with enforce clamped while unavailable, and forced off while the last grant
-// check found the Commit statuses write grant missing. It never promotes.
+// forced off while the last grant check found the Commit statuses write grant
+// missing (no status of any name can be written then), and with enforce run as
+// shadow until a grant check has positively confirmed the write grant. It
+// never promotes.
 func (g *Gate) mode(repo string) Mode {
 	if g == nil || g.ModeOf == nil {
 		return ModeOff
 	}
 	m := Effective(g.ModeOf(repo))
-	if m != ModeOff && g.GrantMissing() {
+	if m == ModeOff {
 		return ModeOff
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	switch {
+	case g.grant.info.Missing():
+		return ModeOff
+	case m == ModeEnforce && !g.enforceGrantedLocked():
+		return ModeShadow
 	}
 	return m
 }
@@ -318,7 +341,11 @@ func (g *Gate) HandleEvent(ctx context.Context, repo string, number int, eventHe
 	// this head can arrive at any moment and is compared against it.
 	g.noteExpectation(repo, eventHead, subject.Title)
 	out := Outcome{Skipped: SkipUnchanged}
+	var unrecorded []string
 	for _, st := range Plan(mode, subject.Title) {
+		if st.Context == ContextVerify && len(unrecorded) > 0 {
+			st = unrecordedWrapper(unrecorded)
+		}
 		key := strings.ToLower(repo) + "@" + eventHead + "|" + st.Context
 		g.mu.Lock()
 		prev, seen := g.sent[key]
@@ -329,7 +356,14 @@ func (g *Gate) HandleEvent(ctx context.Context, repo string, number int, eventHe
 		if err := g.post(ctx, repo, number, eventHead, st); err != nil {
 			out.Err = err
 			out.Skipped = ""
-			break
+			// A 403 means nothing more can be written. Any other failure
+			// leaves this verdict unrecorded and the wrapper says so, as the
+			// workflow job does.
+			if errors.Is(err, ErrForbidden) || errors.Is(err, ErrContextNotAllowed) || st.Context == ContextVerify {
+				break
+			}
+			unrecorded = append(unrecorded, st.Context)
+			continue
 		}
 		g.mu.Lock()
 		if len(g.sent) >= maxSentEntries {

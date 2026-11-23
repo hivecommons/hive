@@ -115,6 +115,29 @@ function scrollToHive(id) {
   return true;
 }
 
+function fieldLabels(set) {
+  return fields.filter(field => set?.[field.key]).map(field => field.label).join(", ");
+}
+
+function formatStamp(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+// What this hive was last sent and when, from the Hub's delivery stamps.
+function deliverySummary(consent) {
+  if (!consent?.last_delivered_at) return "Nothing has been sent to this hive.";
+  const last = fieldLabels(consent.last_delivered_fields);
+  let text = last
+    ? `Last sent to this hive: ${last}, on ${formatStamp(consent.last_delivered_at)}.`
+    : `Last sent to this hive on ${formatStamp(consent.last_delivered_at)}.`;
+  const ever = fieldLabels(consent.delivered_fields);
+  if (ever && ever !== last) text += ` Sent at any time: ${ever}.`;
+  if (consent.first_delivered_at) text += ` First sent on ${formatStamp(consent.first_delivered_at)}.`;
+  if (consent.withdrawn_at) text += " Because you withdrew, the hive removes them at its next sync.";
+  return text;
+}
+
 function renderConsentHive(hive) {
   const form = document.getElementById("consent-hive-template").content.firstElementChild.cloneNode(true);
   const name = hive.name || hive.hive_id;
@@ -137,6 +160,7 @@ function renderConsentHive(hive) {
       : `Recorded selection: ${labels}.`;
   }
   form.querySelector(".saved-selection").textContent = selection;
+  form.querySelector(".delivery").textContent = deliverySummary(consent);
 
   for (const field of fields) {
     const label = document.createElement("label");
