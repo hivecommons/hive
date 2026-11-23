@@ -233,6 +233,90 @@ func TestSweepStillCleansNonGitWorkspace(t *testing.T) {
 	}
 }
 
+// writeAgentNote writes an agent note file under agentDir and backdates it by
+// age. Returns its path.
+func writeAgentNote(t *testing.T, agentDir, name string, age time.Duration) string {
+	t.Helper()
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(agentDir, name)
+	if err := os.WriteFile(p, []byte("# NO-GITHUB MODE: No gh commands\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts := time.Now().Add(-age)
+	if err := os.Chtimes(p, ts, ts); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestIsAgentNoteFile pins which dotfiles count as agent-authored kick notes
+// (#19559). Hive-managed and CLI dotfiles must not match.
+func TestIsAgentNoteFile(t *testing.T) {
+	for _, name := range []string{".kick", ".kick.fixed", ".kick.bak"} {
+		if !isAgentNoteFile(name) {
+			t.Errorf("isAgentNoteFile(%q) = false, want true", name)
+		}
+		if isSkippedEntry(name) {
+			t.Errorf("isSkippedEntry(%q) = true; agent kick notes must be swept", name)
+		}
+	}
+	for _, name := range []string{".kickstart", ".claude", ".claude.json", ".gitconfig", "kick", ".cache"} {
+		if isAgentNoteFile(name) {
+			t.Errorf("isAgentNoteFile(%q) = true, want false", name)
+		}
+	}
+}
+
+// TestSweepRemovesStaleKickNotes is the #19559 regression: an agent-written
+// .kick survived every sweep because all dotfiles were skipped, so each fresh
+// session re-read one session's false belief. A stale note must go; a recent
+// one and other dotfiles must stay.
+func TestSweepRemovesStaleKickNotes(t *testing.T) {
+	agentDir, _, _ := newSweepAgentDir(t, "scanner")
+	stale := writeAgentNote(t, agentDir, ".kick", 2*workspaceMaxAge())
+	staleFixed := writeAgentNote(t, agentDir, ".kick.fixed", 2*workspaceMaxAge())
+	recent := writeAgentNote(t, agentDir, ".kick.recent", time.Minute)
+	otherDot := writeAgentNote(t, agentDir, ".gitconfig", 2*workspaceMaxAge())
+
+	sweepWorkspaces(sweepTestLogger(), nil)
+
+	for _, p := range []string{stale, staleFixed} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("stale agent note %s should be removed, stat err=%v", filepath.Base(p), err)
+		}
+	}
+	for _, p := range []string{recent, otherDot} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s should survive the sweep: %v", filepath.Base(p), err)
+		}
+	}
+}
+
+// TestSweepRemovesStaleKickNotesInGitClone: the git-clone guard keeps the
+// working tree intact, but a stale .kick at the workspace root is still
+// removed — one agent in #19559 had turned its workspace into a clone.
+func TestSweepRemovesStaleKickNotesInGitClone(t *testing.T) {
+	agentDir, staleDir, staleFile := newSweepAgentDir(t, "ci-maintainer")
+	if err := os.MkdirAll(filepath.Join(agentDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := writeAgentNote(t, agentDir, ".kick", 2*workspaceMaxAge())
+	recent := writeAgentNote(t, agentDir, ".kick.new", time.Minute)
+
+	sweepWorkspaces(sweepTestLogger(), nil)
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale .kick in git-clone workspace should be removed, stat err=%v", err)
+	}
+	for _, p := range []string{recent, staleDir, staleFile, filepath.Join(agentDir, ".git")} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s inside git clone should survive: %v", filepath.Base(p), err)
+		}
+	}
+}
+
 // TestStartWorkspaceCleanupDisabled verifies the config gate: with
 // HIVE_WORKSPACE_CLEANUP_ENABLED=false, StartWorkspaceCleanup returns without
 // running even the initial sweep, so stale entries survive.

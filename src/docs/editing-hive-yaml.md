@@ -81,7 +81,14 @@ per-agent overrides, and `config.env` can pin certain values. See
 
 1. Plan a maintenance window for manual edits. Back up the files you will
    change, keep the copies private, and coordinate with anyone saving
-   Settings: a save from the running hive can overwrite a manual edit.
+   Settings. The running hive does not write over a manual edit: it records
+   a content hash of each config file it loaded or saved, and a save that
+   finds the file changed since then writes nothing, logs
+   `config persist skipped: ... changed on disk`, and reloads the file
+   instead. The governor tick and the graceful-shutdown persist reload a
+   changed file before they save (`reloading it before the persist`), so
+   the edit is what they write back. A Settings save made while your edit
+   is still being reloaded fails; retry it after the reload.
 2. Change only the intended key in the persisted YAML, preserving permissions
    and any environment references. Update the existing YAML block rather than
    adding a duplicate. On Kubernetes, if `/data/hive.yaml.dashboard` already
@@ -97,9 +104,13 @@ per-agent overrides, and `config.env` can pin certain values. See
    on a later sweep, or only at startup, depending on the field. For example,
    the stage engine reads `governor.labels.stage.engine.mode` on its next
    pass, while the dashboard listens on a new `dashboard.port` only after a
-   restart. For a manual edit, Hive watches the **loaded file**, not every
-   input in the export. Check for `config reloaded from file` or
-   `config reload failed` in the logs. A reload can update live readers but
+   restart. For a manual edit, Hive watches the **loaded file** (and, on
+   Kubernetes, `/data/hive.yaml.dashboard`), not every input in the export.
+   Both an in-place rewrite (`cat new > file`) and a rename onto the file
+   (`mv`, most editors) are seen. Check for `config reloaded from file` or
+   `config reload failed` in the logs. An edit whose file does not load is
+   left untouched (`config file changed on disk but does not load`): fix it,
+   and the next reload picks it up. A reload can update live readers but
    cannot reinitialize every boot-time service. If the edited file is not
    the watched file, the setting is startup-only, or live reload is not
    documented for the setting, restart through your deployment manager

@@ -75,6 +75,9 @@ type SandboxKickSpec struct {
 	EnvAllowlist []string
 	NetworkMode  string
 	Timeout      time.Duration
+	// PidsLimit is passed to every launch (agent run and publish.verify);
+	// zero keeps sandbox.DefaultPidsLimit (config agent_sandbox.pids_limit).
+	PidsLimit int
 	// PublishVerify are the deterministic preflight commands run in the
 	// sandbox before the run's commits are pushed (config
 	// sandbox.publish.verify). Any non-zero exit withholds the push and the PR.
@@ -279,6 +282,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		Env:            mergeSandboxEnv(spool.sandboxEnv(), relayEnv),
 		EnvAllowlist:   spec.EnvAllowlist,
 		NetworkMode:    spec.NetworkMode,
+		PidsLimit:      spec.PidsLimit,
 		ClineProvider:  provider,
 		// hive-review and the other sandbox-safe relays come from hive, not
 		// the project image (#18512).
@@ -601,6 +605,7 @@ func (e *SandboxExecutor) runPublishVerify(ctx context.Context, spec SandboxKick
 			Env:            env,
 			EnvAllowlist:   spec.EnvAllowlist,
 			NetworkMode:    spec.NetworkMode,
+			PidsLimit:      spec.PidsLimit,
 		})
 		vres.TimedOut = errors.Is(vctx.Err(), context.DeadlineExceeded)
 		cancel()
