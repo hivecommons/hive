@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v6.58.4)
+
+### Fixed
+
+- fix: stop the dependencies lock test leaking its writer into TempDir cleanup (#19600)
+
 ## 2026-11-23 (v6.58.3)
 
 ### Security
