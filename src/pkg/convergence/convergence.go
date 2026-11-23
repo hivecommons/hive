@@ -83,6 +83,9 @@ const (
 	// ReasonDependencyUnknown: no dependency is established as unsatisfied, but
 	// at least one could not be resolved, so satisfaction cannot be asserted.
 	ReasonDependencyUnknown = "DependencyUnknown"
+	// ReasonObserverUnavailable: the observation was degraded and its observer
+	// named no reason of its own.
+	ReasonObserverUnavailable = "ObserverUnavailable"
 )
 
 // Subject is the normalised identity of a unit of work. Repo is the canonical
@@ -256,7 +259,7 @@ func Evaluate(obs Observation) Decision {
 	if obs.Degraded {
 		reason := obs.DegradedReason
 		if reason == "" {
-			reason = "ObserverUnavailable"
+			reason = ReasonObserverUnavailable
 		}
 		d.Conditions = []Condition{
 			{Type: ConditionObserved, Status: ConditionUnknown, Reason: reason,
