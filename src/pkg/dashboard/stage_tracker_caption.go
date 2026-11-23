@@ -395,6 +395,9 @@ func humanizeStageReason(reason string) string {
 		return "the hive resolved its own review threads; merging on the next pass"
 	case stageengineprstage.AutoMergeReasonReviewThreadsPending:
 		return "GitHub refused the merge for unresolved review conversations; retrying in a few minutes"
+	case stageengineprstage.AutoMergeReasonNativeQueueRejectedRepeatedly:
+		return "the merge queue failed this head repeatedly on the same base; the hive retries it every " + nativeQueueRepeatedHours(stageengineprstage.NativeQueueRepeatedRecheck) +
+			" (first after " + nativeQueueRepeatedHours(stageengineprstage.NativeQueueRepeatedRecheckFirst) + "), and at once on a push, a base change or Retry now"
 	case "label:needs-rebase":
 		return "needs a rebase"
 	case "untrusted-author-role":
@@ -1147,4 +1150,13 @@ func stageTrackerApplyTracking(it *StageTrackerItem, stage stagelabels.Stage) {
 	}
 	it.Caption = head + "; waiting on " + strconv.Itoa(n) + " open child issue(s). The scanner leaves a decomposed parent to its children"
 	it.Actor = stageTrackerTrackingActor
+}
+
+// nativeQueueRepeatedHours renders a slow-retry interval of a repeated
+// merge-queue rejection ("6 hours").
+func nativeQueueRepeatedHours(d time.Duration) string {
+	if h := int(d.Hours()); h != 1 {
+		return strconv.Itoa(h) + " hours"
+	}
+	return "1 hour"
 }

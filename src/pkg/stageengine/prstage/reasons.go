@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -112,6 +113,35 @@ const (
 	// (or a per-repo required_checks override) resolves it.
 	RequiredCheckNeverReportedPrefix = "required-check-never-reported:"
 )
+
+// AutoMergeReasonNativeQueueRejectedRepeatedly: GitHub's merge queue failed
+// the hive's entry for one head with failed_checks more than once on the
+// same base tip. The PR waits at stage 085 so a person sees it; the hive
+// retries the head on a slow backoff (NativeQueueRepeatedRecheckFirst, then
+// NativeQueueRepeatedRecheck), at once when the head or the base tip
+// changes, and at once when a person approves the head after the failure.
+const AutoMergeReasonNativeQueueRejectedRepeatedly = AutoMergeReasonNativeQueuePrefix + "-rejected-repeatedly"
+
+// The slow retry of a repeated merge-queue rejection, shared by the lanes
+// and the words the dashboard and the 085 comment print. A merge-group
+// check that fails for a reason the PR does not carry is usually fixed
+// somewhere else (a dependency rebuilt in another repository, an outside
+// service back up), and nothing in the PR or its base says when:
+//   - NativeQueueRepeatedRecheckFirst (2 hours) after the second failure,
+//     enough for a rebuild elsewhere to land;
+//   - then NativeQueueRepeatedRecheck (6 hours) after each later one, so a
+//     fix is picked up within a working day for about four merge-group
+//     runs a day, where the 30-minute loop bought about forty-eight.
+const (
+	NativeQueueRepeatedRecheckFirst = 2 * time.Hour
+	NativeQueueRepeatedRecheck      = 6 * time.Hour
+)
+
+// MergeRefusalRecheck is how long a remembered merge refusal (a review or
+// merge-method 405, a queue-method refusal, a first merge-queue rejection)
+// waits before the lanes try the same head again. It lives here so the
+// dashboard and the 085 comment print the same number the lanes use.
+const MergeRefusalRecheck = 30 * time.Minute
 
 // Review-conversation refusals: GitHub refused the merge or the merge-queue
 // enqueue because the base requires every review conversation resolved

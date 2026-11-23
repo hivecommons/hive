@@ -34,7 +34,7 @@ const (
 // mergeRefusalRecheck is how long a remembered review or merge-method
 // refusal skips the merge call before the sweep tries again, so a new
 // ruleset, repository setting or review is picked up without a restart.
-const mergeRefusalRecheck = 30 * time.Minute
+const mergeRefusalRecheck = prstage.MergeRefusalRecheck
 
 // mergeRefusalPruneAt is the remembered-refusal count at which expired
 // entries are dropped on the next insert.
@@ -122,6 +122,32 @@ type mergeRefusal struct {
 	// behind its base (nativeQueueRejectedHeadBehind); it re-arms on a new
 	// head only.
 	behind bool
+	// base is the base branch tip a native-queue rejection of a head that
+	// is not behind was judged against: the tip the lane's compare read on
+	// its first pass after the rejection (noteNativeQueueRejectionBase).
+	base string
+	// repeated marks a failed_checks rejection of a head on a base tip
+	// whose one 30-minute retry was already spent; it re-arms at once on a
+	// new head or base tip, and otherwise only on the slow backoff
+	// (mergeRefusal.recheck). priorBase is the base tip of that spent
+	// retry, until the lane's compare reads base; retries counts the slow
+	// retries already spent on the head and tip.
+	repeated  bool
+	priorBase string
+	retries   int
+}
+
+// mergeRefusalPrunable reports whether a remembered refusal stored under
+// key may be dropped at now. A native-queue mark that waits for a new head
+// or base tip instead of the clock (behind, repeated, the spent retry) is
+// kept for sweepMemoryIdle, so a busy memory does not hand the same head
+// another merge-group run.
+func mergeRefusalPrunable(key string, r mergeRefusal, now time.Time) bool {
+	idle := mergeRefusalRecheck
+	if r.behind || r.repeated || strings.HasPrefix(key, nativeQueueRetryKeyPrefix) {
+		idle = sweepMemoryIdle
+	}
+	return now.Sub(r.at) >= idle
 }
 
 func mergeRefusalReviewKey(a mergeAttempt) string {
@@ -289,7 +315,7 @@ func (c *Engine) rememberMergeRefusal(key string, r mergeRefusal) {
 	if len(m.mergeRefusals) >= mergeRefusalPruneAt {
 		// Entries for PRs that merged or closed are never read again.
 		for k, old := range m.mergeRefusals {
-			if r.at.Sub(old.at) >= mergeRefusalRecheck {
+			if mergeRefusalPrunable(k, old, r.at) {
 				delete(m.mergeRefusals, k)
 			}
 		}
@@ -340,7 +366,7 @@ func (c *Engine) noteNativeQueueMethodRefusal(claim effects.Claim, head string) 
 	}
 	if len(m.mergeRefusals) >= mergeRefusalPruneAt {
 		for k, old := range m.mergeRefusals {
-			if r.at.Sub(old.at) >= mergeRefusalRecheck {
+			if mergeRefusalPrunable(k, old, r.at) {
 				delete(m.mergeRefusals, k)
 			}
 		}

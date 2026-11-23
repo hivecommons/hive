@@ -58,6 +58,7 @@ var diagramEdges = map[Edge]bool{
 	{stagelabels.PreMergeSoak, stagelabels.ReturnedToContributor}:       true, // contributor head red during the soak (backward hop, commented)
 	{stagelabels.MergeQueue, stagelabels.Fixing}:                        true, // new head red (backward hop, commented)
 	{stagelabels.MergeQueue, stagelabels.ReturnedToContributor}:         true, // contributor head red (backward hop, commented)
+	{stagelabels.MergeQueue, stagelabels.NeedsDecision}:                 true, // merge queue failed the same head twice on the same base tip, or a slow retry failed (native-merge-queue-rejected-repeatedly)
 	{stagelabels.Fixing, stagelabels.ReviewPending}:                     true, // fixed head pushed
 	{stagelabels.Fixing, stagelabels.NeedsDecision}:                     true, // hive adoption copy still conflicting after two fixer rebase attempts (rebase-failed-twice)
 	{stagelabels.NeedsAuthor, stagelabels.ReviewPending}:                true, // author pushes a new head
