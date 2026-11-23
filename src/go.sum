@@ -2,6 +2,8 @@ blitiri.com.ar/go/spf v1.6.0 h1:TK91HOya1R2J5b+x+NZfdYTqDqbr+Q+hil5gy8WzLDQ=
 blitiri.com.ar/go/spf v1.6.0/go.mod h1:x9HYT28jEB65YMJOIVWSx0p88YCJ2h1N0fDFEhhWFBc=
 cel.dev/expr v0.25.3 h1:A2jO8jwOugrrovveCWfj0KEZOfqiLgAcwjpHPhzIGw0=
 cel.dev/expr v0.25.3/go.mod h1:hrXvqGP6G6gyx8UAHSHJ5RGk//1Oj5nXQ2NI02Nrsg4=
+github.com/agnivade/levenshtein v1.2.2 h1:fI8RgiztYX1Nn5pBHHqQ9EMCCklhrmXqPRIedFmx5M4=
+github.com/agnivade/levenshtein v1.2.2/go.mod h1:QVVI16kDrtSuwcpd0p1+xMC6Z/VfhtCyDIjcwga4/DU=
 github.com/ai-openshell/sdk-go v0.1.8 h1:p5i7VAZxlB/tzWy6KQWkdvX3cLIu8x0AinUx1X6wp+s=
 github.com/ai-openshell/sdk-go v0.1.8/go.mod h1:nYYe/HYeEct0KG5YyF2dbLHjUWb7EEA+I1lLi6A8j14=
 github.com/antithesishq/antithesis-sdk-go v0.9.0-default-no-op h1:TfLnk/It42eZEgaWL/e+xBKBAhX9ru4mRn2+0Xeukmc=
@@ -139,6 +141,8 @@ github.com/teambition/rrule-go v1.8.2 h1:lIjpjvWTj9fFUZCmuoVDrKVOtdiyzbzc93qTmRV
 github.com/teambition/rrule-go v1.8.2/go.mod h1:Ieq5AbrKGciP1V//Wq8ktsTXwSwJHDD5mD/wLBGl3p4=
 github.com/tuna-os/ccleft v0.0.0-20260924201033-b243120bfda2 h1:H0E75XhCKONfYtXhCp5d1ZZ4r2MTEtEQ6Gu3am7pNIc=
 github.com/tuna-os/ccleft v0.0.0-20260924201033-b243120bfda2/go.mod h1:Z8dUO2JA5tNGq820FRBVGUQxPNGK8ZiTnE21wc1Qq8w=
+github.com/vektah/gqlparser/v2 v2.5.64 h1:N32yM6hQ6Kd5RdjCCEJsUrbCebVoA9yLLMOIa88Mkk0=
+github.com/vektah/gqlparser/v2 v2.5.64/go.mod h1:nILRSUbsWDTuf8hSmAgFxuYh0SaMZdkvl6JSEbkJX8g=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e h1:JVG44RsyaB9T2KIHavMF/ppJZNG9ZpyihvCd0w101no=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e/go.mod h1:RbqR21r5mrJuqunuUZ/Dhy/avygyECGrLceyNeo4LiM=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
