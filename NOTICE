@@ -694,9 +694,9 @@ SOFTWARE.
 -----------------------------------------------------------------------------
 
 Package:  github.com/charmbracelet/x/ansi
-Version:  v0.11.9
+Version:  v0.11.10
 License:  MIT
-Source:   https://github.com/charmbracelet/x/blob/ansi/v0.11.9/ansi/LICENSE
+Source:   https://github.com/charmbracelet/x/blob/ansi/v0.11.10/ansi/LICENSE
 
 MIT License
 
