@@ -43,6 +43,12 @@ import (
 // the sweep used to post could not work. Where the sweep would have asked,
 // it hands the PR to a person at once, and the comment says that someone
 // with push access has to comment the command.
+//
+// The stale-red pass (stale_red_bot_rebase.go) asks through the same request
+// for a bot branch that is red and behind when the base already passes its
+// failing checks, and records it here with a Trigger. Such a record holds the
+// other hand-offs for one window; if the head has not moved by then and is
+// still red, a person gets the PR with reason depBotHandoffStaleRed.
 
 // depBotHandoffStranded is the hand-off reason for a PR whose bot will not
 // rebase it.
@@ -73,11 +79,19 @@ const depBotDependabotNoAppText = "Hive cannot ask Dependabot to rebase it, beca
 // StuckSince is when the head was first seen behind or conflicting (zero
 // while it is not); RequestedAt is when the bot was asked to rebase this
 // head (zero until then). A new head replaces the record.
+//
+// Trigger is set when the stale-red pass made the request
+// (staleRedBotTrigger*), with BaseSHA the base tip it asked against and
+// Checks the failing checks it asked about; it is empty for a request this
+// sweep made for a stranded branch.
 type depBotRebaseState struct {
 	HeadSHA     string    `json:"head_sha"`
 	StuckSince  time.Time `json:"stuck_since,omitzero"`
 	RequestedAt time.Time `json:"requested_at,omitzero"`
 	Via         string    `json:"via,omitempty"`
+	Trigger     string    `json:"trigger,omitempty"`
+	BaseSHA     string    `json:"base_sha,omitempty"`
+	Checks      []string  `json:"checks,omitempty"`
 }
 
 // depBotBranchFacts is what the PR's commit list says about one head, read
@@ -106,6 +120,10 @@ const (
 	// depBotStrandedHandoff: hand the PR to a person now with
 	// depBotHandoffStranded.
 	depBotStrandedHandoff
+	// depBotStrandedStaleRedHandoff: the stale-red pass asked the bot to
+	// rebase this head one window ago, the head has not moved and it is
+	// still red; hand the PR to a person with depBotHandoffStaleRed.
+	depBotStrandedStaleRedHandoff
 )
 
 // depBotCommitLister reads a PR's commits. *github.Client satisfies it.
@@ -274,6 +292,9 @@ func (c depBotRebaseCheck) rebasesNever(ctx context.Context, repo, key string, p
 // step is the stranded check for one hand-off candidate whose head has no
 // terminal check hold.
 func (c depBotRebaseCheck) step(ctx context.Context, repo, key string, pr github.PullRequest) depBotStrandedStep {
+	if next, ok := c.staleRedStep(key, pr); ok {
+		return next
+	}
 	if !depBotStuck(pr) {
 		if depBotMergeStateKnown(pr) {
 			c.store.clearStuck(key, pr.HeadSHA)
@@ -337,9 +358,80 @@ func (c depBotRebaseCheck) step(ctx context.Context, repo, key string, pr github
 	return c.request(ctx, repo, key, pr, conflict)
 }
 
+// staleRedStep is the stranded check for a head the stale-red pass asked the
+// bot to rebase (a record with a Trigger for this head). GitHub may not call
+// such a PR behind at all (it says "behind" only where the base requires
+// up-to-date branches), so it does not wait for depBotStuck: the request
+// holds the other hand-offs for one window, and then a head that is still red
+// goes to a person. ok is false when there is no such record, or when the
+// head is no longer red: the regular stranded check then decides.
+func (c depBotRebaseCheck) staleRedStep(key string, pr github.PullRequest) (depBotStrandedStep, bool) {
+	st, found := c.store.rebaseState(key)
+	if !found || st.Trigger == "" || st.RequestedAt.IsZero() || !strings.EqualFold(st.HeadSHA, pr.HeadSHA) {
+		return depBotStrandedNone, false
+	}
+	if c.now.Sub(st.RequestedAt) < c.window {
+		return depBotStrandedHold, true
+	}
+	if !strings.EqualFold(strings.TrimSpace(pr.CIStatus), "failure") {
+		// The red cleared on this head (a re-run passed): no stale-red
+		// hand-off; the regular stranded check decides for a head that is
+		// still behind or conflicting.
+		return depBotStrandedNone, false
+	}
+	return depBotStrandedStaleRedHandoff, true
+}
+
+// depBotAsk is what one rebase request through the bot's own mechanism did.
+type depBotAsk int
+
+const (
+	// depBotAskRefused: the write-back gate (bot_rebase_request) refused,
+	// or the reader cannot make the request; nothing was written.
+	depBotAskRefused depBotAsk = iota
+	// depBotAskRetry: the head moved under the request, or the request
+	// failed; try again next pass.
+	depBotAskRetry
+	// depBotAskNoCheckbox: the PR description has no rebase/retry box; the
+	// bot offers no way to ask.
+	depBotAskNoCheckbox
+	// depBotAskTicked: the box was ticked (depBotViaRenovateCheckbox).
+	depBotAskTicked
+	// depBotAskAlreadyTicked: someone already ticked the box
+	// (depBotViaAlreadyTicked); nothing was written.
+	depBotAskAlreadyTicked
+)
+
+// askRenovate is the one rebase request both callers share: the write-back
+// gate (which records a refusal), then Renovate's rebase/retry box, pinned
+// to pr's head. preview is what the gate records.
+func (c depBotRebaseCheck) askRenovate(ctx context.Context, repo string, pr github.PullRequest, preview string) depBotAsk {
+	requester, ok := c.reader.(depBotRebaseRequester)
+	if !ok {
+		return depBotAskRefused
+	}
+	if !c.requestAllowed(ctx, repo, pr, preview) {
+		return depBotAskRefused
+	}
+	state, err := requester.RequestRenovateRebase(ctx, repo, pr.Number, pr.HeadSHA)
+	switch {
+	case errors.Is(err, github.ErrDependencyBotHeadMoved):
+		return depBotAskRetry
+	case err != nil:
+		c.logger.Warn("dependency-bot rebase request failed; will retry next pass", "repo", repo, "pr", pr.Number, "error", err)
+		return depBotAskRetry
+	}
+	switch state {
+	case github.RenovateRebaseCheckboxUnticked:
+		return depBotAskTicked
+	case github.RenovateRebaseCheckboxTicked:
+		return depBotAskAlreadyTicked
+	}
+	return depBotAskNoCheckbox
+}
+
 // request asks the bot to rebase pr's head once.
 func (c depBotRebaseCheck) request(ctx context.Context, repo, key string, pr github.PullRequest, conflict bool) depBotStrandedStep {
-	requester := c.reader.(depBotRebaseRequester)
 	refused := func() depBotStrandedStep {
 		if conflict {
 			return depBotStrandedNone
@@ -354,23 +446,16 @@ func (c depBotRebaseCheck) request(ctx context.Context, repo, key string, pr git
 			"repo", repo, "pr", pr.Number, "head", pr.HeadSHA)
 		return depBotStrandedHandoff
 	}
-	if !c.requestAllowed(ctx, repo, pr, "tick the rebase/retry checkbox") {
+	switch c.askRenovate(ctx, repo, pr, "tick the rebase/retry checkbox") {
+	case depBotAskRefused:
 		return refused()
-	}
-	state, err := requester.RequestRenovateRebase(ctx, repo, pr.Number, pr.HeadSHA)
-	switch {
-	case errors.Is(err, github.ErrDependencyBotHeadMoved):
+	case depBotAskRetry:
 		return depBotStrandedHold
-	case err != nil:
-		c.logger.Warn("dependency-bot rebase request failed; will retry next pass", "repo", repo, "pr", pr.Number, "error", err)
-		return depBotStrandedHold
-	}
-	switch state {
-	case github.RenovateRebaseCheckboxUnticked:
+	case depBotAskTicked:
 		c.store.markRebaseRequested(key, pr.HeadSHA, depBotViaRenovateCheckbox, c.now)
 		c.logger.Info("ticked Renovate's rebase/retry box on a stranded PR", "repo", repo, "pr", pr.Number, "head", pr.HeadSHA)
 		return depBotStrandedHold
-	case github.RenovateRebaseCheckboxTicked:
+	case depBotAskAlreadyTicked:
 		// Someone already asked; give the bot one window from now.
 		c.store.markRebaseRequested(key, pr.HeadSHA, depBotViaAlreadyTicked, c.now)
 		return depBotStrandedHold
@@ -476,6 +561,36 @@ func (s *depBotConflictStore) markRebaseRequested(key, headSHA, via string, at t
 	s.saveRebaseLocked()
 }
 
+// markStaleRedRebaseRequested records a stale-red request on headSHA
+// against baseSHA. A repeat on the same head (a later base tip) keeps the
+// first request's time and mechanism, so the hand-off still comes one window
+// after the bot was first asked about this head. It also notes the request
+// per PR (staleRedLast), which outlives the head, so the bot's next head red
+// on the same checks is not asked about again.
+func (s *depBotConflictStore) markStaleRedRebaseRequested(key, headSHA, baseSHA, trigger, via string, checks []string, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.rebase == nil {
+		s.rebase = map[string]*depBotRebaseState{}
+	}
+	st := s.rebase[key]
+	if st == nil || !strings.EqualFold(st.HeadSHA, headSHA) {
+		st = &depBotRebaseState{HeadSHA: headSHA}
+		s.rebase[key] = st
+	}
+	if st.RequestedAt.IsZero() {
+		st.RequestedAt, st.Via = at, via
+	}
+	st.Trigger, st.BaseSHA = trigger, baseSHA
+	st.Checks = append([]string(nil), checks...)
+	s.saveRebaseLocked()
+	if s.staleRedLast == nil {
+		s.staleRedLast = map[string]*depBotStaleRedAsk{}
+	}
+	s.staleRedLast[key] = &depBotStaleRedAsk{HeadSHA: headSHA, Trigger: trigger, Checks: append([]string(nil), checks...), At: at}
+	s.saveStaleRedLocked()
+}
+
 func (s *depBotConflictStore) rebaseState(key string) (depBotRebaseState, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -504,6 +619,16 @@ func (s *depBotConflictStore) pruneRebase(open map[string]github.PullRequest) {
 	}
 	if changed {
 		s.saveRebaseLocked()
+	}
+	staleRedChanged := false
+	for k := range s.staleRedLast {
+		if _, ok := open[k]; !ok {
+			delete(s.staleRedLast, k)
+			staleRedChanged = true
+		}
+	}
+	if staleRedChanged {
+		s.saveStaleRedLocked()
 	}
 }
 

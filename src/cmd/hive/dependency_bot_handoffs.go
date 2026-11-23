@@ -19,6 +19,10 @@ const (
 	depBotHandoffConflict = ""
 	depBotHandoffRedCI    = "red-ci"
 	depBotHandoffHeld     = "check-held"
+	// depBotHandoffStaleRed: the stale-red pass asked the bot to rebase a
+	// red head (stale_red_bot_rebase.go) one window ago, and the head has
+	// neither moved nor gone green.
+	depBotHandoffStaleRed = "stale-red-bot-did-not-rebase"
 )
 
 // depBotConflictGrace is how long a dependency-bot PR may conflict with its
@@ -116,6 +120,11 @@ func depBotHandoffResolved(rec depBotConflictRecord, pr github.PullRequest) bool
 	case depBotHandoffStranded:
 		// The bot (or a person) moved the head, or the PR caught up.
 		return (pr.HeadSHA != "" && pr.HeadSHA != rec.HeadSHA) || depBotStuckResolved(pr)
+	case depBotHandoffStaleRed:
+		// The bot (or a person) moved the head, or the red cleared. Not
+		// GitHub's merge state: it says "behind" only where the base
+		// requires up-to-date branches, so "not behind" is no evidence here.
+		return (pr.HeadSHA != "" && pr.HeadSHA != rec.HeadSHA) || strings.EqualFold(strings.TrimSpace(pr.CIStatus), "success")
 	default:
 		return depBotConflictResolved(pr)
 	}

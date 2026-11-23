@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/writeback"
@@ -124,6 +125,41 @@ func (c *Client) StaleRedBaseStateFor(ctx context.Context, repo, baseRef string)
 		}
 	}
 	return st, true, nil
+}
+
+// StaleRedBehindBy returns how many commits of baseSHA the head headSHA
+// lacks. It only reads (one compare): the stale-red pass asks it about a
+// dependency bot's branch, which the hive never updates itself; it asks the
+// bot to rebase instead (cmd/hive/stale_red_bot_rebase.go).
+func (c *Client) StaleRedBehindBy(ctx context.Context, repo, baseSHA, headSHA string) (int, error) {
+	if c == nil || c.client == nil {
+		return 0, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	cmp, _, err := c.client.Repositories.CompareCommits(WithRESTCaller(ctx, "hive:stale_red_base_refresh"), owner, name, baseSHA, headSHA, &gh.ListOptions{PerPage: 1})
+	if err != nil {
+		return 0, fmt.Errorf("comparing %s/%s@%s with head %s: %w", owner, name, shortSHA(baseSHA), shortSHA(headSHA), err)
+	}
+	return cmp.GetBehindBy(), nil
+}
+
+// CommitCommittedAt returns the committer date of sha in repo. A commit
+// cannot be pushed before it is committed, so a base tip committed after a
+// check run completed reached the base after that run.
+func (c *Client) CommitCommittedAt(ctx context.Context, repo, sha string) (time.Time, error) {
+	if c == nil || c.client == nil {
+		return time.Time{}, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	commit, _, err := c.client.Git.GetCommit(WithRESTCaller(ctx, "hive:stale_red_base_refresh"), owner, name, sha)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("reading commit %s/%s@%s: %w", owner, name, shortSHA(sha), err)
+	}
+	at := commit.GetCommitter().GetDate().Time
+	if at.IsZero() {
+		return time.Time{}, fmt.Errorf("reading commit %s/%s@%s: no committer date", owner, name, shortSHA(sha))
+	}
+	return at, nil
 }
 
 // StaleRedRefreshOutcome is what RefreshStaleRedPR did for one PR.
