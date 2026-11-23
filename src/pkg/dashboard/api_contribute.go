@@ -310,7 +310,7 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("POST /api/contribute/wall/{id}/hide", s.handleContributeWallHide)
 	s.mux.HandleFunc("POST /api/contribute/wall/{id}/flag", s.handleContributeWallFlag)
 	// Read-only TRIAGE ladder (#2612 part b): the contribute issues grouped into a
-	// Warp-style lifecycle (Triaging → Ready → Implementing → Reviewing → Closed),
+	// Warp-style lifecycle (Held back → Ready → Implementing → Reviewing → Closed),
 	// DERIVED LIVE from the ready queue + fleet snapshot + the PR→issue link (part
 	// c) — no new persistent store. Public like the other /api/contribute* reads
 	// (only public issue metadata + public PR numbers; no tokens, no PII). Fetched

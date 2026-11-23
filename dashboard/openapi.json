@@ -23408,7 +23408,7 @@
           "Contribute"
         ],
         "summary": "Triage lifecycle ladder",
-        "description": "Returns a live-derived, Warp-style grouping of contribute issues into a lifecycle ladder (Triaging -> Ready to implement -> Implementing -> Reviewing -> Closed), computed per request from the raw candidate population, ready queue, fleet snapshot, and PR-issue link resolver. Candidates withheld by admission remain visible in Triaging. No persistent lifecycle store. Public, GET only, read-only.",
+        "description": "Returns a live-derived, Warp-style grouping of contribute issues into a lifecycle ladder (Held back -> Ready to implement -> Implementing -> Reviewing -> Closed), computed per request from the raw candidate population, ready queue, fleet snapshot, and PR-issue link resolver. The first group keeps the level key triaging and the label Held back: every candidate the queue is not offering to agents right now, each with its withheld_reason, withheld_tag and withheld_detail. Admitted issues past the queue list limit count as Ready. No persistent lifecycle store. Public, GET only, read-only.",
         "responses": {
           "200": {
             "description": "Triage snapshot",
@@ -23473,6 +23473,18 @@
                                       "description": "open or merged"
                                     }
                                   }
+                                },
+                                "withheld_reason": {
+                                  "type": "string",
+                                  "description": "Held back rows only: why the queue is not offering the issue. The admission pass's withheld reason code, or one of the card's own codes operator_hold, issue_closed and unrecorded. Absent on a withheld row that recorded no reason code."
+                                },
+                                "withheld_tag": {
+                                  "type": "string",
+                                  "description": "Held back rows only: a short plain-words tag for withheld_reason."
+                                },
+                                "withheld_detail": {
+                                  "type": "string",
+                                  "description": "Held back rows only: the full reason sentence, shown as the tag's hover text."
                                 }
                               }
                             }

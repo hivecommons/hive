@@ -256,6 +256,15 @@ func repoWorkPRRow(raw any) (github.RepoWorkPR, bool) {
 			return github.RepoWorkPR{}, false
 		}
 		return *v, true
+	// A served copy wraps sidelined drafts with their Overview card fields
+	// (overview_status.go).
+	case overviewStatusNonActionablePR:
+		return v.RepoWorkPR, true
+	case *overviewStatusNonActionablePR:
+		if v == nil {
+			return github.RepoWorkPR{}, false
+		}
+		return v.RepoWorkPR, true
 	}
 	return github.RepoWorkPR{}, false
 }

@@ -29,6 +29,24 @@ var (
 	prBandKeys    = []string{"waiting", "eligible", "blocked", "in-review", "open", "draft"}
 )
 
+// issueCardBandKeys, prCardBandKeys and cardGroupKeys mirror pkg/dashboard's
+// Overview card: the issue and PR donuts' band keys in plot order
+// (cardIssueBandOrder, cardPRBandOrder) and the six group keys in tile order
+// (cardGroupOrder). Every export row carries its card_band and card_group.
+var (
+	issueCardBandKeys = []string{"your-turn", "to-close", "covered-by-pr", "waiting-on-item", "human-hold", "reporter-confirm", "queued", "working", "held", "not-work", "unexplained"}
+	prCardBandKeys    = []string{"your-turn", "to-close", "human-hold", "author-update", "bot-rebase", "working", "will-merge", "held", "draft", "unexplained"}
+	cardGroupKeys     = []string{"your-turn", "waiting-elsewhere", "held", "blocked", "actionable-now", "outside"}
+)
+
+// validCardBandsFor returns the card band keys a band-read tool accepts.
+func validCardBandsFor(tool string) []string {
+	if tool == ToolPrsByBand {
+		return prCardBandKeys
+	}
+	return issueCardBandKeys
+}
+
 // validBandsFor returns the band keys a band-read tool accepts, or false if
 // tool is not one of the band-read tools.
 func validBandsFor(tool string) ([]string, bool) {
@@ -68,6 +86,24 @@ func BandReadResult(tool string, data any, args map[string]any) (any, error) {
 			Reason:    fmt.Sprintf("unknown band %q; valid bands: %s", band, strings.Join(validBands, ", ")),
 		}, nil
 	}
+	cardBand := strings.TrimSpace(stringArg(args, "card_band"))
+	if valid := validCardBandsFor(tool); cardBand != "" && !containsBand(valid, cardBand) {
+		return RefusalData{
+			Type:      "refusal",
+			Operation: tool,
+			Kind:      RefusalKindInvalidArgument,
+			Reason:    fmt.Sprintf("unknown card_band %q; valid card bands: %s", cardBand, strings.Join(valid, ", ")),
+		}, nil
+	}
+	cardGroup := strings.TrimSpace(stringArg(args, "card_group"))
+	if cardGroup != "" && !containsBand(cardGroupKeys, cardGroup) {
+		return RefusalData{
+			Type:      "refusal",
+			Operation: tool,
+			Kind:      RefusalKindInvalidArgument,
+			Reason:    fmt.Sprintf("unknown card_group %q; valid card groups: %s", cardGroup, strings.Join(cardGroupKeys, ", ")),
+		}, nil
+	}
 	offset, err := OffsetFromArgs(args)
 	if err != nil {
 		return RefusalData{Type: "refusal", Operation: tool, Kind: RefusalKindInvalidArgument, Reason: err.Error()}, nil
@@ -86,6 +122,15 @@ func BandReadResult(tool string, data any, args map[string]any) (any, error) {
 			}
 		}
 		rows = filtered
+	}
+	// card_band and card_group filter the same way, before paging, so
+	// card_bands[] and card_groups[] keep the full shape.
+	rows = filterRowsByField(rows, "card_band", cardBand)
+	rows = filterRowsByField(rows, "card_group", cardGroup)
+	if cardBand != "" || cardGroup != "" {
+		// The export lists every copy of an item listed twice; the card
+		// counts the first, so a card filter returns the first only.
+		rows = firstCopyRows(rows)
 	}
 	// held is applied here, before the limit cap below, not forwarded as an
 	// /api/overview query parameter: the endpoint computes bands[] counts
@@ -207,6 +252,40 @@ func rekeyBandRows(data any) any {
 		}
 	}
 	return data
+}
+
+// filterRowsByField keeps the rows whose field equals want; "" keeps all.
+func filterRowsByField(rows []any, field, want string) []any {
+	if want == "" {
+		return rows
+	}
+	filtered := make([]any, 0, len(rows))
+	for _, row := range rows {
+		if m, ok := row.(map[string]any); ok && m[field] == want {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+// firstCopyRows keeps the first row of each repo#number.
+func firstCopyRows(rows []any) []any {
+	seen := map[string]bool{}
+	out := make([]any, 0, len(rows))
+	for _, row := range rows {
+		m, ok := row.(map[string]any)
+		if !ok {
+			out = append(out, row)
+			continue
+		}
+		key := strings.ToLower(fmt.Sprint(m["repo"])) + "#" + fmt.Sprint(m["number"])
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, row)
+	}
+	return out
 }
 
 func containsBand(bands []string, band string) bool {
