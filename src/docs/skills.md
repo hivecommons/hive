@@ -22,7 +22,7 @@ land in the same `${KNOWLEDGE}` block of the kick.
 
 `/data/skills/`, inside the container — that is, in the mounted `/data`
 volume. The path is `dataVolumePath + "/skills"`
-(`src/pkg/dashboard/status_builder.go:36`).
+(`src/pkg/dashboard/status_builder.go:46`).
 
 The directory is **optional**. An absent directory reports "not configured"
 rather than erroring, so nothing breaks if you never create it.
