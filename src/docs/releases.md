@@ -431,8 +431,12 @@ below), so the release pipeline never chases its own tail.
 
 ## Verifying image signatures (cosign)
 
-Pushed image digests are signed keyless with cosign from `docker.yml` and
-`tagged-release.yml`. The signature is a separate `sha256-<digest>.sig` object,
+The manifest-list digest behind each tag pushed by `docker.yml` and
+`tagged-release.yml` is signed keyless with cosign, so signatures verify against
+the digest a tag resolves to. Tags are mutable pointers and carry no signature
+themselves: resolve the tag to its digest
+(`docker buildx imagetools inspect <tag> --format '{{.Manifest.Digest}}'`) and
+verify that digest. The signature is a separate `sha256-<digest>.sig` object,
 so the image manifest is unchanged. Verify with the workflow identity:
 
 ```

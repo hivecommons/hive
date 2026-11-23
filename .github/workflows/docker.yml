@@ -668,19 +668,6 @@ jobs:
             "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
             v5 true candidate
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-
-      # Keyless signature of each pushed per-arch digest. cosign stores it as a
-      # separate sha256-<digest>.sig object, so the image manifest stays
-      # untouched (#3760). Verify: src/docs/releases.md.
-      - name: Sign pushed digests with cosign
-        run: |
-          set -euo pipefail
-          for f in /tmp/digests/*; do
-            cosign sign --yes "ghcr.io/${{ github.repository_owner }}/hive@sha256:$(basename "$f")"
-          done
-
       # ---- Cross-org mirror (kubestellar <-> hivecommons dual-publish) ----
       # Copy the tags just published above into the other org's GHCR
       # namespace BY DIGEST (`imagetools create -t <cross>:<tag>
@@ -773,6 +760,68 @@ jobs:
             fi
             echo "Mirroring ${CROSS_IMAGE}:${tag} <- ${NATIVE_IMAGE}@${digest}"
             docker buildx imagetools create -t "${CROSS_IMAGE}:${tag}" "${NATIVE_IMAGE}@${digest}"
+          done
+
+      # Keyless signature of the manifest-list digest behind every tag we just
+      # published, so `cosign verify` works on the tags users actually pull
+      # (not just the per-arch digests). Runs AFTER the cross-org mirror so a
+      # Sigstore outage can never skip the mirror. cosign stores the signature
+      # as a separate sha256-<digest>.sig object, leaving the image manifest
+      # untouched (#3760). Verify: src/docs/releases.md.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # The mirror step may have replaced the GHCR login with the cross-org
+      # PAT (one credential per host); cosign needs native-org write access.
+      - name: Log in to GHCR (native org, for signing)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign published tags with cosign
+        env:
+          NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
+          GIT_SHA: ${{ needs.gate.outputs.sha }}
+          # Mirror publish-image-tags.sh's positional args in the publish step
+          # above — keep in lockstep with that call.
+          INCLUDE_LATEST: "true"
+          RELEASE_BRANCH: "v5"
+          CHANNELS: "candidate"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pushed=(/tmp/digests/*)
+          if [ "${#pushed[@]}" -eq 0 ]; then
+            echo "no per-arch digests were pushed — nothing to sign"
+            exit 0
+          fi
+          branch_tag="${BRANCH//\//-}"
+          tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
+          if [ "$INCLUDE_LATEST" = "true" ]; then tags+=("latest"); fi
+          if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
+            IFS=, read -ra channel_tags <<<"$CHANNELS"
+            for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
+          fi
+          declare -A signed=()
+          for tag in "${tags[@]}"; do
+            if ! digest=$(docker buildx imagetools inspect \
+                "${NATIVE_IMAGE}:${tag}" --format '{{.Manifest.Digest}}' 2>&1); then
+              if grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$' <<<"$digest"; then
+                echo "native tag ${NATIVE_IMAGE}:${tag} does not exist — nothing to sign for it"
+                continue
+              fi
+              echo "::error::could not inspect ${NATIVE_IMAGE}:${tag}" >&2
+              echo "$digest" >&2
+              exit 1
+            fi
+            # Tags can share a digest; one signature covers them all.
+            [ -n "${signed[$digest]:-}" ] && continue
+            signed[$digest]=1
+            echo "Signing ${NATIVE_IMAGE}@${digest} (${tag})"
+            cosign sign --yes "${NATIVE_IMAGE}@${digest}"
           done
 
   build-contributor:
@@ -926,19 +975,6 @@ jobs:
             "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
             v5 true candidate
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-
-      # Keyless signature of each pushed per-arch digest. cosign stores it as a
-      # separate sha256-<digest>.sig object, so the image manifest stays
-      # untouched (#3760). Verify: src/docs/releases.md.
-      - name: Sign pushed digests with cosign
-        run: |
-          set -euo pipefail
-          for f in /tmp/contrib-digests/*; do
-            cosign sign --yes "ghcr.io/${{ github.repository_owner }}/hive-contributor@sha256:$(basename "$f")"
-          done
-
       # Cross-org mirror — same mechanics, same missing-secret asymmetry, and
       # same "one credential per registry host" ordering constraint as the
       # fully commented block in the `merge` job above.
@@ -1003,6 +1039,68 @@ jobs:
             fi
             echo "Mirroring ${CROSS_IMAGE}:${tag} <- ${NATIVE_IMAGE}@${digest}"
             docker buildx imagetools create -t "${CROSS_IMAGE}:${tag}" "${NATIVE_IMAGE}@${digest}"
+          done
+
+      # Keyless signature of the manifest-list digest behind every tag we just
+      # published, so `cosign verify` works on the tags users actually pull
+      # (not just the per-arch digests). Runs AFTER the cross-org mirror so a
+      # Sigstore outage can never skip the mirror. cosign stores the signature
+      # as a separate sha256-<digest>.sig object, leaving the image manifest
+      # untouched (#3760). Verify: src/docs/releases.md.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # The mirror step may have replaced the GHCR login with the cross-org
+      # PAT (one credential per host); cosign needs native-org write access.
+      - name: Log in to GHCR (native org, for signing)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign published tags with cosign
+        env:
+          NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive-contributor
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
+          GIT_SHA: ${{ needs.gate.outputs.sha }}
+          # Mirror publish-image-tags.sh's positional args in the publish step
+          # above — keep in lockstep with that call.
+          INCLUDE_LATEST: "true"
+          RELEASE_BRANCH: "v5"
+          CHANNELS: "candidate"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pushed=(/tmp/contrib-digests/*)
+          if [ "${#pushed[@]}" -eq 0 ]; then
+            echo "no per-arch digests were pushed — nothing to sign"
+            exit 0
+          fi
+          branch_tag="${BRANCH//\//-}"
+          tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
+          if [ "$INCLUDE_LATEST" = "true" ]; then tags+=("latest"); fi
+          if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
+            IFS=, read -ra channel_tags <<<"$CHANNELS"
+            for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
+          fi
+          declare -A signed=()
+          for tag in "${tags[@]}"; do
+            if ! digest=$(docker buildx imagetools inspect \
+                "${NATIVE_IMAGE}:${tag}" --format '{{.Manifest.Digest}}' 2>&1); then
+              if grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$' <<<"$digest"; then
+                echo "native tag ${NATIVE_IMAGE}:${tag} does not exist — nothing to sign for it"
+                continue
+              fi
+              echo "::error::could not inspect ${NATIVE_IMAGE}:${tag}" >&2
+              echo "$digest" >&2
+              exit 1
+            fi
+            # Tags can share a digest; one signature covers them all.
+            [ -n "${signed[$digest]:-}" ] && continue
+            signed[$digest]=1
+            echo "Signing ${NATIVE_IMAGE}@${digest} (${tag})"
+            cosign sign --yes "${NATIVE_IMAGE}@${digest}"
           done
 
   build-hub:
@@ -1170,19 +1268,6 @@ jobs:
             "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
             v5 true candidate
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-
-      # Keyless signature of each pushed per-arch digest. cosign stores it as a
-      # separate sha256-<digest>.sig object, so the image manifest stays
-      # untouched (#3760). Verify: src/docs/releases.md.
-      - name: Sign pushed digests with cosign
-        run: |
-          set -euo pipefail
-          for f in /tmp/hub-digests/*; do
-            cosign sign --yes "ghcr.io/${{ github.repository_owner }}/hive-hub@sha256:$(basename "$f")"
-          done
-
       # Cross-org mirror — same mechanics, same missing-secret asymmetry, and
       # same "one credential per registry host" ordering constraint as the
       # fully commented block in the `merge` job above.
@@ -1254,6 +1339,68 @@ jobs:
   # image above, dual-published through publish-image-tags.sh. The comments
   # copied from the hub jobs apply unchanged; the build-args the hub stamps
   # are unused by Dockerfile.mx and kept only so the two jobs stay diffable.
+      # Keyless signature of the manifest-list digest behind every tag we just
+      # published, so `cosign verify` works on the tags users actually pull
+      # (not just the per-arch digests). Runs AFTER the cross-org mirror so a
+      # Sigstore outage can never skip the mirror. cosign stores the signature
+      # as a separate sha256-<digest>.sig object, leaving the image manifest
+      # untouched (#3760). Verify: src/docs/releases.md.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # The mirror step may have replaced the GHCR login with the cross-org
+      # PAT (one credential per host); cosign needs native-org write access.
+      - name: Log in to GHCR (native org, for signing)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign published tags with cosign
+        env:
+          NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive-hub
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
+          GIT_SHA: ${{ needs.gate.outputs.sha }}
+          # Mirror publish-image-tags.sh's positional args in the publish step
+          # above — keep in lockstep with that call.
+          INCLUDE_LATEST: "true"
+          RELEASE_BRANCH: "v5"
+          CHANNELS: "candidate"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pushed=(/tmp/hub-digests/*)
+          if [ "${#pushed[@]}" -eq 0 ]; then
+            echo "no per-arch digests were pushed — nothing to sign"
+            exit 0
+          fi
+          branch_tag="${BRANCH//\//-}"
+          tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
+          if [ "$INCLUDE_LATEST" = "true" ]; then tags+=("latest"); fi
+          if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
+            IFS=, read -ra channel_tags <<<"$CHANNELS"
+            for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
+          fi
+          declare -A signed=()
+          for tag in "${tags[@]}"; do
+            if ! digest=$(docker buildx imagetools inspect \
+                "${NATIVE_IMAGE}:${tag}" --format '{{.Manifest.Digest}}' 2>&1); then
+              if grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$' <<<"$digest"; then
+                echo "native tag ${NATIVE_IMAGE}:${tag} does not exist — nothing to sign for it"
+                continue
+              fi
+              echo "::error::could not inspect ${NATIVE_IMAGE}:${tag}" >&2
+              echo "$digest" >&2
+              exit 1
+            fi
+            # Tags can share a digest; one signature covers them all.
+            [ -n "${signed[$digest]:-}" ] && continue
+            signed[$digest]=1
+            echo "Signing ${NATIVE_IMAGE}@${digest} (${tag})"
+            cosign sign --yes "${NATIVE_IMAGE}@${digest}"
+          done
+
   build-mx:
     needs: gate
     # Only when gate says push=true, same as `build` above (#4965).
@@ -1416,19 +1563,6 @@ jobs:
             "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
             v5 true candidate
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-
-      # Keyless signature of each pushed per-arch digest. cosign stores it as a
-      # separate sha256-<digest>.sig object, so the image manifest stays
-      # untouched (#3760). Verify: src/docs/releases.md.
-      - name: Sign pushed digests with cosign
-        run: |
-          set -euo pipefail
-          for f in /tmp/mx-digests/*; do
-            cosign sign --yes "ghcr.io/${{ github.repository_owner }}/hive-mx@sha256:$(basename "$f")"
-          done
-
       # Cross-org mirror — same mechanics, same missing-secret asymmetry, and
       # same "one credential per registry host" ordering constraint as the
       # fully commented block in the `merge` job above.
@@ -1493,4 +1627,66 @@ jobs:
             fi
             echo "Mirroring ${CROSS_IMAGE}:${tag} <- ${NATIVE_IMAGE}@${digest}"
             docker buildx imagetools create -t "${CROSS_IMAGE}:${tag}" "${NATIVE_IMAGE}@${digest}"
+          done
+
+      # Keyless signature of the manifest-list digest behind every tag we just
+      # published, so `cosign verify` works on the tags users actually pull
+      # (not just the per-arch digests). Runs AFTER the cross-org mirror so a
+      # Sigstore outage can never skip the mirror. cosign stores the signature
+      # as a separate sha256-<digest>.sig object, leaving the image manifest
+      # untouched (#3760). Verify: src/docs/releases.md.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # The mirror step may have replaced the GHCR login with the cross-org
+      # PAT (one credential per host); cosign needs native-org write access.
+      - name: Log in to GHCR (native org, for signing)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign published tags with cosign
+        env:
+          NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive-mx
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
+          GIT_SHA: ${{ needs.gate.outputs.sha }}
+          # Mirror publish-image-tags.sh's positional args in the publish step
+          # above — keep in lockstep with that call.
+          INCLUDE_LATEST: "true"
+          RELEASE_BRANCH: "v5"
+          CHANNELS: "candidate"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pushed=(/tmp/mx-digests/*)
+          if [ "${#pushed[@]}" -eq 0 ]; then
+            echo "no per-arch digests were pushed — nothing to sign"
+            exit 0
+          fi
+          branch_tag="${BRANCH//\//-}"
+          tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
+          if [ "$INCLUDE_LATEST" = "true" ]; then tags+=("latest"); fi
+          if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
+            IFS=, read -ra channel_tags <<<"$CHANNELS"
+            for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
+          fi
+          declare -A signed=()
+          for tag in "${tags[@]}"; do
+            if ! digest=$(docker buildx imagetools inspect \
+                "${NATIVE_IMAGE}:${tag}" --format '{{.Manifest.Digest}}' 2>&1); then
+              if grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$' <<<"$digest"; then
+                echo "native tag ${NATIVE_IMAGE}:${tag} does not exist — nothing to sign for it"
+                continue
+              fi
+              echo "::error::could not inspect ${NATIVE_IMAGE}:${tag}" >&2
+              echo "$digest" >&2
+              exit 1
+            fi
+            # Tags can share a digest; one signature covers them all.
+            [ -n "${signed[$digest]:-}" ] && continue
+            signed[$digest]=1
+            echo "Signing ${NATIVE_IMAGE}@${digest} (${tag})"
+            cosign sign --yes "${NATIVE_IMAGE}@${digest}"
           done
