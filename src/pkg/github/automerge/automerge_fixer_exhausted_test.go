@@ -1,6 +1,7 @@
 package automerge
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
@@ -107,6 +108,64 @@ func TestFixerExhaustedParksHivePRAtNeedsDecisionOnce(t *testing.T) {
 	o.observeSelf(hiveFixingPRNoIssue(90, "ddd", "stage/085-needs-decision"), contributorLaneReasonChangesRequested)
 	if rec, _ := o.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.Fixing {
 		t.Fatalf("new head with an active fix = %s (%q)", rec.Stage, rec.Reason)
+	}
+}
+
+// Both stage drivers (projectbluefin/utah-packages#1278): the engine loop
+// runs the pass on its long-lived engine, the governor's automerge sweep on
+// a one-shot engine built from its own Options (ApplyStageLabels). Built
+// from options carrying the same FixDispatchStatus, both route the hive's
+// PR whose fixer gave up to 085 fixer-exhausted:N, pass after pass, so the
+// label does not flip 070/085 and the dampener never freezes it at 070.
+func TestFixerExhaustedSameStageFromBothDrivers(t *testing.T) {
+	o, done, status := fixerExhaustedHarness(t)
+	defer done()
+	key := stageKey("acme", "widget", 90)
+	status[90] = review.FixDispatchStatus{Attempts: 6, Reason: review.FixDispatchExcludedAttemptsExhausted}
+	pr := func() *gh.PullRequest { return hiveFixingPRNoIssue(90, "ccc", "stage/070-fixing") }
+	want := func(driver string, pass int) {
+		t.Helper()
+		rec, _ := o.e.stageStoreOrShared().Get(key)
+		if rec.Stage != stagelabels.NeedsDecision || rec.Reason != stagelabels.FixerExhaustedReason(6) {
+			t.Fatalf("pass %d (%s) = %s (%q), want %s (%q)", pass, driver, rec.Stage, rec.Reason, stagelabels.NeedsDecision, stagelabels.FixerExhaustedReason(6))
+		}
+	}
+	// The governor's one-shot engine: the process-shared tracker and store,
+	// and the same stage callbacks the engine loop's options carry.
+	governorPass := func() {
+		t.Helper()
+		g := New(o.e.transport, Options{
+			Now:                    o.e.now,
+			StageLabelPolicy:       o.e.stageLabelPolicy,
+			StageTracker:           o.e.stageTracker,
+			StageStore:             o.e.stageStore,
+			ContributorNudge:       o.e.contributorNudge,
+			ContributorLaneVerdict: o.e.contributorLaneVerdict,
+			RebaseResolver:         o.e.rebaseResolver,
+			RebaseEpisode:          o.e.rebaseEpisode,
+			FixDispatchStatus:      o.e.fixDispatch,
+		})
+		o.adopt.mu.Lock()
+		o.adopt.heads[90] = "ccc"
+		o.adopt.mu.Unlock()
+		g.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr(), contributorLaneReasonChangesRequested, false, nil)
+		g.noteStageRole("acme", "widget", 90, stagelabels.RoleTrusted)
+		if _, err := g.ApplyStageLabels(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	o.observeSelf(pr(), contributorLaneReasonChangesRequested)
+	want("engine loop", 1)
+	for pass := 2; pass <= 7; pass++ {
+		o.clock.advance(5 * time.Minute)
+		if pass%2 == 0 {
+			governorPass()
+			want("governor sweep", pass)
+			continue
+		}
+		o.observeSelf(pr(), contributorLaneReasonChangesRequested)
+		want("engine loop", pass)
 	}
 }
 

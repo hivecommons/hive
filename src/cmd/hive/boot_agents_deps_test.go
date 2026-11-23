@@ -54,6 +54,10 @@ type bootAgentsFake struct {
 	minterCalls     int
 	permWatcherRuns int
 	exitCodes       []int
+
+	// sweepOpts is the engine loop's automerge.Options as bootAgentsWith
+	// handed them to the sweep (TestStageDriversSeeTheSameExhaustedFixer).
+	sweepOpts automerge.Options
 }
 
 func newBootAgentsFake() *bootAgentsFake {
@@ -69,9 +73,10 @@ func newBootAgentsFake() *bootAgentsFake {
 			f.relayMu.Unlock()
 			return ctx.Done()
 		},
-		startSelfAuthoredSweep: func(ctx context.Context, c *github.Client, max int, allowed bool, level *int, _ automerge.Options) <-chan struct{} {
+		startSelfAuthoredSweep: func(ctx context.Context, c *github.Client, max int, allowed bool, level *int, opts automerge.Options) <-chan struct{} {
 			f.relayMu.Lock()
 			f.sweepClient, f.sweepMax, f.sweepAllowed, f.sweepLevel = c, max, allowed, level
+			f.sweepOpts = opts
 			f.relayMu.Unlock()
 			f.sweepStarted <- struct{}{}
 			return ctx.Done()

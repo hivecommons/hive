@@ -80,9 +80,7 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/promptsrc"
-	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/retro"
-	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/review/autoscale"
 	"github.com/hivecommons/hive/pkg/rfccoverage"
 	"github.com/hivecommons/hive/pkg/rotation"
@@ -91,7 +89,6 @@ import (
 	"github.com/hivecommons/hive/pkg/slack"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/stageengine"
-	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/startrec"
 	"github.com/hivecommons/hive/pkg/telegram"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -2371,23 +2368,17 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// its open-PR set and run on webhook events instead of listing /pulls.
 	forgeOpenPRs := b.forgeStateOpenPRs()
 	autoMergeOpts := automerge.Options{
-		Logger:                   b.logger,
-		MergerAuthorizer:         trustedMergerFunc(b.cfg),
-		HumanChangeRequests:      review.DefaultHumanChangeRequests(),
-		TrustedAuthorizer:        trustedAuthorFunc(b.cfg),
-		TrustedAuthorPolicy:      trustedAuthorPolicyFunc(b.cfg),
-		ContributorLanePolicy:    contributorLanePolicyFunc(b.cfg),
-		ContributorLaneVerdict:   contributorLaneVerdictFunc(b.cfg, b.logger),
-		ContributorRegistryTier:  contributorRegistryTierFunc(),
-		ReviewVerdictHold:        reviewVerdictHoldFunc(b.logger),
-		RecordReviewHoldRelease:  reviewHoldReleaseRecorder(b.logger),
-		StageLabelPolicy:         stageLabelPolicyFunc(b.cfg),
-		StageEngine:              stageEngineOptions(b.cfg, b.logger),
-		SentinelLabel:            func() string { return b.cfg.Sentinel.LabelOrDefault() },
-		SweepTrigger:             b.sweepTrigger,
-		MergeQueueBases:          hiveMergeQueueBases,
-		HiveSupersedingAutoMerge: func() bool { return b.cfg.AutoMerge.HiveSuperseding.AutoMergeEnabled() },
+		Logger:                  b.logger,
+		ReviewVerdictHold:       reviewVerdictHoldFunc(b.logger),
+		RecordReviewHoldRelease: reviewHoldReleaseRecorder(b.logger),
+		SweepTrigger:            b.sweepTrigger,
+		MergeQueueBases:         hiveMergeQueueBases,
 	}
+	// The stage-label pass's inputs, shared with the governor's automerge
+	// sweep (governorAutoMergeOptions) so the two passes route a PR alike:
+	// merger/author/lane policy, stage policy, human-merge paths, required
+	// checks, the fixer's dispatch status and the rebase-resolve episode.
+	applyStageDriverOptions(&autoMergeOpts, b.cfg, b.logger)
 	if forgeOpenPRs != nil {
 		autoMergeOpts.OpenPRs = forgeOpenPRs
 	}
@@ -2427,20 +2418,11 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
-	// automerge_sweep.go): install the operator-declared
-	// auto_merge.required_checks list, if any, so naming required checks
-	// does not depend on GitHub's required-status-checks branch-protection
-	// API. Older Hive App installations often lack administration:read, so
-	// that API call fails closed to the coarser isMetaCheck/isIgnorableCICheck
-	// allowlist. Unset/empty leaves the API/allowlist fallback chain
-	// intact (SetRequiredChecks(nil) is a safe no-op).
-	logDeprecatedAllowUnprotectedBase(b.cfg, b.logger)
-	// The same set configureGitHubClient installed on the client via
+	// automerge_sweep.go): applyStageDriverOptions installed the
+	// operator-declared auto_merge.required_checks list, the same set
+	// configureGitHubClient installed on the client via
 	// syncAutoMergePolicyToGitHubClient.
-	if set, ok := b.cfg.AutoMerge.RequiredCheckSet(); ok {
-		autoMergeOpts.RequiredChecks = set
-	}
-	autoMergeOpts.RequiredChecksForRepo = b.cfg.AutoMerge.RequiredCheckSetForRepo
+	logDeprecatedAllowUnprotectedBase(b.cfg, b.logger)
 
 	// Issue relay: agents request issue creation and comments by dropping a
 	// file (hive-open-issue via the gh wrapper) instead of calling GitHub
@@ -2501,14 +2483,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 
 	autoMergeOpts.MutationBoundary = b.mutationBoundary
 	autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
-	autoMergeOpts.MinHeadAge = b.cfg.AutoMerge.EffectiveMinHeadAge()
-	autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
-	autoMergeOpts.RepoAutoMergeSwitchedOff = func(repo string) bool { return b.cfg.RepoAutoMergeSwitchedOff(repo) }
 	autoMergeOpts.RepoOnGitHub = func(repo string) bool { return b.cfg.RepoOnGitHub(repo) }
-	// Read through b.cfg on every sweep tick so a config reload of
-	// auto_merge.trusted_bot_authors takes effect without a restart.
-	autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
-	autoMergeOpts.ReviewBotAuthors = func() []string { return b.cfg.Review.EffectiveBotAuthors() }
+	// Read through b.cfg on every sweep tick so a config reload applies
+	// without a restart.
 	autoMergeOpts.TrustedBotSkipReview = func() bool { return b.cfg.AutoMerge.TrustedBotSkipsReview() }
 	autoMergeOpts.BotTakeoverEnabled = func() bool { return b.cfg.AutoMerge.BotTakeover.IsEnabled() }
 	// A dependency-bot PR parked on a terminal required-check hold is handed
@@ -2530,13 +2507,6 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			b.dashSrv.AuditLogRecord("system", reviewEvaluatedAuditAction, reviewEvaluatedAuditDetail(e), "", e.Repo, e.Number)
 		}
 	})
-	// Human-merge paths (#11038): read through b.cfg on every evaluation so
-	// a reload of auto_merge.human_merge_paths applies without a restart.
-	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
-	autoMergeOpts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(b.cfg, repo) }
-	autoMergeOpts.HumanMergeOwnerApproval = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.HumanMergeOwnerApprovalFor(repo) }
-	autoMergeOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(b.cfg) }
-	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	// Commit messages on a merge-ready head are read for closing keywords
 	// that name another pull request (hivecommons/hive#15025).
 	autoMergeOpts.ScanCommitClosingKeywords = true
@@ -2548,28 +2518,13 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	}
 	// Merge train (#15117): read live so a reload applies. A member the
 	// train could not update-branch is handed to the fixer's rebase-resolve
-	// episode (#15104): the request admits the PR to the fixer router —
-	// which still requires a head the hive can push to — under the shared
-	// two-attempt guard, and the lane merges the clean head on its next pass.
-	// The adoption lane opens the same episode on the hive's own copy of
-	// a contributor PR whose head would not replay onto the base
+	// episode (#15104) through the RebaseResolver applyStageDriverOptions
+	// installed: the request admits the PR to the fixer router (which
+	// still requires a head the hive can push to) under the shared
+	// two-attempt guard, and the lane merges the clean head on its next
+	// pass. The adoption lane opens the same episode on the hive's own copy
+	// of a contributor PR whose head would not replay onto the base
 	// (hivecommons/hive#15307), with RequestedBy naming it.
-	autoMergeOpts.RebaseResolver = automerge.RebaseResolverFunc(func(_ context.Context, req automerge.RebaseRequest) error {
-		requester := mergeTrainRebaseRequester
-		if req.RequestedBy != "" {
-			requester = req.RequestedBy
-		}
-		rebasemerge.SharedAttempts().Request(req.Repo, req.Number, req.HeadSHA, requester, time.Now())
-		return nil
-	})
-	autoMergeOpts.RebaseEpisode = func(repo string, number int) (automerge.RebaseEpisode, bool) {
-		a, ok := rebasemerge.SharedAttempts().Get(repo, number)
-		if !ok {
-			return automerge.RebaseEpisode{}, false
-		}
-		return automerge.RebaseEpisode{Attempt: a.Count(), MaxAttempts: rebasemerge.MaxRebaseAttempts, Exhausted: a.Exhausted(), RequestedBy: a.RequestedBy}, true
-	}
-	autoMergeOpts.FixDispatchStatus = fixDispatchStatusReader()
 	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
 		if b.cfg == nil {
 			return automerge.DefaultMergeTrainPolicy
