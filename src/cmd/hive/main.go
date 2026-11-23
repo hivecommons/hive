@@ -3675,6 +3675,17 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		svc.hubImport = func(ctx context.Context, person string) {
 			b.runCustomersHubImport(ctx, b.customersMentionConfig(), person)
 		}
+		// #19302: fill profile fields from each customer's public forge
+		// profile (backfill, periodic refresh, on accept and on demand).
+		// Off unless customers.profile_fill.enabled.
+		svc.profileFill = newCustomersProfileFill(svc.svc.Store(), customersProfileFillDeps{
+			cfg:         b.customersMentionConfig,
+			client:      b.currentGitHubClient,
+			linearToken: b.dashSrv.LinearAgentAccessToken,
+			orgs:        newCustomersOrgNames(),
+			logger:      b.logger,
+		})
+		b.cleanup.push(svc.startCustomersProfileFill(b.ctx))
 		// Customers enrichment: public affiliation from cncf/gitdm, off
 		// unless customers.enrichment and its gitdm switch are on.
 		wireCustomersEnrichment(svc.svc, customersDataDir, b.customersMentionConfig, b.logger)
@@ -3956,7 +3967,7 @@ func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 
 func syncForgeCredentialEnv(cfg *config.Config) {
-	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName())
+	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName(), cfg.Forgejo.TokenEnvName())
 }
 
 // bootWatchersWith is bootWatchers with its long-lived effects injected; see

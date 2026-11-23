@@ -66,7 +66,7 @@ func NormalizeRepositoryID(id string) (string, error) {
 		return "", fmt.Errorf("repository id %q must be <forge>/<host>/<owner>/<name>", id)
 	}
 	switch parts[0] {
-	case "github", "gitlab", "gitea":
+	case "github", "gitlab", "gitea", "forgejo":
 	default:
 		return "", fmt.Errorf("unsupported repository forge %q", parts[0])
 	}

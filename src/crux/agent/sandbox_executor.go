@@ -99,6 +99,10 @@ type SandboxKickSpec struct {
 	// TargetPRSource says where the kick named TargetPR, for the prompt and
 	// the run record.
 	TargetPRSource string
+	// Environment is the hardware hive requested for a Job-runtime kick,
+	// from config (hivecommons/hive#19549). Non-nil prepends the
+	// [hive:sandbox-environment] section to the prompt.
+	Environment *sandboxEnvironment
 
 	// targetHead and targetURL are set by workspace prep for a TargetPR
 	// kick: the head commit checked out (the push's lease) and the PR URL.
@@ -229,6 +233,9 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 			}
 		}()
 	}
+	// Prepended after workspace prep, so it opens the prompt ahead of any
+	// review or target-PR section.
+	spec.Message = sandboxEnvironmentPromptSection(spec.Environment) + spec.Message
 	if err := writeSandboxPrompt(workspace, spec.Message); err != nil {
 		res.Error = err.Error()
 		return res, err

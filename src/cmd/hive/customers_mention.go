@@ -50,33 +50,10 @@ func (s customersMentionSearcher) SearchMentions(ctx context.Context, kind, logi
 	return out, nil
 }
 
-// customersProfileSource adapts the shared GitHub client to
-// customers.ProfileSource.
-type customersProfileSource struct {
-	client func() *github.Client
-}
-
-func (s customersProfileSource) PublicProfile(ctx context.Context, login string) (customers.PublicProfile, error) {
-	c := s.client()
-	if c == nil {
-		return customers.PublicProfile{}, github.ErrNoGitHubClient
-	}
-	p, err := c.GetPublicProfile(ctx, login)
-	if err != nil {
-		if errors.Is(err, github.ErrMentionSearchRateLimited) {
-			return customers.PublicProfile{}, customers.ErrMentionQuotaLow
-		}
-		return customers.PublicProfile{}, err
-	}
-	return customers.PublicProfile{Name: p.Name, Company: p.Company, Location: p.Location}, nil
-}
-
 // newCustomersMentionSearch builds the accept-time search over the people
 // store's index. cfg and client are read on every call.
 func newCustomersMentionSearch(svc *customers.Service, cfg func() *config.Config, client func() *github.Client) *customers.MentionSearch {
 	m := customers.NewMentionSearch(customersMentionSearcher{client: client}, svc.Index())
-	m.Profiles = customersProfileSource{client: client}
-	m.Store = svc.Store()
 	m.Enabled = func() bool { return cfg().CustomersMentionSearchEnabled() }
 	m.HourlyLimit = func() int {
 		if c := cfg(); c != nil {
@@ -115,12 +92,8 @@ func (c *customersDashboard) searchOnAccept(person string, ident customers.Ident
 	run := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), customersMentionTimeout)
 		defer cancel()
-		// The profile first: one request, filling the real name,
-		// organization and location a person published on GitHub.
-		if pr := c.mentions.FetchProfile(ctx, person, ident); c.logger != nil && pr.Skipped != customers.SkipDisabled {
-			c.logger.Info("[customers] accept-time github profile", slog.String("person", pr.Person),
-				slog.Int("filled", pr.Filled), slog.String("skipped", pr.Skipped))
-		}
+		// The profile fields are filled by the profile fill
+		// (customers.profile_fill, #19302), not by this search.
 		res := c.mentions.Run(ctx, person, ident)
 		if c.logger == nil || res.Skipped == customers.SkipDisabled {
 			return

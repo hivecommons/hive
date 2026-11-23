@@ -38691,7 +38691,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const isPublic = hostLabel === 'github.com';
       // Each card carries its own forge (#14115), and repo_policies[].forge can
       // put one repo on a different forge from the rest. The badge names the
-      // hive's forge only when every card agrees; a GitLab or Gitea/Forgejo
+      // hive's forge only when every card agrees; a GitLab, Gitea or Forgejo
       // hive gets its own host here instead of the GitHub host the badge would
       // otherwise claim, and a mixed hive says so instead of claiming one host.
       const repoForges = (repos || []).map(r => repoForgeWeb(r, hostLabel));
@@ -39079,7 +39079,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
      * Where a repo card points and what it calls its host (#14115). r.forge is
      * the repo's forge kind from /api/status; GitHub (and an older hive that
      * reports no kind) keeps the GitHub host from /api/config, while GitLab and
-     * Gitea/Forgejo use r.forgeUrl and their own issue and change-request paths.
+     * Gitea and Forgejo use r.forgeUrl and their own issue and change-request paths.
      */
     function repoForgeWeb(r, githubHost) {
       const kind = String((r && r.forge) || 'github').toLowerCase();
@@ -39087,8 +39087,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (kind === 'gitlab' && base) {
         return { kind, icon: '🦊', name: 'GitLab', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/-/issues', changesPath: '/-/merge_requests', changePath: '/-/merge_requests' };
       }
+      if (kind === 'forgejo' && base) {
+        return { kind, icon: '🍵', name: 'Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
+      }
       if (kind === 'gitea' && base) {
-        return { kind, icon: '🍵', name: 'Gitea/Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
+        return { kind, icon: '🍵', name: 'Gitea', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
       }
       return { kind: 'github', icon: '🐙', name: 'GitHub', host: githubHost, base: window._githubBaseUrl || 'https://github.com', issuesPath: '/issues', changesPath: '/pulls', changePath: '/pull' };
     }
@@ -42081,7 +42084,8 @@ function burnAreaChart() {
       const FORGE_META = {
         github: { icon: '🐙', name: 'GitHub' },
         gitlab: { icon: '🦊', name: 'GitLab' },
-        gitea:  { icon: '🍵', name: 'Gitea' }
+        gitea:  { icon: '🍵', name: 'Gitea' },
+        forgejo: { icon: '🍵', name: 'Forgejo' }
       };
       const fm = FORGE_META[forgeKind] || { icon: '🔀', name: forgeKind || 'Forge' };
       const repoCount = Number(forge.repoCount) || 0;
@@ -54650,6 +54654,32 @@ function burnAreaChart() {
       { key: 'country', label: 'Country (code or name)', max: 120 }
     ];
 
+    // CUSTOMERS_REFRESH_RELOAD_MS: how long after "Refresh from profiles" for
+    // everyone the list is read again, so the first pass shows.
+    const CUSTOMERS_REFRESH_RELOAD_MS = 5000;
+
+    // CUSTOMERS_PROFILE_SOURCES: the forge a profile-fill value was read
+    // from, by the rule it carries (#19302).
+    const CUSTOMERS_PROFILE_SOURCES = { github_profile: 'GitHub', ghe_profile: 'GitHub Enterprise', gitlab_profile: 'GitLab', gitea_profile: 'Gitea', linear_profile: 'Linear' };
+
+    // customersFieldSourceLabel: the forge an automatic field came from, or
+    // '' for anything else.
+    function customersFieldSourceLabel(f) {
+      return (f && Object.prototype.hasOwnProperty.call(CUSTOMERS_PROFILE_SOURCES, f.rule)) ? CUSTOMERS_PROFILE_SOURCES[f.rule] : '';
+    }
+
+    // customersFieldProvenance: where an automatic field came from, for its
+    // tooltip: the source, the login it was read for and when.
+    function customersFieldProvenance(f) {
+      if (f && f.rule === 'location') return 'Derived from the location';
+      const label = customersFieldSourceLabel(f) || 'GitHub';
+      let t = 'From the public ' + label + ' profile';
+      if (f && f.login) t += ' of ' + f.login;
+      if (f && f.rule) t += ' (source=' + f.rule + ')';
+      if (f && typeof f.at === 'string' && f.at) t += ', fetched ' + f.at.slice(0, 10);
+      return t;
+    }
+
     function customersProfileValue(p, key) {
       const f = (p && p.profile && p.profile[key]) || {};
       return typeof f.value === 'string' ? f.value : '';
@@ -54676,7 +54706,7 @@ function burnAreaChart() {
       const v = customersProfileValue(p, 'organization');
       if (!v) return '';
       const f = p.profile.organization;
-      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : 'From the public GitHub profile');
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : customersFieldProvenance(f));
       const src = f.source === 'manual' || f.source === 'hub' ? f.source : 'auto';
       return '<span class="kc-pill customers-pill customers-org" data-source="' + src + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
@@ -54705,7 +54735,9 @@ function burnAreaChart() {
       const code = customersProfileValue(p, 'country');
       if (!/^[A-Z]{2}$/.test(code)) return '';
       const name = customersCountryName(code);
-      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name) + '">' +
+      const f = p.profile.country;
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub' : customersFieldProvenance(f));
+      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name + ' - ' + why) + '">' +
         '<span aria-hidden="true">' + customersFlagEmoji(code) + '</span> ' + escapeHtml(code) + '</span>';
     }
 
@@ -54894,6 +54926,7 @@ function burnAreaChart() {
       const people = data.people || [];
       const suggestions = data.suggestions || [];
       out += customersAddFormHtml();
+      out += '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshAllProfiles" title="Look every customer up again on their public forge profile, a few at a time">Refresh from profiles</button></div>';
       out += '<div class="customers-block"><div class="section-label m-0">Customers</div><div class="customers-list">' +
         (people.length ? people.map(p => customersRowHtml(p, false)).join('') : '<p class="empty-dashed">No other customers yet. Add one, or accept a suggestion.</p>') + '</div></div>';
       out += '<details class="customers-block customers-suggested" data-ui-key="suggested"' + (_customersUi.open.suggested ? ' open' : '') + '><summary class="customers-summary">Suggested (' + suggestions.length + ')</summary>' +
@@ -55034,16 +55067,19 @@ function burnAreaChart() {
         const manual = cur.source === 'manual';
         // A hub value carries its hub label (#19163, #19306); editing it
         // here makes it manual.
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from GitHub'))) : (manual ? 'cleared by hand' : 'not known');
-        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub')))) : (manual ? 'cleared by hand' : 'not known');
+        const tip = cur.value && cur.source === 'auto' ? ' title="' + escapeHtml(customersFieldProvenance(cur)) + '"' : '';
+        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs"' + tip + '>(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
-          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let the public profile fill this in again">Auto</button>' : '');
       }).join('');
       const cc = customersProfileValue(p, 'country');
       const ccLine = /^[A-Z]{2}$/.test(cc) ? '<div class="muted-xs" data-customers-field="country-line"><span aria-hidden="true">' + customersFlagEmoji(cc) + '</span> ' + escapeHtml(cc) + ' ' + escapeHtml(customersCountryName(cc)) + '</div>' : '';
       return '<div class="customers-block"><div class="section-label m-0">Details</div>' + ccLine +
         '<div class="customers-inline">' + rows + '</div>' + customersAffiliationHtml(p) +
-        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button>' +
+        (customersIsFull() ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshProfile" title="Read this person\'s public forge profile now and fill the fields nobody set by hand">Refresh from profiles</button>' : '') +
+        '</div></div>' +
         customersPublicContributionsHtml(p);
     }
 
@@ -55538,7 +55574,34 @@ function burnAreaChart() {
       if (saved) showToast('Details saved', 'success');
     }
 
-    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
+    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to the public profile'); }
+
+    // customersRefreshProfile: "Refresh from profiles" on the open profile
+    // (#19302). The hive reads the public forge profile now and fills the
+    // fields nobody set by hand.
+    async function customersRefreshProfile() {
+      if (!_customersOpen) return;
+      const id = _customersOpen.me ? 'me' : _customersOpen.id;
+      try {
+        const out = await customersRequest('POST', '/api/customers/' + encodeURIComponent(id) + '/refresh-profile', {});
+        if (out.customer) _customersOpen = out.customer;
+        customersShow();
+        const fill = out.fill || {};
+        if (fill.skipped) showToast('Not refreshed: ' + String(fill.skipped).replace(/_/g, ' '), 'warning');
+        else showToast(fill.filled ? 'Details filled from public profiles' : 'Public profiles checked: nothing new', 'success');
+        fetchCustomers();
+      } catch (e) { customersProfileError(e.message); }
+    }
+
+    // customersRefreshAllProfiles: "Refresh from profiles" for everyone. The
+    // hive looks every customer up again in the background, a few per pass.
+    async function customersRefreshAllProfiles() {
+      try {
+        await customersRequest('POST', '/api/customers/refresh-profiles', {});
+        showToast('Refreshing every customer from public profiles, a few at a time', 'success');
+        setTimeout(fetchCustomers, CUSTOMERS_REFRESH_RELOAD_MS);
+      } catch (e) { showToast(e.message, 'error'); }
+    }
 
     function customersAffiliationAccept(value) { customersEdit({ op: 'profile', field: 'organization', value: value }, 'Organization set'); }
 
@@ -65271,6 +65334,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer goal and satisfaction suggestions', key: 'customers.inference.enabled', text: 'customers inference infer suggest goals satisfaction model confirm HIVE_CUSTOMERS_INFERENCE_ENABLED customers.inference.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer avatars', key: 'customers.avatars.enabled', text: 'customers avatars avatar pictures photos github profile picture privacy HIVE_CUSTOMERS_AVATARS_ENABLED customers.avatars.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer hub import', key: 'customers.hub_import.enabled', text: 'customers hub import consent shared real name organization country from the hub privacy HIVE_CUSTOMERS_HUB_IMPORT_ENABLED customers.hub_import.enabled' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer profile fill', key: 'customers.profile_fill.enabled', text: 'customers profile fill public profile github gitlab gitea forgejo enterprise ghe linear real name organization company location country flag backfill refresh HIVE_CUSTOMERS_PROFILE_FILL_ENABLED customers.profile_fill.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer GitHub search on accept', key: 'customers.mention_search.enabled', text: 'customers github search accept mention mentions comments history quota budget suggested person HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED customers.mention_search.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment', key: 'customers.enrichment.enabled', text: 'customers enrichment public affiliation activity employer company organization cncf colony HIVE_CUSTOMERS_ENRICHMENT_ENABLED customers.enrichment.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment: gitdm', key: 'customers.enrichment.gitdm.enabled', text: 'customers enrichment gitdm cncf affiliation affiliations employer company dates snapshot refresh interval HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED HIVE_CUSTOMERS_ENRICHMENT_GITDM_REFRESH_INTERVAL customers.enrichment.gitdm.enabled customers.enrichment.gitdm.refresh_interval' },
@@ -65282,7 +65346,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Review gate', label: 'Review gate: comments, dispatch and out-of-scope findings', key: 'review.post_comments', text: 'review swarm post comments fan out parallel perspectives combined all authors fix human prs acknowledge no findings confidence score priority labels fixer agent human decision label self authored decision policy reviews per head revise verdicts webhook event driven debounce pending ttl redispatch out of scope backlog issues recommendations review.post_comments review.self_authored_decision_policy review.event_driven review.event_debounce_s review.pending_ttl review.max_redispatch review.head_max_retries review.max_reviews_per_head review.revise_verdicts_before review.out_of_scope_backlog_disabled review.max_out_of_scope_backlog_issues review.recommendations.enabled review.recommendations.min_ready_to_open' },
       { tab: 'Features', section: 'Review gate', label: 'Review evidence bundles', key: 'evidence.enabled', text: 'review evidence bundles audit signing key ed25519 evidence.enabled evidence.signing_key_file' },
       { tab: 'Features', section: 'Review gate', label: 'Benchmarks', key: 'benchmarks.publish', text: 'benchmarks leaderboard publish anonymized hive hash repo consent benchmarks.publish benchmarks.repo_consent hivecommons.dev/benchmarks' },
-      { tab: 'Features', section: 'Integrations & observability', label: 'GitLab and Gitea forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env gitlab.gitlab_url gitlab.token_env gitea.gitea_url gitea.token_env' },
+      { tab: 'Features', section: 'Integrations & observability', label: 'GitLab, Gitea and Forgejo forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env gitlab.gitlab_url gitlab.token_env gitea.gitea_url gitea.token_env forgejo.forgejo_url forgejo.token_env' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Token mint key and TTL', key: 'mint.max_ttl_seconds', text: 'token mint signing key path max ttl lifetime jwt mint.key_path mint.max_ttl_seconds' },
       { tab: 'Features', section: 'Autonomy & ACMM', label: 'Design-first planning', key: 'planning.design_approved_label', text: 'planning design approved label architect revisions concurrent designs plan from label planning.design_approved_label planning.max_concurrent_designs planning.max_design_revisions planning.plan_from_label' },
       { tab: 'Features', section: 'Autonomy & ACMM', label: 'Write-back containment', key: 'writeback.unsolicited.min_level', text: 'write-back writeback containment unsolicited comments labels sentinel hold-gate stage labels opt-in label backfill per repo mode suppressed acmm level duplicate dedupe burst rate cap hourly writeback.unsolicited.min_level writeback.unsolicited.require_labels writeback.unsolicited.backfill writeback.per_repo writeback.kinds writeback.dedupe.enabled writeback.dedupe.same_item_ttl writeback.dedupe.burst_items writeback.dedupe.burst_window writeback.dedupe.hourly_cap' },
@@ -80416,6 +80480,11 @@ function burnAreaChart() {
           </div>
           ${f.customersSearchEffective !== f.customersSearch ? `<p class="config-help">HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED (or turning Customers off) overrides this setting: the search is currently <b>${f.customersSearchEffective ? 'on' : 'off'}</b>.</p>` : ''}
           <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersProfileFill ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersProfileFillEnabled"></div>
+            <span class="config-toggle-label">Fill customer details from public profiles ${yamlHint('customers.profile_fill.enabled')} ${settingHelpMark('settings', 'features', 'Customer profile fill', `OFF by default. When on, the hive reads each confirmed customer's own public profile on this hive's forge (GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo) by their login, and, when a Linear workspace is connected, their workspace member name by an email address the profile already holds. It fills the real name, organization (the company field, a GitHub @org shown by its public name) and location, and the country is derived from the location. Only empty fields are filled, plus fields an earlier fill wrote: a value set by hand or shared from the hub is never changed. Each field shows where it came from. Suggested people are never looked up. Existing customers are filled within a few passes after it is turned on, then refreshed about weekly; "Refresh from profiles" on the Customers section runs it now. It spends at most customers.profile_fill.max_requests_per_hour requests an hour (default 60), stands down while the shared GitHub quota is low and backs off when a forge rate-limits it. Needs Customers on. Independent of the GitHub search on accept. HIVE_CUSTOMERS_PROFILE_FILL_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersProfileFillEffective !== f.customersProfileFill ? `<p class="config-help">HIVE_CUSTOMERS_PROFILE_FILL_ENABLED (or turning Customers off) overrides this setting: the profile fill is currently <b>${f.customersProfileFillEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
             <div class="config-toggle-switch ${f.customersEnrichmentEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentEnabled"></div>
             <span class="config-toggle-label">Public affiliation and activity (enrichment) ${yamlHint('customers.enrichment.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment', `OFF by default. The master switch for adding public facts about confirmed customers from CNCF sources: who they work for (cncf/gitdm, crowd.dev) and their public contributions (devstats). Each source below has its own switch and stays off until you turn it on too. Suggested people are never looked up, and nothing found ever replaces an organization a person set by hand or shared from the hub: an affiliation only appears as a suggestion you accept or dismiss. Forgetting a person deletes what was found for them. Needs Customers on. HIVE_CUSTOMERS_ENRICHMENT_ENABLED overrides it. See src/docs/customers-enrichment.md.`)}</span>
           </div>
@@ -80669,7 +80738,7 @@ function burnAreaChart() {
         ${renderGovFleetReportSection((_configState.data || {}).fleet_report || {})}
 
         <div class="settings-subsection">
-          <div class="settings-subsection-title">GitLab and Gitea forges ${settingHelpMark('settings', 'features', 'GitLab and Gitea forges', `Used only when the project forge is set to gitlab or gitea. Tokens are never stored in config: each forge names the environment variable that holds its token.`)}</div>
+          <div class="settings-subsection-title">GitLab, Gitea and Forgejo forges ${settingHelpMark('settings', 'features', 'GitLab, Gitea and Forgejo forges', `Used only when the project forge is set to gitlab, gitea or forgejo. Tokens are never stored in config: each forge names the environment variable that holds its token.`)}</div>
           <div class="config-field-row">
             <div class="config-field"><label>GitLab URL ${yamlHint('gitlab.gitlab_url')} ${settingHelpMark('settings', 'features', 'GitLab URL', `GitLab instance root, e.g. https://gitlab.example.com. Empty uses ${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}.`)}</label><input type="text" value="${esc(f.gitlabUrl || '')}" placeholder="${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>GitLab token env var ${yamlHint('gitlab.token_env')} ${settingHelpMark('settings', 'features', 'GitLab token env var', `The NAME of the environment variable holding the GitLab token, never the token itself.`)}</label><input type="text" value="${esc(f.gitlabTokenEnv || '')}" placeholder="${esc(platformDefaults.gitlabTokenEnv || 'GITLAB_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabTokenEnv" data-arg-types="s,s,w"></div>
@@ -80677,6 +80746,10 @@ function burnAreaChart() {
           <div class="config-field-row">
             <div class="config-field"><label>Gitea URL ${yamlHint('gitea.gitea_url')} ${settingHelpMark('settings', 'features', 'Gitea URL', `Gitea or Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Gitea forge.`)}</label><input type="text" value="${esc(f.giteaUrl || '')}" placeholder="https://gitea.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="giteaUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>Gitea token env var ${yamlHint('gitea.token_env')} ${settingHelpMark('settings', 'features', 'Gitea token env var', `The NAME of the environment variable holding the Gitea token, never the token itself.`)}</label><input type="text" value="${esc(f.giteaTokenEnv || '')}" placeholder="${esc(platformDefaults.giteaTokenEnv || 'GITEA_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="giteaTokenEnv" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Forgejo URL ${yamlHint('forgejo.forgejo_url')} ${settingHelpMark('settings', 'features', 'Forgejo URL', `Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Forgejo forge.`)}</label><input type="text" value="${esc(f.forgejoUrl || '')}" placeholder="https://forgejo.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoUrl" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Forgejo token env var ${yamlHint('forgejo.token_env')} ${settingHelpMark('settings', 'features', 'Forgejo token env var', `The NAME of the environment variable holding the Forgejo token, never the token itself.`)}</label><input type="text" value="${esc(f.forgejoTokenEnv || '')}" placeholder="${esc(platformDefaults.forgejoTokenEnv || 'FORGEJO_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoTokenEnv" data-arg-types="s,s,w"></div>
           </div>
           <div class="config-help">Requires restart: the forge client is built at boot.</div>
         </div>

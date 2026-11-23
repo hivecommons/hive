@@ -2531,6 +2531,99 @@
         }
       }
     },
+    "/api/customers/{id}/refresh-profile": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Refresh one customer from public profiles",
+        "description": "Runs the profile fill for one customer now: reads the person's own public profile on the hive's forge (GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo) by login, and the connected Linear workspace's member name by a confirmed email, ignoring the weekly refresh age but within the hourly budget. Fills only empty fields or fields an earlier fill wrote; never a value set by hand or one the person entered on the hub. Owner or read-write. Audited as customer_profile_refresh.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer after the lookup and the pass counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customer": {
+                      "type": "object",
+                      "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                    },
+                    "fill": {
+                      "type": "object",
+                      "description": "Pass counts only: skipped (a fixed word), due, people, requests, filled, not_found, failed, stood_down, truncated"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers or the profile fill (customers.profile_fill.enabled) is off"
+          }
+        }
+      }
+    },
+    "/api/customers/refresh-profiles": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Refresh every customer from public profiles",
+        "description": "Makes every customer due for the profile fill and starts a pass in the background; later passes continue, at most 20 people a pass, within the hourly budget. Owner or read-write. Audited as customer_profile_refresh_all.",
+        "responses": {
+          "200": {
+            "description": "The refresh was queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "queued": {
+                      "type": "boolean"
+                    },
+                    "reset": {
+                      "type": "integer",
+                      "description": "Customers whose last lookup was forgotten"
+                    },
+                    "max_per_pass": {
+                      "type": "integer"
+                    },
+                    "interval_minutes": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "503": {
+            "description": "Customers or the profile fill (customers.profile_fill.enabled) is off"
+          }
+        }
+      }
+    },
     "/api/customers/{id}/export": {
       "get": {
         "tags": [
