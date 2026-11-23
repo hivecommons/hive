@@ -134,6 +134,9 @@ type contributorLaneFixture struct {
 	baseRef  string
 	behindBy int // behind_by reported by compare/<baseRef>...sha7
 	compares int
+	// compareBaseSHA, when set, is the base_commit (the base branch tip)
+	// compare/<baseRef>...sha7 reports; empty omits it.
+	compareBaseSHA string
 	// headCommit, when set, is what GET commits/sha7 serves — the parents
 	// and GitHub author the workflow-fence base-refresh carry reads; nil
 	// serves a one-parent commit by the PR author.
@@ -480,6 +483,9 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/"+baseRef+"...sha7":
 			fx.compares++
 			cmp := map[string]any{"behind_by": fx.behindBy, "ahead_by": 1}
+			if fx.compareBaseSHA != "" {
+				cmp["base_commit"] = map[string]string{"sha": fx.compareBaseSHA}
+			}
 			if files, ok := fx.compareFiles["sha7"]; ok {
 				cmp["files"] = files
 				cmp["merge_base_commit"] = map[string]string{"sha": fx.compareMergeBase["sha7"]}

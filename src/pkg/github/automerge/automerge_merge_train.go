@@ -1198,7 +1198,8 @@ type mergeTrainVerdict struct {
 // train's own rebase step repairs it.
 func mergeTrainBlockingReason(reason string) bool {
 	switch reason {
-	case "not-mergeable", autoMergeReasonForkNotEditable, autoMergeReasonClosedSuperseded, autoMergeReasonClosedEmptyDiff:
+	case "not-mergeable", autoMergeReasonForkNotEditable, autoMergeReasonClosedSuperseded, autoMergeReasonClosedEmptyDiff,
+		nativeQueueReasonRejectedRepeatedly:
 		return true
 	}
 	return isTerminalRequiredCheckHold(reason) || isPermanentMergeRefusal(reason) || classifyCIReason(reason) == ciReasonRed

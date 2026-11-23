@@ -206,6 +206,11 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 				return c.queueApprovalStillHolds(ctx, owner, repo, number, head)
 			})
 	}
+	// The other lanes read the base tip of a held queue rejection in their
+	// behind check; this lane has none, so it reads it here, or a head the
+	// merge queue keeps failing on an unchanged base is queued again every
+	// 30 minutes (nativeQueueNoteRejectedBaseTip).
+	c.nativeQueueNoteRejectedBaseTip(ctx, owner+"/"+repo, pr)
 	if reason, err := c.tryNativeQueueAfterRouting(ctx, pr, mergeClaim, requiredNative); reason != "" || err != nil {
 		return AutoMergeSweepEvent{}, reason, err
 	}

@@ -306,6 +306,10 @@ var stageNeedsHumanReasons = map[string]bool{
 	// is matched here, before the native-merge-queue prefix keeps the rest
 	// at 100.
 	prstage.AutoMergeReasonNativeQueueMethod: true,
+	// The merge queue failed the same head on the same base tip again and
+	// the hive retries it only on a slow backoff: a person looks at the
+	// failing merge-group check meanwhile. Also matched before the prefix.
+	prstage.AutoMergeReasonNativeQueueRejectedRepeatedly: true,
 	// GitHub requires every review conversation resolved, and a thread the
 	// hive may not resolve itself is still open: a person's call.
 	prstage.AutoMergeReasonUnresolvedReviewThreads: true,

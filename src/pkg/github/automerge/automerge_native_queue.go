@@ -327,9 +327,10 @@ func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequ
 	// The queue already turned this exact head away. A behind head is
 	// updated on the next pass (nativeQueueSkipsCurrentBase,
 	// nativeQueueRejectedHeadBehind); any other head waits here instead of
-	// buying the same merge-group run again.
-	if c.nativeQueueHeadRejected(claim.Repo, pr.GetNumber(), state) {
-		return nativeQueueReasonRejected, nil
+	// buying the same merge-group run again, at 085 once its retry on the
+	// same base tip is spent (nativeQueueReasonRejectedRepeatedly).
+	if reason := c.nativeQueueHeadRejected(claim.Repo, pr.GetNumber(), state); reason != "" {
+		return reason, nil
 	}
 	// A queue chooses its own merge method. Preserve the attribution gate
 	// that elected a merge commit to retain each author's signed commits.

@@ -27,6 +27,11 @@ func TestClassifyStagePermanentMergeRefusals(t *testing.T) {
 		{name: "native enqueue failure", reason: "native-merge-queue-enqueue", want: stagelabels.MergeQueue},
 		{name: "native read failure", reason: "native-merge-queue-read", want: stagelabels.MergeQueue},
 		{name: "native queue method refused", reason: "native-merge-queue-method", want: stagelabels.NeedsDecision, wantHuman: true},
+		// The merge queue rejected the head once: the hive retries it, so
+		// the stage stays 100. Twice on the same base tip: a person's call.
+		{name: "native queue rejected", reason: "native-merge-queue-rejected", want: stagelabels.MergeQueue},
+		{name: "native queue rejected repeatedly", reason: "native-merge-queue-rejected-repeatedly", want: stagelabels.NeedsDecision, wantHuman: true},
+		{name: "native queue rejected repeatedly but needs-rebase", reason: "native-merge-queue-rejected-repeatedly", labels: []string{"needs-rebase"}, want: stagelabels.Fixing},
 		{name: "unclassified merge failure", reason: "merge-failed", want: stagelabels.MergeQueue},
 		// GitHub requires conversation resolution and a thread the hive may
 		// not resolve is open: a person's call, not merge-imminent.

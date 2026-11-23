@@ -244,6 +244,64 @@ the PR reports why, for example `workflow-permission` at
 for a new base to retry the update against. Any other removal reason, and a
 head that is not behind, keeps the 30-minute recheck.
 
+That recheck is the retry for a flaky merge-group check, and a head that is
+not behind gets it once per base tip. Every lane that queues a PR reads the
+base branch tip while it holds a rejection: the self-authored,
+trusted-author and contributor lanes from the compare above, and the human
+label-queued lane, which has no behind update, from the same compare made
+for this alone. The hive records the tip with the rejection. When the merge
+queue removes the same head with `failed_checks` a second time on the same
+base tip, the mark no longer lapses after 30 minutes: a merge-group check
+that fails for a reason the PR does not carry (a broken dependency, a red
+base) fails the same merge every time, and each round costs a full
+merge-group CI run. Once the compare has confirmed the tip (the pass after
+the failure is seen; until then the base may have moved under the retry),
+the PR moves to `stage/085-needs-decision` with
+`native-merge-queue-rejected-repeatedly`, and its comment links the
+repository's merge-group runs. The merge group runs on a `gh-readonly-queue`
+ref, so the PR's own checks do not list it. The comment does not name the
+failing check: that would take another GitHub call.
+
+Nobody has to remember to queue it again. Such a failure is often fixed
+somewhere else (a dependency rebuilt in another repository, an outside
+service back up) while the PR and its base stay as they are, so the hive
+retries the same head on its own on a slow backoff: 2 hours after the second
+failure, then every 6 hours. Two hours gives a rebuild elsewhere time to
+land; six hours picks a fix up within a working day for about four
+merge-group runs a day, where the 30-minute loop bought about forty-eight. A
+retry that passes merges as usual; one that fails again is back at
+`stage/085-needs-decision` on the next pass and waits 6 hours. The backoff
+is fixed in code, not a setting.
+
+A person who knows the cause is fixed does not have to wait. Two things
+make the next lane pass queue the head again, when they come after the
+failure: **Retry now (the cause is fixed)** on the dashboard's 085 row
+(which approves the head; Give direction and Let hive decide are off on that
+row), or a `/hive decision approve` comment on the PR. A plain approving
+review on GitHub does not start a retry. A push or an update-branch (a new head) retries at once too and
+starts over with the 30-minute retry. A base that moves past the head takes
+the update-branch path above in the lanes that have it; the label-queued
+lane, and a base tip that moves without leaving the head behind, re-queue
+the head at once. A first rejection whose base tip was never read (the compare
+failed), and any removal reason other than `failed_checks`, keep the
+30-minute recheck every time. A repeated rejection whose tip the compare
+cannot confirm still reaches a person: after 10 minutes it is reported as
+`native-merge-queue-rejected-repeatedly` on the last known tip.
+
+The bound covers the hive's own entries only. Another actor queueing the PR
+(a person, or a Prow or Tide merge bot) is neither counted nor stopped, and
+while that entry sits in the queue the PR reads `native-merge-queued` at
+`stage/100-merge-queue`. When GitHub removes it the PR returns to 085; the
+stage-flap guard can hold it at 100 for up to 15 minutes on the way back.
+The same brief 100 is seen during each of the hive's own slow retries.
+
+The memory is in-process. After a restart the hive does not know which head
+an earlier removal was for, so it queues a rejected head once more and gives
+it its 30-minute retry before the slow backoff starts again: at most two
+extra merge-group runs per such PR per restart. Marks that wait for a change
+or a slow retry (a behind head's rejection too) are pruned only after 24
+hours idle once the memory holds 1024 entries, instead of after 30 minutes.
+
 ## API cost
 
 Each `isMergeQueueEnabled` probe is a GraphQL read. The answer is cached per
@@ -252,7 +310,16 @@ Each `isMergeQueueEnabled` probe is a GraphQL read. The answer is cached per
 not one per PR; a read failure is not cached. The per-held-PR entry
 reconciliation, the extra `GET /pulls/{n}` the queued lane needs to run it
 on a prefiltered PR, and the 10-minute paused-repo PR listing all run only on
-repos that opted in through `auto_merge.native_merge_queue`.
+repos that opted in through `auto_merge.native_merge_queue`. While the merge
+queue's rejection of a head is remembered, each pass of the self-authored,
+trusted-author and contributor lanes compares that head with its base (one
+REST compare); the same compare supplies the base tip that bounds the
+retry, so in those lanes the bound adds no GitHub call. The label-queued
+lane made no compare before: it now makes one REST compare per pass while
+it holds a rejection whose tip is still unknown or that is repeated, and
+none while a first rejection with a known tip waits out its 30 minutes. A
+head parked with `native-merge-queue-rejected-repeatedly` keeps one compare
+per pass in every lane, which is how the hive sees the base move.
 
 Queue rules choose the merge method. Where Hive elected a merge commit to
 preserve mixed authorship and DCO attribution, the queue must use `MERGE`;

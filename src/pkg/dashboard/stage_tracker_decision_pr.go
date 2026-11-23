@@ -58,6 +58,11 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	// GitHub refused the merge for unresolved review conversations the hive
 	// does not resolve itself: a person answers them on GitHub.
 	unresolvedThreads := lower == stageengineprstage.AutoMergeReasonUnresolvedReviewThreads
+	// GitHub's merge queue kept failing this head on an unchanged base, so
+	// the hive retries it only on a slow backoff. The cause is usually
+	// outside the PR; an Approve of the head after the failure is the
+	// person's "retry now" (the lane re-queues it on its next pass).
+	queueRejected := lower == stageengineprstage.AutoMergeReasonNativeQueueRejectedRepeatedly
 
 	// WHAT it is waiting on: the question, most specific source first. A
 	// reviewer's own question is quoted verbatim — it is the text the
@@ -165,6 +170,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Question = "A reviewer requested changes" + at + ". Give direction for a new commit, or close it?"
 	case unresolvedThreads:
 		d.Question = "GitHub will not merge this until every review conversation is resolved, and the hive left the open ones for a person. Answer and resolve them on GitHub, or close the PR?"
+	case queueRejected:
+		d.Question = "GitHub's merge queue failed this head repeatedly on the same base, so the hive stopped queueing it every " + strconv.Itoa(int(stageengineprstage.MergeRefusalRecheck.Minutes())) + " minutes. Fix what the failing merge-group check needs (often in another repository), then Retry now; the hive also retries it on its own every " +
+			nativeQueueRepeatedHours(stageengineprstage.NativeQueueRepeatedRecheck) + ". Or close it?"
 	case laneRule:
 		d.Question = "The hive never merges this by itself (" + decisionPlainReason(base) + "). Approve it for a maintainer to merge, give direction, or close it?"
 	default:
@@ -196,6 +204,10 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	case unresolvedThreads:
 		d.Blocker = "The repository requires conversation resolution. The hive resolves its own non-blocking threads itself when nothing else is open; it leaves a person's or another bot's thread, a hive thread someone replied in and any hive finding not marked non-blocking (with review.severity.block_at: P3, every finding), and it also parks here when GitHub kept refusing with nothing left it could resolve. The hive tries the merge again within 30 minutes or on a new push."
 		approveOK, approveWhy = false, "Approving does not resolve review threads on GitHub."
+	case queueRejected:
+		d.Blocker = "The merge group fails the same way at this head and base, so queueing it again buys the same failure. The hive retries it " +
+			nativeQueueRepeatedHours(stageengineprstage.NativeQueueRepeatedRecheckFirst) + " after the second failure and then every " +
+			nativeQueueRepeatedHours(stageengineprstage.NativeQueueRepeatedRecheck) + ", and at once on a new commit, a base change or Retry now."
 	case laneRule:
 		d.Blocker = "The hive never merges this by itself. After approval, a maintainer merges."
 	case forkGuarded:
@@ -219,7 +231,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 			d.Blocker = "The review found: " + strings.TrimSpace(verdict.DecisionFinding) + ". " + d.Blocker
 		}
 	}
-	if approvedBy != "" && approveOK && !sentinel {
+	if approvedBy != "" && approveOK && !sentinel && !queueRejected {
+		// A queue-rejected head keeps Approve: an approval after the
+		// failure is the retry, whoever approved it before.
 		// A sentinel alert keeps Approve: on this row it also clears the
 		// alert's label in the same click.
 		approveOK, approveWhy = false, "@"+approvedBy+" already approved this head on GitHub; another approval does not clear what holds it here."
@@ -247,6 +261,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	// merge with the rebase folded in, right after Approve.
 	if stageTrackerNeedsRebase(it) && !sentinel {
 		d.Options = slices.Insert(d.Options, 2, decisionMergeNowOption(it, held))
+	}
+	if queueRejected {
+		decisionQueueRejectedOptions(d.Options, approveOK)
 	}
 	if rebaseFailedTwice {
 		// The two answers to a rebase nobody could finish lead, as they do
@@ -276,6 +293,35 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Options = decisionLeadWithCloseSuperseded(d.Options, verdict.RedundantOf)
 	}
 	return d
+}
+
+// decisionRetryNowLabel is the Approve option on a PR the merge queue kept
+// failing on an unchanged base: approving the head after the failure clears
+// the queue-rejection mark, so the lane queues it again on its next pass.
+const (
+	decisionRetryNowLabel            = "Retry now (the cause is fixed)"
+	decisionRetryNowConsequence      = "Approves this head as you; the hive puts it back in the merge queue on its next pass. Nothing merges here."
+	decisionWhyQueueRejectedFix      = "Give direction sends a fixer to this PR, and the merge-group failure is usually outside it. If the PR itself is the cause, push a fix on GitHub: a new commit also retries it."
+	decisionWhyQueueRejectedDelegate = "The hive cannot tell whether the cause outside this PR is fixed, and its decision could send a fixer to the PR. Use Retry now once the cause is fixed, or close it."
+)
+
+// decisionQueueRejectedOptions turns Approve into the lead "Retry now" and
+// disables Give direction and Let hive decide: a fixer kicked at the PR
+// cannot fix a cause in another repository, and the hive cannot know when
+// that cause is fixed.
+func decisionQueueRejectedOptions(opts []StageTrackerDecisionOption, approveOK bool) {
+	for i := range opts {
+		switch opts[i].Action {
+		case decisionActionApprove:
+			if approveOK {
+				opts[i].Label, opts[i].Lead, opts[i].Consequence = decisionRetryNowLabel, true, decisionRetryNowConsequence
+			}
+		case decisionActionDirection:
+			opts[i] = decisionOption(decisionActionDirection, opts[i].Label, false, decisionWhyQueueRejectedFix)
+		case decisionActionDelegate:
+			opts[i] = decisionOption(decisionActionDelegate, opts[i].Label, false, decisionWhyQueueRejectedDelegate)
+		}
+	}
 }
 
 // decisionReReviewQuestion is the question for a re-review-requested PR:
