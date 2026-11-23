@@ -389,8 +389,16 @@ func issueDiscussionLabel(labels []string) string {
 
 // issueDiscussionSignal is what IssueFacts.DiscussionLabel carries: the
 // discussion label the issue wears, or rfcTitleDiscussionReason when it
-// wears none but its title opens with an RFC marker, or "".
+// wears none but its title opens with an RFC marker, or "". An issue that
+// carries `approved-direction` has a recorded owner decision and is past
+// discussion, so it carries no signal whatever its labels or title say: an
+// approved RFC epic in rollout keeps the stage the doc gives it (010 for a
+// decomposed parent waiting on children) instead of being forced back to
+// 018 on every sweep.
 func issueDiscussionSignal(labels []string, title string) string {
+	if issueHasLabel(labels, HumanAckLabel) {
+		return ""
+	}
 	if label := issueDiscussionLabel(labels); label != "" {
 		return label
 	}
