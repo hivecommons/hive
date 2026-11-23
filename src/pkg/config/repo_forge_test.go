@@ -19,6 +19,8 @@ project:
     - repo: tea
       forge: gitea
       forge_url: https://codeberg.org
+gitlab:
+  gitlab_url: https://gitlab.example.com
 `
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
@@ -147,7 +149,15 @@ func TestCheckForgeTokenHost(t *testing.T) {
 		{name: "forgejo same host", kind: ForgeForgejo, blockAt: "https://git.example.com", policy: "https://git.example.com", wantErr: false},
 		{name: "forgejo other host", kind: ForgeForgejo, blockAt: "https://git.example.com", policy: "https://evil.example.net", wantErr: true},
 		{name: "gitlab other host", kind: ForgeGitLab, blockAt: "https://gitlab.example.com", policy: "https://evil.example.net", wantErr: true},
-		{name: "gitlab default block names no host", kind: ForgeGitLab, blockAt: "", policy: "https://gitlab.self.example", wantErr: false},
+		{name: "gitlab default block names gitlab.com", kind: ForgeGitLab, blockAt: "", policy: "https://gitlab.self.example", wantErr: true},
+		{name: "gitlab default block matches gitlab.com policy", kind: ForgeGitLab, blockAt: "", policy: "https://gitlab.com", wantErr: false},
+		{name: "https default port equals none", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "https://git.example.com:443", wantErr: false},
+		{name: "https default port on block", kind: ForgeGitea, blockAt: "https://git.example.com:443", policy: "https://git.example.com", wantErr: false},
+		{name: "http default port equals none", kind: ForgeGitea, blockAt: "http://git.example.com", policy: "http://git.example.com:80", wantErr: false},
+		{name: "http port 443 is not default", kind: ForgeGitea, blockAt: "http://git.example.com", policy: "http://git.example.com:443", wantErr: true},
+		{name: "schemeless block url", kind: ForgeGitea, blockAt: "git.example.com", policy: "https://git.example.com", wantErr: true},
+		{name: "schemeless policy url", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "git.example.com", wantErr: true},
+		{name: "unparsable block url", kind: ForgeGitea, blockAt: "https://git.example.com:bad", policy: "https://git.example.com", wantErr: true},
 		{name: "no policy url", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "", wantErr: false},
 	}
 	for _, tc := range cases {

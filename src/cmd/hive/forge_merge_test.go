@@ -53,6 +53,7 @@ func mixedForgeConfig() *config.Config {
 	cfg := &config.Config{}
 	cfg.Project.Org = "acme"
 	cfg.Project.Repos = []string{"app", "lab", "tea"}
+	cfg.GitLab.URL = "https://gitlab.example.com"
 	cfg.Project.RepoPolicies = []config.RepoPolicy{
 		{Repo: "lab", Forge: config.ForgeGitLab, ForgeURL: "https://gitlab.example.com"},
 		{Repo: "tea", Forge: config.ForgeGitea, ForgeURL: "https://codeberg.org"},

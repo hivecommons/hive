@@ -174,6 +174,7 @@ func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
 	default:
 		return nil, nil
 	}
+	// A forge token goes only to its own block's host; see CheckForgeTokenHost.
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}

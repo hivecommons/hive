@@ -78,9 +78,11 @@ func (c *Config) ForgeURLForRepo(repo string) string {
 // CheckForgeTokenHost returns an error when repo's forge token would go to a
 // different host than the one its forge block configures. The token comes from
 // the block of repo's kind (gitlab, gitea or forgejo), so a
-// repo_policies[].forge_url on another host would send it there. A block with
-// no URL of its own (gitea and forgejo have no default, gitlab defaults to
-// gitlab.com) names no host to protect, so nothing is compared.
+// repo_policies[].forge_url on another host would send it there. A gitlab block
+// with no URL defaults to gitlab.com, so that default is the host to protect.
+// A gitea or forgejo block with no URL of its own has no default and names no
+// host, so nothing is compared. A block URL that is unparsable or has no host
+// is an error, because the comparison cannot run.
 func (c *Config) CheckForgeTokenHost(repo string) error {
 	if c == nil {
 		return nil
@@ -93,7 +95,7 @@ func (c *Config) CheckForgeTokenHost(repo string) error {
 	var blockKey, blockURL string
 	switch kind {
 	case ForgeGitLab:
-		blockKey, blockURL = "gitlab.gitlab_url", c.GitLab.URL
+		blockKey, blockURL = "gitlab.gitlab_url", c.GitLab.InstanceURL()
 	case ForgeGitea:
 		blockKey, blockURL = "gitea.gitea_url", c.Gitea.URL
 	case ForgeForgejo:
@@ -104,18 +106,37 @@ func (c *Config) CheckForgeTokenHost(repo string) error {
 	if strings.TrimSpace(blockURL) == "" {
 		return nil
 	}
-	want, err := url.Parse(strings.TrimSpace(blockURL))
-	if err != nil || want.Host == "" {
-		return nil
+	want, err := hostPort(blockURL)
+	if err != nil {
+		return fmt.Errorf("repo %q: %s %w", repo, blockKey, err)
 	}
-	got, err := url.Parse(strings.TrimSpace(rp.ForgeURL))
-	if err != nil || got.Host == "" {
-		return nil
+	got, err := hostPort(rp.ForgeURL)
+	if err != nil {
+		return fmt.Errorf("repo %q: forge_url %w", repo, err)
 	}
-	if !strings.EqualFold(got.Host, want.Host) {
-		return fmt.Errorf("repo %q: forge_url host %q differs from %s host %q; the %s token is only sent to its own block's host", repo, got.Host, blockKey, want.Host, kind)
+	if got != want {
+		return fmt.Errorf("repo %q: forge_url host %q differs from %s host %q; the %s token is only sent to its own block's host", repo, got, blockKey, want, kind)
 	}
 	return nil
+}
+
+// hostPort returns the lowercased host of an http(s) URL, with the port
+// appended unless it is the scheme's default (443 for https, 80 for http). It
+// errors when raw does not parse or has no host, such as a URL with no scheme.
+func hostPort(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("%q is not a URL with a host", raw)
+	}
+	host, port := strings.ToLower(u.Hostname()), u.Port()
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port == "" || (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		return host, nil
+	}
+	return host + ":" + port, nil
 }
 
 // HasRepoForgeOverrides reports whether any repo_policies entry sets forge or
