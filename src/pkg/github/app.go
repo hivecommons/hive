@@ -307,6 +307,10 @@ func (a *AppAuth) mintInstallationTokenWithOptions(ctx context.Context, installa
 	return installToken.GetToken(), installToken.GetExpiresAt().Time, nil
 }
 
+// TokenTier aliases agentmode.TokenTier so callers that only hold a tier name
+// (pkg/dashboard) can convert without importing crux/agentmode directly.
+type TokenTier = agentmode.TokenTier
+
 // ScopedToken creates a short-lived installation token with permissions
 // scoped to a contributor's trust tier. Unlike Token(), this is NOT
 // cached — each call creates a fresh token.

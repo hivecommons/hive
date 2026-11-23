@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/pkg/claims"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -159,7 +158,7 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 	if c.profile != nil {
 		tier = c.profile.TrustTier
 	}
-	canComment, mode := ghpkg.IssueClaimTierCanComment(agentmode.TokenTier(tier))
+	canComment, mode := ghpkg.IssueClaimTierCanComment(ghpkg.TokenTier(tier))
 	posted := false
 	if commenter := h.claimCommenterFor(); commenter != nil && canComment {
 		postCtx, cancel := context.WithTimeout(ctx, claimCommentTimeout)

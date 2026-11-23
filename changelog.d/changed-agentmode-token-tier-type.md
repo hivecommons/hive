@@ -1,0 +1,1 @@
+- Scoped-token tier names now have a named Go type (`agentmode.TokenTier`) instead of a bare string; no behavior change ([#19566](https://github.com/hivecommons/hive/pull/19566)).
