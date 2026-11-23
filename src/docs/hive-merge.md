@@ -811,7 +811,10 @@ can use that command",
 [dependabot/dependabot-core#9147](https://github.com/dependabot/dependabot-core/issues/9147)),
 so the hand-off comment asks someone with push access to comment
 `@dependabot recreate`. Renovate PRs still get the rebase/retry checkbox
-ticked first (write-back kind `bot_rebase_request`).
+ticked first (write-back kind `bot_rebase_request`). The stale-red base
+refresh ticks the same box, instead of updating the branch, for a red Renovate
+PR behind a base that already passes its failing checks; see
+[the stale-red base refresh](operator-reference/sweeps-and-operations.md#stale-red-base-refresh-stale_red_base_refresh).
 
 The same holds for a Dependabot PR whose last commit was pushed by
 `github-actions[bot]` (a `GITHUB_TOKEN` autofix, for example a NOTICE update).

@@ -58,8 +58,11 @@ var staleRedRefresh = &staleRedRefreshState{}
 // It leaves alone a PR that is a draft, held or exempt, still running CI,
 // deferred to an open shared-CI incident, red on the base as well, red only
 // on fork guards (a maintainer's run proves the exact head), a fork
-// with "allow edits by maintainers" off, a dependency bot's branch (the bot
-// rebases it) or adopted by the hive (074, whose recovery owns it). A PR
+// with "allow edits by maintainers" off, or adopted by the hive (074, whose
+// recovery owns it). A dependency bot's branch is never updated: where the
+// pass would update it, it asks the bot to rebase instead, and also once per
+// head for a PR-only check that failed before the base moved
+// (stale_red_bot_rebase.go); those requests count against the same caps. A PR
 // returned to its contributor (072) is a candidate: the red is the base's,
 // not the contributor's, and nobody tells the contributor to merge the base
 // (see staleRedRefreshSkip). Each update goes
@@ -102,14 +105,34 @@ func refreshStaleRedBehindPRs(
 	perRepo := map[string]int{}
 	total := 0
 	var updated map[string]bool
+	var bots *staleRedBotPass
 	for _, pr := range actionable.PRs.Items {
 		if total >= staleRedRefreshMaxPerPass {
 			break
 		}
-		if staleRedRefreshSkip(pr) != "" {
+		repo := fullRepoName(pr.Repo, cfg.Project.Org)
+		if github.DependencyBotBranch(pr.HeadRef, pr.Author) && strings.EqualFold(pr.CIStatus, "success") {
+			// A green bot PR: its next red is a new failure
+			// (stale_red_bot_rebase.go).
+			if bots == nil {
+				bots = newStaleRedBotPass(cfg, refresher, logger, now)
+			}
+			bots.noteGreen(repo, pr)
+		}
+		skip := staleRedRefreshSkip(pr)
+		botBranch := skip == "dependency-bot-branch"
+		if skip != "" && !botBranch {
 			continue
 		}
-		repo := fullRepoName(pr.Repo, cfg.Project.Org)
+		if botBranch {
+			// Decided without an API call, before the base tip is read.
+			if bots == nil {
+				bots = newStaleRedBotPass(cfg, refresher, logger, now)
+			}
+			if !bots.possible(repo, pr) {
+				continue
+			}
+		}
 		if perRepo[repo] >= staleRedRefreshMaxPerRepo {
 			continue
 		}
@@ -131,12 +154,43 @@ func refreshStaleRedBehindPRs(
 		if st.settled[memoKey] == pair {
 			continue
 		}
-		if verdict, _ := github.StaleRedBaseVerdictFor(pr.FailingChecks, base.state); verdict != github.StaleRedBaseClears {
+		verdict, _ := github.StaleRedBaseVerdictFor(pr.FailingChecks, base.state)
+		pr.Repo = repo
+		if botBranch {
+			// Never update a bot's branch: ask the bot to rebase it
+			// (stale_red_bot_rebase.go).
+			if bots == nil {
+				bots = newStaleRedBotPass(cfg, refresher, logger, now)
+			}
+			out := bots.consider(ctx, repo, pr, base.state, verdict)
+			if out.Settled {
+				st.settled[memoKey] = pair
+			}
+			if !out.Asked {
+				continue
+			}
+			perRepo[repo]++
+			total++
+			if logger != nil {
+				logger.Info("stale-red refresh: asked dependency bot to rebase",
+					"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "base", pr.BaseRef, "base_sha", base.state.SHA, "behind_by", out.BehindBy,
+					"failing_checks", out.Checks, "trigger", out.Trigger, "via", out.Via)
+			}
+			if audit != nil {
+				audit(repo, pr.Number, fmt.Sprintf("repo=%s, pr=%d, head=%s, base_sha=%s, behind_by=%d, checks=%s, action=bot_rebase_request, via=%s, reason=%s",
+					repo, pr.Number, pr.HeadSHA, base.state.SHA, out.BehindBy, strings.Join(out.Checks, ","), out.Via, staleRedBotAuditReason(out.Trigger)))
+			}
+			if updated == nil {
+				updated = map[string]bool{}
+			}
+			updated[escalation.Key(repo, pr.Number)] = true
+			continue
+		}
+		if verdict != github.StaleRedBaseClears {
 			// Nothing is spent on a PR the base does not clear, and the
 			// base tip's checks may still complete: read again next pass.
 			continue
 		}
-		pr.Repo = repo
 		outcome, err := refresher.RefreshStaleRedPR(ctx, pr, base.state)
 		if err != nil {
 			if logger != nil {
@@ -220,7 +274,8 @@ func staleRedRefreshSkip(pr github.PullRequest) string {
 // branch sync (a dependency bot rebases its own branch, 072's contributor
 // hive pushes there, 074's adoption recovery owns it). The stale-red and the
 // missing-check base refresh share it; the stale-red refresh lets 072
-// through (staleRedRefreshSkip).
+// through (staleRedRefreshSkip), and asks a dependency bot to rebase its
+// branch instead of updating it (stale_red_bot_rebase.go).
 func baseRefreshBranchOwnerSkip(pr github.PullRequest) string {
 	switch {
 	case strings.TrimSpace(pr.HeadSHA) == "" || strings.TrimSpace(pr.BaseRef) == "":

@@ -281,8 +281,9 @@ gated. Defaults (override under `writeback.kinds.<kind>`):
 on a bot PR it needs the opt-in label unless
 `writeback.kinds.ci_rerun.unlabeled_min_level` is set, and a refused re-run
 hands the PR to a person with the reason. `bot_rebase_request` only ticks
-Renovate's rebase/retry box; a stranded Dependabot PR is handed to a person
-instead, because Dependabot refuses commands from apps.
+Renovate's rebase/retry box, for a stranded bot PR or for a red bot PR the
+stale-red base refresh would otherwise have updated; a stranded Dependabot PR
+is handed to a person instead, because Dependabot refuses commands from apps.
 
 `blocked_repair` replaces a marker-less `blocked` the hive applied with a
 `needs-human` ask (see

@@ -78,6 +78,10 @@ type depBotConflictStore struct {
 	// adopt holds the persisted red-CI adoption requests, one per bot head
 	// (dependency_bot_adopt.go).
 	adopt map[string]*depBotAdoptRecord
+
+	// staleRedLast holds, persisted, the last stale-red rebase request per
+	// PR, kept across the bot's new heads (stale_red_bot_rebase.go).
+	staleRedLast map[string]*depBotStaleRedAsk
 }
 
 func loadDepBotConflictStore(path string) *depBotConflictStore {
@@ -92,6 +96,8 @@ func loadDepBotConflictStore(path string) *depBotConflictStore {
 		branchFacts: map[string]depBotBranchFacts{},
 
 		adopt: loadDepBotAdoptRecords(depBotAdoptPath(path)),
+
+		staleRedLast: loadDepBotStaleRedAsks(depBotStaleRedPath(path)),
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -257,6 +263,9 @@ func dependencyBotConflictComment(base string) string {
 //     once per head (dependency_bot_adopt.go);
 //   - a terminal required-check hold the automerge sweep reported (held for
 //     approval, never started, never ran);
+//   - a red branch the stale-red pass asked the bot to rebase
+//     (stale_red_bot_rebase.go) whose head has neither moved nor gone green
+//     one window later;
 //   - a stranded branch: behind or conflicting past
 //     governor.dependency_bot_rebase_after_s while the bot no longer rebases
 //     it, one window after a request to the bot through its own mechanism
@@ -364,6 +373,8 @@ func sweepDependencyBotConflictsWith(
 			switch stranded.step(ctx, repo, key, pr) {
 			case depBotStrandedHandoff:
 				reason, ok = depBotHandoffStranded, true
+			case depBotStrandedStaleRedHandoff:
+				reason, ok = depBotHandoffStaleRed, true
 			case depBotStrandedHold:
 				holdHandoff = true
 				waiting[key] = true
@@ -445,6 +456,9 @@ func sweepDependencyBotConflictsWith(
 			st, _ := store.rebaseState(key)
 			facts, known := store.branchFactsFor(key, pr.HeadSHA)
 			comment = dependencyBotStrandedComment(pr, st, facts, known, rebaseAfter)
+		case depBotHandoffStaleRed:
+			st, _ := store.rebaseState(key)
+			comment = dependencyBotStaleRedComment(pr, st, rebaseAfter)
 		}
 		if !depBotWritebackAllowed(ctx, reader, repo, pr.Number, writeback.KindNeedsDecisionComment, comment, logger) {
 			continue
