@@ -509,6 +509,14 @@ func normalizeUnicodeSteganography(text string) unicodeNormalization {
 			suspicious = true
 			continue
 		}
+		// Fullwidth forms are always folded: they have no legitimate use
+		// disguising a word, and an all-fullwidth directive has no ASCII
+		// neighbour for the context gate below to find.
+		if folded, ok := fullwidthASCII(r); ok {
+			suspicious = true
+			b.WriteRune(folded)
+			continue
+		}
 		if folded, ok := confusableASCII(r); ok && hasASCII && touchesASCII(runes, i) {
 			suspicious = true
 			b.WriteRune(folded)
