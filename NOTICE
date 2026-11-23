@@ -6472,9 +6472,9 @@ limitations under the License.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/crypto
-Version:  v0.58.0
+Version:  v0.59.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/crypto/+/v0.58.0:LICENSE
+Source:   https://cs.opensource.google/go/x/crypto/+/v0.59.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
@@ -6577,9 +6577,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/net
-Version:  v0.62.0
+Version:  v0.63.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/net/+/v0.62.0:LICENSE
+Source:   https://cs.opensource.google/go/x/net/+/v0.63.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
