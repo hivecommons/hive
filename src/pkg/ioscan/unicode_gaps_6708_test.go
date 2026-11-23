@@ -94,11 +94,11 @@ func TestInvisibleFormatCharactersAreTreatedAsInvisible(t *testing.T) {
 	}
 }
 
-// The fold only applies when the text already contains ASCII alphanumerics, so
-// genuine fullwidth-only text must survive untouched and unflagged. Without
-// this, Japanese and Chinese bug reports would be rewritten and blocked.
+// Genuine fullwidth text that neither touches ASCII nor folds into a rule hit
+// must survive untouched and unflagged. Without this, Japanese and Chinese bug
+// reports would be rewritten and blocked.
 func TestFullwidthOnlyTextIsNotFlagged(t *testing.T) {
-	for _, in := range []string{"ＡＢＣ", "全角の文字", "１２３"} {
+	for _, in := range []string{"ＡＢＣ", "全角の文字", "１２３", "see ＡＢＣ 版本 ２０２６ ｖ２", "ＡＢＣの設定が壊れています"} {
 		norm := normalizeUnicodeSteganography(in)
 		if norm.scanText != in {
 			t.Errorf("normalize(%q) rewrote text to %q", in, norm.scanText)

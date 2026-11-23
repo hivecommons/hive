@@ -500,6 +500,7 @@ func normalizeUnicodeSteganography(text string) unicodeNormalization {
 
 	var b strings.Builder
 	suspicious := false
+	foldedFullwidth := false
 	for i, r := range runes {
 		if isInvisibleControl(r) || isTagCharacter(r) {
 			suspicious = true
@@ -509,11 +510,16 @@ func normalizeUnicodeSteganography(text string) unicodeNormalization {
 			suspicious = true
 			continue
 		}
-		// Fullwidth forms are always folded: they have no legitimate use
-		// disguising a word, and an all-fullwidth directive has no ASCII
-		// neighbour for the context gate below to find.
+		// Fullwidth forms are always folded for matching, because an
+		// all-fullwidth directive has no ASCII neighbour for the context gate
+		// below to find. They only count as steganography when they touch
+		// ASCII or the folded text trips a rule (checked after the loop):
+		// fullwidth letters and digits are ordinary in CJK prose.
 		if folded, ok := fullwidthASCII(r); ok {
-			suspicious = true
+			foldedFullwidth = true
+			if touchesASCII(runes, i) {
+				suspicious = true
+			}
 			b.WriteRune(folded)
 			continue
 		}
@@ -525,6 +531,10 @@ func normalizeUnicodeSteganography(text string) unicodeNormalization {
 		b.WriteRune(r)
 	}
 
+	if !suspicious && foldedFullwidth {
+		folded := b.String()
+		suspicious = len(matchRules(folded, injectionRules)) > 0 || len(matchRules(folded, dangerousRules)) > 0
+	}
 	if !suspicious {
 		return unicodeNormalization{scanText: text}
 	}
