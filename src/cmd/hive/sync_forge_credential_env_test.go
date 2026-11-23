@@ -12,14 +12,16 @@ func TestSyncForgeCredentialEnvKeepsRenamedTokenEnv(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.GitLab.TokenEnv = "RENAME_TEST_GITLAB_OLD"
 	cfg.Gitea.TokenEnv = "RENAME_TEST_GITEA_OLD"
+	cfg.Forgejo.TokenEnv = "RENAME_TEST_FORGEJO_OLD"
 	syncForgeCredentialEnv(cfg)
 
 	cfg.GitLab.TokenEnv = "RENAME_TEST_GITLAB_NEW"
 	cfg.Gitea.TokenEnv = "RENAME_TEST_GITEA_NEW"
+	cfg.Forgejo.TokenEnv = "RENAME_TEST_FORGEJO_NEW"
 	syncForgeCredentialEnv(cfg)
 
 	got := cruxconfig.ExtraCredentialEnvVars()
-	for _, name := range []string{"RENAME_TEST_GITLAB_OLD", "RENAME_TEST_GITLAB_NEW", "RENAME_TEST_GITEA_OLD", "RENAME_TEST_GITEA_NEW"} {
+	for _, name := range []string{"RENAME_TEST_GITLAB_OLD", "RENAME_TEST_GITLAB_NEW", "RENAME_TEST_GITEA_OLD", "RENAME_TEST_GITEA_NEW", "RENAME_TEST_FORGEJO_OLD", "RENAME_TEST_FORGEJO_NEW"} {
 		if !slices.Contains(got, name) {
 			t.Errorf("registry = %v, want it to include %s after a reload renamed the token env", got, name)
 		}
