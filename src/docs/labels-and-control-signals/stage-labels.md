@@ -1141,9 +1141,19 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      (self-authored, trusted-author, `hive-merge`-queued) refuses a PR
      carrying that marker once it is green, with the carried
      `contributor-lane:*` reason, so it routes to 085 like a contributor PR
-     with the same diff; `/hive approve` says so too. The hive's own
-     pushes to the superseding branch do not lift it. A second takeover
-     no longer releases the adoption back to 072 over the fence.
+     with the same diff; `/hive approve` says so too. The marker records
+     what the superseded PR's diff did, so the lanes re-check the carried
+     reason against the superseding PR's own current diff on every head
+     ([#19537](https://github.com/hivecommons/hive/issues/19537)):
+     `workflow-path` holds only while a changed file (or a renamed file's
+     previous path) is under `.github/workflows/` or `.github/actions/`,
+     and `tests-removed` only while the diff still trips the tests-removed
+     check. A reason the head no longer trips is dropped for that head
+     (logged once per head as `carried diff fence dropped`) and the PR
+     goes through the other gates; a later head that trips it again is
+     fenced again, and an unreadable or incomplete file list keeps the
+     fence. A second takeover no longer releases the adoption back to 072
+     over the fence.
    Only a verdict the fence could not reach still defers adoption, with no
    attempt recorded, so the next sweep re-reads: the fence reads the PR
    itself and judges only the head the lane recorded, so a head that moved

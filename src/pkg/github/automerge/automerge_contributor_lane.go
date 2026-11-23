@@ -1222,12 +1222,19 @@ func contributorLaneLinkedIssues(body, fullRepo string) []int {
 // CI workflow/action definitions and test deletion. It returns "" when the
 // diff may be merged unattended.
 func contributorLaneDiffReason(files []intent.ChangedFile) string {
-	adds, dels := 0, 0
 	for _, f := range files {
 		if intent.PathMatchesAny(f.Filename, contributorLaneWorkflowPaths) {
 			return contributorLaneReasonWorkflowPath
 		}
 	}
+	return contributorLaneTestsRemovedReason(files)
+}
+
+// contributorLaneTestsRemovedReason is the tests-removed half of
+// contributorLaneDiffReason: a removed test file, or test deletions past the
+// floor and ratio. It returns "" when the diff keeps its tests.
+func contributorLaneTestsRemovedReason(files []intent.ChangedFile) string {
+	adds, dels := 0, 0
 	for _, f := range files {
 		if !contributorLaneIsTestPath(f.Filename) {
 			continue
