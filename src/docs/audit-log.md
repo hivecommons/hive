@@ -137,8 +137,9 @@ To check a spoke against the hub, compare `hive audit-verify`'s head with the
 registry entry: the spoke's head must be at or after the hub's `seq`, and
 equal to it when no row has been written since the last beat.
 
-Not yet chained: the [token-access audit log](token-access-log.md) and the
-approvals journal.
+The [token-access audit log](token-access-log.md#hash-chain) uses the same
+chain (`hive audit-verify --token-access`), without a hub copy of its head.
+Not yet chained: the approvals journal.
 
 ## Parsing `detail`
 
