@@ -48,6 +48,10 @@ type sandboxEnvironment struct {
 	// PreflightCommands is how many sandbox.preflight commands run in the
 	// Job before the agent. Zero means no preflight checked the node.
 	PreflightCommands int
+	// SetupCommands and SetupHealthCommands count the sandbox.setup
+	// commands that run in the Job before the agent (#19574).
+	SetupCommands       int
+	SetupHealthCommands int
 }
 
 // isExtendedResource reports whether a Kubernetes resource name is an
@@ -135,6 +139,28 @@ func sandboxEnvironmentForLauncher(launcher sandbox.Launcher, runtime string, jo
 	return sandboxEnvironmentFor(runtime, job, preflight, wired)
 }
 
+// withSetup records the sandbox.setup step the launcher runs for this kick,
+// when it is the production Job launcher. A nil environment stays nil.
+func (env *sandboxEnvironment) withSetup(launcher sandbox.Launcher, setup config.SandboxSetupConfig) *sandboxEnvironment {
+	if env == nil {
+		return nil
+	}
+	if _, wired := launcher.(*kubejob.Launcher); !wired {
+		return env
+	}
+	for _, list := range []struct {
+		cmds []string
+		n    *int
+	}{{setup.Commands, &env.SetupCommands}, {setup.HealthCommands, &env.SetupHealthCommands}} {
+		for _, c := range list.cmds {
+			if strings.TrimSpace(c) != "" {
+				*list.n++
+			}
+		}
+	}
+	return env
+}
+
 // sandboxEnvironmentPromptSection is the hive-written block prepended to the
 // prompt of a kick that has an environment. Nil returns "".
 func sandboxEnvironmentPromptSection(env *sandboxEnvironment) string {
@@ -151,6 +177,9 @@ func sandboxEnvironmentPromptSection(env *sandboxEnvironment) string {
 		fmt.Fprintf(&b, "Node preflight: the %d configured sandbox.preflight command(s) passed on this node before you started; hive does not start the agent on a node where one fails.\n", env.PreflightCommands)
 	} else {
 		b.WriteString("Node preflight: none is configured, so hive has not checked the device on this node.\n")
+	}
+	if env.SetupCommands+env.SetupHealthCommands > 0 {
+		fmt.Fprintf(&b, "Workspace setup: the %d configured sandbox.setup command(s) and %d health check(s) already ran in this workspace before you started; do not repeat them.\n", env.SetupCommands, env.SetupHealthCommands)
 	}
 	b.WriteString(sandboxEnvironmentInstruction + "\n")
 	b.WriteString("---\n\n")

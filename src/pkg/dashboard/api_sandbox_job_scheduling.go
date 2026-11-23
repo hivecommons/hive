@@ -28,6 +28,8 @@ import (
 //	tolerations      [{"key", "operator", "value", "effect"}]
 //	scheduleTimeoutS whole seconds, 0 uses config.DefaultSandboxScheduleTimeoutS
 //	preflight        {"commands": [...], "timeoutS", "totalTimeoutS", "retryDelayS"}
+//	setup            {"commands": [...], "healthCommands": [...], "timeoutS", "totalTimeoutS"}
+//	                 (sandbox.setup, #19574; body keys sandboxSetup and agentSandboxSetup)
 //	githubReadProxy  {"enabled", "listenAddr", "endpoint", "noProxy": [...]}
 
 // Bounds on the operator-supplied lists and maps. Kubernetes has no hard cap
@@ -40,6 +42,8 @@ const (
 	maxK8sLabelNameLen          = 63
 	maxK8sLabelPrefixLen        = 253
 	maxSandboxPreflightTimeoutS = 24 * 60 * 60
+	// maxSandboxSetupTimeoutS bounds the setup step's timeouts the same way.
+	maxSandboxSetupTimeoutS = maxSandboxPreflightTimeoutS
 )
 
 // Kubernetes toleration operators and taint effects. An empty operator means
@@ -255,6 +259,36 @@ func wholeSecondsFromBody(field string, v interface{}, limit int) (int, error) {
 	return int(n), nil
 }
 
+// commandListFromBody reads a list of shell commands, blanks dropped.
+func commandListFromBody(field string, raw interface{}) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	arr, isArr := raw.([]interface{})
+	if !isArr {
+		return nil, fmt.Errorf("%s must be a list of shell commands", field)
+	}
+	var out []string
+	for _, item := range arr {
+		s, _ := item.(string)
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// refuseCredentialCommands refuses a command that carries a credential shape:
+// every command here is written to the Job manifest and the pod log.
+func refuseCredentialCommands(field string, cmds []string) error {
+	for i, c := range cmds {
+		if category, found := logscrub.FindSecret(c); found {
+			return fmt.Errorf("%s[%d] looks like it carries a credential (%s). Commands are written to the Job manifest and the pod log; pass secrets with env_from_secrets instead", field, i, category)
+		}
+	}
+	return nil
+}
+
 // preflightFromBody reads a sandbox.preflight block. nil means "no block"
 // (inherit, or off hive-wide); an object with no commands is a block that
 // turns preflight off, which only means something per agent.
@@ -267,21 +301,10 @@ func preflightFromBody(field string, v interface{}) (*config.SandboxPreflightCon
 		return nil, fmt.Errorf("%s must be an object with commands", field)
 	}
 	p := &config.SandboxPreflightConfig{}
-	if raw, ok := obj["commands"]; ok && raw != nil {
-		arr, isArr := raw.([]interface{})
-		if !isArr {
-			return nil, fmt.Errorf("%s.commands must be a list of shell commands", field)
-		}
-		for _, item := range arr {
-			s, _ := item.(string)
-			s = strings.TrimSpace(s)
-			if s == "" {
-				continue
-			}
-			p.Commands = append(p.Commands, s)
-		}
-	}
 	var err error
+	if p.Commands, err = commandListFromBody(field+".commands", obj["commands"]); err != nil {
+		return nil, err
+	}
 	for _, f := range []struct {
 		key, yaml string
 		dst       *int
@@ -297,10 +320,49 @@ func preflightFromBody(field string, v interface{}) (*config.SandboxPreflightCon
 	if err := config.ValidateSandboxPreflight(p); err != nil {
 		return nil, fmt.Errorf("%s: %w", field, err)
 	}
-	for i, c := range p.Commands {
-		if category, found := logscrub.FindSecret(c); found {
-			return nil, fmt.Errorf("%s.commands[%d] looks like it carries a credential (%s). Commands are written to the Job manifest and the pod log; pass secrets with env_from_secrets instead", field, i, category)
+	if err := refuseCredentialCommands(field+".commands", p.Commands); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// setupFromBody reads a sandbox.setup block (#19574), the same way: nil is no
+// block, an object with neither list is a block that turns setup off.
+func setupFromBody(field string, v interface{}) (*config.SandboxSetupConfig, error) {
+	if v == nil {
+		return nil, nil
+	}
+	obj, ok := v.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("%s must be an object with commands and healthCommands", field)
+	}
+	p := &config.SandboxSetupConfig{}
+	var err error
+	if p.Commands, err = commandListFromBody(field+".commands", obj["commands"]); err != nil {
+		return nil, err
+	}
+	if p.HealthCommands, err = commandListFromBody(field+".health_commands", obj["healthCommands"]); err != nil {
+		return nil, err
+	}
+	for _, f := range []struct {
+		key, yaml string
+		dst       *int
+	}{
+		{"timeoutS", "timeout_s", &p.TimeoutS},
+		{"totalTimeoutS", "total_timeout_s", &p.TotalTimeoutS},
+	} {
+		if *f.dst, err = wholeSecondsFromBody(field+"."+f.yaml, obj[f.key], maxSandboxSetupTimeoutS); err != nil {
+			return nil, err
 		}
+	}
+	if err := config.ValidateSandboxSetup(p); err != nil {
+		return nil, fmt.Errorf("%s: %w", field, err)
+	}
+	if err := refuseCredentialCommands(field+".commands", p.Commands); err != nil {
+		return nil, err
+	}
+	if err := refuseCredentialCommands(field+".health_commands", p.HealthCommands); err != nil {
+		return nil, err
 	}
 	return p, nil
 }
@@ -420,6 +482,18 @@ func preflightView(p *config.SandboxPreflightConfig) interface{} {
 	}
 }
 
+func setupView(p *config.SandboxSetupConfig) interface{} {
+	if p == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"commands":       nonNilStrings(p.Commands),
+		"healthCommands": nonNilStrings(p.HealthCommands),
+		"timeoutS":       p.TimeoutS,
+		"totalTimeoutS":  p.TotalTimeoutS,
+	}
+}
+
 func readProxyView(rp *config.SandboxGitHubReadProxy) map[string]interface{} {
 	if rp == nil {
 		rp = &config.SandboxGitHubReadProxy{}
@@ -440,6 +514,15 @@ func sandboxPreflightDefaults() map[string]int {
 		"totalTimeoutS":    config.DefaultSandboxPreflightTotalTimeoutS,
 		"scheduleTimeoutS": config.DefaultSandboxScheduleTimeoutS,
 		"maxCommands":      config.MaxSandboxPreflightCommands,
+	}
+}
+
+// sandboxSetupDefaults are the timeouts a zero setup field resolves to.
+func sandboxSetupDefaults() map[string]int {
+	return map[string]int{
+		"timeoutS":      config.DefaultSandboxSetupTimeoutS,
+		"totalTimeoutS": config.DefaultSandboxSetupTotalTimeoutS,
+		"maxCommands":   config.MaxSandboxSetupCommands,
 	}
 }
 
@@ -518,6 +601,14 @@ func agentSandboxEffectiveView(a config.AgentConfig, global config.AgentSandboxC
 	case global.Preflight != nil:
 		preSource = sandboxSourceGlobal
 	}
+	setup := a.SandboxSetup(global)
+	setupSource := sandboxSourceUnset
+	switch {
+	case a.Sandbox != nil && a.Sandbox.Setup != nil:
+		setupSource = sandboxSourceAgent
+	case global.Setup != nil:
+		setupSource = sandboxSourceGlobal
+	}
 	scheduleTimeout := eff.ScheduleTimeoutS
 	if scheduleTimeout == 0 {
 		scheduleTimeout = config.DefaultSandboxScheduleTimeoutS
@@ -537,11 +628,14 @@ func agentSandboxEffectiveView(a config.AgentConfig, global config.AgentSandboxC
 		"hiddenDefaults":  nonNilStrings(hidden),
 		"preflight":       preflightView(&pre),
 		"preflightSource": preSource,
+		"setup":           setupView(&setup),
+		"setupSource":     setupSource,
 	}
 }
 
 // sandboxJobDefaultsBody is the part of PUT /api/config/governor/security
-// that edits the hive-wide Job scheduling, preflight and read relay settings.
+// that edits the hive-wide Job scheduling, preflight, setup and read relay
+// settings.
 // Each key is raw so an absent key is "unchanged" and null clears the field.
 type sandboxJobDefaultsBody struct {
 	NodeSelector     json.RawMessage `json:"agentSandboxJobNodeSelector"`
@@ -550,6 +644,7 @@ type sandboxJobDefaultsBody struct {
 	ImagePullSecrets json.RawMessage `json:"agentSandboxJobImagePullSecrets"`
 	ScheduleTimeoutS json.RawMessage `json:"agentSandboxJobScheduleTimeoutS"`
 	Preflight        json.RawMessage `json:"agentSandboxPreflight"`
+	Setup            json.RawMessage `json:"agentSandboxSetup"`
 	GitHubReadProxy  json.RawMessage `json:"agentSandboxJobGithubReadProxy"`
 }
 
@@ -560,6 +655,8 @@ type sandboxJobDefaultsEdit struct {
 	jobChanged   bool
 	preflight    *config.SandboxPreflightConfig
 	preflightSet bool
+	setup        *config.SandboxSetupConfig
+	setupSet     bool
 }
 
 // parse validates the body against the current block without changing it.
@@ -631,6 +728,20 @@ func (b sandboxJobDefaultsBody) parse(current config.AgentSandboxConfig) (sandbo
 		edit.preflight = pre
 		edit.preflightSet = true
 	}
+	if v, present, err := rawJSONValue(b.Setup); err != nil {
+		return edit, fmt.Errorf("invalid agentSandboxSetup")
+	} else if present {
+		setup, err := setupFromBody("agent_sandbox.setup", v)
+		if err != nil {
+			return edit, err
+		}
+		// As for preflight: hive-wide, an empty block means off; store none.
+		if setup != nil && !setup.Enabled() && setup.TimeoutS == 0 && setup.TotalTimeoutS == 0 {
+			setup = nil
+		}
+		edit.setup = setup
+		edit.setupSet = true
+	}
 	return edit, nil
 }
 
@@ -641,6 +752,9 @@ func (e sandboxJobDefaultsEdit) apply(sb *config.AgentSandboxConfig) {
 	}
 	if e.preflightSet {
 		sb.Preflight = e.preflight
+	}
+	if e.setupSet {
+		sb.Setup = e.setup
 	}
 }
 
@@ -656,6 +770,8 @@ func sandboxJobDefaultsResponse(cfg *config.Config) map[string]interface{} {
 		"agentSandboxJobScheduleTimeoutS": job.ScheduleTimeoutS,
 		"agentSandboxPreflight":           preflightView(cfg.AgentSandbox.Preflight),
 		"agentSandboxPreflightDefaults":   sandboxPreflightDefaults(),
+		"agentSandboxSetup":               setupView(cfg.AgentSandbox.Setup),
+		"agentSandboxSetupDefaults":       sandboxSetupDefaults(),
 		"agentSandboxJobGithubReadProxy":  readProxyView(job.GitHubReadProxy),
 	}
 }

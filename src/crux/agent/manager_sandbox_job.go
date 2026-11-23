@@ -18,6 +18,8 @@ const (
 	auditSandboxNodeRetry          = "sandbox_node_unhealthy_retry"
 	auditSandboxWaitingForNode     = "sandbox_waiting_for_node"
 	auditSandboxWaitingForNodeFail = "sandbox_waiting_for_node_failed"
+	// auditSandboxSetupFailed: a sandbox.setup command failed (#19574).
+	auditSandboxSetupFailed = "sandbox_setup_failed"
 )
 
 // sandboxPhases holds the live phase of each in-flight sandboxed kick, keyed by
@@ -43,15 +45,20 @@ func sandboxPhaseOf(a *AgentProcess) *crux.SandboxPhase {
 	return &p
 }
 
-// prepareJobKickLocked wires sandbox.preflight and the scheduling events into
-// the launcher of a job-runtime kick. A test factory's launcher is left alone.
-// A preflight configured for another runtime is reported and ignored: it only
-// has a meaning on the Job runtime, where it runs in the Job's own container.
+// prepareJobKickLocked wires sandbox.preflight, sandbox.setup and the
+// scheduling events into the launcher of a job-runtime kick. A test factory's
+// launcher is left alone. A preflight or setup configured for another runtime
+// is reported and ignored: both only have a meaning on the Job runtime, where
+// they run in the Job's own container.
 func (m *Manager) prepareJobKickLocked(launcher sandbox.Launcher, agent *AgentProcess, runtime string) {
 	preflight := agent.Config.SandboxPreflight(m.sandboxConfig)
+	setup := agent.Config.SandboxSetup(m.sandboxConfig)
 	if runtime != config.SandboxRuntimeJob {
 		if len(preflight.Commands) > 0 {
 			m.logger.Warn("sandbox.preflight is set but the runtime is not job; the preflight is ignored", "name", agent.Name, "runtime", runtime)
+		}
+		if setup.Enabled() {
+			m.logger.Warn("sandbox.setup is set but the runtime is not job; the setup step is ignored", "name", agent.Name, "runtime", runtime)
 		}
 		return
 	}
@@ -63,6 +70,10 @@ func (m *Manager) prepareJobKickLocked(launcher sandbox.Launcher, agent *AgentPr
 	kl.Options.PreflightTimeout = time.Duration(preflight.TimeoutS) * time.Second
 	kl.Options.PreflightTotalTimeout = time.Duration(preflight.TotalTimeoutS) * time.Second
 	kl.Options.PreflightRetryDelay = time.Duration(preflight.RetryDelayS) * time.Second
+	kl.Options.Setup = setup.Commands
+	kl.Options.SetupHealth = setup.HealthCommands
+	kl.Options.SetupTimeout = time.Duration(setup.TimeoutS) * time.Second
+	kl.Options.SetupTotalTimeout = time.Duration(setup.TotalTimeoutS) * time.Second
 	name := agent.Name
 	kl.Options.OnEvent = func(e kubejob.Event) { m.onJobEvent(name, e) }
 }
@@ -102,6 +113,13 @@ func (m *Manager) onJobEvent(name string, e kubejob.Event) {
 func (m *Manager) sandboxInfraFailureLocked(agent *AgentProcess, name string, res SandboxKickResult, err error) bool {
 	reason := res.Sandbox.FailReason
 	if reason == "" {
+		return false
+	}
+	if reason == sandbox.FailReasonSetupFailed {
+		// The setup step's failure is the kick's (the repo's script, its
+		// mirror): it fails like any other kick, with the reason recorded
+		// and audited (#19574).
+		m.auditSandbox(name, auditSandboxSetupFailed, fmt.Sprintf("node=%s reason=%s workspace=%s", res.Sandbox.Node, err.Error(), res.Workspace))
 		return false
 	}
 	if agent.Paused || agent.State == StatePaused {

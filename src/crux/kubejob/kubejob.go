@@ -167,6 +167,14 @@ type Options struct {
 	PreflightTimeout      time.Duration
 	PreflightTotalTimeout time.Duration
 	PreflightRetryDelay   time.Duration
+	// Setup, SetupHealth, SetupTimeout and SetupTotalTimeout configure the
+	// workspace setup step (#19574); see setup.go. A failed health command
+	// retries on another node after PreflightRetryDelay, as a failed
+	// preflight does. Both lists empty leave the Job exactly as before.
+	Setup             []string
+	SetupHealth       []string
+	SetupTimeout      time.Duration
+	SetupTotalTimeout time.Duration
 	// ScheduleTimeout is how long the pod may stay Unschedulable before the
 	// kick fails with waiting_for_node; zero uses DefaultScheduleTimeout.
 	ScheduleTimeout time.Duration
@@ -251,6 +259,9 @@ func (o Options) Validate() error {
 	if err := o.validatePreflight(); err != nil {
 		return err
 	}
+	if err := o.validateSetup(); err != nil {
+		return err
+	}
 	switch o.network() {
 	case NetworkDefault, NetworkNone, NetworkHost:
 	default:
@@ -293,6 +304,9 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 	}
 	if spec.Relays && len(l.Options.Preflight) > 0 && len(spec.Command) == 0 {
 		return res, errors.New("kubejob: sandbox.preflight needs an explicit command to run the agent after it; this launch has none")
+	}
+	if spec.Relays && l.Options.setupEnabled() && len(spec.Command) == 0 {
+		return res, errors.New("kubejob: sandbox.setup needs an explicit command to run the agent after it; this launch has none")
 	}
 	return l.runWithRetry(ctx, spec, ns, subPath, relays)
 }
@@ -465,7 +479,8 @@ func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec
 		"envFrom":      envFrom,
 		"volumeMounts": mounts,
 	}
-	command := preflightCommand(spec.Command, l.Options)
+	// relay check, then preflight, then setup, then the agent (#19574).
+	command := preflightCommand(setupCommand(spec.Command, l.Options), l.Options)
 	if relays != nil {
 		command = sandbox.RelayCommand(command)
 		mounts = append(mounts, map[string]any{"name": relayVolumeName, "mountPath": sandbox.RelayMountPath, "readOnly": true})
