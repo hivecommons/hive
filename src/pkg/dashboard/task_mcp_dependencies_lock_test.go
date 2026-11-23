@@ -55,9 +55,17 @@ func TestTaskMCPDependenciesDoesNotDeadlockTheBeadStore(t *testing.T) {
 
 	// Anything else in the hive that writes a bead: a claim, a status change,
 	// the planner.
+	// The writer must be gone before the test returns: it writes into the
+	// store's TempDir, and a write that lands during TempDir cleanup fails the
+	// test with "directory not empty".
 	stop := make(chan struct{})
-	defer close(stop)
+	writerDone := make(chan struct{})
+	defer func() {
+		close(stop)
+		<-writerDone
+	}()
 	go func() {
+		defer close(writerDone)
 		for {
 			select {
 			case <-stop:

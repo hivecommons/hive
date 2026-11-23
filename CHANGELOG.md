@@ -11,6 +11,24 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v6.58.3)
+
+### Security
+
+- Bump `github.com/gorilla/websocket` to v1.5.4-0.20240701034025-d67f41855da4, the version that fixes GO-2026-6278, so govulncheck passes again. The dashboard, contributor and terminal WebSocket code is unchanged.
+
+## 2026-11-23 (v6.58.2)
+
+### Changed
+
+- The Overview card now shows the bands the hive actually decided, read from the server's new `overview_card`. Both donuts plot one band per open item, and the legend shows **Waiting on someone else**, **Blocked** and **Hive has it** as bold subtotal rows with their bands indented under them. A band at zero stays listed but dimmed, except Queued for agents and Unexplained; Held is hidden at zero; every band and subtotal row keeps its ⬇ export (`?card_band=` / `?card_group=`) and a plain-words rule on hover. The PR donut also plots the drafts the hive sidelines. With the card, the **Actionable now** tile is named **Hive has it**, in the mock-up's blue, and counts only what the hive moves on its own; every term tile gets an ⓘ listing its bands with colour swatches and counts, and the Your turn ⓘ says how many of its items the hive holds for a person that are not in the inbox. The KPI strip's label and the left-menu Overview counter's tooltip read the card's tiles, and the tiles keep their own trend samples so the older equation never draws into a card sparkline. With an older server that sends no card, the Overview is exactly today's: same slices, equation, labels and tooltips.
+
+## 2026-11-23 (v6.58.1)
+
+### Fixed
+
+- `stage_tracker_read` now keeps `sentinel_notice` in its default summary view. The summary kept `sentinel_alert` and `sentinel_reason` but dropped `sentinel_notice`, so a trusted author's informational Sentinel notice (no alert label, not a merge gate) read as a blocking alert whose label was missing; only `view=full` told the two apart. Display only: no merge, inbox or stage behaviour changes.
+
 ## 2026-11-23 (v6.58.0)
 
 ### Added
