@@ -114,7 +114,7 @@ review are settled.
 | `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:390` |
 | `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:391` |
 | `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:392` |
-| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1996` |
+| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:2003` |
 
 ### Activity observation provenance
 

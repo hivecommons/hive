@@ -117,3 +117,11 @@ func TestGoodFirstIssueLabelMirrorsGFI(t *testing.T) {
 		t.Fatal("config good-first-issue defaults drifted from pkg/gfi")
 	}
 }
+
+// The Overview card copies gfi.SkipTracking instead of importing pkg/gfi
+// (the dashboard import ratchet), so the copy is pinned here.
+func TestCardFilteredTrackingMatchesGFI(t *testing.T) {
+	if cardFilteredTracking != gfi.SkipTracking {
+		t.Fatalf("cardFilteredTracking = %q, want gfi.SkipTracking %q", cardFilteredTracking, gfi.SkipTracking)
+	}
+}

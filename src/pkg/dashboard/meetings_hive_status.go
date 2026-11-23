@@ -47,6 +47,7 @@ func (s *Server) HiveStatusBrief(ctx context.Context) (string, error) {
 		return "", errHiveStatusUnavailable
 	}
 	now := time.Now()
+	s.cardFixDispatch(now.UTC())
 	status = hiveStatusEnriched(status, s.statusWithOverviewBands(status, now.UTC()))
 	snap := chatBuildSnapshot(status, "", now, nil)
 	return hiveStatusBrief(status, snap, now), nil

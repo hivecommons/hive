@@ -18,7 +18,8 @@ type OverviewBands struct {
 
 // Each row type embeds the item's *CriticalPath (critical_path.go): set on
 // your-turn rows only, so waits_on, unblocks, may_conflict_with and action
-// appear on exactly those rows.
+// appear on exactly those rows. overviewCardRowFields are the row's place on
+// the Overview card (overview_card.go).
 type overviewStatusIssue struct {
 	github.Issue
 	IssueBandInfo
@@ -26,6 +27,7 @@ type overviewStatusIssue struct {
 	ChartSlice   string     `json:"chart_slice,omitempty"`
 	OverviewTerm string     `json:"overview_term,omitempty"`
 	*CriticalPath
+	overviewCardRowFields
 }
 type overviewStatusHold struct {
 	github.HoldItem
@@ -34,6 +36,7 @@ type overviewStatusHold struct {
 	ChartSlice   string     `json:"chart_slice,omitempty"`
 	OverviewTerm string     `json:"overview_term,omitempty"`
 	*CriticalPath
+	overviewCardRowFields
 }
 type overviewStatusPR struct {
 	FrontendPR
@@ -42,6 +45,7 @@ type overviewStatusPR struct {
 	ChartSlice   string     `json:"chart_slice,omitempty"`
 	OverviewTerm string     `json:"overview_term,omitempty"`
 	*CriticalPath
+	overviewCardRowFields
 }
 
 // overviewStatusNonActionable is a non-actionable issue row with its
@@ -61,6 +65,15 @@ type overviewStatusNonActionable struct {
 	ChartSlice   string                 `json:"chart_slice,omitempty"`
 	OverviewTerm string                 `json:"overview_term,omitempty"`
 	*CriticalPath
+	overviewCardRowFields
+}
+
+// overviewStatusNonActionablePR is a sidelined draft PR row with its place
+// on the Overview card. Every reader of NonActionablePrs decodes it
+// (repoWorkPR, repoWorkPRRow); it is wrapped last on the response copy.
+type overviewStatusNonActionablePR struct {
+	github.RepoWorkPR
+	overviewCardRowFields
 }
 
 // parkedIssueLinkedPRs lists the open and held pull requests of repo whose
@@ -126,6 +139,15 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 	}
 	selfAuthorizationHoldActive := s.selfAuthorizationHoldActiveForRepo
 	autoMergeLabel := s.autoMergeLabel()
+	// The Overview card reads the raw rows and the leaf caches only: no
+	// store call and no file read under statusMu (overview_card_stash.go).
+	cardIn := s.overviewCardInputs(now)
+	cardIn.autoMergeLabel = autoMergeLabel
+	card := overviewCardClassify(status, cardIn)
+	cardFields := func(kind, rowRepo, repoName string, number int) overviewCardRowFields {
+		band, _ := card.band(kind, cardRepoFull(rowRepo, repoName), number)
+		return band.rowFields()
+	}
 	out := *status
 	out.OverviewBands = &OverviewBands{Issues: IssueBandSpecs(cfg), PRs: PRBandSpecs(cfg)}
 	slices := OverviewSliceSpecs(cfg)
@@ -174,13 +196,14 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 			term := overviewIssueTerm(ownership, held)
 			countSlice(slices.Issues, slice)
 			path := criticalPathFor(paths, ownershipKindIssue, issue.Number)
+			fields := cardFields(ownershipKindIssue, issue.Repo, repoName, issue.Number)
 			switch v := raw.(type) {
 			case github.HoldItem:
-				result = append(result, overviewStatusHold{v, info, ownership, slice, term, path})
+				result = append(result, overviewStatusHold{v, info, ownership, slice, term, path, fields})
 			case *github.HoldItem:
-				result = append(result, overviewStatusHold{*v, info, ownership, slice, term, path})
+				result = append(result, overviewStatusHold{*v, info, ownership, slice, term, path, fields})
 			default:
-				result = append(result, overviewStatusIssue{issue, info, ownership, slice, term, path})
+				result = append(result, overviewStatusIssue{issue, info, ownership, slice, term, path, fields})
 			}
 		}
 		return result
@@ -197,7 +220,8 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 				continue
 			}
 			ownership := ownershipFor(repo.Ownership, ownershipKindIssue, item.Number)
-			row := overviewStatusNonActionable{RepoWorkIssue: item, Ownership: ownership, ChartSlice: overviewNonActionableChartSlice(ownership), OverviewTerm: overviewNonActionableTerm(ownership), CriticalPath: criticalPathFor(repo.CriticalPath, ownershipKindIssue, item.Number)}
+			row := overviewStatusNonActionable{RepoWorkIssue: item, Ownership: ownership, ChartSlice: overviewNonActionableChartSlice(ownership), OverviewTerm: overviewNonActionableTerm(ownership), CriticalPath: criticalPathFor(repo.CriticalPath, ownershipKindIssue, item.Number),
+				overviewCardRowFields: cardFields(ownershipKindIssue, item.Repo, repoName, item.Number)}
 			if nonActionableIssueBand(item) != "" {
 				info := nonActionableIssueInfo(item, repoName, cfg, now, selfAuthorizationHoldActive)
 				row.IssueBandInfo = &info
@@ -211,7 +235,7 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 		}
 		return result
 	}
-	prs := func(items []any, held bool, decisions map[string]Ownership, paths map[string]CriticalPath) []any {
+	prs := func(items []any, held bool, repoName string, decisions map[string]Ownership, paths map[string]CriticalPath) []any {
 		if items == nil {
 			return nil
 		}
@@ -228,7 +252,7 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 			slice := overviewPRChartSlice(entry.pr, entry.verdict, ownership, autoMergeLabel)
 			term := overviewPRTerm(ownership, held || len(holdLabels(entry.pr.Labels, status.HiveID)) > 0, entry.pr, entry.verdict, autoMergeLabel)
 			countSlice(slices.PRs, slice)
-			result = append(result, overviewStatusPR{entry.wire, info, ownership, slice, term, criticalPathFor(paths, ownershipKindPR, entry.pr.Number)})
+			result = append(result, overviewStatusPR{entry.wire, info, ownership, slice, term, criticalPathFor(paths, ownershipKindPR, entry.pr.Number), cardFields(ownershipKindPR, entry.pr.Repo, repoName, entry.pr.Number)})
 		}
 		return result
 	}
@@ -238,8 +262,8 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 		repo.ActionableIssues = issues(repo.ActionableIssues, false, repoName, repo.Ownership, repo.CriticalPath)
 		repo.HeldIssues = issues(repo.HeldIssues, true, repoName, repo.Ownership, repo.CriticalPath)
 		repo.NonActionableIssues = nonActionable(repo.NonActionableIssues, *repo, repoName)
-		repo.OpenPrs = prs(repo.OpenPrs, false, repo.Ownership, repo.CriticalPath)
-		repo.HeldPrs = prs(repo.HeldPrs, true, repo.Ownership, repo.CriticalPath)
+		repo.OpenPrs = prs(repo.OpenPrs, false, repoName, repo.Ownership, repo.CriticalPath)
+		repo.HeldPrs = prs(repo.HeldPrs, true, repoName, repo.Ownership, repo.CriticalPath)
 		// Drafts are sidelined, not listed with the PRs above; count them in
 		// their band so the Draft band is not always 0.
 		for _, entry := range frontendRepoDraftPRs(*repo) {
@@ -261,7 +285,34 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 	out.OpenItems = openItemsSummary(&out)
 	out.LabelPresets = labelPresets(fullCfg, status.HiveID)
 	s.attachSLA(&out, now)
+	out.OverviewCard = card.card
+	// Last, after every reader of the copy: the sidelined drafts carry their
+	// card fields in a wrapper the NonActionablePrs decoders read.
+	for i := range out.Repos {
+		repo := &out.Repos[i]
+		repo.NonActionablePrs = overviewCardWrapDraftPRs(repo.NonActionablePrs, overviewRepoName(*repo), card)
+	}
 	return &out
+}
+
+// overviewCardWrapDraftPRs copies a repo's sidelined PR rows with each
+// draft wrapped in overviewStatusNonActionablePR; other rows are kept as
+// they are.
+func overviewCardWrapDraftPRs(items []any, repoName string, card overviewCardResult) []any {
+	if items == nil {
+		return nil
+	}
+	result := make([]any, 0, len(items))
+	for _, raw := range items {
+		w, ok := repoWorkPR(raw)
+		if !ok || !w.Draft {
+			result = append(result, raw)
+			continue
+		}
+		band, _ := card.band(ownershipKindPR, cardRepoFull(w.Repo, repoName), w.Number)
+		result = append(result, overviewStatusNonActionablePR{RepoWorkPR: w, overviewCardRowFields: band.rowFields()})
+	}
+	return result
 }
 
 func overviewTotals(status *StatusPayload) FrontendOverviewTotals {

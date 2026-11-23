@@ -606,7 +606,14 @@ open issue, including the non-actionable rows (parked, reporter-triage,
 reporter-confirmation, covered-by-PR, exempt and the like): a row with no band of
 its own is exported with band `outside` and its `bucket`. Every row of both
 exports carries its ownership decision as `your_turn`, `verb`, `reason_code`, `inbox_rank`,
-`reason` and `waiting_elsewhere`, plus its chart `slice`. Cookie sessions work directly; token-authenticated
+`reason` and `waiting_elsewhere`, plus its chart `slice`. The Overview card's
+place for the row comes last: `card_band`, `card_group`, `card_reason` and
+`card_reason_code` (see [Overview](dashboard-sections/overview-and-metrics.md#overview)).
+The `card_band` and `card_group` query filters (repeatable) keep only the rows
+in those card bands or groups, and the `.json` exports add `card_bands[]`,
+`card_groups[]` and `card_remainder`, counted over the rows returned (an item
+listed twice counts once; `card_remainder` is 0 when the export filters rows).
+Cookie sessions work directly; token-authenticated
 pages include their API token in the download link's query string.
 
 The Overview header's ⚙️ popover stores browser-local chart preferences under

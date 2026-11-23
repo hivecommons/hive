@@ -32,6 +32,11 @@ type overviewFilters struct {
 	repos  map[string]bool
 	stale  *bool
 	held   *bool
+	// cardBands and cardGroups keep the rows in the named Overview card
+	// bands and groups (overview_card.go), so a band's or group's export
+	// link returns exactly the rows it counts.
+	cardBands  map[string]bool
+	cardGroups map[string]bool
 }
 
 // overviewJSONResponse is the typed JSON export. GeneratedAt is request time;
@@ -49,6 +54,32 @@ type overviewJSONResponse struct {
 	StaleDays        int        `json:"stale_days"`
 	Bands            []BandSpec `json:"bands"`
 	Rows             []any      `json:"rows"`
+	// CardBands, CardGroups and CardRemainder are the Overview card's
+	// counts over the rows returned, the same way bands[] is counted.
+	CardBands     []OverviewCardBandSpec    `json:"card_bands"`
+	CardGroups    []overviewCardExportGroup `json:"card_groups"`
+	CardRemainder int                       `json:"card_remainder"`
+}
+
+// overviewCardExportGroup is one Overview card group in an export: the rows
+// it counts for the export's kind, of which not_in_inbox are your turn on
+// the card but not in the inbox and unexplained are Unexplained (both only
+// on your-turn).
+type overviewCardExportGroup struct {
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Rule        string `json:"rule"`
+	Headed      bool   `json:"headed"`
+	Count       int    `json:"count"`
+	NotInInbox  int    `json:"not_in_inbox"`
+	Unexplained int    `json:"unexplained"`
+}
+
+// overviewCardExport is the card's part of an export response.
+type overviewCardExport struct {
+	bands     []OverviewCardBandSpec
+	groups    []overviewCardExportGroup
+	remainder int
 }
 
 func (s *Server) handleOverviewIssuesCSV(w http.ResponseWriter, r *http.Request) {
@@ -90,11 +121,17 @@ func (s *Server) handleOverviewExport(w http.ResponseWriter, r *http.Request, ki
 	if err == nil {
 		err = parseOverviewSlices(r, &filters, validSlices)
 	}
+	if err == nil {
+		err = parseOverviewCardFilters(r, &filters, kind)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	now := time.Now().UTC()
+	// The Overview card's dispatch cache may read a file: refresh it before
+	// the lock.
+	s.cardFixDispatch(now)
 	// Rows and snapshot identity are read under one read lock:
 	// applyRepoHoldToStatus rewrites the shared status in place and bumps its
 	// identity under the write lock, so reading either outside it could pair
@@ -107,12 +144,13 @@ func (s *Server) handleOverviewExport(w http.ResponseWriter, r *http.Request, ki
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "initializing"})
 		return
 	}
-	rows, bands := s.overviewRows(status, kind, cfg, filters, now)
+	rows, bands, card := s.overviewRowsCard(status, kind, cfg, filters, now)
 	snapshotAt, snapshotSeq, snapshotInstance, hiveID := status.Timestamp, status.StatusSeq, status.StatusInstance, status.HiveID
 	s.statusMu.RUnlock()
 	if format == "json" {
 		w.Header().Set("Content-Type", overviewJSONType)
-		resp := overviewJSONResponse{Kind: kind, GeneratedAt: now, SnapshotAt: snapshotAt, SnapshotSeq: snapshotSeq, SnapshotInstance: snapshotInstance, HiveID: hiveID, StaleDays: normalizeIssueBandsConfig(cfg).StaleDays, Bands: bands, Rows: rows}
+		resp := overviewJSONResponse{Kind: kind, GeneratedAt: now, SnapshotAt: snapshotAt, SnapshotSeq: snapshotSeq, SnapshotInstance: snapshotInstance, HiveID: hiveID, StaleDays: normalizeIssueBandsConfig(cfg).StaleDays, Bands: bands, Rows: rows,
+			CardBands: card.bands, CardGroups: card.groups, CardRemainder: card.remainder}
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			logOverviewEncodeFailure(err)
 		}
@@ -204,6 +242,76 @@ func parseOverviewSlices(r *http.Request, filters *overviewFilters, validSlices 
 	return nil
 }
 
+// parseOverviewCardFilters reads the card_band and card_group filters:
+// the Overview card bands (this kind's donut) and groups an export link asks
+// for.
+func parseOverviewCardFilters(r *http.Request, filters *overviewFilters, kind string) error {
+	bandKeys := cardIssueBandOrder
+	if kind == overviewKindPRs {
+		bandKeys = cardPRBandOrder
+	}
+	parse := func(param, what string, valid []string) (map[string]bool, error) {
+		values := splitQueryValues(r.URL.Query()[param])
+		if len(values) == 0 {
+			return nil, nil
+		}
+		known := make(map[string]bool, len(valid))
+		for _, key := range valid {
+			known[key] = true
+		}
+		out := map[string]bool{}
+		bad := make([]string, 0)
+		for _, v := range values {
+			if !known[v] {
+				bad = append(bad, v)
+				continue
+			}
+			out[v] = true
+		}
+		if len(bad) > 0 {
+			return nil, fmt.Errorf("unknown %s %q; valid %ss: %s", param, strings.Join(bad, ","), what, strings.Join(valid, ", "))
+		}
+		return out, nil
+	}
+	var err error
+	if filters.cardBands, err = parse("card_band", "card band", bandKeys); err != nil {
+		return err
+	}
+	filters.cardGroups, err = parse("card_group", "card group", cardGroupOrder)
+	return err
+}
+
+func (f overviewFilters) matchCard(band OverviewCardBand) bool {
+	return (len(f.cardBands) == 0 || f.cardBands[band.Key]) && (len(f.cardGroups) == 0 || f.cardGroups[band.Group])
+}
+
+// cardFiltered reports a card_band or card_group filter.
+func (f overviewFilters) cardFiltered() bool {
+	return len(f.cardBands) > 0 || len(f.cardGroups) > 0
+}
+
+// rowFiltered reports a filter that keeps only some of a repository's rows.
+func (f overviewFilters) rowFiltered() bool {
+	return len(f.bands) > 0 || len(f.slices) > 0 || f.stale != nil || f.held != nil || f.cardFiltered()
+}
+
+// overviewCardFirstCopy reports whether an export row is the first copy of
+// its item in its repository, the copy the card counts (overviewCardClassify
+// and repoOpenItems keep the first). The default export still lists every
+// copy, as today; counts and card filters see the first only (with a band,
+// slice, stale or held filter, the first copy that survives the filter).
+func overviewCardFirstCopy() func(repoName, kind string, number int) bool {
+	seen := map[string]bool{}
+	return func(repoName, kind string, number int) bool {
+		key := strings.ToLower(repoName) + "|" + kind + "#" + strconv.Itoa(number)
+		if seen[key] {
+			return false
+		}
+		seen[key] = true
+		return true
+	}
+}
+
 func splitQueryValues(values []string) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
@@ -218,10 +326,96 @@ func splitQueryValues(values []string) []string {
 }
 
 func (s *Server) overviewRows(status *StatusPayload, kind string, cfg config.DashboardIssueBandsConfig, filters overviewFilters, now time.Time) ([]any, []BandSpec) {
+	rows, bands, _ := s.overviewRowsCard(status, kind, cfg, filters, now)
+	return rows, bands
+}
+
+// overviewRowsCard is overviewRows with the Overview card's counts over the
+// rows returned.
+func (s *Server) overviewRowsCard(status *StatusPayload, kind string, cfg config.DashboardIssueBandsConfig, filters overviewFilters, now time.Time) ([]any, []BandSpec, overviewCardExport) {
 	if kind == overviewKindPRs {
-		return s.overviewPRRows(status, cfg, filters, now)
+		return s.overviewPRRowsCard(status, cfg, filters, now)
 	}
-	return s.overviewIssueRows(status, cfg, filters, now)
+	return s.overviewIssueRowsCard(status, cfg, filters, now)
+}
+
+// overviewCardForExport classifies the snapshot for the card, from the leaf
+// caches only (the caller holds statusMu).
+func (s *Server) overviewCardForExport(status *StatusPayload, now time.Time) overviewCardResult {
+	in := s.overviewCardInputs(now)
+	in.autoMergeLabel = s.autoMergeLabel()
+	return overviewCardClassify(status, in)
+}
+
+// overviewCardExportCounts counts the card bands and groups of one kind
+// over the rows an export returns. remainder is the displayed total of the
+// repositories the export covers minus the card rows there, never below 0.
+func overviewCardExportCounts(kind string, rows []overviewCardCounted, remainder int) overviewCardExport {
+	order := cardIssueBandOrder
+	if kind == overviewKindPRs {
+		order = cardPRBandOrder
+	}
+	counts := map[string]int{}
+	notInInbox, unexplained := 0, 0
+	for _, r := range rows {
+		if r.band.Key == "" {
+			// A row the card does not count (an issues-feed echo of a PR).
+			continue
+		}
+		counts[r.band.Key]++
+		if (r.band.Key == cardBandYourTurn || r.band.Key == cardBandToClose) && (r.ownership == nil || !r.ownership.YourTurn) {
+			notInInbox++
+		}
+		if r.band.Key == cardBandUnexplained {
+			unexplained++
+		}
+	}
+	out := overviewCardExport{bands: cardBandSpecs(order, kind, counts), remainder: remainder}
+	for _, group := range cardGroupOrder {
+		def := cardGroupDefs[group]
+		g := overviewCardExportGroup{Key: group, Label: def.label, Rule: cardGroupRule(group, false), Headed: def.headed}
+		for _, spec := range out.bands {
+			if spec.Group == group {
+				g.Count += spec.Count
+			}
+		}
+		if group == cardGroupYourTurn {
+			g.NotInInbox, g.Unexplained = notInInbox, unexplained
+		}
+		out.groups = append(out.groups, g)
+	}
+	return out
+}
+
+// overviewCardCounted is one exported row's card band and ownership.
+type overviewCardCounted struct {
+	band      OverviewCardBand
+	ownership *Ownership
+}
+
+// overviewCardRemainder is the card remainder of one kind over the
+// repositories filters keep: each one's displayed total minus its card rows.
+// The remainder has no rows, so a filter on rows (band, slice, stale, held,
+// card band or group) leaves none of it: 0.
+func overviewCardRemainder(status *StatusPayload, kind string, filters overviewFilters, card overviewCardResult) int {
+	if filters.rowFiltered() {
+		return 0
+	}
+	remainder := 0
+	for _, repo := range status.Repos {
+		repoName := overviewRepoName(repo)
+		if !filters.matchRepo(repoName) {
+			continue
+		}
+		totals := overviewTotals(&StatusPayload{Repos: []FrontendRepo{repo}})
+		listed := card.repoRows[strings.ToLower(repoName)]
+		if kind == overviewKindPRs {
+			remainder += max(0, totals.PRs.Forge-listed.PRs)
+			continue
+		}
+		remainder += max(0, totals.Issues.Forge-listed.Issues)
+	}
+	return remainder
 }
 
 type overviewIssueItem struct {
@@ -236,6 +430,10 @@ type overviewIssueItem struct {
 	// is the enumeration bucket that kept them off the agent queues.
 	nonActionable bool
 	bucket        string
+	// card is the row's place on the Overview card; zero when the caller
+	// did not classify it. repoName is the repository card's name.
+	card     OverviewCardBand
+	repoName string
 }
 
 // overviewIssueItems classifies every open, held and non-actionable issue
@@ -258,7 +456,7 @@ func overviewIssueItems(status *StatusPayload, cfg config.DashboardIssueBandsCon
 			if !filters.matchBand(info.Band) || !filters.matchSlice(slice) || !filters.matchFlags(info.Stale, false) {
 				continue
 			}
-			out = append(out, overviewIssueItem{issue: issue, info: info, ownership: ownership, slice: slice})
+			out = append(out, overviewIssueItem{issue: issue, info: info, ownership: ownership, slice: slice, repoName: repoName})
 		}
 		for _, issue := range frontendRepoIssues(repo, true) {
 			issue.Repo = nonEmpty(issue.Repo, repoName)
@@ -269,7 +467,7 @@ func overviewIssueItems(status *StatusPayload, cfg config.DashboardIssueBandsCon
 			if !filters.matchBand(info.Band) || !filters.matchSlice(slice) || !filters.matchFlags(info.Stale, true) {
 				continue
 			}
-			out = append(out, overviewIssueItem{issue: issue, held: true, info: info, ownership: ownership, slice: slice})
+			out = append(out, overviewIssueItem{issue: issue, held: true, info: info, ownership: ownership, slice: slice, repoName: repoName})
 		}
 		for _, raw := range repo.NonActionableIssues {
 			row, ok := repoWorkIssueRow(raw)
@@ -286,20 +484,36 @@ func overviewIssueItems(status *StatusPayload, cfg config.DashboardIssueBandsCon
 			if !filters.matchBand(info.Band) || !filters.matchSlice(slice) || !filters.matchFlags(info.Stale, false) {
 				continue
 			}
-			out = append(out, overviewIssueItem{issue: issue, info: info, ownership: ownership, slice: slice, nonActionable: true, bucket: row.Bucket})
+			out = append(out, overviewIssueItem{issue: issue, info: info, ownership: ownership, slice: slice, nonActionable: true, bucket: row.Bucket, repoName: repoName})
 		}
 	}
 	return out
 }
 
 func (s *Server) overviewIssueRows(status *StatusPayload, cfg config.DashboardIssueBandsConfig, filters overviewFilters, now time.Time) ([]any, []BandSpec) {
+	rows, specs, _ := s.overviewIssueRowsCard(status, cfg, filters, now)
+	return rows, specs
+}
+
+func (s *Server) overviewIssueRowsCard(status *StatusPayload, cfg config.DashboardIssueBandsConfig, filters overviewFilters, now time.Time) ([]any, []BandSpec, overviewCardExport) {
 	rowBands := append(append([]string{}, issueBandOrder...), overviewBandOutside)
 	byBand := make(map[string][]overviewIssueItem, len(rowBands))
 	counts := make(map[string]int, len(rowBands))
 	for _, key := range rowBands {
 		byBand[key] = nil
 	}
+	card := s.overviewCardForExport(status, now)
+	var counted []overviewCardCounted
+	firstCopy := overviewCardFirstCopy()
 	for _, item := range overviewIssueItems(status, cfg, filters, now, s.selfAuthorizationHoldActiveForRepo) {
+		item.card, _ = card.band(ownershipKindIssue, cardRepoFull(item.issue.Repo, item.repoName), item.issue.Number)
+		first := firstCopy(item.repoName, ownershipKindIssue, item.issue.Number)
+		if !filters.matchCard(item.card) || (!first && filters.cardFiltered()) {
+			continue
+		}
+		if first {
+			counted = append(counted, overviewCardCounted{band: item.card, ownership: item.ownership})
+		}
 		counts[item.info.Band]++
 		byBand[item.info.Band] = append(byBand[item.info.Band], item)
 	}
@@ -325,7 +539,7 @@ func (s *Server) overviewIssueRows(status *StatusPayload, cfg config.DashboardIs
 	if counts[overviewBandOutside] > 0 {
 		specs = append(specs, overviewOutsideBandSpec(counts[overviewBandOutside]))
 	}
-	return rows, specs
+	return rows, specs, overviewCardExportCounts(overviewKindIssues, counted, overviewCardRemainder(status, overviewKindIssues, filters, card))
 }
 
 type overviewPRItem struct {
@@ -337,6 +551,10 @@ type overviewPRItem struct {
 	// slice taken from it.
 	ownership *Ownership
 	slice     string
+	// card is the row's place on the Overview card; zero when the caller
+	// did not classify it. repoName is the repository card's name.
+	card     OverviewCardBand
+	repoName string
 }
 
 // overviewPRItems classifies every open and held PR across the repo cards
@@ -357,7 +575,7 @@ func (s *Server) overviewPRItems(status *StatusPayload, cfg config.DashboardIssu
 			if !filters.matchBand(info.Band) || !filters.matchSlice(slice) || !filters.matchFlags(info.Stale, false) {
 				continue
 			}
-			out = append(out, overviewPRItem{pr: entry.pr, verdict: entry.verdict, info: info, ownership: ownership, slice: slice})
+			out = append(out, overviewPRItem{pr: entry.pr, verdict: entry.verdict, info: info, ownership: ownership, slice: slice, repoName: repoName})
 		}
 		for _, entry := range frontendRepoPRs(repo, true) {
 			entry.pr.Repo = nonEmpty(entry.pr.Repo, repoName)
@@ -367,7 +585,7 @@ func (s *Server) overviewPRItems(status *StatusPayload, cfg config.DashboardIssu
 			if !filters.matchBand(info.Band) || !filters.matchSlice(slice) || !filters.matchFlags(info.Stale, true) {
 				continue
 			}
-			out = append(out, overviewPRItem{pr: entry.pr, verdict: entry.verdict, held: true, info: info, ownership: ownership, slice: slice})
+			out = append(out, overviewPRItem{pr: entry.pr, verdict: entry.verdict, held: true, info: info, ownership: ownership, slice: slice, repoName: repoName})
 		}
 		for _, entry := range frontendRepoDraftPRs(repo) {
 			entry.pr.Repo = nonEmpty(entry.pr.Repo, repoName)
@@ -377,16 +595,32 @@ func (s *Server) overviewPRItems(status *StatusPayload, cfg config.DashboardIssu
 			if !filters.matchBand(info.Band) || !filters.matchSlice(slice) || !filters.matchFlags(info.Stale, false) {
 				continue
 			}
-			out = append(out, overviewPRItem{pr: entry.pr, info: info, ownership: ownership, slice: slice})
+			out = append(out, overviewPRItem{pr: entry.pr, info: info, ownership: ownership, slice: slice, repoName: repoName})
 		}
 	}
 	return out
 }
 
 func (s *Server) overviewPRRows(status *StatusPayload, cfg config.DashboardIssueBandsConfig, filters overviewFilters, now time.Time) ([]any, []BandSpec) {
+	rows, specs, _ := s.overviewPRRowsCard(status, cfg, filters, now)
+	return rows, specs
+}
+
+func (s *Server) overviewPRRowsCard(status *StatusPayload, cfg config.DashboardIssueBandsConfig, filters overviewFilters, now time.Time) ([]any, []BandSpec, overviewCardExport) {
 	byBand := make(map[string][]overviewPRItem, len(prBandOrder))
 	counts := make(map[string]int, len(prBandOrder))
+	card := s.overviewCardForExport(status, now)
+	var counted []overviewCardCounted
+	firstCopy := overviewCardFirstCopy()
 	for _, item := range s.overviewPRItems(status, cfg, filters, now) {
+		item.card, _ = card.band(ownershipKindPR, cardRepoFull(item.pr.Repo, item.repoName), item.pr.Number)
+		first := firstCopy(item.repoName, ownershipKindPR, item.pr.Number)
+		if !filters.matchCard(item.card) || (!first && filters.cardFiltered()) {
+			continue
+		}
+		if first {
+			counted = append(counted, overviewCardCounted{band: item.card, ownership: item.ownership})
+		}
 		counts[item.info.Band]++
 		byBand[item.info.Band] = append(byBand[item.info.Band], item)
 	}
@@ -417,7 +651,7 @@ func (s *Server) overviewPRRows(status *StatusPayload, cfg config.DashboardIssue
 	for i := range specs {
 		specs[i].Count = counts[specs[i].Key]
 	}
-	return rows, specs
+	return rows, specs, overviewCardExportCounts(overviewKindPRs, counted, overviewCardRemainder(status, overviewKindPRs, filters, card))
 }
 
 func (f overviewFilters) matchRepo(repo string) bool {
@@ -557,6 +791,15 @@ func overviewOutsideBandSpec(count int) BandSpec {
 	return BandSpec{Key: overviewBandOutside, Label: overviewBandOutside, Rule: "open issue the scanner kept off the agent queues and that has no band of its own — the row's bucket says why", Count: count}
 }
 
+// overviewCardColumns are the Overview card columns every export row
+// carries, after the ownership columns.
+var overviewCardColumns = []string{"card_band", "card_group", "card_reason", "card_reason_code"}
+
+// overviewCardCells are the card cells of an export row.
+func overviewCardCells(b OverviewCardBand) map[string]any {
+	return map[string]any{"card_band": b.Key, "card_group": b.Group, "card_reason": b.Reason, "card_reason_code": b.ReasonCode}
+}
+
 // overviewOwnershipCells are the ownership columns every export row carries.
 func overviewOwnershipCells(o *Ownership) map[string]any {
 	cells := map[string]any{"your_turn": false, "verb": "", "reason_code": "", "reason": "", "inbox_rank": 0, "waiting_elsewhere": false}
@@ -601,6 +844,9 @@ func overviewIssueCSVRow(item overviewIssueItem, cfg config.DashboardIssueBandsC
 	for key, value := range overviewOwnershipCells(item.ownership) {
 		row[key] = value
 	}
+	for key, value := range overviewCardCells(item.card) {
+		row[key] = value
+	}
 	return row
 }
 
@@ -631,6 +877,9 @@ func overviewPRCSVRow(item overviewPRItem, cfg config.DashboardIssueBandsConfig,
 	for key, value := range overviewOwnershipCells(item.ownership) {
 		row[key] = value
 	}
+	for key, value := range overviewCardCells(item.card) {
+		row[key] = value
+	}
 	return row
 }
 
@@ -638,9 +887,9 @@ var overviewOwnershipColumns = []string{"your_turn", "verb", "reason_code", "rea
 
 func overviewCSVColumns(kind string) []string {
 	if kind == overviewKindPRs || kind == "pr" {
-		return append([]string{"band", "band_rule", "slice", "repo", "number", "title", "url", "author", "draft", "merge_verdict", "mergeable", "failing_checks", "review_decision", "review_class", "held", "hold_reason", "labels", "updated_at", "stale", "signals"}, overviewOwnershipColumns...)
+		return append(append([]string{"band", "band_rule", "slice", "repo", "number", "title", "url", "author", "draft", "merge_verdict", "mergeable", "failing_checks", "review_decision", "review_class", "held", "hold_reason", "labels", "updated_at", "stale", "signals"}, overviewOwnershipColumns...), overviewCardColumns...)
 	}
-	return append([]string{"band", "band_rule", "bucket", "slice", "repo", "number", "title", "url", "state_signals", "labels", "assignees", "agent_role", "acknowledged", "held", "hold_reason", "linked_prs", "updated_at", "stale"}, overviewOwnershipColumns...)
+	return append(append([]string{"band", "band_rule", "bucket", "slice", "repo", "number", "title", "url", "state_signals", "labels", "assignees", "agent_role", "acknowledged", "held", "hold_reason", "linked_prs", "updated_at", "stale"}, overviewOwnershipColumns...), overviewCardColumns...)
 }
 
 func overviewCSV(rows []any, columns []string) string {

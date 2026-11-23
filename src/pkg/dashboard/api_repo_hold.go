@@ -535,6 +535,9 @@ func repoHoldStatusRepoMatches(repo FrontendRepo, full string) bool {
 }
 
 func (s *Server) applyRepoHoldToStatus(repoFull string, number int, itemType string, held bool, label string, removed []string) uint64 {
+	// The broadcast below builds the Overview card under the write lock;
+	// its dispatch cache may read a file, so it is refreshed first.
+	s.cardFixDispatch(time.Now().UTC())
 	s.statusMu.Lock()
 	s.statusMutationEpoch++
 	minStatusSeq := s.statusSeq + 1

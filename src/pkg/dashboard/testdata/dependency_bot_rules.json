@@ -1,0 +1,21 @@
+[
+  {"name": "renovate red required check", "pr": {"number": 1, "author": "renovate[bot]", "head_ref": "renovate/foo", "ci_status": "failure", "failing_checks": ["ci/test"], "labels": []}, "red_ci": true, "conflict": false, "candidate": true},
+  {"name": "renovate red only optional checks", "pr": {"number": 2, "author": "renovate[bot]", "head_ref": "renovate/foo", "ci_status": "failure", "failing_checks": ["ci/lint"], "protection": {"required_checks_known": true, "required_checks_all_reported": true}}, "red_ci": false, "conflict": false, "candidate": true},
+  {"name": "renovate checks still running", "pr": {"number": 3, "author": "renovate[bot]", "head_ref": "renovate/foo", "ci_status": "failure", "failing_checks": ["ci/test"], "ci_checks_running": true}, "red_ci": false, "conflict": false, "candidate": true},
+  {"name": "renovate external CI deferred", "pr": {"number": 4, "author": "renovate[bot]", "head_ref": "renovate/foo", "ci_status": "failure", "failing_checks": ["ci/test"], "external_ci_deferred": true}, "red_ci": false, "conflict": false, "candidate": true},
+  {"name": "renovate shared CI incident", "pr": {"number": 5, "author": "renovate[bot]", "head_ref": "renovate/foo", "ci_status": "failure", "failing_checks": ["ci/test"], "shared_ci_incident": 3}, "red_ci": false, "conflict": false, "candidate": true},
+  {"name": "renovate dirty merge state", "pr": {"number": 6, "author": "renovate[bot]", "head_ref": "renovate/foo", "mergeable_state": "dirty"}, "red_ci": false, "conflict": true, "candidate": true},
+  {"name": "renovate conflicting merge state", "pr": {"number": 7, "author": "renovate[bot]", "head_ref": "renovate/foo", "mergeable_state": "Conflicting"}, "red_ci": false, "conflict": true, "candidate": true},
+  {"name": "needs-rebase label", "pr": {"number": 8, "author": "renovate[bot]", "head_ref": "renovate/foo", "labels": ["Needs-Rebase"]}, "red_ci": false, "conflict": true, "candidate": true},
+  {"name": "changes requested only", "pr": {"number": 9, "author": "renovate[bot]", "head_ref": "renovate/foo", "mergeable_state": "blocked", "protection": {"review_decision": "CHANGES_REQUESTED"}}, "red_ci": false, "conflict": false, "candidate": true},
+  {"name": "dependabot is never asked", "pr": {"number": 10, "author": "dependabot[bot]", "head_ref": "dependabot/npm/foo", "ci_status": "failure", "failing_checks": ["ci/test"]}, "red_ci": true, "conflict": false, "candidate": false},
+  {"name": "github-actions bot is not a dependency bot", "pr": {"number": 11, "author": "github-actions[bot]", "head_ref": "update/foo", "ci_status": "failure", "failing_checks": ["ci/test"]}, "red_ci": true, "conflict": false, "candidate": false},
+  {"name": "renovate branch under another account", "pr": {"number": 12, "author": "mergeraptor[bot]", "head_ref": "renovate/bar", "mergeable_state": "dirty"}, "red_ci": false, "conflict": true, "candidate": true},
+  {"name": "draft", "pr": {"number": 13, "author": "renovate[bot]", "head_ref": "renovate/foo", "draft": true, "ci_status": "failure", "failing_checks": ["ci/test"]}, "red_ci": true, "conflict": false, "candidate": false},
+  {"name": "closed", "pr": {"number": 14, "author": "renovate[bot]", "head_ref": "renovate/foo", "state": "closed"}, "red_ci": false, "conflict": false, "candidate": false},
+  {"name": "needs-human", "pr": {"number": 15, "author": "renovate[bot]", "head_ref": "renovate/foo", "labels": ["needs-human"]}, "red_ci": false, "conflict": false, "candidate": false},
+  {"name": "hold", "pr": {"number": 16, "author": "renovate[bot]", "head_ref": "renovate/foo", "labels": ["hold"]}, "red_ci": false, "conflict": false, "candidate": false},
+  {"name": "do-not-merge", "pr": {"number": 17, "author": "renovate[bot]", "head_ref": "renovate/foo", "labels": ["do-not-merge"]}, "red_ci": false, "conflict": false, "candidate": false},
+  {"name": "adopted by the hive", "pr": {"number": 18, "author": "renovate[bot]", "head_ref": "renovate/foo", "labels": ["stage/074-adopted-by-hive"]}, "red_ci": false, "conflict": false, "candidate": false},
+  {"name": "a person's branch", "pr": {"number": 19, "author": "alice", "head_ref": "fix/foo", "mergeable_state": "dirty"}, "red_ci": false, "conflict": true, "candidate": false}
+]
