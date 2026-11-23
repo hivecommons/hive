@@ -69,19 +69,37 @@ func (m AgentMode) CanMerge() bool        { return m >= ModeIssuesPRsMerge }
 func (m AgentMode) CanPush() bool         { return m >= ModeIssuesAndPRs }
 func (m AgentMode) NeedsMCPWrite() bool   { return m >= ModeIssuesOnly }
 
+// TokenTier is the name of a GitHub App scoped-token tier. Its string value is
+// the wire form used in config, JSON, logs, and metric labels.
+type TokenTier string
+
+const (
+	TokenTierAdvisor       TokenTier = "advisor"
+	TokenTierReviewer      TokenTier = "reviewer"
+	TokenTierNewcomer      TokenTier = "newcomer"
+	TokenTierContributor   TokenTier = "contributor"
+	TokenTierTrusted       TokenTier = "trusted"
+	TokenTierSharedUIDRead TokenTier = "shared-uid-read"
+
+	// TokenTierMerger is the contribute queue's alias for the tier above
+	// trusted. It is an alias, not a tier of its own: it shares trusted's mode
+	// and permissions.
+	TokenTierMerger TokenTier = "merger"
+)
+
 // TokenTier returns the GitHub App scoped-token tier for this mode.
-func (m AgentMode) TokenTier() string {
+func (m AgentMode) TokenTier() TokenTier {
 	switch m {
 	case ModeAdvisory:
-		return "advisor"
+		return TokenTierAdvisor
 	case ModeIssuesOnly:
-		return "newcomer"
+		return TokenTierNewcomer
 	case ModeIssuesAndPRs:
-		return "contributor"
+		return TokenTierContributor
 	case ModeIssuesPRsMerge:
-		return "trusted"
+		return TokenTierTrusted
 	default:
-		return "advisor"
+		return TokenTierAdvisor
 	}
 }
 
@@ -121,9 +139,9 @@ const ReviewerRole = "reviewer"
 // This matters for spokes that do not auto-merge: an advisor-tier reviewer's
 // verdict has exactly one consumer, the merge-eligibility gate, so where no
 // merge sweep runs the review is computed and thrown away (#7469).
-func TokenTierForRole(m AgentMode, role string) string {
+func TokenTierForRole(m AgentMode, role string) TokenTier {
 	if m == ModeAdvisory && role == ReviewerRole {
-		return "reviewer"
+		return TokenTierReviewer
 	}
 	if role == SecCheckRole {
 		switch m {
@@ -147,11 +165,11 @@ const SecCheckRole = "sec-check"
 
 // SecCheckTier is the scoped-token tier TokenTierForRole yields for an
 // ISSUES_AND_PRS agent with SecCheckRole.
-const SecCheckTier = "sec-check"
+const SecCheckTier TokenTier = "sec-check"
 
 // SecCheckTrustedTier is the scoped-token tier TokenTierForRole yields for an
 // ISSUES_PRS_MERGE agent with SecCheckRole (#17496).
-const SecCheckTrustedTier = "sec-check-trusted"
+const SecCheckTrustedTier TokenTier = "sec-check-trusted"
 
 // CanComment reports whether an agent at this mode may post a comment on an
 // issue. It sits at the ISSUES_ONLY rung: the newcomer token tier is the first
@@ -169,15 +187,15 @@ func (m AgentMode) CanComment() bool { return m >= ModeIssuesOnly }
 // contribute queue's name for the tier above trusted and shares its mode. An
 // unknown tier reports ADVISORY and false, so a caller that gates a write on
 // the result fails closed.
-func ModeForTokenTier(tier string) (AgentMode, bool) {
+func ModeForTokenTier(tier TokenTier) (AgentMode, bool) {
 	switch tier {
-	case "advisor", "reviewer":
+	case TokenTierAdvisor, TokenTierReviewer:
 		return ModeAdvisory, true
-	case "newcomer":
+	case TokenTierNewcomer:
 		return ModeIssuesOnly, true
-	case "contributor", SecCheckTier:
+	case TokenTierContributor, SecCheckTier:
 		return ModeIssuesAndPRs, true
-	case "trusted", "merger", SecCheckTrustedTier:
+	case TokenTierTrusted, TokenTierMerger, SecCheckTrustedTier:
 		return ModeIssuesPRsMerge, true
 	default:
 		return ModeAdvisory, false

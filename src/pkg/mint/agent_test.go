@@ -3,6 +3,8 @@ package mint
 import (
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 // testMinter builds a minter with a fresh key for agent-token tests.
@@ -20,7 +22,7 @@ func testMinter(t *testing.T) *Minter {
 }
 
 func TestScopesForTier(t *testing.T) {
-	cases := map[string][]string{
+	cases := map[agentmode.TokenTier][]string{
 		"advisor":           {ScopeIssuesRead},
 		"newcomer":          {ScopeIssuesRead, ScopeIssuesWrite},
 		"contributor":       {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite},

@@ -274,7 +274,7 @@ func (a *AppAuth) mintInstallationTokenWithOptions(ctx context.Context, installa
 // ScopedToken creates a short-lived installation token with permissions
 // scoped to a contributor's trust tier. Unlike Token(), this is NOT
 // cached — each call creates a fresh token.
-func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) {
+func (a *AppAuth) ScopedToken(ctx context.Context, tier agentmode.TokenTier) (string, error) {
 	return a.ScopedTokenForRepos(ctx, tier, nil)
 }
 
@@ -288,7 +288,7 @@ func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) 
 // empty/nil slice yields the tier-scoped, installation-wide token (unchanged
 // behavior for callers that do not scope by repo). Like ScopedToken, the token is
 // NOT cached — each call mints fresh.
-func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []string) (string, error) {
+func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier agentmode.TokenTier, repos []string) (string, error) {
 	// installation_id 0 means the App is not installed on the hive's org (or
 	// auto-discovery never found it). GitHub answers
 	// POST /app/installations/0/access_tokens with a 404, which the repo-scope
@@ -306,7 +306,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 
 	var perms *gh.InstallationPermissions
 	switch tier {
-	case crux.SharedUIDReadTokenTier:
+	case agentmode.TokenTierSharedUIDRead:
 		// Shared-UID agents cannot isolate credentials from one another.
 		// Never deliver a write-capable token, regardless of the agent's role.
 		perms = &gh.InstallationPermissions{
@@ -317,7 +317,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			PullRequests: gh.Ptr("read"),
 			Issues:       gh.Ptr("read"),
 		}
-	case "newcomer":
+	case agentmode.TokenTierNewcomer:
 		// Newcomers (ISSUES_ONLY agents) can comment on and file issues, and
 		// READ code — filing a meaningful issue requires reading the repo it
 		// is about (#4289). Write remains impossible: contents:write is
@@ -328,7 +328,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			Contents: gh.Ptr("read"),
 			Metadata: gh.Ptr("read"),
 		}
-	case "contributor":
+	case agentmode.TokenTierContributor:
 		perms = &gh.InstallationPermissions{
 			Issues:       gh.Ptr("write"),
 			Contents:     gh.Ptr("write"),
@@ -349,7 +349,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			Metadata:            gh.Ptr("read"),
 			VulnerabilityAlerts: gh.Ptr("read"),
 		}
-	case "trusted", "merger", agentmode.SecCheckTrustedTier:
+	case agentmode.TokenTierTrusted, agentmode.TokenTierMerger, agentmode.SecCheckTrustedTier:
 		perms = &gh.InstallationPermissions{
 			Issues:       gh.Ptr("write"),
 			Contents:     gh.Ptr("write"),
@@ -373,7 +373,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			// below retries without it).
 			perms.VulnerabilityAlerts = gh.Ptr("read")
 		}
-	case "reviewer":
+	case agentmode.TokenTierReviewer:
 		// The reviewer tier is the advisor tier under a distinct name: the
 		// role plumbing (agentmode.TokenTierForRole) stays, the permission
 		// level does not widen.
@@ -417,7 +417,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			Metadata:     gh.Ptr("read"),
 			PullRequests: gh.Ptr("read"),
 		}
-	case "advisor":
+	case agentmode.TokenTierAdvisor:
 		// Advisors review agent PRs and audit repo contents — their core
 		// function is READING the repo, so Contents:read is required (#4289:
 		// without it every contents/tarball API call and git fetch 403s no
@@ -626,7 +626,7 @@ func (a *AppAuth) publishBotLogin() {
 // The write must therefore be IN PLACE. A write-temp-then-rename would
 // replace the pre-created inode with a fresh dev:node one and silently
 // destroy both the ownership and the isolation guarantee.
-func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error {
+func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName string, tier agentmode.TokenTier, agentUID int) error {
 	token, err := a.ScopedToken(ctx, tier)
 	if err != nil {
 		return fmt.Errorf("minting scoped token for %s: %w", agentName, err)
@@ -673,7 +673,7 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 	}
 	// Shared-UID mode has no private agent group; keep this owner-only even
 	// if a previous deployment pre-created a group-readable cache.
-	if agentUID == 0 && tier == crux.SharedUIDReadTokenTier {
+	if agentUID == 0 && tier == agentmode.TokenTierSharedUIDRead {
 		if err := f.Chmod(agentTokenCachePerms); err != nil {
 			_ = f.Close()
 			return fmt.Errorf("securing shared-UID token cache %s: %w", cachePath, err)

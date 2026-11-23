@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/proxy"
 )
 
@@ -89,5 +89,5 @@ func (b *boot) sandboxReadToken() (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sandboxReadTokenTimeout)
 	defer cancel()
-	return auth.ScopedTokenForRepos(ctx, crux.SharedUIDReadTokenTier, b.cfg.Project.Repos)
+	return auth.ScopedTokenForRepos(ctx, agentmode.TokenTierSharedUIDRead, b.cfg.Project.Repos)
 }

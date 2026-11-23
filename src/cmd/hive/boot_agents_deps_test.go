@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 
@@ -280,8 +281,8 @@ func TestBootAgentsWith_MintSuccessAttachesIssuer(t *testing.T) {
 
 type fakeMintIssuer struct{}
 
-func (fakeMintIssuer) Enabled() bool                                 { return true }
-func (fakeMintIssuer) MintAgentToken(string, string) (string, error) { return "tok", nil }
+func (fakeMintIssuer) Enabled() bool                                              { return true }
+func (fakeMintIssuer) MintAgentToken(string, agentmode.TokenTier) (string, error) { return "tok", nil }
 
 func TestDefaultBootAgentsDeps_IsFullyWired(t *testing.T) {
 	d := defaultBootAgentsDeps()

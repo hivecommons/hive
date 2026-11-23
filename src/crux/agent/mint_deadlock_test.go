@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 // fakeMintIssuer is a minimal AgentMintIssuer for exercising the mint path
@@ -15,7 +17,7 @@ type fakeMintIssuer struct {
 }
 
 func (f *fakeMintIssuer) Enabled() bool { return f.enabled }
-func (f *fakeMintIssuer) MintAgentToken(agentName, tier string) (string, error) {
+func (f *fakeMintIssuer) MintAgentToken(agentName string, tier agentmode.TokenTier) (string, error) {
 	return f.token, f.err
 }
 

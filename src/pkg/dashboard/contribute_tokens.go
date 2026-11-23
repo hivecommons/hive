@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/pkg/agentaudit"
 )
 
@@ -340,9 +341,9 @@ func (h *ContributeWSHub) mintScopedToken(tier, repo string) (string, error) {
 		// empty repo (synthetic/pr-review tasks with no single repo) falls back to the
 		// tier-scoped installation token — still permission-scoped, unchanged behavior.
 		if name := repoNameOnly(repo); name != "" {
-			return h.server.deps.GHAppAuth.ScopedTokenForRepos(ctx, tier, []string{name})
+			return h.server.deps.GHAppAuth.ScopedTokenForRepos(ctx, agentmode.TokenTier(tier), []string{name})
 		}
-		return h.server.deps.GHAppAuth.ScopedToken(ctx, tier)
+		return h.server.deps.GHAppAuth.ScopedToken(ctx, agentmode.TokenTier(tier))
 	}
 	// No App auth: mint nothing rather than leak a full credential (see the note
 	// above — the cache fallback is deliberately gone).

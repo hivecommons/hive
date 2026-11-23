@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/toolapprove"
 )
@@ -122,11 +123,11 @@ type TokenScoper struct {
 // to repos (bare repository names). A hive without a GitHub App answers
 // callback.ErrNotConfigured, which is the error the nil-App path gives
 // today; unreachable is callback.ErrUnavailable. Both fail the push.
-func (t TokenScoper) ScopedTokenForRepos(ctx context.Context, tier string, repos []string) (string, error) {
+func (t TokenScoper) ScopedTokenForRepos(ctx context.Context, tier agentmode.TokenTier, repos []string) (string, error) {
 	if t.caps == nil {
 		return "", errors.New("hivecap: no capabilities")
 	}
-	req := callback.MintTokenRequest{Agent: t.Agent, Tier: tier, Repos: repos}
+	req := callback.MintTokenRequest{Agent: t.Agent, Tier: string(tier), Repos: repos}
 	if t.TTL > 0 {
 		req.TTLSeconds = int(t.TTL / time.Second)
 	}

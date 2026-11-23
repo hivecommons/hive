@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 // Hive-provided capabilities (hivecommons/hive#14138, stage 1 of the
@@ -17,13 +19,10 @@ import (
 // sidecar runtime will receive them over a hive-side callback endpoint
 // (stage 2 decides the shape). crux/agent aliases every one of them.
 
-// SharedUIDReadTokenTier grants only GitHub reads for agents without UID isolation.
-const SharedUIDReadTokenTier = "shared-uid-read"
-
 // AppTokenMinter is implemented by the host's GitHub App auth
 // (pkg/github.AppAuth) to mint per-agent scoped tokens.
 type AppTokenMinter interface {
-	WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error
+	WriteAgentToken(ctx context.Context, agentName string, tier agentmode.TokenTier, agentUID int) error
 }
 
 // AgentMintIssuer is implemented by mint.AgentMinter. It is the OPT-IN,
@@ -35,7 +34,7 @@ type AppTokenMinter interface {
 // default.
 type AgentMintIssuer interface {
 	Enabled() bool
-	MintAgentToken(agentName, tier string) (string, error)
+	MintAgentToken(agentName string, tier agentmode.TokenTier) (string, error)
 }
 
 // LinearCredential is what an agent authenticates to api.linear.app with.

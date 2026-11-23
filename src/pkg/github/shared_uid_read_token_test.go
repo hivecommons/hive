@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 func TestSharedUIDReadTokenPermissionsAndDelivery(t *testing.T) {
@@ -39,7 +39,7 @@ func TestSharedUIDReadTokenPermissionsAndDelivery(t *testing.T) {
 	for _, name := range []string{"scanner", "quality"} {
 		path := AgentTokenCachePath(name)
 		for i := 0; i < 2; i++ {
-			if err := auth.WriteAgentToken(context.Background(), name, crux.SharedUIDReadTokenTier, 0); err != nil {
+			if err := auth.WriteAgentToken(context.Background(), name, agentmode.TokenTierSharedUIDRead, 0); err != nil {
 				t.Fatal(err)
 			}
 			data, err := os.ReadFile(path)
