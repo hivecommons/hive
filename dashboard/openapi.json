@@ -12130,6 +12130,139 @@
                   "sandboxEnabled": {
                     "type": "boolean"
                   },
+                  "sandboxImage": {
+                    "type": "string",
+                    "description": "The agent's own sandbox.image; empty inherits agent_sandbox.image."
+                  },
+                  "sandboxRuntime": {
+                    "type": "string",
+                    "enum": [
+                      "",
+                      "podman",
+                      "job",
+                      "openshell",
+                      "substrate"
+                    ]
+                  },
+                  "sandboxJob": {
+                    "type": "object",
+                    "description": "The agent's own sandbox.job fields; keys absent are left unchanged. Any Job field gives the agent its own job block, which replaces the hive-wide pod-template fields (node selector, tolerations, resources, service account, scheduler name, secrets) for it.",
+                    "properties": {
+                      "workspaceClaim": {
+                        "type": "string"
+                      },
+                      "workspaceClaimMount": {
+                        "type": "string"
+                      },
+                      "serviceAccount": {
+                        "type": "string"
+                      },
+                      "schedulerName": {
+                        "type": "string"
+                      },
+                      "ttlSeconds": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "envFromSecrets": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Secret names only."
+                      },
+                      "imagePullSecrets": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Secret names only; empty inherits agent_sandbox.job.image_pull_secrets."
+                      },
+                      "nodeSelector": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "resourceLimits": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "resourceRequests": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "tolerations": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "operator": {
+                              "type": "string",
+                              "enum": [
+                                "Equal",
+                                "Exists"
+                              ]
+                            },
+                            "value": {
+                              "type": "string"
+                            },
+                            "effect": {
+                              "type": "string",
+                              "enum": [
+                                "NoSchedule",
+                                "PreferNoSchedule",
+                                "NoExecute"
+                              ]
+                            }
+                          }
+                        },
+                        "description": "Kubernetes tolerations. An empty key needs operator Exists; Exists takes no value."
+                      },
+                      "scheduleTimeoutS": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "0 inherits agent_sandbox.job.schedule_timeout_s."
+                      }
+                    }
+                  },
+                  "sandboxPreflight": {
+                    "type": "object",
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "At most 32 commands, 4096 bytes each."
+                      },
+                      "timeoutS": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "retryDelayS": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "nullable": true,
+                    "description": "The agent's own sandbox.preflight. null inherits agent_sandbox.preflight; an object replaces it, and an empty commands list turns preflight off for the agent."
+                  },
+                  "sandboxCopyFrom": {
+                    "type": "string",
+                    "description": "Copy another agent's complete sandbox block (minus publish) and turn the sandbox on."
+                  },
                   "cavemanMode": {
                     "type": "string",
                     "enum": [
@@ -16730,7 +16863,7 @@
           "Governor"
         ],
         "summary": "Update security posture settings",
-        "description": "Updates ioscan enable/fail-mode/canaries, intent-alignment enforcement, PR review-gate settings, and the agent sandbox toggle. Requires owner role.",
+        "description": "Updates ioscan enable/fail-mode/canaries, intent-alignment enforcement, PR review-gate settings, the agent sandbox toggle and its hive-wide defaults (image, runtime, Job scheduling and resources, node preflight, GitHub read relay). Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -16780,6 +16913,128 @@
                   },
                   "agentSandboxEnabled": {
                     "type": "boolean"
+                  },
+                  "agentSandboxImage": {
+                    "type": "string"
+                  },
+                  "agentSandboxRuntime": {
+                    "type": "string",
+                    "enum": [
+                      "",
+                      "podman",
+                      "job",
+                      "openshell",
+                      "substrate"
+                    ]
+                  },
+                  "agentSandboxJobNodeSelector": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "agent_sandbox.job.node_selector. Kubernetes label keys and values; an empty object clears it."
+                  },
+                  "agentSandboxJobResourceLimits": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "agent_sandbox.job.resources.limits. Resource name to quantity (2, 500m, 4Gi), including extended resources such as ibm.com/spyre_pf."
+                  },
+                  "agentSandboxJobResourceRequests": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "agent_sandbox.job.resources.requests. Resource name to quantity."
+                  },
+                  "agentSandboxJobTolerations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "operator": {
+                          "type": "string",
+                          "enum": [
+                            "Equal",
+                            "Exists"
+                          ]
+                        },
+                        "value": {
+                          "type": "string"
+                        },
+                        "effect": {
+                          "type": "string",
+                          "enum": [
+                            "NoSchedule",
+                            "PreferNoSchedule",
+                            "NoExecute"
+                          ]
+                        }
+                      }
+                    },
+                    "description": "agent_sandbox.job.tolerations. Kubernetes tolerations. An empty key needs operator Exists; Exists takes no value."
+                  },
+                  "agentSandboxJobImagePullSecrets": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "agent_sandbox.job.image_pull_secrets. Secret names only (DNS-1123, at most 32); a value is refused."
+                  },
+                  "agentSandboxJobScheduleTimeoutS": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "agent_sandbox.job.schedule_timeout_s. 0 uses 600."
+                  },
+                  "agentSandboxPreflight": {
+                    "type": "object",
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "At most 32 commands, 4096 bytes each."
+                      },
+                      "timeoutS": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "retryDelayS": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "description": "agent_sandbox.preflight, replaced whole. An all-empty object removes it (preflight off)."
+                  },
+                  "agentSandboxJobGithubReadProxy": {
+                    "type": "object",
+                    "description": "agent_sandbox.job.github_read_proxy, replaced whole. When enabled, listenAddr (host:port) and endpoint (https, no credentials) are required; a field set while disabled must still be well formed.",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "listenAddr": {
+                        "type": "string"
+                      },
+                      "endpoint": {
+                        "type": "string"
+                      },
+                      "noProxy": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -16803,7 +17058,7 @@
             }
           },
           "400": {
-            "description": "Invalid ioscanFailMode or out-of-range reviewMaxParallelReviews"
+            "description": "Invalid ioscanFailMode, out-of-range reviewMaxParallelReviews, or an invalid sandbox field (label key or value, resource quantity, toleration, Secret name, preflight bound, read relay rule)"
           },
           "403": {
             "description": "Requires owner role"

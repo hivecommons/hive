@@ -58,6 +58,16 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		SandboxJobClaimMount        *string                        `json:"agentSandboxJobWorkspaceClaimMount"`
 		SandboxJobEnvFromSecrets    *[]string                      `json:"agentSandboxJobEnvFromSecrets"`
 		SandboxSubstrate            *config.SandboxSubstrateConfig `json:"agentSandboxSubstrate"`
+		// Job scheduling, resources, preflight and read relay (#19553);
+		// see api_sandbox_job_scheduling.go for the hive.yaml leaves.
+		SandboxJobNodeSelector     *map[string]string             `json:"agentSandboxJobNodeSelector"`
+		SandboxJobResourceLimits   *map[string]string             `json:"agentSandboxJobResourceLimits"`
+		SandboxJobResourceRequests *map[string]string             `json:"agentSandboxJobResourceRequests"`
+		SandboxJobTolerations      *[]config.SandboxJobToleration `json:"agentSandboxJobTolerations"`
+		SandboxJobImagePullSecrets *[]string                      `json:"agentSandboxJobImagePullSecrets"`
+		SandboxJobScheduleTimeoutS *int                           `json:"agentSandboxJobScheduleTimeoutS"`
+		SandboxPreflight           *sandboxPreflightBody          `json:"agentSandboxPreflight"`
+		SandboxJobReadRelay        *sandboxReadRelayBody          `json:"agentSandboxJobGithubReadProxy"`
 		// Sentinel (suspicious-activity alerts) is pointer-typed per field
 		// so an absent key means "unchanged" — a save that only toggled a
 		// behavior must not wipe the sensitive-path list.
@@ -148,6 +158,16 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 
 	if body.ReviewMaxParallel != nil && (*body.ReviewMaxParallel < 0 || *body.ReviewMaxParallel > 64) {
 		jsonError(w, "review max_parallel_reviews must be between 0 and 64", http.StatusBadRequest)
+		return
+	}
+
+	sched, err := parseSandboxSchedulingBody(sandboxSchedulingBody{
+		nodeSelector: body.SandboxJobNodeSelector, limits: body.SandboxJobResourceLimits, requests: body.SandboxJobResourceRequests,
+		tolerations: body.SandboxJobTolerations, pullSecrets: body.SandboxJobImagePullSecrets, scheduleTimeoutS: body.SandboxJobScheduleTimeoutS,
+		preflight: body.SandboxPreflight, readRelay: body.SandboxJobReadRelay,
+	})
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -283,6 +303,7 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 			job.EnvFromSecrets = envFromSecrets
 		}
 	}
+	sched.apply(&cfg.AgentSandbox)
 	if body.SandboxSubstrate != nil {
 		sub, err := sanitizeSubstrateConfig(*body.SandboxSubstrate)
 		if err != nil {
@@ -391,6 +412,14 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"agentSandboxJobWorkspaceClaimMount": sandboxJobOrEmpty(cfg).WorkspaceClaimMount,
 		"agentSandboxJobEnvFromSecrets":      nonNilStrings(sandboxJobOrEmpty(cfg).EnvFromSecrets),
 		"agentSandboxSubstrate":              substrateOrEmpty(cfg.AgentSandbox.Substrate),
+		"agentSandboxJobNodeSelector":        nonNilStringMap(sandboxJobOrEmpty(cfg).NodeSelector),
+		"agentSandboxJobResourceLimits":      nonNilStringMap(sandboxJobOrEmpty(cfg).Resources.Limits),
+		"agentSandboxJobResourceRequests":    nonNilStringMap(sandboxJobOrEmpty(cfg).Resources.Requests),
+		"agentSandboxJobTolerations":         nonNilTolerations(sandboxJobOrEmpty(cfg).Tolerations),
+		"agentSandboxJobImagePullSecrets":    nonNilStrings(sandboxJobOrEmpty(cfg).ImagePullSecrets),
+		"agentSandboxJobScheduleTimeoutS":    sandboxJobOrEmpty(cfg).ScheduleTimeoutS,
+		"agentSandboxPreflight":              preflightView(cfg.AgentSandbox.Preflight),
+		"agentSandboxJobGithubReadProxy":     readRelayView(sandboxJobOrEmpty(cfg).GitHubReadProxy),
 		"sandboxedAgents":                    sandboxed,
 		"totalAgents":                        len(cfg.Agents),
 		"sandboxWarnings":                    sandboxWarnings,

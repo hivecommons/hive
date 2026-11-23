@@ -17,17 +17,20 @@ import (
 //	sandboxImage    string   the agent's own sandbox.image ("" inherits agent_sandbox.image)
 //	sandboxRuntime  string   the agent's own sandbox.runtime ("" inherits agent_sandbox.runtime)
 //	sandboxJob      object   workspaceClaim, workspaceClaimMount, serviceAccount,
-//	                         schedulerName, ttlSeconds, envFromSecrets (secret NAMES only)
+//	                         schedulerName, ttlSeconds, envFromSecrets (secret NAMES only),
+//	                         imagePullSecrets, nodeSelector, resourceLimits,
+//	                         resourceRequests, tolerations, scheduleTimeoutS (#19553)
+//	sandboxPreflight object  the agent's own preflight; null inherits agent_sandbox.preflight
 //	sandboxCopyFrom string   copy another agent's complete block (see CopiedSandboxBlock)
 //
-// Node selector, tolerations, resources and volumes are carried by the copy
-// action and preserved by an edit, but have no field here.
+// Affinity and volumes are carried by the copy action and preserved by an
+// edit, but have no field here.
 
 // sandboxJobBodyKey is the General-tab body key carrying the Job fields.
 const sandboxJobBodyKey = "sandboxJob"
 
 // sandboxEditKeys are the body keys that change an agent's sandbox block.
-var sandboxEditKeys = []string{"sandboxImage", "sandboxRuntime", sandboxJobBodyKey}
+var sandboxEditKeys = []string{"sandboxImage", "sandboxRuntime", sandboxJobBodyKey, sandboxPreflightBodyKey}
 
 // secretNameRE is a Kubernetes object name (DNS-1123 subdomain). env_from_secrets
 // holds names only, so anything else, a KEY=value pair most of all, is refused.
@@ -57,6 +60,14 @@ func agentSandboxFieldsView(a config.AgentConfig, global config.AgentSandboxConf
 	if own.Job != nil {
 		job = *own.Job
 	}
+	jobEffective, jobSources := sandboxSchedulingEffectiveView(a, global)
+	preflightSource := "agent_sandbox"
+	var ownPreflight interface{}
+	if own.Preflight != nil {
+		preflightSource = "agent"
+		ownPreflight = preflightView(own.Preflight)
+	}
+	effPreflight := a.SandboxPreflight(global)
 	return map[string]interface{}{
 		"sandboxImage":            own.Image,
 		"sandboxRuntime":          own.Runtime,
@@ -70,7 +81,20 @@ func agentSandboxFieldsView(a config.AgentConfig, global config.AgentSandboxConf
 			"ttlSeconds":          job.TTLSeconds,
 			"envFromSecrets":      nonNilStrings(job.EnvFromSecrets),
 			"imagePullSecrets":    nonNilStrings(job.ImagePullSecrets),
+			"nodeSelector":        nonNilStringMap(job.NodeSelector),
+			"resourceLimits":      nonNilStringMap(job.Resources.Limits),
+			"resourceRequests":    nonNilStringMap(job.Resources.Requests),
+			"tolerations":         nonNilTolerations(job.Tolerations),
+			"scheduleTimeoutS":    job.ScheduleTimeoutS,
 		},
+		// What the Job runs with and where each value comes from (#19553).
+		"sandboxJobEffective": jobEffective,
+		"sandboxJobSources":   jobSources,
+		// Hive-wide Job fields this agent's own job block hides.
+		"sandboxJobHiddenGlobal":    sandboxPodTemplateFieldsHidden(a, global),
+		"sandboxPreflight":          ownPreflight,
+		"sandboxPreflightEffective": preflightView(&effPreflight),
+		"sandboxPreflightSource":    preflightSource,
 	}
 }
 
@@ -121,6 +145,13 @@ func applySandboxEdits(agentCfg *config.AgentConfig, body map[string]interface{}
 			next.Job = &job
 		}
 	}
+	if v, ok := body[sandboxPreflightBodyKey]; ok {
+		p, err := preflightOverrideFromBody(v)
+		if err != nil {
+			return err
+		}
+		next.Preflight = p
+	}
 	agentCfg.Sandbox = next
 	return nil
 }
@@ -165,7 +196,7 @@ func applySandboxJobFields(job *config.SandboxJobConfig, m map[string]interface{
 		}
 		job.ImagePullSecrets = names
 	}
-	return nil
+	return applySandboxSchedulingFields(job, m)
 }
 
 // secretNamesFromBody validates a list of Kubernetes Secret names. The block

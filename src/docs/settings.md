@@ -77,7 +77,7 @@ Where rolling log files are written, when they rotate, how long rotated files ar
 
 ## Security and Access
 
-Input/output scanning, the agent sandbox runner, and suspicious-activity alerts. See [ioscan](ioscan.md), [Credential-free sandbox isolation](sandbox-isolation.md), [Suspicious-activity alerts](operator-reference.md#suspicious-activity-alerts-sentinel), and the [Security Model](security-model.md).
+Input/output scanning, the agent sandbox runner, and suspicious-activity alerts. "Advanced sandbox" holds the hive-wide sandbox defaults: image, runtime, and the Job settings (workspace claim, service account, scheduler name, TTL, node selector, resource limits and requests, tolerations, image pull secrets, schedule timeout), the node preflight and the GitHub read relay; see [Setting up a sandbox from the dashboard](sandbox-isolation.md#setting-up-a-sandbox-from-the-dashboard). See [ioscan](ioscan.md), [Credential-free sandbox isolation](sandbox-isolation.md), [Suspicious-activity alerts](operator-reference.md#suspicious-activity-alerts-sentinel), and the [Security Model](security-model.md).
 
 ## Features
 
@@ -180,6 +180,8 @@ How your configuration maps to SOC 2, FedRAMP, and ISO 27001 controls. See [The 
 ## Agent: General
 
 One agent's identity, engine, model, and behaviour: name, role, kick template, operating mode, sandbox, CLI pin, caveman, Jev, and explain modes, and the repos and keywords it works on. See [Agent Configuration](agent-configuration.md#anatomy-of-an-agent).
+
+"Sandbox settings" edits the agent's own sandbox block, including its Job node selector, resources, tolerations, image pull secrets, schedule timeout and a node preflight override. Each scheduling field shows the value in effect and whether it comes from this agent or the `agent_sandbox` defaults, and a warning names the hive-wide Job fields the agent's own Job block hides. See [Setting up a sandbox from the dashboard](sandbox-isolation.md#setting-up-a-sandbox-from-the-dashboard).
 
 ## Agent: Pipeline
 

@@ -282,6 +282,10 @@
     .rv-psrc-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--sp-3) var(--sp-5); }
     .rv-psrc-actions { margin-top: var(--sp-3); }
     .cfg-inline-row { display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap; }
+    .sbx-effective { color: var(--muted); }
+    .sbx-field-error { color: var(--red); }
+    .sbx-field-error:empty { display: none; }
+    .sbx-job-warning { color: var(--yellow); }
     .cfg-inline-row select { flex: 1 1 12rem; min-width: 0; }
     .am-trusted-authors-repos { min-height: 72px; }
     .am-bot-empty { color: var(--muted); margin: var(--sp-1) 0; }

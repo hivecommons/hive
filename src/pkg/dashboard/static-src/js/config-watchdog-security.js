@@ -576,6 +576,92 @@
       }).join('\n');
     }
 
+    /* Hive-wide Job scheduling, resources, preflight and read relay
+       (#19553). An agent's own Job block replaces the pod-template fields
+       here (node selector, tolerations, resources) wholesale; the agent's
+       General tab shows which values are in effect for it. */
+    function securitySandboxSchedulingHtml(sec) {
+      const help = (label, text) => settingHelpMark('settings', 'security-and-access', label, text);
+      const area = (label, yaml, key, kind, text, placeholder, helpText) =>
+        `<div class="config-field"><label>${label} ${yamlHint(yaml)} ${help(label, helpText)}</label><textarea rows="2" class="mono" spellcheck="false" placeholder="${esc(placeholder)}" data-change-action="markSecuritySandboxField" data-arg0="${key}" data-arg1="${kind}" data-arg-types="s,s,v">${esc(text)}</textarea>${sandboxErrorSlot('gov-sbx-' + key + '-error')}</div>`;
+      const pf = sec.agentSandboxPreflight || {};
+      const rr = sec.agentSandboxJobGithubReadProxy || {};
+      const pfNum = (key, label, yaml, dflt) =>
+        `<div class="config-field"><label>${label} ${yamlHint(yaml)}</label><input type="number" min="0" value="${Number(pf[key] || 0)}" placeholder="0 uses ${dflt}" data-change-action="markSecuritySandboxPreflight" data-arg0="${key}" data-arg-types="s,v"><div class="config-field-hint">0 uses ${dflt}.</div></div>`;
+      const rrText = (key, label, yaml, placeholder, helpText) =>
+        `<div class="config-field"><label>${label} ${yamlHint(yaml)} ${help(label, helpText)}</label><input type="text" value="${esc(rr[key] || '')}" placeholder="${esc(placeholder)}" spellcheck="false" data-change-action="markSecuritySandboxReadRelay" data-arg0="${key}" data-arg-types="s,v"></div>`;
+      return `
+        <div class="config-field-hint">The Job fields below are defaults. An agent with a Job block of its own uses its own node selector, tolerations, resources, service account, scheduler name and secrets instead of these; its General tab shows what is in effect.</div>
+        ${area('Job node selector', 'agent_sandbox.job.node_selector.<key>', 'agentSandboxJobNodeSelector', 'labels', sandboxMapText(sec.agentSandboxJobNodeSelector), 'one key=value per line, e.g. accelerator=spyre', 'Node labels a sandbox Job pod must match. One Kubernetes label key=value per line.')}
+        ${area('Job resource limits', 'agent_sandbox.job.resources.limits.<key>', 'agentSandboxJobResourceLimits', 'resources', sandboxMapText(sec.agentSandboxJobResourceLimits), 'one name=quantity per line, e.g. ibm.com/spyre_pf=1', 'Resource limits for the Job container, including extended resources such as ibm.com/spyre_pf. One name=quantity per line.')}
+        ${area('Job resource requests', 'agent_sandbox.job.resources.requests.<key>', 'agentSandboxJobResourceRequests', 'resources', sandboxMapText(sec.agentSandboxJobResourceRequests), 'one name=quantity per line, e.g. cpu=500m', 'Resource requests for the Job container. One name=quantity per line.')}
+        ${area('Job tolerations', 'agent_sandbox.job.tolerations[]', 'agentSandboxJobTolerations', 'tolerations', sandboxTolerationsText(sec.agentSandboxJobTolerations), 'key=value:NoSchedule, key:NoExecute (Exists) or *', 'One toleration per line: key=value[:Effect] for operator Equal, key[:Effect] for Exists, * for every taint. Effect is NoSchedule, PreferNoSchedule or NoExecute.')}
+        ${area('Job image pull secrets (names)', 'agent_sandbox.job.image_pull_secrets[]', 'agentSandboxJobImagePullSecrets', 'secrets', (sec.agentSandboxJobImagePullSecrets || []).join('\n'), 'one Secret name per line', 'Names of registry Secrets for the Job pod, at most 32. Names only: never paste a credential. An agent with none of its own inherits these.')}
+        <div class="config-field"><label>Job schedule timeout (seconds) ${yamlHint('agent_sandbox.job.schedule_timeout_s')} ${help('Job schedule timeout', 'A kick whose pod stays Unschedulable this long fails as waiting_for_node. 0 uses 600.')}</label><input type="number" min="0" value="${Number(sec.agentSandboxJobScheduleTimeoutS || 0)}" data-change-action="markSecurityNumber" data-arg0="agentSandboxJobScheduleTimeoutS" data-arg-types="s,v"></div>
+        <details class="settings-subsection-details"${(pf.commands || []).length ? ' open' : ''}><summary class="settings-subsection-summary">Node preflight</summary>
+        <p class="config-help">Health check commands run in the Job before the agent starts. A failing node is reported as <code>node_unhealthy</code> and the kick retries once on another node. Off when the list is empty. Commands are part of the Job manifest and their output is in the pod log: never put a credential on a command line.</p>
+        <div class="config-field"><label>Preflight commands ${yamlHint('agent_sandbox.preflight.commands[]')}</label><textarea rows="3" class="mono" spellcheck="false" placeholder="one shell command per line" data-change-action="markSecuritySandboxPreflight" data-arg0="commands" data-arg-types="s,v">${esc((pf.commands || []).join('\n'))}</textarea>${sandboxErrorSlot('gov-sbx-preflight-error')}</div>
+        ${pfNum('timeoutS', 'Timeout per command (seconds)', 'agent_sandbox.preflight.timeout_s', '120')}
+        ${pfNum('totalTimeoutS', 'Total timeout (seconds)', 'agent_sandbox.preflight.total_timeout_s', '300')}
+        ${pfNum('retryDelayS', 'Retry delay (seconds)', 'agent_sandbox.preflight.retry_delay_s', 'no delay')}
+        </details>
+        <details class="settings-subsection-details"${rr.enabled ? ' open' : ''}><summary class="settings-subsection-summary">GitHub read relay</summary>
+        <p class="config-help">Routes a Job's GitHub reads through hive, which attaches a read-only credential the Job never sees. Hive-wide only; agents cannot change it. You expose <code>listen_addr</code> to the Job pods yourself (a Service and a NetworkPolicy).</p>
+        <div class="config-field"><label><input type="checkbox"${rr.enabled ? ' checked' : ''} data-change-action="markSecuritySandboxReadRelay" data-arg0="enabled" data-arg-types="s,c"> Relay GitHub reads ${yamlHint('agent_sandbox.job.github_read_proxy.enabled')}</label></div>
+        ${rrText('listenAddr', 'Listen address', 'agent_sandbox.job.github_read_proxy.listen_addr', ':8443', 'host:port hive binds, TLS only. No default; required when on.')}
+        ${rrText('endpoint', 'Endpoint', 'agent_sandbox.job.github_read_proxy.endpoint', 'https://hive-relay.hive.svc:8443', 'The https://host:port Job pods reach the relay on. Required when on. No credentials: hive adds a per-kick key.')}
+        <div class="config-field"><label>No-proxy hosts ${yamlHint('agent_sandbox.job.github_read_proxy.no_proxy[]')}</label><textarea rows="2" class="mono" spellcheck="false" placeholder="one host or domain per line" data-change-action="markSecuritySandboxReadRelay" data-arg0="noProxy" data-arg-types="s,v">${esc((rr.noProxy || []).join('\n'))}</textarea><div class="config-field-hint">Added to localhost, .svc and .cluster.local, which always bypass the relay.</div></div>
+        ${sandboxErrorSlot('gov-sbx-readrelay-error')}
+        </details>`;
+    }
+
+    /* Stages one hive-wide scheduling map or list after the browser check. */
+    function markSecuritySandboxField(key, kind, value) {
+      let parsed;
+      if (kind === 'labels' || kind === 'resources') parsed = sandboxParseMap(value, kind);
+      else if (kind === 'tolerations') parsed = sandboxParseTolerations(value);
+      else parsed = sandboxParseSecretNames(value);
+      sandboxFieldError('gov-sbx-' + key + '-error', parsed.error ? 'Not saved: ' + parsed.error : '');
+      if (parsed.error) return;
+      if (_configState.data && _configState.data.security) _configState.data.security[key] = parsed.value;
+      markDirty('security', key, parsed.value);
+    }
+
+    function markSecuritySandboxPreflight(field, value) {
+      const sec = (_configState.data && _configState.data.security) || {};
+      const next = Object.assign({ commands: [], timeoutS: 0, totalTimeoutS: 0, retryDelayS: 0 }, sec.agentSandboxPreflight || {});
+      let problem = '';
+      if (field === 'commands') {
+        const cmds = sandboxParseCommands(value);
+        problem = cmds.error || '';
+        if (!problem) next.commands = cmds.value;
+      } else {
+        const n = sandboxParseSeconds(value);
+        if (Number.isNaN(n)) problem = 'a whole number of seconds, 0 or more';
+        else next[field] = n;
+      }
+      sandboxFieldError('gov-sbx-preflight-error', problem ? 'Not saved: ' + problem : '');
+      if (problem) return;
+      if (_configState.data && _configState.data.security) _configState.data.security.agentSandboxPreflight = next;
+      markDirty('security', 'agentSandboxPreflight', next);
+    }
+
+    /* The relay is staged as one block; a problem is shown at once but the
+       block is still staged, since its fields are filled one at a time and
+       the API refuses an incomplete enabled block on Save. */
+    function markSecuritySandboxReadRelay(field, value) {
+      const sec = (_configState.data && _configState.data.security) || {};
+      const next = Object.assign({ enabled: false, listenAddr: '', endpoint: '', noProxy: [] }, sec.agentSandboxJobGithubReadProxy || {});
+      if (field === 'enabled') next.enabled = !!value;
+      else if (field === 'noProxy') next.noProxy = sandboxSplitLines(value);
+      else next[field] = String(value || '').trim();
+      const problem = sandboxReadRelayProblem(next);
+      const el = document.getElementById('gov-sbx-readrelay-error');
+      if (el) el.textContent = problem ? 'Will be refused on Save: ' + problem : '';
+      if (_configState.data && _configState.data.security) _configState.data.security.agentSandboxJobGithubReadProxy = next;
+      markDirty('security', 'agentSandboxJobGithubReadProxy', next);
+    }
+
     function markSubstrateSandbox(section, dirtyKey, field, kind, value) {
       const pending = _configState.dirty[section] && _configState.dirty[section][dirtyKey];
       const base = pending || ((_configState.data && _configState.data[section]) || {})[dirtyKey] || {};
@@ -991,6 +1077,7 @@
         <div class="config-field"><label>Job secrets (names) ${yamlHint('agent_sandbox.job.env_from_secrets[]')} ${settingHelpMark('settings', 'security-and-access', 'Job secrets', `Names of Kubernetes Secrets whose keys become environment variables in the sandbox Job. One name per line. Names only: never paste a secret value here.`)}</label><textarea rows="2" class="mono" placeholder="one Secret name per line" data-change-action="markSecurityLines" data-arg0="agentSandboxJobEnvFromSecrets" data-arg-types="s,v">${esc((sec.agentSandboxJobEnvFromSecrets || []).join('\n'))}</textarea></div>
         <div class="config-field"><label>Job workspace claim ${yamlHint('agent_sandbox.job.workspace_claim')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim', `PVC holding the workspace for the job runtime. Required for runtime job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaim || '')}" placeholder="PersistentVolumeClaim name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaim" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job workspace claim mount ${yamlHint('agent_sandbox.job.workspace_claim_mount')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim mount', `Where the workspace claim is mounted in the Job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaimMount || '')}" placeholder="mount path" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaimMount" data-arg-types="s,s,v"></div>
+        ${securitySandboxSchedulingHtml(sec)}
         <details class="settings-subsection-details"><summary class="settings-subsection-summary">Substrate sandbox</summary>
         ${substrateSandboxFields('security', sec.agentSandboxSubstrate)}
         </details>
