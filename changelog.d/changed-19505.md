@@ -1,0 +1,1 @@
+- build(deps): Bump github.com/vektah/gqlparser/v2 from 2.5.30 to 2.5.64 in /src (#19505)
