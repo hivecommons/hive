@@ -455,6 +455,10 @@
     "URL": "",
     "TokenEnv": ""
   },
+  "Forgejo": {
+    "URL": "",
+    "TokenEnv": ""
+  },
   "Notifications": {
     "Ntfy": null,
     "Slack": null,

@@ -39,8 +39,10 @@ They would post the evidence comment and the `needs-human` label, or the drift
 comment and a re-applied `hold` label, to your forge. Both are driven by the
 GitHub-only enumeration the governor cycle starts from, which produces nothing
 without a GitHub client.
-The wiring is real; the input never arrives. Gitea and Forgejo share one adapter because they share one REST
-API surface.
+The wiring is real; the input never arrives. Gitea and Forgejo are separate
+kinds (`gitea` and `forgejo`) that share one REST client, so a call that differs
+between them can change in one kind without touching the other. Forgejo has its
+own kind, config block and adapter type. It is no further along than Gitea.
 
 **A hive cannot presently run against GitLab, Gitea, or Forgejo.** If that is
 your forge, there is nothing to install and no configuration that will make
@@ -134,7 +136,7 @@ today).
 
 ```yaml
 project:
-  forge: gitlab        # "github" (default) | "gitlab" | "gitea"
+  forge: gitlab        # "github" (default) | "gitlab" | "gitea" | "forgejo"
 
 gitlab:
   gitlab_url: https://gitlab.example.com   # default https://gitlab.com
@@ -143,29 +145,34 @@ gitlab:
 gitea:
   gitea_url: https://gitea.example.com     # no default; required for Gitea
   token_env: GITEA_TOKEN                   # env var NAME, never the token
+
+forgejo:
+  forgejo_url: https://codeberg.org        # no default; required for Forgejo
+  token_env: FORGEJO_TOKEN                 # env var NAME, never the token
 ```
 
 Notes that will save you a wrong guess:
 
-- `gitlab:` and `gitea:` are **top-level** blocks, siblings of `github:` — not
-  nested inside it.
+- `gitlab:`, `gitea:` and `forgejo:` are **top-level** blocks, siblings of
+  `github:` — not nested inside it.
 - `token_env` names the **environment variable to read the token from**. The
   token value is never written to config, matching Hive's no-secrets-in-config
-  rule. Use `GITLAB_TOKEN` / `GITEA_TOKEN` unless you have a reason not to.
+  rule. Use `GITLAB_TOKEN` / `GITEA_TOKEN` / `FORGEJO_TOKEN` unless you have a
+  reason not to.
 - Omitting `project.forge` means GitHub, so every existing config is unaffected.
-- GitLab defaults to `https://gitlab.com`. Gitea has **no** default — there is no
-  single public Gitea host, so selecting the Gitea forge without a URL is a
+- GitLab defaults to `https://gitlab.com`. Gitea and Forgejo have **no** default
+  — there is no single public host, so selecting either forge without a URL is a
   configuration error at client construction.
 - The instance URL is the **bare instance root**. The adapters append `/api/v4`
-  (GitLab) and `/api/v1` (Gitea) themselves; adding the suffix yourself produces
-  a doubled path.
+  (GitLab) and `/api/v1` (Gitea and Forgejo) themselves; adding the suffix
+  yourself produces a doubled path.
 - A single repo can live on a different forge from the rest of the project with
   `project.repo_policies[].forge` and `forge_url` (bare instance root; inherits
-  `gitlab_url` / `gitea_url` when omitted). Unlike `project.forge`, these keys
-  are validated at load: an unknown kind, a non-http(s) URL, or a Gitea repo with
-  no URL anywhere is a config error. The governor's escalation writes and its
-  repo-scoped kicks follow the per-repo value; the token still comes from the
-  forge-wide `token_env`.
+  `gitlab_url` / `gitea_url` / `forgejo_url` when omitted). Unlike
+  `project.forge`, these keys are validated at load: an unknown kind, a
+  non-http(s) URL, or a Gitea or Forgejo repo with no URL anywhere is a config
+  error. The governor's escalation writes and its repo-scoped kicks follow the
+  per-repo value; the token still comes from the forge-wide `token_env`.
 
 ```yaml
 project:
@@ -182,12 +189,12 @@ likely way to break a working hive:
 
 | Key | Meaning | Values |
 | --- | --- | --- |
-| `project.forge` | Which forge **family** a spoke executes against — selects the `pkg/forge` adapter (read by the dashboard and by the governor's escalation and hold-guard writes; see above) | `github`, `gitlab`, `gitea` |
+| `project.forge` | Which forge **family** a spoke executes against — selects the `pkg/forge` adapter (read by the dashboard and by the governor's escalation and hold-guard writes; see above) | `github`, `gitlab`, `gitea`, `forgejo` |
 | `github.forge` | Which GitHub **instance** this hive's App and repos live on — drives App ID, app slug, and API URL | a GitHub host label |
 
 `github.forge` is part of the GitHub App identity system and is fully live. Do
-not set it to `gitlab` or `gitea`; those are not GitHub hosts and it is not that
-kind of setting.
+not set it to `gitlab`, `gitea` or `forgejo`; those are not GitHub hosts and it
+is not that kind of setting.
 
 ## If you evaluate the adapters anyway
 
