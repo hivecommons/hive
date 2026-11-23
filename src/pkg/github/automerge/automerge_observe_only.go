@@ -124,9 +124,14 @@ func observeOnlyStageReason(lane, reason string) string {
 // for the observation's own head, so an unreviewed or new head is still 050.
 // It reads it through this engine's contributorLaneVerdictFor, which also
 // applies a recorded human decision (the observe-only engine has none);
-// foldRecordedDecision then skips a head already answered. The
-// trusted-bot lane's verdict is advisory (trustedBotLaneVerdict) and is left
-// to the lane.
+// foldRecordedDecision then skips a head already answered. A trusted bot's
+// PR (the self-authored sweep's trusted-bot lane) gets the verdict that lane
+// notes on the observe-only engine: the raw record, without a recorded
+// decision, passed through trustedBotLaneVerdict, which makes a held verdict
+// advisory while auto_merge.trusted_bot_skip_review is on; the decision is
+// then foldRecordedDecision's, on both drains.
+// Skipping it left an approved mergeraptor PR flipping 050 (this pass, no
+// verdict) and 060 or 090 (the lane's noted verdict) on every split drain.
 func (c *Engine) foldObserveOnlyVerdict(list []stageObservation) {
 	if c == nil || c.contributorLaneVerdict == nil {
 		return
@@ -136,17 +141,32 @@ func (c *Engine) foldObserveOnlyVerdict(list []stageObservation) {
 		if o.Reason != observeOnlyReasonRepoAutoMergeDisabled || o.Detail.VerdictKnown || o.HeadSHA == "" {
 			continue
 		}
+		trustedBot := false
 		switch o.Lane {
 		case stageLaneTrusted, stageLaneContributor:
 		case stageLaneSelf:
-			if lane, ok := c.sweepLaneForAuthor(o.Author); !ok || lane != stageLaneSelf {
-				// A trusted bot's PR: its lane may downgrade the verdict.
+			lane, ok := c.sweepLaneForAuthor(o.Author)
+			if !ok {
 				continue
 			}
+			trustedBot = lane == laneTrustedBot
 		default:
 			continue
 		}
-		o.Detail.Verdict, o.Detail.VerdictKnown = c.contributorLaneVerdictFor(o.Owner+"/"+o.Repo, o.Number, o.HeadSHA), true
+		var verdict ContributorLaneVerdict
+		if trustedBot {
+			// The verdict the trusted-bot lane notes (trySweepSelfAuthoredPR)
+			// on the observe-only engine, normalized as noteStageVerdict
+			// does. That engine has no recorded decisions
+			// (integrationReadOnlyOptions), so the lane downgrades the raw
+			// verdict before any answer is applied; the answer is left to
+			// foldRecordedDecision, as on the drain that kept the note.
+			raw := normalizeContributorLaneVerdict(c.contributorLaneVerdict(o.Owner+"/"+o.Repo, o.Number, o.HeadSHA))
+			verdict = normalizeContributorLaneVerdict(c.trustedBotLaneVerdict(o.Display, o.Number, o.HeadSHA, laneTrustedBot, raw))
+		} else {
+			verdict = c.contributorLaneVerdictFor(o.Owner+"/"+o.Repo, o.Number, o.HeadSHA)
+		}
+		o.Detail.Verdict, o.Detail.VerdictKnown = verdict, true
 		o.Detail = normalizeStageDetail(o.Detail)
 	}
 }

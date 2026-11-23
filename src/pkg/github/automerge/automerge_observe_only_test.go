@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -252,7 +254,8 @@ func TestObserveOnlyEngineRefusesWrites(t *testing.T) {
 // notes it again the observation classifies as 050. The stage pass now reads
 // the head's verdict from the review-verdicts record the lanes read when the
 // drain carries none: for the trusted-author, contributor and self-authored
-// lanes, never for a trusted bot, whose lane treats the verdict as advisory.
+// lanes. A trusted bot's PR is covered by
+// TestFoldObserveOnlyVerdictTrustedBotMatchesLane.
 func TestFoldObserveOnlyVerdictSurvivesSplitDrain(t *testing.T) {
 	const approvedHead, newHead = "7db5a9e69fec7752953f832862d45e67555acd4e", "beefbeefbeefbeefbeefbeefbeefbeefbeefbeef"
 	approve := ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}
@@ -263,11 +266,9 @@ func TestFoldObserveOnlyVerdictSurvivesSplitDrain(t *testing.T) {
 		// Reviewed nothing for this head.
 		return ContributorLaneVerdict{Configured: true}
 	}
-	const trustedBot = "renovate[bot]"
 	newEngine := func(fn ContributorLaneVerdictFunc) *Engine {
 		return &Engine{
 			transport:              stubTransport{},
-			trustedBotAuthors:      func() map[string]bool { return map[string]bool{trustedBot: true} },
 			stageTracker:           NewStageTracker(),
 			stageLabelPolicy:       func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} },
 			contributorLaneVerdict: fn,
@@ -350,14 +351,14 @@ func TestFoldObserveOnlyVerdictSurvivesSplitDrain(t *testing.T) {
 			t.Fatalf("noted verdict overwritten: %+v", list[0].Detail)
 		}
 	})
-	t.Run("a trusted bot's self-authored observation is left alone", func(t *testing.T) {
+	t.Run("an author in no sweep lane is left alone", func(t *testing.T) {
 		c := newEngine(verdicts)
 		o := observe(stageLaneSelf, approvedHead)
-		o.Author = trustedBot
+		o.Author = "mallory"
 		list := []stageObservation{o}
 		c.foldObserveOnlyVerdict(list)
 		if list[0].Detail.VerdictKnown {
-			t.Fatalf("verdict folded onto trusted bot %s: %+v", trustedBot, list[0].Detail)
+			t.Fatalf("verdict folded onto an author in no sweep lane: %+v", list[0].Detail)
 		}
 	})
 	t.Run("other lane reasons are left alone", func(t *testing.T) {
@@ -370,4 +371,137 @@ func TestFoldObserveOnlyVerdictSurvivesSplitDrain(t *testing.T) {
 			t.Fatalf("verdict folded onto reason %q: %+v", o.Reason, list[0].Detail)
 		}
 	})
+}
+
+// TestFoldObserveOnlyVerdictTrustedBotMatchesLane: a trusted bot's PR (the
+// self-authored sweep's trusted-bot lane, e.g. mergeraptor) on a repo whose
+// auto-merge is off flipped 050 <-> 060 for days. The fold skipped it, so a
+// drain that split the lane's verdict note from its observation classified
+// repo-auto-merge-disabled with no verdict as 050, while a drain that kept
+// the note routed the approved verdict. The fold now gives the observation
+// the verdict the lane notes on the observe-only engine (trustedBotLaneVerdict
+// over the raw record, which that engine reads without recorded decisions),
+// and foldRecordedDecision applies a person's answer on both drains, so both
+// reach the same stage and reason for the same head, verdict and decision.
+func TestFoldObserveOnlyVerdictTrustedBotMatchesLane(t *testing.T) {
+	const head, otherHead = "7db5a9e69fec7752953f832862d45e67555acd4e", "beefbeefbeefbeefbeefbeefbeefbeefbeefbeef"
+	const bot = "mergeraptor[bot]"
+	cases := []struct {
+		name       string
+		verdict    ContributorLaneVerdict
+		skipReview bool
+		decided    bool              // a person's decision is recorded on the head
+		decision   string            // its kind (review.HumanChangeRequestKind*)
+		want       stagelabels.Stage // None: only require both drains to agree
+	}{
+		{name: "approved", verdict: ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}, skipReview: true, want: stagelabels.ReadyForHumanMerge},
+		{name: "no verdict", verdict: ContributorLaneVerdict{Configured: true}, skipReview: true, want: stagelabels.ReviewPending},
+		{name: "changes requested", verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}, skipReview: true},
+		{name: "requires human", verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}, skipReview: true},
+		{name: "changes requested, trusted_bot_skip_review off", verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}},
+		{name: "requires human, trusted_bot_skip_review off", verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}, want: stagelabels.NeedsDecision},
+		{name: "requires human answered approve", verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}, skipReview: true, decided: true, decision: review.HumanChangeRequestKindApprove},
+		{name: "requires human answered with changes", verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}, skipReview: true, decided: true, decision: review.HumanChangeRequestKindChanges},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			skip := tc.skipReview
+			c := &Engine{
+				transport:            stubTransport{},
+				trustedBotAuthors:    func() map[string]bool { return map[string]bool{bot: true} },
+				trustedBotSkipReview: func() bool { return skip },
+				stageTracker:         NewStageTracker(),
+				stageLabelPolicy:     func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} },
+				contributorLaneVerdict: func(repo string, number int, h string) ContributorLaneVerdict {
+					if repo == "acme/widget" && number == 1721 && h == head {
+						return tc.verdict
+					}
+					return ContributorLaneVerdict{Configured: true}
+				},
+			}
+			if tc.decided {
+				body := "approve"
+				if tc.decision != review.HumanChangeRequestKindApprove {
+					body = "Pin the bumped dependency to the previous minor."
+				}
+				store := review.NewHumanChangeRequests("")
+				if err := store.Record(review.HumanChangeRequest{Repo: "acme/widget", Number: 1721, HeadSHA: head, Source: review.HumanChangeRequestSourceDecision, SourceID: 1, Actor: "Danathar", Body: body, Kind: tc.decision}); err != nil {
+					t.Fatal(err)
+				}
+				c.humanChangeRequests = store
+			}
+			if lane, ok := c.sweepLaneForAuthor(bot); !ok || lane != laneTrustedBot {
+				t.Fatalf("sweepLaneForAuthor(%s) = %q, %v; want the trusted-bot lane", bot, lane, ok)
+			}
+			observe := func(h string) stageObservation {
+				return stageObservation{Lane: stageLaneSelf, Display: "acme/widget", Owner: "acme", Repo: "widget", Number: 1721, HeadSHA: h, Author: bot, Reason: observeOnlyReasonRepoAutoMergeDisabled}
+			}
+			// laneNote is what trySweepSelfAuthoredPR notes for the head on
+			// the observe-only engine, which has no recorded decisions
+			// (integrationReadOnlyOptions): the raw verdict, downgraded.
+			laneNote := func(h string) {
+				v := normalizeContributorLaneVerdict(c.contributorLaneVerdict("acme/widget", 1721, h))
+				c.noteStageVerdict("acme", "widget", 1721, c.trustedBotLaneVerdict("acme/widget", 1721, h, laneTrustedBot, v))
+			}
+			// stagePass runs the folds in ApplyStageLabels' order.
+			stagePass := func(list []stageObservation) stageVerdict {
+				c.foldObserveOnlyVerdict(list)
+				c.foldRecordedDecision(context.Background(), list)
+				got, _, _ := resolveStage(list)
+				return got
+			}
+			drainOne := func() []stageObservation {
+				t.Helper()
+				lists := c.stageTracker.drain()
+				if len(lists) != 1 || len(lists[0]) != 1 {
+					t.Fatalf("drain = %+v, want one observation", lists)
+				}
+				return lists[0]
+			}
+
+			// The drain that kept the lane's note.
+			laneNote(head)
+			c.stageTracker.record(observe(head))
+			whole := drainOne()
+			if !whole[0].Detail.VerdictKnown {
+				t.Fatalf("the whole drain lost the lane's verdict: %+v", whole[0].Detail)
+			}
+			wholeStage := stagePass(whole)
+
+			// The drain the other driver split: no verdict until the fold.
+			laneNote(head)
+			c.stageTracker.drain()
+			c.stageTracker.record(observe(head))
+			split := drainOne()
+			if split[0].Detail.VerdictKnown {
+				t.Fatalf("the split drain kept the verdict; the race is not reproduced: %+v", split[0].Detail)
+			}
+			splitStage := stagePass(split)
+			if !split[0].Detail.VerdictKnown {
+				t.Fatalf("the fold left the trusted bot's observation without a verdict: %+v", split[0].Detail)
+			}
+
+			if splitStage.Stage != wholeStage.Stage || splitStage.Reason != wholeStage.Reason {
+				t.Fatalf("split drain stage %s (%s), whole drain stage %s (%s): the two drains disagree", splitStage.Stage, splitStage.Reason, wholeStage.Stage, wholeStage.Reason)
+			}
+			if !reflect.DeepEqual(split[0].Detail.Verdict, whole[0].Detail.Verdict) {
+				t.Fatalf("folded verdict %+v, lane's noted verdict %+v", split[0].Detail.Verdict, whole[0].Detail.Verdict)
+			}
+			if ds, dw := stageengine.DerivePR(factsFrom(split)), stageengine.DerivePR(factsFrom(whole)); ds.Stage != dw.Stage {
+				t.Fatalf("reconciler derivation: split %s, whole %s", ds.Stage, dw.Stage)
+			}
+			if tc.want != stagelabels.None && splitStage.Stage != tc.want {
+				t.Fatalf("stage %s, want %s", splitStage.Stage, tc.want)
+			}
+
+			// A new head never inherits the old head's verdict.
+			c.stageTracker.record(observe(otherHead))
+			fresh := drainOne()
+			if got := stagePass(fresh); fresh[0].Detail.Verdict.Approved || fresh[0].Detail.Verdict.DecisionAnswered {
+				t.Fatalf("the old head's verdict or decision carried onto %s: %+v", otherHead, fresh[0].Detail)
+			} else if got.Stage != stagelabels.ReviewPending {
+				t.Fatalf("new head stage %s, want 050", got.Stage)
+			}
+		})
+	}
 }
