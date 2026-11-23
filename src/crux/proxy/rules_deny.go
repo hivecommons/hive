@@ -74,17 +74,17 @@ var denyRules = []denyRule{
 	{
 		PathPattern: regexp.MustCompile(`^/api/v1/repos/[^/]+/[^/]+/pulls$`),
 		Method:      "POST",
-		Msg:         "direct PR creation is disabled for agents — use the request-file path so the hive opens the PR as the App/bot identity. Do NOT use direct Gitea or Forgejo API calls.",
+		Msg:         "direct PR creation is disabled for agents — use the request-file path so the hive opens the PR as the App/bot identity. Do NOT use direct Gitea API calls.",
 	},
 	{
 		PathPattern: regexp.MustCompile(`^(?:/api/v1)?/repos/[^/]+/[^/]+/pulls/\d+/merge$`),
 		Method:      "POST",
-		Msg:         "direct PR merge is disabled for agents — use the request-file path so the hive merges as the App/bot identity with bindings enforced. Do NOT use direct Gitea or Forgejo API calls.",
+		Msg:         "direct PR merge is disabled for agents — use the request-file path so the hive merges as the App/bot identity with bindings enforced. Do NOT use direct Gitea API calls.",
 	},
 	{
 		PathPattern: regexp.MustCompile(`^/api/v1/repos/[^/]+/[^/]+/pulls/\d+/merge$`),
 		Method:      "PUT",
-		Msg:         "direct PR merge is disabled for agents — use the request-file path so the hive merges as the App/bot identity with bindings enforced. Do NOT use direct Gitea or Forgejo API calls.",
+		Msg:         "direct PR merge is disabled for agents — use the request-file path so the hive merges as the App/bot identity with bindings enforced. Do NOT use direct Gitea API calls.",
 	},
 }
 
