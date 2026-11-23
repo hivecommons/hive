@@ -346,7 +346,7 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 				s.needsHuman(ctx, key, repo, number, route.Reason, d.Items, nil, &res)
 				continue
 			}
-			brief := reviewfeedback.BuildBriefWithRules(repo, number, fb.HeadRef, s.WritingGuide, d.Items, recorded)
+			brief := reviewfeedback.BuildBriefWithRules(repo, number, fb.HeadRef, s.WritingGuide, d.Items, recorded, s.Rules != nil)
 			if err := s.Kicker.Kick(route.Agent, brief); err != nil {
 				level := slog.LevelWarn
 				if isSharedPoolBusyErr(err) {
