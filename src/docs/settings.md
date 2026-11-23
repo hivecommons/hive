@@ -44,6 +44,15 @@ Which labels hold, require, or route work, the label the merger queue applies to
 
 The repos the hive manages and the caps on how many issues and PRs are listed in one kick (`governor.kick_limits`). See the `governor.kick_limits` row of the [notable fields](operator-reference.md#notable-fields).
 
+To add a repository to an existing hive, open its dashboard and choose
+**Settings → Repos**, or use the gear on **Projects**. Enter `org/repo` or the
+GitHub URL for the hive's forge and choose **+ Add**. If the GitHub App needs
+access, follow **Manage App access**, then choose **Re-check & add**. Choose
+**Save & close** to apply the monitored list. Adding a repository from a
+different organization migrates the hive to that organization. To request
+a *new* hosted hive instead, use
+[Request a hosted hive for a repo](hosted-hub.md#2-request-a-hosted-hive-for-a-repo).
+
 The same tab has a **Parent auto-close** card (owner only, `repos.<key>.parent_autoclose`): per monitored repo, choose "Close finished parents (default)", "Also close epics and holds", "Also close trackers whose work is done" or "Never auto-close parents". It shows the effective value for each repo, applies on save without a restart, and is audited. A parent a person reopened is never re-closed, and issues marked as tracking issues are never auto-closed. See [stage-labels](labels-and-control-signals/stage-labels.md#decomposed-parents--closed-by-their-children-never-stalled).
 
 ## Budget
@@ -122,7 +131,7 @@ The OpenAI-compatible gateways (LiteLLM, OpenRouter, vLLM, and others) agents se
 
 ## Appearance
 
-The dashboard's look, stored under `dashboard.theme_overrides`: a background image (URL, opacity, position, size, attachment), the UI and monospace fonts, CSS token overrides and custom CSS. See [Appearance themes](dashboard.md#appearance-themes).
+The dashboard's look, stored under `dashboard.theme_overrides`: a background image (URL, opacity, position, size, attachment), the UI and monospace fonts, CSS token overrides, light-mode token overrides and custom CSS. See [Appearance themes](dashboard.md#appearance-themes).
 
 ## Agents
 

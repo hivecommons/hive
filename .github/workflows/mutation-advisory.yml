@@ -23,21 +23,47 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      # The refresh-only check reads this workflow's runs on the previous head.
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      # Refresh-only heads (src/docs/ci-refresh-only-heads.md): a verified
+      # hive App merge of the base that leaves the PR's three-dot diff
+      # unchanged, on a PR whose previous head already passed this workflow,
+      # and whose base delta touches no dependency manifest, Dockerfile,
+      # deploy or CI path, skips the mutation run. The comment from the
+      # previous head stays as it is: it describes the same diff. Any failure
+      # here leaves refresh_only empty, which means "run".
+      - name: Detect refresh-only head
+        id: refresh
+        continue-on-error: true
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_PATH: .github/workflows/mutation-advisory.yml
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/refresh-only-head.sh
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        if: steps.refresh.outputs.refresh_only != 'true'
         with:
           cache: false
           go-version-file: src/go.mod
       - name: Install gremlins
+        if: steps.refresh.outputs.refresh_only != 'true'
         run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
       # The mutation run executes PR-controlled test code, so it gets no token:
       # it only writes mutation-out/comment.md. The token is scoped to the
       # separate comment-upsert step below.
       - name: Run mutation report
+        if: steps.refresh.outputs.refresh_only != 'true'
         env:
           BASE_REF: ${{ github.base_ref }}
           # Must stay under timeout-minutes (20m = 1200s): a job killed by that
@@ -47,7 +73,7 @@ jobs:
           export PATH="$(go env GOPATH)/bin:$PATH"
           bash src/scripts/mutation-report.sh run
       - name: Upsert mutation comment
-        if: always()
+        if: always() && steps.refresh.outputs.refresh_only != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

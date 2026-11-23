@@ -492,6 +492,35 @@ is re-read and returns the PR to the normal path. A PR with no non-merge
 commits, or whose commits could not be read, is *unknown*: its existing DCO
 pills are left alone and no stage decision is made from DCO.
 
+When a hive agent repairs a red `no-dco` PR (the FIX-BEFORE-NEW kick,
+`redPRFixKick` in `cmd/hive/main_sweeps.go`), it signs off **only the commits
+it authored**: `git rebase <base> --exec` amends with `--signoff` only a commit
+whose author email is the agent's own lane identity. A commit someone else
+wrote keeps exactly the trailers its author gave it, and the agent asks that
+author on the PR to sign it off. A blanket `git rebase --signoff` appended a
+bot `Signed-off-by` under a person's own and failed the "Sign-off survives the
+squash" check ([#19102](https://github.com/hivecommons/hive/pull/19102)). The
+sandbox push broker enforces the same rule: it refuses to push a commit that
+carries the lane's `Signed-off-by` when another identity authored or committed
+it (see [Sandbox isolation](../sandbox-isolation.md)).
+
+On a **person's PR** (GitHub author not the hive App and not a bot) an agent
+pushes no commit of its own and never re-signs the person's commits, unless the
+PR carries `merge-method/merge`. The squash lands every commit under the PR
+author, and the attribution check counts no `Co-authored-by`, so an agent's
+self-signed follow-up (a test fix or refreshed citations after a rebase, a
+coverage fix) fails it just like a re-signed commit
+([#19110](https://github.com/hivecommons/hive/pull/19110),
+[#19102](https://github.com/hivecommons/hive/pull/19102),
+[#19063](https://github.com/hivecommons/hive/pull/19063)). The agent may
+rebase such a PR (replaying the person's commits with their own trailers);
+any other change goes in a PR comment for the author. Every kick that sends an
+agent to such a branch carries this rule (`stagelabels.PersonPRAgentCommitRule`):
+the FIX-BEFORE-NEW block marks the row `person_authored`, and the targeted
+re-engagement kick states it for any author. The rule is prompt-level for
+agents that push outside the sandbox push broker, which only sees sandboxed
+kicks.
+
 The labels are written on every managed repo; the **072 routing is per
 repo**. It applies only where the repo actually enforces DCO — detected when
 a `dco` / `DCO` context is in the branch's required checks or reported on
@@ -1455,7 +1484,7 @@ These existing labels qualify a stage and may coexist with any stage label;
 the reconciler never touches them: `hold` / `hold/*`, `needs-human`,
 `blocked`, `needs-rebase`, `hive:unauthorized` (the App lacks a permission
 for the next step; see the reference table),
-`hive/likely-done`, `hive/partially-addressed`, `hive/verified-open`,
+`hive/likely-done`, `hive/partially-addressed`, `hive/verified-open`, `hive/verify-close` (a 045 park, see below),
 `hive/claimed-by-<who>` (the grey "who" modifier a stage cannot carry),
 `lgtm`, `role/*`, `author/*`, `dco` / `no-dco`, and the agent provenance
 labels.
@@ -1471,6 +1500,17 @@ implement the remainder (`src/pkg/scheduler/kickmessage.go`,
 `src/pkg/github/prclaims.go`, `src/pkg/github/task_list_sweep.go`,
 `src/cmd/hive/verifyonce.go`). They are not a second stage and are not
 retired.
+
+A partially-addressed issue the scanner verified complete leaves that
+loop: its verify-once note ends with
+`<!-- hive:verification verdict=complete prs=N -->`, and the issue stage
+sweep closes it as completed (evidence comment citing the merged PRs) or,
+when a guard is not met, parks it at `stage/045-needs-decision` with
+`hive/verify-close`, the verify-close lane the activity monitor shows with
+a one-click **Close as completed** (`src/pkg/github/verified_close.go`).
+The lane is a park label rather than a numbered stage: issue stages run
+010 to 045 and PR stages 050 to 100, so a `stage/050-…` issue stage would
+cross the kinds the stage table keeps disjoint.
 
 #### `hive/claimed-by-<who>`: one rule for the suffix
 

@@ -182,6 +182,18 @@ every 15 seconds and says which hives are stale or not reporting. See
 
 ## Getting help
 
+If **Ask** is available, use it for navigation questions. To add another
+monitored repo to an existing hive, open that hive from **My Hives**, then
+use [Settings → Repos](settings.md#repos). To pause a worker, use the
+[agent card on the hive dashboard](dashboard.md#pausing-an-agent); neither
+action is a hub setting.
+
+Ask is off by default. When offered, it asks for your consent in the panel
+before sending your question and, if enabled, a fixed section label to
+Kapa.ai. Consent is per person and stored by the hub; you can withdraw it
+in the panel. Do not enter secrets or private details. If Ask is unavailable,
+use the docs directly. See [Ask data and consent](telemetry.md#ask-ai-help).
+
 - For project questions or hosted-hub problems, open an issue in
   <https://github.com/hivecommons/hive/issues> and include the hive name, repo,
   and the visible fleet/dashboard error text. Do not include API keys, private

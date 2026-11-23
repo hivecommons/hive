@@ -85,8 +85,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// owner-only classifier the contributor queue gates and the tracker-row
 	// pill share so the two cannot disagree (hivecommons/hive#19078), plus
 	// pkg/askai, the Ask AI help service and hub-relay client shared with the
-	// hub so consent, limits and filtering cannot drift (hivecommons/hive#19183).
-	const maxDashboardInternalImports = 69
+	// hub so consent, limits and filtering cannot drift (hivecommons/hive#19183),
+	// plus pkg/auditchain, the dependency-free hash-chain leaf the /data/audit.jsonl
+	// writer seals rows with and `hive audit-verify` checks them with, so the
+	// two hash identically (hivecommons/hive#19439).
+	const maxDashboardInternalImports = 70
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

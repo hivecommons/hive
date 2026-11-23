@@ -1111,6 +1111,7 @@
       const bg = overrides.background || {};
       const fonts = overrides.fonts || {};
       const tokens = overrides.tokens || {};
+      const lightTokens = overrides.light_tokens || {};
       const customCSS = overrides.custom_css || '';
       const honeyOn = bg.image === HONEYCOMB_WATERMARK;
       const bgScope = bg.scope || 'page';
@@ -1143,6 +1144,7 @@
         + '<div class="config-field-row"><div class="config-field"><label>UI font ' + yamlHint('dashboard.theme_overrides.fonts.ui') + '</label><input id="theme-font-ui" type="text" value="' + esc(fonts.ui || '') + '" placeholder="Inter, system-ui, sans-serif"></div>'
         + '<div class="config-field"><label>Mono font ' + yamlHint('dashboard.theme_overrides.fonts.mono') + '</label><input id="theme-font-mono" type="text" value="' + esc(fonts.mono || '') + '" placeholder="JetBrains Mono, monospace"></div></div>'
         + '<div class="config-field"><label>CSS token overrides ' + yamlHint('dashboard.theme_overrides.tokens.<key>') + '</label><textarea id="theme-token-overrides" rows="5" placeholder="--accent=#e0a33a">' + esc(settingsMapText(tokens)) + '</textarea><div class="config-help">One allowlisted CSS token per line as <code>--token=value</code>.</div></div>'
+        + '<div class="config-field"><label>Light-mode token overrides ' + yamlHint('dashboard.theme_overrides.light_tokens.<key>') + '</label><textarea id="theme-light-token-overrides" rows="5" placeholder="--surface-0=#fdfaf3">' + esc(settingsMapText(lightTokens)) + '</textarea><div class="config-help">Applied in light mode only, on top of the light palette of the selected preset. Dark presets derive light-mode surfaces, lines and text, so set those here.</div></div>'
         + '<div class="config-field"><label>Custom CSS ' + yamlHint('dashboard.theme_overrides.custom_css') + '</label><textarea id="theme-custom-css" rows="10" data-input-action="updateThemeByteCount" placeholder=".panel { border-radius: 2px; }">' + esc(customCSS) + '</textarea><div class="theme-byte-count"><span id="theme-css-bytes">' + utf8Bytes(customCSS) + '</span> / 32768 bytes</div></div>'
         + '<div id="theme-save-status" style="font-size:.76rem;color:var(--muted)"></div></div>';
     }
@@ -1174,9 +1176,11 @@
       const fontUI = ((document.getElementById('theme-font-ui') || {}).value || '').trim();
       const fontMono = ((document.getElementById('theme-font-mono') || {}).value || '').trim();
       const tokens = parseSettingsMap((document.getElementById('theme-token-overrides') || {}).value || '');
+      const lightTokens = parseSettingsMap((document.getElementById('theme-light-token-overrides') || {}).value || '');
       const css = (document.getElementById('theme-custom-css') || {}).value || '';
       const overrides = { custom_css: css };
       if (Object.keys(tokens).length) overrides.tokens = tokens;
+      if (Object.keys(lightTokens).length) overrides.light_tokens = lightTokens;
       if (fontUI || fontMono) overrides.fonts = { ui: fontUI, mono: fontMono };
       if (bgURL.trim()) overrides.background = { image: bgURL.trim(), scope: scope, opacity: Number.isFinite(opacity) ? opacity : 0.08, position: position, size: size, attachment: attachment || 'fixed' };
       return overrides;

@@ -61,6 +61,10 @@ const (
 	bodyRunes = 800
 	// handledRetention is how long a PR's record is kept after its last kick.
 	handledRetention = 45 * 24 * time.Hour
+	// maxBlockedDrafts bounds the refused replies held per PR.
+	maxBlockedDrafts = DefaultMaxItems
+	// draftRunes bounds each drafted reply quoted into the needs-human note.
+	draftRunes = 2000
 )
 
 // Verdicts of Plan.
@@ -139,6 +143,31 @@ type PRState struct {
 	// Pending is the reply check owed for the last kick that carried
 	// captured rules (hivecommons/hive#19048).
 	Pending *PendingReply `json:"pending,omitempty"`
+	// BlockedDrafts are replies the agent drafted that the proxy refused
+	// (#19096); the next pass posts them in a needs-human note.
+	BlockedDrafts []ReplyDraft `json:"blocked_drafts,omitempty"`
+	// BlockedNotedAt is when drafted replies were last handed to a person.
+	BlockedNotedAt time.Time `json:"blocked_noted_at,omitempty"`
+	// LastKickIDs are the comment ids the last kick routed (#19320).
+	LastKickIDs []string `json:"last_kick_ids,omitempty"`
+	// LastKickHead is the PR head SHA when the last kick was sent.
+	LastKickHead string `json:"last_kick_head,omitempty"`
+	// Retries counts re-routes of the same stranded feedback.
+	Retries int `json:"retries,omitempty"`
+	// RetryPending says the next kick is a re-route of stranded feedback.
+	RetryPending bool `json:"retry_pending,omitempty"`
+	// StrandedClosed says the last kick was judged: the agent acted, the
+	// feedback was answered, or it was handed to a person.
+	StrandedClosed bool `json:"stranded_closed,omitempty"`
+}
+
+// ReplyDraft is one reply the PR's agent tried to post and could not.
+type ReplyDraft struct {
+	// InReplyTo is the review comment the reply answered, "" for a PR comment.
+	InReplyTo string    `json:"in_reply_to,omitempty"`
+	Body      string    `json:"body"`
+	Agent     string    `json:"agent,omitempty"`
+	At        time.Time `json:"at"`
 }
 
 // PendingReply is the rules a kick promised to be named in the agent's reply.
@@ -370,6 +399,14 @@ func (s *Store) Plan(key string, items []github.FeedbackItem, now time.Time, lim
 // RecordKick marks the items routed and persists. Call only after the kick was
 // accepted, so a refused kick is retried on the next pass.
 func (s *Store) RecordKick(key string, items []github.FeedbackItem, now time.Time) error {
+	return s.RecordKickHead(key, items, "", now)
+}
+
+// RecordKickHead is RecordKick that also remembers the PR head SHA, so a later
+// pass can tell whether the agent pushed (#19320). A kick that re-routes
+// stranded feedback (CheckStranded returned StrandedRetry) counts one retry;
+// any other kick starts the count again.
+func (s *Store) RecordKickHead(key string, items []github.FeedbackItem, head string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.get(key)
@@ -378,6 +415,15 @@ func (s *Store) RecordKick(key string, items []github.FeedbackItem, now time.Tim
 	}
 	st.LastKick = now
 	st.KickTimes = append(st.KickTimes, now)
+	st.LastKickIDs = feedbackIDs(items)
+	sort.Strings(st.LastKickIDs)
+	st.LastKickHead = head
+	if st.RetryPending {
+		st.Retries++
+	} else {
+		st.Retries = 0
+	}
+	st.RetryPending, st.StrandedClosed = false, false
 	return s.saveLocked(now)
 }
 
@@ -395,6 +441,68 @@ func (s *Store) MarkNeedsHuman(key string, now time.Time) (bool, error) {
 		st.LastKick = now
 	}
 	return true, s.saveLocked(now)
+}
+
+// RecordBlockedReply keeps a reply the proxy refused so the next pass can hand
+// it to a person (#19096). An identical draft (same target, same text) is kept
+// once, and at most maxBlockedDrafts are held per PR.
+func (s *Store) RecordBlockedReply(key string, d ReplyDraft) error {
+	d.Body = strings.TrimSpace(d.Body)
+	if d.Body == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.get(key)
+	for _, have := range st.BlockedDrafts {
+		if have.InReplyTo == d.InReplyTo && have.Body == d.Body {
+			return nil
+		}
+	}
+	if len(st.BlockedDrafts) >= maxBlockedDrafts {
+		return nil
+	}
+	st.BlockedDrafts = append(st.BlockedDrafts, d)
+	if st.LastKick.IsZero() {
+		st.LastKick = d.At
+	}
+	return s.saveLocked(d.At)
+}
+
+// BlockedDraftsDue returns the refused replies waiting for a person, or nil
+// while the last hand-off is younger than window (so a retrying agent cannot
+// turn into one note per pass).
+func (s *Store) BlockedDraftsDue(key string, now time.Time, window time.Duration) []ReplyDraft {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.PRs[key]
+	if st == nil || len(st.BlockedDrafts) == 0 {
+		return nil
+	}
+	if !st.BlockedNotedAt.IsZero() && now.Sub(st.BlockedNotedAt) < window {
+		return nil
+	}
+	return append([]ReplyDraft(nil), st.BlockedDrafts...)
+}
+
+// MarkBlockedNoted records that drafts were handed to a person and drops them.
+func (s *Store) MarkBlockedNoted(key string, posted []ReplyDraft, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.get(key)
+	done := map[string]bool{}
+	for _, d := range posted {
+		done[d.InReplyTo+"\x00"+d.Body] = true
+	}
+	kept := st.BlockedDrafts[:0]
+	for _, d := range st.BlockedDrafts {
+		if !done[d.InReplyTo+"\x00"+d.Body] {
+			kept = append(kept, d)
+		}
+	}
+	st.BlockedDrafts = kept
+	st.BlockedNotedAt = now
+	return s.saveLocked(now)
 }
 
 // NeedsHumanNoted reports whether the note was already posted for key.
@@ -483,6 +591,8 @@ func BuildBriefWithRules(repo string, number int, headRef, writingGuide string, 
 		}
 	}
 	fmt.Fprintf(&b, "  7. End every reply set with one hidden line so these comments are not routed again: %s\n", github.FeedbackHandledMarker(feedbackIDs(items)))
+	b.WriteString("Never post a test, probe or placeholder comment to check permissions: every comment you post is public on a person's review. If you post a comment by mistake you may delete your own comment within a few minutes (gh api -X DELETE repos/OWNER/REPO/issues/comments/ID or .../pulls/comments/ID); never anyone else's.\n")
+	b.WriteString("If a reply or any other write is refused (HTTP 403 from the hive proxy), STOP: do not retry, do not post the reply some other way (for example as an issue comment), and do not probe other routes. The hive keeps the reply you drafted and posts it in a needs-human note so a person can place it.\n")
 	b.WriteString("If you cannot push (no write access to the branch), say so in a PR comment that names what you would change, and stop.\n")
 	b.WriteString("After replying, STOP. Do not poll CI or wait for the reviewer. More feedback that arrives while you work is sent as a separate follow-up.\n\n")
 	b.WriteString("Style: plain sentences, no em-dashes, no raw @mentions of people (put handles in backticks), and follow the hive's writing guide.\n")
@@ -566,11 +676,24 @@ func truncate(s string, n int) string {
 	return s
 }
 
-// NeedsHumanNote renders the one-time PR comment posted when the feedback
-// cannot be routed to an agent.
-func NeedsHumanNote(reason string, items []github.FeedbackItem) string {
+// NeedsHumanNote renders the PR comment posted when the feedback cannot be
+// routed to an agent, or when the agent's replies were refused (drafts set):
+// then each drafted reply is quoted as text for a person to place.
+func NeedsHumanNote(reason string, items []github.FeedbackItem, drafts []ReplyDraft) string {
 	var b strings.Builder
 	b.WriteString(github.FeedbackNeedsHumanMarker + "\n")
+	if len(drafts) > 0 {
+		b.WriteString("The hive's agent answered review feedback on this PR but could not post its replies: " + reason + ". A person needs to place them. Each drafted reply is quoted below as written; check it before posting.\n")
+		for _, d := range drafts {
+			if d.InReplyTo != "" {
+				fmt.Fprintf(&b, "\nReply to review comment %s:\n", d.InReplyTo)
+			} else {
+				b.WriteString("\nPR comment:\n")
+			}
+			writeFenced(&b, d.Body, draftRunes)
+		}
+		return b.String()
+	}
 	b.WriteString("The hive saw review feedback on this PR but could not hand it to an agent: " + reason + ". A person needs to look at the open threads.\n")
 	for _, it := range items {
 		fmt.Fprintf(&b, "\n- %s", it.URL)

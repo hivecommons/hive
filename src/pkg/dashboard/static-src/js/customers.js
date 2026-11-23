@@ -16,6 +16,9 @@
     const CUSTOMERS_ORIGIN_LABELS = { hive_user: 'hive user', manual: 'added by hand', accepted: 'accepted suggestion' };
     // The short origin pill on a row; the long wording stays in its tooltip.
     const CUSTOMERS_ORIGIN_SHORT = { hive_user: 'hive user', manual: 'added', accepted: 'accepted' };
+    // Long names of the public sources an affiliation suggestion can come from
+    // (customers.enrichment); the chip shows the short key.
+    const CUSTOMERS_AFFILIATION_SOURCES = { gitdm: 'cncf/gitdm', crowddev: 'crowd.dev (LFX Insights)' };
     // A row shows this many identity pills and tag pills, then "+N".
     const CUSTOMERS_SOURCE_PILLS_SHOWN = 2;
     const CUSTOMERS_TAG_PILLS_SHOWN = 3;
@@ -210,14 +213,30 @@
       return typeof f.value === 'string' ? f.value : '';
     }
 
+    // CUSTOMERS_HUB_LABELS: where a hub value came from, by its rule
+    // (pkg/customers HubLabel, #19306). A hub value without a known rule was
+    // shared with consent.
+    const CUSTOMERS_HUB_LABELS = {
+      hub_consent: 'from hub: entered by the person, shared with consent',
+      hub_person: 'from hub: entered by the person',
+      hub_admin: 'from hub: set by a hub admin',
+      hub_email_domain: 'from hub: derived from an organization email domain',
+      hub_browser_language: 'from hub: inferred from browser language',
+      hub_unrecorded: 'from hub: source not recorded'
+    };
+    function customersHubLabel(f) {
+      return CUSTOMERS_HUB_LABELS[(f && f.rule) || ''] || CUSTOMERS_HUB_LABELS.hub_consent;
+    }
+
     // customersOrgPill: the organization as one small pill, with where it came
     // from in its tooltip. Nothing is shown when there is none.
     function customersOrgPill(p) {
       const v = customersProfileValue(p, 'organization');
       if (!v) return '';
       const f = p.profile.organization;
-      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : 'From the public GitHub profile';
-      return '<span class="kc-pill customers-pill customers-org" data-source="' + (f.source === 'manual' ? 'manual' : 'auto') + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : 'From the public GitHub profile');
+      const src = f.source === 'manual' || f.source === 'hub' ? f.source : 'auto';
+      return '<span class="kc-pill customers-pill customers-org" data-source="' + src + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
 
     // customersFlagEmoji: the flag for an ISO 3166 alpha-2 code, or '' when the
@@ -248,12 +267,25 @@
         '<span aria-hidden="true">' + customersFlagEmoji(code) + '</span> ' + escapeHtml(code) + '</span>';
     }
 
+    // customersAffiliationSourceChip: for a suggestion that came from
+    // enrichment (customers.enrichment), a chip naming the public source and
+    // the dates it gives. Offline guesses have no chip.
+    function customersAffiliationSourceChip(s) {
+      if (!s || !s.source) return '';
+      const label = CUSTOMERS_AFFILIATION_SOURCES[s.source] || s.source;
+      const dates = s.from && s.until ? s.from + ' to ' + s.until : (s.from ? 'since ' + s.from : (s.until ? 'until ' + s.until : ''));
+      const title = 'From ' + label + (dates ? ', ' + dates : '') + '. Public data; nothing is saved until you accept.';
+      return '<span class="kc-pill customers-pill customers-affiliation-source" data-source="' + escapeHtml(s.source) + '" title="' + escapeHtml(title) + '">' + escapeHtml(s.source) + '</span>' +
+        (dates ? ' <span class="muted-xs">' + escapeHtml(dates) + '</span>' : '');
+    }
+
     // customersAffiliationHtml: the likely organization, with its evidence, as
     // a suggestion to accept or dismiss. Nothing is saved until Accept.
     function customersAffiliationHtml(p) {
       const s = p && p.affiliation_suggestion;
       if (!s || !s.value) return '';
-      return '<div class="customers-inline" data-customers-field="affiliation-suggestion"><span>Likely: <strong>' + escapeHtml(s.value) + '</strong> <span class="muted-xs">(' + escapeHtml(s.evidence || 'a guess') + ')</span></span>' +
+      const why = s.source ? customersAffiliationSourceChip(s) : '<span class="muted-xs">(' + escapeHtml(s.evidence || 'a guess') + ')</span>';
+      return '<div class="customers-inline" data-customers-field="affiliation-suggestion"><span>Likely: <strong>' + escapeHtml(s.value) + '</strong> ' + why + '</span>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationAccept" data-arg0="' + escapeHtml(s.value) + '">Accept</button>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationDismiss" data-arg0="' + escapeHtml(s.value) + '">Dismiss</button></div>';
     }
@@ -536,11 +568,31 @@
     // Each says whether GitHub or a person set it; a field set by hand has a
     // button that hands it back to the automatic source. Everyone who can
     // open the profile may edit these, a read-only user on their own.
+    // customersPublicContributionsHtml: read-only public activity from
+    // enrichment (customers.enrichment.devstats), each row linking out to the
+    // source. Nothing here can be edited; it comes from a public dashboard.
+    function customersPublicContributionsHtml(p) {
+      const rows = ((p && p.public_contributions) || []).filter(a => a && a.project);
+      if (!rows.length) return '';
+      const items = rows.map(function (a) {
+        const label = escapeHtml(a.project) + ': ' + escapeHtml(String(a.contributions || 0)) + ' contributions' + (a.period ? ' <span class="muted-xs">(' + escapeHtml(a.period) + ')</span>' : '');
+        const src = ' <span class="kc-pill customers-pill customers-affiliation-source" data-source="' + escapeHtml(a.source || '') + '">' + escapeHtml(a.source || '') + '</span>';
+        const url = String(a.url || '');
+        const link = /^https:\/\//.test(url) ? ' <a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" title="Open on ' + escapeHtml(a.source || 'the source') + '" aria-label="Open ' + escapeHtml(a.project) + ' on ' + escapeHtml(a.source || 'the source') + '"><span aria-hidden="true">&#8599;</span></a>' : '';
+        return '<li data-customers-field="public-contribution">' + label + src + link + '</li>';
+      }).join('');
+      return '<div class="customers-block" data-customers-field="public-contributions"><div class="section-label m-0">Public contributions</div>' +
+        '<ul class="customers-public-contributions">' + items + '</ul>' +
+        '<div class="muted-xs">Public data from CNCF devstats, looked up by GitHub login. Read only.</div></div>';
+    }
+
     function customersDetailsHtml(p) {
       const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
         const cur = (p.profile && p.profile[f.key]) || {};
         const manual = cur.source === 'manual';
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.rule === 'location' ? 'from location' : 'from GitHub')) : (manual ? 'cleared by hand' : 'not known');
+        // A hub value carries its hub label (#19163, #19306); editing it
+        // here makes it manual.
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from GitHub'))) : (manual ? 'cleared by hand' : 'not known');
         return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
           (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
@@ -549,7 +601,8 @@
       const ccLine = /^[A-Z]{2}$/.test(cc) ? '<div class="muted-xs" data-customers-field="country-line"><span aria-hidden="true">' + customersFlagEmoji(cc) + '</span> ' + escapeHtml(cc) + ' ' + escapeHtml(customersCountryName(cc)) + '</div>' : '';
       return '<div class="customers-block"><div class="section-label m-0">Details</div>' + ccLine +
         '<div class="customers-inline">' + rows + '</div>' + customersAffiliationHtml(p) +
-        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>';
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>' +
+        customersPublicContributionsHtml(p);
     }
 
     function customersNotesHtml(p) {

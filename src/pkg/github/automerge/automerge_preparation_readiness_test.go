@@ -304,3 +304,113 @@ func TestPreparationClaimUsesLiveBaseNotPRBasePayload(t *testing.T) {
 		t.Fatalf("stale PR base used as authoritative: %+v", st)
 	}
 }
+
+// TestPreparationRefreshCoalescesWhileCIPending pins refresh coalescing: an
+// owner whose last bot refresh still has CI in flight is not refreshed again
+// for a base move that misses its files, so that CI is not cancelled and
+// paid for twice. The refresh goes ahead once that CI finishes green or red,
+// when the base delta touches the PR's files or cannot be read, and once
+// preparationRefreshCoalesceMaxWait has passed since the last refresh.
+func TestPreparationRefreshCoalescesWhileCIPending(t *testing.T) {
+	cases := []struct {
+		name        string
+		mutate      func(api *preparationAPI, c *Engine)
+		wantRefresh bool
+	}{
+		{name: "ci pending defers the refresh"},
+		{name: "ci not reported yet defers the refresh", mutate: func(api *preparationAPI, _ *Engine) {
+			api.pending["refreshed1"] = false
+			api.missing["refreshed1"] = true
+		}},
+		{name: "ci finished green refreshes", mutate: func(api *preparationAPI, _ *Engine) { api.pending["refreshed1"] = false }, wantRefresh: true},
+		{name: "ci failed refreshes", mutate: func(api *preparationAPI, _ *Engine) {
+			api.pending["refreshed1"] = false
+			api.failing["refreshed1"] = true
+		}, wantRefresh: true},
+		{name: "base delta touching the PR's files refreshes", mutate: func(api *preparationAPI, _ *Engine) {
+			api.baseDelta["base1...base2"] = []*gh.CommitFile{{Filename: gh.Ptr("file1.go")}}
+		}, wantRefresh: true},
+		{name: "unreadable base delta refreshes", mutate: func(api *preparationAPI, _ *Engine) { delete(api.baseDelta, "base1...base2") }, wantRefresh: true},
+		{name: "max wait elapsed refreshes", mutate: func(_ *preparationAPI, c *Engine) {
+			later := time.Now().Add(preparationRefreshCoalesceMaxWait)
+			c.now = func() time.Time { return later }
+		}, wantRefresh: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api, c, _ := readinessFixture(t, false)
+			api.baseDelta["base1...base2"] = []*gh.CommitFile{{Filename: gh.Ptr("CHANGELOG.md")}, {Filename: gh.Ptr("other.go")}}
+			if tc.mutate != nil {
+				tc.mutate(api, c)
+			}
+			ev, reason, stop, err := preparationGate(c, 1, "main", "refreshed1")
+			if err != nil || !stop {
+				t.Fatalf("owner gate: %+v %q stop=%v err=%v", ev, reason, stop, err)
+			}
+			if tc.wantRefresh {
+				if !ev.BranchUpdated || api.updates[1] != 2 {
+					t.Fatalf("refresh withheld: %+v %q updates=%v", ev, reason, api.updates)
+				}
+				return
+			}
+			if ev.BranchUpdated || reason != basePreparationCoalescing || api.updates[1] != 1 {
+				t.Fatalf("re-refreshed while CI on the last refresh runs: %+v %q updates=%v", ev, reason, api.updates)
+			}
+			st, err := c.preparationStore().ownerSnapshot(preparationKey("acme", "widget", "main"))
+			if err != nil || st.Owner.Number != 1 || st.Attempt.Head != "head1" {
+				t.Fatalf("coalescing lost the owner or its attempt: %+v %v", st, err)
+			}
+		})
+	}
+}
+
+// TestPreparationGreenReviewedOwnerNotOvertaken pins the successor hold: once
+// the preparation owner is green and reviewed on its completed refresh, a
+// current successor that is otherwise ready waits behind it instead of
+// merging first and making the owner stale again. A pending or unreviewed
+// owner still lets a ready successor pass (readiness first), and the hold
+// ends after preparationRefreshCoalesceMaxWait.
+func TestPreparationGreenReviewedOwnerNotOvertaken(t *testing.T) {
+	cases := []struct {
+		name     string
+		mutate   func(api *preparationAPI, c *Engine)
+		wantHold bool
+	}{
+		{name: "green reviewed owner holds the successor", wantHold: true},
+		{name: "pending owner does not hold", mutate: func(api *preparationAPI, _ *Engine) { api.pending["refreshed1"] = true }},
+		{name: "unreviewed owner does not hold", mutate: func(_ *preparationAPI, c *Engine) {
+			c.reviewGate.Verdict = func(_ string, number int, _ string) ReviewGateVerdict {
+				return ReviewGateVerdict{Loaded: true, Found: true, Approved: number != 1}
+			}
+		}},
+		{name: "unrefreshed owner does not hold", mutate: func(api *preparationAPI, _ *Engine) { api.prs[1].Head.SHA = gh.Ptr("head1") }},
+		{name: "max wait elapsed does not hold", mutate: func(_ *preparationAPI, c *Engine) {
+			later := time.Now().Add(preparationRefreshCoalesceMaxWait)
+			c.now = func() time.Time { return later }
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api, c, _ := readinessFixture(t, false)
+			api.pending["refreshed1"] = false
+			api.behind["head2"] = 0 // the successor is already current
+			if tc.mutate != nil {
+				tc.mutate(api, c)
+			}
+			ev, reason, stop, err := preparationGate(c, 2, "main", "head2")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantHold {
+				if !stop || reason != preparationQueued(1) || ev.BranchUpdated {
+					t.Fatalf("successor overtook a green reviewed owner: %+v %q stop=%v", ev, reason, stop)
+				}
+			} else if stop || reason != "" {
+				t.Fatalf("current successor held without cause: %q stop=%v", reason, stop)
+			}
+			if api.updates[2] != 0 || api.merges[2] != 0 {
+				t.Fatalf("gate mutated the successor: updates=%v merges=%v", api.updates, api.merges)
+			}
+		})
+	}
+}

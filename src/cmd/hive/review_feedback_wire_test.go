@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/reviewfeedback"
 )
@@ -221,5 +222,96 @@ func TestParseReviewFeedbackKey(t *testing.T) {
 		if _, _, ok := parseReviewFeedbackKey(bad); ok {
 			t.Errorf("%q must not parse", bad)
 		}
+	}
+}
+
+// A reply the proxy refused (#19096) is handed to a person once with the
+// drafted text, even when no new feedback is waiting, and a second pass inside
+// the window posts nothing more.
+func TestReviewFeedbackSweep_RefusedReplyPostsDraftsOnce(t *testing.T) {
+	fb := openDraftFeedback()
+	fb.Items = nil
+	src := &fakeFeedbackSource{byKey: map[string]github.PRFeedback{feedbackTestKey: fb}}
+	now := time.Now()
+	s := feedbackSweepFor(t, src, &recordingKicker{}, routeTo("quality"), now)
+	if err := s.Store.RecordBlockedReply(feedbackTestKey, reviewfeedback.ReplyDraft{InReplyTo: "4616203214", Body: "Verified the scorecard; fixed in abc123.", Agent: "quality", At: now}); err != nil {
+		t.Fatal(err)
+	}
+	res := s.run(context.Background(), parseReviewFeedbackKey)
+	if res.NeedsHuman != 1 || len(src.comments) != 1 {
+		t.Fatalf("needs_human=%d comments=%d, want one note", res.NeedsHuman, len(src.comments))
+	}
+	for _, want := range []string{github.FeedbackNeedsHumanMarker, "could not post its replies", "4616203214", "fixed in abc123"} {
+		if !strings.Contains(src.comments[0], want) {
+			t.Errorf("note missing %q:\n%s", want, src.comments[0])
+		}
+	}
+	s.Now = now.Add(10 * time.Minute)
+	if res := s.run(context.Background(), parseReviewFeedbackKey); res.NeedsHuman != 0 || len(src.comments) != 1 {
+		t.Fatalf("second pass must not post again: needs_human=%d comments=%d", res.NeedsHuman, len(src.comments))
+	}
+}
+
+func TestReviewThreadOwners_AuditOwnershipCachedAndCaseInsensitive(t *testing.T) {
+	loads := 0
+	now := time.Now()
+	o := &reviewThreadOwners{
+		org: func() string { return "cncf" },
+		load: func(org string, _ time.Time) map[string]string {
+			loads++
+			return map[string]string{"cncf/techdocs#424": "quality"}
+		},
+		now: func() time.Time { return now },
+	}
+	cases := []struct {
+		name      string
+		repo      string
+		number    int
+		wantAgent string
+		wantOK    bool
+	}{
+		{"hive-authored PR", "cncf/techdocs", 424, "quality", true},
+		{"case-insensitive repo", "CNCF/TechDocs", 424, "quality", true},
+		{"other PR", "cncf/techdocs", 425, "", false},
+		{"other repo", "cncf/toc", 424, "", false},
+	}
+	for _, tc := range cases {
+		agent, ok := o.owner(tc.repo, tc.number)
+		if agent != tc.wantAgent || ok != tc.wantOK {
+			t.Errorf("%s: owner=%q ok=%v, want %q %v", tc.name, agent, ok, tc.wantAgent, tc.wantOK)
+		}
+	}
+	if loads != 1 {
+		t.Fatalf("audit read %d times inside the TTL, want 1", loads)
+	}
+	now = now.Add(reviewThreadOwnersTTL)
+	o.owner("cncf/techdocs", 424)
+	if loads != 2 {
+		t.Fatalf("audit must be re-read after the TTL, loads=%d", loads)
+	}
+}
+
+func TestNewReviewThreadGuard_LoginsAndRefusedReplyKept(t *testing.T) {
+	t.Setenv(reviewfeedback.DirEnvVar, t.TempDir())
+	reviewFeedbackStoreMu.Lock()
+	prev := reviewFeedbackStore
+	reviewFeedbackStore = nil
+	reviewFeedbackStoreMu.Unlock()
+	t.Cleanup(func() {
+		reviewFeedbackStoreMu.Lock()
+		reviewFeedbackStore = prev
+		reviewFeedbackStoreMu.Unlock()
+	})
+	g := newReviewThreadGuard(func() string { return "cncf" }, func() string { return " hive-app[bot] " }, discardLogger())
+	if got := g.HiveLogins(); len(got) != 1 || got[0] != "hive-app[bot]" {
+		t.Fatalf("logins = %v", got)
+	}
+	if got := newReviewThreadGuard(func() string { return "" }, func() string { return "" }, discardLogger()).HiveLogins(); got != nil {
+		t.Fatalf("no App login must yield no logins, got %v", got)
+	}
+	now := time.Now()
+	g.OnRefused(proxy.ReviewWriteRefusal{Agent: "quality", Repo: "cncf/techdocs", Number: 424, InReplyTo: "1", Body: "drafted", At: now})
+	if due := openReviewFeedbackStore(discardLogger()).BlockedDraftsDue(feedbackTestKey, now, time.Hour); len(due) != 1 || due[0].Body != "drafted" {
+		t.Fatalf("refused reply not kept: %+v", due)
 	}
 }

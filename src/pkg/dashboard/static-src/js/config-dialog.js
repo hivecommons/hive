@@ -143,6 +143,7 @@
       add(versionMenu, function() { closeVersionMenu(); const chip = document.getElementById('oc-version-chip'); if (chip) chip.focus(); }, 30000);
       const avatarMenu = document.getElementById('oc-gh-user-menu');
       add(avatarMenu, hiveCloseGHUserMenu, 30000);
+      add(document.getElementById('oc-help-menu'), function() { if (typeof closeHelpMenu === 'function') closeHelpMenu(true); }, 30000);
       add(document.getElementById('nps-survey-card'), dismissNPSSurvey, 30000);
       add(document.getElementById('hiveChatShortcuts'), function() { document.getElementById('hiveChatShortcuts').classList.remove('open'); }, 20001);
       document.querySelectorAll('.hive-dialog-overlay').forEach(function(el) { add(el, function() { if (typeof el.hiveDialogClose === 'function') el.hiveDialogClose(); else el.remove(); }, 20000); });

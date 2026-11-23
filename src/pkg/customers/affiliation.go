@@ -2,6 +2,7 @@ package customers
 
 import (
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -27,14 +28,24 @@ import (
 const (
 	AffiliationFromCompany = "github_company"
 	AffiliationFromEmail   = "email_domain"
+	// AffiliationFromGitdm is a current affiliation in the public cncf/gitdm
+	// files (customers.enrichment.gitdm, off by default). It outranks the
+	// two offline rules because gitdm is curated, and like them it is only
+	// ever a suggestion.
+	AffiliationFromGitdm = "gitdm"
 )
 
 // AffiliationSuggestion is one suggested organization with where it came from.
-// Evidence is human-readable and never includes the email local part.
+// Evidence is human-readable and never includes the email local part. Source,
+// From and Until are set for a suggestion that came from enrichment, so the
+// UI can show the source and the dates.
 type AffiliationSuggestion struct {
 	Value    string `json:"value"`
 	Rule     string `json:"rule"`
 	Evidence string `json:"evidence"`
+	Source   string `json:"source,omitempty"`
+	From     string `json:"from,omitempty"`
+	Until    string `json:"until,omitempty"`
 }
 
 // shortOrgLen is the longest bare handle shown in capitals ("ibm" -> "IBM").
@@ -121,11 +132,42 @@ func affiliationDismissed(pr Profile, key string) bool {
 	return false
 }
 
+// SuggestAffiliationWith is SuggestAffiliation with enrichment facts as one
+// more source. A current gitdm affiliation is offered first when it differs
+// from what is shown; a value a person set by hand or shared from the hub is
+// never challenged, and a dismissed one is not offered again. With no
+// enrichment it is exactly SuggestAffiliation.
+func SuggestAffiliationWith(p Person, enriched []EnrichedAffiliation, now time.Time) *AffiliationSuggestion {
+	org := p.Profile.Organization
+	if org.Source == SourceManual || org.Source == SourceHub {
+		return nil
+	}
+	var gitdm []EnrichedAffiliation
+	for _, a := range enriched {
+		if a.Source == EnrichSourceGitdm {
+			gitdm = append(gitdm, a)
+		}
+	}
+	if cur, ok := currentEnrichedAffiliation(gitdm, now); ok {
+		v := cur.Org
+		shown := strings.EqualFold(strings.TrimSpace(org.Value), v) || strings.EqualFold(TidyCompany(org.Value), v)
+		if !shown && v != "" && len(v) <= MaxProfileFieldLen && !affiliationDismissed(p.Profile, strings.ToLower(v)) {
+			evidence := "from cncf/gitdm"
+			if cur.From != "" {
+				evidence += ", since " + cur.From
+			}
+			return &AffiliationSuggestion{Value: v, Rule: AffiliationFromGitdm, Evidence: evidence,
+				Source: EnrichSourceGitdm, From: cur.From, Until: cur.Until}
+		}
+	}
+	return SuggestAffiliation(p)
+}
+
 // SuggestAffiliation returns the likely organization for p, or nil when a
 // person has settled the field, nothing supports one, or the person refused it.
 func SuggestAffiliation(p Person) *AffiliationSuggestion {
 	org := p.Profile.Organization
-	if org.Source == SourceManual {
+	if org.Source == SourceManual || org.Source == SourceHub {
 		return nil
 	}
 	ok := func(v string) bool {

@@ -51,7 +51,7 @@ func TestCatalogValidAndLargeEnough(t *testing.T) {
 	if err := ValidateCatalog(); err != nil {
 		t.Fatalf("catalog validation failed: %v", err)
 	}
-	for _, id := range []string{"hive", "hive-dark", "hive-light", "star-wars", "dungeons-and-dragons", "star-trek", "cyberpunk", "terminal", "solarized-dark", "nord", "contributor-rank-metal", "contributor-verdant", "contributor-amber-rank", "contributor-violet-advisor", "contributor-minimal", "contributor-rose", "contributor-roomy-ranked"} {
+	for _, id := range []string{"hive", "hive-dark", "hive-light", "star-wars", "dungeons-and-dragons", "star-trek", "cyberpunk", "terminal", "solarized-dark", "nord", "sandstone", "contributor-rank-metal", "contributor-verdant", "contributor-amber-rank", "contributor-violet-advisor", "contributor-minimal", "contributor-rose", "contributor-roomy-ranked"} {
 		th, ok := Builtin(id)
 		if !ok {
 			t.Fatalf("missing built-in theme %q", id)
@@ -483,6 +483,8 @@ func TestValidationErrorBranches(t *testing.T) {
 	cases := []Overrides{
 		{Tokens: map[string]string{"--not-a-token": "red"}},
 		{Tokens: map[string]string{"--accent": "<red>"}},
+		{LightTokens: map[string]string{"--not-a-token": "red"}},
+		{LightTokens: map[string]string{"--surface-0": "#fff</style>"}},
 		{CustomCSS: badCSS},
 		{CustomCSS: ".x{background:url(http://example.org/x)}"},
 		{Background: &ThemeBackground{Image: "ftp://example.org/x", Opacity: 0.5}},
@@ -531,6 +533,134 @@ func TestEffectiveBranches(t *testing.T) {
 	if !strings.Contains(css, "body.light-mode") || !strings.Contains(css, "--surface-0: #f7f8fa") || !strings.Contains(css, "--bg: var(--surface-0)") {
 		t.Fatalf("light css missing body remap: %s", css)
 	}
+}
+
+func TestEffectiveLightTokenOverridesLayerOnDerivedLightPalette(t *testing.T) {
+	tokens := map[string]string{"--surface-0": "#101010", "--accent": "#e0a33a"}
+	withoutLight, err := Effective("hive", Overrides{Tokens: tokens})
+	if err != nil {
+		t.Fatalf("effective hive: %v", err)
+	}
+	derived := lightModeTokens(withoutLight)
+	if derived["--surface-0"] == "#fdfaf3" {
+		t.Fatalf("test palette collides with the derived light surface %q", derived["--surface-0"])
+	}
+
+	th, err := Effective("hive", Overrides{Tokens: tokens, LightTokens: map[string]string{
+		"--surface-0": "#fdfaf3",
+		"--text":      " #2a2118 ",
+	}})
+	if err != nil {
+		t.Fatalf("effective hive with light tokens: %v", err)
+	}
+	css, err := CSS(th)
+	if err != nil {
+		t.Fatalf("css: %v", err)
+	}
+	root, light := themeModeBlocks(t, css)
+	if !strings.Contains(root, "--surface-0: #101010;") || strings.Contains(root, "#fdfaf3") {
+		t.Fatalf("dark palette lost its token override or picked up a light one:\n%s", root)
+	}
+	for _, want := range []string{
+		"--surface-0: #fdfaf3;",
+		"--text: #2a2118;",
+		// Tokens the operator did not override keep the derived light palette.
+		"--surface-1: " + derived["--surface-1"] + ";",
+		"--text-muted: " + derived["--text-muted"] + ";",
+		// Dark-side overrides that are not derived still reach light mode.
+		"--accent: #e0a33a;",
+		"--bg: var(--surface-0);",
+	} {
+		if !strings.Contains(light, want) {
+			t.Fatalf("light palette missing %q:\n%s", want, light)
+		}
+	}
+	if strings.Contains(light, "#101010") {
+		t.Fatalf("light palette leaked the dark surface override:\n%s", light)
+	}
+}
+
+func TestEffectiveLightTokenOverridesOnLightThemeAndLegacyNames(t *testing.T) {
+	base, ok := Builtin("hive-light")
+	if !ok {
+		t.Fatal("hive-light missing")
+	}
+	th, err := Effective("hive-light", Overrides{LightTokens: map[string]string{
+		"--brand": "#9a3412",
+		"--bg":    "#fbf7ef",
+	}})
+	if err != nil {
+		t.Fatalf("effective hive-light with light tokens: %v", err)
+	}
+	css, err := CSS(th)
+	if err != nil {
+		t.Fatalf("css: %v", err)
+	}
+	root, light := themeModeBlocks(t, css)
+	for _, want := range []string{"--brand: #9a3412;", "--surface-0: #fbf7ef;", "--bg: var(--surface-0);"} {
+		if !strings.Contains(light, want) {
+			t.Fatalf("light palette missing %q:\n%s", want, light)
+		}
+	}
+	if !strings.Contains(light, "--text: "+base.Tokens["--text"]+";") {
+		t.Fatalf("light palette lost the theme's own text color %q:\n%s", base.Tokens["--text"], light)
+	}
+	if strings.Contains(root, "#9a3412") || strings.Contains(root, "#fbf7ef") {
+		t.Fatalf("light-only overrides leaked into the dark palette:\n%s", root)
+	}
+}
+
+func TestEffectiveLightTokenOverridesWinOverThemeLightTokens(t *testing.T) {
+	th := Theme{ID: "with-light", Dark: true,
+		Tokens:      map[string]string{"--surface-0": "#0b0b0b", "--text": "#f5f5f5"},
+		LightTokens: map[string]string{"--bg": "#fafafa", "--text": "#111111"},
+	}
+	merged, err := applyOverrides(th, Overrides{LightTokens: map[string]string{"--surface-0": "#fff8e7"}})
+	if err != nil {
+		t.Fatalf("applyOverrides: %v", err)
+	}
+	css, err := CSS(merged)
+	if err != nil {
+		t.Fatalf("css: %v", err)
+	}
+	_, light := themeModeBlocks(t, css)
+	for _, want := range []string{"--surface-0: #fff8e7;", "--text: #111111;"} {
+		if !strings.Contains(light, want) {
+			t.Fatalf("light palette missing %q:\n%s", want, light)
+		}
+	}
+	if strings.Contains(light, "#fafafa") {
+		t.Fatalf("theme light token beat the operator override:\n%s", light)
+	}
+	if th.LightTokens["--bg"] != "#fafafa" || len(th.LightTokens) != 2 {
+		t.Fatalf("applyOverrides mutated the base theme light tokens: %+v", th.LightTokens)
+	}
+}
+
+func TestEffectiveWithoutLightTokenOverridesKeepsDerivedLightMode(t *testing.T) {
+	th, err := Effective("hive", Overrides{Tokens: map[string]string{"--accent": "#e0a33a"}})
+	if err != nil {
+		t.Fatalf("effective hive: %v", err)
+	}
+	if len(th.LightTokens) != 0 {
+		t.Fatalf("light tokens pinned without a light override: %+v", th.LightTokens)
+	}
+}
+
+func themeModeBlocks(t *testing.T, css string) (root, light string) {
+	t.Helper()
+	const rootOpen, lightOpen = ":root{\n", "}\nbody.light-mode{\n"
+	start := strings.Index(css, rootOpen)
+	mid := strings.Index(css, lightOpen)
+	if start < 0 || mid < start {
+		t.Fatalf("css has no :root then body.light-mode block:\n%s", css)
+	}
+	rest := css[mid+len(lightOpen):]
+	end := strings.Index(rest, "}\n")
+	if end < 0 {
+		t.Fatalf("unterminated body.light-mode block:\n%s", css)
+	}
+	return css[start+len(rootOpen) : mid], rest[:end]
 }
 
 func TestValidateThemeAndBackgroundFailures(t *testing.T) {

@@ -1,5 +1,18 @@
 package config
 
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/hivecommons/hive/crux/keystore"
+)
+
 // EnvCustomersEnabled overrides customers.enabled when it holds a recognised
 // boolean.
 const EnvCustomersEnabled = "HIVE_CUSTOMERS_ENABLED"
@@ -26,6 +39,36 @@ type CustomersConfig struct {
 	// ON. It is the one part of the section that makes the viewer's browser
 	// contact another site: github.com, for people already on screen.
 	Avatars CustomersAvatarsConfig `yaml:"avatars,omitempty" json:"avatars,omitempty"`
+	// HubImport gates the import of the real name, organization and country
+	// a person entered on the hub and consented to share with this hive
+	// (#19163). Default OFF.
+	HubImport CustomersHubImportConfig `yaml:"hub_import,omitempty" json:"hub_import,omitempty"`
+	// Enrichment gates public affiliation and activity facts from CNCF
+	// sources (gitdm, devstats, crowd.dev) for confirmed customers. Default
+	// OFF, and each provider has its own switch. See
+	// src/docs/customers-enrichment.md.
+	Enrichment CustomersEnrichmentConfig `yaml:"enrichment,omitempty" json:"enrichment,omitempty"`
+}
+
+// EnvCustomersHubImportEnabled overrides customers.hub_import.enabled when it
+// holds a recognised boolean.
+const EnvCustomersHubImportEnabled = "HIVE_CUSTOMERS_HUB_IMPORT_ENABLED"
+
+// CustomersHubImportConfig (`customers.hub_import:`) lets this hive ask its
+// hub for fields its confirmed customers entered there themselves. On, the
+// hive posts salted hashes of its confirmed customers' GitHub logins to the
+// hub on a bounded interval and when a customer is accepted; the hub answers
+// only for people who consented to share with this hive. The switch is
+// necessary and never sufficient: the person's consent on the hub decides
+// what arrives. See src/docs/design/customers-hub-consent.md.
+type CustomersHubImportConfig struct {
+	// Enabled turns the import on. nil = false.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether the import is on (default off).
+func (c CustomersHubImportConfig) IsEnabled() bool {
+	return c.Enabled != nil && *c.Enabled
 }
 
 // EnvCustomersAvatarsEnabled overrides customers.avatars.enabled when it
@@ -114,6 +157,24 @@ func (c *Config) CustomersAvatarsEnabled() bool {
 	return c.Customers.Avatars.IsEnabled()
 }
 
+// CustomersHubImportEnabled reports whether the hub import is switched on:
+// the HIVE_CUSTOMERS_HUB_IMPORT_ENABLED env wins over
+// customers.hub_import.enabled when it holds a recognised boolean. It also
+// needs the Customers section to be on. A hub registration is checked by the
+// caller, which holds it.
+func (c *Config) CustomersHubImportEnabled() bool {
+	if !c.CustomersEnabled() {
+		return false
+	}
+	if v, ok := parseBoolEnv(EnvCustomersHubImportEnabled); ok {
+		return v
+	}
+	if c == nil {
+		return false
+	}
+	return c.Customers.HubImport.IsEnabled()
+}
+
 // EnvCustomersMentionSearchEnabled overrides customers.mention_search.enabled
 // when it holds a recognised boolean.
 const EnvCustomersMentionSearchEnabled = "HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED"
@@ -174,4 +235,266 @@ func (c *Config) CustomersMentionSearchEnabled() bool {
 		return false
 	}
 	return c.Customers.MentionSearch.IsEnabled()
+}
+
+// Customers enrichment (`customers.enrichment:`) adds public affiliation and
+// activity facts about confirmed customers from CNCF-published sources, through
+// the hivecommons/colony resolver. Everything is OFF by default. The block and
+// each provider have their own switch, every switch also needs the one above it
+// on, and an environment variable overrides each one. See
+// src/docs/customers-enrichment.md.
+const (
+	// EnvCustomersEnrichmentEnabled overrides customers.enrichment.enabled.
+	EnvCustomersEnrichmentEnabled = "HIVE_CUSTOMERS_ENRICHMENT_ENABLED"
+	// EnvCustomersEnrichmentGitdmEnabled overrides
+	// customers.enrichment.gitdm.enabled.
+	EnvCustomersEnrichmentGitdmEnabled = "HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED"
+	// EnvCustomersEnrichmentGitdmRefreshInterval overrides
+	// customers.enrichment.gitdm.refresh_interval (a Go duration).
+	EnvCustomersEnrichmentGitdmRefreshInterval = "HIVE_CUSTOMERS_ENRICHMENT_GITDM_REFRESH_INTERVAL"
+	// EnvCustomersEnrichmentDevstatsEnabled overrides
+	// customers.enrichment.devstats.enabled.
+	EnvCustomersEnrichmentDevstatsEnabled = "HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED"
+	// EnvCustomersEnrichmentDevstatsHourlyLimit overrides
+	// customers.enrichment.devstats.hourly_limit.
+	EnvCustomersEnrichmentDevstatsHourlyLimit = "HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_HOURLY_LIMIT"
+	// EnvCustomersEnrichmentCrowdDevEnabled overrides
+	// customers.enrichment.crowddev.enabled.
+	EnvCustomersEnrichmentCrowdDevEnabled = "HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED"
+	// EnvCustomersEnrichmentCrowdDevToken supplies the crowd.dev API token
+	// directly; it wins over the keystore-sealed token file. A secret.
+	EnvCustomersEnrichmentCrowdDevToken = "HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN"
+	// EnvCustomersEnrichmentCrowdDevTokenFile overrides
+	// customers.enrichment.crowddev.token_file.
+	EnvCustomersEnrichmentCrowdDevTokenFile = "HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN_FILE"
+)
+
+const (
+	// DefaultCustomersEnrichmentGitdmRefresh is how often the public gitdm
+	// affiliation snapshot is downloaded again.
+	DefaultCustomersEnrichmentGitdmRefresh = 24 * time.Hour
+	// MinCustomersEnrichmentGitdmRefresh is the shortest refresh a config
+	// value may ask for; shorter values are raised to it, so a typo cannot
+	// turn the snapshot download into a loop.
+	MinCustomersEnrichmentGitdmRefresh = time.Hour
+	// DefaultCustomersEnrichmentDevstatsHourlyLimit is how many devstats
+	// lookups all people together may make in one hour.
+	DefaultCustomersEnrichmentDevstatsHourlyLimit = 30
+	// MaxCustomersEnrichmentDevstatsHourlyLimit caps what a config value may
+	// ask for.
+	MaxCustomersEnrichmentDevstatsHourlyLimit = 120
+	// DefaultCustomersEnrichmentCrowdDevTokenFile is where Settings seals the
+	// crowd.dev API token.
+	DefaultCustomersEnrichmentCrowdDevTokenFile = WritableSecretsDir + "/customers_crowddev_token"
+)
+
+// CustomersEnrichmentConfig (`customers.enrichment:`) is the master switch and
+// the per-provider settings for enrichment.
+type CustomersEnrichmentConfig struct {
+	// Enabled turns enrichment on. nil = false. Each provider needs its own
+	// switch on as well.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Gitdm matches confirmed customers against the public cncf/gitdm
+	// affiliation files on this hive. Only the public snapshot is
+	// downloaded; nothing about a person is sent.
+	Gitdm CustomersEnrichmentGitdmConfig `yaml:"gitdm,omitempty" json:"gitdm,omitempty"`
+	// Devstats looks up a confirmed customer's public contribution activity
+	// on CNCF devstats by GitHub login (never an email).
+	Devstats CustomersEnrichmentDevstatsConfig `yaml:"devstats,omitempty" json:"devstats,omitempty"`
+	// CrowdDev looks up affiliation and activity on crowd.dev (LFX
+	// Insights) by GitHub login, with an API token.
+	CrowdDev CustomersEnrichmentCrowdDevConfig `yaml:"crowddev,omitempty" json:"crowddev,omitempty"`
+}
+
+// IsEnabled reports whether the enrichment block is on (default off).
+func (c CustomersEnrichmentConfig) IsEnabled() bool {
+	return c.Enabled != nil && *c.Enabled
+}
+
+// CustomersEnrichmentGitdmConfig (`customers.enrichment.gitdm:`).
+type CustomersEnrichmentGitdmConfig struct {
+	// Enabled turns the gitdm provider on. nil = false.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// RefreshInterval is how often the public snapshot is downloaded again,
+	// as a Go duration ("24h"). Empty = DefaultCustomersEnrichmentGitdmRefresh;
+	// values below MinCustomersEnrichmentGitdmRefresh are raised to it.
+	RefreshInterval string `yaml:"refresh_interval,omitempty" json:"refresh_interval,omitempty"`
+}
+
+// IsEnabled reports whether gitdm is on (default off).
+func (c CustomersEnrichmentGitdmConfig) IsEnabled() bool {
+	return c.Enabled != nil && *c.Enabled
+}
+
+// CustomersEnrichmentDevstatsConfig (`customers.enrichment.devstats:`).
+type CustomersEnrichmentDevstatsConfig struct {
+	// Enabled turns the devstats provider on. nil = false.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// HourlyLimit bounds the devstats lookups all people may make in one
+	// hour. 0 = DefaultCustomersEnrichmentDevstatsHourlyLimit; values above
+	// MaxCustomersEnrichmentDevstatsHourlyLimit are lowered to it.
+	HourlyLimit int `yaml:"hourly_limit,omitempty" json:"hourly_limit,omitempty"`
+}
+
+// IsEnabled reports whether devstats is on (default off).
+func (c CustomersEnrichmentDevstatsConfig) IsEnabled() bool {
+	return c.Enabled != nil && *c.Enabled
+}
+
+// CustomersEnrichmentCrowdDevConfig (`customers.enrichment.crowddev:`). The
+// API token is never stored in hive.yaml: it lives in a keystore-sealed file
+// (TokenFile) or arrives through HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN.
+type CustomersEnrichmentCrowdDevConfig struct {
+	// Enabled turns the crowd.dev provider on. nil = false.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// TokenFile is the keystore-sealed token file. Empty =
+	// DefaultCustomersEnrichmentCrowdDevTokenFile.
+	TokenFile string `yaml:"token_file,omitempty" json:"token_file,omitempty"`
+}
+
+// IsEnabled reports whether crowd.dev is on (default off).
+func (c CustomersEnrichmentCrowdDevConfig) IsEnabled() bool {
+	return c.Enabled != nil && *c.Enabled
+}
+
+// TokenFileOrDefault returns the token file path: the env override, then
+// token_file, then the default.
+func (c CustomersEnrichmentCrowdDevConfig) TokenFileOrDefault() string {
+	if v := strings.TrimSpace(os.Getenv(EnvCustomersEnrichmentCrowdDevTokenFile)); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(c.TokenFile); v != "" {
+		return v
+	}
+	return DefaultCustomersEnrichmentCrowdDevTokenFile
+}
+
+// Token returns the crowd.dev API token: the env value, then the sealed
+// file. A missing file is "". A secret; never log it.
+func (c CustomersEnrichmentCrowdDevConfig) Token(ctx context.Context) (string, error) {
+	if v := strings.TrimSpace(os.Getenv(EnvCustomersEnrichmentCrowdDevToken)); v != "" {
+		return v, nil
+	}
+	path := c.TokenFileOrDefault()
+	v, err := keystore.ReadString(ctx, path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("customers enrichment: reading crowd.dev token file %s: %w", path, err)
+	}
+	return strings.TrimSpace(v), nil
+}
+
+// WriteCustomersEnrichmentSecret seals value into the secret file at path
+// through the keystore (owner-only mode). An empty value removes the file.
+func WriteCustomersEnrichmentSecret(ctx context.Context, path, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("customers enrichment: removing secret file %s: %w", path, err)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("customers enrichment: creating secret dir: %w", err)
+	}
+	return keystore.WriteFile(ctx, path, []byte(value))
+}
+
+// CustomersEnrichmentEnabled reports whether enrichment is on: the
+// HIVE_CUSTOMERS_ENRICHMENT_ENABLED env wins over customers.enrichment.enabled
+// when it holds a recognised boolean. It also needs the Customers section on.
+func (c *Config) CustomersEnrichmentEnabled() bool {
+	if !c.CustomersEnabled() {
+		return false
+	}
+	if v, ok := parseBoolEnv(EnvCustomersEnrichmentEnabled); ok {
+		return v
+	}
+	if c == nil {
+		return false
+	}
+	return c.Customers.Enrichment.IsEnabled()
+}
+
+// customersEnrichmentProviderEnabled applies the shared rule for a provider
+// switch: enrichment on, then the env override, then the saved value.
+func (c *Config) customersEnrichmentProviderEnabled(env string, saved func(CustomersEnrichmentConfig) bool) bool {
+	if !c.CustomersEnrichmentEnabled() {
+		return false
+	}
+	if v, ok := parseBoolEnv(env); ok {
+		return v
+	}
+	if c == nil {
+		return false
+	}
+	return saved(c.Customers.Enrichment)
+}
+
+// CustomersEnrichmentGitdmEnabled reports whether the gitdm provider is on.
+// It needs enrichment on; HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED overrides
+// the saved value.
+func (c *Config) CustomersEnrichmentGitdmEnabled() bool {
+	return c.customersEnrichmentProviderEnabled(EnvCustomersEnrichmentGitdmEnabled, func(e CustomersEnrichmentConfig) bool { return e.Gitdm.IsEnabled() })
+}
+
+// CustomersEnrichmentDevstatsEnabled reports whether the devstats provider is
+// on. It needs enrichment on; HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED
+// overrides the saved value.
+func (c *Config) CustomersEnrichmentDevstatsEnabled() bool {
+	return c.customersEnrichmentProviderEnabled(EnvCustomersEnrichmentDevstatsEnabled, func(e CustomersEnrichmentConfig) bool { return e.Devstats.IsEnabled() })
+}
+
+// CustomersEnrichmentCrowdDevEnabled reports whether the crowd.dev provider
+// is on. It needs enrichment on; HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED
+// overrides the saved value. A missing token is checked by the caller.
+func (c *Config) CustomersEnrichmentCrowdDevEnabled() bool {
+	return c.customersEnrichmentProviderEnabled(EnvCustomersEnrichmentCrowdDevEnabled, func(e CustomersEnrichmentConfig) bool { return e.CrowdDev.IsEnabled() })
+}
+
+// CustomersEnrichmentGitdmRefresh is the gitdm snapshot refresh interval:
+// HIVE_CUSTOMERS_ENRICHMENT_GITDM_REFRESH_INTERVAL, then
+// customers.enrichment.gitdm.refresh_interval, then the default. An
+// unparsable or non-positive value falls back to the default, and a value
+// below MinCustomersEnrichmentGitdmRefresh is raised to it.
+func (c *Config) CustomersEnrichmentGitdmRefresh() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(EnvCustomersEnrichmentGitdmRefreshInterval))
+	if raw == "" && c != nil {
+		raw = strings.TrimSpace(c.Customers.Enrichment.Gitdm.RefreshInterval)
+	}
+	d, err := time.ParseDuration(raw)
+	switch {
+	case raw == "" || err != nil || d <= 0:
+		return DefaultCustomersEnrichmentGitdmRefresh
+	case d < MinCustomersEnrichmentGitdmRefresh:
+		return MinCustomersEnrichmentGitdmRefresh
+	default:
+		return d
+	}
+}
+
+// CustomersEnrichmentDevstatsHourlyLimit is the devstats lookup budget per
+// hour: HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_HOURLY_LIMIT, then
+// customers.enrichment.devstats.hourly_limit, then the default, capped at
+// MaxCustomersEnrichmentDevstatsHourlyLimit.
+func (c *Config) CustomersEnrichmentDevstatsHourlyLimit() int {
+	n := 0
+	if raw := strings.TrimSpace(os.Getenv(EnvCustomersEnrichmentDevstatsHourlyLimit)); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil {
+			n = v
+		}
+	}
+	if n <= 0 && c != nil {
+		n = c.Customers.Enrichment.Devstats.HourlyLimit
+	}
+	switch {
+	case n <= 0:
+		return DefaultCustomersEnrichmentDevstatsHourlyLimit
+	case n > MaxCustomersEnrichmentDevstatsHourlyLimit:
+		return MaxCustomersEnrichmentDevstatsHourlyLimit
+	default:
+		return n
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -18,12 +19,13 @@ type gateStateCase struct {
 	Name string           `json:"name"`
 	Item StageTrackerItem `json:"item"`
 	Want struct {
-		Reasons    []string `json:"reasons"`
-		Actions    []string `json:"actions"`
-		Answered   bool     `json:"answered"`
-		AnsweredBy string   `json:"answered_by"`
-		Wait       string   `json:"wait"`
-		Inert      bool     `json:"inert"`
+		Reasons     []string `json:"reasons"`
+		Actions     []string `json:"actions"`
+		Answered    bool     `json:"answered"`
+		AnsweredBy  string   `json:"answered_by"`
+		AnsweredVia string   `json:"answered_via"`
+		Wait        string   `json:"wait"`
+		Inert       bool     `json:"inert"`
 	} `json:"want"`
 }
 
@@ -71,8 +73,8 @@ func TestStageTrackerHumanGateTable(t *testing.T) {
 			if !slices.Equal(g.Actions, tc.Want.Actions) {
 				t.Errorf("actions = %v, want %v", g.Actions, tc.Want.Actions)
 			}
-			if g.Answered != tc.Want.Answered || g.AnsweredBy != tc.Want.AnsweredBy {
-				t.Errorf("answered = %v by %q, want %v by %q", g.Answered, g.AnsweredBy, tc.Want.Answered, tc.Want.AnsweredBy)
+			if g.Answered != tc.Want.Answered || g.AnsweredBy != tc.Want.AnsweredBy || g.AnsweredVia != tc.Want.AnsweredVia {
+				t.Errorf("answered = %v by %q via %q, want %v by %q via %q", g.Answered, g.AnsweredBy, g.AnsweredVia, tc.Want.Answered, tc.Want.AnsweredBy, tc.Want.AnsweredVia)
 			}
 			wait := ""
 			if g.WaitingOn != nil {
@@ -228,5 +230,49 @@ func TestStageTrackerResolveHumanGates(t *testing.T) {
 	// The issue row decides its one parked PR: delegate is accepted there.
 	if !stageTrackerHumanGateAccepts(items[1], decisionActionDelegate) {
 		t.Error("an issue with one parked nested PR must accept Let hive decide")
+	}
+}
+
+// TestStageTrackerHumanGateAnsweredVia pins who answered a sign-off ask and
+// how. Only a GitHub Approve review (the `:human-approved@login` suffix) is
+// a sign-off; a dashboard approval credits the person who clicked it; the
+// owner-delegate policy credits nobody; and with nothing recorded the gate
+// still reads answered, without a name, so the row never claims a sign-off
+// that did not happen.
+func TestStageTrackerHumanGateAnsweredVia(t *testing.T) {
+	const head = "abc1234"
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	answeredRow := func(approver string, action *StageTrackerOperatorAction) StageTrackerItem {
+		return StageTrackerItem{Repo: "acme/api", Number: 7, Kind: "pr", Stage: trackerNumberReviewed, Head: head, HumanApprover: approver,
+			ReviewActivity: &StageTrackerActivity{Head: head, State: "human_decision"}, LastOperatorAction: action}
+	}
+	applied := func(action, actor, sha, verdict string) *StageTrackerOperatorAction {
+		return &StageTrackerOperatorAction{Action: action, Actor: actor, HeadSHA: sha, Verdict: verdict, Outcome: operatorActionOutcomeApplied, At: now}
+	}
+	cases := []struct {
+		name    string
+		item    StageTrackerItem
+		by, via string
+	}{
+		{"github approve review", answeredRow("@octo", nil), "octo", gateAnsweredViaReview},
+		{"review wins over a dashboard action", answeredRow("octo", applied(operatorActionApprove, "someone", head, "")), "octo", gateAnsweredViaReview},
+		{"dashboard approve", answeredRow("", applied(operatorActionApprove, "maintainer", head, "")), "maintainer", gateAnsweredViaDashboard},
+		{"dashboard queue-merge", answeredRow("", applied(operatorActionQueueMerge, "maintainer", "", "")), "maintainer", gateAnsweredViaDashboard},
+		{"owner-delegate policy", answeredRow("", applied(operatorActionLetHiveDecide, "hive-1", head, string(delegatedecision.VerdictApprove))), "", gateAnsweredViaPolicy},
+		{"policy that did not approve", answeredRow("", applied(operatorActionLetHiveDecide, "hive-1", head, string(delegatedecision.VerdictDirection))), "", ""},
+		{"approval on an older head", answeredRow("", applied(operatorActionApprove, "maintainer", "0ld0ld0", "")), "", ""},
+		{"approval that failed", answeredRow("", &StageTrackerOperatorAction{Action: operatorActionApprove, Actor: "maintainer", Outcome: operatorActionOutcomeFailed}), "", ""},
+		{"nothing recorded", answeredRow("", nil), "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := stageTrackerHumanGateFor(tc.item, now)
+			if g == nil || !g.Answered {
+				t.Fatalf("gate = %+v, want an answered sign-off ask", g)
+			}
+			if g.AnsweredBy != tc.by || g.AnsweredVia != tc.via {
+				t.Errorf("answered by %q via %q, want by %q via %q", g.AnsweredBy, g.AnsweredVia, tc.by, tc.via)
+			}
+		})
 	}
 }

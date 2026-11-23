@@ -45,6 +45,17 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			p.logClientRead("proxy client request read timed out", err, "agent", agentName)
 			return
 		}
+		// #19223: a request naming another host, or a path the upstream could
+		// resolve differently from the gates below, is refused before any gate
+		// reads it, and the connection is closed behind it.
+		if reason, refused := relayRequestTargetRefusal(req, host); refused {
+			_ = client.SetReadDeadline(time.Time{})
+			p.recordViolation(agentName, req.Method, reason)
+			_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+			_ = writeRelayBadRequest(client, reason)
+			_ = client.SetWriteDeadline(time.Time{})
+			return
+		}
 
 		blocked := false
 		blockReason := ""
@@ -114,6 +125,13 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blockReason = reason
 				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
+			} else if reason, refused := p.reviewThreadRefusal(req, agentName); !isLinear && refused {
+				// Review-thread replies, PR review comments and comment deletes
+				// (#19096): allowed only on the hive's own PR for the agent that
+				// opened it, or for the hive's own recent comment.
+				blocked = true
+				blockReason = reason
+				blockCode = DenyReasonReviewThread
 			} else if !isLinear {
 				if reason, kind, refused := p.writeSurfaceEnforceRefusal(agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
 					blocked = true
@@ -279,6 +297,9 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				detail = blockReason
 			}
 			p.recordViolation(agentName, req.Method, detail)
+			if agentName != internalCallerName && !isLinear {
+				p.noteRefusedReviewReply(req, agentName, detail)
+			}
 			if writeSurfaceKind != "" {
 				p.auditWriteRefused(agentName, writeSurfaceKind, req.Method, repoScopePath(req))
 			}
@@ -335,6 +356,13 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				_ = client.SetReadDeadline(time.Time{})
 				continue
 			}
+		}
+
+		// Advisory attribution can use a caller-supplied name, so it
+		// cannot exempt a request from header filtering.
+		filterAgentHeaders := agentName != internalCallerName || p.proxyAdvisoryOK
+		if filterAgentHeaders {
+			stripRelayRequestHeaders(req)
 		}
 
 		// #1861: with injection enabled, the upstream credential is decided
@@ -437,6 +465,10 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 					p.observeGraphQLRepoResponse(agentName, graphQLBody, body, resp.Header.Get("Content-Encoding"))
 				},
 			}
+		}
+
+		if filterAgentHeaders {
+			stripRelayResponseHeaders(resp)
 		}
 
 		// Rolling per-Write deadline (see stallBoundedWriter): a response that

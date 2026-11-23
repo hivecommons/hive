@@ -3,7 +3,7 @@
     // Beginner-friendly defaults (#12014): a browser with NO prior dashboard
     // state starts with these non-critical cards collapsed so a new operator
     // first sees the cards that say whether the hive is alive and merging
-    // (Overview, Governor, Projects, Review, Approvals, Agents, Agent activity).
+    // (Overview, Governor, Projects, Review, Approvals, Control panel, Activity).
     // The per-card value under SECTION_LS_PREFIX is '1' (collapsed) or '0'
     // (explicitly expanded); a missing key falls back to this default. The
     // marker key records whether the browser predates the defaults ('legacy',
@@ -117,14 +117,14 @@
       'hive-advice-section': { title: '🧭 Hive Advice', summary: '0 recommendations', badgeHtml: '<span class="dash-card-badge">weekly</span>' },
       'fleet-report-section': { title: '📡 Fleet Report Preview', summary: '0 reports', badgeHtml: '<span class="dash-card-badge">dry-run</span>' },
       'acmm-reco-section': { title: '⬆️ Ready to level up?', summary: 'L— · stay', badgeHtml: '<span class="dash-card-badge">advisory</span>' },
-      'lifecycle-section': { title: '🔀 Lifecycle Timeline', summary: '0 in flight · 0 merged' },
+      'lifecycle-section': { title: '🔀 PR timeline', summary: '0 in flight · 0 merged' },
       'pr-throughput-section': { title: '📈 Throughput', summary: '0 merged · 0 opened (24h)', subtitleHtml: 'pull/merge requests across tracked forges' },
       'token-panel': { title: '🪙 Tokens', summary: '0 sessions' },
       'cost-panel': { title: '💵 Cost', summary: '$0' },
       'repos-section': { title: '📦 Projects', summary: '0 repos', settingsHtml: sectionSettingsGear('Projects', 'gh1', 'Manage monitored projects') },
       'acmm-eval-section': { title: '🎯 ACMM Eval', summary: 'L—' },
       'approvals-section': { title: '✋ Approvals', summary: '0 pending' },
-      'audit-section': { title: '📜 Audit Log', summary: '0 events today' },
+      'audit-section': { title: '📜 Audit log', summary: '0 events today' },
       'review-queue-section': { title: '🔎 Review', summary: '0 PRs' },
       'review-pipeline-subsection': { title: 'Pipeline', summary: '—' },
       'review-queue-subsection': { title: 'Queue', summary: '—' },
@@ -138,8 +138,8 @@
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
-      'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
-      'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },
+      'agents-section': { title: '🎛 Control panel', summary: '0 running / 0 total' },
+      'agent-activity-section': { title: '📡 Activity', summary: '0 working / 0 total' },
       'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') + STAGE_TRACKER_HEADER_TOOLS_HTML, countHtml: STAGE_TRACKER_HEADER_COUNT_HTML },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
@@ -159,14 +159,14 @@
       'hive-advice-section': { heading: 'Hive Advice', help: 'A short weekly list of things Hive recommends you do to keep work moving on your projects.' },
       'fleet-report-section': { heading: 'Fleet Report Preview', help: 'Problems Hive has noticed in itself that it would report to the Hive maintainers, and problems that have since gone away.' },
       'acmm-reco-section': { heading: 'Ready to level up?', help: 'Whether Hive thinks you could safely let it do more on its own, and what still has to be true first.' },
-      'lifecycle-section': { heading: 'Lifecycle Timeline', help: 'A timeline of recent pull requests, from when they were opened to when they were merged or got stuck.' },
+      'lifecycle-section': { heading: 'PR timeline', help: 'A timeline of recent pull requests, from when they were opened to when they were merged or got stuck.' },
       'pr-throughput-section': { heading: 'Throughput', help: 'How many pull requests were opened, merged and closed over a chosen time window, and who did the work.' },
       'token-panel': { heading: 'Tokens', help: 'How much text the AI models read and wrote for Hive recently, broken down by model and by worker.' },
       'cost-panel': { heading: 'Cost', help: "What Hive's use of AI models would cost at public per-token list prices; an estimate, not a bill." },
       'repos-section': { heading: 'Projects', help: 'One card per repository Hive looks after, listing its open issues and pull requests grouped by what each one needs next.' },
       'acmm-eval-section': { heading: 'ACMM Eval', help: 'How ready your repositories are for Hive to work on them alone, scored against a published checklist.' },
       'approvals-section': { heading: 'Approvals', help: 'Actions Hive wants to take that are waiting for you to approve or reject them.' },
-      'audit-section': { heading: 'Audit Log', help: 'A searchable record of everything Hive has done, newest first. The collapsed “sensitive” badge opens a 24h sensitive-only view, matching the server-side risk count.' },
+      'audit-section': { heading: 'Audit log', help: 'A searchable record of everything Hive has done, newest first. The collapsed “sensitive” badge opens a 24h sensitive-only view, matching the server-side risk count.' },
       'review-queue-section': { heading: 'Review', help: "Review Pipeline shows pull requests by stage first; Review Queue lists the same open pull requests in Hive's suggested review order." },
       'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.' },
       'review-queue-subsection': { heading: 'Queue', help: 'Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.' },
@@ -180,8 +180,8 @@
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
-      'agents-section': { heading: 'Agents', help: 'Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.' },
-      'agent-activity-section': { heading: 'Agent activity', help: 'One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.' },
+      'agents-section': { heading: 'Control panel', help: 'One card per worker with its status and buttons to pause, restart or configure it.' },
+      'agent-activity-section': { heading: 'Activity', help: 'One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.' },
       'activity-monitor-section': { heading: 'Hive activity monitor', help: 'A progress strip per open issue and pull request showing which step of the pipeline it is on and who must act next.' },
       'faq-section': { heading: 'FAQ', help: 'Short answers to the questions people ask once a hive is running, each linking to the guide that explains it fully.' },
     });

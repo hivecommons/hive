@@ -569,14 +569,20 @@ func (s *Store) ResetProfileField(id, field string) (Person, error) {
 
 // deriveAutoCountry keeps an automatic country in step with the location: it
 // fills or updates it from DeriveCountry, and drops one the location no longer
-// supports. A country a person set or cleared is never touched. It reports
+// supports. A country a person set or cleared, or one from the hub, is never
+// touched, except that a location-derived country replaces a hub derived or
+// admin-set one (forge public > hub derived, #19306). It reports
 // whether anything changed.
 func deriveAutoCountry(p *Person, now time.Time) bool {
 	c := &p.Profile.Country
-	if c.Source == SourceManual {
+	if c.Source == SourceManual || (c.Source == SourceHub && !HubValueYieldsToForge(*c)) {
 		return false
 	}
 	code := DeriveCountry(p.Profile.Location.Value)
+	if c.Source == SourceHub && code == "" {
+		// A hub derived or admin-set country is not the location's to drop.
+		return false
+	}
 	if code == c.Value {
 		return false
 	}
@@ -613,16 +619,16 @@ func (s *Store) DismissAffiliation(id, value string) (Person, error) {
 }
 
 // ApplyAutoProfile fills profile fields from a public GitHub profile. It
-// only writes a field a person has not set (manual) and only with a
-// non-empty value, derives the country from the location, and reports
-// whether anything changed.
+// only writes a field a person has not set (manual) and the hub did not fill
+// (hub), only with a non-empty value, derives the country from the location,
+// and reports whether anything changed.
 func (s *Store) ApplyAutoProfile(id string, values map[string]string) (Person, bool, error) {
 	changed := false
 	p, err := s.changePerson(id, func(p *Person) error {
 		for _, name := range ProfileFields {
 			f := p.Profile.Field(name)
 			v, err := cleanText(values[name], MaxProfileFieldLen, false)
-			if err != nil || v == "" || f.Source == SourceManual || f.Value == v {
+			if err != nil || v == "" || f.Source == SourceManual || (f.Source == SourceHub && !HubValueYieldsToForge(*f)) || f.Value == v {
 				continue
 			}
 			*f = ProfileField{Value: v, Source: SourceAuto, Rule: ProfileSourceGitHub, At: s.now()}

@@ -55,6 +55,31 @@
       };
       // Paid credit pools and prepaid balances are not plan limits.
       const NOT_LIMITS = ['credits', 'balance'];
+      // Claude's extra usage (usage credits past the plan limits) as one
+      // line: on/off and spent of the monthly cap. null hides the line: the
+      // provider did not say, which is never shown as 0 or off. Display
+      // only; the dashboard never turns credits on or spends them.
+      const creditsFor = (x) => {
+        if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
+        const enabled = typeof x.enabled === 'boolean' ? x.enabled : null;
+        const reached = x.spend_limit_reached === true;
+        const exp = Number.isInteger(x.exponent) && x.exponent >= 0 && x.exponent <= 6 ? x.exponent : 2;
+        const amount = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v / Math.pow(10, exp) : null);
+        const used = amount(x.used_minor);
+        const cap = amount(x.limit_minor);
+        const currency = String(x.currency || '').toUpperCase();
+        const money = (n) => (currency === 'USD' || currency === '' ? '$' + n.toFixed(exp) : n.toFixed(exp) + ' ' + currency);
+        const parts = [];
+        if (reached) parts.push('limit reached');
+        else if (enabled !== null) parts.push(enabled ? 'on' : 'off');
+        if (enabled !== false) {
+          if (used !== null && cap !== null) parts.push(money(used) + ' of ' + money(cap) + ' used this month');
+          else if (cap !== null) parts.push(money(cap) + ' monthly cap');
+          else if (used !== null) parts.push(money(used) + ' used this month');
+        }
+        if (!parts.length) return null;
+        return { text: 'Usage credits: ' + parts.join(' · '), status: reached ? 'warn' : 'ok', enabled: enabled, limitReached: reached, used: used, cap: cap, currency: currency };
+      };
       // listed: the provider is in used_by, so agents spend it and a missing
       // or failed reading is worth saying. Unlisted (a server without
       // used_by) keeps the Claude-only rule: hidden when Claude is not used.
@@ -127,6 +152,7 @@
           ageMs: ageMs,
           outOfDate: !!reading.stale || (ageMs !== null && ageMs > OUT_OF_DATE_MS),
           planName: String(reading.plan_type || ''),
+          credits: creditsFor(reading.extra_usage),
           accountNote: 'Reflects the ' + name + ' account this hive is signed in with.',
         });
       };
@@ -339,6 +365,11 @@
             grid.appendChild(cell);
           });
           box.appendChild(grid);
+          if (row.credits) {
+            const credits = el('div', 'overview-usage-gauge__credits', row.credits.text);
+            credits.setAttribute('data-status', row.credits.status);
+            box.appendChild(credits);
+          }
         }
         parts.push(box);
       });

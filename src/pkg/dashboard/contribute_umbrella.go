@@ -1,9 +1,14 @@
 package dashboard
 
 import (
+	"strings"
+
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -40,7 +45,52 @@ func (h *ContributeWSHub) contributorExclusion(repoFull string, issue map[string
 	if w, ok := pol.HumanOnlyReason(labels, body); ok {
 		return withheldReasonHumanOnly, w
 	}
+	if governorSecurityFollowUp(labels, body) {
+		return withheldReasonHumanOnly, humanOnlyWhySecurityFollowUp
+	}
 	return "", ""
+}
+
+// humanOnlyWhySecurityFollowUp is the owner-only rule name for a governor
+// follow-up that quotes a security review's hand-off to a person.
+const humanOnlyWhySecurityFollowUp = "security-review-follow-up"
+
+// governorSecurityFollowUp reports a follow-up issue the governor filed
+// (origin/governor + follow-up, fileReviewQuestionFollowUp) whose quoted
+// question is the security perspective's requires_human summary, in the
+// exact form the review aggregate writes it (review.SecurityRequiresHumanSummary).
+// Such an issue asks a person for a security read; no agent can act on it
+// (hivecommons/hive#19229, claimed and dropped repeatedly at 010).
+func governorSecurityFollowUp(labels []string, body string) bool {
+	if !hasLabelFold(labels, reviewQuestionFollowUpLabel) || !hasLabelFold(labels, config.OriginLabelPrefix+config.OriginSourceGovernor) {
+		return false
+	}
+	return review.SecurityRequiresHumanSummary(body)
+}
+
+// issueHumanOnlyAsk names why an issue's ask is a person's alone, for the
+// owner-delegate decider (delegatedecision.Input.HumanOnly): the
+// structured human-only marker or a configured human-only label, or a
+// governor security follow-up. `needs-human` alone does not count: it is
+// the ordinary park label a delegated decision answers and lifts.
+func issueHumanOnlyAsk(cfg *config.Config, repo string, labels []string, body string) string {
+	var pol gfi.UmbrellaPolicy
+	if cfg != nil {
+		pol = cfg.Hub.UmbrellaPolicyFor(repo)
+	}
+	kept := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if !strings.EqualFold(strings.TrimSpace(l), stageengine.NeedsHumanLabel) {
+			kept = append(kept, l)
+		}
+	}
+	if why, ok := pol.HumanOnlyReason(kept, body); ok {
+		return "human-only " + why
+	}
+	if governorSecurityFollowUp(labels, body) {
+		return delegatedecision.HumanOnlySecurityReview
+	}
+	return ""
 }
 
 // issueChildrenTotal reads a decomposed parent's sub-issue count from the
@@ -115,6 +165,8 @@ func stageTrackerOwnerFlags(cfg *config.Config, repo string, issue github.Issue)
 	}
 	if why, ok := pol.HumanOnlyReason(issue.Labels, issue.Body); ok {
 		ownerOnly = why
+	} else if governorSecurityFollowUp(issue.Labels, issue.Body) {
+		ownerOnly = humanOnlyWhySecurityFollowUp
 	}
 	return umbrella, ownerOnly
 }

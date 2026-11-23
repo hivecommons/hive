@@ -27,6 +27,8 @@ github.com/hivecommons/hive/pkg/acmmadvisor
 github.com/hivecommons/hive/pkg/advisory
 github.com/hivecommons/hive/pkg/agentaudit
 github.com/hivecommons/hive/pkg/askai
+# auditchain: the dependency-free RFC 8785 hash-chain leaf the /data/audit.jsonl writer seals each row with, shared with `hive audit-verify` so writer and verifier hash identically (hivecommons/hive#19439).
+github.com/hivecommons/hive/pkg/auditchain
 github.com/hivecommons/hive/pkg/beads
 github.com/hivecommons/hive/pkg/blocker
 github.com/hivecommons/hive/pkg/buildcontains

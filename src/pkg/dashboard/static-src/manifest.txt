@@ -178,6 +178,7 @@ js/config-agent.js
 js/config-governor.js
 js/config-parent-autoclose.js
 js/config-review-rules.js
+js/config-review-retry.js
 js/config-workflows.js
 js/config-workflows-handoff.js
 js/config-workflows-library.js
@@ -195,6 +196,7 @@ js/config-helpers.js
 js/linear-repos-save.js
 js/chat.js
 js/gh-auth.js
+js/topbar-strip.js
 js/nps.js
 js/welcome.js
 js/shimmy-handlers.js

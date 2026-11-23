@@ -83,6 +83,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/saas/hives/{id}/access-log` | Hub auth | Permission-Change Audit Log | `pkg/hub/saas.go:449` |
 | `GET` | `/api/saas/admin/scale-settings` | Hub admin | Placeholder Pool Scale Settings Get | `pkg/hub/saas.go:466` |
 | `POST` | `/api/saas/admin/scale-settings` | Hub admin | Placeholder Pool Scale Settings Set | `pkg/hub/saas.go:467` |
+| `GET` | `/api/saas/admin/profile-share/counts` | Hub admin | Customers profile sharing: consent counts per hive (`hive_id`, `name`, `consents`, `awaiting_reconfirmation`). No person, field choice or value. `404` while `HIVE_HUB_CUSTOMERS_SHARE_ENABLED` is off | `pkg/hub/customer_consent.go` |
 | `GET` | `/api/saas/admin/user-countries` | Hub admin | User Country Rollup | `pkg/hub/saas.go:476` |
 | `GET` | `/api/saas/admin/auth-rollout` | Hub admin | Auth Rollout Readiness Summary | `pkg/hub/saas.go:481` |
 | `GET` | `/api/saas/admin/notifications` | Hub admin | Hub Notifications Get | `pkg/hub/saas.go:482` |
@@ -104,6 +105,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/saas/hives/{id}/access-log` | Hub auth | Permission-Change Audit Log | `pkg/hub/saas.go:449` |
 | `GET` | `/api/saas/admin/scale-settings` | Hub admin | Placeholder Pool Scale Settings Get | `pkg/hub/saas.go:466` |
 | `POST` | `/api/saas/admin/scale-settings` | Hub admin | Placeholder Pool Scale Settings Set | `pkg/hub/saas.go:467` |
+| `GET` | `/api/saas/admin/profile-share/counts` | Hub admin | Customers profile sharing: consent counts per hive (`hive_id`, `name`, `consents`, `awaiting_reconfirmation`). No person, field choice or value. `404` while `HIVE_HUB_CUSTOMERS_SHARE_ENABLED` is off | `pkg/hub/customer_consent.go` |
 | `GET` | `/api/saas/admin/user-countries` | Hub admin | User Country Rollup | `pkg/hub/saas.go:476` |
 | `GET` | `/api/saas/admin/auth-rollout` | Hub admin | Auth Rollout Readiness Summary | `pkg/hub/saas.go:481` |
 | `GET` | `/api/saas/admin/notifications` | Hub admin | Hub Notifications Get | `pkg/hub/saas.go:482` |

@@ -148,6 +148,10 @@ type IssueStageResult struct {
 	// issue and PR they reference is finished (trackers_too,
 	// hivecommons/hive#19071).
 	TrackersClosed int
+	// VerifiedClosed counts issues closed because the scanner's
+	// verification marker said complete and every guard held
+	// (closeVerifiedComplete).
+	VerifiedClosed int
 }
 
 // issueStageRESTCaller tags the writes for /api/gh-rate-limits.
@@ -454,6 +458,11 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
+		// A Jira or Linear item has no GitHub issue (Number 0): there is no
+		// label to write, and every such item would collapse onto "repo#0".
+		if issue.Number <= 0 {
+			continue
+		}
 		out = append(out, issueStageInputFrom(issue))
 	}
 	// Held issues leave the pipeline at enumeration (Hold list, no
@@ -599,6 +608,12 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			res.ParentsAwaitingChildren++
 		} else if in.Children == nil && client.closeDoneTracker(ctx, in, store, key, now, logger) {
 			res.TrackersClosed++
+			res.Writes++
+			res.Comments++
+			continue
+		}
+		if !awaitingChildren && client.closeVerifiedComplete(ctx, in, store, key, now, logger) {
+			res.VerifiedClosed++
 			res.Writes++
 			res.Comments++
 			continue
@@ -884,6 +899,17 @@ func handleMergedPRIssueStage(ctx context.Context, client *Client, in IssueStage
 		commented = true
 	}
 	if err := client.CloseIssue(ctx, in.Repo, in.Number, IssueCloseOptions{OverrideReason: fmt.Sprintf("merged Hive-authored PR #%d is the full fix", in.Claim.PRNumber), SuppressOverrideComment: true, StateReason: IssueStateReasonCompleted}); err != nil {
+		if errors.Is(err, ErrItemNotOpen) {
+			// The confirming re-read found the issue already closed — most
+			// often GitHub's own closing keyword beat this sweep to it. The
+			// close this lane wanted has happened; report it as done so the
+			// sweep stops retrying and warning every pass
+			// (hivecommons/hive#19369).
+			if logger != nil {
+				logger.Debug("issue stage labels: merged full-fix PR issue already closed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber)
+			}
+			return true, commented
+		}
 		if logger != nil {
 			logger.Warn("issue stage labels: merged full-fix PR issue close failed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
 		}

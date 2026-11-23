@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 )
 
@@ -370,7 +371,22 @@ func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (
 	}
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.ContentLength = int64(len(body))
-	if leak, ok := p.canaryRegistry.Scan(agentName, string(body), "github:"+req.Method+" "+req.URL.Path); ok {
+	type scanResult struct {
+		leak  crux.CanaryLeak
+		found bool
+	}
+	scanner, text, source := p.canaryRegistry, string(body), "github:"+req.Method+" "+req.URL.Path
+	res, scanned := callPolicySeam(p, "ioscan canary scan", canaryScanTimeout, func() scanResult {
+		leak, found := scanner.Scan(agentName, text, source)
+		return scanResult{leak, found}
+	})
+	if !scanned {
+		// Fail closed (#19224), whatever canaryFailClosed says: a scan that
+		// panicked or did not finish is a body we could not scan, the same
+		// answer as a body we could not read.
+		return "ioscan canary scan failed", true, true
+	}
+	if leak, ok := res.leak, res.found; ok {
 		if p.canaryLeakFunc != nil {
 			p.canaryLeakFunc(leak)
 		}

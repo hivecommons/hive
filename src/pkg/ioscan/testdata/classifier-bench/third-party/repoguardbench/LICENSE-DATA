@@ -1,0 +1,24 @@
+RepoGuardBench data and results --- Creative Commons Attribution 4.0
+International (CC BY 4.0)
+
+Copyright (c) 2026 Daoyuan Li
+
+This license covers the original DATA and RESULTS authored by the author:
+  * data/repoguardbench_core.jsonl, data/repoguardbench_real.jsonl
+  * data/benchmark_datasheet.md, data/exclusion_log.csv
+  * results/aggregate/** and results/scored/**
+  * data/samples/**, results/samples/**
+
+You are free to share and adapt this material for any purpose, even
+commercially, provided you give appropriate credit (cite the paper and this
+repository; see CITATION.cff), provide a link to the license, and indicate if
+changes were made.
+
+Full legal code: https://creativecommons.org/licenses/by/4.0/legalcode
+Human-readable summary: https://creativecommons.org/licenses/by/4.0/
+
+THE MATERIAL IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+Note: All attack payloads embedded in the benchmark are inert and
+workspace-local (see docs/SECURITY_AND_ETHICS.md). The repository contains no
+third-party model weights and no third-party source code.

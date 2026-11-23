@@ -405,56 +405,75 @@ own decision.
 
 ## Docs coverage in Kapa
 
-UI-navigation answers are only as right as the pages the vendor ingests and the
-labels those pages use. The vendor re-crawls websites daily and picks up changes
-within minutes for most sources, and reports crawls that look unusual for
-approval; that suits the docs site.
+Use the published Hive operator docs on `docs.hivecommons.dev` as the source
+of record. The [dashboard UI map](../dashboard-ui-map.md) is generated from
+the UI sources so its headings and navigation labels can be indexed without
+maintaining another copy. Include it alongside the
+[spoke dashboard](../dashboard.md), [settings](../settings.md),
+[hosted hub](../hosted-hub.md), and [hub deployment](../hub-deployment.md)
+guides. On v5, `dashboardDocsHref` sends `?` links to the docs site for
+published pages and falls back to GitHub for the rest.
 
-What must be ingested:
+### Project-owner checklist before enabling Ask
 
-- The published docs site `docs.hivecommons.dev`, as the source of record. The
-  dashboard answers link to its pages.
-- Specifically the operator pages that describe the UI by its labels: the
-  dashboard sections explained and its per-section pages, the dashboard glossary,
-  getting started, agent configuration, the environment variable reference, the
-  registered self-hosted hive page and the hub, hosted and fleet pages.
+Keep Ask off on public deployments until this checklist passes. Work in
+the Kapa console and the deployment's secret store; do not put keys,
+project IDs, integration IDs, or console exports in the repository.
 
-What the audit of the sync list found (read from a local clone of
-`hivecommons/docs`, so re-check against its main branch **(unverified)**):
-
-- The dashboard sections, glossary, agent configuration, getting started,
-  environment variables, self-hosted registration and the hub, configuration and
-  dashboard API reference pages are in the list.
-- Pages the dashboard's own "?" marks and the hosted flow rely on, such as the
-  main dashboard page, hosted hub and hub deployment pages, are not in the list I
-  read. A question about them would be answered from nothing or from a less
-  authoritative page.
-
-Work that follows from it:
-
-1. **Fill the gaps in the sync list and nav map** for the pages above, so the
-   site, and therefore the vendor, has them.
-2. **Add a UI map page**: one table generated from the dashboard's section
-   registry (heading, where it is in the sidebar, the Settings tab that changes
-   it), so the words a person types ("Add repo", "Pause agent") match the words
-   on the screen. A generated page cannot drift from the labels.
-3. **Exclude from ingestion** the design records, ADRs and runbooks under
-   `src/docs/design/` and `src/docs/adr/`, because pages marked "proposed" read as
-   current behaviour to a retrieval engine. Also exclude issues, pull requests
-   and chat history. The vendor's per-source include and exclude patterns are not
-   described in the pages read, so the exclusion may need to be done at the
-   source (the sync list) rather than in the vendor **(unverified)**.
-4. **Link targets**: today's help links point at GitHub blobs for the running
-   release line. The citation allowlist accepts both the docs host and that
-   GitHub path, and a later change can move the help links to the docs site in
-   one place (`dashboardDocsHref`).
-5. **Vendor-side settings (a checklist for the project owner, no credentials in
-   the repo):** enable PII masking for questions; set the customization to scope
-   answers to Hive dashboard help and to refuse off-topic questions and
-   instructions; keep the integration's enabled-domains list to what is needed;
-   ask the vendor to raise the per-team chat limit; use the coverage-gap and
-   top-question analytics to feed unclear docs and labels back into the pages
-   above.
+- [ ] **Limit ingestion to published operator help.** Configure a
+  [Website Crawl source](https://docs.kapa.ai/knowledge-sources/connectors/web-crawling/control-which-pages-are-crawled)
+  for the dashboard integration. Use the canonical HTTPS URLs from the
+  live Hive docs navigation as start URLs and **Include URLs** entries
+  (one anchored Regex entry per approved page, for example
+  `^https://docs\.hivecommons\.dev/docs/hive/dashboard/dashboard-ui-map/?$`).
+  Include the dashboard, UI map, glossary, sections and per-section pages,
+  Settings and its help targets, getting started, agent configuration, env
+  reference, telemetry, and the hosted, self-hosted registration, hub
+  deployment and fleet guides. Don't allow the whole site, `/docs/hive/`,
+  or a broad reference prefix: those can also contain architecture records
+  and runbooks. Keep `src/docs/design/`, `src/docs/adr/`, and runbooks out
+  by approving URLs against their source paths, not just their published
+  slugs. Do not add GitHub issues, pull requests, or chat sources.
+- [ ] **Verify the effective corpus.** Run **Preview all**; check Included,
+  Excluded and parsed page content before publishing. Confirm that Ask
+  cannot inherit excluded material from other sources (including Global
+  sources); check the integration's
+  [source groups](https://docs.kapa.ai/knowledge-sources/source-groups)
+  or use an isolated project if existing sources cannot be separated.
+  Confirm the same in **Deployed** after publishing. This keeps excluded
+  documents out of Ask without removing them from the public docs site.
+- [ ] **Mask questions.** Enable
+  [user-message PII masking](https://docs.kapa.ai/security/pii-masking#enabling-user-message-pii-masking)
+  on the project. Verify with synthetic data only; masking does not
+  replace the disclosure or authorize sending private data.
+- [ ] **Constrain answers.** Associate a
+  [customization](https://docs.kapa.ai/customizing/use#associating-a-customization-with-an-integration)
+  with the dashboard HTTP API integration. Limit answers to using and
+  navigating the Hive dashboards; require a cited doc, say when the docs
+  do not answer, and refuse off-topic questions and requests to override
+  those instructions. Review enabled domains wherever the integration
+  exposes that setting; keep only the exact domains in use, with no wildcards.
+  Do not enable a browser widget or send an origin URL to satisfy that list.
+- [ ] **Protect the shared quota.** Ask [Kapa support](https://support.kapa.ai)
+  to raise the [per-team chat limit](https://docs.kapa.ai/integrations/chat-api#rate-limits).
+  Confirm the effective limit before choosing a hub cap that leaves room
+  for the public docs widget and bots.
+- [ ] **Verify on a hub before rollout.** Use a test deployment running the
+  phase 2 panel ([#19181](https://github.com/hivecommons/hive/issues/19181)).
+  Sign in and consent. Ask “where do I add a repo?” and “how do I pause an
+  agent?” in separate conversations. The first should distinguish adding a
+  monitored repo ([Settings → Repos](../settings.md#repos)) from
+  [requesting a new hosted hive](../hosted-hub.md#2-request-a-hosted-hive-for-a-repo).
+  The second should point to the
+  [spoke agent card](../dashboard.md#pausing-an-agent), not the hub's fleet
+  controls. Open the citations to verify they reach the actual instructions.
+  Check off-topic refusal and that withdrawal stops the next request.
+- [ ] **Close the feedback loop.** Review
+  [Coverage Gaps](https://docs.kapa.ai/analytics/coverage-gaps) and
+  [Top Questions](https://docs.kapa.ai/analytics/top-questions) for the
+  dashboard integration. Fix unclear docs or UI labels using paraphrases
+  rather than copying question text. Recheck the indexed pages and rerun
+  the navigation questions after publishing fixes.
 
 ### Status of the docs coverage work (#19182)
 
@@ -486,9 +505,11 @@ Re-checked against `hivecommons/docs` main on 2026-11-18:
   `https://docs.hivecommons.dev` only; a customization scopes answers to Hive
   Commons help and politely refuses off-topic questions, and the widget uses it.
   Requested from the vendor: a higher per-team chat limit, GitHub Discussions as
-  a source, and a corrected name for the issues source. Still to do: the two
-  ingestion exclusions above, a regular look at coverage gaps and top questions,
-  and the Ask-specific telemetry and consent wording once phases 1 and 2 ship.
+  a source, and a corrected name for the issues source. The Ask-specific
+  telemetry and consent wording is published in the
+  [telemetry page](../telemetry.md) and the dashboard docs. Still to do, all
+  outside this repo: the two ingestion exclusions above and a regular look at
+  coverage gaps and top questions.
 
 ## Phases
 
@@ -590,13 +611,13 @@ Not verified, and the reason:
   thread id in the body. The public pages read do not show them.
 - **Whether the vendor documents a hosted or frame mode.** None was found; the
   claim is an absence in the pages read.
-- **Vendor per-source include and exclude patterns, and deletion of a single
-  thread through the chat API.** Not described in the pages read.
+- **Deletion of a single thread through the chat API.** Not described in the
+  pages read.
 - **A required "powered by" attribution for the chat API.** Documented for the
   chat SDK; not found for the API. The panel shows it anyway, which is also the
   disclosure.
-- **The current sync list on the docs repo's main branch.** Read from a local
-  clone.
+- **Live Ask responses and the deployed Kapa corpus.** Verify with the
+  [project-owner checklist](#project-owner-checklist-before-enabling-ask).
 - **Every number** (limits, timeouts, caps) is a proposal, not a measurement.
 
 ## References

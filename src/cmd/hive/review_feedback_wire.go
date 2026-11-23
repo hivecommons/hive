@@ -6,9 +6,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/reviewfeedback"
@@ -36,9 +38,96 @@ const (
 var (
 	reviewFeedbackLastRun time.Time
 	reviewFeedbackCursor  int
+	// reviewFeedbackStore is shared by the sweep and the proxy's refused-reply
+	// hook (#19096), which run on different goroutines; open it through
+	// openReviewFeedbackStore.
 	reviewFeedbackStore   *reviewfeedback.Store
 	reviewRuleStore       *reviewrules.Store
+	reviewFeedbackStoreMu sync.Mutex
 )
+
+// openReviewFeedbackStore opens the sweep's state once and returns it.
+func openReviewFeedbackStore(logger *slog.Logger) *reviewfeedback.Store {
+	reviewFeedbackStoreMu.Lock()
+	defer reviewFeedbackStoreMu.Unlock()
+	if reviewFeedbackStore == nil {
+		st, err := reviewfeedback.Open(reviewfeedback.Dir())
+		if err != nil {
+			logger.Warn("review feedback: state unreadable or not writable; handled ids kept in memory only", "dir", reviewfeedback.Dir(), "error", err)
+		}
+		reviewFeedbackStore = st
+	}
+	return reviewFeedbackStore
+}
+
+// reviewThreadOwnersTTL bounds how long the audit-trail PR ownership map the
+// proxy's review-thread gate reads is reused before it is read again.
+const reviewThreadOwnersTTL = time.Minute
+
+// reviewThreadOwners caches auditPRAgents for the proxy gate, which is asked
+// per request: reading the audit log on every reply would be wasteful, and a
+// PR opened a minute ago is not yet being reviewed.
+type reviewThreadOwners struct {
+	mu     sync.Mutex
+	at     time.Time
+	owners map[string]string
+	org    func() string
+	load   func(org string, since time.Time) map[string]string
+	now    func() time.Time
+}
+
+// owner returns the agent that opened repo#number, from the same audit-trail
+// source the sweep uses (agent_pr_created within auditPRAttributionWindow).
+func (o *reviewThreadOwners) owner(repo string, number int) (string, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	now := o.now()
+	if o.owners == nil || now.Sub(o.at) >= reviewThreadOwnersTTL {
+		o.owners = o.load(o.org(), now.Add(-auditPRAttributionWindow))
+		o.at = now
+	}
+	key := reviewfeedback.Key(repo, number)
+	if agent, ok := o.owners[key]; ok && agent != "" {
+		return agent, true
+	}
+	for k, agent := range o.owners {
+		if agent != "" && strings.EqualFold(k, key) {
+			return agent, true
+		}
+	}
+	return "", false
+}
+
+// newReviewThreadGuard builds the proxy's review-thread gate seams (#19096):
+// PR ownership from the audit trail, the hive's App bot login, and the hook
+// that keeps a refused reply for the sweep's needs-human note.
+func newReviewThreadGuard(org func() string, botLogin func() string, logger *slog.Logger) proxy.ReviewThreadGuard {
+	owners := &reviewThreadOwners{
+		org: org,
+		load: func(org string, since time.Time) map[string]string {
+			return auditPRAgents(org, since, "")
+		},
+		now: time.Now,
+	}
+	return proxy.ReviewThreadGuard{
+		OwnPR: owners.owner,
+		HiveLogins: func() []string {
+			if l := strings.TrimSpace(botLogin()); l != "" {
+				return []string{l}
+			}
+			return nil
+		},
+		OnRefused: func(r proxy.ReviewWriteRefusal) {
+			key := reviewfeedback.Key(r.Repo, r.Number)
+			err := openReviewFeedbackStore(logger).RecordBlockedReply(key, reviewfeedback.ReplyDraft{InReplyTo: r.InReplyTo, Body: r.Body, Agent: r.Agent, At: r.At})
+			if err != nil {
+				logger.Warn("review feedback: refused reply not kept for the needs-human note", "repo", r.Repo, "pr", r.Number, "agent", r.Agent, "error", err)
+				return
+			}
+			logger.Info("review feedback: reply refused by the proxy, kept for a person", "repo", r.Repo, "pr", r.Number, "agent", r.Agent, "in_reply_to", r.InReplyTo)
+		},
+	}
+}
 
 // reviewFeedbackSource is the GitHub surface the sweep needs.
 type reviewFeedbackSource interface {
@@ -64,10 +153,12 @@ type reviewFeedbackSweep struct {
 	Route        func(owner string) reviewFeedbackRoute
 	WritingGuide string
 	Limits       reviewfeedback.Limits
-	MaxPRs       int
-	Cursor       int
-	Now          time.Time
-	Logger       *slog.Logger
+	// Retry re-routes feedback a kicked agent left stranded (#19320).
+	Retry  reviewfeedback.RetryPolicy
+	MaxPRs int
+	Cursor int
+	Now    time.Time
+	Logger *slog.Logger
 	// Rules captures reviewer-stated rules into the hive's knowledge
 	// (hivecommons/hive#19046). Nil turns capture off; the sweep is
 	// otherwise unchanged.
@@ -83,6 +174,7 @@ type reviewFeedbackResult struct {
 	Checked, Kicked, Debounced, CapReached, NeedsHuman, Errors int
 	RulesCaptured, RulesQueued, RulesMerged                    int
 	ReplyMissingRules                                          int
+	Retried, Stranded                                          int
 	NextCursor                                                 int
 }
 
@@ -120,13 +212,37 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 			s.Logger.Warn("review feedback: fetch failed, PR skipped this pass", "repo", repo, "pr", number, "error", err)
 			continue
 		}
-		if s.Rules != nil && fb.Open() {
+		if !fb.Open() {
+			continue
+		}
+		if s.Rules != nil {
 			s.applyRuleReplies(repo, number, fb.HiveReplies)
 			s.postRuleNotices(ctx, repo, number)
 			s.checkRuleReply(ctx, key, repo, number, fb.AgentReplies, &res)
 			s.captureRules(ctx, repo, number, redPRFixOwner(s.Owners[key]), fb.RuleCandidates, &res)
 		}
-		if !fb.Open() || len(fb.Items) == 0 {
+		// Replies the agent drafted but the proxy refused (#19096): hand them
+		// to a person instead of letting them vanish.
+		if drafts := s.Store.BlockedDraftsDue(key, s.Now, s.Limits.Window); len(drafts) > 0 {
+			s.needsHuman(ctx, key, repo, number, "the hive's proxy refused the reply, so it was not posted", nil, drafts, &res)
+		}
+		// A kick whose agent neither pushed nor replied is re-routed, then
+		// handed to a person (#19320).
+		sc, err := s.Store.CheckStranded(key, fb.HeadSHA, fb.LastHiveReplyAt, fb.Items, s.Now, s.Retry)
+		if err != nil {
+			s.Logger.Warn("review feedback: could not persist the stranded-feedback check", "repo", repo, "pr", number, "error", err)
+		}
+		switch sc.Verdict {
+		case reviewfeedback.StrandedRetry:
+			res.Retried++
+			s.Logger.Info("review feedback: last kick ended with no push and no reply, routing again", "repo", repo, "pr", number,
+				"comments", len(sc.IDs), "retry", sc.Retries+1, "max_retries", s.Retry.MaxRetries)
+		case reviewfeedback.StrandedExhausted:
+			res.Stranded++
+			s.needsHuman(ctx, key, repo, number, reviewfeedback.StrandedReason(sc.Retries+1), reviewfeedback.ItemsByID(fb.Items, sc.IDs), nil, &res)
+			continue
+		}
+		if len(fb.Items) == 0 {
 			continue
 		}
 		d := s.Store.Plan(key, fb.Items, s.Now, s.Limits)
@@ -136,11 +252,11 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 			s.Logger.Debug("review feedback: burst still arriving, waiting to coalesce", "repo", repo, "pr", number, "comments", len(d.Items))
 		case reviewfeedback.VerdictCapReached:
 			res.CapReached++
-			s.needsHuman(ctx, key, repo, number, "it has been routed to its agent "+strconv.Itoa(s.Limits.WindowCap)+" times in "+s.Limits.Window.String()+"; further feedback is waiting, and a new comment from a person resets this", d.Items, &res)
+			s.needsHuman(ctx, key, repo, number, "it has been routed to its agent "+strconv.Itoa(s.Limits.WindowCap)+" times in "+s.Limits.Window.String()+"; further feedback is waiting, and a new comment from a person resets this", d.Items, nil, &res)
 		case reviewfeedback.VerdictKick:
 			recorded := s.recordedRules(repo, number, d.Items)
 			if route.Agent == "" {
-				s.needsHuman(ctx, key, repo, number, route.Reason, d.Items, &res)
+				s.needsHuman(ctx, key, repo, number, route.Reason, d.Items, nil, &res)
 				continue
 			}
 			brief := reviewfeedback.BuildBriefWithRules(repo, number, fb.HeadRef, s.WritingGuide, d.Items, recorded)
@@ -152,7 +268,7 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 				s.Logger.Log(ctx, level, "review feedback: kick undeliverable, retrying next pass", "repo", repo, "pr", number, "agent", route.Agent, "error", err)
 				continue
 			}
-			if err := s.Store.RecordKick(key, d.Items, s.Now); err != nil {
+			if err := s.Store.RecordKickHead(key, d.Items, fb.HeadSHA, s.Now); err != nil {
 				s.Logger.Warn("review feedback: could not persist handled ids; a later pass may re-kick", "repo", repo, "pr", number, "error", err)
 			}
 			if len(recorded) > 0 {
@@ -174,16 +290,23 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 	return res
 }
 
-func (s reviewFeedbackSweep) needsHuman(ctx context.Context, key, repo string, number int, reason string, items []github.FeedbackItem, res *reviewFeedbackResult) {
-	if s.Store.NeedsHumanNoted(key) {
+// needsHuman posts the needs-human note: once per PR when feedback cannot be
+// routed, or with drafts set, the replies the agent drafted but could not
+// post (#19096), at most once per Limits.Window (BlockedDraftsDue).
+func (s reviewFeedbackSweep) needsHuman(ctx context.Context, key, repo string, number int, reason string, items []github.FeedbackItem, drafts []reviewfeedback.ReplyDraft, res *reviewFeedbackResult) {
+	if len(drafts) == 0 && s.Store.NeedsHumanNoted(key) {
 		return
 	}
-	s.Logger.Warn("review feedback: cannot route to an agent, asking a person", "repo", repo, "pr", number, "reason", reason, "comments", len(items))
-	if err := s.Source.CreateIssueComment(ctx, repo, number, reviewfeedback.NeedsHumanNote(reason, items)); err != nil { // writeback:solicited a person's review feedback on this hive-authored PR
+	s.Logger.Warn("review feedback: cannot route to an agent, asking a person", "repo", repo, "pr", number, "reason", reason, "comments", len(items), "drafted_replies", len(drafts))
+	if err := s.Source.CreateIssueComment(ctx, repo, number, reviewfeedback.NeedsHumanNote(reason, items, drafts)); err != nil { // writeback:solicited a person's review feedback on this hive-authored PR
 		s.Logger.Warn("review feedback: needs-human note not posted", "repo", repo, "pr", number, "error", err)
 		return
 	}
-	if _, err := s.Store.MarkNeedsHuman(key, s.Now); err != nil {
+	if len(drafts) > 0 {
+		if err := s.Store.MarkBlockedNoted(key, drafts, s.Now); err != nil {
+			s.Logger.Warn("review feedback: could not persist drafted-replies hand-off", "repo", repo, "pr", number, "error", err)
+		}
+	} else if _, err := s.Store.MarkNeedsHuman(key, s.Now); err != nil {
 		s.Logger.Warn("review feedback: could not persist needs-human flag", "repo", repo, "pr", number, "error", err)
 	}
 	res.NeedsHuman++
@@ -410,6 +533,22 @@ func parseReviewFeedbackKey(key string) (string, int, bool) {
 	return key[:i], n, true
 }
 
+// reviewRetryPolicy is the stranded-feedback retry policy: a value the owner
+// saved in Settings (review_feedback.retry.*) wins; an unsaved one keeps its
+// env value or the default. An unparsable saved backoff keeps the env/default
+// value (the dashboard refuses one on save).
+func reviewRetryPolicy(cfg *config.Config) reviewfeedback.RetryPolicy {
+	p := reviewfeedback.RetryPolicyFromEnv()
+	set := cfg.ReviewRetrySettingsSnapshot()
+	if set.MaxRetries != nil {
+		p.MaxRetries = *set.MaxRetries
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(set.Backoff)); err == nil && d > 0 {
+		p.Backoff = d
+	}
+	return p.Normalized()
+}
+
 // sweepReviewFeedback is the eval-tick entry point.
 func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github.Client, agentMgr crux.Runtime, logger *slog.Logger) {
 	if cfg == nil || client == nil || !reviewfeedback.Enabled() {
@@ -420,13 +559,7 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		return
 	}
 	reviewFeedbackLastRun = now
-	if reviewFeedbackStore == nil {
-		st, err := reviewfeedback.Open(reviewfeedback.Dir())
-		if err != nil {
-			logger.Warn("review feedback: state unreadable or not writable; handled ids kept in memory only", "dir", reviewfeedback.Dir(), "error", err)
-		}
-		reviewFeedbackStore = st
-	}
+	store := openReviewFeedbackStore(logger)
 	rulesCfg, rulesOn := reviewRulesPolicy(cfg)
 	if reviewRuleStore == nil && rulesOn {
 		rs, err := reviewrules.Open(reviewrules.Dir(), reviewrules.VaultDir(), rulesCfg)
@@ -445,11 +578,12 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 	available := agentAvailability(cfg, agentMgr)
 	sweep := reviewFeedbackSweep{
 		Source:       client,
-		Store:        reviewFeedbackStore,
+		Store:        store,
 		Owners:       auditPRAgents(cfg.Project.Org, now.Add(-auditPRAttributionWindow), ""),
 		Kicker:       agentKicker{mgr: agentMgr},
 		WritingGuide: cfg.Project.WritingGuideSection(),
 		Limits:       reviewfeedback.LimitsFromEnv(),
+		Retry:        reviewRetryPolicy(cfg),
 		MaxPRs:       reviewFeedbackMaxPRsPerPass,
 		Cursor:       reviewFeedbackCursor,
 		Now:          now,
@@ -475,8 +609,8 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 	}
 	res := sweep.run(ctx, parseReviewFeedbackKey)
 	reviewFeedbackCursor = res.NextCursor
-	if res.Kicked+res.NeedsHuman+res.Debounced+res.CapReached+res.Errors > 0 {
-		logger.Info("review feedback pass", "checked", res.Checked, "kicked", res.Kicked, "debounced", res.Debounced,
+	if res.Kicked+res.NeedsHuman+res.Debounced+res.CapReached+res.Errors+res.Retried > 0 {
+		logger.Info("review feedback pass", "checked", res.Checked, "kicked", res.Kicked, "retried", res.Retried, "stranded", res.Stranded, "debounced", res.Debounced,
 			"cap_reached", res.CapReached, "needs_human", res.NeedsHuman, "errors", res.Errors,
 			"rules_captured", res.RulesCaptured, "rules_queued", res.RulesQueued, "rules_merged", res.RulesMerged)
 	}

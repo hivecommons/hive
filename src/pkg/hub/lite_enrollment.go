@@ -13,12 +13,16 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	hivegithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 const (
 	liteDefaultACMMLevel      = 2
 	liteMaxACMMLevel          = 2
 	liteRepoAccessHTTPTimeout = 10 * time.Second
+	// liteRepoAccessMaxRedirects bounds the repo-access redirect chain. Existing
+	// GHE redirect tests pin it; shrinking it is follow-up work (#19222).
+	liteRepoAccessMaxRedirects = 10
 )
 
 type LiteEnrollmentConfig struct {
@@ -506,16 +510,36 @@ func validateLiteGitHubHost(ctx context.Context, host string) error {
 	return nil
 }
 
+// liteRepoAccessTransport dials only an address isPrivateURL passed (#19221,
+// part of #18986). validateLiteGitHubHost checks the caller-supplied
+// github_host before the request, and a default transport resolved the name
+// again at dial time, so a host whose answer rebinds was checked as public
+// and connected to as private. Every connection, redirect hops included, is
+// resolved once and pinned to a checked address.
+var liteRepoAccessTransport http.RoundTripper = pinnedFetchTransport(isPrivateURL)
+
+// liteRepoAccessRoundTripper is liteRepoAccessTransport, unless
+// http.DefaultTransport was replaced (tests inject a RoundTripper there, the
+// same convention as hubGitHubHTTPClient); then that replacement is used.
+func liteRepoAccessRoundTripper() http.RoundTripper {
+	return pinnedOrReplacedDefault(liteRepoAccessTransport)
+}
+
 func liteRepoAccessHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: liteRepoAccessHTTPTimeout,
+		Timeout:   liteRepoAccessHTTPTimeout,
+		Transport: liteRepoAccessRoundTripper(),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
+			if len(via) >= liteRepoAccessMaxRedirects {
 				return fmt.Errorf("stopped after %d redirects", len(via))
 			}
 			if isPrivateURL(req.Context(), req.URL.String()) {
 				return fmt.Errorf("redirect to private/internal github_host blocked")
 			}
+			// The request carries the enrolling user's GitHub token: never let
+			// it follow a hop off the original host or down to plain http
+			// (hivecommons/hive#19222).
+			knowledge.StripCredentialsOnCrossHostRedirect(req, via)
 			return nil
 		},
 	}

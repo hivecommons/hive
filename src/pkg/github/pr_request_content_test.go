@@ -305,3 +305,48 @@ func TestValidatePRRequestContentExactlyFullPageWithoutNextPasses(t *testing.T) 
 		t.Fatalf("calls = %d, want 1", calls)
 	}
 }
+
+// TestPRRequestWatcherRejectsMissingBase covers hivecommons/hive#19211: a
+// request whose base branch does not exist 404s on compare although the head
+// exists. That is permanent, so it must be rejected once instead of retried
+// with an unclassified WARN on every backoff.
+func TestPRRequestWatcherRejectsMissingBase(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/o/r":
+			_, _ = io.WriteString(w, `{"name":"r"}`)
+		case "/repos/o/r/git/ref/heads/quality/fix":
+			_, _ = io.WriteString(w, `{"ref":"refs/heads/quality/fix"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.prAuthz = func(string, int) error { return nil }
+	dir := t.TempDir()
+	old := prRequestDirForTest
+	prRequestDirForTest = dir
+	defer func() { prRequestDirForTest = old }()
+
+	reqPath, err := WritePRRequest(dir, PRRequest{
+		Repo: "o/r", Head: "quality/fix", Base: "main", Title: "fix: small change", Body: "a real change", Agent: "quality",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessPRRequestsOnce(context.Background())
+
+	if _, err := os.Stat(reqPath + ".rejected"); err != nil {
+		t.Fatalf("missing-base request was not quarantined as .rejected: %v", err)
+	}
+	result, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(result), `base branch \"main\" does not exist`) {
+		t.Errorf("result %q does not name the missing base", result)
+	}
+}

@@ -264,6 +264,8 @@ type HeartbeatPayload struct {
 	EngagedSessionUsers          []string                        `json:"engaged_session_users,omitempty"`
 	DashboardTokenHash           string                          `json:"dashboard_token_hash,omitempty"`
 	UserLastActions              map[string]string               `json:"user_last_actions,omitempty"`
+	AuditChainSeq                int64                           `json:"audit_chain_seq,omitempty"`
+	AuditChainHead               string                          `json:"audit_chain_head,omitempty"`
 	StartedAt                    string                          `json:"started_at,omitempty"`
 	OpenFDs                      int                             `json:"open_fds,omitempty"`
 	FDSoftLimit                  uint64                          `json:"fd_soft_limit,omitempty"`
@@ -362,6 +364,10 @@ type HeartbeatPayload struct {
 	// Absent from older or non-participating spokes; the hub re-sanitizes it
 	// and keeps it in memory only (activityStore).
 	Activity *hubactivity.Digest `json:"activity,omitempty"`
+	// Protocol is the optional feature negotiation offer (#19237). Absent
+	// from older spokes; answered only while HIVE_HUB_HEARTBEAT_PROTOCOL is
+	// on (heartbeat_protocol.go).
+	Protocol *HeartbeatProtocol `json:"protocol,omitempty"`
 }
 
 const (
@@ -493,6 +499,10 @@ type HeartbeatResponse struct {
 	// converges its own Deployment, which is the only path on a push-reported
 	// cluster. Decoded by spoke.HeartbeatResponse.HostAliases.
 	HostAliases []ClusterHostAlias `json:"host_aliases,omitempty"`
+	// Protocol answers the payload's protocol offer with the accepted and
+	// ignored features (#19237). Nil (absent) when the spoke made no offer
+	// or HIVE_HUB_HEARTBEAT_PROTOCOL is off.
+	Protocol *HeartbeatProtocolAck `json:"protocol,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

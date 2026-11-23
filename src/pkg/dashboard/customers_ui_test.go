@@ -97,7 +97,7 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersFocusSuggestion", "customersAfterSuggestion", "customersAccept", "customersDismiss", "customersShowMore",
 		"customersPickerOpen", "customersProfilePickerOpen", "customersPickerClose", "customersAttach", "customersHintAnswer",
 		"customersAvatarsOn", "customersGithubLogin", "customersAvatarHtml", "customersMorePill", "customersSourcePills",
-		"rowChevronHtml", "customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget", "customersOrgPill", "customersProfileValue", "customersDetailsHtml",
+		"rowChevronHtml", "customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget", "customersOrgPill", "customersProfileValue", "customersDetailsHtml", "customersPublicContributionsHtml",
 		"customersFlagEmoji", "customersCountryName", "customersCountryPill", "customersAffiliationHtml",
 		"graphcanvasRound", "graphcanvasLabel", "graphcanvasLayout", "graphcanvasSvg",
 	} {
@@ -578,5 +578,84 @@ func TestCustomersProfileDetailsWiring(t *testing.T) {
 	}
 	if !strings.Contains(html, `customersDetailsHtml(p) + customersGoalsHtml(p)`) {
 		t.Error("the Details block is not part of the profile")
+	}
+}
+
+// The Features tab renders the hub import switch (#19163) beside Customer
+// avatars, wired to the key the API reads, with the env override line.
+func TestFeaturesTab_CustomersHubImportToggleMarkup(t *testing.T) {
+	html := featuresMarkup(t)
+	for _, want := range []string{
+		`data-section="features" data-key="customersHubImportEnabled"`,
+		`yamlHint('customers.hub_import.enabled')`,
+		`f.customersHubImportEffective !== f.customersHubImport`,
+		`HIVE_CUSTOMERS_HUB_IMPORT_ENABLED`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing %q", want)
+		}
+	}
+	avatars := strings.Index(html, `data-key="customersAvatarsEnabled"`)
+	hub := strings.Index(html, `data-key="customersHubImportEnabled"`)
+	search := strings.Index(html, `data-key="customersSearchEnabled"`)
+	if avatars < 0 || hub < avatars || search < hub {
+		t.Error("the hub import switch must sit right after Customer avatars")
+	}
+}
+
+// customers.hub_import.enabled: default off, owner-only, persisted, reported
+// with the effective value and overridden by env.
+func TestGovernorFeatures_CustomersHubImportToggleRoundTrip(t *testing.T) {
+	t.Setenv(config.EnvCustomersEnabled, "")
+	t.Setenv(config.EnvCustomersHubImportEnabled, "")
+	s := covApiServer(t)
+	type payload struct {
+		Features struct {
+			On        bool `json:"customersHubImport"`
+			Effective bool `json:"customersHubImportEffective"`
+		} `json:"features"`
+	}
+	read := func() payload {
+		var p payload
+		if err := json.Unmarshal(doOwnerGet(s, "/api/config/governor").Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if got := read(); got.Features.On || got.Features.Effective {
+		t.Fatalf("default payload = %+v, want off", got.Features)
+	}
+	if rec := putFeatures(s, map[string]any{"customersHubImportEnabled": true}, func(r *http.Request) {
+		r.Header.Set("X-Hive-Role", "read-write")
+	}); rec.Code != http.StatusForbidden || s.deps.Config.Customers.HubImport.IsEnabled() {
+		t.Fatalf("non-owner PUT = %d", rec.Code)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"customersHubImportEnabled": true}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT on: %d - %s", rec.Code, rec.Body.String())
+	}
+	if got := read(); !got.Features.On || !got.Features.Effective {
+		t.Fatalf("after enable = %+v", got.Features)
+	}
+	t.Setenv(config.EnvCustomersHubImportEnabled, "false")
+	if got := read(); !got.Features.On || got.Features.Effective {
+		t.Fatalf("env override = %+v", got.Features)
+	}
+}
+
+// A hub-provenance field shows its hub label ("from hub: ...") on the
+// profile and the organization pill (#19163, #19306).
+func TestCustomersProfileShowsHubProvenance(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`cur.source === 'hub' ? customersHubLabel(cur)`,
+		`f.source === 'hub' ? customersHubLabel(f)`,
+		`hub_email_domain: 'from hub: derived from an organization email domain'`,
+		`hub_admin: 'from hub: set by a hub admin'`,
+		`hub_person: 'from hub: entered by the person'`,
+		`hub_browser_language: 'from hub: inferred from browser language'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("Customers UI lacks %q", want)
+		}
 	}
 }

@@ -876,6 +876,13 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 		tier := m.agentTokenTier(a)
 		if err := auth.WriteAgentToken(ctx, a.Name, tier, a.UID); err != nil {
 			m.logger.Warn("agent token refresh failed", "agent", a.Name, "error", err)
+			// Keep an ongoing forge outage's condition current: without a
+			// re-observation, a launch-time forge_unreachable whose refreshes
+			// keep failing would age out of the fleet report's TTL while the
+			// outage continues (hivecommons/hive#19403).
+			if isForgeTransportErr(err) {
+				m.observeCondition(crux.ClassForgeUnreachable, a.Name, "github host unreachable during token refresh: "+err.Error(), "")
+			}
 			continue
 		}
 		// A launch-time forge outage can recover without another launch.

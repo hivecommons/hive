@@ -404,15 +404,18 @@ func clusterDefaultForge(c *ClusterConfig) string {
 	return publicForgeHost
 }
 
-// kubectlForCluster builds a bounded kubectl command that targets a specific
+// kubectlForCluster builds a kubectl command bounded by kubectlDefaultTimeout that targets a specific
 // cluster. For in-cluster configs (InCluster == true) it runs plain kubectl;
 // for remote clusters it injects --kubeconfig and --context flags. Execution
 // (Output/CombinedOutput/Run) acquires a per-cluster concurrency slot — see
 // kubectl_executor.go.
 func kubectlForCluster(cluster *ClusterConfig, args ...string) *kubectlCmd {
+	ctx, cancel := context.WithTimeout(context.Background(), kubectlDefaultTimeout)
 	return &kubectlCmd{
-		Cmd:       exec.Command("kubectl", kubectlArgsForCluster(cluster, args...)...),
+		Cmd:       exec.CommandContext(ctx, "kubectl", kubectlArgsForCluster(cluster, args...)...),
 		clusterID: cluster.ID,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
 
@@ -422,6 +425,7 @@ func kubectlForClusterContext(ctx context.Context, cluster *ClusterConfig, args 
 	return &kubectlCmd{
 		Cmd:       exec.CommandContext(ctx, "kubectl", kubectlArgsForCluster(cluster, args...)...),
 		clusterID: cluster.ID,
+		ctx:       ctx,
 	}
 }
 
@@ -2669,6 +2673,8 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// injected it no longer does. Minted and verified on the same spoke, so
 		// symmetric; per-hive so an invite link cannot travel between tenants.
 		"InviteKey": provisionInviteKey(h.ID),
+		// Per-hive customers hub import match key (HIVE_CUSTOMER_MATCH_KEY).
+		"CustomerMatchKey": provisionCustomerMatchKey(h.ID),
 		// Cluster-aware fields.
 		"HubPublicURL":       hubPublicURL(),
 		"ClusterID":          cluster.ID,
@@ -3682,6 +3688,10 @@ spec:
         # in-flight invite links. Nothing else is affected.
         - name: HIVE_INVITE_KEY
           value: "{{.InviteKey}}"
+        # The per-hive customers hub import match key. Spokes never hold the
+        # master, so the hub hands them this derived key instead.
+        - name: HIVE_CUSTOMER_MATCH_KEY
+          value: "{{.CustomerMatchKey}}"
 {{- if .IsNginxIngress}}
         # HIVE_INGRESS_AUTHZ tells the Node proxy that an nginx ingress
         # auth-proxy sits IN FRONT of this pod and per-hive-authorizes every

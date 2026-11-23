@@ -347,7 +347,7 @@ func probeEntitledModels(endpoint, apiKey string, transport http.RoundTripper) [
 	if apiKey == "" {
 		return nil
 	}
-	client := &http.Client{Timeout: entitlementProbeTimeout}
+	client := &http.Client{Timeout: entitlementProbeTimeout, CheckRedirect: egressCheckRedirect()}
 	if transport != nil {
 		client.Transport = transport
 	}

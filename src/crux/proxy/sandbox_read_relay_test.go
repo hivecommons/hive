@@ -170,7 +170,11 @@ func newRelayHarnessWithLogger(t *testing.T, token SandboxReadTokenFunc, logger 
 				h.mu.Lock()
 				h.upstream = append(h.upstream, req)
 				h.mu.Unlock()
-				_, _ = fmt.Fprint(server, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+				resp := &http.Response{StatusCode: http.StatusOK, ProtoMajor: 1, ProtoMinor: 1, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ok")), ContentLength: 2, Request: req}
+				setRelayTestResponseHeaders(resp.Header)
+				if err := resp.Write(server); err != nil {
+					return
+				}
 			}
 		}()
 		return client, nil
@@ -271,14 +275,30 @@ func TestSandboxReadRelayInjectsOnReadAndRefusesWrites(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("CONNECT status = %d", status)
 	}
-	resp := roundTrip(t, tc, "GET", "api.github.com", "/repos/o/r/tags", map[string]string{"Authorization": "token AGENT_SUPPLIED"})
+	headers := relayTestRequestHeaders()
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/o/r/tags", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header = headers.Clone()
+	req.Header.Set("Authorization", "token AGENT_SUPPLIED")
+	if err := req.Write(tc); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(tc), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("GET status = %d", resp.StatusCode)
 	}
+	assertRelayResponseHeaderHygiene(t, resp)
 	seen := h.seen()
 	if len(seen) != 1 {
 		t.Fatalf("upstream saw %d requests, want 1", len(seen))
 	}
+	assertRelayHeaderHygiene(t, seen[0].Header, headers)
 	if got := seen[0].Header.Get("Authorization"); got != "token "+testReadToken {
 		t.Fatalf("upstream Authorization = %q, want the relay's read token (the agent's own header must be replaced)", got)
 	}

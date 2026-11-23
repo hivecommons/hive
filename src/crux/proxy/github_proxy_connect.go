@@ -616,7 +616,7 @@ func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 			p.refuseTunnel(conn, r, p.identifyAgentFromConn(conn, r), denied)
 			return
 		}
-		p.logger.Warn("proxy: CONNECT dial failed", "host", r.Host, "error_class", classifyDialError(err), "error", err)
+		p.logConnectDialFailed(r.Host, err)
 		_, _ = fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\nconnection failed\n")
 		return
 	}
@@ -625,6 +625,19 @@ func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 	_, _ = fmt.Fprintf(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
 
 	relayTunnel(conn, upstream)
+}
+
+// logConnectDialFailed logs a failed CONNECT dial. A name that does not
+// resolve is operator configuration (a placeholder or unreachable host), not a
+// proxy defect, so it logs at Debug rather than tripping WARN consumers such as
+// the fleet self-reporter on every attempt.
+func (p *GitHubProxy) logConnectDialFailed(host string, err error) {
+	level := slog.LevelWarn
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+		level = slog.LevelDebug
+	}
+	p.logger.Log(context.Background(), level, "proxy: CONNECT dial failed", "host", host, "error_class", classifyDialError(err), "error", err)
 }
 
 // refuseTunnel answers a CONNECT whose destination the guard barred, with the
@@ -662,13 +675,7 @@ func (p *GitHubProxy) forwardPlainDirect(conn net.Conn, r *http.Request) {
 	// which is logged as such rather than guessed at.
 	agentName := p.identifyAgentFromConn(conn, r)
 
-	// Proxy-* hop headers address THIS proxy and must not travel further: the
-	// identity they assert is the one identifyAgentFromConn just decided
-	// whether to believe, and forwarding it would hand an agent's claimed name
-	// (and, in the Basic form, whatever it put in the password field) to every
-	// plain-HTTP host it can name.
-	r.Header.Del("Proxy-Authorization")
-	r.Header.Del("Proxy-Connection")
+	stripRelayRequestHeaders(r)
 
 	resp, err := p.plainForwardTransport().RoundTrip(r)
 	if err != nil {
@@ -686,6 +693,7 @@ func (p *GitHubProxy) forwardPlainDirect(conn net.Conn, r *http.Request) {
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+	stripRelayResponseHeaders(resp)
 	_ = resp.Write(conn)
 }
 

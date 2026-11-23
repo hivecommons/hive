@@ -352,6 +352,9 @@ type boot struct {
 	// customers is the people store behind the Customers section
 	// (hivecommons/hive#18742); nil when customers are off.
 	customers *customersDashboard
+	// customersEnricher holds the colony providers across enrichment
+	// passes (customers.enrichment, off by default); built on first use.
+	customersEnricher *customersEnricher
 	// meetingsLive is the Spektacular live loop (hivecommons/hive#18291).
 	meetingsLive *live.Runner
 	// meetingsInboxSrc lists ended meetings in the inbox (#18293).

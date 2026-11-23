@@ -14,11 +14,13 @@ import (
 const (
 	infoHeartbeatKey        = "hive-heartbeat-v1"
 	infoInviteKey           = "hive-invite-v1"
+	infoCustomerMatchKey    = "hive-customer-match-v1"
 	infoSSOEd25519Seed      = "hive-sso-ed25519-v1"
 	EnvHeartbeatKey         = "HIVE_HEARTBEAT_KEY"
 	EnvSSOPublicKey         = "HIVE_SSO_PUBLIC_KEY"
 	EnvSSOPublicKeyPrevious = "HIVE_SSO_PUBLIC_KEY_PREV"
 	EnvInviteKey            = "HIVE_INVITE_KEY"
+	EnvCustomerMatchKey     = "HIVE_CUSTOMER_MATCH_KEY"
 	EnvHiveID               = "HIVE_ID"
 )
 
@@ -88,6 +90,22 @@ func SpokeInviteKey() string {
 		return v
 	}
 	return derivePerHiveKey(strings.TrimSpace(os.Getenv("HIVE_HUB_SECRET")), infoInviteKey, strings.TrimSpace(os.Getenv(EnvHiveID)))
+}
+
+// SpokeCustomerMatchKey is the per-hive key the Customers hub import salts
+// login hashes with (#19163): HIVE_CUSTOMER_MATCH_KEY when injected, else
+// derived from HIVE_HUB_SECRET and hiveID (HIVE_ID when hiveID is empty)
+// under the hub's match label (pkg/hub infoCustomerMatchKey). It is never the
+// heartbeat bearer, and "" when neither source is configured, which makes the
+// import ask nothing.
+func SpokeCustomerMatchKey(hiveID string) string {
+	if v := strings.TrimSpace(os.Getenv(EnvCustomerMatchKey)); v != "" {
+		return v
+	}
+	if hiveID = strings.TrimSpace(hiveID); hiveID == "" {
+		hiveID = strings.TrimSpace(os.Getenv(EnvHiveID))
+	}
+	return derivePerHiveKey(strings.TrimSpace(os.Getenv("HIVE_HUB_SECRET")), infoCustomerMatchKey, hiveID)
 }
 
 func SpokeHeartbeatKey() string {

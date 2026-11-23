@@ -34,11 +34,13 @@ How many issues and pull requests Hive is tracking right now, and how many of th
 - **PRs by band** groups open and held pull requests. The bands are Needs human, Merge-eligible, Blocked, In review, Open and Draft.
 - Merge-eligible means the pull request passed every check Hive uses before merging. Blocked means a failed check, a merge conflict, or a blocking review verdict.
 - Hover any band in a chart to see its exact rule.
+- Each chart also has a grey **Outside** slice for the open items in no band: what your filters kept off the work list, and draft pull requests. Its hover shows the same reasons as the Outside tile. With it, each chart adds up to its Total open tile, for all repositories or for the ones you picked. The slice is left out when it would be 0. Click it to filter Projects the way the Outside tile does.
 - The trend lines come from samples the hive takes on each status refresh, roughly every few minutes. Samples are kept for about 30 days and thinned to 96 points.
 - Your browser also keeps its own samples. When you filter by repository, only the browser's samples are used.
 
 **Numbers that look like they should match but do not.**
 
+- The chart's Outside slice can be larger than the Outside tile. Open issues that are labeled `needs-human` or wait on their reporter but sit in no band are in the slice. The tiles count those as Blocked / needs-human.
 - The band charts count more than Actionable now. The charts include items in "Needs human" and "Confirm & close". Actionable now leaves those out. So an issue chart can total 3 while Actionable now shows 2 issues.
 - The "PRs by band" chart puts held pull requests in "Needs human". The tiles count the same pull requests as Held. So the chart can show 4 needing a human while the Blocked / needs-human tile shows 0 pull requests.
 

@@ -119,7 +119,7 @@ func TestDashboardSectionHelpCoverage(t *testing.T) {
 		}
 	}
 	if !foundLifecycleNav {
-		t.Error("Lifecycle Timeline is missing from the dashboard sidebar nav")
+		t.Error("PR timeline (lifecycle-section) is missing from the dashboard sidebar nav")
 	}
 
 	// Runs and Platform are documented for the v6 line but are not v5 sections.

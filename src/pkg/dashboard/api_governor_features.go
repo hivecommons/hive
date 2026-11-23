@@ -145,6 +145,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		// customers.avatars.enabled: GitHub profile pictures on the
 		// Customers list. Default on.
 		CustomersAvatarsEnabled *bool `json:"customersAvatarsEnabled"`
+		// #19163: customers.hub_import.enabled, the import of fields a
+		// person consented on the hub to share with this hive. Default off.
+		CustomersHubImportEnabled *bool `json:"customersHubImportEnabled"`
 		// #18884: customers.mention_search.enabled, the budgeted GitHub
 		// search made when a suggested person is accepted. Default off.
 		CustomersSearchEnabled *bool `json:"customersSearchEnabled"`
@@ -166,6 +169,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		featuresPlatformBody
 		featuresRunsBody
 		featuresAskBody
+		featuresEnrichmentBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -299,6 +303,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	applyEnrichment, err := body.featuresEnrichmentBody.prepare()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// --- apply ---
 	cfg := s.deps.Config
@@ -306,6 +315,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	applyPlatform(cfg)
 	applyAsk(cfg)
 	applyRuns(cfg)
+	applyEnrichment(cfg)
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -387,6 +397,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.CustomersAvatarsEnabled != nil {
 		on := *body.CustomersAvatarsEnabled
 		cfg.Customers.Avatars.Enabled = &on
+	}
+	if body.CustomersHubImportEnabled != nil {
+		on := *body.CustomersHubImportEnabled
+		cfg.Customers.HubImport.Enabled = &on
 	}
 	if body.CustomersSearchEnabled != nil {
 		on := *body.CustomersSearchEnabled
@@ -600,6 +614,8 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"customersInferenceEffective": cfg.CustomersInferenceEnabled(),
 		"customersAvatars":            cfg.Customers.Avatars.IsEnabled(),
 		"customersAvatarsEffective":   cfg.CustomersAvatarsEnabled(),
+		"customersHubImport":          cfg.Customers.HubImport.IsEnabled(),
+		"customersHubImportEffective": cfg.CustomersHubImportEnabled(),
 		"customersSearch":             cfg.Customers.MentionSearch.IsEnabled(),
 		"customersSearchEffective":    cfg.CustomersMentionSearchEnabled(),
 		"publicationEnabled":          cfg.Publication.Enabled,
@@ -645,6 +661,9 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		out[k] = v
 	}
 	for k, v := range featuresAskResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresEnrichmentResponse(cfg) {
 		out[k] = v
 	}
 	return out

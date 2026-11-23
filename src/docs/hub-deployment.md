@@ -97,10 +97,109 @@ operator settings show the effective state. With the switch off, the page and
 its API return `404`; stored choices are not deleted.
 
 People can enter or clear their real name, organization, and country, then
-confirm or withdraw their own selections separately for each hive. Legacy,
-administrator-entered, and inferred values are not eligible for sharing. A
-material disclosure change requires reconfirmation. This phase records consent
-on the hub only and does not send any profile fields to hives.
+confirm or withdraw their own selections separately for each hive. A real name
+is shared only with that consent, and only if the person entered it
+themselves. Country and organization are treated as public and are sent,
+labeled with their source, to the hives where the person holds a grant,
+without a consent record ([#19306](https://github.com/hivecommons/hive/issues/19306)). A
+material disclosure change requires reconfirmation: disclosure version 2, which
+replaced the version that said nothing was sent yet, suspends every earlier
+consent until the person confirms again.
+
+A hive asks for these values only when its owner turns on
+`customers.hub_import.enabled` (see
+[Customers hub import](telemetry.md#customers-hub-import)). The hive posts
+salted hashes of its confirmed customers' GitHub logins to
+`POST /api/customers/match` with its per-hive bearer. The hub answers only for
+people with an effective consent for that hive (real name) and for grant
+holders of that hive (labeled public country and organization; set
+`HIVE_HUB_CUSTOMERS_ORG_DOMAINS` to let an organization be derived from a
+listed email domain); an unknown, blocked or non-grant-holder person gets the
+same empty answer. A withdrawal, a lost grant, a
+blocked account or a deleted hub user makes the next answer tell the hive to
+clear what it was sent.
+
+What each role sees:
+
+- **The person**, on the Profile sharing page: per hive, what was last sent and
+  when, which fields were sent at any time, and when the first delivery was.
+- **A hub admin**, in the dashboard's Scale Controls, under **Customers profile
+  sharing**: the number of consents per hive, and how many await
+  reconfirmation. No person, field choice or value is shown, and no admin route
+  can grant, change or read a consent. The same counts are at
+  `GET /api/saas/admin/profile-share/counts`.
+- **The hive owner and anyone with Customers access on that hive**: the values
+  the hive received, shown as "from the hub". They can export them, and the hub
+  cannot recall an exported copy.
+
+Audit lines carry names of fields, never values: `audit: customer consent
+grant`, `change` and `withdrawal` per consent change, and `audit: customer match`
+per request with the hive id and counts.
+
+### Ask AI help
+
+Ask AI help is an optional docs-help backend for the hub dashboard (design:
+[Dashboard Ask AI help](design/dashboard-ask-ai-help.md)). It is off by
+default. With it off, or switched on but missing a value, the hub registers no
+Ask route, reads no key and sends nothing. The hub calls the Kapa.ai Chat API
+itself, server side; the browser only ever talks to the hub, and no
+third-party script or Content-Security-Policy change is involved.
+
+To wire it once a Kapa API key exists:
+
+1. In the Kapa project, create an HTTP API integration and an API key. Keep
+   both out of the repository.
+2. Store the key in a Kubernetes Secret and mount it under one of the allowed
+   secret dirs (`/secrets` or `/data/secrets`), for example:
+
+   ```sh
+   kubectl -n <hub-namespace> create secret generic hive-ask-kapa \
+     --from-file=api-key=<path-to-key-file>
+   ```
+
+   and add a volume plus `volumeMounts: [{name: hive-ask-kapa, mountPath: /secrets/kapa, readOnly: true}]`
+   to the hub Deployment.
+3. Set the hub environment:
+
+   ```yaml
+   env:
+     - name: HIVE_ASK_ENABLED
+       value: "true"
+     - name: HIVE_ASK_KAPA_PROJECT_ID
+       value: <project id>
+     - name: HIVE_ASK_KAPA_INTEGRATION_ID
+       value: <integration id>
+     - name: HIVE_ASK_KAPA_API_KEY_FILE
+       value: /secrets/kapa/api-key
+   ```
+
+   The project id and integration id may also come from the same Secret
+   through `valueFrom.secretKeyRef`. There is no env var that holds the key
+   itself.
+4. Restart the hub. It logs `ask: enabled` with the effective limits, or one
+   `ask: requested but staying off` line with the reason. Neither line, nor any
+   API response, carries the key, the project id or the integration id.
+
+What leaves the hub per question: the question text (refused, not sent, when
+it looks like a password, token or key), the label of the dashboard section
+from a closed list of ids in `pkg/askai/sections.go` (set
+`HIVE_ASK_SEND_SECTION_LABEL=false` to drop it), the integration id and, for a
+follow-up, the vendor's thread id. No login, email, page content, URL, hive or
+repo name is sent. Each person confirms a disclosure before their first
+question and can withdraw; the record lives under `/data/saas/ask-consents/`
+and is deleted with the user. Answers without an allowlisted source
+(`docs.hivecommons.dev` or the GitHub docs path under `hivecommons/hive`) are
+shown as "no cited answer" with a docs link.
+
+Limits (env overrides in [Environment variables](env-vars.md)): per person 3 a
+minute, 20 an hour and one in flight; hub-wide 4 a minute (a fifth of the
+vendor's 20 a minute per-team limit, and never more than half of it), 2 in
+flight and 500 a day. A vendor `429` backs every caller off for its
+`Retry-After`; three upstream failures in a row open a circuit breaker for five
+minutes. Audit lines (`audit: ask request`, `audit: ask consent grant`,
+`audit: ask consent withdraw`, `audit: ask breaker opened`, `audit: ask daily
+budget spent`) carry outcomes and counts, never text. Hub admins can read the
+counters at `GET /api/ask/stats`.
 
 ### Ask AI help
 
@@ -202,10 +301,13 @@ The fence above is always on. The registration flow that fills the `byo-` namesp
 | `HIVE_HUB_SELFSERVICE_REGISTRATION` | off | Turns on `/api/hub/selfservice/*` and the **Register your own hive** form on the dashboard. Accepts `1/true/yes/on`. Read per request, so no restart is needed. While off, every route except `GET /api/hub/selfservice/status` answers `404`, and the dashboard button sends users to the self-hosting guide instead of the form. |
 | `HIVE_HUB_SELFSERVICE_MAX_PER_USER` | `5` | How many `byo-` hives one GitHub login may hold at once. The next registration answers `429` until the user removes one. |
 | `HIVE_HUB_SELFSERVICE_MAX_REPOS` | `20` | How many repos one registration may list ([#18642](https://github.com/hivecommons/hive/issues/18642)). Each repo is one read-only GitHub ownership check, so values above `500` are clamped to `500`. `POST /api/hub/selfservice/hives` answers `400` over the cap; `POST /api/hub/v1/registrations` answers `413` with `limit: max_repos`. Advertised to clients by `GET /api/hub/v1` as `limits.max_repos`. Read per request. |
+| `HIVE_HUB_PROOF_GITHUB_USER_TOKEN` | off | Offers the `github-user-token` ownership proof on `POST /api/hub/v1/registrations` and `PATCH /api/hub/v1/registrations/{id}` ([#19238](https://github.com/hivecommons/hive/issues/19238)). See [Proving ownership with your own token](#proving-ownership-with-your-own-token). Accepts `1/true/yes/on`. Read per request. Only meaningful while `HIVE_HUB_SELFSERVICE_REGISTRATION` is on. |
+| `HIVE_HUB_SELFSERVICE_KEY_GRACE` | off | Key rotation with a grace window ([#19235](https://github.com/hivecommons/hive/issues/19235)); see [Rotation](#rotation). Accepts `1/true/yes/on`. Read per request. |
+| `HIVE_HUB_SELFSERVICE_KEY_GRACE_WINDOW` | `1h` | How long the old key keeps working after a rotation while `HIVE_HUB_SELFSERVICE_KEY_GRACE` is on. Clamped to `168h`. Read per request. |
 | `HIVE_HUB_SELFSERVICE_EXPIRY` | `24h` | How long a registered hive may go without an accepted heartbeat before the sweep removes it. Counted from the last accepted heartbeat, or from registration while there has been none. |
 | `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL` | `10m` | How often the expiry sweep runs. Read at startup; restart after changing. |
 
-All four are listed with the other hub variables in [env-vars.md](env-vars.md).
+All of them are listed with the other hub variables in [env-vars.md](env-vars.md).
 
 #### What a registration does
 
@@ -237,9 +339,34 @@ The registry entry becomes a `self-hosted` hive in Active Hives and the fleet vi
 
 The route is part of the v1 registration protocol and follows the same switch as the rest of it, `HIVE_HUB_SELFSERVICE_REGISTRATION`; discovery (`GET /api/hub/v1`) lists it under `operations` with `if_match: "required"` and its fields under `patch_fields`, so a hub that does not offer it does not advertise it. The v6 `/api/hub/selfservice/*` routes are unchanged.
 
+#### Proving ownership with your own token
+
+The hub signs users in with no GitHub scope, so when an org restricts OAuth apps GitHub hides the admin role from the stored token and registration says `not an admin` for repos the user does administer. With `HIVE_HUB_PROOF_GITHUB_USER_TOKEN` on, a v1 create or `PATCH` can prove ownership with a token sent on that request only:
+
+```
+X-Hive-Proof-Method: github-user-token
+X-Hive-Proof-Token: <a GitHub token>
+```
+
+- **Scopes:** none for public repos; the classic `repo` scope for private repos. A fine-grained token needs read access (Metadata) to every repo in the request. Discovery lists this under `proof_method_details`.
+- **Whose token:** the token must belong to the signed-in GitHub account (`GET /user`); a token made by another account is refused.
+- **Never kept:** the token is used for the read-only `GET /user` and `GET /repos/{owner}/{repo}` calls and then dropped. It is not stored, logged or echoed, and the stored sign-in token stays scopeless.
+- **Clear refusals:** a failed proof answers `403 {error, proof_method, reason, repo, required_scopes, granted_scopes}`, where `reason` is one of `token_rejected`, `token_user_mismatch`, `sso_not_authorized`, `missing_scope`, `repo_not_visible`, `admin_role_not_visible` (GitHub showed the repo but not the role) or `not_admin`. `granted_scopes` appears only when GitHub reported the token's scopes.
+- **Off means off:** while the flag is off, asking for the method is `400` listing the methods the hub offers; it never falls back to the stored token. Without `X-Hive-Proof-Method` the hub proves with the stored token as before (`hub-session-token`). The v6 `/api/hub/selfservice/*` routes ignore both headers.
+
+#### Heartbeat feature negotiation
+
+A spoke may send `protocol: {"version": 1, "features": [...]}` in its heartbeat ([#19237](https://github.com/hivecommons/hive/issues/19237)). With `HIVE_HUB_HEARTBEAT_PROTOCOL` on (`1/true/yes/on`, default off, read per request), the hub answers with `protocol: {"version", "accepted", "ignored"}`: the version it speaks for this beat, the requested features it honours, and the requested features it does not. The features a v1 hub accepts are `activity_digest`, `activity_events` and `host_aliases`, all of which it already serves to every spoke; negotiation changes nothing else in the response.
+
+- **No offer, or the flag off:** the response is exactly what it was before, with no `protocol` field.
+- **Unknown version** (below `1`): the beat is still accepted, every requested feature is listed under `ignored`, and `unsupported_version` echoes what the spoke sent. A version above the hub's is answered with the hub's version, so a newer spoke can fall back to it.
+- **Bounds:** at most 32 features are evaluated per beat. Names must be lowercase letters, digits, `_`, `-` or `.`, start with a letter and be at most 64 bytes; anything else is not echoed back.
+
 #### Rotation
 
 The owner can rotate from the **Self-hosted hives** list or with `POST /api/hub/selfservice/hives/{id}/rotate`. The hub mints a new key and keeps the previous hash live for a 10 minute overlap so a running spoke can pick up the new value without a gap. After the overlap only the new key is accepted. Only the owner can rotate; a hub admin who does not own the hive gets `404`, the same answer as for a missing hive.
+
+With `HIVE_HUB_SELFSERVICE_KEY_GRACE` on ([#19235](https://github.com/hivecommons/hive/issues/19235)), the overlap is the configurable grace window `HIVE_HUB_SELFSERVICE_KEY_GRACE_WINDOW` (default `1h`) instead of 10 minutes, on both the v6 route and `POST /api/hub/v1/registrations/{id}/keys`. Rotating again while a window is open keeps the old key, the one the spoke is still running, and replaces the pending key: the key from the earlier rotation stops working at once, and the window restarts. So rotating twice by mistake never cuts off the running spoke. The `overlap` in the response and `limits.key_rotation_overlap` in discovery report the window in effect. Existing registrations need no change.
 
 #### Expiry sweep
 
@@ -258,7 +385,7 @@ Every decision writes one structured log line, documented in [audit-log.md](audi
 | `selfservice_hive_registered` | A registration passed every check and a key was minted. |
 | `selfservice_hive_refused` | A registration was turned away; `reason` is one of `invalid_name`, `reserved_prefix`, `duplicate_id`, `invalid_repos`, `invalid_dashboard_url`, `invalid_update` (a `PATCH` body that was refused), `per_user_cap`, `no_github_token`, `no_github_login`, `not_repo_admin`, `ownership_check_error`. |
 | `selfservice_hive_updated` | The owner edited the repos or dashboard URL with `PATCH`; the line counts repos added and removed and carries no key. |
-| `selfservice_hive_rotated` | The owner rotated the key; `overlap` is how long the old key keeps working. |
+| `selfservice_hive_rotated` | The owner rotated the key; `overlap` is how long the old key keeps working, `grace` whether the grace window is on, `replaced_pending` whether a pending key inside an open window was replaced, `old_key_expires_at` when the old key stops working. No key or hash. |
 | `selfservice_hive_revoked` | The owner or an admin removed the hive; `by_admin` tells which. |
 | `selfservice_hive_expired` | The sweep removed a hive; `last_heartbeat` is RFC 3339 or `never`. |
 

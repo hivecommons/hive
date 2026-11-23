@@ -42,7 +42,7 @@ func TestAgentsCollapsedSummaryRendersPerAgentTiles(t *testing.T) {
 func TestAgentsSidebarLinkAndNavbarUpNextContracts(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span>`,
+		`data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🎛</span><span class="oc-nav-text">Control panel</span>`,
 		`id="agent-navbar-upnext"`,
 		`class="agent-navbar-upnext"`,
 		`function renderAgentNavbarUpNext(agents, nowMs)`,

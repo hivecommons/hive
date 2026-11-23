@@ -234,3 +234,40 @@ test('a one-provider hive reads exactly as before at the top level', () => {
   assert.deepEqual(plain(m.dials.map(d => d.label)), ['Weekly', 'Weekly (Fable)']);
   assert.equal(m.accountNote, 'Reflects the Claude account this hive is signed in with.');
 });
+
+// Claude's extra usage, shaped like the live /api/oauth/usage reading the
+// prober serializes (2026-11-19): on, $0.00 of a $350.00 monthly cap.
+const EXTRA_ON = { enabled: true, used_minor: 0, limit_minor: 35000, exponent: 2, currency: 'USD', spend_limit_reached: false };
+
+test('extra usage on shows spent of the monthly cap', () => {
+  const m = model(resp({ limits: [limit('weekly_all', 'weekly', 54, 10080)], extra_usage: EXTRA_ON }), NOW);
+  assert.equal(m.credits.text, 'Usage credits: on · $0.00 of $350.00 used this month');
+  assert.equal(m.credits.status, 'ok');
+  assert.equal(m.rows[0].credits.text, m.credits.text);
+});
+
+test('extra usage off says off and no amounts', () => {
+  const m = model(resp({ limits: [limit('weekly_all', 'weekly', 54, 10080)], extra_usage: { enabled: false, exponent: 2 } }), NOW);
+  assert.equal(m.credits.text, 'Usage credits: off');
+});
+
+test('spend limit reached is a warning', () => {
+  const m = model(resp({ limits: [limit('weekly_all', 'weekly', 54, 10080)], extra_usage: Object.assign({}, EXTRA_ON, { used_minor: 35000, spend_limit_reached: true }) }), NOW);
+  assert.equal(m.credits.text, 'Usage credits: limit reached · $350.00 of $350.00 used this month');
+  assert.equal(m.credits.status, 'warn');
+});
+
+test('no extra usage reported hides the line (never shown as 0 or off)', () => {
+  for (const extra of [undefined, null, {}, { exponent: 2 }, 'on', []]) {
+    const r = { limits: [limit('weekly_all', 'weekly', 54, 10080)] };
+    if (extra !== undefined) r.extra_usage = extra;
+    const m = model(resp(r), NOW);
+    assert.equal(m.state, 'reading');
+    assert.equal(m.credits, null, JSON.stringify(extra));
+  }
+});
+
+test('amounts follow the stated exponent and currency', () => {
+  const m = model(resp({ limits: [limit('weekly_all', 'weekly', 54, 10080)], extra_usage: { enabled: true, used_minor: 1234, limit_minor: 50000, exponent: 2, currency: 'EUR' } }), NOW);
+  assert.equal(m.credits.text, 'Usage credits: on · 12.34 EUR of 500.00 EUR used this month');
+});

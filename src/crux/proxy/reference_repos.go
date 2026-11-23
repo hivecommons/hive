@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -174,8 +175,15 @@ func ReferenceRepoDecision(pol ReferenceRepoPolicy, method, path, rawQuery strin
 		m := refItemCommentsPath.FindStringSubmatch(path)
 		n, _ := strconv.Atoi(m[1])
 		return referenceOwnItem, n, ""
+	case method == "POST" && reviewReplyPathRe.MatchString(path),
+		method == "DELETE" && ownCommentDeletePathRe.MatchString(path):
+		// A reply inside a review thread, or retracting the hive's own recent
+		// comment (#19096). The ownership checks (the hive's own PR and its
+		// opening agent, or the hive's own comment inside the retract window)
+		// are the review-thread gate's, which runs right after this one.
+		return referenceAllow, 0, ""
 	}
-	return referenceDeny, 0, referenceRepoRefusal(pol, "only opening an issue or PR, forking it, pushing to the owner's fork and commenting on the hive's own items are ever allowed there — never merge, push to the default branch, label, assign, close or review")
+	return referenceDeny, 0, referenceRepoRefusal(pol, "only opening an issue or PR, forking it, pushing to the owner's fork, commenting on the hive's own items, replying in review threads on the hive's own PRs and retracting the hive's own recent comment are ever allowed there — never merge, push to the default branch, label, assign, close or review")
 }
 
 func referenceRepoRefusal(pol ReferenceRepoPolicy, why string) string {
@@ -324,7 +332,7 @@ func referenceAPIBase(req *http.Request) string {
 type referenceLookupFunc func(url, token string) ([]byte, error)
 
 func defaultReferenceLookup(url, token string) ([]byte, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: egressCheckRedirect()}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -348,12 +356,33 @@ func defaultReferenceLookup(url, token string) ([]byte, error) {
 	return body, nil
 }
 
+// referenceLookupOrDefault returns the lookup wrapped in the policy-seam
+// guard (#19224): a lookup that panics or outlives referenceLookupTimeout
+// answers an error, which every caller already turns into a refusal.
 func (p *GitHubProxy) referenceLookupOrDefault() referenceLookupFunc {
-	if p.referenceLookup != nil {
-		return p.referenceLookup
+	lookup := p.referenceLookup
+	if lookup == nil {
+		lookup = defaultReferenceLookup
 	}
-	return defaultReferenceLookup
+	return func(url, token string) ([]byte, error) {
+		type answer struct {
+			body []byte
+			err  error
+		}
+		a, ok := callPolicySeam(p, "reference lookup", referenceLookupTimeout, func() answer {
+			body, err := lookup(url, token)
+			return answer{body, err}
+		})
+		if !ok {
+			return nil, errReferenceLookupFailed
+		}
+		return a.body, a.err
+	}
 }
+
+// errReferenceLookupFailed is the error a guarded lookup answers when the
+// lookup itself panicked or timed out.
+var errReferenceLookupFailed = errors.New("the GitHub lookup failed or timed out")
 
 func (p *GitHubProxy) referenceToken(pol ReferenceRepoPolicy) string {
 	if pol.Token == nil {

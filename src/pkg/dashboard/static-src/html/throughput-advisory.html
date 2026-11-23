@@ -2,7 +2,7 @@
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="pr-throughput-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Throughput section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📈 Throughput <span class="dash-card-subtitle">pull/merge requests across tracked forges</span></h2>
     <div class="section-body">
       <div id="pr-throughput-card" class="prt-card advisory-subsection-card"></div>
-      <div id="evidence-card" class="prt-card advisory-subsection-card evidence-card" aria-live="polite"></div>
+      <div id="evidence-card" class="prt-card advisory-subsection-card evidence-card" aria-live="polite" aria-busy="true"><div class="ev-status ev-status-loading" role="status"><span class="ev-spinner" aria-hidden="true"></span>Loading evidence…</div></div>
     </div>
   </div>
 
@@ -40,7 +40,7 @@
     </div>
 
     <div id="lifecycle-section" class="advisory-subsection" style="display: none;">
-      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="lifecycle-section"><span class="section-chevron">▼</span> 🔀 Lifecycle Timeline</h2>
+      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="lifecycle-section"><span class="section-chevron">▼</span> 🔀 PR timeline</h2>
       <div class="section-body">
         <div id="lifecycle-card" class="advisory-subsection-card"></div>
       </div>

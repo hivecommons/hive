@@ -92,6 +92,14 @@ type PRFeedback struct {
 	State   string
 	Draft   bool
 	HeadRef string
+	// HeadSHA is the PR's head commit, "" when the read did not report it.
+	// The sweep compares it across passes to tell whether a kicked agent
+	// pushed (#19320).
+	HeadSHA string
+	// LastHiveReplyAt is when the hive's identity last commented, reviewed or
+	// replied in a thread on the PR, ignoring the sweep's own notes (needs
+	// human, review-rule notices). Zero when it never has.
+	LastHiveReplyAt time.Time
 	// Items are the unanswered human comments, oldest first.
 	Items []FeedbackItem
 	// Source is "graphql" or "rest": which read produced this result.
@@ -117,13 +125,14 @@ type rawPRFeedback struct {
 	IsDraft     bool   `json:"isDraft"`
 	Merged      bool   `json:"merged"`
 	HeadRefName string `json:"headRefName"`
+	HeadRefOid  string `json:"headRefOid"`
 	rawPRConversation
 }
 
 var prFeedbackQuery = fmt.Sprintf(`query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      state isDraft merged headRefName
+      state isDraft merged headRefName headRefOid
       comments(last: %d) { nodes { databaseId url body createdAt authorAssociation author { __typename login } } }
       reviews(last: %d) { nodes { databaseId url body createdAt authorAssociation state author { __typename login } } }
       reviewThreads(last: %d) {
@@ -176,14 +185,16 @@ func (c *Client) FetchPRFeedback(ctx context.Context, repo string, number int) (
 		state = "closed"
 	}
 	return PRFeedback{
-		State:          state,
-		Draft:          raw.IsDraft,
-		HeadRef:        raw.HeadRefName,
-		Items:          UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
-		Source:         source,
-		HiveReplies:    HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
-		AgentReplies:   HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
-		RuleCandidates: RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
+		State:           state,
+		Draft:           raw.IsDraft,
+		HeadRef:         raw.HeadRefName,
+		HeadSHA:         raw.HeadRefOid,
+		LastHiveReplyAt: LastHiveReplyAt(raw.rawPRConversation, c.isHiveAuthor),
+		Items:           UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
+		Source:          source,
+		HiveReplies:     HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
+		AgentReplies:    HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
+		RuleCandidates:  RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
 	}, nil
 }
 
@@ -195,19 +206,103 @@ func (c *Client) isHiveAuthor(a *rawPRCommentAuthor) bool {
 // it mentions the App bot or the AI author account, or starts with /hive.
 // Inline review comments and review bodies on a hive PR are always aimed at
 // the hive; plain conversation comments between people are not.
+//
+// The App bot is matched with or without its "[bot]" suffix: people type
+// "@hivecommons-hive", not "@hivecommons-hive[bot]" (cncf/techdocs#424).
+// Mentions inside code spans, fenced code and quoted lines do not count, and
+// a login only matches as a whole mention, so "@hive-foo" or an email
+// address never addresses "hive".
 func (c *Client) addressesHive(body string) bool {
-	lower := strings.ToLower(body)
-	if strings.HasPrefix(strings.TrimSpace(lower), "/hive") {
+	if strings.HasPrefix(strings.TrimSpace(strings.ToLower(body)), "/hive") {
 		return true
 	}
 	id := c.getHiveIdentity()
-	for _, login := range []string{c.appBotLogin, id.AppLogin, id.AIAuthor} {
+	return MentionsAnyLogin(body, hiveMentionLogins(c.appBotLogin, id.AppLogin, id.AIAuthor))
+}
+
+// hiveMentionLogins expands the hive's logins into every spelling a person
+// may use to mention them: each login as configured plus, for an App bot
+// login, its bare slug without the "[bot]" suffix.
+func hiveMentionLogins(logins ...string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(l string) {
+		l = strings.ToLower(strings.TrimSpace(l))
+		if l == "" || seen[l] {
+			return
+		}
+		seen[l] = true
+		out = append(out, l)
+	}
+	for _, l := range logins {
+		add(l)
+		if slug, ok := strings.CutSuffix(strings.ToLower(strings.TrimSpace(l)), botLoginSuffix); ok {
+			add(slug)
+		}
+	}
+	return out
+}
+
+// MentionsAnyLogin reports whether text @-mentions any of logins as a
+// whole mention, case-insensitively, outside code and quoted lines.
+func MentionsAnyLogin(text string, logins []string) bool {
+	text = strings.ToLower(stripMentionNoise(text))
+	for _, login := range logins {
 		login = strings.ToLower(strings.TrimSpace(login))
-		if login != "" && strings.Contains(lower, "@"+login) {
+		if login != "" && mentionsLogin(text, login) {
 			return true
 		}
 	}
 	return false
+}
+
+// stripMentionNoise drops the parts of a Markdown body where an @login is
+// not a mention: fenced code, inline code spans and quoted ("> ") lines.
+func stripMentionNoise(text string) string {
+	text = fencedCodeBlockPattern.ReplaceAllString(text, " ")
+	text = inlineCodeSpanPattern.ReplaceAllString(text, " ")
+	lines := strings.Split(text, "\n")
+	kept := lines[:0]
+	for _, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), ">") {
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// mentionsLogin reports whether lower (already lower-cased) contains
+// "@"+login as a standalone mention: the "@" does not follow a login or
+// email character, and the login is not followed by one.
+func mentionsLogin(lower, login string) bool {
+	needle := "@" + login
+	for from := 0; ; {
+		i := strings.Index(lower[from:], needle)
+		if i < 0 {
+			return false
+		}
+		i += from
+		end := i + len(needle)
+		before := i == 0 || !isMentionChar(lower[i-1])
+		after := end >= len(lower) || !isMentionTailChar(lower[end])
+		if before && after {
+			return true
+		}
+		from = i + 1
+	}
+}
+
+// isMentionChar reports whether b may precede "@" in an email address or a
+// longer token, so an "@" after it is not a mention.
+func isMentionChar(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' || b == '_' || b == '.' || b == '+' || b == '/'
+}
+
+// isMentionTailChar reports whether b continues a login (or a "[bot]"
+// suffix), so a match ending before it is a prefix of a longer login.
+func isMentionTailChar(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' || b == '_' || b == '['
 }
 
 var feedbackHandledIDs = regexp.MustCompile(`<!--\s*hive:feedback-handled\s+ids=([^\s>]*)\s*-->`)
@@ -382,7 +477,7 @@ func (c *Client) fetchPRFeedbackREST(ctx context.Context, owner, repo string, nu
 	if err != nil {
 		return nil, err
 	}
-	raw := &rawPRFeedback{State: strings.ToUpper(pr.GetState()), IsDraft: pr.GetDraft(), Merged: pr.GetMerged() || !pr.GetMergedAt().IsZero(), HeadRefName: pr.GetHead().GetRef()}
+	raw := &rawPRFeedback{State: strings.ToUpper(pr.GetState()), IsDraft: pr.GetDraft(), Merged: pr.GetMerged() || !pr.GetMergedAt().IsZero(), HeadRefName: pr.GetHead().GetRef(), HeadRefOid: pr.GetHead().GetSHA()}
 	author := func(u *gh.User) *rawPRCommentAuthor {
 		if u == nil {
 			return nil

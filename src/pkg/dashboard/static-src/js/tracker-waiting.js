@@ -72,6 +72,8 @@
         pill.hidden = !w.count;
         pill.title = title;
         pill.setAttribute('aria-label', w.count + ' waiting on you — show in the activity monitor');
+        // Phones show only the dot and this count (responsive.css).
+        pill.setAttribute('data-count', String(w.count));
         const label = pill.querySelector('.nav-chip__label');
         if (label) label.textContent = 'Waiting on you · ' + w.count;
       }

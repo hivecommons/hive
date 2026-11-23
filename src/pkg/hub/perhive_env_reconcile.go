@@ -132,6 +132,10 @@ func desiredPerHiveEnv(hiveID string) map[string]string {
 		// Without it in this list a rotation would also never converge the
 		// invite key, leaving it derived from a generation the hub has retired.
 		EnvInviteKey: provisionInviteKey(hiveID),
+		// The customers hub import match key. Hub-hosted spokes never hold the
+		// master, so this is how they obtain it; reconciled so a rotation
+		// converges it to the current generation.
+		EnvCustomerMatchKey: provisionCustomerMatchKey(hiveID),
 		// HIVE_SESSION_KEY is deliberately ABSENT (audit #3234 N2 follow-up).
 		// RESIDUAL-2 made it per-hive as defence-in-depth, but every lane that
 		// ever verified against it — F1 (Go legacy cookie lane), N3 (terminal
@@ -188,6 +192,7 @@ func perHiveEnvNames() []string {
 		EnvHeartbeatKey,
 		EnvTerminalKey,
 		EnvInviteKey,
+		EnvCustomerMatchKey,
 		EnvSSOPublicKey,
 		envSessionPublicKey,
 	}

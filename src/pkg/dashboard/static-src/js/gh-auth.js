@@ -167,6 +167,77 @@
       hiveSyncGHUserMenuTrigger();
     }
 
+    /* Top bar "? Help" menu. Same .avatar-menu dropdown as the account menu;
+       its items mirror the sidebar Help group. Enter/Space on the trigger
+       toggle it (native button click), ArrowDown/ArrowUp open it on the first
+       or last item and move between items, Home/End jump, Escape closes it and
+       returns focus to the trigger (the capture-phase hiveDismissTopOverlay
+       handler), and Tab, a click outside or a click on an item closes it. */
+    function hiveHelpMenuItems() {
+      const menu = document.getElementById('oc-help-menu');
+      if (!menu) return [];
+      return Array.from(menu.querySelectorAll('[role="menuitem"]')).filter(el => el.style.display !== 'none' && !el.hidden);
+    }
+    function hiveSyncHelpMenuTrigger() {
+      const menu = document.getElementById('oc-help-menu');
+      const btn = document.getElementById('welcome-topbar-btn');
+      if (menu && btn) btn.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
+    }
+    function openHelpMenu(focusWhich) {
+      const menu = document.getElementById('oc-help-menu');
+      if (!menu) return;
+      menu.hidden = false;
+      hiveSyncHelpMenuTrigger();
+      const items = hiveHelpMenuItems();
+      if (focusWhich && items.length) (focusWhich === 'last' ? items[items.length - 1] : items[0]).focus();
+    }
+    function closeHelpMenu(returnFocus) {
+      const menu = document.getElementById('oc-help-menu');
+      if (!menu || menu.hidden) return;
+      menu.hidden = true;
+      hiveSyncHelpMenuTrigger();
+      if (returnFocus) {
+        const btn = document.getElementById('welcome-topbar-btn');
+        if (btn) btn.focus();
+      }
+    }
+    function toggleHelpMenu() {
+      const menu = document.getElementById('oc-help-menu');
+      if (!menu) return;
+      if (menu.hidden) openHelpMenu(null); else closeHelpMenu(false);
+    }
+    document.addEventListener('click', function(e) {
+      const wrap = document.getElementById('oc-help-menu-wrap');
+      const menu = document.getElementById('oc-help-menu');
+      if (!wrap || !menu || menu.hidden) return;
+      if (!wrap.contains(e.target)) { closeHelpMenu(false); return; }
+      // Choosing an item runs its action (delegated handler) and closes the menu.
+      if (e.target.closest && e.target.closest('#oc-help-menu [role="menuitem"]')) closeHelpMenu(false);
+    });
+    document.addEventListener('keydown', function(e) {
+      const menu = document.getElementById('oc-help-menu');
+      const btn = document.getElementById('welcome-topbar-btn');
+      if (!menu || !btn) return;
+      if (e.target === btn && menu.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        openHelpMenu(e.key === 'ArrowUp' ? 'last' : 'first');
+        return;
+      }
+      if (menu.hidden || (!menu.contains(document.activeElement) && document.activeElement !== btn)) return;
+      if (e.key === 'Tab') { closeHelpMenu(false); return; }
+      const items = hiveHelpMenuItems();
+      if (!items.length) return;
+      const idx = items.indexOf(document.activeElement);
+      let next = -1;
+      if (e.key === 'ArrowDown') next = (idx + 1) % items.length;
+      else if (e.key === 'ArrowUp') next = idx <= 0 ? items.length - 1 : idx - 1;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = items.length - 1;
+      if (next < 0) return;
+      e.preventDefault();
+      items[next].focus();
+    });
+
     document.addEventListener('click', function(e) {
       const wrap = document.getElementById('oc-gh-avatar-wrap');
       if (wrap && !wrap.contains(e.target)) {
