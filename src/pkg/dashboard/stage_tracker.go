@@ -13,6 +13,7 @@ import (
 	forgequeue "github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -1009,12 +1010,46 @@ func stageTrackerSetFinisher(it *StageTrackerItem, decisions map[string]Ownershi
 	if it.Finisher != finisherHive {
 		return
 	}
+	baseRed := stageTrackerBaseRedFinisherReason(*it)
 	switch {
 	case it.Stage == trackerNumberNeedsAuthor, it.Stage == trackerNumberReturned, it.Stage == stagelabels.PossiblyExisting.Number():
 		it.Finisher, it.FinisherReason = finisherElsewhere, it.Caption
 	case draft && it.AuthorKind == authorKindHuman:
 		it.Finisher, it.FinisherReason = finisherElsewhere, "Draft — its author must mark it ready for review"
+	case it.Kind == "pr" && it.Stage == trackerNumberFixing && stageTrackerBotAuthor(it.Author, it.AuthorKind):
+		// A foreign bot's PR the lane filed under 070: no hive lane pushes
+		// to it (stageTrackerBotFixingCaption), the bot's next run replaces
+		// it (projectbluefin/utah#1490, #1497).
+		it.Finisher, it.FinisherReason = finisherElsewhere, "Bot-authored PR (@"+it.Author+"): "+stageTrackerBotWaitWords
+	case baseRed != "":
+		it.Finisher, it.FinisherReason = finisherElsewhere, baseRed
 	}
+}
+
+// stageTrackerBaseRedFinisherReason says why a PR held at 050 / 060
+// because its base branch or a shared CI incident is red waits on that
+// recovery rather than on a hive lane (prstage.StageReasonBaseBranchRed,
+// prstage.StageReasonSharedCIIncident); "" for any other row.
+func stageTrackerBaseRedFinisherReason(it StageTrackerItem) string {
+	if it.Kind != "pr" || (it.Stage != trackerNumberReviewPending && it.Stage != trackerNumberReviewed) {
+		return ""
+	}
+	reason, _ := stagelabels.HumanApprovedReason(it.Reason)
+	if rest, ok := strings.CutPrefix(reason, stageengineprstage.StageReasonBaseBranchRed); ok {
+		checks := ""
+		if rest = strings.TrimSpace(rest); rest != "" {
+			checks = " (" + strings.ReplaceAll(rest, ",", ", ") + ")"
+		}
+		return "Red because the base branch is red" + checks + "; it moves on once the base branch's CI recovers"
+	}
+	if rest, ok := strings.CutPrefix(reason, stageengineprstage.StageReasonSharedCIIncident); ok {
+		incident := "a shared-CI incident"
+		if rest = strings.TrimSpace(rest); rest != "" {
+			incident = "shared-CI incident #" + rest
+		}
+		return "Red because of " + incident + "; it moves on once the incident closes"
+	}
+	return ""
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
