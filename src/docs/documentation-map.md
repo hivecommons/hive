@@ -253,6 +253,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [CNCF reference architecture](cncf-reference-architecture.md) — CNCF submission/reference template.
 - [Podman CI runner map](podman-ci-runner-map.md) — measured hosted-runner capabilities and which Podman lane goes where; SELinux is the only lane needing non-hosted infrastructure.
 - [CI runner labels](ci-runner-labels.md) — how `runs-on:` picks the self-hosted fleet, why a fork must degrade to a GitHub-hosted runner, and the one variable `hivecommons` sets.
+- [Contributing drift gate](contributing-drift-gate.md) - the reusable workflow that fails a repo's CI when a command it runs is not mentioned in its CONTRIBUTING.md or README.md, its exemptions file, and how a sibling repo pins it by SHA.
 - [Refresh-only heads](ci-refresh-only-heads.md) - which heavy CI jobs (Docker multi-arch, FOSSA, Mutation) skip a verified hive App base refresh that leaves the PR diff unchanged, and the fail-safe proof behind the skip.
 - [Session taint design](design/session-taint.md) - **design/proposal:** a session-level record of what an agent has read and the rules that would hold or deny later pushes, comments and PRs against it, off by default with an observe-only first phase (RFC #18987).
 - [Gate-integrity invariants for agent lanes](design/gate-integrity-invariants.md) — proposed write-gate rules for agent lanes: no history rewrites on branches a lane did not create, no sign-off on other authors' commits, and hold-gated demotion for gate manipulation.
