@@ -125,8 +125,13 @@ func stageTrackerAuthorActorKind(author, authorKind string) string {
 
 // stageTrackerBotWhy says why nobody in the hive fixes a bot's PR.
 func stageTrackerBotWhy(author string) string {
-	return "bot-authored PR (@" + author + ") — the hive does not fix bot PRs; it waits for the bot's next run to replace it"
+	return "bot-authored PR (@" + author + ") — " + stageTrackerBotWaitWords
 }
+
+// stageTrackerBotWaitWords is what a foreign bot's PR waits on, shared by
+// the caption (stageTrackerBotWhy) and the 070 finisher reason
+// (stageTrackerSetFinisher) so the two cannot drift.
+const stageTrackerBotWaitWords = "the hive does not fix bot PRs; it waits for the bot's next run to replace it"
 
 // stageTrackerStageActor derives the row's actor from its finished fields.
 // Issues at 030/040 and mirrored issues inherit their covering PR's actor
