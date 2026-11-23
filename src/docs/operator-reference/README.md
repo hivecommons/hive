@@ -580,6 +580,16 @@ fallback when the approval sweep is off or refused:
   conflict hand-off waits, so the PR never gets the request and a person's
   comment at once. First-seen and requested heads persist across restarts in
   `dependency-bot-conflicts-rebase.json` beside the conflict ledger.
+- The stale-red base refresh asks through the same request for a red bot
+  branch the base has fixed (see
+  [sweeps-and-operations.md](sweeps-and-operations.md#stale-red-base-refresh-stale_red_base_refresh)),
+  and records it in the same file. That request holds this sweep's other
+  hand-offs for one window (GitHub need not call the PR behind). If the head
+  has neither moved nor gone green by then, the PR is handed to a person
+  (one comment plus `needs-human`, reason `stale-red-bot-did-not-rebase`);
+  the label comes off once the head moves or CI is green. When the bot did
+  rebase and its new head fails the same checks again, nothing holds the
+  new head: the red-CI hand-off above runs on its usual grace.
 - fork heads, sentinel-alert PRs, and human-authored lanes are never touched; a
   first-time contributor's held run is still a person's decision — with two
   exceptions that reach fork heads: the gated-run approval sweep

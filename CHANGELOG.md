@@ -11,6 +11,28 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v6.57.0)
+
+### Added
+
+- The stale-red base refresh no longer skips a dependency bot's branch. Where it would merge the base into a red PR whose failing checks are green on the base tip, it now asks the bot to rebase instead, through the existing `bot_rebase_request` write-back (it ticks Renovate's rebase/retry box), at most once per head and base tip and within the pass's caps. It never updates a bot's branch itself, never asks over a commit that is not the bot's (the regeneration would drop it), and spends no API call where the write-back gate would refuse; Dependabot, which refuses commands from apps, is skipped as before. A failing check that runs only on pull requests is asked about once per head, when its failing run is older than `governor.dependency_bot_rebase_after_s` (4 hours) and the base tip was committed after it. When the bot's rebased head fails the same checks again, the bump breaks them: the pass does not ask again and the red-CI hand-off runs as before, so such a bump costs one extra CI run. Renovate with `rebaseWhen: "conflicted"` never rebases a branch that is merely behind, so these PRs stayed red until a person merged the base by hand, which also stopped Renovate maintaining the branch ([projectbluefin/actions#775](https://github.com/projectbluefin/actions/pull/775) sat red at 070 for 33 hours, [projectbluefin/utah#1471](https://github.com/projectbluefin/utah/pull/1471) for 40). Each request is logged as `stale-red refresh: asked dependency bot to rebase` and recorded, so a head that has neither moved nor gone green one window later is handed to a person by the dependency-bot sweep (one comment plus `needs-human`, reason `stale-red-bot-did-not-rebase`).
+
+## 2026-11-23 (v6.56.0)
+
+### Added
+
+- Gemini agents can now use the Gemini CLI's model aliases `auto`, `pro`, `flash` and `flash-lite`, the way Claude agents use `opus`, `sonnet`, `haiku` and `fable`. An alias follows whatever model the installed CLI maps it to: the concrete model can change with a CLI update or with the account's preview and latest-Flash access, and `auto` picks a Pro or Flash model each turn. The dashboard's Gemini picker always offers them, with or without a Gemini API key, and model auto-heal never moves an agent off one. `src/docs/cli-pins.md` lists what each alias resolved to in `@google/gemini-cli-core` 0.70.0. A bare alias now also counts as the family it resolves to (the Claude aliases as Claude, the Gemini aliases as Gemini) for `review_models.exclude_author_family`, the fact-check family-level independence check and the evidence family buckets. A Gemini reviewer no longer counts as cross-family for a Gemini-alias author, and the same holds for Claude. The evidence accuracy card regroups those authors' past verdicts once, from "other" to claude or gemini. `auto` stays unknown, and per-model statistics still list each alias under its own name.
+
+### Fixed
+
+- Gemini CLI agents now report token usage and cost instead of $0 with no cost rows. The token collector reads the Gemini CLI chat recordings (`~/.gemini/tmp/<project-id>/chats/*.jsonl`, shared and per-agent homes), counts each message once with its latest recorded tokens, prices it at the concrete model that served it (cached input at the cache-read rate, thinking tokens as output), and attributes it to the agent whose work dir holds the project. A model with no exact price is priced at the tier fallback, marked approximate and logged. Sandbox kicks on the `gemini` backend are still unmetered.
+
+## 2026-11-23 (v6.55.6)
+
+### Fixed
+
+- A hive PR whose fixer gave up now stays at `stage/085-needs-decision` (`fixer-exhausted:N`) instead of flipping between 085 and `stage/070-fixing` until the dampener froze it at 070 with nobody working on it. Two drivers run the stage-label pass, and the 1-minute automerge job built its options without the fixer's dispatch status or the rebase-resolve episode, so its passes read the fixer as unknown and routed the same head back to 070 ([#15744](https://github.com/hivecommons/hive/issues/15744)). Both drivers now take every stage input from one shared helper, and a guard test fails when an option is set on only one of them. The job's merge train and adoption lane now also hand a conflicting member or copy to the fixer's rebase-resolve episode, as the main engine already did.
+
 ## 2026-11-23 (v6.55.5)
 
 ### Fixed
