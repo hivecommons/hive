@@ -263,12 +263,12 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				}
 			}
 		}
-		if reason, deny, ok := p.inspectCanaryEgress(agentName, req); ok {
+		if reason, code, deny, ok := p.inspectGitHubWriteEgress(agentName, req); ok {
 			if deny {
 				blocked = true
 				if blockReason == "" {
 					blockReason = reason
-					blockCode = DenyReasonCanaryEgress
+					blockCode = code
 				}
 			}
 		}
