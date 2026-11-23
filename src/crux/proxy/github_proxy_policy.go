@@ -416,7 +416,10 @@ func (p *GitHubProxy) inspectGitHubWriteEgress(agentName string, req *http.Reque
 	// published (#19445). Deny on a secret shape, naming only the category.
 	if category, found := logscrub.FindSecret(text); found {
 		p.logger.Warn("credential shape in GitHub write body - denying", "agent", agentName, "source", source, "category", category)
-		return "credential shape in write body: " + category, true, true
+		return "credential shape in write body: " + category, DenyReasonCredentialShape, true, true
+	}
+	if canaryLeak {
+		return "ioscan canary leak", DenyReasonCanaryEgress, p.canaryFailClosed, true
 	}
 	return "", "", false, false
 }
