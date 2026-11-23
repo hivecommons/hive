@@ -195,6 +195,9 @@ var modelPrices = map[string]ModelPrice{
 	"gemini-3-1-pro-preview":  {InputPerMTok: 2.00, OutputPerMTok: 12.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.00},
 	"gemini-3-1-pro-high":     {InputPerMTok: 2.00, OutputPerMTok: 12.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.00},
 	"gemini-3-1-pro-low":      {InputPerMTok: 2.00, OutputPerMTok: 12.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.00},
+	// Gemini 3.8 Flash (offered by geminiStaticModels since #19520): OpenRouter
+	// google/gemini-3.8-flash list price, 2026-11-23.
+	"gemini-3-8-flash": {InputPerMTok: 0.825, OutputPerMTok: 4.125, CacheReadPerMTok: 0.0825, CacheWritePerMTok: 0.825},
 
 	// ---- Other Copilot/AGY selectors with no separately published price ----
 	// These reuse the closest sibling tier so every offered dropdown value has
