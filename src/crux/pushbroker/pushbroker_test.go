@@ -711,8 +711,7 @@ func TestParseGitIdent(t *testing.T) {
 }
 
 func TestPushEnvDropsForgeTokens(t *testing.T) {
-	config.SetExtraCredentialEnvVars("CUSTOM_FORGE_PAT")
-	t.Cleanup(func() { config.SetExtraCredentialEnvVars() })
+	config.AddExtraCredentialEnvVars("CUSTOM_FORGE_PAT")
 	got := PushEnv([]string{"GITLAB_TOKEN=x", "GITEA_TOKEN=x", "FORGEJO_TOKEN=x", "CUSTOM_FORGE_PAT=y", "CUSTOM_FORGE_PAT_OTHER=keep", "PATH=/bin"})
 	if want := []string{"CUSTOM_FORGE_PAT_OTHER=keep", "PATH=/bin"}; !slices.Equal(got, want) {
 		t.Fatalf("PushEnv = %v, want %v", got, want)

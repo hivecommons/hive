@@ -37,8 +37,7 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 	const session = "hive-leak"
 	dir := t.TempDir()
 	const customForgeTokenEnv = "CUSTOM_FORGE_PAT"
-	config.SetExtraCredentialEnvVars(customForgeTokenEnv)
-	t.Cleanup(func() { config.SetExtraCredentialEnvVars() })
+	config.AddExtraCredentialEnvVars(customForgeTokenEnv)
 
 	// A dedicated server, so ITS global environment is exactly this process
 	// env plus the planted credentials — the package-wide test server was

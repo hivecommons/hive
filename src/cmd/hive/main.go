@@ -3947,7 +3947,7 @@ func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 
 func syncForgeCredentialEnv(cfg *config.Config) {
-	cruxconfig.SetExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName())
+	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName())
 }
 
 // bootWatchersWith is bootWatchers with its long-lived effects injected; see

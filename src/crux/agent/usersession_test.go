@@ -248,8 +248,7 @@ func TestUserSessionForbiddenCoversEveryKnownCredentialVar(t *testing.T) {
 
 func TestUserSessionStripsConfiguredForgeTokenEnv(t *testing.T) {
 	const custom = "CUSTOM_FORGE_PAT"
-	config.SetExtraCredentialEnvVars(custom)
-	t.Cleanup(func() { config.SetExtraCredentialEnvVars() })
+	config.AddExtraCredentialEnvVars(custom)
 	strip := map[string]bool{}
 	for _, n := range userSessionStripNames() {
 		strip[n] = true
