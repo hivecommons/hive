@@ -505,3 +505,5 @@ kubectl -n hive-hub get deploy hive-hub -o yaml | python3 src/deploy/check-hub-m
 ```
 
 Cluster-side cleanup that cannot be done from the repo: remove any stray `hive-hub` container from the running Deployment, move the two secrets into a Secret, and rotate both values. The check also rejects a secret env fed from a ConfigMap or field and looks at initContainers.
+
+The hub also checks itself: before each self-upgrade `set image`, it reads its own Deployment's container names and logs `hub deployment has unexpected containers` (with `unexpected=<names>`) when anything besides `hub` is present. The warning never blocks the upgrade.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -234,6 +235,7 @@ func (s *HubServer) rolloutHubToSHA(sha string) error {
 		s.noteHubUpgradePaused()
 		return errHubDeploymentPaused
 	}
+	s.warnUnexpectedHubContainers()
 	image := fmt.Sprintf("ghcr.io/%s:%s", ghcrRepoHub, sha)
 	ctx, cancel := context.WithTimeout(context.Background(), hubKubectlTimeout)
 	defer cancel()
@@ -291,6 +293,59 @@ func (s *HubServer) hubDeploymentPaused() (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(string(out)) == "true", nil
+}
+
+// expectedHubContainers is the full set of containers the hub Deployment's pod
+// template may run. Anything else is a stray: #19344 found a second container
+// named "hive-hub" (an old image, no /data mount, no HIVE_MODE) running beside
+// "hub" with the GitHub App credentials and logging like a fresh hub, which
+// misled an outage investigation. Keep in sync with EXPECTED_CONTAINERS in
+// src/deploy/check-hub-manifest.py.
+var expectedHubContainers = []string{hubContainerName}
+
+// unexpectedHubContainers returns the names in containers that are not in
+// expectedHubContainers, in their original order.
+func unexpectedHubContainers(containers []string) []string {
+	var stray []string
+	for _, name := range containers {
+		if !slices.Contains(expectedHubContainers, name) {
+			stray = append(stray, name)
+		}
+	}
+	return stray
+}
+
+// hubDeploymentContainers reads the container names of the hub Deployment's
+// pod template.
+func (s *HubServer) hubDeploymentContainers() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), hubKubectlTimeout)
+	defer cancel()
+	out, err := kubectlForClusterContext(ctx, s.hubCluster(), "get",
+		"deployment/"+hubDeploymentName, "-n", hubNamespace,
+		"-o", "jsonpath={.spec.template.spec.containers[*].name}").Output()
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(string(out)), nil
+}
+
+// warnUnexpectedHubContainers is the self-diagnostic for #19344: it logs a
+// warning when the hub Deployment runs any container besides "hub". It never
+// blocks the upgrade (set image already pins only hubContainerName), and a
+// failed or empty read is skipped because the paused-state read above already
+// reports an unreachable Deployment.
+func (s *HubServer) warnUnexpectedHubContainers() {
+	containers, err := s.hubDeploymentContainers()
+	if err != nil || len(containers) == 0 {
+		return
+	}
+	if stray := unexpectedHubContainers(containers); len(stray) > 0 {
+		s.logger.Warn("hub deployment has unexpected containers; remove them (see src/docs/hub-deployment.md)",
+			"deployment", hubDeploymentName,
+			"namespace", hubNamespace,
+			"unexpected", strings.Join(stray, ","),
+			"expected", strings.Join(expectedHubContainers, ","))
+	}
 }
 
 // noteHubUpgradePaused logs the suspension once and surfaces it as the
