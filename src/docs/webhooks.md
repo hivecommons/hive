@@ -303,7 +303,7 @@ The dashboard reads the same machine:
   but trusted" and `healthy: true, mode: polling` reads "recovering".
 - `/api/status.evalMode` (`webhook` | `poll`) and `evalIntervalS` are the
   loop's view of the same decision, and the governor card's next-kick
-  estimate uses it (`src/pkg/dashboard/status_builder.go:2058`).
+  estimate uses it (`src/pkg/dashboard/status_builder.go:2193`).
 
 What stays on the raw window: the per-repo PR-detail cache TTL extension
 and the "skip the repo's re-enrichment" shortcut still require a delivery

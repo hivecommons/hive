@@ -156,6 +156,28 @@ func stageTrackerContributorGraceElapsed(it StageTrackerItem) bool {
 	return it.Presence != nil && it.Presence.Next == presenceNextAdopt
 }
 
+// stageTrackerWaitsOnAuthorOnly reports a row whose Needs human state is
+// its author's (a 071 / 072 PR inside the author's grace, which
+// stageTrackerWaitKind leaves off the operator) and that the your-turn
+// decision does not put on the operator either (Finisher, from ownership:
+// a sentinel flag or a stale close-or-take-over still is). Before this,
+// projectbluefin/server#594 and #701 were listed as the operator's while
+// ownership said not your turn.
+func stageTrackerWaitsOnAuthorOnly(it StageTrackerItem) bool {
+	return it.NeedsHumanWhy != nil && it.NeedsHumanWhy.Source == needsHumanSourceAuthor && it.Finisher != finisherPerson
+}
+
+// stageTrackerFallbackWait reports a row stageTrackerWaitKind did not
+// classify that still waits on the operator: filed-for-help, level-gate and
+// hive-hold waits, where a person owes the next move though no stage names
+// it. A standing meta issue never waits on anyone
+// (stageTrackerWaitStandingMeta), nor does a wait that is only the
+// author's (stageTrackerWaitsOnAuthorOnly).
+func stageTrackerFallbackWait(it StageTrackerItem) bool {
+	return it.NeedsHumanWhy != nil && !stageTrackerWaitsOnAuthorOnly(it) &&
+		it.Advisory == nil && it.Decided == nil && !stageTrackerWaitStandingMeta(it)
+}
+
 // stageTrackerWaitSince is when the wait on it began.
 func stageTrackerWaitSince(it StageTrackerItem) *time.Time {
 	if it.DecisionNeeded != nil && it.DecisionNeeded.Since != nil {
@@ -180,10 +202,7 @@ func stageTrackerWaitingOnHuman(items []StageTrackerItem) StageTrackerWaitingOnH
 			continue
 		}
 		kind, who := stageTrackerWaitKind(*it)
-		if kind == "" && it.NeedsHumanWhy != nil && it.Advisory == nil && it.Decided == nil && !stageTrackerWaitStandingMeta(*it) {
-			// Filed-for-help, level-gate and hive-hold waits: a person
-			// owes the next move though no stage names it. A standing meta
-			// issue never waits on anyone (stageTrackerWaitStandingMeta).
+		if kind == "" && stageTrackerFallbackWait(*it) {
 			kind, who = waitKindOther, waitWhoOperator
 		}
 		if kind == "" {
