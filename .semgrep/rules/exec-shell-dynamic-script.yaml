@@ -1,0 +1,45 @@
+rules:
+  - id: hive-exec-shell-dynamic-script
+    languages: [go]
+    severity: ERROR
+    message: >-
+      A shell runs a script built at run time ($SH -c with a formatted or
+      concatenated string). Any value spliced into that string is parsed as
+      shell, so a branch name, path, issue text or model output with a quote,
+      `;` or `$(...)` in it runs as a command. Keep the script a constant and
+      pass values as positional parameters, the way the rest of the tree
+      does: exec.Command("sh", "-c", constScript, "sh", arg1, arg2) and read
+      them as "$1" "$2" inside the script. Better still, exec the program
+      directly without a shell.
+    metadata:
+      category: security
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      obligation: >-
+        Every sh -c in hive takes a constant script and positional arguments
+        (src/crux/agent/usersession*.go, src/pkg/hubbackup/collect.go).
+      references:
+        - https://github.com/hivecommons/hive/issues/19443
+    options:
+      # Lets `script := fmt.Sprintf(...)` followed by `sh -c script` match.
+      symbolic_propagation: true
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command(..., $SH, $FLAG, $SCRIPT, ...)
+          - pattern: exec.CommandContext($CTX, ..., $SH, $FLAG, $SCRIPT, ...)
+      - metavariable-regex:
+          metavariable: $SH
+          regex: ^"(/usr/bin/|/bin/)?(sh|bash|dash|zsh|ash|ksh)"$
+      - metavariable-regex:
+          metavariable: $FLAG
+          regex: ^"-[a-z]*c"$
+      - metavariable-pattern:
+          metavariable: $SCRIPT
+          patterns:
+            - pattern-either:
+                - pattern: fmt.Sprintf(...)
+                - pattern: $A + $B
+                - pattern: strings.Join(...)
+                - pattern: strings.ReplaceAll(...)
+                - pattern: strings.Replace(...)
+                - pattern: '($BUF : strings.Builder).String()'
+                - pattern: '($BUF : *strings.Builder).String()'
