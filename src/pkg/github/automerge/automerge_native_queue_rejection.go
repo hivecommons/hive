@@ -398,9 +398,16 @@ func (c *Engine) nativeQueueHeadRejected(repo string, number int, state hgithub.
 		return ""
 	}
 	r := c.noteNativeQueueRepeatedRejection(repo, number, mergeRefusal{head: head, state: removal.Reason})
+	// The mark's clock, and with it laneReason's unconfirmed-tip clock,
+	// starts now: when this rejection is seen, which is also when it
+	// becomes repeated. rememberMergeRefusal stamps only its own copy, so
+	// r is stamped here too; unstamped, a just-seen repeated rejection read
+	// as unconfirmed since the zero time and reported 085 before the
+	// compare could read the tip.
+	r.at = c.clock()
 	c.rememberMergeRefusal(nativeQueueRejectionKey(repo, number), r)
 	c.info("automerge native queue rejected head", "repo", repo, "pr", number, "head", head, "removal_reason", removal.Reason, "repeated", r.repeated)
-	return r.laneReason(c.clock())
+	return r.laneReason(r.at)
 }
 
 // nativeQueueRejectedRepeatedlyCause is the 085 entry comment's cause for
@@ -430,11 +437,12 @@ const nativeQueueTipUnconfirmedAfter = 10 * time.Minute
 // A repeated one says so (stage 085) once the lane's compare confirmed the
 // base tip: until then the base may have moved under the retry, and a
 // false 085 would tell a person the same merge failed again. If the tip is
-// still unread after nativeQueueTipUnconfirmedAfter, the last known tip
-// (priorBase) stands in. The mark stays repeated meanwhile, so the slow
-// backoff applies either way.
+// still unread nativeQueueTipUnconfirmedAfter after r.at (when the current
+// rejection was seen, and became repeated), the last known tip (priorBase)
+// stands in. An unstamped mark never counts as stale. The mark stays
+// repeated meanwhile, so the slow backoff applies either way.
 func (r mergeRefusal) laneReason(now time.Time) string {
-	if r.repeated && (r.base != "" || now.Sub(r.at) >= nativeQueueTipUnconfirmedAfter) {
+	if r.repeated && (r.base != "" || (!r.at.IsZero() && now.Sub(r.at) >= nativeQueueTipUnconfirmedAfter)) {
 		return nativeQueueReasonRejectedRepeatedly
 	}
 	return nativeQueueReasonRejected

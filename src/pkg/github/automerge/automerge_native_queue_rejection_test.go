@@ -712,6 +712,48 @@ func TestNativeQueueRepeatedRejectionReachesAPersonWithoutATipRead(t *testing.T)
 	if got := first.laneReason(at.Add(time.Hour)); got != nativeQueueReasonRejected {
 		t.Fatalf("first rejection: %q, want %q", got, nativeQueueReasonRejected)
 	}
+	// The clock starts at the mark's own time, never at the zero time.
+	unstamped := mergeRefusal{state: nativeQueueRemovalFailedChecks, repeated: true, priorBase: "base1"}
+	if got := unstamped.laneReason(at); got != nativeQueueReasonRejected {
+		t.Fatalf("unstamped mark: %q, want %q", got, nativeQueueReasonRejected)
+	}
+}
+
+// The clock for an unconfirmed tip starts when the repeated rejection is
+// seen, not at the first rejection: the pass that sees it reports the plain
+// reason, and only a compare that stays unread for
+// nativeQueueTipUnconfirmedAfter from then sends the PR to 085.
+func TestNativeQueueRepeatedRejectionUnconfirmedTipClockStartsWhenSeen(t *testing.T) {
+	now := time.Date(2026, 11, 23, 17, 0, 0, 0, time.UTC)
+	c, f, pr, claim := nativeQueueEngine()
+	c.now = func() time.Time { return now }
+	pass := func() string {
+		t.Helper()
+		reason, err := c.tryNativeQueue(context.Background(), pr, claim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reason
+	}
+	pass()
+	removeFromQueue(f, "removal1", mergeQueueBotLogin, "Bot")
+	pass()
+	c.noteNativeQueueRejectionBase(claim.Repo, 7, "sha7", "base1")
+	now = now.Add(mergeRefusalRecheck + time.Minute)
+	pass()
+	removeFromQueue(f, "removal2", mergeQueueBotLogin, "Bot")
+	if reason := pass(); reason != nativeQueueReasonRejected {
+		t.Fatalf("pass that sees the second rejection: %q, want %q", reason, nativeQueueReasonRejected)
+	}
+	// No compare ever reads the tip from here on.
+	now = now.Add(nativeQueueTipUnconfirmedAfter - time.Minute)
+	if reason := pass(); reason != nativeQueueReasonRejected {
+		t.Fatalf("tip unread for less than %s: %q, want %q", nativeQueueTipUnconfirmedAfter, reason, nativeQueueReasonRejected)
+	}
+	now = now.Add(time.Minute)
+	if reason := pass(); reason != nativeQueueReasonRejectedRepeatedly || f.enqueues != 2 {
+		t.Fatalf("tip unread for %s: reason=%q enqueues=%d, want %q and no enqueue", nativeQueueTipUnconfirmedAfter, reason, f.enqueues, nativeQueueReasonRejectedRepeatedly)
+	}
 }
 
 // The human label-queued lane has no behind check, so it reads the base tip
