@@ -196,7 +196,8 @@ function repoItemNeedsHuman(item){ return ((item && item.labels) || []).some(l =
 		"overviewCoverageInfo", "overviewCoverageState", "overviewCoverageColor", "overviewCoverageInfoHTML", "overviewCoverageBar", "overviewCoverageCard", "renderOverviewCoverageKPI",
 		"overviewProjectFilterSpec", "repoCardParkedIssues", "overviewRepoTrackedIssueEntries", "overviewRepoTrackedPREntries", "overviewProjectBucketCount",
 		"overviewNonActionableMoved", "overviewProjectOutsideIssueCount", "overviewProjectOutsidePRCount", "overviewProjectFilterMatchesEntry", "overviewProjectFilterRepoMatches",
-		"overviewProjectFilterSummary", "overviewSidebarPill", "overviewSidebarPillLead", "overviewUnlistedCounts", "overviewUnlistedNote", "overviewSyncingNote", "sidebarPairBadgeText", "setSidebarPairBadge", "renderOverviewKPIs",
+		"overviewProjectFilterSummary", "overviewCard", "overviewCardSpecs", "overviewCardMode", "overviewCardGroups", "overviewCardTiles", "overviewCardRows", "overviewCardRepoRemainder",
+		"overviewCardFilterBuckets", "overviewCardTileDefs", "overviewCardKPI", "overviewCardKinds", "overviewCardTermInfo", "overviewCardApplyTiles", "overviewSidebarPill", "overviewSidebarPillLead", "overviewUnlistedCounts", "overviewUnlistedNote", "overviewSyncingNote", "sidebarPairBadgeText", "setSidebarPairBadge", "renderOverviewKPIs",
 	} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')

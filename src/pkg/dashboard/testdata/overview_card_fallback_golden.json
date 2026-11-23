@@ -1,0 +1,158 @@
+{
+ "kpis": "<div class=\"overview-headline sec-headline\" data-collapsed-keep><div class=\"gov-pr-models-toggle window-pills-toolbar overview-window-toolbar\" aria-label=\"Overview KPI history range\" data-stop=\"1\"><button type=\"button\" class=\"active\" data-action=\"setOverviewKPIWindow\" data-arg0=\"24h\" data-stop=\"1\" aria-pressed=\"true\" title=\"Show 24h KPI history\">24h</button><button type=\"button\" class=\"\" data-action=\"setOverviewKPIWindow\" data-arg0=\"7d\" data-stop=\"1\" aria-pressed=\"false\" title=\"Show 7d KPI history\">7d</button></div><div class=\"overview-kpis\" aria-label=\"9 total open issues + 5 total open PRs = 2 actionable now + 2 your turn + 1 waiting on someone else + 2 held + 1 blocked + 4 outside\"><div class=\"overview-kpi\" role=\"button\" tabindex=\"0\" data-action=\"overviewApplyKPIProjectFilter\" data-keydown-action=\"overviewApplyKPIProjectFilter\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"open-issues\" data-arg1=\"9\" data-arg-types=\"s,j\" data-stop=\"1\" aria-label=\"All open GitHub issues (pull requests excluded) across the selected configured repos. Each one counts in exactly one term: your turn, waiting on someone else, held, outside, or actionable. Click to filter Projects to matching issues.\"><span class=\"overview-kpi-value\" data-overview-kpi-key=\"open-issues\" data-overview-kpi-value=\"9\" data-overview-kpi-display=\"9\">9</span><span class=\"overview-kpi-label\">Total open issues</span><span class=\"overview-kpi-subline\">1 actionable + 2 your turn + 1 waiting on someone else + 1 held + 4 outside: 1 exempt · 3 dependency dashboard</span><span class=\"overview-kpi-spark\"><svg data-id=\"overview-kpi:open-issues\"></svg></span></div><span class=\"overview-kpi-operator\" aria-hidden=\"true\">+</span><div class=\"overview-kpi\" role=\"button\" tabindex=\"0\" data-action=\"overviewApplyKPIProjectFilter\" data-keydown-action=\"overviewApplyKPIProjectFilter\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"open-prs\" data-arg1=\"5\" data-arg-types=\"s,j\" data-stop=\"1\" aria-label=\"All open GitHub pull requests across the selected configured repos, including drafts. Each one counts in exactly one term: your turn, waiting on someone else, held, blocked, outside (drafts are outside until ready), or actionable. Click to filter Projects to matching PRs.\"><span class=\"overview-kpi-value\" data-overview-kpi-key=\"open-prs\" data-overview-kpi-value=\"5\" data-overview-kpi-display=\"5\">5</span><span class=\"overview-kpi-label\">Total open PRs</span><span class=\"overview-kpi-subline\">1 actionable + 1 held + 1 blocked + 2 outside</span><span class=\"overview-kpi-spark\"><svg data-id=\"overview-kpi:open-prs\"></svg></span></div><span class=\"overview-kpi-operator\" aria-hidden=\"true\">=</span><div class=\"overview-kpi\" role=\"button\" tabindex=\"0\" data-action=\"overviewApplyKPIProjectFilter\" data-keydown-action=\"overviewApplyKPIProjectFilter\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"actionable-now\" data-arg1=\"2\" data-arg-types=\"s,j\" data-stop=\"1\" aria-label=\"Actionable now: work that can move. Click to filter Projects to this term.\"><span class=\"overview-kpi-value\" data-overview-kpi-key=\"actionable-now\" data-overview-kpi-value=\"2\" data-overview-kpi-display=\"2\">2</span><span class=\"overview-kpi-label\">Actionable now</span><span class=\"overview-kpi-subline\">2 = 1 issues + 1 PRs</span><span class=\"overview-kpi-spark\"><svg data-id=\"overview-kpi:actionable-now\"></svg></span></div><span class=\"overview-kpi-operator\" aria-hidden=\"true\">+</span><div class=\"overview-kpi\" role=\"button\" tabindex=\"0\" data-action=\"overviewApplyKPIProjectFilter\" data-keydown-action=\"overviewApplyKPIProjectFilter\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"your-turn\" data-arg1=\"2\" data-arg-types=\"s,j\" data-stop=\"1\" aria-label=\"2 your turn = 2 issues + 0 PRs. Items Hive is stuck on a person for, including the ones to close. Click to filter Projects.\"><span class=\"overview-kpi-value\" data-overview-kpi-key=\"your-turn\" data-overview-kpi-value=\"2\" data-overview-kpi-display=\"2\">2</span><span class=\"overview-kpi-label\">Your turn</span><span class=\"overview-kpi-subline\">2 = 2 issues + 0 PRs</span><span class=\"overview-kpi-spark\"><svg data-id=\"overview-kpi:your-turn\"></svg></span></div><span class=\"overview-kpi-operator\" aria-hidden=\"true\">+</span><div class=\"overview-kpi\" role=\"button\" tabindex=\"0\" data-action=\"overviewApplyKPIProjectFilter\" data-keydown-action=\"overviewApplyKPIProjectFilter\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"waiting-elsewhere\" data-arg1=\"1\" data-arg-types=\"s,j\" data-stop=\"1\" aria-label=\"1 waiting on someone else = 1 issues + 0 PRs. Gated on a person&#39;s hold or a pause, the adjudicator, a reporter, or an open PR. Click to filter Projects.\"><span class=\"overview-kpi-value\" data-overview-kpi-key=\"waiting-elsewhere\" data-overview-kpi-value=\"1\" data-overview-kpi-display=\"1\">1</span><span class=\"overview-kpi-label\">Waiting on someone else</span><span class=\"overview-kpi-subline\">1 = 1 issues + 0 PRs</span><span class=\"overview-kpi-spark\"><svg data-id=\"overview-kpi:waiting-elsewhere\"></svg></span></div><span class=\"overview-kpi-operator\" aria-hidden=\"true\">+</span><div class=\"overview-kpi\" role=\"button\" tabindex=\"0\" data-action=\"overviewApplyKPIProjectFilter\" data-keydown-action=\"overviewApplyKPIProjectFilter\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"held\" data-arg1=\"2\" data-arg-types=\"s,j\" data-stop=\"1\" aria-label=\"2 held = 1 issues + 1 PRs. Issues and PRs paused by a hold that no earlier term claimed. Click to filter Projects.\"><span class=\"overview-kpi-value\" data-overview-kpi-key=\"held\" data-overview-kpi-value=\"2\" data-overview-kpi-display=\"2\">2</span><span class=\"overview-kpi-label\">Held</span><span class=\"overview-kpi-subline\">2 = 1 issues + 1 PRs</span><span class=\"overview-kpi-spark\"><svg data-id=\"overview-kpi:held\"></svg></span></div><span class=\"overview-kpi-operator\" aria-hidden=\"true\">+</span><div class=\"overview-kpi\" role=\"button\" tabindex=\"0\" data-action=\"overviewApplyKPIProjectFilter\" data-keydown-action=\"overviewApplyKPIProjectFilter\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"blocked\" data-arg1=\"1\" data-arg-types=\"s,j\" data-stop=\"1\" aria-label=\"1 blocked PRs. Pull requests with a blocked verdict, merge conflicts or failing CI. Click to filter Projects.\"><span class=\"overview-kpi-value\" data-overview-kpi-key=\"blocked\" data-overview-kpi-value=\"1\" data-overview-kpi-display=\"1\">1</span><span class=\"overview-kpi-label\">Blocked</span><span class=\"overview-kpi-subline\">1 = 0 issues + 1 PRs</span><span class=\"overview-kpi-spark\"><svg data-id=\"overview-kpi:blocked\"></svg></span></div><span class=\"overview-kpi-operator\" aria-hidden=\"true\">+</span><div class=\"overview-kpi\" role=\"button\" tabindex=\"0\" data-action=\"overviewApplyKPIProjectFilter\" data-keydown-action=\"overviewApplyKPIProjectFilter\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"outside\" data-arg1=\"4\" data-arg-types=\"s,j\" data-stop=\"1\" aria-label=\"4 outside = 4 issues + 2 PRs. Open items excluded before they enter Overview bands by this hive&#39;s scanner settings, and draft PRs. Click to filter Projects.\"><span class=\"overview-kpi-value\" data-overview-kpi-key=\"outside\" data-overview-kpi-value=\"4\" data-overview-kpi-display=\"4\">4</span><span class=\"overview-kpi-label\">Outside<span class=\"config-info overview-term-info\" tabindex=\"0\" data-action=\"gh3\" data-stop=\"1\" aria-describedby=\"overview-kpi-outside-tip\" aria-label=\"outside details\">ⓘ<span id=\"overview-kpi-outside-tip\" class=\"config-tooltip overview-partition-tooltip\" role=\"tooltip\"><span class=\"overview-partition-summary\">Outside: items Hive is configured to leave alone.</span><div class=\"overview-partition-row\"><span class=\"overview-partition-label\">exempt</span><span class=\"overview-partition-count\">1</span></div><div class=\"overview-partition-row\"><span class=\"overview-partition-label\">dependency dashboard</span><span class=\"overview-partition-count\">3</span></div><span class=\"overview-partition-footer\"><span role=\"button\" tabindex=\"0\" class=\"hv-btn btn-secondary btn-sm\" data-action=\"openConfigDialog\" data-keydown-action=\"openConfigDialog\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"governor\" data-arg2=\"Labels\" data-stop=\"1\">Settings → Labels</span><a href=\"https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard.md#outside-buckets\" target=\"_blank\" rel=\"noopener\" data-stop=\"1\">Learn more ↗</a><span class=\"text-muted\">fixed buckets</span></span></span></span></span><span class=\"overview-kpi-subline\">4 = 4 issues + 2 PRs</span><span class=\"overview-kpi-spark\"><svg data-id=\"overview-kpi:outside\"></svg></span></div></div></div>",
+ "pill": "Board pressure (BP): 9 open issues / 5 open PRs — the Hive activity monitor pill counts rows of this same set (every issue, plus each PR not shown under a listed issue), so it can read differently · 9 total open issues + 5 total open PRs = 2 actionable now + 2 your turn + 1 waiting on someone else + 2 held + 1 blocked + 4 outside",
+ "issueSlices": [
+  [
+   "your-turn",
+   "Your turn",
+   1,
+   "overview-issue-your-turn"
+  ],
+  [
+   "to-close",
+   "To close",
+   1,
+   "overview-issue-to-close"
+  ],
+  [
+   "waiting-elsewhere",
+   "Waiting on someone else",
+   1,
+   "overview-issue-waiting-elsewhere"
+  ],
+  [
+   "ready",
+   "Unclaimed",
+   2,
+   "overview-issue-ready"
+  ]
+ ],
+ "prSlices": [
+  [
+   "eligible",
+   "Merge-eligible",
+   2,
+   "overview-pr-eligible"
+  ],
+  [
+   "blocked",
+   "Blocked",
+   1,
+   "overview-pr-blocked"
+  ],
+  [
+   "draft",
+   "Draft",
+   1,
+   "overview-pr-draft"
+  ]
+ ],
+ "issueLegend": "<div class=\"overview-chart-legend-row\" data-action=\"overviewNavigateBand\" data-arg0=\"issues\" data-arg1=\"your-turn\" data-stop=\"1\" title=\"Your turn: Stuck on a person.\"><span class=\"overview-chart-swatch overview-issue-your-turn\"></span><span class=\"overview-chart-legend-label\">Your turn</span><span class=\"overview-chart-legend-count\">1 · 20.0%</span><button type=\"button\" class=\"overview-band-download\" data-action=\"overviewOpenExport\" data-prevent=\"1\" data-stop=\"1\" data-arg0=\"/api/overview/issues.csv?slice=your-turn\" title=\"Export Your turn as CSV\" aria-label=\"Export Your turn as CSV\">⬇</button></div><div class=\"overview-chart-legend-row\" data-action=\"overviewNavigateBand\" data-arg0=\"issues\" data-arg1=\"to-close\" data-stop=\"1\" title=\"To close: Close it.\"><span class=\"overview-chart-swatch overview-issue-to-close\"></span><span class=\"overview-chart-legend-label\">To close</span><span class=\"overview-chart-legend-count\">1 · 20.0%</span><button type=\"button\" class=\"overview-band-download\" data-action=\"overviewOpenExport\" data-prevent=\"1\" data-stop=\"1\" data-arg0=\"/api/overview/issues.csv?slice=to-close\" title=\"Export To close as CSV\" aria-label=\"Export To close as CSV\">⬇</button></div><div class=\"overview-chart-legend-row\" data-action=\"overviewNavigateBand\" data-arg0=\"issues\" data-arg1=\"waiting-elsewhere\" data-stop=\"1\" title=\"Waiting on someone else: Someone else moves.\"><span class=\"overview-chart-swatch overview-issue-waiting-elsewhere\"></span><span class=\"overview-chart-legend-label\">Waiting on someone else</span><span class=\"overview-chart-legend-count\">1 · 20.0%</span><button type=\"button\" class=\"overview-band-download\" data-action=\"overviewOpenExport\" data-prevent=\"1\" data-stop=\"1\" data-arg0=\"/api/overview/issues.csv?slice=waiting-elsewhere\" title=\"Export Waiting on someone else as CSV\" aria-label=\"Export Waiting on someone else as CSV\">⬇</button></div><div class=\"overview-chart-legend-row\" data-action=\"overviewNavigateBand\" data-arg0=\"issues\" data-arg1=\"ready\" data-stop=\"1\" title=\"Unclaimed: Nobody has it.\"><span class=\"overview-chart-swatch overview-issue-ready\"></span><span class=\"overview-chart-legend-label\">Unclaimed</span><span class=\"overview-chart-legend-count\">2 · 40.0%</span><button type=\"button\" class=\"overview-band-download\" data-action=\"overviewOpenExport\" data-prevent=\"1\" data-stop=\"1\" data-arg0=\"/api/overview/issues.csv?slice=ready\" title=\"Export Unclaimed as CSV\" aria-label=\"Export Unclaimed as CSV\">⬇</button></div>",
+ "prLegend": "<div class=\"overview-chart-legend-row\" data-action=\"overviewNavigateBand\" data-arg0=\"prs\" data-arg1=\"eligible\" data-stop=\"1\" title=\"Merge-eligible: Will merge.\"><span class=\"overview-chart-swatch overview-pr-eligible\"></span><span class=\"overview-chart-legend-label\">Merge-eligible</span><span class=\"overview-chart-legend-count\">2 · 50.0%</span><button type=\"button\" class=\"overview-band-download\" data-action=\"overviewOpenExport\" data-prevent=\"1\" data-stop=\"1\" data-arg0=\"/api/overview/prs.csv?slice=eligible\" title=\"Export Merge-eligible as CSV\" aria-label=\"Export Merge-eligible as CSV\">⬇</button></div><div class=\"overview-chart-legend-row\" data-action=\"overviewNavigateBand\" data-arg0=\"prs\" data-arg1=\"blocked\" data-stop=\"1\" title=\"Blocked: Red.\"><span class=\"overview-chart-swatch overview-pr-blocked\"></span><span class=\"overview-chart-legend-label\">Blocked</span><span class=\"overview-chart-legend-count\">1 · 25.0%</span><button type=\"button\" class=\"overview-band-download\" data-action=\"overviewOpenExport\" data-prevent=\"1\" data-stop=\"1\" data-arg0=\"/api/overview/prs.csv?slice=blocked\" title=\"Export Blocked as CSV\" aria-label=\"Export Blocked as CSV\">⬇</button></div><div class=\"overview-chart-legend-row\" data-action=\"overviewNavigateBand\" data-arg0=\"prs\" data-arg1=\"draft\" data-stop=\"1\" title=\"Draft: Not ready.\"><span class=\"overview-chart-swatch overview-pr-draft\"></span><span class=\"overview-chart-legend-label\">Draft</span><span class=\"overview-chart-legend-count\">1 · 25.0%</span><button type=\"button\" class=\"overview-band-download\" data-action=\"overviewOpenExport\" data-prevent=\"1\" data-stop=\"1\" data-arg0=\"/api/overview/prs.csv?slice=draft\" title=\"Export Draft as CSV\" aria-label=\"Export Draft as CSV\">⬇</button></div>",
+ "bar": "<div class=\"overview-hbar\" role=\"img\" aria-label=\"Issues by band\"><span class=\"overview-hbar-label\" title=\"Your turn: 1 — Stuck on a person.\">Your turn</span><span class=\"overview-hbar-track\"><span class=\"overview-hbar-fill overview-issue-your-turn\" style=\"width:50.0%\" title=\"Your turn: 1 — Stuck on a person.\"></span></span><span class=\"overview-hbar-value\" title=\"Your turn: 1 — Stuck on a person.\">1</span><span class=\"overview-hbar-label\" title=\"To close: 1 — Close it.\">To close</span><span class=\"overview-hbar-track\"><span class=\"overview-hbar-fill overview-issue-to-close\" style=\"width:50.0%\" title=\"To close: 1 — Close it.\"></span></span><span class=\"overview-hbar-value\" title=\"To close: 1 — Close it.\">1</span><span class=\"overview-hbar-label\" title=\"Waiting on someone else: 1 — Someone else moves.\">Waiting on someone else</span><span class=\"overview-hbar-track\"><span class=\"overview-hbar-fill overview-issue-waiting-elsewhere\" style=\"width:50.0%\" title=\"Waiting on someone else: 1 — Someone else moves.\"></span></span><span class=\"overview-hbar-value\" title=\"Waiting on someone else: 1 — Someone else moves.\">1</span><span class=\"overview-hbar-label\" title=\"Unclaimed: 2 — Nobody has it.\">Unclaimed</span><span class=\"overview-hbar-track\"><span class=\"overview-hbar-fill overview-issue-ready\" style=\"width:100.0%\" title=\"Unclaimed: 2 — Nobody has it.\"></span></span><span class=\"overview-hbar-value\" title=\"Unclaimed: 2 — Nobody has it.\">2</span></div>",
+ "filters": [
+  [
+   "open-issues",
+   "Total open issues",
+   9,
+   [
+    {
+     "kind": "issue",
+     "count": 5,
+     "reason": "outside buckets",
+     "label": "Open issues outside Overview bands"
+    }
+   ]
+  ],
+  [
+   "open-prs",
+   "Total open PRs",
+   5,
+   [
+    {
+     "kind": "pr",
+     "count": 1,
+     "reason": "outside buckets",
+     "label": "Open PRs outside Overview bands"
+    }
+   ]
+  ],
+  [
+   "actionable-now",
+   "Actionable now",
+   2,
+   []
+  ],
+  [
+   "your-turn",
+   "Your turn",
+   2,
+   [
+    {
+     "kind": "issue",
+     "count": 1,
+     "reason": "no band on the card",
+     "label": "Your turn · issues without a band"
+    }
+   ]
+  ],
+  [
+   "waiting-elsewhere",
+   "Waiting on someone else",
+   1,
+   []
+  ],
+  [
+   "held",
+   "Held",
+   2,
+   []
+  ],
+  [
+   "blocked",
+   "Blocked",
+   1,
+   []
+  ],
+  [
+   "outside",
+   "Outside",
+   6,
+   [
+    {
+     "kind": "issue",
+     "count": 4,
+     "reason": "outside buckets",
+     "label": "Issues outside Overview bands"
+    },
+    {
+     "kind": "pr",
+     "count": 1,
+     "reason": "outside buckets",
+     "label": "PRs outside Overview bands"
+    }
+   ]
+  ]
+ ],
+ "navigation": {
+  "your-turn": "your-turn",
+  "to-close": "your-turn",
+  "waiting-elsewhere": "waiting-elsewhere",
+  "ready": "actionable-now",
+  "eligible": "actionable-now",
+  "blocked": "blocked",
+  "draft": "outside",
+  "held": "actionable-now",
+  "not-work": "actionable-now"
+ },
+ "sample": {
+  "overviewOpenIssues": 9,
+  "overviewOpenPrs": 5,
+  "overviewActionable": 2,
+  "overviewYourTurn": 2,
+  "overviewWaiting": 1,
+  "overviewHeld": 2,
+  "overviewBlocked": 1,
+  "overviewOutside": 4
+ }
+}

@@ -106,11 +106,15 @@ const OVERVIEW_EXPORT_FORMATS = ['csv', 'json'];
 let token = '';
 const localStorage = {getItem: () => token};
 `)
-	for _, name := range []string{"issueBandSpec", "issueBandLabel", "issueBandRule", "issueBandTip", "issueBandRank", "issueUpdatedAt", "issueIsStale", "repoItemNeedsHuman", "yourTurnOf", "yourTurnFirst", "groupedRepoIssues", "prBandSpec", "prBandLabel", "prBandRule", "prBandTip", "prBandRank", "prUpdatedAt", "prCreatedAt", "prReviewClassRank", "prIsStale", "groupedRepoPRs", "overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewSliceSpecs", "overviewIssueBandSlices", "overviewPRBandSlices", "overviewSliceLabel", "overviewExportURL", "esc", "prSignalHTML", "overviewLegendHTML"} {
+	for _, name := range []string{"issueBandSpec", "issueBandLabel", "issueBandRule", "issueBandTip", "issueBandRank", "issueUpdatedAt", "issueIsStale", "repoItemNeedsHuman", "yourTurnOf", "yourTurnFirst", "groupedRepoIssues", "prBandSpec", "prBandLabel", "prBandRule", "prBandTip", "prBandRank", "prUpdatedAt", "prCreatedAt", "prReviewClassRank", "prIsStale", "groupedRepoPRs", "overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewSliceSpecs", "overviewCard", "overviewCardSpecs", "overviewCardMode", "overviewIssueBandSlices", "overviewPRBandSlices", "overviewSliceLabel", "overviewExportURL", "esc", "prSignalHTML", "overviewLegendHTML"} {
 		script.WriteString(jsFunc(t, html, name))
 		script.WriteByte('\n')
 	}
 	script.WriteString(`
+// This pins the chart_slice path the page falls back to when the status
+// carries no Overview card (an older server); the card's own bands are
+// pinned by overview_card_ui_test.go.
+delete window._lastStatus.overview_card;
 for (const [kind, slices] of [['issues', overviewIssueBandSlices(window._lastStatus.repos)], ['prs', overviewPRBandSlices(window._lastStatus.repos)]]) {
  // The chart slices are the server's: same keys, labels, rules and counts.
  const specs = window._lastStatus.overview_slices[kind];

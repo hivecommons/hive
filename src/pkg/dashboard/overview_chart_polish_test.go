@@ -31,6 +31,12 @@ func TestOverviewChartPolish(t *testing.T) {
 		`y="${OVERVIEW_STACK_TOTAL_Y}">${total} total</text>`,
 		".overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-sm);",
 		".overview-chart-legend-count { font-size: var(--fs-sm); font-variant-numeric: tabular-nums;",
+		// The Overview card legend: bold subtotal rows, indented parts, and
+		// dimmed zero bands (group rows never take the zero class).
+		".overview-chart-legend-group { font-weight: 700;",
+		".overview-chart-legend-part { padding-left: calc(var(--sp-1) + var(--sp-7)); }",
+		".overview-chart-legend-zero { opacity: 0.55; }",
+		"if (!head && !count && !s.keep) classes.push('overview-chart-legend-zero');",
 		"OVERVIEW_TRANSITION_DURATION_MS = { fast: 1000, normal: 2000, slow: 3600 }",
 		"rootStyle.setProperty('--overview-transition-' + duration, overviewTransitionDurationMs({ duration }) + 'ms')",
 	} {

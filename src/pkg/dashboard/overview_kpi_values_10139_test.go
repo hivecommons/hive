@@ -108,6 +108,19 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "overviewProjectFilterMatchesEntry") + `
 ` + jsFunc(t, html, "overviewProjectFilterRepoMatches") + `
 ` + jsFunc(t, html, "overviewProjectFilterSummary") + `
+` + jsFunc(t, html, "overviewCard") + `
+` + jsFunc(t, html, "overviewCardSpecs") + `
+` + jsFunc(t, html, "overviewCardMode") + `
+` + jsFunc(t, html, "overviewCardGroups") + `
+` + jsFunc(t, html, "overviewCardTiles") + `
+` + jsFunc(t, html, "overviewCardRows") + `
+` + jsFunc(t, html, "overviewCardRepoRemainder") + `
+` + jsFunc(t, html, "overviewCardFilterBuckets") + `
+` + jsFunc(t, html, "overviewCardTileDefs") + `
+` + jsFunc(t, html, "overviewCardKPI") + `
+` + jsFunc(t, html, "overviewCardKinds") + `
+` + jsFunc(t, html, "overviewCardTermInfo") + `
+` + jsFunc(t, html, "overviewCardApplyTiles") + `
 ` + jsFunc(t, html, "renderOverviewKPIs") + `
 const document = { _els: {}, getElementById(id) { if (!this._els[id]) this._els[id] = { id, hidden: true, textContent: 'BP = 0/0', title: '', attrs: { 'data-zero': '' }, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; } }; return this._els[id]; } };
 ` + jsFunc(t, html, "overviewSidebarPill") + `

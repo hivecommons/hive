@@ -91,6 +91,19 @@
       --band-in-review: #facc15;
       --band-open: #a78bfa;
       --band-draft: #94a3b8;
+      /* Overview card bands the shared band palette above does not cover
+         (the approved card mock-up's palette). */
+      --card-band-unexplained: #e879f9;
+      --card-band-covered-by-pr: #cbd5e1;
+      --card-band-waiting-on-item: #94a3b8;
+      --card-band-human-hold: #7c8a9c;
+      --card-band-reporter-confirm: #5f6d7e;
+      --card-band-bot-rebase: #fca5a5;
+      --card-band-will-merge: #4ade80;
+      --card-band-not-work: #4b5a6b;
+      --card-band-draft: #3b4757;
+      --card-band-held: #c9a27a;
+      --card-band-waiting-group: #a8b3c2;
       --anim-chart-slow: 1200ms;
       --anim-band-grow: 900ms;
       --anim-kpi-count: 800ms;
@@ -196,6 +209,17 @@
       --band-in-review: #a16207;
       --band-open: #6d28d9;
       --band-draft: #475569;
+      --card-band-unexplained: #c026d3;
+      --card-band-covered-by-pr: #334155;
+      --card-band-waiting-on-item: #475569;
+      --card-band-human-hold: #64748b;
+      --card-band-reporter-confirm: #94a3b8;
+      --card-band-bot-rebase: #ef4444;
+      --card-band-will-merge: var(--band-merge-eligible);
+      --card-band-not-work: #a8a29e;
+      --card-band-draft: #d6d3d1;
+      --card-band-held: #a16207;
+      --card-band-waiting-group: #57534e;
       background: var(--bg); color: var(--text);
     }
     body.light-mode .connection { display: none; }
@@ -4001,6 +4025,34 @@
     .overview-pr-in-review { --slice-c: var(--band-in-review); }
     .overview-pr-open { --slice-c: var(--band-open); }
     .overview-pr-draft { --slice-c: var(--band-draft); }
+    /* Overview card legend: a headed group is a bold subtotal row with its
+       bands indented under it; a zero band dims, a group row never does. */
+    .overview-chart-legend-group { font-weight: 700; background: color-mix(in srgb, var(--muted) 10%, transparent); }
+    .overview-chart-legend-part { padding-left: calc(var(--sp-1) + var(--sp-7)); }
+    .overview-chart-legend-zero { opacity: 0.55; }
+    .overview-partition-tooltip .overview-partition-title { display: block; margin-bottom: var(--sp-1); font-weight: 700; }
+    .overview-partition-tooltip .overview-partition-title + .overview-partition-summary { font-weight: 400; white-space: normal; }
+    .overview-partition-tooltip .overview-partition-label .overview-chart-swatch { display: inline-block; vertical-align: middle; margin-right: var(--sp-2); }
+    /* Overview card bands and groups: the approved mock-up's palette, as
+       --card-band-* tokens in base.css (light mode remaps them there). */
+    .overview-card-issue-your-turn, .overview-card-pr-your-turn { --slice-c: var(--band-needs-human); }
+    .overview-card-issue-to-close, .overview-card-pr-to-close { --slice-c: var(--band-confirm-close); }
+    .overview-card-issue-unexplained, .overview-card-pr-unexplained { --slice-c: var(--card-band-unexplained); }
+    .overview-card-issue-covered-by-pr, .overview-card-pr-covered-by-pr { --slice-c: var(--card-band-covered-by-pr); }
+    .overview-card-issue-waiting-on-item, .overview-card-pr-waiting-on-item { --slice-c: var(--card-band-waiting-on-item); }
+    .overview-card-issue-human-hold, .overview-card-pr-human-hold { --slice-c: var(--card-band-human-hold); }
+    .overview-card-issue-reporter-confirm, .overview-card-pr-reporter-confirm { --slice-c: var(--card-band-reporter-confirm); }
+    .overview-card-issue-author-update, .overview-card-pr-author-update { --slice-c: var(--band-blocked); }
+    .overview-card-issue-bot-rebase, .overview-card-pr-bot-rebase { --slice-c: var(--card-band-bot-rebase); }
+    .overview-card-issue-queued, .overview-card-pr-queued { --slice-c: var(--band-unclaimed); }
+    .overview-card-issue-working, .overview-card-pr-working { --slice-c: var(--band-claimed); }
+    .overview-card-issue-will-merge, .overview-card-pr-will-merge { --slice-c: var(--card-band-will-merge); }
+    .overview-card-issue-not-work, .overview-card-pr-not-work { --slice-c: var(--card-band-not-work); }
+    .overview-card-issue-draft, .overview-card-pr-draft { --slice-c: var(--card-band-draft); }
+    .overview-card-issue-held, .overview-card-pr-held { --slice-c: var(--card-band-held); }
+    .overview-card-group-waiting-elsewhere { --slice-c: var(--card-band-waiting-group); }
+    .overview-card-group-blocked { --slice-c: var(--band-blocked); }
+    .overview-card-group-actionable-now { --slice-c: var(--band-unclaimed); }
 
     /* Plan usage gauge: Overview block, one row per provider, fuel dials. */
     .overview-usage-gauge { display: flex; flex-direction: column; gap: var(--sp-3); margin: var(--sp-0) var(--sp-0) var(--sp-4); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
@@ -37664,7 +37716,98 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return Array.isArray(specs) ? specs : [];
     }
 
+    // The Overview card (window._lastStatus.overview_card) sorts every open
+    // issue and PR into one band from what the hive already decided: each row
+    // carries card_band and card_group, the card lists the band specs in plot
+    // order, the groups (one per term tile) and the six tiles with their
+    // breakdowns. An older server sends no card; the chart slices above stand
+    // in, so every caller below checks for the card first.
+    function overviewCard() {
+      const card = (window._lastStatus || {}).overview_card;
+      return card && typeof card === 'object' ? card : null;
+    }
+
+    function overviewCardSpecs(kind) {
+      const specs = (overviewCard() || {})[kind === 'issue' ? 'issues' : 'prs'];
+      return Array.isArray(specs) ? specs : [];
+    }
+
+    function overviewCardGroups() {
+      const groups = (overviewCard() || {}).groups;
+      return Array.isArray(groups) ? groups : [];
+    }
+
+    // The one test for card mode, shared by the slices, the tiles, the
+    // Projects filters, the navigation and the charts: the status carries the
+    // card and the card lists bands. Without it every caller draws today's
+    // card exactly.
+    function overviewCardMode() {
+      return overviewCardSpecs('issue').length > 0 || overviewCardSpecs('pr').length > 0;
+    }
+
+    function overviewCardTiles() {
+      const tiles = (overviewCard() || {}).tiles;
+      return Array.isArray(tiles) ? tiles : [];
+    }
+
+    // A repo's card rows, as [row, held]. Draft PRs the hive sidelines are not
+    // open PR rows; the card still counts them (Draft, in Outside), so their
+    // nonActionablePrs rows are placed too. The server stamps every copy of
+    // an item listed twice (the claim guard's copy of an actionable issue,
+    // an App stale draft on both PR lists) but counts it once, the first copy
+    // in this order winning, so only that copy is returned here.
+    function overviewCardRows(repo, kind) {
+      const all = kind === 'issue'
+        ? [].concat(
+          ((repo && repo.actionableIssues) || []).map(row => [row, false]),
+          ((repo && repo.heldIssues) || []).map(row => [row, true]),
+          ((repo && repo.nonActionableIssues) || []).map(row => [row, false]))
+        : [].concat(
+          ((repo && repo.openPrs) || []).map(row => [row, false]),
+          ((repo && repo.heldPrs) || []).map(row => [row, true]),
+          ((repo && repo.nonActionablePrs) || []).map(row => [row, false]));
+      const seen = new Set();
+      return all.filter(([row]) => {
+        if (!row || !row.card_band) return false;
+        const number = Number(row.number);
+        if (seen.has(number)) return false;
+        seen.add(number);
+        return true;
+      });
+    }
+
+    function overviewCardBandSlices(kind, repos, specs) {
+      const items = new Map(specs.map(spec => [spec.key, []]));
+      const field = kind === 'issue' ? 'issue' : 'pr';
+      (repos || []).forEach(r => {
+        const repo = overviewRepoName(r);
+        overviewCardRows(r, kind).forEach(([row, held]) => {
+          const list = items.get(row && row.card_band);
+          if (!list) return;
+          list.push(Object.assign({}, row || {}, {
+            item: row,
+            [field]: row,
+            repo,
+            held,
+            info: row,
+            updated_at: (row && row.updated_at) || '',
+            created_at: (row && row.created_at) || '',
+            number: row && row.number
+          }));
+        });
+      });
+      const raw = entry => entry.item || entry[field] || entry;
+      const order = kind === 'issue'
+        ? (a, b) => issueUpdatedAt(raw(a)) - issueUpdatedAt(raw(b)) || Number(raw(a).number || 0) - Number(raw(b).number || 0)
+        : (a, b) => prUpdatedAt(raw(a)) - prUpdatedAt(raw(b)) || prReviewClassRank(raw(a)) - prReviewClassRank(raw(b)) || prCreatedAt(raw(a)) - prCreatedAt(raw(b)) || Number(raw(a).number || 0) - Number(raw(b).number || 0);
+      return specs.map(spec => {
+        const sorted = items.get(spec.key).sort(order);
+        return { key: spec.key, label: spec.label, rule: spec.rule, group: spec.group, keep: !!spec.keep, hideZero: !!spec.hide_zero, card: true, count: sorted.length, className: 'overview-card-' + kind + '-' + spec.key, items: sorted };
+      });
+    }
+
     function overviewIssueBandSlices(repos) {
+      if (overviewCardMode()) return overviewCardBandSlices('issue', repos, overviewCardSpecs('issue'));
       const specs = overviewSliceSpecs('issue');
       const items = new Map(specs.map(spec => [spec.key, []]));
       (repos || []).forEach(r => {
@@ -37694,6 +37837,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function overviewPRBandSlices(repos) {
+      if (overviewCardMode()) return overviewCardBandSlices('pr', repos, overviewCardSpecs('pr'));
       const specs = overviewSliceSpecs('pr');
       const items = new Map(specs.map(spec => [spec.key, []]));
       (repos || []).forEach(r => {
@@ -37722,8 +37866,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // Each Overview tile filters the Projects cards to the rows the server
-    // stamped with that equation term (overview_term); the browser never
-    // re-derives a term from labels or bands.
+    // stamped with that equation term (overview_term), or with the card group
+    // (card_group) when the status carries the Overview card; a term tile's
+    // key is its card group. The browser never re-derives a term from labels
+    // or bands.
     const OVERVIEW_PROJECT_FILTERS = {
       'open-issues': { label: 'Total open issues', kinds: ['issue'], bucketKind: 'issues' },
       'open-prs': { label: 'Total open PRs', kinds: ['pr'], bucketKind: 'prs' },
@@ -37738,7 +37884,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     let _overviewProjectFilterCount = null;
 
     function overviewProjectFilterSpec(key) {
-      return OVERVIEW_PROJECT_FILTERS[String(key || '')] || null;
+      const spec = OVERVIEW_PROJECT_FILTERS[String(key || '')] || null;
+      // With the card the actionable tile is "Hive has it"; its filter chip says so.
+      if (spec && spec.term === 'actionable' && overviewCardMode()) return Object.assign({}, spec, { label: 'Hive has it' });
+      return spec;
     }
 
     function overviewProjectFilterKeyFromURL() {
@@ -37808,8 +37957,40 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function overviewProjectFilterMatchesEntry(entry, filter) {
       if (!filter) return true;
       if (filter.kinds && !filter.kinds.includes(entry.kind)) return false;
+      if (filter.term && overviewCardMode()) return String((entry.item && entry.item.card_group) || '') === (filter.group || filter.key);
       if (filter.term) return String((entry.item && entry.item.overview_term) || '') === filter.term;
       return true;
+    }
+
+    // Card rows a repo has (card_band set) and the part of its displayed
+    // open count that no row stands for: items a source counted but could not
+    // list, and sidelined PRs that are not drafts. That remainder is in
+    // Outside, like the server's overview_card.remainder.
+    function overviewCardRepoRemainder(repo) {
+      const shown = overviewRepoForgeTotals([repo]);
+      const rows = kind => overviewCardRows(repo, kind).filter(([row]) => row && row.card_band).length;
+      return { issues: Math.max(0, Number(shown.issues.forge || 0) - rows('issue')), prs: Math.max(0, Number(shown.prs.forge || 0) - rows('pr')) };
+    }
+
+    // With the card, a tile's Projects filter counts exactly what the tile
+    // counts for this repo: the matching rows listed above, the card rows a
+    // Projects card does not list (non-actionable issues without a band,
+    // sidelined drafts) and, for Outside, the remainder.
+    function overviewCardFilterBuckets(repo, filter, issueEntries, prEntries) {
+      const group = filter.group || filter.key;
+      const listed = new Set(issueEntries.concat(prEntries).map(entry => entry.item));
+      const unlisted = kind => overviewCardRows(repo, kind).filter(([row]) => row && row.card_group === group && !listed.has(row)).length;
+      const buckets = [];
+      const issues = filter.kinds.includes('issue') ? unlisted('issue') : 0;
+      const prs = filter.kinds.includes('pr') ? unlisted('pr') : 0;
+      if (issues) buckets.push({ kind: 'issue', count: issues, reason: 'the Overview counts it; this repo card does not list it as a row', label: filter.label + ' · issues not listed here' });
+      if (prs) buckets.push({ kind: 'pr', count: prs, reason: 'the Overview counts it; this repo card does not list it as a row', label: filter.label + ' · PRs not listed here' });
+      if (group === 'outside') {
+        const rest = overviewCardRepoRemainder(repo);
+        if (rest.issues) buckets.push({ kind: 'issue', count: rest.issues, reason: 'open on GitHub, not listed by the scanner', label: 'Issues counted but not listed' });
+        if (rest.prs) buckets.push({ kind: 'pr', count: rest.prs, reason: 'open on GitHub, not listed by the scanner', label: 'PRs counted but not listed' });
+      }
+      return buckets;
     }
 
     function overviewProjectFilterRepoMatches(repo, filter) {
@@ -37817,6 +37998,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!filter) return { issues: overviewRepoTrackedIssueEntries(repo), prs: overviewRepoTrackedPREntries(repo), buckets: [], count: 0 };
       const issueEntries = overviewRepoTrackedIssueEntries(repo).filter(entry => overviewProjectFilterMatchesEntry(entry, filter));
       const prEntries = overviewRepoTrackedPREntries(repo).filter(entry => overviewProjectFilterMatchesEntry(entry, filter));
+      if (filter.term && overviewCardMode()) {
+        const cardBuckets = overviewCardFilterBuckets(repo, filter, issueEntries, prEntries);
+        return { issues: issueEntries, prs: prEntries, buckets: cardBuckets, count: issueEntries.length + prEntries.length + cardBuckets.reduce((n, b) => n + Number(b.count || 0), 0) };
+      }
       const buckets = [];
       if (filter.key === 'open-issues') {
         const missing = Math.max(0, Number(overviewRepoOpenIssueCount(repo) || 0) - issueEntries.length);
@@ -37909,6 +38094,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // key is a card band by default; by='slice' names a chart slice instead,
     // so a slice's export link returns exactly the rows the slice counts.
+    // by='card_band' or 'card_group' names an Overview card band or group the
+    // same way.
     function overviewExportURL(kind, key, by) {
       let format = 'csv';
       try {
@@ -37917,7 +38104,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       } catch {}
       const path = '/api/overview/' + (kind === 'pr' || kind === 'prs' ? 'prs' : 'issues') + '.' + format;
       const params = new URLSearchParams();
-      if (key) params.set(by === 'slice' ? 'slice' : 'band', key);
+      if (key) params.set(['slice', 'card_band', 'card_group'].includes(by) ? by : 'band', key);
       const repos = typeof _overviewLastRepos !== 'undefined' ? _overviewLastRepos : [];
       const selected = overviewSelectedRepoNames(repos);
       const all = overviewAllRepoNames(repos);
@@ -37981,9 +38168,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const text = percent >= OVERVIEW_CHART_LABEL_MIN_PERCENT
           ? `<text class="overview-chart-label" text-anchor="${point.anchor}" x="${point.x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${point.y.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}">${esc(overviewSliceLabel(s.count, percentLabel, state))}</text>`
           : '';
-        return `<circle class="overview-chart-slice ${esc(s.className)}" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${OVERVIEW_CHART_RADIUS}" pathLength="${OVERVIEW_CHART_FULL}" stroke-width="${OVERVIEW_CHART_STROKE}" stroke-dasharray="${percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)} ${OVERVIEW_CHART_FULL}" stroke-dashoffset="${dashOffset.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" transform="rotate(${OVERVIEW_CHART_START_ANGLE} ${OVERVIEW_CHART_CENTER} ${OVERVIEW_CHART_CENTER})"><title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title></circle>${text}`;
+        return `<circle class="overview-chart-slice ${esc(s.className)}" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${OVERVIEW_CHART_RADIUS}" pathLength="${OVERVIEW_CHART_FULL}" stroke-width="${OVERVIEW_CHART_STROKE}" stroke-dasharray="${percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)} ${OVERVIEW_CHART_FULL}" stroke-dashoffset="${dashOffset.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" transform="rotate(${OVERVIEW_CHART_START_ANGLE} ${OVERVIEW_CHART_CENTER} ${OVERVIEW_CHART_CENTER})">${s.card ? `<title>${esc(overviewCardRuleTip(s.label + ' (' + s.count + ')', s.rule))}</title>` : `<title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title>`}</circle>${text}`;
       }).join('');
-      const legendHtml = visible.map(s => {
+      const legendHtml = (slices || []).some(s => s && s.card) ? overviewCardLegendHTML(slices, '', state) : visible.map(s => {
         const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
         return `<div class="overview-chart-legend-row" data-action="overviewNavigateBand" data-arg0="" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(s.count, percentLabel, state))}</span></div>`;
@@ -38296,9 +38483,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return enabled.length ? enabled : ['donut'];
     }
 
+    // Card bands are sampled under "card:<band>", so the line chart never
+    // joins a chart slice's history to a card band of the same key.
     function overviewHistoryCounts(slices) {
       const counts = {};
-      (slices || []).forEach(s => { counts[s.key] = s.count || 0; });
+      (slices || []).forEach(s => { counts[s.card ? 'card:' + s.key : s.key] = s.count || 0; });
       return counts;
     }
 
@@ -38329,7 +38518,70 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       });
     }
 
+    // A rule in a tooltip reads as one sentence after its label:
+    // "Waiting on another item: another issue or PR must finish first."
+    function overviewCardRuleTip(label, rule) {
+      const text = String(rule || '').trim();
+      if (!text) return String(label || '');
+      // Lower-case only an ordinary first word ("Another" but not "PR" or
+      // "GitHub").
+      const lead = /^[A-Z][a-z]*\b/.test(text) && !/^[A-Z][a-z]*[A-Z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+      return String(label || '') + ': ' + lead;
+    }
+
+    // The card legend in plot order. A headed group (Waiting on someone else,
+    // Blocked, Hive has it) is one bold subtotal row with its bands indented
+    // under it; the other bands are plain rows. The groups come from
+    // overview_card.groups; a band whose group is not headed stays plain.
+    function overviewCardLegendRows(slices) {
+      const groups = new Map(overviewCardGroups().map(g => [g.key, g]));
+      const headed = key => {
+        const g = groups.get(key);
+        return g ? !!g.headed : ['waiting-elsewhere', 'blocked', 'actionable-now'].includes(key);
+      };
+      const rows = [];
+      const done = new Set();
+      (slices || []).forEach(s => {
+        if (!headed(s.group)) { rows.push({ type: 'plain', slice: s }); return; }
+        if (done.has(s.group)) return;
+        done.add(s.group);
+        const parts = slices.filter(p => p.group === s.group);
+        const g = groups.get(s.group) || {};
+        rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: parts.reduce((n, p) => n + Number(p.count || 0), 0), className: 'overview-card-group-' + s.group });
+        parts.forEach(p => rows.push({ type: 'part', slice: p }));
+      });
+      return rows;
+    }
+
+    // Every band and group row keeps its download button and its plain-words
+    // rule as the tooltip. Zero bands stay listed but dimmed, except the keep
+    // bands (Queued for agents, Unexplained), which stay at full strength, and
+    // Held, which is hidden at zero; a group row never dims. Clicks go through
+    // data-action (the dashboard CSP forbids inline handlers).
+    function overviewCardLegendHTML(slices, kind, state) {
+      const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      if (!total) return '<div class="overview-empty">Nothing open here; the hive is caught up</div>';
+      const format = ((state && state.exportFormat) || 'csv').toUpperCase();
+      return overviewCardLegendRows(slices).map(row => {
+        const head = row.type === 'head';
+        const s = head ? row : row.slice;
+        const count = Number(s.count || 0);
+        if (!head && !count && s.hideZero) return '';
+        const percent = (count / total) * OVERVIEW_CHART_PERCENT_SCALE;
+        const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
+        const classes = ['overview-chart-legend-row'];
+        if (head) classes.push('overview-chart-legend-group');
+        if (row.type === 'part') classes.push('overview-chart-legend-part');
+        if (!head && !count && !s.keep) classes.push('overview-chart-legend-zero');
+        const by = head ? 'card_group' : 'card_band';
+        const what = head ? s.label + ' (all)' : s.label;
+        const download = kind ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key, by))}" title="Export ${esc(what)} as ${format}" aria-label="Export ${esc(what)} as ${format}">⬇</button>` : '';
+        return `<div class="${classes.join(' ')}" data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(overviewCardRuleTip(s.label, s.rule))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
+      }).join('');
+    }
+
     function overviewLegendHTML(slices, kind, state) {
+      if ((slices || []).some(s => s && s.card)) return overviewCardLegendHTML(slices, kind, state);
       const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       const visible = (slices || []).filter(s => s.count > 0);
       if (!total) return '<div class="overview-empty">Nothing actionable — the hive is caught up</div>';
@@ -38361,7 +38613,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const dashOffset = -offset;
         offset += percent;
-        return `<circle class="overview-chart-slice ${esc(s.className)}" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${radius}" pathLength="${OVERVIEW_CHART_FULL}" stroke-width="${strokeWidth}" stroke-dasharray="${percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)} ${OVERVIEW_CHART_FULL}" stroke-dashoffset="${dashOffset.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" transform="rotate(${OVERVIEW_CHART_START_ANGLE} ${OVERVIEW_CHART_CENTER} ${OVERVIEW_CHART_CENTER})"><title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title></circle>`;
+        return `<circle class="overview-chart-slice ${esc(s.className)}" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${radius}" pathLength="${OVERVIEW_CHART_FULL}" stroke-width="${strokeWidth}" stroke-dasharray="${percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)} ${OVERVIEW_CHART_FULL}" stroke-dashoffset="${dashOffset.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" transform="rotate(${OVERVIEW_CHART_START_ANGLE} ${OVERVIEW_CHART_CENTER} ${OVERVIEW_CHART_CENTER})">${s.card ? `<title>${esc(overviewCardRuleTip(s.label + ' (' + s.count + ')', s.rule))}</title>` : `<title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title>`}</circle>`;
       }).join('');
       return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_CHART_VIEWBOX} ${OVERVIEW_CHART_VIEWBOX}" role="img" aria-label="${esc(title)}"><circle class="overview-chart-track" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${radius}" stroke-width="${strokeWidth}"></circle>${sliceHtml}<text class="overview-chart-total" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_VALUE_Y_OFFSET}">${total}</text><text class="overview-chart-total-caption" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_CAPTION_Y_OFFSET}">total</text></svg>`;
     }
@@ -38375,9 +38627,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderOverviewBar(title, subtitle, slices) {
+      // A card band hidden at zero (Held) is hidden here too, as in the legend.
+      slices = (slices || []).filter(s => !(s && s.hideZero && !s.count));
       const max = Math.max(1, ...(slices || []).map(s => s.count || 0));
       const rows = (slices || []).map(s => {
-        const tooltip = s.label + ': ' + s.count + (s.rule ? ' — ' + s.rule : '');
+        const tooltip = s.card ? overviewCardRuleTip(s.label + ' (' + s.count + ')', s.rule) : s.label + ': ' + s.count + (s.rule ? ' — ' + s.rule : '');
         const percent = s.count ? Math.max(OVERVIEW_BAR_MIN_PERCENT, (s.count / max) * OVERVIEW_CHART_PERCENT_SCALE) : 0;
         return overviewHBarRow(s.label, tooltip, [{ className: s.className, percent, tooltip }], s.count);
       }).join('');
@@ -38391,7 +38645,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let x = OVERVIEW_STACK_X;
       const bars = visible.map((s, idx) => {
         const w = (s.count / total) * OVERVIEW_STACK_BAR_W;
-        const out = `<rect class="overview-chart-fill overview-stack-segment overview-stagger-${idx} ${esc(s.className)}" x="${x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${OVERVIEW_STACK_Y}" width="${w.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" height="${OVERVIEW_STACK_BAR_H}" rx="3"><title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title></rect>`;
+        const out = `<rect class="overview-chart-fill overview-stack-segment overview-stagger-${idx} ${esc(s.className)}" x="${x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${OVERVIEW_STACK_Y}" width="${w.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" height="${OVERVIEW_STACK_BAR_H}" rx="3">${s.card ? `<title>${esc(overviewCardRuleTip(s.label + ' (' + s.count + ')', s.rule))}</title>` : `<title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title>`}</rect>`;
         x += w;
         return out;
       }).join('');
@@ -38399,17 +38653,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderOverviewLine(title, subtitle, slices, history) {
-      const samples = Array.isArray(history) ? history : [];
+      // With the card, only card samples are drawn and each band reads its
+      // own "card:<band>" history key; Held at zero is hidden.
+      const card = (slices || []).some(s => s && s.card);
+      const hk = s => (s.card ? 'card:' + s.key : s.key);
+      if (card) slices = slices.filter(s => !(s.hideZero && !s.count));
+      const samples = (Array.isArray(history) ? history : []).filter(sample => !card || Object.keys((sample && sample.counts) || {}).some(k => k.startsWith('card:')));
       if (samples.length < 2) return renderOverviewBar(title, subtitle, slices);
-      const max = Math.max(1, ...samples.flatMap(sample => (slices || []).map(s => Number((sample.counts || {})[s.key] || 0))));
+      const max = Math.max(1, ...samples.flatMap(sample => (slices || []).map(s => Number((sample.counts || {})[hk(s)] || 0))));
       const denom = Math.max(1, samples.length - 1);
       const lines = (slices || []).map((s, idx) => {
         const points = samples.map((sample, idx) => {
           const x = OVERVIEW_LINE_PAD + idx * ((OVERVIEW_LINE_W - OVERVIEW_LINE_PAD * 2) / denom);
-          const y = OVERVIEW_LINE_H - OVERVIEW_LINE_PAD - (Number((sample.counts || {})[s.key] || 0) / max) * (OVERVIEW_LINE_H - OVERVIEW_LINE_PAD * 2);
+          const y = OVERVIEW_LINE_H - OVERVIEW_LINE_PAD - (Number((sample.counts || {})[hk(s)] || 0) / max) * (OVERVIEW_LINE_H - OVERVIEW_LINE_PAD * 2);
           return x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + ',' + y.toFixed(OVERVIEW_CHART_DECIMAL_PLACES);
         }).join(' ');
-        return `<polyline class="overview-chart-line overview-line-draw overview-stagger-${idx} ${esc(s.className)}" pathLength="100" points="${points}"><title>${esc(s.label)}${s.rule ? ' — ' + esc(s.rule) : ''}</title></polyline>`;
+        return `<polyline class="overview-chart-line overview-line-draw overview-stagger-${idx} ${esc(s.className)}" pathLength="100" points="${points}"><title>${esc(s.card ? overviewCardRuleTip(s.label, s.rule) : s.label + (s.rule ? ' — ' + s.rule : ''))}</title></polyline>`;
       }).join('');
       return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_LINE_W} ${OVERVIEW_LINE_H}" role="img" aria-label="${esc(title)}">${lines}</svg>`;
     }
@@ -38433,7 +38692,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const fills = row.bySlice.filter(x => x.count > 0).map(xr => ({
           className: xr.slice.className,
           percent: (xr.count / max) * OVERVIEW_CHART_PERCENT_SCALE,
-          tooltip: row.bucket.label + ' · ' + xr.slice.label + ': ' + xr.count + (xr.slice.rule ? ' — ' + xr.slice.rule : '')
+          tooltip: xr.slice.card ? overviewCardRuleTip(row.bucket.label + ' · ' + xr.slice.label + ' (' + xr.count + ')', xr.slice.rule) : row.bucket.label + ' · ' + xr.slice.label + ': ' + xr.count + (xr.slice.rule ? ' — ' + xr.slice.rule : '')
         }));
         return overviewHBarRow(row.bucket.label, row.bucket.label + ': ' + row.total, fills, row.total);
       }).join('');
@@ -38633,6 +38892,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           return 'Waiting on someone else: gated on a person\'s hold, a pause, the adjudicator, a reporter or an open PR.';
         case 'blocked':
           return 'Blocked: pull requests with a blocked verdict, merge conflicts or failing CI.';
+        case 'actionable':
+          return 'Hive has it: the hive moves these on its own.';
         case 'waiting-on-reporter':
           return 'Waiting on reporter: issues labeled needs-reporter-confirmation (search label:needs-reporter-confirmation).';
         default:
@@ -38674,10 +38935,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const hasCount = row && Object.prototype.hasOwnProperty.call(row, 'count') && Number.isFinite(Number(row.count));
       const value = hasCount ? esc(String(Number(row.count))) : esc(overviewPartitionGloss(row));
       const zero = hasCount && Number(row.count) === 0 ? ' muted' : '';
+      if (row && row.card) {
+        // An Overview card row: its band's swatch, and its rule on hover. A
+        // keep band at zero stays at full strength, as in the legend.
+        const dim = hasCount && Number(row.count) === 0 && !row.keep ? ' muted' : '';
+        const title = row.rule ? ` title="${esc(row.rule)}"` : '';
+        const swatch = row.swatch ? `<span class="overview-chart-swatch ${esc(row.swatch)}"></span>` : '';
+        return `<div class="overview-partition-row${dim}"${title}><span class="overview-partition-label">${swatch}${esc(row.label || row.key || 'other')}</span><span class="overview-partition-count">${value}</span></div>`;
+      }
       return `<div class="overview-partition-row${zero}"><span class="overview-partition-label">${esc(row?.label || row?.key || 'other')}</span><span class="overview-partition-count">${value}</span></div>`;
     }
 
     function overviewPartitionTooltip(term, context) {
+      if (term && term.card) {
+        // An Overview card tile: its name and count, its rule as the summary
+        // (Your turn adds the not-in-the-inbox sentence), then its bands.
+        const summary = [term.rule || overviewPartitionSummaryLine(term), term.note || ''].filter(Boolean).join(' ');
+        const rows = (Array.isArray(term.breakdown) ? term.breakdown : []).map(overviewPartitionRowHTML).join('');
+        const links = Array.isArray(term.links) ? term.links : [];
+        const footerParts = [overviewPartitionSettingsButton(overviewPartitionPreferredSettings(links)), overviewPartitionDocsLink(overviewPartitionPreferredDocs(term, links))].filter(Boolean).join('');
+        const footer = footerParts ? `<span class="overview-partition-footer">${footerParts}</span>` : '';
+        return `<span id="${esc(context)}-tip" class="config-tooltip overview-partition-tooltip" role="tooltip"><span class="overview-partition-title">${esc((term.label || term.key) + ' · ' + Number(term.count || 0))}</span><span class="overview-partition-summary">${esc(summary)}</span>${rows}${footer}</span>`;
+      }
       const MAX_TOOLTIP_ROWS = 8;
       const rows = Array.isArray(term?.breakdown) ? term.breakdown : [];
       const orderedRows = rows.slice().sort((a, b) => {
@@ -38784,7 +39063,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return Number.isFinite(t) ? new Date(t).toISOString() : String(ts || '');
     }
 
-    function renderOverviewTotalPartitionSubline(equation) {
+    // With the Overview card (card = { kind, counts by term }) the total
+    // tiles read "54 your turn · 2 waiting · 7 blocked · 2 hive has it · 4
+    // outside": blocked on PRs only, held only above zero.
+    function renderOverviewTotalPartitionSubline(equation, card) {
+      if (card && card.counts) {
+        const n = key => Number(card.counts[key] || 0);
+        const parts = [[n('your_turn'), 'your turn'], [n('waiting_elsewhere'), 'waiting']];
+        if (n('held') > 0) parts.push([n('held'), 'held']);
+        if (card.kind === 'prs') parts.push([n('blocked'), 'blocked']);
+        parts.push([n('actionable'), 'hive has it'], [n('outside'), 'outside']);
+        return parts.map(([count, label]) => `${esc(String(count))} ${esc(label)}`).join(' · ');
+      }
       if (!equation) return '';
       const count = key => overviewEquationTermCount(equation, key);
       const parts = [`${esc(String(Number(equation.result || 0)))} actionable`];
@@ -38871,9 +39161,157 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { issueEq, prEq };
     }
 
+    // The six term tiles in tile order: the key (also the card group and the
+    // Projects filter), the equation term, the label and the sparkline
+    // field. Card samples use their own history fields, so a sample of
+    // today's equation never draws into a card tile's sparkline.
+    function overviewCardTileDefs() {
+      return [
+        { key: 'your-turn', term: 'your_turn', label: 'Your turn', field: 'overviewCardYourTurn' },
+        { key: 'waiting-elsewhere', term: 'waiting_elsewhere', label: 'Waiting on someone else', field: 'overviewCardWaiting' },
+        { key: 'held', term: 'held', label: 'Held', field: 'overviewCardHeld' },
+        { key: 'blocked', term: 'blocked', label: 'Blocked', field: 'overviewCardBlocked' },
+        { key: 'actionable-now', term: 'actionable', label: 'Hive has it', field: 'overviewCardActionable' },
+        { key: 'outside', term: 'outside', label: 'Outside', field: 'overviewCardOutside' }
+      ];
+    }
+
+    // The card tiles for the repos selected in the Overview. With every repo
+    // selected they are the server's overview_card.tiles. For a subset they
+    // are counted here the same way: each row's card_group and card_band,
+    // plus each repo's remainder in Outside (the twin of
+    // overviewKPILocalEquations).
+    function overviewCardKPI(repos) {
+      const card = overviewCard();
+      if (!card) return null;
+      const kinds = v => ({ issues: Number((v && v.issues) || 0), prs: Number((v && v.prs) || 0) });
+      const issueSpecs = overviewCardSpecs('issue');
+      const prSpecs = overviewCardSpecs('pr');
+      const both = new Set(issueSpecs.map(spec => spec.key).filter(key => prSpecs.some(spec => spec.key === key)));
+      const serverTiles = new Map(overviewCardTiles().map(tile => [tile.key, tile]));
+      if (_overviewKPILocalScope === 'all' && serverTiles.size) {
+        const tiles = overviewCardTileDefs().map(def => {
+          const tile = serverTiles.get(def.key) || {};
+          return Object.assign({}, def, { label: tile.label || def.label, rule: tile.rule || '', count: Number(tile.count || 0), issues: Number(tile.issues || 0), prs: Number(tile.prs || 0), breakdown: Array.isArray(tile.breakdown) ? tile.breakdown : [] });
+        });
+        return { tiles, both, notInInbox: kinds(card.your_turn_not_in_inbox), unexplained: kinds(card.unexplained), remainder: kinds(card.remainder) };
+      }
+      const groups = { issues: {}, prs: {} };
+      const bands = { issues: {}, prs: {} };
+      const notInInbox = { issues: 0, prs: 0 };
+      const unexplained = { issues: 0, prs: 0 };
+      const remainder = { issues: 0, prs: 0 };
+      (repos || []).forEach(r => {
+        [['issue', 'issues'], ['pr', 'prs']].forEach(([kind, k]) => {
+          overviewCardRows(r, kind).forEach(([row]) => {
+            if (!row || !row.card_band) return;
+            groups[k][row.card_group] = (groups[k][row.card_group] || 0) + 1;
+            bands[k][row.card_band] = (bands[k][row.card_band] || 0) + 1;
+            if ((row.card_band === 'your-turn' || row.card_band === 'to-close') && !(row.ownership && row.ownership.your_turn)) notInInbox[k]++;
+            if (row.card_band === 'unexplained') unexplained[k]++;
+          });
+        });
+        const rest = overviewCardRepoRemainder(r);
+        remainder.issues += rest.issues;
+        remainder.prs += rest.prs;
+      });
+      const specs = issueSpecs.concat(prSpecs.filter(spec => !both.has(spec.key)));
+      const tiles = overviewCardTileDefs().map(def => {
+        const tile = serverTiles.get(def.key) || {};
+        const extra = def.key === 'outside' ? remainder : { issues: 0, prs: 0 };
+        const issues = Number(groups.issues[def.key] || 0) + extra.issues;
+        const prs = Number(groups.prs[def.key] || 0) + extra.prs;
+        const breakdown = specs.filter(spec => spec.group === def.key).map(spec => {
+          const bi = Number(bands.issues[spec.key] || 0), bp = Number(bands.prs[spec.key] || 0);
+          return { key: spec.key, label: spec.label, rule: spec.rule, keep: !!spec.keep, count: bi + bp, issues: bi, prs: bp };
+        });
+        return Object.assign({}, def, { label: tile.label || def.label, rule: tile.rule || '', count: issues + prs, issues, prs, breakdown });
+      });
+      return { tiles, both, notInInbox, unexplained, remainder };
+    }
+
+    function overviewCardKinds(issues, prs) {
+      const i = Number(issues || 0), p = Number(prs || 0);
+      return `${i} ${i === 1 ? 'issue' : 'issues'}, ${p} ${p === 1 ? 'PR' : 'PRs'}`;
+    }
+
+    // A tile's ⓘ: its bands with counts. Zero bands are left out except the
+    // keep bands (Queued for agents, Unexplained). A band on both donuts is one
+    // row, "Human placed on hold (2 issues, 2 PRs)" (a kept band at zero is
+    // just its name). Outside adds the
+    // remainder; Your turn says how many of its items the inbox does not show.
+    function overviewCardTermInfo(tile, kpi) {
+      const issueSpecs = new Map(overviewCardSpecs('issue').map(spec => [spec.key, spec]));
+      const prSpecs = new Map(overviewCardSpecs('pr').map(spec => [spec.key, spec]));
+      // Unexplained is listed in Your turn only when it is above zero; the
+      // legend keeps it at zero as a keep band.
+      const shown = row => Number(row.count || 0) > 0 || (row.keep && row.key !== 'unexplained');
+      const rows = (tile.breakdown || []).filter(shown).map(row => {
+        const count = Number(row.count || 0);
+        const both = kpi.both.has(row.key) && count > 0;
+        const issueRule = (issueSpecs.get(row.key) || {}).rule || '';
+        const prRule = (prSpecs.get(row.key) || {}).rule || '';
+        // A row that combines issues and PRs names both rules when they differ.
+        const rule = both && Number(row.issues || 0) > 0 && Number(row.prs || 0) > 0 && issueRule && prRule && issueRule !== prRule
+          ? `Issues: ${issueRule} PRs: ${prRule}`
+          : (row.rule || issueRule || prRule);
+        const kind = issueSpecs.has(row.key) && (Number(row.issues || 0) > 0 || !prSpecs.has(row.key)) ? 'issue' : 'pr';
+        return {
+          key: row.key,
+          label: both ? `${row.label} (${overviewCardKinds(row.issues, row.prs)})` : row.label,
+          count,
+          rule,
+          keep: !!row.keep,
+          card: true,
+          swatch: 'overview-card-' + kind + '-' + row.key
+        };
+      });
+      const rest = Number(kpi.remainder.issues || 0) + Number(kpi.remainder.prs || 0);
+      if (tile.key === 'outside' && rest > 0) rows.push({ key: 'remainder', label: `Open but not listed (${overviewCardKinds(kpi.remainder.issues, kpi.remainder.prs)})`, count: rest, rule: 'Open on GitHub but not listed by the scanner, or a PR the hive sidelines that is not a draft.', card: true, swatch: 'overview-card-issue-not-work' });
+      const hidden = Number(kpi.notInInbox.issues || 0) + Number(kpi.notInInbox.prs || 0);
+      const note = tile.key === 'your-turn' && hidden > 0 ? `Includes ${hidden} the hive holds for a person that ${hidden === 1 ? 'is' : 'are'} not in the inbox.` : '';
+      // Outside keeps the server equation's Settings and Learn more links:
+      // which settings keep items off the queue does not change with the card.
+      const outsideTerm = tile.key === 'outside' ? ((window._lastStatus?.actionableNow?.equation?.terms || []).find(t => t && t.key === 'outside') || {}) : null;
+      const links = outsideTerm ? (Array.isArray(outsideTerm.breakdown) ? outsideTerm.breakdown : []) : [];
+      return { key: tile.term, label: tile.label, count: Number(tile.count || 0), rule: tile.rule || '', note, card: true, breakdown: rows, links, docsHref: outsideTerm ? (outsideTerm.docsHref || '/docs/dashboard-sections/overview-and-metrics.md#overview') : '' };
+    }
+
+    // Card mode for the tiles renderOverviewKPIs built: the term tiles take
+    // the card's sparkline fields, plain-words tips and an ⓘ each; the two
+    // total tiles take the card's partition sublines.
+    function overviewCardApplyTiles(cards, kpi, issueEq, prEq) {
+      const byKey = new Map(kpi.tiles.map(tile => [tile.key, tile]));
+      const perKind = k => Object.fromEntries(kpi.tiles.map(tile => [tile.term, Number(tile[k] || 0)]));
+      (cards || []).forEach(card => {
+        if (card.key === 'open-issues') {
+          card.subline = renderOverviewTotalPartitionSubline(issueEq, { kind: 'issues', counts: perKind('issues') });
+          card.tip = 'All open GitHub issues (pull requests excluded) across the selected configured repos. Each one counts in exactly one tile: your turn, waiting on someone else, held, hive has it, or outside. Click to filter Projects to matching issues.';
+          return;
+        }
+        if (card.key === 'open-prs') {
+          card.subline = renderOverviewTotalPartitionSubline(prEq, { kind: 'prs', counts: perKind('prs') });
+          card.tip = 'All open GitHub pull requests across the selected configured repos, including drafts. Each one counts in exactly one tile: your turn, waiting on someone else, held, blocked, hive has it, or outside (drafts). Click to filter Projects to matching PRs.';
+          return;
+        }
+        const tile = byKey.get(card.key);
+        if (!tile) return;
+        card.field = tile.field;
+        card.label = tile.label;
+        // Hive has it is the mock-up's blue in both themes (--accent turns
+        // red in light mode).
+        if (card.key === 'actionable-now') card.color = 'var(--band-unclaimed)';
+        card.tip = `${tile.count} ${tile.label.toLowerCase()} = ${tile.issues} issues + ${tile.prs} PRs.${tile.rule ? ' ' + tile.rule : ''} Click to filter Projects.`;
+        card.infoHTML = overviewPartitionInfo(overviewCardTermInfo(tile, kpi), 'overview-kpi-' + card.key);
+      });
+    }
+
     function renderOverviewKPIs(repos, issueSlices, prSlices, state) {
       _overviewKPILocalScope = overviewKPIRepoScope(repos);
       const forgeTotals = overviewKPIForgeTotals(repos);
+      // With the Overview card the term tiles count card groups; without it
+      // (an older server) they count today's equation terms.
+      const cardKPI = overviewCardMode() ? overviewCardKPI(repos) : null;
       const serverActionable = window._lastStatus?.actionableNow;
       const useServerEquation = _overviewKPILocalScope === 'all' && !!(serverActionable?.equation && serverActionable?.issueEquation && serverActionable?.prEquation);
       const local = useServerEquation ? null : overviewKPILocalEquations(repos, forgeTotals);
@@ -38882,11 +39320,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const prEq = useServerEquation ? serverActionable.prEquation : local.prEq;
       const openIssues = Number(forgeTotals?.issues?.forge ?? issueEq.open);
       const openPRs = Number(forgeTotals?.prs?.forge ?? prEq.open);
-      const actionableIssueSplit = Number(issueEq.result || 0);
-      const actionablePRSplit = Number(prEq.result || 0);
+      const cardTerm = key => (cardKPI ? cardKPI.tiles.find(t => t.term === key) : null) || {};
+      const term = key => cardKPI ? Number(cardTerm(key).count || 0) : overviewKPITerm(equation, key, 0);
+      const split = key => cardKPI ? [Number(cardTerm(key).issues || 0), Number(cardTerm(key).prs || 0)] : [overviewEquationTermCount(issueEq, key), overviewEquationTermCount(prEq, key)];
+      const actionableIssueSplit = cardKPI ? split('actionable')[0] : Number(issueEq.result || 0);
+      const actionablePRSplit = cardKPI ? split('actionable')[1] : Number(prEq.result || 0);
       const actionableNow = actionableIssueSplit + actionablePRSplit;
-      const term = key => overviewKPITerm(equation, key, 0);
-      const split = key => [overviewEquationTermCount(issueEq, key), overviewEquationTermCount(prEq, key)];
       const yourTurn = term('your_turn');
       const waiting = term('waiting_elsewhere');
       const held = term('held');
@@ -38898,9 +39337,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const [waitingIssues, waitingPRs] = split('waiting_elsewhere');
       const [heldIssues, heldPRs] = split('held');
       const [, blockedPRs] = split('blocked');
-      const outside = overviewEquationTermCount(equation, 'outside') + overviewEquationTermCount(equation, 'other');
-      const outsideIssues = overviewEquationTermCount(issueEq, 'outside') + overviewEquationTermCount(issueEq, 'other');
-      const outsidePRs = overviewEquationTermCount(prEq, 'outside') + overviewEquationTermCount(prEq, 'other');
+      const outside = cardKPI ? term('outside') : overviewEquationTermCount(equation, 'outside') + overviewEquationTermCount(equation, 'other');
+      const outsideIssues = cardKPI ? split('outside')[0] : overviewEquationTermCount(issueEq, 'outside') + overviewEquationTermCount(issueEq, 'other');
+      const outsidePRs = cardKPI ? split('outside')[1] : overviewEquationTermCount(prEq, 'outside') + overviewEquationTermCount(prEq, 'other');
       const outsideTermBase = (equation?.terms || []).find(t => t && t.key === 'outside');
       const outsideTerm = Object.assign({ key: 'outside', label: 'outside', count: outside, rule: "Open items excluded before they enter Overview bands by this hive's scanner settings." }, outsideTermBase || {});
       const outsideInfo = overviewPartitionInfo(outsideTerm, 'overview-kpi-outside');
@@ -38916,11 +39355,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         { key: 'blocked', field: 'overviewBlocked', label: 'Blocked', value: blocked, rawValue: blocked, color: 'var(--red)', tip: `${blocked} blocked PRs. Pull requests with a blocked verdict, merge conflicts or failing CI. Click to filter Projects.`, subline: renderOverviewSplitSubline(blocked, 0, blockedPRs, 'blocked') },
         { key: 'outside', field: 'overviewOutside', label: 'Outside', value: outside, rawValue: outside, color: 'var(--muted)', tip: `${outside} outside = ${outsideIssues} issues + ${outsidePRs} PRs. Open items excluded before they enter Overview bands by this hive's scanner settings, and draft PRs. Click to filter Projects.`, subline: renderOverviewSplitSubline(outside, outsideIssues, outsidePRs, 'outside'), infoHTML: outsideInfo }
       ];
+      if (cardKPI) overviewCardApplyTiles(cards, cardKPI, issueEq, prEq);
       const coverageCard = overviewCoverageCard();
       const snapshotComplete = !(repos || []).some(r => r && (r.countsIncomplete || r.countsStale)) && !(_overviewKPILocalScope === 'all' && window._lastStatus?.overviewKPIIncomplete);
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
       const ops = ['+', '=', '+', '+', '+', '+', '+'];
-      const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} actionable now + ${yourTurn} your turn + ${waiting} waiting on someone else + ${held} held + ${blocked} blocked + ${outside} outside`;
+      const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} ${cardKPI ? 'hive has it' : 'actionable now'} + ${yourTurn} your turn + ${waiting} waiting on someone else + ${held} held + ${blocked} blocked + ${outside} outside`;
       // Last-good figures after a refused enumeration (#13382) or a failed
       // forgestate reconcile (#13376) are current as of staleSince, not
       // zero; say so beside the KPIs.
@@ -39140,9 +39580,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // A legend row opens the card filter of the tile that counts the same rows.
+    // With the Overview card a band row goes to its group's tile (the spec's
+    // group) and a group row to its own; old slice keys keep their map.
     function overviewNavigateBand(kind, slice) {
-      const key = { 'your-turn': 'your-turn', 'to-close': 'your-turn', 'waiting-elsewhere': 'waiting-elsewhere', blocked: 'blocked', draft: 'outside' }[slice] || 'actionable-now';
+      const cardKey = overviewCardMode() ? overviewCardTileForKey(slice) : '';
+      const key = cardKey || { 'your-turn': 'your-turn', 'to-close': 'your-turn', 'waiting-elsewhere': 'waiting-elsewhere', blocked: 'blocked', draft: 'outside' }[slice] || 'actionable-now';
       overviewApplyKPIProjectFilter(key);
+    }
+
+    function overviewCardTileForKey(key) {
+      if (overviewCardTileDefs().some(def => def.key === key)) return key;
+      const spec = overviewCardSpecs('issue').concat(overviewCardSpecs('pr')).find(s => s && s.key === key);
+      return (spec && spec.group) || '';
     }
 
     function setOverviewChartType(kind, type) {
@@ -39255,8 +39704,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sampled = issueSampled || prSampled;
       const total = issueSlices.concat(prSlices).reduce((n, s) => n + s.count, 0);
       const kpis = renderOverviewKPIs(selectedRepos, issueSlices, prSlices, state);
+      // The card's legend rows are bands (the approved mock-up's words).
+      const hover = overviewCardMode() ? ' · hover a band for its rule' : ' · hover a slice for its rule';
       const html = total
-        ? `${kpis}<div class="overview-grid">${renderOverviewPanel('issue', 'Issues by band', 'Open issues ' + repoSuffix + ' · hover a slice for its rule', issueSlices, state)}${renderOverviewPanel('pr', 'PRs by band', 'Open and held pull requests ' + repoSuffix + ' · hover a slice for its rule', prSlices, state)}</div>`
+        ? `${kpis}<div class="overview-grid">${renderOverviewPanel('issue', 'Issues by band', 'Open issues ' + repoSuffix + hover, issueSlices, state)}${renderOverviewPanel('pr', 'PRs by band', 'Open and held pull requests ' + repoSuffix + hover, prSlices, state)}</div>`
         : `${kpis}<div class="overview-empty">Nothing actionable — the hive is caught up</div>`;
       if (sampled) saveOverviewChartsState(state);
       setIfChanged(el, html);

@@ -586,7 +586,7 @@ const OVERVIEW_PROJECT_FILTERS = {
   'outside': { label: 'Outside', kinds: ['issue', 'pr'], term: 'outside', outside: true }
 };
 `)
-	for _, name := range []string{"issueUpdatedAt", "prUpdatedAt", "prCreatedAt", "prReviewClassRank", "overviewRepoName", "overviewSliceSpecs", "overviewIssueBandSlices", "overviewPRBandSlices",
+	for _, name := range []string{"issueUpdatedAt", "prUpdatedAt", "prCreatedAt", "prReviewClassRank", "overviewRepoName", "overviewSliceSpecs", "overviewCard", "overviewCardSpecs", "overviewCardMode", "overviewIssueBandSlices", "overviewPRBandSlices",
 		"overviewRepoNumber", "overviewRepoOpenIssueCount", "overviewRepoOpenPRCount", "overviewProjectFilterSpec", "repoCardParkedIssues", "overviewRepoTrackedIssueEntries", "overviewRepoTrackedPREntries",
 		"overviewNonActionableMoved", "overviewProjectOutsideIssueCount", "overviewProjectOutsidePRCount", "overviewProjectFilterMatchesEntry", "overviewProjectFilterRepoMatches",
 		"overviewProjectFilterState", "overviewProjectFilterKeyFromURL", "overviewProjectFilterSummary", "overviewNavigateBand"} {
@@ -599,6 +599,10 @@ let _overviewProjectFilterKey = null;
 let _overviewProjectFilterCount = null;
 let applied = '';
 function overviewApplyKPIProjectFilter(key) { applied = key; }
+// The ownership slices and equation terms are what the page shows without the
+// Overview card (an older server); the card's own bands and tiles are pinned
+// by overview_card_ui_test.go.
+delete window._lastStatus.overview_card;
 const repos = window._lastStatus.repos;
 const server = window._lastStatus.overview_slices;
 const issueSlices = overviewIssueBandSlices(repos);
