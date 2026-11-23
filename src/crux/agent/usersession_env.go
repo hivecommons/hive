@@ -53,7 +53,7 @@ func sessionEnvForbiddenNames() map[string]bool {
 		"DASHBOARD_AUTH_TOKEN": true,
 		"HIVE_DASHBOARD_TOKEN": true,
 	}
-	for _, k := range inheritedCredentialEnvVars {
+	for _, k := range credentialEnvVars() {
 		out[k] = true
 	}
 	for _, k := range githubTokenEnvVars {

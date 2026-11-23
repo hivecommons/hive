@@ -124,7 +124,12 @@ A pin change can leave Hive's model lists behind. Two layers cover it:
 - Gemini: `geminiPinnedCLIModels` is kept by hand. Neither `src/Dockerfile`
   nor `src/Dockerfile.contributor` installs a Gemini CLI, so there is no
   pinned binary to check ids against. The weekly
-  `static-model-freshness.yml` report still flags drift for it.
+  `static-model-freshness.yml` report still flags drift for it. To act on
+  it, install the latest `@google/gemini-cli` with `npm --ignore-scripts`
+  and add only ids in its `VALID_GEMINI_MODELS` set
+  (`packages/core/src/config/models.ts`, in the bundle's
+  `bundle/chunk-*.js`). An id that is on OpenRouter but not in that set
+  (gemini-3.6-flash and gemini-3.7-flash at 0.70.0, #19520) is not added.
 - Goose: out of scope. Its models depend on whichever provider an operator
   configures, so there is no single list to keep fresh; the dashboard's ACP
   probe asks the configured provider at run time.
@@ -146,7 +151,12 @@ A pin change can leave Hive's model lists behind. Two layers cover it:
   and JS lists in the CLI's own order. The agy floor is still the 1.1.18
   snapshot until someone does that. Neither list is guessed.
 - Copilot and codex are tracked under
-  [#19028](https://github.com/hivecommons/hive/issues/19028).
+  [#19028](https://github.com/hivecommons/hive/issues/19028). Copilot has no
+  offline gate: with no login, the pinned 1.0.88 answers every
+  `copilot --model <id> -p hi` with `Model "<id>" from --model flag is not
+  available.`, a listed id and a made-up one alike (checked for #19520). So
+  the report's Copilot "newer models" are not added until someone checks
+  them with a signed-in pinned CLI.
 
 The PR then runs the normal gates. The docker workflow builds both images for
 linux/amd64 and linux/arm64, where every hash-verified layer runs

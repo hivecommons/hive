@@ -333,7 +333,13 @@ func (c *Engine) trustedHumanApprovalForRequiresHuman(ctx context.Context, owner
 	// No live trusted approval on head: a persisted review-backed approval
 	// is revoked, so drop it before reading the recorded decision.
 	c.reconcileReviewBackedApproval(ctx, owner, repo, number, head)
-	return c.recordedHumanApprovalForHead(ctx, owner, repo, number, head)
+	if login, ok := c.recordedHumanApprovalForHead(ctx, owner, repo, number, head); ok {
+		return login, true
+	}
+	// The dashboard's head-bound `/approve` comment is the durable record of
+	// the owner's decision on GitHub; it counts when the store write did not
+	// reach this process (hivecommons/hive#19536).
+	return c.dashboardApprovalForHead(ctx, owner, repo, number, head)
 }
 
 // recordedHumanApprovalForHead is a bare `/hive decision approve` the un-park
