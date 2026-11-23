@@ -562,6 +562,15 @@ func issueUpdatedAtFromMap(issue map[string]any) time.Time {
 	return t
 }
 
+// issueAuthorTrustedFromMap reads the enumerated issue's author_trusted
+// (github.Issue.AuthorTrusted). Absent or malformed reads as false: an
+// unknown author is not trusted, so the reporter-trust awaiting label keeps
+// withholding the issue.
+func issueAuthorTrustedFromMap(issue map[string]any) bool {
+	trusted, _ := issue["author_trusted"].(bool)
+	return trusted
+}
+
 // issueCreatedAtFromMap reads the enumerated issue's creation time, zero when
 // absent or malformed.
 func issueCreatedAtFromMap(issue map[string]any) time.Time {

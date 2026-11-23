@@ -94,14 +94,17 @@ const (
 	// NeedsDecision.
 	PreMergeSoak
 	// TriageNeeded is stage/015: an ISSUE that is actionable but no
-	// maintainer has looked at it yet — it carries the reporter-trust
-	// awaiting label (`needs-triage`) or the gate holds it in the
-	// reporter_triage bucket. Never derived from who filed it: hive-,
-	// agent- and trusted-human-filed issues are 010. A display and
-	// tracking state, NOT a gate: the scanner claims from 015 exactly as
-	// from 010 (the reporter-trust gate withholds `needs-triage` issues on
-	// its own). Appended for the same persisted-enum reason as
-	// NeedsDecision.
+	// maintainer has looked at it yet: an untrusted (or unknown) author's
+	// issue carries the reporter-trust awaiting label (`needs-triage`), or
+	// the gate holds it in the reporter_triage bucket. Issues this hive's
+	// own accounts file, and issues from authors the reporter-trust
+	// predicate trusts, are 010 even when a triage bot such as Prow put the
+	// label on them (owner decision hivecommons/hive#13298;
+	// pkg/github issueAuthorTrusted). A display and tracking state, NOT a
+	// gate: the scanner claims from 015 exactly as from 010. What withholds
+	// an untrusted reporter's issue from agents is the reporter-trust gate
+	// (when enabled) and the contributor skip list, not this stage.
+	// Appended for the same persisted-enum reason as NeedsDecision.
 	TriageNeeded
 	// PossiblyExisting is stage/017-possible-existing: an ISSUE the
 	// prior-art gate parked because something that looks like it already
@@ -270,7 +273,7 @@ func (s Stage) For(k Item) Stage {
 // stage; nothing else in the hive hard-codes a stage label string.
 var Table = []Definition{
 	{Stage: Actionable, Number: 10, Slug: "actionable", Description: "Triaged; eligible for the hive to pick up", Dwell: 24 * time.Hour, Issue: true},
-	{Stage: TriageNeeded, Number: 15, Slug: "triage-needed", Description: "Actionable but held by the reporter-trust gate: awaiting a maintainer's triage label", Dwell: TriageNeededDwell, Issue: true},
+	{Stage: TriageNeeded, Number: 15, Slug: "triage-needed", Description: "Actionable but awaiting a maintainer's first look: untrusted author or reporter-trust hold", Dwell: TriageNeededDwell, Issue: true},
 	{Stage: PossiblyExisting, Number: PossiblyExistingNumber, Slug: PossiblyExistingSlug, Description: "Possibly exists · needs author: prior art found; confirm the gap or close before an agent takes it", Issue: true},
 	{Stage: OpenForDiscussion, Number: OpenForDiscussionNumber, Slug: OpenForDiscussionSlug, Description: "Open for discussion: proposal / design issue with no live claim; claimable, no agent work queued", Issue: true},
 	{Stage: Claimed, Number: 20, Slug: "claimed", Description: "Claimed by the scanner or a relay contributor", Dwell: 2 * time.Hour, Issue: true},

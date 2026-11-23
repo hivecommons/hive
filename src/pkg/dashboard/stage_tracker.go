@@ -387,6 +387,11 @@ type StageTrackerItem struct {
 	// from the author's contributor-hub registration ("registry").
 	AuthorKind       string `json:"author_kind,omitempty"`
 	AuthorKindSource string `json:"author_kind_source,omitempty"`
+	// authorTrusted is the enumeration's github.Issue.AuthorTrusted for an
+	// issue row (false when unknown). Server-side only, not in the payload:
+	// it drops the needs-triage chip and the triage question on a trusted
+	// author's issue (hivecommons/hive#13298).
+	authorTrusted bool
 	// Tier is the author/<tier> admission label without its prefix.
 	Tier string `json:"tier,omitempty"`
 	// Origin is the origin/<source> provenance label without its prefix:

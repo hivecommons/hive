@@ -467,6 +467,9 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 				issueClaim: issueClaim,
 				claimed:    claimed,
 				createdAt:  issueCreatedAtFromMap(issue),
+				// author_trusted rides on the enumerated envelope
+				// (github.Issue.AuthorTrusted); absent reads as untrusted.
+				authorTrusted: issueAuthorTrustedFromMap(issue),
 			})
 			if !decision.admitted {
 				// #4246 retained the convergence Decision behind this refusal
@@ -495,7 +498,7 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 				// the refusal can name WHICH filter matched (#6902). The
 				// short-circuit order and the outcome are identical to the
 				// single expression this replaces.
-				if decision := rejectingContributorFilter(hub, repo.Full, title, author, labels); !decision.Admitted() {
+				if decision := rejectingContributorFilter(hub, repo.Full, title, author, labels, issueAuthorTrustedFromMap(issue)); !decision.Admitted() {
 					withheld.add(withheldFilterItem(cand, decision))
 					return
 				}

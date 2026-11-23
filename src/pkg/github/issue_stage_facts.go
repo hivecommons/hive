@@ -35,6 +35,7 @@ func issueFactsFrom(in IssueStageInput, prStage func(repo string, number int) st
 		Issue: &stageengine.IssueFacts{
 			Bucket:         issueBucketFrom(in.Bucket),
 			FilteredReason: in.Reason,
+			AuthorTrusted:  in.AuthorTrusted,
 		},
 	}
 	resolveIssueLabelFacts(in, &f)
@@ -144,6 +145,7 @@ func issueInputFrom(f stageengine.Facts) IssueStageInput {
 			in.Bucket = string(f.Issue.Bucket)
 		}
 		in.Reason = f.Issue.FilteredReason
+		in.AuthorTrusted = f.Issue.AuthorTrusted
 	}
 	return in
 }

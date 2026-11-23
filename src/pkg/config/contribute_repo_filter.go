@@ -70,9 +70,18 @@ func (h HubConfig) ContributeRepoFilterFor(repo string) (ContributeRepoFilter, b
 // EvaluateContributeFilters applies the hive-wide skip labels and admission
 // filters first, then the matching repository's filter. A repo filter can only
 // narrow admission: deny mode extends the hive deny lists; allow mode requires a
-// match for that repo only.
+// match for that repo only. The author is treated as untrusted for the skip
+// labels (MatchContributeSkipLabel); EvaluateContributeFiltersFor takes the
+// caller's verdict.
 func (h HubConfig) EvaluateContributeFilters(repo, title, author string, labels []string) ContributeFilterDecision {
-	if label, ok := h.MatchContributeSkipLabel(labels); ok {
+	return h.EvaluateContributeFiltersFor(repo, title, author, labels, false)
+}
+
+// EvaluateContributeFiltersFor is EvaluateContributeFilters with the skip
+// labels matched by MatchContributeSkipLabelFor: authorTrusted releases a
+// trusted author's issue from the reporter-trust awaiting label alone.
+func (h HubConfig) EvaluateContributeFiltersFor(repo, title, author string, labels []string, authorTrusted bool) ContributeFilterDecision {
+	if label, ok := h.MatchContributeSkipLabelFor(labels, authorTrusted); ok {
 		return ContributeFilterDecision{Reason: "skip_label", Scope: "hive", Filter: "label", Mode: FilterModeDeny, Match: label}
 	}
 	if d := evaluateContributeFilterScope("hive", "", ContributeRepoFilter{

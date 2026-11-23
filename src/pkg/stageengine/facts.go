@@ -199,9 +199,17 @@ type IssueFacts struct {
 	// (hivecommons/hive#17150, hivecommons/hive#18141).
 	DiscussionLabel string
 	// TriageAwaiting is why an actionable issue is still untriaged (015):
-	// the reporter-trust awaiting label it carries or the gate's
-	// reporter_triage bucket.
+	// the reporter-trust awaiting label an untrusted author's issue carries
+	// or the gate's reporter_triage bucket.
 	TriageAwaiting string
+	// AuthorTrusted is the enumeration's precomputed verdict that the
+	// issue's author is trusted (one of the hive's own accounts, or an
+	// author the reporter-trust predicate trusts; false when unknown). pkg/github reads
+	// it when it resolves TriageAwaiting: a trusted author's issue carrying
+	// the awaiting label is not untriaged (hivecommons/hive#13298), since a
+	// triage bot such as Prow labels every new issue. The deriver itself
+	// does not read it.
+	AuthorTrusted bool
 	// TriageAwaitingLabel is the reporter-trust awaiting label the issue
 	// actually wears (`needs-triage` / `reporter_trust.awaiting_label`),
 	// "" when it carries none. Separate from TriageAwaiting because a

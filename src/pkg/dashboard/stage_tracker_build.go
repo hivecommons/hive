@@ -196,6 +196,17 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
+		// A trusted author's issue (one of the hive's own accounts, or an
+		// author the reporter-trust predicate trusts) is not waiting on
+		// triage even when a triage bot such as Prow put needs-triage on it
+		// (owner decision hivecommons/hive#13298): no chip, so no "triage
+		// needed" pill, no needs-attention count and no Accept triage
+		// question (stageTrackerDecisionNeededWith).
+		if it.Kind == "issue" && it.authorTrusted {
+			notTriage := func(m string) bool { return m == modNeedsTriage }
+			it.Modifiers = slices.DeleteFunc(it.Modifiers, notTriage)
+			it.DeferredModifiers = slices.DeleteFunc(it.DeferredModifiers, notTriage)
+		}
 		stageTrackerApplyMergeTrain(it)
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
 		if hasRec && it.Kind == "pr" && rec.Abandoned() {
@@ -323,6 +334,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Labels: append([]string(nil), issue.Labels...), CreatedAt: timePtr(issue.CreatedAt), UpdatedAt: timePtr(issue.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL)}
+		it.authorTrusted = issue.AuthorTrusted
 		it.Children = issue.Children
 		if it.Children == nil {
 			it.Children = progress
@@ -586,7 +598,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				// The enumeration's sidelined issues: parked in a work-detail
 				// bucket, the open items the first tracker never showed.
 				w := it.WorkIssue
-				addIssue(repoName, repo.Ownership, github.Issue{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, AuthorIsHuman: w.AuthorIsHuman, Labels: w.Labels, Assignees: w.Assignees,
+				addIssue(repoName, repo.Ownership, github.Issue{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, AuthorIsHuman: w.AuthorIsHuman, AuthorTrusted: w.AuthorTrusted, Labels: w.Labels, Assignees: w.Assignees,
 					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, ClaimHive: w.ClaimHive, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext, IsTracker: w.IsTracker, Children: w.Children}, w.Bucket, w.Reason, w.TrackerProgress, w.Advisory)
 			default:
 				w := it.WorkPR

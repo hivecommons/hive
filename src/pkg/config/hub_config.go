@@ -584,11 +584,32 @@ func (h HubConfig) ContributeSkipLabelPatterns() []string {
 // contributor-skip set. Patterns are case-insensitive and use path.Match-style
 // glob syntax; invalid patterns fall back to exact case-insensitive matching so
 // a typo cannot broaden the skip set.
+//
+// It does not know who filed the issue, so it treats the author as untrusted
+// (the reporter-trust awaiting label skips). Callers that know the author use
+// MatchContributeSkipLabelFor.
 func (h HubConfig) MatchContributeSkipLabel(labels []string) (string, bool) {
+	return h.MatchContributeSkipLabelFor(labels, false)
+}
+
+// MatchContributeSkipLabelFor is MatchContributeSkipLabel for an issue whose
+// author the caller knows. The reporter-trust awaiting label
+// (DefaultReporterTrustAwaitingLabel, `needs-triage`) means "awaiting a
+// person's first look" only on an untrusted author's issue: a triage bot such
+// as Prow puts it on every new issue, including the hive's own and a
+// maintainer's, and the owner decided triage is not a step for those
+// (hivecommons/hive#13298). So when authorTrusted is true that one label is
+// passed over and every other skip label still matches; with no other match
+// the issue is not skipped. authorTrusted is false for an unknown author, so
+// the label keeps withholding the issue exactly as before.
+func (h HubConfig) MatchContributeSkipLabelFor(labels []string, authorTrusted bool) (string, bool) {
 	patterns := h.ContributeSkipLabelPatterns()
 	for _, label := range labels {
 		trimmed := strings.TrimSpace(label)
 		if trimmed == "" {
+			continue
+		}
+		if authorTrusted && strings.EqualFold(trimmed, DefaultReporterTrustAwaitingLabel) {
 			continue
 		}
 		candidate := strings.ToLower(trimmed)

@@ -643,7 +643,7 @@ func TestRejectingContributorFilter(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := rejectingContributorFilter(hub, "org/repo", tc.title, tc.author, tc.labels); got.Filter != tc.want {
+			if got := rejectingContributorFilter(hub, "org/repo", tc.title, tc.author, tc.labels, false); got.Filter != tc.want {
 				t.Fatalf("rejectingContributorFilter filter = %q, want %q", got.Filter, tc.want)
 			}
 		})
@@ -732,7 +732,7 @@ func TestRepoContributeFiltersAgreeBetweenSelectionAndWithheld(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			selectionDecision := hub.EvaluateContributeFilters(tc.repo, "fix", "human", tc.labels)
-			withheldDecision := rejectingContributorFilter(hub, tc.repo, "fix", "human", tc.labels)
+			withheldDecision := rejectingContributorFilter(hub, tc.repo, "fix", "human", tc.labels, false)
 			if selectionDecision != withheldDecision {
 				t.Fatalf("selection decision %+v disagrees with withheld decision %+v", selectionDecision, withheldDecision)
 			}
