@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/convergence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -613,6 +614,103 @@ func TestWithheld_EveryReasonHasALabel(t *testing.T) {
 	for _, reason := range reasons {
 		if label, ok := withheldReasonLabels[reason]; !ok || label == "" {
 			t.Errorf("reason %q has no operator-facing label", reason)
+		}
+	}
+}
+
+// Every reason the ladder can emit has a short tag for the lifecycle card's
+// Held back rows. Iterating withheldReasonLabels (rather than a copied list)
+// means a new reason that ships with its label but not its tag fails here. The
+// convergence reasons a dependency row carries verbatim and the card's own
+// codes are checked too. No tag may contain an em or en dash.
+func TestWithheldReasonTag_EveryReasonHasATag(t *testing.T) {
+	reasons := []string{
+		convergence.ReasonWaitingForDependency,
+		convergence.ReasonDependencyUnknown,
+		convergence.ReasonObserverUnavailable,
+	}
+	for reason := range withheldReasonLabels {
+		reasons = append(reasons, reason)
+	}
+	for _, reason := range reasons {
+		tag, ok := withheldReasonTags[reason]
+		if !ok || tag == "" {
+			t.Errorf("reason %q has no Held back tag", reason)
+			continue
+		}
+		if got := withheldReasonTag(AdmissionWithheldItem{Reason: reason}, config.HubConfig{}); got != tag {
+			t.Errorf("withheldReasonTag(%q) = %q, want %q", reason, got, tag)
+		}
+	}
+	for code, td := range triageHeldTags {
+		if td[0] == "" || td[1] == "" {
+			t.Errorf("card code %q needs both a tag and hover text, got %q", code, td)
+		}
+	}
+	all := []string{withheldOtherTagPrefix, withheldUnrecordedTag, withheldLabelNote("needs-triage")}
+	for _, tag := range withheldReasonTags {
+		all = append(all, tag)
+	}
+	for _, td := range triageHeldTags {
+		all = append(all, td[0], td[1])
+	}
+	for _, s := range all {
+		if strings.ContainsAny(s, "\u2014\u2013@") {
+			t.Errorf("tag text %q contains an em/en dash or @", s)
+		}
+	}
+}
+
+// An unknown reason is never blank: a dependency row from a degraded observer
+// falls back on its Ready condition, any other code is shown as "Other: <code>",
+// and a row with no code reads "Reason not recorded".
+func TestWithheldReasonTag_UnknownFallsBack(t *testing.T) {
+	hub := config.HubConfig{}
+	cases := []struct {
+		item AdmissionWithheldItem
+		want string
+	}{
+		{AdmissionWithheldItem{Reason: "SomeObserverDown", Ready: "Unknown"}, "Dependency unclear"},
+		{AdmissionWithheldItem{Reason: "SomeOtherBlock", Ready: "False"}, "Waiting on another issue"},
+		{AdmissionWithheldItem{Reason: "brand_new_gate"}, "Other: brand_new_gate"},
+		{AdmissionWithheldItem{}, withheldUnrecordedTag},
+	}
+	for _, tc := range cases {
+		if got := withheldReasonTag(tc.item, hub); got != tc.want {
+			t.Errorf("withheldReasonTag(%+v) = %q, want %q", tc.item, got, tc.want)
+		}
+	}
+}
+
+// Label refusals name the label: the default skip labels read as words, the
+// hive's configured already-done label is recognised whatever it is, and any
+// other label is shown as itself.
+func TestWithheldReasonTag_NamesTheLabel(t *testing.T) {
+	custom := config.HubConfig{ContributeAlreadyDoneLabel: "status/done"}
+	cases := []struct {
+		reason, label string
+		hub           config.HubConfig
+		want          string
+	}{
+		{contributorAdmissionReasonLabelSkipped, "needs-triage", config.HubConfig{}, "Needs triage"},
+		{contributorAdmissionReasonLabelSkipped, "Needs-Triage", config.HubConfig{}, "Needs triage"},
+		{contributorAdmissionReasonLabelSkipped, config.DefaultContributeAlreadyDoneLabel, config.HubConfig{}, "Marked already done"},
+		{contributorAdmissionReasonLabelSkipped, "status/done", custom, "Marked already done"},
+		{contributorAdmissionReasonLabelSkipped, config.DefaultNeedsDecisionLabel, config.HubConfig{}, "Needs a decision"},
+		{contributorAdmissionReasonLabelSkipped, config.LegacyNeedsDecisionLabel, config.HubConfig{}, "Needs a decision"},
+		{contributorAdmissionReasonLabelSkipped, "epic", config.HubConfig{}, "Epic or tracker"},
+		{contributorAdmissionReasonLabelSkipped, "tracking", config.HubConfig{}, "Epic or tracker"},
+		{contributorAdmissionReasonLabelSkipped, "discussion", config.HubConfig{}, "Discussion"},
+		{contributorAdmissionReasonLabelSkipped, "question", config.HubConfig{}, "Question"},
+		{contributorAdmissionReasonLabelSkipped, "wayfinder:grilling", config.HubConfig{}, "Label: wayfinder:grilling"},
+		{contributorAdmissionReasonLabelSkipped, "", config.HubConfig{}, "Skip label"},
+		{contributorAdmissionReasonWorkflowBlocked, "blocked", config.HubConfig{}, "Blocked"},
+		{contributorAdmissionReasonWorkflowBlocked, "", config.HubConfig{}, "Blocked"},
+	}
+	for _, tc := range cases {
+		item := AdmissionWithheldItem{Reason: tc.reason, SkippedLabel: tc.label}
+		if got := withheldReasonTag(item, tc.hub); got != tc.want {
+			t.Errorf("%s label %q: tag = %q, want %q", tc.reason, tc.label, got, tc.want)
 		}
 	}
 }

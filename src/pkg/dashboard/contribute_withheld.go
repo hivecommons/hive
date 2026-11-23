@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/convergence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -102,6 +103,125 @@ func withheldReasonLabel(reason string) string {
 		return label
 	}
 	return reason
+}
+
+// withheldReasonTags is the short plain-words tag for each reason code, shown
+// on the Held back rows of the Operations lifecycle card. withheldReasonLabels
+// above is the full sentence (the row's hover text); a tag is the few words an
+// operator can scan down a column. Every code in withheldReasonLabels has one
+// (TestWithheldReasonTag_EveryReasonHasATag), plus the convergence reasons a
+// dependency refusal carries verbatim in its Reason field.
+//
+// label_skipped and workflow_blocked are named by the label itself instead
+// (withheldLabelTag); the entries here are their fallback for a row that did
+// not record which label matched.
+var withheldReasonTags = map[string]string{
+	contributorAdmissionReasonOpenPRClaim:       "Open PR covers it",
+	contributorAdmissionReasonOpenPRLinked:      "Open PR covers it",
+	contributorAdmissionReasonIssueClaim:        "Claimed by someone",
+	contributorAdmissionReasonMergedClaimStale:  "Fixed, still open",
+	contributorAdmissionReasonIssueChurn:        "Several PRs merged",
+	contributorAdmissionReasonWorkflowBlocked:   "Blocked",
+	contributorAdmissionReasonLabelSkipped:      "Skip label",
+	contributorAdmissionReasonDependencyBlocked: "Waiting on another issue",
+	contributorAdmissionReasonDependencyUnknown: "Dependency unclear",
+	contributorAdmissionReasonOwnerGrace:        "Owner's first pick",
+	contributorAdmissionReasonCoveringPRStalled: "Stalled PR covers it",
+	withheldReasonDisabledRepo:                  "Repo switched off",
+	withheldReasonRepoUnmintable:                "Repo access failed",
+	withheldReasonTracker:                       "Epic or tracker",
+	withheldReasonCooldown:                      "Worked recently",
+	withheldReasonNoWorkNeeded:                  "Nothing to do",
+	completionVerdictNeedsDecision:              "Needs a decision",
+	withheldReasonFailureCooldown:               "Failed recently",
+	withheldReasonInFlight:                      "Agent working",
+	withheldReasonContributorFilter:             "Filtered out",
+	withheldReasonAssignedToOther:               "Assigned to someone",
+	// A dependency refusal's row carries the convergence Decision's own reason
+	// (withheldItemFromDecision), not dependency_blocked / dependency_unknown.
+	convergence.ReasonWaitingForDependency: "Waiting on another issue",
+	convergence.ReasonDependencyUnknown:    "Dependency unclear",
+	convergence.ReasonObserverUnavailable:  "Dependency unclear",
+}
+
+// withheldOtherTagPrefix starts the tag for a reason code this vocabulary does
+// not know ("Other: <code>"), so a future gate still renders a tag that can be
+// looked up rather than a blank.
+const withheldOtherTagPrefix = "Other: "
+
+// withheldUnrecordedTag is the tag for a row with no reason code at all (for
+// example an integration-orchestration refusal, whose withheld row has always
+// carried an empty reason and detail).
+const withheldUnrecordedTag = "Reason not recorded"
+
+// withheldReasonTag returns the short tag for one withheld row. Label refusals
+// name the label; a dependency reason the map does not list (a degraded
+// observer's own code) falls back on the Ready condition the evaluator set; any
+// other unknown code is shown as "Other: <code>", and a row with no code as
+// withheldUnrecordedTag. Never empty.
+func withheldReasonTag(item AdmissionWithheldItem, hub config.HubConfig) string {
+	reason := item.Reason
+	switch reason {
+	case contributorAdmissionReasonLabelSkipped, contributorAdmissionReasonWorkflowBlocked:
+		if tag := withheldLabelTag(item.SkippedLabel, hub); tag != "" {
+			return tag
+		}
+	}
+	if tag, ok := withheldReasonTags[reason]; ok {
+		return tag
+	}
+	switch item.Ready {
+	case string(convergence.ConditionFalse):
+		return withheldReasonTags[convergence.ReasonWaitingForDependency]
+	case string(convergence.ConditionUnknown):
+		return withheldReasonTags[convergence.ReasonDependencyUnknown]
+	}
+	if reason == "" {
+		return withheldUnrecordedTag
+	}
+	return withheldOtherTagPrefix + reason
+}
+
+// withheldLabelNote is extra hover text for a skip label whose effect is not
+// obvious from its name, or "" for every other label. needs-triage holds back
+// only an outside author's issue (MatchContributeSkipLabelFor passes over it
+// for a trusted author), so the same label also appears on offered issues.
+func withheldLabelNote(label string) string {
+	if strings.EqualFold(strings.TrimSpace(label), config.DefaultReporterTrustAwaitingLabel) {
+		return "This label holds back only issues from outside authors; issues from trusted authors are offered with it."
+	}
+	return ""
+}
+
+// withheldLabelTag names the skip label that withheld an issue in plain words:
+// the default skip labels (and this hive's already-done and needs-decision
+// labels, whatever they are configured to) get a phrase, any other label is
+// shown as itself. "" when no label was recorded.
+func withheldLabelTag(label string, hub config.HubConfig) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return ""
+	}
+	switch lower := strings.ToLower(label); {
+	case lower == config.DefaultReporterTrustAwaitingLabel:
+		return "Needs triage"
+	case lower == strings.ToLower(hub.ContributeAlreadyDoneLabelOrDefault()),
+		lower == config.DefaultContributeAlreadyDoneLabel:
+		return "Marked already done"
+	case lower == strings.ToLower(hub.ContributeNeedsDecisionLabelOrDefault()),
+		lower == config.DefaultNeedsDecisionLabel,
+		lower == config.LegacyNeedsDecisionLabel:
+		return "Needs a decision"
+	case lower == blockedWorkflowLabel:
+		return "Blocked"
+	case lower == "epic", lower == "tracking", lower == "tracker":
+		return "Epic or tracker"
+	case lower == "discussion":
+		return "Discussion"
+	case lower == "question":
+		return "Question"
+	}
+	return "Label: " + label
 }
 
 // isConvergenceWithheldReason reports whether a reason belongs to the #4246

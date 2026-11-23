@@ -1295,6 +1295,43 @@ Candidates dropped *before* they reach the actionable set — the governor `hold
 
 **API.** `GET /api/contribute/queue?withheld=1` returns the same queue plus `withheld` (the rows) and `withheld_total`. The parameter is an explicit opt-in: without it the response is byte-identical to what it has always been, so existing clients are unaffected. The list is bounded by the same limit as the queue, computed per request, and never cached or persisted. It carries only public issue metadata, reason codes, and public evidence — no credentials, prompts, or contributor execution data — with one kind of exception: a row's `detail` can end with the short reason a relay reported for the completion behind it (a `blocked` or maintainer-decision verdict's reason, or the last relay's reason on a `cooldown` row). That is the `verdict_reason` the public `GET /api/contribute/runs` already serves for the same task; here it is one line, token-redacted and capped at 200 bytes.
 
+### Held back on the lifecycle card
+
+The **Issue lifecycle** card further down the Operations tab sorts this hive's contribute issues into five columns: **Held back**, **Ready to implement**, **Implementing**, **Reviewing** and **Closed**. Held back used to be labelled "Triaging", but it lists every issue the queue is not offering to agents right now, and only a few of those are waiting for triage. Most are held back for another reason: an epic or tracker, a recent attempt, an open pull request that already covers it, an issue whose pull requests have merged but which is still open, a skip label, an assignee, or an operator hold. Admitted issues past the Contributor Queue's 150-row list are still offered to agents, so they count under Ready to implement.
+
+Each Held back row carries a short tag saying why. Hover the tag for the full sentence: for a reason the Withheld list carries, the same `detail` it shows; for the card's own codes (`operator_hold`, `issue_closed` and `unrecorded`), a sentence saying what happened. The tag comes from the same admission pass that builds the queue, so it is the real reason and showing it changes nothing about what is offered.
+
+| Code in `withheld_reason`                  | Tag                                                                                                      |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `open_pr_claim`, `open_pr_linked`          | Open PR covers it                                                                                        |
+| `covering_pr_stalled`                      | Stalled PR covers it                                                                                     |
+| `issue_claim`                              | Claimed by someone                                                                                       |
+| `merged_claim_stale`                       | Fixed, still open                                                                                        |
+| `issue_churn`                              | Several PRs merged                                                                                       |
+| `label_skipped`, `workflow_blocked`        | The label in words (below)                                                                               |
+| `WaitingForDependency`                     | Waiting on another issue                                                                                 |
+| `DependencyUnknown`, `ObserverUnavailable` | Dependency unclear                                                                                       |
+| Any other dependency code                  | From the row's `ready` condition: False reads Waiting on another issue, Unknown reads Dependency unclear |
+| `owner_grace`                              | Owner's first pick                                                                                       |
+| `disabled_repo`                            | Repo switched off                                                                                        |
+| `repo_unmintable`                          | Repo access failed                                                                                       |
+| `tracker`                                  | Epic or tracker                                                                                          |
+| `cooldown`                                 | Worked recently                                                                                          |
+| `failure_cooldown`                         | Failed recently                                                                                          |
+| `no_work_needed`                           | Nothing to do                                                                                            |
+| `needs_decision`                           | Needs a decision                                                                                         |
+| `in_flight`                                | Agent working                                                                                            |
+| `contributor_filter`                       | Filtered out                                                                                             |
+| `assigned_to_other`                        | Assigned to someone                                                                                      |
+| `operator_hold`                            | On hold                                                                                                  |
+| `issue_closed`                             | Issue closed                                                                                             |
+| `unrecorded`                               | Reason not recorded                                                                                      |
+| Any other code                             | `Other: <code>`                                                                                          |
+
+A skip-label row names the label: Needs triage, Marked already done (this hive's `contribute_already_done_label`), Needs a decision, Blocked, Epic or tracker, Discussion and Question for the default skip labels, and `Label: <name>` for any other. The Needs triage hover adds that the label holds back only issues from outside authors, because an issue a trusted author filed is offered even with `needs-triage` on it. A dependency refusal's `withheld_reason` is the convergence code the Withheld list shows (`WaitingForDependency`, `DependencyUnknown` or `ObserverUnavailable`), never `dependency_blocked` or `dependency_unknown`. A Withheld row with an empty reason code reads Reason not recorded, with no `withheld_reason` or `withheld_detail`. `operator_hold` is an operator's own decision, never a withheld reason, and its hover carries the operator's note. `unrecorded` means the withheld list had already stopped at the queue's 150-row limit.
+
+`GET /api/contribute/triage` returns the column under its unchanged level key `triaging`, with the label `Held back`. Each Held back row adds `withheld_reason`, `withheld_tag` and `withheld_detail`. Rows in the other columns are unchanged.
+
 ### Explicit acceptance
 
 | Control | Config key | Behavior |

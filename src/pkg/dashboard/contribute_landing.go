@@ -1427,6 +1427,9 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-tg-repo{font-size:.72rem;color:var(--text-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .cc-tg-title{font-size:.86rem;color:var(--text);margin:var(--sp-1) var(--sp-0) var(--sp-0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cc-tg-empty{padding:var(--sp-4) var(--sp-7) var(--sp-5);font-size:.76rem;color:var(--text-faint)}
+/* Held back reason tag: why the queue is not offering this issue. Neutral pill,
+   same shape as the PR badge; the full reason is its hover title. */
+.cc-tg-why{flex-shrink:0;display:inline-block;max-width:45%%;overflow:hidden;text-overflow:ellipsis;align-self:center;font-size:var(--fs-xs);font-weight:600;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);color:var(--text-muted);background:var(--surface-0);border:1px solid var(--line-strong);white-space:nowrap;cursor:help}
 /* PR→issue badge (#2612 part c) — a small link chip on a queue/triage row telling
    whether a fixing PR is open or merged. Reuses the status-pill palette so its
    meaning matches the rest of the page (open = review-amber, merged = done-green). */
@@ -2521,19 +2524,19 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">A light, calm read of fresh, actionable issues beyond what&rsquo;s already lined up &mdash; surfaced by recency, not a heavy recommender. Owner/read-write operators can add one to the queue; it becomes offer-priority only and still obeys every admission filter.</p>
 </div>
 <!-- ── Triage ladder (#2612 part b) — a Warp-style lifecycle view over the hive's
-     contribute issues, grouped Triaging → Ready → Implementing → Reviewing →
-     Closed. Each level is DERIVED LIVE from the raw candidate pool + ready queue
+     contribute issues, grouped Held back (key "triaging") → Ready → Implementing →
+     Reviewing → Closed. Each level is DERIVED LIVE from the raw candidate pool + ready queue
      + fleet snapshot + the PR→issue link (part c); there is no persistent per-issue lifecycle store
      (a future enhancement, out of scope). A SECTION within Operations — NOT a new
      page/tab. Fetched from /api/contribute/triage after load so a slow GitHub
      PR-link lookup never delays the page. Full-width card below the ops grid. -->
 <div class="ops-card cc-triage-card mt-7" id="cc-triage-card" data-ops-card="triage">
-<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Issue triage card" aria-pressed="false">⠿</button><span class="feed-dot"></span><h3>Issue triage</h3><span class="ops-card-count count-strong" id="cc-triage-total"></span></div>
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Issue lifecycle card" aria-pressed="false">⠿</button><span class="feed-dot"></span><h3>Issue lifecycle</h3><span class="ops-card-count count-strong" id="cc-triage-total"></span></div>
 <!-- Compact ladder summary: one chip per level with its live count. -->
 <div class="cc-triage-ladder" id="cc-triage-ladder"><div class="ops-empty">Loading triage&hellip;</div></div>
 <!-- Grouped per-level issue lists (each collapsible-ish section, capped). -->
 <div class="cc-triage-groups" id="cc-triage-groups"></div>
-<p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">A live lifecycle view of this hive&rsquo;s contribute issues &mdash; raw candidates withheld by admission remain in Triaging, while ready work, the fleet&rsquo;s in-flight work, and fixing PRs advance issues through the ladder. Read-only and recomputed on each load; there is no stored per-issue state.</p>
+<p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">A live lifecycle view of this hive&rsquo;s contribute issues. Held back lists the issues the queue is not offering to agents right now, each tagged with its reason (hover a tag for the full reason). Ready work, the fleet&rsquo;s in-flight work and fixing PRs move issues along the later columns. Read-only and recomputed on each load; there is no stored per-issue state.</p>
 </div>
 </div>
 </div>
@@ -6547,8 +6550,10 @@ function ccPRBadgeHTML(key){
 }
 // CC_TRIAGE_LEVELS pins the ladder's render order + display labels client-side,
 // mirroring triageLevelOrder/triageLevelLabel on the server so the chips/groups
-// render in lifecycle order even if the JSON key order ever changed.
-var CC_TRIAGE_LEVELS=[['triaging','Triaging'],['ready','Ready to implement'],['implementing','Implementing'],['reviewing','Reviewing'],['closed','Closed']];
+// render in lifecycle order even if the JSON key order ever changed. The first
+// rung keeps its 'triaging' key but reads Held back: it is every issue the queue
+// is not offering right now, whatever the reason, not only ones awaiting triage.
+var CC_TRIAGE_LEVELS=[['triaging','Held back'],['ready','Ready to implement'],['implementing','Implementing'],['reviewing','Reviewing'],['closed','Closed']];
 // ccTriagePoll fetches the live triage snapshot and renders the ladder + groups,
 // then refreshes ccPRLinks and re-renders the queue so PR badges appear on queue
 // rows too. Best-effort: any failure leaves the "Loading…"/prior state and is
@@ -6589,7 +6594,15 @@ function ccRenderTriage(snap){
         var repoLbl=esc((it.repo||'')+'#'+(it.number||''));
         var link=it.url?('<a class="cc-issue-link" href="'+esc(it.url)+'" target="_blank" rel="noopener noreferrer">'+repoLbl+'</a>'):repoLbl;
         var badge=(it.pr&&it.pr.number)?ccPRBadgeHTML(key):'';
-        return '<div class="cc-tg-item"><div class="cc-tg-body"><div class="cc-tg-repo">'+link+'</div><div class="cc-tg-title" title="'+esc(it.title||'')+'">'+esc(it.title||'(untitled)')+'</div></div>'+badge+'</div>';
+        // Held back rows carry the server's reason tag (withheld_tag) with its
+        // full sentence as the hover title. The words come from the server, as
+        // in the Withheld section; 'Reason not recorded' only guards against a blank.
+        var why='';
+        if(lv[0]==='triaging'){
+          var tag=it.withheld_tag||'Reason not recorded';
+          why='<span class="cc-tg-why" title="'+esc(it.withheld_detail||tag)+'">'+esc(tag)+'</span>';
+        }
+        return '<div class="cc-tg-item"><div class="cc-tg-body"><div class="cc-tg-repo">'+link+'</div><div class="cc-tg-title" title="'+esc(it.title||'')+'">'+esc(it.title||'(untitled)')+'</div></div>'+why+badge+'</div>';
       }).join('');
       var body=issues.length?rows:'<div class="cc-tg-empty">None right now.</div>';
       return '<div class="cc-tg lv-'+lv[0]+'"><div class="cc-tg-head"><span class="cc-tg-dot"></span>'+esc(lv[1])+'<span class="cc-tg-count">'+(g.count||0)+'</span></div>'+body+'</div>';

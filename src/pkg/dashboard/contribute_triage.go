@@ -6,11 +6,14 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Triage ladder levels. Ordered constants (the slice below fixes render order).
 const (
-	triageTriaging     = "triaging"     // open, unclaimed, no linked PR — awaiting triage
+	triageTriaging     = "triaging"     // open, unclaimed, no linked PR: held back from agents (shown as "Held back")
 	triageReady        = "ready"        // admitted to the ready queue, not yet picked up
 	triageImplementing = "implementing" // a clanker holds it, or an open linked PR exists
 	triageReviewing    = "reviewing"    // linked PR is open + not merged (awaiting review)
@@ -24,8 +27,13 @@ var triageLevelOrder = []string{
 
 // triageLevelLabel is the human-facing name for each level, shown as the group
 // heading in the view. Kept beside the constants so the mapping is legible.
+//
+// The first rung keeps its "triaging" key but reads "Held back": it holds every
+// candidate the queue is not offering to agents right now, for whatever reason
+// (tracker, cooldown, open PR, skip label, operator hold and so on), and only a
+// few of those are actually waiting for triage.
 var triageLevelLabel = map[string]string{
-	triageTriaging:     "Triaging",
+	triageTriaging:     "Held back",
 	triageReady:        "Ready to implement",
 	triageImplementing: "Implementing",
 	triageReviewing:    "Reviewing",
@@ -64,7 +72,7 @@ type triageSignals struct {
 //	Reviewing:    linked PR open + not merged (awaiting review)
 //	Implementing: in-flight in the fleet, OR has an open linked PR
 //	Ready:        admitted to the ready queue, not yet picked up
-//	Triaging:     open, unclaimed, not queued, no linked PR
+//	Triaging:     open, unclaimed, not queued, no linked PR (shown as Held back)
 func deriveTriageLevel(sig triageSignals) string {
 	// Closed wins outright: the fix landed (merged PR) or the issue is done.
 	if sig.closed || (sig.prLink != nil && sig.prLink.State == prLinkStateMerged) {
@@ -101,6 +109,67 @@ type triageIssue struct {
 	URL    string        `json:"url,omitempty"`
 	Level  string        `json:"level"`
 	PR     *prLinkStatus `json:"pr,omitempty"`
+	// WithheldReason / WithheldTag / WithheldDetail say why a Held back row is
+	// not on offer: the reason code the queue's admission pass recorded (or one
+	// of the triageHeld* codes below), a short plain-words tag for the row, and
+	// the full sentence for its hover text. Set only on the Held back rung;
+	// additive and omitempty, so every other row is unchanged.
+	WithheldReason string `json:"withheld_reason,omitempty"`
+	WithheldTag    string `json:"withheld_tag,omitempty"`
+	WithheldDetail string `json:"withheld_detail,omitempty"`
+}
+
+// Held back reasons the admission pass does not record as withheld, named here
+// so every Held back row carries a reason. They exist only on this card.
+const (
+	// triageHeldOperatorHold: an operator parked the issue in the queue. The
+	// queue surfaces it as Held rather than withheld (an operator's own
+	// decision is never reported as the hive's refusal).
+	triageHeldOperatorHold = "operator_hold"
+	// triageHeldIssueClosed: the scan's row says the issue is closed, so the
+	// admission pass skips it before any gate.
+	triageHeldIssueClosed = "issue_closed"
+	// triageHeldUnrecorded: the pass recorded no reason for the issue, which
+	// happens when its withheld list reached the row limit first.
+	triageHeldUnrecorded = "unrecorded"
+)
+
+// triageHeldTags is the tag and hover text for each triageHeld* code.
+var triageHeldTags = map[string][2]string{
+	triageHeldOperatorHold: {"On hold", "Held by an operator in the Contributor Queue"},
+	triageHeldIssueClosed:  {"Issue closed", "The last scan saw this issue closed, so the queue skips it"},
+	triageHeldUnrecorded:   {withheldUnrecordedTag, "The queue is not offering this issue, and its last pass recorded no reason for it (its withheld list stops at the queue's row limit)"},
+}
+
+// triageHeldReason is one Held back row's reason, ready to attach.
+type triageHeldReason struct {
+	code, tag, detail string
+}
+
+// heldReasonFromWithheld turns the admission pass's withheld row into the
+// card's reason: its code, a tag (withheldReasonTag, never empty) and its
+// existing detail sentence, unchanged except that a needs-triage row says who
+// that label holds back. A row with no reason code keeps its empty code and
+// detail and reads withheldUnrecordedTag, so the card states nothing the
+// withheld list does not.
+func heldReasonFromWithheld(item AdmissionWithheldItem, hub config.HubConfig) triageHeldReason {
+	code := item.Reason
+	detail := item.Detail
+	if note := withheldLabelNote(item.SkippedLabel); note != "" && item.Reason == contributorAdmissionReasonLabelSkipped {
+		detail = strings.TrimSuffix(detail, ".") + ". " + note
+	}
+	return triageHeldReason{code: code, tag: withheldReasonTag(item, hub), detail: detail}
+}
+
+// heldReasonFor returns the reason for one of the triageHeld* codes; note, when
+// set, is the operator's own hold note and is appended to the hover text.
+func heldReasonFor(code, note string) triageHeldReason {
+	t := triageHeldTags[code]
+	r := triageHeldReason{code: code, tag: t[0], detail: t[1]}
+	if note = strings.TrimSpace(note); note != "" {
+		r.detail += ": " + note
+	}
+	return r
 }
 
 // triageGroup is one ladder rung: its level id/label, the issues on it, and the
@@ -128,7 +197,8 @@ const maxTriageIssuesPerLevel = 60
 // buildTriageSnapshot derives the ladder live from the raw candidate population,
 // ready queue + fleet snapshot + the PR-link resolver. Ready/in-flight issues get
 // a bounded PR-link lookup (cached, short-TTL, degrade-to-nil); raw candidates that
-// admission withheld are placed directly in Triaging. The latter intentionally
+// admission withheld are placed directly in Triaging (Held back), each with the
+// reason the same admission pass recorded. The latter intentionally
 // avoids turning a disabled or heavily filtered repository into one GitHub Search
 // request per issue merely to explain why its queue is empty. Read-only; assigns
 // nothing, persists nothing.
@@ -160,7 +230,9 @@ func (s *Server) buildTriageSnapshot(ctx context.Context) triageSnapshot {
 	byLevel := map[string][]triageIssue{}
 	seen := map[string]bool{}
 
-	place := func(it triageIssue, sig triageSignals) {
+	// why attaches a Held back row's reason. Only that rung carries one: a row
+	// that advanced to a later rung is explained by the rung itself.
+	place := func(it triageIssue, sig triageSignals, why triageHeldReason) {
 		key := prLinkKey(it.Repo, it.Number)
 		if seen[key] {
 			return
@@ -168,10 +240,39 @@ func (s *Server) buildTriageSnapshot(ctx context.Context) triageSnapshot {
 		seen[key] = true
 		it.PR = sig.prLink
 		it.Level = deriveTriageLevel(sig)
+		if it.Level == triageTriaging {
+			it.WithheldReason, it.WithheldTag, it.WithheldDetail = why.code, why.tag, why.detail
+		}
 		byLevel[it.Level] = append(byLevel[it.Level], it)
 	}
 
-	for _, q := range s.contributeHub.ReadyQueue(readyQueueDefaultLimit) {
+	// One admission pass gives the Ready queue AND the reasons it withheld the
+	// rest. The queue is the same one ReadyQueue returns (collecting reasons
+	// never changes admission; TestWithheld_CollectingDoesNotChangeAdmission),
+	// and the reasons are the ones GET /api/contribute/queue?withheld=1 shows,
+	// so this card adds no lookup of its own.
+	var hubCfg config.HubConfig
+	if s.deps != nil && s.deps.Config != nil {
+		hubCfg = s.deps.Config.Hub
+	}
+	adm := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, withheldAll)
+	withheldByKey := make(map[string]AdmissionWithheldItem, len(adm.withheld))
+	for _, w := range adm.withheld {
+		if w.Number <= 0 {
+			continue
+		}
+		key := prLinkKey(w.Repo, w.Number)
+		if _, dup := withheldByKey[key]; !dup {
+			withheldByKey[key] = w
+		}
+	}
+	// An unexplained candidate is admitted but past the queue's row limit only
+	// when the pass admitted more than the queue lists AND recorded every
+	// refusal it made. selectTask offers from the whole admitted set, so such a
+	// row is Ready, not Held back.
+	pastLimit := adm.offerableTotal > readyQueueDefaultLimit && len(adm.withheld) < readyQueueDefaultLimit
+
+	for _, q := range adm.queue {
 		key := prLinkKey(q.Repo, q.Number)
 		pr := resolver.resolve(ctx, q.Repo, q.Number)
 		place(triageIssue{Repo: q.Repo, Number: q.Number, Title: q.Title, URL: q.URL}, triageSignals{
@@ -180,7 +281,7 @@ func (s *Server) buildTriageSnapshot(ctx context.Context) triageSnapshot {
 			inReadyQueue: !q.Held,
 			inFleet:      fleetKeys[key],
 			prLink:       pr,
-		})
+		}, heldReasonFor(triageHeldOperatorHold, q.HeldReason))
 	}
 
 	// Fleet items not already placed via the queue (an in-flight issue is excluded
@@ -190,15 +291,16 @@ func (s *Server) buildTriageSnapshot(ctx context.Context) triageSnapshot {
 			continue
 		}
 		pr := resolver.resolve(ctx, it.Repo, it.Number)
-		place(it, triageSignals{inFleet: true, prLink: pr})
+		place(it, triageSignals{inFleet: true, prLink: pr}, triageHeldReason{})
 	}
 
 	// Finally retain raw scanner candidates that did not survive admission. Before
 	// this pass, the pure deriveTriageLevel mapping had a Triaging case but the
 	// builder never supplied it: it iterated only ReadyQueue and FleetSnapshot, so
 	// every disabled/filtered/cooling candidate disappeared and an affected hive
-	// rendered a completely empty ladder. These items have already failed to reach
-	// Ready and are therefore the observable "awaiting triage" population.
+	// rendered a completely empty ladder. These items are the Held back
+	// population, each with the reason the admission pass above recorded for
+	// it, except admitted issues past the queue's row limit, which are Ready.
 	s.statusMu.RLock()
 	status := s.status
 	s.statusMu.RUnlock()
@@ -219,7 +321,19 @@ func (s *Server) buildTriageSnapshot(ctx context.Context) triageSnapshot {
 				}
 				title, _ := issue["title"].(string)
 				url, _ := issue["url"].(string)
-				place(triageIssue{Repo: repo.Full, Number: ref.Number, Title: title, URL: url}, triageSignals{})
+				it := triageIssue{Repo: repo.Full, Number: ref.Number, Title: title, URL: url}
+				state, _ := issue["state"].(string)
+				w, withheld := withheldByKey[prLinkKey(repo.Full, ref.Number)]
+				switch {
+				case withheld:
+					place(it, triageSignals{}, heldReasonFromWithheld(w, hubCfg))
+				case strings.EqualFold(state, "closed"):
+					place(it, triageSignals{}, heldReasonFor(triageHeldIssueClosed, ""))
+				case pastLimit:
+					place(it, triageSignals{inReadyQueue: true}, triageHeldReason{})
+				default:
+					place(it, triageSignals{}, heldReasonFor(triageHeldUnrecorded, ""))
+				}
 			}
 		}
 	}

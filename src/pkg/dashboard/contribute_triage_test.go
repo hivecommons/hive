@@ -226,7 +226,9 @@ func TestContributeTriageRenderMarkup(t *testing.T) {
 	for _, want := range []string{
 		// Triage card lives INSIDE the Operations tab panel (a section, not a tab).
 		`id="cc-triage-card"`,
-		`<h3>Issue triage</h3>`,
+		`<h3>Issue lifecycle</h3>`,
+		`aria-label="Move Issue lifecycle card"`,
+		`data-ops-card="triage"`,
 		`id="cc-triage-ladder"`,
 		`id="cc-triage-groups"`,
 		// Client wiring: the poll + render + PR-badge helpers and the endpoint.
@@ -234,8 +236,9 @@ func TestContributeTriageRenderMarkup(t *testing.T) {
 		`function ccRenderTriage(`,
 		`function ccPRBadgeHTML(`,
 		`/api/contribute/triage`,
-		// The five ladder levels are named client-side in lifecycle order.
-		`['triaging','Triaging']`,
+		// The five ladder levels are named client-side in lifecycle order. The
+		// first keeps its "triaging" key but reads Held back.
+		`['triaging','Held back']`,
 		`['ready','Ready to implement']`,
 		`['implementing','Implementing']`,
 		`['reviewing','Reviewing']`,
@@ -243,9 +246,22 @@ func TestContributeTriageRenderMarkup(t *testing.T) {
 		// PR badge CSS classes (part c) present for open/merged states.
 		`.cc-pr-badge.pr-open`,
 		`.cc-pr-badge.pr-merged`,
+		// Held back rows show the server's reason tag, hover text from detail.
+		`.cc-tg-why{`,
+		`it.withheld_tag`,
+		`esc(it.withheld_detail||tag)`,
+		`it.withheld_tag||'Reason not recorded'`,
+		`Held back lists the issues the queue is not offering to agents right now`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("rendered page missing triage/PR-link marker %q", want)
+		}
+	}
+	// The old label read as "awaiting triage" for issues held back for any
+	// reason; it must not come back as a displayed name.
+	for _, gone := range []string{`['triaging','Triaging']`, `remain in Triaging`, `<h3>Issue triage</h3>`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("rendered page still shows the old Triaging label: %q", gone)
 		}
 	}
 
@@ -288,6 +304,273 @@ func TestContributeTriageEndpoint(t *testing.T) {
 	for i, want := range triageLevelOrder {
 		if snap.Groups[i].Level != want {
 			t.Errorf("group %d = %q, want %q", i, snap.Groups[i].Level, want)
+		}
+	}
+}
+
+// findTriageIssue returns the ladder row for repo#number and the rung it is on.
+func findTriageIssue(snap triageSnapshot, repo string, number int) (triageIssue, bool) {
+	for _, g := range snap.Groups {
+		for _, it := range g.Issues {
+			if it.Repo == repo && it.Number == number {
+				return it, true
+			}
+		}
+	}
+	return triageIssue{}, false
+}
+
+// TestTriageHeldBackLabel pins the first rung's name: the key stays
+// "triaging" so readers of the JSON are unaffected, the label reads Held back.
+func TestTriageHeldBackLabel(t *testing.T) {
+	if triageTriaging != "triaging" {
+		t.Fatalf("the first rung's key changed to %q; it must stay \"triaging\"", triageTriaging)
+	}
+	if got := triageLevelLabel[triageTriaging]; got != "Held back" {
+		t.Fatalf("first rung label = %q, want \"Held back\"", got)
+	}
+	snap := emptyTriageSnapshot()
+	if snap.Groups[0].Level != "triaging" || snap.Groups[0].Label != "Held back" {
+		t.Fatalf("first group = %q/%q, want triaging/Held back", snap.Groups[0].Level, snap.Groups[0].Label)
+	}
+}
+
+// TestTriageHeldBackRowsCarryTheWithheldReason runs every exclusion cause of
+// the shared withheld ladder through the lifecycle card: the Held back row
+// carries the same reason code the queue's admission pass recorded, a tag the
+// vocabulary knows, and the row's detail sentence. The control (#700) is Ready
+// and carries no reason.
+func TestTriageHeldBackRowsCarryTheWithheldReason(t *testing.T) {
+	for _, tc := range withheldCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			hub, s := withheldHub(t, tc.decorate)
+			if tc.arrange != nil {
+				tc.arrange(t, hub, s)
+			}
+			s.contributeHub = hub
+			snap := s.buildTriageSnapshot(context.Background())
+
+			it, ok := findTriageIssue(snap, "projectbluefin/dakota", 601)
+			if !ok {
+				t.Fatalf("#601 is missing from the ladder: %+v", snap.Groups)
+			}
+			if it.Level != triageTriaging {
+				// An in-flight issue the fleet reports is Implementing, which
+				// explains itself; it must not carry a Held back reason.
+				if tc.reason != withheldReasonInFlight {
+					t.Fatalf("#601 level = %q, want %q", it.Level, triageTriaging)
+				}
+				if it.WithheldReason != "" || it.WithheldTag != "" {
+					t.Fatalf("a %s row must not carry a Held back reason: %+v", it.Level, it)
+				}
+				return
+			}
+			if it.WithheldReason != tc.reason {
+				t.Fatalf("withheld_reason = %q, want %q", it.WithheldReason, tc.reason)
+			}
+			if it.WithheldTag == "" || strings.HasPrefix(it.WithheldTag, withheldOtherTagPrefix) || it.WithheldTag == withheldUnrecordedTag {
+				t.Fatalf("withheld_tag = %q, want a known tag for %q", it.WithheldTag, tc.reason)
+			}
+			if it.WithheldDetail == "" {
+				t.Fatal("a Held back row needs its detail sentence for the hover text")
+			}
+
+			ctl, ok := findTriageIssue(snap, "projectbluefin/dakota", 700)
+			if !ok || ctl.Level != triageReady {
+				t.Fatalf("control #700 = %+v (found %v), want Ready", ctl, ok)
+			}
+			if ctl.WithheldReason != "" || ctl.WithheldTag != "" || ctl.WithheldDetail != "" {
+				t.Fatalf("a Ready row must carry no withheld fields: %+v", ctl)
+			}
+		})
+	}
+}
+
+// TestTriageHeldBackNamesTheSkipLabel: a skip-label refusal is tagged with the
+// label in plain words, so needs-triage reads as the one case that really is
+// waiting for triage.
+func TestTriageHeldBackNamesTheSkipLabel(t *testing.T) {
+	hub, s := withheldHub(t, func(issue map[string]any) { issue["labels"] = []any{"needs-triage"} })
+	s.contributeHub = hub
+	it, ok := findTriageIssue(s.buildTriageSnapshot(context.Background()), "projectbluefin/dakota", 601)
+	if !ok || it.Level != triageTriaging {
+		t.Fatalf("#601 = %+v (found %v), want Held back", it, ok)
+	}
+	if it.WithheldReason != contributorAdmissionReasonLabelSkipped || it.WithheldTag != "Needs triage" {
+		t.Fatalf("reason/tag = %q/%q, want %q/\"Needs triage\"", it.WithheldReason, it.WithheldTag, contributorAdmissionReasonLabelSkipped)
+	}
+}
+
+// TestTriageHeldBackOperatorHold: an operator-held queue row is Held back with
+// its own tag (the queue never reports an operator's hold as withheld), and
+// the operator's note rides in the hover text.
+func TestTriageHeldBackOperatorHold(t *testing.T) {
+	hub, s := withheldHub(t, nil)
+	s.deps.Config.Hub.ContributeQueueHold = []string{withheldKey601}
+	s.deps.Config.Hub.ContributeQueueHoldReasons = map[string]string{withheldKey601: "waiting on design review"}
+	s.contributeHub = hub
+	it, ok := findTriageIssue(s.buildTriageSnapshot(context.Background()), "projectbluefin/dakota", 601)
+	if !ok || it.Level != triageTriaging {
+		t.Fatalf("#601 = %+v (found %v), want Held back", it, ok)
+	}
+	if it.WithheldReason != triageHeldOperatorHold || it.WithheldTag != "On hold" {
+		t.Fatalf("reason/tag = %q/%q, want %q/\"On hold\"", it.WithheldReason, it.WithheldTag, triageHeldOperatorHold)
+	}
+	if !strings.Contains(it.WithheldDetail, "waiting on design review") {
+		t.Fatalf("detail %q does not carry the operator's hold note", it.WithheldDetail)
+	}
+}
+
+// TestTriageHeldBackPastQueueLimitIsReady: admitted issues past the queue's
+// row limit are not refused, and selectTask offers from the whole admitted
+// set, so they sit on Ready rather than Held back.
+func TestTriageHeldBackPastQueueLimitIsReady(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+	extra := 17
+	s.statusMu.Lock()
+	s.status = seedActionable("projectbluefin/common", readyQueueDefaultLimit+extra)
+	s.statusMu.Unlock()
+
+	snap := s.buildTriageSnapshot(context.Background())
+	if got := triageCount(snap, triageTriaging); got != 0 {
+		t.Fatalf("held back count = %d, want 0: every issue was admitted", got)
+	}
+	if got := triageCount(snap, triageReady); got != readyQueueDefaultLimit+extra {
+		t.Fatalf("ready count = %d, want %d (the listed queue plus the %d past its limit)", got, readyQueueDefaultLimit+extra, extra)
+	}
+	for _, g := range snap.Groups {
+		for _, it := range g.Issues {
+			if it.WithheldReason != "" || it.WithheldTag != "" {
+				t.Errorf("#%d on %s carries a held back reason %q", it.Number, g.Level, it.WithheldReason)
+			}
+		}
+	}
+}
+
+// TestTriageHeldBackIssueClosed: a scan row that says the issue is closed is
+// skipped by the admission pass before any gate, so it has no withheld record;
+// the card names that instead of leaving the row unexplained.
+func TestTriageHeldBackIssueClosed(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+	s.statusMu.Lock()
+	s.status = &StatusPayload{Repos: []FrontendRepo{{Name: "r", Full: "acme/r", ActionableIssues: []any{
+		map[string]any{"number": float64(5), "title": "already closed", "state": "closed"},
+		map[string]any{"number": float64(6), "title": "open work"},
+	}}}}
+	s.statusMu.Unlock()
+
+	snap := s.buildTriageSnapshot(context.Background())
+	it, ok := findTriageIssue(snap, "acme/r", 5)
+	if !ok || it.Level != triageTriaging {
+		t.Fatalf("#5 = %+v (found %v), want Held back", it, ok)
+	}
+	if it.WithheldReason != triageHeldIssueClosed || it.WithheldTag != "Issue closed" || it.WithheldDetail == "" {
+		t.Fatalf("#5 reason/tag/detail = %q/%q/%q, want %q/\"Issue closed\"/<sentence>", it.WithheldReason, it.WithheldTag, it.WithheldDetail, triageHeldIssueClosed)
+	}
+	if open, ok := findTriageIssue(snap, "acme/r", 6); !ok || open.Level != triageReady {
+		t.Fatalf("control #6 = %+v (found %v), want Ready", open, ok)
+	}
+}
+
+// TestTriageHeldBackUnrecorded: the withheld list stops at the queue's row
+// limit, so a refusal past it has no record. Its row still reads something
+// (never blank), and nothing claims to know the reason.
+func TestTriageHeldBackUnrecorded(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+	trackers := func(n int) []any {
+		out := make([]any, 0, n)
+		for i := 1; i <= n; i++ {
+			out = append(out, map[string]any{"number": float64(i), "title": "tracker", "is_tracker": true})
+		}
+		return out
+	}
+	// zzz/full is scanned first and fills the withheld list; aaa/late is
+	// scanned after, so its refusal is not recorded, and it sorts first on the
+	// rung, so it is inside the listed rows.
+	s.statusMu.Lock()
+	s.status = &StatusPayload{Repos: []FrontendRepo{
+		{Name: "full", Full: "zzz/full", ActionableIssues: trackers(readyQueueDefaultLimit)},
+		{Name: "late", Full: "aaa/late", ActionableIssues: trackers(1)},
+	}}
+	s.statusMu.Unlock()
+
+	snap := s.buildTriageSnapshot(context.Background())
+	it, ok := findTriageIssue(snap, "aaa/late", 1)
+	if !ok || it.Level != triageTriaging {
+		t.Fatalf("aaa/late#1 = %+v (found %v), want Held back", it, ok)
+	}
+	if it.WithheldReason != triageHeldUnrecorded || it.WithheldTag != withheldUnrecordedTag || it.WithheldDetail == "" {
+		t.Fatalf("reason/tag/detail = %q/%q/%q, want %q/%q/<sentence>", it.WithheldReason, it.WithheldTag, it.WithheldDetail, triageHeldUnrecorded, withheldUnrecordedTag)
+	}
+	recorded, ok := findTriageIssue(snap, "zzz/full", 1)
+	if ok && recorded.WithheldReason != withheldReasonTracker {
+		t.Fatalf("a recorded refusal lost its reason: %+v", recorded)
+	}
+}
+
+// TestTriageHeldBackNeedsTriageNote: the needs-triage hover says the label
+// holds back only outside authors' issues, since the same label also sits on
+// offered issues from trusted authors.
+func TestTriageHeldBackNeedsTriageNote(t *testing.T) {
+	hub, s := withheldHub(t, func(issue map[string]any) { issue["labels"] = []any{"needs-triage"} })
+	s.contributeHub = hub
+	it, ok := findTriageIssue(s.buildTriageSnapshot(context.Background()), "projectbluefin/dakota", 601)
+	if !ok || it.Level != triageTriaging {
+		t.Fatalf("#601 = %+v (found %v), want Held back", it, ok)
+	}
+	if !strings.Contains(it.WithheldDetail, "needs-triage") || !strings.Contains(it.WithheldDetail, "outside authors") {
+		t.Fatalf("detail %q should keep the label and explain it applies only to outside authors", it.WithheldDetail)
+	}
+}
+
+// TestTriageHeldBackDisabledRepo: the #6449 shape (a disabled repository)
+// keeps every candidate on the first rung, now tagged with why.
+func TestTriageHeldBackDisabledRepo(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	deps := testDeps(t)
+	deps.Config.Hub.DisabledRepos = []string{"projectbluefin/common"}
+	s.RegisterAPI(deps)
+	s.statusMu.Lock()
+	s.status = seedActionable("projectbluefin/common", 3)
+	s.statusMu.Unlock()
+
+	snap := s.buildTriageSnapshot(context.Background())
+	for n := 1; n <= 3; n++ {
+		it, ok := findTriageIssue(snap, "projectbluefin/common", n)
+		if !ok || it.Level != triageTriaging {
+			t.Fatalf("#%d = %+v (found %v), want Held back", n, it, ok)
+		}
+		if it.WithheldReason != withheldReasonDisabledRepo || it.WithheldTag != "Repo switched off" {
+			t.Fatalf("#%d reason/tag = %q/%q, want %q", n, it.WithheldReason, it.WithheldTag, withheldReasonDisabledRepo)
+		}
+	}
+}
+
+// TestTriageIssueWithheldFieldsAreAdditive: a row with no reason marshals with
+// exactly the keys it had before, so existing readers of the endpoint see no
+// change on any rung but Held back.
+func TestTriageIssueWithheldFieldsAreAdditive(t *testing.T) {
+	b, err := json.Marshal(triageIssue{Repo: "a/b", Number: 1, Title: "t", Level: triageReady})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "withheld") {
+		t.Fatalf("a row with no reason grew withheld keys: %s", b)
+	}
+	b, err = json.Marshal(triageIssue{Repo: "a/b", Number: 1, Level: triageTriaging, WithheldReason: "tracker", WithheldTag: "Epic or tracker", WithheldDetail: "Tracker / umbrella issue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"withheld_reason":"tracker"`, `"withheld_tag":"Epic or tracker"`, `"withheld_detail":"Tracker / umbrella issue"`} {
+		if !strings.Contains(string(b), key) {
+			t.Errorf("held back row JSON missing %s: %s", key, b)
 		}
 	}
 }
