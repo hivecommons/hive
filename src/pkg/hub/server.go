@@ -5570,7 +5570,7 @@ func sanitizeRepoEntry(s string) string {
 // legacy kind retains the original host-based GitHub/GHE inference.
 func forgeAPIURLForHost(kind, host string) string {
 	switch ForgeKind(strings.ToLower(strings.TrimSpace(kind))) {
-	case ForgeGitLab, ForgeGitea:
+	case ForgeGitLab, ForgeGitea, ForgeForgejo:
 		return ""
 	}
 	host = strings.TrimSpace(strings.ToLower(host))

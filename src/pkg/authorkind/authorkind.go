@@ -302,7 +302,7 @@ func isBotLogin(login, forge string) bool {
 	switch strings.ToLower(strings.TrimSpace(forge)) {
 	case "gitlab":
 		return gitlabBotLoginPattern.MatchString(l)
-	case "gitea":
+	case "gitea", "forgejo":
 		return giteaBotLogins[l]
 	}
 	return false

@@ -10,7 +10,7 @@ import (
 // project.repo_policies[].forge may name. The values match pkg/forge.Kind by
 // value (pkg/forge cannot be imported from here); a test in pkg/forge pins
 // that they stay equal.
-var KnownForgeKinds = []string{ForgeGitHub, ForgeGitLab, ForgeGitea}
+var KnownForgeKinds = []string{ForgeGitHub, ForgeGitLab, ForgeGitea, ForgeForgejo}
 
 func isKnownForgeKind(kind string) bool {
 	for _, k := range KnownForgeKinds {
@@ -43,7 +43,7 @@ func (c *Config) ForgeKindForRepo(repo string) string {
 // forge key never silently stops a GitHub hive's sweeps.
 func (c *Config) RepoOnGitHub(repo string) bool {
 	switch c.ForgeKindForRepo(repo) {
-	case ForgeGitLab, ForgeGitea:
+	case ForgeGitLab, ForgeGitea, ForgeForgejo:
 		return false
 	}
 	return true
@@ -68,6 +68,8 @@ func (c *Config) ForgeURLForRepo(repo string) string {
 		return c.GitLab.InstanceURL()
 	case ForgeGitea:
 		return c.Gitea.InstanceURL()
+	case ForgeForgejo:
+		return c.Forgejo.InstanceURL()
 	default:
 		return c.GitHub.ResolvedBaseURL()
 	}
@@ -115,6 +117,9 @@ func (c *Config) validateRepoForges() error {
 		// project.forge: gitea hive must load exactly as it did before.
 		if kind == ForgeGitea && c.ForgeURLForRepo(rp.Repo) == "" {
 			return fmt.Errorf("%s: repo %q is on gitea but neither forge_url nor gitea.gitea_url is set", field, rp.Repo)
+		}
+		if kind == ForgeForgejo && c.ForgeURLForRepo(rp.Repo) == "" {
+			return fmt.Errorf("%s: repo %q is on forgejo but neither forge_url nor forgejo.forgejo_url is set", field, rp.Repo)
 		}
 	}
 	return nil
