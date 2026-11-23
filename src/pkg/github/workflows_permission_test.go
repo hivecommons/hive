@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agentmode"
 )
 
@@ -55,7 +54,7 @@ func decodePermissions(t *testing.T, r *http.Request) map[string]string {
 // their tokens cannot write workflows either.
 func TestScopedToken_TrustedTiersRequestWorkflowsWrite(t *testing.T) {
 	cases := []struct {
-		tier          string
+		tier          agentmode.TokenTier
 		wantWorkflows string // "" means the permission must be absent
 	}{
 		{tier: "trusted", wantWorkflows: "write"},
@@ -65,13 +64,13 @@ func TestScopedToken_TrustedTiersRequestWorkflowsWrite(t *testing.T) {
 		{tier: "advisor", wantWorkflows: ""},
 	}
 	for _, tc := range cases {
-		t.Run("tier_"+tc.tier, func(t *testing.T) {
+		t.Run("tier_"+string(tc.tier), func(t *testing.T) {
 			var gotPerms map[string]string
 			mux := http.NewServeMux()
 			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 				gotPerms = decodePermissions(t, r)
 				json.NewEncoder(w).Encode(map[string]any{
-					"token":      "scoped-token-" + tc.tier,
+					"token":      "scoped-token-" + string(tc.tier),
 					"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
 				})
 			})
@@ -158,7 +157,7 @@ func TestScopedToken_OnlySecCheckTierRequestsVulnerabilityAlerts(t *testing.T) {
 	defer server.Close()
 	auth := newWorkflowsTestAuth(t, server.URL)
 
-	for _, tier := range []string{"advisor", "reviewer", "newcomer", "contributor", "trusted", "merger", crux.SharedUIDReadTokenTier} {
+	for _, tier := range []agentmode.TokenTier{agentmode.TokenTierAdvisor, agentmode.TokenTierReviewer, agentmode.TokenTierNewcomer, agentmode.TokenTierContributor, agentmode.TokenTierTrusted, agentmode.TokenTierMerger, agentmode.TokenTierSharedUIDRead} {
 		if _, err := auth.ScopedToken(context.Background(), tier); err != nil {
 			t.Fatalf("ScopedToken(%q): %v", tier, err)
 		}

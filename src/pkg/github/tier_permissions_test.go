@@ -9,6 +9,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 // TestScopedToken_AdvisoryTiersRequestContentsRead is the regression test for
@@ -19,7 +21,7 @@ import (
 // all, to prevent issue creation.
 func TestScopedToken_AdvisoryTiersRequestContentsRead(t *testing.T) {
 	cases := []struct {
-		tier       string
+		tier       agentmode.TokenTier
 		wantIssues string // "" means the issues permission must be absent
 	}{
 		{tier: "advisor", wantIssues: ""},
@@ -27,7 +29,7 @@ func TestScopedToken_AdvisoryTiersRequestContentsRead(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		t.Run("tier_"+tc.tier, func(t *testing.T) {
+		t.Run("tier_"+string(tc.tier), func(t *testing.T) {
 			key, _ := generateTestKey(t)
 
 			var gotPerms map[string]string
@@ -41,7 +43,7 @@ func TestScopedToken_AdvisoryTiersRequestContentsRead(t *testing.T) {
 				}
 				gotPerms = body.Permissions
 				json.NewEncoder(w).Encode(map[string]any{
-					"token":      "scoped-token-" + tc.tier,
+					"token":      "scoped-token-" + string(tc.tier),
 					"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
 				})
 			})

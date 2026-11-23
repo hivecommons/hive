@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 // scriptedGit answers git invocations from a table keyed on the joined argv,
@@ -380,12 +382,12 @@ func TestGitHubAppMinterRequiresAuth(t *testing.T) {
 // scopeRecorder is the TokenScoper the minter tests drive: it records what
 // the broker asked for so the test can assert the scope, not GitHub's reply.
 type scopeRecorder struct {
-	tier  string
+	tier  agentmode.TokenTier
 	repos []string
 	token string
 }
 
-func (r *scopeRecorder) ScopedTokenForRepos(_ context.Context, tier string, repos []string) (string, error) {
+func (r *scopeRecorder) ScopedTokenForRepos(_ context.Context, tier agentmode.TokenTier, repos []string) (string, error) {
 	r.tier, r.repos = tier, repos
 	return r.token, nil
 }

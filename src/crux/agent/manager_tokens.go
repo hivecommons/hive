@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/internal/textutil"
 )
@@ -485,7 +486,7 @@ func AgentMintTokenCachePath(agentName string) string {
 // it is safe to call from Start (which holds m.mu.Lock()). m.agentMint is set
 // once at wiring time and never mutated after agents start, so the lock-free
 // read is race-free. See agentMintIssuerLocked for the deadlock this avoids.
-func (m *Manager) issueAgentMintToken(agentName, tier string, agentUID int) {
+func (m *Manager) issueAgentMintToken(agentName string, tier agentmode.TokenTier, agentUID int) {
 	issuer := m.agentMintIssuerLocked()
 	if issuer == nil || !issuer.Enabled() {
 		return
@@ -925,9 +926,9 @@ func (m *Manager) agentTokenCacheEnabled(a *AgentProcess) bool {
 	return a.UID > 0 || (a.UID == 0 && m.project.SharedUIDReadToken && m.appAuth != nil)
 }
 
-func (m *Manager) agentTokenTier(a *AgentProcess) string {
+func (m *Manager) agentTokenTier(a *AgentProcess) agentmode.TokenTier {
 	if a.UID == 0 {
-		return crux.SharedUIDReadTokenTier
+		return agentmode.TokenTierSharedUIDRead
 	}
 	return TokenTierForRole(m.agentMode(a), a.Config.Role)
 }
