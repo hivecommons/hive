@@ -331,6 +331,10 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 		// at load, so reaching it means the config was mutated afterwards.
 		// Still a degraded boot rather than an exit: the dashboard is where an
 		// operator fixes it.
+		if cfg.AllReposOffGitHub() {
+			logger.Info("no GitHub credentials; every repo is on another forge, so none are needed", "forge", cfg.Project.ForgeKind())
+			return out
+		}
 		out.Failure = "No GitHub credentials configured. Set github.token, or github.app_id plus an App installation."
 		logger.Error("no GitHub token configured (set github.token or github.app_id in config) — starting in dashboard-only mode")
 	}
