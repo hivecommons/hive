@@ -125,14 +125,16 @@ jobs:
       env:
         GOBIN: ${{ runner.temp }}/hive-ci-tools
       run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
+    - name: Gosec HIGH gate self-test
+      run: python3 .github/scripts/test-gosec-high-gate.py
     - name: Scan
       working-directory: src
-      continue-on-error: true
-      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
+      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated -no-fail -fmt json -out "${{ runner.temp }}/gosec-src.json" -stdout -verbose text ./...'
     - name: Scan crux module
       working-directory: src/crux
-      continue-on-error: true
-      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
+      run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated -no-fail -fmt json -out "${{ runner.temp }}/gosec-crux.json" -stdout -verbose text ./...'
+    - name: Fail on HIGH-severity findings
+      run: python3 .github/scripts/gosec-high-gate.py "${{ runner.temp }}/gosec-src.json" "${{ runner.temp }}/gosec-crux.json"
   golangci-lint:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}

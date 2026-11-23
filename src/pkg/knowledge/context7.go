@@ -325,7 +325,7 @@ func FetchContext7Docs(ctx context.Context, libraryID, query, apiKey string) (*C
 // could pivot to cloud metadata or internal services without this guard.
 var context7Client = &http.Client{
 	Timeout:       context7Timeout,
-	CheckRedirect: knowledgeNoRedirectToPrivate,
+	CheckRedirect: knowledgeRedirectPolicy,
 }
 
 func context7Get(ctx context.Context, reqURL, apiKey string) ([]byte, error) {

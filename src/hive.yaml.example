@@ -1101,6 +1101,7 @@ dashboard:
   # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord, sandstone); or custom
   # theme_overrides:
   #   tokens: { "--accent": "#e0a33a" } # CSS variables from the dashboard :root allow-list
+  #   light_tokens: { "--surface-0": "#fdfaf3" } # same allow-list, light mode only (layered on the preset's light palette)
   #   background:
   #     image: https://example.org/bg.svg # https or data: URI (inlined data capped at 256 KiB)
   #     opacity: 0.08

@@ -905,6 +905,8 @@ dashboard:
   theme_overrides:
     tokens:
       "--accent": "#e0a33a"
+    light_tokens:       # applied in light mode only
+      "--surface-0": "#fdfaf3"
     background:
       image: https://example.org/bg.svg  # https or data: URI only
       opacity: 0.08
@@ -920,13 +922,22 @@ only permits `https:` or bounded `data:` URLs; inlined backgrounds are capped at
 256 KiB. `/api/theme.css` serves the effective theme with an ETag and is linked
 from the document head so the themed stylesheet is available before first paint.
 
+A dark preset (and `custom`) without its own `light_tokens` derives its
+light-mode surfaces, lines, text, scrim and shadows rather than reusing its
+dark values, so a `tokens` override of one of those changes dark mode only,
+while light mode is the dashboard's default view. `light_tokens` takes the same
+allowlisted tokens and applies them in light mode only, after `tokens`: on top
+of the preset's own `light_tokens` when it has them, otherwise on top of the
+derived palette, so tokens you do not list keep their light-mode values.
+
 ### Settings → Appearance
 
 The **Appearance** tab in Settings renders the built-in preset gallery with
 swatches for background, panel, accent, and text colors. Hovering a card previews
 it, **Apply** persists the preset, **Reset to preset** removes overrides, and
 **Apply background/CSS** saves the background URL, opacity, honeycomb watermark,
-and custom CSS textarea (with byte counter). The existing dark/light button asks
+fonts, the CSS token and light-mode token overrides, and the custom CSS textarea
+(with byte counter). The existing dark/light button asks
 the theme API for the closest light or dark built-in variant and refreshes
 `/api/theme.css` without reloading the dashboard.
 

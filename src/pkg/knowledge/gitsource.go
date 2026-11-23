@@ -496,7 +496,7 @@ func parseGitSourceIPv4Literal(host string) (net.IP, bool) {
 		return nil, false
 	}
 
-	return net.IPv4(byte(value>>24), byte(value>>16), byte(value>>8), byte(value)), true
+	return net.IPv4(byte(value>>24), byte(value>>16), byte(value>>8), byte(value)), true // #nosec G115 -- value <= 0xffffffff is checked above; each shift-and-truncate extracts one octet by design
 }
 
 func gitURLContainsTransportHelperSeparator(raw string) bool {

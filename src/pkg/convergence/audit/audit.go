@@ -189,7 +189,7 @@ func Run(opts Options) (Result, error) {
 		}
 		effect := mutation.Effect{
 			OutcomeKey:        auditRepo + "@" + opts.CampaignKey,
-			DesiredGeneration: int(opts.Generation),
+			DesiredGeneration: int(opts.Generation), // #nosec G115 -- generation is a monotonic counter starting at 1, far below MaxInt
 			Transition:        "audit-inspection",
 			Subject:           auditRepo + "!" + opts.CampaignKey + ":" + c.Name,
 			ClaimKey:          claim.Key(),
@@ -254,7 +254,7 @@ func Run(opts Options) (Result, error) {
 		_ = opts.Store.SetMetadata(inspection.ID, "inspection_state", "inspected")
 		_ = opts.Store.SetMetadata(inspection.ID, metaReceiptDigest, receipt.OutputDigest)
 		if opts.ProofStore != nil {
-			_, err = opts.ProofStore.Put(proof.Record{Fingerprint: proof.Fingerprint{OutcomeKey: auditRepo + "@" + opts.CampaignKey, PredicateID: proof.PredicateInspectionRecorded, DesiredGeneration: int(opts.Generation), Producer: proof.ProducerHiveAuditLane, InspectionBeadID: inspection.ID, ReceiptDigest: receipt.OutputDigest}, Result: proof.ResultSuccess, Provenance: proof.Provenance{Query: "audit-inspection@" + c.Name}, ObservedAt: now})
+			_, err = opts.ProofStore.Put(proof.Record{Fingerprint: proof.Fingerprint{OutcomeKey: auditRepo + "@" + opts.CampaignKey, PredicateID: proof.PredicateInspectionRecorded, DesiredGeneration: int(opts.Generation), Producer: proof.ProducerHiveAuditLane, InspectionBeadID: inspection.ID, ReceiptDigest: receipt.OutputDigest}, Result: proof.ResultSuccess, Provenance: proof.Provenance{Query: "audit-inspection@" + c.Name}, ObservedAt: now}) // #nosec G115 -- generation is a monotonic counter starting at 1, far below MaxInt
 			if err != nil {
 				return Result{}, err
 			}
