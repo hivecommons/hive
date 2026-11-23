@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v5.355.2)
+
+### Fixed
+
+- **Agent-written `.kick` notes no longer outlive their session** ([#19559](https://github.com/hivecommons/hive/issues/19559)). The workspace sweep skipped every dotfile, so a `.kick` (or `.kick.*`) note an agent wrote for itself survived cleanup and restarts, and each fresh session re-read and obeyed one session's stale belief. The sweep now removes those notes once they pass `HIVE_WORKSPACE_CLEANUP_MAX_AGE`, also in a workspace that is a git clone, while other dotfiles stay protected. The idle bootstrap a fresh inference-backend session receives now says there is no task yet and no longer carries the "execute now" suffix that sent agents looking for work in their workspace.
+
+### Security
+
+- The hub Deployment check now also rejects secret env names fed from a ConfigMap or field reference, checks initContainers, and reads `kind: List` manifests (#19344, #19345).
+
 ## 2026-11-23 (v5.355.1)
 
 ### Fixed
