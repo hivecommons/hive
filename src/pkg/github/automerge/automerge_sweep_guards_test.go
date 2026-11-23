@@ -139,6 +139,10 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 			// The superseded rule looks for a merged PR declaring
 			// `Supersedes #7`; this fixture has none.
 			json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			// The requires_human release reads the dashboard's head-bound
+			// approval comment (hivecommons/hive#19536); none here.
+			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
 			reviews := fx.reviews
 			if reviews == nil {
