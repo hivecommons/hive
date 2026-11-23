@@ -41,6 +41,12 @@ type advisorSummaryResp struct {
 		MeanPromptTokens   float64 `json:"mean_prompt_tokens"`
 		MeanCompletionToks float64 `json:"mean_completion_tokens"`
 	} `json:"cost"`
+	Coverage struct {
+		ClosedBeads  int `json:"closed_beads"`
+		WithClosedPR int `json:"with_closed_pr"`
+		NoRef        int `json:"no_ref"`
+		NoDecision   int `json:"no_decision"`
+	} `json:"coverage"`
 	SmallN bool   `json:"small_n"`
 	Caveat string `json:"caveat"`
 }
@@ -145,7 +151,7 @@ func TestAdvisorSummaryMixedArmsMatchLane(t *testing.T) {
 
 	s := advisorTestServer(t)
 	s.deps.Config.Knowledge = config.KnowledgeConfig{Advisor: true, AdvisorLLM: config.AdvisorLLMConfig{Mode: "rank", Model: "small-model", HoldoutPercent: 20, APIKeyEnv: "SHOULD_NOT_APPEAR", Endpoint: "https://llm.example.invalid"}}
-	s.SetKnowledgeAdvisorSummary(store, lane.AdvisorArmSummary)
+	s.SetKnowledgeAdvisorSummary(store, lane.AdvisorArmReport)
 
 	httpRec, got := getAdvisorSummary(t, s, "/api/knowledge/advisor/summary", config.RoleRead)
 	if httpRec.Code != http.StatusOK {
@@ -194,6 +200,11 @@ func TestAdvisorSummaryMixedArmsMatchLane(t *testing.T) {
 	if len(got.Arms) != 2 {
 		t.Fatalf("arms = %+v, want deliver and holdout", got.Arms)
 	}
+	// o/r#5 closed with no decision: counted, so an empty arms list can be
+	// told apart from no closed beads (#19577).
+	if c := got.Coverage; c.ClosedBeads != 4 || c.WithClosedPR != 4 || c.NoRef != 0 || c.NoDecision != 1 {
+		t.Fatalf("coverage = %+v", c)
+	}
 
 	if got.Settings["mode"] != "rank" || got.Settings["model"] != "small-model" || got.Settings["holdout_percent"] != float64(20) || got.Settings["enabled"] != true {
 		t.Fatalf("settings = %v", got.Settings)
@@ -233,7 +244,7 @@ func TestAdvisorSummarySmallNCaveatClearsAtThreshold(t *testing.T) {
 		store.Record(retro.AdvisorDecisionRecord{Timestamp: time.Now().UTC().Format(time.RFC3339), Agent: "dev", Kick: "h" + strconv.Itoa(i), Refs: []string{h}, Mode: "rank", Outcome: "held-out"})
 	}
 	s := advisorTestServer(t)
-	s.SetKnowledgeAdvisorSummary(store, advisorLane(t, store, closed).AdvisorArmSummary)
+	s.SetKnowledgeAdvisorSummary(store, advisorLane(t, store, closed).AdvisorArmReport)
 	_, got := getAdvisorSummary(t, s, "/api/knowledge/advisor/summary", config.RoleRead)
 	if got.SmallN || got.Caveat != "" {
 		t.Fatalf("at %d beads per arm the caveat should clear: %+v", advisorSmallNBeads, got)
@@ -241,7 +252,7 @@ func TestAdvisorSummarySmallNCaveatClearsAtThreshold(t *testing.T) {
 
 	closed["o/r#2000"] = 3
 	delete(closed, "o/r#2001")
-	s.SetKnowledgeAdvisorSummary(store, advisorLane(t, store, closed).AdvisorArmSummary)
+	s.SetKnowledgeAdvisorSummary(store, advisorLane(t, store, closed).AdvisorArmReport)
 	_, got = getAdvisorSummary(t, s, "/api/knowledge/advisor/summary", config.RoleRead)
 	if !got.SmallN || got.Caveat == "" {
 		t.Fatalf("one bead short in the holdout arm should keep the caveat: %+v", got)

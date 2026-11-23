@@ -402,10 +402,13 @@ if gh_release is None:
 elif "steps.push_line.outputs.pushed == 'true'" not in (gh_release.get("if") or ""):
     bad("Create GitHub Release is not gated on pushed=true — a deferred run would "
         "publish a Release for a tag that was never pushed")
-perms = w.get("permissions", {})
-if perms.get("pull-requests") != "write":
-    bad("permissions no longer grant pull-requests: write — the #5222 PR-merge path needs it")
 release_perms = rel.get("permissions", {})
+# Workflow-level permissions are read-only (zizmor excessive-permissions);
+# the scope is granted on the release job that runs the PR-merge path.
+if release_perms.get("pull-requests") != "write":
+    bad("the release job no longer grants pull-requests: write — the #5222 PR-merge path needs it")
+if (w.get("permissions") or {}).get("contents") != "read":
+    bad("workflow-level permissions are no longer read-only — jobs must declare their own write scopes")
 if release_perms.get("statuses") != "write":
     bad("the release job no longer grants statuses: write — the #5356 gate mirror cannot be published")
 # #5318: the deferral chain has no terminating condition of its own — a
