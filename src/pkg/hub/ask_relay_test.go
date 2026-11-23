@@ -119,7 +119,7 @@ func TestHubAskRelayAuthenticatesTheHiveAndServesHostedOnly(t *testing.T) {
 	if want := []string{"", "", "vendor-thread-a"}; strings.Join(threads, ",") != strings.Join(want, ",") {
 		t.Fatalf("threads %q, want %q", threads, want)
 	}
-	if queries[0] != "Dashboard section: Agents.\n\nWhere is pause?" {
+	if queries[0] != "Dashboard section: Control panel.\n\nWhere is pause?" {
 		t.Fatalf("vendor query %q", queries[0])
 	}
 	// Hive A has spent its hourly quota of 2; hive B has not.

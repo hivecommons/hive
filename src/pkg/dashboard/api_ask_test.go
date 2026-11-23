@@ -220,7 +220,7 @@ func TestHiveAskDirectModeFlow(t *testing.T) {
 	if err := json.Unmarshal([]byte(bodies[0]), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload) != 2 || payload["query"] != "Dashboard section: Agents.\n\nWhere do I pause an agent?" || payload["integration_id"] != askTestIntegration {
+	if len(payload) != 2 || payload["query"] != "Dashboard section: Control panel.\n\nWhere do I pause an agent?" || payload["integration_id"] != askTestIntegration {
 		t.Fatalf("payload %v", payload)
 	}
 	for _, seeded := range []string{"alice-login", "acme-secret-hive", "ghp_"} {
