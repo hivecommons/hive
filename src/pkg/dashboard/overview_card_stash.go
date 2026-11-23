@@ -302,7 +302,10 @@ func (s *Server) cardFixDispatch(now time.Time) (review.DispatchState, bool) {
 	return c.state, true
 }
 
-// cardDispatchCached returns the cached copy without any I/O.
+// cardDispatchCached returns the cached copy without any I/O. It is the
+// only read allowed under statusMu. An entry point that builds the card
+// without calling cardFixDispatch first still never does I/O under the
+// lock; it only serves the last loaded copy.
 func (s *Server) cardDispatchCached() (review.DispatchState, bool) {
 	s.cardDispatchMu.Lock()
 	defer s.cardDispatchMu.Unlock()
