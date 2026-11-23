@@ -363,6 +363,12 @@ func TestIssueDiscussionSignal(t *testing.T) {
 		{"rfc word without marker", nil, "RFC process cleanup", ""},
 		{"rfc mid-title", nil, "Implement the [RFC] runtime", ""},
 		{"empty title", nil, "", ""},
+		// hivecommons/hive#19573: approved-direction is a recorded owner
+		// decision, so the issue is past discussion.
+		{"approved-direction outranks proposal", []string{"proposal", HumanAckLabel}, "", ""},
+		{"approved-direction outranks rfc title", []string{"Epic", HumanAckLabel}, "📝 RFC: LLM-ranked knowledge advisor", ""},
+		{"approved-direction is case-insensitive", []string{"Proposal", "Approved-Direction"}, "[RFC] v6", ""},
+		{"rfc title without approval still signals", []string{"Epic"}, "📝 RFC: LLM-ranked knowledge advisor", rfcTitleDiscussionReason},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -390,6 +396,38 @@ func TestIssueStageFor_DiscussionSignals(t *testing.T) {
 		{"[RFC] title claimed by a person", IssueStageInput{Title: "[RFC] v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: "human", ClaimedBy: "alice"}, stagelabels.Claimed, "live issue claim"},
 		{"architecture discussion claimed with a PR under way", IssueStageInput{Labels: []string{"architecture discussion"}, Title: "Hold: v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner", PRStarted: true}, stagelabels.PRInProgress, "live claim with a PR under way"},
 		{"plain title stays 010", IssueStageInput{Labels: []string{"Epic", "help wanted"}, Title: "v6 agent runtime"}, stagelabels.Actionable, "actionable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stage, covered, reason := IssueStageFor(tc.in, nil)
+			if stage != tc.want || covered || reason != tc.wantReason {
+				t.Fatalf("got stage=%v covered=%v reason=%q; want stage=%v reason=%q", stage, covered, reason, tc.want, tc.wantReason)
+			}
+		})
+	}
+}
+
+// TestIssueStageFor_ApprovedRFCLeavesDiscussion pins hivecommons/hive#19573:
+// an RFC / proposal without approval stays 018, one carrying
+// approved-direction does not, an approved epic with open children keeps
+// the decomposed-parent stage (010, waiting on children), and an approved
+// parent whose children are all closed derives the plain 010 with no
+// waiting suffix.
+func TestIssueStageFor_ApprovedRFCLeavesDiscussion(t *testing.T) {
+	const rfcTitle = "📝 RFC: LLM-ranked knowledge advisor"
+	cases := []struct {
+		name       string
+		in         IssueStageInput
+		want       stagelabels.Stage
+		wantReason string
+	}{
+		{"rfc title + proposal, no approval", IssueStageInput{Labels: []string{"Epic", "proposal"}, Title: rfcTitle}, stagelabels.OpenForDiscussion, "open for discussion: proposal"},
+		{"rfc title only, no approval", IssueStageInput{Labels: []string{"Epic"}, Title: rfcTitle}, stagelabels.OpenForDiscussion, "open for discussion: rfc title"},
+		{"rfc title + proposal + approved-direction", IssueStageInput{Labels: []string{"Epic", "proposal", HumanAckLabel}, Title: rfcTitle}, stagelabels.Actionable, "actionable"},
+		{"approved epic with open children", IssueStageInput{Labels: []string{"Epic", "proposal", HumanAckLabel}, Title: rfcTitle, Children: &IssueChildren{Total: 5, Completed: 3}}, stagelabels.Actionable, "actionable; waiting on 2 open child issue(s)"},
+		{"unapproved epic with open children stays 018", IssueStageInput{Labels: []string{"Epic", "proposal"}, Title: rfcTitle, Children: &IssueChildren{Total: 5, Completed: 3}}, stagelabels.OpenForDiscussion, "open for discussion: proposal; waiting on 2 open child issue(s)"},
+		{"approved parent, every child closed", IssueStageInput{Labels: []string{"Epic", "proposal", HumanAckLabel}, Title: rfcTitle, Children: &IssueChildren{Total: 5, Completed: 5}}, stagelabels.Actionable, "actionable"},
+		{"approved rfc with a human claim is still 020", IssueStageInput{Labels: []string{"proposal", HumanAckLabel}, Title: rfcTitle, Bucket: workBucketClaimed, ClaimKind: "human", ClaimedBy: "alice"}, stagelabels.Claimed, "live issue claim"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
