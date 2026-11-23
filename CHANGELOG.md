@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v6.58.1)
+
+### Fixed
+
+- `stage_tracker_read` now keeps `sentinel_notice` in its default summary view. The summary kept `sentinel_alert` and `sentinel_reason` but dropped `sentinel_notice`, so a trusted author's informational Sentinel notice (no alert label, not a merge gate) read as a blocking alert whose label was missing; only `view=full` told the two apart. Display only: no merge, inbox or stage behaviour changes.
+
 ## 2026-11-23 (v6.58.0)
 
 ### Added
