@@ -174,8 +174,9 @@ Notes that will save you a wrong guess:
   error. A `forge_url` must also be on the same host and port as its forge
   block's URL, because the block's token is only sent to that host. A mismatch
   is a config error. The GitLab block URL defaults to `https://gitlab.com`. A
-  Gitea or Forgejo block with no URL of its own is not checked. The governor's escalation writes and its repo-scoped kicks follow the
-  per-repo value; the token still comes from the forge-wide `token_env`.
+  Gitea or Forgejo block with no URL of its own is not checked. The governor's
+  escalation writes and its repo-scoped kicks follow the per-repo value; the
+  token still comes from the forge-wide `token_env`.
 
 ```yaml
 project:
