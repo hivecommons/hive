@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v6.58.0)
+
+### Added
+
+- The server now places every open issue and pull request in one Overview *card band* that says who has the next move (for example Your turn, Waiting on another item, Dependency bot to rebase, Queued for agents, Not work), grouped into six tiles that add up to the open totals. It is display data only, read from what the hive already decided; no decision, inbox or existing field changes. `/api/status` carries an `overview_card` block and `card_band`, `card_group` and `card_reason_code` on each row; the Overview exports and the `issues_by_band` / `prs_by_band` MCP tools gain optional `card_band` and `card_group` filters. The dashboard card that draws these bands follows separately.
+
+### Changed
+
+- Contribute → Operations: the lifecycle card is now called **Issue lifecycle**, and its first column is labelled **Held back** instead of "Triaging". Each row in that column carries a short tag saying why the queue is not offering it (for example "Several PRs merged", "Epic or tracker", "Worked recently", "Open PR covers it", "Needs triage", "On hold"); hover the tag for the full reason. The column always held every issue the queue withholds from agents, for any reason, so operators read most of it as waiting for triage when only a few were. The tags come from the same admission pass as the Contributor Queue's Withheld list, so nothing about what is offered changes. Admitted issues past the queue's 150-row list now count as Ready, since agents can be offered them. `GET /api/contribute/triage` keeps the level key `triaging`, its group label now reads `Held back`, and Held back rows gain `withheld_reason`, `withheld_tag` and `withheld_detail`.
+- `openItems.buckets.blocked` in `/api/status` (and so the `fleet_status` MCP tool and the "Blocked" count in the meeting and chat status line) now reads the PR equation's `blocked` term. It had been reading a term name that no longer exists, so it always said 0.
+
 ## 2026-11-23 (v6.57.3)
 
 ### Fixed
