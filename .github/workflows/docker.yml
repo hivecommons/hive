@@ -74,9 +74,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'push' && github.run_id || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Read-only by default; the jobs that push to GHCR declare packages: write.
 permissions:
   contents: read
-  packages: write
 
 jobs:
   # Decide once whether this run pushes images to GHCR, and expose it as an
@@ -332,6 +332,9 @@ jobs:
             timeout_minutes: 75
     # Public PRs use the same free native ARM64 VM as the Podman arm64 lane.
     # Explicit ARM64 overrides and all release/push runner selection stay intact.
+    permissions:
+      contents: read
+      packages: write
     runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
@@ -854,6 +857,9 @@ jobs:
             self_hosted: true
             qemu: true
             timeout_minutes: 75
+    permissions:
+      contents: read
+      packages: write
     runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
@@ -1133,6 +1139,9 @@ jobs:
             self_hosted: true
             qemu: true
             timeout_minutes: 75
+    permissions:
+      contents: read
+      packages: write
     runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
@@ -1334,11 +1343,6 @@ jobs:
             docker buildx imagetools create -t "${CROSS_IMAGE}:${tag}" "${NATIVE_IMAGE}@${digest}"
           done
 
-  # hive-mx, the receive-only mail receiver (src/Dockerfile.mx, #18395):
-  # the same per-arch build-by-digest + manifest-list publish as the hub
-  # image above, dual-published through publish-image-tags.sh. The comments
-  # copied from the hub jobs apply unchanged; the build-args the hub stamps
-  # are unused by Dockerfile.mx and kept only so the two jobs stay diffable.
       # Keyless signature of the manifest-list digest behind every tag we just
       # published, so `cosign verify` works on the tags users actually pull
       # (not just the per-arch digests). Runs AFTER the cross-org mirror so a
@@ -1401,6 +1405,11 @@ jobs:
             cosign sign --yes "${NATIVE_IMAGE}@${digest}"
           done
 
+  # hive-mx, the receive-only mail receiver (src/Dockerfile.mx, #18395):
+  # the same per-arch build-by-digest + manifest-list publish as the hub
+  # image above, dual-published through publish-image-tags.sh. The comments
+  # copied from the hub jobs apply unchanged; the build-args the hub stamps
+  # are unused by Dockerfile.mx and kept only so the two jobs stay diffable.
   build-mx:
     needs: gate
     # Only when gate says push=true, same as `build` above (#4965).
@@ -1431,6 +1440,9 @@ jobs:
             self_hosted: true
             qemu: true
             timeout_minutes: 75
+    permissions:
+      contents: read
+      packages: write
     runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:

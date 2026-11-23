@@ -191,23 +191,10 @@ concurrency:
 env:
   RELEASE_LINE: ${{ github.ref_name }}
 
+# Read-only by default; every job below declares the scopes it needs, so no
+# job inherits write access it does not use (zizmor excessive-permissions).
 permissions:
-  contents: write
-  packages: write
-  # `actions: write` is required for the `release` job's `gh workflow run
-  # docker.yml` call (#5072) — dispatching a workflow via the API needs this
-  # scope on top of `contents: write`/`packages: write`, which only cover the
-  # git push and image-tag operations this workflow already did.
-  actions: write
-  # `pull-requests: write` is required for the `release` job's PR-merge path
-  # to v5 (#5222, 4th GH006 recurrence): a direct `git push` to v5 is
-  # evaluated against required status checks by the push event, and never
-  # sees the `gate` check-run earned on the scratch branch even though it is
-  # on the identical SHA. The release therefore enters through a protected PR
-  # merge, using the mirrored status described immediately below.
-  pull-requests: write
-  statuses: write
-  issues: write
+  contents: read
 
 jobs:
   # Relay a non-default release line's completed build to that line's own copy
@@ -273,6 +260,10 @@ jobs:
       github.event.workflow_run.head_branch == github.ref_name )
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      # `gh workflow run docker.yml` primes the build for the #5318 backstop.
+      actions: write
     outputs:
       release: ${{ steps.derive.outputs.release }}
       version: ${{ steps.derive.outputs.version }}
@@ -296,10 +287,11 @@ jobs:
           # 100 commits is several hours of the busiest merge rate seen so
           # far; a built commit older than that has had many hourly ticks.
           BACKSTOP_WINDOW: ${{ vars.RELEASE_BACKSTOP_WINDOW || '100' }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            sha="${{ github.event.workflow_run.head_sha }}"
+            sha="$RUN_HEAD_SHA"
             echo "Triggered by docker.yml on ${sha}."
           else
             tip="$(gh api "repos/${{ github.repository }}/branches/${RELEASE_LINE}" --jq .commit.sha)"
@@ -440,6 +432,11 @@ jobs:
     if: needs.decide.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      statuses: write
+      issues: write
+      pull-requests: write
     outputs:
       proceed: ${{ steps.tip.outputs.proceed }}
       hold_sha: ${{ steps.tip.outputs.hold_sha }}
