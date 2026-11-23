@@ -208,6 +208,32 @@
       { key: 'country', label: 'Country (code or name)', max: 120 }
     ];
 
+    // CUSTOMERS_REFRESH_RELOAD_MS: how long after "Refresh from profiles" for
+    // everyone the list is read again, so the first pass shows.
+    const CUSTOMERS_REFRESH_RELOAD_MS = 5000;
+
+    // CUSTOMERS_PROFILE_SOURCES: the forge a profile-fill value was read
+    // from, by the rule it carries (#19302).
+    const CUSTOMERS_PROFILE_SOURCES = { github_profile: 'GitHub', ghe_profile: 'GitHub Enterprise', gitlab_profile: 'GitLab', gitea_profile: 'Gitea', linear_profile: 'Linear' };
+
+    // customersFieldSourceLabel: the forge an automatic field came from, or
+    // '' for anything else.
+    function customersFieldSourceLabel(f) {
+      return (f && Object.prototype.hasOwnProperty.call(CUSTOMERS_PROFILE_SOURCES, f.rule)) ? CUSTOMERS_PROFILE_SOURCES[f.rule] : '';
+    }
+
+    // customersFieldProvenance: where an automatic field came from, for its
+    // tooltip: the source, the login it was read for and when.
+    function customersFieldProvenance(f) {
+      if (f && f.rule === 'location') return 'Derived from the location';
+      const label = customersFieldSourceLabel(f) || 'GitHub';
+      let t = 'From the public ' + label + ' profile';
+      if (f && f.login) t += ' of ' + f.login;
+      if (f && f.rule) t += ' (source=' + f.rule + ')';
+      if (f && typeof f.at === 'string' && f.at) t += ', fetched ' + f.at.slice(0, 10);
+      return t;
+    }
+
     function customersProfileValue(p, key) {
       const f = (p && p.profile && p.profile[key]) || {};
       return typeof f.value === 'string' ? f.value : '';
@@ -234,7 +260,7 @@
       const v = customersProfileValue(p, 'organization');
       if (!v) return '';
       const f = p.profile.organization;
-      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : 'From the public GitHub profile');
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : customersFieldProvenance(f));
       const src = f.source === 'manual' || f.source === 'hub' ? f.source : 'auto';
       return '<span class="kc-pill customers-pill customers-org" data-source="' + src + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
@@ -263,7 +289,9 @@
       const code = customersProfileValue(p, 'country');
       if (!/^[A-Z]{2}$/.test(code)) return '';
       const name = customersCountryName(code);
-      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name) + '">' +
+      const f = p.profile.country;
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub' : customersFieldProvenance(f));
+      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name + ' - ' + why) + '">' +
         '<span aria-hidden="true">' + customersFlagEmoji(code) + '</span> ' + escapeHtml(code) + '</span>';
     }
 
@@ -452,6 +480,7 @@
       const people = data.people || [];
       const suggestions = data.suggestions || [];
       out += customersAddFormHtml();
+      out += '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshAllProfiles" title="Look every customer up again on their public forge profile, a few at a time">Refresh from profiles</button></div>';
       out += '<div class="customers-block"><div class="section-label m-0">Customers</div><div class="customers-list">' +
         (people.length ? people.map(p => customersRowHtml(p, false)).join('') : '<p class="empty-dashed">No other customers yet. Add one, or accept a suggestion.</p>') + '</div></div>';
       out += '<details class="customers-block customers-suggested" data-ui-key="suggested"' + (_customersUi.open.suggested ? ' open' : '') + '><summary class="customers-summary">Suggested (' + suggestions.length + ')</summary>' +
@@ -592,16 +621,19 @@
         const manual = cur.source === 'manual';
         // A hub value carries its hub label (#19163, #19306); editing it
         // here makes it manual.
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from GitHub'))) : (manual ? 'cleared by hand' : 'not known');
-        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub')))) : (manual ? 'cleared by hand' : 'not known');
+        const tip = cur.value && cur.source === 'auto' ? ' title="' + escapeHtml(customersFieldProvenance(cur)) + '"' : '';
+        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs"' + tip + '>(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
-          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let the public profile fill this in again">Auto</button>' : '');
       }).join('');
       const cc = customersProfileValue(p, 'country');
       const ccLine = /^[A-Z]{2}$/.test(cc) ? '<div class="muted-xs" data-customers-field="country-line"><span aria-hidden="true">' + customersFlagEmoji(cc) + '</span> ' + escapeHtml(cc) + ' ' + escapeHtml(customersCountryName(cc)) + '</div>' : '';
       return '<div class="customers-block"><div class="section-label m-0">Details</div>' + ccLine +
         '<div class="customers-inline">' + rows + '</div>' + customersAffiliationHtml(p) +
-        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button>' +
+        (customersIsFull() ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshProfile" title="Read this person\'s public forge profile now and fill the fields nobody set by hand">Refresh from profiles</button>' : '') +
+        '</div></div>' +
         customersPublicContributionsHtml(p);
     }
 
@@ -1096,7 +1128,34 @@
       if (saved) showToast('Details saved', 'success');
     }
 
-    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
+    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to the public profile'); }
+
+    // customersRefreshProfile: "Refresh from profiles" on the open profile
+    // (#19302). The hive reads the public forge profile now and fills the
+    // fields nobody set by hand.
+    async function customersRefreshProfile() {
+      if (!_customersOpen) return;
+      const id = _customersOpen.me ? 'me' : _customersOpen.id;
+      try {
+        const out = await customersRequest('POST', '/api/customers/' + encodeURIComponent(id) + '/refresh-profile', {});
+        if (out.customer) _customersOpen = out.customer;
+        customersShow();
+        const fill = out.fill || {};
+        if (fill.skipped) showToast('Not refreshed: ' + String(fill.skipped).replace(/_/g, ' '), 'warning');
+        else showToast(fill.filled ? 'Details filled from public profiles' : 'Public profiles checked: nothing new', 'success');
+        fetchCustomers();
+      } catch (e) { customersProfileError(e.message); }
+    }
+
+    // customersRefreshAllProfiles: "Refresh from profiles" for everyone. The
+    // hive looks every customer up again in the background, a few per pass.
+    async function customersRefreshAllProfiles() {
+      try {
+        await customersRequest('POST', '/api/customers/refresh-profiles', {});
+        showToast('Refreshing every customer from public profiles, a few at a time', 'success');
+        setTimeout(fetchCustomers, CUSTOMERS_REFRESH_RELOAD_MS);
+      } catch (e) { showToast(e.message, 'error'); }
+    }
 
     function customersAffiliationAccept(value) { customersEdit({ op: 'profile', field: 'organization', value: value }, 'Organization set'); }
 

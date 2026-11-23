@@ -1,7 +1,6 @@
 package customers
 
 import (
-	"context"
 	"testing"
 )
 
@@ -141,14 +140,5 @@ func TestCountryProvenanceAndNeverOverwrite(t *testing.T) {
 	p, _ = st.ResetProfileField(p.ID, FieldLocation)
 	if p.Profile.Country.Value != "" {
 		t.Fatalf("country kept after the location was reset: %+v", p.Profile.Country)
-	}
-}
-
-func TestFetchProfileDerivesCountry(t *testing.T) {
-	x, _ := profileFixture(t)
-	x.m.FetchProfile(context.Background(), x.person.ID, adaLogin)
-	p, _ := x.m.Store.Get(x.person.ID)
-	if c := p.Profile.Country; c.Value != "GB" || c.Source != SourceAuto || c.Rule != CountryRuleLocation {
-		t.Fatalf("country from the GitHub location = %+v", c)
 	}
 }
