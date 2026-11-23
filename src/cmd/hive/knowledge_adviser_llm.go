@@ -13,6 +13,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,8 +22,10 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/jsonextract"
+	"github.com/hivecommons/hive/pkg/keystore"
 	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
@@ -67,7 +70,37 @@ const (
 	// knowledgeAdviserLLMRateLimitHeaderPrefix selects the upstream's
 	// rate-limit headers for the WARN line.
 	knowledgeAdviserLLMRateLimitHeaderPrefix = "x-ratelimit-"
+	// knowledgeAdviserLLMErrorReasonRunes caps the provider message carried
+	// in a refused call's reason (log line, decision record and summary).
+	knowledgeAdviserLLMErrorReasonRunes = 160
+	// knowledgeAdviserLLMMaxResponseBytes bounds a model response read.
+	knowledgeAdviserLLMMaxResponseBytes = 1 << 20
 )
+
+// Error classes on an error decision (hivecommons/hive#17054 evidence pass
+// 2): why the model call produced no answer, coarse enough to aggregate in
+// GET /api/knowledge/advisor/summary.
+const (
+	// knowledgeErrorClassAuth: the endpoint answered 401 or 403.
+	knowledgeErrorClassAuth = "auth"
+	// knowledgeErrorClassRejected: any other 4xx, the endpoint refused the
+	// request (unknown model or route, malformed request or credential).
+	knowledgeErrorClassRejected = "rejected"
+	// knowledgeErrorClassUpstream: a 5xx or other non-200 status.
+	knowledgeErrorClassUpstream = "upstream"
+	// knowledgeErrorClassTransport: no HTTP response at all (DNS, connect,
+	// TLS), short of a timeout.
+	knowledgeErrorClassTransport = "transport"
+	// knowledgeErrorClassConfig: the call was never sent because the
+	// resolved settings cannot work.
+	knowledgeErrorClassConfig = "config"
+	// knowledgeErrorClassDecode: a 200 whose body was not a completion.
+	knowledgeErrorClassDecode = "decode"
+)
+
+// knowledgeAdvisorEnvelopeRedactor masks a keystore envelope echoed back in a
+// provider message; it is ciphertext, but it has no business in a summary.
+var knowledgeAdvisorEnvelopeRedactor = regexp.MustCompile(regexp.QuoteMeta(keystore.Prefix) + `\S*`)
 
 // Model verdicts: what the model call produced.
 const (
@@ -319,6 +352,12 @@ type knowledgeAdviserLLMDecision struct {
 	retryAfter time.Duration
 	// retried reports that the single 429 retry was made.
 	retried bool
+	// errClass and errReason say why an error verdict produced no answer:
+	// one of the knowledgeErrorClass* values and a redacted, bounded reason
+	// (HTTP status, provider error code, scrubbed message). Never key
+	// material, never the prompt.
+	errClass  string
+	errReason string
 }
 
 // decide spends one budgeted call on the model. A wrong answer is never
@@ -344,6 +383,18 @@ func (d *knowledgeAdviserLLM) decide(agent string, kick scheduler.KickSummary, s
 		}
 	}
 	defer d.releaseSlot()
+	if keystore.IsEnvelopeString(r.APIKey) {
+		// The key file was read raw, or could not be opened: sending the
+		// envelope as a bearer token only earns a refusal. Nothing is sent.
+		d.budget.chargeError(agent, spent)
+		return knowledgeAdviserLLMDecision{
+			verdict:   knowledgeVerdictError,
+			err:       errors.New("knowledge advisor: resolved API key is a sealed keystore envelope; no call made"),
+			errClass:  knowledgeErrorClassConfig,
+			errReason: "api key is a sealed keystore envelope, not a token",
+			latency:   d.now().Sub(start),
+		}
+	}
 	reqBody := knowledgeAdviserLLMRequest{
 		Model: r.Model,
 		Messages: []knowledgeAdviserLLMMessage{
@@ -374,6 +425,7 @@ func (d *knowledgeAdviserLLM) decide(agent string, kick scheduler.KickSummary, s
 		dec.err = err
 		dec.verdict = knowledgeVerdictError
 		var ne net.Error
+		var refused *knowledgeAdviserLLMRefused
 		switch {
 		case errors.As(err, &rl):
 			// Nothing was answered: the call is not spent against the
@@ -382,7 +434,18 @@ func (d *knowledgeAdviserLLM) decide(agent string, kick scheduler.KickSummary, s
 			dec.verdict = knowledgeVerdictRateLimited
 			d.budget.refund(agent, spent)
 		case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()):
+			// The upstream may have run the completion: still spent.
 			dec.verdict = knowledgeVerdictTimeout
+		case errors.As(err, &refused):
+			// Refused before any completion ran (no tokens): handed back to
+			// the call budget and charged to the error ledger, whose own
+			// ceilings still bound how often a broken endpoint is asked.
+			dec.errClass, dec.errReason = refused.class, refused.reason
+			if refused.class != knowledgeErrorClassDecode {
+				d.budget.chargeError(agent, spent)
+			}
+		default:
+			dec.errClass, dec.errReason = knowledgeErrorClassUpstream, "request failed"
 		}
 		return dec
 	}
@@ -465,7 +528,7 @@ func (d *knowledgeAdviserLLM) complete(ctx context.Context, r config.ResolvedAdv
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, knowledgeAdviserLLMURL(r.Endpoint), bytes.NewReader(body))
 	if err != nil {
-		return cr, fmt.Errorf("build knowledge advisor request: %w", err)
+		return cr, &knowledgeAdviserLLMRefused{class: knowledgeErrorClassConfig, reason: "endpoint is not a valid URL", cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if r.APIKey != "" {
@@ -473,23 +536,147 @@ func (d *knowledgeAdviserLLM) complete(ctx context.Context, r config.ResolvedAdv
 	}
 	resp, err := d.http.Do(req)
 	if err != nil {
-		return cr, fmt.Errorf("knowledge advisor request failed: %w", err)
+		var ne net.Error
+		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
+			return cr, fmt.Errorf("knowledge advisor request failed: %w", err)
+		}
+		return cr, &knowledgeAdviserLLMRefused{class: knowledgeErrorClassTransport, reason: knowledgeAdviserLLMTransportReason(err), cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return cr, newKnowledgeAdviserLLMRateLimited(resp, time.Now())
 	}
 	if resp.StatusCode != http.StatusOK {
-		return cr, fmt.Errorf("knowledge advisor model returned %d", resp.StatusCode)
+		return cr, newKnowledgeAdviserLLMRefused(resp)
 	}
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, knowledgeAdviserLLMMaxResponseBytes))
 	if err != nil {
 		return cr, fmt.Errorf("read knowledge advisor response: %w", err)
 	}
 	if err := json.Unmarshal(respBody, &cr); err != nil {
-		return cr, fmt.Errorf("decode knowledge advisor response: %w", err)
+		return cr, &knowledgeAdviserLLMRefused{class: knowledgeErrorClassDecode, reason: "HTTP 200 body is not a chat completion", cause: err}
 	}
 	return cr, nil
+}
+
+// knowledgeAdviserLLMRefused is a model call that produced no completion
+// for a reason other than throttling or a timeout: the endpoint answered a
+// non-200 status, never answered (transport), the request could not be
+// built, or a 200 did not decode. class is a knowledgeErrorClass* value and
+// reason is redacted and bounded.
+type knowledgeAdviserLLMRefused struct {
+	status int
+	class  string
+	reason string
+	cause  error
+}
+
+func (e *knowledgeAdviserLLMRefused) Error() string {
+	msg := "knowledge advisor model call failed (" + e.class + "): " + e.reason
+	if e.cause != nil && e.class != knowledgeErrorClassTransport {
+		msg += ": " + logscrub.ScrubString(e.cause.Error())
+	}
+	return msg
+}
+
+func (e *knowledgeAdviserLLMRefused) Unwrap() error { return e.cause }
+
+// newKnowledgeAdviserLLMRefused classifies a non-200, non-429 response and
+// reads a bounded slice of its body for the provider's error code and
+// message.
+func newKnowledgeAdviserLLMRefused(resp *http.Response) *knowledgeAdviserLLMRefused {
+	e := &knowledgeAdviserLLMRefused{status: resp.StatusCode, class: knowledgeErrorClassUpstream}
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		e.class = knowledgeErrorClassAuth
+	case resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError:
+		e.class = knowledgeErrorClassRejected
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, int64(knowledgeAdviserLLMErrorBodyRunes)*4))
+	e.reason = knowledgeAdviserLLMErrorReason(resp.StatusCode, raw)
+	return e
+}
+
+// knowledgeAdviserLLMErrorReason renders "HTTP <status>", the provider's
+// error code or type when the body carries one, and its message, scrubbed
+// of credential-shaped text and capped. OpenAI-compatible bodies nest these
+// under "error"; some gateways send "error" as a string or a top-level
+// "message".
+func knowledgeAdviserLLMErrorReason(status int, body []byte) string {
+	var parsed struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+		Code    any             `json:"code"`
+	}
+	var code, msg string
+	if json.Unmarshal(body, &parsed) == nil {
+		msg = parsed.Message
+		code = knowledgeAdviserLLMCodeString(parsed.Code)
+		var nested struct {
+			Message string `json:"message"`
+			Code    any    `json:"code"`
+			Type    string `json:"type"`
+		}
+		var flat string
+		switch {
+		case json.Unmarshal(parsed.Error, &nested) == nil:
+			if nested.Message != "" {
+				msg = nested.Message
+			}
+			if c := knowledgeAdviserLLMCodeString(nested.Code); c != "" {
+				code = c
+			} else if nested.Type != "" && code == "" {
+				code = nested.Type
+			}
+		case json.Unmarshal(parsed.Error, &flat) == nil && flat != "":
+			msg = flat
+		}
+	} else {
+		msg = string(body)
+	}
+	reason := fmt.Sprintf("HTTP %d", status)
+	if code != "" {
+		reason += " " + knowledgeAdviserLLMRedact(code, knowledgeAdviserLLMErrorReasonRunes)
+	}
+	if m := knowledgeAdviserLLMRedact(msg, knowledgeAdviserLLMErrorReasonRunes); m != "" {
+		reason += ": " + m
+	}
+	return reason
+}
+
+func knowledgeAdviserLLMCodeString(v any) string {
+	switch c := v.(type) {
+	case string:
+		return c
+	case float64:
+		return strconv.FormatFloat(c, 'f', -1, 64)
+	}
+	return ""
+}
+
+// knowledgeAdviserLLMRedact collapses whitespace, masks credential-shaped
+// substrings and keystore envelopes, and caps the result.
+func knowledgeAdviserLLMRedact(s string, maxRunes int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	s = knowledgeAdvisorEnvelopeRedactor.ReplaceAllString(s, "[sealed]")
+	return truncateRunes(logscrub.ScrubString(s), maxRunes)
+}
+
+// knowledgeAdviserLLMTransportReason names the transport failure without the
+// URL or any header: the operator needs the kind (DNS, refused, TLS), not
+// the request.
+func knowledgeAdviserLLMTransportReason(err error) string {
+	var dnsErr *net.DNSError
+	var opErr *net.OpError
+	switch {
+	case errors.As(err, &dnsErr):
+		return "endpoint host does not resolve"
+	case errors.As(err, &opErr) && opErr.Op == "dial":
+		return "endpoint refused the connection"
+	case strings.Contains(strings.ToLower(err.Error()), "tls"):
+		return "TLS handshake with the endpoint failed"
+	}
+	return "no HTTP response from the endpoint"
 }
 
 func (d *knowledgeAdviserLLM) logDecision(agent, kickID string, scope crux.KnowledgeScope, candidates []crux.KnowledgeAdvice, r config.ResolvedAdvisorLLM, dec knowledgeAdviserLLMDecision, outcome string, out []crux.KnowledgeAdvice) {
@@ -530,6 +717,9 @@ func (d *knowledgeAdviserLLM) logDecision(agent, kickID string, scope crux.Knowl
 	}
 	if dec.err != nil {
 		attrs = append(attrs, "error", dec.err.Error())
+	}
+	if dec.errClass != "" {
+		attrs = append(attrs, "error_class", dec.errClass, "error_reason", dec.errReason)
 	}
 	d.logger.Info("knowledge advisor: decision", attrs...)
 }
@@ -678,19 +868,53 @@ type knowledgeAdviserLLMResponse struct {
 // knowledgeAdviserLLMBudget is the ranking pass's call budget: a rolling
 // one-hour window per agent (counted like crux/proxy's agent GitHub budget)
 // and a per-UTC-day fleet counter (like ioscan's DailyQuotaClassifier).
+//
+// Calls the endpoint refused (no completion, no tokens) are moved out of
+// that budget into a parallel error ledger with the same shape (#17054
+// evidence pass 2): a refused call must not starve the agent's hour, yet a
+// broken endpoint is still asked at most the error ceilings' worth.
 type knowledgeAdviserLLMBudget struct {
 	mu     sync.Mutex
 	now    func() time.Time
 	events map[string][]time.Time
 	day    string
 	used   int
+	// errEvents and errUsed are the error ledger: refused calls per agent
+	// in the rolling hour and per UTC day across the fleet.
+	errEvents map[string][]time.Time
+	errUsed   int
 }
 
 func newKnowledgeAdviserLLMBudget(now func() time.Time) *knowledgeAdviserLLMBudget {
 	if now == nil {
 		now = time.Now
 	}
-	return &knowledgeAdviserLLMBudget{now: now, events: make(map[string][]time.Time)}
+	return &knowledgeAdviserLLMBudget{now: now, events: make(map[string][]time.Time), errEvents: make(map[string][]time.Time)}
+}
+
+// Budget names on an over-budget decision for the error ledger.
+const (
+	knowledgeBudgetErrorAgentHour = "error-agent-hour"
+	knowledgeBudgetErrorFleetDay  = "error-fleet-day"
+)
+
+// knowledgeAdviserLLMErrorCeiling is the error ledger's ceiling for one
+// window: the call budget's limit, never above the hard error cap (so
+// budget_override cannot raise it) and never unbounded.
+func knowledgeAdviserLLMErrorCeiling(callLimit, hardCap int) int {
+	if callLimit <= 0 || callLimit > hardCap {
+		return hardCap
+	}
+	return callLimit
+}
+
+// pruneWindow drops stamps at or before cutoff, returning a fresh slice.
+func pruneWindow(events []time.Time, cutoff time.Time) []time.Time {
+	idx := 0
+	for idx < len(events) && !events[idx].After(cutoff) {
+		idx++
+	}
+	return append([]time.Time(nil), events[idx:]...)
 }
 
 // take spends one call for agent when both budgets allow it and returns ""
@@ -704,26 +928,40 @@ func (b *knowledgeAdviserLLMBudget) take(agent string, perAgentHour, perDay int)
 	if day != b.day {
 		b.day = day
 		b.used = 0
+		b.errUsed = 0
 	}
 	cutoff := now.Add(-knowledgeAdviserLLMBudgetWindow)
-	events := b.events[agent]
-	idx := 0
-	for idx < len(events) && !events[idx].After(cutoff) {
-		idx++
-	}
-	events = append([]time.Time(nil), events[idx:]...)
+	events := pruneWindow(b.events[agent], cutoff)
 	if len(events) == 0 {
 		delete(b.events, agent)
+	}
+	if b.errEvents == nil {
+		b.errEvents = make(map[string][]time.Time)
+	}
+	errEvents := pruneWindow(b.errEvents[agent], cutoff)
+	if len(errEvents) == 0 {
+		delete(b.errEvents, agent)
+	} else {
+		b.errEvents[agent] = errEvents
+	}
+	keep := func() {
+		if len(events) > 0 {
+			b.events[agent] = events
+		}
 	}
 	switch {
 	case perAgentHour > 0 && len(events) >= perAgentHour:
 		b.events[agent] = events
 		return "agent-hour", now
 	case perDay > 0 && b.used >= perDay:
-		if len(events) > 0 {
-			b.events[agent] = events
-		}
+		keep()
 		return "fleet-day", now
+	case len(errEvents) >= knowledgeAdviserLLMErrorCeiling(perAgentHour, config.AdvisorLLMMaxErrorsPerAgentHourCap):
+		keep()
+		return knowledgeBudgetErrorAgentHour, now
+	case b.errUsed >= knowledgeAdviserLLMErrorCeiling(perDay, config.AdvisorLLMMaxErrorsPerDayCap):
+		keep()
+		return knowledgeBudgetErrorFleetDay, now
 	}
 	b.events[agent] = append(events, now)
 	b.used++
@@ -754,5 +992,22 @@ func (b *knowledgeAdviserLLMBudget) refund(agent string, at time.Time) {
 	}
 	if removed && b.used > 0 && at.UTC().Format(time.DateOnly) == b.day {
 		b.used--
+	}
+}
+
+// chargeError moves the call take stamped at `at` from the call budget to
+// the error ledger: the endpoint refused it, so no tokens were spent, but it
+// still counts against the error ceilings. Fail closed: the error ledger is
+// charged even when the stamp has already left the call window.
+func (b *knowledgeAdviserLLMBudget) chargeError(agent string, at time.Time) {
+	b.refund(agent, at)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.errEvents == nil {
+		b.errEvents = make(map[string][]time.Time)
+	}
+	b.errEvents[agent] = append(b.errEvents[agent], at)
+	if at.UTC().Format(time.DateOnly) == b.day {
+		b.errUsed++
 	}
 }

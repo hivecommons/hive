@@ -21014,6 +21014,11 @@
                         },
                         "on_error": {
                           "type": "string"
+                        },
+                        "problem": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Why shadow or rank cannot make a model call (no model, endpoint or key, or an unreadable key file); config keys and paths only"
                         }
                       }
                     },
@@ -21036,6 +21041,47 @@
                           "type": "object",
                           "additionalProperties": {
                             "type": "integer"
+                          }
+                        },
+                        "by_verdict": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "by_budget": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "errors": {
+                      "type": "object",
+                      "description": "Error decisions by class (auth, rejected, upstream, transport, config, decode) and the five most frequent redacted reasons",
+                      "properties": {
+                        "by_class": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "top_reasons": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "class": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            }
                           }
                         }
                       }

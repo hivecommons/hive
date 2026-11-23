@@ -55,8 +55,14 @@ returns the same comparison without an exec, and the Knowledge section shows it 
 - `window`: the first and last decision timestamps, the first `rank` decision
   (`rank_mode_start`) and the decision count.
 - `settings`: the advisor settings read-only (`enabled`, `mode`, `model`, `holdout_percent`,
-  the call budget, `candidates`, `on_error`). The endpoint and API key are never returned.
-- `counts`: decisions by mode, arm (`shadow`, `deliver`, `holdout`) and outcome.
+  the call budget, `candidates`, `on_error`, and `problem`: why shadow or rank cannot make a
+  model call, or null). The endpoint and API key are never returned.
+- `counts`: decisions by mode, arm (`shadow`, `deliver`, `holdout`), outcome, model verdict
+  (`by_verdict`, across both arms) and exhausted budget (`by_budget`, including the
+  `error-agent-hour` and `error-fleet-day` error ledger).
+- `errors`: error decisions by class (`by_class`) and the five most frequent redacted
+  reasons (`top_reasons`: `class`, `reason`, `count`), for example
+  `rejected` / `HTTP 400: Bad Request`. Records written before these fields existed carry none.
 - `arms`: the `Lane.AdvisorArmSummary()` rows for `shadow`, `deliver` and `holdout`, with
   `mixed` and `none` listed separately under their own keys. These cover every closed bead
   with a closed PR; `since` does not narrow them.

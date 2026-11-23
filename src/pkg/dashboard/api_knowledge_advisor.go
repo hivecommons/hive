@@ -45,6 +45,12 @@ type advisorArmJSON struct {
 	MeanKicksReceived  float64 `json:"mean_kicks_received"`
 }
 
+type advisorErrorReasonJSON struct {
+	Class  string `json:"class"`
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+}
+
 func toAdvisorArmJSON(a retro.ArmSummary) advisorArmJSON {
 	return advisorArmJSON{Arm: a.Arm, Beads: a.Beads, MeanFixAttempts: a.MeanFixAttempts, MeanCIFailureCount: a.MeanCIFailureCount, MeanKicksReceived: a.MeanKicksReceived}
 }
@@ -92,6 +98,10 @@ func (s *Server) handleKnowledgeAdvisorSummary(w http.ResponseWriter, r *http.Re
 			"max_calls_per_agent_hour": orDefaultInt(a.MaxCallsPerAgentHour, config.AdvisorLLMMaxCallsPerAgentHourCap),
 			"candidates":               orDefaultInt(a.Candidates, config.DefaultAdvisorLLMCandidates),
 			"on_error":                 firstNonEmptyString(strings.TrimSpace(a.OnError), config.AdvisorLLMOnErrorSilence),
+			// problem says why shadow/rank cannot make a model call (no
+			// model, endpoint or key, or an unreadable key file); null when
+			// it can. Config keys and paths only, never a key value.
+			"problem": nilIfEmpty(s.deps.Config.KnowledgeAdvisorLLMProblem()),
 		}
 	}
 
@@ -114,6 +124,20 @@ func (s *Server) handleKnowledgeAdvisorSummary(w http.ResponseWriter, r *http.Re
 	}
 	if byOutcome == nil {
 		byOutcome = map[string]int{}
+	}
+	byVerdict, byBudget, byErrorClass := sum.ByVerdict, sum.ByBudget, sum.ByErrorClass
+	if byVerdict == nil {
+		byVerdict = map[string]int{}
+	}
+	if byBudget == nil {
+		byBudget = map[string]int{}
+	}
+	if byErrorClass == nil {
+		byErrorClass = map[string]int{}
+	}
+	topReasons := make([]advisorErrorReasonJSON, 0, len(sum.TopErrorReasons))
+	for _, e := range sum.TopErrorReasons {
+		topReasons = append(topReasons, advisorErrorReasonJSON{Class: e.Class, Reason: e.Reason, Count: e.Count})
 	}
 
 	armRows := []advisorArmJSON{}
@@ -149,9 +173,19 @@ func (s *Server) handleKnowledgeAdvisorSummary(w http.ResponseWriter, r *http.Re
 		window["since"] = since.UTC().Format(time.RFC3339)
 	}
 	resp := map[string]interface{}{
-		"window":     window,
-		"settings":   settings,
-		"counts":     map[string]interface{}{"by_mode": byMode, "by_arm": byArm, "by_outcome": byOutcome},
+		"window":   window,
+		"settings": settings,
+		"counts": map[string]interface{}{
+			"by_mode": byMode, "by_arm": byArm, "by_outcome": byOutcome,
+			"by_verdict": byVerdict, "by_budget": byBudget,
+		},
+		// errors: why model calls got no answer, by class and the most
+		// frequent redacted reasons (HTTP status, provider error code,
+		// scrubbed message), across both arms.
+		"errors": map[string]interface{}{
+			"by_class":    byErrorClass,
+			"top_reasons": topReasons,
+		},
 		"arms":       armRows,
 		"mixed":      mixed,
 		"none":       none,

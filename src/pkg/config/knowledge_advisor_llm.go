@@ -2,7 +2,10 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
+
+	"github.com/hivecommons/hive/crux/keystore"
 )
 
 // Defaults and hard ceilings for knowledge.advisor_llm (hivecommons/hive#17054).
@@ -19,6 +22,15 @@ const (
 	DefaultAdvisorLLMTimeoutS         = 15
 	AdvisorLLMMaxCallsPerAgentHourCap = 6
 	AdvisorLLMMaxCallsPerDayCap       = 300
+
+	// AdvisorLLMMaxErrorsPerAgentHourCap and AdvisorLLMMaxErrorsPerDayCap
+	// bound the calls the endpoint refused (hivecommons/hive#17054 evidence
+	// pass 2). A refused call spends no tokens, so it is handed back to the
+	// call budget and charged to this separate error ledger instead; the
+	// error ledger never exceeds these ceilings, even with budget_override,
+	// so a broken endpoint is still asked at most this often.
+	AdvisorLLMMaxErrorsPerAgentHourCap = AdvisorLLMMaxCallsPerAgentHourCap
+	AdvisorLLMMaxErrorsPerDayCap       = AdvisorLLMMaxCallsPerDayCap
 )
 
 // AdvisorLLMConfig is the knowledge.advisor_llm block. Zero numeric values
@@ -157,4 +169,49 @@ func (c *Config) KnowledgeAdvisorLLM() (ResolvedAdvisorLLM, bool) {
 		r.OnError = AdvisorLLMOnErrorSilence
 	}
 	return r, true
+}
+
+// KnowledgeAdvisorLLMProblem returns the operator-facing reason the ranking
+// pass cannot make a model call although knowledge.advisor is on and
+// advisor_llm.mode asks for shadow or rank, or "" when it can (or is not
+// asked to). It names config keys and paths only, never a key value. Boot
+// logs it at WARN and GET /api/knowledge/advisor/summary returns it, so a
+// misconfiguration is visible instead of resolving silently to off.
+func (c *Config) KnowledgeAdvisorLLMProblem() string {
+	if c == nil || !c.Knowledge.Advisor {
+		return ""
+	}
+	a := c.Knowledge.AdvisorLLM
+	mode := strings.TrimSpace(a.Mode)
+	if mode != AdvisorLLMModeShadow && mode != AdvisorLLMModeRank {
+		return ""
+	}
+	if c.advisorLLMModel() == "" {
+		return fmt.Sprintf("knowledge.advisor_llm.mode is %q but no model resolves: set knowledge.advisor_llm.model (or governor.litellm.default_model)", mode)
+	}
+	endpoint := strings.TrimRight(strings.TrimSpace(a.Endpoint), "/")
+	if endpoint == "" {
+		endpoint = c.Governor.LiteLLM.ResolveEndpoint()
+	}
+	if endpoint == "" {
+		return fmt.Sprintf("knowledge.advisor_llm.mode is %q but no endpoint resolves: set knowledge.advisor_llm.endpoint (or governor.litellm.endpoint)", mode)
+	}
+	key, fileProblem := readKeyFile(a.APIKeyFile)
+	if key == "" && a.APIKeyEnv != "" {
+		key = os.Getenv(a.APIKeyEnv)
+	}
+	if key == "" {
+		key = c.Governor.LiteLLM.ResolveAPIKey()
+	}
+	switch {
+	case fileProblem != "":
+		// Even when another source supplied a key, the configured file is
+		// not the one in use: say so.
+		return "knowledge.advisor_llm.api_key_file: " + fileProblem
+	case key == "":
+		return fmt.Sprintf("knowledge.advisor_llm.mode is %q but no API key resolves: set knowledge.advisor_llm.api_key_file or api_key_env (or a governor.litellm key)", mode)
+	case keystore.IsEnvelopeString(key):
+		return "knowledge.advisor_llm: the resolved API key is a sealed keystore envelope, not a token; check " + keystore.EnvSecretsKey + " on this hive"
+	}
+	return ""
 }

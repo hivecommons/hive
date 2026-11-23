@@ -3071,12 +3071,8 @@ func (g *GovernorConfig) ReviewerReady() bool {
 // NAME, returning "" if neither yields a value. Mirrors the LiteLLM/inference
 // resolution order without pulling in defaults.
 func resolveKeyFromFileThenEnv(file, env string) string {
-	if file != "" {
-		if data, err := os.ReadFile(file); err == nil {
-			if k := strings.TrimSpace(string(data)); k != "" {
-				return k
-			}
-		}
+	if k, _ := readKeyFile(file); k != "" {
+		return k
 	}
 	if env != "" {
 		if k := os.Getenv(env); k != "" {
@@ -3084,6 +3080,31 @@ func resolveKeyFromFileThenEnv(file, env string) string {
 		}
 	}
 	return ""
+}
+
+// readKeyFile reads a single-value key file through the keystore, so a file
+// sealed at rest (hivecommons/hive#18214, for example the durable Copilot
+// token at /data/copilot-user-token) yields its plaintext, never the
+// envelope. A raw os.ReadFile here sent the sealed envelope as the bearer
+// token, which the knowledge advisor's endpoint refused on every call.
+// problem is a log-safe description when the file is configured and present
+// but unusable; it never carries file content. A missing file or an empty
+// path is no problem: resolution falls through to the env var.
+func readKeyFile(file string) (key, problem string) {
+	if file == "" {
+		return "", ""
+	}
+	k, err := keystore.ReadString(context.Background(), file)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return "", ""
+	case err != nil:
+		return "", fmt.Sprintf("key file %s cannot be read: %v", file, err)
+	case keystore.IsEnvelopeString(k):
+		// ReadString opens envelopes; one that survived is not usable.
+		return "", fmt.Sprintf("key file %s still holds a sealed keystore envelope", file)
+	}
+	return k, ""
 }
 
 // Discovery-auth defaults for the self-hosted inference backends. Like

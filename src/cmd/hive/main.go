@@ -4202,6 +4202,12 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	if _, ok := b.cfg.KnowledgeAdvisorLLM(); ok {
 		knowledgeAdviserImpl = newKnowledgeAdviserLLM(b, knowledgeMatcher)
 	}
+	if problem := b.cfg.KnowledgeAdvisorLLMProblem(); problem != "" {
+		// Shadow or rank is asked for but cannot make a model call; say so
+		// instead of resolving silently to the phase-1 matcher or to a call
+		// the endpoint refuses every time (#17054 evidence pass 2).
+		b.logger.Warn("knowledge advisor: ranking pass is misconfigured", "problem", problem)
+	}
 	b.agentMgr.SetKnowledgeAdviser(knowledgeAdviserImpl)
 
 	// Feed agent lifecycle events (start, stop, launch FAILURE, backend/model

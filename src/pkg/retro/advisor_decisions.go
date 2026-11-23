@@ -49,6 +49,17 @@ type AdvisorDecisionRecord struct {
 	LatencyMS        int64 `json:"latency_ms,omitempty"`
 	PromptTokens     int   `json:"prompt_tokens,omitempty"`
 	CompletionTokens int   `json:"completion_tokens,omitempty"`
+	// Verdict is the model call's verdict (pick, null, error, over-budget,
+	// ...), which a held-out decision's outcome hides. Budget names the
+	// exhausted budget on an over-budget verdict. ErrorClass and ErrorReason
+	// say why an error verdict got no answer: a coarse class and a redacted,
+	// bounded reason (HTTP status, provider error code, scrubbed message).
+	// None of them carries key material or prompt text; older records carry
+	// none (hivecommons/hive#17054 evidence pass 2).
+	Verdict     string `json:"verdict,omitempty"`
+	Budget      string `json:"budget,omitempty"`
+	ErrorClass  string `json:"error_class,omitempty"`
+	ErrorReason string `json:"error_reason,omitempty"`
 }
 
 // AdvisorDecisionArm is the arm a decision belongs to: holdout when the kick
