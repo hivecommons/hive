@@ -111,7 +111,7 @@ func TestReviewFeedbackSweep_MaintainersFileRuleIsCapturedAndRetrievableByQualit
 
 	// The agent is told it is recorded and not to record it again.
 	brief := h.kick.kicks["quality"][0]
-	for _, want := range []string{"R-1 (recorded; applies to the `quality` agent's future work)", "do NOT run hivectl knowledge create", "hive:review-rules", fixtureCommentURL} {
+	for _, want := range []string{"R-1 (recorded; applies to the `quality` agent's future work)", "do NOT record them again", "hive:review-rules", fixtureCommentURL} {
 		if !strings.Contains(brief, want) {
 			t.Errorf("brief missing %q", want)
 		}
@@ -169,8 +169,42 @@ func TestReviewFeedbackSweep_CorrectionsAreNotRules(t *testing.T) {
 	if res.Kicked != 1 || res.RulesCaptured+res.RulesQueued+res.RulesMerged != 0 || len(h.rules.List()) != 0 || len(h.src.comments) != 0 {
 		t.Fatalf("res = %+v", res)
 	}
-	if !strings.Contains(h.kick.kicks["quality"][0], "hivectl knowledge create") {
-		t.Fatal("with nothing captured the brief keeps the best-effort instruction")
+	brief := h.kick.kicks["quality"][0]
+	if !strings.Contains(brief, "hive:review-rules") || !strings.Contains(brief, "evidence_url set to the URL of the comment") || strings.Contains(brief, "hivectl knowledge create") {
+		t.Fatalf("with nothing captured the brief points at the hive's rule block, not hivectl:\n%s", brief)
+	}
+}
+
+// A rule the classifier missed (#19605): the brief tells the agent to record it
+// with the hive:review-rules block, and the agent's reply citing the comment
+// becomes a rule the reviewer is told about, with no hivectl in the sandbox.
+func TestReviewFeedbackSweep_UnclassifiedRuleIsRecordedFromTheAgentBlock(t *testing.T) {
+	h := newRuleHarness(t, reviewrules.Config{})
+	missed := "please set the batch size to 5, because larger batches time out on CI"
+	h.feedback(ruleItem("inline:1001", "OWNER", missed))
+	res := h.sweep(t).run(context.Background(), parseReviewFeedbackKey)
+	if res.Kicked != 1 || len(h.rules.List()) != 0 {
+		t.Fatalf("res = %+v rules = %+v, want a kick and nothing classified", res, h.rules.List())
+	}
+	brief := h.kick.kicks["quality"][0]
+	if !strings.Contains(brief, "hive:review-rules") || !strings.Contains(brief, fixtureCommentURL) || strings.Contains(brief, "hivectl knowledge create") {
+		t.Fatalf("brief:\n%s", brief)
+	}
+
+	block := "Set to 5.\n<!-- hive:review-rules {\"rules\":[{\"text\":\"Keep the CI batch size at 5; larger batches time out.\",\"scope\":\"agent\",\"evidence_url\":\"" + fixtureCommentURL + "\"}]} -->"
+	fb := openDraftFeedback()
+	fb.Items = nil
+	fb.HiveReplies = []github.FeedbackMessage{{ID: "conversation:77", Author: "hive", Hive: true, Body: block}}
+	h.src.byKey[feedbackTestKey] = fb
+	h.now = h.now.Add(time.Hour)
+	before := len(h.src.comments)
+	h.sweep(t).run(context.Background(), parseReviewFeedbackKey)
+	rules := h.rules.List()
+	if len(rules) != 1 || !strings.Contains(rules[0].Text, "batch size at 5") || rules[0].AppliesTo != "quality" {
+		t.Fatalf("rules = %+v", rules)
+	}
+	if len(h.src.comments) != before+1 || !strings.Contains(h.src.comments[before], "Recorded as rule "+rules[0].ID) {
+		t.Fatalf("the reviewer must be told the rule was captured: %q", h.src.comments[before:])
 	}
 }
 
@@ -332,8 +366,10 @@ func TestReviewFeedbackSweep_RulesOffChangesNothing(t *testing.T) {
 	s := h.sweep(t)
 	s.Rules = nil
 	res := s.run(context.Background(), parseReviewFeedbackKey)
-	if res.Kicked != 1 || len(h.src.comments) != 0 || !strings.Contains(h.kick.kicks["quality"][0], "hivectl knowledge create") {
-		t.Fatalf("res = %+v comments = %q", res, h.src.comments)
+	brief := h.kick.kicks["quality"][0]
+	if res.Kicked != 1 || len(h.src.comments) != 0 || !strings.Contains(brief, "a person needs to record it") ||
+		strings.Contains(brief, "hive:review-rules") || strings.Contains(brief, "hivectl knowledge create") {
+		t.Fatalf("res = %+v comments = %q brief:\n%s", res, h.src.comments, brief)
 	}
 }
 
@@ -348,7 +384,7 @@ func TestReviewFeedbackSweep_RuleLimitRefusalIsLoggedNotFatal(t *testing.T) {
 
 func TestRecordedRulesBriefShape(t *testing.T) {
 	brief := reviewfeedback.BuildBriefWithRules("o/r", 1, "b", "", []github.FeedbackItem{ruleItem("inline:1", "OWNER", "x")},
-		[]reviewfeedback.RecordedRule{{ID: "R-2", Text: "t", Applies: "all agents' work", Queued: true, SourceURL: "u"}})
+		[]reviewfeedback.RecordedRule{{ID: "R-2", Text: "t", Applies: "all agents' work", Queued: true, SourceURL: "u"}}, true)
 	if !strings.Contains(brief, "R-2 (queued for a person to confirm; applies to all agents' work): t [source u]") || strings.Contains(brief, "\u2014") {
 		t.Fatalf("brief:\n%s", brief)
 	}

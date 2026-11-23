@@ -121,8 +121,12 @@ Agents (and external tools) can fetch what the primer did not push:
 `GET /api/knowledge/toc` and `/api/knowledge/entry/{id}` (pass `agent=` to
 apply that agent's scope), `GET /api/knowledge/effective?agent=` to see what
 a given agent is allowed to see and why entries are excluded, the public
-`POST /mcp/knowledge` MCP (`knowledge_toc`, `knowledge_get`), `hivectl
-knowledge search|list`, and `bd kb search` inside the pod. See
+`POST /mcp/knowledge` MCP (`knowledge_toc`, `knowledge_get`), and `bd kb
+search` inside the pod. Operators and external tools can also use `hivectl
+knowledge search|list`; `hivectl` is not installed in agent sandboxes, so
+agent-facing prompts do not name it. An agent records a reviewer-stated rule
+with the `hive:review-rules` reply block instead (see
+[review-feedback-rules.md](review-feedback-rules.md#the-agents-structured-block)). See
 [knowledge-toc.md](knowledge-toc.md) and
 [public-knowledge-mcp.md](public-knowledge-mcp.md).
 

@@ -171,7 +171,7 @@ func TestBuildBrief_CarriesWholeThreadAndLatestPositionRules(t *testing.T) {
 	}
 	for _, want := range []string{
 		"(the hive, your earlier reply)", "NEW id inline:3", "apply the LATEST position", "Wrong facts about people first",
-		"re-verify the source the reviewer cites", "too positive on one point and too negative", "hivectl knowledge create",
+		"re-verify the source the reviewer cites", "too positive on one point and too negative", "a person needs to record it",
 		"do NOT write there", "what you verified, what you changed",
 	} {
 		if !strings.Contains(brief, want) {
