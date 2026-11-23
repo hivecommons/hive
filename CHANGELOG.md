@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-23 (v6.58.3)
+
+### Security
+
+- Bump `github.com/gorilla/websocket` to v1.5.4-0.20240701034025-d67f41855da4, the version that fixes GO-2026-6278, so govulncheck passes again. The dashboard, contributor and terminal WebSocket code is unchanged.
+
 ## 2026-11-23 (v6.58.2)
 
 ### Changed
