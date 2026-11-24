@@ -211,8 +211,9 @@ type Config struct {
 	// on). Nothing it stores leaves the hive.
 	Customers CustomersConfig `yaml:"customers,omitempty" json:"customers,omitempty"`
 	// Ask is the optional Ask AI help panel (#19177): docs questions answered
-	// server side by Kapa.ai, directly or through the hub relay. Default off
-	// and inert when unconfigured. See src/docs/design/dashboard-ask-ai-help.md.
+	// server side by Kapa.ai, directly or through the hub relay. Default on in
+	// hub mode for a hosted hive with a hub link and a hive id; default off and
+	// inert everywhere else. See src/docs/design/dashboard-ask-ai-help.md.
 	Ask AskConfig `yaml:"ask,omitempty" json:"ask,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
