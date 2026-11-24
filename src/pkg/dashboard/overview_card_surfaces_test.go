@@ -719,6 +719,27 @@ func TestAdminMCPCardKeysMatchTheCard(t *testing.T) {
 	for name := range want {
 		t.Errorf("tool %s not found", name)
 	}
+	// The your-turn alias keeps an issue churn row by its card reason code;
+	// adminmcp spells that code itself, so it must be the card's. A plain
+	// Yours to close row stays out.
+	churn := decideIssueCard(cardIssueRow{repoFull: cardTestRepo, issue: cardIssue(1)}, cardTestInputs(cardTestStash(1, churnItem(3, 0))))
+	if churn.Key != cardBandToClose || churn.ReasonCode != cardChurnReasonCode {
+		t.Fatalf("churn row band %q code %q, want %q %q", churn.Key, churn.ReasonCode, cardBandToClose, cardChurnReasonCode)
+	}
+	closeRow := cardBand(cardBandToClose, "ownership:"+OwnershipReasonVerifiedDone, "reason")
+	row := func(n int, b OverviewCardBand) any {
+		return map[string]any{"number": float64(n), "repo": cardTestRepo, "card_band": b.Key, "card_group": b.Group, "card_reason_code": b.ReasonCode}
+	}
+	data := map[string]any{"kind": "issues", "rows": []any{row(1, churn), row(2, closeRow)}}
+	out, err := adminmcp.BandReadResult(adminmcp.ToolIssuesByBand, data, map[string]any{"card_band": cardBandYourTurnAlias})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := out.(map[string]any)
+	kept, _ := body["rows"].([]any)
+	if len(kept) != 1 || kept[0].(map[string]any)["number"] != float64(1) {
+		t.Errorf("issues_by_band card_band=your-turn kept %v, want only the churn row", kept)
+	}
 }
 
 // Both publishers give the same card: one payload with the eval cycle's

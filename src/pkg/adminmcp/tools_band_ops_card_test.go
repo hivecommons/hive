@@ -66,7 +66,8 @@ func TestBandReadResultFiltersByCardBandAndGroupBeforePaging(t *testing.T) {
 // The Your turn group's bands say what the person has to do; card_group
 // your-turn still returns every one of them, and card_band your-turn, the
 // single band of before the split, returns the rows it held: every
-// your-turn row but to-close and unexplained. The schema lists it.
+// your-turn row but to-close and unexplained, plus the issue churn rows,
+// which it held and which are to-close rows now. The schema lists it.
 func TestBandReadResultYourTurnGroupSpansItsBands(t *testing.T) {
 	out, err := BandReadResult(ToolIssuesByBand, sampleOverviewCardResponse(), map[string]any{"card_group": "your-turn"})
 	if err != nil {
@@ -101,6 +102,16 @@ func TestBandReadResultYourTurnGroupSpansItsBands(t *testing.T) {
 		rows, _ := got["rows"].([]any)
 		if len(rows) != 1 || rows[0].(map[string]any)["card_band"] != "decide" {
 			t.Fatalf("%s card_band=your-turn rows = %#v, want the decide row only", tool, rows)
+		}
+		// An issue churn row on to-close is one the single band held.
+		body["rows"].([]any)[1].(map[string]any)["card_reason_code"] = "verdict:issue_churn"
+		out, err = BandReadResult(tool, body, map[string]any{"card_band": "your-turn"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, _ = out.(map[string]any)["rows"].([]any)
+		if len(rows) != 2 || rows[0].(map[string]any)["card_band"] != "decide" || rows[1].(map[string]any)["card_band"] != "to-close" {
+			t.Fatalf("%s card_band=your-turn rows = %#v, want the decide row and the churn row", tool, rows)
 		}
 	}
 	for _, tool := range Tools() {
@@ -181,10 +192,10 @@ func TestBandReadResultCardFilterReturnsADuplicateOnce(t *testing.T) {
 // card_band filter and the limit cap, and survives the JSON round trip.
 func TestBandReadResultKeepsIssueChurnPRs(t *testing.T) {
 	const export = `{"kind":"issues","bands":[{"key":"ready","label":"Unclaimed","count":2}],
-		"card_bands":[{"key":"triage","count":1},{"key":"queued","count":1}],
+		"card_bands":[{"key":"to-close","count":1},{"key":"queued","count":1}],
 		"rows":[
-			{"number":40,"repo":"octo/demo","band":"Unclaimed","card_band":"triage","card_group":"your-turn","card_reason_code":"verdict:issue_churn",
-			 "card_reason":"2 PRs merged (#1236, #1240), 1 closed unmerged (#1251) and it is still open; say what is left, or add hive: churn-triaged.",
+			{"number":40,"repo":"octo/demo","band":"Unclaimed","card_band":"to-close","card_group":"your-turn","card_reason_code":"verdict:issue_churn",
+			 "card_reason":"2 PRs merged (#1236, #1240), 1 closed unmerged (#1251) and it is still open; close it if it is done, or add hive: churn-triaged to give it back to agents.",
 			 "card_churn_prs":[
 				{"repo":"octo/demo","number":1236,"state":"merged","title":"First slice","url":"https://github.com/octo/demo/pull/1236","merged_at":"2026-11-21T17:00:00Z"},
 				{"repo":"octo/demo","number":1240,"state":"merged","url":"https://github.com/octo/demo/pull/1240"},
@@ -194,7 +205,7 @@ func TestBandReadResultKeepsIssueChurnPRs(t *testing.T) {
 	if err := json.Unmarshal([]byte(export), &data); err != nil {
 		t.Fatal(err)
 	}
-	out, err := BandReadResult(ToolIssuesByBand, data, map[string]any{"card_band": "triage", "limit": float64(1)})
+	out, err := BandReadResult(ToolIssuesByBand, data, map[string]any{"card_band": "to-close", "limit": float64(1)})
 	if err != nil {
 		t.Fatal(err)
 	}
