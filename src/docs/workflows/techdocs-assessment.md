@@ -148,9 +148,11 @@ never through one — the compiler's `agent-no-human-gate` refusal enforces this
 ### Label contract
 
 What each label means, who puts it on, and what the hive does with it, as the engine
-behaves for `curated-2026.11.3`. `curated-2026.11.1` and `curated-2026.11.2` behave the same
-except that four states write the built-in stage label spellings
-([Stage labels](#stage-labels)). The labels and the PR's draft flag are the source of truth:
+behaves for `curated-2026.11.4`, the current version. `curated-2026.11.3` behaves the same
+except that it writes none of the three
+[whose-turn status labels](#whose-turn-status-labels-on-the-deliverable-pr);
+`curated-2026.11.1` and `curated-2026.11.2` also write the built-in stage label spellings in
+four states ([Stage labels](#stage-labels)). The labels and the PR's draft flag are the source of truth:
 the hive derives every state from them and does not care who wrote them, with one
 exception (reference-repo derivation, below).
 
@@ -174,16 +176,21 @@ starts the verifier (see [Starting the drafter](#starting-the-drafter-accepted--
 | `Docs analysis` | the drafter on its PR; people on issues | the PR is an assessment deliverable | a PR without it is outside the model (no state) | a person |
 
 The verifier's report never applies `verified`: it is a PR comment the reviewer reads before
-deciding. The hive's stage writer never adds or removes any of these labels itself; every one
-is an input label of the model, so it is preserved even where a built-in stage would clear it
-(for example `needs-triage` once an issue reaches stage 20).
+deciding. (The spec's "the workflow applies the `verified` label" is a cncf/techdocs Action's
+job, or the reviewer's via `/hive verify`; the hive's verifier does not do it.) The hive's
+stage writer never adds or removes any of these labels itself, even where a built-in stage
+would clear one (for example `needs-triage` once an issue reaches stage 20). Each is either
+an input label of the model (named by a derivation rule or event: `needs-triage`,
+`triage/accepted`, `triage/declined`, `verified`, `confirmed`, `Docs analysis`), which the
+writer preserves, or has no state binding (`phase/*`, `skip-implementation`), which the
+writer never touches.
 
 #### Gate commands
 
 | Command | Offered in | What the hive does | What it does not do |
 |---|---|---|---|
 | `/hive accept` | `requested` | adds `triage/accepted` and replies | remove `needs-triage`, assign, validate or freeze the contacts; a label the hive's bot applied does not derive reference repos |
-| `/hive decline [reason]` | `requested` | adds `triage/declined` and replies | close the issue |
+| `/hive decline [reason]` | `requested`; also offered in `accepted` | in `requested`: adds `triage/declined` and replies. In `accepted`: records the reply only (the model has no transition from `accepted` on decline, so no label) | close the issue |
 | `/verify` (bare) | `drafting` | starts `techdocs-verifier` once per comment; its report lands as a PR comment | apply `verified` |
 | `/hive verify` | `drafting` | adds `verified` (records a skip or a delegated verification) | run the verifier |
 | `/hive ready` | `in-review` | records the reply | mark the PR ready, mention the stakeholders |
@@ -218,6 +225,12 @@ wrong for this model (`claimed`, `fixing`, `reviewed`); 11.3 replaces those four
 stage number, state and owner are the same under either spelling.
 `stage/050-reviewer-check` covers both a verified draft and a ready but unverified PR.
 
+Under 11.4 the hive also writes one whose-turn status label on a deliverable PR, adding it
+and removing the other two as the state moves: `ready-for-techdocs-review` (`drafting`,
+`in-review`), `ready-for-stakeholder-review` (`stakeholder-review`) and `ready-for-approver`
+(`awaiting-merge`). See
+[Whose turn](#whose-turn-status-labels-on-the-deliverable-pr).
+
 #### Generic labels that can appear
 
 These come from the hive's own lanes, not from the model: `stage/stalled`, `role/*`,
@@ -231,8 +244,9 @@ a hold: on an issue it moves the item to `escalated` until removed.
 The hive creates the model's labels and its stage labels once per repository per process
 (and again when the binding or the bound model version changes). It does not re-create a
 label deleted while it runs. `cncf/techdocs` syncs labels from `.github/settings.yml`, which
-deletes undeclared ones, so declare every label above (model, `stage/*`, and the generic ones
-the hive writes) in `settings.yml`; otherwise each sync strips them until the hive restarts.
+deletes undeclared ones, so declare every label above (model, `stage/*`, the three 11.4
+whose-turn labels, and the generic ones the hive writes) in `settings.yml`; otherwise each
+sync strips them until the hive restarts.
 
 #### Whose turn: status labels on the deliverable PR
 
