@@ -155,6 +155,44 @@ The `nginx.ingress.kubernetes.io/*` annotations only work with ingress-nginx. Ot
 including F5's NGINX Ingress Controller, ignore them, so set the same body size and timeouts with
 that controller's own options.
 
+##### Behavior-based IP blockers (CrowdSec, fail2ban, WAF rate rules)
+
+One dashboard page load sends a burst of API reads. Some blockers read that burst as a crawler
+and ban a signed-in user while the page is still loading.
+
+- **Why it happens.** The first load makes about a dozen direct reads, such as `/api/status` and
+  `/api/config`. Every card then loads its own data through the background scheduler, which starts
+  350 ms after the page and runs two jobs at a time, visible cards first. Collapsed cards still
+  load, so they can show their one-line summary. In total, one load requests more than 50 distinct
+  `/api/` paths within a few seconds. Many cards then keep polling on their own timers.
+- **Error counts.** Some reads return 404 or 503 by design when a feature is off. Two examples are
+  `/api/meetings*` when meetings are disabled and `/api/inference/models/{backend}` for a backend
+  that is not configured. Rules that count error responses per client see these too.
+- **What trips.** Any rule that counts distinct paths or requests per client over a few seconds
+  can fire. The stock CrowdSec `crowdsecurity/http-crawl-non_statics` scenario has a bucket
+  capacity of 40 distinct non-static paths, so one load can exceed it. After the ban, the 403s can
+  also trigger `crowdsecurity/http-probing`.
+- **Fix.** Exempt the dashboard host, or its `/api/` paths, from crawl, probing and rate rules. The
+  dashboard and `/api/*` require sign-in, so the exemption does not open an unauthenticated
+  surface. Keep your rules for other hosts.
+
+For CrowdSec, a parser whitelist (for example
+`/etc/crowdsec/parsers/s02-enrich/hive-dashboard-whitelist.yaml`) skips the dashboard host's
+access-log events. Put your own host in place of `hive.example.com`, then reload CrowdSec:
+
+```yaml
+name: local/hive-dashboard-whitelist
+description: Skip events for the Hive dashboard
+filter: "evt.Meta.service == 'http' && evt.Meta.log_type == 'http_access-log'"
+whitelist:
+  reason: Hive dashboard page loads
+  expression:
+    - evt.Meta.target_fqdn == 'hive.example.com'
+```
+
+With fail2ban or a WAF rate rule, exclude the same host or path prefix, or raise the threshold
+well above one page load.
+
 #### Quick apply (all manifests)
 
 ```bash
