@@ -15,6 +15,49 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
+type fixedRedirectTransport struct {
+	status   int
+	location string
+}
+
+func (t fixedRedirectTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	h := http.Header{}
+	h.Set("Location", t.location)
+	return &http.Response{StatusCode: t.status, Header: h, Body: http.NoBody, Request: r}, nil
+}
+
+func TestWebhookRedirectStaysOnOrigin(t *testing.T) {
+	cases := []struct {
+		name     string
+		from     string
+		location string
+		keep     bool
+	}{
+		{"same host https", "https://hooks.example.com/secret", "/moved", true},
+		{"same host upgrade", "http://hooks.example.com/secret", "https://hooks.example.com/moved", true},
+		{"host case differs", "https://hooks.example.com/secret", "https://HOOKS.example.com/moved", true},
+		{"https downgrade", "https://hooks.example.com/secret", "http://hooks.example.com/moved", false},
+		{"other host", "https://hooks.example.com/secret", "https://attacker.example.net/moved", false},
+		{"other port", "https://hooks.example.com/secret", "https://hooks.example.com:8443/moved", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, tc.from, http.NoBody)
+			if err != nil {
+				t.Fatalf("new request: %v", err)
+			}
+			rt := webhookRedirectTransport{base: fixedRedirectTransport{status: http.StatusTemporaryRedirect, location: tc.location}}
+			resp, err := rt.RoundTrip(req)
+			if err != nil {
+				t.Fatalf("round trip: %v", err)
+			}
+			if got := resp.Header.Get("Location") != ""; got != tc.keep {
+				t.Errorf("Location kept = %t, want %t", got, tc.keep)
+			}
+		})
+	}
+}
+
 type webhookErrorTransport struct{}
 
 func (webhookErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -51,6 +94,8 @@ func TestWebhookFailureLogging(t *testing.T) {
 		{"out of range redirect port", 308, "http://127.0.0.1:65536" + redirectPath, 0},
 		{"unsupported redirect scheme", 308, "ftp://example.invalid" + redirectPath, 0},
 		{"redirect without location", 307, "", 0},
+		{"cross-host redirect", 307, "http://example.invalid" + redirectPath, 0},
+		{"cross-host permanent redirect", 308, "http://localhost.invalid:8080" + redirectPath, 0},
 		{"redirect target rejects", 307, redirectPath, 429},
 		{"redirect limit", 308, webhookPath, 0},
 		{"bad request", 400, "", 0},

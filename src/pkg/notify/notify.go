@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -209,11 +210,23 @@ func (t webhookRedirectTransport) RoundTrip(req *http.Request) (*http.Response, 
 		if err == nil && target.Port() != "" {
 			_, err = strconv.ParseUint(target.Port(), 10, 16)
 		}
-		if err != nil || target.Hostname() == "" || (target.Scheme != "http" && target.Scheme != "https") {
+		if err != nil || target.Hostname() == "" || (target.Scheme != "http" && target.Scheme != "https") ||
+			!webhookRedirectStaysOnOrigin(req.URL, target) {
 			resp.Header.Del("Location")
 		}
 	}
 	return resp, nil
+}
+
+// webhookRedirectStaysOnOrigin reports whether a 307/308 target keeps the
+// webhook's host and does not downgrade https to http. Following a redirect to
+// another host would hand it the alert payload and, through the Referer
+// header, the secret webhook URL.
+func webhookRedirectStaysOnOrigin(from, to *url.URL) bool {
+	if !strings.EqualFold(from.Host, to.Host) {
+		return false
+	}
+	return from.Scheme != "https" || to.Scheme == "https"
 }
 
 func (n *Notifier) postWebhook(provider, webhookURL string, body []byte, sendErrorMessage string) {
