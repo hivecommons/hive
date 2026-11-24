@@ -1,1 +1,0 @@
-- hub: the owner a self-registered spoke reports in its own heartbeat can no longer grant, revoke or approve hub access to that hive; only the hub admin and users holding a stored owner grant can (#19653). My Hives no longer stores that heartbeat owner as an owner grant, and the dashboard hides the Permissions action and the access roster from it. Hosted hives are unchanged.

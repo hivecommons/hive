@@ -100,6 +100,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).resolveDuplicateFixGroup":           {Class: NotificationClassAttention},
 	"github.(*Client).upsertScannerNote":                  {Class: NotificationClassAttention},
 	"github.attentionDelivery.Post":                       {Class: NotificationClassAttention},
+	"main.(*forgeRequestRelay).handleIssue":               {Class: NotificationClassAttention},
 	"main.claimEscalationLookup":                          {Class: NotificationClassAttention},
 	"main.factCheckSweep.needsHuman":                      {Class: NotificationClassAttention},
 	"main.maintainHeldPRMergeability":                     {Class: NotificationClassAttention},
