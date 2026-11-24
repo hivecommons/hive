@@ -78,7 +78,10 @@ function toggleSection() { throw new Error('an expanded subsection must not be t
   assert.equal(govPRModelsWindow, '30d');
   assert.equal(fetchURLs[1], '/api/governor/pr-models?window=30d');
   assert.equal(govPRModelsData.window, '30d');
-  assert.equal(renders.length, 2, 'filter-change path and initial path share the same loader/rerender path');
+  // A window pill repaints at once (the new window shows as loading), then the
+  // loader repaints again when the data lands: the same loader/rerender path.
+  assert.equal(renders.length, 3, 'filter-change path and initial path share the same loader/rerender path');
+  assert.equal(renders[1].loaded.window, '7d', 'the immediate repaint runs before the new window loads');
 })().catch(err => { console.error(err && err.stack || err); process.exit(1); });
 `)
 	if out, err := exec.Command(node, "-e", script.String()).CombinedOutput(); err != nil {

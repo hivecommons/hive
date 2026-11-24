@@ -428,6 +428,9 @@
 
     let govPRModelsWindow = '7d';
     let govPRModelsSort = 'effectiveness';
+    // Column sort from a PRs-by-model header click. An empty key means the
+    // rank / PR count pills decide the order; picking a pill clears it.
+    let govPRModelsColumnSort = { key: '', dir: 'desc' };
     let govPRModelsLoading = false;
     let govPRModelsData = null;
     let reviewerAccuracyLoading = false;
@@ -464,10 +467,28 @@
     window.setGovernorPRModelsWindow = setGovernorPRModelsWindow;
     function setGovernorPRModelsSort(sortName) {
       govPRModelsSort = sortName === 'count' ? 'count' : 'effectiveness';
+      govPRModelsColumnSort = { key: '', dir: 'desc' };
       expandGovernorPRModelsSection();
       if (window._lastStatus?.governor) renderGovernor(window._lastStatus.governor, window._lastStatus.cadenceMatrix || [], window._lastStatus);
     }
     window.setGovernorPRModelsSort = setGovernorPRModelsSort;
+    // Header click: a new column sorts most to least first (Model sorts A to
+    // Z first); clicking the active column again flips the direction.
+    function setGovernorPRModelsColumnSort(key) {
+      if (!governorPRModelSortLabel(key)) return;
+      govPRModelsColumnSort = govPRModelsColumnSort.key === key
+        ? { key, dir: govPRModelsColumnSort.dir === 'desc' ? 'asc' : 'desc' }
+        : { key, dir: key === 'model' ? 'asc' : 'desc' };
+      expandGovernorPRModelsSection();
+      // The card re-renders from scratch; keep keyboard focus on the control
+      // that was used: the header button, or the active column-sort pill.
+      const focused = typeof document !== 'undefined' ? document.activeElement : null;
+      const refocus = focused?.classList?.contains('gov-pr-models-colsort') ? '.gov-pr-models-colsort'
+        : focused?.classList?.contains('gov-pr-model-sort') ? `.gov-pr-model-head .gov-pr-model-sort[data-arg0="${key}"]` : '';
+      renderGovernorFromLastStatus();
+      if (refocus) document.querySelector(refocus)?.focus();
+    }
+    window.setGovernorPRModelsColumnSort = setGovernorPRModelsColumnSort;
 
     function governorPRModelPRsKey(windowName, model) {
       return `${normalizeGovernorPRModelsWindowName(windowName)}\u0000${model}`;
@@ -561,8 +582,80 @@
       ['no_ship', 'No ship', 'Share of recorded task runs that completed but produced no pull request. Multiplies the rank score by (1 − no ship).'],
     ];
 
+    // Sortable PRs-by-model columns: Model, the metric columns above, and
+    // "PRs · share". Returns '' for anything else.
+    function governorPRModelSortLabel(key) {
+      if (key === 'model') return 'Model';
+      if (key === 'prs') return 'PRs · share';
+      const col = GOV_PR_MODEL_COLUMNS.find(([k]) => k === key);
+      return col ? col[1] : '';
+    }
+
+    // The number a column sorts on, not its rendered string. Rates compare
+    // as the whole percent the cell shows, so two rows showing the same
+    // percentage tie. The run columns of a row with no recorded runs render
+    // a dash (not a measured 0%) and return null here, so they sort last in
+    // both directions.
+    function governorPRModelColumnValue(b, key) {
+      const eff = b?.effectiveness || {};
+      const rw = b?.rework || {};
+      const num = v => Number(v) || 0;
+      const pct = v => Math.round(num(v) * 100);
+      const measured = Number(eff.runs || 0) > 0;
+      switch (key) {
+        case 'merged': return num(eff.merged_prs ?? b?.merged);
+        case 'first_pass': return pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate);
+        case 'pr_runs': return measured ? pct(eff.verified_pr_run_rate) : null;
+        case 'fail': return measured ? pct(eff.failure_rate) : null;
+        case 'no_ship': return measured ? pct(eff.nothing_to_ship_rate) : null;
+        case 'prs': return num(b?.prs);
+        default: return null;
+      }
+    }
+
+    // Column-sort comparator. Unattributed rows go last in both directions,
+    // as under rank, after any rows with no value (no runs recorded) in a run
+    // column. Ties break by PR count (most first), then model, then backend,
+    // whichever way the column runs.
+    function governorPRModelColumnCompare(a, b, key, dir) {
+      const sign = dir === 'asc' ? 1 : -1;
+      const au = governorPRModelUnattributed(a), bu = governorPRModelUnattributed(b);
+      if (au !== bu) return au ? 1 : -1;
+      if (key === 'model') {
+        const byName = String(a.model || 'unknown').localeCompare(String(b.model || 'unknown'));
+        if (byName) return sign * byName;
+      } else {
+        const av = governorPRModelColumnValue(a, key), bv = governorPRModelColumnValue(b, key);
+        if ((av === null) !== (bv === null)) return av === null ? 1 : -1;
+        if (av !== null && av !== bv) return sign * (av - bv);
+      }
+      return (b.prs || 0) - (a.prs || 0) || String(a.model || '').localeCompare(String(b.model || '')) || String(a.backend || '').localeCompare(String(b.backend || ''));
+    }
+
+    // One header cell: the label is a real button (keyboard reachable) that
+    // sorts by the column, and its aria-label carries the sort state (the
+    // header is a div grid, so there is no columnheader for aria-sort). The
+    // "?" help mark and its title sit outside the button, so hovering the
+    // label or the mark still shows the help.
+    function governorPRModelSortHeadHtml(key, help, cls) {
+      const label = governorPRModelSortLabel(key);
+      const active = govPRModelsColumnSort.key === key;
+      const asc = govPRModelsColumnSort.dir === 'asc';
+      const order = key === 'model' ? (asc ? 'A to Z' : 'Z to A') : (asc ? 'least to most' : 'most to least');
+      const ariaLabel = active ? `${label}, sorted ${order}. Activate to reverse.` : `Sort by ${label}`;
+      const arrow = active ? `<span class="gov-pr-model-sort-arrow" aria-hidden="true">${asc ? '▴' : '▾'}</span>` : '';
+      const button = `<button type="button" class="gov-pr-model-sort${active ? ' active' : ''}" data-action="setGovernorPRModelsColumnSort" data-arg0="${key}" aria-label="${escapeHtml(ariaLabel)}">${escapeHtml(label)}${arrow}</button>`;
+      const helpMark = help ? '<span class="gov-pr-model-help" aria-hidden="true">?</span>' : '';
+      const title = help ? ` title="${escapeHtml(help)}"` : '';
+      return `<div${cls ? ` class="${cls}"` : ''}><span class="gov-pr-model-col"${title}>${button}${helpMark}</span></div>`;
+    }
+
     function governorPRModelRows(data) {
       const rows = [...(data?.buckets || [])];
+      if (govPRModelsColumnSort.key) {
+        const { key, dir } = govPRModelsColumnSort;
+        return rows.sort((a, b) => governorPRModelColumnCompare(a, b, key, dir));
+      }
       if (govPRModelsSort === 'count') {
         return rows.sort((a, b) => (b.prs || 0) - (a.prs || 0) || String(a.model || '').localeCompare(String(b.model || '')) || String(a.backend || '').localeCompare(String(b.backend || '')));
       }
@@ -667,11 +760,19 @@
       const data = govPRModelsData && govPRModelsData.window === govPRModelsWindow ? govPRModelsData : null;
       const total = data?.total || 0;
       const buttons = ['7d', '30d', 'all'].map(w => `<button type="button" class="${govPRModelsWindow === w ? 'active' : ''}" data-action="setGovernorPRModelsWindow" data-arg0="${w}" title="Show PRs authored in ${w === 'all' ? 'all time' : 'the last ' + w}">${w}</button>`).join('');
-      const sortButtons = [['effectiveness', 'rank'], ['count', 'PR count']].map(([v, label]) => `<button type="button" class="${govPRModelsSort === v ? 'active' : ''}" data-action="setGovernorPRModelsSort" data-arg0="${v}" title="Sort PRs by model by ${label}">${label}</button>`).join('');
+      const colSort = govPRModelsColumnSort;
+      // An active column sort also shows as a pill, so it stays visible (and
+      // reversible) on narrow screens, where the header row is hidden.
+      const colSortLabel = colSort.key ? governorPRModelSortLabel(colSort.key) : '';
+      const colSortButton = colSortLabel ? `<button type="button" class="active gov-pr-models-colsort" data-action="setGovernorPRModelsColumnSort" data-arg0="${colSort.key}" title="Sorted by ${escapeHtml(colSortLabel)}. Click to reverse; choose rank or PR count to go back.">${escapeHtml(colSortLabel)} ${colSort.dir === 'asc' ? '▴' : '▾'}</button>` : '';
+      const sortButtons = [['effectiveness', 'rank'], ['count', 'PR count']].map(([v, label]) => `<button type="button" class="${!colSort.key && govPRModelsSort === v ? 'active' : ''}" data-action="setGovernorPRModelsSort" data-arg0="${v}" title="Sort PRs by model by ${label}">${label}</button>`).join('') + colSortButton;
       const modelRows = data ? governorPRModelRows(data) : [];
       const modelCount = data && Array.isArray(data.buckets) ? data.buckets.length : 0;
       const minMerged = data?.min_merged_prs || 5;
-      const topModel = modelRows[0] && (modelRows[0].model || 'unknown');
+      // Collapsed summary "#1": under rank or PR count, the first row shown (as
+      // before); under a column sort, the rank leader (rank 1), if any.
+      const topRow = colSort.key ? (data?.buckets || []).find(b => b?.effectiveness?.rank === 1) : modelRows[0];
+      const topModel = topRow && (topRow.model || 'unknown');
       const collapsedSummary = topModel ? `#1 ${escapeHtml(topModel)} · ${modelCount} model${modelCount === 1 ? '' : 's'}` : `${modelCount} model${modelCount === 1 ? '' : 's'}`;
       const subtitle = `${total} agent-authored PR${total === 1 ? '' : 's'} · rank requires ${minMerged} merged`;
       // Emit the saved collapse state in the markup itself. renderGovernor
@@ -761,10 +862,10 @@
       const coverageNote = covParts.length ? `<div class="gov-pr-model-sub gov-pr-model-sub-spaced gov-pr-models-coverage">Partial history: ${covParts.join(' · ')}. Run columns come from the task-run log; — means no runs recorded, not a measured 0%.</div>` : '';
       const hiveCostNote = governorPRModelsHiveCostNote(data);
       const header = data && total > 0 ? `<div class="gov-pr-model-row gov-pr-model-head" aria-hidden="false">
-          <div>Model</div>
+          ${governorPRModelSortHeadHtml('model', '', '')}
           <div>Outcome</div>
-          <div class="gov-pr-model-metrics">${GOV_PR_MODEL_COLUMNS.map(([, label, help]) => `<div class="gov-pr-model-metric"><span class="gov-pr-model-col" title="${escapeHtml(help)}">${label}<span class="gov-pr-model-help" aria-hidden="true">?</span></span></div>`).join('')}</div>
-          <div class="gov-pr-model-share">PRs · share</div>
+          <div class="gov-pr-model-metrics">${GOV_PR_MODEL_COLUMNS.map(([key, , help]) => governorPRModelSortHeadHtml(key, help, 'gov-pr-model-metric')).join('')}</div>
+          ${governorPRModelSortHeadHtml('prs', '', 'gov-pr-model-share')}
         </div>` : '';
       return `<div id="governor-pr-models-section" class="advisory-subsection governor-subsection${collapsedCls}">
         <div class="section-label section-header-toggle gov-pr-models-subheader" role="button" tabindex="0" aria-expanded="${collapsed ? 'false' : 'true'}" aria-controls="governor-pr-models-section-body" data-action="toggleSection" data-keydown-action="sectionHeaderKey" data-arg-types="e,s" data-arg0="governor-pr-models-section" data-arg1="governor-pr-models-section" data-keys="*">

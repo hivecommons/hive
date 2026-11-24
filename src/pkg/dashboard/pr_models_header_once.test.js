@@ -18,7 +18,7 @@ function pick(re, what) {
 }
 
 const src = [
-  'let govPRModelsSort = "effectiveness"; let govPRModelsWindow = "7d"; let govPRModelsData = null;',
+  'let govPRModelsSort = "effectiveness"; let govPRModelsColumnSort = { key: "", dir: "desc" }; let govPRModelsWindow = "7d"; let govPRModelsData = null;',
   'const escapeHtml = s => String(s).replace(/[&<>"\']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",\'"\':"&quot;","\'":"&#39;"}[c]));',
   'const dashboardSectionHelpMark = () => "";',
   'const isSectionCollapsed = () => false;',
@@ -29,6 +29,11 @@ const src = [
   pick(/function governorPRModelUnattributed\(b\) \{[\s\S]*?\n    \}\n/, 'governorPRModelUnattributed'),
   pick(/function governorPRModelSliceDetail\(b\) \{[\s\S]*?\n    \}\n/, 'governorPRModelSliceDetail'),
   pick(/const GOV_PR_MODEL_COLUMNS = \[[\s\S]*?\n    \];\n/, 'GOV_PR_MODEL_COLUMNS'),
+  // Sortable column headers: each label is a sort button beside its ? mark.
+  pick(/function governorPRModelSortLabel\(key\) \{[\s\S]*?\n    \}\n/, 'governorPRModelSortLabel'),
+  pick(/function governorPRModelColumnValue\(b, key\) \{[\s\S]*?\n    \}\n/, 'governorPRModelColumnValue'),
+  pick(/function governorPRModelColumnCompare\(a, b, key, dir\) \{[\s\S]*?\n    \}\n/, 'governorPRModelColumnCompare'),
+  pick(/function governorPRModelSortHeadHtml\(key, help, cls\) \{[\s\S]*?\n    \}\n/, 'governorPRModelSortHeadHtml'),
   pick(/function governorPRModelRows\(data\) \{[\s\S]*?\n    \}\n/, 'governorPRModelRows'),
   // Per-model PR list (#18722): rows render a PRs toggle and, when open, the list.
   'let govPRModelPRsOpen = ""; const govPRModelPRsCache = {}; const loadGovernorPRModelPRs = () => {};',
@@ -62,7 +67,7 @@ test('column labels appear exactly once, in a header row with tooltips', () => {
   const header = out.match(/<div class="gov-pr-model-row gov-pr-model-head"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/);
   assert.ok(header, 'sticky header row rendered');
   for (const [, label, help] of lifted.columns) {
-    const re = new RegExp('>' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<span class="gov-pr-model-help"', 'g');
+    const re = new RegExp('>' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '</button><span class="gov-pr-model-help"', 'g');
     assert.strictEqual((out.match(re) || []).length, 1, `${label} rendered once as header text`);
     assert.ok(header[0].includes(`title="${help.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}"`) || header[0].includes(help.slice(0, 40)), `${label} tooltip lives in the header`);
   }
