@@ -501,11 +501,19 @@ func runEvalCycle(
 		attribute.Int(tracing.AttrHiveACMMLevel, inferACMMLevel(cfg)))
 	defer span.End()
 
+	// A hive whose repos are all on another forge (#19494) enumerates through
+	// pkg/forge and runs the rest of the cycle with no GitHub client, even if
+	// one is configured: no GitHub API call can be about one of its repos.
+	forgeOnly := cfg.AllReposOffGitHub()
+	if forgeOnly {
+		ghClient = nil
+	}
+
 	// A hive running without GitHub credentials (placeholder app_id, or a real
 	// App whose key could not be read) has nothing to enumerate. Return before
 	// the first API call rather than logging a misleading enumeration failure
 	// once per eval interval — the dashboard banner already states the cause.
-	if ghClient == nil {
+	if ghClient == nil && !forgeOnly {
 		logger.Debug("skipping eval cycle: hive is running without GitHub credentials")
 		return
 	}
@@ -575,7 +583,7 @@ func runEvalCycle(
 			"stale", actionable.Stale())
 	} else {
 		enumCtx, enumSpan := tracing.StartSpan(ctx, "governor.enumerate_actionable")
-		fresh, err := ghClient.EnumerateActionable(enumCtx)
+		fresh, err := enumerateActionableForCycle(enumCtx, cfg, ghClient, logger)
 		enumSpan.End()
 		var ok bool
 		actionable, ok = actionableAfterGitHubEnumerate(cfg, fresh, err, logger)
