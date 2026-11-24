@@ -247,7 +247,7 @@ func TestInlineAccessAvatarHandlesNonGitHubIdentity(t *testing.T) {
 	if !strings.Contains(dashboardHTML, "var provider = a.provider || identityProviderFromKey(uname);") {
 		t.Error("inlineAccessAvatar must classify the provider from a.provider (falling back to identityProviderFromKey)")
 	}
-	if !strings.Contains(dashboardHTML, "provider === 'github'\n        ? linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), extraStyle)") {
+	if !strings.Contains(dashboardHTML, "=== 'github'\n        ? linkedAvatar(uname, px, label, extraStyle)") {
 		t.Error("inlineAccessAvatar must only use the GitHub-profile-linked avatar for provider === 'github'")
 	}
 	if !strings.Contains(dashboardHTML, "if (label && label !== uname) lines.splice(0, 0, label);") {

@@ -427,6 +427,9 @@ function avatarImg(username, px, extraStyle) {
 function linkedAvatar(username, px, label, extraStyle) {
   return avatarProfileLink(username, label, avatarImg(username, px, extraStyle));
 }
+function navProfileURL(d) {
+  return d.provider === "github" && d.login ? ghProfileURL(d.login) : "";
+}
 function fmtHours(secs) {
   secs = Number(secs) || 0;
   if (secs <= 0) return "0h";
@@ -450,10 +453,19 @@ function accessAvatarTitle(a) {
   return lines.join("\n");
 }
 function inlineAccessAvatar(a) {
-  var uname = String((a || {}).username || "");
-  var role = String((a || {}).role || "");
-  return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a),
-    "border:1px solid " + accessRoleColor(role) + ";background:var(--surface-2);flex:0 0 auto");
+  a = a || {};
+  var uname = String(a.username || "");
+  var role = String(a.role || "");
+  var px = INLINE_ACCESS_AVATAR_PX;
+  var style = "border:1px solid " + accessRoleColor(role) + ";background:var(--surface-2);flex:0 0 auto";
+  if (a.provider === "github") {
+    return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), style);
+  }
+  var initials = avatarInitialsSVG(a.display_label || uname, px);
+  return '<span title="' + escAttr(accessAvatarTitle(a)) + '" style="display:inline-block;line-height:0">' +
+    '<img src="' + escAttr(a.avatar_url || initials) + '" alt="" ' +
+    'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' + style + '" ' +
+    'onerror="this.onerror=null;this.src=' + jsArg(initials) + '"></span>';
 }
 function hiveAccessAvatars(h) {
   var members = (h && h.access) || [];
@@ -1146,7 +1158,8 @@ setInterval(load, 30000);
       var role = document.getElementById("nav-menu-role");
       if (role) { role.textContent = d.hub_admin ? "hub admin" : "member"; role.style.display = ""; }
       var prof = document.getElementById("nav-menu-profile");
-      if (prof && d.login) { prof.href = "https://github.com/" + encodeURIComponent(d.login); prof.style.display = ""; }
+      var profURL = navProfileURL(d);
+      if (prof && profURL) { prof.href = profURL; prof.style.display = ""; }
       var out = document.getElementById("nav-menu-signout");
       if (out) out.addEventListener("click", function () {
         fetch("/api/auth/logout", { method: "POST" }).then(function () { location.href = "/"; });

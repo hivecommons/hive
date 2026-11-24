@@ -25,8 +25,8 @@ func TestAvatarSitesUseSharedHelper(t *testing.T) {
 		// would build a 404'ing image AND link to whatever account happens to
 		// occupy that URL shape. The guard's intent — no site hand-rolls an
 		// <img> — is unchanged; userAvatar is the other shared helper.
-		{"inline per-hive faces", "? linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), extraStyle)"},
-		{"status-dot hover panel rows", "linkedAvatar(a.username, PANEL_ACCESS_AVATAR_PX,"},
+		{"inline per-hive faces", "accessFace(a, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), extraStyle)"},
+		{"status-dot hover panel rows", "accessFace(a, PANEL_ACCESS_AVATAR_PX,"},
 		{"per-hive pending request rows", "userAvatar({display_name: userLabel, avatar_url: pr.avatar_url, github_username: rawUser}, LIST_AVATAR_PX,"},
 		{"past requests table", "provisionRequesterAvatar(pr, PANEL_ACCESS_AVATAR_PX, 'margin-right:6px')"},
 		{"pending provision cards", "var avatar = provisionRequesterAvatar(pr, TABLE_AVATAR_PX, 'margin-right:8px');"},
@@ -37,7 +37,7 @@ func TestAvatarSitesUseSharedHelper(t *testing.T) {
 		{"admin users table (oidc path)", ": userAvatar(u, TABLE_AVATAR_PX, 'margin-right:6px');"},
 		{"access modal pending requests", "userAvatar({display_name: userLabel, avatar_url: r.avatar_url, github_username: rawUser}, LIST_AVATAR_PX,"},
 		{"access modal access list", "? linkedAvatar(u.github_username, TABLE_AVATAR_PX,"},
-		{"nav bar viewer avatar", "avatarProfileLink(data.login, String(data.login || '') + ' — ' + roleText,"},
+		{"nav bar viewer avatar", "navAvatarHTML(data, String(data.login || '') + ' — ' + roleText)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
