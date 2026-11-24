@@ -389,10 +389,29 @@ def same_user(account):
     return (str(account.get("login") or "").lower() == login
             and account.get("id") == uid)
 
+def update_branch_merge(c):
+    # GitHub "Update branch" merge of the base into the PR head (#19775): two
+    # or more parents, authored by a Bot account, committed and verified by
+    # GitHub itself (web-flow). GitHub refuses that merge on any conflict and a
+    # bot has no conflict editor, so it carries only base-branch content and
+    # authors none of the squashed change.
+    author = c.get("author") or {}
+    committer = c.get("committer") or {}
+    verification = (c.get("commit") or {}).get("verification") or {}
+    return (len(c.get("parents") or []) >= 2
+            and author.get("type") == "Bot"
+            and committer.get("login") == "web-flow"
+            and verification.get("verified") is True)
+
+if not commits:
+    no("pr-has-no-commits")
+if not all(isinstance(c, dict) for c in commits):
+    no("pr-commit-not-by-pr-author")
+commits = [c for c in commits if not update_branch_merge(c)]
 if not commits:
     no("pr-has-no-commits")
 for c in commits:
-    if not isinstance(c, dict) or not same_user(c.get("author")):
+    if not same_user(c.get("author")):
         no("pr-commit-not-by-pr-author")
 
 evidence = []
@@ -430,7 +449,10 @@ print("ok pr#%s:%s" % (pr.get("number"), ",".join(evidence)))
 #   - the squash author is that PR author's noreply address, with BOTH the
 #     numeric id and the login matching the PR author;
 #   - EVERY commit on the PR is attributed by GitHub to that same account
-#     (login and id), so a multi-author PR never qualifies;
+#     (login and id), so a multi-author PR never qualifies. The one exception
+#     is a GitHub "Update branch" merge: a verified web-flow merge commit with
+#     two or more parents authored by a Bot account (#19775), which carries
+#     only base-branch content and is ignored, never counted as evidence;
 #   - EVERY Signed-off-by on the squash other than the noreply author itself
 #     is the author or committer email of one of those commits, and that very
 #     commit carried that Signed-off-by.

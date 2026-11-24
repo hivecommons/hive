@@ -577,12 +577,27 @@ PY
 # pe_commits <pr-number> <spec>... where each spec is
 # sha|author-login|author-id|author-email|committer-login|committer-email|message
 # and an empty author-login stands for a commit GitHub could not attribute.
+# A spec starting `merge|` is a merge commit as GitHub reports it:
+# merge|sha|author-login|author-id|author-type|committer-login|verified|parents
 pe_commits() {
   number="$1"; shift
   python3 - "$@" > "$(pe_fixture_name "repos/${pe_slug}/pulls/${number}/commits?per_page=100&page=1")" <<'PY'
 import json, sys
 out = []
 for spec in sys.argv[1:]:
+    if spec.startswith("merge|"):
+        _, sha, al, aid, atype, cl, verified, parents = spec.split("|")
+        out.append({
+            "sha": sha,
+            "parents": [{"sha": "%040x" % i} for i in range(int(parents))],
+            "author": {"login": al, "id": int(aid), "type": atype},
+            "committer": {"login": cl, "id": 19864447, "type": "User"},
+            "commit": {"author": {"email": "%s+%s@users.noreply.github.com" % (aid, al)},
+                       "committer": {"email": "noreply@github.com"},
+                       "message": "Merge branch 'v5' into topic",
+                       "verification": {"verified": verified == "true"}},
+        })
+        continue
     sha, al, aid, ae, cl, ce, msg = spec.split("|", 6)
     out.append({
         "sha": sha,
@@ -618,6 +633,17 @@ pe_commit 'Riccardo Bifulco' '154237075+RiccardoBifulco@users.noreply.github.com
 pe_riccardo=$pe_sha
 pe_pulls "$pe_riccardo" 19386 RiccardoBifulco 154237075
 pe_commits 19386 "3c7de54200000000000000000000000000000000|RiccardoBifulco|154237075|riccardoxxbif@gmail.com|RiccardoBifulco|riccardoxxbif@gmail.com|fix\\n\\nFixes #19383\\n\\nSigned-off-by: RiccardoBifulco <riccardoxxbif@gmail.com>"
+
+# Positive, 69794fd6 shape (#19766): the author's single signed commit plus
+# two GitHub "Update branch" merges of v5 made by the hive App (#19775).
+pe_commit 'Fayez Bast' '96446332+FayezBast@users.noreply.github.com' \
+  $'🐛 fix(hub): save weekly auto-upgrade settings in bulk (#19766)\n\nSigned-off-by: Fayez Bast <fayezbast15@gmail.com>'
+pe_updated=$pe_sha
+pe_pulls "$pe_updated" 19766 FayezBast 96446332
+pe_commits 19766 \
+  "9e90910600000000000000000000000000000000|FayezBast|96446332|fayezbast15@gmail.com|FayezBast|fayezbast15@gmail.com|fix\\n\\nSigned-off-by: Fayez Bast <fayezbast15@gmail.com>" \
+  "merge|5b9ea82200000000000000000000000000000000|hivecommons-hive[bot]|280983584|Bot|web-flow|true|2" \
+  "merge|bcc3588b00000000000000000000000000000000|hivecommons-hive[bot]|280983584|Bot|web-flow|true|2"
 
 # Negative: the noreply login is not the PR author's (same numeric id).
 pe_commit 'Alice' '1001+alice@users.noreply.github.com' $'login mismatch\n\nSigned-off-by: Alice <alice@example.com>'
@@ -691,6 +717,29 @@ pe_plain=$pe_sha
 pe_pulls "$pe_plain" 9012 mo 1012
 pe_commits 9012 "b900000000000000000000000000000000000000|mo|1012|mo@example.com|mo|mo@example.com|x\\n\\nSigned-off-by: Mo <mo@example.com>"
 
+# Negatives for the update-branch exception (#19775): it covers only a
+# verified web-flow merge authored by a Bot account. A web-flow merge by
+# another human (the conflict editor can add content), an unverified bot
+# merge, a single-parent bot commit, and a PR holding nothing but
+# update-branch merges all still fail.
+pe_ub_author="n100000000000000000000000000000000000000|nina|1013|nina@example.com|nina|nina@example.com|x\\n\\nSigned-off-by: Nina <nina@example.com>"
+pe_commit 'Nina' '1013+nina@users.noreply.github.com' $'human web-flow merge\n\nSigned-off-by: Nina <nina@example.com>'
+pe_ub_human=$pe_sha
+pe_pulls "$pe_ub_human" 9013 nina 1013
+pe_commits 9013 "$pe_ub_author" "merge|n200000000000000000000000000000000000000|oscar|1014|User|web-flow|true|2"
+pe_commit 'Nina' '1013+nina@users.noreply.github.com' $'unverified bot merge\n\nSigned-off-by: Nina <nina@example.com>'
+pe_ub_unverified=$pe_sha
+pe_pulls "$pe_ub_unverified" 9014 nina 1013
+pe_commits 9014 "$pe_ub_author" "merge|n300000000000000000000000000000000000000|hivecommons-hive[bot]|280983584|Bot|web-flow|false|2"
+pe_commit 'Nina' '1013+nina@users.noreply.github.com' $'single-parent bot commit\n\nSigned-off-by: Nina <nina@example.com>'
+pe_ub_single=$pe_sha
+pe_pulls "$pe_ub_single" 9015 nina 1013
+pe_commits 9015 "$pe_ub_author" "merge|n400000000000000000000000000000000000000|hivecommons-hive[bot]|280983584|Bot|web-flow|true|1"
+pe_commit 'Nina' '1013+nina@users.noreply.github.com' $'only update-branch merges\n\nSigned-off-by: Nina <nina@example.com>'
+pe_ub_only=$pe_sha
+pe_pulls "$pe_ub_only" 9016 nina 1013
+pe_commits 9016 "merge|n500000000000000000000000000000000000000|hivecommons-hive[bot]|280983584|Bot|web-flow|true|2"
+
 run_pe() { # run_pe <env-assignments...>
   set +e
   output=$(env DCO_GITHUB_REPOSITORY="$pe_slug" DCO_GITHUB_API_FIXTURES="$pe_fix" \
@@ -700,7 +749,7 @@ run_pe() { # run_pe <env-assignments...>
 }
 
 run_pe
-for pe_pos in "$pe_fayez:19637:9ce6d34d" "$pe_sachin:15315:97a705ca" "$pe_riccardo:19386:3c7de542"; do
+for pe_pos in "$pe_fayez:19637:9ce6d34d" "$pe_sachin:15315:97a705ca" "$pe_riccardo:19386:3c7de542" "$pe_updated:19766:9e909106"; do
   pe_s=${pe_pos%%:*}; pe_rest=${pe_pos#*:}
   if out_grep -q "^pr-noreply ${pe_s} .*evidence=pr#${pe_rest}\$" && ! out_grep -q "^FAIL ${pe_s}"; then
     pass "first private-email squash ${pe_s:0:8} is accepted on PR evidence (pr#${pe_rest})"
@@ -732,10 +781,14 @@ pe_expect_fail "$pe_apierr" 'an API error on the PR lookup' 'mismatched-signoff 
 pe_expect_fail "$pe_commitserr" 'an API error on the PR commits lookup' 'mismatched-signoff .*pr-evidence=api-error$'
 pe_expect_fail "$pe_nosignoff" 'a squash with no sign-off at all' 'missing-signoff '
 pe_expect_fail "$pe_plain" 'a plain (id-less) noreply author' 'mismatched-signoff .*signed-off-by=mo@example.com$'
-if [ "$rc" -eq 1 ] && out_grep -q '3 pr-noreply; 0 same-person-noreply)'; then
-  pass "the run still fails on the negatives and the summary counts 3 pr-noreply"
+pe_expect_fail "$pe_ub_human" 'a web-flow merge by another human' 'mismatched-signoff .*pr-evidence=pr-commit-not-by-pr-author$'
+pe_expect_fail "$pe_ub_unverified" 'an unverified bot merge' 'mismatched-signoff .*pr-evidence=pr-commit-not-by-pr-author$'
+pe_expect_fail "$pe_ub_single" 'a single-parent bot commit' 'mismatched-signoff .*pr-evidence=pr-commit-not-by-pr-author$'
+pe_expect_fail "$pe_ub_only" 'a PR of only update-branch merges' 'mismatched-signoff .*pr-evidence=pr-has-no-commits$'
+if [ "$rc" -eq 1 ] && out_grep -q '4 pr-noreply; 0 same-person-noreply)'; then
+  pass "the run still fails on the negatives and the summary counts 4 pr-noreply"
 else
-  bad "expected rc=1 and 3 pr-noreply in the summary (rc=${rc})"
+  bad "expected rc=1 and 4 pr-noreply in the summary (rc=${rc})"
   echo "$output" | sed 's/^/      | /'
 fi
 
@@ -760,7 +813,7 @@ else
 fi
 
 # Waiving every negative leaves only the positives, which pass on their own.
-run_pe "DCO_WAIVED_COMMITS=${pe_login} ${pe_id} ${pe_other} ${pe_multi} ${pe_unattr} ${pe_unsigned_pr} ${pe_nopr} ${pe_othermerge} ${pe_apierr} ${pe_commitserr} ${pe_nosignoff} ${pe_plain}"
+run_pe "DCO_WAIVED_COMMITS=${pe_login} ${pe_id} ${pe_other} ${pe_multi} ${pe_unattr} ${pe_unsigned_pr} ${pe_nopr} ${pe_othermerge} ${pe_apierr} ${pe_commitserr} ${pe_nosignoff} ${pe_plain} ${pe_ub_human} ${pe_ub_unverified} ${pe_ub_single} ${pe_ub_only}"
 if [ "$rc" -eq 0 ] && ! out_grep -q '^FAIL '; then
   pass "with the negatives waived the PR-evidence positives pass the run"
 else
