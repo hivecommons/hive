@@ -34299,8 +34299,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         var bg = a.severity === 'error' ? 'color-mix(in srgb, var(--red) 14%, transparent)' : 'color-mix(in srgb, var(--yellow) 14%, transparent)';
         var border = a.severity === 'error' ? 'var(--red)' : 'var(--yellow)';
         var textColor = 'var(--text)'; // banner copy stays neutral; severity lives in the tint/border
-        var dismiss = (a.id || '').indexOf('plan-stall-') === 0
-          ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="dismissSystemAlert" data-arg0="' + esc(a.id || '') + '" data-stop="1" title="Dismiss this needs-human plan alert">Dismiss</button>'
+        // Mirrors systemAlertDismissible in server.go.
+        var alertID = a.id || '';
+        var dismissible = alertID.indexOf('plan-stall-') === 0 || alertID.indexOf('model-id-normalized-') === 0;
+        var dismiss = dismissible
+          ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="dismissSystemAlert" data-arg0="' + esc(alertID) + '" data-stop="1" title="Dismiss this alert">Dismiss</button>'
           : '';
         var guideTip = a.onboarding ? '<div class="onboarding-guide-tip">' + onboardingGuideTipHtml(a.guideStep || 'github-app') + '</div>' : '';
         return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
