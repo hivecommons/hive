@@ -191,6 +191,7 @@ var (
 	IsInferenceBackend        = cruxconfig.IsInferenceBackend
 	LiteLLMChatCompletionsURL = cruxconfig.LiteLLMChatCompletionsURL
 	LocalLiteLLMProxyURL      = cruxconfig.LocalLiteLLMProxyURL
+	OpenAIURL                 = cruxconfig.OpenAIURL
 	ModelArgs                 = cruxconfig.ModelArgs
 	ModelFlag                 = cruxconfig.ModelFlag
 	NormalizeKickLogSource    = cruxconfig.NormalizeKickLogSource
