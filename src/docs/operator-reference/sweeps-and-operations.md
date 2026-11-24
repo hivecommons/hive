@@ -512,7 +512,9 @@ in repositories with auto-merge off:
     request per PR (`dependency-bot-conflicts-stale-red.json`). When the
     bot's next head fails any of the same checks again, the bump breaks
     them: the pass does not ask again, whatever the base does, and the
-    dependency-bot sweep's red-CI hand-off runs on its usual 4-hour grace.
+    dependency-bot sweep's red-CI hand-off runs on its usual 4-hour grace
+    (on a PR already parked by that hand-off, see below, the PR keeps its
+    label and comment and no new hand-off is posted).
     A different failing check, or a red head after a green one (a green head
     clears the note), may be asked about once more. A bump that breaks a
     check therefore costs one extra CI run.
@@ -528,10 +530,29 @@ in repositories with auto-merge off:
     `stale-red-base-refresh` with `action=bot_rebase_request`. Dependabot is
     never asked (it refuses commands from apps): its branch is skipped as
     before. Bot PRs labelled `needs-human`, `hold` or `do-not-merge`, or at
-    074, are skipped.
+    074, are skipped, with one exception: a `needs-human` that the
+    dependency-bot sweep's own red-CI hand-off added (red on the same head
+    for 4 hours) is no barrier once every failing check is green on the base
+    tip, because the bot's rebase is the fresh run that hand-off asks a
+    person for. The sweep's ledger (`dependency-bot-conflicts.json`) must
+    show that hand-off (reason `red-ci`) for the current head with the label
+    added by the sweep; otherwise the label still blocks. Right before the
+    request the pass reads the PR's label events once, and asks only when
+    the newest `needs-human` event is the App's own `labeled`: a person who
+    took the label off and put it back means no request on that head, and a
+    failed read means no request on that pass (the next pass reads again). A `needs-human` a person added, one from any other
+    hand-off, or one recorded for an older head blocks as before, and the
+    PR-only trigger never applies to such a PR. Such a PR is asked at most
+    once per head, whatever the base does next (the request is in the
+    ledger, so a restart does not ask again). The sweep skips a PR labelled
+    `needs-human`, so the `stale-red-bot-did-not-rebase` hand-off below
+    never comes for it: it keeps the red-CI hand-off's label and comment,
+    and no new hand-off is posted. The label comes off when CI is green;
+    when the bot's new head is red again the label stays and the record
+    names the old head, so it is not asked again.
   The request is recorded in `dependency-bot-conflicts-rebase.json`; if the
   head has neither moved nor gone green one window later, the dependency-bot
-  sweep hands the PR to a person (one comment plus `needs-human`, reason
+  sweep hands a PR without `needs-human` to a person (one comment plus `needs-human`, reason
   `stale-red-bot-did-not-rebase`), and takes that label off once the head
   moves or CI is green. See
   [the dependency-bot sweep](README.md) for the rest of that hand-off.

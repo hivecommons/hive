@@ -617,6 +617,11 @@ func (s *depBotConflictStore) pruneRebase(open map[string]github.PullRequest) {
 			delete(s.branchFacts, k)
 		}
 	}
+	for k := range s.staleRedNotOwnLabel {
+		if _, ok := open[k]; !ok {
+			delete(s.staleRedNotOwnLabel, k)
+		}
+	}
 	if changed {
 		s.saveRebaseLocked()
 	}
