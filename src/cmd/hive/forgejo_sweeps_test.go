@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 const testForgejoTokenEnv = "HIVE_TEST_FORGEJO_SWEEP_TOKEN"
@@ -96,16 +98,16 @@ func TestForgejoSweepAPIForRepo(t *testing.T) {
 }
 
 func TestForgejoSweeperFor(t *testing.T) {
-	if forgejoSweeperFor(nil, nil, nil) != nil {
+	if forgejoSweeperFor(nil, forgejoSweepDeps{}) != nil {
 		t.Error("nil config: want nil")
 	}
 	gh := &config.Config{Project: config.ProjectConfig{Org: "acme", Repos: []string{"widgets"}}}
-	if forgejoSweeperFor(gh, nil, nil) != nil {
+	if forgejoSweeperFor(gh, forgejoSweepDeps{}) != nil {
 		t.Error("GitHub hive: want no Forgejo sweeper")
 	}
 	cfg := forgejoSweepTestConfig()
 	cfg.AutoMerge.MaxMerges = 3
-	s := forgejoSweeperFor(cfg, nil, nil)
+	s := forgejoSweeperFor(cfg, forgejoSweepDeps{})
 	if s == nil {
 		t.Fatal("want a sweeper")
 	}
@@ -121,10 +123,23 @@ func TestForgejoSweeperFor(t *testing.T) {
 			t.Errorf("BlockingLabels %v lacks %q", s.BlockingLabels, want)
 		}
 	}
+	if s.Gate != nil {
+		t.Error("no write-back gate given: want a nil Gate")
+	}
 	t.Setenv(testForgejoTokenEnv, "fj-secret")
 	stubForgejoSweepAPI(t, &sweepAPIStub{}, nil)
 	if _, err := s.API("widgets"); err != nil {
 		t.Errorf("API: %v", err)
+	}
+
+	gate := writeback.New(writeback.Config{}, writeback.Deps{}, filepath.Join(t.TempDir(), "writeback.json"))
+	gated := forgejoSweeperFor(cfg, forgejoSweepDeps{Gate: gate})
+	if gated.Gate == nil {
+		t.Fatal("write-back gate given: want Gate set")
+	}
+	// The hive's own issue is never gated (outside per-repo mode off).
+	if d := gated.Gate("widgets", writeback.Item{Number: 5, HiveAuthored: true}, writeback.KindIssueClose, "close"); !d.Allowed {
+		t.Errorf("own item refused: %+v", d)
 	}
 }
 
@@ -133,16 +148,16 @@ func TestRunForgejoSweepPass(t *testing.T) {
 	stub := &sweepAPIStub{}
 	stubForgejoSweepAPI(t, stub, nil)
 	cfg := forgejoSweepTestConfig()
-	if m, c := runForgejoSweepPass(context.Background(), nil, nil, nil); m != nil || c != nil {
+	if m, c := runForgejoSweepPass(context.Background(), nil, forgejoSweepDeps{}); m != nil || c != nil {
 		t.Errorf("nil config: %v %v", m, c)
 	}
-	runForgejoSweepPass(context.Background(), cfg, nil, nil)
+	runForgejoSweepPass(context.Background(), cfg, forgejoSweepDeps{})
 	if stub.listed != 1 {
 		t.Errorf("listed = %d, want one automerge listing", stub.listed)
 	}
 	off := false
 	cfg.Issues.CloseOnMerge = &off
-	runForgejoSweepPass(context.Background(), cfg, nil, nil)
+	runForgejoSweepPass(context.Background(), cfg, forgejoSweepDeps{})
 	if stub.listed != 2 {
 		t.Errorf("listed = %d", stub.listed)
 	}
@@ -152,12 +167,12 @@ func TestSafeForgejoSweepPassRecovers(t *testing.T) {
 	t.Setenv(testForgejoTokenEnv, "fj-secret")
 	// A nil API inside the stub panics on the first call.
 	stubForgejoSweepAPI(t, &panicAPI{}, nil)
-	_, _, err := safeForgejoSweepPass(context.Background(), forgejoSweepTestConfig(), nil, nil)
+	_, _, err := safeForgejoSweepPass(context.Background(), forgejoSweepTestConfig(), forgejoSweepDeps{})
 	if err == nil {
 		t.Error("want the panic reported as an error")
 	}
 	stubForgejoSweepAPI(t, nil, errors.New("down"))
-	if _, _, err := safeForgejoSweepPass(context.Background(), forgejoSweepTestConfig(), nil, nil); err != nil {
+	if _, _, err := safeForgejoSweepPass(context.Background(), forgejoSweepTestConfig(), forgejoSweepDeps{}); err != nil {
 		t.Errorf("client error must not panic: %v", err)
 	}
 }
@@ -177,7 +192,7 @@ func TestStartForgejoSweepsRunsAndStops(t *testing.T) {
 		default:
 		}
 		return cfg
-	}, nil, nil, time.Millisecond)
+	}, forgejoSweepDeps{}, time.Millisecond)
 	select {
 	case <-passes:
 	case <-time.After(5 * time.Second):
@@ -191,7 +206,7 @@ func TestStartForgejoSweepsRunsAndStops(t *testing.T) {
 	}
 	// A zero interval falls back to the default and still stops.
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	done2 := startForgejoSweeps(ctx2, func() *config.Config { return nil }, nil, nil, 0)
+	done2 := startForgejoSweeps(ctx2, func() *config.Config { return nil }, forgejoSweepDeps{}, 0)
 	cancel2()
 	<-done2
 }
@@ -209,7 +224,7 @@ func TestStartForgejoSweepsLogsPanic(t *testing.T) {
 		default:
 		}
 		return cfg
-	}, nil, slog.New(slog.DiscardHandler), time.Millisecond)
+	}, forgejoSweepDeps{Logger: slog.New(slog.DiscardHandler)}, time.Millisecond)
 	<-ran
 	cancel()
 	<-done

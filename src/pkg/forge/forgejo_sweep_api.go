@@ -37,9 +37,9 @@ type SweepAPI interface {
 	// RecentlyMergedPulls lists the most recently updated closed pull
 	// requests that were merged, newest first, at most limit of them.
 	RecentlyMergedPulls(ctx context.Context, repo string, limit int) ([]MergedPull, error)
-	// IssueState returns "open" or "closed" for an issue, and whether the
-	// number is really a pull request.
-	IssueState(ctx context.Context, repo string, number int) (state string, isPull bool, err error)
+	// IssueFacts reads one issue: its state, author, labels and creation
+	// time, and whether the number is really a pull request.
+	IssueFacts(ctx context.Context, repo string, number int) (IssueFacts, error)
 	// IssueCommentBodies returns the bodies of an issue's comments.
 	IssueCommentBodies(ctx context.Context, repo string, number int) ([]string, error)
 	// IssueReopened reports whether the issue's timeline holds a reopen
@@ -62,6 +62,15 @@ type PullFacts struct {
 	Labels    []string
 	HeadSHA   string
 	Base      string
+}
+
+// IssueFacts is one issue as the close-on-merge sweep sees it.
+type IssueFacts struct {
+	State     string
+	IsPull    bool
+	Author    string
+	Labels    []string
+	CreatedAt time.Time
 }
 
 // MergedPull is a merged pull request as the close-on-merge sweep sees it.
@@ -228,12 +237,18 @@ func (f *forgejoForge) RecentlyMergedPulls(ctx context.Context, repo string, lim
 	return out, nil
 }
 
-func (f *forgejoForge) IssueState(ctx context.Context, repo string, number int) (string, bool, error) {
+func (f *forgejoForge) IssueFacts(ctx context.Context, repo string, number int) (IssueFacts, error) {
 	var is gtIssue
 	if err := f.getJSON(ctx, fmt.Sprintf("%s/issues/%d", f.repoPath(repo), number), nil, &is); err != nil {
-		return "", false, fmt.Errorf("%s: read issue %s#%d: %w", f.label, repo, number, err)
+		return IssueFacts{}, fmt.Errorf("%s: read issue %s#%d: %w", f.label, repo, number, err)
 	}
-	return is.State, is.PullRequest != nil, nil
+	return IssueFacts{
+		State:     is.State,
+		IsPull:    is.PullRequest != nil,
+		Author:    is.User.Login,
+		Labels:    labelNames(is.Labels),
+		CreatedAt: is.CreatedAt,
+	}, nil
 }
 
 func (f *forgejoForge) IssueCommentBodies(ctx context.Context, repo string, number int) ([]string, error) {

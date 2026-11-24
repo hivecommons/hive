@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/forgesweep"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // forgejoSweepInterval is how often the Forgejo automerge and close-on-merge
@@ -25,6 +26,15 @@ const forgejoHoldLabel = "hold"
 // newForgejoSweepAPI builds the Forgejo client a sweep uses. It is a variable
 // so tests can substitute a fake.
 var newForgejoSweepAPI = forge.NewForgejoSweepAPI
+
+// forgejoSweepDeps are the process-wide pieces every pass shares.
+type forgejoSweepDeps struct {
+	// Mutation is the boundary merges and comments go through.
+	Mutation effects.Boundary
+	// Gate is the unsolicited write-back gate; nil allows.
+	Gate   *writeback.Gate
+	Logger *slog.Logger
+}
 
 // forgejoSweepAPIForRepo returns the Forgejo client for repo, refusing when
 // the forgejo token would go to another host (CheckForgeTokenHost) or no
@@ -46,7 +56,7 @@ func forgejoSweepAPIForRepo(cfg *config.Config, repo string) (forge.SweepAPI, er
 // forgejoSweeperFor builds one pass's sweeper from cfg. Only repos whose kind
 // has the sweeps (config.ForgeSweepsFor) are included; GitLab and Gitea
 // repos never reach it, and GitHub repos keep the GitHub sweeps.
-func forgejoSweeperFor(cfg *config.Config, boundary effects.Boundary, logger *slog.Logger) *forgesweep.Sweeper {
+func forgejoSweeperFor(cfg *config.Config, deps forgejoSweepDeps) *forgesweep.Sweeper {
 	if cfg == nil {
 		return nil
 	}
@@ -56,22 +66,29 @@ func forgejoSweeperFor(cfg *config.Config, boundary effects.Boundary, logger *sl
 	}
 	blocking := []string{forgejoHoldLabel, cfg.Sentinel.LabelOrDefault(), cfg.Governor.Labels.DecisionNeededLabelOrDefault()}
 	blocking = append(blocking, cfg.Governor.Labels.Exempt...)
-	return &forgesweep.Sweeper{
+	s := &forgesweep.Sweeper{
 		Repos:            repos,
 		API:              func(repo string) (forge.SweepAPI, error) { return forgejoSweepAPIForRepo(cfg, repo) },
 		AutoMergeEnabled: cfg.RepoAutoMergeEnabled,
 		AutoMergeLabel:   cfg.Governor.Labels.AutoMerge,
 		BlockingLabels:   blocking,
 		MaxMerges:        cfg.AutoMerge.MaxMerges,
-		Mutation:         boundary,
-		Logger:           logger,
+		Mutation:         deps.Mutation,
+		Logger:           deps.Logger,
 	}
+	if gate := deps.Gate; gate != nil {
+		s.Gate = func(repo string, item writeback.Item, kind writeback.Kind, preview string) writeback.Decision {
+			full, _ := config.NormalizeRepoForOrg(cfg.Project.Org, repo)
+			return gate.AllowedPreview(full, item, kind, preview)
+		}
+	}
+	return s
 }
 
 // runForgejoSweepPass runs one automerge pass and, when issues.close_on_merge
 // is on, one close-on-merge pass over the Forgejo repos.
-func runForgejoSweepPass(ctx context.Context, cfg *config.Config, boundary effects.Boundary, logger *slog.Logger) (merges []forgesweep.MergeOutcome, closes []forgesweep.CloseOutcome) {
-	s := forgejoSweeperFor(cfg, boundary, logger)
+func runForgejoSweepPass(ctx context.Context, cfg *config.Config, deps forgejoSweepDeps) (merges []forgesweep.MergeOutcome, closes []forgesweep.CloseOutcome) {
+	s := forgejoSweeperFor(cfg, deps)
 	if s == nil {
 		return nil, nil
 	}
@@ -88,7 +105,7 @@ func runForgejoSweepPass(ctx context.Context, cfg *config.Config, boundary effec
 // cfgFn is read on every pass so a reload takes effect without a restart. A
 // hive with no Forgejo repo does no work on a pass. The returned channel
 // closes once the loop has exited.
-func startForgejoSweeps(ctx context.Context, cfgFn func() *config.Config, boundary effects.Boundary, logger *slog.Logger, interval time.Duration) <-chan struct{} {
+func startForgejoSweeps(ctx context.Context, cfgFn func() *config.Config, deps forgejoSweepDeps, interval time.Duration) <-chan struct{} {
 	done := make(chan struct{})
 	if interval <= 0 {
 		interval = forgejoSweepInterval
@@ -102,8 +119,8 @@ func startForgejoSweeps(ctx context.Context, cfgFn func() *config.Config, bounda
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if _, _, err := safeForgejoSweepPass(ctx, cfgFn(), boundary, logger); err != nil && logger != nil {
-					logger.Error("forgejo sweeps: pass panicked", "error", err)
+				if _, _, err := safeForgejoSweepPass(ctx, cfgFn(), deps); err != nil && deps.Logger != nil {
+					deps.Logger.Error("forgejo sweeps: pass panicked", "error", err)
 				}
 			}
 		}
@@ -113,12 +130,12 @@ func startForgejoSweeps(ctx context.Context, cfgFn func() *config.Config, bounda
 
 // safeForgejoSweepPass is runForgejoSweepPass with a panic turned into an
 // error, so one bad pass never ends the loop.
-func safeForgejoSweepPass(ctx context.Context, cfg *config.Config, boundary effects.Boundary, logger *slog.Logger) (merges []forgesweep.MergeOutcome, closes []forgesweep.CloseOutcome, err error) {
+func safeForgejoSweepPass(ctx context.Context, cfg *config.Config, deps forgejoSweepDeps) (merges []forgesweep.MergeOutcome, closes []forgesweep.CloseOutcome, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = errors.New(fmt.Sprint(r))
 		}
 	}()
-	merges, closes = runForgejoSweepPass(ctx, cfg, boundary, logger)
+	merges, closes = runForgejoSweepPass(ctx, cfg, deps)
 	return merges, closes, nil
 }

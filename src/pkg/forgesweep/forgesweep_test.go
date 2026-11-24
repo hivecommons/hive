@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 var errBoom = errors.New("boom")
@@ -79,9 +80,9 @@ func (f *fakeAPI) Self(context.Context) (string, error) { return f.self, f.selfE
 func (f *fakeAPI) RecentlyMergedPulls(context.Context, string, int) ([]forge.MergedPull, error) {
 	return f.merged, f.mergedErr
 }
-func (f *fakeAPI) IssueState(_ context.Context, _ string, n int) (string, bool, error) {
+func (f *fakeAPI) IssueFacts(_ context.Context, _ string, n int) (forge.IssueFacts, error) {
 	st := f.issues[n]
-	return st, st == "pull", f.issueErr
+	return forge.IssueFacts{State: st, IsPull: st == "pull", Author: "reporter", Labels: []string{"bug"}}, f.issueErr
 }
 func (f *fakeAPI) IssueCommentBodies(_ context.Context, _ string, n int) ([]string, error) {
 	return f.comments[n], f.commentErr
@@ -350,6 +351,41 @@ func TestCloseOnMergeSkips(t *testing.T) {
 				t.Errorf("CloseOnMerge = %+v, want reason %q", got, c.reason)
 			}
 		})
+	}
+}
+
+func TestCloseOnMergeAsksTheWritebackGate(t *testing.T) {
+	var asked []writeback.Item
+	gate := func(allow bool, reason string) func(string, writeback.Item, writeback.Kind, string) writeback.Decision {
+		return func(repo string, item writeback.Item, kind writeback.Kind, preview string) writeback.Decision {
+			if repo != "widgets" || kind != writeback.KindIssueClose || !strings.Contains(preview, "#30") {
+				t.Errorf("gate asked repo=%q kind=%q preview=%q", repo, kind, preview)
+			}
+			asked = append(asked, item)
+			return writeback.Decision{Allowed: allow, Reason: reason}
+		}
+	}
+	refused := closeAPI()
+	s := closeSweeper(refused)
+	s.Gate = gate(false, "level")
+	got := s.CloseOnMerge(context.Background())
+	if len(got) != 1 || got[0].Closed || got[0].Reason != "writeback:level" || len(refused.posted) != 0 || len(refused.closed) != 0 {
+		t.Errorf("refused: %+v posted %v closed %v", got, refused.posted, refused.closed)
+	}
+	noReason := closeAPI()
+	s = closeSweeper(noReason)
+	s.Gate = gate(false, "")
+	if got := s.CloseOnMerge(context.Background()); len(got) != 1 || got[0].Reason != "writeback:refused" {
+		t.Errorf("refused without reason: %+v", got)
+	}
+	allowed := closeAPI()
+	s = closeSweeper(allowed)
+	s.Gate = gate(true, "own-item")
+	if got := s.CloseOnMerge(context.Background()); len(got) != 1 || !got[0].Closed {
+		t.Errorf("allowed: %+v", got)
+	}
+	if len(asked) != 3 || asked[0].Number != 5 || asked[0].Author != "reporter" || asked[0].HiveAuthored || asked[0].Labels[0] != "bug" {
+		t.Errorf("items = %+v", asked)
 	}
 }
 

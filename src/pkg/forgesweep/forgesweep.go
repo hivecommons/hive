@@ -19,6 +19,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 const (
@@ -75,8 +76,12 @@ type Sweeper struct {
 	MaxMerges      int
 	// Mutation is the boundary merges and comments go through.
 	Mutation effects.Boundary
-	Logger   *slog.Logger
-	Now      func() time.Time
+	// Gate is the unsolicited write-back gate the close-on-merge sweep asks
+	// before it comments on and closes an issue (writeback.KindIssueClose).
+	// Nil allows, as a nil *writeback.Gate does; cmd/hive always sets it.
+	Gate   func(repo string, item writeback.Item, kind writeback.Kind, preview string) writeback.Decision
+	Logger *slog.Logger
+	Now    func() time.Time
 }
 
 // MergeOutcome is one pull request's automerge verdict.
@@ -342,7 +347,7 @@ func (s *Sweeper) CloseOnMerge(ctx context.Context) []CloseOutcome {
 				continue
 			}
 			for _, issue := range refs {
-				o := s.closeOne(ctx, api, repo, pr.Number, issue)
+				o := s.closeOne(ctx, api, repo, self, pr.Number, issue)
 				if o.Closed {
 					s.log().Info("forgejo close-on-merge: closed issue", "repo", repo, "issue", issue, "pr", pr.Number)
 				}
@@ -364,18 +369,31 @@ func (s *Sweeper) trustedAuthor(ctx context.Context, api forge.SweepAPI, repo, s
 	return err == nil && writeAccess[perm]
 }
 
-func (s *Sweeper) closeOne(ctx context.Context, api forge.SweepAPI, repo string, pr, issue int) CloseOutcome {
+func (s *Sweeper) closeOne(ctx context.Context, api forge.SweepAPI, repo, self string, pr, issue int) CloseOutcome {
 	o := CloseOutcome{Repo: repo, Issue: issue, PR: pr}
 	skip := func(reason string) CloseOutcome { o.Reason = reason; return o }
-	state, isPull, err := api.IssueState(ctx, repo, issue)
+	facts, err := api.IssueFacts(ctx, repo, issue)
 	if err != nil {
 		return skip("issue-read-failed")
 	}
-	if isPull {
+	if facts.IsPull {
 		return skip("is-pull-request")
 	}
-	if !strings.EqualFold(state, "open") {
+	if !strings.EqualFold(facts.State, "open") {
 		return skip("already-closed")
+	}
+	// Closing someone's issue is an unsolicited write: the write-back gate
+	// (ACMM level, opt-in labels, repo mode, backfill) decides, as it does
+	// for the GitHub close-on-merge paths.
+	item := writeback.Item{
+		Number:       issue,
+		Author:       facts.Author,
+		Labels:       facts.Labels,
+		CreatedAt:    facts.CreatedAt,
+		HiveAuthored: self != "" && strings.EqualFold(facts.Author, self),
+	}
+	if d := s.allowed(repo, item, fmt.Sprintf("close issue named by merged #%d", pr)); !d.Allowed {
+		return skip("writeback:" + nonEmpty(d.Reason, "refused"))
 	}
 	marker := fmt.Sprintf(closeMarkerFormat, pr)
 	bodies, err := api.IssueCommentBodies(ctx, repo, issue)
@@ -405,7 +423,7 @@ func (s *Sweeper) closeOne(ctx context.Context, api forge.SweepAPI, repo string,
 		Target: strconv.Itoa(issue),
 		Inputs: map[string]string{"body": effects.StableDigest(body)},
 	}, func(ctx context.Context) (effects.Result, error) {
-		return effects.Result{}, api.CreateIssueComment(ctx, repo, issue, body)
+		return effects.Result{}, api.CreateIssueComment(ctx, repo, issue, body) // writeback:gated
 	})
 	if err != nil {
 		return skip("close-comment-failed")
@@ -413,8 +431,15 @@ func (s *Sweeper) closeOne(ctx context.Context, api forge.SweepAPI, repo string,
 	return s.close(ctx, api, o)
 }
 
+func (s *Sweeper) allowed(repo string, item writeback.Item, preview string) writeback.Decision {
+	if s.Gate == nil {
+		return writeback.Decision{Allowed: true, Reason: writeback.ReasonNoGate}
+	}
+	return s.Gate(repo, item, writeback.KindIssueClose, preview)
+}
+
 func (s *Sweeper) close(ctx context.Context, api forge.SweepAPI, o CloseOutcome) CloseOutcome {
-	if err := api.CloseIssue(ctx, o.Repo, o.Issue); err != nil {
+	if err := api.CloseIssue(ctx, o.Repo, o.Issue); err != nil { // writeback:gated
 		s.log().Warn("forgejo close-on-merge: close failed", "repo", o.Repo, "issue", o.Issue, "error", err)
 		o.Reason = "close-failed"
 		return o

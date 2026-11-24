@@ -69,7 +69,7 @@ func TestForgejoSweepAPIReads(t *testing.T) {
 			{"number":3,"title":"t","body":"Fixes #1","merged":true,"merged_at":` + string(mergedJSON) + `,"user":{"login":"hive-bot"},"base":{"ref":"release"}},
 			{"number":4,"merged":false},
 			{"number":5,"merged":true}]`,
-		"GET " + repoAPI + "/issues/1":          `{"number":1,"state":"open"}`,
+		"GET " + repoAPI + "/issues/1":          `{"number":1,"state":"open","user":{"login":"reporter"},"labels":[{"name":"bug"}],"created_at":"2026-11-01T00:00:00Z"}`,
 		"GET " + repoAPI + "/issues/2":          `{"number":2,"state":"open","pull_request":{"merged":true}}`,
 		"GET " + repoAPI + "/issues/1/comments": `[{"body":"a"},{"body":"b"}]`,
 		"GET /api/v1/user":                      `{"login":"hive-bot"}`,
@@ -115,11 +115,12 @@ func TestForgejoSweepAPIReads(t *testing.T) {
 		pulls[0].Body != "Fixes #1" || pulls[0].Base != "release" || !pulls[0].MergedAt.Equal(merged) {
 		t.Errorf("RecentlyMergedPulls = %+v", pulls)
 	}
-	if st, isPull, err := api.IssueState(ctx, "widgets", 1); err != nil || st != "open" || isPull {
-		t.Errorf("IssueState(1) = %q %v %v", st, isPull, err)
+	is, err := api.IssueFacts(ctx, "widgets", 1)
+	if err != nil || is.State != "open" || is.IsPull || is.Author != "reporter" || !reflect.DeepEqual(is.Labels, []string{"bug"}) || is.CreatedAt.IsZero() {
+		t.Errorf("IssueFacts(1) = %+v %v", is, err)
 	}
-	if _, isPull, err := api.IssueState(ctx, "widgets", 2); err != nil || !isPull {
-		t.Errorf("IssueState(2) isPull = %v %v", isPull, err)
+	if is, err := api.IssueFacts(ctx, "widgets", 2); err != nil || !is.IsPull {
+		t.Errorf("IssueFacts(2) = %+v %v", is, err)
 	}
 	bodies, err := api.IssueCommentBodies(ctx, "widgets", 1)
 	if err != nil || !reflect.DeepEqual(bodies, []string{"a", "b"}) {
@@ -177,8 +178,8 @@ func TestForgejoSweepAPIErrors(t *testing.T) {
 	if _, err := api.RecentlyMergedPulls(ctx, "widgets", 10); err == nil {
 		t.Error("RecentlyMergedPulls: want an error")
 	}
-	if _, _, err := api.IssueState(ctx, "widgets", 1); err == nil {
-		t.Error("IssueState: want an error")
+	if _, err := api.IssueFacts(ctx, "widgets", 1); err == nil {
+		t.Error("IssueFacts: want an error")
 	}
 	if _, err := api.IssueCommentBodies(ctx, "widgets", 7); err == nil {
 		t.Error("IssueCommentBodies bad json: want an error")
