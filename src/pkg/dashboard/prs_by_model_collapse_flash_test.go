@@ -49,6 +49,7 @@ func TestGovernorPRModelsPillsExpandCollapsedSubsectionWithoutFlash(t *testing.T
 const assert = require('node:assert/strict');
 let govPRModelsWindow = '7d';
 let govPRModelsSort = 'effectiveness';
+let govPRModelsColumnSort = { key: '', dir: 'desc' };
 let govPRModelsData = null;
 let collapsed = true;
 const toggles = [];
