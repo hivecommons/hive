@@ -1,7 +1,11 @@
   <div class="mt-6 mb-8" id="calendar-section" data-dashboard-section="calendar-section">
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="calendar-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Calendar section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📅 Calendar</h2>
     <div class="section-body">
-      <div id="calendar-panel" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
+      <div id="calendar-panel" class="calendar-panel">
+        <div id="calendar-email-in" hidden></div>
+        <div id="calendar-add-form" hidden></div>
+        <div id="calendar-results" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
+      </div>
       <div id="meeting-drafts-panel" class="calendar-panel"></div>
     </div>
   </div>
