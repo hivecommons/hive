@@ -90,6 +90,15 @@ func api(ctx context.Context, t *testing.T, method, url, token string, body any,
 	return resp.StatusCode
 }
 
+// pause waits one poll interval for the forge's asynchronous work, or until
+// the cycle's deadline.
+func pause(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(pollInterval):
+	}
+}
+
 func git(t *testing.T, dir string, extraEnv []string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -258,7 +267,7 @@ func TestForgejoHiveCycle(t *testing.T) {
 		if err == nil || !errors.Is(err, forge.ErrNotMergeable) || time.Now().After(deadline) {
 			break
 		}
-		time.Sleep(pollInterval)
+		pause(ctx)
 	}
 	if err != nil {
 		t.Fatalf("Merge: %v", err)
@@ -287,6 +296,6 @@ func TestForgejoHiveCycle(t *testing.T) {
 			t.Logf("issue #%d still %q %s after the merge; Forgejo did not apply the closing keyword in time", issueNum, is.State, closeWaitFor)
 			break
 		}
-		time.Sleep(pollInterval)
+		pause(ctx)
 	}
 }
