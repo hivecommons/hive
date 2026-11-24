@@ -108,6 +108,9 @@ type sessionStore struct {
 	// one session never has two (api_sessions_delete.go). Not persisted: a
 	// `deleting` record without an entry here is a job a restart interrupted.
 	deleting map[string]bool
+	// closing holds shutdown claims while a terminal is being killed or
+	// confirmed gone. Guarded by the server's sessionsMu.
+	closing map[string]bool
 }
 
 // claimDelete marks id as having a delete job; false when it already has one.
@@ -265,6 +268,23 @@ func (st *sessionStore) update(id string, fn func(*sessionRecord)) (sessionRecor
 	}
 	fn(rec)
 	return *rec, true, st.saveLocked()
+}
+
+// updatePersisted leaves the record intact if saving fails.
+func (st *sessionStore) updatePersisted(id string, fn func(*sessionRecord)) (sessionRecord, bool, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	rec, ok := st.sessions[id]
+	if !ok {
+		return sessionRecord{}, false, nil
+	}
+	before := *rec
+	fn(rec)
+	if err := st.saveLocked(); err != nil {
+		*rec = before
+		return before, true, err
+	}
+	return *rec, true, nil
 }
 
 func (st *sessionStore) remove(id string) error {

@@ -1,8 +1,11 @@
 package dashboard
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -69,6 +72,224 @@ func sessionViewOf(t *testing.T, e *sessionTestEnv, c sessionCaller, id string) 
 		}
 	}
 	return nil
+}
+
+type sessionResumeLookupRuntime struct {
+	SessionRuntime
+	onLookup func()
+}
+
+func (rt sessionResumeLookupRuntime) ResumeInfo(_, _, _ string) (crux.UserSessionResume, bool) {
+	rt.onLookup()
+	return crux.UserSessionResume{SessionID: "abc", Command: "claude --resume abc"}, true
+}
+
+func TestSessionResumeRechecksConcurrentDelete(t *testing.T) {
+	for _, tc := range []struct {
+		name                   string
+		deleteCode, resumeCode int
+	}{
+		{"deleting", http.StatusAccepted, http.StatusConflict},
+		{"deleted", http.StatusOK, http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newSessionTestEnv(t, true)
+			const id = "abcdef012345"
+			if err := e.s.sessionStoreOrNil().put(sessionRecord{
+				ID: id, Vendor: "claude", Creator: callerRW.user, Status: sessionStatusEnded, UIDSlot: 1,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if tc.deleteCode == http.StatusOK {
+				e.rt.markGone(id)
+			} else {
+				release := make(chan struct{})
+				e.rt.removeHook = func(string) error {
+					<-release
+					return nil
+				}
+				t.Cleanup(func() {
+					close(release)
+					e.waitDeleted(t, id)
+				})
+			}
+			path := "/api/sessions/" + id
+			e.s.deps.Sessions = sessionResumeLookupRuntime{SessionRuntime: e.rt, onLookup: func() {
+				// Resume has read the ended record, but has not claimed it.
+				res := e.do(t, callerRW, "DELETE", path, nil)
+				if res.Code != tc.deleteCode {
+					t.Fatalf("delete = %d, want %d: %s", res.Code, tc.deleteCode, res.Body.String())
+				}
+			}}
+			res := e.do(t, callerRW, "POST", path+"/resume", nil)
+			if res.Code != tc.resumeCode {
+				t.Errorf("resume = %d, want %d: %s", res.Code, tc.resumeCode, res.Body.String())
+			}
+			if e.s.sessionStartInFlight(id) || len(e.rt.startedSpecs()) != 0 {
+				t.Error("resume started after delete won")
+			}
+		})
+	}
+}
+
+type sessionKillHookRuntime struct {
+	SessionRuntime
+	beforeKill func() error
+}
+
+func (rt sessionKillHookRuntime) Kill(id string) error {
+	if err := rt.beforeKill(); err != nil {
+		return err
+	}
+	return rt.SessionRuntime.Kill(id)
+}
+
+func TestSessionShutdownKeepsResumeOutUntilKillFinishes(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		idle, remove bool
+		killErr      error
+		want         int
+	}{
+		{name: "close", want: http.StatusOK},
+		{name: "close and remove", remove: true, want: http.StatusAccepted},
+		{name: "idle sweep", idle: true},
+		{name: "failed shutdown", killErr: errors.New("kill failed"), want: http.StatusBadGateway},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newSessionTestEnv(t, true)
+			id := e.create(t, callerRW, "closing")
+			st := e.s.sessionStoreOrNil()
+			path := "/api/sessions/" + id
+			e.rt.mu.Lock()
+			e.rt.resume[id] = crux.UserSessionResume{SessionID: "abc", Command: "claude --resume abc"}
+			e.rt.mu.Unlock()
+
+			kills := 0
+			e.s.deps.Sessions = sessionKillHookRuntime{SessionRuntime: e.rt, beforeKill: func() error {
+				kills++
+				if kills > 1 {
+					return errors.New("duplicate shutdown")
+				}
+				if !e.s.sessionsMu.TryLock() {
+					t.Error("shutdown held the shared session lock during Kill")
+					return errors.New("lock held")
+				}
+				e.s.sessionsMu.Unlock()
+				if rec, ok := st.get(id); !ok || rec.Status != sessionStatusRunning {
+					t.Errorf("session before Kill = %+v, want running", rec)
+				}
+				if got := e.statusOf(t, callerRW, http.MethodPost, path+"/resume", nil); got != http.StatusConflict {
+					t.Errorf("Resume during Kill = %d, want 409", got)
+				}
+				res := e.do(t, callerRW, http.MethodPost, path+"/input", map[string]any{"text": "draft", "submit": true})
+				if res.Code != http.StatusConflict {
+					t.Errorf("Send during Kill = %d, want 409: %s", res.Code, res.Body.String())
+				}
+				if got := e.statusOf(t, callerRW, http.MethodDelete, path, nil); got != http.StatusConflict {
+					t.Errorf("second close during Kill = %d, want 409", got)
+				}
+				return tc.killErr
+			}}
+			if tc.idle {
+				now := time.Now()
+				idleSince := now.Add(-100 * time.Hour)
+				if _, _, err := st.update(id, func(r *sessionRecord) {
+					r.LastActivity = idleSince.UTC().Format(time.RFC3339)
+				}); err != nil {
+					t.Fatal(err)
+				}
+				e.rt.mu.Lock()
+				e.rt.alive[id] = crux.UserSessionProbe{Exists: true, Activity: idleSince}
+				e.rt.mu.Unlock()
+				e.s.sweepSessions(now)
+			} else {
+				closePath := path
+				if tc.remove {
+					closePath += "?remove=true"
+				}
+				if got := e.statusOf(t, callerRW, http.MethodDelete, closePath, nil); got != tc.want {
+					t.Fatalf("close = %d, want %d", got, tc.want)
+				}
+			}
+			if kills != 1 || len(e.rt.startedSpecs()) != 1 {
+				t.Fatalf("kills = %d, starts = %d; want one kill and only the original start", kills, len(e.rt.startedSpecs()))
+			}
+
+			if tc.remove {
+				e.waitDeleted(t, id)
+				if got := e.statusOf(t, callerRW, http.MethodPost, path+"/resume", nil); got != http.StatusNotFound {
+					t.Fatalf("Resume after removal = %d, want 404", got)
+				}
+				return
+			}
+			if tc.killErr != nil {
+				if rec, ok := st.get(id); !ok || rec.Status != sessionStatusRunning {
+					t.Fatalf("session after failed Kill = %+v, want running", rec)
+				}
+				e.s.deps.Sessions = e.rt
+				if got := e.statusOf(t, callerRW, http.MethodDelete, path, nil); got != http.StatusOK {
+					t.Fatalf("close retry = %d, want 200", got)
+				}
+			}
+			if got := e.statusOf(t, callerRW, http.MethodPost, path+"/resume", nil); got != http.StatusAccepted {
+				t.Fatalf("Resume after shutdown = %d, want 202", got)
+			}
+			if rec := e.waitSettled(t, id); rec.Status != sessionStatusRunning || !e.rt.Probe(id).Exists {
+				t.Fatalf("replacement after shutdown = %+v, want a live terminal", rec)
+			}
+		})
+	}
+}
+
+type sessionCloseLogHook struct {
+	slog.Handler
+	afterClose func()
+}
+
+func (h sessionCloseLogHook) Handle(ctx context.Context, rec slog.Record) error {
+	if rec.Message == "sessions: session closed" {
+		h.afterClose()
+	}
+	return h.Handler.Handle(ctx, rec)
+}
+
+func TestSessionCloseAndRemoveKeepsResumeOutAfterKill(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	st := e.s.sessionStoreOrNil()
+	var id string
+	attemptedResume := false
+	e.s.logger = slog.New(sessionCloseLogHook{
+		Handler: slog.NewTextHandler(io.Discard, nil),
+		afterClose: func() {
+			rec, found := st.get(id)
+			if !found || rec.Status != sessionStatusEnded || rec.ResumeCommand == "" {
+				t.Fatalf("session before delete = %+v, exists = %v; want ended with a resume command", rec, found)
+			}
+			if !e.s.sessionsMu.TryLock() {
+				t.Fatal("close held the shared lock while logging")
+			}
+			e.s.sessionsMu.Unlock()
+			attemptedResume = true
+			res := e.do(t, callerRW, http.MethodPost, "/api/sessions/"+id+"/resume", nil)
+			if res.Code != http.StatusConflict {
+				t.Errorf("Resume before delete claims the session = %d, want 409: %s", res.Code, res.Body.String())
+			}
+		},
+	})
+	id = e.create(t, callerRW, "close and remove")
+	e.rt.mu.Lock()
+	e.rt.resume[id] = crux.UserSessionResume{SessionID: "abc", Command: "claude --resume abc"}
+	e.rt.mu.Unlock()
+
+	res := e.do(t, callerRW, http.MethodDelete, "/api/sessions/"+id+"?remove=true", nil)
+	if res.Code != http.StatusAccepted || !attemptedResume {
+		t.Fatalf("close and remove = %d, attempted Resume = %v: %s", res.Code, attemptedResume, res.Body.String())
+	}
+	e.waitDeleted(t, id)
+	if starts := len(e.rt.startedSpecs()); starts != 1 {
+		t.Fatalf("terminal starts = %d, want only the original start", starts)
+	}
 }
 
 // The incident (#18767): removing a session's files outlasts any request

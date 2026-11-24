@@ -143,6 +143,15 @@ type ChannelTarget struct {
 // imageBranchCacheTTL, the existing registry-derived cache next door.
 const channelDigestTTL = 5 * time.Minute
 
+// channelResolveFailureBackoff is how long the hub waits after a refresh that
+// resolved nothing before it asks GHCR again (#19725). Caching a failed
+// resolve for the full channelDigestTTL latched "unknown" for five minutes,
+// but not caching it at all meant every caller (the My Hives snapshot loop,
+// the dashboard's 30 s polls, the SHA poller) started a fresh resolve, about
+// 930 an hour with one tab open and GHCR unreachable. A minute caps that at
+// 60 an hour and still recovers within a minute of GHCR coming back.
+const channelResolveFailureBackoff = 60 * time.Second
+
 // channelResolveTimeout bounds the whole refresh. GHCR being slow must degrade
 // to "serve the previous answer", never to a hung dashboard request.
 const channelResolveTimeout = 8 * time.Second
@@ -156,7 +165,28 @@ var (
 	// resolver cannot outlive the test that stubbed package-level hooks.
 	channelTargetRefreshDisabled bool
 	channelTargetRefreshWG       sync.WaitGroup
+	// channelTargetFailedAt is when the last refresh resolved nothing, or zero
+	// after a good refresh. While it is within channelResolveFailureBackoff
+	// callers get the previous answer or placeholder rows without a new
+	// resolve.
+	channelTargetFailedAt time.Time
+	// channelTargetNow is the clock for the TTL and the failure backoff; a var
+	// so tests can move it instead of sleeping.
+	channelTargetNow = time.Now
 )
+
+// channelTargetInBackoffLocked reports whether a recent failed refresh means
+// callers must not start another one yet. Caller holds channelTargetMu.
+func channelTargetInBackoffLocked(now time.Time) bool {
+	return !channelTargetFailedAt.IsZero() && now.Sub(channelTargetFailedAt) < channelResolveFailureBackoff
+}
+
+// noteChannelTargetFailure starts the failure backoff window.
+func noteChannelTargetFailure() {
+	channelTargetMu.Lock()
+	channelTargetFailedAt = channelTargetNow()
+	channelTargetMu.Unlock()
+}
 
 // ghcrTagDigest returns the registry digest that repo:tag currently resolves
 // to, or "" if the tag does not exist or the registry could not be reached.
@@ -285,16 +315,28 @@ func resolveChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []
 
 // getChannelTargets returns the cached channel→image association, refreshing it
 // when older than channelDigestTTL. On a failed refresh the previous answer is
-// kept: a transient GHCR blip must not blank the channel rows.
+// kept: a transient GHCR blip must not blank the channel rows. After a failed
+// refresh no new one starts for channelResolveFailureBackoff (#19725).
 func getChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []ChannelTarget {
+	if releaseTrackingDisabled() {
+		return channelTargetPlaceholders()
+	}
+	now := channelTargetNow()
 	channelTargetMu.RLock()
-	if channelTargetCache != nil && time.Since(channelTargetCachedAt) < channelDigestTTL {
+	if channelTargetCache != nil && now.Sub(channelTargetCachedAt) < channelDigestTTL {
 		cp := append([]ChannelTarget(nil), channelTargetCache...)
 		channelTargetMu.RUnlock()
 		return cp
 	}
 	stale := append([]ChannelTarget(nil), channelTargetCache...)
+	backoff := channelTargetInBackoffLocked(now)
 	channelTargetMu.RUnlock()
+	if backoff {
+		if len(stale) > 0 {
+			return stale
+		}
+		return channelTargetPlaceholders()
+	}
 
 	fresh := resolveChannelTargets(branchSHAs, logger)
 	// "Resolved nothing at all" means the registry was unreachable, not that
@@ -315,10 +357,12 @@ func getChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []Chan
 		// empty rows WITHOUT caching them. Caching here latched "unknown" for
 		// the full channelDigestTTL, so a hub that lost one refresh showed no
 		// channel association for five minutes and no amount of reloading the
-		// dashboard would fix it. Leaving the cache untouched means the very
-		// next poll retries.
-		logger.Warn("channel resolve: no channel resolved to an image — serving the previous answer if one exists, and retrying on the next poll",
-			"had_previous", len(stale) > 0)
+		// dashboard would fix it. The cache stays untouched; only the short
+		// channelResolveFailureBackoff window starts, so the hub retries
+		// within a minute instead of on every caller (#19725).
+		noteChannelTargetFailure()
+		logger.Warn("channel resolve: no channel resolved to an image, serving the previous answer if one exists and retrying after the backoff",
+			"had_previous", len(stale) > 0, "retry_after", channelResolveFailureBackoff)
 		if len(stale) > 0 {
 			return stale
 		}
@@ -327,7 +371,8 @@ func getChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []Chan
 
 	channelTargetMu.Lock()
 	channelTargetCache = fresh
-	channelTargetCachedAt = time.Now()
+	channelTargetCachedAt = channelTargetNow()
+	channelTargetFailedAt = time.Time{}
 	channelTargetMu.Unlock()
 	return append([]ChannelTarget(nil), fresh...)
 }
@@ -349,11 +394,13 @@ func cacheResolvedChannelTargets(fresh []ChannelTarget) bool {
 		}
 	}
 	if !resolvedAny {
+		noteChannelTargetFailure()
 		return false
 	}
 	channelTargetMu.Lock()
 	channelTargetCache = fresh
-	channelTargetCachedAt = time.Now()
+	channelTargetCachedAt = channelTargetNow()
+	channelTargetFailedAt = time.Time{}
 	channelTargetMu.Unlock()
 	return true
 }
@@ -363,8 +410,11 @@ func refreshChannelTargetsAsync(branchSHAs map[string]string, logger *slog.Logge
 	for k, v := range branchSHAs {
 		shas[k] = v
 	}
+	if releaseTrackingDisabled() {
+		return
+	}
 	channelTargetMu.Lock()
-	if channelTargetRefreshDisabled || channelTargetRefreshInFlight {
+	if channelTargetRefreshDisabled || channelTargetRefreshInFlight || channelTargetInBackoffLocked(channelTargetNow()) {
 		channelTargetMu.Unlock()
 		return
 	}
@@ -399,9 +449,12 @@ func waitForChannelTargetRefreshes() {
 // Request handlers use this path so an external registry/API stall cannot hang
 // the authenticated My Hives JSON response.
 func getChannelTargetsNonBlocking(branchSHAs map[string]string, logger *slog.Logger) []ChannelTarget {
+	if releaseTrackingDisabled() {
+		return channelTargetPlaceholders()
+	}
 	channelTargetMu.RLock()
 	cached := append([]ChannelTarget(nil), channelTargetCache...)
-	fresh := channelTargetCache != nil && time.Since(channelTargetCachedAt) < channelDigestTTL
+	fresh := channelTargetCache != nil && channelTargetNow().Sub(channelTargetCachedAt) < channelDigestTTL
 	channelTargetMu.RUnlock()
 	if fresh {
 		return cached

@@ -1,0 +1,1 @@
+- Closing or deleting a terminal session now coordinates with Resume so shutdown cannot kill a replacement terminal or leave a terminal the dashboard cannot track.

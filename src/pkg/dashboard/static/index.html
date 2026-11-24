@@ -5325,6 +5325,8 @@
     .wf-enabled-toggle { margin: var(--sp-3) 0 var(--sp-1); }
     .wf-enabled-toggle .config-toggle-label { font-weight: 700; }
     .wf-enabled-explain { margin: 0 0 var(--sp-4); max-width: 60em; }
+    .wf-repo-binding { min-width: 0; max-width: 100%; }
+    .wf-repo-select { min-width: 0; max-width: min(100%, 32em); text-overflow: ellipsis; }
     .wf-derivation-off { color: var(--status-warn); }
     .wf-dispatch-gap { color: var(--status-warn); white-space: normal; }
     .wf-prov, .wf-compiled { display: inline-block; border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; border: var(--line-width) solid var(--border); color: var(--muted); }
@@ -74843,13 +74845,17 @@ function burnAreaChart() {
       const options = _workflowState.workflows.map(w => {
         const key = workflowKey(w.name, w.version);
         const compiled = w.compiled !== false;
-        const label = key + (w.description ? ' — ' + w.description : '') + (compiled ? '' : ' (draft, does not compile)');
-        return `<option value="${esc(key)}" ${key === current ? 'selected' : ''} ${compiled ? '' : 'disabled'}>${esc(label)}</option>`;
+        // The label is the key alone: the description can run to hundreds
+        // of characters and would widen the select past the dialog
+        // (hivecommons/hive#19744); it stays available on hover.
+        const label = key + (compiled ? '' : ' (draft, does not compile)');
+        const desc = w.description ? ` title="${esc(w.description)}"` : '';
+        return `<option value="${esc(key)}"${desc} ${key === current ? 'selected' : ''} ${compiled ? '' : 'disabled'}>${esc(label)}</option>`;
       }).join('');
       const flag = _workflowState.enabled || !bound
         ? ''
         : '<span class="rt-inherit wf-derivation-off" title="workflow.enabled is off: the binding is recorded and the monitor shows the model\'s columns, but stage derivation still runs the built-in engine. Turn on &quot;Derive stages from bound models&quot; on Settings → Workflows.">columns only — turn on derivation in Workflows</span>';
-      return `<div class="config-list-item ld-sub" data-wf-repo="${esc(repo)}"><label class="rt-check" title="Which workflow model this repository follows (hivecommons/hive#17620). hive-default is the built-in lifecycle; a custom model changes the monitor's columns and, when workflow.enabled is on, how stages are derived.">Workflow <select ${locked ? 'disabled' : ''} data-change-action="setRepoWorkflow" data-arg0="${esc(repo)}" data-arg-types="s,v">${options}</select></label>${flag}${bound ? `<span class="rt-inherit" title="Bound to ${esc(current)}">bound</span>` : '<span class="rt-inherit">default</span>'}</div>${bound ? renderRepoWorkflowProfileRows(repo, workflowDispatchProfilesFor(bound, _workflowState.dispatch), _workflowState.agents, locked) : ''}`;
+      return `<div class="config-list-item ld-sub" data-wf-repo="${esc(repo)}"><label class="rt-check wf-repo-binding" title="Which workflow model this repository follows (hivecommons/hive#17620). hive-default is the built-in lifecycle; a custom model changes the monitor's columns and, when workflow.enabled is on, how stages are derived.">Workflow <select class="wf-repo-select" ${locked ? 'disabled' : ''} data-change-action="setRepoWorkflow" data-arg0="${esc(repo)}" data-arg-types="s,v">${options}</select></label>${flag}${bound ? `<span class="rt-inherit" title="Bound to ${esc(current)}">bound</span>` : '<span class="rt-inherit">default</span>'}</div>${bound ? renderRepoWorkflowProfileRows(repo, workflowDispatchProfilesFor(bound, _workflowState.dispatch), _workflowState.agents, locked) : ''}`;
     }
 
     // Which hive agent fills each profile the bound model hands items to
