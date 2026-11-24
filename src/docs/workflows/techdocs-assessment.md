@@ -148,7 +148,9 @@ never through one — the compiler's `agent-no-human-gate` refusal enforces this
 ### Label contract
 
 What each label means, who puts it on, and what the hive does with it, as the engine
-behaves for `curated-2026.11.2`. The labels and the PR's draft flag are the source of truth:
+behaves for `curated-2026.11.3`. `curated-2026.11.1` and `curated-2026.11.2` behave the same
+except that four states write the built-in stage label spellings
+([Stage labels](#stage-labels)). The labels and the PR's draft flag are the source of truth:
 the hive derives every state from them and does not care who wrote them, with one
 exception (reference-repo derivation, below).
 
@@ -163,7 +165,7 @@ starts the verifier (see [Starting the drafter](#starting-the-drafter-accepted--
 | Label | Applied by | Means | Hive does on seeing it | Removed by |
 |---|---|---|---|---|
 | `needs-triage` | intake form; the phase-advance workflow | filed, nobody has taken it | state `requested`; writes `stage/010-actionable` | a person or Action; the hive never removes it, `/hive accept` included |
-| `triage/accepted` | a maintainer by hand, or the hive on `/hive accept` | the request is accepted | state `accepted`; writes `stage/020-claimed`; hands the issue to `techdocs-drafter`; derives reference repos **only when a person with write access applied it** | a person; removing it drops the derived reference repos |
+| `triage/accepted` | a maintainer by hand, or the hive on `/hive accept` | the request is accepted | state `accepted`; writes `stage/020-accepted`; hands the issue to `techdocs-drafter`; derives reference repos **only when a person with write access applied it** | a person; removing it drops the derived reference repos |
 | `triage/declined` | a maintainer, or the hive on `/hive decline` | the request will not run | state `declined` **once the issue is also closed**; the hive does not close it | n/a |
 | `phase/assessment` `phase/implementation` `phase/backlog` | intake form; the phase-advance workflow | which phase the issue and its PR belong to | the drafter copies the issue's phase label onto the draft PR; no state depends on it | the phase-advance workflow |
 | `verified` | the reviewer by hand (a deliberate skip, with the reason in a comment), or the hive on `/hive verify` | the verification this PR needs is satisfied | state `in-review` (draft) or `stakeholder-review` (ready); `/hive ready` is offered | a person |
@@ -199,21 +201,22 @@ that is missing and never removes one of these labels, so the two writers cannot
 
 #### Labels the hive writes; people read them
 
-| Label | State | Item | Whose turn |
-|---|---|---|---|
-| `stage/010-actionable` | `requested` | issue | a technical writer: `/hive accept` or `/hive decline` |
-| `stage/020-claimed` | `accepted` | issue | the drafter, started by the hive (no agent claim is held, see above) |
-| `stage/040-covered-by-pr` | `draft-open` | issue | the drafter, on the linked PR |
-| `stage/045-needs-decision` | `escalated` | issue | the administrator: release the hold or `/hive abort` |
-| `stage/070-fixing` | `drafting` | PR | the reviewer: `/verify` or `/hive verify` |
-| `stage/050-review-pending` | `in-review` | PR | the reviewer: check findings, then mark ready |
-| `stage/071-needs-author` | `checks-failing` | PR | the drafter or reviewer: fix the red check |
-| `stage/060-reviewed` | `stakeholder-review` | PR | a stakeholder: `/hive confirm` |
-| `stage/090-ready-for-human-merge` | `awaiting-merge` | PR | an independent approver: merge |
+| Label | 11.1, 11.2 spelling | State | Item | Whose turn |
+|---|---|---|---|---|
+| `stage/010-actionable` | same | `requested` | issue | a technical writer: `/hive accept` or `/hive decline` |
+| `stage/020-accepted` | `stage/020-claimed` | `accepted` | issue | the drafter, started by the hive (no agent claim is held, see above) |
+| `stage/040-covered-by-pr` | same | `draft-open` | issue | the drafter, on the linked PR |
+| `stage/045-needs-decision` | same | `escalated` | issue | the administrator: release the hold or `/hive abort` |
+| `stage/070-drafting` | `stage/070-fixing` | `drafting` | PR | the reviewer: `/verify` or `/hive verify` |
+| `stage/050-reviewer-check` | `stage/050-review-pending` | `in-review` | PR | the reviewer: check findings, then mark ready |
+| `stage/071-needs-author` | same | `checks-failing` | PR | the drafter or reviewer: fix the red check |
+| `stage/060-stakeholder-review` | `stage/060-reviewed` | `stakeholder-review` | PR | a stakeholder: `/hive confirm` |
+| `stage/090-ready-for-human-merge` | same | `awaiting-merge` | PR | an independent approver: merge |
 
-The slugs are the built-in stage names reused by number, so several read wrong for this
-model (`claimed`, `fixing`, `reviewed`); the state and owner columns above are what they mean
-here. `stage/050-review-pending` covers both a verified draft and a ready but unverified PR.
+The 11.1 and 11.2 spellings are the built-in stage names reused by number, so several read
+wrong for this model (`claimed`, `fixing`, `reviewed`); 11.3 replaces those four, and the
+stage number, state and owner are the same under either spelling.
+`stage/050-reviewer-check` covers both a verified draft and a ready but unverified PR.
 
 #### Generic labels that can appear
 
