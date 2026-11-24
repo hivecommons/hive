@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.360.0)
+
+### Added
+
+- A forge-only hive now serves agent requests through the forge. Pull requests opened with `hive-open-pr`, and issue, comment and label requests, go to the Forgejo or Gitea repository (GitLab has no create seams yet and is refused) with the same agent-manager authorization as on GitHub. Every such pull request carries the ready-for-review gate label until a person releases it. Hives with any repository on GitHub keep their GitHub relays unchanged. Refs [#19670](https://github.com/hivecommons/hive/issues/19670).
+
 ## 2026-11-24 (v5.359.0)
 
 ### Added
