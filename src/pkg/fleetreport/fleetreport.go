@@ -384,7 +384,7 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 		if ev.Class == "" || !IsKnownClass(ev.Class) {
 			continue
 		}
-		if onboardingOnlyCondition(obs, ev) {
+		if localOnlyCondition(ev) {
 			continue
 		}
 		fp := RuntimeFingerprint(ev.Class, ev.Message)
@@ -435,14 +435,27 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 	return res
 }
 
-// onboardingOnlyCondition reports whether ev is an operator-configuration
-// state rather than a fleet defect. A missing GitHub App installation is the
-// expected state of an unclaimed hosted slot (#17593) and, equally, of a
-// self-hosted spoke whose owner has not installed the App or set
-// github.installation_id (#19614). Either way the dashboard surfaces it as the
-// github_app_not_installed onboarding banner, so it is never filed upstream.
-func onboardingOnlyCondition(_ Observation, ev Evidence) bool {
-	return ev.Class == ClassGitHubAppNotInstalled
+// localOnlyCondition reports whether ev is an operator-action state on this
+// hive rather than a fleet defect, so it is never filed upstream. The local
+// signal already reaches the operator and an upstream issue only gets triaged
+// back to them:
+//   - github_app_not_installed: the expected state of an unclaimed hosted slot
+//     (#17593) and, equally, of a self-hosted spoke whose owner has not
+//     installed the App or set github.installation_id (#19614). The dashboard
+//     surfaces it as the onboarding banner.
+//   - agent_login_required: the login scanner pauses an agent only once its
+//     credential probe found no valid credential, and the watchdog logs a
+//     credential failure only on a False auth verdict. Both mean the operator
+//     has to re-authenticate the backend on that spoke. The pause sends a
+//     "Login required" notification with the login command, and the watchdog
+//     raises a dashboard alert. Every upstream sighting (#15021, #16953,
+//     #19628) ended in an owner re-login (#19628).
+func localOnlyCondition(ev Evidence) bool {
+	switch ev.Class {
+	case ClassGitHubAppNotInstalled, ClassAgentLoginRequired:
+		return true
+	}
+	return false
 }
 
 // BuildObservationReports converts detector findings into reports consumed by

@@ -333,6 +333,43 @@ func TestEvaluateGitHubAppNotInstalledOpenTrackerRetiresOnUnclaimedHive(t *testi
 	}
 }
 
+// agent_login_required means the operator must re-authenticate an agent's
+// backend on that spoke: the login scanner pauses only after its credential
+// probe found no valid credential, and the watchdog logs only a False auth
+// verdict. The pause notification and the dashboard alert already reach the
+// operator, so the class is never filed upstream (#19628). Other classes in
+// the same pass still are, and a tracker a pre-fix release opened retires
+// through the ordinary recovery path.
+func TestEvaluateAgentLoginRequiredStaysLocal(t *testing.T) {
+	now := time.Date(2026, 11, 24, 4, 13, 0, 0, time.UTC)
+	loginEv := Evidence{Class: ClassAgentLoginRequired, Component: "agent-runtime", Severity: "medium", Count: 5, Message: "login required detected", Attributable: true}
+	watchdogEv := Evidence{Class: ClassAgentLoginRequired, Component: "agent-runtime", Severity: "medium", Count: 5, Message: "watchdog: agent credential failure", Attributable: true}
+	panicEv := Evidence{Class: ClassPanicRecovered, Component: "dashboard", Severity: "high", Count: 1, Message: "panic in handler: nil deref", Attributable: true}
+	obs := Observation{EpochStart: now, HiveID: "hive-a", Version: "v5.349.1", HiveSlug: "marinatedconcrete", ProjectOrg: "acme", Evidence: []Evidence{loginEv, watchdogEv, panicEv}, Now: now}
+
+	res := Evaluate(obs, State{}, false)
+	var got []string
+	for _, r := range res.Reports {
+		got = append(got, r.Class)
+	}
+	if fmt.Sprint(got) != fmt.Sprint([]string{ClassPanicRecovered}) {
+		t.Fatalf("report classes = %v, want only %s", got, ClassPanicRecovered)
+	}
+
+	fp := RuntimeFingerprint(loginEv.Class, loginEv.Message)
+	prev := State{Open: map[string]OpenIssue{
+		fp: {Number: 19628, PostedAt: now.Add(-time.Hour), Trigger: TriggerRuntimeError, Class: ClassAgentLoginRequired, Component: loginEv.Component},
+	}}
+	obs.Evidence = []Evidence{loginEv}
+	res = Evaluate(obs, prev, false)
+	if len(res.Reports) != 0 {
+		t.Fatalf("local-only class still reported: %#v", res.Reports)
+	}
+	if len(res.Recoveries) != 1 || res.Recoveries[0].Fingerprint != fp || res.Recoveries[0].Class != ClassAgentLoginRequired {
+		t.Fatalf("recoveries = %#v, want one retiring the pre-fix #19628 tracker", res.Recoveries)
+	}
+}
+
 func TestDefaultTrackerPackageHelpersAndEviction(t *testing.T) {
 	now, advance := fakeClock(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC))
 	tr := NewRuntimeTracker(now)
