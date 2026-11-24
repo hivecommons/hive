@@ -14,6 +14,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // The forge request relay (hivecommons/hive#19670, #19494 item 5).
@@ -39,6 +40,9 @@ import (
 //   - Issue kinds served: issue, comment and label. A label request may not
 //     add or remove a hold or gate label. Other kinds are rejected with a
 //     reason so the agent does not wait on them.
+//
+// Agent-written titles and bodies pass through prosefilter before they are
+// sent, as on the GitHub relays.
 //
 // Results are written next to the request as <name>.result.json with the
 // GitHub relays' response shapes, and a consumed request is removed (success)
@@ -269,8 +273,8 @@ func (r *forgeRequestRelay) handlePR(ctx context.Context, path string) {
 	ref, err := w.CreateChangeRequest(ctx, req.Repo, forge.ChangeRequestSpec{
 		Head:   req.Head,
 		Base:   req.Base,
-		Title:  req.Title,
-		Body:   req.Body,
+		Title:  prosefilter.SanitizeTitle(req.Title),
+		Body:   prosefilter.Sanitize(req.Body),
 		Labels: []string{github.ReadyForReviewLabelName()},
 	})
 	if err != nil && !errors.Is(err, forge.ErrLabelsNotApplied) {
@@ -368,7 +372,7 @@ func (r *forgeRequestRelay) handleIssue(ctx context.Context, path string) {
 	case "issue":
 		labels := append(append([]string{}, req.Labels...), config.OriginLabelForAgent(req.Agent))
 		var ref forge.IssueRef
-		ref, err = w.CreateIssue(ctx, req.Repo, req.Title, req.Body, labels)
+		ref, err = w.CreateIssue(ctx, req.Repo, prosefilter.SanitizeTitle(req.Title), prosefilter.Sanitize(req.Body), labels) // writeback:solicited the agent's own issue request
 		if err == nil || errors.Is(err, forge.ErrLabelsNotApplied) {
 			resp.Number, resp.URL = ref.Number, ref.URL
 			if err != nil {
@@ -376,11 +380,11 @@ func (r *forgeRequestRelay) handleIssue(ctx context.Context, path string) {
 			}
 		}
 	case "comment":
-		err = w.CreateIssueComment(ctx, req.Repo, req.Number, req.Body)
+		err = w.CreateIssueComment(ctx, req.Repo, req.Number, prosefilter.Sanitize(req.Body)) // writeback:solicited the agent's own comment request
 	case "label":
-		if err = w.AddLabels(ctx, req.Repo, req.Number, req.Labels); err == nil {
+		if err = w.AddLabels(ctx, req.Repo, req.Number, req.Labels); err == nil { // writeback:solicited the agent's own label request
 			for _, l := range req.RemoveLabels {
-				if err = w.RemoveLabel(ctx, req.Repo, req.Number, l); err != nil {
+				if err = w.RemoveLabel(ctx, req.Repo, req.Number, l); err != nil { // writeback:solicited the agent's own label request
 					break
 				}
 			}

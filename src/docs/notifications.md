@@ -535,6 +535,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |
 | `github.(*Client).upsertScannerNote` | `attention` | one scanner note per PR; a new comment only for the first note or when the author must act on a new head (#18451) |
 | `github.attentionDelivery.Post` | `attention` | condition-episode page; live write-back policy rechecked before the write |
+| `main.(*forgeRequestRelay).handleIssue` | `attention` | an agent's comment request on a forge-only hive (#19670) |
 | `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.claimEscalationLookup` | `attention` |  |
 | `main.factCheckSweep.needsHuman` | `attention` | one note per PR when the analysis fact-check loop stops without a passing verdict (#19074) |
