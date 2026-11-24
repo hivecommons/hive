@@ -1,0 +1,1 @@
+- Hive now remembers the sequence of a calendar cancellation and ignores older updates for the same event.
