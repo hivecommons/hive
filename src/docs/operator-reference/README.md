@@ -589,12 +589,17 @@ fallback when the approval sweep is off or refused:
   (one comment plus `needs-human`, reason `stale-red-bot-did-not-rebase`);
   the label comes off once the head moves or CI is green. When the bot did
   rebase and its new head fails the same checks again, nothing holds the
-  new head: the red-CI hand-off above runs on its usual grace. The red-CI
+  new head: the red-CI hand-off above runs on its usual grace, unless the PR
+  still carries that hand-off's `needs-human` (below). The red-CI
   hand-off's own `needs-human` does not stop that request: once every
   failing check is green on the base tip, the stale-red pass asks the bot to
   rebase a PR this sweep labelled for red CI on its current head (proved by
-  this sweep's record, not guessed), once per head and base tip. Any other
-  `needs-human` still blocks it.
+  this sweep's record and by the newest `needs-human` label event being
+  the App's), at most once per head. Such a PR keeps its label and comment,
+  and no new hand-off is posted: this sweep skips a PR labelled
+  `needs-human`, so neither the `stale-red-bot-did-not-rebase` hand-off nor
+  a second red-CI hand-off comes. Any other `needs-human` still blocks the
+  request.
 - fork heads, sentinel-alert PRs, and human-authored lanes are never touched; a
   first-time contributor's held run is still a person's decision — with two
   exceptions that reach fork heads: the gated-run approval sweep

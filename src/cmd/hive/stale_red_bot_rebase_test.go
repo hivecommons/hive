@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"strconv"
@@ -33,6 +34,11 @@ type srbRefresher struct {
 	// that head.
 	heads   map[int]string
 	commits map[int][]github.PRCommit
+	// labelByPerson makes the newest needs-human event a person's, and
+	// labelErr fails the label-event read; labelReads counts the reads.
+	labelByPerson bool
+	labelErr      error
+	labelReads    int
 }
 
 func newSRBRefresher(bases map[string]github.StaleRedBaseState) *srbRefresher {
@@ -78,6 +84,14 @@ func (f *srbRefresher) RequestRenovateRebase(_ context.Context, repo string, num
 
 func (f *srbRefresher) untick(number int) { delete(f.ticked, number) }
 
+func (f *srbRefresher) StaleRedNeedsHumanLabeledByApp(context.Context, string, int) (bool, error) {
+	f.labelReads++
+	if f.labelErr != nil {
+		return false, f.labelErr
+	}
+	return !f.labelByPerson, nil
+}
+
 func (f *srbRefresher) StaleRedBehindBy(context.Context, string, string, string) (int, error) {
 	f.compares++
 	return f.behind, nil
@@ -93,6 +107,8 @@ var (
 	_ staleRedBotRebaser = (*srbRefresher)(nil)
 	_ depBotRebasePolicy = (*srbRefresher)(nil)
 	_ depBotCommitLister = (*srbRefresher)(nil)
+
+	_ staleRedLabelActorReader = (*srbRefresher)(nil)
 )
 
 // useSRBStore gives the pass a fresh dependency-bot ledger.
@@ -633,6 +649,9 @@ func TestStaleRedBotRebase_OwnRedCIHandoffAskedOnceBaseClears(t *testing.T) {
 	if f.asks != 1 || len(f.edits) != 1 || len(f.calls) != 0 || !got["acme/widgets#570"] {
 		t.Fatalf("asks %d, edits %v, updates %d, keys %v; want one request and no update", f.asks, f.edits, len(f.calls), got)
 	}
+	if f.labelReads != 1 {
+		t.Fatalf("label-event reads = %d, want one right before the request", f.labelReads)
+	}
 	if st, ok := store.rebaseState("acme/widgets#570"); !ok || st.HeadSHA != "head1" || st.BaseSHA != "base1" || st.Trigger != staleRedBotTriggerBaseClears {
 		t.Fatalf("recorded request = %+v (found %v), want head1/base1 stale-red", st, ok)
 	}
@@ -786,5 +805,85 @@ func TestStaleRedBotRebase_DependabotOwnRedCIHandoffUnchanged(t *testing.T) {
 	refreshStaleRedBehindPRs(context.Background(), escalationTestConfig(), f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour))
 	if f.asks != 0 || len(f.calls) != 0 || len(f.baseReads) != 0 {
 		t.Fatalf("Dependabot PR: asks %d, updates %d, base reads %v; want none", f.asks, len(f.calls), f.baseReads)
+	}
+}
+
+// A PR parked by the sweep's own red-CI label is asked about at most once
+// per head: the sweep skips it, so no stale-red-bot-did-not-rebase hand-off
+// would end the requests. A later base tip that still clears asks nothing,
+// also after a restart reloads the ledger from disk.
+func TestStaleRedBotRebase_OwnRedCIHandoffOncePerHead(t *testing.T) {
+	resetStaleRedRefresh(t)
+	path := filepath.Join(t.TempDir(), "dependency-bot-conflicts.json")
+	store := loadDepBotConflictStore(path)
+	prev := staleRedDepBotStore
+	staleRedDepBotStore = func() *depBotConflictStore { return store }
+	t.Cleanup(func() { staleRedDepBotStore = prev })
+	cfg := escalationTestConfig()
+	at := time.Date(2026, 11, 22, 7, 0, 0, 0, time.UTC)
+	pr := srbRedCIHandoff(store, 570, "head1", depBotHandoffRedCI, true, at)
+
+	f := newSRBRefresher(greenPytestBase("base1"))
+	now := at.Add(5 * time.Hour)
+	refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), now)
+	if f.asks != 1 {
+		t.Fatalf("asks = %d at (head1, base1), want 1", f.asks)
+	}
+
+	// The base moves and still clears; Renovate has not acted.
+	f.bases = greenPytestBase("base2")
+	refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), now.Add(staleRedRefreshInterval))
+	if f.asks != 1 {
+		t.Fatalf("asks = %d at (head1, base2), want still 1", f.asks)
+	}
+
+	// A restart: the pass's memo is gone and the ledger is read from disk.
+	resetStaleRedRefresh(t)
+	restarted := loadDepBotConflictStore(path)
+	staleRedDepBotStore = func() *depBotConflictStore { return restarted }
+	f.bases = greenPytestBase("base3")
+	refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), now.Add(2*staleRedRefreshInterval))
+	if f.asks != 1 || len(f.edits) != 1 {
+		t.Fatalf("asks %d, edits %v after a restart at base3; want still one", f.asks, f.edits)
+	}
+	if f.labelReads != 1 {
+		t.Fatalf("label-event reads = %d, want only the one before the request", f.labelReads)
+	}
+}
+
+// Right before the request the pass reads the label events once: the
+// newest needs-human event must be the App's own. A person who took the
+// label off and put it back, or a failed read, means no request, and the
+// head is not read or asked about again, also at a new base tip.
+func TestStaleRedBotRebase_OwnRedCIHandoffLabelActor(t *testing.T) {
+	at := time.Date(2026, 11, 22, 7, 0, 0, 0, time.UTC)
+	cases := map[string]func(f *srbRefresher){
+		"a person relabelled": func(f *srbRefresher) { f.labelByPerson = true },
+		"events read fails":   func(f *srbRefresher) { f.labelErr = errors.New("502 bad gateway") },
+	}
+	for name, set := range cases {
+		t.Run(name, func(t *testing.T) {
+			resetStaleRedRefresh(t)
+			store := useSRBStore(t)
+			pr := srbRedCIHandoff(store, 570, "head1", depBotHandoffRedCI, true, at)
+			f := newSRBRefresher(greenPytestBase("base1"))
+			set(f)
+			cfg := escalationTestConfig()
+			refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour))
+			if f.asks != 0 || f.labelReads != 1 {
+				t.Fatalf("asks %d, label reads %d; want no request after one read", f.asks, f.labelReads)
+			}
+			if st, ok := store.rebaseState("acme/widgets#570"); ok && !st.RequestedAt.IsZero() {
+				t.Fatalf("a request was recorded: %+v", st)
+			}
+
+			// A new base tip on the same head: no read, no compare, no ask.
+			compares := f.compares
+			f.bases = greenPytestBase("base2")
+			refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour+staleRedRefreshInterval))
+			if f.asks != 0 || f.labelReads != 1 || f.compares != compares {
+				t.Fatalf("asks %d, label reads %d, compares %d (was %d) at a new base tip; want nothing more", f.asks, f.labelReads, f.compares, compares)
+			}
+		})
 	}
 }
