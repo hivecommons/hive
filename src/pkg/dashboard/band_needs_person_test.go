@@ -46,6 +46,11 @@ func TestBandAndOwnershipForPRsThatNeedAPerson(t *testing.T) {
 	// right before this change).
 	pr723 := person(723)
 	v723 := &github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: offReason, HandMerge: true}
+	// A green PR whose merge relay the contributor lane refuses for a trust
+	// reason, auto-merge on: no Hive lane merges it, so the classifier marks
+	// it a hand merge naming the refusal.
+	prTrustRefused := person(1669)
+	vTrustRefused := &github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: "contributor-lane policy refuses the merge relay: contributor-lane:no-linked-issue; no Hive lane merges this PR, so a person merges it", HandMerge: true}
 	// Queued with no verdict yet, and a plain eligible verdict: unchanged.
 	prQueuedOnly := person(1, queued)
 	prEligible := person(2)
@@ -75,6 +80,7 @@ func TestBandAndOwnershipForPRsThatNeedAPerson(t *testing.T) {
 		{"server#583 queued, red optional check, auto-merge off", pr583, v583, "blocked", handMerge12378, []string{"prow / prow", "auto-merge is off"}},
 		{"server#613 queued, GitHub blocks the merge", pr613, v613, "blocked", notYours11565, nil},
 		{"documentation#1668 lane refusal, auto-merge off", pr1668, v1668, "open", handMerge12378, []string{"no-linked-issue", "auto-merge is off"}},
+		{"lane refusal that needs a maintainer, auto-merge on", prTrustRefused, vTrustRefused, "open", handMerge12378, []string{"no-linked-issue", "a person merges it"}},
 		{"actions#697 red optional check, auto-merge off", pr697, v697, "blocked", handMerge12378, []string{"Check consumer validation evidence", "auto-merge is off"}},
 		{"actions#723 every gate passed, auto-merge off", pr723, v723, "open", handMerge12378, []string{"auto-merge is off"}},
 		{"queued with no verdict yet", prQueuedOnly, nil, "eligible", notYours11565, nil},

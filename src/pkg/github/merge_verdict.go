@@ -50,7 +50,12 @@ type MergeVerdict struct {
 	// whose auto-merge switch is off (config.RepoAutoMergeEnabled: an owner
 	// override, or a hive below ACMM L6). No Hive sweep merges there, so the
 	// verdict is outstanding rather than eligible and only a person can land
-	// it — the dashboard's your-turn decision reads this flag.
+	// it — the dashboard's your-turn decision reads this flag. It also marks
+	// a PR that passes every per-PR gate in a repo whose auto-merge is on
+	// but whose merge relay the contributor lane refuses for a reason no Hive
+	// lane will clear (a trust or admission reason, or the lane switched off
+	// or scoped to other repos): no Hive lane merges it either. It changes no
+	// merge bucket; only the dashboard reads it.
 	HandMerge bool `json:"hand_merge,omitempty"`
 	// ReviewChangesRequested marks a verdict for a PR whose current head the
 	// hive's review returned for changes (a changes_requested verdict that

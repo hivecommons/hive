@@ -377,7 +377,11 @@ func TestDecidePRCardPrecedence(t *testing.T) {
 			return p
 		}()}, cardBandAuthorUpdate, "stage:072:author"},
 		{"085 not your turn", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice", "stage/085-needs-decision")}, cardBandUnexplained, "unexplained:stage_085_not_your_turn"},
-		{"090 not your turn", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice", "stage/090-ready-for-human-merge")}, cardBandUnexplained, "unexplained:stage_090_not_your_turn"},
+		{"090 with no your-turn decision", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice", "stage/090-ready-for-human-merge")}, cardBandUnexplained, "unexplained:stage_090_not_your_turn"},
+		// A trust refusal of the merge relay in an auto-merge-on repo: the
+		// classifier marks it a hand merge, so the stored decision is
+		// hand_merge_required and the row is Merge by hand, not Unexplained.
+		{"090 relay refusal needs a maintainer", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice", "stage/090-ready-for-human-merge"), verdict: cardTestTrustRefusalVerdict(), ownership: cardTestOwnership(OwnershipReasonHandMerge)}, cardBandHandMerge, "ownership:hand_merge_required"},
 		{"unknown stage", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice", "stage/040-covered-by-pr")}, cardBandUnexplained, "unexplained:stage_unknown"},
 	}
 	for _, tc := range cases {
@@ -388,6 +392,43 @@ func TestDecidePRCardPrecedence(t *testing.T) {
 		if got.Group == "" || got.Reason == "" {
 			t.Errorf("%s: group %q reason %q", tc.name, got.Group, got.Reason)
 		}
+	}
+}
+
+// cardTestTrustRefusalVerdict is the verdict the merge classifier writes for
+// a PR that passes every merge gate in an auto-merge-on repo but whose merge
+// relay the contributor lane refuses for a trust reason.
+func cardTestTrustRefusalVerdict() *github.MergeVerdict {
+	return &github.MergeVerdict{
+		State:     github.MergeVerdictOutstanding,
+		Reason:    "contributor-lane policy refuses the merge relay for contributor's PR: contributor-lane:no-linked-issue; no Hive lane merges this PR, so a person merges it",
+		HandMerge: true,
+	}
+}
+
+// A stage 090 PR whose merge relay the contributor lane refuses for a trust
+// reason, in an auto-merge-on repo: the your-turn decision reads the
+// classifier's hand merge, so the card places it in Merge by hand with the
+// refusal in the reason. Without the hand merge it read
+// unexplained:stage_090_not_your_turn.
+func TestDecidePRCardTrustRefusalIsMergeByHand(t *testing.T) {
+	pr := cardPR(1, "alice", "stage/090-ready-for-human-merge")
+	pr.Mergeable = github.MergeableYes
+	verdict := cardTestTrustRefusalVerdict()
+	env := ownershipEnv11565(6)
+	env.now = cardTestNow
+	env.mergeLaneTakesAuthor = func(string, string) bool { return true }
+	o := decidePROwnershipGated(pr, verdict, false, config.DashboardIssueBandsConfig{}, env)
+	checkOwnership11565(t, o, handMerge12378)
+	if !strings.Contains(o.Reason, "contributor-lane:no-linked-issue") {
+		t.Errorf("ownership reason %q does not name the refusal", o.Reason)
+	}
+	got := decidePRCard(cardPRRow{repoFull: cardTestRepo, pr: pr, verdict: verdict, ownership: &o}, cardTestInputs(nil))
+	if got.Key != cardBandHandMerge || got.ReasonCode != "ownership:"+OwnershipReasonHandMerge || got.Group != cardGroupYourTurn {
+		t.Fatalf("card band %+v, want Merge by hand from hand_merge_required", got)
+	}
+	if !strings.Contains(got.Reason, "contributor-lane:no-linked-issue") {
+		t.Errorf("card reason %q does not name the refusal", got.Reason)
 	}
 }
 

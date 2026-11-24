@@ -596,16 +596,65 @@ func relayLaneRefusal(pr github.PullRequest, fullRepo string, logger *slog.Logge
 // stage engine's existing classification. Soak, head age and pending review
 // are temporary gates, not requests for a maintainer merge.
 func relayRefusalNeedsMaintainer(refusal string) bool {
+	reason, ok := relayRefusalReason(refusal)
+	return ok && prstage.HumanMergeReason(reason) == prstage.HumanMergeReasonUntrustedAuthor
+}
+
+// relayRefusalReason is the lane's skip reason inside a relay refusal (the
+// text after the prefix and the author, before the detail in parentheses),
+// and false when refusal is not a relay refusal.
+func relayRefusalReason(refusal string) (string, bool) {
 	if !strings.HasPrefix(refusal, automerge.RelayMergeRefusalPrefix) {
-		return false
+		return "", false
 	}
 	_, reason, ok := strings.Cut(refusal, ": ")
 	if !ok {
-		return false
+		return "", false
 	}
 	reason, _, _ = strings.Cut(reason, " (")
-	return prstage.HumanMergeReason(reason) == prstage.HumanMergeReasonUntrustedAuthor
+	return strings.TrimSpace(reason), true
 }
+
+// relayRefusalNoLaneMerges reports a relay refusal no Hive lane will ever
+// clear on its own: one that needs a maintainer (relayRefusalNeedsMaintainer),
+// or the lane switched off (automerge.RelayLaneReasonDisabled) or scoped to
+// other repos (automerge.RelayLaneReasonRepoNotAllowed). A soak, a head too
+// new or a pending verdict clears by itself, so it is not one.
+func relayRefusalNoLaneMerges(refusal string) bool {
+	if relayRefusalNeedsMaintainer(refusal) {
+		return true
+	}
+	reason, ok := relayRefusalReason(refusal)
+	return ok && (reason == automerge.RelayLaneReasonDisabled || reason == automerge.RelayLaneReasonRepoNotAllowed)
+}
+
+// relayRefusalVerdict is the merge verdict of a PR that passed every merge
+// gate but whose merge relay the contributor-lane gate refuses. It is
+// outstanding with the refusal as its reason. A refusal no Hive lane will
+// clear (relayRefusalNoLaneMerges: a trust or admission reason, or the lane
+// off or scoped to other repos) is also a hand merge in a repo whose
+// auto-merge is on: only a person can land that PR, and without HandMerge it
+// reached no one (a trust refusal is listed under needs_maintainer_merge for
+// the scheduler, which the dashboard does not read). In a repo whose
+// auto-merge is off the verdict is left to handMergeVerdict, which marks
+// every outstanding verdict there and names the switch, so that result is
+// unchanged. A temporary refusal (a soak, a head too new, a pending verdict)
+// is never a hand merge here: the lane merges the PR itself once it clears.
+// HandMerge is display only; the bucket and needs_maintainer_merge are
+// decided by the caller as before.
+func relayRefusalVerdict(refusal string, repoAutoMergeOff bool) github.MergeVerdict {
+	v := github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: refusal}
+	if repoAutoMergeOff || !relayRefusalNoLaneMerges(refusal) {
+		return v
+	}
+	v.HandMerge = true
+	v.Reason = strings.TrimSpace(refusal) + "; " + relayRefusalHandMergeReason
+	return v
+}
+
+// relayRefusalHandMergeReason is the tail relayRefusalVerdict adds to a
+// relay refusal no Hive lane will clear.
+const relayRefusalHandMergeReason = "no Hive lane merges this PR, so a person merges it"
 
 // mergeableJSON renders a tri-state mergeability verdict for the
 // merge-eligible.json marker, mapping the unknown zero value to an explicit
@@ -1518,7 +1567,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		if bucket == mergeBucketEligible {
 			if refusal := relayLaneRefusal(pr, fullRepo, logger); refusal != "" {
 				bucket = mergeBucketSkip
-				verdict = github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: refusal}
+				verdict = relayRefusalVerdict(refusal, prGates.repoAutoMergeOff)
 				if relayRefusalNeedsMaintainer(refusal) {
 					needsMaintainer = append(needsMaintainer, maintainerMergePR{
 						Number: pr.Number, Repo: fullRepo, Title: pr.Title, HeadSHA: pr.HeadSHA, Reason: refusal,
