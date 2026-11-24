@@ -163,7 +163,7 @@ func TestReviewDeciderAnsweredHeadKeepsAnsweredPath(t *testing.T) {
 
 // The card agrees with the decision: a row waiting on the named decider is
 // in Waiting on someone else (Waiting on another item) with the decision's
-// reason as card_reason, and once the window has passed it is a Review row
+// reason as card_reason, and once the window has passed it is a Decide row
 // in Your turn with the decision's reason. The overview breakdown names the
 // cause instead of counting it as the adjudicator wait.
 func TestReviewDeciderCardBandAgrees(t *testing.T) {
@@ -176,7 +176,7 @@ func TestReviewDeciderCardBandAgrees(t *testing.T) {
 		wantCode  string
 	}{
 		{name: "within the window", age: 2 * time.Hour, wantBand: cardBandWaitingOnItem, wantGroup: cardGroupWaiting, wantCode: "wait:review_decider"},
-		{name: "past the window", age: 4 * 24 * time.Hour, wantBand: cardBandReview, wantGroup: cardGroupYourTurn, wantCode: "ownership:" + OwnershipReasonReviewRequiresHuman},
+		{name: "past the window", age: 4 * 24 * time.Hour, wantBand: cardBandDecide, wantGroup: cardGroupYourTurn, wantCode: "ownership:" + OwnershipReasonReviewRequiresHuman},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := deciderVerdict(pr, "head-2", "@carol should decide whether the release job may skip its smoke test", tc.age)
