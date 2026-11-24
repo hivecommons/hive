@@ -31,6 +31,7 @@ func TestCardTurnBandFromTheStoredDecision(t *testing.T) {
 		OwnershipReasonReviewDecision:      cardBandApprove,
 		OwnershipReasonHandMerge:           cardBandHandMerge,
 		OwnershipReasonReviewRequiresHuman: cardBandDecide,
+		OwnershipReasonBotPRReviewChanges:  cardBandTurnOther,
 	}
 	inOrder := func(order []string, key string) bool {
 		for _, k := range order {

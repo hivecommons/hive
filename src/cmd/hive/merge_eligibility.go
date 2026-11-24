@@ -677,6 +677,18 @@ type mergeGates struct {
 // caller logs it (the log line carries the verdict tier, which this function
 // does not need).
 func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string, g mergeGates) (bucket mergeBucket, verdict github.MergeVerdict, intentReason string) {
+	// Whether the review returned this head for changes is a fact about the
+	// head, not about which gate failed first: a red check, an intent
+	// refusal or an unverified CI run can stop a returned head before the
+	// review gate does, and that head must not become a hand merge either.
+	// Every return below keeps its own bucket and reason; only the flag is
+	// added.
+	changesRequested := reviewChangesRequestedHead(g, fullRepo, pr)
+	defer func() {
+		if changesRequested {
+			verdict.ReviewChangesRequested = true
+		}
+	}()
 	// blockedOrOutstanding is the verdict for a PR the sweep will not take
 	// for a reason of its own: the state still depends on what GitHub says,
 	// because a conflicting PR is blocked whatever else is outstanding, and
@@ -815,6 +827,17 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 			return mergeBucketSkip, blockedOrOutstanding("review approval required, but review-verdicts.json is unavailable"), ""
 		}
 		if !g.reviewArtifact.HasAggregateApproval(fullRepo, pr.Number, pr.HeadSHA) {
+			// A head the hive's review returned for changes is not
+			// "awaiting" anything from the review, and its reason says so
+			// (the flag is set for it above, whatever gate fails first).
+			// requires_human and reject keep the awaiting wording: they
+			// reach a person through the review's own hold, and once a
+			// person releases that hold (which this classifier cannot see)
+			// the hand merge is the right ask. So do a head with no verdict
+			// yet and an incomplete aggregate.
+			if changesRequested {
+				return mergeBucketSkip, blockedOrOutstanding(reviewChangesRequestedReason), ""
+			}
 			return mergeBucketSkip, blockedOrOutstanding("awaiting review approval"), ""
 		}
 	}
@@ -903,8 +926,15 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 // (projectbluefin/documentation#1668, projectbluefin/actions#697). A blocked
 // verdict (GitHub itself refuses: a conflict, a failing required check) is
 // still the author's CI work, and an unknown one is left alone.
+//
+// A head the hive's own review returned for changes (ReviewChangesRequested,
+// whichever gate stopped it) is not a hand merge either: the review asked for
+// a new head, so the dashboard must not ask a person to merge this one. A
+// head the review has not judged yet still is one, and so is a
+// requires_human or reject head: the review's own hold brings it to a person
+// first, and after a person releases that hold the hand merge is the ask.
 func handMergeVerdict(v github.MergeVerdict, repoAutoMergeOff bool) github.MergeVerdict {
-	if !repoAutoMergeOff || v.HandMerge || v.State != github.MergeVerdictOutstanding {
+	if !repoAutoMergeOff || v.HandMerge || v.ReviewChangesRequested || v.State != github.MergeVerdictOutstanding {
 		return v
 	}
 	v.HandMerge = true
@@ -919,6 +949,24 @@ func handMergeVerdict(v github.MergeVerdict, repoAutoMergeOff bool) github.Merge
 // repoAutoMergeOffReason is the verdict reason for a PR that passes every
 // gate in a repo whose auto-merge switch is off.
 const repoAutoMergeOffReason = "auto-merge is off for this repo (its auto-merge setting, or the hive is below ACMM L6) — a person merges it"
+
+// reviewChangesRequestedReason is the review gate's verdict reason for a head
+// reviewChangesRequestedHead reports.
+const reviewChangesRequestedReason = "the hive's review did not approve this head (changes requested)"
+
+// reviewChangesRequestedHead reports whether the newest review aggregate for
+// pr's current head (the one HasAggregateApproval reads) is changes_requested
+// and does not also hold the head for a person (RequiresHuman, the flag
+// pipeline.RequiresHuman reads): the review returned the head to its author.
+// It reads the artifact only where the review gate does, with
+// review.require_approval on and review-verdicts.json loaded.
+func reviewChangesRequestedHead(g mergeGates, fullRepo string, pr github.PullRequest) bool {
+	if !g.requireReviewApproval || !g.reviewLoaded || strings.TrimSpace(pr.HeadSHA) == "" {
+		return false
+	}
+	agg, ok := g.reviewArtifact.AggregateFor(fullRepo, pr.Number, pr.HeadSHA)
+	return ok && agg.Verdict == review.VerdictChangesRequested && !agg.RequiresHuman
+}
 
 // hiveMergeQueueBases is the one merge-queue base memory the sweep engines
 // write and the classifier reads (automerge.MergeQueueBases).

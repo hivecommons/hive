@@ -485,7 +485,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if newState != nil && cfg != nil && !cfg.RepoAutoMergeEnabled(repoName) {
 			// No merge lane runs on this repo, so no stage pass will place
 			// the PR: say who lands it instead.
-			newState = stageTrackerAutoMergeOffNew(newState, verdict)
+			newState = stageTrackerAutoMergeOffNew(newState, verdict, it.AuthorKind)
 		}
 		applyStageTrackerNew(&it, newState)
 		// After the New caption: an unclassified clanker PR whose clanker
