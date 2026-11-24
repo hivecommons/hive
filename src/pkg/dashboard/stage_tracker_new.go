@@ -26,6 +26,9 @@ const (
 	// StageTrackerMoverHive: the hive's own stage-label pass places it on
 	// its next governor cycle.
 	StageTrackerMoverHive = "hive"
+	// StageTrackerMoverAuthor: the PR's author must push a new head (the
+	// hive's review returned the current one for changes).
+	StageTrackerMoverAuthor = "author"
 )
 
 // Gate states on a 000-new item.
@@ -50,7 +53,7 @@ type StageTrackerGate struct {
 type StageTrackerNew struct {
 	// Since is when the item was opened (the row's since-time).
 	Since *time.Time `json:"since,omitempty"`
-	// NextMover is maintainer or hive; NextMoverText the plain words.
+	// NextMover is maintainer, hive or author; NextMoverText the plain words.
 	NextMover     string `json:"next_mover"`
 	NextMoverText string `json:"next_mover_text"`
 	// NextPassAt / NextPassInSeconds: the governor's next cycle, when the
@@ -225,6 +228,9 @@ func applyStageTrackerNew(it *StageTrackerItem, n *StageTrackerNew) {
 	it.StageSlug = StageTrackerNewSlug
 	it.Caption = n.Text
 	it.Actor = n.NextMover
+	if n.NextMover == StageTrackerMoverAuthor && strings.TrimSpace(it.Author) != "" {
+		it.Actor = it.Author
+	}
 	if n.Since != nil && it.StageSince == nil {
 		it.StageSince = n.Since
 	}
@@ -280,8 +286,10 @@ const stageTrackerAutoMergeOffGateText = "auto-merge is off for this repo (its a
 // hive-side gate on top of it, holds it); the row then carries a decision
 // whose lead is Merge now as maintainer (decisionForAutoMergeOffNew). Any
 // other PR is still in CI / review, and the hive stays the next mover as
-// before, without the false promise of a stage pass.
-func stageTrackerAutoMergeOffNew(n *StageTrackerNew, verdict *github.MergeVerdict) *StageTrackerNew {
+// before, without the false promise of a stage pass, except a person's or a
+// contributor agent's PR whose head the hive's review returned for changes
+// (authorKind; the verdict's ReviewChangesRequested): its author is next.
+func stageTrackerAutoMergeOffNew(n *StageTrackerNew, verdict *github.MergeVerdict, authorKind string) *StageTrackerNew {
 	if n == nil {
 		return nil
 	}
@@ -310,6 +318,19 @@ func stageTrackerAutoMergeOffNew(n *StageTrackerNew, verdict *github.MergeVerdic
 		}
 		out.Gates = []StageTrackerGate{{Name: "merge-verdict", State: StageTrackerGateDone, Text: verdictText}, mergeGate}
 		out.Text = "New · auto-merge off — a person merges it"
+		return &out
+	}
+	if verdict != nil && verdict.ReviewChangesRequested && (authorKind == authorKindHuman || authorKind == authorKindClanker) {
+		// The hive's review returned the head of a person's or a contributor
+		// agent's PR for changes: its author moves it next, not the hive.
+		out.NextMover = StageTrackerMoverAuthor
+		out.NextMoverText = "the PR's author: the hive's review asked for changes on this head"
+		reviewText := "the hive's review asked for changes on this head"
+		if reason != "" {
+			reviewText += "; hive's merge verdict: " + reason
+		}
+		out.Gates = []StageTrackerGate{{Name: "review", State: StageTrackerGateNext, Text: reviewText}, mergeGate}
+		out.Text = "New · not staged (auto-merge off) · the hive's review asked for changes; waiting for the author to push"
 		return &out
 	}
 	out.NextMover = StageTrackerMoverHive

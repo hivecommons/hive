@@ -486,8 +486,11 @@ func cardOwnershipBand(o *Ownership, kind string) (OverviewCardBand, bool) {
 // hive's review holds for a human decision is Decide: a person answers its
 // question, which is a call, not a look (an approving review or /hive
 // approve releases it; on a PR the hive opened, a /hive decision reply or a
-// changes-requested review answers it too). A verb the card does not know is
-// Other, never dropped: every your-turn decision is in the Your turn group.
+// changes-requested review answers it too). Another bot's PR the review
+// returned for changes (bot_pr_review_changes) is Other: there is nothing to
+// review, only to close it or wait for the bot. A verb the card does not
+// know is Other, never dropped: every your-turn decision is in the Your turn
+// group.
 func cardTurnBand(verb, reasonCode, kind string) string {
 	switch verb {
 	case OwnershipVerbInspect:
@@ -503,6 +506,8 @@ func cardTurnBand(verb, reasonCode, kind string) string {
 				return cardBandHandMerge
 			case OwnershipReasonReviewRequiresHuman:
 				return cardBandDecide
+			case OwnershipReasonBotPRReviewChanges:
+				return cardBandTurnOther
 			}
 		}
 		return cardBandReview
@@ -1286,6 +1291,15 @@ func cardPRNoStageBand(row cardPRRow, in cardInputs) OverviewCardBand {
 			return cardBotPRBand(row, pr.UpdatedAt, "flags:no_stage:bot", in)
 		default:
 			return cardBand(cardBandAuthorUpdate, "flags:no_stage:author", "Blocked; it waits until its author pushes.")
+		}
+	}
+	// The hive's review returned the head for changes (the merge verdict's
+	// flag): a person's or a contributor agent's PR waits on its author, not
+	// on the hive.
+	if v := row.verdict; v != nil && v.ReviewChangesRequested {
+		switch cardPRAuthorKind(pr) {
+		case cardAuthorPerson, cardAuthorClanker:
+			return cardBand(cardBandAuthorUpdate, "flags:no_stage:review_changes", "The hive's review asked for changes; it waits until its author pushes.")
 		}
 	}
 	var overrides map[string]time.Duration
