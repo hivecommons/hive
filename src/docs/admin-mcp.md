@@ -366,15 +366,15 @@ capped at 256 KiB.
 
 **Issues, pull requests and the Activity monitor**
 
-| Tool                        | Returns                                                                                                                                                                        |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `issues_by_band`            | Issues grouped by band; optional `repo`, `band`, `card_band`, `card_group`, `stale`, `held`, `offset`; each row carries its Overview card fields (`card_*`)                    |
-| `prs_by_band`               | Pull requests grouped by band; optional `repo`, `band`, `card_band`, `card_group`, `stale`, `held`, `offset`; each row carries its Overview card fields (`card_*`)             |
-| `merged_prs_read`           | PRs this hive saw merge over a window, from the merged ledger (see [Merged pull requests](#merged-pull-requests)); optional `since`, `repo`, `merged_by`, `approved`, `offset` |
-| `stage_tracker_read`        | The Activity monitor (see note 3)                                                                                                                                              |
-| `delegated_decision_status` | Status and outcome of the latest "Let hive decide" on one item; needs `owner`, `repo`, `number`                                                                                |
-| `review_queue`              | The your-turn items (the dashboard inbox's N plus M), parked issues included, in `inbox_rank` order, each with its verb, reason code and reason; optional `repo`, `offset`     |
-| `contributor_queue`         | The contributor ready-work queue as the Operations card shows it (see note 6); optional `withheld`, `offset`                                                                   |
+| Tool                        | Returns                                                                                                                                                                                                                     |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `issues_by_band`            | Issues grouped by band; optional `repo`, `band`, `card_band`, `card_group`, `stale`, `held`, `offset`; each row carries its Overview card fields (`card_*`); an issue churn row lists its pull requests in `card_churn_prs` |
+| `prs_by_band`               | Pull requests grouped by band; optional `repo`, `band`, `card_band`, `card_group`, `stale`, `held`, `offset`; each row carries its Overview card fields (`card_*`)                                                          |
+| `merged_prs_read`           | PRs this hive saw merge over a window, from the merged ledger (see [Merged pull requests](#merged-pull-requests)); optional `since`, `repo`, `merged_by`, `approved`, `offset`                                              |
+| `stage_tracker_read`        | The Activity monitor (see note 3)                                                                                                                                                                                           |
+| `delegated_decision_status` | Status and outcome of the latest "Let hive decide" on one item; needs `owner`, `repo`, `number`                                                                                                                             |
+| `review_queue`              | The your-turn items (the dashboard inbox's N plus M), parked issues included, in `inbox_rank` order, each with its verb, reason code and reason; optional `repo`, `offset`                                                  |
+| `contributor_queue`         | The contributor ready-work queue as the Operations card shows it (see note 6); optional `withheld`, `offset`                                                                                                                |
 
 **Settings, knowledge and advice**
 

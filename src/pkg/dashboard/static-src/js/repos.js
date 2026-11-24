@@ -1154,6 +1154,40 @@
       return `<a class="repo-issue-plan pill-icon" href="${esc(covering.pr.url || '')}" target="_blank" rel="noopener" data-stop="1" title="${esc(covering.tip)}" aria-label="${esc(covering.tip)}">🔗${count}</a>`;
     }
 
+    // An issue the contributor queue withholds because several PRs have not
+    // settled it (the Overview card's issue churn row, Triage) carries
+    // card_churn_prs: those PRs, merged first, then closed unmerged, by repo,
+    // number and state only. They fold under the pill as links, so the
+    // maintainer asked to say what is left does not have to hunt for them.
+    // The title, link and merge time are on the export and MCP rows.
+    // repoFull is the card's repository; forge its web paths; hiddenClass
+    // the pill row's filter class, so the fold hides with its row.
+    function issueChurnPRsHTML(issue, repoFull, forge, hiddenClass) {
+      const prs = Array.isArray(issue && issue.card_churn_prs) ? issue.card_churn_prs.filter(pr => pr && pr.number) : [];
+      if (!prs.length) return '';
+      const f = forge || {};
+      const base = String(f.base || window._githubBaseUrl || 'https://github.com').replace(/\/$/, '');
+      const changePath = f.changePath || '/pull';
+      const home = String(repoFull || '').toLowerCase();
+      const merged = prs.filter(pr => pr.state === 'merged').length;
+      const parts = [];
+      if (merged) parts.push(merged + ' merged');
+      if (prs.length > merged) parts.push((prs.length - merged) + ' closed unmerged');
+      const links = prs.map(pr => {
+        const repo = String(pr.repo || repoFull || '');
+        const ref = (repo && repo.toLowerCase() !== home ? repo : '') + '#' + pr.number;
+        const isMerged = pr.state === 'merged';
+        // A server link is used only when it is an http(s) URL.
+        const url = (pr.url && /^https?:\/\//i.test(String(pr.url))) ? String(pr.url) : (repo ? base + '/' + repo + changePath + '/' + pr.number : '');
+        const tip = ref + (isMerged ? ' merged' : ' closed unmerged');
+        const cls = isMerged ? 'cp-chip' : 'cp-chip soft';
+        return url
+          ? `<a class="${cls}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(tip)}">${esc(ref)}</a>`
+          : `<span class="${cls}" title="${esc(tip)}">${esc(ref)}</span>`;
+      }).join('');
+      return `<details class="cp-dependents${hiddenClass || ''}"><summary>${esc('PRs on this issue: ' + parts.join(', '))}</summary>${links}</details>`;
+    }
+
     // Issues GitHub reports the PR will close (closingIssuesReferences), as
     // carried on the snapshot — the PR-side mirror of the issue pill's
     // linked_prs badge.

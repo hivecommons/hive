@@ -859,7 +859,24 @@ func overviewIssueCSVRow(item overviewIssueItem, cfg config.DashboardIssueBandsC
 	for key, value := range overviewCardCells(item.card) {
 		row[key] = value
 	}
+	row[overviewCardChurnPRsColumn] = overviewChurnPRCells(item.card.ChurnPRs, githubBaseURL)
 	return row
+}
+
+// overviewCardChurnPRsColumn is the issue export's list of the pull
+// requests behind an issue churn row (OverviewChurnPR, each with its link);
+// empty on every other row.
+const overviewCardChurnPRsColumn = "card_churn_prs"
+
+// overviewChurnPRCells copies an issue churn row's pull requests with each
+// one's link filled in.
+func overviewChurnPRCells(prs []OverviewChurnPR, githubBaseURL string) []OverviewChurnPR {
+	out := make([]OverviewChurnPR, 0, len(prs))
+	for _, pr := range prs {
+		pr.URL = overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", githubBaseURL)
+		out = append(out, pr)
+	}
+	return out
 }
 
 func overviewPRCSVRow(item overviewPRItem, cfg config.DashboardIssueBandsConfig, githubBaseURL string) map[string]any {
@@ -901,7 +918,7 @@ func overviewCSVColumns(kind string) []string {
 	if kind == overviewKindPRs || kind == "pr" {
 		return append(append([]string{"band", "band_rule", "slice", "repo", "number", "title", "url", "author", "draft", "merge_verdict", "mergeable", "failing_checks", "review_decision", "review_class", "held", "hold_reason", "labels", "updated_at", "stale", "signals"}, overviewOwnershipColumns...), overviewCardColumns...)
 	}
-	return append(append([]string{"band", "band_rule", "bucket", "slice", "repo", "number", "title", "url", "state_signals", "labels", "assignees", "agent_role", "acknowledged", "held", "hold_reason", "linked_prs", "updated_at", "stale"}, overviewOwnershipColumns...), overviewCardColumns...)
+	return append(append(append([]string{"band", "band_rule", "bucket", "slice", "repo", "number", "title", "url", "state_signals", "labels", "assignees", "agent_role", "acknowledged", "held", "hold_reason", "linked_prs", "updated_at", "stale"}, overviewOwnershipColumns...), overviewCardColumns...), overviewCardChurnPRsColumn)
 }
 
 func overviewCSV(rows []any, columns []string) string {
@@ -946,6 +963,13 @@ func overviewCSVCell(v any) string {
 		}
 	case []string:
 		text = strings.Join(value, ";")
+	case []OverviewChurnPR:
+		// "owner/repo#N merged <link>"; the title stays in the JSON export.
+		parts := make([]string, 0, len(value))
+		for _, pr := range value {
+			parts = append(parts, strings.TrimSpace(fmt.Sprintf("%s#%d %s %s", pr.Repo, pr.Number, pr.State, pr.URL)))
+		}
+		text = strings.Join(parts, ";")
 	case []any:
 		parts := make([]string, 0, len(value))
 		for _, item := range value {

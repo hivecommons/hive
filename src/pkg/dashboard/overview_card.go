@@ -181,6 +181,24 @@ type OverviewCardBand struct {
 	Group      string `json:"card_group"`
 	Reason     string `json:"card_reason"`
 	ReasonCode string `json:"card_reason_code"`
+	// ChurnPRs are the pull requests behind an issue_churn verdict, merged
+	// first, then closed unmerged (cardChurnPRs); nil on every other row.
+	ChurnPRs []OverviewChurnPR `json:"card_churn_prs,omitempty"`
+}
+
+// OverviewChurnPR is one pull request behind an issue churn row. Repo,
+// Number and State (github.PRStateMerged or github.PRStateClosed, closed
+// meaning closed without merging) are the claim ledger's churn record.
+// Title, URL and MergedAt are what the server's merged ledger lists for a
+// merged one, copied at publish (cardStash.addChurnMerged); a merged PR the
+// ledger does not list, and every closed one, has none of them.
+type OverviewChurnPR struct {
+	Repo     string `json:"repo"`
+	Number   int    `json:"number"`
+	State    string `json:"state"`
+	Title    string `json:"title,omitempty"`
+	URL      string `json:"url,omitempty"`
+	MergedAt string `json:"merged_at,omitempty"`
 }
 
 // OverviewCardBandSpec is one band of a donut, in plot order.
@@ -263,14 +281,22 @@ type OverviewCard struct {
 
 // overviewCardRowFields are the card fields a status row carries. The
 // reason sentence stays on export and MCP rows to keep SSE frames small.
+// CardChurnPRs is set on issue churn rows only, and carries only each pull
+// request's repo, number and state, so the repo card can link them without
+// a fetch; the title, link and merge time stay on export and MCP rows.
 type overviewCardRowFields struct {
-	CardBand       string `json:"card_band,omitempty"`
-	CardGroup      string `json:"card_group,omitempty"`
-	CardReasonCode string `json:"card_reason_code,omitempty"`
+	CardBand       string            `json:"card_band,omitempty"`
+	CardGroup      string            `json:"card_group,omitempty"`
+	CardReasonCode string            `json:"card_reason_code,omitempty"`
+	CardChurnPRs   []OverviewChurnPR `json:"card_churn_prs,omitempty"`
 }
 
 func (b OverviewCardBand) rowFields() overviewCardRowFields {
-	return overviewCardRowFields{CardBand: b.Key, CardGroup: b.Group, CardReasonCode: b.ReasonCode}
+	f := overviewCardRowFields{CardBand: b.Key, CardGroup: b.Group, CardReasonCode: b.ReasonCode}
+	for _, pr := range b.ChurnPRs {
+		f.CardChurnPRs = append(f.CardChurnPRs, OverviewChurnPR{Repo: pr.Repo, Number: pr.Number, State: pr.State})
+	}
+	return f
 }
 
 // cardInputs is everything the classifiers read besides the row: a value
@@ -804,7 +830,10 @@ func cardIssueVerdictBand(row cardIssueRow, v cardVerdict, in cardInputs) Overvi
 	case completionVerdictNeedsDecision:
 		return cardBand(cardBandDecide, code, "An agent needs a maintainer decision before it can go on.")
 	case contributorAdmissionReasonIssueChurn:
-		return cardBand(cardBandTriage, code, fmt.Sprintf("%d PRs merged and it is still open; say what is left, or add %s.", item.ChurnMerged, churnTriagedMarker))
+		prs := cardChurnPRs(item, row.repoFull, in.stash)
+		band := cardBand(cardBandTriage, code, cardChurnReason(item, prs, nonEmpty(item.Repo, row.repoFull)))
+		band.ChurnPRs = prs
+		return band
 	case contributorAdmissionReasonLabelSkipped:
 		return cardSkippedLabelBand(item.SkippedLabel, code, in.cfg)
 	case withheldReasonTracker:
@@ -833,6 +862,103 @@ func cardIssueVerdictBand(row cardIssueRow, v cardVerdict, in cardInputs) Overvi
 		return cardBand(cardBandWaitingOnItem, "verdict:integration_orchestration", "Integration orchestration holds it until another item finishes.")
 	}
 	return cardUnexplained("verdict", "The contributor queue withholds it for a reason the card does not know ("+r+").")
+}
+
+// cardChurnInlineMax is how many pull request numbers an issue churn
+// reason names per list before "and N more"; the row's ChurnPRs has them
+// all.
+const cardChurnInlineMax = 5
+
+// cardChurnPRs reads an issue_churn verdict's pull requests. ChurnPRs is
+// github.IssueChurn.PRNumbers: the merged ones first (ChurnMerged of them),
+// then the closed-unmerged ones, each "#N" in the issue's repository or
+// "owner/repo#N" in another. stash adds what the merged ledger lists for a
+// merged one; nil adds nothing.
+func cardChurnPRs(item AdmissionWithheldItem, repoFull string, stash *cardStash) []OverviewChurnPR {
+	issueRepo := nonEmpty(item.Repo, repoFull)
+	var out []OverviewChurnPR
+	for i, ref := range item.ChurnPRs {
+		repo, number, ok := cardChurnRef(ref, issueRepo)
+		if !ok {
+			continue
+		}
+		pr := OverviewChurnPR{Repo: repo, Number: number, State: github.PRStateClosed}
+		if i < item.ChurnMerged {
+			pr.State = github.PRStateMerged
+			if stash != nil {
+				if e, ok := stash.churnMerged[cardStashKey(repo, number)]; ok {
+					pr.Title, pr.URL = cardText(e.Title), e.URL
+					if !e.MergedAt.IsZero() {
+						pr.MergedAt = e.MergedAt.UTC().Format(time.RFC3339)
+					}
+				}
+			}
+		}
+		out = append(out, pr)
+	}
+	return out
+}
+
+// cardChurnRef parses one PRNumbers entry; "#N" is in issueRepo.
+func cardChurnRef(ref, issueRepo string) (string, int, bool) {
+	ref = strings.TrimSpace(ref)
+	i := strings.LastIndexByte(ref, '#')
+	if i < 0 {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(ref[i+1:])
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	repo := strings.TrimSpace(ref[:i])
+	if repo == "" {
+		repo = issueRepo
+	}
+	return repo, n, repo != ""
+}
+
+// cardChurnReason is an issue churn row's reason: the merged and the
+// closed-unmerged counts, each with its pull requests' numbers inline, at
+// most cardChurnInlineMax of them, "#N" in the issue's repository and
+// "owner/repo#N" in another.
+func cardChurnReason(item AdmissionWithheldItem, prs []OverviewChurnPR, issueRepo string) string {
+	const tail = " and it is still open; say what is left, or add " + churnTriagedMarker + "."
+	var merged, closed []string
+	for _, pr := range prs {
+		ref := "#" + strconv.Itoa(pr.Number)
+		if !strings.EqualFold(pr.Repo, issueRepo) {
+			ref = pr.Repo + ref
+		}
+		if pr.State == github.PRStateMerged {
+			merged = append(merged, ref)
+		} else {
+			closed = append(closed, ref)
+		}
+	}
+	list := func(refs []string) string {
+		if len(refs) == 0 {
+			return ""
+		}
+		if len(refs) <= cardChurnInlineMax {
+			return " (" + strings.Join(refs, ", ") + ")"
+		}
+		return " (" + strings.Join(refs[:cardChurnInlineMax], ", ") + " and " + strconv.Itoa(len(refs)-cardChurnInlineMax) + " more)"
+	}
+	prsWord := func(n int) string {
+		if n == 1 {
+			return "1 PR"
+		}
+		return strconv.Itoa(n) + " PRs"
+	}
+	nMerged, nClosed := item.ChurnMerged, item.ChurnClosed
+	switch {
+	case nMerged > 0 && nClosed > 0:
+		return prsWord(nMerged) + " merged" + list(merged) + ", " + strconv.Itoa(nClosed) + " closed unmerged" + list(closed) + tail
+	case nClosed > 0:
+		return prsWord(nClosed) + " closed unmerged" + list(closed) + tail
+	default:
+		return prsWord(nMerged) + " merged" + list(merged) + tail
+	}
 }
 
 // cardClaimPRRef names the covering PR from the claim URL, " #N", or "".

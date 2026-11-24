@@ -3171,6 +3171,11 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		s.statusMu.RUnlock()
 		snap := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, withheldAll)
 		cardNext.addAdmission(snap, admissionSeq, time.Now())
+		// Issue churn rows name their merged PRs from the merged ledger;
+		// the Entry lookups run only for the merged PRs of such rows.
+		cardNext.addChurnMerged(func(repo string, number int) (MergedLedgerEntry, bool) {
+			return s.mergedLedger().Entry(repo, number)
+		})
 		queue := snap.queue
 		status.Governor.QualifiedStandbys = s.contributeHub.QualifiedStandbyCounts(
 			status.Governor.SuppressedLanes,

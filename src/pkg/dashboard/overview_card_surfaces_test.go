@@ -398,7 +398,7 @@ func TestOverviewCardLeavesTheRestOfStatusUnchanged(t *testing.T) {
 func stripCardKeys(v any) {
 	switch x := v.(type) {
 	case map[string]any:
-		for _, key := range []string{"card_band", "card_group", "card_reason_code", "card_reason", "overview_card"} {
+		for _, key := range []string{"card_band", "card_group", "card_reason_code", "card_reason", "card_churn_prs", "overview_card"} {
 			delete(x, key)
 		}
 		for _, child := range x {
@@ -550,7 +550,7 @@ func TestOverviewExportCardColumnsAndFilters(t *testing.T) {
 
 	legacyIssueColumns := []string{"band", "band_rule", "bucket", "slice", "repo", "number", "title", "url", "state_signals", "labels", "assignees", "agent_role", "acknowledged", "held", "hold_reason", "linked_prs", "updated_at", "stale", "your_turn", "verb", "reason_code", "reason", "inbox_rank", "waiting_elsewhere"}
 	legacyPRColumns := []string{"band", "band_rule", "slice", "repo", "number", "title", "url", "author", "draft", "merge_verdict", "mergeable", "failing_checks", "review_decision", "review_class", "held", "hold_reason", "labels", "updated_at", "stale", "signals", "your_turn", "verb", "reason_code", "reason", "inbox_rank", "waiting_elsewhere"}
-	if got := overviewCSVColumns(overviewKindIssues); !reflect.DeepEqual(got, append(append([]string{}, legacyIssueColumns...), overviewCardColumns...)) {
+	if got := overviewCSVColumns(overviewKindIssues); !reflect.DeepEqual(got, append(append(append([]string{}, legacyIssueColumns...), overviewCardColumns...), overviewCardChurnPRsColumn)) {
 		t.Errorf("issue columns = %v", got)
 	}
 	if got := overviewCSVColumns(overviewKindPRs); !reflect.DeepEqual(got, append(append([]string{}, legacyPRColumns...), overviewCardColumns...)) {
