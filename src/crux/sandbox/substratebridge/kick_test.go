@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hivecommons/hive/internal/testutil"
 )
 
 const kickTestToken = "s3cret"
@@ -74,14 +72,18 @@ func TestKickServerPushRunPull(t *testing.T) {
 		t.Fatalf("push = %d, want 204", resp.StatusCode)
 	}
 	var resp *http.Response
-	testutil.Eventually(t, 10*time.Second, func() bool {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
 		resp = kickRequest(t, http.MethodGet, base+PathWorkspace, kickTestToken, nil)
-		if resp.StatusCode == http.StatusConflict {
-			resp.Body.Close()
-			return false
+		if resp.StatusCode != http.StatusConflict {
+			break
 		}
-		return true
-	}, "pull still 409: the run has not finished")
+		resp.Body.Close()
+		if time.Now().After(deadline) {
+			t.Fatal("pull still 409: the run has not finished")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("pull = %d, want 200", resp.StatusCode)
 	}
