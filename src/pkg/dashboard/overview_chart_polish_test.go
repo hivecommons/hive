@@ -37,7 +37,7 @@ func TestOverviewChartPolish(t *testing.T) {
 		".overview-chart-legend-part { padding-left: calc(var(--sp-1) + var(--sp-7)); }",
 		".overview-chart-legend-zero { opacity: 0.55; }",
 		"if (!head && !subtotal && !count && !s.keep) classes.push('overview-chart-legend-zero');",
-		// The To do and Status subtotal rows.
+		// The Needs a person and Status subtotal rows.
 		".overview-chart-legend-subtotal {",
 		"OVERVIEW_TRANSITION_DURATION_MS = { fast: 1000, normal: 2000, slow: 3600 }",
 		"rootStyle.setProperty('--overview-transition-' + duration, overviewTransitionDurationMs({ duration }) + 'ms')",
