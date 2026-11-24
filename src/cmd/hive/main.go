@@ -2444,6 +2444,13 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		return joinDone(relaysDone, sweepDone)
 	}, b.logger)
 	b.armRequestRelays(b.ghClient)
+	// A forge-only hive has no GitHub client, so the relays above never
+	// start; its PR and issue requests are served through the forge instead
+	// (hivecommons/hive#19670), with the same manager authorizers.
+	if b.cfg.AllReposOffGitHub() {
+		startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger))
+	}
 	b.integrationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
 		client := b.currentGitHubClient()
 		if client == nil {

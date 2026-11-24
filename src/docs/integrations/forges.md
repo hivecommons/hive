@@ -94,6 +94,18 @@ When `project.forge` is `gitlab`, `gitea` or `forgejo` and no `project.repo_poli
 
 A hive with any repository on GitHub keeps the GitHub enumeration unchanged. In such a mixed hive, a repository on another forge is still enumerated through GitHub and finds nothing. Agents also reach their forge through the `gh` CLI wrapper, not through `pkg/forge`. [Why: the agent execution path is GitHub-only](../forge-app-setup.md#why-the-agent-execution-path-is-github-only) explains this.
 
+## Agent requests on a forge-only hive
+
+Agents do not write to a forge directly. They drop a request file (`hive-open-pr`, or an issue, comment or label request), and a hive relay makes the write. On a GitHub hive those relays run on the GitHub client. On a forge-only hive, the forge request relay serves the same request directories through `pkg/forge` ([#19670](https://github.com/hivecommons/hive/issues/19670)). The code is `src/cmd/hive/forge_request_relay.go`.
+
+- Each request is authorized by the same agent-manager gate as on GitHub. The file's owner must be the agent it names, and the agent must be allowed the write at the hive's ACMM level. With no authorizer, every request is denied.
+- The repository must be in `project.repos`, on a non-GitHub forge, not paused and in the agent's scope.
+- Every pull request opened this way carries the ready-for-review gate label, so a person releases it. The GitHub relay's self-authorization, reporter-trust and duplicate-claim checks read GitHub data and are not ported, so the label holds the pull request in their place. A retried request for the same head returns the open pull request.
+- An issue request files the issue with the agent's origin label. A comment request posts the comment. A label request adds and removes labels, but it may not touch a hold or gate label.
+- Results are written next to the request as `<name>.result.json`. A refused request is renamed `.denied`, `.rejected` or `.bad`. A transient forge failure is retried a few times and then renamed `.failed`.
+
+Pushing the branch the pull request is opened from is a separate relay and is not covered here.
+
 ## Dashboard behavior
 
 - The **Platform** tile (in Diagnostics on v5, its own section on v6) shows the forge kind and, for a self-managed instance, its URL. See [Dashboard sections](../dashboard-sections.md#platform).
@@ -106,7 +118,7 @@ Each adapter has unit tests against a fake HTTP server (`src/pkg/forge/*_test.go
 ## Gaps
 
 - Enumeration through the forge covers only forge-only hives. The stage engine, the advisory report and the merge gate are GitHub-only ([#14113](https://github.com/hivecommons/hive/issues/14113), [#14096](https://github.com/hivecommons/hive/issues/14096)).
-- No production path opens issues or change requests through the Gitea or Forgejo create seams yet ([#19670](https://github.com/hivecommons/hive/issues/19670)).
+- The forge request relay serves only `hive-open-pr` and the issue, comment and label requests. Claim, close, review-request and PR-edit requests are refused on a forge-only hive.
 - There is no GitLab or Gitea webhook receiver, dashboard login provider or egress-proxy rule table.
 
 The complete list is in [What full support would require](../forge-app-setup.md#what-full-support-would-require).
