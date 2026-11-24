@@ -216,6 +216,9 @@ auto_merge.human_merge_pin_only.<key>.paths[] # bounded pin-only human-merge pol
 auto_merge.human_merge_pin_only.<key>.trusted_authors[] # bounded pin-only human-merge policy (#16262); yaml-only
 auto_merge.human_merge_title_prefixes[] # breaking-titled PRs wait for a human; yaml-only
 auto_merge.human_merge_labels[] # needs-owner-merge PRs wait for a human; yaml-only
+auto_merge.decision_gate.enabled # credential-path PRs wait for a person's decision; yaml-only
+auto_merge.decision_gate.paths[] # credential-path PRs wait for a person's decision; yaml-only
+auto_merge.decision_gate.sentinel # sentinel-flagged PRs wait for a person's decision; yaml-only
 auto_merge.merge_forward_trusted_human[] # TODO #11854
 auto_merge.native_merge_queue.enabled # native merge queue hand-off opt-in (#15198); yaml-only
 auto_merge.native_merge_queue.probe_ttl # merge-queue probe cache TTL (#15198); yaml-only
