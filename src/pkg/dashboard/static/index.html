@@ -4927,6 +4927,11 @@
     .hive-export-dialog .hive-dialog-title { margin-bottom: var(--sp-3); }
     .hive-export-dialog .hive-dialog-body { margin-bottom: var(--sp-6); white-space: normal; }
     .hive-export-note { margin: 0 0 var(--sp-4); }
+    /* Copy outcome, its own line above the buttons. Empty (no height, no
+       margin) until Copy is clicked, so the popup looks the same until then;
+       kept in the layout rather than display:none so role="status" announces. */
+    .hive-export-status { margin: 0; }
+    .hive-export-status:not(:empty) { margin: calc(-1 * var(--sp-4)) 0 var(--sp-4); }
     .hive-export-link, .hive-export-text { display: block; width: 100%; box-sizing: border-box; margin: 0; padding: var(--sp-4) var(--sp-5); font: inherit; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); border: 1px solid var(--border); border-radius: var(--r); cursor: text; user-select: all; -webkit-user-select: all; }
     .hive-export-link { word-break: break-all; overflow-wrap: anywhere; white-space: normal; line-height: 1.5; }
     .hive-export-text { font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.5; white-space: pre; overflow: auto; min-height: 8em; max-height: 50vh; }
@@ -7472,6 +7477,7 @@
       .hive-dialog.modal-sheet .modal-scroll { flex: 1 1 auto; min-height: 0; max-height: none; margin-bottom: var(--sp-0); }
       .hive-dialog.modal-sheet > .hive-dialog-buttons { flex: 0 0 auto; margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--border); }
       .hive-dialog.modal-sheet > .hive-dialog-buttons .hv-btn { min-height: var(--modal-sheet-close-size); }
+      .hive-dialog.modal-sheet > .hive-export-status:not(:empty) { margin: var(--sp-4) 0 0; }
       .hive-dialog.modal-sheet .modal-sheet-close { display: inline-flex; }
       /* Activity monitor on a phone (#17159): the 13-control toolbar and
          the label chips hide; the sticky bar carries the compact chips
@@ -64568,6 +64574,49 @@ function burnAreaChart() {
       sel.removeAllRanges();
       sel.addRange(range);
     }
+    // Copy button of the export viewer. The outcome goes in the popup's own
+    // status line, not a toast: #toast-container (z-index 10001) sits under
+    // .hive-dialog-overlay (20000) and its blur, so a toast here is unreadable.
+    // Each click clears the last outcome first and only the newest click may
+    // write one, so a slow earlier clipboard promise cannot overwrite it. The
+    // text lands on the next task so a repeated message is announced again.
+    // A success clears itself. Resolves true (copied), false (selected for
+    // manual copy) or null (superseded by a later click).
+    function hiveExportCopy(text, textEl, statusEl) {
+      const seq = (statusEl._hiveExportSeq || 0) + 1;
+      statusEl._hiveExportSeq = seq;
+      const current = function() { return statusEl._hiveExportSeq === seq; };
+      const stopClear = function() {
+        if (statusEl._hiveExportClear) { clearTimeout(statusEl._hiveExportClear); statusEl._hiveExportClear = 0; }
+      };
+      const show = function(msg) {
+        setTimeout(function() { if (current()) statusEl.textContent = msg; }, 0);
+      };
+      const manualCopy = function(msg) {
+        textEl.focus();
+        hiveSelectAllText(textEl);
+        show(msg);
+        return false;
+      };
+      stopClear();
+      statusEl.textContent = '';
+      if (!(navigator.clipboard && navigator.clipboard.writeText)) {
+        return Promise.resolve(manualCopy('The text is selected; press Ctrl+C (or Cmd+C) to copy it.'));
+      }
+      return navigator.clipboard.writeText(text).then(function() {
+        if (!current()) return null;
+        show('Copied to clipboard.');
+        stopClear();
+        statusEl._hiveExportClear = setTimeout(function() {
+          statusEl._hiveExportClear = 0;
+          if (current()) statusEl.textContent = '';
+        }, 4000);
+        return true;
+      }, function() {
+        if (!current()) return null;
+        return manualCopy('Your browser blocked the clipboard. The text is selected; press Ctrl+C (or Cmd+C) to copy it.');
+      });
+    }
     // In-app viewer for text the dashboard hands to the user: a single link
     // (OAuth authorization URLs, terminal URLs, external links) or a text
     // export (JSON, YAML, CSV). No textarea: a link is one full-width,
@@ -64594,6 +64643,7 @@ function burnAreaChart() {
             ? '<code class="hive-export-link" tabindex="0" aria-readonly="true"></code>'
             : '<pre class="hive-export-text" tabindex="0" aria-readonly="true"></pre>'}
         </div>
+        <p class="hive-export-status muted-xs" role="status" aria-live="polite"></p>
         <div class="hive-dialog-buttons">
           <button type="button" class="hv-btn btn-ghost hive-dialog-btn hive-export-close">Close</button>
           <button type="button" class="hv-btn btn-secondary hive-export-copy">Copy to clipboard</button>
@@ -64627,14 +64677,10 @@ function burnAreaChart() {
         copy.classList.add('btn-primary');
         copy.setAttribute('data-initial-focus', '');
       }
+      const copyStatus = overlay.querySelector('.hive-export-status');
       copy.addEventListener('click', function(e) {
         e.preventDefault();
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(function(){ showToast('Copied ' + title + ' to clipboard', 'success'); }, function(){ textEl.focus(); hiveSelectAllText(textEl); showToast('Clipboard blocked — selected text for manual copy', 'error'); });
-        } else {
-          textEl.focus(); hiveSelectAllText(textEl);
-          showToast('Selected text for manual copy', 'info');
-        }
+        hiveExportCopy(text, textEl, copyStatus);
       });
       document.body.appendChild(overlay);
       // Enter activates the focused action (Open leads with initial focus);
