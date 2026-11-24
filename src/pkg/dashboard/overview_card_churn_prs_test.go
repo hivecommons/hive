@@ -244,11 +244,15 @@ assert.match(html, /<a class="cp-chip" href="https:\/\/github.com\/octo\/demo\/p
 assert.match(html, /<a class="cp-chip" href="https:\/\/github.com\/octo\/other\/pull\/9"[^>]*>octo\/other#9<\/a>/);
 assert.match(html, /<a class="cp-chip soft" href="https:\/\/github.com\/octo\/demo\/pull\/1251"[^>]*title="#1251 closed unmerged">#1251<\/a>/);
 assert.equal((html.match(/<a /g) || []).length, 3);
-// No forge: the GitHub base URL; a server link wins; text is escaped.
-const bare = issueChurnPRsHTML({ card_churn_prs: [{ repo: 'octo/demo', number: 5, state: 'merged' }, { repo: 'octo/demo', number: 6, state: 'merged', url: 'https://x/"><b>' }] }, 'octo/demo');
+// No forge: the GitHub base URL; an http(s) server link wins and is
+// escaped; any other scheme falls back to the built link.
+const bare = issueChurnPRsHTML({ card_churn_prs: [{ repo: 'octo/demo', number: 5, state: 'merged' }, { repo: 'octo/demo', number: 6, state: 'merged', url: 'https://x/"><b>' }, { repo: 'octo/demo', number: 7, state: 'merged', url: 'javascript:alert(1)' }] }, 'octo/demo');
 assert.match(bare, /href="https:\/\/ghe.example\/octo\/demo\/pull\/5"/);
+assert.match(bare, /href="https:\/\/x\/&quot;&gt;&lt;b&gt;"/);
 assert.doesNotMatch(bare, /"><b>/);
-assert.match(bare, /<summary>PRs on this issue: 2 merged<\/summary>/);
+assert.doesNotMatch(bare, /javascript:/);
+assert.match(bare, /href="https:\/\/ghe.example\/octo\/demo\/pull\/7"/);
+assert.match(bare, /<summary>PRs on this issue: 3 merged<\/summary>/);
 `)
 	if out, err := exec.Command(node, "-e", script.String()).CombinedOutput(); err != nil {
 		t.Fatalf("churn PR links check failed: %v\n%s", err, strings.TrimSpace(string(out)))

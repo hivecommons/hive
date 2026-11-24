@@ -37540,7 +37540,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const repo = String(pr.repo || repoFull || '');
         const ref = (repo && repo.toLowerCase() !== home ? repo : '') + '#' + pr.number;
         const isMerged = pr.state === 'merged';
-        const url = pr.url || (repo ? base + '/' + repo + changePath + '/' + pr.number : '');
+        // A server link is used only when it is an http(s) URL.
+        const url = (pr.url && /^https?:\/\//i.test(String(pr.url))) ? String(pr.url) : (repo ? base + '/' + repo + changePath + '/' + pr.number : '');
         const tip = ref + (isMerged ? ' merged' : ' closed unmerged');
         const cls = isMerged ? 'cp-chip' : 'cp-chip soft';
         return url

@@ -52,7 +52,7 @@ type cardStash struct {
 	// churnMerged holds, per merged pull request behind an issue_churn
 	// verdict (cardStashKey of the PR), what the merged ledger lists for
 	// it (addChurnMerged).
-	churnMerged map[string]MergedLedgerEntry
+	churnMerged map[string]cardChurnMergedFacts
 	// builtAt is when the published snapshot's rows were built; stages are
 	// the stage records copied for them.
 	builtAt time.Time
@@ -155,11 +155,19 @@ func (st *cardStash) addChurnMerged(entry func(repo string, number int) (MergedL
 				continue
 			}
 			if st.churnMerged == nil {
-				st.churnMerged = map[string]MergedLedgerEntry{}
+				st.churnMerged = map[string]cardChurnMergedFacts{}
 			}
-			st.churnMerged[cardStashKey(pr.Repo, pr.Number)] = e
+			st.churnMerged[cardStashKey(pr.Repo, pr.Number)] = cardChurnMergedFacts{Title: e.Title, URL: e.URL, MergedAt: e.MergedAt}
 		}
 	}
+}
+
+// cardChurnMergedFacts are the merged ledger fields an issue churn row
+// names a merged pull request by, copied by value so the stash shares no
+// slice with the ledger.
+type cardChurnMergedFacts struct {
+	Title, URL string
+	MergedAt   time.Time
 }
 
 // cardAdmissionKey keys a queue or withheld row: its canonical key when it
