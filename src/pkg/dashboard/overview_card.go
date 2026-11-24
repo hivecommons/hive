@@ -116,14 +116,14 @@ var cardBandDefs = map[string]cardBandDef{
 	cardBandReview: {label: "Review", group: cardGroupYourTurn,
 		rule: "The hive wants a person to look at it before it goes on."},
 	cardBandTriage: {label: "Triage", group: cardGroupYourTurn, hideZero: true,
-		rule: "Say what's left, confirm the gap, or triage it."},
+		rule: "Confirm the gap, or triage it."},
 	cardBandAdmit: {label: "Admit", group: cardGroupYourTurn, hideZero: true,
 		rule: "Add the admission label to let agents work on it, or close it."},
 	cardBandTurnOther: {label: "Other", group: cardGroupYourTurn, hideZero: true,
 		rule:   "Your turn for a reason not listed above; the download shows each item's reason.",
 		prRule: "Your turn for a reason not listed above, such as a red base branch, nobody to fix it, or a dependency-bot PR still red after the hand-off time; the download shows each item's reason."},
 	cardBandToClose: {label: "Yours to close", group: cardGroupYourTurn,
-		rule: "The hive recommends closing it but won't do it itself. Close it or keep it."},
+		rule: "The hive thinks it may be done or no longer needed but won't close it itself. Close it, or keep it open."},
 	cardBandUnexplained: {label: "Unexplained", group: cardGroupYourTurn, keep: true,
 		rule: "No rule explains what happens next. This is a hive bug; please report it."},
 	cardBandCoveredByPR: {label: "Covered by an open PR", group: cardGroupWaiting,
@@ -508,9 +508,22 @@ func cardTurnBand(verb, reasonCode, kind string) string {
 }
 
 // cardBandYourTurnAlias is the single Your turn band of before the split.
-// A card_band filter still accepts it and reads it as cardTurnAction: the
-// set of rows that band held (it never held Yours to close or Unexplained).
+// A card_band filter still accepts it and reads it as cardTurnAliasRow: the
+// set of rows that band held (it never held Yours to close or Unexplained,
+// but it did hold the issue churn rows that are Yours to close now).
 const cardBandYourTurnAlias = "your-turn"
+
+// cardChurnReasonCode is an issue churn row's card reason code.
+const cardChurnReasonCode = "verdict:" + contributorAdmissionReasonIssueChurn
+
+// cardTurnAliasRow reports a row the card_band=your-turn alias returns: a
+// row on a what-to-do band (cardTurnAction), or an issue churn row. The
+// churn rows were in the single Your turn band and then in Triage; their
+// action is closing the issue or adding the churn label, so they sit in
+// Yours to close, and the alias keeps returning them.
+func cardTurnAliasRow(b OverviewCardBand) bool {
+	return cardTurnAction(b.Key) || (b.Key == cardBandToClose && b.ReasonCode == cardChurnReasonCode)
+}
 
 // cardTurnAction reports a Your turn band that says what to do: every Your
 // turn band but Yours to close and Unexplained.
@@ -831,7 +844,11 @@ func cardIssueVerdictBand(row cardIssueRow, v cardVerdict, in cardInputs) Overvi
 		return cardBand(cardBandDecide, code, "An agent needs a maintainer decision before it can go on.")
 	case contributorAdmissionReasonIssueChurn:
 		prs := cardChurnPRs(item, row.repoFull, in.stash)
-		band := cardBand(cardBandTriage, code, cardChurnReason(item, prs, nonEmpty(item.Repo, row.repoFull)))
+		// A person ends the guard only by closing the issue or adding the
+		// churn label (issueNeedsHumanTriage); nothing reads a comment, and
+		// otherwise it lapses when the churn history ages out. So the row
+		// is Yours to close, not Triage.
+		band := cardBand(cardBandToClose, code, cardChurnReason(item, prs, nonEmpty(item.Repo, row.repoFull)))
 		band.ChurnPRs = prs
 		return band
 	case contributorAdmissionReasonLabelSkipped:
@@ -922,7 +939,7 @@ func cardChurnRef(ref, issueRepo string) (string, int, bool) {
 // most cardChurnInlineMax of them, "#N" in the issue's repository and
 // "owner/repo#N" in another.
 func cardChurnReason(item AdmissionWithheldItem, prs []OverviewChurnPR, issueRepo string) string {
-	const tail = " and it is still open; say what is left, or add " + churnTriagedMarker + "."
+	const tail = " and it is still open; close it if it is done, or add " + churnTriagedMarker + " to give it back to agents."
 	var merged, closed []string
 	for _, pr := range prs {
 		ref := "#" + strconv.Itoa(pr.Number)
