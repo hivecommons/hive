@@ -11,6 +11,8 @@
 
 Hive can authenticate with either a personal access token or a GitHub App. Use a GitHub App for production hives because installation tokens are scoped to selected repositories and can author PRs as the app bot when `github.app_authored_prs` is enabled.
 
+> **A PAT is enough only for L1–L2. L3 and above need a GitHub App.** Agents do not write to GitHub themselves. They write request files ([`hive-open-issue`](hive-open-issue.md), [`hive-open-pr`](hive-open-pr.md), review, merge and push-branch requests), and the hive's request relays carry them out. The relays start only when the hive has a usable App: `github.app_id` set and a non-zero `github.installation_id` (`HasUsableApp()`). Without one, no agent can file, comment on or claim an issue, open a PR, post a review verdict or request a merge, at any level. The requests pile up on disk and nothing processes them. Nothing in the log or dashboard warns about this: the hive's own writes, such as stage labels and the advisory digest comment, still go through the PAT, so the hive looks partly healthy. Once a usable App is configured, the relays start on the next GitHub client rebuild, with no restart needed. L1–L2 agents are advisory and file nothing, so a PAT covers them.
+
 ## Personal access token (PAT) scopes
 
 The PAT path is `HIVE_GITHUB_TOKEN` (or `github.token` in `hive.yaml`); the App path is `github.app_id`/`github.key_file` as described below. If you set `app_id`/`key_file` this section does not apply — the App permission table further down does.
@@ -19,19 +21,19 @@ Hive never validates token scopes at startup. A PAT with missing scopes fails **
 
 ### Classic PATs
 
-Classic scopes are coarse, so one scope covers every ACMM tier:
+Classic scopes are coarse, so one scope covers the hive's own writes at every ACMM tier. At L3 and above, the agents' writes also need a GitHub App (see the note above). The PAT scopes in the L3–L6 rows cover only the hive's own calls:
 
 | ACMM tier | Minimum classic scopes | Why |
 | --- | --- | --- |
-| L1–L2 (advisory) | `repo` (private repos) or `public_repo` (public repos only) | Read issues/PRs/contents; post advisory digest comments to the pinned tracking issue (an issues **write**, even though the tier is otherwise read-only). |
-| L3–L4 (issue filing) | same | Create, label, comment on, and close issues. |
-| L5–L6 (PR/merge) | same, plus `workflow` if agent PRs may touch `.github/workflows/` | Push branches, open/update/merge PRs, read checks/statuses. GitHub rejects workflow-file pushes without `workflow`. |
+| L1–L2 (advisory) | `repo` (private repos) or `public_repo` (public repos only) | Read issues/PRs/contents; post advisory digest comments to the pinned tracking issue (an issues **write**, even though the tier is otherwise read-only). A PAT alone is enough at this tier. |
+| L3–L4 (issue filing) | same, **plus a usable GitHub App** | The hive's own issue writes (stage labels, digest comments). Agent issue filing, comments and claims go through the App-gated issue relay, so they need the App. |
+| L5–L6 (PR/merge) | same, plus `workflow` if the hive's own pushes may touch `.github/workflows/`, **plus a usable GitHub App** | The hive's own reads of checks/statuses and its direct writes. Agent branch pushes, PRs, reviews and merges go through the App-gated relays and use the App installation token. |
 
 Add `read:org` when Hive should identify org members and contributor roles (recommended for org-owned hives).
 
 ### Fine-grained PATs
 
-Fine-grained PATs are supported — the token is sent as a plain bearer, same as a classic PAT. Grant the token access to every repository the hive works on, with repository permissions mirroring the App table below:
+Fine-grained PATs are supported — the token is sent as a plain bearer, same as a classic PAT. Grant the token access to every repository the hive works on, with repository permissions mirroring the App table below. As with classic PATs, the L3–L4 and L5–L6 columns cover the hive's own calls only. Agent issues, claims, reviews, PRs and merges at those tiers need a usable GitHub App, because the request relays do not start without one:
 
 | Permission | L1–L2 (advisory) | L3–L4 (issues) | L5–L6 (PR/merge) |
 | --- | --- | --- | --- |

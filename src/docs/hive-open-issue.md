@@ -10,6 +10,11 @@ server-side, retried with backoff, and deduplicated against open issues by
 title — exact match first, canonical subject as the fallback (see
 [Idempotency](#idempotency)).
 
+The watcher runs only on a hive with a usable GitHub App (`github.app_id` and
+a non-zero `github.installation_id`). On a PAT-only hive, issue, comment, claim
+and label requests stay queued on disk and nothing carries them out. See
+[GitHub App setup](github-app-setup.md).
+
 ## Why it exists
 
 The direct path rode the agent's own shell tool, and that path lost work

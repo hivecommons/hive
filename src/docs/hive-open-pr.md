@@ -8,6 +8,11 @@ PR-request watcher picks up and acts on using the App installation token, so
 the PR is authored by the App bot (`<slug>[bot]`) rather than by whatever login
 the agent's CLI happens to be authenticated as.
 
+The watcher runs only on a hive with a usable GitHub App (`github.app_id` and
+a non-zero `github.installation_id`). On a PAT-only hive, PR requests stay
+queued on disk and nothing opens them. See
+[GitHub App setup](github-app-setup.md).
+
 ## Why it exists
 
 Two reasons, and the second is the load-bearing one.

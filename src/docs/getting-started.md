@@ -21,7 +21,7 @@ You do not need to reach L6. At L6, permitted lanes can merge when automated che
 Before Step 0, have:
 
 - A repository on **GitHub.com or GitHub Enterprise**. GitLab, Gitea, and Forgejo are not supported for running a hive today.
-- For the App route, someone with permission to install/authorize it for that repository. You can request a hosted hive before installing the App; the request is not an App authorization. A self-hosted PAT deployment instead needs the [documented token scopes](github-app-setup.md#personal-access-token-pat-scopes).
+- For the App route, someone with permission to install/authorize it for that repository. You can request a hosted hive before installing the App; the request is not an App authorization. A self-hosted PAT deployment instead needs the [documented token scopes](github-app-setup.md#personal-access-token-pat-scopes). A PAT alone covers only L1–L2. From L3 up, agents file issues and open PRs through request relays that start only when a GitHub App is installed, so install one before raising the level.
 - Owner access for changing owner-only settings, or an owner who will perform those steps. Viewing a dashboard does not grant configuration rights.
 - A supported agent-backend login/subscription or a model gateway and credentials. Hosting the hive does not automatically authenticate its coding agents.
 

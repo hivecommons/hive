@@ -16,6 +16,12 @@ issues. The **KB** is the knowledge base of reusable facts; an **RFC** is a
 request for comments on a proposed design. For a first deployment's trust
 choices, start with [Securing your hive](securing-your-hive.md).
 
+**L3 and above need a GitHub App.** Agents file issues, claim them, post
+reviews, open PRs and request merges through the hive's request relays, which
+start only when the hive has a usable GitHub App. A PAT-only hive can run
+L1–L2. At L3 and above, its agent requests stay queued and are never processed.
+See [GitHub App setup](github-app-setup.md).
+
 ## What is a pack?
 
 An ACMM **pack** is the bundle of settings Hive applies for one ACMM level.
