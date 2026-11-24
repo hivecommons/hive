@@ -868,58 +868,90 @@
       return String(label || '') + ': ' + lead;
     }
 
-    // The card legend in plot order. A headed group (Your turn, Waiting on
-    // someone else, Blocked, Hive has it) is one bold subtotal row with its
-    // bands indented under it; the other bands are plain rows. The groups
+    // The card legend in plot order, in two sections. To do is the Your turn
+    // group (card_group your-turn): a "To do" heading, its bands as plain
+    // rows, then a bold To do subtotal in the group's colour, which takes the
+    // place of the Your turn group row. Status is every other group, drawn as
+    // before (a headed group such as Waiting on someone else, Blocked or Hive
+    // has it is one bold subtotal row with its bands indented under it; the
+    // other bands are plain rows), then a bold Status subtotal. The groups
     // come from overview_card.groups; a band whose group is not headed stays
-    // plain.
+    // plain. The split reads only card_group, so it is the same for any hive.
     function overviewCardLegendRows(slices) {
+      const todoGroup = 'your-turn';
       const groups = new Map(overviewCardGroups().map(g => [g.key, g]));
       const headed = key => {
         const g = groups.get(key);
         return g ? !!g.headed : ['your-turn', 'waiting-elsewhere', 'blocked', 'actionable-now'].includes(key);
       };
-      const rows = [];
+      const sum = list => list.reduce((n, p) => n + Number(p.count || 0), 0);
+      const todo = (slices || []).filter(s => s.group === todoGroup);
+      const status = (slices || []).filter(s => s.group !== todoGroup);
+      const rows = [{ type: 'section', label: 'To do' }];
+      todo.forEach(s => rows.push({ type: 'plain', slice: s }));
+      rows.push({ type: 'subtotal', key: todoGroup, groups: [todoGroup], label: 'To do', rule: (groups.get(todoGroup) || {}).rule || '', count: sum(todo), className: 'overview-card-group-' + todoGroup });
+      rows.push({ type: 'section', label: 'Status', note: 'nothing for you to do' });
       const done = new Set();
-      (slices || []).forEach(s => {
+      status.forEach(s => {
         if (!headed(s.group)) { rows.push({ type: 'plain', slice: s }); return; }
         if (done.has(s.group)) return;
         done.add(s.group);
-        const parts = slices.filter(p => p.group === s.group);
+        const parts = status.filter(p => p.group === s.group);
         const g = groups.get(s.group) || {};
-        rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: parts.reduce((n, p) => n + Number(p.count || 0), 0), className: 'overview-card-group-' + s.group });
+        rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: sum(parts), className: 'overview-card-group-' + s.group });
         parts.forEach(p => rows.push({ type: 'part', slice: p }));
       });
+      rows.push({ type: 'subtotal', key: '', groups: [...new Set(status.map(s => s.group).filter(Boolean))], label: 'Status', rule: 'Nothing for you to do. Someone else or the hive has the next move, or the item is not work.', count: sum(status), className: '' });
       return rows;
     }
 
     // Every band and group row keeps its download button and its plain-words
     // rule as the tooltip. Zero bands stay listed but dimmed, except the keep
     // bands (Queued for agents, Unexplained), which stay at full strength, and
-    // Held, which is hidden at zero; a group row never dims. Clicks go through
-    // data-action (the dashboard CSP forbids inline handlers).
+    // Held, which is hidden at zero; a group or subtotal row never dims.
+    // Section headings are role=heading level 4 under the chart title (level
+    // 3). The To do subtotal opens and exports the Your turn group, as its
+    // group row did; the Status subtotal exports card_group=<every other
+    // group> (the export reads a comma list) and opens nothing, since no tile
+    // counts exactly those rows. Clicks go through data-action (the dashboard
+    // CSP forbids inline handlers).
     function overviewCardLegendHTML(slices, kind, state) {
       const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       if (!total) return '<div class="overview-empty">Nothing open here; the hive is caught up</div>';
       const format = ((state && state.exportFormat) || 'csv').toUpperCase();
       return overviewCardLegendRows(slices).map(row => {
+        if (row.type === 'section') {
+          // The comma is for screen readers: "Status, nothing for you to do".
+          const note = row.note ? `<span class="overview-chart-legend-sr">,</span> <span class="overview-chart-legend-section-note">${esc(row.note)}</span>` : '';
+          return `<div class="overview-chart-legend-section" role="heading" aria-level="4">${esc(row.label)}${note}</div>`;
+        }
         const head = row.type === 'head';
-        const s = head ? row : row.slice;
+        const subtotal = row.type === 'subtotal';
+        const s = head || subtotal ? row : row.slice;
         const count = Number(s.count || 0);
-        if (!head && !count && s.hideZero) return '';
+        if (!head && !subtotal && !count && s.hideZero) return '';
         const percent = (count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
         const classes = ['overview-chart-legend-row'];
         if (head) classes.push('overview-chart-legend-group');
+        if (subtotal) classes.push('overview-chart-legend-subtotal');
+        if (subtotal && !s.key) classes.push('overview-chart-legend-static');
         if (row.type === 'part') classes.push('overview-chart-legend-part');
-        if (!head && !count && !s.keep) classes.push('overview-chart-legend-zero');
-        const by = head ? 'card_group' : 'card_band';
-        const what = head ? s.label + ' (all)' : s.label;
-        const download = kind ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key, by))}" title="Export ${esc(what)} as ${format}" aria-label="Export ${esc(what)} as ${format}">⬇</button>` : '';
-        return `<div class="${classes.join(' ')}" data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(overviewCardRuleTip(s.label, s.rule))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
+        if (!head && !subtotal && !count && !s.keep) classes.push('overview-chart-legend-zero');
+        const by = head || subtotal ? 'card_group' : 'card_band';
+        const exportKey = subtotal ? s.groups.join(',') : s.key;
+        const what = head || subtotal ? s.label + ' (all)' : s.label;
+        const download = kind && exportKey ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, exportKey, by))}" title="Export ${esc(what)} as ${format}" aria-label="Export ${esc(what)} as ${format}">⬇</button>` : '';
+        const action = s.key ? ` data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1"` : '';
+        const swatch = s.className ? `<span class="overview-chart-swatch ${esc(s.className)}"></span>` : '<span class="overview-chart-swatch overview-chart-swatch-none" aria-hidden="true"></span>';
+        const spoken = subtotal ? '<span class="overview-chart-legend-sr"> total</span>' : '';
+        return `<div class="${classes.join(' ')}"${action} title="${esc(overviewCardRuleTip(s.label, s.rule))}">${swatch}<span class="overview-chart-legend-label">${esc(s.label)}</span>${spoken}<span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
       }).join('');
     }
 
+    // Without the card (an older server) the legend below is today's chart
+    // slice list, unchanged: it has no card groups, so it is not split into
+    // To do and Status.
     function overviewLegendHTML(slices, kind, state) {
       if ((slices || []).some(s => s && s.card)) return overviewCardLegendHTML(slices, kind, state);
       const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
@@ -1084,7 +1116,7 @@
       const format = (state.exportFormat || 'csv').toUpperCase();
       const csvTitle = total ? ('Export ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as ' + format) : 'No matching items to export';
       const download = `<button type="button" class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(csvKind))}" title="${esc(csvTitle)}" aria-label="${esc(csvTitle)}">⬇︎</button>`;
-      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
+      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title" role="heading" aria-level="3">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
     }
 
     function overviewMedianAgeLabel(slices, state) {

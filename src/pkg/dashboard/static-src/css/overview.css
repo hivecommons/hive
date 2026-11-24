@@ -178,6 +178,19 @@
     .overview-chart-legend-group { font-weight: 700; background: color-mix(in srgb, var(--muted) 10%, transparent); }
     .overview-chart-legend-part { padding-left: calc(var(--sp-1) + var(--sp-7)); }
     .overview-chart-legend-zero { opacity: 0.55; }
+    /* The legend's two sections, To do (the Your turn group) and Status
+       (every other group): a small muted heading over a thin rule, and a
+       bold subtotal row under a thin rule. The Status subtotal opens
+       nothing, so it has no pointer or hover, and no dot. */
+    .overview-chart-legend-section { display: flex; align-items: baseline; gap: var(--sp-3); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; padding: var(--sp-1); border-bottom: 1px solid var(--border); }
+    .overview-chart-legend-section:not(:first-child) { margin-top: var(--sp-4); }
+    .overview-chart-legend-section-note { font-size: var(--fs-xs); font-weight: 500; letter-spacing: 0; text-transform: none; }
+    .overview-chart-legend-subtotal { font-weight: 800; border-top: 1px solid var(--border); border-radius: var(--sp-0); padding-top: var(--sp-3); }
+    .overview-chart-legend-subtotal .overview-chart-legend-count { color: var(--text); }
+    .overview-chart-legend-static { cursor: default; }
+    .overview-chart-legend-static:hover { background: transparent; }
+    .overview-chart-swatch-none { visibility: hidden; }
+    .overview-chart-legend-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     .overview-partition-tooltip .overview-partition-title { display: block; margin-bottom: var(--sp-1); font-weight: 700; }
     .overview-partition-tooltip .overview-partition-title + .overview-partition-summary { font-weight: 400; white-space: normal; }
     .overview-partition-tooltip .overview-partition-label .overview-chart-swatch { display: inline-block; vertical-align: middle; margin-right: var(--sp-2); }

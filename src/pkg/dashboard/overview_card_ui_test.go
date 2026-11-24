@@ -135,37 +135,42 @@ func runOverviewCardNode(t *testing.T, script string) string {
 	return string(out)
 }
 
-// The legend: headed groups are bold subtotal rows with their bands indented
-// under them, group rows never dim, zero bands dim except the keep bands,
-// Held is hidden at zero, and every band and group row downloads its own
-// card_band= or card_group= export. No inline handlers (CSP).
+// The legend: To do lists the Your turn bands as plain rows under a To do
+// subtotal; in Status, headed groups are bold subtotal rows with their bands
+// indented under them. Group and subtotal rows never dim, zero bands dim
+// except the keep bands, Held is hidden at zero, and every band, group and
+// subtotal row downloads its own card_band= or card_group= export. No inline
+// handlers (CSP).
 func TestOverviewCardLegendGroupsAndDownloads(t *testing.T) {
 	html := indexHTML(t)
 	script := overviewCardUIPrelude(t, html) + `
 window._lastStatus = { hiveId: 'h', overview_card: cardFixture() };
 const repoA = cardRepoA();
 _overviewLastRepos = [repoA];
-const legendRows = out => [...out.matchAll(/<div class="([^"]*)" data-action="overviewNavigateBand" data-arg0="([^"]*)" data-arg1="([^"]+)" data-stop="1" title="([^"]*)"><span class="overview-chart-swatch ([^"]*)"><\/span><span class="overview-chart-legend-label">([^<]*)<\/span><span class="overview-chart-legend-count">([^<]*)<\/span>(?:<button[^>]*data-arg0="([^"]*)")?/g)]
-  .map(m => ({ cls: m[1].split(' '), kind: m[2], key: m[3], title: m[4], swatch: m[5], label: m[6], count: m[7], url: m[8] || '' }));
+const legendRows = out => [...out.matchAll(/<div class="([^"]*)"(?: data-action="overviewNavigateBand" data-arg0="([^"]*)" data-arg1="([^"]+)" data-stop="1")? title="([^"]*)"><span class="overview-chart-swatch ([^"]*)"(?: aria-hidden="true")?><\/span><span class="overview-chart-legend-label">([^<]*)<\/span>(?:<span class="overview-chart-legend-sr">[^<]*<\/span>)?<span class="overview-chart-legend-count">([^<]*)<\/span>(?:<button[^>]*data-arg0="([^"]*)")?/g)]
+  .map(m => ({ cls: m[1].split(' '), kind: m[2] || '', key: m[3] || '', title: m[4], swatch: m[5], label: m[6], count: m[7], url: m[8] || '' }));
 const issueSlices = overviewIssueBandSlices([repoA]);
 assert.ok(issueSlices.every(s => s.card), 'the card bands replace the chart slices');
 assert.deepEqual(issueSlices.map(s => [s.key, s.count]), [['inspect', 1], ['decide', 0], ['review', 0], ['triage', 1], ['admit', 0], ['your-turn-other', 0], ['to-close', 1], ['unexplained', 0], ['covered-by-pr', 1], ['waiting-on-item', 0], ['human-hold', 1], ['reporter-confirm', 0], ['queued', 0], ['working', 1], ['held', 0], ['not-work', 1]]);
 const issueHTML = overviewLegendHTML(issueSlices, 'issues', { exportFormat: 'csv' });
 const issues = legendRows(issueHTML);
-assert.deepEqual(issues.map(r => r.label), ['Your turn', 'Inspect a sentinel flag', 'Decide', 'Review', 'Triage', 'Yours to close', 'Unexplained', 'Waiting on someone else', 'Covered by an open PR', 'Waiting on another item', 'Human placed on hold', 'Reporter to confirm the fix', 'Hive has it', 'Queued for agents', 'Agents are working it', 'Not work']);
+assert.deepEqual(issues.map(r => r.label), ['Inspect a sentinel flag', 'Decide', 'Review', 'Triage', 'Yours to close', 'Unexplained', 'To do', 'Waiting on someone else', 'Covered by an open PR', 'Waiting on another item', 'Human placed on hold', 'Reporter to confirm the fix', 'Hive has it', 'Queued for agents', 'Agents are working it', 'Not work', 'Status']);
 const row = label => issues.find(r => r.label === label);
 // headed groups: a bold subtotal row and indented parts
 assert.ok(row('Waiting on someone else').cls.includes('overview-chart-legend-group'));
 assert.match(row('Waiting on someone else').count, /^2 · /);
 assert.equal(row('Waiting on someone else').key, 'waiting-elsewhere');
 for (const label of ['Covered by an open PR', 'Waiting on another item', 'Human placed on hold', 'Reporter to confirm the fix', 'Queued for agents', 'Agents are working it']) assert.ok(row(label).cls.includes('overview-chart-legend-part'), label + ' is indented');
-// Your turn is headed too: its what-to-do rows, Yours to close and
-// Unexplained sit under it, in plot order.
-assert.ok(row('Your turn').cls.includes('overview-chart-legend-group'));
-assert.equal(row('Your turn').key, 'your-turn');
-assert.match(row('Your turn').count, /^3 · /);
-assert.equal(row('Your turn').swatch, 'overview-card-group-your-turn');
-for (const label of ['Inspect a sentinel flag', 'Decide', 'Review', 'Triage', 'Yours to close', 'Unexplained']) assert.ok(row(label).cls.includes('overview-chart-legend-part'), label + ' is under Your turn');
+// Your turn is the To do section: its what-to-do rows, Yours to close and
+// Unexplained are plain rows in plot order, then the To do subtotal in the
+// group's colour, which opens the Your turn tile. No Your turn group row.
+assert.ok(!issues.some(r => r.label === 'Your turn'), 'the Your turn group row is gone');
+assert.ok(row('To do').cls.includes('overview-chart-legend-subtotal'));
+assert.ok(!row('To do').cls.includes('overview-chart-legend-group'));
+assert.equal(row('To do').key, 'your-turn');
+assert.match(row('To do').count, /^3 · /);
+assert.equal(row('To do').swatch, 'overview-card-group-your-turn');
+for (const label of ['Inspect a sentinel flag', 'Decide', 'Review', 'Triage', 'Yours to close', 'Unexplained']) assert.ok(!row(label).cls.includes('overview-chart-legend-part'), label + ' is not indented in To do');
 assert.ok(!row('Not work').cls.includes('overview-chart-legend-part') && !row('Not work').cls.includes('overview-chart-legend-group'), 'Not work is a plain row');
 // Your turn rows at zero: hide-zero ones are hidden, Decide and Review dim,
 // Unexplained (a keep band) stays at full strength.
@@ -193,7 +198,8 @@ assert.ok(legendRows(overviewLegendHTML(overviewIssueBandSlices([heldRepo]), 'is
 for (const r of issues) {
   const url = new URL(r.url, 'https://hive.test');
   assert.equal(url.pathname, '/api/overview/issues.csv', r.label);
-  if (r.cls.includes('overview-chart-legend-group')) assert.equal(url.searchParams.get('card_group'), r.key, r.label);
+  if (r.label === 'Status') assert.equal(url.searchParams.get('card_group'), 'waiting-elsewhere,actionable-now,held,outside', r.label);
+  else if (r.cls.includes('overview-chart-legend-group') || r.cls.includes('overview-chart-legend-subtotal')) assert.equal(url.searchParams.get('card_group'), r.key, r.label);
   else assert.equal(url.searchParams.get('card_band'), r.key, r.label);
 }
 // colours and plain-words tooltips
@@ -210,10 +216,10 @@ localStorage.setItem(OVERVIEW_CHARTS_KEY, JSON.stringify({ exportFormat: 'json' 
 const prHTML = overviewLegendHTML(prSlices, 'prs', { exportFormat: 'json' });
 localStorage.removeItem(OVERVIEW_CHARTS_KEY);
 const prs = legendRows(prHTML);
-assert.deepEqual(prs.map(r => r.label), ['Your turn', 'Inspect a sentinel flag', 'Decide', 'Review', 'Yours to close', 'Unexplained', 'Waiting on someone else', 'Human placed on hold', 'Blocked', 'Author to update the PR', 'Dependency bot to rebase', 'Hive has it', 'Agents are working it', 'Will merge on its own', 'Draft']);
+assert.deepEqual(prs.map(r => r.label), ['Inspect a sentinel flag', 'Decide', 'Review', 'Yours to close', 'Unexplained', 'To do', 'Waiting on someone else', 'Human placed on hold', 'Blocked', 'Author to update the PR', 'Dependency bot to rebase', 'Hive has it', 'Agents are working it', 'Will merge on its own', 'Draft', 'Status']);
 for (const key of ['approve', 'merge-by-hand', 'triage', 'admit', 'your-turn-other']) assert.ok(!prs.some(r => r.key === key), 'PR ' + key + ' is hidden at zero');
-assert.match(prs.find(r => r.label === 'Your turn').count, /^1 · /);
-assert.ok(prs.find(r => r.label === 'Unexplained').cls.includes('overview-chart-legend-part'), 'Unexplained stays under Your turn');
+assert.match(prs.find(r => r.label === 'To do').count, /^1 · /);
+assert.ok(prs.indexOf(prs.find(r => r.label === 'Unexplained')) < prs.indexOf(prs.find(r => r.label === 'To do')), 'Unexplained stays in To do');
 assert.ok(prs.find(r => r.label === 'Blocked').cls.includes('overview-chart-legend-group'));
 assert.equal(new URL(prs.find(r => r.label === 'Blocked').url, 'https://hive.test').searchParams.get('card_group'), 'blocked');
 assert.equal(new URL(prs.find(r => r.label === 'Draft').url, 'https://hive.test').pathname, '/api/overview/prs.json');
@@ -494,8 +500,9 @@ for (const [kind, slices, specs] of [['issue', issueSlices, card.issues], ['pr',
 }
 assert.equal(new Set(plotted).size, plotted.length, 'no item is plotted twice');
 assert.deepEqual([...plotted].sort(), [...stamped].sort(), 'every stamped row is on a donut');
-// The legend's subtotal rows are the server's groups.
-const groupRows = html => Object.fromEntries([...html.matchAll(/<div class="overview-chart-legend-row overview-chart-legend-group" data-action="overviewNavigateBand" data-arg0="[^"]*" data-arg1="([^"]+)"[^>]*>.*?<span class="overview-chart-legend-count">(\d+) /g)].map(m => [m[1], Number(m[2])]));
+// The legend's group rows and the To do subtotal (the Your turn group) are
+// the server's groups.
+const groupRows = html => Object.fromEntries([...html.matchAll(/<div class="overview-chart-legend-row overview-chart-legend-(?:group|subtotal)" data-action="overviewNavigateBand" data-arg0="[^"]*" data-arg1="([^"]+)"[^>]*>.*?<span class="overview-chart-legend-count">(\d+) /g)].map(m => [m[1], Number(m[2])]));
 const headed = card.groups.filter(g => g.headed);
 const issueGroups = groupRows(overviewLegendHTML(issueSlices, 'issues', {}));
 const prGroups = groupRows(overviewLegendHTML(prSlices, 'prs', {}));

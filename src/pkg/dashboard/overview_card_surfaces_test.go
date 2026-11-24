@@ -632,6 +632,67 @@ func TestOverviewExportCardColumnsAndFilters(t *testing.T) {
 	}
 }
 
+// The Overview legend's Status subtotal exports every group but Your turn
+// in one link, card_group=<the other groups, comma-joined>. That export
+// returns exactly the rows those groups count, which are the donut's rows
+// outside the Your turn bands, and none of the Your turn rows.
+func TestOverviewExportCardGroupStatusSection(t *testing.T) {
+	s := cardPartitionServer()
+	status := cardPartitionStatus()
+	s.statusMu.Lock()
+	s.status = status
+	s.statusMu.Unlock()
+	card := cardClassifyAt(s, status, time.Now().UTC()).card
+	for _, kind := range []string{overviewKindIssues, overviewKindPRs} {
+		specs := card.Issues
+		if kind == overviewKindPRs {
+			specs = card.PRs
+		}
+		var all overviewJSONResponse
+		if err := json.Unmarshal(cardExport(t, s, kind, "json", "").Body.Bytes(), &all); err != nil {
+			t.Fatal(err)
+		}
+		others := make([]string, 0, len(all.CardGroups))
+		want := 0
+		for _, group := range all.CardGroups {
+			if group.Key == cardGroupYourTurn {
+				continue
+			}
+			others = append(others, group.Key)
+			want += group.Count
+		}
+		donut := 0
+		for _, spec := range specs {
+			if spec.Group != cardGroupYourTurn {
+				donut += spec.Count
+			}
+		}
+		if want != donut {
+			t.Errorf("%s: the other groups count %d, the donut's other bands %d", kind, want, donut)
+		}
+		w := cardExport(t, s, kind, "json", "?card_group="+strings.Join(others, ","))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s card_group=%s: status %d %q", kind, strings.Join(others, ","), w.Code, w.Body.String())
+		}
+		var section overviewJSONResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &section); err != nil {
+			t.Fatal(err)
+		}
+		if want == 0 {
+			t.Fatalf("%s: the fixture has no rows outside Your turn", kind)
+		}
+		if len(section.Rows) != want {
+			t.Errorf("%s: Status export %d rows, the other groups count %d", kind, len(section.Rows), want)
+		}
+		for _, row := range section.Rows {
+			m, _ := row.(map[string]any)
+			if m["card_group"] == cardGroupYourTurn {
+				t.Errorf("%s: Status export has a Your turn row %v", kind, m)
+			}
+		}
+	}
+}
+
 // adminmcp cannot import this package, so issues_by_band and prs_by_band
 // carry their own copy of the card keys; it must match the card.
 func TestAdminMCPCardKeysMatchTheCard(t *testing.T) {

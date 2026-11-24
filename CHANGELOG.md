@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v6.60.0)
+
+### Added
+
+- The Governor card's PRs by model table now sorts by any column: click Model, Merged, 1st pass, PR runs, Fail, No ship or PRs · share in the header to sort most to least (Model sorts A to Z), and click the same header again to reverse. The active column shows a ▾ or ▴, and its button label tells screen readers the order; the headers are buttons, so they work from the keyboard. Rates sort by the whole percent shown. Rows with no recorded runs (a dash in the run columns) and unattributed rows stay last either way, and ties fall back to PR count, then model name. The rank and PR count buttons still work and clear a column sort; rank stays the default. On narrow screens, where the header row is hidden, the active column sort shows as an extra button next to rank and PR count.
+
 ## 2026-11-24 (v6.59.0)
 
 ### Added
