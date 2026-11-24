@@ -116,6 +116,11 @@ type ClaimScan struct {
 	// have contained yet, so an authoritative reconcile must not treat its
 	// absence from Claims as evidence the PR is gone (hivecommons/hive#15559).
 	StartedAt time.Time
+	// OpenPRs is every PR number the open listing returned, per repo, and
+	// which repos it listed to the last page. Reconcile reads it to keep an
+	// open-PR verdict claim while its PR is open and release it once it is
+	// not; recording it adds no API call. Nil when the scan listed nothing.
+	OpenPRs *OpenPRListing
 }
 
 // PRTerminalObservation reports a terminal PR state seen by the regular PR
