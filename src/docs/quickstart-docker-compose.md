@@ -26,13 +26,14 @@ on the same port.
 git clone https://github.com/hivecommons/hive.git
 cd hive
 
-cp src/hive.yaml.example src/hive.yaml
-# REQUIRED: set project.org and project.repos (optionally primary_repo and
-# ai_author) in src/hive.yaml — the placeholders do not work as shipped. See
-# src/docs/operator-reference.md#minimum-required-configuration
-# REQUIRED: the example ships dashboard.port 3001 for local source runs; the
-# container healthcheck probes 3002, so keeping 3001 never becomes healthy.
-sed -i 's/^  port: 3001$/  port: 3002/' src/hive.yaml
+# The example ships dashboard.port 3001 for local source runs; Compose needs
+# the Go API on 3002 for its healthcheck. Generate the config before editing it
+# with sed syntax that works on Linux, macOS, and WSL2.
+sed 's/^  port: 3001$/  port: 3002/' src/hive.yaml.example > src/hive.yaml
+# REQUIRED: set project.org and project.repos in src/hive.yaml.
+# Set project.primary_repo to one of those repos or remove the field.
+# You can also set project.ai_author. See
+# src/docs/operator-reference/README.md#minimum-required-configuration
 
 # src/.env, NOT ./.env. `-f src/docker-compose.yaml` makes `src/` the project
 # directory, and that is where Compose reads `.env` from — the same place the
@@ -49,12 +50,11 @@ echo "HIVE_GITHUB_TOKEN=ghp_..." >> src/.env   # classic PAT: repo scope (see sr
 # for both runtimes.
 printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> src/.env
 
-docker compose -f src/docker-compose.yaml up -d
+docker compose -f src/docker-compose.yaml up -d --wait
 ```
 
-Dashboard at `http://localhost:3001`. Confirm it end to end rather than assuming
-the port answers — the gateway publishes 3001 whether or not the proxy behind it
-came up:
+The dashboard is at `http://localhost:3001`. Verify that it responds through
+the gateway.
 
 ```bash
 curl -sf http://127.0.0.1:3001/api/health     # -> {"status":"ok"}
@@ -66,5 +66,5 @@ To build from source instead of pulling the pre-built image:
 
 ```bash
 docker compose -f src/docker-compose.yaml build
-docker compose -f src/docker-compose.yaml up -d
+docker compose -f src/docker-compose.yaml up -d --wait
 ```

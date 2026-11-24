@@ -444,14 +444,25 @@
       <pre><code>git clone https://github.com/hivecommons/hive.git
 cd hive
 
-cp src/hive.yaml.example src/hive.yaml
-# Edit src/hive.yaml: set your org, repos, and GitHub token
+# Generate the config before editing (Linux, macOS, and WSL2).
+# Compose needs the Go API on 3002; the dashboard stays on 3001.
+sed 's/^  port: 3001$/  port: 3002/' src/hive.yaml.example &gt; src/hive.yaml
+# REQUIRED: edit src/hive.yaml to set project.org and project.repos.
+# Set project.primary_repo to one of those repos or remove the field.
 
-echo "HIVE_GITHUB_TOKEN=ghp_your_token_here" > .env
-docker compose -f src/docker-compose.yaml up -d
+# Compose reads src/.env, beside src/docker-compose.yaml.
+install -m 600 /dev/null src/.env
+echo "HIVE_GITHUB_TOKEN=ghp_your_token_here" &gt;&gt; src/.env
+# REQUIRED: the dashboard auth proxy needs its own token.
+printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" &gt;&gt; src/.env
 
+docker compose -f src/docker-compose.yaml up -d --wait
+
+# Confirm the gateway and dashboard are healthy.
+curl -sf http://127.0.0.1:3001/api/health
 # Open the dashboard
 open http://localhost:3001</code></pre>
+      <p>Requires Docker Compose v2, Git, OpenSSL, and a GitHub token. See the <a class="text-info" href="https://github.com/hivecommons/hive/blob/HEAD/src/docs/quickstart-docker-compose.md">Docker Compose quick-start guide</a> for prerequisites and configuration details.</p>
       <p>A self-hosted hive is fully functional on its own &mdash; it does not need to be attached to hive.hivecommons.dev.</p>
       <h3>List your hive on this hub</h3>
       <p>You can list a hive you run yourself in the <a class="text-info" href="/#hives">Active Hives</a> table without asking anyone. Setting <code>HIVE_HUB_URL</code> on its own is <strong>not</strong> sufficient: the hub authenticates every heartbeat, so your hive needs a key the hub knows. You register for that key yourself:</p>

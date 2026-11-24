@@ -1,0 +1,1 @@
+- Fix Docker Compose quick-start config generation on macOS.
