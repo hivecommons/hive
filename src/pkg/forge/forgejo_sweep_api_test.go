@@ -111,7 +111,8 @@ func TestForgejoSweepAPIReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pulls) != 1 || pulls[0] != (MergedPull{Number: 3, Author: "hive-bot", Title: "t", Body: "Fixes #1", Base: "release", MergedAt: merged}) {
+	if len(pulls) != 1 || pulls[0].Number != 3 || pulls[0].Author != "hive-bot" || pulls[0].Title != "t" ||
+		pulls[0].Body != "Fixes #1" || pulls[0].Base != "release" || !pulls[0].MergedAt.Equal(merged) {
 		t.Errorf("RecentlyMergedPulls = %+v", pulls)
 	}
 	if st, isPull, err := api.IssueState(ctx, "widgets", 1); err != nil || st != "open" || isPull {
