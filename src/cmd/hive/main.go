@@ -2130,6 +2130,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		b.agentMgr.SetSandboxPRClient(b.ghClient)
 		b.agentMgr.SetSandboxMutationBoundary(b.mutationBoundary)
 	}
+	b.wireForgeRemotes()
 
 	// PR-open-as-the-App-bot: agents push their branch (App-token credential
 	// helper) then drop a request file; the hive opens the PR here with the App

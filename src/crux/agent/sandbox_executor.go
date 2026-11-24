@@ -58,11 +58,15 @@ func (sandboxExecRunner) Run(ctx context.Context, dir string, env []string, name
 type PRCreator = crux.PRCreator
 
 type SandboxKickSpec struct {
-	Agent        string
-	AgentConfig  configSnapshot
-	Message      string
-	Org          string
-	Repo         string
+	Agent       string
+	AgentConfig configSnapshot
+	Message     string
+	Org         string
+	Repo        string
+	// ForgeBaseURL is the instance root of the forge Org/Repo lives on; the
+	// workspace is cloned from it and the broker pushes only to it. Empty is
+	// github.com. The minters must mint tokens for this forge.
+	ForgeBaseURL string
 	BaseRef      string
 	Branch       string
 	WorkspaceDir string
@@ -397,6 +401,9 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		Logger:    e.Logger,
 		Mutation:  e.Mutation,
 		LeaseSHA:  spec.targetHead,
+		// The workspace was cloned from this forge; the broker pushes to it
+		// and nowhere else.
+		RemoteBaseURL: spec.ForgeBaseURL,
 	}
 	bres, brokerErr := broker.Run(ctx)
 	res.Broker = &bres

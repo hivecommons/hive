@@ -12,6 +12,9 @@ func (b *boot) userSessionRuntime() *cruxruntime.UserSessions {
 	if b.userSessions == nil {
 		b.userSessions = cruxruntime.NewUserSessions(b.logger)
 		b.userSessions.SetCloneMinter(appMinter(b.appAuth, ""))
+		// A repo on another forge is cloned from that forge with its own
+		// minter, never from github.com with the App token.
+		b.userSessions.SetForgeRemotes(b.bootForgeRemoteResolver())
 	}
 	return b.userSessions
 }
