@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v6.60.1)
+
+### Fixed
+
+- **Dashboard Governor: the PRs by model window and sort pills no longer flash the ranking open on a collapsed subsection.** The subsection was rendered expanded and collapsed again after every Governor re-render, so a pill click (or a status refresh) briefly showed the ranking over Reviewer accuracy and then hid it. It now renders in its saved state, and a 7d, 30d, all, rank, PR count or column-sort click on the collapsed subsection expands it, shows the new window as loading, and remembers that choice, like a click on its header. The subsection's expand and collapse animation is also clipped to its own box (a later `.advisory-subsection` rule had turned the clipping off), so it no longer draws over the tile below.
+
 ## 2026-11-24 (v6.60.0)
 
 ### Added

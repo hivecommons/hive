@@ -120,8 +120,8 @@ var cardBandDefs = map[string]cardBandDef{
 	cardBandAdmit: {label: "Admit", group: cardGroupYourTurn, hideZero: true,
 		rule: "Add the admission label to let agents work on it, or close it."},
 	cardBandTurnOther: {label: "Other", group: cardGroupYourTurn, hideZero: true,
-		rule:   "Your turn for a reason not listed above; the download shows each item's reason.",
-		prRule: "Your turn for a reason not listed above, such as a red base branch, nobody to fix it, or a dependency-bot PR still red after the hand-off time; the download shows each item's reason."},
+		rule:   "Needs a person for a reason not listed above; the download shows each item's reason.",
+		prRule: "Needs a person for a reason not listed above, such as a red base branch, nobody to fix it, or a dependency-bot PR still red after the hand-off time; the download shows each item's reason."},
 	cardBandToClose: {label: "Yours to close", group: cardGroupYourTurn,
 		rule: "The hive thinks it may be done or no longer needed but won't close it itself. Close it, or keep it open."},
 	cardBandUnexplained: {label: "Unexplained", group: cardGroupYourTurn, keep: true,
@@ -137,7 +137,7 @@ var cardBandDefs = map[string]cardBandDef{
 	cardBandAuthorUpdate: {label: "Author to update the PR", group: cardGroupBlocked,
 		rule: "Returned to its author for changes. It waits until the author pushes."},
 	cardBandBotRebase: {label: "Dependency bot to rebase", group: cardGroupBlocked,
-		rule: "The hive will ask the bot to rebase its red branch, and it is still within the hand-off time. Past that time it becomes your turn."},
+		rule: "The hive will ask the bot to rebase its red branch, and it is still within the hand-off time. Past that time it needs a person."},
 	cardBandQueued: {label: "Queued for agents", group: cardGroupActionable, keep: true,
 		rule: "In the contributor queue now. An agent will pick it up; nothing for you to do."},
 	cardBandWorking: {label: "Agents are working it", group: cardGroupActionable,
@@ -153,7 +153,7 @@ var cardBandDefs = map[string]cardBandDef{
 		rule: "Paused by a hold no earlier rule explains. It moves when the hold is released."},
 }
 
-// cardYourTurnRule is the Your turn tile's rule.
+// cardYourTurnRule is the your-turn tile's rule.
 const cardYourTurnRule = "No agent will move these until a person acts. Each row says what to do next, for example decide, review or close. Unexplained is a hive bug a person should see."
 
 // cardGroupDef is one group's spec; term is its Actionable-now equation term.
@@ -162,8 +162,12 @@ type cardGroupDef struct {
 	headed            bool
 }
 
+// The your-turn group reads "Needs a person": the card is the same for every
+// owner, so "your" would be wrong for most of what it counts. Only the words
+// changed; its key (your-turn, the card_group value and the card_band alias)
+// did not, and code and comments still call it the Your turn group.
 var cardGroupDefs = map[string]cardGroupDef{
-	cardGroupYourTurn:   {label: "Your turn", term: overviewTermYourTurn, headed: true, rule: cardYourTurnRule},
+	cardGroupYourTurn:   {label: "Needs a person", term: overviewTermYourTurn, headed: true, rule: cardYourTurnRule},
 	cardGroupWaiting:    {label: "Waiting on someone else", term: overviewTermWaiting, headed: true, rule: "Someone other than you has the next move. Nothing to do until they act."},
 	cardGroupBlocked:    {label: "Blocked", term: overviewTermBlocked, headed: true, rule: "Someone else must push a fix: the author or a dependency bot."},
 	cardGroupActionable: {label: "Hive has it", term: overviewTermActionable, headed: true, rule: "The hive moves these on its own. Nothing for you to do."},
