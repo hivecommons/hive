@@ -1,6 +1,7 @@
 package hubbackup
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,19 +71,16 @@ func TestLoadTargetsErrors(t *testing.T) {
 // producing an unaddressable "" -> "" mapping.
 func TestLoadTargetsSkipsIncompleteHives(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, saasSubdir, "clusters.json"), `[{"id":"c1","in_cluster":true}]`)
+	mustWrite(t, filepath.Join(dir, saasSubdir, "clusters.json"), `[{"id":"c1","in_cluster":true,"domain":"example.com"},{"id":"hive-oke","in_cluster":true,"domain":"oke.example"}]`)
 	mustWrite(t, filepath.Join(dir, registryFile),
-		`{"hives":[{"id":"good","clusterId":"c1"},{"id":"","clusterId":"c1"},{"id":"noclust","clusterId":""}]}`)
+		`{"hives":[{"id":"good","clusterId":"c1"},{"id":"","clusterId":"c1"},{"id":"noclust","clusterId":""},{"id":"legacy","namespace":"hive-hosted-legacy"}]}`)
 
 	_, hives, err := LoadTargets(dir)
 	if err != nil {
 		t.Fatalf("LoadTargets: %v", err)
 	}
-	if len(hives) != 1 {
-		t.Fatalf("incomplete registry entries must be skipped, got %v", hives)
-	}
-	if _, ok := hives["good"]; !ok {
-		t.Fatal("the complete entry was dropped")
+	if len(hives) != 2 || hives["good"] != "c1" || hives["legacy"] != "hive-oke" {
+		t.Fatalf("want explicit and defaulted hosted targets, got %v", hives)
 	}
 }
 
@@ -180,6 +178,61 @@ func TestRunFailsWhenFleetCannotBeEnumerated(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "enumerate spokes") {
 		t.Errorf("error should explain the enumeration failure, got %v", err)
+	}
+}
+
+type secretCollectionHook func()
+
+func (f secretCollectionHook) Collect(*slog.Logger) ([]SecretItem, error) {
+	f()
+	return nil, nil
+}
+
+func TestBuildCollectsSpokesFromArchivedTopology(t *testing.T) {
+	dir := seedHubData(t)
+	t.Setenv(EnvDataDir, dir)
+	fakeKubectl(t, map[string]string{
+		"get pods -n hive-hosted-hosted-x": "pod-before",
+		"exec -n hive-hosted-hosted-x":     spokeStream(map[string]string{spokeRuntimeConfigFile: "project: fixture"}),
+	})
+	registry := filepath.Join(dir, registryFile)
+	clusters := filepath.Join(dir, saasSubdir, clustersFile)
+	key := decodeTestKey(t)
+	sealed, man, err := build(key, nil, secretCollectionHook(func() {
+		// The topology has been captured. Changes during collection must not
+		// cause the archive to describe a different set of spokes and clusters.
+		mustWrite(t, registry, `{"hives":[{"id":"hosted-y","clusterId":"new-cluster"}]}`)
+		mustWrite(t, clusters, `[{"id":"new-cluster","in_cluster":true,"domain":"example.com"}]`)
+	}), collectArchivedSpokes, nil, quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(man.HubErrors) != 0 || len(man.SpokeErrors) != 0 || len(man.SpokeIDs) != 1 || man.SpokeIDs[0] != "hosted-x" {
+		t.Fatalf("unexpected recovery manifest: %+v", man)
+	}
+	dest := t.TempDir()
+	if _, err := Extract(key, sealed, dest); err != nil {
+		t.Fatal(err)
+	}
+	archivedClusters, archivedHives, err := LoadTargets(filepath.Join(dest, hubPrefix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !archivedClusters["hive-oke"].InCluster || len(archivedHives) != 1 || archivedHives[man.SpokeIDs[0]] != "hive-oke" {
+		t.Fatalf("archived topology differs from captured spoke: %v %v", archivedClusters, archivedHives)
+	}
+}
+
+func TestRunCapturesHostedHiveWithLegacyRegistryRow(t *testing.T) {
+	dir := seedHubData(t)
+	t.Setenv(EnvDataDir, dir)
+	t.Setenv(EnvBackupKey, testKey)
+	mustWrite(t, filepath.Join(dir, registryFile), `{"hives":[{"id":"hosted-x"}]}`)
+	fakeBackupKubectl(t, "pod")
+	out := filepath.Join(t.TempDir(), "legacy.enc")
+	man, _, err := Run(Options{LocalOnly: true, LocalPath: out}, quietLogger())
+	if err != nil || len(man.SpokeIDs) != 1 || man.SpokeIDs[0] != "hosted-x" {
+		t.Fatalf("archived metadata should identify the legacy hosted hive: %+v, %v", man, err)
 	}
 }
 

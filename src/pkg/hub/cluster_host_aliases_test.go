@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"text/template"
+
+	"github.com/hivecommons/hive/pkg/hub/clusterconfig"
 )
 
 func renderManifestWithHostAliases(t *testing.T, aliases []ClusterHostAlias) string {
@@ -92,10 +94,10 @@ func TestNormalizeClusterHostAliases(t *testing.T) {
 
 func TestValidateClusterEntriesKeepsClusterOnBadHostAliases(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
-	got := validateClusterEntries([]ClusterConfig{
-		{ID: "bad", InCluster: true, Domain: "x.example",
+	got := normalizeClusterEntries(map[string]clusterconfig.ClusterConfig{
+		"bad": {ID: "bad", InCluster: true, Domain: "x.example",
 			HostAliases: []ClusterHostAlias{{IP: "nope", Hostnames: []string{"a"}}}},
-		{ID: "good", InCluster: true, Domain: "x.example",
+		"good": {ID: "good", InCluster: true, Domain: "x.example",
 			HostAliases: []ClusterHostAlias{{IP: "10.1.2.3", Hostnames: []string{"A.Example"}}}},
 	}, logger)
 	bad, ok := got["bad"]

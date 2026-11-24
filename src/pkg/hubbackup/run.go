@@ -6,6 +6,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/hivecommons/hive/pkg/hub/clusterconfig"
 )
 
 // Hub namespace defaults.
@@ -23,54 +26,102 @@ const (
 	DefaultKubeconfigDir = "/etc/hive/kubeconfigs"
 )
 
-// registryDoc models the parts of hub-registry.json the backup needs.
-type registryDoc struct {
-	Hives []struct {
-		ID        string `json:"id"`
-		ClusterID string `json:"clusterId"`
-	} `json:"hives"`
-}
-
-// clusterDoc models the parts of clusters.json the backup needs.
-type clusterDoc struct {
-	ID             string `json:"id"`
-	InCluster      bool   `json:"in_cluster"`
-	KubeconfigPath string `json:"kubeconfig_path"`
-	Context        string `json:"context"`
-}
-
-// LoadTargets reads clusters.json and hub-registry.json to determine which
-// spokes exist and how to reach each hosting cluster.
+// LoadTargets reads the captured topology and returns the spoke collection plan.
 func LoadTargets(dataDir string) (map[string]ClusterTarget, map[string]string, error) {
-	clustersRaw, err := os.ReadFile(filepath.Join(dataDir, saasSubdir, "clusters.json"))
+	clustersRaw, err := os.ReadFile(filepath.Join(dataDir, saasSubdir, clustersFile))
 	if err != nil {
 		return nil, nil, fmt.Errorf("read clusters.json: %w", err)
 	}
-	var cds []clusterDoc
-	if err := json.Unmarshal(clustersRaw, &cds); err != nil {
-		return nil, nil, fmt.Errorf("parse clusters.json: %w", err)
-	}
-	clusters := map[string]ClusterTarget{}
-	for _, c := range cds {
-		clusters[c.ID] = ClusterTarget(c)
-	}
-
 	regRaw, err := os.ReadFile(filepath.Join(dataDir, registryFile))
 	if err != nil {
 		return nil, nil, fmt.Errorf("read hub-registry.json: %w", err)
 	}
-	var rd registryDoc
-	if err := json.Unmarshal(regRaw, &rd); err != nil {
-		return nil, nil, fmt.Errorf("parse hub-registry.json: %w", err)
-	}
-	hives := map[string]string{}
-	for _, h := range rd.Hives {
-		if h.ID != "" && h.ClusterID != "" {
-			hives[h.ID] = h.ClusterID
-		}
+	gaps := make(map[string]string)
+	clusters, hives := backupTargets(archivedSaaS{clusters: clustersRaw, gaps: gaps}, regRaw, slog.Default())
+	if len(gaps) > 0 {
+		return nil, nil, fmt.Errorf("enumerate spokes: %v", gaps)
 	}
 	return clusters, hives, nil
 }
+
+// backupTargets validates both registries even for a hub-only archive.
+func backupTargets(saas archivedSaaS, regRaw []byte, logger *slog.Logger) (map[string]ClusterTarget, map[string]string) {
+	gaps := saas.gaps
+	clustersPath := filepath.Join(hubPrefix, saasSubdir, clustersFile)
+	registryPath := filepath.Join(hubPrefix, registryFile)
+
+	clusters := make(map[string]ClusterTarget)
+	if saas.clusters == nil {
+		clusters[clusterconfig.DefaultID] = ClusterTarget{ID: clusterconfig.DefaultID, InCluster: true}
+	} else {
+		configs, err := clusterconfig.Decode(saas.clusters, logger)
+		if err != nil {
+			gaps[clustersPath] = err.Error()
+		}
+		for _, cluster := range configs {
+			clusters[cluster.ID] = ClusterTarget{
+				ID:             cluster.ID,
+				InCluster:      cluster.InCluster,
+				KubeconfigPath: cluster.KubeconfigPath,
+				Context:        cluster.Context,
+				PullOnly:       cluster.PullOnly,
+			}
+		}
+	}
+
+	var registry struct {
+		Hives json.RawMessage `json:"hives"`
+	}
+	var entries []struct {
+		ID        string `json:"id"`
+		ClusterID string `json:"clusterId"`
+		Namespace string `json:"namespace"`
+	}
+	if gaps[registryPath] == "" {
+		if err := json.Unmarshal(regRaw, &registry); err != nil {
+			gaps[registryPath] = err.Error()
+		} else if err := json.Unmarshal(registry.Hives, &entries); err != nil {
+			gaps[registryPath] = "invalid fleet registry hives: " + err.Error()
+		}
+	}
+
+	hives := make(map[string]string, len(entries))
+	for _, hive := range entries {
+		if hive.ID == "" {
+			continue
+		}
+		metaCluster, hasHostedMeta := saas.hostedClusters[hive.ID]
+		hosted := hasHostedMeta || strings.HasPrefix(hive.Namespace, spokeNamespacePrefix)
+		clusterID := hive.ClusterID
+		if clusterID == "" && hosted {
+			clusterID = metaCluster
+			if clusterID == "" {
+				clusterID = clusterconfig.DefaultID
+			}
+		}
+		if clusterID == "" {
+			continue
+		}
+		hives[hive.ID] = clusterID
+		if _, ok := clusters[clusterID]; !ok && gaps[clustersPath] == "" {
+			switch {
+			case saas.clusters == nil:
+				gaps[clustersPath] = "cluster registry is missing from the archive"
+			case hosted:
+				gaps[clustersPath] = fmt.Sprintf("cluster %q for hosted hive %q is missing", clusterID, hive.ID)
+			}
+		}
+	}
+	return clusters, hives
+}
+
+type spokeCapture int
+
+const (
+	useSpokeCollector spokeCapture = iota
+	collectArchivedSpokes
+	skipSpokeCapture
+)
 
 // Options controls one backup run.
 type Options struct {
@@ -84,6 +135,9 @@ type Options struct {
 	// SkipSecrets disables Kubernetes Secret collection. Only safe in tests —
 	// a real backup without Secrets is not restorable.
 	SkipSecrets bool
+
+	// ValidateFleetRegistry applies the restore schema to the captured registry.
+	ValidateFleetRegistry func([]byte) error
 }
 
 // Run performs a full backup: build, encrypt, upload, verify, prune.
@@ -92,14 +146,11 @@ func Run(opts Options, logger *slog.Logger) (*Manifest, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	dataDir := DataDir()
-
 	hubNS := os.Getenv(EnvHubNamespace)
 	if hubNS == "" {
 		hubNS = DefaultHubNamespace
 	}
 
-	var spokeCollector SpokeCollector
 	var secretCollector SecretCollector
 
 	// The hub runs in-cluster, so its own kubectl needs no flags.
@@ -108,17 +159,12 @@ func Run(opts Options, logger *slog.Logger) (*Manifest, string, error) {
 	if !opts.SkipSecrets {
 		secretCollector = KubectlSecretCollector{Cluster: hubCluster, Namespace: hubNS}
 	}
-	if !opts.SkipSpokes {
-		clusters, hives, err := LoadTargets(dataDir)
-		if err != nil {
-			logger.Error("backup: cannot enumerate spokes", "err", err)
-			return nil, "", fmt.Errorf("enumerate spokes: %w", err)
-		}
-		logger.Info("backup: enumerated fleet", "clusters", len(clusters), "hives", len(hives))
-		spokeCollector = KubectlSpokeCollector{Clusters: clusters, Hives: hives}
-	}
 
-	sealed, man, err := Build(key, spokeCollector, secretCollector, logger)
+	capture := collectArchivedSpokes
+	if opts.SkipSpokes {
+		capture = skipSpokeCapture
+	}
+	sealed, man, err := build(key, nil, secretCollector, capture, opts.ValidateFleetRegistry, logger)
 	if err != nil {
 		return nil, "", err
 	}
@@ -144,25 +190,32 @@ func Run(opts Options, logger *slog.Logger) (*Manifest, string, error) {
 		return man, path, nil
 	}
 
+	// Prune counts stored names, so a partial hub archive must not enter the
+	// bucket where it could displace a usable backup on a later run.
+	if len(man.HubErrors) > 0 {
+		return nil, "", fmt.Errorf("refusing to upload incomplete hub backup: %v", man.HubErrors)
+	}
+	if opts.SkipSecrets {
+		return nil, "", fmt.Errorf("refusing to upload a backup without Kubernetes Secrets")
+	}
+	prefix := fleetArchivePrefix
+	switch {
+	case man.SpokesSkipped:
+		prefix = hubOnlyArchivePrefix
+	case len(man.SpokeErrors) > 0:
+		prefix = partialArchivePrefix
+	}
+	name = retainedArchiveName(prefix, man.CreatedAt, sealed)
+
 	store, err := NewObjectStore(os.Getenv(EnvBucket))
 	if err != nil {
 		return nil, "", err
 	}
-	if err := store.Put(name, sealed); err != nil {
-		return nil, "", fmt.Errorf("upload archive: %w", err)
+	if err := store.publishArchive(name, sealed, logger); err != nil {
+		return nil, "", err
 	}
-	logger.Info("backup: uploaded", "object", name, "bytes", len(sealed),
-		"spokes", len(man.SpokeIDs), "spoke_errors", len(man.SpokeErrors))
-
-	// Read back and verify what actually landed in object storage.
-	fetched, err := store.Get(name)
-	if err != nil {
-		return nil, "", fmt.Errorf("read-back failed: %w", err)
-	}
-	if _, err := Verify(key, fetched); err != nil {
-		return nil, "", fmt.Errorf("stored archive failed verification: %w", err)
-	}
-	logger.Info("backup: verified stored archive", "object", name)
+	logger.Info("backup: published verified archive", "object", name, "bytes", len(sealed),
+		"spokes", len(man.SpokeIDs), "spoke_errors", len(man.SpokeErrors), "spokes_skipped", man.SpokesSkipped)
 
 	if err := store.Prune(Retention(), logger); err != nil {
 		logger.Warn("backup: prune failed", "err", err)

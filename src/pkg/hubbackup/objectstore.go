@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -177,7 +178,12 @@ func (o *ObjectStore) sign(req *http.Request, body []byte) error {
 
 	if req.Method == http.MethodPut || req.Method == http.MethodPost {
 		sum := sha256.Sum256(body)
-		req.Header.Set("x-content-sha256", base64.StdEncoding.EncodeToString(sum[:]))
+		checksum := base64.StdEncoding.EncodeToString(sum[:])
+		req.Header.Set("x-content-sha256", checksum)
+		if req.Method == http.MethodPut {
+			req.Header.Set("opc-checksum-algorithm", "SHA256")
+			req.Header.Set("opc-content-sha256", checksum)
+		}
 		req.Header.Set("content-type", ociUploadContentType)
 		req.Header.Set("content-length", fmt.Sprintf("%d", len(body)))
 		signedHeaders = ociPutSignedHeaders
@@ -228,7 +234,10 @@ func (o *ObjectStore) do(method, path string, body []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read OCI %s response: %w", method, err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("OCI %s %s: HTTP %d: %s",
 			method, path, resp.StatusCode, strings.TrimSpace(string(respBody)))
@@ -269,45 +278,138 @@ func (o *ObjectStore) Delete(name string) error {
 	return err
 }
 
+const (
+	legacyArchivePrefix  = "hive-hub-backup-"
+	fleetArchivePrefix   = "hive-hub-fleet-backup-"
+	partialArchivePrefix = "hive-hub-partial-backup-"
+	hubOnlyArchivePrefix = "hive-hub-only-backup-"
+	stagingArchivePrefix = "hive-hub-staging-"
+	archiveSuffix        = ".tar.gz.enc"
+)
+
+func retainedArchiveName(prefix string, at time.Time, data []byte) string {
+	digest := sha256.Sum256(data)
+	return fmt.Sprintf("%s%s-%x%s", prefix, at.UTC().Format("20060102T150405.000000000Z"), digest[:16], archiveSuffix)
+}
+
+// publishArchive uploads under a staging name, verifies the bytes returned by
+// storage, then publishes those exact bytes under a unique retention name.
+func (o *ObjectStore) publishArchive(name string, data []byte, logger *slog.Logger) error {
+	staged := stagingArchivePrefix + name
+	defer func() {
+		if err := o.Delete(staged); err != nil {
+			logger.Warn("backup: remove staged archive failed", "object", staged, "err", err)
+		}
+	}()
+
+	if err := o.Put(staged, data); err != nil {
+		return fmt.Errorf("upload staged archive: %w", err)
+	}
+	fetched, err := o.Get(staged)
+	if err != nil {
+		return fmt.Errorf("read-back failed: %w", err)
+	}
+	if !bytes.Equal(fetched, data) {
+		return fmt.Errorf("read-back differs from the uploaded archive")
+	}
+	if err := o.Put(name, fetched); err != nil {
+		return fmt.Errorf("publish verified archive: %w", err)
+	}
+	return nil
+}
+
 // listResponse models the Object Storage list payload.
 type listResponse struct {
 	Objects []struct {
 		Name string `json:"name"`
 	} `json:"objects"`
+	NextStartWith string `json:"nextStartWith"`
 }
 
-// List returns archive object names, newest first (names sort lexically by
-// their UTC timestamp, so reverse-sorting yields newest-first).
-func (o *ObjectStore) List() ([]string, error) {
-	path := fmt.Sprintf(ociListPathTemplate, o.namespace, o.bucket)
-	body, err := o.do(http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	var lr listResponse
-	if err := json.Unmarshal(body, &lr); err != nil {
-		return nil, fmt.Errorf("parse list response: %w", err)
-	}
-	names := make([]string, 0, len(lr.Objects))
-	for _, ob := range lr.Objects {
-		if strings.HasPrefix(ob.Name, "hive-hub-backup-") {
-			names = append(names, ob.Name)
+func archivePrefix(name string) string {
+	if strings.HasSuffix(name, archiveSuffix) {
+		for _, prefix := range []string{legacyArchivePrefix, fleetArchivePrefix, partialArchivePrefix, hubOnlyArchivePrefix} {
+			if strings.HasPrefix(name, prefix) {
+				return prefix
+			}
 		}
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	return ""
+}
+
+func archiveSortKey(name string) string {
+	prefix := archivePrefix(name)
+	suffix := strings.TrimPrefix(name, prefix)
+	if prefix == legacyArchivePrefix {
+		return strings.Replace(suffix, "Z", ".000000000Z", 1)
+	}
+	return suffix
+}
+
+// List returns published and legacy archives in capture order, newest first.
+func (o *ObjectStore) List() ([]string, error) {
+	basePath := fmt.Sprintf(ociListPathTemplate, o.namespace, o.bucket)
+	path := basePath
+	var names []string
+	seen := make(map[string]bool)
+	var start string
+	for {
+		body, err := o.do(http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
+		var lr listResponse
+		if err := json.Unmarshal(body, &lr); err != nil {
+			return nil, fmt.Errorf("parse list response: %w", err)
+		}
+		for _, object := range lr.Objects {
+			if archivePrefix(object.Name) != "" && !seen[object.Name] {
+				seen[object.Name] = true
+				names = append(names, object.Name)
+			}
+		}
+		if lr.NextStartWith == "" {
+			break
+		}
+		if lr.NextStartWith <= start {
+			return nil, fmt.Errorf("object list pagination did not advance")
+		}
+		start = lr.NextStartWith
+		path = basePath + "?start=" + url.QueryEscape(start)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		left, right := archiveSortKey(names[i]), archiveSortKey(names[j])
+		if left == right {
+			return names[i] > names[j]
+		}
+		return left > right
+	})
 	return names, nil
 }
 
-// Prune deletes archives beyond the retention count, oldest first.
+// Prune keeps each backup history independently. Legacy archives are protected
+// until enough newer full fleet backups exist.
 func (o *ObjectStore) Prune(keep int, logger *slog.Logger) error {
+	if keep < 1 {
+		return fmt.Errorf("backup retention must be positive")
+	}
 	names, err := o.List()
 	if err != nil {
 		return err
 	}
-	if len(names) <= keep {
-		return nil
-	}
-	for _, name := range names[keep:] {
+	counts := make(map[string]int)
+	for _, name := range names {
+		prefix := archivePrefix(name)
+		if prefix == legacyArchivePrefix {
+			if counts[fleetArchivePrefix] < keep {
+				continue
+			}
+		} else {
+			counts[prefix]++
+			if counts[prefix] <= keep {
+				continue
+			}
+		}
 		if err := o.Delete(name); err != nil {
 			logger.Warn("backup: prune failed", "object", name, "err", err)
 			continue
