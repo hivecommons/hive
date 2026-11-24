@@ -92,7 +92,7 @@ Each adapter has unit tests against a fake HTTP server (`src/pkg/forge/*_test.go
 ## Gaps
 
 - Enumeration, the stage engine and the merge gate are GitHub-only ([#14113](https://github.com/hivecommons/hive/issues/14113), [#14096](https://github.com/hivecommons/hive/issues/14096)).
-- No production path opens issues or change requests through the Gitea or Forgejo create seams yet ([#19670](https://github.com/hivecommons/hive/issues/19670)).
+- Gitea and Forgejo have no merge yet. No adapter can open a change request.
 - There is no GitLab or Gitea webhook receiver, dashboard login provider or egress-proxy rule table.
 
 The complete list is in [What full support would require](../forge-app-setup.md#what-full-support-would-require).
