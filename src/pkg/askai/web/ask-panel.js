@@ -10,6 +10,9 @@
  *
  * Usage: window.HiveAsk.mount({slot, base, section, docsHref, headers}).
  * The hub mounts it from the data-ask-* attributes on its own script tag.
+ * Once mounted, window.HiveAsk.open() and close() let another control (the
+ * dashboard Help menu's Ask Hive item) open or close the same panel. Both
+ * return false when no panel was built, for example with Ask off.
  */
 (function () {
   'use strict';
@@ -17,6 +20,9 @@
   var MAX_QUESTION_CHARS = 1000;
   var PANEL_ID = 'hive-ask-panel';
   var OPEN_CLASS = 'hive-ask-open';
+  // The built panel's open and close, set by build(). Null until the
+  // backend has said Ask is on for this person.
+  var active = null;
 
   // askViewModel turns a backend Result into what the panel shows. Pure, so
   // it can be tested without a DOM.
@@ -98,15 +104,15 @@
 
     function build() {
       var opener = el('button', { type: 'button', className: 'hive-ask-opener', 'aria-expanded': 'false', 'aria-controls': PANEL_ID }, 'Ask');
-      opener.title = 'Ask the docs (AI)';
+      opener.title = 'Ask Hive (AI)';
       slot.appendChild(opener);
 
       var panel = el('section', { id: PANEL_ID, className: 'hive-ask-panel', 'aria-labelledby': 'hive-ask-title' });
       panel.setAttribute('role', 'region');
       panel.hidden = true;
       var head = el('div', { className: 'hive-ask-head' });
-      head.appendChild(el('h2', { id: 'hive-ask-title' }, 'Ask the docs'));
-      var close = el('button', { type: 'button', className: 'hive-ask-close', 'aria-label': 'Close Ask' }, '×');
+      head.appendChild(el('h2', { id: 'hive-ask-title' }, 'Ask Hive'));
+      var close = el('button', { type: 'button', className: 'hive-ask-close', 'aria-label': 'Close Ask Hive' }, '×');
       head.appendChild(close);
       panel.appendChild(head);
       panel.appendChild(el('p', { className: 'hive-ask-label' }, status.ai_label || 'AI generated, may be wrong.'));
@@ -217,6 +223,15 @@
         });
       }
 
+      // open() from another control reuses setOpen, so focus lands where the
+      // opener would put it; on an open panel it only moves focus back in.
+      active = {
+        open: function () {
+          if (panel.hidden) setOpen(true);
+          else (status.consented ? input : confirm).focus();
+        },
+        close: function () { if (!panel.hidden) setOpen(false); }
+      };
       opener.addEventListener('click', function () { setOpen(panel.hidden); });
       close.addEventListener('click', function () { setOpen(false); });
       panel.addEventListener('keydown', function (e) {
@@ -250,7 +265,19 @@
     }
   }
 
-  var api = { mount: mount, askViewModel: askViewModel };
+  function open() {
+    if (!active) return false;
+    active.open();
+    return true;
+  }
+
+  function close() {
+    if (!active) return false;
+    active.close();
+    return true;
+  }
+
+  var api = { mount: mount, open: open, close: close, askViewModel: askViewModel };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window === 'undefined') return;
   window.HiveAsk = api;

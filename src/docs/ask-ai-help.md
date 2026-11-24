@@ -99,16 +99,22 @@ vendor quota shows "Busy, try again in N seconds" and the docs link.
 
 ## Using the panel
 
-With Ask on, the dashboard header shows an **Ask** button. It opens a panel
-docked to the side (a bottom sheet on a phone). The first time, it shows the
+With Ask on, the hive dashboard shows **Ask Hive** in the Help menu, right
+after Getting started: in the top bar **? Help** menu and in the sidebar
+**Help** group. The header also keeps its **Ask** button, and the hub dashboard
+has that button only, since its header has no Help menu. Either opens a panel,
+titled **Ask Hive**, docked to the side (a bottom sheet on a phone). Choosing
+Ask Hive closes the Help menu (and the navigation drawer on a phone) first; it
+works with a tap, a click, or Enter and Space from the keyboard. The first time, it shows the
 notice and **I understand, continue**; after that the person types a question
 (Enter sends, Shift+Enter adds a line) and gets a plain-text answer with a
 **Sources** list and the "AI generated, may be wrong" label. The label of the
 section in view, or of the open Settings tab, goes with the question. Every
 state has a docs link for the section in view. Escape closes the panel and
-returns focus to the button; answers and errors are announced to screen
-readers. With Ask off the button is not shown and the page loads nothing for
-it.
+returns focus to the **Ask** button; answers and errors are announced to
+screen readers. With Ask off, or when the backend says Ask is not on for the
+person, neither the button nor the Help menu item is shown, and with Ask off
+the page loads nothing for it.
 
 ## Configuration keys
 
@@ -165,8 +171,8 @@ has consented; nothing here needs a production change beyond the switch.
 4. **Withdraw.** Click **Stop sending my questions**, ask again, and expect the
    notice instead of an answer.
 5. **Hosted hive.** On a hosted hive, Settings, Features: turn on **Ask AI help**
-   and set **Ask mode** to `hub`. Open **Ask**, confirm, and ask "Where do I pause
-   an agent?". Expect an answer linking to the dashboard sections or agents
+   and set **Ask mode** to `hub`. Open **? Help**, then **Ask Hive**, confirm, and
+   ask "Where do I pause an agent?". Expect an answer linking to the dashboard sections or agents
    docs. The hub log shows `audit: ask request` with `hive=<that hive>`; the hive
    log shows `audit: ask request` with `relay=true`. Neither line carries the
    question.

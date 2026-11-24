@@ -784,9 +784,10 @@
             <span class="stack-badge">GitHub</span>
             <span class="stack-badge">GitHub Enterprise</span>
             <span class="stack-badge">GitLab</span>
-            <span class="stack-badge">Gitea / Forgejo</span>
+            <span class="stack-badge">Gitea</span>
+            <span class="stack-badge">Forgejo</span>
           </div>
-          <p class="stack-note">GitHub and GitHub Enterprise are the production App path; forge-neutral adapters cover GitLab and Gitea / Forgejo issue and change-request flows as they graduate.</p>
+          <p class="stack-note">GitHub and GitHub Enterprise are the production App path; forge-neutral adapters cover GitLab, Gitea and Forgejo issue and change-request flows as they graduate. Forgejo has its own forge kind on v5, and agent work on a Forgejo-only hive is in progress.</p>
         </div>
         <div class="stack-group">
           <p class="stack-group-label">Work sources</p>
@@ -1335,6 +1336,16 @@
               <span><span class="hv-infra-logo-label">DeepSeek</span><span class="hv-infra-logo-note">provider: deepseek</span></span>
             </a></li>
           </ul>
+        </section>
+        <section class="hv-integration-group" aria-labelledby="forges-title">
+          <h3 id="forges-title">Forges</h3>
+          <ul class="hv-infra-logo-row" aria-label="Forge integrations">
+            <li><a class="hv-infra-logo-chip" href="https://forgejo.org/" aria-label="Forgejo forge, partial, in progress">
+              <img src="/static/integrations/forgejo.svg" alt="Forgejo forge" loading="lazy" decoding="async">
+              <span><span class="hv-infra-logo-label">Forgejo</span><span class="hv-infra-logo-note">self-hosted or Codeberg · project.forge: forgejo · partial, in progress</span></span>
+            </a></li>
+          </ul>
+          <p class="muted">The forgejo forge kind and its config are on v5. Agent work on a Forgejo-only hive is in progress (<a href="https://github.com/hivecommons/hive/issues/19494">#19494</a>). See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/integrations/forgejo.md">Forgejo on Hive</a>. Forgejo logo by <a href="https://caesarschinas.com/">Caesar Schinas</a>, <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>.</p>
         </section>
         <section class="hv-integration-group" aria-labelledby="isolation-secrets-title">
           <h3 id="isolation-secrets-title">Isolation and secrets</h3>
