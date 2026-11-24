@@ -4966,6 +4966,7 @@
       background: var(--green);
       border-color: var(--green);
     }
+    .config-toggle-note-warn { color: var(--status-warn); }
     .config-toggle-switch.disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -9880,7 +9881,11 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   <div class="mt-6 mb-8" id="calendar-section" data-dashboard-section="calendar-section">
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="calendar-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Calendar section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📅 Calendar</h2>
     <div class="section-body">
-      <div id="calendar-panel" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
+      <div id="calendar-panel" class="calendar-panel">
+        <div id="calendar-email-in" hidden></div>
+        <div id="calendar-add-form" hidden></div>
+        <div id="calendar-results" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
+      </div>
       <div id="meeting-drafts-panel" class="calendar-panel"></div>
     </div>
   </div>
@@ -53400,13 +53405,8 @@ function burnAreaChart() {
     }
 
     async function fetchCalendar() {
-      const host = document.getElementById('calendar-panel');
-      if (!calendarRoleKnown()) {
-        if (host) host.innerHTML = '<p class="muted-xs">Loading calendar…</p>';
-        return;
-      }
-      if (!calendarCanView()) {
-        if (host) host.innerHTML = '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>';
+      if (!calendarRoleKnown() || !calendarCanView()) {
+        renderCalendar();
         return;
       }
       try {
@@ -53423,7 +53423,7 @@ function burnAreaChart() {
     dashboardSetInterval('calendar', fetchCalendar, CALENDAR_POLL_MS);
 
     function calendarFormHtml() {
-      return '<details class="calendar-add"><summary class="calendar-add-summary">Add meeting</summary><div class="calendar-add-grid mt-2">' +
+      return '<details class="calendar-add"><summary class="calendar-add-summary">Add meeting</summary><form><div class="calendar-add-grid mt-2">' +
         '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-calendar-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
         '<label>Title (optional)<input class="kb-search-box" type="text" data-calendar-field="title" maxlength="200" placeholder="Weekly sync" autocomplete="off"></label>' +
         '<label>Starts<input class="kb-search-box" type="datetime-local" data-calendar-field="start"></label>' +
@@ -53431,9 +53431,8 @@ function burnAreaChart() {
         '<label>Repeats<select class="kb-search-box" data-calendar-field="repeat"><option value="none">Does not repeat</option><option value="daily">Daily</option>' +
         '<option value="weekdays">Every weekday</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>' +
         '<button type="button" class="hv-btn btn-primary btn-sm" data-action="calendarAdd">Add meeting</button></div>' +
-        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). ' +
-        (calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.') + '</p>' +
-        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></details>';
+        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). <span data-calendar-field="hint"></span></p>' +
+        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></form></details>';
     }
 
     function calendarActionButtons(e) {
@@ -53587,20 +53586,45 @@ function burnAreaChart() {
 
     function renderCalendar() {
       refreshSectionCardShell('calendar-section');
-      const host = document.getElementById('calendar-panel');
+      const email = document.getElementById('calendar-email-in');
+      const add = document.getElementById('calendar-add-form');
+      const results = document.getElementById('calendar-results');
+      const known = calendarRoleKnown();
+      const canView = known && calendarCanView();
+      if (!canView) {
+        _calendarData = null;
+        _calendarError = '';
+      }
       renderCalendarIndicator();
-      if (!host) return;
-      if (_calendarError) {
-        host.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
-        setSectionSummary('calendar-section', 'unavailable');
+      if (!email || !add || !results) return;
+      if (!canView) {
+        email.innerHTML = add.innerHTML = '';
+        email.hidden = add.hidden = true;
+        results.innerHTML = known
+          ? '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>'
+          : '<p class="muted-xs">Loading calendar…</p>';
         return;
       }
       const data = _calendarData || {};
+      const emailHtml = !_calendarError && typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '';
+      email.innerHTML = emailHtml;
+      email.hidden = !emailHtml;
+      // Polls may update the schedule while an operator is editing the form.
+      if (add.hidden && !_calendarError) {
+        add.innerHTML = calendarFormHtml();
+        add.hidden = false;
+      }
+      const hint = calendarField('hint');
+      if (hint) hint.textContent = calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.';
+      if (_calendarError) {
+        results.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
+        setSectionSummary('calendar-section', 'unavailable');
+        return;
+      }
       const upcoming = data.upcoming || [];
       const recent = data.recent || [];
       const pending = upcoming.filter(e => e.status === 'awaiting_approval').length;
-      host.innerHTML = (typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '') + calendarFormHtml() +
-        '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
+      results.innerHTML = '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
         (recent.length ? '<div class="calendar-subsection"><div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div></div>' : '');
       setSectionSummary('calendar-section', upcoming.length + ' upcoming' + (pending ? ' · ' + pending + ' awaiting approval' : ''));
     }
@@ -53624,21 +53648,37 @@ function burnAreaChart() {
 
     async function calendarAdd() {
       const err = calendarField('error');
-      const repeat = (calendarField('repeat') || {}).value || 'none';
+      if (!err) return;
+      const form = err.closest('form');
+      const button = form.querySelector('[data-action="calendarAdd"]');
+      if (button.disabled) return;
+      const fields = ['url', 'title', 'start', 'end', 'repeat'].map(calendarField);
+      const values = fields.map(field => field.value);
+      const [url, title, start, end, repeat] = values;
       const body = {
-        url: ((calendarField('url') || {}).value || '').trim(),
-        title: ((calendarField('title') || {}).value || '').trim(),
-        start: calendarLocalISO((calendarField('start') || {}).value),
-        end: calendarLocalISO((calendarField('end') || {}).value),
+        url: url.trim(),
+        title: title.trim(),
+        start: calendarLocalISO(start),
+        end: calendarLocalISO(end),
         rrule: CALENDAR_REPEAT_RULES[repeat] || '',
         timezone: calendarViewerTimeZone()
       };
-      if (!body.url || !body.start) { if (err) err.textContent = 'A meeting link and a start time are required.'; return; }
+      if (!body.url || !body.start) { err.textContent = 'A meeting link and a start time are required.'; return; }
+      err.textContent = '';
+      button.disabled = true;
       try {
         const ev = await calendarPost('/api/meetings/schedule', body);
+        if (fields.every((field, i) => field.value === values[i])) {
+          form.reset();
+          form.closest('details').open = false;
+        }
         showToast(ev && ev.status === 'awaiting_approval' ? 'Meeting added; it waits for the owner to approve' : 'Meeting scheduled', 'success');
         fetchCalendar();
-      } catch (e) { if (err) err.textContent = e.message; }
+      } catch (e) {
+        err.textContent = e.message;
+      } finally {
+        button.disabled = false;
+      }
     }
 
     async function calendarAct(id, action) {
@@ -67600,6 +67640,22 @@ function burnAreaChart() {
         '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.autostart !== false ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="autostart"></div><span class="config-toggle-label">Answer the CLI startup screens ' + yamlHint('dashboard.sessions.autostart') + ' ' + settingHelpMark('settings', 'dashboard', 'Session startup', 'When a session starts, Hive takes the vendor CLI through its startup screens (first-run notice, trust for the session folder, onboarding) to its input prompt, so the first request runs without a person. It never answers a tool or command permission prompt and never signs in. On by default; the HIVE_SESSIONS_AUTOSTART environment variable, when set, overrides this switch.') + '</span></div>';
     }
 
+    // dashboard.github_sign_in (#19721): an unset key reads as on. The note
+    // names the hub link the login page falls back to when it is off. With no
+    // link the switch is disabled while on (the server refuses that save too),
+    // because turning it off would lock everyone out, the owner included.
+    function renderGovDashboardGitHubSignIn(dash) {
+      const on = dash.github_sign_in !== false;
+      const link = dash.hub_sign_in_link || '';
+      const locked = on && !link;
+      const note = link
+        ? ' <span class="text-muted">When off, the login page links to ' + esc(link) + '.</span>'
+        : ' <span class="config-toggle-note-warn">' + (on
+          ? 'Cannot be turned off: this hive has no hub sign-in link, so the login page would offer no way to sign in. Set dashboard.hub_sign_in_url (or hub.url / HIVE_HUB_URL) and hive_id first.'
+          : 'No hub sign-in link: the login page says hub sign-in is not configured. Turn this back on, or set dashboard.hub_sign_in_url (or hub.url / HIVE_HUB_URL) and hive_id.') + '</span>';
+      return '<div class="config-toggle"><div class="config-toggle-switch' + (on ? ' on' : '') + (locked ? ' disabled' : '') + '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"' + (locked ? ' aria-disabled="true" data-disabled="true"' : '') + ' data-action="toggleConfigSwitch" data-section="dashboard" data-key="github_sign_in"></div><span class="config-toggle-label">GitHub sign-in ' + yamlHint('dashboard.github_sign_in') + ' ' + settingHelpMark('settings', 'dashboard', 'GitHub sign-in', 'Offers the "Sign in with GitHub" device flow on the login page. On by default. When off, the login page shows a "Sign in through the hub" link instead, /api/gh-user-auth/start and /poll refuse, and hivectl login to this hive stops working. It can only be turned off when the hive has a hub sign-in link. Applies without a restart.') + note + '</span></div>';
+    }
+
     function renderGovDashboard(dash) {
       const bands = dash.issue_bands || {};
       const authTokenText = dash.auth_token_configured ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
@@ -67613,6 +67669,7 @@ function burnAreaChart() {
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab ' + yamlHint('dashboard.experiment_lab') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.subscription_gauge_header ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="subscription_gauge_header"></div><span class="config-toggle-label">Also show the usage gauge in the header ' + yamlHint('dashboard.subscription_gauge_header') + ' ' + settingHelpMark('settings', 'dashboard', 'Usage gauge in the header', 'The usage fuel gauge is on the Overview by default for the owner, with a row for each provider the agents use (Claude, Copilot and others). This also shows it as a small chip in the header on every page, with the needle on the limit closest to empty. It reads the usage measurements hive already makes, so it adds no calls to any provider. Only the hive owner sees it. These are the plans this hive is signed in with, not the hive token budget. Off by default.') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
+        renderGovDashboardGitHubSignIn(dash) +
         renderGovDashboardSessions(dash) +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +

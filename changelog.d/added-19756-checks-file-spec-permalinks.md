@@ -1,1 +1,0 @@
-- The emitted `.hive/workflows/checks.yml` now resolves `spec:` check sources to a permalink built from the model's `workflow.hivecommons.dev/source` annotation and keeps the section title in a `description` field; non-spec and unresolvable sources are unchanged ([#19756](https://github.com/hivecommons/hive/issues/19756)).

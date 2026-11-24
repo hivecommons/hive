@@ -137,13 +137,8 @@
     }
 
     async function fetchCalendar() {
-      const host = document.getElementById('calendar-panel');
-      if (!calendarRoleKnown()) {
-        if (host) host.innerHTML = '<p class="muted-xs">Loading calendar…</p>';
-        return;
-      }
-      if (!calendarCanView()) {
-        if (host) host.innerHTML = '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>';
+      if (!calendarRoleKnown() || !calendarCanView()) {
+        renderCalendar();
         return;
       }
       try {
@@ -160,7 +155,7 @@
     dashboardSetInterval('calendar', fetchCalendar, CALENDAR_POLL_MS);
 
     function calendarFormHtml() {
-      return '<details class="calendar-add"><summary class="calendar-add-summary">Add meeting</summary><div class="calendar-add-grid mt-2">' +
+      return '<details class="calendar-add"><summary class="calendar-add-summary">Add meeting</summary><form><div class="calendar-add-grid mt-2">' +
         '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-calendar-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
         '<label>Title (optional)<input class="kb-search-box" type="text" data-calendar-field="title" maxlength="200" placeholder="Weekly sync" autocomplete="off"></label>' +
         '<label>Starts<input class="kb-search-box" type="datetime-local" data-calendar-field="start"></label>' +
@@ -168,9 +163,8 @@
         '<label>Repeats<select class="kb-search-box" data-calendar-field="repeat"><option value="none">Does not repeat</option><option value="daily">Daily</option>' +
         '<option value="weekdays">Every weekday</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>' +
         '<button type="button" class="hv-btn btn-primary btn-sm" data-action="calendarAdd">Add meeting</button></div>' +
-        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). ' +
-        (calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.') + '</p>' +
-        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></details>';
+        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). <span data-calendar-field="hint"></span></p>' +
+        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></form></details>';
     }
 
     function calendarActionButtons(e) {
@@ -324,20 +318,45 @@
 
     function renderCalendar() {
       refreshSectionCardShell('calendar-section');
-      const host = document.getElementById('calendar-panel');
+      const email = document.getElementById('calendar-email-in');
+      const add = document.getElementById('calendar-add-form');
+      const results = document.getElementById('calendar-results');
+      const known = calendarRoleKnown();
+      const canView = known && calendarCanView();
+      if (!canView) {
+        _calendarData = null;
+        _calendarError = '';
+      }
       renderCalendarIndicator();
-      if (!host) return;
-      if (_calendarError) {
-        host.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
-        setSectionSummary('calendar-section', 'unavailable');
+      if (!email || !add || !results) return;
+      if (!canView) {
+        email.innerHTML = add.innerHTML = '';
+        email.hidden = add.hidden = true;
+        results.innerHTML = known
+          ? '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>'
+          : '<p class="muted-xs">Loading calendar…</p>';
         return;
       }
       const data = _calendarData || {};
+      const emailHtml = !_calendarError && typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '';
+      email.innerHTML = emailHtml;
+      email.hidden = !emailHtml;
+      // Polls may update the schedule while an operator is editing the form.
+      if (add.hidden && !_calendarError) {
+        add.innerHTML = calendarFormHtml();
+        add.hidden = false;
+      }
+      const hint = calendarField('hint');
+      if (hint) hint.textContent = calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.';
+      if (_calendarError) {
+        results.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
+        setSectionSummary('calendar-section', 'unavailable');
+        return;
+      }
       const upcoming = data.upcoming || [];
       const recent = data.recent || [];
       const pending = upcoming.filter(e => e.status === 'awaiting_approval').length;
-      host.innerHTML = (typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '') + calendarFormHtml() +
-        '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
+      results.innerHTML = '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
         (recent.length ? '<div class="calendar-subsection"><div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div></div>' : '');
       setSectionSummary('calendar-section', upcoming.length + ' upcoming' + (pending ? ' · ' + pending + ' awaiting approval' : ''));
     }
@@ -361,21 +380,37 @@
 
     async function calendarAdd() {
       const err = calendarField('error');
-      const repeat = (calendarField('repeat') || {}).value || 'none';
+      if (!err) return;
+      const form = err.closest('form');
+      const button = form.querySelector('[data-action="calendarAdd"]');
+      if (button.disabled) return;
+      const fields = ['url', 'title', 'start', 'end', 'repeat'].map(calendarField);
+      const values = fields.map(field => field.value);
+      const [url, title, start, end, repeat] = values;
       const body = {
-        url: ((calendarField('url') || {}).value || '').trim(),
-        title: ((calendarField('title') || {}).value || '').trim(),
-        start: calendarLocalISO((calendarField('start') || {}).value),
-        end: calendarLocalISO((calendarField('end') || {}).value),
+        url: url.trim(),
+        title: title.trim(),
+        start: calendarLocalISO(start),
+        end: calendarLocalISO(end),
         rrule: CALENDAR_REPEAT_RULES[repeat] || '',
         timezone: calendarViewerTimeZone()
       };
-      if (!body.url || !body.start) { if (err) err.textContent = 'A meeting link and a start time are required.'; return; }
+      if (!body.url || !body.start) { err.textContent = 'A meeting link and a start time are required.'; return; }
+      err.textContent = '';
+      button.disabled = true;
       try {
         const ev = await calendarPost('/api/meetings/schedule', body);
+        if (fields.every((field, i) => field.value === values[i])) {
+          form.reset();
+          form.closest('details').open = false;
+        }
         showToast(ev && ev.status === 'awaiting_approval' ? 'Meeting added; it waits for the owner to approve' : 'Meeting scheduled', 'success');
         fetchCalendar();
-      } catch (e) { if (err) err.textContent = e.message; }
+      } catch (e) {
+        err.textContent = e.message;
+      } finally {
+        button.disabled = false;
+      }
     }
 
     async function calendarAct(id, action) {

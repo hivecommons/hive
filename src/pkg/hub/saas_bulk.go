@@ -89,13 +89,10 @@ func (s *HubServer) registerBulkRoutes() {
 	s.mux.HandleFunc("POST /api/saas/hives/bulk", s.requireAuth(s.handleBulkHiveAction))
 }
 
-// authorizeBulkHive re-derives authorization for one hive from the hub's own
-// store, mirroring the owner check every single-hive handler performs
-// (!canonicalEqual(h.Owner, username) && !isHubAdmin(username)). It returns the loaded
-// hive on success, or a reason string on refusal. The client's list is never
-// trusted: an ID that does not resolve, or resolves to someone else's hive, is
-// refused here rather than acted on.
-func authorizeBulkHive(id, username string) (*SaaSHive, string) {
+// authorizeBulkHive checks each hive against the hub's own store. Preference
+// changes honor owner grants just like the single-hive auto-upgrade endpoint.
+// Operational actions require the recorded hive owner or a hub admin.
+func authorizeBulkHive(id, username, action string) (*SaaSHive, string) {
 	if username == "" {
 		return nil, "not authenticated"
 	}
@@ -103,7 +100,14 @@ func authorizeBulkHive(id, username string) (*SaaSHive, string) {
 	if h == nil {
 		return nil, "hive not found"
 	}
-	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
+	var authorized bool
+	switch action {
+	case bulkActionEnableAutoUpgrade, bulkActionDisableAutoUpgrade, bulkActionDailyAutoUpgrade, bulkActionWeeklyAutoUpgrade:
+		authorized = userIsHiveOwner(username, h)
+	default:
+		authorized = canonicalEqual(h.Owner, username) || isHubAdmin(username)
+	}
+	if !authorized {
 		return nil, "not authorized for this hive"
 	}
 	return h, ""
@@ -137,7 +141,8 @@ func (s *HubServer) handleBulkHiveAction(w http.ResponseWriter, r *http.Request)
 
 	switch body.Action {
 	case bulkActionRestart, bulkActionUpgrade, bulkActionEnableAutoUpgrade,
-		bulkActionDisableAutoUpgrade, bulkActionDailyAutoUpgrade, bulkActionSwitchBranch:
+		bulkActionDisableAutoUpgrade, bulkActionDailyAutoUpgrade, bulkActionWeeklyAutoUpgrade,
+		bulkActionSwitchBranch:
 	default:
 		writeBulkError(w, http.StatusBadRequest, "unknown bulk action")
 		return
@@ -256,7 +261,7 @@ func (s *HubServer) runBulkAction(action, branch string, ids []string, username 
 // applyBulkAction authorizes ONE hive and applies the action, reusing the exact
 // mechanics of the corresponding single-hive handler.
 func (s *HubServer) applyBulkAction(action, branch, id, username string) BulkHiveResult {
-	h, reason := authorizeBulkHive(id, username)
+	h, reason := authorizeBulkHive(id, username, action)
 	if h == nil {
 		return BulkHiveResult{HiveID: id, Ok: false, Error: reason}
 	}
@@ -387,6 +392,10 @@ func (s *HubServer) bulkRestartOrUpgrade(h *SaaSHive, id, username, action strin
 // preference reaches the spoke on its next heartbeat. No kubectl is involved,
 // so this works identically for firewalled clusters.
 func (s *HubServer) bulkSetAutoUpgrade(h *SaaSHive, id, username string, enabled bool, mode string) BulkHiveResult {
+	// Saving the same setting must preserve the current schedule's fire date.
+	if h.AutoUpgrade == enabled && h.AutoUpgradeMode == mode {
+		return BulkHiveResult{HiveID: id, Ok: true, Via: bulkViaStore}
+	}
 	h.AutoUpgrade = enabled
 	h.AutoUpgradeMode = mode
 	// Mode changes clear the day's fire record for the same reason the
