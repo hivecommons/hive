@@ -48,6 +48,26 @@ import (
 // (the regeneration drops it), and decides whether the write-back gate would
 // allow the request before any API call.
 //
+// A bot PR the dependency-bot sweep's own red-CI hand-off parked with
+// needs-human (red on the same head past depBotRedCIGrace) is still asked
+// about, for the first trigger only: once every failing check is green on
+// the base tip, the bot's rebase is the fresh run that hand-off asks a
+// person for. The sweep's ledger record proves the label is the hand-off's
+// (staleRedOwnRedCIHandoff): reason red-ci, recorded for the current head,
+// and the label marked as added by the sweep. Right before the request the
+// pass also reads the PR's label events once: the newest needs-human event
+// must be the App's own `labeled`, so a person who took the label off and
+// put it back is not overruled (a failed read asks nothing that pass). A
+// needs-human a person added, one from any other hand-off, or one recorded
+// for an older head still blocks, as do hold and do-not-merge. Such a PR is
+// asked about at most once per head, whatever the base does next: the
+// sweep skips a PR labelled needs-human, so its stale-red-bot-did-not-rebase
+// hand-off never comes, and nothing else would end the requests. The PR
+// keeps the hand-off's label and comment, and no new hand-off is posted.
+// The label comes off when CI goes green, as before; when the bot's new
+// head fails again it stays, and the record names the old head, so nothing
+// is asked again.
+//
 // Requests count against the pass's caps (staleRedRefreshMaxPerRepo,
 // staleRedRefreshMaxPerPass). Dependabot is never asked, as in the
 // dependency-bot sweep: it refuses commands from apps, and its branch is
@@ -79,6 +99,15 @@ type staleRedBotRebaser interface {
 }
 
 var _ staleRedBotRebaser = (*github.Client)(nil)
+
+// staleRedLabelActorReader reads whether the newest needs-human label event
+// on a PR is the App's own `labeled`. *github.Client implements it; a
+// rebaser without it never asks over the sweep's red-CI label.
+type staleRedLabelActorReader interface {
+	StaleRedNeedsHumanLabeledByApp(ctx context.Context, repo string, number int) (bool, error)
+}
+
+var _ staleRedLabelActorReader = (*github.Client)(nil)
 
 // staleRedDepBotStore is the dependency-bot sweep's ledger; tests replace it.
 var staleRedDepBotStore = getDepBotConflictStore
@@ -127,13 +156,88 @@ func staleRedBotRebaseCandidate(pr github.PullRequest) bool {
 		!hasLabel(pr.Labels, stagelabels.AdoptedByHive.Label())
 }
 
+// staleRedOwnRedCIHandoff reports whether pr's needs-human is the one the
+// dependency-bot sweep's red-CI hand-off added for pr's current head, as
+// the sweep's own ledger record for key says: reason depBotHandoffRedCI,
+// recorded for this exact head, and LabelApplied (the sweep's own label
+// write succeeded). The sweep only hands off a PR that has no needs-human
+// yet (dependencyBotHandoffCandidate), so such a record is not a label a
+// person added before it. Anything else, including no record, a failed
+// label write or a record for an older head, is false.
+func staleRedOwnRedCIHandoff(store *depBotConflictStore, key string, pr github.PullRequest) bool {
+	if store == nil || strings.TrimSpace(pr.HeadSHA) == "" || !escalation.HasNeedsHumanLabel(pr.Labels) {
+		return false
+	}
+	rec, ok := store.get(key)
+	return ok && rec.Reason == depBotHandoffRedCI && rec.LabelApplied && strings.EqualFold(rec.HeadSHA, pr.HeadSHA)
+}
+
+// staleRedWithoutNeedsHuman is pr with needs-human dropped from a copy of
+// its labels.
+func staleRedWithoutNeedsHuman(pr github.PullRequest) github.PullRequest {
+	labels := make([]string, 0, len(pr.Labels))
+	for _, l := range pr.Labels {
+		if !strings.EqualFold(l, escalation.NeedsHumanLabel) {
+			labels = append(labels, l)
+		}
+	}
+	pr.Labels = labels
+	return pr
+}
+
+// parkedByOwnRedCIHandoff reports whether pr would be a candidate but for
+// the needs-human the dependency-bot sweep's own red-CI hand-off added on
+// this head (staleRedOwnRedCIHandoff). Such a PR is asked about only when
+// the base clears every failing check (consider).
+// A head whose label events already showed a needs-human that is not the
+// App's own is not one (staleRedLabelNotOwn), so it costs no further API
+// call.
+func (p *staleRedBotPass) parkedByOwnRedCIHandoff(repo string, pr github.PullRequest) bool {
+	if p.rebaser == nil {
+		return false
+	}
+	key := escalation.Key(repo, pr.Number)
+	return staleRedOwnRedCIHandoff(p.check.store, key, pr) &&
+		!p.check.store.staleRedLabelNotOwn(key, pr.HeadSHA) &&
+		staleRedBotRebaseCandidate(staleRedWithoutNeedsHuman(pr))
+}
+
+// labelIsOwn reads pr's label events once, right before a request on a PR
+// parked by the sweep's red-CI hand-off, and reports whether the newest
+// needs-human event is the App's own `labeled`. Anything else fails closed.
+// A rebaser that cannot read them, or a read that shows another actor (or
+// no App label), is remembered for this head (in memory), so the head is
+// not read or asked about again. A failed read is not remembered: retry
+// is true, and the next pass reads again.
+func (p *staleRedBotPass) labelIsOwn(ctx context.Context, repo, key string, pr github.PullRequest) (own, retry bool) {
+	reader, ok := p.rebaser.(staleRedLabelActorReader)
+	if !ok {
+		p.check.store.rememberStaleRedLabelNotOwn(key, pr.HeadSHA)
+		return false, false
+	}
+	own, err := reader.StaleRedNeedsHumanLabeledByApp(ctx, repo, pr.Number)
+	if err != nil {
+		p.logger.Warn("stale-red refresh: could not read the label events of a dependency-bot PR; not asking the bot to rebase, retrying next pass",
+			"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "error", err)
+		return false, true
+	}
+	if !own {
+		p.logger.Info("stale-red refresh: needs-human on this dependency-bot PR was not last added by Hive; not asking the bot to rebase",
+			"repo", repo, "pr", pr.Number, "head", pr.HeadSHA)
+		p.check.store.rememberStaleRedLabelNotOwn(key, pr.HeadSHA)
+		return false, false
+	}
+	return true, false
+}
+
 // possible reports, without an API call, whether the pass could ask pr's
-// bot to rebase: a candidate, and bot_rebase_request admits it
+// bot to rebase: a candidate (or one parked only by the sweep's own red-CI
+// hand-off on this head), and bot_rebase_request admits it
 // (depBotRebaseCheck.requestPossible: the gate's decision, nothing
 // recorded). The loop asks it before reading the base tip, so a hive where
 // the gate would refuse spends nothing on bot PRs.
 func (p *staleRedBotPass) possible(repo string, pr github.PullRequest) bool {
-	if p.rebaser == nil || !staleRedBotRebaseCandidate(pr) {
+	if p.rebaser == nil || (!staleRedBotRebaseCandidate(pr) && !p.parkedByOwnRedCIHandoff(repo, pr)) {
 		return false
 	}
 	if p.check.requestPossible(repo, pr) {
@@ -163,6 +267,22 @@ func (p *staleRedBotPass) consider(ctx context.Context, repo string, pr github.P
 	key := escalation.Key(repo, pr.Number)
 	st, found := p.check.store.rebaseState(key)
 	askedHead := found && !st.RequestedAt.IsZero() && strings.EqualFold(st.HeadSHA, pr.HeadSHA)
+
+	// possible admitted pr, so a PR that is not a plain candidate is parked
+	// by the sweep's own red-CI hand-off on this head.
+	parked := !staleRedBotRebaseCandidate(pr) && p.parkedByOwnRedCIHandoff(repo, pr)
+	if parked && verdict != github.StaleRedBaseClears {
+		// Asked about only once the base tip clears every failing check.
+		// Read again next pass.
+		return staleRedBotOutcome{}
+	}
+	if parked && askedHead {
+		// At most once per head, whatever the base does next: the sweep
+		// skips a labelled PR, so no stale-red-bot-did-not-rebase hand-off
+		// would end the requests. The request is in the persisted ledger,
+		// so a restart does not ask again.
+		return staleRedBotOutcome{Settled: true}
+	}
 
 	out := staleRedBotOutcome{}
 	switch verdict {
@@ -236,6 +356,16 @@ func (p *staleRedBotPass) consider(ctx context.Context, repo string, pr github.P
 			"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "facts_known", known)
 		out.Settled = true
 		return out
+	}
+
+	// The last check before the request, so the label events are read only
+	// when the bot would otherwise be asked. A failed read is not settled:
+	// the next pass reads again.
+	if parked {
+		if own, retry := p.labelIsOwn(ctx, repo, key, pr); !own {
+			out.Settled = !retry
+			return out
+		}
 	}
 
 	preview := fmt.Sprintf("tick the rebase/retry checkbox on %s#%d at %s (red on %s, behind %s@%s)",
@@ -404,6 +534,24 @@ func (s *depBotConflictStore) staleRedAsk(key string) (depBotStaleRedAsk, bool) 
 		return depBotStaleRedAsk{}, false
 	}
 	return *a, true
+}
+
+// staleRedLabelNotOwn reports whether headSHA's needs-human was found not
+// to be the App's own on an earlier pass.
+func (s *depBotConflictStore) staleRedLabelNotOwn(key, headSHA string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sha, ok := s.staleRedNotOwnLabel[key]
+	return ok && strings.EqualFold(sha, headSHA)
+}
+
+func (s *depBotConflictStore) rememberStaleRedLabelNotOwn(key, headSHA string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.staleRedNotOwnLabel == nil {
+		s.staleRedNotOwnLabel = map[string]string{}
+	}
+	s.staleRedNotOwnLabel[key] = headSHA
 }
 
 // clearStaleRedAsk forgets the PR's last stale-red request: its CI went
