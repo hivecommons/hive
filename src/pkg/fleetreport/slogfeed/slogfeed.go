@@ -203,7 +203,7 @@ func ghcrTransientTimeout(r slog.Record) bool {
 // appTokenRefreshFallbackMessage is the WARN pkg/github's AppAuth.Token logs
 // when a proactive installation-token refresh fails while the cached token is
 // still valid (src/pkg/github/app.go). Keep the two strings in sync.
-const appTokenRefreshFallbackMessage = "github app token proactive refresh failed; serving still-valid cached token"
+const appTokenRefreshFallbackMessage = "github app token proactive refresh failed; serving still-valid cached token" // #nosec G101 -- a log message to match, not a credential
 
 // appTokenRefreshTimeoutFallback reports whether r is that fallback caused by
 // the mint timing out. The cached token keeps every caller working and the
