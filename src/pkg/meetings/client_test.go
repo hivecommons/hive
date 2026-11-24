@@ -202,10 +202,10 @@ func TestClientToolErrors(t *testing.T) {
 	if IsCode(errors.New("x"), CodeNotLive) {
 		t.Fatal("plain errors carry no code")
 	}
-	if _, err := c.request(ctx, "rpc-error", nil); err == nil || !strings.Contains(err.Error(), "nope") {
+	if _, err := c.request(ctx, "rpc-error", nil, nil); err == nil || !strings.Contains(err.Error(), "nope") {
 		t.Fatalf("rpc error = %v", err)
 	}
-	if _, err := c.request(ctx, "teapot", nil); err == nil || !strings.Contains(err.Error(), "418") {
+	if _, err := c.request(ctx, "teapot", nil, nil); err == nil || !strings.Contains(err.Error(), "418") {
 		t.Fatalf("http error = %v", err)
 	}
 	if err := decodeToolResult("x", json.RawMessage(`[`), nil); err == nil {
@@ -226,6 +226,35 @@ func TestClientReinitializesExpiredSession(t *testing.T) {
 	}
 	if f.inits != 2 {
 		t.Fatalf("inits = %d, want a re-initialize", f.inits)
+	}
+}
+
+func TestClientRechecksJoinAfterSessionExpires(t *testing.T) {
+	f, srv := newFakeQuorumServer(t)
+	c := NewClient(srv.URL, "tok", nil)
+	ctx := context.Background()
+	if err := c.ensureInit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.expire = 1
+	f.mu.Unlock()
+
+	checks := 0
+	_, err := c.Join(ctx, JoinArgs{beforeDispatch: func() error {
+		checks++
+		if checks == 2 {
+			return ErrJoinSuperseded
+		}
+		return nil
+	}})
+	if !errors.Is(err, ErrJoinSuperseded) || checks != 2 {
+		t.Fatalf("Join = %v after %d checks, want superseded on retry", err, checks)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.inits != 2 || len(f.calls) != 0 {
+		t.Fatalf("initialized %d times and sent accepted calls %v", f.inits, f.calls)
 	}
 }
 
