@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/hivecommons/hive/crux/config"
 )
 
 // forwardToInference sends an Anthropic Messages API request to an
@@ -17,7 +19,7 @@ func forwardToInference(clientReq *http.Request, clientBody []byte, w http.Respo
 		return fmt.Errorf("translate request: %w", err)
 	}
 
-	upstreamURL := openAIChatCompletionsURL(route.Endpoint)
+	upstreamURL := config.LiteLLMChatCompletionsURL(route.Endpoint)
 	upstreamReq, err := http.NewRequestWithContext(
 		clientReq.Context(), http.MethodPost, upstreamURL, bytes.NewReader(openaiBody))
 	if err != nil {
@@ -77,14 +79,6 @@ func forwardToInference(clientReq *http.Request, clientBody []byte, w http.Respo
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(translated)
 	return err
-}
-
-func openAIChatCompletionsURL(endpoint string) string {
-	base := strings.TrimRight(endpoint, "/")
-	if strings.HasSuffix(base, "/v1") {
-		return base + "/chat/completions"
-	}
-	return base + "/v1/chat/completions"
 }
 
 type flushResponseWriter struct {

@@ -93,7 +93,7 @@ The agent still launches Claude Code in bare mode. Hive writes Claude settings t
 
 ## Configure a gateway
 
-Use the dashboard's **Governor Config → Model Gateways** UI, or YAML. A gateway needs a name, kind, endpoint, optional key reference, and optional default model. Agents can then set `backend:` to either the built-in kind (`vllm`, `llm-d`, `litellm`, `watsonx`) or to a configured gateway name such as `openrouter`.
+Use the dashboard's **Governor Config → Model Gateways** UI, or YAML. A gateway needs a name, kind, endpoint, optional key reference, and optional default model. The endpoint can be the server root (`https://litellm.example.com`) or end in `/v1` (`https://litellm.example.com/v1`). Hive adds `/v1` only when the endpoint does not end in it. Agents can then set `backend:` to either the built-in kind (`vllm`, `llm-d`, `litellm`, `watsonx`) or to a configured gateway name such as `openrouter`.
 
 Each gateway also accepts an optional `key_name` — a human-chosen LABEL for the configured key ("Team inference key", "andy personal", …). It is safe-to-show metadata, not a secret: it records WHICH key a gateway is set to use so operators can tell keys apart without ever seeing the value. The dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set. `key_name` mirrors the bob backend's `KeyName` field and is optional on every gateway kind (litellm / openrouter / watsonx / vllm); omitting it keeps existing gateways byte-identical in `hive.yaml`.
 

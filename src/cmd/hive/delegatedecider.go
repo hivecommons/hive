@@ -116,7 +116,7 @@ func (r *delegateDeciderRunner) RunDeciderTurn(ctx context.Context, profile, sys
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, delegateDeciderTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint+"/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, config.LiteLLMChatCompletionsURL(endpoint), bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("%s: build request: %w", profile, err)
 	}

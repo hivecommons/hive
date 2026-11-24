@@ -392,7 +392,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			return
 		}
 
-		upstreamURL := strings.TrimRight(route.Endpoint, "/") + "/v1/chat/completions"
+		upstreamURL := config.LiteLLMChatCompletionsURL(route.Endpoint)
 		upstreamReq, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(openaiBody))
 		if err != nil {
 			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to create upstream request"}}`, http.StatusBadGateway)
@@ -605,7 +605,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		return
 	}
 
-	upstreamURL := strings.TrimRight(route.Endpoint, "/") + "/v1/chat/completions"
+	upstreamURL := config.LiteLLMChatCompletionsURL(route.Endpoint)
 	upstreamReq, err := http.NewRequestWithContext(req.Context(), "POST", upstreamURL, bytes.NewReader(openaiBody))
 	if err != nil {
 		p.writeHTTPError(conn, http.StatusBadGateway, "failed to create upstream request")

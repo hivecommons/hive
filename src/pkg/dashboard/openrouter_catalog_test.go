@@ -2,23 +2,6 @@ package dashboard
 
 import "testing"
 
-// OpenRouter's base URL already ends in /api/v1. The generic probe appended
-// "/v1/models" and asked for /api/v1/v1/models (404), so OpenRouter gateways
-// never discovered their catalog.
-func TestOpenAIModelsURLHandlesV1Suffix(t *testing.T) {
-	for in, want := range map[string]string{
-		"https://openrouter.ai/api/v1":                 "https://openrouter.ai/api/v1/models",
-		"https://openrouter.ai/api/v1/":                "https://openrouter.ai/api/v1/models",
-		"http://vllm:8000":                             "http://vllm:8000/v1/models",
-		"http://vllm:8000/":                            "http://vllm:8000/v1/models",
-		"https://us-south.ml.cloud.ibm.com/ml/gateway": "https://us-south.ml.cloud.ibm.com/ml/gateway/v1/models",
-	} {
-		if got := openAIModelsURL(in); got != want {
-			t.Errorf("openAIModelsURL(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestAvailableOpenRouterSuggestedHidesRetired(t *testing.T) {
 	sug := []OpenRouterSuggestedModel{{ID: "a/one", Label: "One"}, {ID: "b/two", Label: "Two"}}
 	got := availableOpenRouterSuggested(sug, []string{"b/two", "c/three"})

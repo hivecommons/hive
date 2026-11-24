@@ -329,7 +329,7 @@ func inferenceHTTPClient(route *InferenceRoute) (*http.Client, error) {
 
 // newModelsRequest builds an authenticated GET {endpoint}/v1/models request.
 func newModelsRequest(endpoint, apiKey string) (*http.Request, error) {
-	req, err := http.NewRequest("GET", strings.TrimRight(endpoint, "/")+"/v1/models", nil)
+	req, err := http.NewRequest("GET", config.OpenAIURL(endpoint, "/models"), nil)
 	if err != nil {
 		return nil, err
 	}

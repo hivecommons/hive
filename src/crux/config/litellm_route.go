@@ -35,15 +35,24 @@ const (
 // to for an endpoint: {endpoint}/v1/chat/completions, tolerating a base that
 // already ends in /v1 and any trailing slash. The dashboard's Test Connection
 // reports this URL so the operator sees the request agents will actually
-// make, not a guess. pkg/proxy keeps its own copy (it cannot import
-// pkg/inference without a test-only cycle); TestOpenAIChatCompletionsURLMatchesInference
-// pins the two together.
+// make, not a guess.
 func LiteLLMChatCompletionsURL(endpoint string) string {
+	return OpenAIURL(endpoint, "/chat/completions")
+}
+
+// OpenAIURL joins an OpenAI API path such as "/models" to a gateway endpoint.
+// Most endpoints are stored as the server root (vLLM's http://host:8000,
+// watsonx's .../ml/gateway). The OpenRouter and Groq presets and OpenRouter
+// scan-to-fund store an endpoint that already ends in /v1, so /v1 is added
+// only when it is not there. Without this an OpenRouter gateway probed
+// /api/v1/v1/models, got a 404, and its model dropdown fell back to unrelated
+// static aliases.
+func OpenAIURL(endpoint, path string) string {
 	base := strings.TrimRight(strings.TrimSpace(endpoint), "/")
-	if strings.HasSuffix(base, "/v1") {
-		return base + "/chat/completions"
+	if !strings.HasSuffix(base, "/v1") {
+		base += "/v1"
 	}
-	return base + "/v1/chat/completions"
+	return base + path
 }
 
 // ExplicitLiteLLMGateway returns the gateway from an EXPLICIT `gateways:`

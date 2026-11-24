@@ -1932,7 +1932,7 @@ func describeEgressProxy(req *http.Request) string {
 // still sent as the Bearer — for watsonx the caller passes the minted IAM token
 // as apiKey, not the raw key.
 func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]string) (int, error) {
-	modelsURL := openAIModelsURL(endpoint)
+	modelsURL := config.OpenAIURL(endpoint, "/models")
 	req, err := http.NewRequest("GET", modelsURL, nil)
 	if err != nil {
 		return 0, fmt.Errorf("building request: %w", err)
@@ -2100,7 +2100,7 @@ func (e *probeEdgeRejectedError) Unwrap() error { return e.err }
 // completions from their laptop must not be told the configuration is broken
 // just because model listing is filtered (hivecommons/hive#9945).
 func probeLiteLLMInference(endpoint, apiKey, model string) error {
-	chatURL := strings.TrimRight(endpoint, "/") + "/v1/chat/completions"
+	chatURL := config.LiteLLMChatCompletionsURL(endpoint)
 	payload, err := json.Marshal(map[string]interface{}{
 		"model":      model,
 		"messages":   []map[string]string{{"role": "user", "content": "ping"}},
