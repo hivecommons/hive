@@ -119,13 +119,13 @@ var cardBandDefs = map[string]cardBandDef{
 		rule: "Confirm the gap, or triage it."},
 	cardBandAdmit: {label: "Admit", group: cardGroupYourTurn, hideZero: true,
 		rule: "Add the admission label to let agents work on it, or close it."},
-	cardBandTurnOther: {label: "Other", group: cardGroupYourTurn, hideZero: true,
-		rule:   "Needs a person for a reason not listed above; the download shows each item's reason.",
-		prRule: "Needs a person for a reason not listed above, such as a red base branch, nobody to fix it, a dependency-bot PR still red after the hand-off time, or a bot's red or conflicting PR labelled needs-human; the download shows each item's reason."},
+	cardBandTurnOther: {label: "Other reason", group: cardGroupYourTurn, hideZero: true,
+		rule:   "Needs a person for a known reason that has no band of its own; the export's card_reason names it.",
+		prRule: "Needs a person for a known reason that has no band of its own, such as a red base branch, nobody to fix it, a dependency-bot PR still red after the hand-off time, or a bot's red or conflicting PR labelled needs-human; the export's card_reason names it."},
 	cardBandToClose: {label: "Yours to close", group: cardGroupYourTurn,
 		rule: "The hive thinks it may be done or no longer needed but won't close it itself. Close it, or keep it open."},
-	cardBandUnexplained: {label: "Unexplained", group: cardGroupYourTurn, keep: true,
-		rule: "No rule explains what happens next. This is a hive bug; please report it."},
+	cardBandUnexplained: {label: "No rule matched (hive bug)", group: cardGroupYourTurn, keep: true,
+		rule: "No rule explains what happens next for this item. It is a hive bug and should be 0; report it."},
 	cardBandCoveredByPR: {label: "Covered by an open PR", group: cardGroupWaiting,
 		rule: "A PR is doing the work. Follow the PR."},
 	cardBandWaitingOnItem: {label: "Waiting on another item", group: cardGroupWaiting,
@@ -154,7 +154,7 @@ var cardBandDefs = map[string]cardBandDef{
 }
 
 // cardYourTurnRule is the your-turn tile's rule.
-const cardYourTurnRule = "No agent will move these until a person acts. Each row says what to do next, for example decide, review or close. Unexplained is a hive bug a person should see."
+const cardYourTurnRule = "No agent will move these until a person acts. Each row says what to do next, for example decide, review or close. No rule matched (hive bug) is listed here only so a person sees it."
 
 // cardGroupDef is one group's spec; term is its Actionable-now equation term.
 type cardGroupDef struct {
