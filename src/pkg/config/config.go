@@ -4326,6 +4326,10 @@ type ForgejoConfig struct {
 	// TokenEnv is the environment variable holding the Forgejo access token.
 	// Defaults to DefaultForgejoTokenEnv.
 	TokenEnv string `yaml:"token_env,omitempty"`
+	// Integration, when set, makes git clone and push on Forgejo repos use a
+	// short-lived JWT per token tier, signed by an operator-held key, instead
+	// of TokenEnv's access token. See ForgejoIntegrationConfig.
+	Integration *ForgejoIntegrationConfig `yaml:"integration,omitempty" json:"Integration,omitempty"`
 }
 
 const (
