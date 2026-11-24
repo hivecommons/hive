@@ -1287,12 +1287,24 @@
          one-line box so a card row stays under the #17161 height budget; the
          hit area is padded out to the tap target like .ham-pill (#17453). */
       #activity-monitor-section .ham-badge-mod.ham-decision-trigger { position: relative; }
-      /* Gate segments keep the one-line pill; each segment pads its hit area
-         out to the tap target so the phone harness sees ≥44×44. */
-      #activity-monitor-section .ham-human-gate { display: inline-flex; line-height: inherit; vertical-align: baseline; }
-      #activity-monitor-section .ham-human-gate > .ham-gate-act, #activity-monitor-section .ham-human-gate .ham-gate-more, #activity-monitor-section .ham-human-gate > button.ham-gate-status { position: relative; display: inline-flex; min-width: var(--tap-target); min-height: 0; height: auto; padding-block: 0; line-height: inherit; }
-
-      #activity-monitor-section .ham-human-gate > .ham-gate-act::before, #activity-monitor-section .ham-human-gate .ham-gate-more::before, #activity-monitor-section .ham-human-gate > button.ham-gate-status::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) 0; }
+      /* Gate segments are real tap-target-tall boxes, not a one-line pill
+         with a ::before hit slop: the pill's overflow: hidden (it rounds the
+         segment fills) clipped that slop, so the … segment only took taps on
+         its 16px painted line. The pill stays rounded by giving its end
+         segments the pill radius instead of clipping. The … segment sits
+         --sp-4 (8px) clear of the verb before it, so a near miss on … never
+         lands on Approve. */
+      #activity-monitor-section .ham-human-gate { display: inline-flex; align-items: stretch; min-height: var(--tap-target); overflow: visible; line-height: inherit; vertical-align: middle; }
+      #activity-monitor-section .ham-human-gate > .ham-gate-act, #activity-monitor-section .ham-human-gate .ham-gate-more, #activity-monitor-section .ham-human-gate > button.ham-gate-status { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: var(--tap-target); min-height: var(--tap-target); height: auto; padding-block: 0; line-height: inherit; }
+      #activity-monitor-section .ham-human-gate > :first-child { border-radius: var(--r-pill) 0 0 var(--r-pill); }
+      #activity-monitor-section .ham-human-gate > .ham-gate-act:last-child, #activity-monitor-section .ham-human-gate .ham-gate-more { --ham-gate-seg-radius: 0 var(--r-pill) var(--r-pill) 0; }
+      #activity-monitor-section .ham-human-gate .ham-gate-more-wrap { display: inline-flex; align-items: stretch; margin-left: var(--sp-4); }
+      #activity-monitor-section .ham-human-gate .ham-gate-more { font-size: var(--tap-glyph); }
+      /* The head's inline lead-action slop (::before, above) would now spill
+         past the unclipped pill onto the title and step pill: the segments
+         are already tap-sized, so they drop it. */
+      #activity-monitor-section .ham-human-gate .ham-lead-act::before { content: none; }
+      #activity-monitor-section .ham-human-gate .ham-gate-more:focus-visible, #activity-monitor-section .ham-kebab:focus-visible { outline: calc(var(--line-width) * 2) solid var(--accent); outline-offset: calc(var(--line-width) * -2); }
       #activity-monitor-section .ham-badge-mod.ham-decision-trigger::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) calc((100% - var(--tap-target)) / 2); }
       /* A card keeps its two-line head and its density (#17161): the 🗒
          shows on a phone only once the item has notes; the row's ⋯ menu
@@ -1304,8 +1316,12 @@
       #activity-monitor-section .ham-repo-filter { min-height: var(--tap-target); align-items: center; }
       #activity-monitor-section .ham-header-tool { width: var(--tap-target); min-width: var(--tap-target); height: var(--tap-target); min-height: var(--tap-target); padding: 0; font-size: var(--tap-glyph); }
       #activity-monitor-panel { padding-left: 0; }
-      #activity-monitor-section .ham-row > .ham-row-tools, #activity-monitor-section .ham-sub > .ham-row-tools { left: auto; right: 0; top: 0; width: auto; flex-direction: row; align-items: flex-start; gap: var(--sp-2); z-index: 1; }
-      #activity-monitor-section .ham-row > .ham-row-head, #activity-monitor-section .ham-sub > .ham-row-head { padding-right: calc(2 * var(--tap-target) + var(--sp-2) + var(--sp-3)); min-height: var(--tap-target); }
+      #activity-monitor-section .ham-row > .ham-row-tools, #activity-monitor-section .ham-sub > .ham-row-tools { left: auto; right: 0; top: 0; width: auto; flex-direction: row; align-items: flex-start; gap: var(--sp-4); z-index: 1; }
+      #activity-monitor-section .ham-row > .ham-row-head, #activity-monitor-section .ham-sub > .ham-row-head { padding-right: calc(2 * var(--tap-target) + var(--sp-4) + var(--sp-3)); min-height: var(--tap-target); }
+      /* The decision popover's "More ⋯" (and its sibling verbs) is a sheet
+         on a phone, hosted outside the section: tap-sized and 8px apart. */
+      .ham-decision-acts { gap: var(--sp-4); }
+      .ham-decision-act { min-height: var(--tap-target-touch); min-width: var(--tap-target-touch); padding-inline: var(--sp-4); font-size: var(--fs-sm); }
       #activity-monitor-section .ham-sel, #activity-monitor-section .ham-kebab { width: var(--tap-target); height: var(--tap-target); min-width: var(--tap-target); min-height: var(--tap-target); font-size: var(--tap-glyph); opacity: 1; }
       .ham-menu.ham-menu-sheet { position: static; min-width: 0; max-width: none; padding: 0; border: 0; box-shadow: none; background: transparent; font-size: var(--fs-touch); }
       .ham-menu-sheet .ham-menu-head { display: none; }

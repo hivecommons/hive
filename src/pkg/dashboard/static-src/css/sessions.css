@@ -42,6 +42,8 @@
     .sessions-pane-meta { color: var(--muted); font-size: var(--fs-sm); flex: 1 1 auto; }
     .sessions-menu { position: relative; }
     .sessions-menu > summary { list-style: none; cursor: pointer; }
+    /* The session ⋯ menu meets the coarse-pointer floor on touch screens. */
+    @media (pointer: coarse) { .sessions-menu > summary { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-width: var(--tap-target-touch); min-height: var(--tap-target-touch); font-size: var(--tap-glyph); } }
     .sessions-menu-items { position: absolute; right: 0; z-index: var(--z-sticky); display: flex; flex-direction: column; min-width: 12em; background: var(--panel); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow-raised); padding: var(--sp-2); }
     .sessions-menu-items button { background: none; border: 0; color: var(--fg); font: inherit; font-size: var(--fs-sm); text-align: left; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm); cursor: pointer; }
     .sessions-menu-items button:hover { background: color-mix(in srgb, var(--border) 30%, transparent); }
