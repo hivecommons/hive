@@ -718,10 +718,11 @@ pe_pulls "$pe_plain" 9012 mo 1012
 pe_commits 9012 "b900000000000000000000000000000000000000|mo|1012|mo@example.com|mo|mo@example.com|x\\n\\nSigned-off-by: Mo <mo@example.com>"
 
 # Negatives for the update-branch exception (#19775): it covers only a
-# verified web-flow merge authored by a Bot account. A web-flow merge by
-# another human (the conflict editor can add content), an unverified bot
-# merge, a single-parent bot commit, and a PR holding nothing but
-# update-branch merges all still fail.
+# verified web-flow merge authored by the hive App (login and id). A web-flow
+# merge by another human (the conflict editor can add content), one by another
+# GitHub App, one by a bot reusing the hive App login with another id, an
+# unverified bot merge, a single-parent bot commit, and a PR holding nothing
+# but update-branch merges all still fail.
 pe_ub_author="n100000000000000000000000000000000000000|nina|1013|nina@example.com|nina|nina@example.com|x\\n\\nSigned-off-by: Nina <nina@example.com>"
 pe_commit 'Nina' '1013+nina@users.noreply.github.com' $'human web-flow merge\n\nSigned-off-by: Nina <nina@example.com>'
 pe_ub_human=$pe_sha
@@ -739,6 +740,14 @@ pe_commit 'Nina' '1013+nina@users.noreply.github.com' $'only update-branch merge
 pe_ub_only=$pe_sha
 pe_pulls "$pe_ub_only" 9016 nina 1013
 pe_commits 9016 "merge|n500000000000000000000000000000000000000|hivecommons-hive[bot]|280983584|Bot|web-flow|true|2"
+pe_commit 'Nina' '1013+nina@users.noreply.github.com' $'other app merge\n\nSigned-off-by: Nina <nina@example.com>'
+pe_ub_otherbot=$pe_sha
+pe_pulls "$pe_ub_otherbot" 9017 nina 1013
+pe_commits 9017 "$pe_ub_author" "merge|n600000000000000000000000000000000000000|dependabot[bot]|49699333|Bot|web-flow|true|2"
+pe_commit 'Nina' '1013+nina@users.noreply.github.com' $'hive login wrong id\n\nSigned-off-by: Nina <nina@example.com>'
+pe_ub_wrongid=$pe_sha
+pe_pulls "$pe_ub_wrongid" 9018 nina 1013
+pe_commits 9018 "$pe_ub_author" "merge|n700000000000000000000000000000000000000|hivecommons-hive[bot]|1015|Bot|web-flow|true|2"
 
 run_pe() { # run_pe <env-assignments...>
   set +e
@@ -784,6 +793,8 @@ pe_expect_fail "$pe_plain" 'a plain (id-less) noreply author' 'mismatched-signof
 pe_expect_fail "$pe_ub_human" 'a web-flow merge by another human' 'mismatched-signoff .*pr-evidence=pr-commit-not-by-pr-author$'
 pe_expect_fail "$pe_ub_unverified" 'an unverified bot merge' 'mismatched-signoff .*pr-evidence=pr-commit-not-by-pr-author$'
 pe_expect_fail "$pe_ub_single" 'a single-parent bot commit' 'mismatched-signoff .*pr-evidence=pr-commit-not-by-pr-author$'
+pe_expect_fail "$pe_ub_otherbot" 'a web-flow merge by another GitHub App' 'mismatched-signoff .*pr-evidence=pr-commit-not-by-pr-author$'
+pe_expect_fail "$pe_ub_wrongid" 'a bot merge with the hive App login but another id' 'mismatched-signoff .*pr-evidence=pr-commit-not-by-pr-author$'
 pe_expect_fail "$pe_ub_only" 'a PR of only update-branch merges' 'mismatched-signoff .*pr-evidence=pr-has-no-commits$'
 if [ "$rc" -eq 1 ] && out_grep -q '4 pr-noreply; 0 same-person-noreply)'; then
   pass "the run still fails on the negatives and the summary counts 4 pr-noreply"
@@ -813,7 +824,7 @@ else
 fi
 
 # Waiving every negative leaves only the positives, which pass on their own.
-run_pe "DCO_WAIVED_COMMITS=${pe_login} ${pe_id} ${pe_other} ${pe_multi} ${pe_unattr} ${pe_unsigned_pr} ${pe_nopr} ${pe_othermerge} ${pe_apierr} ${pe_commitserr} ${pe_nosignoff} ${pe_plain} ${pe_ub_human} ${pe_ub_unverified} ${pe_ub_single} ${pe_ub_only}"
+run_pe "DCO_WAIVED_COMMITS=${pe_login} ${pe_id} ${pe_other} ${pe_multi} ${pe_unattr} ${pe_unsigned_pr} ${pe_nopr} ${pe_othermerge} ${pe_apierr} ${pe_commitserr} ${pe_nosignoff} ${pe_plain} ${pe_ub_human} ${pe_ub_otherbot} ${pe_ub_wrongid} ${pe_ub_unverified} ${pe_ub_single} ${pe_ub_only}"
 if [ "$rc" -eq 0 ] && ! out_grep -q '^FAIL '; then
   pass "with the negatives waived the PR-evidence positives pass the run"
 else

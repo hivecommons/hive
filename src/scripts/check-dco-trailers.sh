@@ -389,17 +389,25 @@ def same_user(account):
     return (str(account.get("login") or "").lower() == login
             and account.get("id") == uid)
 
+# The hive App, the only account whose Update-branch merges are exempt. Login
+# AND numeric id must both match, so another GitHub App with write access to
+# the PR branch cannot merge an arbitrary ref and have it ignored.
+HIVE_APP_LOGIN = "hivecommons-hive[bot]"
+HIVE_APP_ID = 280983584
+
 def update_branch_merge(c):
     # GitHub "Update branch" merge of the base into the PR head (#19775): two
-    # or more parents, authored by a Bot account, committed and verified by
-    # GitHub itself (web-flow). GitHub refuses that merge on any conflict and a
-    # bot has no conflict editor, so it carries only base-branch content and
-    # authors none of the squashed change.
+    # or more parents, authored by the hive App, committed and verified by
+    # GitHub itself (web-flow). GitHub refuses that merge on any conflict and
+    # the App has no conflict editor, so it carries only base-branch content
+    # and authors none of the squashed change.
     author = c.get("author") or {}
     committer = c.get("committer") or {}
     verification = (c.get("commit") or {}).get("verification") or {}
     return (len(c.get("parents") or []) >= 2
             and author.get("type") == "Bot"
+            and author.get("login") == HIVE_APP_LOGIN
+            and author.get("id") == HIVE_APP_ID
             and committer.get("login") == "web-flow"
             and verification.get("verified") is True)
 
@@ -451,8 +459,9 @@ print("ok pr#%s:%s" % (pr.get("number"), ",".join(evidence)))
 #   - EVERY commit on the PR is attributed by GitHub to that same account
 #     (login and id), so a multi-author PR never qualifies. The one exception
 #     is a GitHub "Update branch" merge: a verified web-flow merge commit with
-#     two or more parents authored by a Bot account (#19775), which carries
-#     only base-branch content and is ignored, never counted as evidence;
+#     two or more parents authored by the hive App, login and id (#19775),
+#     which carries only base-branch content and is ignored, never counted as
+#     evidence;
 #   - EVERY Signed-off-by on the squash other than the noreply author itself
 #     is the author or committer email of one of those commits, and that very
 #     commit carried that Signed-off-by.
