@@ -1,1 +1,0 @@
-- A hive that authenticates with a personal access token now picks up a rotated `github.token` when its config reloads. Before, the GitHub client was built once at boot, so the old token kept being used until a restart. The new token also reaches agents and relays immediately. Settings-field rotation (#19633) is not part of this change.

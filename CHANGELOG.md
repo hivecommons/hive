@@ -11,6 +11,27 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.358.0)
+
+### Added
+
+- A hive whose repositories are all on GitLab, Gitea or Forgejo now finds work. The governor cycle lists each repository's open issues and change requests through the forge adapter and applies the hold, exempt, hard-suppress, issue-filter and reporter-trust gates (reporter trust fails closed, since the forge payload has no author association). GitHub hives, and hives with any repository on GitHub, enumerate exactly as before. Refs [#19494](https://github.com/hivecommons/hive/issues/19494).
+- Dashboard: with Ask on, the top bar Help menu and the sidebar Help group now have an **Ask Hive** item right after Getting started that opens the Ask panel (now titled Ask Hive); it is hidden while Ask is off and works with touch and the keyboard. The shared panel gains `HiveAsk.open()` and `HiveAsk.close()` (#19688).
+- A self-hosted spoke can turn off GitHub sign-in with `dashboard.github_sign_in: false`: its login page then shows a "Sign in through the hub" link (to `dashboard.hub_sign_in_url`, else `hub.url`) instead of the GitHub button, and `/api/gh-user-auth/start` and `/poll` refuse with an error that names the setting (#19618).
+
+### Changed
+
+- **The weekly competitor report workflow is retired.** `weekly-competitor-report` (the gh-aw source and its compiled `.lock.yml`) had failed every scheduled run since 2026-11-02 with HTTP 429 from the engine, and it published competitor research into repository issues. It is removed along with its grounding script, tests and fixtures, its compile-guard steps in `gh-aw-compile.yml`, its docs page, and its entries in the gh-aw README and the notification class table. The on-ramp sample compile and classifier tests are unchanged ([#19535](https://github.com/hivecommons/hive/issues/19535)).
+- The hub landing page lists Forgejo in a new Forges group with the official Forgejo logo (by Caesar Schinas, CC BY-SA 4.0, credited on the page), names Forgejo apart from Gitea in the source-control badges, and the get-started forge message says Forgejo support is in progress. A new docs page, `src/docs/integrations/forgejo.md`, describes what Hive does with a Forgejo repository on v5 today, the `forgejo:` config keys, and the open work. Forgejo is marked partial and in progress until [#19494](https://github.com/hivecommons/hive/issues/19494) closes. Refs [#19672](https://github.com/hivecommons/hive/issues/19672).
+
+### Fixed
+
+- The stage tracker now offers Adopt now in the ⋯ menu on a person-authored PR that waits for its author to push (071 / 072), so an operator can take over a stalled contributor PR from the dashboard. It is an explicit, audited operator action: it never becomes the row's inline lead, Reroute stays disabled because there is no Contributor Relay to reroute from, the row still waits on its author, and the engine still never adopts a person's PR on its own ([#19645](https://github.com/hivecommons/hive/issues/19645)).
+- hub: the owner a self-registered spoke reports in its own heartbeat can no longer grant, revoke or approve hub access to that hive; only the hub admin and users holding a stored owner grant can (#19653). My Hives no longer stores that heartbeat owner as an owner grant, and the dashboard hides the Permissions action and the access roster from it. Hosted hives are unchanged.
+- Dashboard: on a phone, the "..." on a stage tracker row's human-gate pill now opens a full-screen sheet with tap-sized items, so "Let hive decide" (and "Request changes...") can be reached again; each item spells out what it does or why it is disabled. On wider layouts the "..." popover is anchored under its button and kept on-screen instead of opening off-screen when the page is scrolled (#19655).
+- ci(dco): the post-merge DCO monitor no longer needs a per-commit waiver for a contributor's first squash when their GitHub email is private. When the squash author is the PR author's own `<id>+<login>@users.noreply.github.com` address and every `Signed-off-by` on it was carried by that author's GitHub-attributed PR commits, the merged PR is accepted as proof that the two addresses are one signer. Sign-off is still required on every commit; a missing sign-off, a different login, a sign-off for someone else, a multi-author PR, an unresolvable PR or any API error still fails.
+- A hive that authenticates with a personal access token now picks up a rotated `github.token` when its config reloads. Before, the GitHub client was built once at boot, so the old token kept being used until a restart. The new token also reaches agents and relays immediately. Settings-field rotation (#19633) is not part of this change.
+
 ## 2026-11-24 (v5.357.0)
 
 ### Added
