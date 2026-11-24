@@ -22,6 +22,11 @@ bad()  { echo "  FAIL: $*"; fail=1; }
 # the match succeeded (#7080). A herestring has no pipe for pipefail to see.
 out_grep() { grep "$@" <<<"$output"; }
 
+# Every section except the PR-evidence one runs with that rule off, so no case
+# here ever reaches the real GitHub API (CI sets GITHUB_REPOSITORY). run_pe
+# turns it back on against a fixture directory.
+export DCO_PR_EVIDENCE=false
+
 repo="$TMP/repo"
 mkdir -p "$repo"
 cd "$repo" || exit 1
@@ -526,6 +531,240 @@ if [ "$rc" -eq 2 ]; then
   pass "a non-numeric DCO_SAME_PERSON_WINDOW is a config error"
 else
   bad "non-numeric window should exit 2, got ${rc}"
+  echo "$output" | sed 's/^/      | /'
+fi
+cd "$repo" || exit 1
+
+# --- PR evidence for a first private-email squash (hivecommons/hive#19660) ---
+#
+# The same squash shape as above, but as the contributor's FIRST commit on the
+# branch, so local history has no evidence. The merged PR supplies it: the
+# squash author is the PR author's own <id>+<login> noreply address, every PR
+# commit is GitHub-attributed to that account, and the PR commit authored under
+# the sign-off address carried that sign-off. Fixture names follow
+# github_api_get: the API path with every `/ ? & =` turned into `_`.
+pe_repo="$TMP/pr-evidence"
+pe_fix="$TMP/pr-evidence-fixtures"
+mkdir -p "$pe_repo" "$pe_fix"
+cd "$pe_repo" || exit 1
+git init -q
+pe_slug='test-org/test-repo'
+
+pe_n=0
+pe_commit() { # pe_commit <author-name> <author-email> <message>; sets pe_sha
+  git config user.name "$1"
+  git config user.email "$2"
+  pe_n=$((pe_n + 1))
+  echo "$pe_n" >> f.txt
+  git add f.txt
+  git commit -q -m "$3"
+  pe_sha=$(git rev-parse HEAD)
+}
+
+pe_fixture_name() { printf '%s/%s.json' "$pe_fix" "$(printf '%s' "$1" | tr '/?&=' '____')"; }
+
+# pe_pulls <squash-sha> <pr-number> <pr-login> <pr-id> [merge-commit-sha]
+pe_pulls() {
+  python3 - "$1" "$2" "$3" "$4" "${5:-$1}" > "$(pe_fixture_name "repos/${pe_slug}/commits/$1/pulls")" <<'PY'
+import json, sys
+_, sha, number, login, uid, merge = sys.argv
+print(json.dumps([{"number": int(number), "merge_commit_sha": merge,
+                   "merged_at": "2026-11-24T12:39:06Z",
+                   "user": {"login": login, "id": int(uid)}}]))
+PY
+}
+
+# pe_commits <pr-number> <spec>... where each spec is
+# sha|author-login|author-id|author-email|committer-login|committer-email|message
+# and an empty author-login stands for a commit GitHub could not attribute.
+pe_commits() {
+  number="$1"; shift
+  python3 - "$@" > "$(pe_fixture_name "repos/${pe_slug}/pulls/${number}/commits?per_page=100&page=1")" <<'PY'
+import json, sys
+out = []
+for spec in sys.argv[1:]:
+    sha, al, aid, ae, cl, ce, msg = spec.split("|", 6)
+    out.append({
+        "sha": sha,
+        "author": {"login": al, "id": int(aid)} if al else None,
+        "committer": {"login": cl, "id": int(aid)} if cl else None,
+        "commit": {"author": {"email": ae}, "committer": {"email": ce},
+                   "message": msg.replace("\\n", "\n")},
+    })
+print(json.dumps(out))
+PY
+}
+
+# Positive, 50df3121 shape (#19637): single branch commit authored and signed
+# off under a personal gmail; squash written as the mixed-case noreply.
+pe_commit 'Fayez Bast' '96446332+FayezBast@users.noreply.github.com' \
+  $'🐛 dashboard: honor startup options when creating agents (#19637)\n\nSigned-off-by: Fayez Bast <fayezbast15@gmail.com>'
+pe_fayez=$pe_sha
+pe_pulls "$pe_fayez" 19637 FayezBast 96446332
+pe_commits 19637 "9ce6d34d00000000000000000000000000000000|FayezBast|96446332|fayezbast15@gmail.com|FayezBast|fayezbast15@gmail.com|wip\\n\\nSigned-off-by: Fayez Bast <fayezbast15@gmail.com>"
+
+# Positive, 687c3cb0 shape (#15315): long body with Hive trailers, sign-off
+# name in a different case from the landing author name, work address.
+pe_commit 'Sachin Naik' '91499691+odttlnt@users.noreply.github.com' \
+  $'🐛 fix: stop filing the pre-restart kick-undeliverable warning (#15315)\n\nMark the message benign for that feed.\n\nHive-Run: hivecommons/hive#15313\nHive-Plan: selfreport agent_pane_timeout\n\nSigned-off-by: SACHIN NAIK <sachin.naik@example.com>'
+pe_sachin=$pe_sha
+pe_pulls "$pe_sachin" 15315 odttlnt 91499691
+pe_commits 15315 "97a705ca00000000000000000000000000000000|odttlnt|91499691|sachin.naik@example.com|odttlnt|sachin.naik@example.com|fix\\n\\nSigned-off-by: SACHIN NAIK <sachin.naik@example.com>"
+
+# Positive, 64f4815a shape (#19386): branch name differs from landing name,
+# body carries a Fixes line before the sign-off.
+pe_commit 'Riccardo Bifulco' '154237075+RiccardoBifulco@users.noreply.github.com' \
+  $'🐛 fix(msteams): make TestListenBackoffStopsOnContext deterministic (#19386)\n\nFixes #19383\n\nSigned-off-by: RiccardoBifulco <riccardoxxbif@gmail.com>'
+pe_riccardo=$pe_sha
+pe_pulls "$pe_riccardo" 19386 RiccardoBifulco 154237075
+pe_commits 19386 "3c7de54200000000000000000000000000000000|RiccardoBifulco|154237075|riccardoxxbif@gmail.com|RiccardoBifulco|riccardoxxbif@gmail.com|fix\\n\\nFixes #19383\\n\\nSigned-off-by: RiccardoBifulco <riccardoxxbif@gmail.com>"
+
+# Negative: the noreply login is not the PR author's (same numeric id).
+pe_commit 'Alice' '1001+alice@users.noreply.github.com' $'login mismatch\n\nSigned-off-by: Alice <alice@example.com>'
+pe_login=$pe_sha
+pe_pulls "$pe_login" 9001 mallory 1001
+pe_commits 9001 "a100000000000000000000000000000000000000|mallory|1001|alice@example.com|mallory|alice@example.com|x\\n\\nSigned-off-by: Alice <alice@example.com>"
+
+# Negative: the login matches but the numeric id does not.
+pe_commit 'Bob' '1002+bob@users.noreply.github.com' $'id mismatch\n\nSigned-off-by: Bob <bob@example.com>'
+pe_id=$pe_sha
+pe_pulls "$pe_id" 9002 bob 9999
+pe_commits 9002 "b100000000000000000000000000000000000000|bob|9999|bob@example.com|bob|bob@example.com|x\\n\\nSigned-off-by: Bob <bob@example.com>"
+
+# Negative: the squash signs off as someone else; the PR's commits are the
+# author's own and say nothing about that address.
+pe_commit 'Carol' '1003+carol@users.noreply.github.com' $'sign-off for someone else\n\nSigned-off-by: Dave <dave@example.com>'
+pe_other=$pe_sha
+pe_pulls "$pe_other" 9003 carol 1003
+pe_commits 9003 "c100000000000000000000000000000000000000|carol|1003|carol@example.com|carol|carol@example.com|x\\n\\nSigned-off-by: Carol <carol@example.com>"
+
+# Negative: a multi-author PR. The sign-off is backed by the PR author's own
+# commit, but another account also has a commit on the PR.
+pe_commit 'Erin' '1004+erin@users.noreply.github.com' $'multi-author pr\n\nSigned-off-by: Erin <erin@example.com>'
+pe_multi=$pe_sha
+pe_pulls "$pe_multi" 9004 erin 1004
+pe_commits 9004 \
+  "e100000000000000000000000000000000000000|erin|1004|erin@example.com|erin|erin@example.com|x\\n\\nSigned-off-by: Erin <erin@example.com>" \
+  "e200000000000000000000000000000000000000|frank|1005|frank@example.com|frank|frank@example.com|y\\n\\nSigned-off-by: Frank <frank@example.com>"
+
+# Negative: a PR commit GitHub could not attribute to any account.
+pe_commit 'Gina' '1006+gina@users.noreply.github.com' $'unattributed pr commit\n\nSigned-off-by: Gina <gina@example.com>'
+pe_unattr=$pe_sha
+pe_pulls "$pe_unattr" 9006 gina 1006
+pe_commits 9006 "f100000000000000000000000000000000000000||1006|gina@example.com||gina@example.com|x\\n\\nSigned-off-by: Gina <gina@example.com>"
+
+# Negative: the PR commit is authored under the sign-off address but never
+# carried that Signed-off-by itself.
+pe_commit 'Hank' '1007+hank@users.noreply.github.com' $'pr commit lacked the sign-off\n\nSigned-off-by: Hank <hank@example.com>'
+pe_unsigned_pr=$pe_sha
+pe_pulls "$pe_unsigned_pr" 9007 hank 1007
+pe_commits 9007 "d100000000000000000000000000000000000000|hank|1007|hank@example.com|hank|hank@example.com|no trailer here"
+
+# Negative: no PR resolves (empty list), and a PR that only CONTAINS the
+# commit without having merged as it.
+pe_commit 'Ivy' '1008+ivy@users.noreply.github.com' $'no pr\n\nSigned-off-by: Ivy <ivy@example.com>'
+pe_nopr=$pe_sha
+printf '[]\n' > "$(pe_fixture_name "repos/${pe_slug}/commits/${pe_nopr}/pulls")"
+pe_commit 'Jack' '1009+jack@users.noreply.github.com' $'pr merged as another commit\n\nSigned-off-by: Jack <jack@example.com>'
+pe_othermerge=$pe_sha
+pe_pulls "$pe_othermerge" 9009 jack 1009 0000000000000000000000000000000000000001
+pe_commits 9009 "a900000000000000000000000000000000000000|jack|1009|jack@example.com|jack|jack@example.com|x\\n\\nSigned-off-by: Jack <jack@example.com>"
+
+# Negative: API error. No fixture at all, so the lookup fails closed.
+pe_commit 'Kate' '1010+kate@users.noreply.github.com' $'api error\n\nSigned-off-by: Kate <kate@example.com>'
+pe_apierr=$pe_sha
+# And an API error on the commits page after the PR resolved.
+pe_commit 'Liam' '1011+liam@users.noreply.github.com' $'commits api error\n\nSigned-off-by: Liam <liam@example.com>'
+pe_commitserr=$pe_sha
+pe_pulls "$pe_commitserr" 9011 liam 1011
+
+# Negative: the PR is fine, but the squash has no sign-off at all. The new rule
+# never relaxes the sign-off requirement.
+pe_commit 'Fayez Bast' '96446332+FayezBast@users.noreply.github.com' 'squash with no sign-off'
+pe_nosignoff=$pe_sha
+pe_pulls "$pe_nosignoff" 19638 FayezBast 96446332
+pe_commits 19638 "9ce6d34e00000000000000000000000000000000|FayezBast|96446332|fayezbast15@gmail.com|FayezBast|fayezbast15@gmail.com|wip\\n\\nSigned-off-by: Fayez Bast <fayezbast15@gmail.com>"
+
+# Negative: a plain login@ noreply (no numeric id) cannot prove the id half.
+pe_commit 'Mo' 'mo@users.noreply.github.com' $'plain noreply author\n\nSigned-off-by: Mo <mo@example.com>'
+pe_plain=$pe_sha
+pe_pulls "$pe_plain" 9012 mo 1012
+pe_commits 9012 "b900000000000000000000000000000000000000|mo|1012|mo@example.com|mo|mo@example.com|x\\n\\nSigned-off-by: Mo <mo@example.com>"
+
+run_pe() { # run_pe <env-assignments...>
+  set +e
+  output=$(env DCO_GITHUB_REPOSITORY="$pe_slug" DCO_GITHUB_API_FIXTURES="$pe_fix" \
+    DCO_SAME_PERSON_WINDOW=0 DCO_WAIVED_COMMITS= DCO_PR_EVIDENCE=true "$@" bash "$CHECKER" 30 HEAD 2>&1)
+  rc=$?
+  set -e
+}
+
+run_pe
+for pe_pos in "$pe_fayez:19637:9ce6d34d" "$pe_sachin:15315:97a705ca" "$pe_riccardo:19386:3c7de542"; do
+  pe_s=${pe_pos%%:*}; pe_rest=${pe_pos#*:}
+  if out_grep -q "^pr-noreply ${pe_s} .*evidence=pr#${pe_rest}\$" && ! out_grep -q "^FAIL ${pe_s}"; then
+    pass "first private-email squash ${pe_s:0:8} is accepted on PR evidence (pr#${pe_rest})"
+  else
+    bad "first private-email squash ${pe_s} was not accepted on PR evidence"
+    echo "$output" | sed 's/^/      | /'
+  fi
+done
+pe_expect_fail() { # pe_expect_fail <sha> <label> <pattern>
+  if out_grep -q "^FAIL $1 $3"; then
+    pass "$2 still fails"
+  else
+    bad "$2 ($1) did not fail with '$3'"
+    echo "$output" | sed 's/^/      | /'
+  fi
+  if out_grep -q "^pr-noreply $1 "; then
+    bad "$2 ($1) was accepted on PR evidence"
+  fi
+}
+pe_expect_fail "$pe_login" 'a noreply login that is not the PR author' 'mismatched-signoff .*pr-evidence=author-not-pr-author-noreply$'
+pe_expect_fail "$pe_id" 'a noreply id that is not the PR author' 'mismatched-signoff .*pr-evidence=author-not-pr-author-noreply$'
+pe_expect_fail "$pe_other" 'a sign-off for a different person' 'mismatched-signoff .*pr-evidence=signoff-not-on-pr-commits$'
+pe_expect_fail "$pe_multi" 'a multi-author PR' 'mismatched-signoff .*pr-evidence=pr-commit-not-by-pr-author$'
+pe_expect_fail "$pe_unattr" 'a PR commit GitHub cannot attribute' 'mismatched-signoff .*pr-evidence=pr-commit-not-by-pr-author$'
+pe_expect_fail "$pe_unsigned_pr" 'a PR commit that never carried the sign-off' 'mismatched-signoff .*pr-evidence=signoff-not-on-pr-commits$'
+pe_expect_fail "$pe_nopr" 'a commit with no resolvable PR' 'mismatched-signoff .*pr-evidence=no-merged-pr$'
+pe_expect_fail "$pe_othermerge" 'a PR that merged as a different commit' 'mismatched-signoff .*pr-evidence=no-merged-pr$'
+pe_expect_fail "$pe_apierr" 'an API error on the PR lookup' 'mismatched-signoff .*pr-evidence=api-error$'
+pe_expect_fail "$pe_commitserr" 'an API error on the PR commits lookup' 'mismatched-signoff .*pr-evidence=api-error$'
+pe_expect_fail "$pe_nosignoff" 'a squash with no sign-off at all' 'missing-signoff '
+pe_expect_fail "$pe_plain" 'a plain (id-less) noreply author' 'mismatched-signoff .*signed-off-by=mo@example.com$'
+if [ "$rc" -eq 1 ] && out_grep -q '3 pr-noreply; 0 same-person-noreply)'; then
+  pass "the run still fails on the negatives and the summary counts 3 pr-noreply"
+else
+  bad "expected rc=1 and 3 pr-noreply in the summary (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# The rule is a strict addition: switched off, the positives fail as before.
+run_pe DCO_PR_EVIDENCE=false
+if out_grep -q "^FAIL ${pe_fayez} mismatched-signoff .*pr-evidence=disabled\$" && ! out_grep -q '^pr-noreply '; then
+  pass "DCO_PR_EVIDENCE=false disables the PR-evidence rule"
+else
+  bad "DCO_PR_EVIDENCE=false did not disable the rule"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# Existing waivers keep working, and a waiver the rule would now cover reads
+# as WAIVED, never STALE-WAIVER, so leaving it in place pages nobody.
+run_pe "DCO_WAIVED_COMMITS=${pe_fayez} ${pe_sachin}"
+if out_grep -q "^WAIVED ${pe_fayez} mismatched-signoff" && out_grep -q "^WAIVED ${pe_sachin} mismatched-signoff" \
+   && ! out_grep -q '^STALE-WAIVER ' && out_grep -q "^pr-noreply ${pe_riccardo} "; then
+  pass "waivers on PR-evidence-covered commits stay WAIVED and are not reported stale"
+else
+  bad "waiver interplay with the PR-evidence rule is wrong"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# Waiving every negative leaves only the positives, which pass on their own.
+run_pe "DCO_WAIVED_COMMITS=${pe_login} ${pe_id} ${pe_other} ${pe_multi} ${pe_unattr} ${pe_unsigned_pr} ${pe_nopr} ${pe_othermerge} ${pe_apierr} ${pe_commitserr} ${pe_nosignoff} ${pe_plain}"
+if [ "$rc" -eq 0 ] && ! out_grep -q '^FAIL '; then
+  pass "with the negatives waived the PR-evidence positives pass the run"
+else
+  bad "positives did not pass once the negatives were waived (rc=${rc})"
   echo "$output" | sed 's/^/      | /'
 fi
 cd "$repo" || exit 1
