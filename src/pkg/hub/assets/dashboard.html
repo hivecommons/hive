@@ -3539,8 +3539,17 @@
       return (rank[role] || 0) >= (rank[tier] || 0);
     }
 
+    /* The role the hub's Manage Access endpoints honor (MyHiveEntry.accessRole).
+       On a self-registered spoke the heartbeat-reported owner shows as owner
+       but holds no hub access rights (#19653), so the Permissions entry must
+       not be offered on h.role alone. Falls back to h.role for a payload from
+       a hub that predates the field. */
+    function hubAccessRole(h) {
+      return typeof h.accessRole === 'string' ? h.accessRole : h.role;
+    }
+
     function canManageAccess(h) {
-      return roleAtLeast(h.role, 'read-write');
+      return roleAtLeast(hubAccessRole(h), 'read-write');
     }
 
     /* One-line description of what each grantable role allows. Shown as the

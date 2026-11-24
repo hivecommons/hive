@@ -39,8 +39,11 @@ func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec *SandboxKic
 		return e.prepareRunStageWorkspace(ctx, spec)
 	}
 	workspace := sandbox.WorkspaceDir(spec.WorkspaceDir, spec.Agent, e.now().UnixNano())
-	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", spec.Org, spec.Repo)
-	authArgs, cleanupAuth, err := e.cloneAuthArgs(ctx, spec.Org+"/"+spec.Repo, spec.WorkspaceDir)
+	repoURL, err := sandboxRepoURL(*spec)
+	if err != nil {
+		return "", "", err
+	}
+	authArgs, cleanupAuth, err := e.cloneAuthArgs(ctx, spec.ForgeBaseURL, spec.Org+"/"+spec.Repo, spec.WorkspaceDir)
 	if err != nil {
 		return "", "", err
 	}
@@ -94,9 +97,12 @@ func (e *SandboxExecutor) prepareRunStageWorkspace(ctx context.Context, spec *Sa
 	if strings.TrimSpace(spec.RunKey) == "" || spec.Generation == 0 {
 		return "", "", errors.New("sandbox run-stage workspace prep requires run key and generation")
 	}
-	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", spec.Org, spec.Repo)
+	repoURL, err := sandboxRepoURL(*spec)
+	if err != nil {
+		return "", "", err
+	}
 	source := runStageSourceRepo(*spec)
-	authArgs, cleanupAuth, err := e.cloneAuthArgs(ctx, spec.Org+"/"+spec.Repo, spec.WorkspaceDir)
+	authArgs, cleanupAuth, err := e.cloneAuthArgs(ctx, spec.ForgeBaseURL, spec.Org+"/"+spec.Repo, spec.WorkspaceDir)
 	if err != nil {
 		return "", "", err
 	}
@@ -175,7 +181,24 @@ func (e *SandboxExecutor) resolveBaseRef(ctx context.Context, workspace string) 
 	return ref, nil
 }
 
-func (e *SandboxExecutor) cloneAuthArgs(ctx context.Context, repo, dir string) ([]string, func(), error) {
+// sandboxRepoURL is the clone URL of the kick's repo on its forge
+// (spec.ForgeBaseURL, github.com when empty). The push broker pins the push
+// to the same URL.
+func sandboxRepoURL(spec SandboxKickSpec) (string, error) {
+	if _, err := pushbroker.NormalizeForgeBaseURL(spec.ForgeBaseURL); err != nil {
+		return "", fmt.Errorf("sandbox workspace prep: %w", err)
+	}
+	url := pushbroker.ForgeRepoURL(spec.ForgeBaseURL, spec.Org+"/"+spec.Repo)
+	if url == "" {
+		return "", fmt.Errorf("sandbox workspace prep: %q is not an owner/name repo", spec.Org+"/"+spec.Repo)
+	}
+	return url, nil
+}
+
+// cloneAuthArgs mints a clone token for repo and writes it to a one-shot
+// credential-store file that answers only for the forge at base, so the
+// token never reaches another host.
+func (e *SandboxExecutor) cloneAuthArgs(ctx context.Context, base, repo, dir string) ([]string, func(), error) {
 	minter := e.CloneMinter
 	if minter == nil {
 		minter = e.Minter
@@ -191,7 +214,10 @@ func (e *SandboxExecutor) cloneAuthArgs(ctx context.Context, repo, dir string) (
 		return nil, func() {}, errors.New("sandbox workspace prep: minter returned empty clone token")
 	}
 	path := filepath.Join(dir, ".hive-git-credentials-"+sanitizeBranchPart(repo)+"-"+fmt.Sprint(e.now().UnixNano()))
-	line := "https://x-access-token:" + token + "@github.com\n"
+	line, err := pushbroker.CredentialStoreLine(base, token)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("sandbox workspace prep: %w", err)
+	}
 	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
 		return nil, func() {}, fmt.Errorf("writing sandbox clone credential helper: %w", err)
 	}

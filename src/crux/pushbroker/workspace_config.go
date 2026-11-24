@@ -31,14 +31,14 @@ import (
 //     url.*.insteadOf, http.proxy / http.sslVerify, filter.*.clean and
 //     core.askPass have no override that is safe against every spelling, so
 //     the only sound answer to seeing them is to not run git at all.
-func workspaceConfigOverrides(remote, repo string) [][2]string {
+func workspaceConfigOverrides(remote, url string) [][2]string {
 	pairs := [][2]string{
 		{"core.hooksPath", os.DevNull},
 		{"core.fsmonitor", "false"},
 		{"credential.helper", ""},
 		{"commit.gpgsign", "false"},
 	}
-	if url := expectedRemoteURL(repo); url != "" {
+	if url != "" {
 		pairs = append(pairs,
 			[2]string{"remote." + remote + ".url", url},
 			[2]string{"remote." + remote + ".pushurl", url},
@@ -47,14 +47,11 @@ func workspaceConfigOverrides(remote, repo string) [][2]string {
 	return pairs
 }
 
-// expectedRemoteURL is the URL SandboxExecutor cloned repo from, and the only
-// URL the broker will push to. Empty when repo is not an "owner/name" pair.
-func expectedRemoteURL(repo string) string {
-	owner, name, ok := strings.Cut(strings.TrimSpace(repo), "/")
-	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
-		return ""
-	}
-	return "https://" + pushRemoteHost + "/" + owner + "/" + name + ".git"
+// expectedRemoteURL is the URL SandboxExecutor cloned the repo from, on the
+// broker's forge, and the only URL the broker will push to. Empty when Repo
+// is not an "owner/name" pair.
+func (b *Broker) expectedRemoteURL() string {
+	return ForgeRepoURL(b.RemoteBaseURL, b.Repo)
 }
 
 // configEnv renders pairs as the GIT_CONFIG_COUNT/KEY/VALUE triplets git reads
@@ -114,7 +111,7 @@ func (b *Broker) rejectHostileWorkspaceConfig(ctx context.Context) error {
 		return fmt.Errorf("reading workspace git config: %w", err)
 	}
 	remote := strings.ToLower(b.remote())
-	want := expectedRemoteURL(b.Repo)
+	want := b.expectedRemoteURL()
 	offenders := workspaceConfigOffenders(out, remote, &want)
 	if len(offenders) == 0 {
 		return nil

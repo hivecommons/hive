@@ -26,6 +26,8 @@
     const STAGE_TRACKER_GATE_SETTLING = 'settling…';
     const STAGE_TRACKER_GATE_VISIBLE = 3;
     const STAGE_TRACKER_GATE_FOLD_QUERY = '(max-width: 1100px)';
+    // The phone sheet's title for the folded verbs, before the row's ref.
+    const STAGE_TRACKER_GATE_SHEET_TITLE = 'More ways to settle';
     // Reason → verbs, in the order they stand on the pill. The same reason
     // always offers the same verbs (the maintainer's "consistent way").
     const STAGE_TRACKER_GATE_VERBS = {
@@ -254,21 +256,109 @@
       if (word) word.textContent = STAGE_TRACKER_GATE_SETTLING;
       gate.querySelectorAll('.ham-gate-act').forEach(b => b.setAttribute('aria-disabled', 'true'));
     }
-    // The `…` menu: open / close on its button, close on outside click or
-    // Escape, the same popover pattern the row's ⋯ menu uses.
+    // Whether the `…` menu opens as the phone sheet: the same query the
+    // row's ⋯ menu uses (STAGE_TRACKER_SHEET_QUERY, tracker-actions.js).
+    function stageTrackerHumanGateSheetOn() {
+      return typeof stageTrackerIsPhoneSheet === 'function' && stageTrackerIsPhoneSheet();
+    }
+    // Pure: one folded verb as a sheet item. The pill classes go (the sheet
+    // is not the row, so its taps are handled here, not by the row's lead
+    // listener) and the verb's hover text is written out under the label:
+    // what it posts, or why it is disabled. A phone has no hover, so a
+    // greyed verb otherwise never says why.
+    function stageTrackerHumanGateSheetItem(b) {
+      if (!b || !b.classList) return b;
+      b.classList.remove('ham-lead-act', 'ham-gate-act');
+      b.removeAttribute('tabindex');
+      const note = String(b.getAttribute('title') || '').trim();
+      if (note && typeof document !== 'undefined') {
+        const hint = document.createElement('span');
+        hint.className = 'ham-menu-hint';
+        hint.textContent = note;
+        b.classList.add('ham-menu-item-hinted');
+        b.appendChild(hint);
+      }
+      return b;
+    }
+    // Open the folded verbs as a full-screen sheet (phone tier,
+    // hivecommons/hive#19655): tap-sized items, ✕ / backdrop / Esc close,
+    // and a tap runs the verb on the row the `…` sits on, the same
+    // runRowAction path an inline verb takes.
+    function stageTrackerOpenHumanGateSheet(b, menu) {
+      if (typeof stageTrackerOpenSheet !== 'function') return false;
+      const sub = b.closest('[data-ham-sub-key]');
+      const row = b.closest('.ham-row[data-ham-key]');
+      const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
+      const find = () => key && typeof stageTrackerItemByKey === 'function' && typeof _stageTracker !== 'undefined' ? stageTrackerItemByKey(_stageTracker, key) : null;
+      const shown = find();
+      const ref = shown && typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(shown) : '';
+      const list = menu.cloneNode(true);
+      list.hidden = false;
+      list.classList.add('ham-menu-sheet');
+      list.querySelectorAll('[data-ham-act]').forEach(stageTrackerHumanGateSheetItem);
+      let host = null;
+      list.addEventListener('click', e => {
+        const i = e.target.closest ? e.target.closest('[data-ham-act]') : null;
+        if (!i) return;
+        e.preventDefault(); e.stopPropagation();
+        if (i.getAttribute('aria-disabled') === 'true') return;
+        const item = find();
+        if (host && host.hiveDialogClose) host.hiveDialogClose();
+        if (!item || typeof stageTrackerDecisionRun !== 'function') return;
+        const run = stageTrackerDecisionRun(item, i.dataset.hamAct);
+        if (run && typeof run.then === 'function') {
+          run.then(r => { if (r && !r.cancelled && Array.isArray(r.results) && r.results.length && r.results.every(x => x && x.ok) && document.contains(b)) stageTrackerHumanGateSettling(b); }, () => {});
+        }
+      });
+      b.setAttribute('aria-expanded', 'true');
+      host = stageTrackerOpenSheet(STAGE_TRACKER_GATE_SHEET_TITLE + (ref ? ' ' + ref : ''), list, 'ham-menu-dialog ham-gate-sheet', () => {
+        b.setAttribute('aria-expanded', 'false');
+        if (document.contains(b) && typeof b.focus === 'function') b.focus();
+      }, () => {
+        const f = document.activeElement && document.activeElement.closest ? document.activeElement.closest('[data-ham-act]') : null;
+        if (f && list.contains(f)) f.click();
+      });
+      const first = list.querySelector('[role="menuitem"]:not([aria-disabled="true"])') || list.querySelector('[role="menuitem"]');
+      if (first) setTimeout(() => first.focus(), 0);
+      return true;
+    }
+    // Anchor the popover under its button, clamped into the viewport. The
+    // menu is position: fixed; left unplaced it fell to its static spot,
+    // shifted by the page scroll, and opened off-screen (#19655).
+    function stageTrackerPlaceHumanGateMenu(b, menu) {
+      if (typeof stageTrackerMenuPosition !== 'function' || typeof b.getBoundingClientRect !== 'function') return;
+      const r = b.getBoundingClientRect();
+      const pos = stageTrackerMenuPosition(r.left, r.bottom, menu.offsetWidth, menu.offsetHeight, window.innerWidth, window.innerHeight);
+      menu.style.setProperty('left', pos.left + 'px');
+      menu.style.setProperty('top', pos.top + 'px');
+    }
+    // The `…` menu: open / close on its button, close on outside click,
+    // scroll, resize or Escape. On a phone it opens as the row menu's sheet;
+    // elsewhere as a popover anchored to the button.
     function stageTrackerWireHumanGate(el) {
       if (!el || el._hamGateWired) return;
       el._hamGateWired = true;
       const closeAll = () => el.querySelectorAll('.ham-gate-menu:not([hidden])').forEach(m => { m.hidden = true; const b = m.previousElementSibling; if (b) b.setAttribute('aria-expanded', 'false'); });
       el.addEventListener('click', e => {
         const b = e.target.closest ? e.target.closest('[data-ham-gate-more]') : null;
-        if (!b) { if (!(e.target.closest && e.target.closest('.ham-gate-menu'))) closeAll(); return; }
+        // Outside the menu, or a live verb picked in it: close.
+        if (!b) { if (!(e.target.closest && e.target.closest('.ham-gate-menu')) || e.target.closest('[data-ham-act]:not([aria-disabled="true"])')) closeAll(); return; }
         e.preventDefault(); e.stopPropagation();
         let menu = b.nextElementSibling;
         if (menu && menu.tagName === 'TEMPLATE') { const stamped = menu.content.firstElementChild.cloneNode(true); menu.replaceWith(stamped); menu = stamped; }
         const open = menu && menu.hidden;
         closeAll();
-        if (menu && open) { menu.hidden = false; b.setAttribute('aria-expanded', 'true'); const first = menu.querySelector('[role="menuitem"]'); if (first) first.focus(); }
+        if (!menu || !open) return;
+        if (stageTrackerHumanGateSheetOn() && stageTrackerOpenHumanGateSheet(b, menu)) return;
+        menu.hidden = false;
+        b.setAttribute('aria-expanded', 'true');
+        stageTrackerPlaceHumanGateMenu(b, menu);
+        const first = menu.querySelector('[role="menuitem"]');
+        if (first) first.focus({ preventScroll: true });
       });
       el.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('scroll', closeAll, true);
+        window.addEventListener('resize', closeAll);
+      }
     }

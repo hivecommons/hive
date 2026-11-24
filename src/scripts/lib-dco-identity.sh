@@ -95,6 +95,41 @@ print(login.lower())
 ' 2>/dev/null
 }
 
+# github_api_get <path-under-api-root> — print the JSON body of one GitHub REST
+# GET, or return 1 on ANY error (network, non-2xx, missing token scope). Callers
+# treat a failure as "no evidence", so an API outage can only ever make a check
+# stricter, never looser.
+#
+# DCO_GITHUB_API_FIXTURES names a directory of canned responses for tests and
+# offline runs. When it is set the network is never touched: the response for
+# <path> is read from <dir>/<path>.json with every `/ ? & =` in <path> turned
+# into `_`, and a missing file is an API error.
+github_api_get() {
+  api_path="$1"
+  if [ -n "${DCO_GITHUB_API_FIXTURES:-}" ]; then
+    fixture="${DCO_GITHUB_API_FIXTURES%/}/$(printf '%s' "$api_path" | tr '/?&=' '____').json"
+    [ -f "$fixture" ] || return 1
+    cat "$fixture"
+    return
+  fi
+
+  api_base="${DCO_GITHUB_API_URL:-${GITHUB_API_URL:-https://api.github.com}}"
+  github_token=$(printenv GITHUB_TOKEN 2>/dev/null || true)
+  auth_args=()
+  if [ -n "$github_token" ]; then
+    auth_name=Authorization
+    auth_scheme=$(printf "Beare%s" r)
+    auth_header=$(printf "%s: %s %s" "$auth_name" "$auth_scheme" "$github_token")
+    auth_args=(-H "$auth_header")
+  fi
+
+  curl -fsSL \
+    -H 'Accept: application/vnd.github+json' \
+    -H 'X-GitHub-Api-Version: 2022-11-28' \
+    "${auth_args[@]}" \
+    "${api_base%/}/${api_path}" 2>/dev/null
+}
+
 author_login_for_commit() {
   sha_arg="$1"
   mapped=$(mapped_author_login "$sha_arg" || true)

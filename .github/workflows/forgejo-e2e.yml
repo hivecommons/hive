@@ -1,0 +1,158 @@
+# Forgejo e2e: one hive cycle against a real Forgejo (hivecommons/hive#19683).
+#
+# The Forgejo smoke lane (forgejo-smoke.yml) checks the forge adapter against
+# a live instance. This workflow goes one step further and drives the path a
+# Forgejo-only hive takes for one piece of work:
+#   1. enumerate the seeded issue through the Forgejo adapter and label it;
+#   2. clone the repo and commit a signed-off change as the lane;
+#   3. push the branch through the real push broker pinned to the Forgejo host,
+#      with the token offered only to that origin (#19677);
+#   4. open the PR with a closing keyword for the issue;
+#   5. add the release labels through the adapter;
+#   6. merge at the pinned head through forge.Merger;
+#   7. check that Forgejo closed the issue.
+# The test is src/pkg/forge/forgee2e (build tag forgejo_e2e).
+#
+# NOT a required check. Promote it once it has run green for two weeks and
+# the Part A discovery work in #19494 lets it start from the governor's own
+# enumeration. No secrets: the Forgejo admin and token are created per run
+# inside the throwaway container. The image is pinned by digest; bump the tag
+# and digest together with forgejo-smoke.yml.
+name: Forgejo e2e
+
+on:
+  schedule:
+    # Nightly at :55; :50 is the Forgejo smoke.
+    - cron: '55 4 * * *'
+  push:
+    branches:
+      - v5
+    paths:
+      - 'src/crux/pushbroker/**'
+      - 'src/pkg/forge/**'
+      - 'src/crux/proxy/forge_hosts*.go'
+      - 'src/cmd/hive/forge_remote*.go'
+      - '.github/workflows/forgejo-e2e.yml'
+  pull_request:
+    branches:
+      - v5
+    paths:
+      - 'src/crux/pushbroker/**'
+      - 'src/pkg/forge/**'
+      - 'src/crux/proxy/forge_hosts*.go'
+      - 'src/cmd/hive/forge_remote*.go'
+      - '.github/workflows/forgejo-e2e.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Build-cache isolation for the self-hosted pool (see
+# .github/scripts/go-cache-guard.sh).
+env:
+  GO_CACHE_GUARD_BUILD_CACHE: ${{ vars.HIVE_GO_BUILD_CACHE || 'job' }}
+  FORGEJO_IMAGE: codeberg.org/forgejo/forgejo:16.0.6@sha256:e2c34a699543ca8a00217ee9ab2bea5feedc98bd6d0ea95ec287d3b7ae1355c6
+  FORGEJO_URL: http://127.0.0.1:3000
+  FORGEJO_ADMIN: hive-e2e
+
+jobs:
+  e2e:
+    if: github.repository == 'hivecommons/hive'
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Record start time
+        run: echo "E2E_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          cache: false
+          go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+
+      - name: Start Forgejo
+        run: |
+          set -euo pipefail
+          name="forgejo-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "FORGEJO_CONTAINER=$name" >> "$GITHUB_ENV"
+          docker run -d --name "$name" -p 127.0.0.1:3000:3000 \
+            -e USER_UID=1000 -e USER_GID=1000 \
+            -e FORGEJO__database__DB_TYPE=sqlite3 \
+            -e FORGEJO__security__INSTALL_LOCK=true \
+            -e FORGEJO__server__ROOT_URL="$FORGEJO_URL/" \
+            -e FORGEJO__server__DISABLE_SSH=true \
+            -e FORGEJO__service__DISABLE_REGISTRATION=true \
+            -e FORGEJO__repository__DEFAULT_BRANCH=main \
+            "$FORGEJO_IMAGE"
+          for _ in $(seq 1 90); do
+            if curl -fsS "$FORGEJO_URL/api/healthz" >/dev/null 2>&1; then
+              curl -fsS "$FORGEJO_URL/api/v1/version"; echo
+              exit 0
+            fi
+            sleep 2
+          done
+          echo '::error::Forgejo did not become healthy within 3 minutes'
+          docker logs "$name" | tail -100
+          exit 1
+
+      - name: Seed admin, token, repo, labels and issue
+        run: |
+          set -euo pipefail
+          pass="E2e-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          docker exec -u git "$FORGEJO_CONTAINER" forgejo admin user create \
+            --admin --username "$FORGEJO_ADMIN" --password "$pass" \
+            --email "$FORGEJO_ADMIN@example.invalid" --must-change-password=false
+          api() { curl -fsS -H 'Content-Type: application/json' "$@"; }
+          token="$(api -u "$FORGEJO_ADMIN:$pass" -X POST "$FORGEJO_URL/api/v1/users/$FORGEJO_ADMIN/tokens" \
+            -d '{"name":"e2e","scopes":["write:repository","write:issue","write:user"]}' | jq -r .sha1)"
+          echo "::add-mask::$token"
+          echo "FORGEJO_TOKEN=$token" >> "$GITHUB_ENV"
+          auth=(-H "Authorization: token $token")
+          repo="$FORGEJO_ADMIN/e2e"
+          api "${auth[@]}" -X POST "$FORGEJO_URL/api/v1/user/repos" \
+            -d '{"name":"e2e","auto_init":true,"default_branch":"main","readme":"Default"}' >/dev/null
+          for l in 'hold:#e11d21' 'hive/kicked:#0e8a16' 'lgtm:#15dd18' 'approved:#0ffa16'; do
+            api "${auth[@]}" -X POST "$FORGEJO_URL/api/v1/repos/$repo/labels" \
+              -d "$(jq -nc --arg n "${l%%:*}" --arg c "${l#*:}" '{name:$n,color:$c}')" >/dev/null
+          done
+          issue="$(api "${auth[@]}" -X POST "$FORGEJO_URL/api/v1/repos/$repo/issues" \
+            -d '{"title":"E2E issue","body":"Seeded by the Forgejo e2e workflow."}' | jq -r .number)"
+          {
+            echo "FORGEJO_REPO=$repo"
+            echo "FORGEJO_ISSUE=$issue"
+          } >> "$GITHUB_ENV"
+          echo "Seeded $repo issue #$issue"
+
+      - name: One hive cycle (enumerate, push via broker, PR, label, merge)
+        working-directory: src
+        run: go test -tags forgejo_e2e -run '^TestForgejoHiveCycle$' -count=1 -v ./pkg/forge/forgee2e/
+
+      - name: Forgejo logs
+        if: failure()
+        run: docker logs "$FORGEJO_CONTAINER" 2>&1 | tail -200
+
+      - name: Stop Forgejo
+        if: always()
+        run: |
+          if [ -n "${FORGEJO_CONTAINER:-}" ]; then
+            docker rm -f -v "$FORGEJO_CONTAINER" >/dev/null 2>&1 || true
+          fi
+
+      - name: Record job runtime
+        if: always()
+        run: |
+          secs=$(( $(date +%s) - ${E2E_STARTED:-$(date +%s)} ))
+          echo "Forgejo e2e runtime: ${secs}s"
+          echo "Forgejo e2e runtime: **${secs}s** on one runner (\`${{ runner.name }}\`)" >> "$GITHUB_STEP_SUMMARY"

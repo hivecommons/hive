@@ -6,9 +6,11 @@
 > tree and are tested, but they are **still not on a path a non-GitHub hive can
 > reach**. Two callers now construct an adapter from `project.forge` — the
 > governor's escalation writes ([#5259](https://github.com/hivecommons/hive/issues/5259))
-> and the hold guard's re-hold — and they are a genuine first step, but nothing
-> feeds them on a GitLab or Gitea hive, because enumeration still requires a
-> GitHub client. The operation list per adapter is on
+> and the hold guard's re-hold. A hive whose repositories are all on GitLab,
+> Gitea or Forgejo now enumerates its work through the adapters
+> ([#19669](https://github.com/hivecommons/hive/issues/19669)), so those writes
+> are reached. Stage labels, merging, agent execution and mixed GitHub hives are
+> still missing. The operation list per adapter is on
 > [Forges: GitLab, Gitea and Forgejo](integrations/forges.md). There is no
 > non-GitHub setup path to follow yet, and this page exists so you can establish
 > that in one read instead of discovering it after an install.
@@ -37,9 +39,9 @@ comment/label column is now in: two production callers — the governor's
 escalation sweep and the hold guard — select their adapter from `project.forge`.
 They would post the evidence comment and the `needs-human` label, or the drift
 comment and a re-applied `hold` label, to your forge. Both are driven by the
-GitHub-only enumeration the governor cycle starts from, which produces nothing
-without a GitHub client.
-The wiring is real; the input never arrives. Gitea and Forgejo are separate
+governor's enumeration. On a forge-only hive that enumeration now runs through
+the adapter, so they fire; in a hive with any repository on GitHub, a repository
+on another forge is still enumerated through GitHub and finds nothing. Gitea and Forgejo are separate
 kinds (`gitea` and `forgejo`) that share one REST client, so a call that differs
 between them can change in one kind without touching the other. Forgejo has its
 own kind, config block and adapter type. It is no further along than Gitea.
@@ -116,9 +118,12 @@ What is deliberately **absent** matters as much as what is present:
   (accept the MR with `merge`, `squash` or `rebase`, a head-SHA guard and branch
   removal). No production caller uses it yet; routing the merge gate by forge
   kind is [#14113](https://github.com/hivecommons/hive/issues/14113).
-- **No issue or change-request creation.** The interface has no `CreateIssue` and
-  no `CreatePR`. Even fully wired, the adapters could comment and label but could
-  not file the work.
+- **Creation is partial.** Gitea and Forgejo implement `CreateIssue` and
+  `CreateChangeRequest` through optional seams (`forge.IssueSeam`,
+  `forge.ChangeRequestCreator`), and on a forge-only hive the forge request
+  relay uses them for agents' `hive-open-pr`, issue, comment and label requests
+  ([#19670](https://github.com/hivecommons/hive/issues/19670)). GitLab has
+  neither seam, and the `Forge` interface itself still has no create methods.
 
 That second point is the ceiling on this path: the abstraction was scoped to the
 read path plus light write operations, not to the create-and-merge lifecycle an
@@ -171,8 +176,12 @@ Notes that will save you a wrong guess:
   `gitlab_url` / `gitea_url` / `forgejo_url` when omitted). Unlike
   `project.forge`, these keys are validated at load: an unknown kind, a
   non-http(s) URL, or a Gitea or Forgejo repo with no URL anywhere is a config
-  error. The governor's escalation writes and its repo-scoped kicks follow the
-  per-repo value; the token still comes from the forge-wide `token_env`.
+  error. A `forge_url` must also be on the same host and port as its forge
+  block's URL, because the block's token is only sent to that host. A mismatch
+  is a config error. The GitLab block URL defaults to `https://gitlab.com`. A
+  Gitea or Forgejo block with no URL of its own is not checked. The governor's
+  escalation writes and its repo-scoped kicks follow the per-repo value; the
+  token still comes from the forge-wide `token_env`.
 
 ```yaml
 project:
@@ -225,14 +234,15 @@ is not deployment-ready.
 
 Listed so the size of the gap is legible, not as a plan of record:
 
-1. A forge-neutral enumeration path. Today the governor cycle starts at
-   `github.Client.EnumerateActionable`, which also owns hold-label filtering,
-   issue filters and SLA tracking, so neutralizing it means lifting that policy
-   above the forge boundary — this is what makes the already-wired escalation
-   writes unreachable on a non-GitHub hive.
-2. `CreateIssue` and `CreateChangeRequest` on the `Forge` interface, plus
-   `Merge` on every adapter (GitLab has it; Gitea/Forgejo does not) — the
-   create-and-merge lifecycle agents depend on.
+1. Forge-neutral enumeration for mixed hives. A forge-only hive now enumerates
+   through the adapters ([#19669](https://github.com/hivecommons/hive/issues/19669)),
+   with the label gates and issue filter applied above the forge boundary. A
+   hive with any repository on GitHub still starts at
+   `github.Client.EnumerateActionable` for every repository.
+2. Create seams on GitLab, and the create relay for repositories on another
+   forge inside a hive that also has GitHub repositories. Gitea and Forgejo
+   have `CreateIssue` and `CreateChangeRequest` (`forge.IssueSeam`,
+   `forge.ChangeRequestCreator`), served to agents on a forge-only hive.
 3. A forge-neutral agent execution path, since agents reach their forge through
    the `gh` CLI wrapper rather than through `pkg/forge`.
 4. Credential plumbing for token-based forges alongside the GitHub App minting
