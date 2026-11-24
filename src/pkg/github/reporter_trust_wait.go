@@ -143,24 +143,25 @@ func reporterTrustWaitCommentAt(webBase, repo, linkRepo, addedLabel string, ra R
 	return body
 }
 
-func (c *Client) markReporterTrustAwaiting(ctx context.Context, repo string, issue *gh.Issue, labels []string, ra ReporterAdmitter, budget *reporterTrustWaitBudget) {
+func (c *Client) markReporterTrustAwaiting(ctx context.Context, repo string, issue *gh.Issue, labels []string, ra ReporterAdmitter, budget *reporterTrustWaitBudget) ([]*gh.IssueComment, bool) {
 	number := issue.GetNumber()
 	if !reporterTrustCommentEnabled(ra) {
-		return
+		return nil, false
 	}
-	comments, err := c.reporterTrustWaitComments(ctx, repo, number)
+	all, err := c.reporterTrustWaitCommentList(ctx, repo, number)
 	if err != nil {
 		c.warnReporterTrustWait("comment scan failed", repo, number, err)
-		return
+		return nil, false
 	}
+	comments := reporterTrustWaitBodies(all)
 	if len(comments) > 0 {
-		return
+		return all, true
 	}
 	if !budget.reserve() {
 		if c != nil && c.logger != nil {
 			c.logger.Info("reporter trust wait notice budget exhausted", slog.String("repo", repo), slog.Int("number", number))
 		}
-		return
+		return all, true
 	}
 
 	label := reporterTrustAwaitingLabel(ra)
@@ -183,10 +184,11 @@ func (c *Client) markReporterTrustAwaiting(ctx context.Context, repo string, iss
 				c.warnReporterTrustWait("label cleanup failed", repo, number, removeErr)
 			}
 		}
-		return
+		return all, true
 	}
 	c.recordWriteAudit(AuditActionReporterTrustWaitNoticed, hiveWriteMeta(),
 		WriteTarget{Repo: c.reporterTrustAuditRepo(repo), Number: number}, "label", addedLabel)
+	return all, true
 }
 
 func (c *Client) clearReporterTrustAwaiting(ctx context.Context, repo string, issue *gh.Issue, labels []string, ra ReporterAdmitter) []string {
@@ -217,28 +219,48 @@ func (c *Client) reporterTrustAuditRepo(repo string) string {
 }
 
 func (c *Client) reporterTrustWaitComments(ctx context.Context, repo string, number int) ([]string, error) {
+	all, err := c.reporterTrustWaitCommentList(ctx, repo, number)
+	if err != nil {
+		return nil, err
+	}
+	return reporterTrustWaitBodies(all), nil
+}
+
+// reporterTrustWaitCommentList lists every comment on the issue. The wait
+// notice scan reads the marker bodies from it, and the enumeration reuses
+// the same list for the issue's newest person comment
+// (issue_person_comment.go), so that costs no second read.
+func (c *Client) reporterTrustWaitCommentList(ctx context.Context, repo string, number int) ([]*gh.IssueComment, error) {
 	if c == nil {
 		return nil, ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
 	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
-	var out []string
+	var out []*gh.IssueComment
 	for {
 		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repoName, number, opts)
 		if err != nil {
 			return nil, err
 		}
-		for _, comment := range comments {
-			body := comment.GetBody()
-			if strings.Contains(body, reporterTrustWaitMarkerPrefix) {
-				out = append(out, body)
-			}
-		}
+		out = append(out, comments...)
 		if resp == nil || resp.NextPage == 0 {
 			return out, nil
 		}
 		opts.Page = resp.NextPage
 	}
+}
+
+// reporterTrustWaitBodies are the bodies of the comments that carry the
+// wait notice marker.
+func reporterTrustWaitBodies(comments []*gh.IssueComment) []string {
+	var out []string
+	for _, comment := range comments {
+		body := comment.GetBody()
+		if strings.Contains(body, reporterTrustWaitMarkerPrefix) {
+			out = append(out, body)
+		}
+	}
+	return out
 }
 
 func reporterTrustWaitMarkedAdded(comments []string, label string) bool {
