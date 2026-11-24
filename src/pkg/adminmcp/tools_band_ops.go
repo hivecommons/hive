@@ -36,8 +36,8 @@ var (
 // The Your turn group's bands say what the person has to do (inspect,
 // decide, ...); card_group "your-turn" returns all of them.
 var (
-	issueCardBandKeys = []string{"inspect", "decide", "review", "triage", "admit", "your-turn-other", "to-close", "covered-by-pr", "waiting-on-item", "human-hold", "reporter-confirm", "queued", "working", "held", "not-work", "unexplained"}
-	prCardBandKeys    = []string{"inspect", "decide", "approve", "merge-by-hand", "review", "triage", "admit", "your-turn-other", "to-close", "human-hold", "author-update", "bot-rebase", "working", "will-merge", "held", "draft", "unexplained"}
+	issueCardBandKeys = []string{"inspect", "decide", "review", "triage", "admit", "your-turn-other", "to-close", "unexplained", "covered-by-pr", "waiting-on-item", "human-hold", "reporter-confirm", "queued", "working", "held", "not-work"}
+	prCardBandKeys    = []string{"inspect", "decide", "approve", "merge-by-hand", "review", "triage", "admit", "your-turn-other", "to-close", "unexplained", "human-hold", "author-update", "bot-rebase", "working", "will-merge", "held", "draft"}
 	cardGroupKeys     = []string{"your-turn", "waiting-elsewhere", "held", "blocked", "actionable-now", "outside"}
 )
 
@@ -90,11 +90,15 @@ func BandReadResult(tool string, data any, args map[string]any) (any, error) {
 	}
 	cardBand := strings.TrimSpace(stringArg(args, "card_band"))
 	if valid := validCardBandsFor(tool); cardBand != "" && !containsBand(valid, cardBand) {
+		reason := fmt.Sprintf("unknown card_band %q; valid card bands: %s", cardBand, strings.Join(valid, ", "))
+		if cardBand == "your-turn" {
+			reason += "; your-turn is no longer a card band; use card_group=your-turn for every Your turn row"
+		}
 		return RefusalData{
 			Type:      "refusal",
 			Operation: tool,
 			Kind:      RefusalKindInvalidArgument,
-			Reason:    fmt.Sprintf("unknown card_band %q; valid card bands: %s", cardBand, strings.Join(valid, ", ")),
+			Reason:    reason,
 		}, nil
 	}
 	cardGroup := strings.TrimSpace(stringArg(args, "card_group"))

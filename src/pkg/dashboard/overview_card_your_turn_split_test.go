@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -290,6 +291,37 @@ func TestCardYourTurnSplitPartitionFixture(t *testing.T) {
 	}
 	if sub != (OverviewCardKinds{Issues: 5, PRs: 5}) {
 		t.Errorf("what-to-do sub-rows = %+v, want 5 issues and 5 PRs", sub)
+	}
+}
+
+// A parked row with no decision yet takes the park the decision reads:
+// the recorded bucket, its labels in the decision's order.
+func TestCardYourTurnSplitParkFollowsTheDecisionsLabelOrder(t *testing.T) {
+	w := cardWork(1, repoWorkBucketFiltered, config.DefaultNeedsDecisionLabel, config.DefaultNeedsDecisionLabel, config.DefaultNeedsHumanLabel)
+	row := cardIssueRow{repoFull: cardTestRepo, work: w, nonActionable: true}
+	want := cardTurnBand(parkedOwnership(cardIssueParking(row, nil)).Verb, "", ownershipKindIssue)
+	if got := decideIssueCard(row, cardTestInputs(nil)); got.Key != want || got.ReasonCode != "bucket:filtered:parked" {
+		t.Errorf("parked with two park labels: band %q code %q, want %q", got.Key, got.ReasonCode, want)
+	}
+	if want != cardBandReview {
+		t.Errorf("needs-human comes first in the decision's order; got %q", want)
+	}
+}
+
+// The retired single band key is refused with a pointer to the group.
+func TestCardYourTurnSplitRetiredBandKey(t *testing.T) {
+	s := cardPartitionServer()
+	s.statusMu.Lock()
+	s.status = cardPartitionStatus()
+	s.statusMu.Unlock()
+	for _, kind := range []string{overviewKindIssues, overviewKindPRs} {
+		w := cardExport(t, s, kind, "json", "?card_band=your-turn")
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "use card_group=your-turn") {
+			t.Errorf("%s card_band=your-turn = %d %q", kind, w.Code, w.Body.String())
+		}
+		if w := cardExport(t, s, kind, "json", "?card_group=your-turn"); w.Code != http.StatusOK {
+			t.Errorf("%s card_group=your-turn = %d", kind, w.Code)
+		}
 	}
 }
 

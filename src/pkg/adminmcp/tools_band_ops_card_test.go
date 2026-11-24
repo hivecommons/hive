@@ -64,7 +64,8 @@ func TestBandReadResultFiltersByCardBandAndGroupBeforePaging(t *testing.T) {
 
 // The Your turn group's bands say what the person has to do; card_group
 // your-turn still returns every one of them, and the retired single
-// your-turn band key is refused with the new keys listed.
+// your-turn band key is refused with the new keys listed and a pointer to
+// card_group=your-turn.
 func TestBandReadResultYourTurnGroupSpansItsBands(t *testing.T) {
 	out, err := BandReadResult(ToolIssuesByBand, sampleOverviewCardResponse(), map[string]any{"card_group": "your-turn"})
 	if err != nil {
@@ -84,7 +85,7 @@ func TestBandReadResultYourTurnGroupSpansItsBands(t *testing.T) {
 			t.Fatal(err)
 		}
 		refusal, ok := out.(RefusalData)
-		if !ok || refusal.Kind != RefusalKindInvalidArgument || !strings.Contains(refusal.Reason, "decide") || !strings.Contains(refusal.Reason, "your-turn-other") {
+		if !ok || refusal.Kind != RefusalKindInvalidArgument || !strings.Contains(refusal.Reason, "decide") || !strings.Contains(refusal.Reason, "your-turn-other") || !strings.Contains(refusal.Reason, "use card_group=your-turn") {
 			t.Fatalf("%s card_band=your-turn: result = %#v", tool, out)
 		}
 	}

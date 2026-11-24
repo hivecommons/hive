@@ -78,16 +78,19 @@ var (
 		cardBandHeld,
 	}
 	// Approve and Merge by hand are PR gates; an issue never lands there
-	// (cardTurnBand).
+	// (cardTurnBand). The Your turn bands come first, Unexplained last among
+	// them, so the plot order is the legend's (the legend draws a headed
+	// group's bands under its subtotal row in this order).
 	cardIssueBandOrder = []string{
 		cardBandInspect, cardBandDecide, cardBandReview, cardBandTriage, cardBandAdmit, cardBandTurnOther,
-		cardBandToClose, cardBandCoveredByPR, cardBandWaitingOnItem, cardBandHumanHold,
-		cardBandReporterConfirm, cardBandQueued, cardBandWorking, cardBandHeld, cardBandNotWork, cardBandUnexplained,
+		cardBandToClose, cardBandUnexplained, cardBandCoveredByPR, cardBandWaitingOnItem, cardBandHumanHold,
+		cardBandReporterConfirm, cardBandQueued, cardBandWorking, cardBandHeld, cardBandNotWork,
 	}
 	cardPRBandOrder = []string{
 		cardBandInspect, cardBandDecide, cardBandApprove, cardBandHandMerge, cardBandReview,
-		cardBandTriage, cardBandAdmit, cardBandTurnOther, cardBandToClose, cardBandHumanHold, cardBandAuthorUpdate, cardBandBotRebase,
-		cardBandWorking, cardBandWillMerge, cardBandHeld, cardBandDraft, cardBandUnexplained,
+		cardBandTriage, cardBandAdmit, cardBandTurnOther, cardBandToClose, cardBandUnexplained,
+		cardBandHumanHold, cardBandAuthorUpdate, cardBandBotRebase,
+		cardBandWorking, cardBandWillMerge, cardBandHeld, cardBandDraft,
 	}
 	// cardGroupOrder is the tile order.
 	cardGroupOrder = []string{cardGroupYourTurn, cardGroupWaiting, cardGroupHeld, cardGroupBlocked, cardGroupActionable, cardGroupOutside}
@@ -151,7 +154,7 @@ var cardBandDefs = map[string]cardBandDef{
 }
 
 // cardYourTurnRule is the Your turn tile's rule.
-const cardYourTurnRule = "No agent will move these until a person acts. Each row says what to do: inspect, decide, approve, merge by hand, review, triage, admit, or close. Unexplained is a hive bug a person should see."
+const cardYourTurnRule = "No agent will move these until a person acts. Each row says what to do next, for example decide, review or close. Unexplained is a hive bug a person should see."
 
 // cardGroupDef is one group's spec; term is its Actionable-now equation term.
 type cardGroupDef struct {
@@ -658,9 +661,12 @@ func cardFilteredBand(row cardIssueRow, in cardInputs) OverviewCardBand {
 	case reason == config.PossiblyExistsStageLabel:
 		return cardBand(cardBandTriage, code+"possibly_exists", "It may already exist; confirm the gap or close it.")
 	case repoWorkIssueParkingBucket(w) != "" || cardParkingFor(in.cfg).parkingBucket([]string{reason}) != "":
-		// The band the stored decision gives this park (parkedOwnership):
-		// needs-human is Review, the decision, direction and spec parks Decide.
-		bucket := nonEmpty(repoWorkIssueParkingBucket(w), cardParkingFor(in.cfg).parkingBucket([]string{reason}))
+		// The row the stored decision will give it (parkedOwnership):
+		// needs-human is Review, the decision, direction and spec parks
+		// Decide. The park is the one the decision reads (cardIssueParking:
+		// the recorded bucket, its labels in the decision's order), else the
+		// one the recorded reason names.
+		bucket := nonEmpty(cardIssueParking(row, in.cfg), cardParkingFor(in.cfg).parkingBucket([]string{reason}))
 		park := parkedOwnership(bucket)
 		return cardBand(cardTurnBand(park.Verb, park.ReasonCode, ownershipKindIssue), code+"parked", "Parked for a person ("+reason+").")
 	case reason == github.IssueFilterReason:

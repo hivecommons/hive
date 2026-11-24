@@ -1004,10 +1004,13 @@
       const denom = Math.max(1, samples.length - 1);
       const lines = (slices || []).map((s, idx) => {
         const points = samples.map((sample, idx) => {
+          // A card band a sample never recorded (taken before the band
+          // existed) is a gap, not a 0.
+          if (s.card && !Object.prototype.hasOwnProperty.call(sample.counts || {}, hk(s))) return '';
           const x = OVERVIEW_LINE_PAD + idx * ((OVERVIEW_LINE_W - OVERVIEW_LINE_PAD * 2) / denom);
           const y = OVERVIEW_LINE_H - OVERVIEW_LINE_PAD - (Number((sample.counts || {})[hk(s)] || 0) / max) * (OVERVIEW_LINE_H - OVERVIEW_LINE_PAD * 2);
           return x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + ',' + y.toFixed(OVERVIEW_CHART_DECIMAL_PLACES);
-        }).join(' ');
+        }).filter(Boolean).join(' ');
         return `<polyline class="overview-chart-line overview-line-draw overview-stagger-${idx} ${esc(s.className)}" pathLength="100" points="${points}"><title>${esc(s.card ? overviewCardRuleTip(s.label, s.rule) : s.label + (s.rule ? ' — ' + s.rule : ''))}</title></polyline>`;
       }).join('');
       return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_LINE_W} ${OVERVIEW_LINE_H}" role="img" aria-label="${esc(title)}">${lines}</svg>`;
@@ -1560,13 +1563,17 @@
       const specs = issueSpecs.concat(prSpecs.filter(spec => !both.has(spec.key)));
       const tiles = overviewCardTileDefs().map(def => {
         const tile = serverTiles.get(def.key) || {};
+        // The server's breakdown order (every band in tile order), so a
+        // PR-only band is not appended after the issue donut's bands.
+        const rank = new Map((Array.isArray(tile.breakdown) ? tile.breakdown : []).map((row, i) => [row && row.key, i]));
+        const at = key => (rank.has(key) ? rank.get(key) : rank.size);
         const extra = def.key === 'outside' ? remainder : { issues: 0, prs: 0 };
         const issues = Number(groups.issues[def.key] || 0) + extra.issues;
         const prs = Number(groups.prs[def.key] || 0) + extra.prs;
         const breakdown = specs.filter(spec => spec.group === def.key).map(spec => {
           const bi = Number(bands.issues[spec.key] || 0), bp = Number(bands.prs[spec.key] || 0);
           return { key: spec.key, label: spec.label, rule: spec.rule, keep: !!spec.keep, count: bi + bp, issues: bi, prs: bp };
-        });
+        }).sort((a, b) => at(a.key) - at(b.key));
         return Object.assign({}, def, { label: tile.label || def.label, rule: tile.rule || '', count: issues + prs, issues, prs, breakdown });
       });
       return { tiles, both, notInInbox, unexplained, remainder };
