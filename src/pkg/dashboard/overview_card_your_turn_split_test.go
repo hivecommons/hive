@@ -147,7 +147,7 @@ func cardTurnCases() []cardTurnCase {
 		{"parked needs-spec", ownershipKindIssue, nil, issueRow(filtered(config.DefaultNeedsSpecLabel), none), cardBandDecide},
 		{"issue filter, a person's issue", ownershipKindIssue, nil, issueRow(cardIssueRow{work: person, nonActionable: true}, none), cardBandAdmit},
 		{"verdict: needs a decision", ownershipKindIssue, nil, issueRow(cardIssueRow{issue: cardIssue(1)}, verdict(AdmissionWithheldItem{Reason: completionVerdictNeedsDecision})), cardBandDecide},
-		{"verdict: churn", ownershipKindIssue, nil, issueRow(cardIssueRow{issue: cardIssue(1)}, verdict(AdmissionWithheldItem{Reason: contributorAdmissionReasonIssueChurn, ChurnMerged: 3})), cardBandTriage},
+		{"verdict: churn", ownershipKindIssue, nil, issueRow(cardIssueRow{issue: cardIssue(1)}, verdict(AdmissionWithheldItem{Reason: contributorAdmissionReasonIssueChurn, ChurnMerged: 3})), cardBandToClose},
 		{"verdict: triage label", ownershipKindIssue, nil, issueRow(cardIssueRow{issue: cardIssue(1)}, verdict(AdmissionWithheldItem{Reason: contributorAdmissionReasonLabelSkipped, SkippedLabel: "needs-triage"})), cardBandTriage},
 		{"verdict: decision label", ownershipKindIssue, nil, issueRow(cardIssueRow{issue: cardIssue(1)}, verdict(AdmissionWithheldItem{Reason: contributorAdmissionReasonLabelSkipped, SkippedLabel: config.DefaultNeedsDecisionLabel})), cardBandDecide},
 		// Issues, the stored decision.
@@ -174,6 +174,11 @@ func cardTurnCases() []cardTurnCase {
 	}
 }
 
+// cardTurnMovedToClose names the cardTurnCases the single Your turn band
+// held that are Yours to close now: the card_band=your-turn alias still
+// returns them, and no other Yours to close case.
+var cardTurnMovedToClose = map[string]bool{"verdict: churn": true}
+
 // The split changes only the breakdown: over a row for every rule that used
 // to return the single Your turn band (plus Yours to close and Unexplained),
 // every row stays in the Your turn group, the tile counts all of them, its
@@ -184,6 +189,9 @@ func TestCardYourTurnSplitKeepsTheTileCount(t *testing.T) {
 	tally := newCardTally()
 	wantKinds := OverviewCardKinds{}
 	oldYourTurn := OverviewCardKinds{}
+	// moved are rows the single band held that are Yours to close now (the
+	// issue churn rows); the card_band=your-turn alias still returns them.
+	moved := OverviewCardKinds{}
 	notInInbox := OverviewCardKinds{}
 	for _, tc := range cases {
 		var got OverviewCardBand
@@ -202,8 +210,20 @@ func TestCardYourTurnSplitKeepsTheTileCount(t *testing.T) {
 		}
 		tally.add(tc.kind, got, tc.o)
 		// The single band of before the split: every Your turn row but
-		// Yours to close and Unexplained.
-		old := tc.want != cardBandToClose && tc.want != cardBandUnexplained
+		// Yours to close and Unexplained, and the cases that were in it and
+		// are Yours to close now (the issue churn row). The alias must
+		// return exactly those rows, no other Yours to close row.
+		old := (tc.want != cardBandToClose && tc.want != cardBandUnexplained) || cardTurnMovedToClose[tc.name]
+		if alias := cardTurnAliasRow(got); alias != old {
+			t.Errorf("%s: card_band=your-turn alias returns it = %v, want %v", tc.name, alias, old)
+		}
+		if old && got.Key == cardBandToClose {
+			if tc.kind == ownershipKindPR {
+				moved.PRs++
+			} else {
+				moved.Issues++
+			}
+		}
 		inbox := tc.o != nil && tc.o.YourTurn
 		if tc.kind == ownershipKindPR {
 			wantKinds.PRs++
@@ -242,8 +262,11 @@ func TestCardYourTurnSplitKeepsTheTileCount(t *testing.T) {
 	if sum != tile.Count {
 		t.Errorf("your-turn sub-rows sum to %d, tile %d", sum, tile.Count)
 	}
-	if subRows != oldYourTurn {
-		t.Errorf("the what-to-do sub-rows count %+v, the single Your turn band counted %+v", subRows, oldYourTurn)
+	if moved.Issues == 0 {
+		t.Error("no issue churn row moved to Yours to close; the cases cover one")
+	}
+	if subRows.Issues+moved.Issues != oldYourTurn.Issues || subRows.PRs+moved.PRs != oldYourTurn.PRs {
+		t.Errorf("the what-to-do sub-rows count %+v plus %+v moved to Yours to close, the single Your turn band counted %+v", subRows, moved, oldYourTurn)
 	}
 	for _, donut := range []struct {
 		kind  string
@@ -312,8 +335,10 @@ func TestCardYourTurnSplitParkFollowsTheDecisionsLabelOrder(t *testing.T) {
 
 // card_band=your-turn, the single Your turn band of before the split, still
 // works: it returns the rows that band held (every Your turn band but Yours
-// to close and Unexplained), joins other card_band values as a union, and
-// card_group=your-turn returns the whole group.
+// to close and Unexplained; the fixture has no issue churn row, which
+// TestIssueChurnRowIsYoursToCloseAndInTheYourTurnAlias covers), joins other
+// card_band values as a union, and card_group=your-turn returns the whole
+// group.
 func TestCardYourTurnSplitBandAlias(t *testing.T) {
 	s := cardPartitionServer()
 	status := cardPartitionStatus()

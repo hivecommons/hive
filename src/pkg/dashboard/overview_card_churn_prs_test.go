@@ -13,7 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/review"
 )
 
-// An issue churn row (Triage) names the pull requests behind it: inline in
+// An issue churn row (Yours to close) names the pull requests behind it: inline in
 // the card reason, capped, and as card_churn_prs on the status, export and
 // MCP rows, so a maintainer does not have to hunt for them.
 
@@ -30,7 +30,7 @@ func churnRefs(from, n int) []string {
 }
 
 func TestIssueChurnCardReasonListsThePRs(t *testing.T) {
-	const tail = " and it is still open; say what is left, or add hive: churn-triaged."
+	const tail = " and it is still open; close it if it is done, or add hive: churn-triaged to give it back to agents."
 	for _, tc := range []struct {
 		name string
 		item AdmissionWithheldItem
@@ -46,7 +46,7 @@ func TestIssueChurnCardReasonListsThePRs(t *testing.T) {
 		{"no list (an older verdict)", churnItem(3, 0), "3 PRs merged" + tail},
 	} {
 		got := decideIssueCard(cardIssueRow{repoFull: cardTestRepo, issue: cardIssue(1)}, cardTestInputs(cardTestStash(1, tc.item)))
-		if got.Key != cardBandTriage || got.ReasonCode != "verdict:"+contributorAdmissionReasonIssueChurn {
+		if got.Key != cardBandToClose || got.ReasonCode != cardChurnReasonCode || !cardTurnAliasRow(got) {
 			t.Errorf("%s: band %q code %q", tc.name, got.Key, got.ReasonCode)
 		}
 		if got.Reason != tc.want {
@@ -167,7 +167,7 @@ func TestIssueChurnPRsOnStatusAndExportRows(t *testing.T) {
 		map[string]any{"repo": cardTestRepo, "number": float64(1240), "state": "merged"},
 		map[string]any{"repo": cardTestRepo, "number": float64(1251), "state": "closed"},
 	}
-	if rows[0]["card_band"] != cardBandTriage || !reflect.DeepEqual(rows[0]["card_churn_prs"], wantStatus) {
+	if rows[0]["card_band"] != cardBandToClose || !reflect.DeepEqual(rows[0]["card_churn_prs"], wantStatus) {
 		t.Errorf("status churn row: band %v, card_churn_prs %#v", rows[0]["card_band"], rows[0]["card_churn_prs"])
 	}
 	if _, ok := rows[1]["card_churn_prs"]; ok {
@@ -196,7 +196,7 @@ func TestIssueChurnPRsOnStatusAndExportRows(t *testing.T) {
 	if !reflect.DeepEqual(churn["card_churn_prs"], wantExport) {
 		t.Errorf("export card_churn_prs = %#v\nwant %#v", churn["card_churn_prs"], wantExport)
 	}
-	if want := "2 PRs merged (#1236, #1240), 1 closed unmerged (#1251) and it is still open; say what is left, or add hive: churn-triaged."; churn["card_reason"] != want {
+	if want := "2 PRs merged (#1236, #1240), 1 closed unmerged (#1251) and it is still open; close it if it is done, or add hive: churn-triaged to give it back to agents."; churn["card_reason"] != want {
 		t.Errorf("export card_reason = %q, want %q", churn["card_reason"], want)
 	}
 	if plain := byNumber[41]; plain == nil || !reflect.DeepEqual(plain["card_churn_prs"], []any{}) {
@@ -210,6 +210,43 @@ func TestIssueChurnPRsOnStatusAndExportRows(t *testing.T) {
 	}
 	if !strings.Contains(csv, "octo/demo#1236 merged https://github.com/octo/demo/pull/1236;octo/demo#1240 merged https://github.com/octo/demo/pull/1240;octo/demo#1251 closed https://github.com/octo/demo/pull/1251") {
 		t.Errorf("issue CSV lacks the churn PR cell:\n%s", csv)
+	}
+}
+
+// An issue churn row is Yours to close, not Triage, and the card_band
+// your-turn alias still returns it: the single Your turn band of before
+// the split held it. The alias adds no other Yours to close row.
+func TestIssueChurnRowIsYoursToCloseAndInTheYourTurnAlias(t *testing.T) {
+	s, status := churnServer(t)
+	verified := github.Issue{Repo: cardTestRepo, Number: 42, Title: "Done", CreatedAt: cardTestNow.Add(-480 * time.Hour), UpdatedAt: cardTestNow.Add(-time.Hour)}
+	status.Repos[0].ActionableIssues = append(status.Repos[0].ActionableIssues, verified)
+	status.Repos[0].Issues = 3
+	status.Repos[0].Ownership = map[string]Ownership{ownershipKey(ownershipKindIssue, 42): yourTurn(OwnershipReasonVerifiedDone, "reason")}
+	numbers := func(query string) []int {
+		t.Helper()
+		w := cardExport(t, s, overviewKindIssues, "json", query)
+		var body overviewJSONResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: %v (%s)", query, err, w.Body.String())
+		}
+		var out []int
+		for _, row := range body.Rows {
+			m, _ := row.(map[string]any)
+			n, _ := m["number"].(float64)
+			out = append(out, int(n))
+		}
+		return out
+	}
+	for query, want := range map[string][]int{
+		"?card_band=to-close":                     {40, 42},
+		"?card_band=triage":                       nil,
+		"?card_band=your-turn":                    {40},
+		"?card_band=your-turn&card_band=to-close": {40, 42},
+		"?card_band=your-turn&card_group=outside": nil,
+	} {
+		if got := numbers(query); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: rows %v, want %v", query, got, want)
+		}
 	}
 }
 
