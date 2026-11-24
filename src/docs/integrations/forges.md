@@ -66,7 +66,8 @@ The neutral interface is `forge.Forge` in `src/pkg/forge/forge.go`. Merging is a
 | `CreateIssueComment`, `AddLabels`, `RemoveLabel` | Yes | Yes | Yes |
 | `SetHold` (the `hold` label gate) | Yes | Yes | Yes |
 | `Merge` (`forge.Merger`) | No | Yes: accepts the MR with `merge`, `squash` or `rebase` (rebase, then merge), an optional head-SHA guard and branch removal | Yes: with a hold gate and an optional head-SHA guard, run against a real Forgejo by the nightly smoke workflow |
-| `CreateIssue`, `FindIssueByMarker` | Yes | No | No |
+| `CreateIssue`, `FindIssueByMarker` (`forge.IssueSeam`) | Yes | No | Yes: the issue is created, then its labels are added by name |
+| `CreateChangeRequest` (`forge.ChangeRequestCreator`) | No: GitHub opens pull requests through the GitHub client | No | Yes: reuses an open pull request from the same head, and resolves an empty base to the default branch |
 
 The GitLab merge maps forge errors onto shared ones: an MR with the `hold` label returns `ErrHoldActive`; HTTP 405 returns `ErrNotMergeable`; 406 returns `ErrAlreadyMerged`; 409 returns `ErrConflict`. No production caller merges through `forge.Merger` yet. Routing the merge gate, stage engine and attribution trailer by forge kind is [#14113](https://github.com/hivecommons/hive/issues/14113).
 
