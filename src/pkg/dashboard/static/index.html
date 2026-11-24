@@ -114,6 +114,9 @@
       --card-band-triage: #ff46a9;
       --card-band-admit: #eb1f1b;
       --card-band-your-turn-other: #af7560;
+      /* Check if finished: an olive green next to Yours to close's lime,
+         at least 10 CIEDE2000 from every band on the issue donut. */
+      --card-band-check-finished: #9ca83a;
       --anim-chart-slow: 1200ms;
       --anim-band-grow: 900ms;
       --anim-kpi-count: 800ms;
@@ -238,6 +241,7 @@
       --card-band-triage: #8e1053;
       --card-band-admit: #8f261b;
       --card-band-your-turn-other: #9d6653;
+      --card-band-check-finished: #556b12;
       background: var(--bg); color: var(--text);
     }
     body.light-mode .connection { display: none; }
@@ -4090,6 +4094,7 @@
     .overview-card-issue-triage, .overview-card-pr-triage { --slice-c: var(--card-band-triage); }
     .overview-card-issue-admit, .overview-card-pr-admit { --slice-c: var(--card-band-admit); }
     .overview-card-issue-your-turn-other, .overview-card-pr-your-turn-other { --slice-c: var(--card-band-your-turn-other); }
+    .overview-card-issue-check-finished { --slice-c: var(--card-band-check-finished); }
     .overview-card-issue-to-close, .overview-card-pr-to-close { --slice-c: var(--band-confirm-close); }
     .overview-card-issue-unexplained, .overview-card-pr-unexplained { --slice-c: var(--card-band-unexplained); }
     .overview-card-issue-covered-by-pr, .overview-card-pr-covered-by-pr { --slice-c: var(--card-band-covered-by-pr); }
@@ -37670,10 +37675,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // An issue the contributor queue withholds because several PRs have not
-    // settled it (the Overview card's issue churn row, Triage) carries
-    // card_churn_prs: those PRs, merged first, then closed unmerged, by repo,
-    // number and state only. They fold under the pill as links, so the
-    // maintainer asked to say what is left does not have to hunt for them.
+    // settled it (the Overview card's issue churn row, Check if finished)
+    // carries card_churn_prs: those PRs, merged first, then closed unmerged,
+    // by repo, number and state only. They fold under the pill as links, so
+    // the maintainer checking whether it is finished does not have to hunt
+    // for them.
     // The title, link and merge time are on the export and MCP rows.
     // repoFull is the card's repository; forge its web paths; hiddenClass
     // the pill row's filter class, so the fold hides with its row.

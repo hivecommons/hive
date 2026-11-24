@@ -208,6 +208,7 @@
     .overview-card-issue-triage, .overview-card-pr-triage { --slice-c: var(--card-band-triage); }
     .overview-card-issue-admit, .overview-card-pr-admit { --slice-c: var(--card-band-admit); }
     .overview-card-issue-your-turn-other, .overview-card-pr-your-turn-other { --slice-c: var(--card-band-your-turn-other); }
+    .overview-card-issue-check-finished { --slice-c: var(--card-band-check-finished); }
     .overview-card-issue-to-close, .overview-card-pr-to-close { --slice-c: var(--band-confirm-close); }
     .overview-card-issue-unexplained, .overview-card-pr-unexplained { --slice-c: var(--card-band-unexplained); }
     .overview-card-issue-covered-by-pr, .overview-card-pr-covered-by-pr { --slice-c: var(--card-band-covered-by-pr); }

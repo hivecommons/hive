@@ -236,7 +236,7 @@ func TestDecideIssueCardEveryWithheldReason(t *testing.T) {
 		contributorAdmissionReasonOpenPRLinked:      cardBandCoveredByPR,
 		contributorAdmissionReasonIssueClaim:        cardBandWorking,
 		contributorAdmissionReasonMergedClaimStale:  cardBandToClose,
-		contributorAdmissionReasonIssueChurn:        cardBandToClose,
+		contributorAdmissionReasonIssueChurn:        cardBandCheckFinished,
 		contributorAdmissionReasonWorkflowBlocked:   cardBandWaitingOnItem,
 		contributorAdmissionReasonLabelSkipped:      cardBandNotWork,
 		contributorAdmissionReasonDependencyBlocked: cardBandWaitingOnItem,

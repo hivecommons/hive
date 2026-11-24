@@ -1155,10 +1155,11 @@
     }
 
     // An issue the contributor queue withholds because several PRs have not
-    // settled it (the Overview card's issue churn row, Triage) carries
-    // card_churn_prs: those PRs, merged first, then closed unmerged, by repo,
-    // number and state only. They fold under the pill as links, so the
-    // maintainer asked to say what is left does not have to hunt for them.
+    // settled it (the Overview card's issue churn row, Check if finished)
+    // carries card_churn_prs: those PRs, merged first, then closed unmerged,
+    // by repo, number and state only. They fold under the pill as links, so
+    // the maintainer checking whether it is finished does not have to hunt
+    // for them.
     // The title, link and merge time are on the export and MCP rows.
     // repoFull is the card's repository; forge its web paths; hiddenClass
     // the pill row's filter class, so the fold hides with its row.

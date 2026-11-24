@@ -39,6 +39,7 @@ const (
 	cardBandTriage          = "triage"
 	cardBandAdmit           = "admit"
 	cardBandTurnOther       = "your-turn-other"
+	cardBandCheckFinished   = "check-finished"
 	cardBandToClose         = "to-close"
 	cardBandUnexplained     = "unexplained"
 	cardBandCoveredByPR     = "covered-by-pr"
@@ -70,7 +71,7 @@ const (
 var (
 	cardBandOrder = []string{
 		cardBandInspect, cardBandDecide, cardBandApprove, cardBandHandMerge, cardBandReview,
-		cardBandTriage, cardBandAdmit, cardBandTurnOther, cardBandToClose, cardBandUnexplained,
+		cardBandTriage, cardBandAdmit, cardBandTurnOther, cardBandCheckFinished, cardBandToClose, cardBandUnexplained,
 		cardBandCoveredByPR, cardBandWaitingOnItem, cardBandHumanHold, cardBandReporterConfirm,
 		cardBandAuthorUpdate, cardBandBotRebase,
 		cardBandQueued, cardBandWorking, cardBandWillMerge,
@@ -78,12 +79,13 @@ var (
 		cardBandHeld,
 	}
 	// Approve and Merge by hand are PR gates; an issue never lands there
-	// (cardTurnBand). The Your turn bands come first, Unexplained last among
-	// them, so the plot order is the legend's (the legend draws a headed
-	// group's bands under its subtotal row in this order).
+	// (cardTurnBand). Check if finished holds issue churn rows only, so the
+	// PR donut has no such band. The Your turn bands come first, Unexplained
+	// last among them, so the plot order is the legend's (the legend draws a
+	// headed group's bands under its subtotal row in this order).
 	cardIssueBandOrder = []string{
 		cardBandInspect, cardBandDecide, cardBandReview, cardBandTriage, cardBandAdmit, cardBandTurnOther,
-		cardBandToClose, cardBandUnexplained, cardBandCoveredByPR, cardBandWaitingOnItem, cardBandHumanHold,
+		cardBandCheckFinished, cardBandToClose, cardBandUnexplained, cardBandCoveredByPR, cardBandWaitingOnItem, cardBandHumanHold,
 		cardBandReporterConfirm, cardBandQueued, cardBandWorking, cardBandHeld, cardBandNotWork,
 	}
 	cardPRBandOrder = []string{
@@ -122,6 +124,8 @@ var cardBandDefs = map[string]cardBandDef{
 	cardBandTurnOther: {label: "Other reason", group: cardGroupYourTurn, hideZero: true,
 		rule:   "Needs a person for a known reason that has no band of its own; the export's card_reason names it.",
 		prRule: "Needs a person for a known reason that has no band of its own, such as a red base branch, nobody to fix it, a dependency-bot PR still red after the hand-off time, or a bot's red or conflicting PR labelled needs-human; the export's card_reason names it."},
+	cardBandCheckFinished: {label: "Check if finished", group: cardGroupYourTurn, hideZero: true,
+		rule: "Several PRs merged or were closed on it and it is still open. Close it if it is done, or add " + churnTriagedMarker + " so agents keep going."},
 	cardBandToClose: {label: "Yours to close", group: cardGroupYourTurn,
 		rule: "The hive thinks it may be done or no longer needed but won't close it itself. Close it, or keep it open."},
 	cardBandUnexplained: {label: "No rule matched (hive bug)", group: cardGroupYourTurn, keep: true,
@@ -522,22 +526,11 @@ func cardTurnBand(verb, reasonCode, kind string) string {
 }
 
 // cardBandYourTurnAlias is the single Your turn band of before the split.
-// A card_band filter still accepts it and reads it as cardTurnAliasRow: the
-// set of rows that band held (it never held Yours to close or Unexplained,
-// but it did hold the issue churn rows that are Yours to close now).
+// A card_band filter still accepts it and reads it as cardTurnAction: the
+// set of rows that band held. It never held Yours to close or Unexplained;
+// it did hold the issue churn rows, which are Check if finished now, a
+// what-to-do band like the rest.
 const cardBandYourTurnAlias = "your-turn"
-
-// cardChurnReasonCode is an issue churn row's card reason code.
-const cardChurnReasonCode = "verdict:" + contributorAdmissionReasonIssueChurn
-
-// cardTurnAliasRow reports a row the card_band=your-turn alias returns: a
-// row on a what-to-do band (cardTurnAction), or an issue churn row. The
-// churn rows were in the single Your turn band and then in Triage; their
-// action is closing the issue or adding the churn label, so they sit in
-// Yours to close, and the alias keeps returning them.
-func cardTurnAliasRow(b OverviewCardBand) bool {
-	return cardTurnAction(b.Key) || (b.Key == cardBandToClose && b.ReasonCode == cardChurnReasonCode)
-}
 
 // cardTurnAction reports a Your turn band that says what to do: every Your
 // turn band but Yours to close and Unexplained.
@@ -862,9 +855,11 @@ func cardIssueVerdictBand(row cardIssueRow, v cardVerdict, in cardInputs) Overvi
 		prs := cardChurnPRs(item, row.repoFull, in.stash)
 		// A person ends the guard only by closing the issue or adding the
 		// churn label (issueNeedsHumanTriage); nothing reads a comment, and
-		// otherwise it lapses when the churn history ages out. So the row
-		// is Yours to close, not Triage.
-		band := cardBand(cardBandToClose, code, cardChurnReason(item, prs, nonEmpty(item.Repo, row.repoFull)))
+		// otherwise it lapses when the churn history ages out. The hive does
+		// not claim the work is done (it often labels such an issue partly
+		// addressed), so the row asks a person to check, in its own band,
+		// not Yours to close.
+		band := cardBand(cardBandCheckFinished, code, cardChurnReason(item, prs, nonEmpty(item.Repo, row.repoFull)))
 		band.ChurnPRs = prs
 		return band
 	case contributorAdmissionReasonLabelSkipped:

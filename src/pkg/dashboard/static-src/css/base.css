@@ -98,6 +98,9 @@
       --card-band-triage: #ff46a9;
       --card-band-admit: #eb1f1b;
       --card-band-your-turn-other: #af7560;
+      /* Check if finished: an olive green next to Yours to close's lime,
+         at least 10 CIEDE2000 from every band on the issue donut. */
+      --card-band-check-finished: #9ca83a;
       --anim-chart-slow: 1200ms;
       --anim-band-grow: 900ms;
       --anim-kpi-count: 800ms;
@@ -222,6 +225,7 @@
       --card-band-triage: #8e1053;
       --card-band-admit: #8f261b;
       --card-band-your-turn-other: #9d6653;
+      --card-band-check-finished: #556b12;
       background: var(--bg); color: var(--text);
     }
     body.light-mode .connection { display: none; }

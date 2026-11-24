@@ -37,9 +37,6 @@ type overviewFilters struct {
 	// link returns exactly the rows it counts.
 	cardBands  map[string]bool
 	cardGroups map[string]bool
-	// cardTurnAlias is card_band=your-turn: it also keeps the rows
-	// cardTurnAliasRow adds beyond the what-to-do bands.
-	cardTurnAlias bool
 }
 
 // overviewJSONResponse is the typed JSON export. GeneratedAt is request time;
@@ -248,9 +245,10 @@ func parseOverviewSlices(r *http.Request, filters *overviewFilters, validSlices 
 // parseOverviewCardFilters reads the card_band and card_group filters:
 // the Overview card bands (this kind's donut) and groups an export link asks
 // for. card_band=your-turn, the single Your turn band of before the split,
-// stands for this donut's what-to-do bands (cardTurnAction) and the issue
-// churn rows (cardTurnAliasRow), so it keeps the rows it always returned;
-// card_group=your-turn returns the whole group.
+// stands for this donut's what-to-do bands (cardTurnAction), so it keeps the
+// rows it always returned (the issue churn rows it held are Check if
+// finished, one of those bands); card_group=your-turn returns the whole
+// group.
 func parseOverviewCardFilters(r *http.Request, filters *overviewFilters, kind string) error {
 	bandKeys := cardIssueBandOrder
 	if kind == overviewKindPRs {
@@ -270,14 +268,12 @@ func parseOverviewCardFilters(r *http.Request, filters *overviewFilters, kind st
 		for _, v := range values {
 			if param == "card_band" && v == cardBandYourTurnAlias {
 				// The single Your turn band of before the split: the rows it
-				// held, this donut's what-to-do bands, and the issue churn
-				// rows matchCard adds.
+				// held, this donut's what-to-do bands.
 				for _, key := range valid {
 					if cardTurnAction(key) {
 						out[key] = true
 					}
 				}
-				filters.cardTurnAlias = true
 				continue
 			}
 			if !known[v] {
@@ -300,8 +296,7 @@ func parseOverviewCardFilters(r *http.Request, filters *overviewFilters, kind st
 }
 
 func (f overviewFilters) matchCard(band OverviewCardBand) bool {
-	bandOK := len(f.cardBands) == 0 || f.cardBands[band.Key] || (f.cardTurnAlias && cardTurnAliasRow(band))
-	return bandOK && (len(f.cardGroups) == 0 || f.cardGroups[band.Group])
+	return (len(f.cardBands) == 0 || f.cardBands[band.Key]) && (len(f.cardGroups) == 0 || f.cardGroups[band.Group])
 }
 
 // cardFiltered reports a card_band or card_group filter.
