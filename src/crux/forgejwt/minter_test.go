@@ -5,10 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/pushbroker"
 )
 
-func testMinter(t *testing.T, auds map[string]Audience) Minter {
+func testMinter(t *testing.T, auds map[agentmode.TokenTier]Audience) Minter {
 	t.Helper()
 	return Minter{
 		Signer:    Signer{Issuer: testIssuer, KeyFile: writeFile(t, pemBytes(t, testKeys()[0]), 0o600)},
@@ -41,8 +42,8 @@ func mintedClaims(t *testing.T, m pushbroker.TokenMinter) map[string]any {
 // Each tier gets the token for its own integration, with sub naming the tier
 // so the integration's claim rule pins it.
 func TestMinterMintsForTheAgentTier(t *testing.T) {
-	m := testMinter(t, map[string]Audience{"advisor": "aud-advisor", "contributor": "aud-contributor"})
-	for tier, want := range map[string][2]string{
+	m := testMinter(t, map[agentmode.TokenTier]Audience{"advisor": "aud-advisor", "contributor": "aud-contributor"})
+	for tier, want := range map[agentmode.TokenTier][2]string{
 		"advisor":     {"aud-advisor", "hive:advisor"},
 		"contributor": {"aud-contributor", "hive:contributor"},
 		"":            {"aud-contributor", "hive:contributor"},
@@ -56,15 +57,15 @@ func TestMinterMintsForTheAgentTier(t *testing.T) {
 
 // A tier with no integration falls to a less-privileged one, never up.
 func TestMinterFallsOnlyToALessPrivilegedTier(t *testing.T) {
-	m := testMinter(t, map[string]Audience{"advisor": "aud-advisor", "contributor": "aud-contributor"})
+	m := testMinter(t, map[agentmode.TokenTier]Audience{"advisor": "aud-advisor", "contributor": "aud-contributor"})
 	if c := mintedClaims(t, m.WithTier("trusted")); c["sub"] != "hive:contributor" {
 		t.Fatalf("trusted fell to %v, want contributor", c["sub"])
 	}
 	if c := mintedClaims(t, m.WithTier("reviewer")); c["sub"] != "hive:advisor" {
 		t.Fatalf("reviewer fell to %v, want advisor", c["sub"])
 	}
-	onlyTrusted := testMinter(t, map[string]Audience{"trusted": "aud-trusted"})
-	for _, tier := range []string{"contributor", "advisor", "newcomer", "reviewer", "not-a-tier"} {
+	onlyTrusted := testMinter(t, map[agentmode.TokenTier]Audience{"trusted": "aud-trusted"})
+	for _, tier := range []agentmode.TokenTier{"contributor", "advisor", "newcomer", "reviewer", "not-a-tier"} {
 		if _, err := onlyTrusted.WithTier(tier).MintPushToken(context.Background(), "team/app"); err == nil {
 			t.Fatalf("tier %q got a token from a more-privileged integration", tier)
 		}
@@ -76,7 +77,7 @@ func TestMinterRefusesWithoutAudiences(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no integration audiences") {
 		t.Fatalf("err = %v", err)
 	}
-	_, err = testMinter(t, map[string]Audience{"contributor": "  "}).MintPushToken(context.Background(), "team/app")
+	_, err = testMinter(t, map[agentmode.TokenTier]Audience{"contributor": "  "}).MintPushToken(context.Background(), "team/app")
 	if err == nil {
 		t.Fatal("blank audience accepted")
 	}
@@ -86,7 +87,7 @@ func TestMinterRefusesWithoutAudiences(t *testing.T) {
 func TestMinterSurfacesSignerErrors(t *testing.T) {
 	m := Minter{
 		Signer:    Signer{Issuer: testIssuer, KeyFile: writeFile(t, pemBytes(t, testKeys()[0]), 0o644)},
-		Audiences: map[string]Audience{"contributor": "aud"},
+		Audiences: map[agentmode.TokenTier]Audience{"contributor": "aud"},
 	}
 	if tok, err := m.MintPushToken(context.Background(), "team/app"); err == nil || tok != "" {
 		t.Fatalf("token %q, err %v; want the key-mode refusal", tok, err)
@@ -94,7 +95,7 @@ func TestMinterSurfacesSignerErrors(t *testing.T) {
 }
 
 func TestMinterWorksThroughPushbrokerWithTier(t *testing.T) {
-	m := testMinter(t, map[string]Audience{"advisor": "aud-advisor"})
+	m := testMinter(t, map[agentmode.TokenTier]Audience{"advisor": "aud-advisor"})
 	if c := mintedClaims(t, pushbroker.WithTier(m, "advisor")); c["sub"] != "hive:advisor" {
 		t.Fatalf("pushbroker.WithTier did not narrow the JWT minter: %v", c)
 	}
