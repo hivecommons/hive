@@ -1,1 +1,0 @@
-- The Workflow select on Settings → Repos now stays inside the dialog: options show only the model name and version, with the description on hover.

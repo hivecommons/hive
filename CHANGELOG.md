@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.363.0)
+
+### Added
+
+- Hubs can turn off release tracking with `HIVE_HUB_RELEASE_TRACKING_DISABLED=true`, in the same style as `HIVE_HUB_MARKETPLACE_DISABLED`. The hub then skips the GitHub branch-tip SHA poll, image-branch discovery, the release-channel resolver and the stable-promotion status reads, so it makes no release-tracking calls to api.github.com or ghcr.io, and the dashboard shows its existing "unknown" state for the latest-image and channel rows. `network-requirements.md` now lists the hub's outbound hosts and which feature needs each ([#19726](https://github.com/hivecommons/hive/issues/19726)).
+
+### Fixed
+
+- A hub that cannot reach ghcr.io no longer retries the release-channel resolve and the image-branch lookup on every dashboard poll and snapshot rebuild. After a failed lookup it waits about 60 seconds and serves the previous answer or the "unknown" placeholder rows meanwhile, which cuts a firewalled hub from about 2,800 failing GHCR requests an hour to at most a few hundred and still recovers within a minute of GHCR coming back ([#19725](https://github.com/hivecommons/hive/issues/19725)).
+- The Workflow select on Settings → Repos now stays inside the dialog: options show only the model name and version, with the description on hover.
+- Closing or deleting a terminal session now coordinates with Resume so shutdown cannot kill a replacement terminal or leave a terminal the dashboard cannot track.
+
 ## 2026-11-24 (v5.362.0)
 
 ### Added
