@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/hivecommons/hive/crux/pushbroker"
 )
 
 // Per-session git worktrees of the shared workspace clone, and the lock of
@@ -236,7 +238,13 @@ func (r *UserSessionRuntime) SessionWorkspaceDir(id, repo string) string {
 // (userSessionWorkspaceSecureScript) and records it for this process. The
 // caller holds workspaceMu.
 func (r *UserSessionRuntime) secureClone(org, name, clone string) error {
-	url := "https://github.com/" + org + "/" + name + ".git"
+	// The locked config names the forge the clone came from, so a later
+	// fetch goes back there and nowhere else.
+	base, _, err := r.workspaceRemote(org + "/" + name)
+	if err != nil {
+		return fmt.Errorf("session workspace for %s/%s: %w", org, name, err)
+	}
+	url := pushbroker.ForgeRepoURL(base, org+"/"+name)
 	if out, err := r.privRunFor(userSessionWorkspaceHandoffTimeout, userSessionRootSpec, nil, "sh", "-c", userSessionWorkspaceSecureScript, "sh", clone, strconv.Itoa(userSessionGID()), url, userSessionWorktreeBranchDir); err != nil {
 		return outputErr("locking "+clone, err, out)
 	}

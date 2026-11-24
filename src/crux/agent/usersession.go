@@ -126,6 +126,9 @@ type UserSessionRuntime struct {
 	// (usersession_workspace.go); cloneMinter mints its scoped token.
 	git         gitRunFunc
 	cloneMinter pushbroker.TokenMinter
+	// forgeRemotes names the forge and minter of a repo that is not on
+	// github.com (SetForgeRemotes); nil keeps every repo on github.com.
+	forgeRemotes pushbroker.ForgeRemoteResolver
 	// orphaned judges whether an attached tmux client has lost its terminal
 	// attacher (usersession_clients.go); nil disables the reaper.
 	orphaned clientOrphanFunc

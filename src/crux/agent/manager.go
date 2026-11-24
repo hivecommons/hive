@@ -811,8 +811,12 @@ type Manager struct {
 	sandboxSubstrateLauncherFactory func(config.SandboxSubstrateConfig) sandbox.Launcher
 	sandboxRunner                   sandboxCommandRunner
 	// sandboxRunPersister overrides persistSandboxRun in tests.
-	sandboxRunPersister  func(workDir string, entry SandboxRunHistoryEntry) error
-	sandboxPushMinter    pushbroker.TokenMinter
+	sandboxRunPersister func(workDir string, entry SandboxRunHistoryEntry) error
+	sandboxPushMinter   pushbroker.TokenMinter
+	// sandboxForgeRemotes resolves a repo that is not on github.com to its
+	// forge URL and minter (SetSandboxForgeRemotes). Nil: every repo is on
+	// github.com.
+	sandboxForgeRemotes  pushbroker.ForgeRemoteResolver
 	sandboxPRClient      PRCreator
 	sandboxMutation      effects.Boundary
 	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]

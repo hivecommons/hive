@@ -794,7 +794,7 @@ func TestF5_PushTokenNeverAppearsInGitArgv(t *testing.T) {
 	}
 	var helper bool
 	for _, arg := range r.argsOnPush {
-		if strings.HasPrefix(arg, "credential.helper=") {
+		if strings.HasPrefix(arg, "credential.https://github.com.helper=") {
 			helper = true
 			if !strings.Contains(arg, pushTokenEnvVar) {
 				t.Fatalf("F5: credential helper does not read %s: %q", pushTokenEnvVar, arg)
@@ -1842,7 +1842,7 @@ func TestExpectedRemoteURL(t *testing.T) {
 		"/hive":              "",
 		"hivecommons/":       "",
 	} {
-		if got := expectedRemoteURL(in); got != want {
+		if got := (&Broker{Repo: in}).expectedRemoteURL(); got != want {
 			t.Fatalf("expectedRemoteURL(%q) = %q, want %q", in, got, want)
 		}
 	}

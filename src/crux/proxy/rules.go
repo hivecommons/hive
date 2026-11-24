@@ -88,7 +88,7 @@ func IsGitHubHost(host string) bool {
 // the "should I inspect this?" test; see NeedsInspection.
 func NeedsMITM(host string) bool {
 	host = canonicalHost(host)
-	return host == "api.github.com" || IsLinearHost(host)
+	return host == "api.github.com" || IsLinearHost(host) || IsForgeHost(host)
 }
 
 // NeedsInspection reports whether the proxy must terminate TLS for this host to
@@ -101,7 +101,7 @@ func NeedsMITM(host string) bool {
 // would still have been tunneled by the IsGitHubHost guard above it. Call sites
 // ask this instead, so a host added to NeedsMITM is actually inspected.
 func NeedsInspection(host string) bool {
-	return (IsGitHubHost(host) || IsLinearHost(host)) && NeedsMITM(host)
+	return (IsGitHubHost(host) || IsLinearHost(host) || IsForgeHost(host)) && NeedsMITM(host)
 }
 
 // copilotAPIHostSuffix matches the GitHub Copilot completion API hosts. The
