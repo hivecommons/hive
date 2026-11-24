@@ -8,6 +8,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -141,6 +142,22 @@ func (c *Client) StaleRedBehindBy(ctx context.Context, repo, baseSHA, headSHA st
 		return 0, fmt.Errorf("comparing %s/%s@%s with head %s: %w", owner, name, shortSHA(baseSHA), shortSHA(headSHA), err)
 	}
 	return cmp.GetBehindBy(), nil
+}
+
+// StaleRedNeedsHumanLabeledByApp reports whether the newest needs-human
+// labeled or unlabeled event on PR number in repo is a `labeled` by the
+// hive's App bot (latestLabelEventByApp). The stale-red pass reads it right
+// before asking a dependency bot to rebase a PR that the dependency-bot
+// sweep's own red-CI hand-off labelled, so a person who took the label off
+// and put it back is not overruled. A client with no App bot login reports
+// false.
+func (c *Client) StaleRedNeedsHumanLabeledByApp(ctx context.Context, repo string, number int) (bool, error) {
+	if c == nil || c.client == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	byApp, _, err := c.latestLabelEventByApp(WithRESTCaller(ctx, "hive:stale_red_base_refresh"), owner, name, number, escalation.NeedsHumanLabel)
+	return byApp, err
 }
 
 // CommitCommittedAt returns the committer date of sha in repo. A commit
