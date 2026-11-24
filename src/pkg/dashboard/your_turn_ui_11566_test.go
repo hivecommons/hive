@@ -830,6 +830,10 @@ assert.deepEqual(kinds(model(own('SPEC', 'parked_needs_spec'), { hasPlan: true }
 assert.match(kinds(model(own('TRIAGE', 'agent_filed_unacknowledged')))[1], /approved-direction label, assigning a person, or closing/);
 assert.deepEqual(kinds(model(own('TRIAGE', 'agent_filed_unacknowledged'))).length, 2);
 assert.deepEqual(kinds(model(own('ADMIT', 'untrusted_reporter'))), [open, 'note:Add the label triage-ok to admit it.']);
+// An untrusted reporter's design proposal has no parking label, so the
+// un-park sweep would ignore /hive approve and /hive decision on it.
+assert.deepEqual(kinds(model(own('DECIDE', 'open_for_discussion'))), [open, 'note:Once decided, add the label triage-ok to admit it, or close it.']);
+assert.deepEqual(kinds(model(own('DECIDE', 'open_for_discussion'), { admissionLabels: [] })), [open, 'note:Once decided, add an admission label to admit it, or close it.']);
 // The issue-filter ADMIT rows name the filter's labels in their reason; the
 // reporter-trust labels would be the wrong ones.
 assert.deepEqual(kinds(model(own('ADMIT', 'decided_not_admitted'))), [open]);
