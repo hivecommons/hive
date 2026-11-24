@@ -11,6 +11,25 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.357.0)
+
+### Added
+
+- Add agentmode.KnownTokenTiers and LessPrivilegedTokenTier so per-tier forge credentials can be validated and fall back safely.
+- A hub operator can now narrow the scope of the `hive_hub_user` session cookie with `HIVE_HUB_SESSION_COOKIE_DOMAIN`. Before, the cookie was always scoped to the registrable domain of `HIVE_HUB_PUBLIC_URL`, so a self-hosted hub at `hive.example.org` sent its login cookie to every service on `example.org`. Set it to `hive.example.org` to keep the cookie on the hub and its spokes at `<hive-id>.hive.example.org`. The value must be the hub host or a parent of it, and no wider than the registrable domain. Any other value is ignored with one error log line, and the cookie is scoped to the hub host. When the scope narrows, the hub also expires the copy that browsers still hold under the registrable domain. A first-party sibling product outside the narrowed scope is signed out. Unset keeps the current behavior.
+
+### Fixed
+
+- Fix Docker Compose quick-start config generation on macOS.
+- Create Agent now respects Agent power and On Demand. Hive leaves disabled agents off and starts on-demand agents only when explicitly requested.
+- **A forge token is only sent to its own forge block's host.** A `project.repo_policies[].forge_url` on a different host or port than `gitlab.gitlab_url`, `gitea.gitea_url` or `forgejo.forgejo_url` used to receive that block's token. Config load now rejects the mismatch with an error naming the repo policy and both hosts, and the governor's comment, label and merge paths build no writer for such a repo, so no request leaves. A GitLab block with no `gitlab_url` is checked against `https://gitlab.com`. A block URL with no scheme or host is rejected when a repo policy sets `forge_url`. A Gitea or Forgejo block with no URL of its own, and a repo whose `forge_url` matches its block, behave as before.
+- A gateway endpoint that ends in `/v1`, as the OpenRouter and Groq presets and the gateway form placeholder suggest, now works for every agent kick. The inference proxy, the model context length query, Test Connection and the reviewer lanes added `/v1` again and called `/v1/v1/chat/completions`, which a gateway can refuse with 405 or 404. They now share one URL builder with the model list, and an endpoint with or without `/v1` reaches the same path.
+- The hub links an avatar to a GitHub profile only for a GitHub user. A user who signs in through another identity provider no longer gets a link to `github.com/<display name>` from their own avatar, the fleet page menu, or the hive access avatars. `/api/auth/user` now returns the user's `provider`.
+- The owner of a self-registered spoke and the hub admin can now grant, change and remove access to it on the hub. The access endpoints answered `hive not found` for a spoke with no hosted record, and the dashboard showed no Permissions control for it.
+- Preserve other repositories’ write-back modes when saving repository cards, report failed saves, and show saved modes even before the write-back gate observes a repository.
+- Log Slack and Discord webhook rejections with the provider and HTTP status without exposing webhook URLs.
+- Preserve workflow editor edits made while a save is in progress and keep them marked as unsaved until they are saved.
+
 ## 2026-11-24 (v5.356.0)
 
 ### Added
