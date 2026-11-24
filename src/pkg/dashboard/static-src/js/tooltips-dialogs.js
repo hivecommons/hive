@@ -565,6 +565,49 @@
       sel.removeAllRanges();
       sel.addRange(range);
     }
+    // Copy button of the export viewer. The outcome goes in the popup's own
+    // status line, not a toast: #toast-container (z-index 10001) sits under
+    // .hive-dialog-overlay (20000) and its blur, so a toast here is unreadable.
+    // Each click clears the last outcome first and only the newest click may
+    // write one, so a slow earlier clipboard promise cannot overwrite it. The
+    // text lands on the next task so a repeated message is announced again.
+    // A success clears itself. Resolves true (copied), false (selected for
+    // manual copy) or null (superseded by a later click).
+    function hiveExportCopy(text, textEl, statusEl) {
+      const seq = (statusEl._hiveExportSeq || 0) + 1;
+      statusEl._hiveExportSeq = seq;
+      const current = function() { return statusEl._hiveExportSeq === seq; };
+      const stopClear = function() {
+        if (statusEl._hiveExportClear) { clearTimeout(statusEl._hiveExportClear); statusEl._hiveExportClear = 0; }
+      };
+      const show = function(msg) {
+        setTimeout(function() { if (current()) statusEl.textContent = msg; }, 0);
+      };
+      const manualCopy = function(msg) {
+        textEl.focus();
+        hiveSelectAllText(textEl);
+        show(msg);
+        return false;
+      };
+      stopClear();
+      statusEl.textContent = '';
+      if (!(navigator.clipboard && navigator.clipboard.writeText)) {
+        return Promise.resolve(manualCopy('The text is selected; press Ctrl+C (or Cmd+C) to copy it.'));
+      }
+      return navigator.clipboard.writeText(text).then(function() {
+        if (!current()) return null;
+        show('Copied to clipboard.');
+        stopClear();
+        statusEl._hiveExportClear = setTimeout(function() {
+          statusEl._hiveExportClear = 0;
+          if (current()) statusEl.textContent = '';
+        }, 4000);
+        return true;
+      }, function() {
+        if (!current()) return null;
+        return manualCopy('Your browser blocked the clipboard. The text is selected; press Ctrl+C (or Cmd+C) to copy it.');
+      });
+    }
     // In-app viewer for text the dashboard hands to the user: a single link
     // (OAuth authorization URLs, terminal URLs, external links) or a text
     // export (JSON, YAML, CSV). No textarea: a link is one full-width,
@@ -591,6 +634,7 @@
             ? '<code class="hive-export-link" tabindex="0" aria-readonly="true"></code>'
             : '<pre class="hive-export-text" tabindex="0" aria-readonly="true"></pre>'}
         </div>
+        <p class="hive-export-status muted-xs" role="status" aria-live="polite"></p>
         <div class="hive-dialog-buttons">
           <button type="button" class="hv-btn btn-ghost hive-dialog-btn hive-export-close">Close</button>
           <button type="button" class="hv-btn btn-secondary hive-export-copy">Copy to clipboard</button>
@@ -624,14 +668,10 @@
         copy.classList.add('btn-primary');
         copy.setAttribute('data-initial-focus', '');
       }
+      const copyStatus = overlay.querySelector('.hive-export-status');
       copy.addEventListener('click', function(e) {
         e.preventDefault();
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(function(){ showToast('Copied ' + title + ' to clipboard', 'success'); }, function(){ textEl.focus(); hiveSelectAllText(textEl); showToast('Clipboard blocked — selected text for manual copy', 'error'); });
-        } else {
-          textEl.focus(); hiveSelectAllText(textEl);
-          showToast('Selected text for manual copy', 'info');
-        }
+        hiveExportCopy(text, textEl, copyStatus);
       });
       document.body.appendChild(overlay);
       // Enter activates the focused action (Open leads with initial focus);
