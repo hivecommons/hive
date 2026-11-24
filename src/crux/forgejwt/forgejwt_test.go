@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux/keystore"
 )
 
 const testIssuer Issuer = "https://hive-keys.example.org"
@@ -376,5 +378,174 @@ func TestPKCS1KeyLoads(t *testing.T) {
 func TestSignRejectsUnencodableClaims(t *testing.T) {
 	if _, err := sign(testKeys()[0], func() {}); err == nil {
 		t.Error("claims that cannot be encoded were signed")
+	}
+}
+
+func TestKeyModeAllowed(t *testing.T) {
+	const nodeGID = 1000
+	cases := []struct {
+		perm    os.FileMode
+		gid     uint32
+		haveGID bool
+		want    bool
+	}{
+		{0o600, nodeGID, true, true},
+		{0o400, nodeGID, true, true},
+		{0o700, nodeGID, true, true},
+		{0o600, 0, false, true},
+		{0o440, LaunchGID, true, true},
+		{0o640, LaunchGID, true, true},
+		{0o440, nodeGID, true, false},
+		{0o640, nodeGID, true, false},
+		{0o440, 0, true, false},
+		{0o440, LaunchGID, false, false},
+		{0o444, LaunchGID, true, false},
+		{0o644, LaunchGID, true, false},
+		{0o404, LaunchGID, true, false},
+		{0o441, LaunchGID, true, false},
+		{0o460, LaunchGID, true, false},
+		{0o420, LaunchGID, true, false},
+		{0o450, LaunchGID, true, false},
+		{0o470, LaunchGID, true, false},
+		{0o660, LaunchGID, true, false},
+	}
+	for _, c := range cases {
+		if got := keyModeAllowed(c.perm, c.gid, c.haveGID); got != c.want {
+			t.Errorf("keyModeAllowed(%#o, gid %d, haveGID %v) = %v, want %v", c.perm, c.gid, c.haveGID, got, c.want)
+		}
+	}
+}
+
+// useLaunchGID points the hive-launch GID at gid for one test.
+func useLaunchGID(t *testing.T, gid uint32) {
+	t.Helper()
+	prev := launchGID
+	launchGID = gid
+	t.Cleanup(func() { launchGID = prev })
+}
+
+func statGID(t *testing.T, path string) uint32 {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gid, ok := fileGID(info)
+	if !ok {
+		t.Skip("platform reports no file group")
+	}
+	return gid
+}
+
+// TestGroupReadKeyNeedsLaunchGroup reads a real 0440 file the way the
+// shipped /secrets mount presents one. The test cannot chown to GID 1002, so
+// it treats the file's own group as hive-launch, then as some other group.
+func TestGroupReadKeyNeedsLaunchGroup(t *testing.T) {
+	data := pemBytes(t, testKeys()[0])
+	f := writeFile(t, data, 0o440)
+	gid := statGID(t, f)
+	s := Signer{Issuer: testIssuer, KeyFile: f}
+
+	useLaunchGID(t, gid)
+	if _, err := s.Mint("u:7:3f0c", "hive:advisor"); err != nil {
+		t.Fatalf("0440 key under the hive-launch group refused: %v", err)
+	}
+	if _, err := PublicKey(f); err != nil {
+		t.Fatalf("PublicKey of a 0440 key under the hive-launch group: %v", err)
+	}
+	for _, mode := range []os.FileMode{0o444, 0o644, 0o460, 0o404} {
+		g := writeFile(t, data, mode)
+		useLaunchGID(t, statGID(t, g))
+		if _, err := (Signer{Issuer: testIssuer, KeyFile: g}).Mint("u:7:3f0c", "hive:advisor"); !errors.Is(err, ErrKeyFileMode) {
+			t.Errorf("mode %#o under the hive-launch group: err = %v, want ErrKeyFileMode", mode, err)
+		}
+	}
+
+	useLaunchGID(t, gid+1)
+	_, err := s.Mint("u:7:3f0c", "hive:advisor")
+	if !errors.Is(err, ErrKeyFileMode) {
+		t.Fatalf("0440 key under a group other than hive-launch: err = %v, want ErrKeyFileMode", err)
+	}
+	if !strings.Contains(err.Error(), f) {
+		t.Errorf("mode error %q does not name the path", err)
+	}
+	if strings.Contains(err.Error(), "PRIVATE KEY") {
+		t.Errorf("mode error %q carries file contents", err)
+	}
+}
+
+// TestSealedKeyLoadsAfterRestart walks a key under the data volume through
+// two boots: the first reads the plaintext PEM, the boot sweep seals it in
+// place, and the second boot, with a fresh provider from the same material,
+// must still mint with the same key.
+func TestSealedKeyLoadsAfterRestart(t *testing.T) {
+	const material = "forgejwt-test-keystore-material-0123456789"
+	ctx := t.Context()
+	dir := t.TempDir()
+	t.Cleanup(keystore.SetRewriteRootsForTest(dir))
+	t.Cleanup(keystore.ResetForTest)
+	boot := func() {
+		keystore.ResetForTest()
+		p, err := keystore.NewEnvKeyProvider([]byte(material))
+		if err != nil {
+			t.Fatal(err)
+		}
+		keystore.SetActive(p)
+	}
+
+	key := testKeys()[0]
+	path := filepath.Join(dir, "forgejo-jwt.pem")
+	if err := os.WriteFile(path, pemBytes(t, key), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, jwks, err := KeyList(testIssuer, &key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := Signer{Issuer: testIssuer, KeyFile: path}
+
+	boot()
+	tok, err := s.Mint("u:7:3f0c", "hive:advisor")
+	if err != nil {
+		t.Fatalf("first boot, plaintext key: %v", err)
+	}
+	if err := verify(t, tok, jwks); err != nil {
+		t.Fatalf("first boot token does not verify: %v", err)
+	}
+	if _, err := keystore.MigrateDir(ctx, dir); err != nil {
+		t.Fatalf("MigrateDir: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !keystore.IsEnvelope(raw) || strings.Contains(string(raw), "PRIVATE KEY") {
+		t.Fatal("the boot sweep did not seal the key file in place")
+	}
+
+	boot()
+	tok, err = s.Mint("u:7:3f0c", "hive:advisor")
+	if err != nil {
+		t.Fatalf("second boot, sealed key: %v", err)
+	}
+	if err := verify(t, tok, jwks); err != nil {
+		t.Errorf("second boot token does not verify against the same key list: %v", err)
+	}
+	pub, err := PublicKey(path)
+	if err != nil {
+		t.Fatalf("PublicKey of a sealed key: %v", err)
+	}
+	if keyID(pub) != keyID(&key.PublicKey) {
+		t.Error("the sealed key opened to a different public key")
+	}
+
+	keystore.ResetForTest()
+	keystore.SetActive(nil)
+	_, err = s.Mint("u:7:3f0c", "hive:advisor")
+	if !errors.Is(err, keystore.ErrNoProvider) {
+		t.Fatalf("sealed key with no provider: err = %v, want keystore.ErrNoProvider", err)
+	}
+	if strings.Contains(err.Error(), key.D.String()) || strings.Contains(err.Error(), "PRIVATE KEY") {
+		t.Errorf("error %q carries key material", err)
 	}
 }

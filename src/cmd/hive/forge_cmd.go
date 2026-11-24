@@ -36,7 +36,7 @@ func runForge(args []string, stdout, stderr io.Writer) int {
 	issuer := fs.String("issuer", "", "issuer URL, https://host[:port]; Forgejo's integration --issuer")
 	out := fs.String("out", ".", "directory to write "+forgejwt.DiscoveryPath+" and "+forgejwt.KeyListPath+" into")
 	var keys stringList
-	fs.Var(&keys, "key", "signing key file (PEM RSA private key, mode 0600); repeat for each key to publish")
+	fs.Var(&keys, "key", "signing key file (PEM RSA private key, mode 0600, or 0440 with group hive-launch); repeat for each key to publish")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}

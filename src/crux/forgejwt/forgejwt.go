@@ -1,13 +1,16 @@
 // Package forgejwt signs the JWTs a Forgejo authorized integration accepts,
 // and renders the discovery document and key list Forgejo fetches to verify
-// them. It uses only the standard library.
+// them. It uses the standard library and crux/keystore.
 //
 // Forgejo verifies a token against the issuer's key list, which an operator
 // serves as two static files from an https host Forgejo trusts. The signing
-// key stays in a file on the spoke.
+// key stays in a file on the spoke. A key under the data volume is sealed in
+// place by the boot keystore sweep, so the key file may hold either a PEM key
+// or a keystore envelope around one.
 package forgejwt
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -19,10 +22,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/big"
 	"net/url"
 	"os"
+	"syscall"
 	"time"
+
+	"github.com/hivecommons/hive/crux/keystore"
 )
 
 const (
@@ -37,14 +44,51 @@ const (
 	DiscoveryPath = ".well-known/openid-configuration"
 	KeyListPath   = "jwks.json"
 
+	// LaunchGID is the hive-launch group, pinned in src/Dockerfile and used
+	// as the pod fsGroup in src/deploy/k8s. Its only member is dev; agent
+	// UIDs share group node (GID 1000) instead, so a key that hive-launch
+	// can read stays out of their reach.
+	LaunchGID = 1002
+
 	alg         = "RS256"
 	minKeyBits  = 2048
 	maxKeyBytes = 64 << 10
+
+	ownerOnlyMask fs.FileMode = 0o077
+	otherMask     fs.FileMode = 0o007
+	groupMask     fs.FileMode = 0o070
+	groupRead     fs.FileMode = 0o040
 )
 
-// ErrKeyFileMode is returned for a signing key file that group or other can
-// read.
-var ErrKeyFileMode = errors.New("signing key file is readable by group or other")
+// ErrKeyFileMode is returned for a signing key file that others can read, or
+// that a group other than hive-launch can read, or that any group can write.
+var ErrKeyFileMode = errors.New("signing key file is readable beyond its owner and the hive-launch group")
+
+// launchGID is LaunchGID; tests point it at their own GID so a group-read
+// file they create can stand in for the shipped Secret mount.
+var launchGID uint32 = LaunchGID
+
+// keyModeAllowed reports whether a key file at perm owned by group gid may be
+// read. Owner-only modes always pass. Group read (and nothing else for the
+// group or for others) passes only when the group is hive-launch, which is
+// how the Deployment mounts /secrets (defaultMode 0440, fsGroup 1002). Group
+// read under any other group, node above all, would expose the key to every
+// agent UID.
+func keyModeAllowed(perm fs.FileMode, gid uint32, haveGID bool) bool {
+	if perm&ownerOnlyMask == 0 {
+		return true
+	}
+	return perm&otherMask == 0 && perm&groupMask == groupRead && haveGID && gid == launchGID
+}
+
+// fileGID returns the owning group of info, when the platform reports one.
+func fileGID(info fs.FileInfo) (uint32, bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || st == nil {
+		return 0, false
+	}
+	return st.Gid, true
+}
 
 // Issuer is an https URL with no path, query or fragment. It is the iss claim
 // and the base URL of the discovery document.
@@ -146,8 +190,10 @@ func PublicKey(path string) (*rsa.PublicKey, error) {
 	return &key.PublicKey, nil
 }
 
-// readKey loads a PEM RSA private key. Its errors name the path and never
-// carry file contents or parser detail.
+// readKey loads a PEM RSA private key, opening it first when the boot
+// keystore sweep has sealed the file in place. The mode check and the read
+// use the same open file, so the checked file is the one read. Its errors
+// name the path and never carry file contents or parser detail.
 func readKey(path string) (*rsa.PrivateKey, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -158,12 +204,20 @@ func readKey(path string) (*rsa.PrivateKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("forgejwt: signing key: %w", err)
 	}
-	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		return nil, fmt.Errorf("forgejwt: %s has mode %#o: %w; chmod it to 0600", path, perm, ErrKeyFileMode)
+	gid, haveGID := fileGID(info)
+	if perm := info.Mode().Perm(); !keyModeAllowed(perm, gid, haveGID) {
+		return nil, fmt.Errorf("forgejwt: %s has mode %#o: %w; chmod it to 0600, or to 0440 with group hive-launch (GID %d)", path, perm, ErrKeyFileMode, LaunchGID)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxKeyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("forgejwt: signing key: %w", err)
+	}
+	if keystore.IsEnvelope(data) {
+		pt, _, err := keystore.Open(context.Background(), keystore.Active(), string(data), keystore.FileAAD(path))
+		if err != nil {
+			return nil, fmt.Errorf("forgejwt: %s is a sealed signing key that could not be opened: %w", path, err)
+		}
+		data = pt
 	}
 	block, _ := pem.Decode(data)
 	if block == nil {

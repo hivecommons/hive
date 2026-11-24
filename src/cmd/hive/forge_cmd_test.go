@@ -78,7 +78,7 @@ func TestForgeKeyListRefusesReadableKey(t *testing.T) {
 	if code := runForge([]string{"key-list", "--issuer", "https://hive-keys.example.org", "--key", key, "--out", out}, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit %d, want 1; stderr %s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "readable by group or other") {
+	if !strings.Contains(stderr.String(), "readable beyond its owner") {
 		t.Errorf("stderr = %q", stderr.String())
 	}
 	if strings.Contains(stdout.String()+stderr.String(), line) {
