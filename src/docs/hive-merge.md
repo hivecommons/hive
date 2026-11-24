@@ -342,6 +342,24 @@ comment may change within its major version), `FROM image@sha256:<64-hex>` /
 missing patches, line-count mismatches, added/renamed files, owner files,
 permission/credential/signing text and non-pin edits fail closed.
 
+**A short note after the version comment is allowed when it does not
+change.** Renovate keeps any text after a pin's version comment when it
+rewrites the pin, so a workflow that annotates a pin, such as
+`uses: taiki-e/install-action@<sha> # v2.90.7 (just)` or a linter suppression
+like `uses: owner/repo@<sha> # v1 # zizmor: ignore[ref-version-mismatch]`,
+would otherwise make every later bump of that line a person's merge
+([projectbluefin/dakota-iso#400](https://github.com/projectbluefin/dakota-iso/pull/400)).
+On a `uses:` line and on an `action-sha-ref` line (below), the version
+comment may be followed by whitespace and a note of at most 80 printable
+ASCII characters, with no backtick and no `$` (so no `${{ }}` expression).
+The note must be byte-identical on the removed and the added line and must
+follow a `# vN[.N[.N]]` comment set off by whitespace. A note that changes,
+appears or disappears, a note without a version comment, a longer note and a
+note holding one of the refused words keep the pull request a person's
+merge. The note is never part of the version: the upstream tag check
+resolves `tags/v2.90.7`, not the note, and the major-version rule below
+compares the versions alone.
+
 **A major version change is not a pin.** The major version is the first number
 of the version, after an optional leading `v`. When the version comment of a
 `uses:` line (or of an `action-sha-ref` line, below) moves to another major
@@ -385,7 +403,8 @@ of these hold:
 - Both the removed and the added line are a plain `key: <40-hex>` line: an
   unquoted mapping key (letters, digits, `_`, `-`), one space, the commit and
   nothing else except an optional `# vN[.N[.N]]` comment set off by
-  whitespace. A list item (`- key:`), a quoted value, a short SHA or any
+  whitespace, which may carry the same short unchanged note as a `uses:`
+  line (above). A list item (`- key:`), a quoted value, a short SHA or any
   other text does not qualify.
 - The key and its indentation are byte-identical on both lines.
 - As for `action-sha`, an existing version comment may change within its

@@ -413,6 +413,13 @@ func testPinFileNoComment(name string) map[string]any {
 		"patch": "@@ -3 +3 @@\n-" + strip(testPinOldLine) + "\n+" + strip(testPinNewLine)}
 }
 
+// testPinFileNoted is the same pin bump with an unchanged note after the
+// version comment on both lines; the upstream tag read is still tags/v5.
+func testPinFileNoted(name, note string) map[string]any {
+	return map[string]any{"filename": name, "status": "modified", "additions": 1, "deletions": 1,
+		"patch": "@@ -3 +3 @@\n-" + testPinOldLine + note + "\n+" + testPinNewLine + note}
+}
+
 // testPinRef is a git ref (or annotated tag) object pointing at sha.
 func testPinRef(kind, sha string) map[string]any {
 	return map[string]any{"object": map[string]any{"type": kind, "sha": sha}}
@@ -478,6 +485,9 @@ func TestHumanMergePathGatePinOnlyException(t *testing.T) {
 		{name: "trusted pure pin, commit list unavailable: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)},
 			commitsStatus: http.StatusBadGateway, wantHold: true, wantHits: 1, wantCommitHits: 1},
 		{name: "upstream tag points elsewhere: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)},
+			upstream: map[string]any{"/git/ref/tags/v5": testPinRef("commit", strings.Repeat("c", 40))}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 1},
+		{name: "trailing note kept, upstream tag is the pin: not held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFileNoted(workflow, " (just)")}, wantHits: 1, wantCommitHits: 1},
+		{name: "trailing note kept, upstream tag points elsewhere: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFileNoted(workflow, " (just)")},
 			upstream: map[string]any{"/git/ref/tags/v5": testPinRef("commit", strings.Repeat("c", 40))}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 1},
 		{name: "upstream tag missing (fork-network SHA): held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)},
 			upstream: map[string]any{}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 1},

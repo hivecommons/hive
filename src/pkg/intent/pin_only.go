@@ -18,11 +18,42 @@ type PinOnlySpec struct {
 
 var (
 	pinHunkRE    = regexp.MustCompile(`^@@ -[0-9]+(?:,([0-9]+))? \+[0-9]+(?:,([0-9]+))? @@(?: .*)?$`)
-	actionPinRE  = regexp.MustCompile(`^([ \t]*(?:- )?uses: [A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@)([0-9a-fA-F]{40})([ \t]*(?:# v[0-9]+(?:\.[0-9]+){0,2})?)$`)
+	actionPinRE  = regexp.MustCompile(`^([ \t]*(?:- )?uses: [A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@)([0-9a-fA-F]{40})([ \t]*(?:# v[0-9]+(?:\.[0-9]+){0,2})?)` + pinNoteGroup + `$`)
 	imagePinRE   = regexp.MustCompile(`^([ \t]*(?:FROM |image: )[A-Za-z0-9][A-Za-z0-9._/:\-]*@sha256:)([0-9a-fA-F]{64})([ \t]*(?:AS [A-Za-z0-9_-]+)?)$`)
 	versionPinRE = regexp.MustCompile(`^([ \t]*(?:version: |ARG [A-Z][A-Z0-9_]*_VERSION=))(["']?v?[0-9]+\.[0-9]+\.[0-9]+["']?)([ \t]*)$`)
 	unsafePinRE  = regexp.MustCompile(`(?i)(permissions|secrets[.]|\benv\b|\brun:|\bwith:|id-token|cosign|attest|provenance|credential|signing|codeowners)`)
 )
+
+// pinNoteGroup is the optional short note after the version comment of an
+// action pin or a companion line, such as ` (just)` or
+// ` # zizmor: ignore[ref-version-mismatch]`, that a dependency bot keeps when
+// it rewrites the pin. It is whitespace, then 1 to 80 printable ASCII
+// characters, the first not a space, none a backtick or a dollar sign (so no
+// shell or expression syntax). It is its own capture group, so the version
+// comment group stays exactly what it was; pinNoteKept decides whether a pair
+// of notes is acceptable.
+const pinNoteGroup = `((?:[ \t]+[!-#%-_a-~][ !-#%-_a-~]{0,79})?)`
+
+// pinNoteKept reports whether the trailing notes (pinNoteGroup) of an old and
+// a new pin line allow the pair: absent on both, or byte-identical on both
+// and set after a version comment that is a real comment on each line (it
+// starts with whitespace and holds the "#"). Without such a comment the note
+// would be part of the value, not a comment. A note that changes, appears or
+// disappears refuses the pair, so the bump still changes only the commit and
+// the version. The unsafe-word check is repeated on the note itself rather
+// than relying on the callers' whole-line check.
+func pinNoteKept(oldComment, oldNote, nextComment, nextNote string) bool {
+	if oldNote != nextNote {
+		return false
+	}
+	if oldNote == "" {
+		return true
+	}
+	isComment := func(s string) bool {
+		return s != "" && (s[0] == ' ' || s[0] == '\t') && strings.Contains(s, "#")
+	}
+	return isComment(oldComment) && isComment(nextComment) && !unsafePinRE.MatchString(oldNote)
+}
 
 // Pin kinds a PinOnlySpec may name. pinLineKinds are the kinds one
 // removed/added pair satisfies on its own, in match precedence order.
@@ -290,9 +321,10 @@ func matchPinReplacement(old, next string, kinds map[string]bool) (*ActionPin, s
 			continue
 		}
 		// Only action version comments may change; all other suffixes (image
-		// aliases, whitespace and quoting) must remain byte-identical.
+		// aliases, whitespace and quoting, and a note after an action's
+		// version comment) must remain byte-identical.
 		if kind == pinKindActionSHA {
-			if strings.Contains(a[3], "#") != strings.Contains(b[3], "#") {
+			if strings.Contains(a[3], "#") != strings.Contains(b[3], "#") || !pinNoteKept(a[3], a[4], b[3], b[4]) {
 				continue
 			}
 			if why := pinCommentMajorChange(a[3], b[3]); why != "" {
@@ -327,7 +359,8 @@ func matchPinReplacement(old, next string, kinds map[string]bool) (*ActionPin, s
 }
 
 // pinVersionComment returns the version in an action pin's trailing
-// `# vN[.N[.N]]` group ("v4", "v4.1.2"), or "" when the line has none.
+// `# vN[.N[.N]]` group ("v4", "v4.1.2"), or "" when the line has none. A note
+// after the version (pinNoteGroup) is a separate group and never part of it.
 func pinVersionComment(suffix string) string {
 	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(suffix), "#"))
 }
