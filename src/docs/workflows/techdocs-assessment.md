@@ -1,8 +1,8 @@
 # CNCF TechDocs AI-assisted assessment — curated workflow model
 
-`cncf-techdocs-assessment@curated-2026.11.2` is the current version of the first curated
+`cncf-techdocs-assessment@curated-2026.11.3` is the current version of the first curated
 model in the hub marketplace (https://hive.hivecommons.dev → Settings → Workflows →
-Marketplace on any hive); `curated-2026.11.1` stays in the catalogue unchanged. It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
+Marketplace on any hive); `curated-2026.11.1` and `curated-2026.11.2` stay in the catalogue unchanged. It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
 so a hive bound to `cncf/techdocs` runs intake, drafting, verification, stakeholder review
 and approval as a visible lifecycle, with every agent action followed by a human gate.
 
@@ -19,7 +19,8 @@ annotations and in each element's `citations`):
 
 The model's scope is `github.com cncf/techdocs` — the upstream repository where the
 process runs; the fork above is where the spec was written. Model files:
-`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.2.yaml` (current) and
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.3.yaml` (current),
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.2.yaml` (`curated-2026.11.2`) and
 `pkg/hub/marketplace/curated/cncf-techdocs-assessment.yaml` (`curated-2026.11.1`)
 (`apiVersion: workflow.hivecommons.dev/v1alpha1`, `derivation.mode: rules`,
 `meta.provenance: curated`). Curated files are never edited in place: a change is a new
@@ -126,6 +127,33 @@ From `settings.yml`: `Docs analysis`. Proposed for the assessment: `needs-triage
 `triage/accepted`, `triage/declined`, `phase/assessment`, `phase/implementation`,
 `phase/backlog`, `verified`, `confirmed`, `skip-implementation`.
 
+#### Whose turn: status labels on the deliverable PR
+
+`curated-2026.11.3` adds three hive-owned status labels
+([hivecommons/hive#19609](https://github.com/hivecommons/hive/issues/19609)). The gate labels
+`verified` and `confirmed` record what has happened; these name the audience that acts next,
+with the action in the GitHub label description:
+
+| Label | On while the PR is in | Description |
+|---|---|---|
+| `ready-for-techdocs-review` | `drafting`, `in-review` | Draft is open. TechDocs reviewer: run /verify, refine, then /ready. |
+| `ready-for-stakeholder-review` | `stakeholder-review` | Ready for the project. Named stakeholders: review for accuracy and comment /confirm. |
+| `ready-for-approver` | `awaiting-merge` | Stakeholder confirmed and checks green. An independent approver merges. |
+
+Each entry in `spec.labels.entries` carries a `state:` and no rule, event or gate reads it, so
+the stage reconciler owns it: on every pass it adds the label for the PR's current state and
+removes the other two, so a PR carries at most one (none in `checks-failing` or once closed).
+They are status only. Removing one by hand changes nothing (the next pass puts it back), and
+`/ready`, `/approve` and merge still check `verified` and `confirmed`. They are deliberately
+not hive's generic `ready-for-review`, which is a merge hold released by removal
+([hivecommons/hive#18468](https://github.com/hivecommons/hive/issues/18468)): a stakeholder
+removing what they took for a status marker must never clear a merge gate. The
+`techdocs-drafter` and `techdocs-verifier` kicks tell the agent not to add or remove them.
+
+A hive picks them up by rebinding `cncf/techdocs` to `curated-2026.11.3`; the labels are
+created on bind, and PRs already in flight get the label for their current state on the
+next pass. `cncf/techdocs` is to mirror the names in its own `.github/settings.yml` and spec §13.
+
 ### Checks
 
 Required CI: format-check, link-check, spell-check (the three `cncf/techdocs` workflows,
@@ -143,7 +171,7 @@ required.
 
 #### Reference repos from the request
 
-`curated-2026.11.2` adds a `spec.intake` block
+`curated-2026.11.2` adds a `spec.intake` block (kept unchanged in `curated-2026.11.3`)
 ([hivecommons/hive#18139](https://github.com/hivecommons/hive/issues/18139)):
 
 ```yaml
@@ -171,8 +199,9 @@ The first request through this path is
 [cncf/techdocs#395](https://github.com/cncf/techdocs/issues/395), the Hive Commons assessment.
 What the operator of the TechDocs hive (authorized repo `cncf/techdocs`) does and sees:
 
-1. **Rebind to 11.2.** Settings → Workflows → Marketplace, bind `cncf/techdocs` to
-   `cncf-techdocs-assessment@curated-2026.11.2`. This step is required: a hive still bound to
+1. **Rebind to 11.2 or later.** Settings → Workflows → Marketplace, bind `cncf/techdocs` to
+   `cncf-techdocs-assessment@curated-2026.11.3` (or `curated-2026.11.2`, which has the same
+   intake block without the whose-turn labels). This step is required: a hive still bound to
    `curated-2026.11.1` derives nothing, however many requests are accepted. No
    `reference_repos` entry is written by hand.
 2. **A maintainer accepts the request.** Someone with write access to `cncf/techdocs` applies
@@ -229,7 +258,9 @@ On each pass the hive:
 4. kicks that agent once with the issue, the state's guidance and the deliverable the model
    requires: a draft PR in `cncf/techdocs` labeled `Docs analysis` plus the issue's phase
    label, named in the PR request (`hive-open-pr --issues N`) and referenced with `Refs #N`,
-   not marked ready and without the `verified` / `confirmed` gate labels;
+   not marked ready and without the `verified` / `confirmed` gate labels or the
+   [whose-turn status labels](#whose-turn-status-labels-on-the-deliverable-pr), which the
+   hive sets itself;
 5. records the hand-off in `workflow-dispatch.json` under the workflow store root when the
    kick lands, as pending, so neither a later pass nor a restart repeats it. A kick that
    could not be delivered (busy, paused, failed) is retried on a later pass;

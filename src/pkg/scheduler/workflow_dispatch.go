@@ -408,7 +408,44 @@ func workflowDeliverableLines(d github.WorkflowDispatch) []string {
 	if len(guarded) > 0 {
 		lines = append(lines, "Do not apply "+backtickJoin(guarded)+": those labels record a person's gate.")
 	}
+	if status := statusLabels(d.Profile); len(status) > 0 {
+		lines = append(lines, "Do not add or remove "+backtickJoin(status)+": the hive sets those status labels from the item's state.")
+	}
 	return lines
+}
+
+// statusLabels are the model's state-bound labels that nothing reads back:
+// no rule, event or gate names them, so they only mirror the state and the
+// stage reconciler owns them (TechDocs' whose-turn labels,
+// hivecommons/hive#19609). Labels that are also inputs (triage/accepted,
+// verified) are a person's or another system's and are left out.
+func statusLabels(p *workflowmodel.Profile) []string {
+	if p == nil {
+		return nil
+	}
+	input := func(name string) bool {
+		for _, set := range [][]string{p.InputLabels, p.GuardedLabels} {
+			for _, pattern := range set {
+				pattern = strings.ToLower(strings.TrimSpace(pattern))
+				if name == pattern || (strings.HasSuffix(pattern, "*") && strings.HasPrefix(name, strings.TrimSuffix(pattern, "*"))) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, e := range p.Labels.Entries {
+		name := strings.TrimSpace(e.Name)
+		k := strings.ToLower(name)
+		if e.State == "" || name == "" || seen[k] || input(k) {
+			continue
+		}
+		seen[k] = true
+		out = append(out, name)
+	}
+	return out
 }
 
 // carriedLabels are the item's labels the model declares with no state of
