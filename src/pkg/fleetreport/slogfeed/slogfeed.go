@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || unresolvedConversationsSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || unresolvedConversationsSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) || appTokenRefreshTimeoutFallback(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -196,6 +196,34 @@ func ghcrTransientTimeout(r slog.Record) bool {
 			return false
 		}
 		return true
+	})
+	return timedOut
+}
+
+// appTokenRefreshFallbackMessage is the WARN pkg/github's AppAuth.Token logs
+// when a proactive installation-token refresh fails while the cached token is
+// still valid (src/pkg/github/app.go). Keep the two strings in sync.
+const appTokenRefreshFallbackMessage = "github app token proactive refresh failed; serving still-valid cached token"
+
+// appTokenRefreshTimeoutFallback reports whether r is that fallback caused by
+// the mint timing out. The cached token keeps every caller working and the
+// refresh is retried on a backoff long before the token expires, so a slow or
+// unreachable GitHub API is not a hive defect (hivecommons/hive#19706). If the
+// outage outlasts the token, callers fail with their own errors. The WARN
+// stays in local logs; non-timeout refresh failures (a 401 from a revoked key,
+// a 404 from an uninstalled App) stay reportable as early warnings.
+func appTokenRefreshTimeoutFallback(r slog.Record) bool {
+	if r.Level != slog.LevelWarn || strings.TrimSpace(r.Message) != appTokenRefreshFallbackMessage {
+		return false
+	}
+	timedOut := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key != "error" {
+			return true
+		}
+		text := a.Value.String()
+		timedOut = strings.Contains(text, "context deadline exceeded") || strings.Contains(text, "Client.Timeout exceeded")
+		return false
 	})
 	return timedOut
 }
