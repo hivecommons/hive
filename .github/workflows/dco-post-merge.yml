@@ -32,9 +32,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-permissions:
-  contents: read
-  issues: write
+# Nothing at the workflow level; each job asks for exactly what it uses.
+permissions: {}
 
 env:
   DCO_COMMIT_LIMIT: ${{ inputs.commit_limit || '50' }}
@@ -426,6 +425,9 @@ jobs:
     name: Self-test the DCO checker
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Checkout only; the self-tests run against a throwaway local repository.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run check-dco-trailers self-tests
@@ -441,6 +443,13 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # contents: read covers the full-history checkout and the commits API
+    # author-login lookup in lib-dco-identity.sh; issues: write covers the
+    # ci-dco label lookup/creation and opening or commenting on the monitor
+    # issue in "Create or update DCO issue".
+    permissions:
+      contents: read
+      issues: write
     strategy:
       fail-fast: false
       matrix:
