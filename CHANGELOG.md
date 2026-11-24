@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v6.58.9)
+
+### Fixed
+
+- A dependency bot's branch name is no longer read as an issue claim. When a pull request names no issue, the hive recovers one from its head branch, and the trailing number of a Renovate or Dependabot branch is the version it bumps: `renovate/registry.fedoraproject.org-fedora-43` claimed issue 43 of its repository, so the supersession sweep posted a "superseded by" notice naming the unrelated pull request that had closed that issue and listed the digest bump to close ([projectbluefin/utah#1494](https://github.com/projectbluefin/utah/pull/1494)), and close-on-merge could have closed an open issue with that number. A `renovate/` head ref, or a Renovate, Dependabot or mergeraptor author, now makes no branch-name claim in the claim scan, the webhook claim path, the supersession sweep or close-on-merge. This applies from the next pass on: a supersession notice comment already posted on such a pull request is not retracted. A closing keyword or issue reference in the bot's own pull request text still counts, and the branch names of hive agents and people are read exactly as before. There is no new setting.
+- The export popup now says on the popup itself whether "Copy to clipboard" worked. The popup opens from the Overview card's band download arrow and from about twenty other exports and links, and it used to report the copy with a toast that rendered behind the popup's blurred backdrop, so the confirmation could not be read. A small status line above the buttons now shows "Copied to clipboard." (it clears after a few seconds), or, when the browser blocks the clipboard or has no clipboard API, says the text is selected and to press Ctrl+C (or Cmd+C). Other dialogs' toasts are unchanged.
+
 ## 2026-11-24 (v6.58.8)
 
 ### Changed
