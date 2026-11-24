@@ -39,13 +39,13 @@ const sumOf = list => list.reduce((n, s) => n + Number(s.count || 0), 0);
 const pct = (n, total) => (n / total * 100).toFixed(1) + '%';
 `
 
-// The card legend splits into To do and Status: a To do heading, the Your
-// turn group's bands as plain rows in plot order (no Your turn group row),
-// then a To do subtotal equal to their sum; a Status heading with its note,
-// every other group exactly as before, then a Status subtotal. Both
-// subtotals use the legend's own rounding, read "<label> total" to a screen
-// reader, and never dim; the Status subtotal opens nothing and exports every
-// other group.
+// The card legend splits into Needs a person and Status: a Needs a person
+// heading (the Your turn group's label), the group's bands as plain rows in
+// plot order (no group row), then a Needs a person subtotal equal to their
+// sum; a Status heading with its note, every other group exactly as before,
+// then a Status subtotal. Both subtotals use the legend's own rounding, read
+// "<label> total" to a screen reader, and never dim; the Status subtotal
+// opens nothing and exports every other group.
 func TestOverviewCardLegendToDoAndStatus(t *testing.T) {
 	html := indexHTML(t)
 	script := overviewCardUIPrelude(t, html) + overviewCardTodoStatusParse + `
@@ -58,26 +58,26 @@ for (const [kind, slices] of [['issues', overviewIssueBandSlices([repoA])], ['pr
   const total = sumOf(slices);
   const legend = overviewLegendHTML(slices, kind, { exportFormat: 'csv' });
   const items = legendItems(legend);
-  // The two headings, in order, To do first.
-  assert.deepEqual(items.filter(i => i.section).map(i => [i.label, i.note]), [['To do', ''], ['Status', 'nothing for you to do']], kind);
-  assert.ok(items[0].section && items[0].label === 'To do', kind + ': the legend opens with To do');
-  // To do: exactly the Your turn bands (hide-at-zero ones hidden), plain
-  // rows in plot order, then the subtotal.
-  const todo = sectionOf(items, 'To do');
+  // The two headings, in order, Needs a person first.
+  assert.deepEqual(items.filter(i => i.section).map(i => [i.label, i.note]), [['Needs a person', ''], ['Status', 'nothing for a person to do']], kind);
+  assert.ok(items[0].section && items[0].label === 'Needs a person', kind + ': the legend opens with Needs a person');
+  // Needs a person: exactly the Your turn bands (hide-at-zero ones hidden),
+  // plain rows in plot order, then the subtotal.
+  const todo = sectionOf(items, 'Needs a person');
   const yourTurn = slices.filter(s => s.group === 'your-turn');
   const todoRows = todo.slice(0, -1);
   const todoTotal = todo[todo.length - 1];
-  assert.deepEqual(todoRows.map(r => r.key), yourTurn.filter(visible).map(s => s.key), kind + ' To do rows');
+  assert.deepEqual(todoRows.map(r => r.key), yourTurn.filter(visible).map(s => s.key), kind + ' Needs a person rows');
   for (const r of todoRows) assert.ok(!r.cls.includes('overview-chart-legend-part') && !r.cls.includes('overview-chart-legend-group'), kind + ': ' + r.label + ' is a plain row');
-  assert.equal(todoTotal.label, 'To do');
-  assert.ok(todoTotal.cls.includes('overview-chart-legend-subtotal') && !todoTotal.cls.includes('overview-chart-legend-zero'), kind + ' To do subtotal');
+  assert.equal(todoTotal.label, 'Needs a person');
+  assert.ok(todoTotal.cls.includes('overview-chart-legend-subtotal') && !todoTotal.cls.includes('overview-chart-legend-zero'), kind + ' Needs a person subtotal');
   assert.equal(todoTotal.swatch, 'overview-card-group-your-turn', kind + ': the Your turn dot');
   assert.equal(todoTotal.spoken, ' total');
-  assert.ok(todoTotal.action && todoTotal.key === 'your-turn', kind + ': To do opens the Your turn tile');
+  assert.ok(todoTotal.action && todoTotal.key === 'your-turn', kind + ': Needs a person opens the Your turn tile');
   const todoCount = sumOf(yourTurn);
   assert.equal(todoCount, sumOf(slices.filter(s => s.group === 'your-turn' && visible(s))), 'hidden rows are zero');
-  assert.equal(todoTotal.count, todoCount + ' · ' + pct(todoCount, total), kind + ' To do subtotal is the sum');
-  assert.equal(new URL(todoTotal.url, 'https://hive.test').searchParams.get('card_group'), 'your-turn', kind + ': To do exports the Your turn group');
+  assert.equal(todoTotal.count, todoCount + ' · ' + pct(todoCount, total), kind + ' Needs a person subtotal is the sum');
+  assert.equal(new URL(todoTotal.url, 'https://hive.test').searchParams.get('card_group'), 'your-turn', kind + ': Needs a person exports the Your turn group');
   // The old Your turn group row is gone from the legend.
   assert.ok(!items.some(i => i.label === 'Your turn'), kind + ': no Your turn row');
   assert.ok(!items.some(i => !i.section && i.cls.includes('overview-chart-legend-group') && i.key === 'your-turn'), kind);
@@ -110,18 +110,18 @@ for (const [kind, slices] of [['issues', overviewIssueBandSlices([repoA])], ['pr
 }
 // The fixture's numbers: issues 3 to do of 7, PRs 1 of 7.
 const issueItems = legendItems(overviewLegendHTML(overviewIssueBandSlices([repoA]), 'issues', {}));
-assert.equal(issueItems.find(i => !i.section && i.label === 'To do').count, '3 · 42.9%');
+assert.equal(issueItems.find(i => !i.section && i.label === 'Needs a person').count, '3 · 42.9%');
 assert.equal(issueItems.find(i => !i.section && i.label === 'Status').count, '4 · 57.1%');
 const prItems = legendItems(overviewLegendHTML(overviewPRBandSlices([repoA]), 'prs', {}));
-assert.equal(prItems.find(i => !i.section && i.label === 'To do').count, '1 · 14.3%');
+assert.equal(prItems.find(i => !i.section && i.label === 'Needs a person').count, '1 · 14.3%');
 assert.equal(prItems.find(i => !i.section && i.label === 'Status').count, '6 · 85.7%');
 // The percent-only label mode applies to the subtotals too.
-assert.equal(legendItems(overviewLegendHTML(overviewIssueBandSlices([repoA]), 'issues', { labelMode: 'percent' })).find(i => !i.section && i.label === 'To do').count, '42.9%');
-// Nothing for you to do: To do still shows, at 0, and never dims.
+assert.equal(legendItems(overviewLegendHTML(overviewIssueBandSlices([repoA]), 'issues', { labelMode: 'percent' })).find(i => !i.section && i.label === 'Needs a person').count, '42.9%');
+// Nothing for you to do: Needs a person still shows, at 0, and never dims.
 const idle = cardRepoA();
 for (const list of ['actionableIssues', 'nonActionableIssues']) idle[list] = idle[list].filter(r => r.card_group !== 'your-turn');
 const idleItems = legendItems(overviewLegendHTML(overviewIssueBandSlices([idle]), 'issues', {}));
-const idleTodo = idleItems.find(i => !i.section && i.label === 'To do');
+const idleTodo = idleItems.find(i => !i.section && i.label === 'Needs a person');
 assert.equal(idleTodo.count, '0 · 0.0%');
 assert.ok(!idleTodo.cls.includes('overview-chart-legend-zero'));
 // Without a kind (the legend drawn inside the donut) no row has a download.
@@ -136,8 +136,8 @@ assert.doesNotMatch(overviewLegendHTML(overviewIssueBandSlices([old]), 'issues',
 	runOverviewCardNode(t, script)
 }
 
-// The served status (the server's own card) splits the same way: To do is
-// the Your turn group's count and Status every other group's.
+// The served status (the server's own card) splits the same way: Needs a
+// person is the Your turn group's count and Status every other group's.
 func TestOverviewCardLegendToDoAndStatusServed(t *testing.T) {
 	served := cardPartitionServer().statusWithOverviewBands(cardPartitionStatus(), cardTestNow)
 	if served.OverviewCard == nil {
@@ -157,12 +157,12 @@ for (const [kind, field, slices] of [['issues', 'issues', overviewIssueBandSlice
   const total = sumOf(slices);
   if (!total) continue;
   const items = legendItems(overviewLegendHTML(slices, kind, {}));
-  const todo = items.find(i => !i.section && i.label === 'To do');
+  const todo = items.find(i => !i.section && i.label === 'Needs a person');
   const status = items.find(i => !i.section && i.label === 'Status');
   // The groups count the rows on the donuts.
   const others = card.groups.filter(g => g.key !== 'your-turn').reduce((n, g) => n + Number(g[field] || 0), 0);
   assert.equal(yourTurn[field] + others, total, kind + ': the groups cover the donut');
-  assert.equal(todo.count, yourTurn[field] + ' · ' + pct(yourTurn[field], total), kind + ' To do');
+  assert.equal(todo.count, yourTurn[field] + ' · ' + pct(yourTurn[field], total), kind + ' Needs a person');
   assert.equal(status.count, others + ' · ' + pct(others, total), kind + ' Status');
 }
 process.stdout.write('ok');

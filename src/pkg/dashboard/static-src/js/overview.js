@@ -224,8 +224,10 @@
 
     function overviewProjectFilterSpec(key) {
       const spec = OVERVIEW_PROJECT_FILTERS[String(key || '')] || null;
-      // With the card the actionable tile is "Hive has it"; its filter chip says so.
+      // With the card the actionable tile is "Hive has it" and the your-turn
+      // tile "Needs a person"; their filter chips say so.
       if (spec && spec.term === 'actionable' && overviewCardMode()) return Object.assign({}, spec, { label: 'Hive has it' });
+      if (spec && spec.term === 'your_turn' && overviewCardMode()) return Object.assign({}, spec, { label: 'Needs a person' });
       return spec;
     }
 
@@ -868,10 +870,11 @@
       return String(label || '') + ': ' + lead;
     }
 
-    // The card legend in plot order, in two sections. To do is the Your turn
-    // group (card_group your-turn): a "To do" heading, its bands as plain
-    // rows, then a bold To do subtotal in the group's colour, which takes the
-    // place of the Your turn group row. Status is every other group, drawn as
+    // The card legend in plot order, in two sections. The first is the Your
+    // turn group (card_group your-turn), headed and totalled with the group's
+    // label, "Needs a person": that heading, its bands as plain rows, then a
+    // bold subtotal in the group's colour, which takes the place of the
+    // group row. Status is every other group, drawn as
     // before (a headed group such as Waiting on someone else, Blocked or Hive
     // has it is one bold subtotal row with its bands indented under it; the
     // other bands are plain rows), then a bold Status subtotal. The groups
@@ -887,10 +890,11 @@
       const sum = list => list.reduce((n, p) => n + Number(p.count || 0), 0);
       const todo = (slices || []).filter(s => s.group === todoGroup);
       const status = (slices || []).filter(s => s.group !== todoGroup);
-      const rows = [{ type: 'section', label: 'To do' }];
+      const todoLabel = (groups.get(todoGroup) || {}).label || 'Needs a person';
+      const rows = [{ type: 'section', label: todoLabel }];
       todo.forEach(s => rows.push({ type: 'plain', slice: s }));
-      rows.push({ type: 'subtotal', key: todoGroup, groups: [todoGroup], label: 'To do', rule: (groups.get(todoGroup) || {}).rule || '', count: sum(todo), className: 'overview-card-group-' + todoGroup });
-      rows.push({ type: 'section', label: 'Status', note: 'nothing for you to do' });
+      rows.push({ type: 'subtotal', key: todoGroup, groups: [todoGroup], label: todoLabel, rule: (groups.get(todoGroup) || {}).rule || '', count: sum(todo), className: 'overview-card-group-' + todoGroup });
+      rows.push({ type: 'section', label: 'Status', note: 'nothing for a person to do' });
       const done = new Set();
       status.forEach(s => {
         if (!headed(s.group)) { rows.push({ type: 'plain', slice: s }); return; }
@@ -901,7 +905,7 @@
         rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: sum(parts), className: 'overview-card-group-' + s.group });
         parts.forEach(p => rows.push({ type: 'part', slice: p }));
       });
-      rows.push({ type: 'subtotal', key: '', groups: [...new Set(status.map(s => s.group).filter(Boolean))], label: 'Status', rule: 'Nothing for you to do. Someone else or the hive has the next move, or the item is not work.', count: sum(status), className: '' });
+      rows.push({ type: 'subtotal', key: '', groups: [...new Set(status.map(s => s.group).filter(Boolean))], label: 'Status', rule: 'Nothing for a person to do. Someone else or the hive has the next move, or the item is not work.', count: sum(status), className: '' });
       return rows;
     }
 
@@ -910,18 +914,18 @@
     // bands (Queued for agents, Unexplained), which stay at full strength, and
     // Held, which is hidden at zero; a group or subtotal row never dims.
     // Section headings are role=heading level 4 under the chart title (level
-    // 3). The To do subtotal opens and exports the Your turn group, as its
-    // group row did; the Status subtotal exports card_group=<every other
-    // group> (the export reads a comma list) and opens nothing, since no tile
-    // counts exactly those rows. Clicks go through data-action (the dashboard
-    // CSP forbids inline handlers).
+    // 3). The Needs a person subtotal opens and exports the Your turn group,
+    // as its group row did; the Status subtotal exports card_group=<every
+    // other group> (the export reads a comma list) and opens nothing, since
+    // no tile counts exactly those rows. Clicks go through data-action (the
+    // dashboard CSP forbids inline handlers).
     function overviewCardLegendHTML(slices, kind, state) {
       const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       if (!total) return '<div class="overview-empty">Nothing open here; the hive is caught up</div>';
       const format = ((state && state.exportFormat) || 'csv').toUpperCase();
       return overviewCardLegendRows(slices).map(row => {
         if (row.type === 'section') {
-          // The comma is for screen readers: "Status, nothing for you to do".
+          // The comma is for screen readers: "Status, nothing for a person to do".
           const note = row.note ? `<span class="overview-chart-legend-sr">,</span> <span class="overview-chart-legend-section-note">${esc(row.note)}</span>` : '';
           return `<div class="overview-chart-legend-section" role="heading" aria-level="4">${esc(row.label)}${note}</div>`;
         }
@@ -1439,12 +1443,12 @@
     }
 
     // With the Overview card (card = { kind, counts by term }) the total
-    // tiles read "54 your turn · 2 waiting · 7 blocked · 2 hive has it · 4
-    // outside": blocked on PRs only, held only above zero.
+    // tiles read "54 needs a person · 2 waiting · 7 blocked · 2 hive has it ·
+    // 4 outside": blocked on PRs only, held only above zero.
     function renderOverviewTotalPartitionSubline(equation, card) {
       if (card && card.counts) {
         const n = key => Number(card.counts[key] || 0);
-        const parts = [[n('your_turn'), 'your turn'], [n('waiting_elsewhere'), 'waiting']];
+        const parts = [[n('your_turn'), 'needs a person'], [n('waiting_elsewhere'), 'waiting']];
         if (n('held') > 0) parts.push([n('held'), 'held']);
         if (card.kind === 'prs') parts.push([n('blocked'), 'blocked']);
         parts.push([n('actionable'), 'hive has it'], [n('outside'), 'outside']);
@@ -1542,7 +1546,7 @@
     // today's equation never draws into a card tile's sparkline.
     function overviewCardTileDefs() {
       return [
-        { key: 'your-turn', term: 'your_turn', label: 'Your turn', field: 'overviewCardYourTurn' },
+        { key: 'your-turn', term: 'your_turn', label: 'Needs a person', field: 'overviewCardYourTurn' },
         { key: 'waiting-elsewhere', term: 'waiting_elsewhere', label: 'Waiting on someone else', field: 'overviewCardWaiting' },
         { key: 'held', term: 'held', label: 'Held', field: 'overviewCardHeld' },
         { key: 'blocked', term: 'blocked', label: 'Blocked', field: 'overviewCardBlocked' },
@@ -1667,12 +1671,12 @@
       (cards || []).forEach(card => {
         if (card.key === 'open-issues') {
           card.subline = renderOverviewTotalPartitionSubline(issueEq, { kind: 'issues', counts: perKind('issues') });
-          card.tip = 'All open GitHub issues (pull requests excluded) across the selected configured repos. Each one counts in exactly one tile: your turn, waiting on someone else, held, hive has it, or outside. Click to filter Projects to matching issues.';
+          card.tip = 'All open GitHub issues (pull requests excluded) across the selected configured repos. Each one counts in exactly one tile: needs a person, waiting on someone else, held, hive has it, or outside. Click to filter Projects to matching issues.';
           return;
         }
         if (card.key === 'open-prs') {
           card.subline = renderOverviewTotalPartitionSubline(prEq, { kind: 'prs', counts: perKind('prs') });
-          card.tip = 'All open GitHub pull requests across the selected configured repos, including drafts. Each one counts in exactly one tile: your turn, waiting on someone else, held, blocked, hive has it, or outside (drafts). Click to filter Projects to matching PRs.';
+          card.tip = 'All open GitHub pull requests across the selected configured repos, including drafts. Each one counts in exactly one tile: needs a person, waiting on someone else, held, blocked, hive has it, or outside (drafts). Click to filter Projects to matching PRs.';
           return;
         }
         const tile = byKey.get(card.key);
@@ -1741,7 +1745,7 @@
       const snapshotComplete = !(repos || []).some(r => r && (r.countsIncomplete || r.countsStale)) && !(_overviewKPILocalScope === 'all' && window._lastStatus?.overviewKPIIncomplete);
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
       const ops = ['+', '=', '+', '+', '+', '+', '+'];
-      const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} ${cardKPI ? 'hive has it' : 'actionable now'} + ${yourTurn} your turn + ${waiting} waiting on someone else + ${held} held + ${blocked} blocked + ${outside} outside`;
+      const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} ${cardKPI ? 'hive has it' : 'actionable now'} + ${yourTurn} ${cardKPI ? 'needs a person' : 'your turn'} + ${waiting} waiting on someone else + ${held} held + ${blocked} blocked + ${outside} outside`;
       // Last-good figures after a refused enumeration (#13382) or a failed
       // forgestate reconcile (#13376) are current as of staleSince, not
       // zero; say so beside the KPIs.
