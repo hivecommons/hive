@@ -8,7 +8,8 @@ import (
 func sampleOverviewCardResponse() map[string]any {
 	body := sampleOverviewIssuesResponse()
 	body["card_bands"] = []any{
-		map[string]any{"key": "your-turn", "count": float64(2)},
+		map[string]any{"key": "decide", "count": float64(1)},
+		map[string]any{"key": "review", "count": float64(1)},
 		map[string]any{"key": "queued", "count": float64(2)},
 	}
 	body["card_groups"] = []any{
@@ -18,9 +19,12 @@ func sampleOverviewCardResponse() map[string]any {
 	rows := body["rows"].([]any)
 	for i, raw := range rows {
 		m := raw.(map[string]any)
-		if i%2 == 0 {
-			m["card_band"], m["card_group"] = "your-turn", "your-turn"
-		} else {
+		switch i {
+		case 0:
+			m["card_band"], m["card_group"] = "decide", "your-turn"
+		case 2:
+			m["card_band"], m["card_group"] = "review", "your-turn"
+		default:
 			m["card_band"], m["card_group"] = "queued", "actionable-now"
 		}
 	}
@@ -49,11 +53,40 @@ func TestBandReadResultFiltersByCardBandAndGroupBeforePaging(t *testing.T) {
 		if body["next_offset"] != 1 {
 			t.Fatalf("%v: next_offset = %#v, want 1 (two queued rows, limit 1)", args, body["next_offset"])
 		}
-		if bands, _ := body["card_bands"].([]any); len(bands) != 2 {
+		if bands, _ := body["card_bands"].([]any); len(bands) != 3 {
 			t.Fatalf("%v: card_bands = %#v, want the full shape", args, body["card_bands"])
 		}
 		if groups, _ := body["card_groups"].([]any); len(groups) != 2 {
 			t.Fatalf("%v: card_groups = %#v, want the full shape", args, body["card_groups"])
+		}
+	}
+}
+
+// The Your turn group's bands say what the person has to do; card_group
+// your-turn still returns every one of them, and the retired single
+// your-turn band key is refused with the new keys listed and a pointer to
+// card_group=your-turn.
+func TestBandReadResultYourTurnGroupSpansItsBands(t *testing.T) {
+	out, err := BandReadResult(ToolIssuesByBand, sampleOverviewCardResponse(), map[string]any{"card_group": "your-turn"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := out.(map[string]any)["rows"].([]any)
+	var bands []any
+	for _, row := range rows {
+		bands = append(bands, row.(map[string]any)["card_band"])
+	}
+	if len(bands) != 2 || bands[0] != "decide" || bands[1] != "review" {
+		t.Fatalf("card_group=your-turn rows carry bands %v, want decide and review", bands)
+	}
+	for _, tool := range []string{ToolIssuesByBand, ToolPrsByBand} {
+		out, err := BandReadResult(tool, sampleOverviewIssuesResponse(), map[string]any{"card_band": "your-turn"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		refusal, ok := out.(RefusalData)
+		if !ok || refusal.Kind != RefusalKindInvalidArgument || !strings.Contains(refusal.Reason, "decide") || !strings.Contains(refusal.Reason, "your-turn-other") || !strings.Contains(refusal.Reason, "use card_group=your-turn") {
+			t.Fatalf("%s card_band=your-turn: result = %#v", tool, out)
 		}
 	}
 }

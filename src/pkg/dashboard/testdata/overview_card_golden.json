@@ -1,6 +1,11 @@
 {
   "issues": {
-    "your-turn": 5,
+    "inspect": 0,
+    "decide": 1,
+    "review": 1,
+    "triage": 2,
+    "admit": 1,
+    "your-turn-other": 0,
     "to-close": 1,
     "covered-by-pr": 1,
     "waiting-on-item": 2,
@@ -13,7 +18,14 @@
     "unexplained": 1
   },
   "prs": {
-    "your-turn": 1,
+    "inspect": 1,
+    "decide": 0,
+    "approve": 1,
+    "merge-by-hand": 1,
+    "review": 1,
+    "triage": 0,
+    "admit": 0,
+    "your-turn-other": 1,
     "to-close": 0,
     "human-hold": 0,
     "author-update": 1,
@@ -27,7 +39,7 @@
   "groups": {
     "your-turn": {
       "issues": 7,
-      "prs": 2
+      "prs": 6
     },
     "waiting-elsewhere": {
       "issues": 5,
@@ -51,7 +63,7 @@
     }
   },
   "tiles": {
-    "your-turn": 9,
+    "your-turn": 13,
     "waiting-elsewhere": 5,
     "held": 2,
     "blocked": 2,

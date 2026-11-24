@@ -275,11 +275,20 @@ func parseOverviewCardFilters(r *http.Request, filters *overviewFilters, kind st
 	}
 	var err error
 	if filters.cardBands, err = parse("card_band", "card band", bandKeys); err != nil {
+		for _, v := range splitQueryValues(r.URL.Query()["card_band"]) {
+			if v == cardGroupYourTurn {
+				return fmt.Errorf("%w; %s", err, cardRetiredYourTurnBand)
+			}
+		}
 		return err
 	}
 	filters.cardGroups, err = parse("card_group", "card group", cardGroupOrder)
 	return err
 }
+
+// cardRetiredYourTurnBand is added to a card_band error that names the
+// retired single Your turn band.
+const cardRetiredYourTurnBand = "your-turn is no longer a card band; use card_group=your-turn for every Your turn row"
 
 func (f overviewFilters) matchCard(band OverviewCardBand) bool {
 	return (len(f.cardBands) == 0 || f.cardBands[band.Key]) && (len(f.cardGroups) == 0 || f.cardGroups[band.Group])
@@ -363,7 +372,7 @@ func overviewCardExportCounts(kind string, rows []overviewCardCounted, remainder
 			continue
 		}
 		counts[r.band.Key]++
-		if (r.band.Key == cardBandYourTurn || r.band.Key == cardBandToClose) && (r.ownership == nil || !r.ownership.YourTurn) {
+		if cardNotInInbox(r.band.Key) && (r.ownership == nil || !r.ownership.YourTurn) {
 			notInInbox++
 		}
 		if r.band.Key == cardBandUnexplained {

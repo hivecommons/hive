@@ -65,7 +65,7 @@ func TestDecideIssueCardPrecedence(t *testing.T) {
 		wantCode string
 	}{
 		{"ownership close", cardIssueRow{repoFull: cardTestRepo, issue: cardIssue(1), ownership: cardTestOwnership(OwnershipReasonVerifiedDone)}, cardTestInputs(nil), cardBandToClose, "ownership:verified_done"},
-		{"ownership your turn", cardIssueRow{repoFull: cardTestRepo, issue: cardIssue(2), ownership: cardTestOwnership(OwnershipReasonParkedNeedsHuman)}, cardTestInputs(nil), cardBandYourTurn, "ownership:parked_needs_human"},
+		{"ownership your turn", cardIssueRow{repoFull: cardTestRepo, issue: cardIssue(2), ownership: cardTestOwnership(OwnershipReasonParkedNeedsHuman)}, cardTestInputs(nil), cardBandReview, "ownership:parked_needs_human"},
 		{"waiting: a person's hold", cardIssueRow{repoFull: cardTestRepo, issue: cardIssue(3, "hold"), held: true, holdSources: []string{github.HoldSourcePerson}, ownership: cardTestWaiting()}, cardTestInputs(nil), cardBandHumanHold, "wait:hold"},
 		{"waiting: claimed_by_pr", cardIssueRow{repoFull: cardTestRepo, work: cardWork(4, repoWorkBucketClaimedByPR, ""), nonActionable: true, ownership: cardTestWaiting()}, cardTestInputs(nil), cardBandCoveredByPR, "wait:covered"},
 		{"waiting: open linked PR", cardIssueRow{repoFull: cardTestRepo, issue: linked, ownership: cardTestWaiting()}, cardTestInputs(nil), cardBandCoveredByPR, "wait:covered"},
@@ -120,20 +120,20 @@ var cardTestBucketTable = []struct {
 	{repoWorkBucketFiltered, "blocked on octo/demo#12", cardBandWaitingOnItem},
 	{repoWorkBucketFiltered, ownershipLabelReporterConfirmation, cardBandReporterConfirm},
 	{repoWorkBucketFiltered, config.DefaultSHAHoldTrustedLabel, cardBandReporterConfirm},
-	{repoWorkBucketFiltered, config.PossiblyExistsStageLabel, cardBandYourTurn},
-	{repoWorkBucketFiltered, config.DefaultNeedsHumanLabel, cardBandYourTurn},
-	{repoWorkBucketFiltered, config.DefaultNeedsDirectionLabel, cardBandYourTurn},
-	{repoWorkBucketFiltered, config.DefaultNeedsDecisionLabel, cardBandYourTurn},
-	{repoWorkBucketFiltered, config.LegacyNeedsDecisionLabel, cardBandYourTurn},
-	{repoWorkBucketFiltered, config.PRNeedsDecisionStageLabel, cardBandYourTurn},
-	{repoWorkBucketFiltered, config.DefaultNeedsSpecLabel, cardBandYourTurn},
+	{repoWorkBucketFiltered, config.PossiblyExistsStageLabel, cardBandTriage},
+	{repoWorkBucketFiltered, config.DefaultNeedsHumanLabel, cardBandReview},
+	{repoWorkBucketFiltered, config.DefaultNeedsDirectionLabel, cardBandDecide},
+	{repoWorkBucketFiltered, config.DefaultNeedsDecisionLabel, cardBandDecide},
+	{repoWorkBucketFiltered, config.LegacyNeedsDecisionLabel, cardBandDecide},
+	{repoWorkBucketFiltered, config.PRNeedsDecisionStageLabel, cardBandDecide},
+	{repoWorkBucketFiltered, config.DefaultNeedsSpecLabel, cardBandDecide},
 	{repoWorkBucketFiltered, github.IssueFilterReason, cardBandNotWork},
 	{repoWorkBucketFiltered, cardAgentProposalReason, cardBandNotWork},
 	{cardBucketInProgress, "In progress by agent", cardBandWorking},
 	{cardBucketClaimed, "Live issue claim by someone", cardBandWorking},
 	{repoWorkBucketClaimedByPR, "Open external PR #7 covers this issue", cardBandCoveredByPR},
-	{repoWorkBucketReporterTriage, "Awaiting maintainer triage label", cardBandYourTurn},
-	{cardBucketPendingRelease, "Unanswered release owner step is parked for the owner", cardBandYourTurn},
+	{repoWorkBucketReporterTriage, "Awaiting maintainer triage label", cardBandAdmit},
+	{cardBucketPendingRelease, "Unanswered release owner step is parked for the owner", cardBandDecide},
 	{cardBucketActionable, "Contributor claim is advisory", cardBandQueued},
 	{cardBucketOther, forgeUnclassifiedReason, ""},
 	{cardBucketOther, webhookUnclassifiedReason, ""},
@@ -172,9 +172,9 @@ func TestDecideIssueCardIssueFilterRows(t *testing.T) {
 		row  cardIssueRow
 		want string
 	}{
-		{"a person's issue", cardIssueRow{repoFull: cardTestRepo, work: person, nonActionable: true}, cardBandYourTurn},
-		{"decided", cardIssueRow{repoFull: cardTestRepo, work: decided, nonActionable: true}, cardBandYourTurn},
-		{"an agent's finding", cardIssueRow{repoFull: cardTestRepo, work: agent, nonActionable: true}, cardBandYourTurn},
+		{"a person's issue", cardIssueRow{repoFull: cardTestRepo, work: person, nonActionable: true}, cardBandAdmit},
+		{"decided", cardIssueRow{repoFull: cardTestRepo, work: decided, nonActionable: true}, cardBandAdmit},
+		{"an agent's finding", cardIssueRow{repoFull: cardTestRepo, work: agent, nonActionable: true}, cardBandAdmit},
 		{"a bot's issue", cardIssueRow{repoFull: cardTestRepo, work: bot, nonActionable: true}, cardBandNotWork},
 		{"a PR closes it", cardIssueRow{repoFull: cardTestRepo, work: person, nonActionable: true, closingPR: 9}, cardBandCoveredByPR},
 		{"ownership left it alone", cardIssueRow{repoFull: cardTestRepo, work: person, nonActionable: true, ownership: &Ownership{}}, cardBandNotWork},
@@ -236,7 +236,7 @@ func TestDecideIssueCardEveryWithheldReason(t *testing.T) {
 		contributorAdmissionReasonOpenPRLinked:      cardBandCoveredByPR,
 		contributorAdmissionReasonIssueClaim:        cardBandWorking,
 		contributorAdmissionReasonMergedClaimStale:  cardBandToClose,
-		contributorAdmissionReasonIssueChurn:        cardBandYourTurn,
+		contributorAdmissionReasonIssueChurn:        cardBandTriage,
 		contributorAdmissionReasonWorkflowBlocked:   cardBandWaitingOnItem,
 		contributorAdmissionReasonLabelSkipped:      cardBandNotWork,
 		contributorAdmissionReasonDependencyBlocked: cardBandWaitingOnItem,
@@ -248,7 +248,7 @@ func TestDecideIssueCardEveryWithheldReason(t *testing.T) {
 		withheldReasonTracker:                       cardBandNotWork,
 		withheldReasonCooldown:                      cardBandQueued,
 		withheldReasonNoWorkNeeded:                  cardBandToClose,
-		completionVerdictNeedsDecision:              cardBandYourTurn,
+		completionVerdictNeedsDecision:              cardBandDecide,
 		withheldReasonFailureCooldown:               cardBandQueued,
 		withheldReasonInFlight:                      cardBandWorking,
 		withheldReasonContributorFilter:             cardBandNotWork,
@@ -280,10 +280,10 @@ func TestDecideIssueCardSkippedLabels(t *testing.T) {
 	for _, tc := range []struct {
 		label, want string
 	}{
-		{"needs-triage", cardBandYourTurn},
+		{"needs-triage", cardBandTriage},
 		{ownershipLabelAlreadyDone, cardBandToClose},
-		{config.DefaultNeedsDecisionLabel, cardBandYourTurn},
-		{config.LegacyNeedsDecisionLabel, cardBandYourTurn},
+		{config.DefaultNeedsDecisionLabel, cardBandDecide},
+		{config.LegacyNeedsDecisionLabel, cardBandDecide},
 		{"epic", cardBandNotWork},
 		{"tracking", cardBandNotWork},
 		{"discussion", cardBandNotWork},
@@ -348,7 +348,7 @@ func TestDecidePRCardPrecedence(t *testing.T) {
 		wantCode string
 	}{
 		{"ownership close", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice"), ownership: cardTestOwnership(OwnershipReasonSupersededRecommendedClose)}, cardBandToClose, "ownership:superseded_recommended_close"},
-		{"ownership your turn", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice"), ownership: cardTestOwnership(OwnershipReasonPersonPRNeedsHuman)}, cardBandYourTurn, "ownership:person_pr_needs_human"},
+		{"ownership your turn", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice"), ownership: cardTestOwnership(OwnershipReasonPersonPRNeedsHuman)}, cardBandReview, "ownership:person_pr_needs_human"},
 		{"draft listed", cardPRRow{repoFull: cardTestRepo, pr: draft}, cardBandDraft, "flags:draft"},
 		{"draft sidelined", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice"), sidelinedDraft: true}, cardBandDraft, "flags:draft"},
 		{"waiting: a person's hold", cardPRRow{repoFull: cardTestRepo, pr: func() github.PullRequest {
@@ -360,7 +360,7 @@ func TestDecidePRCardPrecedence(t *testing.T) {
 		{"waiting: answered, hive", cardPRRow{repoFull: cardTestRepo, pr: hive, ownership: cardTestWaiting()}, cardBandWorking, "wait:answered:hive"},
 		{"waiting: answered, person", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice"), ownership: cardTestWaiting()}, cardBandAuthorUpdate, "wait:answered:person"},
 		{"waiting: answered, clanker", cardPRRow{repoFull: cardTestRepo, pr: clanker, ownership: cardTestWaiting()}, cardBandAuthorUpdate, "wait:answered:clanker"},
-		{"waiting: answered, bot", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "renovate[bot]"), ownership: cardTestWaiting()}, cardBandYourTurn, "wait:answered:bot"},
+		{"waiting: answered, bot", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "renovate[bot]"), ownership: cardTestWaiting()}, cardBandTurnOther, "wait:answered:bot"},
 		{"held list", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice"), held: true}, cardBandHeld, "held:label"},
 		{"hold label", cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice", "hold")}, cardBandHeld, "held:label"},
 		{"eligible verdict", cardPRRow{repoFull: cardTestRepo, pr: eligible, verdict: &github.MergeVerdict{State: github.MergeVerdictEligible}}, cardBandWillMerge, "verdict:eligible"},
@@ -393,11 +393,11 @@ func TestDecidePRCardPrecedence(t *testing.T) {
 
 func TestDecidePRCardStageRecordFacts(t *testing.T) {
 	baseRed := cardStageStash(1, cardStageFacts{Stage: stagelabels.ReviewPending, Reason: "base-branch-red:main", EnteredAt: cardTestNow.Add(-time.Hour)})
-	if got := decidePRCard(cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice", "stage/050-review-pending")}, cardTestInputs(baseRed)); got.Key != cardBandYourTurn || got.ReasonCode != "stage:050:base_red" {
+	if got := decidePRCard(cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice", "stage/050-review-pending")}, cardTestInputs(baseRed)); got.Key != cardBandTurnOther || got.ReasonCode != "stage:050:base_red" {
 		t.Errorf("050 base red: %+v", got)
 	}
 	shared := cardStageStash(1, cardStageFacts{Stage: stagelabels.Reviewed, Reason: "shared-ci-incident:runner"})
-	if got := decidePRCard(cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice", "stage/060-reviewed")}, cardTestInputs(shared)); got.Key != cardBandYourTurn {
+	if got := decidePRCard(cardPRRow{repoFull: cardTestRepo, pr: cardPR(1, "alice", "stage/060-reviewed")}, cardTestInputs(shared)); got.Key != cardBandTurnOther {
 		t.Errorf("060 shared CI incident: %+v", got)
 	}
 	// No stage label: the stashed record supplies the stage (server#594).
@@ -451,7 +451,7 @@ func TestDecidePRCardHiveFixing(t *testing.T) {
 
 	in := cardTestInputs(nil)
 	in.dispatch = exhausted
-	if got := decidePRCard(row, in); got.Key != cardBandYourTurn || got.ReasonCode != "stage:070:fixer_excluded" || !strings.HasPrefix(got.Reason, "Nobody is fixing it: ") {
+	if got := decidePRCard(row, in); got.Key != cardBandTurnOther || got.ReasonCode != "stage:070:fixer_excluded" || !strings.HasPrefix(got.Reason, "Nobody is fixing it: ") {
 		t.Errorf("070 excluded, nobody on it: %+v", got)
 	}
 	in.workers = map[string]stageTrackerWorker{cardStashKey(cardTestRepo, 3): {Agent: "fixer"}}
@@ -516,18 +516,18 @@ func TestDecidePRCardDependencyBots(t *testing.T) {
 		wantCode string
 	}{
 		{"gate allows, inside the bound", renovate, entered(time.Hour), allowed, cardBandBotRebase, "stage:070:bot_rebase"},
-		{"gate allows, past the red-CI bound", renovate, entered(5 * time.Hour), allowed, cardBandYourTurn, "stage:070:bot_overdue"},
+		{"gate allows, past the red-CI bound", renovate, entered(5 * time.Hour), allowed, cardBandTurnOther, "stage:070:bot_overdue"},
 		{"conflict uses the 24h bound", conflicting, entered(5 * time.Hour), allowed, cardBandBotRebase, "stage:070:bot_rebase"},
-		{"conflict past the 24h bound", conflicting, entered(25 * time.Hour), allowed, cardBandYourTurn, "stage:070:bot_overdue"},
-		{"gate refuses", renovate, entered(time.Hour), refuse, cardBandYourTurn, "stage:070:bot_no_rebase"},
+		{"conflict past the 24h bound", conflicting, entered(25 * time.Hour), allowed, cardBandTurnOther, "stage:070:bot_overdue"},
+		{"gate refuses", renovate, entered(time.Hour), refuse, cardBandTurnOther, "stage:070:bot_no_rebase"},
 		{"nil gate allows", renovate, entered(time.Hour), noGate, cardBandBotRebase, "stage:070:bot_rebase"},
 		{"no entry time: the bound runs from the last update", renovate, unrecorded, noGate, cardBandBotRebase, "stage:070:bot_rebase"},
-		{"no entry time and no update time", noTime, unrecorded, noGate, cardBandYourTurn, "stage:070:bot_unknown"},
-		{"added since the publish: not yet checked", renovate, entered(time.Hour), unchecked, cardBandYourTurn, "stage:070:bot_gate_unknown"},
-		{"Dependabot is never asked", dependabot, entered(time.Hour), allowed, cardBandYourTurn, "stage:070:bot_no_rebase"},
-		{"github-actions is not a dependency bot", actions, entered(time.Hour), allowed, cardBandYourTurn, "stage:071:bot_no_rebase"},
-		{"optional check only", optionalOnly, entered(time.Hour), allowed, cardBandYourTurn, "stage:070:bot_no_rebase"},
-		{"changes requested only", changesOnly, entered(time.Hour), allowed, cardBandYourTurn, "stage:070:bot_no_rebase"},
+		{"no entry time and no update time", noTime, unrecorded, noGate, cardBandTurnOther, "stage:070:bot_unknown"},
+		{"added since the publish: not yet checked", renovate, entered(time.Hour), unchecked, cardBandTurnOther, "stage:070:bot_gate_unknown"},
+		{"Dependabot is never asked", dependabot, entered(time.Hour), allowed, cardBandTurnOther, "stage:070:bot_no_rebase"},
+		{"github-actions is not a dependency bot", actions, entered(time.Hour), allowed, cardBandTurnOther, "stage:071:bot_no_rebase"},
+		{"optional check only", optionalOnly, entered(time.Hour), allowed, cardBandTurnOther, "stage:070:bot_no_rebase"},
+		{"changes requested only", changesOnly, entered(time.Hour), allowed, cardBandTurnOther, "stage:070:bot_no_rebase"},
 	}
 	for _, tc := range cases {
 		in := cardTestInputs(withGate(tc.stash, tc.gate))
@@ -564,7 +564,7 @@ func TestDecidePRCardNoStageIsNeverUnexplained(t *testing.T) {
 		{"new", newPR, cardBandWorking},
 		{"blocked person", blockedPerson, cardBandAuthorUpdate},
 		{"blocked hive", blockedHive, cardBandWorking},
-		{"shared CI incident", sharedCI, cardBandYourTurn},
+		{"shared CI incident", sharedCI, cardBandTurnOther},
 		{"blocked bot", blockedBot, cardBandBotRebase},
 		{"queued for auto-merge", queued, cardBandWillMerge},
 	}
@@ -718,14 +718,15 @@ func TestCardBucketTableCoversEveryRecordedBucket(t *testing.T) {
 
 // A hive that renames its hard-suppress labels still records the canonical
 // bucket as the filtered reason (IssueFilterConfig.HardSuppressIssueBucket);
-// a parked row with no decision yet is Your turn, as ownership would say.
+// a parked needs-human row with no decision yet is Review, as ownership
+// would say.
 func TestDecideIssueCardParkedWithRenamedLabels(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Project.IssueFilter.HardSuppressLabels.NeedsHuman = []string{"hive/needs-human"}
 	in := cardTestInputs(nil)
 	in.cfg = cfg
 	row := cardIssueRow{repoFull: cardTestRepo, work: cardWork(1, repoWorkBucketFiltered, config.DefaultNeedsHumanLabel, "hive/needs-human"), nonActionable: true}
-	if got := decideIssueCard(row, in); got.Key != cardBandYourTurn || got.ReasonCode != "bucket:filtered:parked" {
+	if got := decideIssueCard(row, in); got.Key != cardBandReview || got.ReasonCode != "bucket:filtered:parked" {
 		t.Errorf("renamed needs-human park: %+v", got)
 	}
 }

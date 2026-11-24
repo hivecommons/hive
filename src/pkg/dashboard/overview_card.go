@@ -27,9 +27,18 @@ import (
 // construction. Nothing here does I/O or takes a lock beyond the two leaf
 // caches overviewCardInputs reads (overview_card_stash.go).
 
-// Band keys.
+// Band keys. The Your turn group's bands say what the person has to do;
+// cardTurnBand reads that from the stored decision's verb and reason code,
+// and each card-only your-turn rule names its band.
 const (
-	cardBandYourTurn        = "your-turn"
+	cardBandInspect         = "inspect"
+	cardBandDecide          = "decide"
+	cardBandApprove         = "approve"
+	cardBandHandMerge       = "merge-by-hand"
+	cardBandReview          = "review"
+	cardBandTriage          = "triage"
+	cardBandAdmit           = "admit"
+	cardBandTurnOther       = "your-turn-other"
 	cardBandToClose         = "to-close"
 	cardBandUnexplained     = "unexplained"
 	cardBandCoveredByPR     = "covered-by-pr"
@@ -60,20 +69,28 @@ const (
 // are the two donuts in plot order.
 var (
 	cardBandOrder = []string{
-		cardBandYourTurn, cardBandToClose, cardBandUnexplained,
+		cardBandInspect, cardBandDecide, cardBandApprove, cardBandHandMerge, cardBandReview,
+		cardBandTriage, cardBandAdmit, cardBandTurnOther, cardBandToClose, cardBandUnexplained,
 		cardBandCoveredByPR, cardBandWaitingOnItem, cardBandHumanHold, cardBandReporterConfirm,
 		cardBandAuthorUpdate, cardBandBotRebase,
 		cardBandQueued, cardBandWorking, cardBandWillMerge,
 		cardBandNotWork, cardBandDraft,
 		cardBandHeld,
 	}
+	// Approve and Merge by hand are PR gates; an issue never lands there
+	// (cardTurnBand). The Your turn bands come first, Unexplained last among
+	// them, so the plot order is the legend's (the legend draws a headed
+	// group's bands under its subtotal row in this order).
 	cardIssueBandOrder = []string{
-		cardBandYourTurn, cardBandToClose, cardBandCoveredByPR, cardBandWaitingOnItem, cardBandHumanHold,
-		cardBandReporterConfirm, cardBandQueued, cardBandWorking, cardBandHeld, cardBandNotWork, cardBandUnexplained,
+		cardBandInspect, cardBandDecide, cardBandReview, cardBandTriage, cardBandAdmit, cardBandTurnOther,
+		cardBandToClose, cardBandUnexplained, cardBandCoveredByPR, cardBandWaitingOnItem, cardBandHumanHold,
+		cardBandReporterConfirm, cardBandQueued, cardBandWorking, cardBandHeld, cardBandNotWork,
 	}
 	cardPRBandOrder = []string{
-		cardBandYourTurn, cardBandToClose, cardBandHumanHold, cardBandAuthorUpdate, cardBandBotRebase,
-		cardBandWorking, cardBandWillMerge, cardBandHeld, cardBandDraft, cardBandUnexplained,
+		cardBandInspect, cardBandDecide, cardBandApprove, cardBandHandMerge, cardBandReview,
+		cardBandTriage, cardBandAdmit, cardBandTurnOther, cardBandToClose, cardBandUnexplained,
+		cardBandHumanHold, cardBandAuthorUpdate, cardBandBotRebase,
+		cardBandWorking, cardBandWillMerge, cardBandHeld, cardBandDraft,
 	}
 	// cardGroupOrder is the tile order.
 	cardGroupOrder = []string{cardGroupYourTurn, cardGroupWaiting, cardGroupHeld, cardGroupBlocked, cardGroupActionable, cardGroupOutside}
@@ -87,9 +104,24 @@ type cardBandDef struct {
 }
 
 var cardBandDefs = map[string]cardBandDef{
-	cardBandYourTurn: {label: "Your turn", group: cardGroupYourTurn,
-		rule:   "No agent will move it until you act: decide, triage, answer 'what's left?'.",
-		prRule: "Decide, inspect a sentinel flag, approve, merge by hand, answer the hive's review, fix a red base branch, or a dependency-bot PR still red after the hand-off time."},
+	cardBandInspect: {label: "Inspect a sentinel flag", group: cardGroupYourTurn, hideZero: true,
+		rule:   "Sentinel found something risky. Look at it before agents work on it.",
+		prRule: "Sentinel found something risky. Look before it merges."},
+	cardBandDecide: {label: "Decide", group: cardGroupYourTurn,
+		rule: "The hive stopped and is waiting for your call."},
+	cardBandApprove: {label: "Approve", group: cardGroupYourTurn, hideZero: true,
+		rule: "GitHub won't merge this without a person's approval."},
+	cardBandHandMerge: {label: "Merge by hand", group: cardGroupYourTurn, hideZero: true,
+		rule: "The hive doesn't merge this one, in this repo or for this author. A person merges it."},
+	cardBandReview: {label: "Review", group: cardGroupYourTurn,
+		rule: "The hive wants a person to look at it before it goes on."},
+	cardBandTriage: {label: "Triage", group: cardGroupYourTurn, hideZero: true,
+		rule: "Say what's left, confirm the gap, or triage it."},
+	cardBandAdmit: {label: "Admit", group: cardGroupYourTurn, hideZero: true,
+		rule: "Add the admission label to let agents work on it, or close it."},
+	cardBandTurnOther: {label: "Other", group: cardGroupYourTurn, hideZero: true,
+		rule:   "Your turn for a reason not listed above; the download shows each item's reason.",
+		prRule: "Your turn for a reason not listed above, such as a red base branch, nobody to fix it, or a dependency-bot PR still red after the hand-off time; the download shows each item's reason."},
 	cardBandToClose: {label: "Yours to close", group: cardGroupYourTurn,
 		rule: "The hive recommends closing it but won't do it itself. Close it or keep it."},
 	cardBandUnexplained: {label: "Unexplained", group: cardGroupYourTurn, keep: true,
@@ -122,7 +154,7 @@ var cardBandDefs = map[string]cardBandDef{
 }
 
 // cardYourTurnRule is the Your turn tile's rule.
-const cardYourTurnRule = "No agent will move these until a person acts. It includes the items the hive recommends closing, and any Unexplained item, which is a hive bug a person should see."
+const cardYourTurnRule = "No agent will move these until a person acts. Each row says what to do next, for example decide, review or close. Unexplained is a hive bug a person should see."
 
 // cardGroupDef is one group's spec; term is its Actionable-now equation term.
 type cardGroupDef struct {
@@ -131,7 +163,7 @@ type cardGroupDef struct {
 }
 
 var cardGroupDefs = map[string]cardGroupDef{
-	cardGroupYourTurn:   {label: "Your turn", term: overviewTermYourTurn, rule: cardYourTurnRule},
+	cardGroupYourTurn:   {label: "Your turn", term: overviewTermYourTurn, headed: true, rule: cardYourTurnRule},
 	cardGroupWaiting:    {label: "Waiting on someone else", term: overviewTermWaiting, headed: true, rule: "Someone other than you has the next move. Nothing to do until they act."},
 	cardGroupBlocked:    {label: "Blocked", term: overviewTermBlocked, headed: true, rule: "Someone else must push a fix: the author or a dependency bot."},
 	cardGroupActionable: {label: "Hive has it", term: overviewTermActionable, headed: true, rule: "The hive moves these on its own. Nothing for you to do."},
@@ -409,16 +441,50 @@ func cardUnexplained(what, reason string) OverviewCardBand {
 }
 
 // cardOwnershipBand is rules 1 and 2 of both tables: the stored decision
-// says your turn.
-func cardOwnershipBand(o *Ownership) (OverviewCardBand, bool) {
+// says your turn. kind is ownershipKindIssue or ownershipKindPR.
+func cardOwnershipBand(o *Ownership, kind string) (OverviewCardBand, bool) {
 	if o == nil || !o.YourTurn {
 		return OverviewCardBand{}, false
 	}
-	key := cardBandYourTurn
-	if o.Verb == OwnershipVerbClose {
-		key = cardBandToClose
+	return cardBand(cardTurnBand(o.Verb, o.ReasonCode, kind), "ownership:"+o.ReasonCode, nonEmpty(o.Reason, "The hive holds it for a person.")), true
+}
+
+// cardTurnBand is the Your turn band of a stored decision: what the person
+// has to do, read from its verb. Two PR review gates get their own band (a
+// person's approval, a hand merge); on an issue they stay Review, so an
+// issue never lands on a band the issue donut does not plot. A verb the card
+// does not know is Other, never dropped: every your-turn decision is in the
+// Your turn group.
+func cardTurnBand(verb, reasonCode, kind string) string {
+	switch verb {
+	case OwnershipVerbInspect:
+		return cardBandInspect
+	case OwnershipVerbDecide, OwnershipVerbSteer, OwnershipVerbSpec:
+		return cardBandDecide
+	case OwnershipVerbReview:
+		if kind == ownershipKindPR {
+			switch reasonCode {
+			case OwnershipReasonReviewDecision:
+				return cardBandApprove
+			case OwnershipReasonHandMerge:
+				return cardBandHandMerge
+			}
+		}
+		return cardBandReview
+	case OwnershipVerbTriage:
+		return cardBandTriage
+	case OwnershipVerbAdmit:
+		return cardBandAdmit
+	case OwnershipVerbClose:
+		return cardBandToClose
 	}
-	return cardBand(key, "ownership:"+o.ReasonCode, nonEmpty(o.Reason, "The hive holds it for a person.")), true
+	return cardBandTurnOther
+}
+
+// cardNotInInbox reports a band the not-in-inbox count reads: every Your
+// turn band but Unexplained, which is counted apart.
+func cardNotInInbox(key string) bool {
+	return key != cardBandUnexplained && cardBandDefs[key].group == cardGroupYourTurn
 }
 
 func cardHoldSources(sources []string) string {
@@ -459,7 +525,7 @@ func cardIssueParking(row cardIssueRow, cfg *config.Config) string {
 // matching rule wins.
 func decideIssueCard(row cardIssueRow, in cardInputs) OverviewCardBand {
 	o := row.ownership
-	if band, ok := cardOwnershipBand(o); ok {
+	if band, ok := cardOwnershipBand(o, ownershipKindIssue); ok {
 		return band
 	}
 	if o != nil && o.WaitingElsewhere {
@@ -556,9 +622,9 @@ func cardIssueBucketBand(row cardIssueRow, in cardInputs) OverviewCardBand {
 	case repoWorkBucketClaimedByPR:
 		return cardBand(cardBandCoveredByPR, code, "An open PR covers it; follow the PR.")
 	case repoWorkBucketReporterTriage:
-		return cardBand(cardBandYourTurn, code, "The reporter is not trusted; add an admission label to let agents work on it.")
+		return cardBand(cardBandAdmit, code, "The reporter is not trusted; add an admission label to let agents work on it.")
 	case cardBucketPendingRelease:
-		return cardBand(cardBandYourTurn, code, "The hive parked it for the owner's release step.")
+		return cardBand(cardBandDecide, code, "The hive parked it for the owner's release step.")
 	case cardBucketActionable:
 		// The claim guard lists an issue it keeps actionable here as well
 		// as on the actionable list; the first copy wins, so this row is
@@ -593,9 +659,16 @@ func cardFilteredBand(row cardIssueRow, in cardInputs) OverviewCardBand {
 	case reason == ownershipLabelReporterConfirmation || cardSHAHoldReason(reason, in.cfg):
 		return cardBand(cardBandReporterConfirm, code+"reporter", "It waits on the person who filed it.")
 	case reason == config.PossiblyExistsStageLabel:
-		return cardBand(cardBandYourTurn, code+"possibly_exists", "It may already exist; confirm the gap or close it.")
+		return cardBand(cardBandTriage, code+"possibly_exists", "It may already exist; confirm the gap or close it.")
 	case repoWorkIssueParkingBucket(w) != "" || cardParkingFor(in.cfg).parkingBucket([]string{reason}) != "":
-		return cardBand(cardBandYourTurn, code+"parked", "Parked for a person ("+reason+").")
+		// The row the stored decision will give it (parkedOwnership):
+		// needs-human is Review, the decision, direction and spec parks
+		// Decide. The park is the one the decision reads (cardIssueParking:
+		// the recorded bucket, its labels in the decision's order), else the
+		// one the recorded reason names.
+		bucket := nonEmpty(cardIssueParking(row, in.cfg), cardParkingFor(in.cfg).parkingBucket([]string{reason}))
+		park := parkedOwnership(bucket)
+		return cardBand(cardTurnBand(park.Verb, park.ReasonCode, ownershipKindIssue), code+"parked", "Parked for a person ("+reason+").")
 	case reason == github.IssueFilterReason:
 		return cardIssueFilterBand(row, code+"issue_filter")
 	case reason == cardAgentProposalReason:
@@ -616,7 +689,7 @@ func cardIssueFilterBand(row cardIssueRow, code string) OverviewCardBand {
 	if row.ownership == nil {
 		labels := labelSet(w.Labels)
 		if labels[ownershipLabelApprovedDirection] || issueAgentRole(w.Labels) != "" || w.AuthorIsHuman {
-			return cardBand(cardBandYourTurn, code, "The issue filter keeps it off the agent queue; add an admission label to admit it, or close it.")
+			return cardBand(cardBandAdmit, code, "The issue filter keeps it off the agent queue; add an admission label to admit it, or close it.")
 		}
 	}
 	return cardBand(cardBandNotWork, code, "The issue filter keeps it off the agent queues, and it is not a person's to admit.")
@@ -718,9 +791,9 @@ func cardIssueVerdictBand(row cardIssueRow, v cardVerdict, in cardInputs) Overvi
 	case withheldReasonNoWorkNeeded:
 		return cardBand(cardBandToClose, code, "An agent found no work needed; close it or say what is left.")
 	case completionVerdictNeedsDecision:
-		return cardBand(cardBandYourTurn, code, "An agent needs a maintainer decision before it can go on.")
+		return cardBand(cardBandDecide, code, "An agent needs a maintainer decision before it can go on.")
 	case contributorAdmissionReasonIssueChurn:
-		return cardBand(cardBandYourTurn, code, fmt.Sprintf("%d PRs merged and it is still open; say what is left, or add %s.", item.ChurnMerged, churnTriagedMarker))
+		return cardBand(cardBandTriage, code, fmt.Sprintf("%d PRs merged and it is still open; say what is left, or add %s.", item.ChurnMerged, churnTriagedMarker))
 	case contributorAdmissionReasonLabelSkipped:
 		return cardSkippedLabelBand(item.SkippedLabel, code, in.cfg)
 	case withheldReasonTracker:
@@ -776,11 +849,11 @@ func cardSkippedLabelBand(label, code string, cfg *config.Config) OverviewCardBa
 	}
 	switch {
 	case strings.EqualFold(l, config.DefaultReporterTrustAwaitingLabel) || (awaiting != "" && strings.EqualFold(l, awaiting)):
-		return cardBand(cardBandYourTurn, code, label+" keeps agents off it; triage it.")
+		return cardBand(cardBandTriage, code, label+" keeps agents off it; triage it.")
 	case l == ownershipLabelAlreadyDone:
 		return cardBand(cardBandToClose, code, "Marked already done; close it or keep it.")
 	case cardHasLabel(decision, l):
-		return cardBand(cardBandYourTurn, code, "It waits on a maintainer's decision ("+label+").")
+		return cardBand(cardBandDecide, code, "It waits on a maintainer's decision ("+label+").")
 	}
 	return cardBand(cardBandNotWork, code, "The skip label "+nonEmpty(label, "(unnamed)")+" keeps it off the queue; skip labels are this hive's settings.")
 }
@@ -820,7 +893,7 @@ func cardPRAuthorKind(pr github.PullRequest) string {
 func decidePRCard(row cardPRRow, in cardInputs) OverviewCardBand {
 	pr := row.pr
 	o := row.ownership
-	if band, ok := cardOwnershipBand(o); ok {
+	if band, ok := cardOwnershipBand(o, ownershipKindPR); ok {
 		return band
 	}
 	if pr.Draft || row.sidelinedDraft {
@@ -889,7 +962,7 @@ func cardPRWaitingBand(row cardPRRow, o *Ownership) OverviewCardBand {
 	case cardAuthorHive:
 		return cardBand(cardBandWorking, code, "A person answered the hive's review; the hive's fixer carries it out.")
 	case cardAuthorBot:
-		return cardBand(cardBandYourTurn, code, "A person answered the review; the hive does not fix bot PRs.")
+		return cardBand(cardBandTurnOther, code, "A person answered the review; the hive does not fix bot PRs.")
 	}
 	return cardBand(cardBandAuthorUpdate, code, nonEmpty(o.Reason, "A person answered the review; the author must push the change."))
 }
@@ -916,7 +989,7 @@ func cardPRStageBand(row cardPRRow, stage int, facts cardStageFacts, hasFacts bo
 	switch stage {
 	case trackerNumberReviewPending, trackerNumberReviewed:
 		if hasFacts && cardBaseRed(facts.Reason) {
-			return cardBand(cardBandYourTurn, cardStageCode(stage, "base_red"), "Red because main is red; fix main or follow its fix.")
+			return cardBand(cardBandTurnOther, cardStageCode(stage, "base_red"), "Red because main is red; fix main or follow its fix.")
 		}
 		return cardBand(cardBandWorking, cardStageCode(stage, "review"), "The hive's review is on it.")
 	case trackerNumberFixing, trackerNumberNeedsAuthor:
@@ -939,7 +1012,7 @@ func cardPRStageBand(row cardPRRow, stage int, facts cardStageFacts, hasFacts bo
 			return cardBand(cardBandWorking, cardStageCode(stage, "dispatch_unread"), "The hive's fixer is on it (fix dispatch state not read yet).")
 		}
 		if why, excluded := cardFixerExcluded(in.dispatch, in.workers, row.repoFull, pr); excluded {
-			return cardBand(cardBandYourTurn, cardStageCode(stage, "fixer_excluded"), "Nobody is fixing it: "+why+".")
+			return cardBand(cardBandTurnOther, cardStageCode(stage, "fixer_excluded"), "Nobody is fixing it: "+why+".")
 		}
 		return cardBand(cardBandWorking, cardStageCode(stage, "fixing"), "The hive's fixer is on it.")
 	case trackerNumberReturned:
@@ -978,25 +1051,25 @@ func cardBotPRBand(row cardPRRow, since time.Time, code string, in cardInputs) O
 	if cardBotRebaseCandidate(pr) && (red || conflict) {
 		allowed, known := cardBotRebaseAllowed(in, row.repoFull, pr)
 		if !known {
-			return cardBand(cardBandYourTurn, code+"_gate_unknown", "Not yet checked against the write-back policy; the next refresh says whether the hive asks the bot to rebase.")
+			return cardBand(cardBandTurnOther, code+"_gate_unknown", "Not yet checked against the write-back policy; the next refresh says whether the hive asks the bot to rebase.")
 		}
 		if !allowed {
-			return cardBand(cardBandYourTurn, code+"_no_rebase", "The hive will not ask the bot to rebase; close it, rebase it by hand, or ask the bot.")
+			return cardBand(cardBandTurnOther, code+"_no_rebase", "The hive will not ask the bot to rebase; close it, rebase it by hand, or ask the bot.")
 		}
 		grace := cardBotConflictGrace
 		if red {
 			grace = cardBotRedCIGrace
 		}
 		if since.IsZero() {
-			return cardBand(cardBandYourTurn, code+"_unknown", "The hand-off time is unknown; check whether the bot is still updating it.")
+			return cardBand(cardBandTurnOther, code+"_unknown", "The hand-off time is unknown; check whether the bot is still updating it.")
 		}
 		deadline := since.Add(grace).UTC()
 		if in.now.Before(deadline) {
 			return cardBand(cardBandBotRebase, code+"_rebase", "Inside the hand-off time; a person gets it at "+deadline.Format(cardClockFormat)+".")
 		}
-		return cardBand(cardBandYourTurn, code+"_overdue", "Hand-off overdue since "+deadline.Format(cardClockFormat)+".")
+		return cardBand(cardBandTurnOther, code+"_overdue", "Hand-off overdue since "+deadline.Format(cardClockFormat)+".")
 	}
-	return cardBand(cardBandYourTurn, code+"_no_rebase", "The hive will not ask the bot to rebase; close it, rebase it by hand, or ask the bot.")
+	return cardBand(cardBandTurnOther, code+"_no_rebase", "The hive will not ask the bot to rebase; close it, rebase it by hand, or ask the bot.")
 }
 
 // cardPRNoStageBand places a PR with no stage at all (engine off, shadow
@@ -1011,7 +1084,7 @@ func cardPRNoStageBand(row cardPRRow, in cardInputs) OverviewCardBand {
 	case blocked:
 		switch kind := cardPRAuthorKind(pr); {
 		case pr.SharedCIIncident > 0:
-			return cardBand(cardBandYourTurn, "flags:no_stage:shared_ci", "Red because of a shared CI incident; fix it or follow its fix.")
+			return cardBand(cardBandTurnOther, "flags:no_stage:shared_ci", "Red because of a shared CI incident; fix it or follow its fix.")
 		case kind == cardAuthorHive:
 			return cardBand(cardBandWorking, "flags:no_stage:hive_blocked", "The hive's own PR; its fixer takes it.")
 		case kind == cardAuthorBot:
@@ -1074,7 +1147,7 @@ func newCardTally() *cardTally {
 
 func (t *cardTally) add(kind string, band OverviewCardBand, o *Ownership) {
 	inbox := o != nil && o.YourTurn
-	notInInbox := (band.Key == cardBandYourTurn || band.Key == cardBandToClose) && !inbox
+	notInInbox := cardNotInInbox(band.Key) && !inbox
 	if kind == ownershipKindPR {
 		t.prs[band.Key]++
 		t.prRows++

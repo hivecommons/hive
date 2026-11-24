@@ -88,6 +88,16 @@
       --card-band-draft: #3b4757;
       --card-band-held: #c9a27a;
       --card-band-waiting-group: #a8b3c2;
+      /* The Your turn group's bands: what the person has to do. Warm hues,
+         each at least 10 CIEDE2000 from every band on the same donut. */
+      --card-band-inspect: #e01f5d;
+      --card-band-decide: #f96906;
+      --card-band-approve: #f4e0ad;
+      --card-band-merge-by-hand: #fce224;
+      --card-band-review: #fcb532;
+      --card-band-triage: #ff46a9;
+      --card-band-admit: #eb1f1b;
+      --card-band-your-turn-other: #af7560;
       --anim-chart-slow: 1200ms;
       --anim-band-grow: 900ms;
       --anim-kpi-count: 800ms;
@@ -204,6 +214,14 @@
       --card-band-draft: #d6d3d1;
       --card-band-held: #a16207;
       --card-band-waiting-group: #57534e;
+      --card-band-inspect: #d41859;
+      --card-band-decide: #e57503;
+      --card-band-approve: #bd8900;
+      --card-band-merge-by-hand: #82740e;
+      --card-band-review: #6e4117;
+      --card-band-triage: #8e1053;
+      --card-band-admit: #8f261b;
+      --card-band-your-turn-other: #9d6653;
       background: var(--bg); color: var(--text);
     }
     body.light-mode .connection { display: none; }
