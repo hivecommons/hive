@@ -83,3 +83,26 @@ func TestRescanRepos_PublishesWorkBreakdown(t *testing.T) {
 		t.Fatal("manual rescan did not store the classified result used for the dashboard refresh")
 	}
 }
+
+// A hive whose repos are all on another forge has no GitHub client, and the
+// manual rescan must still enumerate them through their forge instead of
+// reporting missing credentials (#19494).
+func TestRescanRepos_ForgeOnlyHiveNeedsNoGitHubClient(t *testing.T) {
+	t.Setenv(forgejoTestTokenEnv, forgejoTestToken)
+	fake := &fakeForgejo{}
+	srv := httptest.NewServer(fake.handler(t))
+	defer srv.Close()
+	cfg := forgejoOnlyConfig(srv.URL)
+
+	var last atomic.Pointer[github.ActionableResult]
+	got, err := rescanRepos(context.Background(), cfg, nil, &last, nil, slog.Default())
+	if err != nil {
+		t.Fatalf("rescan of a forge-only hive: %v", err)
+	}
+	if got == nil || got.Issues.Count != 1 {
+		t.Fatalf("rescan result = %+v, want the one actionable forge issue", got)
+	}
+	if last.Load() == nil {
+		t.Error("rescan did not publish its snapshot")
+	}
+}

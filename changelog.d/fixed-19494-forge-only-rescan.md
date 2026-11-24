@@ -1,0 +1,1 @@
+- The manual repository rescan now works on a hive whose repos are all on Gitea or Forgejo ([#19494](https://github.com/hivecommons/hive/issues/19494)). It used to fail with a missing-credentials error because it called the GitHub enumerator directly; it now enumerates through the repo's own forge, as the eval cycle does, and skips GitHub CI enrichment for PRs on other forges.
