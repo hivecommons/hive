@@ -74641,13 +74641,21 @@ function burnAreaChart() {
     // store (the model must exist and compile) and the tracker picks the new
     // columns up on its next poll.
     const WORKFLOW_DEFAULT_KEY = 'hive-default@1';
-    const _workflowState = { loaded: false, loading: false, enabled: false, workflows: [], bindings: [], dispatch: [], agents: [] };
+    const _workflowState = { loaded: false, loading: null, enabled: false, workflows: [], bindings: [], dispatch: [], agents: [] };
 
     function workflowKey(name, version) { return (name || '') + '@' + (version || ''); }
 
-    async function loadWorkflowLibrary(onDone) {
-      if (_workflowState.loading) return;
-      _workflowState.loading = true;
+    function loadWorkflowLibrary(onDone, options) {
+      const pending = _workflowState.loading;
+      if (pending) {
+        // An earlier request may have read the library before the write completed.
+        return options?.afterWrite ? pending.then(() => loadWorkflowLibrary(onDone)) : pending;
+      }
+      _workflowState.loading = fetchWorkflowLibrary().finally(() => { _workflowState.loading = null; });
+      return _workflowState.loading.then(onDone);
+    }
+
+    async function fetchWorkflowLibrary() {
       try {
         const res = await fetch('/api/workflows', { headers: _inceptionAuthHeaders() });
         if (res.status === 503) { _workflowState.loaded = true; _workflowState.workflows = []; return; }
@@ -74661,9 +74669,6 @@ function burnAreaChart() {
       } catch (err) {
         _workflowState.loaded = true;
         showToast('Could not load the workflow library: ' + err.message, 'error');
-      } finally {
-        _workflowState.loading = false;
-        if (typeof onDone === 'function') onDone();
       }
     }
 
@@ -76470,12 +76475,12 @@ function burnAreaChart() {
 
     function wfEdDefaultState() {
       return {
-        model: null, saved: null, source: null, readOnly: false, rev: 0,
+        model: null, saved: null, source: null, pendingSave: null, readOnly: false, rev: 0,
         history: [], future: [], selection: { type: '', ids: [] },
         view: { panX: 0, panY: 0, zoom: 1, laneWidths: {}, showLabels: false, fansOpen: {} },
         compile: { busy: false, rev: -1, profile: null, diags: [], compiled: null, error: '' },
         drawer: { tab: 'problems', open: true },
-        yaml: { text: '', rev: -1, error: '', busy: false, focused: false },
+        yaml: { text: '', base: null, rev: -1, error: '', busy: null, focused: false },
         diff: { versions: [], against: '', remote: null, error: '', busy: false, loadedFor: '' },
         sim: { kind: 'pr', facts: wfSimDefaultFacts(), result: null, error: '', busy: false, hit: '' },
         palette: { hiveDefault: null, loading: false, section: 'states' },
@@ -76621,6 +76626,7 @@ function burnAreaChart() {
       const name = (st.model.metadata || {}).name || 'untitled';
       const ver = st.source ? '@' + st.source.version : (st.model.spec.meta && st.model.spec.meta.version ? '@' + st.model.spec.meta.version + ' (unsaved)' : ' (unsaved)');
       const dirty = wfEdDirty();
+      const saving = !!st.pendingSave;
       const inferred = wfEdStates(st.model).filter(s => (s.lifecycle || {}).confidence === 'inferred').length;
       const btn = (action, label, title, extra) => `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="${action}" title="${esc(title || '')}" ${extra || ''}>${label}</button>`;
       return '<div class="wf-ed-toolbar" role="toolbar" aria-label="Editor toolbar">' +
@@ -76646,8 +76652,8 @@ function burnAreaChart() {
         '<span class="wf-ed-grow"></span>' +
         (st.readOnly ? btn('wfEdEditCopy', 'Edit a copy', 'Duplicate under a new name and edit that') : '') +
         (can ? btn('wfEdRevert', 'Revert', 'Discard unsaved changes', dirty ? '' : 'disabled') : '') +
-        (can ? btn('wfEdSaveAs', 'Save as\u2026', 'Save under a new name as version 1') : '') +
-        (can ? `<button type="button" class="hv-btn btn-primary btn-sm" data-action="wfEdSave" title="Save as the next version" ${dirty || !st.source ? '' : 'disabled'}>Save</button>` : '') +
+        (can ? btn('wfEdSaveAs', 'Save as\u2026', 'Save under a new name as version 1', saving ? 'disabled' : '') : '') +
+        (can ? `<button type="button" class="hv-btn btn-primary btn-sm" data-action="wfEdSave" title="Save as the next version" ${saving || (!dirty && st.source) ? 'disabled' : ''}>${saving ? 'Saving\u2026' : 'Save'}</button>` : '') +
         btn('wfEdClose', 'Close', 'Back to the library') +
         '</div>';
     }
@@ -76948,7 +76954,9 @@ function burnAreaChart() {
         root.addEventListener('keydown', wfEdRootKey);
         root.addEventListener('keyup', ev => { if (ev.key === ' ') _wfEd.spaceHeld = false; });
         root.addEventListener('focusin', ev => { if (ev.target && ev.target.id === 'wf-ed-yaml') _wfEd.yaml.focused = true; });
-        root.addEventListener('focusout', ev => { if (ev.target && ev.target.id === 'wf-ed-yaml') _wfEd.yaml.focused = false; });
+        root.addEventListener('focusout', ev => {
+          if (ev.target && ev.target.id === 'wf-ed-yaml') { _wfEd.yaml.focused = false; wfEdYamlSync(); }
+        });
         root.addEventListener('click', ev => { if (_wfEd.exportMenu && !(ev.target.closest && ev.target.closest('.wf-ed-menu'))) { _wfEd.exportMenu = false; wfEdRefresh(['toolbar']); } });
       }
       if (!window._wfEdResizeWired) {
@@ -77460,26 +77468,69 @@ function burnAreaChart() {
 
     // --- Persistence ----------------------------------------------------------
 
+    // Carry forward save metadata for fields whose values still match the original draft.
+    function wfEdReconcileSavedMetadata(model, base, latest) {
+      let next = model;
+      const name = model.metadata?.name || '';
+      const latestName = latest.metadata?.name || '';
+      if (name === (base.metadata?.name || '') && name !== latestName) {
+        next = { ...next, metadata: { ...next.metadata, name: latestName } };
+      }
+      let meta = model.spec.meta;
+      for (const key of ['version', 'provenance']) {
+        const value = model.spec.meta?.[key] || '';
+        const latestValue = latest.spec.meta?.[key];
+        if (value === (base.spec.meta?.[key] || '') && value !== (latestValue || '')) {
+          meta = { ...meta, [key]: latestValue };
+        }
+      }
+      if (meta !== model.spec.meta) next = { ...next, spec: { ...next.spec, meta } };
+      return next;
+    }
+
     async function wfEdSave(asName) {
-      if (!wfEdCanEdit()) return;
-      const m = wfEdClone(_wfEd.model);
+      if (!wfEdCanEdit() || _wfEd.pendingSave) return;
+      const submitted = _wfEd.model;
+      const m = wfEdClone(submitted);
       if (asName) m.metadata = Object.assign({}, m.metadata, { name: asName });
       const name = (m.metadata || {}).name;
       if (!/^[a-z0-9][a-z0-9._-]*$/.test(name || '')) { showToast('Name must be lower-case letters, digits, dots, dashes or underscores.', 'error'); return; }
       m.spec.meta = Object.assign({}, m.spec.meta, { version: '' });
       if (!m.spec.meta.provenance || m.spec.meta.provenance === 'built-in') m.spec.meta.provenance = 'local';
+      _wfEd.pendingSave = m;
       try {
+        wfEdRefresh(['toolbar']);
         const res = await fetch('/api/workflows', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify(m) });
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         const data = await res.json(), e = data.entry || {};
+        if (_wfEd.pendingSave === m && _wfEd.model) {
+          m.spec.meta.version = e.version;
+          const saved = wfEdNormalize(m);
+          _wfEd.saved = saved;
+          _wfEd.source = { name: e.name, version: e.version };
+          const reconcile = draft => wfEdReconcileSavedMetadata(draft, submitted, saved);
+          _wfEd.model = reconcile(_wfEd.model);
+          _wfEd.history = _wfEd.history.map(reconcile);
+          _wfEd.future = _wfEd.future.map(reconcile);
+          _wfEd.pendingSave = null;
+          _wfEd.diff.loadedFor = ''; _wfEd.rev++; wfEdScheduleCompile(0);
+          // Inspector inputs commit on change, so keep any text the user is still typing.
+          const field = document.activeElement;
+          const editing = field?.closest('#wf-ed-inspector') && typeof field.defaultValue === 'string' && field.value !== field.defaultValue;
+          wfEdRefresh(editing ? ['toolbar', 'canvas', 'drawer'] : undefined);
+          wfEdLoadVersions();
+        }
         showToast('Saved ' + e.name + '@' + e.version + (e.compiled ? '' : ' (does not compile)'), e.compiled ? 'success' : 'info');
-        _workflowState.loaded = false; await loadWorkflowLibrary();
-        m.spec.meta.version = e.version;
-        _wfEd.model = wfEdNormalize(m); _wfEd.saved = wfEdClone(_wfEd.model); _wfEd.source = { name: e.name, version: e.version }; _wfEd.readOnly = false;
-        _wfEd.diff.loadedFor = ''; _wfEd.rev++; wfEdScheduleCompile(0);
-        wfEdRefresh(); wfEdLoadVersions();
+        loadWorkflowLibrary(() => {
+          if (_wfLib.view === 'library' || (_wfLib.view === 'editor' && !_wfEd.model)) wfLibRerender();
+        }, { afterWrite: true });
       } catch (err) {
         showToast('Save failed: ' + err.message, 'error');
+      } finally {
+        if (_wfEd.pendingSave === m) {
+          _wfEd.pendingSave = null;
+          if (_wfEd.model) wfEdRefresh(['toolbar']);
+        }
       }
     }
     async function wfEdSaveAs() {
@@ -77546,36 +77597,55 @@ function burnAreaChart() {
       clearTimeout(_wfEd.timers.yaml);
       _wfEd.timers.yaml = setTimeout(wfEdYamlRefresh, WF_ED_YAML_DEBOUNCE_MS);
     }
+    function wfEdFinishYamlRequest(y, request) {
+      if (y.busy !== request) return;
+      y.busy = null;
+      if (y === _wfEd.yaml && _wfEd.model && _wfEd.drawer.tab === 'yaml') wfEdRefresh(['drawer']);
+    }
     async function wfEdYamlRefresh() {
-      const y = _wfEd.yaml, rev = _wfEd.rev;
-      if (!_wfEd.model) return;
-      y.busy = true;
+      const y = _wfEd.yaml, rev = _wfEd.rev, model = _wfEd.model, source = _wfEd.source;
+      if (!model || y.focused || y.busy) return;
+      const request = {};
+      y.busy = request;
       try {
-        const res = await fetch('/api/workflows/yaml', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ model: _wfEd.model }) });
+        const res = await fetch('/api/workflows/yaml', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ model }) });
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         const data = await res.json();
-        if (rev !== _wfEd.rev) return;
+        if (y !== _wfEd.yaml || y.busy !== request || rev !== _wfEd.rev || y.focused) return;
+        y.base = { model, source };
         y.text = data.yaml || ''; y.rev = rev; y.error = '';
-      } catch (err) { y.error = 'YAML render failed: ' + err.message; }
-      y.busy = false; y.focused = false;
-      if (_wfEd.drawer.tab === 'yaml') wfEdRefresh(['drawer']);
+      } catch (err) {
+        if (y.busy === request) y.error = 'YAML render failed: ' + err.message;
+      } finally {
+        wfEdFinishYamlRequest(y, request);
+      }
     }
     async function wfEdYamlApply() {
       const y = _wfEd.yaml, el = document.getElementById('wf-ed-yaml');
       if (!el || !wfEdCanEdit()) return;
       const text = el.value;
-      if (text === y.text) return;
-      y.busy = true; y.error = ''; y.focused = false;
+      if (text === y.text || text === y.busy?.text) return;
+      const request = { text }, base = y.base;
+      y.busy = request; y.error = '';
       try {
         const res = await fetch('/api/workflows/yaml', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ yaml: text }) });
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         const data = await res.json();
-        if (data.error) { y.error = data.error; y.text = text; y.busy = false; wfEdRefresh(['drawer']); return; }
-        y.text = text; y.busy = false;
+        if (y !== _wfEd.yaml || y.busy !== request || !_wfEd.model) return;
+        y.text = text;
+        if (data.error) { y.error = data.error; y.rev = _wfEd.rev; return; }
+        const model = base && base.source !== _wfEd.source
+          ? wfEdReconcileSavedMetadata(data.model, base.model, _wfEd.model) : data.model;
         wfEdPruneSelection();
-        wfEdCommit(data.model);
-        y.rev = _wfEd.rev;
-      } catch (err) { y.error = 'YAML apply failed: ' + err.message; y.busy = false; wfEdRefresh(['drawer']); }
+        wfEdCommit(model);
+        const rebased = model !== data.model;
+        y.base = { model: data.model, source: rebased ? base.source : _wfEd.source };
+        y.rev = rebased ? -1 : _wfEd.rev;
+      } catch (err) {
+        if (y.busy === request) y.error = 'YAML apply failed: ' + err.message;
+      } finally {
+        wfEdFinishYamlRequest(y, request);
+      }
     }
 
     // --- Simulate drawer ------------------------------------------------------
