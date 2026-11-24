@@ -446,3 +446,82 @@ func TestClassifyPinOnlyDakotaMajorUpgrade(t *testing.T) {
 		t.Fatalf("v4 -> v4.3.1: got (%v, %q, %+v), want accepted with %+v", ok, why, pins, wantPins)
 	}
 }
+
+// Renovate keeps the text after a pin's version comment when it rewrites the
+// pin, so a workflow that annotates a pin (`# v2.90.6 (just)`, or a linter
+// suppression such as `# v1 # zizmor: ignore[ref-version-mismatch]`) had
+// every later bump refused as a non-pin (projectbluefin/dakota-iso#400). A
+// short note is accepted only when it is byte-identical on both lines and
+// follows a version comment; it never becomes part of the version the
+// upstream tag check resolves.
+func TestClassifyPinOnlyTrailingNote(t *testing.T) {
+	const (
+		ci      = ".github/workflows/ci.yml"
+		notAPin = ci + ": non-pin or unsafe replacement"
+		zizmor  = " # zizmor: ignore[ref-version-mismatch]"
+	)
+	oldSHA, newSHA := strings.Repeat("a", 40), "25f51f6b1bf4e18876107cece836f4f77ac17c8c"
+	uses := func(sha, suffix string) string {
+		return "      - uses: taiki-e/install-action@" + sha + suffix
+	}
+	spec := PinOnlySpec{Paths: []string{".github/workflows/*.yml"}, Kinds: []string{"action-sha", "action-sha-ref"}}
+	for _, tc := range []struct {
+		name, old, next string
+		version         string // the accepted pin's Version
+		reason          string // "" means accepted
+	}{
+		{"note kept, version bumped", uses(oldSHA, " # v2.90.6 (just)"), uses(newSHA, " # v2.90.7 (just)"), "v2.90.7", ""},
+		{"linter suppression kept, version unchanged", uses(oldSHA, " # v1"+zizmor), uses(newSHA, " # v1"+zizmor), "v1", ""},
+		{"no note, as before", uses(oldSHA, " # v2.90.6"), uses(newSHA, " # v2.90.7"), "v2.90.7", ""},
+		{"note of 80 characters", uses(oldSHA, " # v2 "+strings.Repeat("n", 80)), uses(newSHA, " # v2 "+strings.Repeat("n", 80)), "v2", ""},
+		{"note kept after a tab", uses(oldSHA, " # v2\t(just)"), uses(newSHA, " # v2\t(just)"), "v2", ""},
+
+		{"note changes", uses(oldSHA, " # v2.90.6 (just)"), uses(newSHA, " # v2.90.7 (cargo)"), "", notAPin},
+		{"note appears", uses(oldSHA, " # v2.90.6"), uses(newSHA, " # v2.90.7 (just)"), "", notAPin},
+		{"note disappears", uses(oldSHA, " # v2.90.6 (just)"), uses(newSHA, " # v2.90.7"), "", notAPin},
+		{"note separator changes", uses(oldSHA, " # v2 (just)"), uses(newSHA, " # v2  (just)"), "", notAPin},
+		{"only the note changes", uses(oldSHA, " # v2 (just)"), uses(oldSHA, " # v2 (cargo)"), "", notAPin},
+		{"note of 81 characters", uses(oldSHA, " # v2 "+strings.Repeat("n", 81)), uses(newSHA, " # v2 "+strings.Repeat("n", 81)), "", notAPin},
+		{"unsafe word secrets. in the note", uses(oldSHA, " # v2 (secrets.X)"), uses(newSHA, " # v2 (secrets.X)"), "", notAPin},
+		{"unsafe word permissions in the note", uses(oldSHA, " # v2 (permissions)"), uses(newSHA, " # v2 (permissions)"), "", notAPin},
+		{"expression in the note", uses(oldSHA, " # v2 ${{ github.token }}"), uses(newSHA, " # v2 ${{ github.token }}"), "", notAPin},
+		{"dollar sign in the note", uses(oldSHA, " # v2 $HOME"), uses(newSHA, " # v2 $HOME"), "", notAPin},
+		{"backtick in the note", uses(oldSHA, " # v2 `id`"), uses(newSHA, " # v2 `id`"), "", notAPin},
+		{"control character in the note", uses(oldSHA, " # v2 (a\x01b)"), uses(newSHA, " # v2 (a\x01b)"), "", notAPin},
+		{"note without a version comment", uses(oldSHA, " (just)"), uses(newSHA, " (just)"), "", notAPin},
+		{"note after a comment not set off by a space", uses(oldSHA, "# v2 (just)"), uses(newSHA, "# v2 (just)"), "", notAPin},
+		{"note after a version that is not vN[.N[.N]]", uses(oldSHA, " # v2.90.6.1 (just)"), uses(newSHA, " # v2.90.7.1 (just)"), "", notAPin},
+		{"note kept, major version changes", uses(oldSHA, " # v2.90.6 (just)"), uses(newSHA, " # v3.0.0 (just)"), "", ci + ": major version change v2.90.6 -> v3.0.0 is not a pin"},
+
+		// The same rule for an action-sha-ref companion of the uses: pin.
+		{"companion note kept", "      test_ref: " + oldSHA + " # v2.90.6" + zizmor, "      test_ref: " + newSHA + " # v2.90.7" + zizmor, "v2.90.7", ""},
+		{"companion note changes", "      test_ref: " + oldSHA + " # v2.90.6 (just)", "      test_ref: " + newSHA + " # v2.90.7 (cargo)", "", notAPin},
+		{"companion note without a version comment", "      test_ref: " + oldSHA + " (just)", "      test_ref: " + newSHA + " (just)", "", notAPin},
+		{"companion note with an expression", "      test_ref: " + oldSHA + " # v2 ${{ x }}", "      test_ref: " + newSHA + " # v2 ${{ x }}", "", notAPin},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			patch := "@@ -3 +3 @@\n-" + tc.old + "\n+" + tc.next
+			file := ChangedFile{Filename: ci, Status: "modified", Additions: 1, Deletions: 1, Patch: patch}
+			if strings.Contains(tc.old, "test_ref:") {
+				// A companion needs the uses: pin that moves the same commit.
+				file = ChangedFile{Filename: ci, Status: "modified", Additions: 2, Deletions: 2, Patch: "@@ -3,3 +3,3 @@\n" +
+					"-" + uses(oldSHA, " # v2.90.6") + "\n" +
+					"+" + uses(newSHA, " # v2.90.7") + "\n" +
+					"     with:\n" +
+					"-" + tc.old + "\n" +
+					"+" + tc.next}
+			}
+			ok, why, pins := ClassifyPinOnlyActions([]ChangedFile{file}, []string{ci}, spec)
+			if tc.reason != "" {
+				if ok || why != tc.reason || pins != nil {
+					t.Fatalf("got (%v, %q, %+v), want refused with %q and no pins", ok, why, pins, tc.reason)
+				}
+				return
+			}
+			want := []ActionPin{{Repo: "taiki-e/install-action", SHA: newSHA, Version: tc.version}}
+			if !ok || !slices.Equal(pins, want) {
+				t.Fatalf("got (%v, %q, %+v), want accepted with %+v", ok, why, pins, want)
+			}
+		})
+	}
+}
