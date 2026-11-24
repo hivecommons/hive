@@ -110,6 +110,7 @@ var outboundSites = map[string]outboundSite{
 	"hub.patchHubGitHubIssueComment":     template("pkg/fleetreport", reasonFleetReport),
 	"forge.(*gitLabForge).doWrite":       template("pkg/forge", reasonForgeWrite),
 	"forge.(*giteaForge).doWrite":        template("pkg/forge", reasonForgeWrite),
+	"forge.(*giteaForge).doWriteJSON":    template("pkg/forge", reasonForgeWrite),
 	"forge.(*giteaForge).Merge":          template("pkg/forge", "merge request on a non-GitHub forge"),
 	"forge.(*gitLabForge).doAcceptMerge": template("pkg/forge", "merge request on a non-GitHub forge"),
 	"feedbackbundle.githubJSON":          template("pkg/feedbackbundle", "feedback bundle commit message"),

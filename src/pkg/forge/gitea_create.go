@@ -89,7 +89,7 @@ func (f *giteaForge) CreateIssue(ctx context.Context, repo, title, body string, 
 	}
 	ref := IssueRef{Number: out.Number, URL: out.HTMLURL}
 	labels = config.WithOriginLabel(labels, config.OriginSourceForge)
-	if err := f.AddLabels(ctx, repo, ref.Number, labels); err != nil {
+	if err := f.AddLabels(ctx, repo, ref.Number, labels); err != nil { // writeback:solicited labels of the issue the caller is creating
 		return ref, fmt.Errorf("%w: issue %s/%s#%d: %v", ErrLabelsNotApplied, owner, name, ref.Number, err)
 	}
 	return ref, nil
@@ -165,7 +165,7 @@ func (f *giteaForge) CreateChangeRequest(ctx context.Context, repo string, spec 
 		return ChangeRequestRef{}, fmt.Errorf("%s: open pull request in %s: %w", f.label, slug, err)
 	}
 	ref := ChangeRequestRef{Number: out.Number, URL: out.HTMLURL}
-	if err := f.AddLabels(ctx, repo, ref.Number, spec.Labels); err != nil {
+	if err := f.AddLabels(ctx, repo, ref.Number, spec.Labels); err != nil { // writeback:solicited labels of the pull request the caller is opening
 		return ref, fmt.Errorf("%w: pull request %s#%d: %v", ErrLabelsNotApplied, slug, ref.Number, err)
 	}
 	return ref, nil
