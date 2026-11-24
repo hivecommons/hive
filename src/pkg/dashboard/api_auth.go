@@ -82,7 +82,16 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, map[string]interface{}{"logged_in": true, "username": user.Login, "avatar_url": user.AvatarURL})
 }
 
+// errGitHubSignInOff is the refusal /api/gh-user-auth/start and /poll give
+// when dashboard.github_sign_in is false (#19618). It names the setting so a
+// `hivectl login` user learns why the device flow is gone.
+const errGitHubSignInOff = "GitHub sign-in is turned off on this hive (dashboard.github_sign_in: false); sign in through the hub instead"
+
 func (s *Server) handleGHUserAuthStart(w http.ResponseWriter, r *http.Request) {
+	if !s.githubSignInEnabled() {
+		jsonError(w, errGitHubSignInOff, http.StatusForbidden)
+		return
+	}
 	// Always resolves to a github.com client ID (configured or the public
 	// default) — login is github.com even on GHE hives, so this never fails for
 	// a blank oauth_client_id and never uses a GHE client.
@@ -135,6 +144,12 @@ func newDeviceFlowID() (string, error) {
 }
 
 func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
+	// The off switch is checked on poll too, so a flow started before the
+	// setting changed can never mint a session after it.
+	if !s.githubSignInEnabled() {
+		jsonError(w, errGitHubSignInOff, http.StatusForbidden)
+		return
+	}
 	// Read the caller's flow binding BEFORE taking the lock — decodeBody does
 	// network I/O and must not serialize behind another poll's GitHub call.
 	var pollReq struct {

@@ -39,11 +39,13 @@
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <!-- Help menu: mirrors the sidebar Help group (#help-nav-group) with the
            same labels and targets. It reuses the account menu's .avatar-menu
-           dropdown. A future Ask AI item goes right after Getting started. -->
+           dropdown. Ask Hive starts hidden and is shown by askShowHelpItems()
+           only once the Ask panel is built (ask_enabled on). -->
       <div id="oc-help-menu-wrap">
-        <button type="button" class="nav-chip nav-chip--primary" id="welcome-topbar-btn" data-action="toggleHelpMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-help-menu" title="Help: Getting started, Docs, FAQ, Report an issue" aria-label="Help menu"><span class="nav-chip__icon" aria-hidden="true">?</span><span class="nav-chip__label">Help</span><span class="nav-chip__caret" aria-hidden="true">▾</span></button>
+        <button type="button" class="nav-chip nav-chip--primary" id="welcome-topbar-btn" data-action="toggleHelpMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-help-menu" title="Help: Getting started, Ask Hive, Docs, FAQ, Report an issue" aria-label="Help menu"><span class="nav-chip__icon" aria-hidden="true">?</span><span class="nav-chip__label">Help</span><span class="nav-chip__caret" aria-hidden="true">▾</span></button>
         <div id="oc-help-menu" class="avatar-menu" role="menu" aria-label="Help" hidden>
           <button type="button" class="avatar-menu-item" role="menuitem" id="welcome-help-menu-item" style="display:none" data-action="openWelcomeDialog">🚀 Getting started</button>
+          <button type="button" class="avatar-menu-item" role="menuitem" id="ask-help-menu-item" style="display:none" data-action="openAskFromHelp" title="Ask a question about using the dashboard. Answers come from the Hive docs, with sources. AI generated, may be wrong.">✨ Ask Hive</button>
           <a class="avatar-menu-item" role="menuitem" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer">📖 Docs</a>
           <button type="button" class="avatar-menu-item" role="menuitem" data-action="ocNavigate" data-arg0="faq-section">❓ FAQ</button>
           <button type="button" class="avatar-menu-item" role="menuitem" data-action="openFeedbackModal" data-arg0="bug">🐛 Report an issue</button>

@@ -1,1 +1,0 @@
-- Add agentmode.KnownTokenTiers and LessPrivilegedTokenTier so per-tier forge credentials can be validated and fall back safely.

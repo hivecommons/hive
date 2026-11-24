@@ -84,3 +84,24 @@ func TestForgejoAdapterTalksToServer(t *testing.T) {
 		t.Errorf("AddLabels error = %v, want a forgejo-prefixed error", err)
 	}
 }
+
+func TestForgejoListOpenIssuesCarriesBodyAndUpdatedAt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"number": 3, "title": "t", "body": "the body", "state": "open",
+			"created_at": "2026-11-01T12:00:00Z", "updated_at": "2026-11-02T08:00:00Z",
+			"user": {"login": "alice"}}]`))
+	}))
+	defer srv.Close()
+
+	f, err := NewForge(KindForgejo, "tok", Options{BaseURL: srv.URL, Org: "acme"})
+	if err != nil {
+		t.Fatalf("NewForge: %v", err)
+	}
+	issues, err := f.ListOpenIssues(context.Background(), "widgets")
+	if err != nil {
+		t.Fatalf("ListOpenIssues: %v", err)
+	}
+	if len(issues) != 1 || issues[0].Body != "the body" || issues[0].UpdatedAt.IsZero() {
+		t.Fatalf("issues = %+v, want one with body and updated_at", issues)
+	}
+}

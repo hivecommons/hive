@@ -70,10 +70,12 @@
       <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📜</span><span class="oc-nav-text">Audit log</span></a>
     </div>
     <!-- Help mirrors the top bar "? Help" menu (#oc-help-menu): same labels,
-         same targets. A future Ask AI entry goes right after Getting started. -->
+         same targets. Ask Hive starts hidden and is shown by askShowHelpItems()
+         only once the Ask panel is built (ask_enabled on). -->
     <div class="oc-nav-group" id="help-nav-group">
       <div class="oc-nav-label">Help</div>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting started checklist: one-time setup steps for a new hive, with a link to the full guide"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting started</span></a>
+      <a class="oc-nav-item" id="ask-nav-item" style="display:none" role="button" tabindex="0" data-action="openAskFromHelp" data-keydown-action="openAskFromHelp" data-keys="Enter, " data-prevent="1" title="Ask a question about using the dashboard. Answers come from the Hive docs, with sources. AI generated, may be wrong."><span class="oc-nav-emoji">✨</span><span class="oc-nav-text">Ask Hive</span></a>
       <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Short answers to the questions people ask once a hive is running: levels and holds, the Evidence card, release channels, the Model Gateway, pausing, cost, and where to get help"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer" title="The Hive documentation, including the Getting Started guide"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Docs</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">🔌</span><span class="oc-nav-text">API reference</span></a>
