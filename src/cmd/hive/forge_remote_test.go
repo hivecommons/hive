@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/forgejwt"
 	"github.com/hivecommons/hive/crux/proxy"
+	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -114,6 +116,35 @@ func TestForgeRemoteResolverRefusesUnimplementedForges(t *testing.T) {
 		if err == nil || ok || !strings.Contains(err.Error(), "not implemented") {
 			t.Fatalf("%s: ok=%v err=%v, want not implemented", kind, ok, err)
 		}
+	}
+}
+
+// With forgejo.integration set, git on a Forgejo repo uses a per-tier JWT
+// minter, not the block's access token.
+func TestForgejoMinterUsesTheIntegration(t *testing.T) {
+	cfg := forgejoTestConfig()
+	if _, ok := forgejoMinter(cfg).(pushbroker.StaticTokenMinter); !ok {
+		t.Fatal("without an integration the static token minter is used")
+	}
+	cfg.Forgejo.Integration = &config.ForgejoIntegrationConfig{
+		Issuer:    "https://keys.example.com/",
+		KeyFile:   " /etc/hive/forgejo-jwt.pem ",
+		Audiences: map[string]string{"contributor": " aud-c "},
+	}
+	m, ok := forgejoMinter(cfg).(forgejwt.Minter)
+	if !ok {
+		t.Fatalf("minter = %T, want forgejwt.Minter", forgejoMinter(cfg))
+	}
+	if m.Signer.Issuer != "https://keys.example.com" || m.Signer.KeyFile != "/etc/hive/forgejo-jwt.pem" || m.Audiences["contributor"] != "aud-c" {
+		t.Fatalf("minter = %+v", m)
+	}
+	remote, ok, err := forgeRemoteResolver(func() *config.Config { return cfg })("team/app")
+	t.Cleanup(func() { proxy.SetForgeHosts(nil) })
+	if err != nil || !ok {
+		t.Fatalf("resolver ok=%v err=%v", ok, err)
+	}
+	if _, isJWT := remote.Minter.(forgejwt.Minter); !isJWT {
+		t.Fatalf("resolver minter = %T, want the JWT minter", remote.Minter)
 	}
 }
 
