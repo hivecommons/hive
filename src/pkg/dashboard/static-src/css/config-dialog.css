@@ -314,6 +314,7 @@
       background: var(--green);
       border-color: var(--green);
     }
+    .config-toggle-note-warn { color: var(--status-warn); }
     .config-toggle-switch.disabled {
       opacity: 0.5;
       cursor: not-allowed;
