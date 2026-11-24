@@ -827,4 +827,5 @@ var HostSetters = map[string]HostSetter{
 	// In-process only.
 	"SetSpanStarter":            {HostSetterInProcessOnly, "OpenTelemetry global tracer in the runtime process; trajectory events are independent of spans"},
 	"SetSandboxGitHubReadRelay": {HostSetterInProcessOnly, "the relay holds the read-only GitHub credential and Enroll is a Go call into hive's proxy; neither crosses into a runtime process, so a sidecar runtime's Job kicks read GitHub without the relay (hivecommons/hive#18865)"},
+	"SetSandboxInferenceRelay":  {HostSetterInProcessOnly, "Enroll is a Go call into hive's proxy and the translator holds the gateway key; a sidecar runtime's Job kicks reach inference as they did before the listener (hivecommons/hive#19619)"},
 }

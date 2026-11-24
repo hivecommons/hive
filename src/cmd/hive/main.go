@@ -4610,6 +4610,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 
 		deps.startProxy(b.githubProxy, b.logger)
 		b.wireSandboxGitHubReadRelay()
+		b.wireSandboxInferenceRelay()
 		// Jev decision endpoint (hivecommons/hive#8939). Always bound so a
 		// jev_mode toggle in the dashboard takes effect on the agent's next
 		// call; every predicate reads the LIVE config, and an agent whose

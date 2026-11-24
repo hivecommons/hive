@@ -232,6 +232,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	if spec.AgentConfig.Backend == "cline" {
 		spec.AgentConfig.Model = agent.effectiveModel()
 	}
+	spec.InferenceRouted = m.routeSandboxInferenceLocked(agent, runtime)
 	// The verify list comes from config only. A kick message is not a trusted
 	// source for commands: by the time it reaches the manager it carries
 	// text from issue and PR titles, knowledge facts and delegated prompts,
@@ -319,6 +320,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 		exec.GitHubReadRelay = in.relay
 		exec.GitHubReadRelayNoProxy = in.noProxy
 	}
+	exec.InferenceRelay = m.sandboxInferenceRelayLoad()
 	res, err := exec.Run(ctx, spec)
 	ended := time.Now()
 	// The run record is written to disk after m.mu is released (defers run
