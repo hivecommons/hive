@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.365.4)
+
+### Fixed
+
+- A hive paused through its fleet breaker no longer looks healthy in My Hives, and it can be resumed from where its paused state shows ([#19778](https://github.com/hivecommons/hive/issues/19778)). The My Hives row now carries a **⏸ paused** pill next to the mode badge, with a hover naming how many agents the breaker holds and who paused them. For the owner or a hub admin the pill reads **⏸ paused · ▶ resume** and resumes the hive on click. On the hive's own dashboard the owner's chip reads **paused · resume**, and it is clickable as soon as sign-in resolves instead of after the next status poll. A viewer who cannot release the breaker there gets a **Resume in My Hives ↗** link to the hub.
+
 ## 2026-11-24 (v5.365.3)
 
 ### Fixed
