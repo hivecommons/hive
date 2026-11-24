@@ -4,7 +4,7 @@
 
 This page is for teams whose code lives on GitLab, Gitea or Forgejo and who want to know what Hive does with those forges today. It sits next to the [work source providers](work-source-providers.md) page: a **work source** (tracker) tells Hive what work exists; a **forge** is where the repositories, branches and change requests live. It is written from v5 code.
 
-**Short answer:** GitHub.com and GitHub Enterprise are the only forges a hive can run against. The GitLab, Gitea and Forgejo adapters are built and tested, and two governor writes already go through them, but the governor cycle that would reach those writes still starts from GitHub. Setup and the full list of reasons are on [Forge setup: GitLab, Gitea, and Forgejo](../forge-app-setup.md); the work to finish it is tracked in [#14096](https://github.com/hivecommons/hive/issues/14096).
+**Short answer:** GitHub.com and GitHub Enterprise are the only forges a hive can fully run against. A hive whose repositories are all on GitLab, Gitea or Forgejo now boots without GitHub credentials and finds its work: the governor lists each repository's open issues and change requests through the forge adapter (see [Work discovery on a forge-only hive](#work-discovery-on-a-forge-only-hive)). The rest of the loop is not finished yet, as the [Gaps](#gaps) list says. Setup and the full list of reasons are on [Forge setup: GitLab, Gitea, and Forgejo](../forge-app-setup.md); the remaining work is tracked in [#19494](https://github.com/hivecommons/hive/issues/19494).
 
 ## Trackers and forges are separate settings
 
@@ -66,7 +66,8 @@ The neutral interface is `forge.Forge` in `src/pkg/forge/forge.go`. Merging is a
 | `CreateIssueComment`, `AddLabels`, `RemoveLabel` | Yes | Yes | Yes |
 | `SetHold` (the `hold` label gate) | Yes | Yes | Yes |
 | `Merge` (`forge.Merger`) | No | Yes: accepts the MR with `merge`, `squash` or `rebase` (rebase, then merge), an optional head-SHA guard and branch removal | Yes: with a hold gate and an optional head-SHA guard, run against a real Forgejo by the nightly smoke workflow |
-| `CreateIssue`, `FindIssueByMarker` | Yes | No | No |
+| `CreateIssue`, `FindIssueByMarker` (`forge.IssueSeam`) | Yes | No | Yes: the issue is created, then its labels are added by name |
+| `CreateChangeRequest` (`forge.ChangeRequestCreator`) | No: GitHub opens pull requests through the GitHub client | No | Yes: reuses an open pull request from the same head, and resolves an empty base to the default branch |
 
 The GitLab merge maps forge errors onto shared ones: an MR with the `hold` label returns `ErrHoldActive`; HTTP 405 returns `ErrNotMergeable`; 406 returns `ErrAlreadyMerged`; 409 returns `ErrConflict`. No production caller merges through `forge.Merger` yet. Routing the merge gate, stage engine and attribution trailer by forge kind is [#14113](https://github.com/hivecommons/hive/issues/14113).
 
@@ -77,7 +78,34 @@ Two governor writes take their writer from `project.forge` instead of the GitHub
 - the **escalation sweep**, which posts the evidence comment and the `needs-human` label on a stuck PR;
 - the **hold guard**, which posts the drift comment and re-applies the `hold` label when a held PR's head moves.
 
-Both are fed by the governor's enumeration, which is still `github.Client.EnumerateActionable`. On a GitLab or Gitea hive that enumeration finds nothing, so these writes never fire. Agents also reach their forge through the `gh` CLI wrapper, not through `pkg/forge`. [Why: the agent execution path is GitHub-only](../forge-app-setup.md#why-the-agent-execution-path-is-github-only) explains this.
+Both are fed by the governor's enumeration. On a forge-only hive that enumeration runs through the forge adapter, so these writes reach the forge.
+
+## Work discovery on a forge-only hive
+
+When `project.forge` is `gitlab`, `gitea` or `forgejo` and no `project.repo_policies[]` entry puts a repository on GitHub, the governor cycle enumerates through `pkg/forge` instead of `github.Client.EnumerateActionable` ([#19669](https://github.com/hivecommons/hive/issues/19669)). The code is `src/cmd/hive/forge_enumerate.go`.
+
+- Each repository in `project.repos` that is not paused is listed with `ListOpenIssues` and `ListOpenChangeRequests`.
+- The items fill the same actionable snapshot a GitHub hive builds, so the queue, kicks and dashboard read them the same way.
+- Held items (the `hold` labels, the hive's pause label and the sentinel label) go to the hold list. Exempt labels, the hard-suppress labels and `project.issue_filter` are applied as on GitHub. Draft change requests are not offered.
+- Reporter trust fails closed. The forge list payload has no author association, so only `reporter_trust.trusted_logins` can trust an author. Any other author's issue needs one of the `untrusted_require_labels`.
+- Every issue author is treated as a person, so the injection scan and clarity gate judge the text.
+- A repository whose listing fails is marked stale. If every repository fails, the cycle keeps its previous snapshot.
+- The cycle runs with no GitHub client, even when one is configured. CI status, mergeability, review signals and dependency links are GitHub enrichments, so they stay unknown.
+
+A hive with any repository on GitHub keeps the GitHub enumeration unchanged. In such a mixed hive, a repository on another forge is still enumerated through GitHub and finds nothing. Agents also reach their forge through the `gh` CLI wrapper, not through `pkg/forge`. [Why: the agent execution path is GitHub-only](../forge-app-setup.md#why-the-agent-execution-path-is-github-only) explains this.
+
+## Agent requests on a forge-only hive
+
+Agents do not write to a forge directly. They drop a request file (`hive-open-pr`, or an issue, comment or label request), and a hive relay makes the write. On a GitHub hive those relays run on the GitHub client. On a forge-only hive, the forge request relay serves the same request directories through `pkg/forge` ([#19670](https://github.com/hivecommons/hive/issues/19670)). The code is `src/cmd/hive/forge_request_relay.go`.
+
+- Each request is authorized by the same agent-manager gate as on GitHub. The file's owner must be the agent it names, and the agent must be allowed the write at the hive's ACMM level. With no authorizer, every request is denied.
+- The repository must be in `project.repos`, on a non-GitHub forge, not paused and in the agent's scope.
+- Every pull request opened this way carries the ready-for-review gate label, so a person releases it. The GitHub relay's self-authorization, reporter-trust and duplicate-claim checks read GitHub data and are not ported, so the label holds the pull request in their place. A retried request for the same head returns the open pull request.
+- An issue request files the issue with the agent's origin label. A comment request posts the comment. A label request adds and removes labels. No request may set or clear a hive-controlled label: the hold and gate labels, `approved-direction`, `needs-human`, `blocked`, the auto-merge label, `hive/*` and `stage/*`.
+- A forge 4xx other than 408 or 429 is final. Other failures are retried a few times.
+- Results are written next to the request as `<name>.result.json`. A refused request is renamed `.denied`, `.rejected` or `.bad`. A transient forge failure is retried a few times and then renamed `.failed`.
+
+Pushing the branch the pull request is opened from is a separate relay and is not covered here.
 
 ## Dashboard behavior
 
@@ -90,8 +118,9 @@ Each adapter has unit tests against a fake HTTP server (`src/pkg/forge/*_test.go
 
 ## Gaps
 
-- Enumeration, the stage engine and the merge gate are GitHub-only ([#14113](https://github.com/hivecommons/hive/issues/14113), [#14096](https://github.com/hivecommons/hive/issues/14096)).
-- No adapter can open a change request.
+- Enumeration through the forge covers only forge-only hives. The stage engine, the advisory report and the merge gate are GitHub-only ([#14113](https://github.com/hivecommons/hive/issues/14113), [#14096](https://github.com/hivecommons/hive/issues/14096)).
+- The forge request relay serves only `hive-open-pr` and the issue, comment and label requests. Claim, close, review-request and PR-edit requests are refused on a forge-only hive.
+- A hive with any repository on GitHub runs only the GitHub relays, so agent requests for a repository on another forge in such a mixed hive are not served.
 - There is no GitLab or Gitea webhook receiver, dashboard login provider or egress-proxy rule table.
 
 The complete list is in [What full support would require](../forge-app-setup.md#what-full-support-would-require). For Forgejo specifically, what works on v5 and what is in progress is on [Forgejo](forgejo.md).

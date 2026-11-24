@@ -2444,6 +2444,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		return joinDone(relaysDone, sweepDone)
 	}, b.logger)
 	b.armRequestRelays(b.ghClient)
+	// A forge-only hive has no GitHub client, so the relays above never
+	// start; its PR and issue requests are served through the forge instead
+	// (hivecommons/hive#19670), with the same manager authorizers. The relay
+	// idles on each scan unless every repo is off GitHub, so a reload either
+	// way hands the queues to the right relays. It stops with b.ctx, which
+	// is all shutdown needs, so its done channel is not joined.
+	if deps.startForgeRequestRelay != nil {
+		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger))
+	}
 	b.integrationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
 		client := b.currentGitHubClient()
 		if client == nil {
@@ -4152,6 +4162,17 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 					)
 				}
 			}
+		}
+
+		// Rebuild the PAT client when github.token was rotated in hive.yaml
+		// (hivecommons/hive#19633). The PAT client is built once at boot, so
+		// without this the old token kept being used until a restart. App mode
+		// is untouched: it rebuilds above on App identity changes.
+		if !b.cfg.GitHub.HasApp() && b.cfg.GitHub.Token != "" && prevGitHub.Token != b.cfg.GitHub.Token {
+			newClient := b.newConfiguredGitHubPATClient(b.cfg.GitHub.Token)
+			b.adoptGitHubClient(newClient, nil)
+			deps.refreshAgentTokens(b.ctx, b.agentMgr)
+			b.logger.Info("github token client rebuilt after config reload")
 		}
 
 		b.refreshDashboard()
