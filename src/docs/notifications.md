@@ -572,7 +572,6 @@ Go client; listed for completeness):
 | `issue-closed-reopen-hint.yml`, `issue-reopen-command.yml` | `status` | Reopen hint on closed issues; reply to a reopen command. |
 | `backend-smoke.yml`, `ci-runner-canary.yml`, `coverage-hourly.yml`, `dco-post-merge.yml`, `flue-smoke.yml`, `omp-smoke.yml`, `wavefront-smoke.yml`, `v2-ci.yml`, `v2-tests.yml` | `attention` | "Still failing" comments on an open failure-tracking issue. |
 | `promote-stable.yml` | `attention` | Emergency stable-promotion exception note. |
-| `weekly-competitor-report.md` (`.lock.yml`) | `status` | Weekly report comment on the tracking issue. |
 | `hive-ok-to-test.yml` | `protocol_command` | The `/ok-to-test` command that releases held workflow runs. |
 
 ## Attention pilot and the issue status card (`github.notifications.attention_pilot`)
