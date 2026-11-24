@@ -113,6 +113,8 @@ That only works while the browser sends the cookie to the sibling at all, and it
 does so solely because of the cookie's `Domain` attribute — which the hub derives
 from **the registrable domain of its own canonical host** (`HIVE_HUB_PUBLIC_URL`
 → `sessionCookieDomain`, `src/pkg/hub/saas.go`).
+`HIVE_HUB_SESSION_COOKIE_DOMAIN` can narrow that scope but never widen it, so a
+sibling outside the narrowed scope is signed out too.
 
 So the bridge has a precondition:
 
