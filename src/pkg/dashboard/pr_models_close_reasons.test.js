@@ -16,7 +16,7 @@ function pick(re, what) {
 }
 
 const src = [
-  'let govPRModelsSort = "effectiveness"; let govPRModelsWindow = "7d"; let govPRModelsData = null;',
+  'let govPRModelsSort = "effectiveness"; let govPRModelsColumnSort = { key: "", dir: "desc" }; let govPRModelsWindow = "7d"; let govPRModelsData = null;',
   'const escapeHtml = s => String(s).replace(/[&<>"\']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",\'"\':"&quot;","\'":"&#39;"}[c]));',
   'const dashboardSectionHelpMark = () => "";',
   'const formatFixTime = () => "";',
@@ -26,6 +26,10 @@ const src = [
   pick(/function governorPRModelUnattributed\(b\) \{[\s\S]*?\n    \}\n/, 'governorPRModelUnattributed'),
   pick(/function governorPRModelSliceDetail\(b\) \{[\s\S]*?\n    \}\n/, 'governorPRModelSliceDetail'),
   pick(/const GOV_PR_MODEL_COLUMNS = \[[\s\S]*?\n    \];\n/, 'GOV_PR_MODEL_COLUMNS'),
+  pick(/function governorPRModelSortLabel\(key\) \{[\s\S]*?\n    \}\n/, 'governorPRModelSortLabel'),
+  pick(/function governorPRModelColumnValue\(b, key\) \{[\s\S]*?\n    \}\n/, 'governorPRModelColumnValue'),
+  pick(/function governorPRModelColumnCompare\(a, b, key, dir\) \{[\s\S]*?\n    \}\n/, 'governorPRModelColumnCompare'),
+  pick(/function governorPRModelSortHeadHtml\(key, help, cls\) \{[\s\S]*?\n    \}\n/, 'governorPRModelSortHeadHtml'),
   pick(/function governorPRModelRows\(data\) \{[\s\S]*?\n    \}\n/, 'governorPRModelRows'),
   // Per-model PR list (#18722): rows render a PRs toggle and, when open, the list.
   'let govPRModelPRsOpen = ""; const govPRModelPRsCache = {}; const loadGovernorPRModelPRs = () => {};',
