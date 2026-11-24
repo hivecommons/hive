@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v6.60.2)
+
+### Changed
+
+- The Overview card's band lists (Issues by band, PRs by band) now come in two parts. **To do** lists the Your turn bands (Decide, Review, Yours to close and the rest) as plain rows, then a bold To do total in the Your turn colour, which replaces the old Your turn row and keeps its click and ⬇ export. **Status**, marked "nothing for you to do", lists every other group exactly as before, then a bold Status total whose ⬇ exports all of those groups at once. The donut, the tiles, band names, colours and order are unchanged, and a hive whose server sends no Overview card keeps today's legend. The section names are headings for screen readers, and the chart titles are now headings too.
+
+### Fixed
+
+- The Overview card's **Admit** band no longer lists every untrusted reporter's issue as your turn. An issue whose newest comment by a person is a maintainer's (an `OWNER`, `MEMBER` or `COLLABORATOR` who did not file it) now waits on someone else, under **Waiting on another item**, with a reason that names who it waits on ("Waits on jeefy: maintainer Danathar asked on Nov 11") or says it waits on a reply. A newer comment by the reporter or anyone else, an `approved-direction` label, or the dashboard's stale period passing puts it back in Admit; bot comments, slash commands and comments carrying a hive marker are ignored. An untrusted reporter's design proposal (`stage/018-open-for-discussion`) is now **Decide** (`open_for_discussion`) instead of Admit, and its menu says to admit or close it once decided. The issue enumeration reuses the comment list the reporter-trust wait notice scan already read; otherwise it reads the last comments page once, again only when the issue changes, at most 10 reads per repository per pass. Display only: the dashboard, exports, `issues_by_band` and the hive advisor read it; admission, the issue filter, reporter trust and the agent queues are unchanged, and the issue still needs an admission label before any agent works it (projectbluefin/server#655, #679; projectbluefin/testsuite#1302, #1303).
+
 ## 2026-11-24 (v6.60.1)
 
 ### Fixed
