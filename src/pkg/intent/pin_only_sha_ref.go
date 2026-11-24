@@ -28,11 +28,15 @@ import (
 // for refuses the whole diff, exactly as any other non-pin line does.
 
 // pinSHARefRE is one `key: <40-hex>` line with an optional `# vN[.N[.N]]`
-// comment. The key is a plain block-mapping key (no list dash, no quoting, no
-// flow syntax) and the commit is the whole unquoted value. A comment must be
-// set off by whitespace: YAML reads `<sha># v1` as one scalar, not a commit
-// followed by a comment, so that form is not a bare commit line at all.
-var pinSHARefRE = regexp.MustCompile(`^([ \t]*[A-Za-z_][A-Za-z0-9_-]*: )([0-9a-fA-F]{40})([ \t]*|[ \t]+# v[0-9]+(?:\.[0-9]+){0,2})$`)
+// comment, which may carry a short note (pinNoteGroup). The key is a plain
+// block-mapping key (no list dash, no quoting, no flow syntax) and the commit
+// is the whole unquoted value. A comment must be set off by whitespace: YAML
+// reads `<sha># v1` as one scalar, not a commit followed by a comment, so
+// that form is not a bare commit line at all. The comment alternative comes
+// first so that, when a line has one, the match puts it in the comment group
+// and not in the note group (Go picks the leftmost alternative that matches);
+// a note whose comment group holds no comment is refused (pinNoteKept).
+var pinSHARefRE = regexp.MustCompile(`^([ \t]*[A-Za-z_][A-Za-z0-9_-]*: )([0-9a-fA-F]{40})([ \t]+# v[0-9]+(?:\.[0-9]+){0,2}|[ \t]*)` + pinNoteGroup + `$`)
 
 // pinSHAMove is one commit replacement, both commits lowercased.
 type pinSHAMove struct {
@@ -54,7 +58,8 @@ type pinSHARefCandidate struct {
 //
 // Both lines must match pinSHARefRE with a byte-identical key prefix
 // (indentation included). As for action-sha, an existing version comment may
-// change within its major version but may not appear or disappear. The
+// change within its major version but may not appear or disappear, and a
+// note after it must be byte-identical on both lines (pinNoteKept). The
 // commit itself must change: a comment-only or letter-case-only edit is not
 // a bump.
 //
@@ -69,7 +74,7 @@ func pinSHARefMove(old, next string, kinds map[string]bool) (pinSHAMove, string,
 	if a == nil || b == nil || a[1] != b[1] {
 		return pinSHAMove{}, "", false
 	}
-	if strings.Contains(a[3], "#") != strings.Contains(b[3], "#") {
+	if strings.Contains(a[3], "#") != strings.Contains(b[3], "#") || !pinNoteKept(a[3], a[4], b[3], b[4]) {
 		return pinSHAMove{}, "", false
 	}
 	move := pinSHAMove{old: strings.ToLower(a[2]), next: strings.ToLower(b[2])}
